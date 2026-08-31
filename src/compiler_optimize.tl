@@ -94822,6 +94822,1617 @@
     (opt-bce-mb-blocks-have-check? (compiler-opt-global-shared-view blocks))
     (opt-ssa-blocks-have-phi? blocks)))
 
+;; --- loop predication: hoisting a check WITHOUT cloning ------------------------
+;;
+;; The versioner above buys a check-free body by CLONING it: the guard picks the
+;; clone when no check can abort and the untouched original otherwise, so the
+;; guard-fail path is the checked loop and abort behaviour is exact by
+;; construction. That is the only form available while the guard is a
+;; SUFFICIENT condition evaluated ahead of the loop, and it is why every
+;; admission above is a size/pressure price on the clone.
+;;
+;; This pass is the other form -- LLVM's LoopPredication without the deopt exit
+;; (`llvm/lib/Transforms/Scalar/LoopPredication.cpp`), and IRCE's no-clone mode.
+;; It MOVES a check out of the loop instead of copying the loop, so it costs no
+;; code at all and is available to loops the clone budgets refuse: bodies with
+;; calls, nests, whole inlined regions. It buys ONE check per loop instead of the
+;; versioner's whole derivable set, and it needs a strictly stronger fact.
+;;
+;; THE FACT IT NEEDS. LLVM may hoist a widened guard because its failure path is
+;; a DEOPT: falling out early re-enters the interpreter, which then does the work
+;; the compiled loop skipped. TypeLisp's check failure is an ABORT. Moving a
+;; check earlier therefore has to preserve two things:
+;;
+;;   (a) WHETHER the run aborts. The moved check is evaluated once, at the loop's
+;;       first executed iteration's index. So the hoist is sound only when
+;;       `check passes at the first iteration` implies `check passes at EVERY
+;;       executed iteration` -- i.e. the first executed index is EXTREMAL.
+;;   (b) WHAT the run had done before it aborted. The abort now fires before the
+;;       loop rather than in iteration k0, so every observable effect the
+;;       original performed in iterations 0..k0 and in the header before the
+;;       check must be NONE. With (a) forcing k0 = 0, that reduces to: nothing
+;;       observable may precede the check inside the header.
+;;
+;; So the transform is exact -- not merely safe -- and the abort it emits is the
+;; SAME instruction: the check keeps its own ok-label, so the located tail
+;; (`tl_oob_abort_at`) reports the same source span, and it is evaluated on the
+;; same (index, length) pair the aborting iteration would have used. Both
+;; branches of the contract are byte-identical, which is what the fixture matrix
+;; pins.
+;;
+;; THE TWO INDEX FORMS THAT MAKE THE FIRST INDEX EXTREMAL, and nothing else:
+;;
+;;   * a LOOP-INVARIANT index. Every iteration evaluates the identical check, so
+;;     it fails at iteration 0 or never. This is the shape LICM leaves behind: it
+;;     hoists the invariant address computation and the length load out of the
+;;     header and leaves the check, because a check is a trap site and LICM has
+;;     no argument for moving one.
+;;
+;;   * a DESCENDING counter phi `iphi`, seeded from the preheader, stepped by a
+;;     negative literal, whose back edge is taken only when the STEPPED value is
+;;     at or above a non-negative literal. Then, writing `seed` for the preheader
+;;     input: if `seed <u len` holds, `len <= i64-MAX` gives `seed >= 0`, every
+;;     later value is `previous + step < previous` with no overflow (the addend
+;;     is negative and the operand non-negative) and is `>= 0` because the latch
+;;     compare admitted it, so the whole executed set lies in `[0, seed]` and
+;;     every check passes. If `seed <u len` fails, iteration 0's check is exactly
+;;     this compare on exactly these operands and aborts there. Both directions
+;;     are the equivalence (a) asks for, and neither needs `seed >= 0` as a
+;;     hypothesis: a negative seed simply fails the moved check the way it failed
+;;     the original one.
+;;
+;; ASCENDING counters are the case this pass must REFUSE, and the reason is the
+;; whole packet: for `i` rising to `bound` against `len`, the first failing index
+;; is `k0 = len > 0`, so the original performs `len` iterations of stores and
+;; calls BEFORE aborting. Hoisting the abort ahead of them changes what a
+;; malformed run has written when it stops. Those loops need the clone above,
+;; and are priced there.
+;;
+;; WHAT MAY PRECEDE THE CHECK. Register computations and loads only -- the same
+;; window `opt-bce-mb-pair-barrier?` opens for the bounds_dom run widening, whose
+;; skipped-prefix argument this reuses verbatim. A store, a call, an aborting
+;; Div/Mod/shift, or ANOTHER bounds check closes it: a second check is itself a
+;; trap site, and moving an abort across one would change which site reports.
+;; Checks are hoisted in header order, so the first failing one is unchanged.
+;;
+;; WHERE IT LANDS. Immediately before the preheader's terminator, and the
+;; preheader must end `Jump header`: reaching it must IMPLY the header runs, or
+;; the moved check would fire on a path that never entered the loop. A loop whose
+;; header has more than one out-of-loop predecessor has no such block and is
+;; refused (`OptLoopPreheader.No`). Operand dominance is free: the length and the
+;; invariant index dominate the header, the preheader's only successor is the
+;; header, so they dominate the preheader's end; the descending seed is a phi
+;; input on the preheader edge, which is the same statement.
+;;
+;; IT CANNOT LOSE. The moved check runs once per loop ENTRY where it ran once per
+;; TRIP, and an entered loop runs at least one trip; the code does not grow (the
+;; instruction is moved, not copied); and the length's live range SHRINKS out of
+;; the loop, which is why no economics gate guards this pass the way the
+;; versioner's guard needs one.
+;; Instruction kinds the loop-def scan accounts for. Everything with a
+;; destination here is exactly what `opt-bce-mb-instr-dst-or` reports, so
+;; `opt-bce-mb-collect-defs` over an accounted body is a COMPLETE def set and
+;; `opt-unroll-invariant-bound?` cannot mistake a per-iteration value for an
+;; invariant one. An unaccounted kind (Alloc, AddrOf, the vector and SPMD
+;; families, Syscall, the indirect call forms, Store) refuses the whole loop
+;; rather than silently widening invariance.
+(define (opt-bce-hoist-body-instr-ok? [instr : ir.CompilerIrInstr]) : bool
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Mov _ _ _) true]
+    [(ir.CompilerIrInstr.Gep _ _ _ _) true]
+    [(ir.CompilerIrInstr.Load _ _ _) true]
+    [(ir.CompilerIrInstr.Cast _ _ _ _) true]
+    [(ir.CompilerIrInstr.Bitcast _ _ _ _) true]
+    [(ir.CompilerIrInstr.BinOp _ _ _ _ _) true]
+    [(ir.CompilerIrInstr.UnOp _ _ _ _) true]
+    [(ir.CompilerIrInstr.Phi _ _ _) true]
+    [(ir.CompilerIrInstr.Call _ _ _ _) true]
+    [(ir.CompilerIrInstr.StorePtr _ _ _) true]
+    [(ir.CompilerIrInstr.CopyBytes _ _ _) true]
+    [(ir.CompilerIrInstr.BoundsCheck _ _ _) true]
+    [(ir.CompilerIrInstr.Jump _) true]
+    [(ir.CompilerIrInstr.Branch _ _ _) true]
+    [(ir.CompilerIrInstr.TotalEnumBranch _ _ _) true]
+    [(ir.CompilerIrInstr.Return _) true]
+    [(ir.CompilerIrInstr.Switch _ _ _ _) true]
+    [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) true]
+    [_ false]))
+
+(define (opt-bce-hoist-block-ok?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]) : bool
+  (if (>= index count)
+    true
+    (and
+      (opt-bce-hoist-body-instr-ok?
+        (ir.compiler-ir-instr-seq-ref
+          (compiler-opt-global-shared-view instrs)
+          index))
+      (opt-bce-hoist-block-ok? instrs (+ index 1) count))))
+
+(define (opt-bce-hoist-body-ok? [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) true]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (and
+        (match (compiler-opt-global-shared-view block)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-bce-hoist-block-ok?
+              (compiler-opt-global-shared-view instrs)
+              0
+              (ir.compiler-ir-instr-seq-count
+                (compiler-opt-global-shared-view instrs)))])
+        (opt-bce-hoist-body-ok? (compiler-opt-box-shared-view rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bce-hoist-body-ok? (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; A literal strictly greater than zero.
+(define (opt-bce-hoist-positive-literal? [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.I64 k) (> k 0)]
+    [_ false]))
+
+;; A literal strictly less than zero.
+(define (opt-bce-hoist-negative-literal? [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.I64 k) (< k 0)]
+    [_ false]))
+
+(define (opt-bce-hoist-literal-at-least?
+  [value : ir.CompilerIrValue]
+  [floor : i64]) : bool
+  (match value
+    [(ir.CompilerIrValue.I64 k) (>= k floor)]
+    [_ false]))
+
+(define (opt-bce-hoist-var? [value : ir.CompilerIrValue] [id : i64]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var other) (= other id)]
+    [_ false]))
+
+;; `inext` is `iphi` moved DOWN by a literal, on a signed type: `iphi - c` with
+;; `c > 0`, or `iphi + c` with `c < 0` in either operand order. Signedness is
+;; required because the descending argument reads the step as a negative
+;; number and the latch bound below as a signed floor.
+(define (opt-bce-hoist-descending-step?
+  [body-blocks : ir.CompilerIrBlockList]
+  [iphi : i64]
+  [inext : ir.CompilerIrValue]) : bool
+  (match inext
+    [(ir.CompilerIrValue.Var next-id)
+      (match (opt-bce-mb-find-def
+        (compiler-opt-global-shared-view body-blocks)
+        next-id)
+        [(OptBceMbMaybeInstr.No) false]
+        [(OptBceMbMaybeInstr.Some instr)
+          (match (compiler-opt-global-shared-view instr)
+            [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+              (and
+                (opt-bce-version-cond-signed-type?
+                  (compiler-opt-global-shared-view ty))
+                (match op
+                  [(ir.CompilerIrBinOp.Sub)
+                    (and
+                      (opt-bce-hoist-var?
+                        (compiler-opt-global-shared-view lhs)
+                        iphi)
+                      (opt-bce-hoist-positive-literal? rhs))]
+                  [(ir.CompilerIrBinOp.Add)
+                    (or
+                      (and
+                        (opt-bce-hoist-var?
+                          (compiler-opt-global-shared-view lhs)
+                          iphi)
+                        (opt-bce-hoist-negative-literal?
+                          (compiler-opt-global-shared-view rhs)))
+                      (and
+                        (opt-bce-hoist-var? rhs iphi)
+                        (opt-bce-hoist-negative-literal? lhs)))]
+                  [_ false]))]
+            [_ false])])]
+    [_ false]))
+
+;; The back edge is taken only when the STEPPED counter is at or above a
+;; non-negative literal, so no executed value after the first is negative.
+;; `Ge` wants a floor of 0 and `Gt` a floor of -1; both are signed compares of
+;; the step value itself.
+(define (opt-bce-hoist-lower-bounded?
+  [body-blocks : ir.CompilerIrBlockList]
+  [cond-var : i64]
+  [inext : ir.CompilerIrValue]) : bool
+  (match (opt-bce-mb-find-def
+    (compiler-opt-global-shared-view body-blocks)
+    cond-var)
+    [(OptBceMbMaybeInstr.No) false]
+    [(OptBceMbMaybeInstr.Some instr)
+      (match (compiler-opt-global-shared-view instr)
+        [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+          (and
+            (opt-bce-version-cond-signed-type?
+              (compiler-opt-global-shared-view ty))
+            (opt-value-eq (compiler-opt-global-shared-view lhs) inext)
+            (match op
+              [(ir.CompilerIrBinOp.Ge)
+                (opt-bce-hoist-literal-at-least?
+                  (compiler-opt-global-shared-view rhs)
+                  0)]
+              [(ir.CompilerIrBinOp.Gt)
+                (opt-bce-hoist-literal-at-least? rhs (- 0 1))]
+              [_ false]))]
+        [_ false])]))
+
+;; The value a descending counter phi holds on the FIRST executed iteration --
+;; its preheader input -- or `No` when `idx` is not such a phi. A phi that
+;; splits at all has exactly two inputs, so admitting one here is also the
+;; statement that the header has exactly the preheader and the latch as
+;; predecessors.
+(define (opt-bce-hoist-descending-seed
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [phi-count : i64]
+  [body-blocks : ir.CompilerIrBlockList]
+  [latch : i64]
+  [preheader : i64]
+  [latch-cond : i64]
+  [idx : ir.CompilerIrValue]) : ir.CompilerIrMaybeValue
+  (if (>= index phi-count)
+    (ir.CompilerIrMaybeValue.No)
+    (match (ir.compiler-ir-instr-seq-ref
+      (compiler-opt-global-shared-view instrs)
+      index)
+      [(ir.CompilerIrInstr.Phi dst inputs _)
+        (if (not (opt-bce-hoist-var? (compiler-opt-global-shared-view idx) dst))
+          (opt-bce-hoist-descending-seed
+            instrs
+            (+ index 1)
+            phi-count
+            body-blocks
+            latch
+            preheader
+            latch-cond
+            idx)
+          (match (opt-unroll-split-phi-inputs inputs latch)
+            [(OptUnrollPhiSplit.No) (ir.CompilerIrMaybeValue.No)]
+            [(OptUnrollPhiSplit.Split seed inext pred-label)
+              (if (and
+                (= pred-label preheader)
+                (opt-bce-hoist-descending-step?
+                  (compiler-opt-global-shared-view body-blocks)
+                  dst
+                  (compiler-opt-global-shared-view inext))
+                (opt-bce-hoist-lower-bounded? body-blocks latch-cond inext))
+                (ir.CompilerIrMaybeValue.Some seed)
+                (ir.CompilerIrMaybeValue.No))]))]
+      [_ (ir.CompilerIrMaybeValue.No)])))
+
+;; The index the moved check must be evaluated on: the index itself when it is
+;; loop-invariant, the preheader seed when it is a descending counter phi.
+(define (opt-bce-hoist-entry-index
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [latch : i64]
+  [preheader : i64]
+  [latch-cond : i64]
+  [idx : ir.CompilerIrValue]) : ir.CompilerIrMaybeValue
+  (if (opt-unroll-invariant-bound?
+    (compiler-opt-global-shared-view defs)
+    (compiler-opt-global-shared-view idx))
+    (ir.CompilerIrMaybeValue.Some idx)
+    (if (< latch-cond 0)
+      (ir.CompilerIrMaybeValue.No)
+      (opt-bce-hoist-descending-seed
+        instrs
+        0
+        phi-count
+        body-blocks
+        latch
+        preheader
+        latch-cond
+        idx))))
+
+;; Walk the header's leading window, pushing each hoistable check's moved copy
+;; into `builder` and recording its position in the drop set. The window closes
+;; at the first barrier and at the first check that does NOT hoist -- that check
+;; is a trap site the moved ones must not cross -- so the surviving order of
+;; trap sites is exactly the original's.
+(define (opt-bce-hoist-scan
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [phi-count : i64]
+  [latch : i64]
+  [preheader : i64]
+  [latch-cond : i64]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [drop : OptBceVersionKeep]) : OptBceVersionKeep
+  (if (>= index last)
+    drop
+    (let
+      [instr : ir.CompilerIrInstr
+        (ir.compiler-ir-instr-seq-ref
+          (compiler-opt-global-shared-view instrs)
+          index)]
+      (match (compiler-opt-global-shared-view instr)
+        [(ir.CompilerIrInstr.BoundsCheck idx length ok-label)
+          (if (not
+            (opt-unroll-invariant-bound?
+              (compiler-opt-global-shared-view defs)
+              (compiler-opt-global-shared-view length)))
+            drop
+            (match (opt-bce-hoist-entry-index
+              (compiler-opt-global-shared-view instrs)
+              phi-count
+              (compiler-opt-global-shared-view body-blocks)
+              (compiler-opt-global-shared-view defs)
+              latch
+              preheader
+              latch-cond
+              (compiler-opt-global-shared-view idx))
+              [(ir.CompilerIrMaybeValue.No) drop]
+              [(ir.CompilerIrMaybeValue.Some entry-index)
+                (begin
+                  (ir.compiler-ir-instr-builder-push!
+                    builder
+                    (ir.CompilerIrInstr.BoundsCheck entry-index length ok-label))
+                  (opt-bce-hoist-scan
+                    instrs
+                    (+ index 1)
+                    last
+                    body-blocks
+                    defs
+                    phi-count
+                    latch
+                    preheader
+                    latch-cond
+                    builder
+                    (opt-bce-version-keep-add drop index)))]))]
+        [_
+          (if (opt-bce-mb-pair-barrier? instr)
+            drop
+            (opt-bce-hoist-scan
+              instrs
+              (+ index 1)
+              last
+              body-blocks
+              defs
+              phi-count
+              latch
+              preheader
+              latch-cond
+              builder
+              drop))]))))
+
+;; The header without the moved checks.
+(define (opt-bce-hoist-drop-instrs
+  [instrs : ir.CompilerIrInstrSeq]
+  [drop : OptBceVersionKeep]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity count)]
+    [next : i64 0]
+    (begin
+      (while (< next count)
+        (begin
+          (if (opt-bce-version-keep-contains?
+            (compiler-opt-global-shared-view drop)
+            next)
+            unit
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (ir.compiler-ir-instr-seq-ref
+                (compiler-opt-global-shared-view instrs)
+                next)))
+          (set! next (+ next 1))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+;; The preheader with the moved checks spliced in ahead of its terminator.
+(define (opt-bce-hoist-splice-instrs
+  [instrs : ir.CompilerIrInstrSeq]
+  [moved : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [moved-count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view moved))]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (+ count moved-count))]
+    [next : i64 0]
+    (begin
+      (while (< next (- count 1))
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.compiler-ir-instr-seq-ref
+              (compiler-opt-global-shared-view instrs)
+              next))
+          (set! next (+ next 1))))
+      (set! next 0)
+      (while (< next moved-count)
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.compiler-ir-instr-seq-ref
+              (compiler-opt-global-shared-view moved)
+              next))
+          (set! next (+ next 1))))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.compiler-ir-instr-seq-ref instrs (- count 1)))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+(define (opt-bce-hoist-rewrite-blocks
+  [blocks : ir.CompilerIrBlockList]
+  [header : i64]
+  [preheader : i64]
+  [moved : ir.CompilerIrInstrSeq]
+  [drop : OptBceVersionKeep]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (ir.compiler-ir-block-cons
+        (match (compiler-opt-global-shared-view block)
+          [(ir.CompilerIrBlock.Block label instrs)
+            (cond
+              [(= label header)
+                (ir.CompilerIrBlock.Block
+                  label
+                  (opt-bce-hoist-drop-instrs
+                    instrs
+                    (compiler-opt-global-shared-view drop)))]
+              [(= label preheader)
+                (ir.CompilerIrBlock.Block
+                  label
+                  (opt-bce-hoist-splice-instrs
+                    instrs
+                    (compiler-opt-global-shared-view moved)))]
+              [else block])])
+        (opt-bce-hoist-rewrite-blocks
+          (compiler-opt-box-shared-view rest)
+          header
+          preheader
+          moved
+          drop))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bce-hoist-rewrite-blocks
+        (ir.compiler-ir-block-seq-to-list seq)
+        header
+        preheader
+        moved
+        drop)]))
+
+;; `Jump header` and nothing else: reaching the preheader must IMPLY that the
+;; header's first iteration runs, or a moved check could abort on a path the
+;; original never ran it on.
+(define (opt-bce-hoist-preheader-jumps-to?
+  [block : ir.CompilerIrBlock]
+  [header : i64]) : bool
+  (match block
+    [(ir.CompilerIrBlock.Block _ instrs)
+      (let
+        [count : i64
+          (ir.compiler-ir-instr-seq-count
+            (compiler-opt-global-shared-view instrs))]
+        (if (< count 1)
+          false
+          (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+            [(ir.CompilerIrInstr.Jump target) (= target header)]
+            [_ false])))]))
+
+;; The latch's continuing condition, or -1 when the loop has no do-while latch
+;; branch (which leaves only the loop-invariant index form available).
+(define (opt-bce-hoist-latch-cond
+  [blocks : ir.CompilerIrBlockList]
+  [header : i64]
+  [latch : i64]
+  [body-labels : OptLabelSet]) : i64
+  (match (opt-cfg-find-block (compiler-opt-global-shared-view blocks) latch)
+    [(OptMaybeBlock.No) (- 0 1)]
+    [(OptMaybeBlock.Some latch-block)
+      (match (opt-bce-mb-latch-branch latch-block header body-labels)
+        [(OptBceMbMaybeLatch.No) (- 0 1)]
+        [(OptBceMbMaybeLatch.Some cond-var _) cond-var])]))
+
+(defenum OptBceHoistResult
+  (No)
+  (Some ir.CompilerIrBlockList i64))
+
+(define (opt-bce-hoist-loop
+  [blocks : ir.CompilerIrBlockList]
+  [loop : OptNaturalLoop]
+  [frame : i64]) : OptBceHoistResult
+  (match (opt-natural-loop-preheader (compiler-opt-global-shared-view loop))
+    [(OptLoopPreheader.No) (OptBceHoistResult.No)]
+    [(OptLoopPreheader.Some preheader)
+      (let
+        [header : i64
+          (opt-natural-loop-header (compiler-opt-global-shared-view loop))]
+        [latch : i64
+          (opt-natural-loop-latch (compiler-opt-global-shared-view loop))]
+        [body-labels : OptLabelSet
+          (opt-natural-loop-body (compiler-opt-global-shared-view loop))]
+        [body-blocks : ir.CompilerIrBlockList
+          (opt-natural-loop-current-body-blocks
+            (compiler-opt-global-shared-view loop)
+            (compiler-opt-global-shared-view blocks))]
+        (if (not
+          (opt-bce-hoist-body-ok? (compiler-opt-global-shared-view body-blocks)))
+          (OptBceHoistResult.No)
+          (match (opt-cfg-find-block
+            (compiler-opt-global-shared-view blocks)
+            preheader)
+            [(OptMaybeBlock.No) (OptBceHoistResult.No)]
+            [(OptMaybeBlock.Some pre-block)
+              (if (not (opt-bce-hoist-preheader-jumps-to? pre-block header))
+                (OptBceHoistResult.No)
+                (match (opt-cfg-find-block
+                  (compiler-opt-global-shared-view blocks)
+                  header)
+                  [(OptMaybeBlock.No) (OptBceHoistResult.No)]
+                  [(OptMaybeBlock.Some header-block)
+                    (match header-block
+                      [(ir.CompilerIrBlock.Block _ instrs)
+                        (let
+                          [count : i64
+                            (ir.compiler-ir-instr-seq-count
+                              (compiler-opt-global-shared-view instrs))]
+                          [phi-count : i64
+                            (opt-unroll-phi-prefix-count
+                              (compiler-opt-global-shared-view instrs)
+                              0)]
+                          [latch-cond : i64
+                            (opt-bce-hoist-latch-cond
+                              (compiler-opt-global-shared-view blocks)
+                              header
+                              latch
+                              body-labels)]
+                          [defs : opt_i64_i64_map.Map
+                            (opt-bce-mb-collect-defs
+                              (compiler-opt-global-shared-view body-blocks)
+                              (opt_i64_i64_map.with-capacity 64))]
+                          [builder : ir.CompilerIrInstrBuilder
+                            (ir.compiler-ir-instr-builder-with-capacity 4)]
+                          [drop : OptBceVersionKeep
+                            (opt-bce-hoist-scan
+                              (compiler-opt-global-shared-view instrs)
+                              phi-count
+                              (- count 1)
+                              (compiler-opt-global-shared-view body-blocks)
+                              (compiler-opt-global-shared-view defs)
+                              phi-count
+                              latch
+                              preheader
+                              latch-cond
+                              (&mut builder)
+                              (opt-bce-version-keep-new count))]
+                          (if (< drop.count 1)
+                            (OptBceHoistResult.No)
+                            (OptBceHoistResult.Some
+                              (opt-bce-hoist-rewrite-blocks
+                                blocks
+                                header
+                                preheader
+                                (ir.compiler-ir-instr-builder-to-seq builder)
+                                drop)
+                              frame)))])]))])))]))
+
+;; --- clone-free predication for ASCENDING counters: bound tightening ----------
+;;
+;; The hoist above refuses an ascending counter, and the refusal is not a
+;; conservatism -- for `i` rising from `seed` to `limit` against `len`, the first
+;; index that fails is `k0 = len`, and the original ran `len` iterations of
+;; stores and calls before it aborted. An abort moved ahead of them is a
+;; different program.
+;;
+;; This is IRCE's no-clone mode, which reaches that class without moving the
+;; abort at all: instead of hoisting the check, TIGHTEN THE TRIP RANGE so the
+;; loop stops exactly where the check would have fired, and put the check on the
+;; way out. Writing `m` for the smallest length checked and `safe` for
+;; `min(limit, m)`:
+;;
+;;   * the preheader keeps the FIRST iteration's checks, at the counter's seed.
+;;     That is the hoist's own move and sound for the hoist's own reason (the
+;;     first iteration's check fails at the first iteration or never), and it
+;;     establishes `seed <u m` for everything below;
+;;   * the latch tests `i + 1 < safe` instead of `i + 1 < limit`. Every executed
+;;     index after the first is then `< safe <= m`, so every removed check would
+;;     have passed, and the body runs them not at all;
+;;   * on the way out, `i + 1 < limit` says whether the loop stopped EARLY --
+;;     that is, at `m` rather than at `limit` -- and if it did, the removed
+;;     checks are re-evaluated at `i + 1`, which is exactly the index the
+;;     original's next iteration would have checked. They are the same
+;;     instructions, carrying their own ok-labels, so the first one to fail is
+;;     the one the original aborted at, with the same index, the same length and
+;;     the same source span.
+;;
+;; Iteration for iteration, the trace is the original's: the loop runs the same
+;; body the same number of times, and either exits where the original exited or
+;; aborts on the index the original aborted on. Nothing observable moves.
+;;
+;; STEP ONE ONLY. The argument needs `i + step` not to wrap: with `i < safe <= m`
+;; and `m` a container length (so `m <= i64-MAX`), `i + 1 <= i64-MAX` is
+;; immediate, while a larger step reaches `safe - 1 + step` and a wrapped counter
+;; would go negative, satisfy the signed latch again and run the body on an
+;; index no check covers. The versioner spends a guard conjunct on that; this
+;; pass has no guard to spend, so it takes the step the arithmetic is free for.
+;;
+;; ONLY A PREFIX OF THE HEADER'S CHECKS. The window is the hoist's: it closes at
+;; the first barrier and at the first check that is not on the counter. A check
+;; left behind sits AFTER every removed one, so at the index the loop stops on,
+;; the original would have reached a removed check first -- which is what the
+;; exit path re-evaluates. Removing a check from the middle would let a kept
+;; check report where a removed one did.
+;;
+;; THE COST. `min` is a compare and a phi per length, in blocks reached once per
+;; loop ENTRY, plus one compare on the way OUT. The latch keeps exactly one
+;; compare, and every removed check's `cmp`/`jae` leaves every TRIP.
+(defenum OptBceTightenCounter
+  (No)
+  ;; counter phi, its preheader seed, the latch's stepped value, the latch
+  ;; limit, and the latch compare's (signed) operand type
+  (Some
+    i64
+    ir.CompilerIrValue
+    ir.CompilerIrValue
+    ir.CompilerIrValue
+    ast.AstType))
+
+;; At most this many checks may be traded for one min chain: each costs three
+;; blocks in the preheader, and the loops this pass is aimed at check one or two
+;; parallel arrays per index.
+(define (opt-bce-tighten-max-checks) : i64
+  4)
+
+;; `inext` is `iphi + 1`, and the latch compares it `Lt` against a loop-invariant
+;; limit on a signed type.
+(define (opt-bce-tighten-latch
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [cond-var : i64]
+  [iphi : i64]) : OptBceTightenCounter
+  (match (opt-bce-mb-find-def
+    (compiler-opt-global-shared-view body-blocks)
+    cond-var)
+    [(OptBceMbMaybeInstr.No) (OptBceTightenCounter.No)]
+    [(OptBceMbMaybeInstr.Some cmp)
+      (match (compiler-opt-global-shared-view cmp)
+        [(ir.CompilerIrInstr.BinOp _ op cmp-lhs cmp-rhs ty)
+          (if (not
+            (and
+              (match op
+                [(ir.CompilerIrBinOp.Lt) true]
+                [_ false])
+              (opt-bce-version-cond-signed-type?
+                (compiler-opt-global-shared-view ty))
+              (opt-unroll-invariant-bound?
+                (compiler-opt-global-shared-view defs)
+                (compiler-opt-global-shared-view cmp-rhs))))
+            (OptBceTightenCounter.No)
+            (match (compiler-opt-global-shared-view cmp-lhs)
+              [(ir.CompilerIrValue.Var next-id)
+                (match (opt-bce-mb-find-def body-blocks next-id)
+                  [(OptBceMbMaybeInstr.No) (OptBceTightenCounter.No)]
+                  [(OptBceMbMaybeInstr.Some step)
+                    (match (compiler-opt-global-shared-view step)
+                      [(ir.CompilerIrInstr.BinOp
+                          _
+                          step-op
+                          step-lhs
+                          step-rhs
+                          step-ty)
+                        (if (and
+                          (match step-op
+                            [(ir.CompilerIrBinOp.Add) true]
+                            [_ false])
+                          (opt-bce-version-cond-signed-type?
+                            (compiler-opt-global-shared-view step-ty))
+                          (opt-bce-hoist-var?
+                            (compiler-opt-global-shared-view step-lhs)
+                            iphi)
+                          (match (compiler-opt-global-shared-view step-rhs)
+                            [(ir.CompilerIrValue.I64 k) (= k 1)]
+                            [_ false]))
+                          (OptBceTightenCounter.Some
+                            iphi
+                            (ir.CompilerIrValue.I64 0)
+                            cmp-lhs
+                            cmp-rhs
+                            ty)
+                          (OptBceTightenCounter.No))]
+                      [_ (OptBceTightenCounter.No)])])]
+              [_ (OptBceTightenCounter.No)]))]
+        [_ (OptBceTightenCounter.No)])]))
+
+;; The counter phi of the header, with the seed the preheader carries.
+(define (opt-bce-tighten-counter-of
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [phi-count : i64]
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [latch : i64]
+  [preheader : i64]
+  [cond-var : i64]) : OptBceTightenCounter
+  (if (>= index phi-count)
+    (OptBceTightenCounter.No)
+    (match (ir.compiler-ir-instr-seq-ref
+      (compiler-opt-global-shared-view instrs)
+      index)
+      [(ir.CompilerIrInstr.Phi dst inputs _)
+        (match (opt-unroll-split-phi-inputs
+          (compiler-opt-global-shared-view inputs)
+          latch)
+          [(OptUnrollPhiSplit.No)
+            (opt-bce-tighten-counter-of
+              instrs
+              (+ index 1)
+              phi-count
+              body-blocks
+              defs
+              latch
+              preheader
+              cond-var)]
+          [(OptUnrollPhiSplit.Split seed _ pred-label)
+            (if (not (= pred-label preheader))
+              (opt-bce-tighten-counter-of
+                instrs
+                (+ index 1)
+                phi-count
+                body-blocks
+                defs
+                latch
+                preheader
+                cond-var)
+              (match (opt-bce-tighten-latch
+                (compiler-opt-global-shared-view body-blocks)
+                (compiler-opt-global-shared-view defs)
+                cond-var
+                dst)
+                [(OptBceTightenCounter.No)
+                  (opt-bce-tighten-counter-of
+                    instrs
+                    (+ index 1)
+                    phi-count
+                    body-blocks
+                    defs
+                    latch
+                    preheader
+                    cond-var)]
+                [(OptBceTightenCounter.Some _ _ inext limit ty)
+                  (OptBceTightenCounter.Some dst seed inext limit ty)]))])]
+      [_ (OptBceTightenCounter.No)])))
+
+;; The header's leading window of checks ON THE COUNTER against a loop-invariant
+;; length. Same window rule as the hoist: a barrier or a check on anything else
+;; closes it.
+(define (opt-bce-tighten-scan
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]
+  [defs : opt_i64_i64_map.Map]
+  [iphi : i64]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [drop : OptBceVersionKeep]) : OptBceVersionKeep
+  (if (or (>= index last) (>= drop.count (opt-bce-tighten-max-checks)))
+    drop
+    (let
+      [instr : ir.CompilerIrInstr
+        (ir.compiler-ir-instr-seq-ref
+          (compiler-opt-global-shared-view instrs)
+          index)]
+      (match (compiler-opt-global-shared-view instr)
+        [(ir.CompilerIrInstr.BoundsCheck idx length _)
+          (if (not
+            (and
+              (opt-bce-hoist-var? (compiler-opt-global-shared-view idx) iphi)
+              (opt-unroll-invariant-bound?
+                (compiler-opt-global-shared-view defs)
+                (compiler-opt-global-shared-view length))))
+            drop
+            (begin
+              (ir.compiler-ir-instr-builder-push! builder instr)
+              (opt-bce-tighten-scan
+                instrs
+                (+ index 1)
+                last
+                defs
+                iphi
+                builder
+                (opt-bce-version-keep-add drop index))))]
+        [_
+          (if (opt-bce-mb-pair-barrier? instr)
+            drop
+            (opt-bce-tighten-scan
+              instrs
+              (+ index 1)
+              last
+              defs
+              iphi
+              builder
+              drop))]))))
+
+;; The collected checks re-issued on `index`. Used twice -- at the counter's
+;; seed in the preheader and at the stepped value on the early-exit path -- so
+;; ONE of the two must rename its ok-label: two blocks may not define the same
+;; assembly symbol. The preheader copy keeps the original spelling (it is the
+;; first iteration's own check, in the position that iteration ran it), and the
+;; exit copy takes the shared clone suffix `opt-unroll-copy-suffix` mints, which
+;; is one of the spellings the span table's fallback strips
+;; (compiler-source-spans-bounds-clone-suffix-len). Without that the copy misses
+;; the span table and the backend silently degrades `tl_oob_abort_at` to the
+;; bare handler -- the abort would still fire on the same index, but it would
+;; stop reporting where.
+(define (opt-bce-tighten-checks-at
+  [checks : ir.CompilerIrInstrSeq]
+  [index : ir.CompilerIrValue]
+  [copy? : bool]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view checks))]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity count)]
+    [next : i64 0]
+    (begin
+      (while (< next count)
+        (begin
+          (match (ir.compiler-ir-instr-seq-ref
+            (compiler-opt-global-shared-view checks)
+            next)
+            [(ir.CompilerIrInstr.BoundsCheck _ length ok-label)
+              (ir.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (ir.CompilerIrInstr.BoundsCheck
+                  (compiler-opt-global-shared-view index)
+                  length
+                  (if copy?
+                    (ir.compiler-ir-label
+                      (str_cat.str-cat
+                        (ir.compiler-ir-label-text ok-label)
+                        (opt-unroll-copy-suffix 0)))
+                    ok-label)))]
+            [_ unit])
+          (set! next (+ next 1))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+(define (opt-bce-tighten-label [header : i64] [suffix : String]) : i64
+  (ir.compiler-ir-label
+    (str_cat.str-cat (ir.compiler-ir-label-text header) suffix)))
+
+(define (opt-bce-tighten-step-label [header : i64] [part : String] [step : i64]) : i64
+  (opt-bce-tighten-label
+    header
+    (str_cat.str-cat part (string.int->string step))))
+
+;; Every label this rewrite mints must be absent from the function, which is
+;; also the pass's idempotence: a loop it already tightened owns them.
+(define (opt-bce-tighten-labels-fresh?
+  [blocks : ir.CompilerIrBlockList]
+  [header : i64]
+  [step : i64]
+  [count : i64]) : bool
+  (if (>= step count)
+    true
+    (and
+      (not
+        (opt-cfg-block-exists?
+          (compiler-opt-global-shared-view blocks)
+          (opt-bce-tighten-step-label header "__pred_min." step)))
+      (not
+        (opt-cfg-block-exists?
+          (compiler-opt-global-shared-view blocks)
+          (opt-bce-tighten-step-label header "__pred_hi." step)))
+      (not
+        (opt-cfg-block-exists?
+          (compiler-opt-global-shared-view blocks)
+          (opt-bce-tighten-step-label header "__pred_join." step)))
+      (opt-bce-tighten-labels-fresh? blocks header (+ step 1) count))))
+
+;; Fresh ids, laid out by position rather than handed out by an allocator so
+;; every consumer below can name them: two per min step (its compare and its
+;; join phi), then the latch's new compare and the exit path's.
+(define (opt-bce-tighten-cond-var [base : i64] [step : i64]) : i64
+  (+ base (* step 2)))
+
+(define (opt-bce-tighten-join-var [base : i64] [step : i64]) : i64
+  (+ base (+ (* step 2) 1)))
+
+(define (opt-bce-tighten-latch-var [base : i64] [count : i64]) : i64
+  (+ base (* count 2)))
+
+(define (opt-bce-tighten-exit-var [base : i64] [count : i64]) : i64
+  (+ base (+ (* count 2) 1)))
+
+(define (opt-bce-tighten-frame [base : i64] [count : i64]) : i64
+  (+ base (+ (* count 2) 2)))
+
+(define (opt-bce-hoist-seq1 [a : ir.CompilerIrInstr]) : ir.CompilerIrInstrSeq
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 1)]
+    (begin
+      (ir.compiler-ir-instr-builder-push! (&mut builder) a)
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+(define (opt-bce-hoist-seq2 [a : ir.CompilerIrInstr] [b : ir.CompilerIrInstr]) : ir.CompilerIrInstrSeq
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 2)]
+    (begin
+      (ir.compiler-ir-instr-builder-push! (&mut builder) a)
+      (ir.compiler-ir-instr-builder-push! (&mut builder) b)
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+;; The `min(cur, len_k)` chain, three blocks per length: a compare block, the
+;; arm that takes the length, and a join phi. Entered from the preheader; the
+;; last join jumps to the header.
+(define (opt-bce-tighten-min-blocks
+  [checks : ir.CompilerIrInstrSeq]
+  [step : i64]
+  [count : i64]
+  [header : i64]
+  [base : i64]
+  [cur : ir.CompilerIrValue]
+  [ty : ast.AstType]
+  [tail : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (if (>= step count)
+    tail
+    (let
+      [length : ir.CompilerIrValue
+        (match (ir.compiler-ir-instr-seq-ref
+          (compiler-opt-global-shared-view checks)
+          step)
+          [(ir.CompilerIrInstr.BoundsCheck _ len _) len]
+          [_ (ir.CompilerIrValue.I64 0)])]
+      [min-label : i64 (opt-bce-tighten-step-label header "__pred_min." step)]
+      [hi-label : i64 (opt-bce-tighten-step-label header "__pred_hi." step)]
+      [join-label : i64 (opt-bce-tighten-step-label header "__pred_join." step)]
+      [next-label : i64
+        (if (>= (+ step 1) count)
+          header
+          (opt-bce-tighten-step-label header "__pred_min." (+ step 1)))]
+      [cond-var : i64 (opt-bce-tighten-cond-var base step)]
+      [join-var : i64 (opt-bce-tighten-join-var base step)]
+      (ir.compiler-ir-block-cons
+        (ir.CompilerIrBlock.Block
+          min-label
+          (opt-bce-hoist-seq2
+            (ir.CompilerIrInstr.BinOp
+              cond-var
+              (ir.CompilerIrBinOp.Lt)
+              (compiler-opt-global-shared-view cur)
+              (compiler-opt-global-shared-view length)
+              (compiler-opt-global-shared-view ty))
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Var cond-var)
+              join-label
+              hi-label)))
+        (ir.compiler-ir-block-cons
+          (ir.CompilerIrBlock.Block
+            hi-label
+            (opt-bce-hoist-seq1 (ir.CompilerIrInstr.Jump join-label)))
+          (ir.compiler-ir-block-cons
+            (ir.CompilerIrBlock.Block
+              join-label
+              (opt-bce-hoist-seq2
+                (ir.CompilerIrInstr.Phi
+                  join-var
+                  (ir.compiler-ir-phi-input-seq-prepend
+                    cur
+                    min-label
+                    (ir.compiler-ir-phi-input-seq-prepend
+                      length
+                      hi-label
+                      (ir.compiler-ir-phi-input-seq-empty)))
+                  (compiler-opt-global-shared-view ty))
+                (ir.CompilerIrInstr.Jump next-label)))
+            (opt-bce-tighten-min-blocks
+              checks
+              (+ step 1)
+              count
+              header
+              base
+              (ir.CompilerIrValue.Var join-var)
+              ty
+              tail)))))))
+
+;; The preheader, with the first-iteration checks appended and its jump aimed at
+;; the min chain.
+(define (opt-bce-tighten-preheader-instrs
+  [instrs : ir.CompilerIrInstrSeq]
+  [moved : ir.CompilerIrInstrSeq]
+  [target : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [moved-count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view moved))]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (+ count (+ moved-count 1)))]
+    [next : i64 0]
+    (begin
+      (while (< next (- count 1))
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.compiler-ir-instr-seq-ref
+              (compiler-opt-global-shared-view instrs)
+              next))
+          (set! next (+ next 1))))
+      (set! next 0)
+      (while (< next moved-count)
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.compiler-ir-instr-seq-ref
+              (compiler-opt-global-shared-view moved)
+              next))
+          (set! next (+ next 1))))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Jump target))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+;; The latch, with the tightened compare in place of its terminator's condition
+;; and its exit edge aimed at the early-exit test.
+;;
+;; The ORIGINAL limit compare is dropped here rather than left for dead-code
+;; elimination. Left in place it is still a computed value in the latch, and the
+;; early-exit block's own `inext < limit` -- the same expression on the same
+;; operands, in a block the latch dominates -- value-numbers onto it on the next
+;; pipeline round. The compare then spans the latch's branch, both conditions
+;; stop being flags and get materialised through `setl`/`movzbq`, and the trip
+;; pays more than the removed checks were worth. Deleting the definition is what
+;; keeps ONE compare in the latch and the other on the way out.
+(define (opt-bce-tighten-latch-instrs
+  [instrs : ir.CompilerIrInstrSeq]
+  [header : i64]
+  [exit-label : i64]
+  [inext : ir.CompilerIrValue]
+  [safe : ir.CompilerIrValue]
+  [ty : ast.AstType]
+  [old-cond : i64]
+  [cond-var : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (+ count 1))]
+    [next : i64 0]
+    (begin
+      (while (< next (- count 1))
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref
+              (compiler-opt-global-shared-view instrs)
+              next)]
+          (begin
+            (if (=
+              (opt-bce-mb-instr-dst-or
+                (compiler-opt-global-shared-view instr)
+                (- 0 1))
+              old-cond)
+              unit
+              (ir.compiler-ir-instr-builder-push! (&mut builder) instr))
+            (set! next (+ next 1)))))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.BinOp
+          cond-var
+          (ir.CompilerIrBinOp.Lt)
+          (compiler-opt-global-shared-view inext)
+          (compiler-opt-global-shared-view safe)
+          (compiler-opt-global-shared-view ty)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Branch
+          (ir.CompilerIrValue.Var cond-var)
+          header
+          exit-label))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+;; The abort block: the removed checks, re-issued on the stepped counter, then a
+;; jump the abort never reaches.
+(define (opt-bce-tighten-abort-instrs
+  [checks : ir.CompilerIrInstrSeq]
+  [inext : ir.CompilerIrValue]
+  [exit-label : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [at : ir.CompilerIrInstrSeq (opt-bce-tighten-checks-at checks inext true)]
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view at))]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (+ count 1))]
+    [next : i64 0]
+    (begin
+      (while (< next count)
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.compiler-ir-instr-seq-ref
+              (compiler-opt-global-shared-view at)
+              next))
+          (set! next (+ next 1))))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Jump exit-label))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+;; Every input the exit phis carried on the latch edge now arrives on BOTH new
+;; blocks, with the same value: the split changed which block branches into the
+;; exit, not what reaches it.
+(define (opt-bce-tighten-split-phi-inputs
+  [inputs : ir.CompilerIrPhiInputSeq]
+  [latch : i64]
+  [exit-pred : i64]
+  [abort-pred : i64]) : ir.CompilerIrPhiInputSeq
+  (let
+    [seq : ir.CompilerIrPhiInputSeq (compiler-opt-global-shared-view inputs)]
+    (if (<= seq.len 0)
+      (ir.compiler-ir-phi-input-seq-empty)
+      (let
+        [head : ir.CompilerIrPhiInput
+          (ir.compiler-ir-phi-input-seq-ref
+            (ir.compiler-ir-global-shared-view seq)
+            0)]
+        [value : ir.CompilerIrValue head.value]
+        [label : i64 head.label]
+        [rest : ir.CompilerIrPhiInputSeq
+          (ir.CompilerIrPhiInputSeq
+            (ir.compiler-ir-global-shared-view seq.slots)
+            (+ seq.start 1)
+            (- seq.len 1))]
+        [tail : ir.CompilerIrPhiInputSeq
+          (opt-bce-tighten-split-phi-inputs
+            (compiler-opt-global-shared-view rest)
+            latch
+            exit-pred
+            abort-pred)]
+        (if (= label latch)
+          (ir.compiler-ir-phi-input-seq-prepend
+            (compiler-opt-global-shared-view value)
+            exit-pred
+            (ir.compiler-ir-phi-input-seq-prepend value abort-pred tail))
+          (ir.compiler-ir-phi-input-seq-prepend value label tail))))))
+
+(define (opt-bce-tighten-exit-instrs
+  [instrs : ir.CompilerIrInstrSeq]
+  [latch : i64]
+  [exit-pred : i64]
+  [abort-pred : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity count)]
+    [next : i64 0]
+    (begin
+      (while (< next count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref
+              (compiler-opt-global-shared-view instrs)
+              next)]
+          (begin
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (match (compiler-opt-global-shared-view instr)
+                [(ir.CompilerIrInstr.Phi dst inputs ty)
+                  (ir.CompilerIrInstr.Phi
+                    dst
+                    (opt-bce-tighten-split-phi-inputs
+                      inputs
+                      latch
+                      exit-pred
+                      abort-pred)
+                    ty)]
+                [_ instr]))
+            (set! next (+ next 1)))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+(defstruct OptBceTightenEdit
+  (header i64)
+  (preheader i64)
+  (latch i64)
+  (exit-label i64)
+  (checks ir.CompilerIrInstrSeq)
+  (drop OptBceVersionKeep)
+  (count i64)
+  (base i64)
+  ;; the latch's original limit compare, deleted with its terminator
+  (old-cond i64)
+  (seed ir.CompilerIrValue)
+  (inext ir.CompilerIrValue)
+  (limit ir.CompilerIrValue)
+  (ty ast.AstType))
+
+(define (opt-bce-tighten-rewrite-blocks
+  [blocks : ir.CompilerIrBlockList]
+  [edit : OptBceTightenEdit]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (let
+        [tail : ir.CompilerIrBlockList
+          (opt-bce-tighten-rewrite-blocks
+            (compiler-opt-box-shared-view rest)
+            (compiler-opt-global-shared-view edit))]
+        (match (compiler-opt-global-shared-view block)
+          [(ir.CompilerIrBlock.Block label instrs)
+            (cond
+              [(= label edit.preheader)
+                (ir.compiler-ir-block-cons
+                  (ir.CompilerIrBlock.Block
+                    label
+                    (opt-bce-tighten-preheader-instrs
+                      instrs
+                      (opt-bce-tighten-checks-at
+                        (compiler-opt-global-shared-view edit.checks)
+                        (compiler-opt-global-shared-view edit.seed)
+                        false)
+                      (opt-bce-tighten-step-label edit.header "__pred_min." 0)))
+                  (opt-bce-tighten-min-blocks
+                    (compiler-opt-global-shared-view edit.checks)
+                    0
+                    edit.count
+                    edit.header
+                    edit.base
+                    (compiler-opt-global-shared-view edit.limit)
+                    (compiler-opt-global-shared-view edit.ty)
+                    tail))]
+              [(= label edit.header)
+                (ir.compiler-ir-block-cons
+                  (ir.CompilerIrBlock.Block
+                    label
+                    (opt-relabel-phi-instrs
+                      (opt-bce-hoist-drop-instrs
+                        instrs
+                        (compiler-opt-global-shared-view edit.drop))
+                      0
+                      edit.preheader
+                      (opt-bce-tighten-step-label
+                        edit.header
+                        "__pred_join."
+                        (- edit.count 1))))
+                  tail)]
+              [(= label edit.latch)
+                (ir.compiler-ir-block-cons
+                  (ir.CompilerIrBlock.Block
+                    label
+                    (opt-bce-tighten-latch-instrs
+                      instrs
+                      edit.header
+                      (opt-bce-tighten-label edit.header "__pred_exit")
+                      (compiler-opt-global-shared-view edit.inext)
+                      (ir.CompilerIrValue.Var
+                        (opt-bce-tighten-join-var edit.base (- edit.count 1)))
+                      (compiler-opt-global-shared-view edit.ty)
+                      edit.old-cond
+                      (opt-bce-tighten-latch-var edit.base edit.count)))
+                  (ir.compiler-ir-block-cons
+                    (ir.CompilerIrBlock.Block
+                      (opt-bce-tighten-label edit.header "__pred_exit")
+                      (opt-bce-hoist-seq2
+                        (ir.CompilerIrInstr.BinOp
+                          (opt-bce-tighten-exit-var edit.base edit.count)
+                          (ir.CompilerIrBinOp.Lt)
+                          (compiler-opt-global-shared-view edit.inext)
+                          (compiler-opt-global-shared-view edit.limit)
+                          (compiler-opt-global-shared-view edit.ty))
+                        (ir.CompilerIrInstr.Branch
+                          (ir.CompilerIrValue.Var
+                            (opt-bce-tighten-exit-var edit.base edit.count))
+                          (opt-bce-tighten-label edit.header "__pred_abort")
+                          edit.exit-label)))
+                    (ir.compiler-ir-block-cons
+                      (ir.CompilerIrBlock.Block
+                        (opt-bce-tighten-label edit.header "__pred_abort")
+                        (opt-bce-tighten-abort-instrs
+                          (compiler-opt-global-shared-view edit.checks)
+                          (compiler-opt-global-shared-view edit.inext)
+                          edit.exit-label))
+                      tail)))]
+              [(= label edit.exit-label)
+                (ir.compiler-ir-block-cons
+                  (ir.CompilerIrBlock.Block
+                    label
+                    (opt-bce-tighten-exit-instrs
+                      instrs
+                      edit.latch
+                      (opt-bce-tighten-label edit.header "__pred_exit")
+                      (opt-bce-tighten-label edit.header "__pred_abort")))
+                  tail)]
+              [else (ir.compiler-ir-block-cons block tail)])]))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bce-tighten-rewrite-blocks
+        (ir.compiler-ir-block-seq-to-list seq)
+        edit)]))
+
+(define (opt-bce-tighten-latch-of
+  [blocks : ir.CompilerIrBlockList]
+  [header : i64]
+  [latch : i64]
+  [body-labels : OptLabelSet]) : OptBceMbMaybeLatch
+  (match (opt-cfg-find-block (compiler-opt-global-shared-view blocks) latch)
+    [(OptMaybeBlock.No) (OptBceMbMaybeLatch.No)]
+    [(OptMaybeBlock.Some latch-block)
+      (opt-bce-mb-latch-branch latch-block header body-labels)]))
+
+;; ADMISSION: a counted loop that CONTAINS ANOTHER LOOP and CALLS OUT of its
+;; body, which is the class this packet names and, measured, the only class the
+;; trade pays in.
+;;
+;; The trade is per-ENTRY cost against per-TRIP saving: the min chain and the
+;; early-exit test run once per entry, every removed check leaves every trip. A
+;; static trip estimate does not exist here, so the admission is a proxy for
+;; "trips per entry is not about one", and both sides of it were measured on
+;; this corpus rather than guessed.
+;;
+;; The losers are all FLAT innermost loops entered about as often as they trip.
+;; cfg_domloops' natural-loops successor walk runs 1,486,236 trips over
+;; 1,401,648 entries -- 1.06 -- so its one removed check never repays the entry;
+;; its idom intersection walks, its loop-body worklist and its Euler scans are
+;; the same shape. Ungated, the pass took fourteen such loops and cost that row
+;; +28,149,312 (+5.08%) while the loops it was aimed at were unaffected.
+;;
+;; The winner is the shape the packet describes: intern_table's `k` loop, which
+;; walks every line of the corpus, calls the interner per line and holds the
+;; interner's own probe loop inline. Gated to that class the same pass is
+;; -9,847,504 on that row (-2.57%) with cfg_domloops back to what the clone-free
+;; MOVE alone buys it.
+;;
+;; A nested loop is not a trip count and this comment does not claim it is. It
+;; is the property that separated the measured winners from the measured losers:
+;; a loop whose body runs another loop is walking a collection, and a flat
+;; innermost scan with a call on one arm is not.
+(define (opt-bce-tighten-loop
+  [blocks : ir.CompilerIrBlockList]
+  [loops : OptNaturalLoopList]
+  [loop : OptNaturalLoop]
+  [frame : i64]) : OptBceHoistResult
+  (match (opt-natural-loop-preheader (compiler-opt-global-shared-view loop))
+    [(OptLoopPreheader.No) (OptBceHoistResult.No)]
+    [(OptLoopPreheader.Some preheader)
+      (let
+        [header : i64
+          (opt-natural-loop-header (compiler-opt-global-shared-view loop))]
+        [latch : i64
+          (opt-natural-loop-latch (compiler-opt-global-shared-view loop))]
+        [body-labels : OptLabelSet
+          (opt-natural-loop-body (compiler-opt-global-shared-view loop))]
+        [body-blocks : ir.CompilerIrBlockList
+          (opt-natural-loop-current-body-blocks
+            (compiler-opt-global-shared-view loop)
+            (compiler-opt-global-shared-view blocks))]
+        ;; A self-loop is the single-block versioner's own shape and is left to
+        ;; it: header and latch would be one block and this rewrite edits them
+        ;; separately.
+        (if (or
+          (= header latch)
+          (not
+            (opt-bce-mb-has-nested-loop?
+              (compiler-opt-global-shared-view loops)
+              header
+              (compiler-opt-global-shared-view body-labels)))
+          (<
+            (opt-bce-mb-body-calls
+              (compiler-opt-global-shared-view body-blocks)
+              0)
+            1)
+          (not
+            (opt-bce-hoist-body-ok?
+              (compiler-opt-global-shared-view body-blocks))))
+          (OptBceHoistResult.No)
+          (match (opt-cfg-find-block
+            (compiler-opt-global-shared-view blocks)
+            preheader)
+            [(OptMaybeBlock.No) (OptBceHoistResult.No)]
+            [(OptMaybeBlock.Some pre-block)
+              (if (not (opt-bce-hoist-preheader-jumps-to? pre-block header))
+                (OptBceHoistResult.No)
+                (match (opt-bce-tighten-latch-of
+                  (compiler-opt-global-shared-view blocks)
+                  header
+                  latch
+                  (compiler-opt-global-shared-view body-labels))
+                  [(OptBceMbMaybeLatch.No) (OptBceHoistResult.No)]
+                  [(OptBceMbMaybeLatch.Some cond-var exit-label)
+                    (match (opt-cfg-find-block
+                      (compiler-opt-global-shared-view blocks)
+                      header)
+                      [(OptMaybeBlock.No) (OptBceHoistResult.No)]
+                      [(OptMaybeBlock.Some header-block)
+                        (match header-block
+                          [(ir.CompilerIrBlock.Block _ instrs)
+                            (let
+                              [count : i64
+                                (ir.compiler-ir-instr-seq-count
+                                  (compiler-opt-global-shared-view instrs))]
+                              [phi-count : i64
+                                (opt-unroll-phi-prefix-count
+                                  (compiler-opt-global-shared-view instrs)
+                                  0)]
+                              [defs : opt_i64_i64_map.Map
+                                (opt-bce-mb-collect-defs
+                                  (compiler-opt-global-shared-view body-blocks)
+                                  (opt_i64_i64_map.with-capacity 64))]
+                              (match (opt-bce-tighten-counter-of
+                                (compiler-opt-global-shared-view instrs)
+                                0
+                                phi-count
+                                (compiler-opt-global-shared-view body-blocks)
+                                (compiler-opt-global-shared-view defs)
+                                latch
+                                preheader
+                                cond-var)
+                                [(OptBceTightenCounter.No)
+                                  (OptBceHoistResult.No)]
+                                [(OptBceTightenCounter.Some
+                                    iphi
+                                    seed
+                                    inext
+                                    limit
+                                    ty)
+                                  (let
+                                    [builder : ir.CompilerIrInstrBuilder
+                                      (ir.compiler-ir-instr-builder-with-capacity
+                                        4)]
+                                    [drop : OptBceVersionKeep
+                                      (opt-bce-tighten-scan
+                                        (compiler-opt-global-shared-view instrs)
+                                        phi-count
+                                        (- count 1)
+                                        (compiler-opt-global-shared-view defs)
+                                        iphi
+                                        (&mut builder)
+                                        (opt-bce-version-keep-new count))]
+                                    [removed : i64 drop.count]
+                                    (if (or
+                                      (< removed 1)
+                                      (not
+                                        (opt-bce-tighten-labels-fresh?
+                                          (compiler-opt-global-shared-view
+                                            blocks)
+                                          header
+                                          0
+                                          removed))
+                                      (opt-cfg-block-exists?
+                                        (compiler-opt-global-shared-view blocks)
+                                        (opt-bce-tighten-label
+                                          header
+                                          "__pred_exit"))
+                                      (opt-cfg-block-exists?
+                                        (compiler-opt-global-shared-view blocks)
+                                        (opt-bce-tighten-label
+                                          header
+                                          "__pred_abort")))
+                                      (OptBceHoistResult.No)
+                                      (OptBceHoistResult.Some
+                                        (opt-bce-tighten-rewrite-blocks
+                                          blocks
+                                          (OptBceTightenEdit
+                                            header
+                                            preheader
+                                            latch
+                                            exit-label
+                                            (ir.compiler-ir-instr-builder-to-seq
+                                              builder)
+                                            drop
+                                            removed
+                                            frame
+                                            cond-var
+                                            seed
+                                            inext
+                                            limit
+                                            ty))
+                                        (opt-bce-tighten-frame frame removed))))]))])])]))])))]))
+
+(defenum OptBceHoistScan
+  (Scan ir.CompilerIrBlockList i64 bool i64))
+
+;; One loop at a time, MOVE first and TIGHTEN second: a check the move reaches
+;; costs nothing at all, so the restructuring form is only ever offered what the
+;; move left behind.
+(define (opt-bce-hoist-loops-scan
+  [blocks : ir.CompilerIrBlockList]
+  [all-loops : OptNaturalLoopList]
+  [loops : OptNaturalLoopList]
+  [rejected : OptLabelSet]
+  [frame : i64]) : OptBceHoistScan
+  (match (compiler-opt-global-shared-view loops)
+    [(OptNaturalLoopList.Nil)
+      (OptBceHoistScan.Scan blocks frame false (ir.compiler-ir-label-none))]
+    [(OptNaturalLoopList.Cons loop rest)
+      (let
+        [header : i64
+          (opt-natural-loop-header (compiler-opt-global-shared-view loop))]
+        (if (opt-label-contains
+          (compiler-opt-global-shared-view rejected)
+          header)
+          (opt-bce-hoist-loops-scan
+            blocks
+            all-loops
+            (compiler-opt-box-shared-view rest)
+            rejected
+            frame)
+          (match (opt-bce-hoist-loop
+            (compiler-opt-global-shared-view blocks)
+            (compiler-opt-global-shared-view loop)
+            frame)
+            [(OptBceHoistResult.Some next next-frame)
+              (OptBceHoistScan.Scan next next-frame true header)]
+            [(OptBceHoistResult.No)
+              (match (opt-bce-tighten-loop
+                (compiler-opt-global-shared-view blocks)
+                (compiler-opt-global-shared-view all-loops)
+                loop
+                frame)
+                [(OptBceHoistResult.Some next next-frame)
+                  (OptBceHoistScan.Scan next next-frame true header)]
+                [(OptBceHoistResult.No)
+                  (opt-bce-hoist-loops-scan
+                    blocks
+                    all-loops
+                    (compiler-opt-box-shared-view rest)
+                    rejected
+                    frame)])])))]))
+
+;; Budgeted application, like the versioner's: one loop per round, each rewrite
+;; verified on its own, a refused loop retired for the rest of the invocation.
+(define (opt-bce-hoist-function-budget-result
+  [context : OptCfgContext]
+  [func : ir.CompilerIrFunction]
+  [budget : i64]
+  [rejected : OptLabelSet]) : OptFunctionCtxResult
+  (if (<= budget 0)
+    (OptFunctionCtxResult.Result func context)
+    (match (compiler-opt-global-shared-view func)
+      [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+        (match (opt-bce-hoist-loops-scan
+          (compiler-opt-global-shared-view blocks)
+          (opt-cfg-natural-loops-with-context
+            (compiler-opt-global-shared-view blocks)
+            (compiler-opt-global-shared-view context))
+          (opt-cfg-natural-loops-with-context
+            (compiler-opt-global-shared-view blocks)
+            (compiler-opt-global-shared-view context))
+          (compiler-opt-global-shared-view rejected)
+          frame)
+          [(OptBceHoistScan.Scan next-blocks next-frame changed applied)
+            (if (not changed)
+              (OptFunctionCtxResult.Result func context)
+              (let
+                [next : ir.CompilerIrFunction
+                  (ir.CompilerIrFunction.Function
+                    name
+                    params
+                    ret-ty
+                    next-frame
+                    (compiler-opt-global-shared-view next-blocks))]
+                [next-context : OptCfgContext
+                  (opt-cfg-context-build
+                    (compiler-opt-global-shared-view next-blocks))]
+                (match (opt-verify-function-with-context
+                  (compiler-opt-global-shared-view next)
+                  (compiler-opt-global-shared-view next-context))
+                  [(ResultCompilerOptimizeVerify.Ok)
+                    (opt-bce-hoist-function-budget-result
+                      next-context
+                      next
+                      (- budget 1)
+                      rejected)]
+                  [(ResultCompilerOptimizeVerify.Err _)
+                    (opt-bce-hoist-function-budget-result
+                      context
+                      func
+                      budget
+                      (opt-label-add rejected applied))])))])])))
+
 ;; The budgeted driver's post-application verdict. `reject-probe` is
 ;; `ir.compiler-ir-label-none` on every production path and no real label
 ;; equals it, so this is exactly `opt-verify-function-with-context` there. The
@@ -95051,7 +96662,10 @@
     (compiler-opt-global-shared-view func)
     (compiler-opt-global-shared-view context))
     [(ResultCompilerOptimizeVerify.Ok)
-      (opt-bce-version-function-budget-result
+      ;; The clone-free hoist runs LAST, over what the two versioners left: a
+      ;; loop they took has a check-free clone already, and a loop they refused
+      ;; on size, calls or economics is exactly the shape this reaches.
+      (match (opt-bce-version-function-budget-result
         type-segment-bases
         direct-call-clean
         len-eq
@@ -95060,7 +96674,13 @@
         (opt-loop-apply-budget)
         (opt-loop-apply-budget)
         (OptLabelSet.Nil)
-        (ir.compiler-ir-label-none))]
+        (ir.compiler-ir-label-none))
+        [(OptFunctionCtxResult.Result versioned versioned-context)
+          (opt-bce-hoist-function-budget-result
+            versioned-context
+            versioned
+            (opt-loop-apply-budget)
+            (OptLabelSet.Nil))])]
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
 

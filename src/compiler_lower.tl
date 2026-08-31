@@ -21289,6 +21289,14 @@
       (not
         (tc_core.tc-type-contains-reference?
           (tc_core.tc-context-type-get ctx elem-ty)))]
+    ;; Borrowing a Box value takes the address of its one-word owning handle.
+    ;; The pointee remains behind the Box and is lowered separately when the
+    ;; resulting reference is dereferenced.
+    [(ast.AstType.Box elem-ty)
+      (lower-supported-reference-type-with-stack?
+        (lower-global-shared-view ctx)
+        (tc_core.tc-context-type-get ctx elem-ty)
+        (lower-id-set-empty))]
     ;; A Slice is supported only when it is the immediate referent of a
     ;; borrowed reference; bare Slice remains unsized and has no by-value
     ;; borrow layout.  As with fixed/dynamic arrays, the element itself must

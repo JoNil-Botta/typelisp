@@ -4455,10 +4455,10 @@
                 (ctfe-expr-shared-view expr)
                 (str_cat.str-cat name " expects a String argument"))))])]))
 
-;; Module indexes use parser-established Name identities for generated owners,
-;; but a computed String must be re-interned from its evaluated text. The
-;; generic String helper intentionally preserves both raw IDs, so keep this
-;; normalization local to module value lookup.
+;; Module indexes use the same source/generated Name identity that a String-to-
+;; syntax constructor would assign. Re-interning only the evaluated text loses
+;; the generated canonical identity for a declaration whose spelling never
+;; occurred in parsed source, so a later computed lookup cannot find it.
 (define (ctfe-eval-module-index-arg
   [arg : ast.AstExpr]
   [expr : (& expr ast.AstExpr)]
@@ -4469,10 +4469,13 @@
     [(ResultCtfe.Err d) (ResultCtfeStringArg.Err d)]
     [(ResultCtfe.Ok value arg-fuel)
       (match value
-        [(CompilerCtfeValue.String text _)
+        [(CompilerCtfeValue.String text string-id)
           (let
             [text-id : i64
-              (ci.intern (owned_view.compiler-owned-shared-view text))]
+              (ctfe-string-syntax-name-id
+                (ctfe-env-source-names env)
+                (owned_view.compiler-owned-shared-view text)
+                string-id)]
             (ResultCtfeStringArg.Ok text text-id arg-fuel))]
         [(CompilerCtfeValue.Name text name-id)
           (ResultCtfeStringArg.Ok text name-id arg-fuel)]
@@ -7007,10 +7010,16 @@
                         (ast.AstExpr.Var
                           (if (string.eq module "")
                             name-id
-                            (ci.intern
-                              (str_cat.str-cat
-                                module
-                                (str_cat.str-cat "." name))))))
+                            (if (or
+                              (ci.intern-generated-canonical-id? module-id)
+                              (ci.intern-generated-canonical-id? name-id))
+                              (ctfe-generated-dotted-append-member-id
+                                module-id
+                                name-id)
+                              (ci.intern
+                                (str_cat.str-cat
+                                  module
+                                  (str_cat.str-cat "." name)))))))
                       (ctfe-untyped-expr-type))
                     name-fuel)]
                 [(CtfeMaybeModuleValueType.None)

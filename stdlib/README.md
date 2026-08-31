@@ -97,11 +97,15 @@ Vec bang place macros as available yet.
   and runtime hot paths that need construction, push, append, reserve, length,
   and explicit finish/copy boundaries without importing the full borrowed
   `bytes` view surface. Import it with `(import stdlib.byte_buf_core)`.
-- `clone.tl`: declaration-macro producer for every compiler-discovered
-  reachable named `clone` root, including full structs, ordinary enums, and
-  tail-recursive list-shaped enums. Cloneability, diagnostics, arena behavior,
-  and root discovery remain compiler-owned. The compiler loads this producer
-  through its implicit macro prelude; an explicit import is optional.
+- `clone.tl`: explicit deep-clone generation for nominal owners. Import it and
+  invoke `(gen-clone Point)` beside `Point` to emit the ordinary public
+  `clone-point : (& Point) -> Point` function. Generated functions reconstruct
+  structs and enums and deeply copy strings, boxes, tuples, fixed arrays, and
+  dynamic arrays; nominal fields call clone functions generated earlier in
+  their canonical owner modules. Missing dependencies, cleanup owners, cycles,
+  unsupported shapes, and generated-name collisions are expansion errors. The
+  older compiler-discovered `clone` root producer remains in this module only
+  during the repository migration tracked by #7073.
 - `comptime.tl`: public stdlib-owned declarations for well-known macro syntax
   and reflection values (`Expr`, `ExprList`, `ExprClause`, `ExprClauseList`,
   `ExprBindingClause`, `ExprBindingClauseList`, `Pattern`, `PatternList`,

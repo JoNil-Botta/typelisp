@@ -395,7 +395,7 @@ stage2_can_compile_native_windows() {
         return 1
     fi
     if ! lld-link -NOLOGO "$(cygpath -aw "$obj")" "-OUT:$(cygpath -aw "$bin")" \
-        -SUBSYSTEM:CONSOLE -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib \
+        -SUBSYSTEM:CONSOLE -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib ntdll.lib \
         > "$probe_dir/link.out" 2>&1; then
         echo "[ci-verify] windows stage2 compile-native probe link failed"
         sed 's/^/  /' "$probe_dir/link.out" >&2 || true

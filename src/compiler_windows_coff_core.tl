@@ -43,6 +43,7 @@
       (string.eq name "ExitProcess")
       (string.eq name "GetCommandLineA")
       (string.eq name "GetStdHandle")
+      (string.eq name "NtCreateFile")
       (string.eq name "WriteFile")
       (string.eq name "VirtualAlloc")
       (string.eq name "VirtualFree"))))

@@ -8,7 +8,8 @@
 ;# `rename-status`, `try-atomic-replace`, `file-lock-acquire`,
 ;# `file-lock-release`, `read-dir-status`, `read-dir`,
 ;# `file-kind-status`, `file-size-status`, `file-size`,
-;# `process-id`, `current-dir-status`, and `current-dir`.
+;# `process-id`, `current-dir-status`, `current-dir`, and the Windows-only
+;# `windows-nt-create-file-relative` rooted-operation boundary.
 ;#
 ;# Usage: `(import stdlib.fs)`
 ;#
@@ -281,6 +282,198 @@
 (cfg
   windows
   (extern (fs-win-close-handle [arg0 : i64]) : i32 (:symbol "CloseHandle")))
+
+;: Audited x64 `winternl.h` ABI for the one native NT boundary used by rooted
+;: filesystem operations. Keep the pointer-shaped fields as integer words so
+;: the representation stays explicit and the public surface does not expose
+;: raw native pointers.
+(defstruct FsWindowsUnicodeString
+  (length u16)
+  (maximum-length u16)
+  (buffer i64))
+
+(defstruct FsWindowsObjectAttributes
+  (length u32)
+  (root-directory i64)
+  (object-name i64)
+  (attributes u32)
+  (security-descriptor i64)
+  (security-quality-of-service i64))
+
+(defstruct FsWindowsIoStatusBlock
+  (status-or-pointer i64)
+  (information u64))
+
+;: Stable, portable outcomes from the narrow native-create boundary. NTSTATUS
+;: values are classified once inside this module and never enter diagnostics.
+(defenum FsWindowsNtCreateResult
+  (OkWindowsNtCreate i64)
+  (WindowsNtCreateAlreadyExists)
+  (WindowsNtCreateReparsePoint)
+  (WindowsNtCreateNotFound)
+  (WindowsNtCreateAccessDenied)
+  (WindowsNtCreateFailed))
+
+(define fs-windows-obj-case-insensitive : u32
+  (cast 64 : u32))
+(define fs-windows-obj-dont-reparse : u32
+  (cast 4096 : u32))
+(define fs-windows-file-open-reparse-point : u32
+  (cast 2097152 : u32))
+(define fs-windows-file-create : u32
+  (cast 2 : u32))
+(define fs-windows-file-open : u32
+  (cast 1 : u32))
+(define fs-windows-file-directory-file : u32
+  (cast 1 : u32))
+(define fs-windows-file-non-directory-file : u32
+  (cast 64 : u32))
+(define fs-windows-file-synchronous-io-nonalert : u32
+  (cast 32 : u32))
+(define fs-windows-file-attribute-normal : u32
+  (cast 128 : u32))
+(define fs-windows-file-share-read : u32
+  (cast 1 : u32))
+(define fs-windows-file-share-write : u32
+  (cast 2 : u32))
+(define fs-windows-file-share-delete : u32
+  (cast 4 : u32))
+(define fs-windows-synchronize : u32
+  (cast 1048576 : u32))
+(define fs-windows-file-read-data : u32
+  (cast 1 : u32))
+(define fs-windows-file-write-data : u32
+  (cast 2 : u32))
+(define fs-windows-file-list-directory : u32
+  (cast 1 : u32))
+
+(cfg
+  windows
+  (extern (fs-win-nt-create-file
+    [file-handle : (MutPtr i64)]
+    [desired-access : u32]
+    [object-attributes : (MutPtr FsWindowsObjectAttributes)]
+    [io-status-block : (MutPtr FsWindowsIoStatusBlock)]
+    [allocation-size : i64]
+    [file-attributes : u32]
+    [share-access : u32]
+    [create-disposition : u32]
+    [create-options : u32]
+    [ea-buffer : i64]
+    [ea-length : u32]) : i32 (:symbol "NtCreateFile")))
+
+;: Return `result` through the aggregate return path for imported callers.
+(define (windows-nt-create-result-normalize [result : FsWindowsNtCreateResult]) : FsWindowsNtCreateResult
+  result)
+
+;: Classify the private NTSTATUS result without exposing its numeric value.
+(define (fs-windows-nt-create-result-from-status [status : i32] [handle : i64]) : FsWindowsNtCreateResult
+  (cond
+    [(>= status (cast 0 : i32)) (OkWindowsNtCreate handle)]
+    [(= status (cast -1073741771 : i32)) (WindowsNtCreateAlreadyExists)]
+    [(= status (cast -1073740533 : i32)) (WindowsNtCreateReparsePoint)]
+    [(or
+        (= status (cast -1073741772 : i32))
+        (= status (cast -1073741766 : i32)))
+      (WindowsNtCreateNotFound)]
+    [(= status (cast -1073741790 : i32)) (WindowsNtCreateAccessDenied)]
+    [else (WindowsNtCreateFailed)]))
+
+;: Return true when the native create operation produced an open handle.
+(define (windows-nt-create-ok? [result : FsWindowsNtCreateResult]) : bool
+  (match (windows-nt-create-result-normalize result)
+    [(OkWindowsNtCreate _) true]
+    [_ false]))
+
+;: Return the open handle, or `fallback` for a classified failure.
+(define (windows-nt-create-handle-or
+  [result : FsWindowsNtCreateResult]
+  [fallback : i64]) : i64
+  (match (windows-nt-create-result-normalize result)
+    [(OkWindowsNtCreate handle) handle]
+    [_ fallback]))
+
+;: Return true when exclusive creation found an existing name.
+(define (windows-nt-create-already-exists? [result : FsWindowsNtCreateResult]) : bool
+  (match (windows-nt-create-result-normalize result)
+    [(WindowsNtCreateAlreadyExists) true]
+    [_ false]))
+
+;: Return true when native object resolution refused a reparse point.
+(define (windows-nt-create-reparse-point? [result : FsWindowsNtCreateResult]) : bool
+  (match (windows-nt-create-result-normalize result)
+    [(WindowsNtCreateReparsePoint) true]
+    [_ false]))
+
+;: Return true when native object resolution found no matching name or path.
+(define (windows-nt-create-not-found? [result : FsWindowsNtCreateResult]) : bool
+  (match (windows-nt-create-result-normalize result)
+    [(WindowsNtCreateNotFound) true]
+    [_ false]))
+
+;: Return true when native object resolution denied access.
+(define (windows-nt-create-access-denied? [result : FsWindowsNtCreateResult]) : bool
+  (match (windows-nt-create-result-normalize result)
+    [(WindowsNtCreateAccessDenied) true]
+    [_ false]))
+
+;: Return true for an unclassified native failure.
+(define (windows-nt-create-failed? [result : FsWindowsNtCreateResult]) : bool
+  (match (windows-nt-create-result-normalize result)
+    [(WindowsNtCreateFailed) true]
+    [_ false]))
+
+;: Invoke the one admitted ntdll boundary relative to an already-open root.
+;: `name-byte-length` excludes any terminator and names UTF-16 bytes. Reparse
+;: traversal is always disabled at both the object-manager and file-open layers.
+(cfg
+  windows
+  (define (windows-nt-create-file-relative
+    [root-handle : i64]
+    [name-buffer : (MutPtr u16)]
+    [name-byte-length : u16]
+    [desired-access : u32]
+    [share-access : u32]
+    [create-disposition : u32]
+    [create-options : u32]) : FsWindowsNtCreateResult
+    (let
+      [name-address : i64
+        (cast
+          (unsafe
+            (ptr->int (ptr-cast name-buffer : (Ptr u16))))
+          : i64)]
+      [name : FsWindowsUnicodeString
+        (FsWindowsUnicodeString name-byte-length name-byte-length name-address)]
+      [attributes : FsWindowsObjectAttributes
+        (FsWindowsObjectAttributes
+          (cast 48 : u32)
+          root-handle
+          (cast
+            (unsafe
+              (ptr->int (ptr-cast (ptr-addr-of name) : (Ptr u8))))
+            : i64)
+          (bit-or fs-windows-obj-case-insensitive fs-windows-obj-dont-reparse)
+          0
+          0)]
+      [io-status : FsWindowsIoStatusBlock (FsWindowsIoStatusBlock 0 0)]
+      [handle : i64 -1]
+      [status : i32
+        (fs-win-nt-create-file
+          (unsafe
+            (ptr-addr-of handle))
+          desired-access
+          (unsafe
+            (ptr-addr-of attributes))
+          (unsafe
+            (ptr-addr-of io-status))
+          0
+          fs-windows-file-attribute-normal
+          share-access
+          create-disposition
+          (bit-or create-options fs-windows-file-open-reparse-point)
+          0
+          (cast 0 : u32))]
+      (fs-windows-nt-create-result-from-status status handle))))
 
 ;: Windows `rename` replacement via MoveFileExA with MOVEFILE_REPLACE_EXISTING.
 (cfg
@@ -2709,12 +2902,181 @@
 
 (cfg
   test
+  (define (fs-test-assert-windows-nt-create-abi) : unit
+    (begin
+      (fs-test-assert-i64-eq
+        (comptime (size-of (type FsWindowsUnicodeString)))
+        16
+        "UNICODE_STRING x64 size")
+      (fs-test-assert-i64-eq
+        (comptime (offset-of (type FsWindowsUnicodeString) length))
+        0
+        "UNICODE_STRING.Length offset")
+      (fs-test-assert-i64-eq
+        (comptime (offset-of (type FsWindowsUnicodeString) maximum-length))
+        2
+        "UNICODE_STRING.MaximumLength offset")
+      (fs-test-assert-i64-eq
+        (comptime (offset-of (type FsWindowsUnicodeString) buffer))
+        8
+        "UNICODE_STRING.Buffer offset")
+      (fs-test-assert-i64-eq
+        (comptime (size-of (type FsWindowsObjectAttributes)))
+        48
+        "OBJECT_ATTRIBUTES x64 size")
+      (fs-test-assert-i64-eq
+        (comptime (offset-of (type FsWindowsObjectAttributes) length))
+        0
+        "OBJECT_ATTRIBUTES.Length offset")
+      (fs-test-assert-i64-eq
+        (comptime (offset-of (type FsWindowsObjectAttributes) root-directory))
+        8
+        "OBJECT_ATTRIBUTES.RootDirectory offset")
+      (fs-test-assert-i64-eq
+        (comptime (offset-of (type FsWindowsObjectAttributes) object-name))
+        16
+        "OBJECT_ATTRIBUTES.ObjectName offset")
+      (fs-test-assert-i64-eq
+        (comptime (offset-of (type FsWindowsObjectAttributes) attributes))
+        24
+        "OBJECT_ATTRIBUTES.Attributes offset")
+      (fs-test-assert-i64-eq
+        (comptime
+          (offset-of (type FsWindowsObjectAttributes) security-descriptor))
+        32
+        "OBJECT_ATTRIBUTES.SecurityDescriptor offset")
+      (fs-test-assert-i64-eq
+        (comptime
+          (offset-of
+            (type FsWindowsObjectAttributes)
+            security-quality-of-service))
+        40
+        "OBJECT_ATTRIBUTES.SecurityQualityOfService offset")
+      (fs-test-assert-i64-eq
+        (comptime (size-of (type FsWindowsIoStatusBlock)))
+        16
+        "IO_STATUS_BLOCK x64 size")
+      (fs-test-assert-i64-eq
+        (comptime (offset-of (type FsWindowsIoStatusBlock) status-or-pointer))
+        0
+        "IO_STATUS_BLOCK status union offset")
+      (fs-test-assert-i64-eq
+        (comptime (offset-of (type FsWindowsIoStatusBlock) information))
+        8
+        "IO_STATUS_BLOCK.Information offset")
+      (fs-test-assert-i64-eq (comptime (size-of (type i32))) 4 "NTSTATUS width")
+      (fs-test-assert-i64-eq
+        (comptime (size-of (type i64)))
+        8
+        "Windows handle width")
+      (fs-test-assert-i64-eq
+        (cast fs-windows-obj-case-insensitive : i64)
+        64
+        "OBJ_CASE_INSENSITIVE value")
+      (fs-test-assert-i64-eq
+        (cast fs-windows-obj-dont-reparse : i64)
+        4096
+        "OBJ_DONT_REPARSE value")
+      (fs-test-assert-i64-eq
+        (cast fs-windows-file-open-reparse-point : i64)
+        2097152
+        "FILE_OPEN_REPARSE_POINT value")
+      (fs-test-assert-i64-eq
+        (cast fs-windows-file-create : i64)
+        2
+        "FILE_CREATE value")
+      (fs-test-assert-i64-eq
+        (cast fs-windows-file-open : i64)
+        1
+        "FILE_OPEN value")
+      (fs-test-assert-i64-eq
+        (cast fs-windows-file-directory-file : i64)
+        1
+        "FILE_DIRECTORY_FILE value")
+      (fs-test-assert-i64-eq
+        (cast fs-windows-file-write-data : i64)
+        2
+        "FILE_WRITE_DATA value")
+      (fs-test-assert-i64-eq
+        (cast fs-windows-file-read-data : i64)
+        1
+        "FILE_READ_DATA value")
+      (fs-test-assert-i64-eq
+        (cast fs-windows-file-list-directory : i64)
+        1
+        "FILE_LIST_DIRECTORY value")
+      (fs-test-assert-i64-eq
+        (cast fs-windows-file-non-directory-file : i64)
+        64
+        "FILE_NON_DIRECTORY_FILE value")
+      (fs-test-assert-i64-eq
+        (cast fs-windows-file-synchronous-io-nonalert : i64)
+        32
+        "FILE_SYNCHRONOUS_IO_NONALERT value")
+      (fs-test-assert-i64-eq
+        (cast fs-windows-file-attribute-normal : i64)
+        128
+        "FILE_ATTRIBUTE_NORMAL value")
+      (fs-test-assert-i64-eq
+        (cast fs-windows-file-share-read : i64)
+        1
+        "FILE_SHARE_READ value")
+      (fs-test-assert-i64-eq
+        (cast fs-windows-file-share-write : i64)
+        2
+        "FILE_SHARE_WRITE value")
+      (fs-test-assert-i64-eq
+        (cast fs-windows-file-share-delete : i64)
+        4
+        "FILE_SHARE_DELETE value")
+      (fs-test-assert-i64-eq
+        (cast fs-windows-synchronize : i64)
+        1048576
+        "SYNCHRONIZE value")
+      (fs-test-assert-true
+        (windows-nt-create-ok?
+          (fs-windows-nt-create-result-from-status (cast 0 : i32) 91))
+        "NT_SUCCESS maps to ok")
+      (fs-test-assert-i64-eq
+        (windows-nt-create-handle-or
+          (fs-windows-nt-create-result-from-status (cast 0 : i32) 91)
+          -1)
+        91
+        "NT_SUCCESS preserves handle")
+      (fs-test-assert-true
+        (windows-nt-create-already-exists?
+          (fs-windows-nt-create-result-from-status (cast -1073741771 : i32) -1))
+        "STATUS_OBJECT_NAME_COLLISION maps once")
+      (fs-test-assert-true
+        (windows-nt-create-reparse-point?
+          (fs-windows-nt-create-result-from-status (cast -1073740533 : i32) -1))
+        "STATUS_REPARSE_POINT_ENCOUNTERED maps once")
+      (fs-test-assert-true
+        (windows-nt-create-not-found?
+          (fs-windows-nt-create-result-from-status (cast -1073741772 : i32) -1))
+        "STATUS_OBJECT_NAME_NOT_FOUND maps once")
+      (fs-test-assert-true
+        (windows-nt-create-not-found?
+          (fs-windows-nt-create-result-from-status (cast -1073741766 : i32) -1))
+        "STATUS_OBJECT_PATH_NOT_FOUND maps once")
+      (fs-test-assert-true
+        (windows-nt-create-access-denied?
+          (fs-windows-nt-create-result-from-status (cast -1073741790 : i32) -1))
+        "STATUS_ACCESS_DENIED maps once")
+      (fs-test-assert-true
+        (windows-nt-create-failed?
+          (fs-windows-nt-create-result-from-status (cast -1 : i32) -1))
+        "unknown NTSTATUS maps to stable failure"))))
+
+(cfg
+  test
   (define (fs-test-api-main) : i64
     (let
       [joined : String (fs-api-test-fs-path-join "left path" "right file")]
       [expected-join : String
         (str_cat.str-cat "left path" (stdlib.fs.path-separator) "right file")]
       (begin
+        (fs-test-assert-windows-nt-create-abi)
         (fs-test-assert-owned-string-eq
           joined
           (clone expected-join)

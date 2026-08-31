@@ -89439,3 +89439,519 @@
     (compiler-optimize-unroll-cascade-self-test)
     42
     "a store-free counted body that reads one element per trip gets a second, four-copy group between its sixteen-copy group and the one-at-a-time remainder, the rewrite stays idempotent, and the nearest store-only neighbour is refused a cascade so the load-and-store and word-merge tiers keep the factors they were measured at"))
+
+;; --- clone-free check hoisting (loop predication) -----------------------------
+;;
+;; Nine shapes over the shared `(n, len, base)` params. Every one holds a direct
+;; call in a two-block loop, which prices the multi-block versioner out
+;; (`opt-bce-mb-call-clone-min-derived` wants three derived checks per call site
+;; and no variant offers more than one), so what these observe is the hoist and
+;; nothing else: a check that LEFT the header for the preheader, keeping its own
+;; ok-label so the located abort tail reports the same source span.
+;;
+;;   0 descending counter `pos = phi(n, pos - 1)` latched on `pos - 1 >= 0`:
+;;     the first executed index is the largest, so the check moves.
+;;   1 the same loop ASCENDING. The first failing index would be `len`, after
+;;     `len` iterations of calls, so the abort may not move ahead of them: the
+;;     check stays. This is the packet's unsound sub-case, stated as a refusal.
+;;   2 descending, but latched on `pos - 1 >= -1`: nothing forbids a negative
+;;     index on a later trip, so the first index is no longer extremal and the
+;;     check stays.
+;;   3 a LOOP-INVARIANT index (the `n` param) with an ascending counter: every
+;;     trip evaluates the identical check, so it moves whatever the counter does.
+;;   4 a call BEFORE the check in the header: an observable effect the original
+;;     performed before aborting, so the abort may not move ahead of it.
+;;   5 a non-hoistable check before the hoistable one: a second trap site, and
+;;     which site reports must not change. Both stay.
+;;   6 a preheader that BRANCHES rather than jumping to the header: reaching it
+;;     no longer implies the loop runs, so a moved check could abort on a path
+;;     the original never ran it on.
+;;   7 a length loaded inside the header: not loop-invariant, no hoist.
+;;   8 variant 0's shape with the counter stepped by `pos + (-4)` instead of
+;;     `pos - 1`: the same descending fact spelled the other way, and it moves.
+(define (opt-bce-hoist-test-i64
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BinOp
+    dst
+    op
+    lhs
+    rhs
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-bce-hoist-test-call [dst : i64] [arg : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Call
+    dst
+    (opt-test-symbol "bce_hoist_helper")
+    (compiler_ir_types.CompilerIrCallArgs.One
+      (compiler_ir_types.CompilerIrValue.Var arg))
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-bce-hoist-test-check
+  [index : compiler_ir_types.CompilerIrValue]
+  [length : compiler_ir_types.CompilerIrValue]
+  [label : String]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BoundsCheck
+    index
+    length
+    (compiler_ir_types.compiler-ir-label label)))
+
+(define (opt-bce-hoist-test-phi
+  [dst : i64]
+  [init : compiler_ir_types.CompilerIrValue]
+  [back : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Phi
+    dst
+    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+      init
+      (compiler_ir_types.compiler-ir-label "pre")
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+        back
+        (compiler_ir_types.compiler-ir-label "latch")
+        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+    (compiler_ast_types.AstType.I64)))
+
+;; header: pos/acc phis, [4: a call] [5: an underivable check] [7: a load],
+;; the candidate check, an add, the call, jump latch.
+(define (opt-bce-hoist-header-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instr-seq-prepend
+    (opt-bce-hoist-test-phi
+      3
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 6))
+    (opt-test-instr-seq-prepend
+      (opt-bce-hoist-test-phi
+        11
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ir_types.CompilerIrValue.Var 12))
+      (opt-test-instr-seq-prepend
+        ;; variant 4's leading call, variant 5's leading check, variant 7's
+        ;; in-loop length load, and an inert Mov everywhere else.
+        (cond
+          [(or (= variant 4) (= variant 10)) (opt-bce-hoist-test-call 14 11)]
+          [(= variant 5)
+            (opt-bce-hoist-test-check
+              (compiler_ir_types.CompilerIrValue.Var 11)
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              "hoist_other_ok")]
+          [(= variant 7)
+            (compiler_ir_types.CompilerIrInstr.Load
+              22
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ast_types.AstType.I64))]
+          [else
+            (compiler_ir_types.CompilerIrInstr.Mov
+              15
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ast_types.AstType.I64))])
+        (opt-test-instr-seq-prepend
+          (opt-bce-hoist-test-check
+            ;; variant 3 checks the invariant `n` param instead of the counter.
+            (if (= variant 3)
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.CompilerIrValue.Var 3))
+            (if (= variant 7)
+              (compiler_ir_types.CompilerIrValue.Var 22)
+              (compiler_ir_types.CompilerIrValue.Var 1))
+            "hoist_ok")
+          (opt-test-instr-seq-prepend
+            (opt-bce-hoist-test-i64
+              4
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.CompilerIrValue.Var 11))
+            (opt-test-instr-seq-prepend
+              (opt-bce-hoist-test-call 12 4)
+              (opt-test-instr-seq-prepend
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label
+                    (if (= variant 11)
+                      "inner"
+                      "latch")))
+                (compiler_ir_types.compiler-ir-instr-seq-empty)))))))))
+
+;; Variant 11's nested loop: a self-looping counter over the value the header's
+;; call produced. It is what makes the outer loop a walk over a collection
+;; rather than a flat innermost scan, which is the tightening's admission.
+(define (opt-bce-hoist-maybe-inner
+  [variant : i64]
+  [tail : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (if (not (= variant 11))
+    tail
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "inner")
+        (opt-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Phi
+            30
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ir_types.compiler-ir-label "header")
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 31)
+                (compiler_ir_types.compiler-ir-label "inner_latch")
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+            (compiler_ast_types.AstType.I64))
+          (opt-test-instr-seq-prepend
+            (opt-bce-hoist-test-i64
+              32
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 30)
+              (compiler_ir_types.CompilerIrValue.Var 4))
+            (opt-test-instr-seq-prepend
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 32)
+                (compiler_ir_types.compiler-ir-label "inner_latch")
+                (compiler_ir_types.compiler-ir-label "latch"))
+              (compiler_ir_types.compiler-ir-instr-seq-empty)))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "inner_latch")
+          (opt-test-instr-seq-prepend
+            (opt-bce-hoist-test-i64
+              31
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 30)
+              (compiler_ir_types.CompilerIrValue.I64 1))
+            (opt-test-instr-seq-prepend
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "inner"))
+              (compiler_ir_types.compiler-ir-instr-seq-empty))))
+        tail))))
+
+;; latch: the step and the continuing compare. Variants 1 and 3 ascend against
+;; `n`; variant 2 descends against a floor of -1; variant 8 steps by -4.
+(define (opt-bce-hoist-latch-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instr-seq-prepend
+    (cond
+      [(= variant 9)
+        (opt-bce-hoist-test-i64
+          6
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.I64 2))]
+      [(or (= variant 1) (= variant 3) (= variant 10) (= variant 11))
+        (opt-bce-hoist-test-i64
+          6
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.I64 1))]
+      [(= variant 8)
+        (opt-bce-hoist-test-i64
+          6
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.I64 (- 0 4)))]
+      [else
+        (opt-bce-hoist-test-i64
+          6
+          (compiler_ir_types.CompilerIrBinOp.Sub)
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.I64 1))])
+    (opt-test-instr-seq-prepend
+      (cond
+        [(or
+            (= variant 1)
+            (= variant 3)
+            (= variant 9)
+            (= variant 10)
+            (= variant 11))
+          (opt-bce-hoist-test-i64
+            7
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 6)
+            (compiler_ir_types.CompilerIrValue.Var 0))]
+        [(= variant 2)
+          (opt-bce-hoist-test-i64
+            7
+            (compiler_ir_types.CompilerIrBinOp.Ge)
+            (compiler_ir_types.CompilerIrValue.Var 6)
+            (compiler_ir_types.CompilerIrValue.I64 (- 0 1)))]
+        [else
+          (opt-bce-hoist-test-i64
+            7
+            (compiler_ir_types.CompilerIrBinOp.Ge)
+            (compiler_ir_types.CompilerIrValue.Var 6)
+            (compiler_ir_types.CompilerIrValue.I64 0))])
+      (opt-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 7)
+          (compiler_ir_types.compiler-ir-label "header")
+          (compiler_ir_types.compiler-ir-label "exit"))
+        (compiler_ir_types.compiler-ir-instr-seq-empty)))))
+
+(define (opt-bce-hoist-test-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instr-seq-prepend
+        (opt-bce-hoist-test-i64
+          20
+          (compiler_ir_types.CompilerIrBinOp.Ge)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 0))
+        (opt-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 20)
+            (compiler_ir_types.compiler-ir-label "pre")
+            (compiler_ir_types.compiler-ir-label "exit"))
+          (compiler_ir_types.compiler-ir-instr-seq-empty))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "pre")
+        (opt-test-instr-seq-prepend
+          ;; variant 6's preheader is not dedicated: reaching it does not imply
+          ;; the header runs.
+          (if (= variant 6)
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 20)
+              (compiler_ir_types.compiler-ir-label "header")
+              (compiler_ir_types.compiler-ir-label "bail"))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "header")))
+          (compiler_ir_types.compiler-ir-instr-seq-empty)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "header")
+          (opt-bce-hoist-header-instrs variant))
+        (opt-bce-hoist-maybe-inner
+          variant
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "latch")
+              (opt-bce-hoist-latch-instrs variant))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "bail")
+                (opt-test-instr-seq-prepend
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.I64 7)))
+                  (compiler_ir_types.compiler-ir-instr-seq-empty)))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "exit")
+                  (opt-test-instr-seq-prepend
+                    (compiler_ir_types.CompilerIrInstr.Phi
+                      13
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                        (compiler_ir_types.CompilerIrValue.I64 0)
+                        (compiler_ir_types.compiler-ir-label "entry")
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                          (compiler_ir_types.CompilerIrValue.Var 12)
+                          (compiler_ir_types.compiler-ir-label "latch")
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+                      (compiler_ast_types.AstType.I64))
+                    (opt-test-instr-seq-prepend
+                      (compiler_ir_types.CompilerIrInstr.Return
+                        (compiler_ir_types.CompilerIrMaybeValue.Some
+                          (compiler_ir_types.CompilerIrValue.Var 13)))
+                      (compiler_ir_types.compiler-ir-instr-seq-empty))))
+                (compiler_ir_types.CompilerIrBlockList.Nil)))))))))
+
+(define (opt-bce-hoist-test-function [variant : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "bce_hoist_fixture")
+    (opt-bce-version-test-params)
+    (compiler_ast_types.AstType.I64)
+    64
+    (opt-bce-hoist-test-blocks variant)))
+
+(define (opt-bce-hoist-rewrite [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-function-blocks
+    (compiler_optimize.opt-bce-version-function
+      (opt-bce-hoist-test-function variant))))
+
+;; The ok-label of the first check in `label`, or "" when it holds none. A moved
+;; check must carry the ORIGINAL spelling: the span side table is keyed by it,
+;; and a renamed one silently degrades `tl_oob_abort_at` to the bare handler.
+(define (opt-bce-hoist-first-check-label
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]) : String
+  (if (>= index count)
+    ""
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref
+      (compiler_ir_types.compiler-ir-global-shared-view instrs)
+      index)
+      [(compiler_ir_types.CompilerIrInstr.BoundsCheck _ _ ok-label)
+        (compiler_ir_types.compiler-ir-label-text ok-label)]
+      [_ (opt-bce-hoist-first-check-label instrs (+ index 1) count)])))
+
+(define (opt-bce-hoist-check-label
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : String
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_optimize.OptMaybeBlock.No) ""]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-bce-hoist-first-check-label
+            (compiler_ir_types.compiler-ir-global-shared-view instrs)
+            0
+            (compiler_ir_types.compiler-ir-instr-seq-count
+              (compiler_ir_types.compiler-ir-global-shared-view instrs)))])]))
+
+;; The index operand of the first check in `label`, as a var id, or -1 for a
+;; literal / no check. The moved check must read the phi's PREHEADER input --
+;; the value the first executed iteration held -- not the phi.
+(define (opt-bce-hoist-first-check-index
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]) : i64
+  (if (>= index count)
+    (- 0 1)
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref
+      (compiler_ir_types.compiler-ir-global-shared-view instrs)
+      index)
+      [(compiler_ir_types.CompilerIrInstr.BoundsCheck idx _ _)
+        (match idx
+          [(compiler_ir_types.CompilerIrValue.Var id) id]
+          [_ (- 0 1)])]
+      [_ (opt-bce-hoist-first-check-index instrs (+ index 1) count)])))
+
+(define (opt-bce-hoist-check-index
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : i64
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-bce-hoist-first-check-index
+            (compiler_ir_types.compiler-ir-global-shared-view instrs)
+            0
+            (compiler_ir_types.compiler-ir-instr-seq-count
+              (compiler_ir_types.compiler-ir-global-shared-view instrs)))])]))
+
+(define (compiler-optimize-bce-hoist-self-test) : i64
+  (cond
+    ;; 0: the descending counter's check leaves the header for the preheader,
+    ;; reading the phi's preheader seed and keeping its own ok-label.
+    [(not (= (opt-bce-mask-block-checks (opt-bce-hoist-rewrite 0) "header") 0))
+      1]
+    [(not (= (opt-bce-mask-block-checks (opt-bce-hoist-rewrite 0) "pre") 1)) 2]
+    [(not
+        (string.eq
+          (opt-bce-hoist-check-label (opt-bce-hoist-rewrite 0) "pre")
+          "hoist_ok"))
+      3]
+    [(not (= (opt-bce-hoist-check-index (opt-bce-hoist-rewrite 0) "pre") 0)) 4]
+    ;; the versioner did not fire: what moved is the hoist, not a clone
+    [(opt-bce-mask-has-block? (opt-bce-hoist-rewrite 0) "header__bce_guard") 5]
+    ;; 1: ascending and FLAT. The abort may not move ahead of the iterations
+    ;; before it, and the trip range is not tightened either: a flat innermost
+    ;; loop is the shape whose entries measured about as many as its trips.
+    [(not (= (opt-bce-mask-block-checks (opt-bce-hoist-rewrite 1) "header") 1))
+      6]
+    [(not (= (opt-bce-mask-block-checks (opt-bce-hoist-rewrite 1) "pre") 0)) 7]
+    [(opt-bce-mask-has-block? (opt-bce-hoist-rewrite 1) "header__pred_exit") 23]
+    ;; 2: a floor of -1 admits a negative index on a later trip
+    [(not (= (opt-bce-mask-block-checks (opt-bce-hoist-rewrite 2) "header") 1))
+      8]
+    [(not (= (opt-bce-mask-block-checks (opt-bce-hoist-rewrite 2) "pre") 0)) 9]
+    ;; 3: a loop-invariant index moves whatever the counter does
+    [(not (= (opt-bce-mask-block-checks (opt-bce-hoist-rewrite 3) "header") 0))
+      10]
+    [(not (= (opt-bce-mask-block-checks (opt-bce-hoist-rewrite 3) "pre") 1)) 11]
+    [(not (= (opt-bce-hoist-check-index (opt-bce-hoist-rewrite 3) "pre") 0)) 12]
+    ;; 4: an observable effect before the check in the header
+    [(not (= (opt-bce-mask-block-checks (opt-bce-hoist-rewrite 4) "header") 1))
+      13]
+    [(not (= (opt-bce-mask-block-checks (opt-bce-hoist-rewrite 4) "pre") 0)) 14]
+    ;; 5: a second trap site before it -- which site reports must not change
+    [(not (= (opt-bce-mask-block-checks (opt-bce-hoist-rewrite 5) "header") 2))
+      15]
+    [(not (= (opt-bce-mask-block-checks (opt-bce-hoist-rewrite 5) "pre") 0)) 16]
+    ;; 6: reaching the preheader does not imply the loop runs
+    [(not (= (opt-bce-mask-block-checks (opt-bce-hoist-rewrite 6) "header") 1))
+      17]
+    [(not (= (opt-bce-mask-block-checks (opt-bce-hoist-rewrite 6) "pre") 0)) 18]
+    ;; 7: the length is loaded inside the loop
+    [(not (= (opt-bce-mask-block-checks (opt-bce-hoist-rewrite 7) "header") 1))
+      19]
+    [(not (= (opt-bce-mask-block-checks (opt-bce-hoist-rewrite 7) "pre") 0)) 20]
+    ;; 8: the same descending fact spelled `pos + (-4)`
+    [(not (= (opt-bce-mask-block-checks (opt-bce-hoist-rewrite 8) "header") 0))
+      21]
+    [(not (= (opt-bce-mask-block-checks (opt-bce-hoist-rewrite 8) "pre") 1)) 22]
+    ;; 9: ascending by TWO. `i + step` can reach `safe - 1 + step`, which a
+    ;; wrapped counter turns into a negative index the tightened latch would
+    ;; still admit, so the trip range is not tightened either.
+    [(not (= (opt-bce-mask-block-checks (opt-bce-hoist-rewrite 9) "header") 1))
+      30]
+    [(opt-bce-mask-has-block? (opt-bce-hoist-rewrite 9) "header__pred_exit") 31]
+    ;; 10: ascending by one, but behind a call. The preheader copy of the first
+    ;; iteration's check is still an abort moved ahead of that call.
+    [(not (= (opt-bce-mask-block-checks (opt-bce-hoist-rewrite 10) "header") 1))
+      32]
+    [(opt-bce-mask-has-block? (opt-bce-hoist-rewrite 10) "header__pred_exit")
+      33]
+    ;; 11: variant 1's ascending loop with a nested loop in its body -- the
+    ;; admitted shape. The header runs unchecked, the preheader keeps the first
+    ;; iteration's check on the counter's SEED, and the early-exit path re-issues
+    ;; it on the stepped counter under the clone suffix the span table strips.
+    [(not
+        (opt-bce-mask-has-block?
+          (opt-bce-hoist-rewrite 11)
+          "header__pred_min.0"))
+      46]
+    [(not (= (opt-bce-mask-block-checks (opt-bce-hoist-rewrite 11) "header") 0))
+      34]
+    [(not (= (opt-bce-mask-block-checks (opt-bce-hoist-rewrite 11) "pre") 1))
+      35]
+    [(not
+        (string.eq
+          (opt-bce-hoist-check-label (opt-bce-hoist-rewrite 11) "pre")
+          "hoist_ok"))
+      36]
+    [(not (= (opt-bce-hoist-check-index (opt-bce-hoist-rewrite 11) "pre") 0))
+      37]
+    [(not
+        (opt-bce-mask-has-block? (opt-bce-hoist-rewrite 11) "header__pred_exit"))
+      38]
+    [(not
+        (=
+          (opt-bce-mask-block-checks
+            (opt-bce-hoist-rewrite 11)
+            "header__pred_abort")
+          1))
+      39]
+    [(not
+        (string.eq
+          (opt-bce-hoist-check-label
+            (opt-bce-hoist-rewrite 11)
+            "header__pred_abort")
+          "hoist_ok__u0"))
+      40]
+    [(not
+        (=
+          (opt-bce-hoist-check-index
+            (opt-bce-hoist-rewrite 11)
+            "header__pred_abort")
+          6))
+      41]
+    [(not
+        (opt-bce-mask-has-block?
+          (opt-bce-hoist-rewrite 11)
+          "header__pred_min.0"))
+      43]
+    [(not
+        (opt-bce-mask-has-block?
+          (opt-bce-hoist-rewrite 11)
+          "header__pred_join.0"))
+      44]
+    [else 42]))
+
+(test
+  bce-hoist-clone-free-check-predication
+  (test.assert-i64-eq
+    (compiler-optimize-bce-hoist-self-test)
+    42
+    "a check whose index is loop-invariant or a descending counter, standing in the header ahead of every observable effect and every other trap site, MOVES to a dedicated preheader with its own ok-label and its first-iteration index; an ASCENDING unit counter in a loop that nests another and calls out of its body instead keeps its abort where it was and tightens the trip range to min(limit, length), re-issuing the check on the way out under the clone suffix the span table strips; and the flat ascending loop, the floor that admits a negative index, the step of two, a preceding call, a preceding check, a branching preheader and a loop-variant length each leave the loop alone"))

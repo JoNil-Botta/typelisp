@@ -23,6 +23,10 @@ content_bounds_checked_abort|tests/integration/content_bounds_checked_abort.tl|1
 guard_dedup_bypass_descriptor|tests/integration/guard_dedup_bypass_descriptor.tl|42|-5915004525821994045\n|24|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 guard_dedup_mutated_slice|tests/integration/guard_dedup_mutated_slice.tl|42|172085089044\n|20 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 guard_dedup_mutated_slice_abort|tests/integration/guard_dedup_mutated_slice.tl|134|-|20 17|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/guard_dedup_mutated_slice_abort/guard_dedup_mutated_slice_abort.tl:62:57: array index out of bounds: index=17 length=17\n
+guard_hoist_predication|tests/integration/guard_hoist_predication.tl|42|-7026568991372851604\n|8 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+guard_hoist_predication_abort|tests/integration/guard_hoist_predication.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/guard_hoist_predication_abort/guard_hoist_predication_abort.tl:45:49: array index out of bounds: index=8 length=8\n
+guard_tighten_predication|tests/integration/guard_tighten_predication.tl|42|-4662016400569783832\n|8 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+guard_tighten_predication_abort|tests/integration/guard_tighten_predication.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/guard_tighten_predication_abort/guard_tighten_predication_abort.tl:56:36: array index out of bounds: index=8 length=8\n
 inline_sole_call_absorb|tests/integration/inline_sole_call_absorb.tl|42|339292\n|64 3|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 inline_sole_call_abort|tests/integration/inline_sole_call_abort.tl|134|-|8 8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/inline_sole_call_abort/inline_sole_call_abort.tl:64:37: array index out of bounds: index=8 length=8\n
 bce_range_two_loops|tests/integration/bce_range_two_loops.tl|42|-5915004525821994045\n|24|stdlib/io.tl stdlib/string.tl stdlib/vector.tl

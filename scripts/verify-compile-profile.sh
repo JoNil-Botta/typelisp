@@ -1909,6 +1909,10 @@ if [ "$NL_HOST_OS" = windows ]; then
     # Rebasing that cutover over #6843's dense-only instruction sequence surface
     # measures 27,698 used nodes and crosses to 28 segments, 28,672 capacity,
     # and 688,128 physical payload bytes on the authoritative Windows probe.
+    # #7106's admitted NtCreateFile boundary adds the audited Windows ABI types
+    # and stable result taxonomy: the authoritative Windows probe measured
+    # 28,710 used nodes and crossed to 29 segments, 29,696 capacity, and 712,704
+    # physical payload bytes.
     # #5407's semantic completion provider measured 26,662 used nodes and 27
     # segments on the pre-ownership mainline tree.
     assert_selfhost_pool_family \

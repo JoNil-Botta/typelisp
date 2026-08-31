@@ -297,7 +297,8 @@ function Invoke-DebugRelink {
         /DYNAMICBASE:NO `
         "/STACK:$stackReserve" `
         "/LIBPATH:$(Join-Path $sdkLibRoot "um\x64")" `
-        kernel32.lib
+        kernel32.lib `
+        ntdll.lib
     if ($LASTEXITCODE -ne 0) {
         throw "debug relink failed with exit code $LASTEXITCODE"
     }

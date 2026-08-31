@@ -292,6 +292,7 @@
   (maximum-length u16)
   (buffer i64))
 
+;: Audited x64 `OBJECT_ATTRIBUTES` layout for rooted NT object lookup.
 (defstruct FsWindowsObjectAttributes
   (length u32)
   (root-directory i64)
@@ -300,6 +301,7 @@
   (security-descriptor i64)
   (security-quality-of-service i64))
 
+;: Audited x64 `IO_STATUS_BLOCK` layout for native filesystem completion data.
 (defstruct FsWindowsIoStatusBlock
   (status-or-pointer i64)
   (information u64))
@@ -314,36 +316,67 @@
   (WindowsNtCreateAccessDenied)
   (WindowsNtCreateFailed))
 
+;: Windows object-lookup flag for case-insensitive name matching.
 (define fs-windows-obj-case-insensitive : u32
   (cast 64 : u32))
+
+;: Windows object-lookup flag that rejects reparse points along the path.
 (define fs-windows-obj-dont-reparse : u32
   (cast 4096 : u32))
+
+;: Windows create option that opens a reparse point rather than its target.
 (define fs-windows-file-open-reparse-point : u32
   (cast 2097152 : u32))
+
+;: Windows create disposition that exclusively creates a new object.
 (define fs-windows-file-create : u32
   (cast 2 : u32))
+
+;: Windows create disposition that opens an existing object.
 (define fs-windows-file-open : u32
   (cast 1 : u32))
+
+;: Windows create option requiring the target to be a directory.
 (define fs-windows-file-directory-file : u32
   (cast 1 : u32))
+
+;: Windows create option requiring the target not to be a directory.
 (define fs-windows-file-non-directory-file : u32
   (cast 64 : u32))
+
+;: Windows create option for synchronous, non-alertable I/O.
 (define fs-windows-file-synchronous-io-nonalert : u32
   (cast 32 : u32))
+
+;: Windows normal-file attribute used when no special attribute is required.
 (define fs-windows-file-attribute-normal : u32
   (cast 128 : u32))
+
+;: Windows share-access flag permitting other readers.
 (define fs-windows-file-share-read : u32
   (cast 1 : u32))
+
+;: Windows share-access flag permitting other writers.
 (define fs-windows-file-share-write : u32
   (cast 2 : u32))
+
+;: Windows share-access flag permitting delete or rename operations.
 (define fs-windows-file-share-delete : u32
   (cast 4 : u32))
+
+;: Windows access right required for synchronous file handles.
 (define fs-windows-synchronize : u32
   (cast 1048576 : u32))
+
+;: Windows file access right for reading file data.
 (define fs-windows-file-read-data : u32
   (cast 1 : u32))
+
+;: Windows file access right for writing file data.
 (define fs-windows-file-write-data : u32
   (cast 2 : u32))
+
+;: Windows directory access right for listing child entries.
 (define fs-windows-file-list-directory : u32
   (cast 1 : u32))
 

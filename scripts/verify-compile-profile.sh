@@ -348,6 +348,7 @@ assert_lifetime_ledger_in() {
                 if (owners[boundary] * 100 < total[boundary] * 90) exit 1
             }
             if (value["load.handoff|token-storage"] != 0 || value["load.handoff|reader-sexpr-storage"] != 0) exit 1
+            if (value["macro.pre-detach|retired-symbols-registry"] != 0) exit 1
             if (value["macro.lower-handoff|live-symbols-registry"] != 0 || value["macro.lower-handoff|retired-symbols-registry"] != 0 || value["macro.lower-handoff|expansion-pool"] != 0 || value["macro.lower-handoff|active-generation-pools"] != 0 || value["macro.lower-handoff|retired-generation-pools"] != 0) exit 1
         }
     ' "$_lll_file"; then
@@ -1213,6 +1214,23 @@ assert_lifetime_ledger_in \
     "$DETACH_CHANGED_STDERR" \
     "$DETACH_CHANGED_STDOUT" \
     "$DETACH_CHANGED_STDERR"
+for retention_counter in \
+    retention_retired_symbol_rotations \
+    retention_expansion_scratch_creations \
+    retention_active_generation_rotations \
+    retention_retired_generation_rotations \
+    retention_live_symbols_max_bytes \
+    retention_retired_symbols_max_bytes \
+    retention_expansion_scratch_max_bytes \
+    retention_active_generations_max_bytes \
+    retention_retired_generations_max_bytes
+do
+    assert_contains_in \
+        "$DETACH_CHANGED_STDERR" \
+        "compile-profile|typecheck.macro.$retention_counter|" \
+        "$DETACH_CHANGED_STDOUT" \
+        "$DETACH_CHANGED_STDERR"
+done
 
 echo "[compile-profile] verify compile-wide peak survives nested reset"
 if ! "$PROFILE_BIN" run tests/integration/compile_profile_nested_peak_reset.tl \
@@ -1588,6 +1606,28 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
+    assert_lifetime_ledger_in \
+        "$SELFHOST_STDERR" \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    for retention_counter in \
+        retention_retired_symbol_rotations \
+        retention_expansion_scratch_creations \
+        retention_active_generation_rotations \
+        retention_retired_generation_rotations \
+        retention_live_symbols_max_bytes \
+        retention_retired_symbols_max_bytes \
+        retention_expansion_scratch_max_bytes \
+        retention_active_generations_max_bytes \
+        retention_retired_generations_max_bytes
+    do
+        assert_profile_counter_at_least_in \
+            "$SELFHOST_STDERR" \
+            "typecheck.macro.$retention_counter" \
+            1 \
+            "$SELFHOST_STDOUT" \
+            "$SELFHOST_STDERR"
+    done
     SELFHOST_SEGMENT_FILE_FLATTENS=$(profile_counter_value_in \
         "$SELFHOST_STDERR" \
         "typecheck.macro.walk_segment_fallback_file_flattens")

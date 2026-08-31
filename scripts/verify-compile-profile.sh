@@ -1741,6 +1741,8 @@ if [ "$NL_HOST_OS" = windows ]; then
     # 4,849,664 capacity, and 155,189,248 physical payload bytes.
     # #6996 (inline aggregate globals, ~2,400 backend lines): Windows CI probe
     # 74 macro_expand / 58 typecheck expr-pool segments.
+    # #7104's optimizer/backend additions independently carried macro_expand
+    # from 74 to 75 segments on its prior base.
     # #7133's checked diagnostic registry, complete typecheck taxonomy, explain
     # corpus, and regression coverage cross macro_expand from 74 to 75 segments:
     # the authoritative Windows CI probe measured 4,851,619 used nodes,

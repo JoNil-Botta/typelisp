@@ -114556,8 +114556,9 @@
                 (=
                   (tc-macro-walk-field state-b macro-live-symbols-arena)
                   symbols-b-arena)
-                (not (= decl-arena-a decl-arena-b))
-                (not (= splice-arena-a splice-arena-b))
+                (not (= decl-arena-a-next decl-arena-b))
+                (not (= splice-arena-a-next splice-arena-b))
+                (not (= splice-arena-a-third splice-arena-b))
                 (=
                   (tc-macro-walk-field state-b macro-decl-generation-arena)
                   decl-arena-b)

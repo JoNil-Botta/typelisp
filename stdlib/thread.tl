@@ -533,7 +533,9 @@
   [arg : i64]
   [result-addr : i64]
   [started-addr : i64]
+  ;; lint-allow: unused-variable -- consumed only in compiler-backtrace builds.
   [stack-low : i64]
+  ;; lint-allow: unused-variable -- consumed only in compiler-backtrace builds.
   [stack-high : i64]) : never
   (begin
     (cfg linux (thread-linux-runtime-init) unit)

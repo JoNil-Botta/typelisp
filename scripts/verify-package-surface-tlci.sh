@@ -16,19 +16,20 @@ native_link_detect_host
 
 # Target-conditioned prefix declarations change the skip totals. The explicit
 # compiler-owned-view import from the by-value ownership cutover contributes
-# one declaration on both hosts. Windows builds dependency nodes serially in
-# one process, which still changes prefix skip totals. All three library nodes
-# are dependency-free, however, so forced-source fallback happens only for the
-# root consumer on both hosts.
+# one declaration on both hosts. Explicit clone generation contributes seven
+# public declaration macros. Windows builds dependency nodes serially in one
+# process, which still changes prefix skip totals. All three library nodes are
+# dependency-free, however, so forced-source fallback happens only for the root
+# consumer on both hosts.
 case "$NL_HOST_OS" in
     windows)
-        TRUSTED_PREFIX_SKIPPED=220
-        FAILURE_PREFIX_SKIPPED=205
+        TRUSTED_PREFIX_SKIPPED=227
+        FAILURE_PREFIX_SKIPPED=212
         FORCED_SOURCE_FALLBACKS=1
         ;;
     *)
-        TRUSTED_PREFIX_SKIPPED=215
-        FAILURE_PREFIX_SKIPPED=200
+        TRUSTED_PREFIX_SKIPPED=222
+        FAILURE_PREFIX_SKIPPED=207
         FORCED_SOURCE_FALLBACKS=1
         ;;
 esac

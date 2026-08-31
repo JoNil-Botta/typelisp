@@ -1,6 +1,25 @@
 (import reflection.signature.provider)
 (import stdlib.comptime)
 
+(defmacro (generated-computed-value [suffix : Expr]) : Decls
+  (let
+    [name : String
+      (comptime.string-append "computed-" (comptime.expr-string-value suffix))]
+    `(define (,(comptime.expr-var name)) : i64
+      42)))
+
+(defmacro (computed-value [suffix : Expr]) : i64
+  (let
+    [name : String
+      (comptime.string-append "computed-" (comptime.expr-string-value suffix))]
+    (if (comptime.module-value? "" name)
+      (comptime.expr-call
+        (comptime.module-value-expr "" name)
+        (comptime.expr-list-empty))
+      (comptime.comptime-error "computed value was not indexed"))))
+
+(generated-computed-value "answer")
+
 (defmacro (generated-provider) : Module
   `(begin
     (module generated.reflection.signature)
@@ -91,6 +110,6 @@
       (+
         (shared-protocol-score (& token))
         (mutable-protocol-score (&mut token)))]
-    (if (= protocol-total 42)
+    (if (and (= protocol-total 42) (= (computed-value "answer") 42))
       signature-total
       0)))

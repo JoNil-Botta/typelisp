@@ -210,6 +210,9 @@ vector_iter_shared_escape_reject|check-fail|tests/safety/vector_iter_shared_esca
 vector_core_full_surface_reject|check-fail|tests/safety/vector_core_full_surface_reject.tl|-|typecheck: unbound name compact.pop
 vector_full_unsupported_equality_nested_reject|check-fail|tests/safety/vector_full_unsupported_equality_nested_reject.tl|-|eq: unsupported type mutptr_i64
 clone_imported_nominal_noncloneable_reject|check-fail|tests/safety/clone_imported_nominal_noncloneable_reject.tl|-|typecheck: clone unsupported type LocalRawWrapper at LocalRawWrapper.item.ptr: (Ptr i64) has no clone capability
+gen_clone_missing_dependency_reject|check-fail|tests/safety/gen_clone_missing_dependency_reject.tl|-|gen-clone: missing explicit dependency clone-leaf
+gen_clone_cycle_reject|check-fail|tests/safety/gen_clone_cycle_reject.tl|-|gen-clone: cyclic clone dependency reaches
+gen_clone_name_collision_reject|check-fail|tests/safety/gen_clone_name_collision_reject.tl|-|gen-clone: generated name collision for clone-point
 reborrow_stored_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`
 reborrow_stored_mut_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_mut_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`
 reborrow_stored_nested_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_nested_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`

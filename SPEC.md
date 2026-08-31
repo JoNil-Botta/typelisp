@@ -7615,18 +7615,26 @@ and not a general manual memory management feature.
 - Returning an aggregate may heap-promote storage that would otherwise be
   frame-local. This is storage placement for safety; ownership transfer is
   still governed by the source-level move rules.
-- `(clone value)` is the explicit deep-copy operation for values that must
-  not share aggregate backing storage with the source. Cloneable types are
-  scalars, `unit`, `never`, `String`, and tuples, fixed arrays, dynamic
-  buffers, and named structs/enums whose elements, fields, or payloads are
-  cloneable. Scalars return the same value; aggregate clones allocate fresh
-  storage in the current active arena and recursively clone nested cloneable
-  elements. Named structs/enums use `clone$Type` helpers. `clone` and
-  `with-escape` remain compiler-checked semantic forms: the compiler owns
-  cloneability, reachable-root discovery, diagnostics, and active-arena
-  behavior. After the clone-generator migration, helper declarations are
-  owned by a declared stdlib `: Decls` macro rather than by a second language
-  semantic form.
+- Deep copying is an explicit owner-generated operation. In a nominal type's
+  canonical module, `(gen-clone Point)` emits the ordinary public function
+  `clone-point : (& Point) -> Point`; acronym-bearing names use deterministic
+  lowercase/kebab spelling. The function preserves its source and reconstructs
+  structs or enums in declaration order. Copy values are read normally;
+  strings, boxes, tuples, fixed arrays, and dynamic arrays are recursively
+  copied with fresh owned storage where the shape requires it. Allocation uses
+  the current checked arena through ordinary allocation operations.
+- Each owned nominal dependency must expose its own generated clone function
+  from its canonical owner before a dependent generator is expanded. Generated
+  calls and signatures use ordinary module-value reflection and normal
+  typechecking; there is no clone-specific borrow, move, lifetime, unsafe, or
+  lowering bypass. Missing or ambiguous dependencies, cleanup-owning types,
+  cycles, raw pointers, references, and unsupported shapes are rejected with an
+  expansion diagnostic.
+- During the #7073 repository migration, `(clone value)` and `with-escape`
+  still use the compiler-checked clone surface described below. New owner code
+  should use `gen-clone`; the compiler-special spelling, reachable-root
+  discovery, `clone$Type` identities, and the transitional handoff are removed
+  only after existing callers have moved to explicit functions.
 - The clone handoff runs only after typechecking has resolved and deduplicated
   the reachable named-aggregate closure. `stdlib.clone` is part of the implicit
   macro prelude and routes every reachable named struct or enum through
@@ -7645,7 +7653,8 @@ and not a general manual memory management feature.
   from a generated helper use its generated-decl
   origin and the compiler handoff request location; producer conflicts name
   the conflicting helper explicitly.
-- `clone` rejects unsupported ownership/lifetime forms rather than silently
+- The transitional compiler-special `clone` rejects unsupported
+  ownership/lifetime forms rather than silently
   bit-copying them. Unsupported clone operands include function values,
   references including borrowed `str`, raw pointers, boxes,
   compile-time-only values, and named aggregate shapes containing

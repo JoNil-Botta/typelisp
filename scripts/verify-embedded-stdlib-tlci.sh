@@ -10,6 +10,7 @@ cd "$ROOT"
 
 required_native_identities() {
     printf '%s\n' \
+        stdlib.clone/gen-clone \
         stdlib.clone/synthesize-helpers \
         stdlib.serialize/serialize \
         stdlib.sort/vec \

@@ -811,6 +811,26 @@
       (CompilerCtfeMaybeStringIdentity.Some text name-id)]
     [_ (CompilerCtfeMaybeStringIdentity.None)]))
 
+;; Module reflection indexes mirror interpreted CTFE: String values are
+;; normalized through the current source/generated-name session, while an
+;; inspected Name retains its exact identity. Re-interning computed text loses
+;; declarations whose generated spelling never occurred in parsed source.
+(define (compiler-comptime-host-value-module-index
+  [value : ctfe_support.CompilerCtfeValue]) : CompilerCtfeMaybeStringIdentity
+  (match value
+    [(ctfe_support.CompilerCtfeValue.String text string-id)
+      (let
+        [env : ctfe_support.CtfeEnv (compiler-comptime-host-ctfe-env)]
+        [name-id : i64
+          (ctfe_support.ctfe-string-syntax-name-id
+            (ctfe_support.ctfe-env-source-names env)
+            (owned_view.compiler-owned-shared-view text)
+            string-id)]
+        (CompilerCtfeMaybeStringIdentity.Some text name-id))]
+    [(ctfe_support.CompilerCtfeValue.Name text name-id)
+      (CompilerCtfeMaybeStringIdentity.Some text name-id)]
+    [_ (CompilerCtfeMaybeStringIdentity.None)]))
+
 (define (compiler-comptime-host-value-string
   [value : ctfe_support.CompilerCtfeValue]) : CompilerCtfeMaybeString
   (match (compiler-comptime-host-value-string-identity value)
@@ -1935,9 +1955,15 @@
                       0)
                     (ast.AstExpr.Var
                       (if (string.eq module "")
-                        (ci.intern name)
-                        (ci.intern
-                          (str_cat.str-cat module (str_cat.str-cat "." name))))))
+                        name-id
+                        (if (or
+                          (ci.intern-generated-canonical-id? module-id)
+                          (ci.intern-generated-canonical-id? name-id))
+                          (ctfe_support.ctfe-generated-dotted-append-member-id
+                            module-id
+                            name-id)
+                          (ci.intern
+                            (str_cat.str-cat module (str_cat.str-cat "." name)))))))
                   (ctfe_support.ctfe-untyped-expr-type)))
               1)))]
       [(ctfe_support.CtfeMaybeModuleValueType.None)
@@ -1987,42 +2013,18 @@
             (compiler-comptime-host-array-element-shared-view
               compiler-comptime-host-stack
               (- compiler-comptime-host-stack-len 2))]
-          (match module-value
-            [(ctfe_support.CompilerCtfeValue.String module _)
-              (match name-value
-                [(ctfe_support.CompilerCtfeValue.String name _)
-                  (compiler-comptime-host-resolve-module-value!
-                    (compiler-comptime-host-global-shared-view module)
-                    (ci.intern module)
-                    (compiler-comptime-host-global-shared-view name)
-                    (ci.intern name)
-                    0)]
-                [(ctfe_support.CompilerCtfeValue.Name name name-id)
-                  (compiler-comptime-host-resolve-module-value!
-                    (compiler-comptime-host-global-shared-view module)
-                    (ci.intern module)
-                    name
-                    name-id
-                    0)]
-                [_ -3])]
-            [(ctfe_support.CompilerCtfeValue.Name module module-id)
-              (match name-value
-                [(ctfe_support.CompilerCtfeValue.String name _)
-                  (compiler-comptime-host-resolve-module-value!
-                    module
-                    module-id
-                    (compiler-comptime-host-global-shared-view name)
-                    (ci.intern name)
-                    0)]
-                [(ctfe_support.CompilerCtfeValue.Name name name-id)
+          (match (compiler-comptime-host-value-module-index module-value)
+            [(CompilerCtfeMaybeStringIdentity.Some module module-id)
+              (match (compiler-comptime-host-value-module-index name-value)
+                [(CompilerCtfeMaybeStringIdentity.Some name name-id)
                   (compiler-comptime-host-resolve-module-value!
                     module
                     module-id
                     name
                     name-id
                     0)]
-                [_ -3])]
-            [_ -3]))))))
+                [(CompilerCtfeMaybeStringIdentity.None) -3])]
+            [(CompilerCtfeMaybeStringIdentity.None) -3]))))))
 
 (define (compiler-comptime-host-callback-module-value-result
   [session : i64]
@@ -2049,42 +2051,20 @@
                 (compiler-comptime-host-array-element-shared-view
                   compiler-comptime-host-stack
                   (- compiler-comptime-host-stack-len 2))]
-              (match module-value
-                [(ctfe_support.CompilerCtfeValue.String module _)
-                  (match name-value
-                    [(ctfe_support.CompilerCtfeValue.String name _)
-                      (compiler-comptime-host-resolve-module-value!
-                        (compiler-comptime-host-global-shared-view module)
-                        (ci.intern module)
-                        (compiler-comptime-host-global-shared-view name)
-                        (ci.intern name)
-                        query-kind)]
-                    [(ctfe_support.CompilerCtfeValue.Name name name-id)
-                      (compiler-comptime-host-resolve-module-value!
-                        (compiler-comptime-host-global-shared-view module)
-                        (ci.intern module)
-                        name
-                        name-id
-                        query-kind)]
-                    [_ tlci.tlci-host-callback-status-bad-request])]
-                [(ctfe_support.CompilerCtfeValue.Name module module-id)
-                  (match name-value
-                    [(ctfe_support.CompilerCtfeValue.String name _)
-                      (compiler-comptime-host-resolve-module-value!
-                        module
-                        module-id
-                        (compiler-comptime-host-global-shared-view name)
-                        (ci.intern name)
-                        query-kind)]
-                    [(ctfe_support.CompilerCtfeValue.Name name name-id)
+              (match (compiler-comptime-host-value-module-index module-value)
+                [(CompilerCtfeMaybeStringIdentity.Some module module-id)
+                  (match (compiler-comptime-host-value-module-index name-value)
+                    [(CompilerCtfeMaybeStringIdentity.Some name name-id)
                       (compiler-comptime-host-resolve-module-value!
                         module
                         module-id
                         name
                         name-id
                         query-kind)]
-                    [_ tlci.tlci-host-callback-status-bad-request])]
-                [_ tlci.tlci-host-callback-status-bad-request])))]
+                    [(CompilerCtfeMaybeStringIdentity.None)
+                      tlci.tlci-host-callback-status-bad-request])]
+                [(CompilerCtfeMaybeStringIdentity.None)
+                  tlci.tlci-host-callback-status-bad-request])))]
         (begin
           (when
             (not (= result tlci.tlci-host-callback-status-ok))

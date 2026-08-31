@@ -87241,3 +87241,501 @@
     (compiler-optimize-content-bounds-self-test)
     42
     "CB-1 admits an array every element store of which passed a dominating or same-block post-dominating check against one length family, refuses an unchecked store, a non-zero literal, a call between the store and its check, an array whose fill is not zero and one reset in its own region, and retires the load-side check only with the fill covered and the length in the family"))
+
+;; --- IT-2: below-the-fixpoint guard dedup ------------------------------------
+;;
+;; Three params: a branch condition, an array handle (so the descriptor words
+;; the PRE moves have a header base), and a length.
+(define (opt-guard-dedup-params) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "cond"
+      (compiler_ast_types.AstType.Bool)
+      0)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "arr"
+        (compiler_ast_types.AstType.DynArray 0)
+        1)
+      (compiler_ir_types.compiler-ir-param-seq-prepend
+        (compiler_ir_types.CompilerIrParam.Param
+          "n"
+          (compiler_ast_types.AstType.I64)
+          2)
+        (compiler_ir_types.compiler-ir-param-seq-empty)))))
+
+(define (opt-guard-dedup-fn [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "guard_dedup_fixture")
+    (opt-guard-dedup-params)
+    (compiler_ast_types.AstType.I64)
+    32
+    blocks))
+
+;; Summaries carrying one call-memory row, so the region test can be shown
+;; admitting a callee proven to write nothing and refusing one that writes.
+(define (opt-guard-dedup-summaries [name : i64] [known? : bool] [summary : i64]) : compiler_optimize.OptLoopBceSummaries
+  (let
+    [call-memory : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
+    (begin
+      (if known?
+        (opt_i64_i64_map.insert-ref!
+          (&mut call-memory)
+          (compiler_ir_types.compiler-ir-symbol-id name)
+          summary)
+        unit)
+      (compiler_optimize.OptLoopBceSummaries
+        false
+        (profile_state.compiler-profile-state-new)
+        (opt_i64_i64_map.with-capacity 8)
+        (opt_i64_i64_map.with-capacity 8)
+        call-memory
+        (opt_i64_i64_map.with-capacity 8)
+        (opt_i64_i64_map.with-capacity 8)
+        (opt_i64_i64_map.with-capacity 8)
+        (compiler_optimize.opt-global-cell-summary-empty)
+        (compiler_ir_types.compiler-ir-representation-index-empty)))))
+
+(define (opt-guard-dedup-run
+  [summaries : compiler_optimize.OptLoopBceSummaries]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (match (compiler_optimize.opt-guard-dedup-final-sweep
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    summaries
+    (opt-guard-dedup-fn blocks))
+    [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ out) out]))
+
+;; Branches whose condition is already a literal: what retirement leaves for
+;; `opt-cfg-fold-branch` below to turn into a jump.
+(define (opt-guard-dedup-count-literal-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
+  (let
+    [count : i64
+      (compiler_ir_types.compiler-ir-instr-seq-count
+        (compiler_optimize.compiler-opt-global-shared-view instrs))]
+    [index : i64 0]
+    [found : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler_ir_types.compiler-ir-instr-seq-ref
+            (compiler_optimize.compiler-opt-global-shared-view instrs)
+            index)
+            [(compiler_ir_types.CompilerIrInstr.Branch value _ _)
+              (match value
+                [(compiler_ir_types.CompilerIrValue.Bool _)
+                  (set! found (+ found 1))]
+                [_ unit])]
+            [_ unit])
+          (set! index (+ index 1))))
+      found)))
+
+(define (opt-guard-dedup-count-literal
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match (compiler_optimize.compiler-opt-global-shared-view blocks)
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (+
+        (match (compiler_optimize.compiler-opt-global-shared-view block)
+          [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+            (opt-guard-dedup-count-literal-seq
+              (compiler_optimize.compiler-opt-global-shared-view instrs))])
+        (opt-guard-dedup-count-literal
+          (compiler_optimize.compiler-opt-box-shared-view rest)))]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-guard-dedup-count-literal
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
+
+;; The instruction that sits between the moved pair and the re-derivation the
+;; CSE wants to retire: nothing (0), a store (1), a call with no summary row
+;; (2), and a call whose row proves it writes nothing (3).
+(define (opt-guard-dedup-extra [kind : i64] [callee : i64]) : compiler_ir_types.CompilerIrInstr
+  (cond
+    [(= kind 1)
+      (compiler_ir_types.CompilerIrInstr.StorePtr
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.I64))]
+    [(or (= kind 2) (= kind 3))
+      (compiler_ir_types.CompilerIrInstr.Call
+        19
+        callee
+        (compiler_ir_types.CompilerIrCallArgs.Nil)
+        (compiler_ast_types.AstType.I64))]
+    [else
+      (compiler_ir_types.CompilerIrInstr.Mov
+        19
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.I64))]))
+
+;; `it-hash-words` in miniature: a guarded arm whose descriptor word the join --
+;; reachable around the arm on the bypass edge -- re-derives for its own guard.
+(define (opt-guard-dedup-pre-blocks [kind : i64] [callee : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "arm")
+          (compiler_ir_types.compiler-ir-label "join"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "arm")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Gep
+            10
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Load
+            11
+            (compiler_ir_types.CompilerIrValue.Var 10)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            12
+            (compiler_ir_types.CompilerIrBinOp.Le)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.Var 11)
+            (compiler_ast_types.AstType.U64))
+          (opt-guard-dedup-extra kind callee)
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 12)
+            (compiler_ir_types.compiler-ir-label "mid")
+            (compiler_ir_types.compiler-ir-label "join"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "mid")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "join"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "join")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Gep
+                13
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Load
+                14
+                (compiler_ir_types.CompilerIrValue.Var 13)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                15
+                (compiler_ir_types.CompilerIrBinOp.Le)
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.CompilerIrValue.Var 14)
+                (compiler_ast_types.AstType.U64))
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 15)
+                (compiler_ir_types.compiler-ir-label "fast")
+                (compiler_ir_types.compiler-ir-label "slow"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "fast")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 14)))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "slow")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.I64 0)))))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+;; A two-conjunct chain below a dominating branch on the first conjunct's
+;; condition. `both?` decides whether the SECOND conjunct is also decided.
+(define (opt-guard-dedup-chain-blocks [both? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          10
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 10)
+          (compiler_ir_types.compiler-ir-label "mid")
+          (compiler_ir_types.compiler-ir-label "exit"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "mid")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            11
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.I64 8)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 11)
+            (compiler_ir_types.compiler-ir-label "c0")
+            (compiler_ir_types.compiler-ir-label "exit"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "c0")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              12
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 12)
+              (compiler_ir_types.compiler-ir-label "c1")
+              (compiler_ir_types.compiler-ir-label "slow"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "c1")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                13
+                (compiler_ir_types.CompilerIrBinOp.Lt)
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.CompilerIrValue.I64
+                  (if both?
+                    8
+                    9))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 13)
+                (compiler_ir_types.compiler-ir-label "fast")
+                (compiler_ir_types.compiler-ir-label "slow"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "fast")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.I64 1)))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "slow")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.I64 0)))))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "exit")
+                  (opt-test-instrs
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.I64 2)))))
+                (compiler_ir_types.CompilerIrBlockList.Nil)))))))))
+
+;; The same condition on the branch's FALSE side: a sibling, not a dominated
+;; re-test, and nothing is decided there.
+(define (opt-guard-dedup-sibling-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          10
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 10)
+          (compiler_ir_types.compiler-ir-label "taken")
+          (compiler_ir_types.compiler-ir-label "sibling"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "taken")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.I64 1)))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "sibling")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              11
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 11)
+              (compiler_ir_types.compiler-ir-label "x")
+              (compiler_ir_types.compiler-ir-label "y"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "x")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 2)))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "y")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.I64 3)))))
+            (compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (compiler-optimize-guard-dedup-self-test) : i64
+  (let
+    [callee : i64 (opt-test-symbol "guard_dedup_callee")]
+    [clean : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-dedup-run
+        (opt-guard-dedup-summaries callee false 0)
+        (opt-guard-dedup-pre-blocks 0 callee))]
+    [stored : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-dedup-run
+        (opt-guard-dedup-summaries callee false 0)
+        (opt-guard-dedup-pre-blocks 1 callee))]
+    [unknown-call : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-dedup-run
+        (opt-guard-dedup-summaries callee false 0)
+        (opt-guard-dedup-pre-blocks 2 callee))]
+    [writing-call : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-dedup-run
+        (opt-guard-dedup-summaries
+          callee
+          true
+          (compiler_optimize.opt-call-memory-global-bit))
+        (opt-guard-dedup-pre-blocks 3 callee))]
+    [clean-call : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-dedup-run
+        (opt-guard-dedup-summaries callee true 0)
+        (opt-guard-dedup-pre-blocks 3 callee))]
+    [whole-chain : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-dedup-run
+        (opt-guard-dedup-summaries callee false 0)
+        (opt-guard-dedup-chain-blocks true))]
+    [partial-chain : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-dedup-run
+        (opt-guard-dedup-summaries callee false 0)
+        (opt-guard-dedup-chain-blocks false))]
+    [sibling : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-dedup-run
+        (opt-guard-dedup-summaries callee false 0)
+        (opt-guard-dedup-sibling-blocks))]
+    (cond
+      ;; (1) The bypass shape: the arm's descriptor pair moves to the guard
+      ;; block the bypass edge leaves, and the join stops re-deriving it.
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              (compiler_optimize.compiler-opt-global-shared-view clean)
+              (compiler_ir_types.compiler-ir-label "entry"))
+            1))
+        1]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              (compiler_optimize.compiler-opt-global-shared-view clean)
+              (compiler_ir_types.compiler-ir-label "arm"))
+            0))
+        2]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              (compiler_optimize.compiler-opt-global-shared-view clean)
+              (compiler_ir_types.compiler-ir-label "join"))
+            0))
+        3]
+      [(not
+          (=
+            (opt-count-load-blocks
+              (compiler_optimize.compiler-opt-global-shared-view clean))
+            1))
+        4]
+      ;; A store between the surviving definition and the re-derivation refuses
+      ;; the CSE, and with it the hoist that only pays for it.
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              (compiler_optimize.compiler-opt-global-shared-view stored)
+              (compiler_ir_types.compiler-ir-label "arm"))
+            1))
+        5]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              (compiler_optimize.compiler-opt-global-shared-view stored)
+              (compiler_ir_types.compiler-ir-label "join"))
+            1))
+        6]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              (compiler_optimize.compiler-opt-global-shared-view stored)
+              (compiler_ir_types.compiler-ir-label "entry"))
+            0))
+        7]
+      ;; A call with no summary row is an unknown write.
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              (compiler_optimize.compiler-opt-global-shared-view unknown-call)
+              (compiler_ir_types.compiler-ir-label "join"))
+            1))
+        8]
+      ;; A call whose row says it writes a global cell is a write too.
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              (compiler_optimize.compiler-opt-global-shared-view writing-call)
+              (compiler_ir_types.compiler-ir-label "join"))
+            1))
+        9]
+      ;; A call whose row proves it writes nothing does not stop the CSE.
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              (compiler_optimize.compiler-opt-global-shared-view clean-call)
+              (compiler_ir_types.compiler-ir-label "join"))
+            0))
+        10]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              (compiler_optimize.compiler-opt-global-shared-view clean-call)
+              (compiler_ir_types.compiler-ir-label "entry"))
+            1))
+        11]
+      ;; (2) All-or-nothing: both conjuncts decided retires both conditions.
+      [(not
+          (=
+            (opt-guard-dedup-count-literal
+              (compiler_optimize.compiler-opt-global-shared-view whole-chain))
+            2))
+        12]
+      ;; One conjunct decided and one not retires NEITHER.
+      [(not
+          (=
+            (opt-guard-dedup-count-literal
+              (compiler_optimize.compiler-opt-global-shared-view partial-chain))
+            0))
+        13]
+      ;; An equal condition on the dominating branch's FALSE side is a sibling,
+      ;; not a decided re-test.
+      [(not
+          (=
+            (opt-guard-dedup-count-literal
+              (compiler_optimize.compiler-opt-global-shared-view sibling))
+            0))
+        14]
+      [else 42])))
+
+(test
+  guard-dedup-below-fixpoint
+  (test.assert-i64-eq
+    (compiler-optimize-guard-dedup-self-test)
+    42
+    "IT-2 moves a guarded arm's descriptor pair onto the bypass edge and retires the join's re-derivation, refuses that CSE across a store, an unsummarized call and a call whose row writes a global cell, admits it across a callee proven to write nothing, and retires a conjunct chain only when EVERY conjunct is decided by a dominating branch's taken edge"))

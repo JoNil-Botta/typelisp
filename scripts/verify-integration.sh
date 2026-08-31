@@ -1742,6 +1742,10 @@ run_linux_program_fixture() {
     _want=$3
     _opt_level=$4
     _stdout_spec=${5:--}
+    # Space-separated runtime arguments, so a fixture whose shape has to stay
+    # opaque to constant folding can take its sizes from argv and still be run
+    # at more than one optimization level.
+    _run_args=${6:-}
     _dir="$WORKDIR/$_label"
     mkdir -p "$_dir"
     _asm="$_dir/$_label.s"
@@ -1773,7 +1777,9 @@ run_linux_program_fixture() {
         exit 1
     fi
     set +e
-    "$_bin" > "$_stdout" 2> "$_stderr"
+    # Deliberately unquoted: the runner's own space-separated argument list.
+    # shellcheck disable=SC2086
+    "$_bin" $_run_args > "$_stdout" 2> "$_stderr"
     _got=$?
     set -e
     assert_program_fixture_result \
@@ -2069,6 +2075,57 @@ run_linux_backend_fixtures() {
         tests/integration/gep_fold_ordinal_store_pair_clone.tl \
         42 \
         2
+    # IT-2: the two-loop hash whose tail guard re-derives the slice descriptor
+    # on the bypass edge around the first loop, at every level -- the PRE and
+    # the CSE that completes it run only at opt2, so the opt0 and opt1 rows are
+    # the parity reference the opt2 row is checked against. The rows below are
+    # the same corpus with the container REBOUND between the two loops: the
+    # write refuses the CSE and both guards survive. Its OOB span is a manifest
+    # row (`guard_dedup_mutated_slice_abort`) rather than a row here, because
+    # this runner's assertion requires an EMPTY stderr and an abort writes its
+    # location to it.
+    run_linux_program_fixture \
+        guard-dedup-bypass-descriptor-opt0 \
+        tests/integration/guard_dedup_bypass_descriptor.tl \
+        42 \
+        0 \
+        '-5915004525821994045\n' \
+        24
+    run_linux_program_fixture \
+        guard-dedup-bypass-descriptor-opt1 \
+        tests/integration/guard_dedup_bypass_descriptor.tl \
+        42 \
+        1 \
+        '-5915004525821994045\n' \
+        24
+    run_linux_program_fixture \
+        guard-dedup-bypass-descriptor-opt2 \
+        tests/integration/guard_dedup_bypass_descriptor.tl \
+        42 \
+        2 \
+        '-5915004525821994045\n' \
+        24
+    run_linux_program_fixture \
+        guard-dedup-mutated-slice-opt0 \
+        tests/integration/guard_dedup_mutated_slice.tl \
+        42 \
+        0 \
+        '172085089044\n' \
+        '20 0'
+    run_linux_program_fixture \
+        guard-dedup-mutated-slice-opt1 \
+        tests/integration/guard_dedup_mutated_slice.tl \
+        42 \
+        1 \
+        '172085089044\n' \
+        '20 0'
+    run_linux_program_fixture \
+        guard-dedup-mutated-slice-opt2 \
+        tests/integration/guard_dedup_mutated_slice.tl \
+        42 \
+        2 \
+        '172085089044\n' \
+        '20 0'
     # IAG-1: the inline shape at every level, so a fold or copy that is only
     # reachable at one optimization level cannot regress unnoticed.
     run_linux_program_fixture \

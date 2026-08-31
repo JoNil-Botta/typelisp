@@ -20898,10 +20898,15 @@
           (opt-inline-chain-callee callee-name wide 128)))
       0)))
 
-;; One block past the backstop and the same body stays out of line. Nothing but
-;; the backstop refuses it: the reference class, the arity, the site and the
-;; call-free body are all what the fixture above uses.
-(define (compiler-optimize-inline-single-site-size-cap-refusal-ok?) : bool
+;; One block past the backstop the same body is absorbed anyway, because the
+;; sole-call tier answers first and carries no block cap: the body is ACYCLIC
+;; and the site is straight-line, which is the whole of that tier's admission.
+;; This fixture asserted a refusal until the sole-call tier landed; the
+;; backstop it was testing still governs the arity/frame-tax band, which is
+;; what compiler-optimize-inline-sole-call-cyclic-refusal-ok? now pins -- a
+;; body one block past the backstop that the sole-call tier will not take
+;; because it carries a back edge.
+(define (compiler-optimize-inline-sole-call-past-backstop-absorb-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
@@ -20911,7 +20916,7 @@
         (opt-inline-wide-two-function-optimized
           (opt-inline-wide-cold-caller symbols.main callee-name wide)
           (opt-inline-chain-callee callee-name wide 129)))
-      1)))
+      0)))
 
 ;; A one-parameter, one-block, three-reference leaf: too many references to be
 ;; absorbable, small enough that the ordinary cost model admits it (1
@@ -21217,6 +21222,415 @@
           (compiler_optimize.compiler-opt-global-shared-view optimized)
           "inline_nonleaf"
           "inline_switch")))))
+
+;; --- sole-call absorption ---------------------------------------------------
+;;
+;; The tier under test admits a callee with exactly one static reference at a
+;; STRAIGHT-LINE site when the callee's body is ACYCLIC, with no arity floor,
+;; no body-size ceiling and no block ceiling -- LLVM's `isSoleCallToLocalFunction`
+;; rule with the one structural refusal the measurement demanded. Every fixture
+;; below builds the same program and varies exactly one thing.
+;;
+;; The leaf is `opt-inline-chain-callee`: bounds-free, call-free, acyclic, and
+;; eighty blocks -- past the cost model's 32-block fuel, past the branch-chain
+;; gate's 64 and past the measured tier's 64, so nothing else in this file can
+;; admit it at either site; the hot-loop-leaf gate wants a cyclic body. At
+;; three parameters the arity/frame-tax band is out too, so whatever these
+;; fixtures admit was admitted by opt-inline-sole-call-absorb-ok? and by
+;; nothing else.
+(define (opt-inline-sole-call-params) : i64
+  3)
+
+(define (opt-inline-sole-call-blocks) : i64
+  80)
+
+(define (opt-inline-sole-call-leaf [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-inline-chain-callee
+    callee-name
+    (opt-inline-sole-call-params)
+    (opt-inline-sole-call-blocks)))
+
+;; The identical chain with ONE back edge: the last chain block branches to
+;; `chain_0` instead of falling into the exit. Same parameters, same block
+;; count, same instruction shapes -- the back edge is the only difference, so a
+;; verdict that changes between this leaf and the one above changed on the
+;; cycle and on nothing else.
+(define (opt-inline-sole-call-cyclic-leaf [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [blocks : i64 (opt-inline-sole-call-blocks)]
+    (compiler_ir_types.CompilerIrFunction.Function
+      callee-name
+      (opt-inline-wide-params (opt-inline-sole-call-params))
+      (compiler_ast_types.AstType.I64)
+      (opt-inline-sole-call-params)
+      (opt-inline-chain-blocks
+        0
+        (- blocks 2)
+        (compiler_ir_types.compiler-ir-label "chain_latch")
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "chain_latch")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (opt-inline-chain-block-label 0)
+                (opt-inline-chain-exit-label))))
+          (opt-inline-chain-exit-block))))))
+
+;; The same acyclic chain leaf with a call to itself in its first block. The
+;; census counts that self-reference, so the callee carries two references and
+;; is not class 1 -- which is exactly why the tier needs no separate recursion
+;; clause.
+(define (opt-inline-sole-call-self-recursive-leaf [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [params : i64 (opt-inline-sole-call-params)]
+    (compiler_ir_types.CompilerIrFunction.Function
+      callee-name
+      (opt-inline-wide-params params)
+      (compiler_ast_types.AstType.I64)
+      (+ params 1)
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "self_entry")
+          (opt-test-instrs
+            (opt-inline-wide-call callee-name params params)
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (opt-inline-chain-block-label 0))))
+        (opt-inline-chain-blocks
+          0
+          (- (opt-inline-sole-call-blocks) 1)
+          (opt-inline-chain-exit-label)
+          (opt-inline-chain-exit-block))))))
+
+;; A straight-line caller at the tier's arity, one block, one call.
+;; The same acyclic chain leaf with an `__sret` first parameter, which is what
+;; makes the clone stage its arguments. Nothing else about the body changes.
+(define (opt-inline-sole-call-sret-leaf [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    callee-name
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "__sret"
+        (compiler_ast_types.AstType.I64)
+        0)
+      (opt-inline-wide-params-from 1 (opt-inline-sole-call-params)))
+    (compiler_ast_types.AstType.I64)
+    (opt-inline-sole-call-params)
+    (opt-inline-chain-blocks
+      0
+      (- (opt-inline-sole-call-blocks) 1)
+      (opt-inline-chain-exit-label)
+      (opt-inline-chain-exit-block))))
+
+(define (opt-inline-sole-call-caller [func-name : i64] [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-inline-wide-cold-caller
+    func-name
+    callee-name
+    (opt-inline-sole-call-params)))
+
+;; The same caller with the callee's address taken first, and nothing else
+;; changed.
+(define (opt-inline-sole-call-address-taken-caller
+  [func-name : i64]
+  [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    5
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Mov
+            4
+            (compiler_ir_types.CompilerIrValue.Function callee-name)
+            (compiler_ast_types.AstType.I64))
+          (opt-inline-wide-call callee-name (opt-inline-sole-call-params) 3)
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 3)))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; The same caller with the call inside a natural loop: entry -> header ->
+;; {body -> latch -> header, exit}, the call in `body`.
+(define (opt-inline-sole-call-loop-caller [func-name : i64] [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    6
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-inline-loop-site-entry-instrs))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "header")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Phi
+              4
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.compiler-ir-label "entry")
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var 5)
+                  (compiler_ir_types.compiler-ir-label "latch")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.compiler-ir-label "body")
+              (compiler_ir_types.compiler-ir-label "exit"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "body")
+            (opt-test-instrs
+              (opt-inline-wide-call callee-name (opt-inline-sole-call-params) 5)
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "latch"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "latch")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "header"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "exit")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 4)))))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+;; The headline case: three parameters, forty blocks, one straight-line site.
+;; The arity floor refuses it, the cost model's block fuel refuses it, and the
+;; sole-call tier takes it anyway -- the body MOVES, so there is no growth to
+;; budget and no marshalling threshold to clear.
+(define (compiler-optimize-inline-sole-call-narrow-absorb-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
+      (opt-inline-wide-two-function-optimized
+        (opt-inline-sole-call-caller symbols.main callee-name)
+        (opt-inline-sole-call-leaf callee-name))]
+    (match (compiler_optimize.opt-function-seq-find
+      (compiler_optimize.compiler-opt-global-shared-view optimized)
+      "main")
+      [(compiler_optimize.OptMaybeFunction.Some main)
+        (let
+          [blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-function-blocks
+              (compiler_optimize.compiler-opt-global-shared-view main))]
+          (and
+            (=
+              (opt-count-direct-call-name-blocks
+                (compiler_ir_types.compiler-ir-global-shared-view blocks)
+                "inline_switch")
+              0)
+            (compiler_optimize.opt-inline-structure-ok? blocks)))]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
+;; The one structural refusal the corpus demanded. The identical leaf with a
+;; single back edge stays out of line: a loop-carrying body absorbed into a
+;; caller compounds the pressure the caller's own regions already carry, and
+;; every measured absorption of that shape lost -- cfg-idom-iterate and
+;; cfg-stamp-euler into cfg-function +24.5M, cfg-loop-body and
+;; cfg-loop-preheader into cfg-natural-loops +36.5M, gvn-scan-ints into
+;; gvn-bench +23.0M, ls-scan-comment-end and ls-scan-str-end into ls-tokenize
+;; +8.4M. See the header above opt-inline-sole-call-pressure-ok?.
+(define (compiler-optimize-inline-sole-call-cyclic-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    (=
+      (opt-inline-wide-remaining-calls
+        (opt-inline-wide-two-function-optimized
+          (opt-inline-sole-call-caller symbols.main callee-name)
+          (opt-inline-sole-call-cyclic-leaf callee-name)))
+      1)))
+
+;; The same acyclic leaf at an IN-LOOP site stays out too. An absorption there
+;; lands the whole body inside a region the caller's allocator already prices,
+;; which is the half of the measurement the acyclic clause does not cover:
+;; ls-tokenize's in-loop imports cost lex_source +5.7M with the acyclic clause
+;; alone, and nothing with this one.
+(define (compiler-optimize-inline-sole-call-loop-site-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    (=
+      (opt-inline-wide-remaining-calls
+        (opt-inline-wide-two-function-optimized
+          (opt-inline-sole-call-loop-caller symbols.main callee-name)
+          (opt-inline-sole-call-leaf callee-name)))
+      1)))
+
+;; Two references is not a sole call. The identical leaf reached from two
+;; straight-line sites keeps its body at both: this tier moves, it never copies.
+(define (compiler-optimize-inline-sole-call-two-reference-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
+      (opt-inline-wide-optimized
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-inline-sole-call-caller symbols.main callee-name)
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-inline-sole-call-caller symbols.inline-loop callee-name)
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (opt-inline-sole-call-leaf callee-name)
+              (compiler_ir_types.compiler-ir-function-seq-empty)))))]
+    (and
+      (=
+        (opt-inline-wide-remaining-calls
+          (compiler_optimize.compiler-opt-global-shared-view optimized))
+        1)
+      (=
+        (opt-count-direct-call-name-function-seq
+          (compiler_optimize.compiler-opt-global-shared-view optimized)
+          "inline_loop"
+          "inline_switch")
+        1))))
+
+;; An address-taken callee is refused at one call site: the address is a second
+;; way in, so the body cannot move and the function cannot be pruned.
+(define (compiler-optimize-inline-sole-call-address-taken-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    (=
+      (opt-inline-wide-remaining-calls
+        (opt-inline-wide-two-function-optimized
+          (opt-inline-sole-call-address-taken-caller symbols.main callee-name)
+          (opt-inline-sole-call-leaf callee-name)))
+      1)))
+
+;; A directly recursive callee is refused with no clause of its own: its own
+;; call is a second static reference, so the census never calls it class 1.
+(define (compiler-optimize-inline-sole-call-self-recursive-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    (=
+      (opt-inline-wide-remaining-calls
+        (opt-inline-wide-two-function-optimized
+          (opt-inline-sole-call-caller symbols.main callee-name)
+          (opt-inline-sole-call-self-recursive-leaf callee-name)))
+      1)))
+
+;; A callee with no body in the program's function sequence -- which is exactly
+;; what an extern is, since externs live in their own sequence and the inliner
+;; walks only functions -- keeps its call. The census resolves no slot, so the
+;; reference count is 0 and the absorb class is 0.
+(define (compiler-optimize-inline-sole-call-extern-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    (=
+      (opt-inline-wide-remaining-calls
+        (opt-inline-wide-optimized
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-inline-sole-call-caller symbols.main symbols.inline-switch)
+            (compiler_ir_types.compiler-ir-function-seq-empty))))
+      1)))
+
+;; The middle link: a straight-line, single-site, multiblock caller that itself
+;; calls the acyclic leaf, at the tier's arity and with an acyclic body of its
+;; own.
+;; The fail-closed staged-argument refusal. The identical leaf with an `__sret`
+;; parameter stays out of line: the clone's staged path is where the recorded
+;; wrong-code reproducer lives (see the note under
+;; opt-inline-sole-call-absorb-ok?), so this tier does not go there. A callee
+;; that writes its own parameter slots is refused by the same clause.
+(define (compiler-optimize-inline-sole-call-staged-args-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    (=
+      (opt-inline-wide-remaining-calls
+        (opt-inline-wide-two-function-optimized
+          (opt-inline-sole-call-caller symbols.main callee-name)
+          (opt-inline-sole-call-sret-leaf callee-name)))
+      1)))
+
+(define (opt-inline-sole-call-middle [func-name : i64] [leaf-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [params : i64 (opt-inline-sole-call-params)]
+    (compiler_ir_types.CompilerIrFunction.Function
+      func-name
+      (opt-inline-wide-params params)
+      (compiler_ast_types.AstType.I64)
+      (+ params 1)
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (opt-test-instrs
+            (opt-inline-wide-call leaf-name params params)
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "exit"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var params)))))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+;; Two-level absorption: `main` calls the middle function, which calls the leaf.
+;; SCC order rewrites the leaf's caller before the caller's caller, so the leaf
+;; lands in the middle function first and the MERGED middle function is what
+;; `main` then absorbs -- both boundaries gone in one pass, with the middle
+;; function's phi predecessors renamed twice.
+;;
+;; Reported as one number so the achieved depth stays visible when it changes:
+;; ten times the calls to the middle function still in `main`, plus the calls to
+;; the leaf still anywhere, plus one hundred if the merged `main` fails the
+;; structural check that the pred renames and cloned labels are consistent. 0 is
+;; the full two-level cascade with a well-formed result.
+(define (compiler-optimize-inline-sole-call-cascade-depth-code) : i64
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [leaf-name : i64 symbols.inline-switch]
+    [mid-name : i64 symbols.inline-nonleaf]
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
+      (opt-inline-wide-optimized
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-inline-sole-call-caller symbols.main mid-name)
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-inline-sole-call-middle mid-name leaf-name)
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (opt-inline-sole-call-leaf leaf-name)
+              (compiler_ir_types.compiler-ir-function-seq-empty)))))]
+    [structure-penalty : i64
+      (match (compiler_optimize.opt-function-seq-find
+        (compiler_optimize.compiler-opt-global-shared-view optimized)
+        "main")
+        [(compiler_optimize.OptMaybeFunction.Some main)
+          (if (compiler_optimize.opt-inline-structure-ok?
+            (compiler_optimize.opt-function-blocks
+              (compiler_optimize.compiler-opt-global-shared-view main)))
+            0
+            100)]
+        [(compiler_optimize.OptMaybeFunction.No) 100])]
+    (+
+      structure-penalty
+      (+
+        (*
+          10
+          (opt-count-direct-call-name-function-seq
+            (compiler_optimize.compiler-opt-global-shared-view optimized)
+            "main"
+            "inline_nonleaf"))
+        (+
+          (opt-inline-wide-remaining-calls
+            (compiler_optimize.compiler-opt-global-shared-view optimized))
+          (opt-count-direct-call-name-function-seq
+            (compiler_optimize.compiler-opt-global-shared-view optimized)
+            "inline_nonleaf"
+            "inline_switch"))))))
 
 ;; --- shared acyclic accessor admission --------------------------------------
 ;;

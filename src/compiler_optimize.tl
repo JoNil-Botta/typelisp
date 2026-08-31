@@ -117821,8 +117821,182 @@
       (or (not has-bounds?) (opt-inline-bounds-loop-cascade-safe?))
       (opt-inline-blocks-call-free? blocks))))
 
+;; --- sole-call absorption ---------------------------------------------------
+;;
+;; The band above prices a single-reference callee against the boundary it
+;; retires, and asks for a WIDE boundary (>= 8 parameters) or an in-loop site,
+;; plus a call-free body at a straight-line site and a 1024/128 backstop. Every
+;; one of those clauses is a measured refusal, and every one was measured
+;; against an allocator whose per-value intervals came from a CONSERVATIVE
+;; LOOP-CARRY HULL.
+;;
+;; This tier states the other half of the same fact, the half LLVM states as
+;; `isSoleCallToLocalFunction` (InlineCost.cpp:1250-1254, applied in
+;; `updateThreshold` :2074-2204 with a 15000 LastCallToStaticBonus against a
+;; 225 threshold, so a sole call to an internal function is inlined at ANY
+;; size): absorbing the ONLY reference to a function DELETES the function. The
+;; body is MOVED, not copied, and opt-prune-unreachable-program drops the
+;; original, so the program-size ledger is net-negative by construction and no
+;; growth budget is the right thing to ask. What is left to price is not size
+;; but PRESSURE -- whether the merged body's live values fit the pool.
+;;
+;; So this tier drops the arity floor, the body ceiling and the block ceiling
+;; outright, and carries exactly two clauses, both of them pressure clauses,
+;; both measured on the corpus after LP-1 landed edge-precise intervals:
+;;
+;;   1. the callee's body is ACYCLIC, and
+;;   2. the site is not inside a natural loop of the caller.
+;;
+;; Together they say: the merged body gains no loop the caller did not already
+;; have, and gains nothing inside a loop the caller already has. Everything the
+;; corpus measured as a loss violates one of the two, and everything it
+;; measured as a win satisfies both.
+;;
+;; What clause 1 refuses, with the per-absorption numbers (callgrind, per
+;; function, against tl-i3base):
+;;   cfg-idom-iterate (236 instructions, 40 blocks) and cfg-stamp-euler
+;;     (207, 16) into cfg-function: the trio 212.8M -> 237.3M, +24.5M;
+;;   cfg-loop-body (201, 22) and cfg-loop-preheader (177, 30) into
+;;     cfg-natural-loops: the trio 74.2M -> 110.7M, +36.5M;
+;;   cfg-build-csr (353, 13) and cfg-build-euler-tree (277, 37) into the
+;;     already-merged cfg-function: 390.6M -> 415.9M, +25.2M;
+;;   gvn-scan-ints (233, 69) into gvn-bench: 51.6M -> 74.7M, +23.0M;
+;;   ls-scan-comment-end (37, 10) and ls-scan-str-end (56, 16) into
+;;     ls-tokenize: +8.4M on the row;
+;;   it-count-lines (34, 7) and it-index-lines (64, 7) into it-bench: +67.4M
+;;     on the row.
+;; That is the nine-helper absorption target of the phase-3 cfg report,
+;; measured on the post-LP-1 allocator and rejected by it: the report's
+;; argument was that the helpers absorb SEQUENTIALLY into cfg-function and
+;; their descriptors die at each helper's last loop, so only the conservative
+;; hull made them look simultaneously live. Edge-precise intervals landed and
+;; the absorptions still cost +89.2M on the row (+16.0%). The residue is not
+;; interval precision; it is that each imported loop adds its own working set
+;; to a function whose CSR set, frame and spill weights are chosen once for the
+;; whole body.
+;;
+;; What clause 2 refuses: the same acyclic bodies at in-loop sites.
+;; ls-tokenize's imports (ls-apostrophe-char-end 164/46, ls-negative-number-
+;; start? 38/5, ls-number-float? 6/3) cost lex_source +5.7M with clause 1
+;; alone; with clause 2 the row is flat. It costs pl-run-chunk <- pl-pair-action
+;; (-5.0M) and crc-bench <- crc-update (-0.7M), and the corpus is still ahead:
+;; the two-clause rule nets -14.9M against clause 1's -12.8M, with no row up.
+;;
+;; What the rule ADMITS, which nothing in this file admitted before:
+;;   gvn-kinds-invalidate-def (60 instructions, 16 blocks, ONE parameter, and
+;;     it makes calls) into gvn-kinds-step: 83.6M -> 72.8M, -10.9M. The arity
+;;     floor refused it on one parameter and the frame-tax clause refused it a
+;;     second time on its calls;
+;;   gvn-survives-location? (112, 21, six parameters, makes calls) into
+;;     gvn-survives-store?: -3.1M;
+;;   peephole_lines' straight-line predicate chain (pl-mnemonic-call? 214/75,
+;;     pl-redundant-zext? 222/69, pl-suffix-abort? 191/63, pl-access-width
+;;     74/23, pl-rsp-displacement 9/5), -0.9M net on the row.
+;; Rows: gvn_table -13,994,382 (-1.810%), peephole_lines -904,124 (-0.210%),
+;; nineteen rows within 8 Ir, opt1 self-compile 88,402,050,506 ->
+;; 86,714,041,228 (-1.910%).
+;;
+;; Ordering. This tier is asked BEFORE the size-band clauses because within one
+;; SCC pass the callees of an SCC are rewritten before their callers
+;; (opt-inline-process-scc-order!, reverse-topological), so a helper that has
+;; itself just absorbed its own sole-call callees is presented to its caller at
+;; its MERGED size. Testing the sole call first is what keeps that chain from
+;; being cut by a band whose budget the merged size has already spent.
+;;
+;; The heavy gate stays, shared with the band below. It is not a growth budget:
+;; past it every whole-function transform downstream refuses the caller
+;; outright, so absorbing across it would trade one call boundary for a whole
+;; optimizer pass.
+;;
+;; TailCall sites are not absorbed. The multiblock rewrite matches
+;; ir.CompilerIrInstr.Call only, so a callee reached in tail position -- the
+;; measured case is cfg-natural-loops, tail-called from cfg-function -- keeps
+;; its boundary. Extending the rewrite to tail position is a separate change to
+;; the clone plumbing, not an admission clause, and clause 1 would refuse
+;; cfg-natural-loops anyway.
+;;
+;; No raw-size cap. The staged ladder measured 64 / 256 / 512 / 1024 /
+;; unlimited under this rule: only peephole_lines moves, and it moves smoothly
+;; rather than at a threshold, because the cost is the CALLER's growth and not
+;; the callee's size. pl-parse-line takes pl-mnemonic-call? at 256 for
+;; -910,630; adding pl-movq-prefix? (337) and pl-cmp-or-test? (410) at 512
+;; leaves -257,652; adding pl-single-dest? (708) leaves +770, the caller having
+;; gone from 127 blocks to 249. A cap anywhere in that range buys at most
+;; 910,630 Ir on one row and states nothing true about the transformation, so
+;; the tier ships without one and the caller-growth question is left to the
+;; heavy gate, where it belongs.
+;;
+;; The structural form of that same question -- a per-caller block fuel for this
+;; tier, which is what the hot-loop-leaf (32), branch-chain (128) and shared-
+;; accessor (160) tiers each carry -- was measured too and is WORSE than either:
+;; at 128 blocks peephole_lines is +503,522, because a per-caller budget admits
+;; whatever prefix of the caller's sites the walk reaches first rather than the
+;; subset that pays. A budget that picks its members by walk order is not a
+;; statement about the program, so none ships.
+;; The two pressure clauses, ordered so the free one runs first: the site
+;; question reads memoized caller facts, and a straight-line answer is needed
+;; before the scan over the callee's blocks is worth paying for. The acyclic
+;; scan runs in the inliner's scratch arena and rewinds it, so a refused
+;; candidate leaves no allocation behind.
+(define (opt-inline-sole-call-pressure-ok? [blocks : ir.CompilerIrBlockList]) : bool
+  (and
+    (not (opt-inline-bounds-loop-site-in-loop?))
+    (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)))
+
+;; Class 1 is exactly the LLVM predicate: one static reference (a self-call
+;; would be a second, so a directly recursive callee is never class 1), not
+;; address-taken, not `main`, and not the caller itself -- see
+;; opt-inline-census-absorb-class. An extern has no entry in the program's
+;; function sequence, so the census resolves no slot for it and its class is 0.
+;; The staged-argument clause is the fail-closed refusal documented under this
+;; function; the clauses shared with the band below live in
+;; opt-inline-single-site-absorb-ok?.
+(define (opt-inline-sole-call-absorb-ok?
+  [absorb-class : i64]
+  [stage-args? : bool]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (and
+    (= absorb-class 1)
+    (not stage-args?)
+    (opt-inline-sole-call-pressure-ok? blocks)))
+
+;; --- why the staged-argument clause above is FAIL-CLOSED, not a cost rule ---
+;;
+;; `stage-args?` is true when the callee writes its own parameter slots
+;; (opt-inline-param-mutating-blocks?) or returns through an sret pointer
+;; (opt-inline-params-have-sret?). Both make the clone stage the arguments into
+;; fresh slots before the body runs. Every band above reaches that path only at
+;; shapes it has separately bounded; this tier, admitting at any size and any
+;; arity, is the first thing in the file that reaches it for a CALL-CARRYING
+;; body at a STRAIGHT-LINE site, and that combination produces WRONG CODE.
+;;
+;; The reproducer, recorded here because the defect is not in this file and
+;; outlives this tier. Build a compiler with this tier and no staged-argument
+;; clause, have it compile src/main.tl at --opt-level 2, assemble and link that
+;; assembly, and ask the result to compile ANY program at --opt-level 2: it
+;; aborts with "tl: array index out of bounds", raised from
+;; opt-gep-split-seed-params! indexing `defs[var]` past the `frame` the caller
+;; sized from the function's var count. Bisecting the tier by the callee's
+;; block count puts the boundary at exactly 15 blocks (a cap of 14 passes, 15
+;; fails), and excluding one leaf by name isolates it completely:
+;; `opt-bce-version-function-with-context-result` -- 15 blocks, acyclic,
+;; call-carrying, and returning the two-field `OptFunctionCtxResult` through an
+;; sret pointer -- absorbed into its sole caller
+;; `optimize-function-once-with-summaries`, whose result the caller then reads
+;; through two separate shared views. Excluding either of the other two 15-block
+;; leaves absorbed at the same cap changes nothing.
+;;
+;; So the clause is not "staged arguments do not pay". It is "the clone's staged
+;; path is not proven at this tier's shapes, so this tier does not go there".
+;; It costs the corpus NOTHING measurable -- all twenty-one rows carry the same
+;; instruction count with and without it, gvn_table -13,994,382 and
+;; peephole_lines -904,124 either way
+;; -- because the bodies this tier profits from return scalars and leave their
+;; parameters alone. Removing it must wait for the underlying defect to be found
+;; and fixed, and re-measuring it is a one-line change plus the reproducer above.
 (define (opt-inline-single-site-absorb-ok?
   [absorb-class : i64]
+  [stage-args? : bool]
   [has-bounds? : bool]
   [param-count : i64]
   [callee-instrs : i64]
@@ -117832,23 +118006,30 @@
   [added-so-far : i64]) : bool
   (and
     (= absorb-class 1)
-    (opt-inline-single-site-arity-ok?
-      param-count
-      callee-instrs
-      (compiler-opt-global-shared-view blocks))
-    (<= callee-instrs (opt-inline-single-site-max-body))
-    (<=
-      (ir.compiler-ir-block-list-count (compiler-opt-global-shared-view blocks))
-      (opt-inline-single-site-max-blocks))
     ;; The heavy gate is asked about TOTAL caller growth, this band's own moved
     ;; blocks included; they are kept out of `added-so-far` itself by
-    ;; opt-inline-caller-absorb-blocks.
+    ;; opt-inline-caller-absorb-blocks. Both tiers below keep it.
     (not
       (opt-inline-cost-crosses-heavy-gate?
         caller-blocks
         (+ added-so-far opt-inline-caller-absorb-blocks)
         added-blocks))
-    (opt-inline-single-site-frame-tax-ok? has-bounds? blocks)))
+    (or
+      (opt-inline-sole-call-absorb-ok?
+        absorb-class
+        stage-args?
+        (compiler-opt-global-shared-view blocks))
+      (and
+        (opt-inline-single-site-arity-ok?
+          param-count
+          callee-instrs
+          (compiler-opt-global-shared-view blocks))
+        (<= callee-instrs (opt-inline-single-site-max-body))
+        (<=
+          (ir.compiler-ir-block-list-count
+            (compiler-opt-global-shared-view blocks))
+          (opt-inline-single-site-max-blocks))
+        (opt-inline-single-site-frame-tax-ok? has-bounds? blocks)))))
 
 (define (opt-inline-multiblock-bounds-loop-ok?
   [has-bounds? : bool]
@@ -120203,6 +120384,7 @@
                 [single-site-absorb? : bool
                   (opt-inline-single-site-absorb-ok?
                     absorb-class
+                    stage-args?
                     has-bounds?
                     np
                     callee-instrs
@@ -121164,6 +121346,7 @@
                 [single-site-absorb? : bool
                   (opt-inline-single-site-absorb-ok?
                     absorb-class
+                    stage-args?
                     has-bounds?
                     np
                     callee-instrs

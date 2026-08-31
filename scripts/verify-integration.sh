@@ -1777,6 +1777,52 @@ run_linux_backend_fixtures() {
         tests/integration/gep_fold_ordinal_store_pair_clone.tl \
         42 \
         2
+    # I3-1: sole-call absorption. `sc-classify` (acyclic, five parameters, one
+    # straight-line site) is absorbed into `sc-driver` at opt2 and at no other
+    # level, because the multiblock inliner runs only at opt2; `sc-scan-run`
+    # (loop-carrying) and `sc-fold-step` (acyclic but called from inside the
+    # driver's loop) are the tier's two structural refusals and keep their calls
+    # at every level. The opt0 and opt1 rows are the parity reference for the
+    # opt2 answer.
+    run_linux_program_fixture \
+        inline-sole-call-absorb-opt0 \
+        tests/integration/inline_sole_call_absorb.tl \
+        42 \
+        0 \
+        '339292\n' \
+        '64 3'
+    run_linux_program_fixture \
+        inline-sole-call-absorb-opt1 \
+        tests/integration/inline_sole_call_absorb.tl \
+        42 \
+        1 \
+        '339292\n' \
+        '64 3'
+    run_linux_program_fixture \
+        inline-sole-call-absorb-opt2 \
+        tests/integration/inline_sole_call_absorb.tl \
+        42 \
+        2 \
+        '339292\n' \
+        '64 3'
+    # The abort-carrying callee on its PASSING path: `sca-probe` owns a bounds
+    # check and is absorbed at opt2, so the opt2 row is the one where the check
+    # that fires belongs to the merged `main`. Its failing path is the manifest
+    # row `inline_sole_call_abort`, because this runner requires empty stderr.
+    run_linux_program_fixture \
+        inline-sole-call-abort-pass-opt0 \
+        tests/integration/inline_sole_call_abort.tl \
+        42 \
+        0 \
+        '53\n' \
+        '8 3'
+    run_linux_program_fixture \
+        inline-sole-call-abort-pass-opt2 \
+        tests/integration/inline_sole_call_abort.tl \
+        42 \
+        2 \
+        '53\n' \
+        '8 3'
     # IT-2: the two-loop hash whose tail guard re-derives the slice descriptor
     # on the bypass edge around the first loop, at every level -- the PRE and
     # the CSE that completes it run only at opt2, so the opt0 and opt1 rows are

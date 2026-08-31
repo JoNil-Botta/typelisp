@@ -78007,13 +78007,22 @@
 (defstruct CompilerBackendSwbPlan
   (label i64)
   (bare (__tl_dyn-array i64))
-  (bare-count i64))
+  (bare-count i64)
+  ;; TD-1: byte offsets in the analysed text at which the duplicated tail's
+  ;; label suffix is spliced onto a bypass branch operand, and the tail block
+  ;; the emitter appends.  Empty when no tail was duplicated.
+  (dup-sites (__tl_dyn-array i64))
+  (dup-site-count i64)
+  (dup-text String))
 
 (define (compiler-backend-swb-no-plan) : CompilerBackendSwbPlan
   (CompilerBackendSwbPlan
     (compiler_ir_types.compiler-ir-label-none)
     (__tl_make-array i64 0)
-    0))
+    0
+    (__tl_make-array i64 0)
+    0
+    ""))
 
 ;; A function whose emitted text carries more label nodes than this is not
 ;; analysed.  The placement is a whole-function dominator computation with a
@@ -78869,6 +78878,361 @@
 ;; use outside the region" and "the region is single-entry" tests improve
 ;; monotonically; only "the bypass still returns" can be lost by moving up, so
 ;; it is tested last, once.
+;; --------------------------------------------------------------------------
+;; TD-1: tail-duplicate the shared return tail so a guard bypass gets its own.
+;;
+;; SW-1 refuses a placement whose framed region is not single-entry.  The shape
+;; this rule keeps refusing is the one LLVM's TailDuplicator opens up before it
+;; shrink-wraps: the region is well formed except for ONE block -- the tail that
+;; both the guard's bypass and the framed arms return through.  Give the bypass
+;; its own copy of that tail (a fresh label whose return is bare, no epilogue)
+;; and retarget the bypass edges to it; the Save-dominated predecessors keep the
+;; original, framed tail.  That is the split SW-1 already emits between a
+;; `swb-bare` label and a framed return -- the new part is minting the second
+;; label when the block is SHARED.
+;;
+;; Every clause below is a refusal.  A shape that does not match to the byte
+;; keeps the old entry placement, and SW-1's drift check still runs on top.
+;; The duplicated tail's label is the original's plus `__swb_tail`; no emitted
+;; label ends that way, so the clone cannot collide with a block or with form
+;; (a)'s `__shrinkwrap_*` names.  The suffix is written literally at both sites
+;; because a borrow of a global String would escape the accumulator it folds
+;; into.
+;;
+;; At most this many bypass edges are retargeted for one duplicated tail.  The
+;; duplication is bounded by construction -- one clone per block, and the clone
+;; is a return tail with no successor -- and this caps the edge rewrite too.
+(define compiler-backend-swb-dup-site-limit : i64
+  16)
+
+;; The tail that may be duplicated: an IR block (so the bare-return set can name
+;; it), which returns, has no resolved successor, and whose pre-epilogue body
+;; never names the frame, a callee-saved register, or a register the saving
+;; prologue writes.  The last clause is what makes the COPY safe to run before
+;; the prologue exists, and it is already computed: it is the frame flag.
+(define (compiler-backend-swb-dup-candidate?
+  [flags : (__tl_dyn-array i64)]
+  [succ-count : (__tl_dyn-array i64)]
+  [block-start : (__tl_dyn-array i64)]
+  [node : i64]
+  [candidate : i64]) : bool
+  (and
+    (not (= node candidate))
+    (= (array-ref succ-count node) 0)
+    (= (array-ref block-start node) 1)
+    (not
+      (= (bit-and (array-ref flags node) compiler-backend-swb-flag-return) 0))
+    (= (bit-and (array-ref flags node) compiler-backend-swb-flag-frame) 0)))
+
+;; One past the branch operand of a `j*` line naming the span [lab0, lab1), or
+;; -1 when this line does not branch there.  The offset is where the fresh
+;; label's suffix is spliced in.
+(define (compiler-backend-swb-branch-target-end
+  [data : (Ptr u8)]
+  [m : i64]
+  [stop : i64]
+  [lab0 : i64]
+  [lab1 : i64]) : i64
+  (let
+    [tok : i64 (- (compiler-backend-peephole-scan-byte-range data m stop 32) m)]
+    (if (or (< tok 1) (not (= (compiler-backend-peephole-byte-at data m) 106)))
+      (- 0 1)
+      (let
+        [arg : i64 (+ m tok)]
+        (begin
+          (while (and
+            (< arg stop)
+            (= (compiler-backend-peephole-byte-at data arg) 32))
+            (set! arg (+ arg 1)))
+          (if (and
+            (< arg stop)
+            (compiler-backend-swb-span-eq? data arg stop lab0 lab1))
+            stop
+            (- 0 1)))))))
+
+;; Append every branch-to-[lab0,lab1) splice offset in one node's body; returns
+;; how many this node contributed.  A predecessor that reaches the tail by
+;; FALLING THROUGH contributes none, and the caller refuses the duplication --
+;; there is no operand to retarget.
+(define (compiler-backend-swb-collect-dup-sites!
+  [data : (Ptr u8)]
+  [body-start : i64]
+  [body-stop : i64]
+  [lab0 : i64]
+  [lab1 : i64]
+  [sites : (__tl_dyn-array i64)]
+  [cursor : (__tl_dyn-array i64)]) : i64
+  (let
+    [i : i64 body-start]
+    [found : i64 0]
+    (begin
+      (while (< i body-stop)
+        (let
+          [stop : i64
+            (compiler-backend-peephole-scan-byte-range data i body-stop 10)]
+          [m : i64 i]
+          (begin
+            (while (and
+              (< m stop)
+              (= (compiler-backend-peephole-byte-at data m) 32))
+              (set! m (+ m 1)))
+            (if (>= m stop)
+              unit
+              (let
+                [end : i64
+                  (compiler-backend-swb-branch-target-end data m stop lab0 lab1)]
+                (if (< end 0)
+                  unit
+                  (if (>=
+                    (array-ref cursor 0)
+                    compiler-backend-swb-dup-site-limit)
+                    (set! found (- 0 1))
+                    (begin
+                      (set! (array-ref sites (array-ref cursor 0)) end)
+                      (set! (array-ref cursor 0) (+ (array-ref cursor 0) 1))
+                      (set! found (+ found 1)))))))
+            (set! i (+ stop 1)))))
+      found)))
+
+;; The duplicated tail's body: the tail's own pre-epilogue lines, with its
+;; trailing `jmp <shared epilogue>` dropped, and a BARE `ret` in place of the
+;; epilogue the bypass never has a prologue for.  `ok` is cleared for any line
+;; the copy cannot reproduce safely -- a branch that is not that trailing jump
+;; would send the bypass into framed code.
+(define (compiler-backend-swb-dup-tail-body
+  [text : String]
+  [data : (Ptr u8)]
+  [body-start : i64]
+  [body-stop : i64]
+  [return-label : String]
+  [ok : (__tl_dyn-array i64)]) : String
+  (let
+    [epilogue : i64
+      (compiler-backend-swb-epilogue-start data body-start body-stop)]
+    [i : i64 body-start]
+    [out : String ""]
+    [tail-jump : bool false]
+    (begin
+      (while (< i epilogue)
+        (let
+          [stop : i64
+            (compiler-backend-peephole-scan-byte-range data i epilogue 10)]
+          [m : i64 i]
+          (begin
+            (while (and
+              (< m stop)
+              (= (compiler-backend-peephole-byte-at data m) 32))
+              (set! m (+ m 1)))
+            (if (>= m stop)
+              unit
+              (let
+                [tok : i64
+                  (-
+                    (compiler-backend-peephole-scan-byte-range data m stop 32)
+                    m)]
+                [kind : i64 (compiler-backend-control-mnemonic-kind data m tok)]
+                (if tail-jump
+                  ;; Anything after the tail jump is unreachable in the
+                  ;; original and must not be reproduced.
+                  (set! (array-ref ok 0) 0)
+                  (if (and
+                    (>= tok 1)
+                    (= (compiler-backend-peephole-byte-at data m) 106))
+                    (let
+                      [arg : i64 (+ m tok)]
+                      (begin
+                        (while (and
+                          (< arg stop)
+                          (= (compiler-backend-peephole-byte-at data arg) 32))
+                          (set! arg (+ arg 1)))
+                        (if (and
+                          (= kind compiler-backend-control-mnemonic-jmp)
+                          (< arg stop)
+                          (compiler-backend-swb-span-eq-text?
+                            data
+                            arg
+                            stop
+                            (compiler-backend-global-shared-view return-label)))
+                          (set! tail-jump true)
+                          (set! (array-ref ok 0) 0))))
+                    (set!
+                      out
+                      (str_cat.str-cat
+                        out
+                        (string.substring text i (- (+ stop 1) i))
+                        ""))))))
+            (set! i (+ stop 1)))))
+      out)))
+
+;; Splice `__swb_tail` onto every recorded branch operand and append the
+;; duplicated tail.  `sites` is ascending, so one left-to-right pass rebuilds
+;; the text.
+(define (compiler-backend-swb-apply-dup
+  [text : String]
+  [sites : (__tl_dyn-array i64)]
+  [site-count : i64]
+  [dup-text : String]) : String
+  (let
+    [n : i64 (string.string-length text)]
+    [out : String ""]
+    [at : i64 0]
+    [k : i64 0]
+    (begin
+      (while (< k site-count)
+        (let
+          [s : i64 (array-ref sites k)]
+          (begin
+            (set!
+              out
+              (str_cat.str-cat
+                out
+                (string.substring text at (- s at))
+                "__swb_tail"))
+            (set! at s)
+            (set! k (+ k 1)))))
+      (str_cat.str-cat
+        out
+        (string.substring text at (- n at))
+        (compiler-backend-global-shared-view dup-text)))))
+
+(define (compiler-backend-swb-node-targets?
+  [succ-start : (__tl_dyn-array i64)]
+  [succ-count : (__tl_dyn-array i64)]
+  [succ : (__tl_dyn-array i64)]
+  [node : i64]
+  [target : i64]) : bool
+  (let
+    [j : i64 0]
+    [hit : bool false]
+    (begin
+      (while (< j (array-ref succ-count node))
+        (begin
+          (if (= (array-ref succ (+ (array-ref succ-start node) j)) target)
+            (set! hit true)
+            unit)
+          (set! j (+ j 1))))
+      hit)))
+
+(defstruct CompilerBackendSwbDup
+  (ok bool)
+  (sites (__tl_dyn-array i64))
+  (site-count i64)
+  (text String))
+
+(define (compiler-backend-swb-no-dup) : CompilerBackendSwbDup
+  (CompilerBackendSwbDup false (__tl_make-array i64 0) 0 ""))
+
+;; Resolve the duplication for tail `dup-node` under Save `chosen`: every edge
+;; into the tail from OUTSIDE the framed region is retargeted, the tail's own
+;; body is copied with a bare return, and anything that does not reproduce
+;; exactly refuses the whole duplication (and with it the placement).
+(define (compiler-backend-swb-dup-plan
+  [text : String]
+  [lab-start : (__tl_dyn-array i64)]
+  [lab-end : (__tl_dyn-array i64)]
+  [body-start : (__tl_dyn-array i64)]
+  [body-end : (__tl_dyn-array i64)]
+  [succ-start : (__tl_dyn-array i64)]
+  [succ-count : (__tl_dyn-array i64)]
+  [succ : (__tl_dyn-array i64)]
+  [po : (__tl_dyn-array i64)]
+  [idom : (__tl_dyn-array i64)]
+  [node-count : i64]
+  [chosen : i64]
+  [dup-node : i64]
+  [return-label : String]) : CompilerBackendSwbDup
+  (let
+    [data : (Ptr u8)
+      (unsafe
+        (string-data text))]
+    [sites : (__tl_dyn-array i64)
+      (__tl_make-array i64 compiler-backend-swb-dup-site-limit)]
+    [cursor : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [ok : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [_init : unit (set! (array-ref ok 0) 1)]
+    [_scan : unit
+      (let
+        [p : i64 0]
+        (while (< p node-count)
+          (begin
+            (if (and
+              (>= (array-ref po p) 0)
+              (not
+                (compiler-backend-swb-dominates?
+                  (compiler-backend-global-shared-view idom)
+                  p
+                  chosen
+                  0)))
+              (let
+                [targets : bool
+                  (compiler-backend-swb-node-targets?
+                    (compiler-backend-global-shared-view succ-start)
+                    (compiler-backend-global-shared-view succ-count)
+                    (compiler-backend-global-shared-view succ)
+                    p
+                    dup-node)]
+                (if targets
+                  (if (<=
+                    (compiler-backend-swb-collect-dup-sites!
+                      data
+                      (array-ref body-start p)
+                      (array-ref body-end p)
+                      (array-ref lab-start dup-node)
+                      (array-ref lab-end dup-node)
+                      (compiler-backend-global-shared-view sites)
+                      (compiler-backend-global-shared-view cursor))
+                    0)
+                    (set! (array-ref ok 0) 0)
+                    unit)
+                  unit))
+              unit)
+            (set! p (+ p 1)))))]
+    ;; The tail's TEXTUAL predecessor can reach it by falling through, and a
+    ;; fallthrough has no operand to retarget.  If that predecessor is outside
+    ;; the region the bypass would keep entering the framed tail, so refuse --
+    ;; even when it also branches there, because only the branch would move.
+    [fallthrough-outside? : bool
+      (and
+        (> dup-node 0)
+        (>= (array-ref po (- dup-node 1)) 0)
+        (not
+          (compiler-backend-swb-dominates?
+            (compiler-backend-global-shared-view idom)
+            (- dup-node 1)
+            chosen
+            0))
+        (compiler-backend-swb-node-targets?
+          (compiler-backend-global-shared-view succ-start)
+          (compiler-backend-global-shared-view succ-count)
+          (compiler-backend-global-shared-view succ)
+          (- dup-node 1)
+          dup-node))]
+    [body : String
+      (compiler-backend-swb-dup-tail-body
+        (compiler-backend-global-shared-view text)
+        data
+        (array-ref body-start dup-node)
+        (array-ref body-end dup-node)
+        (compiler-backend-global-shared-view return-label)
+        (compiler-backend-global-shared-view ok))]
+    (if (or
+      (= (array-ref ok 0) 0)
+      (= (array-ref cursor 0) 0)
+      fallthrough-outside?)
+      (compiler-backend-swb-no-dup)
+      (CompilerBackendSwbDup
+        true
+        sites
+        (array-ref cursor 0)
+        (str_cat.str-cat
+          (string.substring
+            text
+            (array-ref lab-start dup-node)
+            (- (array-ref lab-end dup-node) (array-ref lab-start dup-node)))
+          "__swb_tail:\n"
+          (compiler-backend-global-shared-view body)
+          "    ret\n")))))
+
 (define (compiler-backend-swb-choose-node
   [succ-start : (__tl_dyn-array i64)]
   [succ-count : (__tl_dyn-array i64)]
@@ -78877,6 +79241,8 @@
   [po : (__tl_dyn-array i64)]
   [idom : (__tl_dyn-array i64)]
   [block-start : (__tl_dyn-array i64)]
+  [dup-out : (__tl_dyn-array i64)]
+  [allow-dup : bool]
   [node-count : i64]) : i64
   (let
     [mark : (__tl_dyn-array i64) (__tl_make-array i64 node-count)]
@@ -78917,6 +79283,9 @@
               [reject : bool false]
               (begin
                 (set! steps (+ steps 1))
+                ;; The duplication belongs to the candidate under test; a walk
+                ;; up to the next dominator starts from no duplication again.
+                (set! (array-ref dup-out 0) (- 0 1))
                 ;; The prologue may not run more than once per activation.
                 (compiler-backend-swb-reach!
                   (compiler-backend-global-shared-view succ-start)
@@ -78930,23 +79299,46 @@
                   unit)
                 ;; Every block reachable from S is dominated by S: the framed
                 ;; region is single-entry and no bypass path merges into it.
+                ;; TD-1: a SINGLE violator that is a duplicable return tail is
+                ;; not a refusal.  The bypass edges into it are given their own
+                ;; copy of the tail below, which restores the single entry; the
+                ;; duplication itself still has to resolve, or the placement is
+                ;; refused with it.
                 (if reject
                   unit
                   (let
                     [j : i64 0]
-                    (while (< j node-count)
-                      (begin
+                    [viol : i64 -1]
+                    [viol-count : i64 0]
+                    (begin
+                      (while (< j node-count)
+                        (begin
+                          (if (and
+                            (= (array-ref mark j) 1)
+                            (not
+                              (compiler-backend-swb-dominates?
+                                (compiler-backend-global-shared-view idom)
+                                j
+                                candidate
+                                0)))
+                            (begin
+                              (set! viol j)
+                              (set! viol-count (+ viol-count 1)))
+                            unit)
+                          (set! j (+ j 1))))
+                      (if (= viol-count 0)
+                        unit
                         (if (and
-                          (= (array-ref mark j) 1)
-                          (not
-                            (compiler-backend-swb-dominates?
-                              (compiler-backend-global-shared-view idom)
-                              j
-                              candidate
-                              0)))
-                          (set! reject true)
-                          unit)
-                        (set! j (+ j 1))))))
+                          allow-dup
+                          (= viol-count 1)
+                          (compiler-backend-swb-dup-candidate?
+                            (compiler-backend-global-shared-view flags)
+                            (compiler-backend-global-shared-view succ-count)
+                            (compiler-backend-global-shared-view block-start)
+                            viol
+                            candidate))
+                          (set! (array-ref dup-out 0) viol)
+                          (set! reject true))))))
                 ;; Nothing outside the region may touch the frame.  By
                 ;; construction of U this holds; assert it against the text.
                 (if reject
@@ -78983,7 +79375,9 @@
                     (set! done true)))))]))
       ;; A placement that bypasses no return saves nothing.
       (if (< answer 0)
-        -1
+        (begin
+          (set! (array-ref dup-out 0) (- 0 1))
+          -1)
         (let
           [j : i64 0]
           [bypass-return : bool false]
@@ -79009,7 +79403,9 @@
                 (set! j (+ j 1))))
             (if bypass-return
               answer
-              -1)))))))
+              (begin
+                (set! (array-ref dup-out 0) (- 0 1))
+                -1))))))))
 
 (define (compiler-backend-swb-plan-for
   [text : String]
@@ -79229,7 +79625,9 @@
                                   (set! scan (+ found 1)))
                                 unit)
                               (set! b (+ b 1))))])))]
-                [chosen : i64
+                [dup-out : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+                [_dup-init : unit (set! (array-ref dup-out 0) (- 0 1))]
+                [chosen-dup : i64
                   (compiler-backend-swb-choose-node
                     (compiler-backend-global-shared-view succ-start)
                     (compiler-backend-global-shared-view succ-count)
@@ -79238,7 +79636,58 @@
                     (compiler-backend-global-shared-view po)
                     (compiler-backend-global-shared-view idom)
                     (compiler-backend-global-shared-view block-start)
+                    (compiler-backend-global-shared-view dup-out)
+                    true
                     node-count)]
+                ;; TD-1: the tail this placement duplicates, or -1.
+                [dup-node-first : i64 (array-ref dup-out 0)]
+                [dup-first : CompilerBackendSwbDup
+                  (if (or (< chosen-dup 0) (< dup-node-first 0))
+                    (compiler-backend-swb-no-dup)
+                    (compiler-backend-swb-dup-plan
+                      (compiler-backend-global-shared-view text)
+                      (compiler-backend-global-shared-view lab-start)
+                      (compiler-backend-global-shared-view lab-end)
+                      (compiler-backend-global-shared-view body-start)
+                      (compiler-backend-global-shared-view body-end)
+                      (compiler-backend-global-shared-view succ-start)
+                      (compiler-backend-global-shared-view succ-count)
+                      (compiler-backend-global-shared-view succ)
+                      (compiler-backend-global-shared-view po)
+                      (compiler-backend-global-shared-view idom)
+                      node-count
+                      chosen-dup
+                      dup-node-first
+                      (compiler-backend-global-shared-view return-label)))]
+                ;; A duplication the text cannot reproduce rejects that
+                ;; CANDIDATE, not the placement.  Re-run the walk with
+                ;; duplication disabled -- which is exactly the pre-TD-1
+                ;; search -- so a shape TD-1 cannot open keeps whatever
+                ;; placement SW-1 alone would have found for it.
+                [dup-usable? : bool (or (< dup-node-first 0) dup-first.ok)]
+                [dup-retry : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+                [chosen : i64
+                  (if dup-usable?
+                    chosen-dup
+                    (compiler-backend-swb-choose-node
+                      (compiler-backend-global-shared-view succ-start)
+                      (compiler-backend-global-shared-view succ-count)
+                      (compiler-backend-global-shared-view succ)
+                      (compiler-backend-global-shared-view flags)
+                      (compiler-backend-global-shared-view po)
+                      (compiler-backend-global-shared-view idom)
+                      (compiler-backend-global-shared-view block-start)
+                      (compiler-backend-global-shared-view dup-retry)
+                      false
+                      node-count))]
+                [dup-node : i64
+                  (if dup-usable?
+                    dup-node-first
+                    (- 0 1))]
+                [dup : CompilerBackendSwbDup
+                  (if dup-usable?
+                    dup-first
+                    (compiler-backend-swb-no-dup))]
                 (if (< chosen 0)
                   (compiler-backend-swb-no-plan)
                   (let
@@ -79272,8 +79721,14 @@
                                   ;; that `ret` would carry an epilogue for a
                                   ;; prologue this path never ran. Marking a
                                   ;; block that does not return is inert.
+                                  ;; TD-1: the duplicated tail is NOT bare.
+                                  ;; Its clone carries the bare return for the
+                                  ;; bypass; the original keeps the framed
+                                  ;; epilogue for the predecessors the Save
+                                  ;; dominates, which are now its only ones.
                                   (if (and
                                     (>= node 0)
+                                    (not (= node dup-node))
                                     (>= (array-ref po node) 0)
                                     (not
                                       (compiler-backend-swb-dominates?
@@ -79298,7 +79753,13 @@
                               (begin
                                 (set! (array-ref packed k) (array-ref bare k))
                                 (set! k (+ k 1))))
-                            (CompilerBackendSwbPlan saving packed bare-count)))))))))))))))
+                            (CompilerBackendSwbPlan
+                              saving
+                              packed
+                              bare-count
+                              dup.sites
+                              dup.site-count
+                              dup.text)))))))))))))))
 
 (define (compiler-backend-emit-function
   [type-segment-bases : i64]
@@ -81140,6 +81601,25 @@
                                 (and
                                   swb-active?
                                   (not (= swb-plan.label swb-label)))]
+                              ;; TD-1: the applied emission is the one that gets
+                              ;; the duplicated tail.  The offsets come from the
+                              ;; plan just computed over THIS text, so they are
+                              ;; valid here and nowhere else; the clone is
+                              ;; appended past the shared epilogue, where
+                              ;; nothing falls into it.
+                              [swb-body : String
+                                (if (and
+                                  swb-active?
+                                  (not swb-drift?)
+                                  (> swb-plan.dup-site-count 0))
+                                  (compiler-backend-swb-apply-dup
+                                    (compiler-backend-global-shared-view
+                                      final-body)
+                                    swb-plan.dup-sites
+                                    swb-plan.dup-site-count
+                                    swb-plan.dup-text)
+                                  (compiler-backend-global-shared-view
+                                    final-body))]
                               [entry-symbol : String
                                 (if wrap-active?
                                   (compiler-backend-global-shared-view
@@ -81182,7 +81662,7 @@
                                 (if wrap-active?
                                   (string.replace
                                     (compiler-backend-global-shared-view
-                                      final-body)
+                                      swb-body)
                                     (str_cat.str-cat
                                       (compiler-backend-global-shared-view
                                         saving-asm-label)
@@ -81190,8 +81670,7 @@
                                       "")
                                     (compiler-backend-global-shared-view
                                       selected-prologue))
-                                  (compiler-backend-global-shared-view
-                                    final-body))]
+                                  (compiler-backend-global-shared-view swb-body))]
                               (cond
                                 ;; SW-1: the first emission found a placement.
                                 ;; Re-emit applying it, so the bypass returns

@@ -49553,9 +49553,69 @@ g:
       (>= loop-label 0)
       (< prologue loop-label))))
 
-;; (6) A bypass path and a framed path MERGE before the return. The block that
-;; uses the frame does not dominate that merge, so no well-formed pair exists
-;; and the placement must fall back to entry.
+;; The duplicated tail is the LAST block of the body, so everything after its
+;; label is the clone.  It has to return, and it may not carry any part of the
+;; epilogue: on the bypass there is no prologue to undo.
+(define (compiler-backend-swb-clone-before-prologue? [body : String]) : bool
+  (let
+    [prologue : i64
+      (compiler-backend-swb-prologue-index
+        (owned_view.compiler-owned-shared-view body))]
+    [guard : i64
+      (compiler-backend-swb-find
+        (owned_view.compiler-owned-shared-view body)
+        "__swb_tail\n")]
+    (and
+      (not (string.eq (owned_view.compiler-owned-shared-view body) ""))
+      (compiler_backend.compiler-backend-string-prefix-at?
+        (owned_view.compiler-owned-shared-view body)
+        ".L"
+        0)
+      (>= guard 0)
+      (>= prologue 0)
+      (< guard prologue))))
+
+(define (compiler-backend-swb-clone-bare? [body : String]) : bool
+  (let
+    [at : i64
+      (compiler-backend-swb-find
+        (owned_view.compiler-owned-shared-view body)
+        "__swb_tail:\n")]
+    (if (< at 0)
+      false
+      (let
+        [clone : String
+          (string.substring
+            (owned_view.compiler-owned-shared-view body)
+            at
+            (-
+              (string.string-length
+                (owned_view.compiler-owned-shared-view body))
+              at))]
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view clone)
+            "    ret\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view clone)
+              ", %rsp\n"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view clone)
+              "    popq ")))))))
+
+;; (6) TD-1. A bypass path and a framed path MERGE before the return, so the
+;; return tail has a predecessor the Save does not dominate.  Before TD-1 that
+;; was a refusal (the region would not be single-entry); now the bypass edge is
+;; retargeted to its own copy of the tail and the placement is well formed.
+;;
+;; This is also the answer to "what happens when the outside predecessor needs
+;; a phi value": it DUPLICATES, and duplicates correctly.  By the time SW-1
+;; reads the text the phi is already resolved into a register the predecessors
+;; write, so the copy of `(+ r 5)` is exact; a tail that instead named the frame
+;; or a callee-saved register carries the frame flag and is refused by
+;; `compiler-backend-swb-dup-candidate?` before it is ever copied.
 (define compiler-backend-swb-merge-source : String
   "(extern (opaque [value : i64]) : i64 (:symbol \"opaque\"))
 (define swb-m : i64 0)
@@ -49574,11 +49634,107 @@ g:
     (swb-merge 3)))")
 
 (define (compiler-backend-swb-merge-ok?) : bool
-  (compiler-backend-swb-entry-placed?
-    (compiler-backend-swb-body-for
-      (string.copy (& compiler-backend-swb-merge-source))
-      (compiler_backend.CompilerBackendTarget.Linux)
-      "_tl_swb_merge")))
+  (let
+    [body : String
+      (compiler-backend-swb-body-for
+        (string.copy (& compiler-backend-swb-merge-source))
+        (compiler_backend.CompilerBackendTarget.Linux)
+        "_tl_swb_merge")]
+    (and
+      ;; A duplicated tail's bypass returns through the clone, which sits at the
+      ;; END of the body -- so the placement is witnessed by the guard reaching
+      ;; the clone before the prologue, not by a `ret` before it.
+      (compiler-backend-swb-clone-before-prologue?
+        (owned_view.compiler-owned-shared-view body))
+      ;; The tail's own computation is reproduced in the clone ...
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view body)
+        "__swb_tail:\n    addq $5, %rax\n    ret\n")
+      ;; ... and a framed return still tears the frame down.
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view body)
+        ", %rsp\n    ret\n")
+      (compiler-backend-swb-clone-bare?
+        (owned_view.compiler-owned-shared-view body)))))
+
+;; (6c) The duplication's bound, tested on the copier directly.  A tail whose
+;; body is data plus the trailing jump to the shared epilogue is reproduced with
+;; a bare `ret`; a tail carrying any OTHER branch is refused, because copying it
+;; would send the bypass into code the prologue never ran for.
+(define (compiler-backend-swb-dup-tail-body-for
+  [text : String]
+  [return-label : String]
+  [ok : (__tl_dyn-array i64)]) : String
+  (let
+    [data : (Ptr u8)
+      (unsafe
+        (string-data text))]
+    (compiler_backend.compiler-backend-swb-dup-tail-body
+      (owned_view.compiler-owned-shared-view text)
+      data
+      0
+      (string.string-length (owned_view.compiler-owned-shared-view text))
+      (owned_view.compiler-owned-shared-view return-label)
+      (owned_view.compiler-owned-shared-view ok))))
+
+(define (compiler-backend-swb-dup-tail-bound-ok?) : bool
+  (let
+    [good : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [bad : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [plain : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [_init : unit
+      (begin
+        (set! (array-ref good 0) 1)
+        (set! (array-ref bad 0) 1)
+        (set! (array-ref plain 0) 1))]
+    [good-text : String
+      (compiler-backend-swb-dup-tail-body-for
+        "    movq $7, %rax\n    jmp .Lret\n"
+        ".Lret"
+        (owned_view.compiler-owned-shared-view good))]
+    [_bad-text : String
+      (compiler-backend-swb-dup-tail-body-for
+        "    movq $7, %rax\n    jne .Lelsewhere\n    jmp .Lret\n"
+        ".Lret"
+        (owned_view.compiler-owned-shared-view bad))]
+    [plain-text : String
+      (compiler-backend-swb-dup-tail-body-for
+        "    movq $7, %rax\n    addq $8, %rsp\n    ret\n"
+        ".Lret"
+        (owned_view.compiler-owned-shared-view plain))]
+    (and
+      ;; The trailing jump to the shared epilogue is dropped, the data kept.
+      (= (array-ref good 0) 1)
+      (string.eq
+        (owned_view.compiler-owned-shared-view good-text)
+        "    movq $7, %rax\n")
+      ;; A branch that is not that jump refuses the whole duplication.
+      (= (array-ref bad 0) 0)
+      ;; An inline epilogue is stripped: only the pre-epilogue body is copied.
+      (= (array-ref plain 0) 1)
+      (string.eq
+        (owned_view.compiler-owned-shared-view plain-text)
+        "    movq $7, %rax\n"))))
+
+;; (6d) The splice itself: each recorded offset gets the clone's label suffix,
+;; and the clone is appended once, after everything else.
+(define (compiler-backend-swb-apply-dup-ok?) : bool
+  (let
+    [sites : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [text : String ".Le:\n    jl .Lt\n.Lt:\n    jmp .Lt\n"]
+    [_sites : unit
+      (begin
+        (set! (array-ref sites 0) 15)
+        (set! (array-ref sites 1) 32))]
+    [out : String
+      (compiler_backend.compiler-backend-swb-apply-dup
+        (owned_view.compiler-owned-shared-view text)
+        (owned_view.compiler-owned-shared-view sites)
+        2
+        ".Lt__swb_tail:\n    ret\n")]
+    (string.eq
+      (owned_view.compiler-owned-shared-view out)
+      ".Le:\n    jl .Lt__swb_tail\n.Lt:\n    jmp .Lt__swb_tail\n.Lt__swb_tail:\n    ret\n")))
 
 ;; (7) Windows is unchanged. Its unwind program describes a prologue at the
 ;; function symbol and the `.seh_*` opcodes may not follow an interior label, so
@@ -55260,6 +55416,8 @@ b_keep:
         (compiler-backend-swb-entry-slot-ok?)
         (compiler-backend-swb-loop-call-ok?)
         (compiler-backend-swb-merge-ok?)
+        (compiler-backend-swb-dup-tail-bound-ok?)
+        (compiler-backend-swb-apply-dup-ok?)
         (compiler-backend-swb-windows-unchanged-ok?)
         (compiler-backend-scavenge-occupancy-cache-ok?)
         (compiler-backend-scavenge-segment-occupancy-ok?)

@@ -87242,6 +87242,518 @@
     42
     "CB-1 admits an array every element store of which passed a dominating or same-block post-dominating check against one length family, refuses an unchecked store, a non-zero literal, a call between the store and its check, an array whose fill is not zero and one reset in its own region, and retires the load-side check only with the fill covered and the length in the family"))
 
+;; --- CB-2: the affine induction store class ----------------------------------
+;;
+;; The same harness as CB-1's, with writers whose stored value is a MULTIPLY
+;; ASSIGNED loop counter rather than a single-definition checked value. Two
+;; globals are admitted (a literal seed with the family's own length as the
+;; bound; a checked seed with a checked bound), and four are refused, one for
+;; each way the class can fail.
+(defstruct OptCb2TestSymbols
+  (b i64)
+  (c i64)
+  (i i64)
+  (k i64)
+  (d i64)
+  (o i64)
+  (n i64)
+  (s i64)
+  (init-b i64)
+  (init-c i64)
+  (init-i i64)
+  (init-k i64)
+  (init-d i64)
+  (init-o i64)
+  (init-n i64)
+  (init-s i64)
+  (ctor i64)
+  (reset i64)
+  (w-i i64)
+  (w-k i64)
+  (w-d i64)
+  (w-o i64)
+  (w-n i64)
+  (w-s i64)
+  (w-s2 i64))
+
+(define (opt-cb2-test-symbols) : OptCb2TestSymbols
+  (OptCb2TestSymbols
+    (opt-test-symbol "cb2_b")
+    (opt-test-symbol "cb2_c")
+    (opt-test-symbol "cb2_i")
+    (opt-test-symbol "cb2_k")
+    (opt-test-symbol "cb2_d")
+    (opt-test-symbol "cb2_o")
+    (opt-test-symbol "cb2_n")
+    (opt-test-symbol "cb2_s")
+    (opt-test-symbol "cb2_init_b")
+    (opt-test-symbol "cb2_init_c")
+    (opt-test-symbol "cb2_init_i")
+    (opt-test-symbol "cb2_init_k")
+    (opt-test-symbol "cb2_init_d")
+    (opt-test-symbol "cb2_init_o")
+    (opt-test-symbol "cb2_init_n")
+    (opt-test-symbol "cb2_init_s")
+    (opt-test-symbol "cb2_ctor")
+    (opt-test-symbol "cb2_reset")
+    (opt-test-symbol "cb2_w_i")
+    (opt-test-symbol "cb2_w_k")
+    (opt-test-symbol "cb2_w_d")
+    (opt-test-symbol "cb2_w_o")
+    (opt-test-symbol "cb2_w_n")
+    (opt-test-symbol "cb2_w_s")
+    (opt-test-symbol "cb2_w_s2")))
+
+(define (opt-cb2-block
+  [label : String]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [tail : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label label)
+      instrs)
+    tail))
+
+;; entry -> head -> body -> head, head -> exit: the top-tested counted loop.
+(define (opt-cb2-loop-blocks
+  [entry : compiler_ir_types.CompilerIrInstrSeq]
+  [head : compiler_ir_types.CompilerIrInstrSeq]
+  [body : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrBlockList
+  (opt-cb2-block
+    "entry"
+    entry
+    (opt-cb2-block
+      "head"
+      head
+      (opt-cb2-block
+        "body"
+        body
+        (opt-cb2-block
+          "exit"
+          (opt-mr-return-zero)
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+;; entry -> body -> body, body -> exit: the BOTTOM-tested loop, whose body block
+;; is entered from outside the test as well.
+(define (opt-cb2-do-while-blocks
+  [entry : compiler_ir_types.CompilerIrInstrSeq]
+  [body : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrBlockList
+  (opt-cb2-block
+    "entry"
+    entry
+    (opt-cb2-block
+      "body"
+      body
+      (opt-cb2-block
+        "exit"
+        (opt-mr-return-zero)
+        compiler_ir_types.CompilerIrBlockList.Nil))))
+
+(define (opt-cb2-function
+  [name : i64]
+  [params : compiler_ir_types.CompilerIrParamSeq]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    name
+    params
+    (compiler_ast_types.AstType.I64)
+    64
+    blocks))
+
+(define (opt-cb2-jump [label : String]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Jump
+    (compiler_ir_types.compiler-ir-label label)))
+
+(define (opt-cb2-mov [dst : i64] [src : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Mov
+    dst
+    src
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-cb2-add [dst : i64] [var : i64] [step : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BinOp
+    dst
+    (compiler_ir_types.CompilerIrBinOp.Add)
+    (compiler_ir_types.CompilerIrValue.Var var)
+    (compiler_ir_types.CompilerIrValue.I64 step)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-cb2-lt
+  [dst : i64]
+  [var : i64]
+  [bound : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BinOp
+    dst
+    (compiler_ir_types.CompilerIrBinOp.Lt)
+    (compiler_ir_types.CompilerIrValue.Var var)
+    bound
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-cb2-branch [test : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Branch
+    (compiler_ir_types.CompilerIrValue.Var test)
+    (compiler_ir_types.compiler-ir-label "body")
+    (compiler_ir_types.compiler-ir-label "exit")))
+
+;; `add v, 1` then the `Mov` that assigns it back: the pre-SSA shape of
+;; `(set! v (+ v 1))`, and the one the step recogniser has to follow.
+(define (opt-cb2-step-instrs [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instr-seq-prepend
+    (opt-cb2-add 22 20 1)
+    (opt-test-instr-seq-prepend
+      (opt-cb2-mov 20 (compiler_ir_types.CompilerIrValue.Var 22))
+      tail)))
+
+;; The element store `A[0] = v`, `v` being the counter.
+(define (opt-cb2-store-instrs
+  [cell : i64]
+  [first : i64]
+  [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-cb-elem-instrs
+    (compiler_ir_types.CompilerIrValue.Global cell)
+    first
+    (compiler_ir_types.CompilerIrValue.I64 0)
+    (opt-test-instr-seq-prepend
+      (opt-cb-elem-store (+ first 4) (compiler_ir_types.CompilerIrValue.Var 20))
+      tail)))
+
+;; ADMITTED, literal seed: `v = 0`, `while (v < len(cb2_b))`, store, `v = v + 1`.
+;; The bound IS a family member's length, which is clause (III)(a).
+(define (opt-cb2-writer-literal-seed [name : i64] [cell : i64] [len-cell : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-cb2-function
+    name
+    (opt-le-params 1)
+    (opt-cb2-loop-blocks
+      (opt-fz-chain-instrs
+        (compiler_ir_types.CompilerIrValue.Global len-cell)
+        1
+        (opt-test-instr-seq-prepend
+          (opt-cb2-mov 20 (compiler_ir_types.CompilerIrValue.I64 0))
+          (opt-test-instr-seq-prepend
+            (opt-cb2-jump "head")
+            (compiler_ir_types.compiler-ir-instr-seq-empty))))
+      (opt-test-instr-seq-prepend
+        (opt-cb2-lt 21 20 (compiler_ir_types.CompilerIrValue.Var 4))
+        (opt-test-instr-seq-prepend
+          (opt-cb2-branch 21)
+          (compiler_ir_types.compiler-ir-instr-seq-empty)))
+      (opt-cb2-store-instrs
+        cell
+        5
+        (opt-cb2-step-instrs
+          (opt-test-instr-seq-prepend
+            (opt-cb2-jump "head")
+            (compiler_ir_types.compiler-ir-instr-seq-empty)))))))
+
+;; ADMITTED, checked seed: the seed is a parameter a dominating
+;; `bounds_check` proved `<u len(cb2_b)` (hence `>= 0`), and the BOUND is a
+;; second parameter the same kind of check dominates -- clause (III)(b).
+(define (opt-cb2-writer-checked-seed [name : i64] [cell : i64] [len-cell : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-cb2-function
+    name
+    (opt-le-params 2)
+    (opt-cb2-loop-blocks
+      (opt-fz-chain-instrs
+        (compiler_ir_types.CompilerIrValue.Global len-cell)
+        2
+        (opt-test-instr-seq-prepend
+          (opt-cb-check-instr 0 5)
+          (opt-test-instr-seq-prepend
+            (opt-cb-check-instr 1 5)
+            (opt-test-instr-seq-prepend
+              (opt-cb2-mov 20 (compiler_ir_types.CompilerIrValue.Var 0))
+              (opt-test-instr-seq-prepend
+                (opt-cb2-jump "head")
+                (compiler_ir_types.compiler-ir-instr-seq-empty))))))
+      (opt-test-instr-seq-prepend
+        (opt-cb2-lt 21 20 (compiler_ir_types.CompilerIrValue.Var 1))
+        (opt-test-instr-seq-prepend
+          (opt-cb2-branch 21)
+          (compiler_ir_types.compiler-ir-instr-seq-empty)))
+      (opt-cb2-store-instrs
+        cell
+        6
+        (opt-cb2-step-instrs
+          (opt-test-instr-seq-prepend
+            (opt-cb2-jump "head")
+            (compiler_ir_types.compiler-ir-instr-seq-empty)))))))
+
+;; REFUSED, do-while: the test is at the BOTTOM, so the block holding the store
+;; is entered from outside the test as well and the first iteration stores an
+;; untested value.
+(define (opt-cb2-writer-do-while [name : i64] [cell : i64] [len-cell : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-cb2-function
+    name
+    (opt-le-params 1)
+    (opt-cb2-do-while-blocks
+      (opt-fz-chain-instrs
+        (compiler_ir_types.CompilerIrValue.Global len-cell)
+        1
+        (opt-test-instr-seq-prepend
+          (opt-cb2-mov 20 (compiler_ir_types.CompilerIrValue.I64 0))
+          (opt-test-instr-seq-prepend
+            (opt-cb2-jump "body")
+            (compiler_ir_types.compiler-ir-instr-seq-empty))))
+      (opt-cb2-store-instrs
+        cell
+        5
+        (opt-cb2-step-instrs
+          (opt-test-instr-seq-prepend
+            (opt-cb2-lt 21 20 (compiler_ir_types.CompilerIrValue.Var 4))
+            (opt-test-instr-seq-prepend
+              (opt-cb2-branch 21)
+              (compiler_ir_types.compiler-ir-instr-seq-empty))))))))
+
+;; REFUSED, overshoot: top-tested, but the step runs BEFORE the store, so the
+;; value stored is one past the value the test passed.
+(define (opt-cb2-writer-overshoot [name : i64] [cell : i64] [len-cell : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-cb2-function
+    name
+    (opt-le-params 1)
+    (opt-cb2-loop-blocks
+      (opt-fz-chain-instrs
+        (compiler_ir_types.CompilerIrValue.Global len-cell)
+        1
+        (opt-test-instr-seq-prepend
+          (opt-cb2-mov 20 (compiler_ir_types.CompilerIrValue.I64 0))
+          (opt-test-instr-seq-prepend
+            (opt-cb2-jump "head")
+            (compiler_ir_types.compiler-ir-instr-seq-empty))))
+      (opt-test-instr-seq-prepend
+        (opt-cb2-lt 21 20 (compiler_ir_types.CompilerIrValue.Var 4))
+        (opt-test-instr-seq-prepend
+          (opt-cb2-branch 21)
+          (compiler_ir_types.compiler-ir-instr-seq-empty)))
+      (opt-cb2-step-instrs
+        (opt-cb2-store-instrs
+          cell
+          5
+          (opt-test-instr-seq-prepend
+            (opt-cb2-jump "head")
+            (compiler_ir_types.compiler-ir-instr-seq-empty)))))))
+
+;; REFUSED, bound not family-tied: the loop counts to a bare parameter no check
+;; ever related to a length.
+(define (opt-cb2-writer-untied [name : i64] [cell : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-cb2-function
+    name
+    (opt-le-params 1)
+    (opt-cb2-loop-blocks
+      (opt-test-instr-seq-prepend
+        (opt-cb2-mov 20 (compiler_ir_types.CompilerIrValue.I64 0))
+        (opt-test-instr-seq-prepend
+          (opt-cb2-jump "head")
+          (compiler_ir_types.compiler-ir-instr-seq-empty)))
+      (opt-test-instr-seq-prepend
+        (opt-cb2-lt 21 20 (compiler_ir_types.CompilerIrValue.Var 0))
+        (opt-test-instr-seq-prepend
+          (opt-cb2-branch 21)
+          (compiler_ir_types.compiler-ir-instr-seq-empty)))
+      (opt-cb2-store-instrs
+        cell
+        5
+        (opt-cb2-step-instrs
+          (opt-test-instr-seq-prepend
+            (opt-cb2-jump "head")
+            (compiler_ir_types.compiler-ir-instr-seq-empty)))))))
+
+(define (opt-cb2-reset-function [symbols : OptCb2TestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-cb-function
+    symbols.reset
+    (opt-le-params 2)
+    256
+    (opt-cb-reset-step
+      symbols.ctor
+      10
+      symbols.b
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (opt-cb-reset-step
+        symbols.ctor
+        20
+        symbols.c
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (opt-cb-reset-step
+          symbols.ctor
+          30
+          symbols.i
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (opt-cb-reset-step
+            symbols.ctor
+            40
+            symbols.k
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (opt-cb-reset-step
+              symbols.ctor
+              50
+              symbols.d
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (opt-cb-reset-step
+                symbols.ctor
+                60
+                symbols.o
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (opt-cb-reset-step
+                  symbols.ctor
+                  70
+                  symbols.n
+                  (compiler_ir_types.CompilerIrValue.Var 1)
+                  (opt-cb-reset-step
+                    symbols.ctor
+                    80
+                    symbols.s
+                    (compiler_ir_types.CompilerIrValue.Var 1)
+                    (opt-mr-return-zero)))))))))))
+
+(define (opt-cb2-test-globals [symbols : OptCb2TestSymbols]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 16)]
+    (begin
+      (opt-le-runtime-global (&mut builder) symbols.b symbols.init-b)
+      (opt-le-runtime-global (&mut builder) symbols.c symbols.init-c)
+      (opt-le-runtime-global (&mut builder) symbols.i symbols.init-i)
+      (opt-le-runtime-global (&mut builder) symbols.k symbols.init-k)
+      (opt-le-runtime-global (&mut builder) symbols.d symbols.init-d)
+      (opt-le-runtime-global (&mut builder) symbols.o symbols.init-o)
+      (opt-le-runtime-global (&mut builder) symbols.n symbols.init-n)
+      (opt-le-runtime-global (&mut builder) symbols.s symbols.init-s)
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+
+(define (opt-cb2-test-writers [symbols : OptCb2TestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-cb2-reset-function
+      (compiler_optimize.compiler-opt-global-shared-view symbols))
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-cb2-writer-literal-seed symbols.w-i symbols.i symbols.b)
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-cb2-writer-checked-seed symbols.w-k symbols.k symbols.b)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-cb2-writer-do-while symbols.w-d symbols.d symbols.b)
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-cb2-writer-overshoot symbols.w-o symbols.o symbols.b)
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (opt-cb2-writer-untied symbols.w-n symbols.n)
+              (compiler_ir_types.compiler-ir-function-seq-prepend
+                (opt-cb2-writer-literal-seed symbols.w-s symbols.s symbols.b)
+                (compiler_ir_types.compiler-ir-function-seq-prepend
+                  ;; the second, unrelated store: the all-or-nothing join
+                  (opt-cb-writer-plain
+                    symbols.w-s2
+                    symbols.s
+                    (compiler_ir_types.CompilerIrValue.Var 0))
+                  (compiler_ir_types.compiler-ir-function-seq-empty))))))))))
+
+(define (opt-cb2-test-functions [symbols : OptCb2TestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-cb-ctor-function symbols.ctor)
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-le-init-function symbols.init-b symbols.ctor)
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-le-init-function symbols.init-c symbols.ctor)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-le-init-function symbols.init-i symbols.ctor)
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-le-init-function symbols.init-k symbols.ctor)
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (opt-le-init-function symbols.init-d symbols.ctor)
+              (compiler_ir_types.compiler-ir-function-seq-prepend
+                (opt-le-init-function symbols.init-o symbols.ctor)
+                (compiler_ir_types.compiler-ir-function-seq-prepend
+                  (opt-le-init-function symbols.init-n symbols.ctor)
+                  (compiler_ir_types.compiler-ir-function-seq-prepend
+                    (opt-le-init-function symbols.init-s symbols.ctor)
+                    (opt-cb2-test-writers symbols)))))))))))
+
+(define (opt-cb2-test-cells [symbols : OptCb2TestSymbols]) : compiler_optimize.OptGlobalCellSummary
+  (compiler_optimize.opt-cb-attach
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-cb2-test-globals symbols)
+    (opt-cb2-test-functions symbols)
+    64
+    (compiler_optimize.opt-global-cell-summary-build-with-call-memory
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (opt-cb2-test-globals symbols)
+      (opt-cb2-test-functions symbols)
+      (opt_i64_i64_map.with-capacity 1))))
+
+(define (compiler-optimize-induction-content-self-test) : i64
+  (let
+    [symbols : OptCb2TestSymbols (opt-cb2-test-symbols)]
+    [cells : compiler_optimize.OptGlobalCellSummary
+      (opt-cb2-test-cells
+        (compiler_optimize.compiler-opt-global-shared-view symbols))]
+    [family-b : i64
+      (opt-len-eq-family-of
+        (compiler_optimize.compiler-opt-global-shared-view cells)
+        symbols.b)]
+    (cond
+      ;; the family the content facts must name
+      [(= family-b 0) 1]
+      [(not
+          (=
+            family-b
+            (opt-len-eq-family-of
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.c)))
+        2]
+      ;; a literal-seeded counter bounded by the family's own length
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.i)
+            (+ family-b 1)))
+        3]
+      ;; a checked seed, bounded by a checked value
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.k)
+            (+ family-b 1)))
+        4]
+      ;; a bottom-tested loop stores an untested value on its first iteration
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.d)
+            0))
+        5]
+      ;; a step that runs before the store overshoots the bound
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.o)
+            0))
+        6]
+      ;; a bound no check ever tied to a family member's length
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.n)
+            0))
+        7]
+      ;; the all-or-nothing join: one unrelated unchecked store elsewhere in the
+      ;; program refuses an array whose induction store is admissible
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.s)
+            0))
+        8]
+      [else 42])))
+
+(test
+  content-bounds-induction-stores
+  (test.assert-i64-eq
+    (compiler-optimize-induction-content-self-test)
+    42
+    "CB-2 admits an array whose element store writes an affine induction variable governed by a loop condition bounded by a family length -- literal seed with the length as the bound, and checked seed with a checked bound -- and refuses the bottom-tested do-while shape, a step that can overshoot before the store, a bound tied to no family length, and an array carrying a second unrelated unchecked store"))
+
 ;; --- IT-2: below-the-fixpoint guard dedup ------------------------------------
 ;;
 ;; Three params: a branch condition, an array handle (so the descriptor words

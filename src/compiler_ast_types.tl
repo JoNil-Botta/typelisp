@@ -5031,7 +5031,9 @@
   (len i64))
 
 (defstruct AstExprBindingClause
-  (name i64)
+  ;; Macro binding names can carry renderable, generated, hygiene, or
+  ;; structural syntax identities. Preserve that mixed domain nominally.
+  (name ci.InternSyntaxId)
   (has-type bool)
   (ty i64)
   (init i64)
@@ -7103,7 +7105,7 @@
       out)))
 
 (define (ast-expr-binding-clause-id
-  [name : i64]
+  [name : ci.InternSyntaxId]
   [has-type : bool]
   [ty : i64]
   [init : i64]
@@ -7112,7 +7114,13 @@
   (AstExprBindingClause name has-type ty init init-produced span))
 
 (define (ast-expr-binding-clause-fallback) : AstExprBindingClause
-  (AstExprBindingClause 0 false 0 0 (AstType.Var -3) (ast-source-span 0 0 0 0)))
+  (AstExprBindingClause
+    (ci.intern-syntax-id-from-raw 0)
+    false
+    0
+    0
+    (AstType.Var -3)
+    (ast-source-span 0 0 0 0)))
 
 (define (ast-expr-binding-clause-list-with-capacity [capacity : i64]) : AstExprBindingClauseList
   (let
@@ -12125,16 +12133,22 @@
 (cfg
   test
   (test
-    compiler-ast-renderable-name-layout
+    compiler-ast-name-layout
     (unless
       (and
         (= (ci.intern-id-size) 4)
+        (= (ci.intern-syntax-id-size) 8)
+        (= (comptime (size-of (type AstExprBindingClause))) 72)
         (= (comptime (size-of (type AstImportedSpmdSpecialization))) 40)
         (= (comptime (size-of (type AstImportedSpmdCallable))) 24))
       (io.panic
         (str_cat.str-cat
-          "compiler AST renderable-name layout changed: InternId="
+          "compiler AST name layout changed: InternId="
           (string.int->string (ci.intern-id-size))
+          " InternSyntaxId="
+          (string.int->string (ci.intern-syntax-id-size))
+          " binding-clause="
+          (string.int->string (comptime (size-of (type AstExprBindingClause))))
           " specialization="
           (string.int->string
             (comptime (size-of (type AstImportedSpmdSpecialization))))

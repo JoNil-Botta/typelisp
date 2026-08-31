@@ -2097,6 +2097,73 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.unbound_candidate
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.unbound_visible_candidates|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.unbound_length_survivors|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.unbound_edit_evaluations|"
+for resolution_metric in \
+    ordinary_calls \
+    concrete_leaf_calls \
+    concrete_composite_calls \
+    unresolved_var_calls \
+    unresolved_varargs_calls \
+    unresolved_composite_calls \
+    name_lookup_calls \
+    name_cache_hits \
+    name_cache_misses \
+    type_symbol_probes; do
+    assert_contains \
+        "$CHECK_STDERR" \
+        "compile-profile|typecheck.resolve.typecheck.$resolution_metric|"
+done
+RESOLUTION_ORDINARY_CALLS=$(profile_counter_value_in \
+    "$CHECK_STDERR" \
+    "typecheck.resolve.typecheck.ordinary_calls")
+RESOLUTION_CLASSIFIED_CALLS=0
+for resolution_class in \
+    concrete_leaf_calls \
+    concrete_composite_calls \
+    unresolved_var_calls \
+    unresolved_varargs_calls \
+    unresolved_composite_calls; do
+    resolution_class_value=$(profile_counter_value_in \
+        "$CHECK_STDERR" \
+        "typecheck.resolve.typecheck.$resolution_class")
+    RESOLUTION_CLASSIFIED_CALLS=$((RESOLUTION_CLASSIFIED_CALLS + resolution_class_value))
+done
+[ "$RESOLUTION_ORDINARY_CALLS" -eq "$RESOLUTION_CLASSIFIED_CALLS" ] || {
+    show_failure_logs "$CHECK_STDOUT" "$CHECK_STDERR"
+    fail "ordinary type-resolution classification mismatch: calls=$RESOLUTION_ORDINARY_CALLS classified=$RESOLUTION_CLASSIFIED_CALLS"
+}
+RESOLUTION_NAME_LOOKUPS=$(profile_counter_value_in \
+    "$CHECK_STDERR" \
+    "typecheck.resolve.typecheck.name_lookup_calls")
+RESOLUTION_NAME_CACHE_HITS=$(profile_counter_value_in \
+    "$CHECK_STDERR" \
+    "typecheck.resolve.typecheck.name_cache_hits")
+RESOLUTION_NAME_CACHE_MISSES=$(profile_counter_value_in \
+    "$CHECK_STDERR" \
+    "typecheck.resolve.typecheck.name_cache_misses")
+RESOLUTION_TYPE_SYMBOL_PROBES=$(profile_counter_value_in \
+    "$CHECK_STDERR" \
+    "typecheck.resolve.typecheck.type_symbol_probes")
+[ "$RESOLUTION_NAME_LOOKUPS" -eq \
+    "$((RESOLUTION_NAME_CACHE_HITS + RESOLUTION_NAME_CACHE_MISSES))" ] || {
+    show_failure_logs "$CHECK_STDOUT" "$CHECK_STDERR"
+    fail "type-name resolution cache accounting mismatch: lookups=$RESOLUTION_NAME_LOOKUPS hits=$RESOLUTION_NAME_CACHE_HITS misses=$RESOLUTION_NAME_CACHE_MISSES"
+}
+[ "$RESOLUTION_NAME_CACHE_MISSES" -eq "$RESOLUTION_TYPE_SYMBOL_PROBES" ] || {
+    show_failure_logs "$CHECK_STDOUT" "$CHECK_STDERR"
+    fail "type-name resolution probe accounting mismatch: misses=$RESOLUTION_NAME_CACHE_MISSES probes=$RESOLUTION_TYPE_SYMBOL_PROBES"
+}
+assert_profile_counter_at_least_in \
+    "$CHECK_STDERR" \
+    "typecheck.resolve.typecheck.concrete_composite_calls" \
+    1 \
+    "$CHECK_STDOUT" \
+    "$CHECK_STDERR"
+assert_profile_counter_at_least_in \
+    "$CHECK_STDERR" \
+    "typecheck.resolve.typecheck.unresolved_var_calls" \
+    1 \
+    "$CHECK_STDOUT" \
+    "$CHECK_STDERR"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_materializations|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_decl_checks|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_memo_hits|"

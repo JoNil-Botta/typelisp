@@ -8141,6 +8141,46 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-resolution-profile-ordinary-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-resolution-profile-concrete-leaf-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-resolution-profile-concrete-composite-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-resolution-profile-unresolved-var-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-resolution-profile-unresolved-varargs-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-resolution-profile-unresolved-composite-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-resolution-profile-name-lookup-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-resolution-profile-name-cache-hits : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-resolution-profile-name-cache-misses : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-resolution-profile-type-symbol-probes : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-env-profile-binds : i64
     0))
 (cfg
@@ -8344,6 +8384,157 @@
   compile-profile
   (define tc-lp-counts : (__tl_dyn-array i64)
     (__tl_make-array i64 15)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-resolution-profile-reset) : unit
+    (begin
+      (set! compiler-tc-resolution-profile-ordinary-calls 0)
+      (set! compiler-tc-resolution-profile-concrete-leaf-calls 0)
+      (set! compiler-tc-resolution-profile-concrete-composite-calls 0)
+      (set! compiler-tc-resolution-profile-unresolved-var-calls 0)
+      (set! compiler-tc-resolution-profile-unresolved-varargs-calls 0)
+      (set! compiler-tc-resolution-profile-unresolved-composite-calls 0)
+      (set! compiler-tc-resolution-profile-name-lookup-calls 0)
+      (set! compiler-tc-resolution-profile-name-cache-hits 0)
+      (set! compiler-tc-resolution-profile-name-cache-misses 0)
+      (set! compiler-tc-resolution-profile-type-symbol-probes 0))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-resolution-profile-note-input
+    [ty : ast.AstType]
+    [needs-resolution : bool]) : unit
+    (begin
+      (set!
+        compiler-tc-resolution-profile-ordinary-calls
+        (+ compiler-tc-resolution-profile-ordinary-calls 1))
+      (match ty
+        [(ast.AstType.Var _)
+          (set!
+            compiler-tc-resolution-profile-unresolved-var-calls
+            (+ compiler-tc-resolution-profile-unresolved-var-calls 1))]
+        [(ast.AstType.VarArgs _ _)
+          (set!
+            compiler-tc-resolution-profile-unresolved-varargs-calls
+            (+ compiler-tc-resolution-profile-unresolved-varargs-calls 1))]
+        [(ast.AstType.Func _ _)
+          (if needs-resolution
+            (set!
+              compiler-tc-resolution-profile-unresolved-composite-calls
+              (+ compiler-tc-resolution-profile-unresolved-composite-calls 1))
+            (set!
+              compiler-tc-resolution-profile-concrete-composite-calls
+              (+ compiler-tc-resolution-profile-concrete-composite-calls 1)))]
+        [(ast.AstType.Tuple _)
+          (if needs-resolution
+            (set!
+              compiler-tc-resolution-profile-unresolved-composite-calls
+              (+ compiler-tc-resolution-profile-unresolved-composite-calls 1))
+            (set!
+              compiler-tc-resolution-profile-concrete-composite-calls
+              (+ compiler-tc-resolution-profile-concrete-composite-calls 1)))]
+        [(ast.AstType.Array _ _)
+          (if needs-resolution
+            (set!
+              compiler-tc-resolution-profile-unresolved-composite-calls
+              (+ compiler-tc-resolution-profile-unresolved-composite-calls 1))
+            (set!
+              compiler-tc-resolution-profile-concrete-composite-calls
+              (+ compiler-tc-resolution-profile-concrete-composite-calls 1)))]
+        [(ast.AstType.DynArray _)
+          (if needs-resolution
+            (set!
+              compiler-tc-resolution-profile-unresolved-composite-calls
+              (+ compiler-tc-resolution-profile-unresolved-composite-calls 1))
+            (set!
+              compiler-tc-resolution-profile-concrete-composite-calls
+              (+ compiler-tc-resolution-profile-concrete-composite-calls 1)))]
+        [(ast.AstType.Slice _)
+          (if needs-resolution
+            (set!
+              compiler-tc-resolution-profile-unresolved-composite-calls
+              (+ compiler-tc-resolution-profile-unresolved-composite-calls 1))
+            (set!
+              compiler-tc-resolution-profile-concrete-composite-calls
+              (+ compiler-tc-resolution-profile-concrete-composite-calls 1)))]
+        [(ast.AstType.Box _)
+          (if needs-resolution
+            (set!
+              compiler-tc-resolution-profile-unresolved-composite-calls
+              (+ compiler-tc-resolution-profile-unresolved-composite-calls 1))
+            (set!
+              compiler-tc-resolution-profile-concrete-composite-calls
+              (+ compiler-tc-resolution-profile-concrete-composite-calls 1)))]
+        [(ast.AstType.Ptr _)
+          (if needs-resolution
+            (set!
+              compiler-tc-resolution-profile-unresolved-composite-calls
+              (+ compiler-tc-resolution-profile-unresolved-composite-calls 1))
+            (set!
+              compiler-tc-resolution-profile-concrete-composite-calls
+              (+ compiler-tc-resolution-profile-concrete-composite-calls 1)))]
+        [(ast.AstType.MutPtr _)
+          (if needs-resolution
+            (set!
+              compiler-tc-resolution-profile-unresolved-composite-calls
+              (+ compiler-tc-resolution-profile-unresolved-composite-calls 1))
+            (set!
+              compiler-tc-resolution-profile-concrete-composite-calls
+              (+ compiler-tc-resolution-profile-concrete-composite-calls 1)))]
+        [(ast.AstType.Ref _ _)
+          (if needs-resolution
+            (set!
+              compiler-tc-resolution-profile-unresolved-composite-calls
+              (+ compiler-tc-resolution-profile-unresolved-composite-calls 1))
+            (set!
+              compiler-tc-resolution-profile-concrete-composite-calls
+              (+ compiler-tc-resolution-profile-concrete-composite-calls 1)))]
+        [(ast.AstType.MutRef _ _)
+          (if needs-resolution
+            (set!
+              compiler-tc-resolution-profile-unresolved-composite-calls
+              (+ compiler-tc-resolution-profile-unresolved-composite-calls 1))
+            (set!
+              compiler-tc-resolution-profile-concrete-composite-calls
+              (+ compiler-tc-resolution-profile-concrete-composite-calls 1)))]
+        [(ast.AstType.Region _ _)
+          (if needs-resolution
+            (set!
+              compiler-tc-resolution-profile-unresolved-composite-calls
+              (+ compiler-tc-resolution-profile-unresolved-composite-calls 1))
+            (set!
+              compiler-tc-resolution-profile-concrete-composite-calls
+              (+ compiler-tc-resolution-profile-concrete-composite-calls 1)))]
+        [_
+          (set!
+            compiler-tc-resolution-profile-concrete-leaf-calls
+            (+ compiler-tc-resolution-profile-concrete-leaf-calls 1))]))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-resolution-profile-note-name-cache-hit) : unit
+    (begin
+      (set!
+        compiler-tc-resolution-profile-name-lookup-calls
+        (+ compiler-tc-resolution-profile-name-lookup-calls 1))
+      (set!
+        compiler-tc-resolution-profile-name-cache-hits
+        (+ compiler-tc-resolution-profile-name-cache-hits 1)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-resolution-profile-note-name-cache-miss) : unit
+    (begin
+      (set!
+        compiler-tc-resolution-profile-name-lookup-calls
+        (+ compiler-tc-resolution-profile-name-lookup-calls 1))
+      (set!
+        compiler-tc-resolution-profile-name-cache-misses
+        (+ compiler-tc-resolution-profile-name-cache-misses 1))
+      (set!
+        compiler-tc-resolution-profile-type-symbol-probes
+        (+ compiler-tc-resolution-profile-type-symbol-probes 1)))))
 
 (cfg
   compile-profile
@@ -8552,6 +8743,7 @@
   compile-profile
   (define (compiler-tc-macro-profile-reset-program-counters) : unit
     (begin
+      (compiler-tc-resolution-profile-reset)
       (compiler-tc-unbound-profile-reset)
       (set! compiler-tc-macro-generated-module-materializations 0)
       (set! compiler-tc-macro-generated-decl-checks 0)
@@ -9107,6 +9299,66 @@
 
 (cfg
   compile-profile
+  (define (compiler-tc-resolution-profile-line
+    [scope : String]
+    [phase : String]
+    [value : i64]) : unit
+    (io.print-error
+      (str_cat.str-cat
+        "compile-profile|typecheck.resolve."
+        scope
+        "."
+        phase
+        (compiler-tc-profile-field value)
+        "|0|0|0\n"))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-resolution-profile-finish [scope : String]) : unit
+    (begin
+      (compiler-tc-resolution-profile-line
+        (tc-global-shared-view scope)
+        "ordinary_calls"
+        compiler-tc-resolution-profile-ordinary-calls)
+      (compiler-tc-resolution-profile-line
+        (tc-global-shared-view scope)
+        "concrete_leaf_calls"
+        compiler-tc-resolution-profile-concrete-leaf-calls)
+      (compiler-tc-resolution-profile-line
+        (tc-global-shared-view scope)
+        "concrete_composite_calls"
+        compiler-tc-resolution-profile-concrete-composite-calls)
+      (compiler-tc-resolution-profile-line
+        (tc-global-shared-view scope)
+        "unresolved_var_calls"
+        compiler-tc-resolution-profile-unresolved-var-calls)
+      (compiler-tc-resolution-profile-line
+        (tc-global-shared-view scope)
+        "unresolved_varargs_calls"
+        compiler-tc-resolution-profile-unresolved-varargs-calls)
+      (compiler-tc-resolution-profile-line
+        (tc-global-shared-view scope)
+        "unresolved_composite_calls"
+        compiler-tc-resolution-profile-unresolved-composite-calls)
+      (compiler-tc-resolution-profile-line
+        (tc-global-shared-view scope)
+        "name_lookup_calls"
+        compiler-tc-resolution-profile-name-lookup-calls)
+      (compiler-tc-resolution-profile-line
+        (tc-global-shared-view scope)
+        "name_cache_hits"
+        compiler-tc-resolution-profile-name-cache-hits)
+      (compiler-tc-resolution-profile-line
+        (tc-global-shared-view scope)
+        "name_cache_misses"
+        compiler-tc-resolution-profile-name-cache-misses)
+      (compiler-tc-resolution-profile-line
+        scope
+        "type_symbol_probes"
+        compiler-tc-resolution-profile-type-symbol-probes))))
+
+(cfg
+  compile-profile
   (define (compiler-tc-macro-counter-profile-line
     [phase : String]
     [value : i64]) : unit
@@ -9147,6 +9399,7 @@
   compile-profile
   (define (compiler-tc-decl-profile-finish) : unit
     (begin
+      (compiler-tc-resolution-profile-finish "typecheck")
       (compiler-tc-decl-profile-line-mem
         "local_env"
         compiler-tc-decl-profile-local-env-ms
@@ -22693,6 +22946,23 @@
       type-bases
       ty)))
 
+;; The ordinary resolver reads and appends through the installed reader rather
+;; than through an explicit `AstNodePoolContext`. Bind the job-owned memo to
+;; that reader's segment table directly: selecting and copying a pool context
+;; for every composite type would cost more than the rebuilds this predicate
+;; avoids. Reader segment tables are stable across pool growth, and rebinding
+;; advances only this job's cache epoch when a compatibility caller swaps the
+;; installed reader.
+(define (tc-type-needs-resolution-for-reader-context?
+  [ctx : TcContext]
+  [ty : ast.AstType]) : bool
+  (let
+    [state : TcTypeResolutionCacheState
+      (tc-job-state-type-resolution-cache (tc-context-job-state ctx))]
+    (begin
+      (tc-type-resolution-cache-bind-active-for-state! state)
+      (tc-type-needs-resolution-for-state? state ty))))
+
 ;; id-keyed variant: reads the O(1) precomputed "contains-'/'" metadata slot
 ;; instead of re-hashing the name. The hygiene check needs the string, which
 ;; intern-str recovers in O(1). `tc-name-qualified? name` ==
@@ -26535,8 +26805,18 @@
   [symbols : csym.CompilerSymbols]
   [lookup-id : i64]) : i64
   (match (tc-resolve-type-name-cache-lookup state lookup-id)
-    [(TcTypeNameLookupCache.Found handle) handle]
-    [(TcTypeNameLookupCache.Missing) (csym.compiler-symbols-missing-handle)]
+    [(TcTypeNameLookupCache.Found handle)
+      (begin
+        (cfg
+          compile-profile
+          (compiler-tc-resolution-profile-note-name-cache-hit))
+        handle)]
+    [(TcTypeNameLookupCache.Missing)
+      (begin
+        (cfg
+          compile-profile
+          (compiler-tc-resolution-profile-note-name-cache-hit))
+        (csym.compiler-symbols-missing-handle))]
     [(TcTypeNameLookupCache.Miss)
       (let
         [handle : i64
@@ -26545,6 +26825,9 @@
             lookup-id
             (csym.compiler-symbols-missing-handle))]
         (begin
+          (cfg
+            compile-profile
+            (compiler-tc-resolution-profile-note-name-cache-miss))
           (tc-resolve-type-name-cache-store!
             state
             lookup-id
@@ -27061,30 +27344,72 @@
           source-id))
       (tc-resolve-source-type-name resolution-ctx name name-id))))
 
+(define (tc-resolve-type-composite [ctx : TcContext] [ty : ast.AstType]) : ast.AstType
+  ;; Ordinary compatibility callers may have installed a pool distinct from
+  ;; `ctx.pools`. Classify child ids in the same pool that the rebuilding path
+  ;; would read and append to; the job-owned predicate memo keeps that owner and
+  ;; its segment table isolated from every other compile job.
+  (let
+    [needs-resolution : bool
+      (tc-type-needs-resolution-for-reader-context?
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view ty))]
+    (begin
+      (cfg
+        compile-profile
+        (compiler-tc-resolution-profile-note-input
+          (tc-global-shared-view ty)
+          needs-resolution))
+      (if needs-resolution
+        (tc-resolve-type-rebuild ctx ty)
+        ty))))
+
 (define (tc-resolve-type [ctx : TcContext] [ty : ast.AstType]) : ast.AstType
-  ;; The ordinary resolver follows the installed compatibility pool because
-  ;; most production AstType values still carry child ids in that domain.
-  ;; Callers that carry a pool end-to-end use `tc-resolve-type-with-pools`.
-  (match ty
-    [(ast.AstType.I64) (ast.AstType.I64)]
-    [(ast.AstType.I32) (ast.AstType.I32)]
-    [(ast.AstType.I16) (ast.AstType.I16)]
-    [(ast.AstType.I8) (ast.AstType.I8)]
-    [(ast.AstType.U64) (ast.AstType.U64)]
-    [(ast.AstType.U32) (ast.AstType.U32)]
-    [(ast.AstType.U16) (ast.AstType.U16)]
-    [(ast.AstType.U8) (ast.AstType.U8)]
-    [(ast.AstType.F64) (ast.AstType.F64)]
-    [(ast.AstType.F32) (ast.AstType.F32)]
-    [(ast.AstType.Bool) (ast.AstType.Bool)]
-    [(ast.AstType.Char) (ast.AstType.Char)]
-    [(ast.AstType.String) (ast.AstType.String)]
-    [(ast.AstType.Str) (ast.AstType.Str)]
-    [(ast.AstType.Bytes) (ast.AstType.Bytes)]
-    [(ast.AstType.Unit) (ast.AstType.Unit)]
-    [(ast.AstType.Never) (ast.AstType.Never)]
-    [(ast.AstType.Expr) (ast.AstType.Expr)]
-    [(ast.AstType.ExprList) (ast.AstType.ExprList)]
+  ;; Concrete leaves already returned directly from this match. Keep that
+  ;; 17M-call selfhost path free of pool selection, and consult the recursive
+  ;; job-owned predicate only for composite shapes that the old resolver would
+  ;; otherwise rebuild unconditionally.
+  (match (tc-global-shared-view ty)
+    [(ast.AstType.Func _ _) (tc-resolve-type-composite ctx ty)]
+    [(ast.AstType.Tuple _) (tc-resolve-type-composite ctx ty)]
+    [(ast.AstType.Array _ _) (tc-resolve-type-composite ctx ty)]
+    [(ast.AstType.DynArray _) (tc-resolve-type-composite ctx ty)]
+    [(ast.AstType.Slice _) (tc-resolve-type-composite ctx ty)]
+    [(ast.AstType.Box _) (tc-resolve-type-composite ctx ty)]
+    [(ast.AstType.Ptr _) (tc-resolve-type-composite ctx ty)]
+    [(ast.AstType.MutPtr _) (tc-resolve-type-composite ctx ty)]
+    [(ast.AstType.Ref _ _) (tc-resolve-type-composite ctx ty)]
+    [(ast.AstType.MutRef _ _) (tc-resolve-type-composite ctx ty)]
+    [(ast.AstType.Region _ _) (tc-resolve-type-composite ctx ty)]
+    [(ast.AstType.VarArgs _ _)
+      (begin
+        (cfg
+          compile-profile
+          (compiler-tc-resolution-profile-note-input
+            (tc-global-shared-view ty)
+            true))
+        (tc-resolve-type-rebuild ctx ty))]
+    [(ast.AstType.Var _)
+      (begin
+        (cfg
+          compile-profile
+          (compiler-tc-resolution-profile-note-input
+            (tc-global-shared-view ty)
+            true))
+        (tc-resolve-type-rebuild ctx ty))]
+    [_
+      (begin
+        (cfg
+          compile-profile
+          (compiler-tc-resolution-profile-note-input
+            (tc-global-shared-view ty)
+            false))
+        ty)]))
+
+(define (tc-resolve-type-rebuild [ctx : TcContext] [ty : ast.AstType]) : ast.AstType
+  ;; The caller has proved this value contains an unresolved Var/VarArgs. Reuse
+  ;; the public resolver for children so concrete subtrees remain shared.
+  (match (tc-global-shared-view ty)
     [(ast.AstType.Func args ret)
       (ast.ast-ty-func
         (tc-resolve-type-list
@@ -27125,12 +27450,6 @@
       (ast.ast-ty-region
         region
         (tc-resolve-type (tc-global-shared-view ctx) (ast.ty-node-get inner)))]
-    [(ast.AstType.Enum name) (ast.AstType.Enum name)]
-    [(ast.AstType.EnumArgs name lifetimes)
-      (ast.AstType.EnumArgs name lifetimes)]
-    [(ast.AstType.Struct name) (ast.AstType.Struct name)]
-    [(ast.AstType.StructArgs name lifetimes)
-      (ast.AstType.StructArgs name lifetimes)]
     [(ast.AstType.VarArgs name lifetimes)
       (let
         [name-text : String
@@ -27148,7 +27467,8 @@
           (tc-hygiene-name-text-id-for-session
             (tc-context-structural-session ctx)
             name)]
-        (tc-resolve-type-name ctx name-text name))]))
+        (tc-resolve-type-name ctx name-text name))]
+    [_ ty]))
 
 (define (tc-resolve-type-with-pools
   [ctx : TcContext]
@@ -111432,6 +111752,114 @@
                       unit
                       (io.panic
                         "typecheck: type-resolution cache state isolation failed"))))))))))))
+
+(cfg
+  test
+  (test
+    type-resolution-concrete-fast-path-pool-isolation
+    (let
+      [installed : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-capture-active)]
+      [concrete-pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-new-with-capacities 4 4)]
+      [compatibility-pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-new-with-capacities 4 4)]
+      [job-state : TcJobState (tc-job-state-new)]
+      [concrete-child : i64
+        (ast.ast-node-pool-context-type-push
+          (tc-global-shared-view concrete-pools)
+          (ast.AstType.I64))]
+      [concrete-root : ast.AstType (ast.AstType.Array concrete-child 3)]
+      [unresolved-name : i64 (ci.intern "Expr")]
+      [unresolved-child : i64
+        (ast.ast-node-pool-context-type-push
+          (tc-global-shared-view compatibility-pools)
+          (ast.AstType.Var unresolved-name))]
+      [unresolved-root : ast.AstType (ast.AstType.Array unresolved-child 5)]
+      [ctx : TcContext
+        (tc-context-new-with-source-names-and-job-state
+          (ast.ast-program (ast.ast-decl-list-new))
+          (csym.compiler-symbols-empty)
+          (csym.compiler-registries-empty)
+          ""
+          cbi.compiler-builtin-id-fix-empty
+          (tc-global-shared-view concrete-pools)
+          (ci.intern-source-name-session-capture-active-handle)
+          (tc-global-shared-view job-state))]
+      [_install-concrete : unit
+        (ast.ast-node-pool-context-install!
+          (tc-global-shared-view concrete-pools))]
+      [concrete-len-before : i64
+        (ast.ast-node-pool-context-type-len
+          (tc-global-shared-view concrete-pools))]
+      [resolved-primitive : ast.AstType
+        (tc-resolve-type (tc-global-shared-view ctx) (ast.AstType.I64))]
+      [resolved-nominal : ast.AstType
+        (tc-resolve-type (tc-global-shared-view ctx) (ast.AstType.Struct 700))]
+      [resolved-concrete : ast.AstType
+        (tc-resolve-type
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view concrete-root))]
+      [concrete-unchanged? : bool
+        (and
+          (match resolved-primitive
+            [(ast.AstType.I64) true]
+            [_ false])
+          (match resolved-nominal
+            [(ast.AstType.Struct name) (= name 700)]
+            [_ false])
+          (match resolved-concrete
+            [(ast.AstType.Array child len)
+              (and (= child concrete-child) (= len 3))]
+            [_ false])
+          (=
+            (ast.ast-node-pool-context-type-len
+              (tc-global-shared-view concrete-pools))
+            concrete-len-before))]
+      [_install-compatibility : unit
+        (ast.ast-node-pool-context-install!
+          (tc-global-shared-view compatibility-pools))]
+      [compatibility-len-before : i64
+        (ast.ast-node-pool-context-type-len
+          (tc-global-shared-view compatibility-pools))]
+      [resolved-unresolved : ast.AstType
+        (tc-resolve-type
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view unresolved-root))]
+      [compatibility-result-ok? : bool
+        (match resolved-unresolved
+          [(ast.AstType.Array child len)
+            (and
+              (= len 5)
+              (match (ast.ast-node-pool-context-type-get
+                compatibility-pools
+                child)
+                [(ast.AstType.Expr) true]
+                [_ false]))]
+          [_ false])]
+      [compatibility-len-grew? : bool
+        (=
+          (ast.ast-node-pool-context-type-len
+            (tc-global-shared-view compatibility-pools))
+          (+ compatibility-len-before 1))]
+      [compatibility-still-installed? : bool
+        (ast.ast-node-pool-context-type-installed? (& compatibility-pools))]
+      (begin
+        (ast.ast-node-pool-context-install! installed)
+        (cond
+          [(not concrete-unchanged?)
+            (io.panic
+              "typecheck: concrete resolution fast path rebuilt a concrete type")]
+          [(not compatibility-result-ok?)
+            (io.panic
+              "typecheck: concrete resolution fast path changed unresolved output")]
+          [(not compatibility-len-grew?)
+            (io.panic
+              "typecheck: concrete resolution fast path skipped unresolved rebuild")]
+          [(not compatibility-still-installed?)
+            (io.panic
+              "typecheck: concrete resolution fast path changed the installed pool")]
+          [else unit])))))
 
 (cfg
   test

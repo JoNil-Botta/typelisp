@@ -4649,6 +4649,99 @@
           point)
         (set! index (+ index 1))))))
 
+;; ---------------------------------------------------------------------------
+;; LP-1: the allocation-side EP mode.
+;;
+;;   0 = off. The allocation interval index is exactly what it was: the
+;;       CONSERVATIVE segment builder run over EDGE-PRECISE liveness (the #6377
+;;       switch), so a phi still contributes a use touch AT the phi point.
+;;   1 = substitute EP SEGMENT rows for safe-mode phi-touched vars.
+;;   2 = 1, plus tighten those vars' coarse hull to the substituted rows.
+;;
+;; This is a compile-time constant, not an escape hatch: there is no per-function
+;; bail-out. Every relaxation is decided PER VALUE by the safe-mode phi-touched
+;; mask, and a value the mask does not select keeps today's row and today's hull.
+;; ---------------------------------------------------------------------------
+(define (compiler-reg-ep-alloc-mode) : i64
+  2)
+
+;; Masked block live-in seeding for the EP walk.
+;;
+;; The conservative builder opens a live-in value's segment one point BELOW the
+;; block's first instruction (`compiler-reg-live-in-block-point`), and that
+;; anchor is load-bearing: a segment/hull start is read as the value's own
+;; definition, so a clobber AT it is not spanned. Under a block layout that puts
+;; a block where a value merely flows IN ahead of the block that defines it, a
+;; row that opened at the first instruction instead would declare a value live
+;; ACROSS an opening call not call-spanning and hand it a caller-saved home.
+;;
+;; The EP walk was written for the coalescer, which reads its rows only to RELAX
+;; interference among phi-touched vars and never lets them reach a clobber-span
+;; test, so it never needed the bridge. The allocation index does, so the walk
+;; takes the seeding as a parameter: the coalescer keeps passing false and its
+;; rows stay byte-identical, and only the allocation build pays for -- and gets
+;; -- the bridge. With it, an EP row differs from the conservative row of the
+;; same var in exactly one way: the phi-point use touches are gone.
+(define (compiler-reg-ep-segment-live-in-word!
+  [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
+  [segment-starts : (__tl_dyn-array i64)]
+  [segment-ends : (__tl_dyn-array i64)]
+  [bits : i64]
+  [var-base : i64]
+  [point : i64]) : unit
+  (if (= bits 0)
+    unit
+    (begin
+      (compiler-reg-segment-note-point!
+        (compiler-reg-global-shared-view segments)
+        (compiler-reg-global-shared-view segment-starts)
+        (compiler-reg-global-shared-view segment-ends)
+        (+ var-base (compiler-reg-low-bit-index32-nonzero bits))
+        point)
+      (compiler-reg-ep-segment-live-in-word!
+        segments
+        segment-starts
+        segment-ends
+        (bit-and bits (- bits 1))
+        var-base
+        point))))
+
+(define (compiler-reg-ep-segment-live-in!
+  [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
+  [segment-starts : (__tl_dyn-array i64)]
+  [segment-ends : (__tl_dyn-array i64)]
+  [set : live.CompilerLiveI64Set]
+  [mask-words : (__tl_dyn-array i64)]
+  [mask-limit : i64]
+  [point : i64]) : unit
+  (let
+    [set-words : i64
+      (live.compiler-live-set-word-count (compiler-reg-global-shared-view set))]
+    [mask-len : i64 (array-length mask-words)]
+    [word-limit : i64
+      (if (< set-words mask-limit)
+        set-words
+        mask-limit)]
+    [limit : i64
+      (if (< word-limit mask-len)
+        word-limit
+        mask-len)]
+    [index : i64 0]
+    (while (< index limit)
+      (begin
+        (compiler-reg-ep-segment-live-in-word!
+          (compiler-reg-global-shared-view segments)
+          (compiler-reg-global-shared-view segment-starts)
+          (compiler-reg-global-shared-view segment-ends)
+          (bit-and
+            (live.compiler-live-set-word-at-bounded
+              (compiler-reg-global-shared-view set)
+              index)
+            (array-ref mask-words index))
+          (* index (live.compiler-live-set-word-bits))
+          point)
+        (set! index (+ index 1))))))
+
 ;; The segment-bridge body is spelled out here rather than called, exactly as
 ;; the conservative walk (`compiler-reg-extend-segment-after-words!`) spells out
 ;; its own copy: a shared helper would be a call per live bit in BOTH walks, and
@@ -4952,17 +5045,32 @@
   [segment-ends : (__tl_dyn-array i64)]
   [mask : (__tl_dyn-array i64)]
   [mask-words : (__tl_dyn-array i64)]
-  [mask-limit : i64]) : i64
+  [mask-limit : i64]
+  [seed-live-in? : bool]) : i64
   (match blocks
     [(ir.CompilerIrBlockList.Nil) point]
     [(ir.CompilerIrBlockList.Cons block rest)
       (match (compiler-reg-global-shared-view block)
         [(ir.CompilerIrBlock.Block label instrs)
           (let
-            [live-afters : live.CompilerLiveInstrSetVec
-              (compiler-reg-live-intervals-find-afters
+            [live-block : live.CompilerLiveMaybeBlock
+              (live.compiler-live-function-find-block
                 (compiler-reg-global-shared-view liveness)
                 label)]
+            [live-afters : live.CompilerLiveInstrSetVec
+              (compiler-reg-live-maybe-block-afters
+                (compiler-reg-global-shared-view live-block))]
+            [_live-in : unit
+              (if seed-live-in?
+                (compiler-reg-ep-segment-live-in!
+                  (compiler-reg-global-shared-view segments)
+                  (compiler-reg-global-shared-view segment-starts)
+                  (compiler-reg-global-shared-view segment-ends)
+                  (compiler-reg-live-maybe-block-live-in live-block)
+                  (compiler-reg-global-shared-view mask-words)
+                  mask-limit
+                  (compiler-reg-live-in-block-point point))
+                unit)]
             (compiler-reg-live-interval-selection-ep-blocks
               (compiler-reg-box-shared-view rest)
               (compiler-reg-global-shared-view liveness)
@@ -4981,7 +5089,8 @@
               (compiler-reg-global-shared-view segment-ends)
               (compiler-reg-global-shared-view mask)
               (compiler-reg-global-shared-view mask-words)
-              mask-limit))])]
+              mask-limit
+              seed-live-in?))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -4996,10 +5105,24 @@
                 i)
                 [(ir.CompilerIrBlock.Block label instrs)
                   (let
-                    [live-afters : live.CompilerLiveInstrSetVec
-                      (compiler-reg-live-intervals-find-afters
+                    [live-block : live.CompilerLiveMaybeBlock
+                      (live.compiler-live-function-find-block
                         (compiler-reg-global-shared-view liveness)
                         label)]
+                    [live-afters : live.CompilerLiveInstrSetVec
+                      (compiler-reg-live-maybe-block-afters
+                        (compiler-reg-global-shared-view live-block))]
+                    [_live-in : unit
+                      (if seed-live-in?
+                        (compiler-reg-ep-segment-live-in!
+                          (compiler-reg-global-shared-view segments)
+                          (compiler-reg-global-shared-view segment-starts)
+                          (compiler-reg-global-shared-view segment-ends)
+                          (compiler-reg-live-maybe-block-live-in live-block)
+                          (compiler-reg-global-shared-view mask-words)
+                          mask-limit
+                          (compiler-reg-live-in-block-point out-point))
+                        unit)]
                     (set!
                       out-point
                       (compiler-reg-live-interval-selection-ep-instr-seq
@@ -5020,7 +5143,8 @@
 (define (compiler-reg-live-interval-selection-ep-segments
   [func : ir.CompilerIrFunction]
   [liveness : live.CompilerFunctionLiveness]
-  [mask : (__tl_dyn-array i64)]) : (__tl_dyn-array CompilerRegIntervalSeq)
+  [mask : (__tl_dyn-array i64)]
+  [seed-live-in? : bool]) : (__tl_dyn-array CompilerRegIntervalSeq)
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
       (let
@@ -5054,7 +5178,8 @@
                   (compiler-reg-global-shared-view segment-ends)
                   (compiler-reg-global-shared-view mask)
                   (compiler-reg-global-shared-view mask-words)
-                  mask-limit)]
+                  mask-limit
+                  seed-live-in?)]
               unit)
             unit)
           (let
@@ -5522,6 +5647,150 @@
                 (compiler-reg-interval-seq-empty))))
           (set! v (+ v 1))))
       (CompilerRegIntervalIndex cons-starts cons-ends hybrid-segs))))
+
+;; ---------------------------------------------------------------------------
+;; LP-1: the ALLOCATION interval index -- edge-precise PER VALUE.
+;;
+;; #6377 moved allocation onto edge-precise LIVENESS, which stopped a loop carry
+;; leaking backward to function entry. It left one conservatism behind: the
+;; SEGMENT builder is still the baseline one, and that builder asks an
+;; instruction for its uses, so a phi contributes a use touch for every input AT
+;; THE PHI POINT. A back-edge input therefore still gets a one-point segment at
+;; the header and, because the header is linearly ahead of the latch, a coarse
+;; hull that starts at the header and covers the whole loop body -- the
+;; conservative loop-carry hull. The EP builder (`...-ep-instr-seq`, which asks
+;; for `uses-nophi`) is the row without that touch; until now its only consumer
+;; was the coalescing hybrid.
+;;
+;; SUBSTITUTION RULE, per value, fail-closed at every step:
+;;   * only a var the SAFE-MODE phi-touched mask selects is substituted. That is
+;;     the same population, built by the same `compiler-reg-function-phi-touched-safe-mode`
+;;     call, that the coalescer already trusts -- so the live-out-input phi
+;;     exclusion (the `merged-root-index` self-host mis-coalesce the fixpoint
+;;     caught) is applied here unchanged. Every other var keeps today's row.
+;;   * a selected var whose EP row came back EMPTY keeps today's row. An empty
+;;     row proves nothing, and the coarse hull spans a value's holes.
+;;   * a selected var whose conservative hull starts at or before point 0 keeps
+;;     today's row and hull -- see `use-ep?` below.
+;;   * the hull is only ever TIGHTENED, never widened: the new start is the MAX
+;;     of the conservative start and the EP row's first start, the new end the
+;;     MIN of the conservative end and the EP row's last end. A substitution that
+;;     came out degenerate (start past end) is dropped.
+;;
+;; SOUNDNESS. For a pair (A selected, B not) the greedy compares A's EP row
+;; against B's row, which still over-approximates B's liveness, so every real
+;; interference of A with B is still seen; only A-vs-A' -- two members of the
+;; same carry web -- is relaxed, and that relaxation is the exact SSA
+;; interference. This is the containment argument the coalescing hybrid is built
+;; on, and it is strictly weaker than what the coalescer already does with the
+;; same rows: coalescing MERGES A and A' into one register, whereas this only
+;; declines to force them apart.
+;;
+;; The rows fed here are built with the live-in bridge on (`seed-live-in?`), so
+;; a selected var's row differs from its conservative row in exactly one way --
+;; the phi-point touches are gone -- and the hull-start convention the
+;; clobber-span test reads (`inclusive-hull-start?`) keeps meaning what it meant.
+;; ---------------------------------------------------------------------------
+(define (compiler-reg-ep-alloc-hull-start [old-start : i64] [ep-start : i64]) : i64
+  (if (<= old-start 0)
+    old-start
+    (if (> ep-start old-start)
+      ep-start
+      old-start)))
+
+(define (compiler-reg-ep-alloc-hull-end [old-end : i64] [ep-end : i64]) : i64
+  (if (< old-end 0)
+    old-end
+    (if (< ep-end old-end)
+      ep-end
+      old-end)))
+
+(define (compiler-reg-ep-alloc-index
+  [cons-index : CompilerRegIntervalIndex]
+  [ep-segs : (__tl_dyn-array CompilerRegIntervalSeq)]
+  [mask : (__tl_dyn-array i64)]
+  [tighten-hull? : bool]) : CompilerRegIntervalIndex
+  (let
+    [cons-starts : (__tl_dyn-array i64) cons-index.starts]
+    [cons-ends : (__tl_dyn-array i64) cons-index.ends]
+    [cons-segs : (__tl_dyn-array CompilerRegIntervalSeq) cons-index.segments]
+    [n : i64 (array-length cons-starts)]
+    [out-segs : (__tl_dyn-array CompilerRegIntervalSeq)
+      (__tl_make-array CompilerRegIntervalSeq n)]
+    [out-starts : (__tl_dyn-array i64)
+      (if tighten-hull?
+        (__tl_make-array i64 n)
+        cons-starts)]
+    [out-ends : (__tl_dyn-array i64)
+      (if tighten-hull?
+        (__tl_make-array i64 n)
+        cons-ends)]
+    [v : i64 0]
+    (begin
+      (while (< v n)
+        (begin
+          (let
+            [cons-row : CompilerRegIntervalSeq
+              (if (< v (array-length cons-segs))
+                (array-ref cons-segs v)
+                (compiler-reg-interval-seq-empty))]
+            [ep-row : CompilerRegIntervalSeq
+              (if (if (< v (array-length mask))
+                (= (array-ref mask v) 1)
+                false)
+                (if (< v (array-length ep-segs))
+                  (array-ref ep-segs v)
+                  (compiler-reg-interval-seq-empty))
+                (compiler-reg-interval-seq-empty))]
+            [old-start : i64 (array-ref cons-starts v)]
+            [old-end : i64 (array-ref cons-ends v)]
+            ;; Entry-anchored vars are REFUSED outright, row and hull alike. A
+            ;; conservative hull that starts at or before point 0 is the M-A
+            ;; (RC1) param entry reservation, which
+            ;; `compiler-reg-param-intervals-extend-entry!` writes into the
+            ;; coarse start AND into the earliest SEGMENT of the row. The EP row
+            ;; is built by a walk that never saw that reservation, so
+            ;; substituting it would drop the very anchor the reservation exists
+            ;; to place -- the prologue writes a register-homed param's home
+            ;; before point 0, which no point model can express. 3.7% of the
+            ;; selected vars on an opt2 self-compile are entry-anchored, and
+            ;; their hulls are the short near-entry ones ([0,8], [0,10]), not the
+            ;; loop carries this packet is after.
+            [use-ep? : bool (and (> ep-row.len 0) (> old-start 0))]
+            [new-start : i64
+              (if use-ep?
+                (compiler-reg-ep-alloc-hull-start
+                  old-start
+                  (array-ref ep-row.slots 0).start)
+                old-start)]
+            [new-end : i64
+              (if use-ep?
+                (compiler-reg-ep-alloc-hull-end
+                  old-end
+                  (array-ref ep-row.slots (- ep-row.len 1)).end)
+                old-end)]
+            [keep-hull? : bool (> new-start new-end)]
+            (begin
+              (set!
+                (array-ref out-segs v)
+                (if use-ep?
+                  ep-row
+                  cons-row))
+              (if tighten-hull?
+                (begin
+                  (set!
+                    (array-ref out-starts v)
+                    (if keep-hull?
+                      old-start
+                      new-start))
+                  (set!
+                    (array-ref out-ends v)
+                    (if keep-hull?
+                      old-end
+                      new-end)))
+                unit)))
+          (set! v (+ v 1))))
+      (CompilerRegIntervalIndex out-starts out-ends out-segs))))
 
 ;; ---------------------------------------------------------------------------
 ;; Cheap block-level liveness for register planning (#perf).
@@ -36655,6 +36924,64 @@
             (compiler-reg-global-shared-view interval-index)
             (compiler-reg-global-shared-view clobber-points)
             (compiler-reg-global-shared-view storage-identity-vars))))]
+    ;; LP-1: edge-precise liveness, the SAFE-MODE phi-touched mask, and the EP
+    ;; segment rows, built once here and shared by the coalescing hybrid below
+    ;; and by the allocation index. `compiler-reg-liveness-handle-edge-precise`
+    ;; only reads the handle's already-computed field, so naming it twice costs
+    ;; nothing; the two segment WALKS are separate because they want different
+    ;; rows (see `seed-live-in?`), and the allocation walk is not run at all
+    ;; unless the mode below asks for it.
+    ;;
+    ;; Everything here is dead work for a move-free function and for the
+    ;; SIMD/AVX plan, exactly as before: the coalesce map build returns the
+    ;; empty map without reading an index, so the plan is unchanged.
+    [ep-relax? : bool
+      (and
+        allow-caller-saved-zero-call
+        (not
+          (compiler-reg-move-list-empty?
+            (compiler-reg-global-shared-view moves))))]
+    ;; Exclude unsafe live-out inputs while admitting proven self-loop
+    ;; back-edge-only values. Fixed div/mod or variable-shift functions retain
+    ;; the conservative guard: relaxing an otherwise unrelated carry can reshape
+    ;; fixed-home pressure differently on SysV/Win64. Built BEFORE the EP segment
+    ;; walks (all are pure reads of `func` and the EP liveness into their own
+    ;; fresh arrays, so the order does not change any result) so each walk can
+    ;; restrict itself to the rows its consumer will actually read.
+    [ep-phi-touched : (__tl_dyn-array i64)
+      (if ep-relax?
+        (compiler-reg-function-phi-touched-safe-mode
+          (compiler-reg-global-shared-view func)
+          (compiler-reg-liveness-handle-edge-precise
+            (compiler-reg-global-shared-view liveness-handle))
+          (=
+            (live.compiler-live-set-word-count
+              (compiler-reg-global-shared-view destructive-fixed-points))
+            0))
+        (__tl_make-array i64 0))]
+    ;; The coalescer's rows: NO live-in bridge, byte-identical to what it read
+    ;; before this packet.
+    [ep-coalesce-segs : (__tl_dyn-array CompilerRegIntervalSeq)
+      (if ep-relax?
+        (compiler-reg-live-interval-selection-ep-segments
+          (compiler-reg-global-shared-view func)
+          (compiler-reg-liveness-handle-edge-precise
+            (compiler-reg-global-shared-view liveness-handle))
+          (compiler-reg-global-shared-view ep-phi-touched)
+          false)
+        (__tl_make-array CompilerRegIntervalSeq 0))]
+    ;; The allocation rows: the SAME walk WITH the live-in bridge, so a selected
+    ;; var's row differs from its conservative row only by the phi-point touches
+    ;; (see compiler-reg-ep-alloc-index).
+    [ep-alloc-segs : (__tl_dyn-array CompilerRegIntervalSeq)
+      (if (and ep-relax? (> (compiler-reg-ep-alloc-mode) 0))
+        (compiler-reg-live-interval-selection-ep-segments
+          (compiler-reg-global-shared-view func)
+          (compiler-reg-liveness-handle-edge-precise
+            (compiler-reg-global-shared-view liveness-handle))
+          (compiler-reg-global-shared-view ep-phi-touched)
+          true)
+        (__tl_make-array CompilerRegIntervalSeq 0))]
     ;; Coalescing interference uses a hybrid view. Scalar opt2 allocation already
     ;; receives the edge-precise interval-index at the plan entry; the hybrid adds
     ;; the same precise phi-edge segments while retaining a separately built
@@ -36675,25 +37002,6 @@
           ;; selection + safe-mode exclusion are provably dead work for
           ;; move-free functions.
           (let
-            [ep-liveness : live.CompilerFunctionLiveness
-              (compiler-reg-liveness-handle-edge-precise
-                (compiler-reg-global-shared-view liveness-handle))]
-            ;; Exclude unsafe live-out inputs while admitting proven self-loop
-            ;; back-edge-only values. Fixed div/mod or variable-shift functions
-            ;; retain the conservative guard: relaxing an otherwise unrelated
-            ;; carry can reshape fixed-home pressure differently on SysV/Win64.
-            ;; Built BEFORE the EP segment walk (both are pure reads of `func`
-            ;; and `ep-liveness` into their own fresh arrays, so the order does
-            ;; not change either result) so the walk can restrict itself to the
-            ;; rows the hybrid index will actually read.
-            [phi-touched : (__tl_dyn-array i64)
-              (compiler-reg-function-phi-touched-safe-mode
-                (compiler-reg-global-shared-view func)
-                (compiler-reg-global-shared-view ep-liveness)
-                (=
-                  (live.compiler-live-set-word-count
-                    (compiler-reg-global-shared-view destructive-fixed-points))
-                  0))]
             ;; The hybrid's conservative input: allocation runs on the
             ;; edge-precise index (see the EP comment at the plan entry),
             ;; while the live-out-input phi exclusion's defense in depth is
@@ -36725,12 +37033,19 @@
                       cons-idx)]))]
             (compiler-reg-hybrid-coalesce-index
               (compiler-reg-global-shared-view cons-index)
-              (compiler-reg-live-interval-selection-ep-segments
-                (compiler-reg-global-shared-view func)
-                (compiler-reg-global-shared-view ep-liveness)
-                (compiler-reg-global-shared-view phi-touched))
-              (compiler-reg-global-shared-view phi-touched)))
+              (compiler-reg-global-shared-view ep-coalesce-segs)
+              (compiler-reg-global-shared-view ep-phi-touched)))
           (compiler-reg-global-shared-view interval-index)))]
+    ;; LP-1: the index the GREEDY, its eviction logic, the rescue rounds and the
+    ;; spill machinery see. Mode 0 hands back today's object unchanged.
+    [alloc-index : CompilerRegIntervalIndex
+      (if (and ep-relax? (> (compiler-reg-ep-alloc-mode) 0))
+        (compiler-reg-ep-alloc-index
+          (compiler-reg-global-shared-view interval-index)
+          (compiler-reg-global-shared-view ep-alloc-segs)
+          (compiler-reg-global-shared-view ep-phi-touched)
+          (> (compiler-reg-ep-alloc-mode) 1))
+        (compiler-reg-global-shared-view interval-index))]
     [coalesce : CompilerRegCoalesceMap
       (if allow-caller-saved-zero-call
         (compiler-reg-coalesce-map-build
@@ -36750,7 +37065,7 @@
       (if allow-caller-saved-zero-call
         (compiler-reg-merged-root-index
           (compiler-reg-global-shared-view coalesce)
-          (compiler-reg-global-shared-view interval-index))
+          (compiler-reg-global-shared-view alloc-index))
         (compiler-reg-global-shared-view interval-index))]
     [low-xmm-exclusions : (__tl_dyn-array CompilerRegIdSeq)
       (cfg
@@ -40405,18 +40720,24 @@
 ;; same home) makes the backend's leading-phi-copy builder drop the copy before
 ;; emission, and a Mov between merged ids is a same-home no-op.
 ;;
-;; INTERFERENCE MODEL. The plan's intervals are the CONSERVATIVE hulls, which
-;; treat a phi as USING every input AT THE PHI BLOCK; that leaks a loop carry
-;; backward around its own loop, so the carry's hull overlaps its phi's hull from
-;; function entry onward and the pairs worth merging all look live at once.
-;; Legality is therefore judged on EDGE-PRECISE hulls (LLVM PHIElimination
+;; INTERFERENCE MODEL. The plan's intervals are no longer the fully conservative
+;; hulls this rule was first written against, and the difference is worth stating
+;; because the rule reads them. #6377 moved scalar-opt2 allocation onto
+;; EDGE-PRECISE liveness, and LP-1 (`compiler-reg-ep-alloc-index`) additionally
+;; substitutes the edge-precise SEGMENT rows -- and their tightened hulls -- for
+;; every safe-mode phi-touched var, so a loop carry no longer leaks backward
+;; around its own loop. What survives is the residue: a var the safe-mode mask
+;; does not select, or one anchored at entry, still carries the conservative row,
+;; which treats a phi as USING every input AT THE PHI BLOCK.
+;; Legality here is still judged on EDGE-PRECISE hulls (LLVM PHIElimination
 ;; semantics: an input is a copy at the end of ITS OWN predecessor), the exact
 ;; SSA interference model the register coalescer already trusts, recomputed here
 ;; over the FINAL rewritten blocks so its point coordinates describe the IR the
-;; backend actually emits. The plan's conservative hulls keep their existing job
+;; backend actually emits -- the plan's own hulls are built over the PRE-rewrite
+;; blocks and cannot answer for them. The plan's hulls keep their existing job
 ;; unchanged -- deciding which OTHER variable may reuse a slot -- through the
 ;; ordinary disjoint-interval walk, which now sees the whole web as one variable
-;; and therefore reserves the UNION of the members' conservative hulls.
+;; and therefore reserves the UNION of the members' hulls.
 ;;
 ;; WEB RULE (conservative; when in doubt, no alias). Membership is decided by
 ;; PAIRWISE EP-hull disjointness: a web may absorb another web only when EVERY

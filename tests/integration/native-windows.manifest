@@ -17,6 +17,7 @@ arg_global_len_eq_split|tests/integration/arg_global_len_eq_split.tl|134|-|8|std
 bce_range_two_loops|tests/integration/bce_range_two_loops.tl|42|-5915004525821994045\n|24|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 bce_range_negative_span|tests/integration/bce_range_negative_span.tl|134|-|24|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/windows/bce_range_negative_span/bce_range_negative_span.tl:15:36: array index out of bounds: index=-17 length=24\n
 shrink_wrap_general|tests/integration/shrink_wrap_general.tl|42|7100\n7048\n14\n|-|stdlib/io.tl stdlib/string.tl
+tail_duplicate_shared_return|tests/integration/tail_duplicate_shared_return.tl|42|7007\n7010\n1\n4\n6\n|-|stdlib/io.tl stdlib/string.tl
 global_header_hoist_loop|tests/integration/global_header_hoist_loop.tl|42|885\n|12|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 global_header_hoist_grow|tests/integration/global_header_hoist_grow.tl|42|397\n|12|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 generated_hashmap_global_mutation|tests/integration/generated_hashmap_global_mutation.tl|42|-|-|stdlib/hashmap.tl

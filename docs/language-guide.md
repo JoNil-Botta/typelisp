@@ -222,7 +222,7 @@ the server host and accepts `target` plus a string-array `cfg` in
 `break`/`continue`),
 `begin`, `set!`, `match` (nested/recursive enum patterns, constructor-shaped
 struct patterns, `_`), `ann`, `cast`, `return`, `try`, `foreach`,
-`spmd-reduce`, `spmd-scan`; arithmetic (`+ - * / %`), comparison
+`spmd-reduce`, `spmd-scan`, `spmd-compact`; arithmetic (`+ - * / %`), comparison
 (`= != < <= > >=`), boolean (`and` `or`), and bitwise/shift (`bit-and`
 `bit-or` `bit-xor` `shl` `shr`) operators. Unary operators are prefix forms
 too: `(neg x)` negates a numeric operand (negation is not spelled with a unary

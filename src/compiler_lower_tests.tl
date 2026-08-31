@@ -832,6 +832,25 @@
         (compiler-lower-maybe-span-start-ok?
           (compiler_lower.lower-ast-expr-span
             pools
+            (compiler_ast_types.AstExpr.SpmdCompact
+              (box
+                (compiler_ast_types.AstSpmdCompact.Compact
+                  i-id
+                  (compiler_ast_types.AstType.I64)
+                  plain
+                  plain
+                  prefix-id
+                  (compiler_ast_types.AstType.I64)
+                  plain
+                  plain
+                  spanned-inner))))
+          17
+          5)
+        (set! ok false))
+      (unless
+        (compiler-lower-maybe-span-start-ok?
+          (compiler_lower.lower-ast-expr-span
+            pools
             (compiler_ast_types.AstExpr.Call
               plain
               (owned_view.compiler-owned-shared-view items)))

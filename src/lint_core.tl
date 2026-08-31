@@ -2946,6 +2946,54 @@
                 (ast.ast-node-get body)
                 (owned_view.compiler-owned-shared-view alias)
                 (owned_view.compiler-owned-shared-view module-name))])])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            _
+            index-ty
+            start
+            end
+            _
+            slot-ty
+            init
+            keep
+            body)
+          (cond
+            [(lint-type-uses-import?
+                index-ty
+                (owned_view.compiler-owned-shared-view alias)
+                (owned_view.compiler-owned-shared-view module-name))
+              true]
+            [(lint-type-uses-import?
+                slot-ty
+                (owned_view.compiler-owned-shared-view alias)
+                (owned_view.compiler-owned-shared-view module-name))
+              true]
+            [(lint-expr-uses-import?
+                (ast.ast-node-get start)
+                (owned_view.compiler-owned-shared-view alias)
+                (owned_view.compiler-owned-shared-view module-name))
+              true]
+            [(lint-expr-uses-import?
+                (ast.ast-node-get end)
+                (owned_view.compiler-owned-shared-view alias)
+                (owned_view.compiler-owned-shared-view module-name))
+              true]
+            [(lint-expr-uses-import?
+                (ast.ast-node-get init)
+                (owned_view.compiler-owned-shared-view alias)
+                (owned_view.compiler-owned-shared-view module-name))
+              true]
+            [(lint-expr-uses-import?
+                (ast.ast-node-get keep)
+                (owned_view.compiler-owned-shared-view alias)
+                (owned_view.compiler-owned-shared-view module-name))
+              true]
+            [else
+              (lint-expr-uses-import?
+                (ast.ast-node-get body)
+                (owned_view.compiler-owned-shared-view alias)
+                (owned_view.compiler-owned-shared-view module-name))])])]
     [(ast.AstExpr.SpmdBroadcast value lane)
       (if (lint-expr-uses-import?
         (ast.ast-node-get value)
@@ -4710,6 +4758,29 @@
               outer
               (lint-unsafe-scan-combine
                 value-scan
+                (lint-unsafe-scan-node body body-scope))))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact index _ start end slot _ init keep body)
+          (let
+            [outer : LintUnsafeScan
+              (lint-unsafe-scan-three-nodes
+                start
+                end
+                init
+                (owned_view.compiler-owned-shared-view scope))]
+            [index-scope : LintUnsafeScope
+              (lint-unsafe-scope-add-id scope index)]
+            [keep-scan : LintUnsafeScan
+              (lint-unsafe-scan-node
+                keep
+                (owned_view.compiler-owned-shared-view index-scope))]
+            [body-scope : LintUnsafeScope
+              (lint-unsafe-scope-add-id index-scope slot)]
+            (lint-unsafe-scan-combine
+              outer
+              (lint-unsafe-scan-combine
+                keep-scan
                 (lint-unsafe-scan-node body body-scope))))])]
     [(ast.AstExpr.SpmdBroadcast value lane)
       (lint-unsafe-scan-two-nodes value lane scope)]
@@ -7005,6 +7076,20 @@
                   (lint-single-element-array-expr
                     (ast.ast-node-get start)
                     state)))))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact _ _ start end _ _ init keep body)
+          (lint-single-element-array-expr
+            (ast.ast-node-get body)
+            (lint-single-element-array-expr
+              (ast.ast-node-get keep)
+              (lint-single-element-array-expr
+                (ast.ast-node-get init)
+                (lint-single-element-array-expr
+                  (ast.ast-node-get end)
+                  (lint-single-element-array-expr
+                    (ast.ast-node-get start)
+                    state)))))])]
     [(ast.AstExpr.SpmdBroadcast value lane)
       (lint-single-element-array-expr
         (ast.ast-node-get lane)
@@ -7564,6 +7649,21 @@
               (ast.ast-node-get body)
               (lint-unused-assignment-note-reads
                 (ast.ast-node-get value)
+                (lint-unused-assignment-note-reads
+                  (ast.ast-node-get init)
+                  (lint-unused-assignment-note-reads
+                    (ast.ast-node-get end)
+                    (lint-unused-assignment-note-reads
+                      (ast.ast-node-get start)
+                      state))))))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact _ _ start end _ _ init keep body)
+          (lint-unused-assignment-clear-pending
+            (lint-unused-assignment-note-reads
+              (ast.ast-node-get body)
+              (lint-unused-assignment-note-reads
+                (ast.ast-node-get keep)
                 (lint-unused-assignment-note-reads
                   (ast.ast-node-get init)
                   (lint-unused-assignment-note-reads
@@ -10099,6 +10199,20 @@
                   (lint-unused-variable-quasiquote-expr
                     (ast.ast-node-get start)
                     state)))))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact _ _ start end _ _ init keep body)
+          (lint-unused-variable-quasiquote-expr
+            (ast.ast-node-get body)
+            (lint-unused-variable-quasiquote-expr
+              (ast.ast-node-get keep)
+              (lint-unused-variable-quasiquote-expr
+                (ast.ast-node-get init)
+                (lint-unused-variable-quasiquote-expr
+                  (ast.ast-node-get end)
+                  (lint-unused-variable-quasiquote-expr
+                    (ast.ast-node-get start)
+                    state)))))])]
     [(ast.AstExpr.SpmdBroadcast value lane)
       (lint-unused-variable-quasiquote-expr
         (ast.ast-node-get lane)
@@ -10501,6 +10615,32 @@
       (lint-unused-variable-expr body with-frame span)]
     (lint-unused-variable-pop-frame with-body)))
 
+(define (lint-unused-variable-compact-scope
+  [index : i64]
+  [slot : i64]
+  [keep : ast.AstExpr]
+  [body : ast.AstExpr]
+  [state : LintUnusedVariableState]
+  [span : ast.AstSourceSpan]) : LintUnusedVariableState
+  (let
+    [with-index : LintUnusedVariableState
+      (lint-unused-variable-push-frame
+        (owned_view.compiler-owned-shared-view state)
+        (lint-unused-variable-binding-push
+          (lint-unused-variable-bindings-empty)
+          (lint-unused-variable-binding (ci.intern-str index) span false false)))]
+    [with-keep : LintUnusedVariableState
+      (lint-unused-variable-expr keep with-index span)]
+    [with-slot : LintUnusedVariableState
+      (lint-unused-variable-push-frame
+        (owned_view.compiler-owned-shared-view with-keep)
+        (lint-unused-variable-binding-push
+          (lint-unused-variable-bindings-empty)
+          (lint-unused-variable-binding (ci.intern-str slot) span false false)))]
+    [with-body : LintUnusedVariableState
+      (lint-unused-variable-expr body with-slot span)]
+    (lint-unused-variable-pop-frame (lint-unused-variable-pop-frame with-body))))
+
 (define (lint-unused-variable-expr
   [expr : ast.AstExpr]
   [state : LintUnusedVariableState]
@@ -10816,6 +10956,67 @@
               prefix
               (ast.ast-node-get body)
               value-state
+              span))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            index-ty
+            start
+            end
+            slot
+            slot-ty
+            init
+            keep
+            body)
+          (let
+            [index-scan : LintNameCaseLocalScan
+              (if state.name-case
+                (lint-unused-variable-scan-form-local-name
+                  (owned_view.compiler-owned-shared-view state)
+                  (ci.intern-str index)
+                  span
+                  "(spmd-compact")
+                (LintNameCaseLocalScan
+                  (owned_view.compiler-owned-shared-view state)
+                  0))]
+            [slot-scan : LintNameCaseLocalScan
+              (if state.name-case
+                (let
+                  [limit : i64
+                    (lint-source-span-end-index
+                      (owned_view.compiler-owned-shared-view state.source)
+                      span)]
+                  (lint-unused-variable-scan-local-name
+                    index-scan.state
+                    (ci.intern-str slot)
+                    index-scan.next-index
+                    (if (< limit 0)
+                      (string.string-length
+                        (owned_view.compiler-owned-shared-view state.source))
+                      limit)))
+                (LintNameCaseLocalScan index-scan.state 0))]
+            [base-state : LintUnusedVariableState
+              (lint-unused-variable-type
+                slot-ty
+                (lint-unused-variable-type
+                  index-ty
+                  (lint-unused-variable-expr
+                    (ast.ast-node-get init)
+                    (lint-unused-variable-expr
+                      (ast.ast-node-get end)
+                      (lint-unused-variable-expr
+                        (ast.ast-node-get start)
+                        slot-scan.state
+                        span)
+                      span)
+                    span)))]
+            (lint-unused-variable-compact-scope
+              index
+              slot
+              (ast.ast-node-get keep)
+              (ast.ast-node-get body)
+              base-state
               span))])]
     [(ast.AstExpr.SpmdBroadcast value lane)
       (lint-unused-variable-expr
@@ -12381,6 +12582,37 @@
               threshold
               (lint-walk-expr
                 value
+                threshold
+                (lint-walk-expr
+                  init
+                  threshold
+                  (lint-walk-expr
+                    end
+                    threshold
+                    (lint-walk-expr start threshold acc))))))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            _
+            _
+            start-box
+            end-box
+            _
+            _
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr (ast.ast-node-get start-box)]
+            [end : ast.AstExpr (ast.ast-node-get end-box)]
+            [init : ast.AstExpr (ast.ast-node-get init-box)]
+            [keep : ast.AstExpr (ast.ast-node-get keep-box)]
+            [body : ast.AstExpr (ast.ast-node-get body-box)]
+            (lint-walk-expr
+              body
+              threshold
+              (lint-walk-expr
+                keep
                 threshold
                 (lint-walk-expr
                   init

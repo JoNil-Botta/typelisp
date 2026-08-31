@@ -3835,7 +3835,9 @@
 
 (defenum TcSpmdRole
   (Value)
-  (ForeachIndex))
+  (ForeachIndex)
+  (CompactIndex)
+  (CompactSlot))
 
 (defstruct TcSpmdBinding
   (name i64)
@@ -30131,6 +30133,47 @@
                       true)]
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            _
+            _
+            start-box
+            end-box
+            _
+            _
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases start-box)]
+            [end : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases end-box)]
+            [init : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases init-box)]
+            [keep : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases keep-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            (match (tc-source-expr-triple-spmd-broadcast-scope-ok
+              expr-bases
+              start
+              end
+              init
+              false)
+              [(ResultTcUnit.Ok)
+                (match (tc-source-expr-spmd-broadcast-scope-ok
+                  expr-bases
+                  keep
+                  false)
+                  [(ResultTcUnit.Ok)
+                    (tc-source-expr-spmd-broadcast-scope-ok
+                      expr-bases
+                      body
+                      true)]
+                  [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (if allow
         (let
@@ -30742,6 +30785,55 @@
                           (tc-global-shared-view ctx)
                           expr-bases
                           value)
+                          [(ResultTcUnit.Ok)
+                            (tc-source-expr-policy-ok ctx expr-bases body)]
+                          [(ResultTcUnit.Err message)
+                            (ResultTcUnit.Err message)])]
+                      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+                  [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            _
+            index-ty
+            start-box
+            end-box
+            _
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases start-box)]
+            [end : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases end-box)]
+            [init : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases init-box)]
+            [keep : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases keep-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            (match (tc-source-type-policy-ok
+              (tc-global-shared-view ctx)
+              index-ty)
+              [(ResultTcUnit.Ok)
+                (match (tc-source-type-policy-ok
+                  (tc-global-shared-view ctx)
+                  slot-ty)
+                  [(ResultTcUnit.Ok)
+                    (match (tc-source-expr-triple-policy-ok
+                      (tc-global-shared-view ctx)
+                      expr-bases
+                      start
+                      end
+                      init)
+                      [(ResultTcUnit.Ok)
+                        (match (tc-source-expr-policy-ok
+                          (tc-global-shared-view ctx)
+                          expr-bases
+                          keep)
                           [(ResultTcUnit.Ok)
                             (tc-source-expr-policy-ok ctx expr-bases body)]
                           [(ResultTcUnit.Err message)
@@ -40112,6 +40204,7 @@
     [(ast.AstExpr.Foreach _) true]
     [(ast.AstExpr.SpmdReduce _) true]
     [(ast.AstExpr.SpmdScan _) true]
+    [(ast.AstExpr.SpmdCompact _) true]
     [(ast.AstExpr.WithResource _) true]
     [_ false]))
 
@@ -50511,6 +50604,59 @@
                 (tc-global-shared-view name)
                 index-bound)
               (tc-ref-closure-local-uses-ok? expr-bases body name body-bound)))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            _
+            start-box
+            end-box
+            slot
+            _
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases start-box)]
+            [end : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases end-box)]
+            [init : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases init-box)]
+            [keep : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases keep-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            [index-bound : TcStringList
+              (tc-string-list-add
+                (tc-global-shared-view bound)
+                (tc-env-key-name-text index))]
+            [body-bound : TcStringList
+              (tc-string-list-add
+                (tc-global-shared-view index-bound)
+                (tc-env-key-name-text slot))]
+            (and
+              (tc-ref-closure-local-uses-ok?
+                expr-bases
+                start
+                (tc-global-shared-view name)
+                (tc-global-shared-view bound))
+              (tc-ref-closure-local-uses-ok?
+                expr-bases
+                end
+                (tc-global-shared-view name)
+                (tc-global-shared-view bound))
+              (tc-ref-closure-local-uses-ok?
+                expr-bases
+                init
+                (tc-global-shared-view name)
+                (tc-global-shared-view bound))
+              (tc-ref-closure-local-uses-ok?
+                expr-bases
+                keep
+                (tc-global-shared-view name)
+                index-bound)
+              (tc-ref-closure-local-uses-ok? expr-bases body name body-bound)))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : ast.AstExpr
@@ -51807,7 +51953,7 @@
         spmd-env
         (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [(ast.AstExpr.Var name)
-      (match (tc-spmd-env-lookup-id spmd-env name)
+      (match (tc-spmd-env-lookup-id (tc-global-shared-view spmd-env) name)
         [(TcSpmdLookup.Found _ _ _ role) role]
         [(TcSpmdLookup.Missing) TcSpmdRole.Value])]
     [_ TcSpmdRole.Value]))
@@ -52619,11 +52765,62 @@
         (TcSpmdScope.Local)
         (TcSpmdRole.ForeachIndex))
       true]
+    [(TcSpmdLookup.Found
+        _
+        (TcSpmdClass.Varying)
+        (TcSpmdScope.Local)
+        (TcSpmdRole.CompactIndex))
+      true]
+    [(TcSpmdLookup.Found
+        _
+        (TcSpmdClass.Varying)
+        (TcSpmdScope.Local)
+        (TcSpmdRole.CompactSlot))
+      true]
     [_ false]))
 
-(define (tc-spmd-foreach-index-unsupported) : ResultTcUnit
-  (ResultTcUnit.Err
-    "typecheck: foreach does not support non-contiguous array element destination indexes; use the foreach index plus a uniform offset"))
+(define (tc-spmd-foreach-write-index-var?
+  [spmd-env : TcSpmdEnv]
+  [name-id : i64]) : bool
+  (match (tc-spmd-env-lookup-id spmd-env name-id)
+    [(TcSpmdLookup.Found
+        _
+        (TcSpmdClass.Varying)
+        (TcSpmdScope.Local)
+        (TcSpmdRole.ForeachIndex))
+      true]
+    [(TcSpmdLookup.Found
+        _
+        (TcSpmdClass.Varying)
+        (TcSpmdScope.Local)
+        (TcSpmdRole.CompactSlot))
+      true]
+    [_ false]))
+
+(define (tc-spmd-env-has-compact-slot-at?
+  [bindings : (__tl_dyn-array TcSpmdBinding)]
+  [index : i64]) : bool
+  (if (< index 0)
+    false
+    (match (tc-spmd-binding-at
+      (owned_view.compiler-owned-shared-view bindings)
+      index)
+      [(TcSpmdBinding _ _ _ _ role)
+        (match role
+          [(TcSpmdRole.CompactSlot) true]
+          [_ (tc-spmd-env-has-compact-slot-at? bindings (- index 1))])])))
+
+(define (tc-spmd-env-has-compact-slot? [env : TcSpmdEnv]) : bool
+  (tc-spmd-env-has-compact-slot-at?
+    (tc-spmd-env-bindings (tc-global-shared-view env))
+    (- (tc-spmd-env-len env) 1)))
+
+(define (tc-spmd-foreach-index-unsupported [spmd-env : TcSpmdEnv]) : ResultTcUnit
+  (if (tc-spmd-env-has-compact-slot? (tc-global-shared-view spmd-env))
+    (ResultTcUnit.Err
+      "typecheck: spmd-compact varying array destination indexes must use the compact slot plus a uniform offset")
+    (ResultTcUnit.Err
+      "typecheck: foreach does not support non-contiguous array element destination indexes; use the foreach index plus a uniform offset")))
 
 (define (tc-spmd-foreach-uniform-offset
   [ctx : TcContext]
@@ -52631,12 +52828,12 @@
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr : ast.AstExpr]) : ResultTcUnit
-  (match (tc-spmd-expr ctx expr-bases env spmd-env expr)
+  (match (tc-spmd-expr ctx expr-bases env (tc-global-shared-view spmd-env) expr)
     [(ResultTcSpmdExprInfo.Ok info)
       (match info
         [(TcSpmdExprInfo _ class _)
           (if (tc-spmd-varying? class)
-            (tc-spmd-foreach-index-unsupported)
+            (tc-spmd-foreach-index-unsupported spmd-env)
             ResultTcUnit.Ok)])]
     [(ResultTcSpmdExprInfo.Err message) (ResultTcUnit.Err message)]))
 
@@ -52658,10 +52855,12 @@
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-spmd-foreach-direct-index expr-bases spmd-env inner))]
     [(ast.AstExpr.Var name)
-      (if (tc-spmd-masked-if-index-var? spmd-env name)
+      (if (tc-spmd-foreach-write-index-var?
+        (tc-global-shared-view spmd-env)
+        name)
         ResultTcUnit.Ok
-        (tc-spmd-foreach-index-unsupported))]
-    [_ (tc-spmd-foreach-index-unsupported)]))
+        (tc-spmd-foreach-index-unsupported spmd-env))]
+    [_ (tc-spmd-foreach-index-unsupported spmd-env)]))
 
 (define (tc-spmd-foreach-index
   [ctx : TcContext]
@@ -52727,7 +52926,7 @@
                   spmd-env
                   right)]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-          [_ (tc-spmd-foreach-index-unsupported)]))]
+          [_ (tc-spmd-foreach-index-unsupported spmd-env)]))]
     [_
       (tc-spmd-foreach-direct-index
         expr-bases
@@ -53219,6 +53418,9 @@
         "nested spmd-reduce inside masked branches")]
     [(ast.AstExpr.SpmdScan _)
       (tc-spmd-masked-if-unsupported "nested spmd-scan inside masked branches")]
+    [(ast.AstExpr.SpmdCompact _)
+      (tc-spmd-masked-if-unsupported
+        "nested spmd-compact inside masked branches")]
     [(ast.AstExpr.SpmdBroadcast _ _)
       (tc-spmd-masked-if-unsupported "spmd-broadcast inside masked branches")]
     [(ast.AstExpr.SpmdShuffle _ _)
@@ -54015,6 +54217,9 @@
     [(ast.AstExpr.SpmdScan _)
       (ResultTcUnit.Err
         "typecheck: nested spmd-scan inside spmd-scan is not supported")]
+    [(ast.AstExpr.SpmdCompact _)
+      (ResultTcUnit.Err
+        "typecheck: nested spmd-compact inside spmd-scan is not supported")]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (tc-spmd-scan-body-no-nested-pair
         expr-bases
@@ -54230,6 +54435,77 @@
             (tc-context-job-state (tc-global-shared-view ctx)))
           result)]
       [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
+
+(define (tc-spmd-check-compact
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [index-id : i64]
+  [index-ty : ast.AstType]
+  [slot-id : i64]
+  [slot-ty : ast.AstType]
+  [keep : ast.AstExpr]
+  [body : ast.AstExpr]) : ResultTcUnit
+  (let
+    [index-env : TcTypeEnv
+      (tc-bind-id env index-id (tc-global-shared-view index-ty))]
+    [body-env : TcTypeEnv
+      (tc-bind-id index-env slot-id (tc-global-shared-view slot-ty))]
+    [base-spmd-env : TcSpmdEnv
+      (tc-spmd-env-mark-outer (tc-spmd-env-from-type-env env))]
+    ;; The logical input index may participate in reads and predicates, but it
+    ;; must not authorize compact destination writes. Only the slot receives
+    ;; the dedicated write-index role.
+    [index-spmd-env : TcSpmdEnv
+      (tc-spmd-env-bind-role-id
+        base-spmd-env
+        index-id
+        index-ty
+        TcSpmdClass.Varying
+        TcSpmdScope.Local
+        TcSpmdRole.CompactIndex)]
+    [body-spmd-env : TcSpmdEnv
+      (tc-spmd-env-bind-role-id
+        (tc-global-shared-view index-spmd-env)
+        slot-id
+        slot-ty
+        TcSpmdClass.Varying
+        TcSpmdScope.Local
+        TcSpmdRole.CompactSlot)]
+    [result : ResultTcUnit ResultTcUnit.Ok]
+    (begin
+      (tc-spmd-inline-helper-stack-reset-for-job!
+        (tc-context-job-state (tc-global-shared-view ctx)))
+      (set!
+        result
+        (match (tc-spmd-masked-if-expr
+          (tc-global-shared-view ctx)
+          expr-bases
+          index-env
+          (tc-global-shared-view index-spmd-env)
+          (tc-global-shared-view keep))
+          [(ResultTcUnit.Ok)
+            (match (tc-spmd-expr
+              (tc-global-shared-view ctx)
+              expr-bases
+              index-env
+              (tc-global-shared-view index-spmd-env)
+              keep)
+              [(ResultTcSpmdExprInfo.Ok _)
+                (match (tc-spmd-expr
+                  (tc-global-shared-view ctx)
+                  expr-bases
+                  body-env
+                  body-spmd-env
+                  body)
+                  [(ResultTcSpmdExprInfo.Ok _) ResultTcUnit.Ok]
+                  [(ResultTcSpmdExprInfo.Err message)
+                    (ResultTcUnit.Err message)])]
+              [(ResultTcSpmdExprInfo.Err message) (ResultTcUnit.Err message)])]
+          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
+      (tc-spmd-inline-helper-stack-reset-for-job!
+        (tc-context-job-state (tc-global-shared-view ctx)))
+      result)))
 
 ;; `spmd-reduce` allows varying bool values for `all`/`any`, so it cannot reuse
 ;; the full foreach body checker: that checker applies foreach array-lane
@@ -55530,45 +55806,51 @@
     [(ast.AstExpr.Unsafe exprs)
       (tc-spmd-begin-list ctx expr-bases (tc-enter-unsafe env) spmd-env exprs)]
     [(ast.AstExpr.Set name value-box)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
-          (match (tc-dotted-local-field-set-expr-id-after-check
-            (tc-context-structural-session ctx)
-            name
-            value-box)
-            [(ResultTcExprId.Ok virtual-id)
-              (tc-spmd-expr-typed
-                ctx
-                expr-bases
-                env
-                spmd-env
-                (ast.ast-expr-segment-bases-get expr-bases virtual-id)
-                expr-ty)]
-            [(ResultTcExprId.Err message) (ResultTcSpmdExprInfo.Err message)])
-          (match (tc-spmd-expr ctx expr-bases env spmd-env value)
-            [(ResultTcSpmdExprInfo.Ok value-info)
-              (match value-info
-                [(TcSpmdExprInfo _ value-class value-env)
-                  (if (tc-spmd-env-has-local-id?
-                    (tc-global-shared-view value-env)
-                    name)
-                    (tc-spmd-finish
-                      expr-ty
-                      TcSpmdClass.Uniform
-                      (tc-spmd-env-set-local-class-id
-                        value-env
-                        name
-                        value-class))
-                    (if (tc-spmd-env-has-outer-id?
-                      (tc-global-shared-view value-env)
-                      name)
-                      (ResultTcSpmdExprInfo.Err
-                        "typecheck: foreach cannot set binding declared outside foreach")
-                      (tc-spmd-finish expr-ty TcSpmdClass.Uniform value-env)))])]
-            [(ResultTcSpmdExprInfo.Err message)
-              (ResultTcSpmdExprInfo.Err message)])))]
+      (match (tc-spmd-env-lookup-id (tc-global-shared-view spmd-env) name)
+        [(TcSpmdLookup.Found _ _ _ (TcSpmdRole.CompactSlot))
+          (ResultTcSpmdExprInfo.Err
+            "typecheck: spmd-compact slot binding is read-only")]
+        [_
+          (let
+            [value : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases value-box)]
+            (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
+              (match (tc-dotted-local-field-set-expr-id-after-check
+                (tc-context-structural-session ctx)
+                name
+                value-box)
+                [(ResultTcExprId.Ok virtual-id)
+                  (tc-spmd-expr-typed
+                    ctx
+                    expr-bases
+                    env
+                    spmd-env
+                    (ast.ast-expr-segment-bases-get expr-bases virtual-id)
+                    expr-ty)]
+                [(ResultTcExprId.Err message)
+                  (ResultTcSpmdExprInfo.Err message)])
+              (match (tc-spmd-expr ctx expr-bases env spmd-env value)
+                [(ResultTcSpmdExprInfo.Ok value-info)
+                  (match value-info
+                    [(TcSpmdExprInfo _ value-class value-env)
+                      (if (tc-spmd-env-has-local-id?
+                        (tc-global-shared-view value-env)
+                        name)
+                        (tc-spmd-finish
+                          expr-ty
+                          TcSpmdClass.Uniform
+                          (tc-spmd-env-set-local-class-id
+                            value-env
+                            name
+                            value-class))
+                        (if (tc-spmd-env-has-outer-id?
+                          (tc-global-shared-view value-env)
+                          name)
+                          (ResultTcSpmdExprInfo.Err
+                            "typecheck: foreach cannot set binding declared outside foreach")
+                          (tc-spmd-finish expr-ty TcSpmdClass.Uniform value-env)))])]
+                [(ResultTcSpmdExprInfo.Err message)
+                  (ResultTcSpmdExprInfo.Err message)])))])]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
@@ -55674,6 +55956,9 @@
     [(ast.AstExpr.SpmdScan _)
       (ResultTcSpmdExprInfo.Err
         "typecheck: spmd-scan inside foreach is not supported")]
+    [(ast.AstExpr.SpmdCompact _)
+      (ResultTcSpmdExprInfo.Err
+        "typecheck: spmd-compact inside SPMD is not supported")]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : ast.AstExpr
@@ -56924,6 +57209,59 @@
                 value
                 (tc-global-shared-view name)
                 value-bound)
+              (tc-expr-uses-free-name? expr-bases body name body-bound)))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            _
+            start-box
+            end-box
+            slot
+            _
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases start-box)]
+            [end : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases end-box)]
+            [init : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases init-box)]
+            [keep : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases keep-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            [keep-bound : TcStringList
+              (tc-string-list-add
+                (tc-global-shared-view bound)
+                (tc-env-key-name-text index))]
+            [body-bound : TcStringList
+              (tc-string-list-add
+                (tc-global-shared-view keep-bound)
+                (tc-env-key-name-text slot))]
+            (or
+              (tc-expr-uses-free-name?
+                expr-bases
+                start
+                (tc-global-shared-view name)
+                (tc-global-shared-view bound))
+              (tc-expr-uses-free-name?
+                expr-bases
+                end
+                (tc-global-shared-view name)
+                (tc-global-shared-view bound))
+              (tc-expr-uses-free-name?
+                expr-bases
+                init
+                (tc-global-shared-view name)
+                bound)
+              (tc-expr-uses-free-name?
+                expr-bases
+                keep
+                (tc-global-shared-view name)
+                keep-bound)
               (tc-expr-uses-free-name? expr-bases body name body-bound)))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
@@ -58304,6 +58642,73 @@
                 target-1
                 target-2
                 body-bound)))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            _
+            start-box
+            end-box
+            slot
+            _
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases start-box)]
+            [end : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases end-box)]
+            [init : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases init-box)]
+            [keep : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases keep-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            [keep-bound : TcNameIdList
+              (tc-name-id-list-add
+                bound
+                (tc-env-key-source-id-or-neg session index))]
+            [body-bound : TcNameIdList
+              (tc-name-id-list-add
+                keep-bound
+                (tc-env-key-source-id-or-neg session slot))]
+            (or
+              (tc-expr-uses-free-source-id?
+                session
+                expr-bases
+                start
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                session
+                expr-bases
+                end
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                session
+                expr-bases
+                init
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                session
+                expr-bases
+                keep
+                target-1
+                target-2
+                keep-bound)
+              (tc-expr-uses-free-source-id?
+                session
+                expr-bases
+                body
+                target-1
+                target-2
+                body-bound)))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : ast.AstExpr
@@ -59432,6 +59837,59 @@
                 (tc-global-shared-view name)
                 value-bound)
               (tc-expr-sets-free-name? expr-bases body name body-bound)))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            _
+            start-box
+            end-box
+            slot
+            _
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases start-box)]
+            [end : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases end-box)]
+            [init : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases init-box)]
+            [keep : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases keep-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            [keep-bound : TcStringList
+              (tc-string-list-add
+                (tc-global-shared-view bound)
+                (tc-env-key-name-text index))]
+            [body-bound : TcStringList
+              (tc-string-list-add
+                (tc-global-shared-view keep-bound)
+                (tc-env-key-name-text slot))]
+            (or
+              (tc-expr-sets-free-name?
+                expr-bases
+                start
+                (tc-global-shared-view name)
+                (tc-global-shared-view bound))
+              (tc-expr-sets-free-name?
+                expr-bases
+                end
+                (tc-global-shared-view name)
+                (tc-global-shared-view bound))
+              (tc-expr-sets-free-name?
+                expr-bases
+                init
+                (tc-global-shared-view name)
+                bound)
+              (tc-expr-sets-free-name?
+                expr-bases
+                keep
+                (tc-global-shared-view name)
+                keep-bound)
+              (tc-expr-sets-free-name? expr-bases body name body-bound)))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : ast.AstExpr
@@ -59883,6 +60341,31 @@
                 value
                 (tc-global-shared-view owners)
                 (tc-global-shared-view value-bound))
+              (tc-expr-result-uses-cleanup-owner?
+                expr-bases
+                body
+                owners
+                body-bound)))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact index _ _ _ slot _ _ keep-box body-box)
+          (let
+            [keep : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases keep-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            [keep-bound : TcStringList
+              (tc-string-list-add bound (tc-env-key-name-text index))]
+            [body-bound : TcStringList
+              (tc-string-list-add
+                (tc-global-shared-view keep-bound)
+                (tc-env-key-name-text slot))]
+            (or
+              (tc-expr-result-uses-cleanup-owner?
+                expr-bases
+                keep
+                (tc-global-shared-view owners)
+                (tc-global-shared-view keep-bound))
               (tc-expr-result-uses-cleanup-owner?
                 expr-bases
                 body
@@ -68096,6 +68579,9 @@
     [(ast.AstExpr.SpmdScan _)
       (ResultTcUnit.Err
         "a nested spmd-scan is not allowed inside a spmd-reduce value expression (SPEC.md 5.15)")]
+    [(ast.AstExpr.SpmdCompact _)
+      (ResultTcUnit.Err
+        "a nested spmd-compact is not allowed inside a spmd-reduce value expression (SPEC.md 5.15)")]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (if in-index
         (ResultTcUnit.Err
@@ -68300,6 +68786,164 @@
             [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])
       (ResultTcType.Err (tc-scan-op-type-msg op)))))
+
+(define (tc-spmd-compact-expr-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [index : i64]
+  [index-ty : ast.AstType]
+  [start-box : i64]
+  [end-box : i64]
+  [slot : i64]
+  [slot-ty : ast.AstType]
+  [init-box : i64]
+  [keep-box : i64]
+  [body-box : i64]) : ResultTcType
+  (let
+    [resolved-index-ty : ast.AstType
+      (tc-resolve-type (tc-global-shared-view ctx) index-ty)]
+    [resolved-slot-ty : ast.AstType
+      (tc-resolve-type (tc-global-shared-view ctx) slot-ty)]
+    (if (= index slot)
+      (ResultTcType.Err
+        "typecheck: spmd-compact index and slot bindings must have distinct names")
+      (match (tc-expect
+        (tc-global-shared-view resolved-index-ty)
+        (ast.AstType.I64)
+        "typecheck: spmd-compact index type must be i64")
+        [(ResultTcUnit.Ok)
+          (match (tc-expect
+            (tc-global-shared-view resolved-slot-ty)
+            (ast.AstType.I64)
+            "typecheck: spmd-compact slot type must be i64")
+            [(ResultTcUnit.Ok)
+              (match (tc-expr-with-expected-or-actual-id
+                (tc-global-shared-view ctx)
+                (tc-global-shared-view env)
+                start-box
+                (ast.AstType.I64))
+                [(ResultTcType.Ok start-ty)
+                  (match (tc-expect
+                    (tc-resolve-type (tc-global-shared-view ctx) start-ty)
+                    (ast.AstType.I64)
+                    "typecheck: spmd-compact start expression must have type i64")
+                    [(ResultTcUnit.Ok)
+                      (match (tc-expr-with-expected-or-actual-id
+                        (tc-global-shared-view ctx)
+                        (tc-global-shared-view env)
+                        end-box
+                        (ast.AstType.I64))
+                        [(ResultTcType.Ok end-ty)
+                          (match (tc-expect
+                            (tc-resolve-type (tc-global-shared-view ctx) end-ty)
+                            (ast.AstType.I64)
+                            "typecheck: spmd-compact end expression must have type i64")
+                            [(ResultTcUnit.Ok)
+                              (match (tc-expr-with-expected-or-actual-id
+                                (tc-global-shared-view ctx)
+                                (tc-global-shared-view env)
+                                init-box
+                                (ast.AstType.I64))
+                                [(ResultTcType.Ok init-ty)
+                                  (match (tc-expect
+                                    (tc-resolve-type
+                                      (tc-global-shared-view ctx)
+                                      init-ty)
+                                    (ast.AstType.I64)
+                                    "typecheck: spmd-compact initial slot must have type i64")
+                                    [(ResultTcUnit.Ok)
+                                      (let
+                                        [index-env : TcTypeEnv
+                                          (tc-bind-id
+                                            (tc-global-shared-view env)
+                                            index
+                                            (tc-global-shared-view
+                                              resolved-index-ty))]
+                                        [body-env : TcTypeEnv
+                                          (tc-bind-id
+                                            (tc-global-shared-view index-env)
+                                            slot
+                                            (tc-global-shared-view
+                                              resolved-slot-ty))]
+                                        [keep : ast.AstExpr
+                                          (tc-context-expr-get
+                                            (tc-global-shared-view ctx)
+                                            keep-box)]
+                                        [body : ast.AstExpr
+                                          (tc-context-expr-get
+                                            (tc-global-shared-view ctx)
+                                            body-box)]
+                                        (match (tc-expr-with-expected-or-actual-id
+                                          (tc-global-shared-view ctx)
+                                          (tc-global-shared-view index-env)
+                                          keep-box
+                                          (ast.AstType.Bool))
+                                          [(ResultTcType.Ok keep-ty)
+                                            (match (tc-expect
+                                              (tc-resolve-type
+                                                (tc-global-shared-view ctx)
+                                                keep-ty)
+                                              (ast.AstType.Bool)
+                                              "typecheck: spmd-compact predicate must have type bool")
+                                              [(ResultTcUnit.Ok)
+                                                (match (tc-expr-id
+                                                  (tc-global-shared-view ctx)
+                                                  (tc-global-shared-view
+                                                    body-env)
+                                                  body-box)
+                                                  [(ResultTcType.Ok body-ty)
+                                                    (match (tc-expect
+                                                      (tc-global-shared-view
+                                                        body-ty)
+                                                      (ast.AstType.Unit)
+                                                      "typecheck: spmd-compact body must be unit")
+                                                      [(ResultTcUnit.Ok)
+                                                        (match (tc-spmd-check-compact
+                                                          (tc-global-shared-view
+                                                            ctx)
+                                                          (tc-context-expr-bases
+                                                            (tc-global-shared-view
+                                                              ctx))
+                                                          (tc-global-shared-view
+                                                            env)
+                                                          index
+                                                          (tc-global-shared-view
+                                                            resolved-index-ty)
+                                                          slot
+                                                          (tc-global-shared-view
+                                                            resolved-slot-ty)
+                                                          (tc-global-shared-view
+                                                            keep)
+                                                          (tc-global-shared-view
+                                                            body))
+                                                          [(ResultTcUnit.Ok)
+                                                            (ResultTcType.Ok
+                                                              (ast.AstType.I64))]
+                                                          [(ResultTcUnit.Err
+                                                              message)
+                                                            (ResultTcType.Err
+                                                              message)])]
+                                                      [(ResultTcUnit.Err
+                                                          message)
+                                                        (ResultTcType.Err
+                                                          message)])]
+                                                  [(ResultTcType.Err message)
+                                                    (ResultTcType.Err message)])]
+                                              [(ResultTcUnit.Err message)
+                                                (ResultTcType.Err message)])]
+                                          [(ResultTcType.Err message)
+                                            (ResultTcType.Err message)]))]
+                                    [(ResultTcUnit.Err message)
+                                      (ResultTcType.Err message)])]
+                                [(ResultTcType.Err message)
+                                  (ResultTcType.Err message)])]
+                            [(ResultTcUnit.Err message)
+                              (ResultTcType.Err message)])]
+                        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+                    [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+                [(ResultTcType.Err message) (ResultTcType.Err message)])]
+            [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+        [(ResultTcUnit.Err message) (ResultTcType.Err message)]))))
 
 (define (tc-ptr-addr-of-expr
   [ctx : TcContext]
@@ -71825,6 +72469,30 @@
                 [(ResultTcType.Err message) (ResultTcType.Err message)])
               (ResultTcType.Err
                 "typecheck: spmd-scan index type must be integer")))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (ast.ast-spmd-compact-box-shared-view compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (tc-spmd-compact-expr-type
+            (tc-global-shared-view ctx)
+            (tc-global-shared-view env)
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (match (tc-expr-with-expected-or-actual-id
         (tc-global-shared-view ctx)
@@ -73558,6 +74226,51 @@
                         template?
                         (tc-global-shared-view index-bound)
                         prefix)
+                      (tc-global-shared-view chain)
+                      (tc-global-shared-view seen)
+                      template?
+                      body)]
+                  [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
+            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact index _ start end slot _ init keep body)
+          (match (tc-comptime-purity-node3-mode
+            (tc-global-shared-view ctx)
+            expr-bases
+            (tc-global-shared-view env)
+            (tc-global-shared-view bound)
+            (tc-global-shared-view chain)
+            (tc-global-shared-view seen)
+            template?
+            start
+            end
+            init)
+            [(ResultTcUnit.Ok)
+              (let
+                [index-bound : TcStringList
+                  (tc-comptime-purity-template-bound
+                    template?
+                    (tc-global-shared-view bound)
+                    index)]
+                (match (tc-comptime-purity-node-mode
+                  (tc-global-shared-view ctx)
+                  expr-bases
+                  (tc-global-shared-view env)
+                  (tc-global-shared-view index-bound)
+                  (tc-global-shared-view chain)
+                  (tc-global-shared-view seen)
+                  template?
+                  keep)
+                  [(ResultTcUnit.Ok)
+                    (tc-comptime-purity-node-mode
+                      (tc-global-shared-view ctx)
+                      expr-bases
+                      (tc-global-shared-view env)
+                      (tc-comptime-purity-template-bound
+                        template?
+                        (tc-global-shared-view index-bound)
+                        slot)
                       (tc-global-shared-view chain)
                       (tc-global-shared-view seen)
                       template?
@@ -78963,6 +79676,40 @@
               (tc-generated-expr-dependent-construct?
                 (tc-global-shared-view ctx)
                 (tc-context-expr-get (tc-global-shared-view ctx) value-id))
+              (tc-generated-expr-dependent-construct?
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) body-id)))])]
+      [(ast.AstExpr.SpmdCompact compact-box)
+        (match (__tl-box-place compact-box)
+          [(ast.AstSpmdCompact.Compact
+              _
+              index-ty
+              start-id
+              end-id
+              _
+              slot-ty
+              init-id
+              keep-id
+              body-id)
+            (or
+              (tc-generated-type-dependent-construct?
+                (tc-global-shared-view ctx)
+                index-ty)
+              (tc-generated-type-dependent-construct?
+                (tc-global-shared-view ctx)
+                slot-ty)
+              (tc-generated-expr-dependent-construct?
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) start-id))
+              (tc-generated-expr-dependent-construct?
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) end-id))
+              (tc-generated-expr-dependent-construct?
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) init-id))
+              (tc-generated-expr-dependent-construct?
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) keep-id))
               (tc-generated-expr-dependent-construct?
                 (tc-global-shared-view ctx)
                 (tc-context-expr-get (tc-global-shared-view ctx) body-id)))])]
@@ -86645,6 +87392,71 @@
                         body)]
                     [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
               [(TcMoveResult.Err message) (TcMoveResult.Err message)]))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (ast.ast-spmd-compact-box-shared-view compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (let
+            [keep-env : TcTypeEnv
+              (tc-bind-id
+                (tc-global-shared-view env)
+                index
+                (tc-resolve-type (tc-global-shared-view ctx) index-ty))]
+            [body-env : TcTypeEnv
+              (tc-bind-id
+                (tc-global-shared-view keep-env)
+                slot
+                (tc-resolve-type (tc-global-shared-view ctx) slot-ty))]
+            [keep-locals : TcMovedSet
+              (tc-moved-add
+                (tc-moved-clone (tc-global-shared-view locals))
+                index)]
+            [body-locals : TcMovedSet
+              (tc-moved-add
+                (tc-moved-clone (tc-global-shared-view keep-locals))
+                slot)]
+            (match (tc-move-check-exprs
+              (tc-global-shared-view ctx)
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              (tc-global-shared-view loop-carried)
+              (tc-global-shared-view moved)
+              (ast.ast-expr-cons
+                start-box
+                (ast.ast-expr-cons
+                  end-box
+                  (ast.ast-expr-cons init-box (ast.ast-expr-list-new)))))
+              [(TcMoveResult.Ok outer-moved)
+                (match (tc-move-check-expr-id
+                  (tc-global-shared-view ctx)
+                  expr-bases
+                  (tc-global-shared-view keep-env)
+                  (tc-global-shared-view keep-locals)
+                  (tc-global-shared-view loop-carried)
+                  (tc-global-shared-view outer-moved)
+                  keep-box)
+                  [(TcMoveResult.Ok keep-moved)
+                    (match (tc-move-check-expr-id
+                      (tc-global-shared-view ctx)
+                      expr-bases
+                      body-env
+                      body-locals
+                      (tc-global-shared-view loop-carried)
+                      (tc-global-shared-view keep-moved)
+                      body-box)
+                      [(TcMoveResult.Ok _) (TcMoveResult.Ok keep-moved)]
+                      [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)]))])]
     [(ast.AstExpr.Tuple exprs)
       (match (tc-body-type-fact-expr-list-types
         "move.tuple_list"
@@ -88615,6 +89427,31 @@
                   env
                   locals
                   (tc-name-id-list-add value-shadowed prefix)
+                  moved1
+                  body-box
+                  result-ty)]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)]))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact index _ _ _ slot _ _ keep-box body-box)
+          (let
+            [keep-shadowed : TcNameIdList (tc-name-id-list-add shadowed index)]
+            (match (tc-move-check-global-result-expr-id
+              (tc-global-shared-view ctx)
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              keep-shadowed
+              moved
+              keep-box
+              (tc-global-shared-view result-ty))
+              [(TcMoveResult.Ok moved1)
+                (tc-move-check-global-result-expr-id
+                  ctx
+                  expr-bases
+                  env
+                  locals
+                  (tc-name-id-list-add keep-shadowed slot)
                   moved1
                   body-box
                   result-ty)]
@@ -94346,6 +95183,102 @@
                   [(ResultTcType.Err message) (TcBorrowCheckResult.Err message)])]
               [(TcBorrowCheckResult.Err message)
                 (TcBorrowCheckResult.Err message)]))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (let
+            [keep : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases keep-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            [keep-env : TcTypeEnv
+              (tc-bind-id
+                (tc-global-shared-view env)
+                index
+                (tc-resolve-type (tc-global-shared-view ctx) index-ty))]
+            [body-env : TcTypeEnv
+              (tc-bind-id
+                (tc-global-shared-view keep-env)
+                slot
+                (tc-resolve-type (tc-global-shared-view ctx) slot-ty))]
+            [keep-locals : TcMovedSet
+              (tc-moved-add
+                (tc-moved-clone (tc-global-shared-view locals))
+                index)]
+            [body-locals : TcMovedSet
+              (tc-moved-add
+                (tc-moved-clone (tc-global-shared-view keep-locals))
+                slot)]
+            (match (tc-borrow-check-exprs
+              (tc-global-shared-view ctx)
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              (tc-global-shared-view borrowed)
+              (ast.ast-expr-cons
+                start-box
+                (ast.ast-expr-cons
+                  end-box
+                  (ast.ast-expr-cons init-box (ast.ast-expr-list-new)))))
+              [(TcBorrowCheckResult.Ok outer-borrowed)
+                (let
+                  [keep-entry : TcMovedSet
+                    (tc-borrow-check-remove-root-state
+                      (tc-moved-clone (tc-global-shared-view outer-borrowed))
+                      index)]
+                  (match (tc-borrow-check-expr-loop
+                    (tc-global-shared-view ctx)
+                    expr-bases
+                    (tc-global-shared-view keep-env)
+                    (tc-global-shared-view env)
+                    (tc-global-shared-view keep-locals)
+                    (tc-global-shared-view keep-entry)
+                    keep-entry
+                    keep)
+                    [(TcBorrowCheckResult.Ok keep-borrowed)
+                      (let
+                        [body-entry : TcMovedSet
+                          (tc-borrow-check-remove-root-state
+                            (tc-borrow-check-remove-root-state
+                              (tc-moved-clone
+                                (tc-global-shared-view keep-borrowed))
+                              index)
+                            slot)]
+                        (match (tc-borrow-check-expr-loop
+                          (tc-global-shared-view ctx)
+                          expr-bases
+                          body-env
+                          (tc-global-shared-view env)
+                          body-locals
+                          (tc-global-shared-view body-entry)
+                          body-entry
+                          body)
+                          [(TcBorrowCheckResult.Ok body-borrowed)
+                            (TcBorrowCheckResult.Ok
+                              (tc-borrow-check-loop-visible-body-borrows
+                                (tc-global-shared-view ctx)
+                                (tc-global-shared-view env)
+                                keep-borrowed
+                                (tc-borrow-check-remove-root-state
+                                  (tc-borrow-check-remove-root-state
+                                    body-borrowed
+                                    index)
+                                  slot)))]
+                          [(TcBorrowCheckResult.Err message)
+                            (TcBorrowCheckResult.Err message)]))]
+                    [(TcBorrowCheckResult.Err message)
+                      (TcBorrowCheckResult.Err message)]))]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)]))])]
     [_
       (tc-borrow-check-expr
         ctx
@@ -96923,6 +97856,108 @@
                     (TcBorrowCheckResult.Err message)])]
               [(TcBorrowCheckResult.Err message)
                 (TcBorrowCheckResult.Err message)]))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases start-box)]
+            [end : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases end-box)]
+            [init : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases init-box)]
+            [keep : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases keep-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            [keep-env : TcTypeEnv
+              (tc-bind-id
+                env
+                index
+                (tc-resolve-type (tc-global-shared-view ctx) index-ty))]
+            [body-env : TcTypeEnv
+              (tc-bind-id
+                (tc-global-shared-view keep-env)
+                slot
+                (tc-resolve-type (tc-global-shared-view ctx) slot-ty))]
+            [keep-locals : TcMovedSet
+              (tc-moved-add
+                (tc-moved-clone (tc-global-shared-view locals))
+                index)]
+            [body-locals : TcMovedSet
+              (tc-moved-add
+                (tc-moved-clone (tc-global-shared-view keep-locals))
+                slot)]
+            (match (tc-borrow-check-exprs
+              (tc-global-shared-view ctx)
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              (tc-global-shared-view borrowed)
+              (ast.ast-expr-cons
+                start-box
+                (ast.ast-expr-cons
+                  end-box
+                  (ast.ast-expr-cons init-box (ast.ast-expr-list-new)))))
+              [(TcBorrowCheckResult.Ok outer-borrowed)
+                (let
+                  [keep-entry : TcMovedSet
+                    (tc-borrow-check-remove-root-state
+                      (tc-moved-clone (tc-global-shared-view outer-borrowed))
+                      index)]
+                  (match (tc-borrow-check-expr-loop
+                    (tc-global-shared-view ctx)
+                    expr-bases
+                    (tc-global-shared-view keep-env)
+                    (tc-global-shared-view env)
+                    (tc-global-shared-view keep-locals)
+                    (tc-global-shared-view keep-entry)
+                    keep-entry
+                    keep)
+                    [(TcBorrowCheckResult.Ok keep-borrowed)
+                      (let
+                        [body-entry : TcMovedSet
+                          (tc-borrow-check-remove-root-state
+                            (tc-borrow-check-remove-root-state
+                              (tc-moved-clone
+                                (tc-global-shared-view keep-borrowed))
+                              index)
+                            slot)]
+                        (match (tc-borrow-check-expr-loop
+                          (tc-global-shared-view ctx)
+                          expr-bases
+                          body-env
+                          (tc-global-shared-view env)
+                          body-locals
+                          (tc-global-shared-view body-entry)
+                          body-entry
+                          body)
+                          [(TcBorrowCheckResult.Ok body-borrowed)
+                            (TcBorrowCheckResult.Ok
+                              (tc-borrow-check-loop-visible-body-borrows
+                                (tc-global-shared-view ctx)
+                                (tc-global-shared-view env)
+                                keep-borrowed
+                                (tc-borrow-check-remove-root-state
+                                  (tc-borrow-check-remove-root-state
+                                    body-borrowed
+                                    index)
+                                  slot)))]
+                          [(TcBorrowCheckResult.Err message)
+                            (TcBorrowCheckResult.Err message)]))]
+                    [(TcBorrowCheckResult.Err message)
+                      (TcBorrowCheckResult.Err message)]))]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)]))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : ast.AstExpr
@@ -97934,6 +98969,39 @@
               (tc-global-shared-view ctx)
               expr-bases
               (ast.ast-expr-segment-bases-get expr-bases value-box))
+            (tc-borrow-gate-expr-relevant?
+              ctx
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases body-box)))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            _
+            _
+            start-box
+            end-box
+            _
+            _
+            init-box
+            keep-box
+            body-box)
+          (or
+            (tc-borrow-gate-expr-relevant?
+              (tc-global-shared-view ctx)
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases start-box))
+            (tc-borrow-gate-expr-relevant?
+              (tc-global-shared-view ctx)
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases end-box))
+            (tc-borrow-gate-expr-relevant?
+              (tc-global-shared-view ctx)
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases init-box))
+            (tc-borrow-gate-expr-relevant?
+              (tc-global-shared-view ctx)
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases keep-box))
             (tc-borrow-gate-expr-relevant?
               ctx
               expr-bases
@@ -109384,6 +110452,44 @@
               expr-bases
               body-box
               shared-path?))])]
+    [(ast.AstExpr.SpmdCompact payload)
+      (match (__tl-box-place payload)
+        [(ast.AstSpmdCompact.Compact
+            _
+            _
+            start-box
+            end-box
+            _
+            _
+            init-box
+            keep-box
+            body-box)
+          (begin
+            (macro-hygiene-produced-note-id!
+              (tc-global-shared-view produced)
+              expr-bases
+              start-box
+              shared-path?)
+            (macro-hygiene-produced-note-id!
+              (tc-global-shared-view produced)
+              expr-bases
+              end-box
+              shared-path?)
+            (macro-hygiene-produced-note-id!
+              (tc-global-shared-view produced)
+              expr-bases
+              init-box
+              shared-path?)
+            (macro-hygiene-produced-note-id!
+              (tc-global-shared-view produced)
+              expr-bases
+              keep-box
+              shared-path?)
+            (macro-hygiene-produced-note-id!
+              (tc-global-shared-view produced)
+              expr-bases
+              body-box
+              shared-path?))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (begin
         (macro-hygiene-produced-note-id!
@@ -111352,6 +112458,78 @@
                         expr-bases
                         value
                         value-env
+                        (tc-global-shared-view macro-name)
+                        depth)
+                      (macro-hygiene-expr
+                        expr-bases
+                        body
+                        body-env
+                        (tc-global-shared-view macro-name)
+                        depth))])]))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : i64 start-box]
+            [end : i64 end-box]
+            [init : i64 init-box]
+            [keep : i64 keep-box]
+            [body : i64 body-box]
+            (match (macro-hygiene-bind-name-id
+              (macro-hygiene-env-shared-view env)
+              (tc-global-shared-view macro-name)
+              depth
+              index)
+              [(MacroHygieneName.Name nindex-id keep-env)
+                (match (macro-hygiene-bind-name-id
+                  (tc-global-shared-view keep-env)
+                  (tc-global-shared-view macro-name)
+                  depth
+                  slot)
+                  [(MacroHygieneName.Name nslot-id body-env)
+                    (ast.ast-expr-spmd-compact-id-with-pools
+                      (macro-hygiene-env-pools-shared-view env)
+                      nindex-id
+                      (macro-hygiene-type
+                        index-ty
+                        (macro-hygiene-env-shared-view env)
+                        (tc-global-shared-view macro-name))
+                      (macro-hygiene-expr
+                        expr-bases
+                        start
+                        (macro-hygiene-env-shared-view env)
+                        (tc-global-shared-view macro-name)
+                        depth)
+                      (macro-hygiene-expr
+                        expr-bases
+                        end
+                        (macro-hygiene-env-shared-view env)
+                        (tc-global-shared-view macro-name)
+                        depth)
+                      nslot-id
+                      (macro-hygiene-type
+                        slot-ty
+                        (tc-global-shared-view keep-env)
+                        (tc-global-shared-view macro-name))
+                      (macro-hygiene-expr
+                        expr-bases
+                        init
+                        (macro-hygiene-env-shared-view env)
+                        (tc-global-shared-view macro-name)
+                        depth)
+                      (macro-hygiene-expr
+                        expr-bases
+                        keep
+                        keep-env
                         (tc-global-shared-view macro-name)
                         depth)
                       (macro-hygiene-expr
@@ -125623,6 +126801,35 @@
               (macro-expr-might-fire? state expr-bases end)
               (macro-expr-might-fire? state expr-bases init)
               (macro-expr-might-fire? state expr-bases value)
+              (macro-expr-might-fire? state expr-bases body)))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            _
+            _
+            start-box
+            end-box
+            _
+            _
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases start-box)]
+            [end : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases end-box)]
+            [init : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases init-box)]
+            [keep : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases keep-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            (or
+              (macro-expr-might-fire? state expr-bases start)
+              (macro-expr-might-fire? state expr-bases end)
+              (macro-expr-might-fire? state expr-bases init)
+              (macro-expr-might-fire? state expr-bases keep)
               (macro-expr-might-fire? state expr-bases body)))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let

@@ -2542,6 +2542,9 @@
 (define (compiler-parse-tag-expr-spmd-scan) : i64
   294)
 
+(define (compiler-parse-tag-expr-spmd-compact) : i64
+  318)
+
 (define (compiler-parse-tag-expr-spmd-broadcast) : i64
   290)
 
@@ -3307,6 +3310,12 @@
           out
           "spmd-scan"
           (compiler-parse-tag-expr-spmd-scan)))
+      (set!
+        out
+        (compiler-parse-dispatch-bind
+          out
+          "spmd-compact"
+          (compiler-parse-tag-expr-spmd-compact)))
       (set!
         out
         (compiler-parse-dispatch-bind
@@ -7877,6 +7886,221 @@
         [_ (ResultAstExpr.Err "parse: malformed spmd-scan prefix binding")])]
     [_ (ResultAstExpr.Err "parse: malformed spmd-scan prefix binding")]))
 
+(define (parse-ast-spmd-compact
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [rest : reader.SpannedSexpr]) : ResultAstExpr
+  (match (reader.spanned-sexpr-view rest)
+    [(reader.SpannedSexprView.Cons binding-list keep-tail _)
+      (match (reader.spanned-sexpr-view binding-list)
+        [(reader.SpannedSexprView.Cons range-binding slot-tail _)
+          (match (reader.spanned-sexpr-view slot-tail)
+            [(reader.SpannedSexprView.Cons slot-binding bindings-end _)
+              (match (reader.spanned-sexpr-view bindings-end)
+                [(reader.SpannedSexprView.Nil _)
+                  (match (reader.spanned-sexpr-view keep-tail)
+                    [(reader.SpannedSexprView.Cons keep body-tail _)
+                      (match (reader.spanned-sexpr-view body-tail)
+                        [(reader.SpannedSexprView.Cons body end _)
+                          (match (reader.spanned-sexpr-view end)
+                            [(reader.SpannedSexprView.Nil _)
+                              (parse-ast-spmd-compact-bindings
+                                dispatch
+                                pools
+                                range-binding
+                                slot-binding
+                                keep
+                                body)]
+                            [_
+                              (ResultAstExpr.Err
+                                "parse: malformed spmd-compact")])]
+                        [_ (ResultAstExpr.Err "parse: malformed spmd-compact")])]
+                    [_ (ResultAstExpr.Err "parse: malformed spmd-compact")])]
+                [_ (ResultAstExpr.Err "parse: malformed spmd-compact")])]
+            [_ (ResultAstExpr.Err "parse: malformed spmd-compact")])]
+        [_ (ResultAstExpr.Err "parse: malformed spmd-compact")])]
+    [(reader.SpannedSexprView.Cons _ _ _)
+      (ResultAstExpr.Err "parse: malformed spmd-compact")]
+    [_ (ResultAstExpr.Err "parse: malformed spmd-compact")]))
+
+(define (parse-ast-spmd-compact-bindings
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [range-binding : reader.SpannedSexpr]
+  [slot-binding : reader.SpannedSexpr]
+  [keep : reader.SpannedSexpr]
+  [body : reader.SpannedSexpr]) : ResultAstExpr
+  (match (reader.spanned-sexpr-view range-binding)
+    [(reader.SpannedSexprView.BracketList items _)
+      (parse-ast-spmd-compact-bindings
+        dispatch
+        pools
+        items
+        slot-binding
+        keep
+        body)]
+    [(reader.SpannedSexprView.Cons index-node colon-tail _)
+      (match (reader.spanned-sexpr-view index-node)
+        [(reader.SpannedSexprView.Sym index _)
+          (match (reader.spanned-sexpr-view colon-tail)
+            [(reader.SpannedSexprView.Cons colon index-ty-tail _)
+              (match (reader.spanned-sexpr-view index-ty-tail)
+                [(reader.SpannedSexprView.Cons index-ty start-tail _)
+                  (match (reader.spanned-sexpr-view start-tail)
+                    [(reader.SpannedSexprView.Cons start end-tail _)
+                      (match (reader.spanned-sexpr-view end-tail)
+                        [(reader.SpannedSexprView.Cons end finish _)
+                          (match (reader.spanned-sexpr-view finish)
+                            [(reader.SpannedSexprView.Nil _)
+                              (if (sexpr-colon?
+                                (reader.spanned-sexpr-form colon))
+                                (match (parse-ast-type-spanned
+                                  (compiler-parse-place-shared-view dispatch)
+                                  (compiler-parse-place-shared-view pools)
+                                  index-ty)
+                                  [(ResultAstType.Ok parsed-index-ty)
+                                    (parse-ast-spmd-compact-slot-binding
+                                      dispatch
+                                      pools
+                                      (ci.intern-syntax-id-value index)
+                                      parsed-index-ty
+                                      start
+                                      end
+                                      slot-binding
+                                      keep
+                                      body)]
+                                  [(ResultAstType.Err message)
+                                    (ResultAstExpr.Err message)])
+                                (ResultAstExpr.Err
+                                  "parse: expected ':' in spmd-compact range binding"))]
+                            [_
+                              (ResultAstExpr.Err
+                                "parse: malformed spmd-compact range binding")])]
+                        [_
+                          (ResultAstExpr.Err
+                            "parse: malformed spmd-compact range binding")])]
+                    [_
+                      (ResultAstExpr.Err
+                        "parse: malformed spmd-compact range binding")])]
+                [_
+                  (ResultAstExpr.Err
+                    "parse: malformed spmd-compact range binding")])]
+            [_
+              (ResultAstExpr.Err "parse: malformed spmd-compact range binding")])]
+        [_ (ResultAstExpr.Err "parse: malformed spmd-compact range binding")])]
+    [_ (ResultAstExpr.Err "parse: malformed spmd-compact range binding")]))
+
+(define (parse-ast-spmd-compact-slot-binding
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [index : i64]
+  [index-ty : ast.AstType]
+  [start : reader.SpannedSexpr]
+  [end : reader.SpannedSexpr]
+  [slot-binding : reader.SpannedSexpr]
+  [keep : reader.SpannedSexpr]
+  [body : reader.SpannedSexpr]) : ResultAstExpr
+  (match (reader.spanned-sexpr-view slot-binding)
+    [(reader.SpannedSexprView.BracketList items _)
+      (parse-ast-spmd-compact-slot-binding
+        dispatch
+        pools
+        index
+        index-ty
+        start
+        end
+        items
+        keep
+        body)]
+    [(reader.SpannedSexprView.Cons slot-node colon-tail _)
+      (match (reader.spanned-sexpr-view slot-node)
+        [(reader.SpannedSexprView.Sym slot _)
+          (match (reader.spanned-sexpr-view colon-tail)
+            [(reader.SpannedSexprView.Cons colon slot-ty-tail _)
+              (match (reader.spanned-sexpr-view slot-ty-tail)
+                [(reader.SpannedSexprView.Cons slot-ty init-tail _)
+                  (match (reader.spanned-sexpr-view init-tail)
+                    [(reader.SpannedSexprView.Cons init finish _)
+                      (match (reader.spanned-sexpr-view finish)
+                        [(reader.SpannedSexprView.Nil _)
+                          (if (sexpr-colon? (reader.spanned-sexpr-form colon))
+                            (match (parse-ast-type-spanned
+                              (compiler-parse-place-shared-view dispatch)
+                              (compiler-parse-place-shared-view pools)
+                              slot-ty)
+                              [(ResultAstType.Ok parsed-slot-ty)
+                                (match (parse-ast-expr-with-pools
+                                  (compiler-parse-place-shared-view dispatch)
+                                  (compiler-parse-place-shared-view pools)
+                                  start)
+                                  [(ResultAstExpr.Ok parsed-start)
+                                    (match (parse-ast-expr-with-pools
+                                      (compiler-parse-place-shared-view
+                                        dispatch)
+                                      (compiler-parse-place-shared-view pools)
+                                      end)
+                                      [(ResultAstExpr.Ok parsed-end)
+                                        (match (parse-ast-expr-with-pools
+                                          (compiler-parse-place-shared-view
+                                            dispatch)
+                                          (compiler-parse-place-shared-view
+                                            pools)
+                                          init)
+                                          [(ResultAstExpr.Ok parsed-init)
+                                            (match (parse-ast-expr-with-pools
+                                              (compiler-parse-place-shared-view
+                                                dispatch)
+                                              (compiler-parse-place-shared-view
+                                                pools)
+                                              keep)
+                                              [(ResultAstExpr.Ok parsed-keep)
+                                                (match (parse-ast-expr-with-pools
+                                                  dispatch
+                                                  (compiler-parse-place-shared-view
+                                                    pools)
+                                                  body)
+                                                  [(ResultAstExpr.Ok
+                                                      parsed-body)
+                                                    (ResultAstExpr.Ok
+                                                      (ast.ast-expr-spmd-compact-id-with-pools
+                                                        pools
+                                                        index
+                                                        index-ty
+                                                        parsed-start
+                                                        parsed-end
+                                                        (ci.intern-syntax-id-value
+                                                          slot)
+                                                        parsed-slot-ty
+                                                        parsed-init
+                                                        parsed-keep
+                                                        parsed-body))]
+                                                  [(ResultAstExpr.Err message)
+                                                    (ResultAstExpr.Err message)])]
+                                              [(ResultAstExpr.Err message)
+                                                (ResultAstExpr.Err message)])]
+                                          [(ResultAstExpr.Err message)
+                                            (ResultAstExpr.Err message)])]
+                                      [(ResultAstExpr.Err message)
+                                        (ResultAstExpr.Err message)])]
+                                  [(ResultAstExpr.Err message)
+                                    (ResultAstExpr.Err message)])]
+                              [(ResultAstType.Err message)
+                                (ResultAstExpr.Err message)])
+                            (ResultAstExpr.Err
+                              "parse: expected ':' in spmd-compact slot binding"))]
+                        [_
+                          (ResultAstExpr.Err
+                            "parse: malformed spmd-compact slot binding")])]
+                    [_
+                      (ResultAstExpr.Err
+                        "parse: malformed spmd-compact slot binding")])]
+                [_
+                  (ResultAstExpr.Err
+                    "parse: malformed spmd-compact slot binding")])]
+            [_ (ResultAstExpr.Err "parse: malformed spmd-compact slot binding")])]
+        [_ (ResultAstExpr.Err "parse: malformed spmd-compact slot binding")])]
+    [_ (ResultAstExpr.Err "parse: malformed spmd-compact slot binding")]))
+
 (define (parse-ast-spmd-broadcast
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
@@ -9122,6 +9346,8 @@
       (parse-ast-spmd-reduce dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-spmd-scan))
       (parse-ast-spmd-scan dispatch pools rest)]
+    [(= tag (compiler-parse-tag-expr-spmd-compact))
+      (parse-ast-spmd-compact dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-spmd-broadcast))
       (parse-ast-spmd-broadcast dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-spmd-shuffle))
@@ -15841,6 +16067,8 @@
       "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) i))) 0))")
     (compiler-parse-ok?
       "(define (main [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (set! (array-ref out i) (+ (program-index) (program-count)))) 0))")
+    (compiler-parse-ok?
+      "(define (main [out : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-compact ([i : i64 0 n] [slot : i64 2]) (= (% i 2) 0) (set! (array-ref out slot) i)))")
     ;; An empty range, a non-i64 index type, and expression
     ;; start/end bounds all parse (range semantics are checked later).
     (compiler-parse-ok?
@@ -15865,6 +16093,21 @@
     (compiler-parse-error-ok?
       "(define (main) : i64 (spmd-reduce sum))"
       "parse: malformed spmd-reduce")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-compact))"
+      "parse: malformed spmd-compact")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-compact ([i nope i64 0 3] [slot : i64 0]) true unit))"
+      "parse: expected ':' in spmd-compact range binding")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-compact ([i : i64 0 3] [slot nope i64 0]) true unit))"
+      "parse: expected ':' in spmd-compact slot binding")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-compact ([i : i64 0] [slot : i64 0]) true unit))"
+      "parse: malformed spmd-compact range binding")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-compact ([i : i64 0 3] [slot : i64]) true unit))"
+      "parse: malformed spmd-compact slot binding")
     (compiler-parse-error-ok?
       "(define (main) : i64 (spmd-broadcast 1))"
       "parse: malformed spmd-broadcast")

@@ -493,6 +493,7 @@
     [(compiler_ast_types.AstExpr.Foreach _) "foreach"]
     [(compiler_ast_types.AstExpr.SpmdReduce _) "spmd-reduce"]
     [(compiler_ast_types.AstExpr.SpmdScan _) "spmd-scan"]
+    [(compiler_ast_types.AstExpr.SpmdCompact _) "spmd-compact"]
     [(compiler_ast_types.AstExpr.Unsafe _) "unsafe"]
     [(compiler_ast_types.AstExpr.Literal
         (compiler_ast_types.AstLiteral.Float _))

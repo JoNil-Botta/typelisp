@@ -11,6 +11,8 @@ inline_aggregate_global_three_field|tests/integration/inline_aggregate_global_th
 inline_aggregate_global_nested|tests/integration/inline_aggregate_global_nested.tl|42|555\n897\n|-|stdlib/io.tl stdlib/string.tl
 cli_common_option|tests/integration/cli_common_option.tl|42|-|-|cli_option_core.tl stdlib/io.tl stdlib/string.tl
 arg_global_len_eq_pair|tests/integration/arg_global_len_eq_pair.tl|42|711\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+guard_sink_invalidate_walk|tests/integration/guard_sink_invalidate_walk.tl|42|0\n0\n2\n13\n|-|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+guard_sink_store_across_guard|tests/integration/guard_sink_store_across_guard.tl|42|25\n210\n-1\n|-|stdlib/io.tl stdlib/string.tl
 arg_global_len_eq_split|tests/integration/arg_global_len_eq_split.tl|134|-|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/windows/arg_global_len_eq_split/arg_global_len_eq_split.tl:32:64: array index out of bounds: index=7 length=7\n
 bce_range_two_loops|tests/integration/bce_range_two_loops.tl|42|-5915004525821994045\n|24|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 bce_range_negative_span|tests/integration/bce_range_negative_span.tl|134|-|24|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/windows/bce_range_negative_span/bce_range_negative_span.tl:15:36: array index out of bounds: index=-17 length=24\n

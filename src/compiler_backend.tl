@@ -85808,23 +85808,20 @@
       "    movq %rax, %fs:tl_backtrace_stack_low@tpoff
 "
       "")
-    "
-    addq $0x40000000, %rax
+    "    addq $0x40000000, %rax
     andq $-16, %rax
 "
     (if (compiler_ir_types.compiler-debug-info-enabled?)
       "    movq %rax, %fs:tl_backtrace_stack_high@tpoff
 "
       "")
-    "
-    movq %rax, %rsp
+    "    movq %rax, %rsp
 "
     (if (compiler_ir_types.compiler-debug-info-enabled?)
       "    xorl %ebp, %ebp
 "
       "")
-    "
-    call main
+    "    call main
     movq %rax, %rdi
     movq $60, %rax
     syscall

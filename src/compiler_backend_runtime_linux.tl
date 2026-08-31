@@ -20,11 +20,9 @@ tl_backtrace_stack_low:
     .globl tl_backtrace_stack_high
 tl_backtrace_stack_high:
     .zero 8
-
 "
       "")
     "
-
     .section .bss
     .balign 8
 .L_tl_arena_poison_enabled:

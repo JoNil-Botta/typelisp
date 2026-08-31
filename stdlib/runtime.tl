@@ -820,13 +820,12 @@
       unit)))
 
 ;: Emit the optional fatal backtrace, then terminate with `code`.
-(define (abort-exit [code : i64]) : never
-  (cfg
-    compiler-backtrace
+(cfg
+  compiler-backtrace
+  (define (abort-exit [code : i64]) : never
     (begin
       (abort-write-backtrace)
-      (os-exit code))
-    (os-exit code)))
+      (os-exit code))))
 
 ;: Allocation-free Windows VirtualAlloc failure reporter. KIND is 0 for an
 ;: ordinary arena and 1 for an atomic arena. OPERATION is 0 for reserve, 1 for
@@ -872,21 +871,21 @@
   (:export-symbol "tl_oob_abort") : never
   (begin
     (abort-write "tl: array index out of bounds\n")
-    (abort-exit 134)))
+    (cfg compiler-backtrace (abort-exit 134) (os-exit 134))))
 
 ;: Fault handler for division (or remainder) by zero, exported as `tl_div_abort`.
 (define (div-abort)
   (:export-symbol "tl_div_abort") : never
   (begin
     (abort-write "tl: integer division or remainder error\n")
-    (abort-exit 135)))
+    (cfg compiler-backtrace (abort-exit 135) (os-exit 135))))
 
 ;: Fault handler for an out-of-range shift amount, exported as `tl_shift_abort`.
 (define (shift-abort)
   (:export-symbol "tl_shift_abort") : never
   (begin
     (abort-write "tl: shift count out of range\n")
-    (abort-exit 129)))
+    (cfg compiler-backtrace (abort-exit 129) (os-exit 129))))
 
 ;: A compiler-emitted abort-site descriptor is four machine words:
 ;: path-data pointer, path byte length, one-based line, and one-based column.
@@ -927,7 +926,7 @@
     (abort-write " length=")
     (abort-write-signed-decimal length)
     (abort-write "\n")
-    (abort-exit 134)))
+    (cfg compiler-backtrace (abort-exit 134) (os-exit 134))))
 
 ;: Report a source-located integer division or remainder failure with both
 ;: operands, then exit with the legacy division-abort status.
@@ -941,7 +940,7 @@
     (abort-write " divisor=")
     (abort-write-signed-decimal divisor)
     (abort-write "\n")
-    (abort-exit 135)))
+    (cfg compiler-backtrace (abort-exit 135) (os-exit 135))))
 
 ;: Report a source-located invalid shift with its count and operand width, then
 ;: exit with the legacy shift-abort status.  The fourth ABI flag selects
@@ -962,7 +961,7 @@
     (abort-write " width=")
     (abort-write-signed-decimal width)
     (abort-write "\n")
-    (abort-exit 129)))
+    (cfg compiler-backtrace (abort-exit 129) (os-exit 129))))
 
 ;: Report a source-located panic message and exit with the legacy panic status.
 ;: A trailing newline in `message` is preserved without adding a second one.
@@ -987,7 +986,7 @@
       (if ends-with-newline?
         unit
         (abort-write "\n"))
-      (abort-exit 134))))
+      (cfg compiler-backtrace (abort-exit 134) (os-exit 134)))))
 
 ;: General panic abort: write the supplied message to stderr and exit 134.
 ;: Exported as the fixed `tl_abort_string` symbol so `(panic …)` call sites and
@@ -997,7 +996,7 @@
   (:export-symbol "tl_abort_string") : never
   (begin
     (abort-write message)
-    (abort-exit 134)))
+    (cfg compiler-backtrace (abort-exit 134) (os-exit 134))))
 
 ;; `typelisp test` enables this process-local state in its generated harness.
 ;; Outside that harness, stdlib.test assertion failures retain their historical
@@ -1315,7 +1314,7 @@
   (:export-symbol "tl_region_abort") : never
   (begin
     (abort-write "tl: invalid region mark\n")
-    (abort-exit 134)))
+    (cfg compiler-backtrace (abort-exit 134) (os-exit 134))))
 
 ;: Out-of-memory abort, exported as `tl_oom_abort`. Reached from the
 ;: allocator (`tl_alloc`) when it cannot obtain more memory, so it MUST NOT

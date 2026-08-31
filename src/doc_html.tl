@@ -69,6 +69,24 @@
     ""
     ""))
 
+(define (doc-html-page-open-with-metadata
+  [title : String]
+  [compiler-identity : String]
+  [source-identity : String]
+  [package-identity : String]) : String
+  (str_cat.str-cat
+    "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>"
+    (doc-html-escape title)
+    "</title>\n<meta name=\"typelisp-compiler-identity\" content=\""
+    (doc-html-escape compiler-identity)
+    "\">\n<meta name=\"typelisp-source-identity\" content=\""
+    (doc-html-escape source-identity)
+    "\">\n<meta name=\"typelisp-package-identity\" content=\""
+    (doc-html-escape package-identity)
+    "\">\n<link rel=\"stylesheet\" href=\"typelisp-docs.css\">\n<script defer src=\"typelisp-docs-search-index.js\"></script>\n<script defer src=\"typelisp-docs.js\"></script>\n</head>\n<body class=\"tl-docs\">\n"
+    ""
+    ""))
+
 (define (doc-html-page-close) : String
   "</body>\n</html>\n")
 
@@ -628,12 +646,11 @@
 (define (doc-html-code-block [source : String]) : String
   (doc-html-code-block-with-info "typelisp" "" source))
 
-(define (doc-html-item-nav-entry [item : doc_extract.DocItem]) : String
+(define (doc-html-item-nav-entry [path : String] [item : doc_extract.DocItem]) : String
   (let
     [name : String
       (doc_extract.doc-item-name (owned_view.compiler-owned-shared-view item))]
-    [anchor : String
-      (doc_render.doc-render-anchor (doc_extract.doc-item-name item))]
+    [anchor : String (doc_render.doc-render-item-anchor path item)]
     (str_cat.str-cat
       "<li><a href=\"#"
       (owned_view.compiler-owned-shared-view anchor)
@@ -642,6 +659,7 @@
       "</code></a></li>\n")))
 
 (define (doc-html-item-nav-entries-from
+  [path : String]
   [items : doc_item_vec.Vec]
   [index : i64]
   [count : i64]) : String
@@ -649,18 +667,20 @@
     ""
     (str_cat.str-cat
       (doc-html-item-nav-entry
+        (owned_view.compiler-owned-shared-view path)
         (doc_extract.doc-item-list-ref
           (owned_view.compiler-owned-shared-view items)
           index))
-      (doc-html-item-nav-entries-from items (+ index 1) count))))
+      (doc-html-item-nav-entries-from path items (+ index 1) count))))
 
-(define (doc-html-item-nav-entries [items : doc_item_vec.Vec]) : String
+(define (doc-html-item-nav-entries [path : String] [items : doc_item_vec.Vec]) : String
   (doc-html-item-nav-entries-from
+    path
     (owned_view.compiler-owned-shared-view items)
     0
     (doc_extract.doc-item-list-count items)))
 
-(define (doc-html-item-nav [items : doc_item_vec.Vec]) : String
+(define (doc-html-item-nav [path : String] [items : doc_item_vec.Vec]) : String
   (if (=
     (doc_extract.doc-item-list-count
       (owned_view.compiler-owned-shared-view items))
@@ -668,29 +688,55 @@
     ""
     (str_cat.str-cat
       "<nav class=\"tl-doc-item-nav\" aria-label=\"Declarations\">\n<h3>Declarations</h3>\n<ul>\n"
-      (doc-html-item-nav-entries items)
+      (doc-html-item-nav-entries path items)
       "</ul>\n</nav>\n")))
 
-(define (doc-html-item [item : doc_extract.DocItem]) : String
+(define (doc-html-source-link [source-url : String] [line : i64]) : String
+  (if (= (string.string-length source-url) 0)
+    ""
+    (str_cat.str-cat
+      "<dt>Source</dt><dd><a class=\"tl-doc-source-link\" href=\""
+      (doc-html-escape source-url)
+      (if (> line 0)
+        (str_cat.str-cat "#L" (string.int->string line) "")
+        "")
+      "\">view source"
+      (if (> line 0)
+        (str_cat.str-cat " (line " (string.int->string line) ")")
+        "")
+      "</a></dd>")))
+
+(define (doc-html-item
+  [path : String]
+  [source-url : String]
+  [item : doc_extract.DocItem]) : String
   (let
     [name : String
       (doc_extract.doc-item-name (owned_view.compiler-owned-shared-view item))]
     [anchor : String
-      (doc_render.doc-render-anchor
-        (doc_extract.doc-item-name (owned_view.compiler-owned-shared-view item)))]
+      (doc_render.doc-render-item-anchor
+        (owned_view.compiler-owned-shared-view path)
+        (owned_view.compiler-owned-shared-view item))]
     [kind : String
       (doc_extract.doc-kind-name
         (doc_extract.doc-item-kind (owned_view.compiler-owned-shared-view item)))]
     (str_cat.str-cat
       "<a id=\""
       (owned_view.compiler-owned-shared-view anchor)
-      "\"></a>\n<section class=\"tl-doc-item\">\n<h3><a href=\"#"
+      "\"></a>\n<section class=\"tl-doc-item\" data-doc-identity=\""
+      (owned_view.compiler-owned-shared-view anchor)
+      "\">\n<h3><a href=\"#"
       (owned_view.compiler-owned-shared-view anchor)
       "\">"
       (doc-html-escape name)
       "</a></h3>\n<dl class=\"tl-doc-meta\"><dt>Kind</dt><dd>"
       (doc-html-escape kind)
-      "</dd></dl>\n"
+      "</dd>"
+      (doc-html-source-link
+        source-url
+        (doc_extract.doc-item-source-line
+          (owned_view.compiler-owned-shared-view item)))
+      "</dl>\n"
       (doc-html-code-block
         (doc_extract.doc-item-signature
           (owned_view.compiler-owned-shared-view item)))
@@ -701,6 +747,8 @@
       "</section>\n")))
 
 (define (doc-html-item-list-from
+  [path : String]
+  [source-url : String]
   [items : doc_item_vec.Vec]
   [index : i64]
   [count : i64]) : String
@@ -708,24 +756,179 @@
     ""
     (str_cat.str-cat
       (doc-html-item
+        (owned_view.compiler-owned-shared-view path)
+        (owned_view.compiler-owned-shared-view source-url)
         (doc_extract.doc-item-list-ref
           (owned_view.compiler-owned-shared-view items)
           index))
-      (doc-html-item-list-from items (+ index 1) count))))
+      (doc-html-item-list-from path source-url items (+ index 1) count))))
 
-(define (doc-html-item-list [items : doc_item_vec.Vec]) : String
+(define (doc-html-item-list
+  [path : String]
+  [source-url : String]
+  [items : doc_item_vec.Vec]) : String
   (doc-html-item-list-from
+    path
+    source-url
     (owned_view.compiler-owned-shared-view items)
     0
     (doc_extract.doc-item-list-count items)))
 
-(define (doc-html-items [items : doc_item_vec.Vec]) : String
+(define (doc-html-items
+  [path : String]
+  [source-url : String]
+  [items : doc_item_vec.Vec]) : String
   (if (=
     (doc_extract.doc-item-list-count
       (owned_view.compiler-owned-shared-view items))
     0)
     "<p class=\"tl-doc-empty\">No documented declarations.</p>\n"
-    (doc-html-item-list (owned_view.compiler-owned-shared-view items))))
+    (doc-html-item-list
+      path
+      source-url
+      (owned_view.compiler-owned-shared-view items))))
+
+(define (doc-html-json-escape-one [text : (& text str)] [idx : i64]) : String
+  (let
+    [c : char (string.string-ref text idx)]
+    (cond
+      [(= c '"') "\\\""]
+      [(= c '\\') "\\\\"]
+      [(= c '\n') "\\n"]
+      [(= c '\r') "\\r"]
+      [(= c '\t') "\\t"]
+      ;; Avoid closing an inline script if a future consumer embeds the same
+      ;; deterministic JSON payload instead of loading it as an asset.
+      [(= c '<') "\\u003c"]
+      [(= c '>') "\\u003e"]
+      [(= c '&') "\\u0026"]
+      [else (string.substring text idx 1)])))
+
+(define (doc-html-json-string [text : (& text str)]) : String
+  (let
+    [i : i64 0]
+    [n : i64 (string.string-length text)]
+    [out : byte_buf.ByteBufBuilder
+      (byte_buf.byte-buf-builder-with-capacity (+ n 2))]
+    (begin
+      (byte_buf.byte-buf-builder-append-string (&mut out) "\"")
+      (while (< i n)
+        (begin
+          (byte_buf.byte-buf-builder-append-string
+            (&mut out)
+            (doc-html-json-escape-one text i))
+          (set! i (+ i 1))))
+      (byte_buf.byte-buf-builder-append-string (&mut out) "\"")
+      (byte_buf.byte-buf-builder-finish-string (& out)))))
+
+(define (doc-html-short-doc [doc-text : String]) : String
+  (let
+    [n : i64 (string.string-length doc-text)]
+    (if (> n 240)
+      (string.substring doc-text 0 240)
+      doc-text)))
+
+(define (doc-html-search-record
+  [identity : String]
+  [kind : String]
+  [label : String]
+  [module-path : String]
+  [href : String]
+  [signature : String]
+  [doc-text : String]
+  [source-line : i64]) : String
+  (str_cat.str-cat
+    "{\"identity\":"
+    (doc-html-json-string identity)
+    ",\"kind\":"
+    (doc-html-json-string kind)
+    ",\"label\":"
+    (doc-html-json-string label)
+    ",\"module\":"
+    (doc-html-json-string module-path)
+    ",\"href\":"
+    (doc-html-json-string href)
+    ",\"signature\":"
+    (doc-html-json-string signature)
+    ",\"docs\":"
+    (doc-html-json-string (doc-html-short-doc doc-text))
+    ",\"sourceLine\":"
+    (string.int->string source-line)
+    "}"))
+
+(define (doc-html-search-item-record
+  [page : String]
+  [path : String]
+  [item : doc_extract.DocItem]) : String
+  (let
+    [identity : String
+      (doc_render.doc-render-item-anchor
+        (owned_view.compiler-owned-shared-view path)
+        (owned_view.compiler-owned-shared-view item))]
+    (doc-html-search-record
+      (owned_view.compiler-owned-shared-view identity)
+      (doc_extract.doc-kind-name
+        (doc_extract.doc-item-kind (owned_view.compiler-owned-shared-view item)))
+      (doc_extract.doc-item-name (owned_view.compiler-owned-shared-view item))
+      (owned_view.compiler-owned-shared-view path)
+      (str_cat.str-cat page "#" identity)
+      (doc_extract.doc-item-signature
+        (owned_view.compiler-owned-shared-view item))
+      (doc_extract.doc-item-doc (owned_view.compiler-owned-shared-view item))
+      (doc_extract.doc-item-source-line item))))
+
+(define (doc-html-search-item-records-from
+  [page : String]
+  [path : String]
+  [items : doc_item_vec.Vec]
+  [index : i64]
+  [count : i64]) : String
+  (if (>= index count)
+    ""
+    (str_cat.str-cat
+      ","
+      (doc-html-search-item-record
+        (owned_view.compiler-owned-shared-view page)
+        (owned_view.compiler-owned-shared-view path)
+        (doc_extract.doc-item-list-ref
+          (owned_view.compiler-owned-shared-view items)
+          index))
+      (doc-html-search-item-records-from page path items (+ index 1) count))))
+
+;; Emit one module record followed by its declarations. The caller supplies
+;; modules in deterministic site order and wraps the records in a JSON array.
+(define (doc-html-search-records-for-module
+  [page : String]
+  [module : doc_render.DocModule]) : String
+  (let
+    [path : String
+      (doc_render.doc-module-path
+        (owned_view.compiler-owned-shared-view module))]
+    [docs : doc_extract.DocExtraction
+      (doc_render.doc-module-docs
+        (owned_view.compiler-owned-shared-view module))]
+    [items : doc_item_vec.Vec
+      (doc_extract.doc-extraction-items
+        (owned_view.compiler-owned-shared-view docs))]
+    [item-count : i64
+      (doc_extract.doc-item-list-count
+        (owned_view.compiler-owned-shared-view items))]
+    (str_cat.str-cat
+      (doc-html-search-record
+        (doc_render.doc-render-anchor
+          (owned_view.compiler-owned-shared-view path))
+        "module"
+        (owned_view.compiler-owned-shared-view path)
+        (owned_view.compiler-owned-shared-view path)
+        (str_cat.str-cat
+          (owned_view.compiler-owned-shared-view page)
+          "#"
+          (doc_render.doc-render-anchor
+            (owned_view.compiler-owned-shared-view path)))
+        ""
+        (doc_extract.doc-extraction-module-doc docs)
+        1)
+      (doc-html-search-item-records-from page path items 0 item-count))))
 
 (define (doc-html-module-nav-entry [module : doc_render.DocModule]) : String
   (let
@@ -771,7 +974,9 @@
       (doc-html-module-nav-entries modules)
       "</ul>\n</nav>\n")))
 
-(define (doc-html-module-section [module : doc_render.DocModule]) : String
+(define (doc-html-module-section-with-source-url
+  [module : doc_render.DocModule]
+  [source-url : String]) : String
   (let
     [path : String
       (doc_render.doc-module-path
@@ -784,27 +989,42 @@
         (doc_render.doc-module-path
           (owned_view.compiler-owned-shared-view module)))]
     (str_cat.str-cat
-      "<section class=\"tl-doc-module\" id=\""
+      "<section class=\"tl-doc-module\" data-module-identity=\""
+      (doc-html-escape path)
+      "\" id=\""
       (owned_view.compiler-owned-shared-view anchor)
       "\">\n<h2><a href=\"#"
       (owned_view.compiler-owned-shared-view anchor)
       "\">"
       (doc-html-escape (owned_view.compiler-owned-shared-view path))
-      "</a></h2>\n<p class=\"tl-doc-source\"><code>"
-      (doc-html-escape path)
-      "</code></p>\n"
+      "</a></h2>\n<p class=\"tl-doc-source\">"
+      (if (= (string.string-length source-url) 0)
+        (str_cat.str-cat "<code>" (doc-html-escape path) "</code>")
+        (str_cat.str-cat
+          "<a class=\"tl-doc-source-link\" href=\""
+          (doc-html-escape source-url)
+          "\"><code>"
+          (doc-html-escape path)
+          "</code></a>"))
+      "</p>\n"
       (doc-html-doc-block
         "tl-doc-module-text"
         (doc_extract.doc-extraction-module-doc
           (owned_view.compiler-owned-shared-view docs))
         "No module docs.")
       (doc-html-item-nav
+        (owned_view.compiler-owned-shared-view path)
         (doc_extract.doc-extraction-items
           (owned_view.compiler-owned-shared-view docs)))
       (doc-html-items
+        path
+        (owned_view.compiler-owned-shared-view source-url)
         (doc_extract.doc-extraction-items
           (owned_view.compiler-owned-shared-view docs)))
       "</section>\n")))
+
+(define (doc-html-module-section [module : doc_render.DocModule]) : String
+  (doc-html-module-section-with-source-url module ""))
 
 (define (doc-html-module-sections-from
   [modules : doc_module_vec.Vec]

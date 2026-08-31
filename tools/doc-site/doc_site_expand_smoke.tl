@@ -22,19 +22,19 @@
         "ivec")
       (doc_site_expand_pages_core.doc-site-expand-string-contains?
         vector-sections
-        "<h3><a href=\"#tl-Vec\">Vec</a></h3>")
+        "<h3><a href=\"#tl-stdlib-46vector-46generated-46i64-58-58generated-58-58Vec\">Vec</a></h3>")
       (doc_site_expand_pages_core.doc-site-expand-string-contains?
         vector-sections
-        "<h3><a href=\"#tl-new\">new</a></h3>")
+        "<h3><a href=\"#tl-stdlib-46vector-46generated-46i64-58-58generated-58-58new\">new</a></h3>")
       (doc_site_expand_pages_core.doc-site-expand-string-contains?
         vector-sections
-        "<h3><a href=\"#tl-len\">len</a></h3>")
+        "<h3><a href=\"#tl-stdlib-46vector-46generated-46i64-58-58generated-58-58len\">len</a></h3>")
       (doc_site_expand_pages_core.doc-site-expand-string-contains?
         vector-sections
-        "<h3><a href=\"#tl-push-ref-33\">push-ref!</a></h3>")
+        "<h3><a href=\"#tl-stdlib-46vector-46generated-46i64-58-58generated-58-58push-ref-33\">push-ref!</a></h3>")
       (doc_site_expand_pages_core.doc-site-expand-string-contains?
         vector-sections
-        "<h3><a href=\"#tl-push-33\">push!</a></h3>")
+        "<h3><a href=\"#tl-stdlib-46vector-46generated-46i64-58-58generated-58-58push-33\">push!</a></h3>")
       (not
         (doc_site_expand_pages_core.doc-site-expand-string-contains?
           vector-sections

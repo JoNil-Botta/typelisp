@@ -4,15 +4,20 @@
 ;; trees. API pages still use the source/module documentation extractor and HTML
 ;; renderer without hard-coding TypeLisp guide-page knowledge into that path.
 (import stdlib.byte_buf)
+(import compiler_owned_view as owned_view)
 (import stdlib.io)
 (import stdlib.fs)
+(import stdlib.env)
 (import stdlib.string)
 (import stdlib.str_cat)
 (import stdlib.vector)
 (import doc_site_doc_bridge as doc_bridge)
 (import doc_md)
 (import doc_site_stdlib_manifest as stdlib_manifest)
+(import doc_site_search_asset as search_asset)
+(import compiler_build_identity as build_identity)
 (import (vector.vector String) as doc_site_name_vec)
+(import (vector.vector doc_md.MdBlock core) as doc_site_md_blocks)
 
 (defmacro (doc-site-global-shared-view [place : Expr]) : Expr
   (cfg
@@ -43,9 +48,25 @@
 (define doc-site-status-ok : i64
   0)
 (define doc-site-repo-blob-root : String
-  "https://github.com/JoNil-Botta/typelisp/blob/main/")
+  "https://github.com/JoNil-Botta/typelisp/blob/")
 (define doc-site-repo-tree-root : String
-  "https://github.com/JoNil-Botta/typelisp/tree/main/")
+  "https://github.com/JoNil-Botta/typelisp/tree/")
+(define doc-site-package-identity : String
+  "typelisp@0.1.0")
+
+(define (doc-site-build-identity) : String
+  (let
+    [name : String "TYPELISP_DOC_COMPILER_IDENTITY"]
+    (match (env.get (& name))
+      [(env.EnvSomeString value) value]
+      [(env.EnvNoString) (build_identity.compiler-build-git-hash-shared-view)])))
+
+(define (doc-site-source-identity) : String
+  (let
+    [name : String "TYPELISP_DOC_SOURCE_IDENTITY"]
+    (match (env.get (& name))
+      [(env.EnvSomeString value) value]
+      [(env.EnvNoString) (doc-site-build-identity)])))
 
 (define (doc-site-module-source [module : (& module DocSiteModule)]) : String
   (match module
@@ -328,7 +349,9 @@
     (string.eq output "readme.html")
     (string.eq output "spec.html")
     (string.eq output "stdlib.html")
-    (string.eq output "typelisp-docs.css")))
+    (string.eq output "typelisp-docs.css")
+    (string.eq output "typelisp-docs.js")
+    (string.eq output "typelisp-docs-search-index.js")))
 
 (define (doc-site-output-list-has-duplicate?
   [modules : (& modules doc_site_modules.Vec)]) : bool
@@ -407,6 +430,8 @@
     (if (doc-site-href-file-like? target)
       (doc-site-global-shared-view doc-site-repo-blob-root)
       (doc-site-global-shared-view doc-site-repo-tree-root))
+    (doc-site-source-identity)
+    "/"
     target
     ""))
 
@@ -565,6 +590,74 @@
 .tl-doc-header p {
   margin: 0;
   color: #95a3b8;
+}
+.tl-doc-build-identity {
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+.tl-doc-search {
+  position: relative;
+  max-width: 72rem;
+  margin: 1rem auto 0;
+  padding: 0 clamp(1rem, 4vw, 3rem);
+}
+.tl-doc-search label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-weight: 700;
+}
+.tl-doc-search input {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #111827;
+  color: #f8fafc;
+  padding: 0.65rem 0.8rem;
+  font: inherit;
+}
+.tl-doc-search-results {
+  position: absolute;
+  z-index: 10;
+  right: clamp(1rem, 4vw, 3rem);
+  left: clamp(1rem, 4vw, 3rem);
+  max-height: min(60vh, 32rem);
+  overflow: auto;
+  margin: 0.25rem 0 0;
+  padding: 0.35rem;
+  list-style: none;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #0f172a;
+  box-shadow: 0 12px 30px #020617cc;
+}
+.tl-doc-search-results[hidden] {
+  display: none;
+}
+.tl-doc-search-results a {
+  display: grid;
+  grid-template-columns: minmax(10rem, max-content) minmax(0, 1fr);
+  gap: 0.75rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 4px;
+  text-decoration: none;
+}
+.tl-doc-search-results a:focus,
+.tl-doc-search-results a:hover {
+  outline: none;
+  background: #164e63;
+}
+.tl-doc-search-results span {
+  color: #cbd5e1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tl-doc-search-status {
+  min-height: 1.2rem;
+  margin: 0.25rem 0 0;
+  color: #94a3b8;
+  font-size: 0.85rem;
 }
 main {
   max-width: 72rem;
@@ -1047,15 +1140,32 @@ pre {
   [sections : (& sections doc_site_sections.Vec)]
   [current : String]
   [body : String]) : String
-  (str_cat.str-cat
-    (doc_bridge.bridge-doc-html-page-open title)
-    (doc_bridge.bridge-doc-html-header "TypeLisp Docs" subtitle)
-    "<div class=\"tl-doc-shell\">\n"
-    (doc-site-sidebar sections current)
-    "<main class=\"tl-doc-content\">\n"
-    body
-    "</main>\n</div>\n"
-    (doc_bridge.bridge-doc-html-page-close)))
+  (let
+    [compiler-identity : String (doc-site-build-identity)]
+    [source-identity : String (doc-site-source-identity)]
+    (str_cat.str-cat
+      (doc_bridge.bridge-doc-html-page-open-with-metadata
+        title
+        (owned_view.compiler-owned-shared-view compiler-identity)
+        (owned_view.compiler-owned-shared-view source-identity)
+        (doc-site-global-shared-view doc-site-package-identity))
+      (doc_bridge.bridge-doc-html-header "TypeLisp Docs" subtitle)
+      "<p class=\"tl-doc-build-identity\">Package <code>"
+      (doc_bridge.bridge-doc-html-escape
+        (doc-site-global-shared-view doc-site-package-identity))
+      "</code> · compiler <code>"
+      (doc_bridge.bridge-doc-html-escape
+        (owned_view.compiler-owned-shared-view compiler-identity))
+      "</code> · source <code>"
+      (doc_bridge.bridge-doc-html-escape source-identity)
+      "</code></p>\n"
+      "<div class=\"tl-doc-search\" role=\"search\">\n<label for=\"tl-doc-search-input\">Search documentation <small>(press /)</small></label>\n<input id=\"tl-doc-search-input\" data-doc-search-input type=\"search\" autocomplete=\"off\" aria-controls=\"tl-doc-search-results\" aria-describedby=\"tl-doc-search-status\">\n<p id=\"tl-doc-search-status\" class=\"tl-doc-search-status\" data-doc-search-status aria-live=\"polite\"></p>\n<ul id=\"tl-doc-search-results\" class=\"tl-doc-search-results\" data-doc-search-results hidden></ul>\n</div>\n"
+      "<div class=\"tl-doc-shell\">\n"
+      (doc-site-sidebar sections current)
+      "<main class=\"tl-doc-content\">\n"
+      body
+      "</main>\n</div>\n"
+      (doc_bridge.bridge-doc-html-page-close))))
 
 (define (doc-site-render-index
   [sections : (& sections doc_site_sections.Vec)]
@@ -1106,7 +1216,10 @@ pre {
       (string.copy (& source))
       sections
       (doc-site-module-output module)
-      (doc_bridge.bridge-doc-html-module-section-source source source-text))))
+      (doc_bridge.bridge-doc-html-module-section-source-url
+        (owned_view.compiler-owned-shared-view source)
+        source-text
+        (doc-site-repo-source-url source)))))
 
 (define (doc-site-read-module-source [source : String]) : String
   (let
@@ -1237,6 +1350,157 @@ pre {
           (doc-site-section-list-ref remaining i))
         (set! i (+ i 1))))))
 
+(define (doc-site-search-module-records
+  [modules : (& modules doc_site_modules.Vec)]) : String
+  (let
+    [i : i64 0]
+    [n : i64 (doc-site-module-list-count modules)]
+    [out : String ""]
+    (begin
+      (while (< i n)
+        (let
+          [module : DocSiteModule (doc-site-module-list-ref modules i)]
+          [source : String (doc-site-module-source module)]
+          (begin
+            (set!
+              out
+              (str_cat.str-cat
+                out
+                ","
+                (doc_bridge.bridge-doc-html-search-records-for-module
+                  (doc-site-module-output module)
+                  (string.copy (& source))
+                  (doc-site-read-module-source source))))
+            (set! i (+ i 1)))))
+      out)))
+
+(define (doc-site-search-guide-heading-records-from
+  [guide : DocSiteGuidePage]
+  [blocks : doc_site_md_blocks.Vec]
+  [index : i64]
+  [count : i64]) : String
+  (if (>= index count)
+    ""
+    (match (doc_md.md-block-list-ref (& blocks) index)
+      [(doc_md.MdMaybeBlock.Some block)
+        (match block
+          [(doc_md.MdBlock.Heading _ heading)
+            (let
+              [anchor : String
+                (doc_bridge.bridge-doc-render-anchor (& heading))]
+              (str_cat.str-cat
+                ","
+                (doc_bridge.bridge-doc-html-search-record
+                  (str_cat.str-cat
+                    (doc-site-guide-output (& guide))
+                    "#"
+                    (owned_view.compiler-owned-shared-view anchor))
+                  "heading"
+                  (owned_view.compiler-owned-shared-view heading)
+                  (doc-site-guide-source (& guide))
+                  (str_cat.str-cat (doc-site-guide-output (& guide)) "#" anchor)
+                  ""
+                  ""
+                  0)
+                (doc-site-search-guide-heading-records-from
+                  guide
+                  blocks
+                  (+ index 1)
+                  count)))]
+          [_
+            (doc-site-search-guide-heading-records-from
+              guide
+              blocks
+              (+ index 1)
+              count)])]
+      [(doc_md.MdMaybeBlock.No)
+        (doc-site-search-guide-heading-records-from
+          guide
+          blocks
+          (+ index 1)
+          count)])))
+
+(define (doc-site-search-guide-record [guide : DocSiteGuidePage]) : String
+  (let
+    [source : String (doc-site-guide-source (& guide))]
+    [markdown : String
+      (doc-site-read-markdown (owned_view.compiler-owned-shared-view source))]
+    [blocks : doc_site_md_blocks.Vec (doc_md.md-scan-blocks (& markdown))]
+    [block-count : i64 (doc_md.md-block-list-count (& blocks))]
+    (str_cat.str-cat
+      ","
+      (doc_bridge.bridge-doc-html-search-record
+        (doc_bridge.bridge-doc-render-anchor (& source))
+        "guide"
+        (doc-site-guide-title (& guide))
+        (owned_view.compiler-owned-shared-view source)
+        (doc-site-guide-output (& guide))
+        ""
+        ""
+        0)
+      (doc-site-search-guide-heading-records-from guide blocks 0 block-count))))
+
+(define (doc-site-search-guide-records [guides : doc_site_guides.Vec]) : String
+  (let
+    [i : i64 0]
+    [n : i64 (doc-site-guide-page-list-count (& guides))]
+    [out : String ""]
+    (begin
+      (while (< i n)
+        (begin
+          (set!
+            out
+            (str_cat.str-cat
+              out
+              (doc-site-search-guide-record
+                (doc-site-guide-page-list-ref (& guides) i))
+              ""))
+          (set! i (+ i 1))))
+      out)))
+
+(define (doc-site-search-section-records [section : DocSiteSection]) : String
+  (match section
+    [(DocSiteSection.Guide _ guides) (doc-site-search-guide-records guides)]
+    [(DocSiteSection.ApiTree tree)
+      (doc-site-search-module-records (doc-site-api-tree-modules (& tree)))]))
+
+(define (doc-site-search-records
+  [sections : (& sections doc_site_sections.Vec)]) : String
+  (let
+    [i : i64 0]
+    [n : i64 (doc-site-section-list-count sections)]
+    [out : String ""]
+    (begin
+      (while (< i n)
+        (begin
+          (set!
+            out
+            (str_cat.str-cat
+              out
+              (doc-site-search-section-records
+                (doc-site-section-list-ref sections i))
+              ""))
+          (set! i (+ i 1))))
+      (if (> (string.string-length out) 0)
+        (string.substring out 1 (- (string.string-length out) 1))
+        ""))))
+
+(define (doc-site-search-index [sections : (& sections doc_site_sections.Vec)]) : String
+  (let
+    [compiler-identity : String (doc-site-build-identity)]
+    [source-identity : String (doc-site-source-identity)]
+    (str_cat.str-cat
+      "globalThis.TYPELISP_DOC_SEARCH=Object.freeze({\"schema\":1,\"compilerIdentity\":"
+      (doc_bridge.bridge-doc-html-json-string (& compiler-identity))
+      ",\"sourceIdentity\":"
+      (doc_bridge.bridge-doc-html-json-string (& source-identity))
+      ",\"packageIdentity\":"
+      (doc_bridge.bridge-doc-html-json-string
+        (doc-site-global-shared-view doc-site-package-identity))
+      ",\"records\":Object.freeze(["
+      (doc-site-search-records sections)
+      "])});\n")))
+
 (define (doc-site-build [output-dir : String]) : i64
   (let
     [sections : doc_site_sections.Vec (doc-site-typelisp-sections)]
@@ -1247,6 +1511,12 @@ pre {
       (doc-site-write-file
         (doc-site-path-join output-dir "typelisp-docs.css")
         (doc-site-css))
+      (doc-site-write-file
+        (doc-site-path-join output-dir "typelisp-docs.js")
+        (search_asset.doc-site-search-client))
+      (doc-site-write-file
+        (doc-site-path-join output-dir "typelisp-docs-search-index.js")
+        (doc-site-search-index (& sections)))
       (doc-site-write-file
         (doc-site-path-join output-dir "index.html")
         (doc-site-render-index sections "index.html"))
@@ -1382,7 +1652,7 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
           (doc-site-rewrite-language-link-target
             sections
             "../tools/doc-site/doc_site.tl")
-          "https://github.com/JoNil-Botta/typelisp/blob/main/tools/doc-site/doc_site.tl")
+          (doc-site-repo-source-url "tools/doc-site/doc_site.tl"))
         "doc-site: parent repository link rewrite missing")
       (doc_bridge.bridge-doc-html-require-contains
         index
@@ -1442,7 +1712,7 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
         "doc-site: module docs escaping missing")
       (doc_bridge.bridge-doc-html-require-contains
         page
-        "href=\"#tl-doc-site-smoke-value\""
+        "href=\"#tl-stdlib-47smoke-60-38-62-46tl-58-58define-58-58doc-site-smoke-value\""
         "doc-site: item anchor link missing")
       (doc_bridge.bridge-doc-html-require-contains
         second-page
@@ -1474,8 +1744,27 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
         "doc-site: language api link rewrite missing")
       (doc_bridge.bridge-doc-html-require-contains
         language-page
-        "href=\"https://github.com/JoNil-Botta/typelisp/blob/main/tools/doc-site/doc_site.tl\""
+        (str_cat.str-cat
+          "href=\""
+          (doc-site-repo-source-url "tools/doc-site/doc_site.tl")
+          "\"")
         "doc-site: language repo link rewrite missing")
+      (doc_bridge.bridge-doc-html-require-contains
+        page
+        "data-doc-search-input"
+        "doc-site: search input missing")
+      (doc_bridge.bridge-doc-html-require-contains
+        page
+        "name=\"typelisp-compiler-identity\""
+        "doc-site: compiler identity metadata missing")
+      (doc_bridge.bridge-doc-html-require-contains
+        page
+        (str_cat.str-cat
+          "href=\""
+          (doc_bridge.bridge-doc-html-escape
+            (doc-site-repo-source-url "stdlib/smoke<&>.tl"))
+          "\"")
+        "doc-site: immutable module source link missing")
       (doc_bridge.bridge-doc-html-require-contains
         language-page
         "<pre><code class=\"language-typelisp\">(<span class=\"tl-syn-keyword\">define</span> <span class=\"tl-syn-definition\">answer</span> : <span class=\"tl-syn-type\">i64</span> <span class=\"tl-syn-number\">42</span>)"
@@ -1508,4 +1797,9 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
       (doc-site-require
         (not (doc-site-output-list-has-duplicate? stdlib-modules))
         "doc-site: stdlib manifest has a duplicate or reserved output")
+      (doc-site-require
+        (and
+          (doc-site-output-reserved? "typelisp-docs.js")
+          (doc-site-output-reserved? "typelisp-docs-search-index.js"))
+        "doc-site: search assets are not reserved outputs")
       42)))

@@ -215,6 +215,19 @@ discovery path selected by `--manifest-path <typelisp.pkg>`, or the nearest
 manifest when no explicit input is supplied; package doc generation requires
 `-o <out.md>`.
 
+The composed static documentation site emits a deterministic
+`typelisp-docs-search-index.js` beside its pages. The index records modules,
+documented declarations, declaration signatures and short documentation text,
+guide pages, and guide headings in site order. Declaration identities and
+anchors are derived from module path, declaration kind, and declaration name;
+synthetic generated imports additionally include their generated form. Source
+declarations record a one-based source line, and rendered API entries link to
+that exact line at the documented source revision. Every page and the search
+index carry matching compiler, source, and package identities. The client-side
+search uses no network service or third-party JavaScript, supports `/`, arrow
+keys, Escape, and normal link activation, and refuses a stale index whose
+identities differ from the page.
+
 ### 2.3 String escapes
 
 | Escape | Meaning |

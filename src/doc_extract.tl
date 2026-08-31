@@ -28,7 +28,9 @@
   (GeneratedImport))
 
 (defenum DocItem
-  (Item DocItemKind String String String))
+  ;; `source-line` is one-based for source declarations and zero for synthetic
+  ;; declarations produced from expanded ASTs.
+  (Item DocItemKind String String String i64))
 
 (import (vector.vector DocItem core) as doc_item_vec)
 
@@ -72,22 +74,26 @@
 
 (define (doc-item-kind [item : DocItem]) : DocItemKind
   (match item
-    [(DocItem.Item kind _ _ _) kind]))
+    [(DocItem.Item kind _ _ _ _) kind]))
 
 (define (doc-item-name [item : DocItem]) : String
   (match item
-    [(DocItem.Item _ name _ _) name]))
+    [(DocItem.Item _ name _ _ _) name]))
 
 (define (doc-item-doc [item : DocItem]) : String
   (match item
-    [(DocItem.Item _ _ doc-text _) doc-text]))
+    [(DocItem.Item _ _ doc-text _ _) doc-text]))
 
 (define (doc-item-signature [item : DocItem]) : String
   (match item
-    [(DocItem.Item _ _ _ signature) signature]))
+    [(DocItem.Item _ _ _ signature _) signature]))
+
+(define (doc-item-source-line [item : DocItem]) : i64
+  (match item
+    [(DocItem.Item _ _ _ _ source-line) source-line]))
 
 (define (doc-item-fallback) : DocItem
-  (DocItem.Item (DocItemKind.Define) "" "" ""))
+  (DocItem.Item (DocItemKind.Define) "" "" "" 0))
 
 (define (doc-item-list-count [items : doc_item_vec.Vec]) : i64
   (doc_item_vec.len (& items)))
@@ -537,6 +543,19 @@
         n)]
     (doc-decl-info-at-list signature open-idx)))
 
+(define (doc-source-line-at [src : (& src str)] [offset : i64]) : i64
+  (let
+    [i : i64 0]
+    [line : i64 1]
+    (begin
+      (while (< i offset)
+        (begin
+          (if (= (string.string-ref src i) '\n')
+            (set! line (+ line 1))
+            unit)
+          (set! i (+ i 1))))
+      line)))
+
 (define (doc-extract-source [src : String]) : DocExtraction
   (let
     [n : i64 (string.string-length src)]
@@ -649,7 +668,8 @@
                                 name
                                 (unsafe
                                   (ptr-read (ptr-addr-of pending-doc)))
-                                signature))]
+                                signature
+                                (doc-source-line-at src line-start)))]
                           [(DocMaybeDeclInfo.No) unit])
                         unit)
                       (set! pending-doc "")
@@ -721,7 +741,7 @@
   [doc-text : String]
   [signature-fragment : String]) : bool
   (match item
-    [(DocItem.Item kind item-name item-doc signature)
+    [(DocItem.Item kind item-name item-doc signature _)
       (begin
         (unless (= (doc-kind-tag kind) kind-tag) (return false))
         (unless (string.eq item-name name) (return false))
@@ -800,6 +820,15 @@
           "helper doc"
           "(define (box-string-value"))]))
 
+(define (doc-extract-source-line-smoke-ok?) : bool
+  (match (doc-extract-source ";: docs\n(define answer : i64 42)\n")
+    [(DocExtraction.Extraction _ items)
+      (and
+        (=
+          (doc-item-list-count (owned_view.compiler-owned-shared-view items))
+          1)
+        (= (doc-item-source-line (doc-item-list-ref items 0)) 2))]))
+
 (define (doc-extract-smoke) : i64
   (match (doc-extract-source (doc-extract-smoke-source))
     [(DocExtraction.Extraction module-doc items)
@@ -821,6 +850,9 @@
         (unless
           (doc-extract-declaration-smoke-ok?)
           (return (io.panic "doc-extract: declaration item mismatch")))
+        (unless
+          (doc-extract-source-line-smoke-ok?)
+          (return (io.panic "doc-extract: declaration source line mismatch")))
         (match (doc-extract-source (doc-extract-legacy-smoke-source))
           [(DocExtraction.Extraction legacy-module legacy-items)
             (begin

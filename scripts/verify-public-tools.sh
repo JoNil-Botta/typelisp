@@ -2862,7 +2862,9 @@ EOF
     assert_stderr_empty
     assert_contains "$WORKDIR/doc_source.html" "<!doctype html>"
     assert_contains "$WORKDIR/doc_source.html" "typelisp-docs.css"
-    assert_contains "$WORKDIR/doc_source.html" "id=\"tl-answer\""
+    assert_contains "$WORKDIR/doc_source.html" "data-doc-identity=\"tl-"
+    assert_contains "$WORKDIR/doc_source.html" "-58-58define-58-58answer\">"
+    assert_not_contains "$WORKDIR/doc_source.html" "id=\"tl-answer\""
     assert_contains "$WORKDIR/doc_source.html" "<code class=\"language-typelisp\">(<span class=\"tl-syn-keyword\">define</span> <span class=\"tl-syn-definition\">answer</span> : <span class=\"tl-syn-type\">i64</span> <span class=\"tl-syn-number\">42</span>)</code>"
     case_name=doc-highlight-vscode-grammar
     DOC_VSCODE_GRAMMAR="$ROOT/tools/vs-code-extension/syntaxes/typelisp.tmLanguage.json"

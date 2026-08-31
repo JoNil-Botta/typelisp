@@ -49,7 +49,15 @@
         (owned_view.compiler-owned-shared-view docs))]
     [graph : String
       (doc_html.doc-html-render-module-graph
-        (doc-html-smoke-modules docs second-docs))]
+        (doc-html-smoke-modules
+          (owned_view.compiler-owned-shared-view docs)
+          second-docs))]
+    [search-records : String
+      (doc_html.doc-html-search-records-for-module
+        "smoke.html"
+        (doc_render.DocModule.Module
+          "smoke<&>.tl"
+          (owned_view.compiler-owned-shared-view docs)))]
     (if (and
       (doc_html.doc-html-require-contains
         page
@@ -73,7 +81,7 @@
         "doc-html: quote escaping missing")
       (doc_html.doc-html-require-contains
         page
-        "id=\"tl-answer\""
+        "id=\"tl-smoke-60-38-62-46tl-58-58define-58-58answer\""
         "doc-html: item anchor missing")
       (doc_html.doc-html-require-contains
         page
@@ -85,7 +93,7 @@
         "doc-html: item doc escaping missing")
       (doc_html.doc-html-require-contains
         page
-        "href=\"#tl-add-one\""
+        "href=\"#tl-smoke-60-38-62-46tl-58-58define-function-58-58add-one\""
         "doc-html: item nav link missing")
       (doc_html.doc-html-require-contains
         graph
@@ -102,7 +110,19 @@
       (doc_html.doc-html-require-contains
         graph
         "No documented declarations."
-        "doc-html: empty item message missing"))
+        "doc-html: empty item message missing")
+      (doc_html.doc-html-require-contains
+        search-records
+        "\"href\":\"smoke.html#tl-smoke-60-38-62-46tl-58-58define-58-58answer\""
+        "doc-html: declaration search href missing")
+      (doc_html.doc-html-require-contains
+        search-records
+        "\"sourceLine\":6"
+        "doc-html: declaration search source line missing")
+      (doc_html.doc-html-require-contains
+        search-records
+        "Global docs for answer mention \\u003canswer\\u003e, \\u0026 value"
+        "doc-html: declaration search docs escaping missing"))
       42
       0)))
 

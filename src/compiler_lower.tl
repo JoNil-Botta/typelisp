@@ -27661,53 +27661,37 @@
     [(ResultLowerExpr.Ok lowered)
       (match lowered
         [(LowerExpr.Expr result-state result-value result-ty)
-          (match (tc_core.tc-result-info
-            (lower-global-shared-view ctx)
-            result-ty)
-            [(tc_core.ResultTcResultInfo.Ok operand-info)
-              (match (tc_core.tc-current-return-type type-env)
-                [(tc_core.ResultTcType.Ok return-ty)
-                  (match (tc_core.tc-result-info
+          (match (tc_core.tc-current-return-type type-env)
+            [(tc_core.ResultTcType.Ok return-ty)
+              (match (tc_core.tc-try-query
+                (lower-global-shared-view ctx)
+                result-ty
+                return-ty
+                tc_core.TcTryEarlyExitAllowed)
+                [(tc_core.TcTryQueryCompatible operand-info return-info)
+                  (lower-try-with-info
                     (lower-global-shared-view ctx)
-                    return-ty)
-                    [(tc_core.ResultTcResultInfo.Ok return-info)
-                      (match (tc_core.tc-try-infos-compatible
-                        (lower-global-shared-view operand-info)
-                        (lower-global-shared-view return-info))
-                        [(tc_core.ResultTcUnit.Ok)
-                          (lower-try-with-info
-                            ctx
-                            result-state
-                            env
-                            type-env
-                            result-value
-                            operand-info
-                            return-info
-                            origin)]
-                        [(tc_core.ResultTcUnit.Err message)
-                          (ResultLowerExpr.Err
-                            (box (lower-diagnostic-at-expr ctx origin message)))])]
-                    [(tc_core.ResultTcResultInfo.Err _)
-                      (ResultLowerExpr.Err
-                        (box
-                          (lower-diagnostic-at-expr
-                            ctx
-                            origin
-                            "typecheck: try requires enclosing Result-like function")))])]
-                [(tc_core.ResultTcType.Err _)
+                    result-state
+                    env
+                    type-env
+                    result-value
+                    operand-info
+                    return-info
+                    origin)]
+                [(tc_core.TcTryQueryIncompatible _ _ reason)
                   (ResultLowerExpr.Err
                     (box
                       (lower-diagnostic-at-expr
                         ctx
                         origin
-                        "typecheck: try requires enclosing Result-like function")))])]
-            [(tc_core.ResultTcResultInfo.Err _)
+                        (tc_core.tc-try-incompatibility-message reason))))])]
+            [(tc_core.ResultTcType.Err _)
               (ResultLowerExpr.Err
                 (box
                   (lower-diagnostic-at-expr
                     ctx
                     origin
-                    "typecheck: try operand must be Result-like enum")))])])]
+                    "typecheck: try requires enclosing Result-like function")))])])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
 (define (lower-top-level-value-defined-id?

@@ -1,12 +1,17 @@
-;; package_lock_core.tl - Deterministic typelisp.lock parser/emitter.
+;; package_lock_core.tl - Deterministic typelisp.lock parser/emitter/transaction.
 ;;
 ;; This module models the lockfile data needed after remote package pins are
-;; resolved. It parses and emits `typelisp.lock` S-expressions only; build-time
+;; resolved. It parses and emits `typelisp.lock` S-expressions and owns the
+;; shared atomic, conflict-aware filesystem commit boundary. Build-time
 ;; fetch/replay behavior remains owned by the package build pipeline.
 (import compiler_owned_view as owned_view)
+(import stdlib.byte_buf)
+(import stdlib.env)
+(import stdlib.fs)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import stdlib.string)
+(import stdlib.time)
 (import stdlib.vector)
 (import compiler_intern as ci)
 (import lex as lexer)
@@ -68,6 +73,26 @@
   (Ok PackageLockFile)
   (Err String))
 
+(defstruct PackageLockSnapshot
+  (path String)
+  (source String)
+  (existed bool))
+
+(defenum ResultPackageLockSnapshot
+  (Ok PackageLockSnapshot)
+  (Err String))
+
+(defenum PackageLockCommitOutcome
+  (Unchanged String)
+  (Reused String)
+  (Replaced String))
+
+(defenum ResultPackageLockCommit
+  (Ok PackageLockCommitOutcome)
+  (Err String))
+
+(define package-lock-stage-sequence : i64
+  0)
 (define package-lock-version : String
   "v1")
 
@@ -710,6 +735,467 @@
     (package-lock-emit-entries lock.entries)
     "  ))\n"))
 
+(define (package-lock-transaction-error
+  [phase : String]
+  [path : String]
+  [detail : String]) : String
+  (str_cat.str-cat
+    "package-lock transaction "
+    phase
+    " failed for '"
+    path
+    "': "
+    detail))
+
+(define (package-lock-transaction-read [path : String]) : ResultPackageLockSnapshot
+  (match (io.try-file-exists? (& path))
+    [(io.ErrIoBool error)
+      (ResultPackageLockSnapshot.Err
+        (package-lock-transaction-error "read" path (io.error-message error)))]
+    [(io.OkIoBool exists)
+      (if exists
+        (match (io.try-read-file (& path))
+          [(io.ErrIoBytes error)
+            (ResultPackageLockSnapshot.Err
+              (package-lock-transaction-error
+                "read"
+                path
+                (io.error-message error)))]
+          [(io.OkIoBytes contents)
+            (ResultPackageLockSnapshot.Ok
+              (PackageLockSnapshot path (byte_buf.to-string contents) true))])
+        (ResultPackageLockSnapshot.Ok (PackageLockSnapshot path "" false)))]))
+
+(define (package-lock-snapshot-identity-eq?
+  [left : (& left PackageLockSnapshot)]
+  [right : (& right PackageLockSnapshot)]) : bool
+  (and
+    (= left.existed right.existed)
+    (if left.existed
+      (string.eq left.source right.source)
+      true)))
+
+(define (package-lock-snapshot-is-source?
+  [snapshot : (& snapshot PackageLockSnapshot)]
+  [source : String]) : bool
+  (and snapshot.existed (string.eq snapshot.source source)))
+
+(define (package-lock-io-already-exists? [error : io.IoError]) : bool
+  (match error
+    [(io.IoSystemCode code _) (= code fs.fs-status-already-exists)]
+    [_ false]))
+
+(define (package-lock-io-retryable-replace? [error : io.IoError]) : bool
+  (match error
+    [(io.IoSystemCode code _) (or (= code 32) (= code 33))]
+    [_ false]))
+
+(define (package-lock-transaction-fault? [phase : String]) : bool
+  (let
+    [name : String "TYPELISP_PACKAGE_LOCK_TEST_FAULT"]
+    (match (env.get (& name))
+      [(env.EnvNoString) false]
+      [(env.EnvSomeString value) (string.eq value phase)])))
+
+(define (package-lock-transaction-pause? [phase : String]) : bool
+  (let
+    [name : String "TYPELISP_PACKAGE_LOCK_TEST_PAUSE"]
+    (match (env.get (& name))
+      [(env.EnvNoString) false]
+      [(env.EnvSomeString value) (string.eq value phase)])))
+
+(define (package-lock-transaction-wait-release [path : String]) : ResultPackageLockString
+  (let
+    [attempt : i64 0]
+    [done : bool false]
+    [error-message : String ""]
+    (begin
+      (while (and (not done) (< attempt 6000))
+        (match (io.try-file-exists? (& path))
+          [(io.ErrIoBool error)
+            (begin
+              (set! error-message (io.error-message error))
+              (set! done true))]
+          [(io.OkIoBool exists)
+            (if exists
+              (match (time.sleep-ms 10)
+                [(time.ErrTimeUnit error)
+                  (begin
+                    (set! error-message (time.error-message error))
+                    (set! done true))]
+                [(time.OkTimeUnit) (set! attempt (+ attempt 1))])
+              (set! done true))]))
+      (if (> (string.string-length error-message) 0)
+        (ResultPackageLockString.Err error-message)
+        (if (>= attempt 6000)
+          (ResultPackageLockString.Err
+            "package-lock transaction test pause timed out")
+          (ResultPackageLockString.Ok ""))))))
+
+(define (package-lock-transaction-maybe-pause [phase : String]) : ResultPackageLockString
+  (if (package-lock-transaction-pause? phase)
+    (let
+      [name : String "TYPELISP_PACKAGE_LOCK_TEST_RELEASE_FILE"]
+      (match (env.get (& name))
+        [(env.EnvNoString)
+          (match (time.sleep-ms 2000)
+            [(time.ErrTimeUnit error)
+              (ResultPackageLockString.Err (time.error-message error))]
+            [(time.OkTimeUnit) (ResultPackageLockString.Ok "")])]
+        [(env.EnvSomeString path) (package-lock-transaction-wait-release path)]))
+    (ResultPackageLockString.Ok "")))
+
+(define (package-lock-stage-next-sequence) : i64
+  (begin
+    (set! package-lock-stage-sequence (+ package-lock-stage-sequence 1))
+    package-lock-stage-sequence))
+
+(define (package-lock-stage-path
+  [destination : String]
+  [sequence : i64]
+  [attempt : i64]) : String
+  (str_cat.str-cat
+    destination
+    ".stage."
+    (string.int->string (fs.process-id))
+    "."
+    (string.int->string sequence)
+    "."
+    (string.int->string attempt)))
+
+(define (package-lock-remove-stage [path : String]) : ResultPackageLockString
+  (match (fs.try-remove-file-if-exists (& path))
+    [(io.OkIoUnit) (ResultPackageLockString.Ok "")]
+    [(io.ErrIoUnit error)
+      (ResultPackageLockString.Err
+        (package-lock-transaction-error "cleanup" path (io.error-message error)))]))
+
+(define (package-lock-stage-write-opened
+  [path : String]
+  [source : String]
+  [handle : io.FileHandle]) : ResultPackageLockString
+  (if (package-lock-transaction-fault? "during-stage")
+    (begin
+      (io.file-close handle)
+      (package-lock-remove-stage (clone path))
+      (ResultPackageLockString.Err
+        (package-lock-transaction-error
+          "during-stage"
+          path
+          "injected test failure")))
+    (match (io.file-write handle (byte_buf.str-as-bytes (& source)))
+      [(io.ErrIoUnit error)
+        (begin
+          (io.file-close handle)
+          (package-lock-remove-stage (clone path))
+          (ResultPackageLockString.Err
+            (package-lock-transaction-error
+              "stage-write"
+              path
+              (io.error-message error))))]
+      [(io.OkIoUnit)
+        (match (io.file-flush handle)
+          [(io.ErrIoUnit error)
+            (begin
+              (io.file-close handle)
+              (package-lock-remove-stage (clone path))
+              (ResultPackageLockString.Err
+                (package-lock-transaction-error
+                  "stage-flush"
+                  path
+                  (io.error-message error))))]
+          [(io.OkIoUnit)
+            (match (io.file-close handle)
+              [(io.ErrIoUnit error)
+                (begin
+                  (package-lock-remove-stage (clone path))
+                  (ResultPackageLockString.Err
+                    (package-lock-transaction-error
+                      "stage-close"
+                      path
+                      (io.error-message error))))]
+              [(io.OkIoUnit) (ResultPackageLockString.Ok path)])])])))
+
+(define (package-lock-stage-write-attempt
+  [destination : String]
+  [source : String]
+  [sequence : i64]
+  [attempt : i64]) : ResultPackageLockString
+  (if (>= attempt 100)
+    (ResultPackageLockString.Err
+      (package-lock-transaction-error
+        "stage-create"
+        destination
+        "could not allocate a unique sibling staging path"))
+    (let
+      [path : String
+        (package-lock-stage-path (clone destination) sequence attempt)]
+      (match (io.file-open (& path) (io.OpenWriteCreateNew))
+        [(io.OkIoFile handle)
+          (package-lock-stage-write-opened path source handle)]
+        [(io.ErrIoFile error)
+          (if (package-lock-io-already-exists? (clone error))
+            (package-lock-stage-write-attempt
+              destination
+              source
+              sequence
+              (+ attempt 1))
+            (ResultPackageLockString.Err
+              (package-lock-transaction-error
+                "stage-create"
+                path
+                (io.error-message error))))]))))
+
+(define (package-lock-stage-write [destination : String] [source : String]) : ResultPackageLockString
+  (package-lock-stage-write-attempt
+    destination
+    source
+    (package-lock-stage-next-sequence)
+    0))
+
+(define (package-lock-stage-validate [path : String] [expected : String]) : ResultPackageLockString
+  (match (io.try-read-file (& path))
+    [(io.ErrIoBytes error)
+      (ResultPackageLockString.Err
+        (package-lock-transaction-error
+          "stage-validate"
+          path
+          (io.error-message error)))]
+    [(io.OkIoBytes contents)
+      (let
+        [actual : String (byte_buf.to-string contents)]
+        (if (not (string.eq actual expected))
+          (ResultPackageLockString.Err
+            (package-lock-transaction-error
+              "stage-validate"
+              path
+              "staged bytes differ from the complete canonical lock"))
+          (match (package-lock-parse actual)
+            [(ResultPackageLockFile.Err message)
+              (ResultPackageLockString.Err
+                (package-lock-transaction-error "stage-validate" path message))]
+            [(ResultPackageLockFile.Ok _) (ResultPackageLockString.Ok path)])))]))
+
+(define (package-lock-transaction-ensure-dir [path : String]) : ResultPackageLockString
+  (match (fs.try-mkdir-if-missing (& path))
+    [(io.OkIoUnit) (ResultPackageLockString.Ok path)]
+    [(io.ErrIoUnit error)
+      (ResultPackageLockString.Err
+        (package-lock-transaction-error
+          "coordination-directory"
+          path
+          (io.error-message error)))]))
+
+(define (package-lock-transaction-lock-path [destination : String]) : ResultPackageLockString
+  (let
+    [parent : String (fs.dirname (& destination))]
+    [target-name : String "target"]
+    [typelisp-name : String "typelisp"]
+    [locks-name : String "locks"]
+    [guard-name : String "package-lock.writer-lock"]
+    [target : String (fs.path-join (& parent) (& target-name))]
+    [typelisp : String (fs.path-join (& target) (& typelisp-name))]
+    [locks : String (fs.path-join (& typelisp) (& locks-name))]
+    [guard : String (fs.path-join (& locks) (& guard-name))]
+    (match (package-lock-transaction-ensure-dir target)
+      [(ResultPackageLockString.Err message)
+        (ResultPackageLockString.Err message)]
+      [(ResultPackageLockString.Ok _)
+        (match (package-lock-transaction-ensure-dir typelisp)
+          [(ResultPackageLockString.Err message)
+            (ResultPackageLockString.Err message)]
+          [(ResultPackageLockString.Ok _)
+            (match (package-lock-transaction-ensure-dir locks)
+              [(ResultPackageLockString.Err message)
+                (ResultPackageLockString.Err message)]
+              [(ResultPackageLockString.Ok _)
+                (ResultPackageLockString.Ok guard)])])])))
+
+(define (package-lock-transaction-finish
+  [lock : fs.FsFileLock]
+  [stage : String]
+  [remove-stage : bool]
+  [result : ResultPackageLockCommit]) : ResultPackageLockCommit
+  (let
+    [cleanup : ResultPackageLockString
+      (if remove-stage
+        (package-lock-remove-stage (clone stage))
+        (ResultPackageLockString.Ok ""))]
+    [release : io.ResultIoUnit (fs.file-lock-release lock)]
+    (match cleanup
+      [(ResultPackageLockString.Err message)
+        (ResultPackageLockCommit.Err message)]
+      [(ResultPackageLockString.Ok _)
+        (match release
+          [(io.ErrIoUnit error)
+            (ResultPackageLockCommit.Err
+              (package-lock-transaction-error
+                "coordination-unlock"
+                stage
+                (io.error-message error)))]
+          [(io.OkIoUnit) result])])))
+
+(define (package-lock-atomic-replace-attempt
+  [stage : String]
+  [destination : String]
+  [attempt : i64]) : ResultPackageLockString
+  (match (fs.try-atomic-replace (& stage) (& destination))
+    [(io.OkIoUnit) (ResultPackageLockString.Ok destination)]
+    [(io.ErrIoUnit error)
+      (if (and
+        (< attempt 100)
+        (package-lock-io-retryable-replace? (clone error)))
+        (match (time.sleep-ms 10)
+          [(time.ErrTimeUnit sleep-error)
+            (ResultPackageLockString.Err (time.error-message sleep-error))]
+          [(time.OkTimeUnit)
+            (package-lock-atomic-replace-attempt
+              stage
+              destination
+              (+ attempt 1))])
+        (ResultPackageLockString.Err (io.error-message error)))]))
+
+(define (package-lock-transaction-under-lock
+  [snapshot : PackageLockSnapshot]
+  [source : String]
+  [stage : String]
+  [lock : fs.FsFileLock]) : ResultPackageLockCommit
+  (match (package-lock-transaction-read (clone snapshot.path))
+    [(ResultPackageLockSnapshot.Err message)
+      (package-lock-transaction-finish
+        lock
+        stage
+        true
+        (ResultPackageLockCommit.Err message))]
+    [(ResultPackageLockSnapshot.Ok current)
+      (cond
+        [(package-lock-snapshot-is-source? (& current) (clone source))
+          (package-lock-transaction-finish
+            lock
+            stage
+            true
+            (ResultPackageLockCommit.Ok
+              (PackageLockCommitOutcome.Reused snapshot.path)))]
+        [(not (package-lock-snapshot-identity-eq? (& snapshot) (& current)))
+          (package-lock-transaction-finish
+            lock
+            stage
+            true
+            (ResultPackageLockCommit.Err
+              (str_cat.str-cat
+                "package-lock transaction conflict for '"
+                snapshot.path
+                "': lock changed since resolution; rerun against the current lock")))]
+        [(package-lock-transaction-fault? "before-replace")
+          (package-lock-transaction-finish
+            lock
+            stage
+            true
+            (ResultPackageLockCommit.Err
+              (package-lock-transaction-error
+                "before-replace"
+                snapshot.path
+                "injected test failure")))]
+        [else
+          (match (package-lock-atomic-replace-attempt
+            (clone stage)
+            (clone snapshot.path)
+            0)
+            [(ResultPackageLockString.Err message)
+              (package-lock-transaction-finish
+                lock
+                stage
+                true
+                (ResultPackageLockCommit.Err
+                  (package-lock-transaction-error
+                    "replace"
+                    snapshot.path
+                    message)))]
+            [(ResultPackageLockString.Ok _)
+              (package-lock-transaction-finish
+                lock
+                stage
+                false
+                (ResultPackageLockCommit.Ok
+                  (PackageLockCommitOutcome.Replaced snapshot.path)))])])]))
+
+(define (package-lock-transaction-acquire
+  [snapshot : PackageLockSnapshot]
+  [source : String]
+  [guard : String]
+  [stage : String]) : ResultPackageLockCommit
+  (match (package-lock-transaction-maybe-pause "before-lock")
+    [(ResultPackageLockString.Err message)
+      (begin
+        (package-lock-remove-stage stage)
+        (ResultPackageLockCommit.Err message))]
+    [(ResultPackageLockString.Ok _)
+      (match (fs.file-lock-acquire (& guard))
+        [(fs.ErrFsFileLock error)
+          (begin
+            (package-lock-remove-stage stage)
+            (ResultPackageLockCommit.Err
+              (package-lock-transaction-error
+                "coordination-lock"
+                guard
+                (io.error-message error))))]
+        [(fs.OkFsFileLock lock)
+          (package-lock-transaction-under-lock snapshot source stage lock)])]))
+
+(define (package-lock-transaction-stage-ready
+  [snapshot : PackageLockSnapshot]
+  [source : String]
+  [guard : String]
+  [stage : String]) : ResultPackageLockCommit
+  (match (package-lock-stage-validate (clone stage) (clone source))
+    [(ResultPackageLockString.Err message)
+      (begin
+        (package-lock-remove-stage stage)
+        (ResultPackageLockCommit.Err message))]
+    [(ResultPackageLockString.Ok _)
+      (if (package-lock-transaction-fault? "after-stage")
+        (begin
+          (package-lock-remove-stage stage)
+          (ResultPackageLockCommit.Err
+            (package-lock-transaction-error
+              "after-stage"
+              snapshot.path
+              "injected test failure")))
+        (package-lock-transaction-acquire snapshot source guard stage))]))
+
+(define (package-lock-transaction-with-guard
+  [snapshot : PackageLockSnapshot]
+  [source : String]
+  [guard : String]) : ResultPackageLockCommit
+  (match (package-lock-stage-write (clone snapshot.path) (clone source))
+    [(ResultPackageLockString.Err message)
+      (ResultPackageLockCommit.Err message)]
+    [(ResultPackageLockString.Ok stage)
+      (package-lock-transaction-stage-ready snapshot source guard stage)]))
+
+(define (package-lock-transaction-commit
+  [snapshot : PackageLockSnapshot]
+  [source : String]) : ResultPackageLockCommit
+  (match (package-lock-parse (clone source))
+    [(ResultPackageLockFile.Err message)
+      (ResultPackageLockCommit.Err
+        (package-lock-transaction-error "validate" snapshot.path message))]
+    [(ResultPackageLockFile.Ok _)
+      (if (package-lock-snapshot-is-source? (& snapshot) (clone source))
+        (ResultPackageLockCommit.Ok
+          (PackageLockCommitOutcome.Unchanged snapshot.path))
+        (if (package-lock-transaction-fault? "before-stage")
+          (ResultPackageLockCommit.Err
+            (package-lock-transaction-error
+              "before-stage"
+              snapshot.path
+              "injected test failure"))
+          (match (package-lock-transaction-lock-path (clone snapshot.path))
+            [(ResultPackageLockString.Err message)
+              (ResultPackageLockCommit.Err message)]
+            [(ResultPackageLockString.Ok guard)
+              (package-lock-transaction-with-guard snapshot source guard)])))]))
+
 (define (package-lock-valid-source) : String
   "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"zeta\") (url \"https://github.com/owner/zeta.git\") (pin (rev \"abcdef0123456789abcdef0123456789abcdef01\")) (commit \"abcdef0123456789abcdef0123456789abcdef01\")) (dependency (alias \"alpha\") (url \"https://github.com/owner/alpha.git\") (pin (branch \"main\")) (commit \"1111111111111111111111111111111111111111\"))))")
 
@@ -876,6 +1362,211 @@
       "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"a\") (url \"u\") (pin (sha \"a\")) (commit \"a\"))))"
       "package-lock: pin kind must be `rev`, `tag`, or `branch`")))
 
+(cfg
+  test
+  (define (package-lock-transaction-test-fail [message : String]) : never
+    (io.panic message)))
+
+(cfg
+  test
+  (define (package-lock-transaction-test-snapshot [path : String]) : PackageLockSnapshot
+    (match (package-lock-transaction-read path)
+      [(ResultPackageLockSnapshot.Err message)
+        (package-lock-transaction-test-fail message)]
+      [(ResultPackageLockSnapshot.Ok snapshot) snapshot])))
+
+(cfg
+  test
+  (define (package-lock-transaction-test-read [path : String]) : String
+    (match (io.try-read-file (& path))
+      [(io.ErrIoBytes error)
+        (package-lock-transaction-test-fail (io.error-message error))]
+      [(io.OkIoBytes contents) (byte_buf.to-string contents)])))
+
+(cfg
+  test
+  (define (package-lock-transaction-test-expect-commit
+    [snapshot : PackageLockSnapshot]
+    [source : String]
+    [kind : i64]) : unit
+    (match (package-lock-transaction-commit snapshot source)
+      [(ResultPackageLockCommit.Err message)
+        (package-lock-transaction-test-fail message)]
+      [(ResultPackageLockCommit.Ok outcome)
+        (let
+          [actual : i64
+            (match outcome
+              [(PackageLockCommitOutcome.Unchanged _) 0]
+              [(PackageLockCommitOutcome.Reused _) 1]
+              [(PackageLockCommitOutcome.Replaced _) 2])]
+          (if (= actual kind)
+            unit
+            (package-lock-transaction-test-fail
+              "package-lock transaction: unexpected commit outcome")))])))
+
+(cfg
+  test
+  (define (package-lock-transaction-test-expect-error
+    [snapshot : PackageLockSnapshot]
+    [source : String]
+    [needle : String]) : unit
+    (match (package-lock-transaction-commit snapshot source)
+      [(ResultPackageLockCommit.Ok _)
+        (package-lock-transaction-test-fail
+          "package-lock transaction unexpectedly succeeded")]
+      [(ResultPackageLockCommit.Err message)
+        (if (string.contains (& message) (& needle))
+          unit
+          (package-lock-transaction-test-fail message))])))
+
+(cfg
+  test
+  (define (package-lock-transaction-test-set-fault [phase : String]) : unit
+    (let
+      [name : String "TYPELISP_PACKAGE_LOCK_TEST_FAULT"]
+      (if (env.set! (& name) (& phase))
+        unit
+        (package-lock-transaction-test-fail
+          "package-lock transaction: cannot set fault injection")))))
+
+(cfg
+  test
+  (define (package-lock-transaction-test-clear-fault) : unit
+    (let
+      [name : String "TYPELISP_PACKAGE_LOCK_TEST_FAULT"]
+      (if (env.unset! (& name))
+        unit
+        (package-lock-transaction-test-fail
+          "package-lock transaction: cannot clear fault injection")))))
+
+(cfg
+  test
+  (define (package-lock-transaction-test-cleanup
+    [root : String]
+    [path : String]
+    [collision : String]) : unit
+    (let
+      [target-name : String "target"]
+      [typelisp-name : String "typelisp"]
+      [locks-name : String "locks"]
+      [guard-name : String "package-lock.writer-lock"]
+      [target : String (fs.path-join (& root) (& target-name))]
+      [typelisp : String (fs.path-join (& target) (& typelisp-name))]
+      [locks : String (fs.path-join (& typelisp) (& locks-name))]
+      [guard : String (fs.path-join (& locks) (& guard-name))]
+      (begin
+        (fs.try-remove-file-if-exists (& path))
+        (fs.try-remove-file-if-exists (& collision))
+        (fs.try-remove-file-if-exists (& guard))
+        (fs.try-remove-dir-if-exists (& locks))
+        (fs.try-remove-dir-if-exists (& typelisp))
+        (fs.try-remove-dir-if-exists (& target))
+        (fs.try-remove-dir-if-exists (& root))
+        unit))))
+
+(cfg
+  test
+  (define (package-lock-transaction-test) : unit
+    (match (fs.try-create-temp-dir "typelisp package lock transaction")
+      [(io.ErrIoString error)
+        (package-lock-transaction-test-fail (io.error-message error))]
+      [(io.OkIoString root)
+        (let
+          [lock-name : String "typelisp.lock"]
+          [path : String (fs.path-join (& root) (& lock-name))]
+          [collision : String
+            (package-lock-stage-path
+              (clone path)
+              (+ package-lock-stage-sequence 1)
+              0)]
+          [collision-source : String "unrelated staging owner\n"]
+          [source-a : String
+            "(typelisp-lock\n  (version \"v1\")\n  (dependencies\n  ))\n"]
+          [source-b : String
+            "(typelisp-lock\n  (version \"v1\")\n  (dependencies\n    (dependency\n      (alias \"dep\")\n      (url \"https://example.invalid/a.git\")\n      (pin (rev \"a\"))\n      (commit \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"))\n  ))\n"]
+          [source-c : String
+            "(typelisp-lock\n  (version \"v1\")\n  (dependencies\n    (dependency\n      (alias \"dep\")\n      (url \"https://example.invalid/a.git\")\n      (pin (rev \"b\"))\n      (commit \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"))\n  ))\n"]
+          (begin
+            (match (io.try-write-file
+              (& collision)
+              (byte_buf.str-as-bytes (& collision-source)))
+              [(io.ErrIoUnit error)
+                (package-lock-transaction-test-fail (io.error-message error))]
+              [(io.OkIoUnit) unit])
+            (package-lock-transaction-test-expect-commit
+              (package-lock-transaction-test-snapshot (clone path))
+              (clone source-a)
+              2)
+            (if (string.eq
+              (package-lock-transaction-test-read (clone path))
+              source-a)
+              unit
+              (package-lock-transaction-test-fail
+                "package-lock transaction: initial replacement mismatch"))
+            (package-lock-transaction-test-expect-commit
+              (package-lock-transaction-test-snapshot (clone path))
+              (clone source-a)
+              0)
+            (let
+              [snapshot-a : PackageLockSnapshot
+                (package-lock-transaction-test-snapshot (clone path))]
+              (begin
+                (match (io.try-write-file
+                  (& path)
+                  (byte_buf.str-as-bytes (& source-b)))
+                  [(io.ErrIoUnit error)
+                    (package-lock-transaction-test-fail
+                      (io.error-message error))]
+                  [(io.OkIoUnit) unit])
+                (package-lock-transaction-test-expect-error
+                  snapshot-a
+                  (clone source-c)
+                  "changed since resolution")))
+            (match (io.file-open (& path) (io.OpenWriteCreateNew))
+              [(io.OkIoFile handle)
+                (begin
+                  (io.file-close handle)
+                  (package-lock-transaction-test-fail
+                    "package-lock transaction: exclusive create reopened lock"))]
+              [(io.ErrIoFile _) unit])
+            (if (string.eq
+              (package-lock-transaction-test-read (clone path))
+              source-b)
+              unit
+              (package-lock-transaction-test-fail
+                "package-lock transaction: conflict overwrote winner"))
+            (package-lock-transaction-test-set-fault "before-stage")
+            (package-lock-transaction-test-expect-error
+              (package-lock-transaction-test-snapshot (clone path))
+              (clone source-c)
+              "before-stage")
+            (package-lock-transaction-test-clear-fault)
+            (package-lock-transaction-test-set-fault "during-stage")
+            (package-lock-transaction-test-expect-error
+              (package-lock-transaction-test-snapshot (clone path))
+              (clone source-c)
+              "during-stage")
+            (package-lock-transaction-test-clear-fault)
+            (if (string.eq
+              (package-lock-transaction-test-read (clone collision))
+              collision-source)
+              unit
+              (package-lock-transaction-test-fail
+                "package-lock transaction: removed another staging owner"))
+            (package-lock-transaction-test-set-fault "before-replace")
+            (package-lock-transaction-test-expect-error
+              (package-lock-transaction-test-snapshot (clone path))
+              source-c
+              "before-replace")
+            (package-lock-transaction-test-clear-fault)
+            (if (string.eq
+              (package-lock-transaction-test-read (clone path))
+              source-b)
+              unit
+              (package-lock-transaction-test-fail
+                "package-lock transaction: injected failure changed lock"))
+            (package-lock-transaction-test-cleanup root path collision)))])))
+
 (define (package-lock-self-test-ok?) : bool
   (and
     (package-lock-valid-parse-ok?)
@@ -899,3 +1590,5 @@
   (if (package-lock-growth-order-ok?)
     unit
     (io.panic "package-lock: generated vector growth/order mismatch")))
+
+(test package-lock-atomic-transaction (package-lock-transaction-test))

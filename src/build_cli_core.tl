@@ -199,7 +199,8 @@
 (defstruct BuildPackageLockState
   (path String)
   (entries package_lock_entry_vec.Vec)
-  (has-lock bool))
+  (has-lock bool)
+  (original-source String))
 
 (defenum ResultBuildPackageLockState
   (Ok BuildPackageLockState)
@@ -1563,18 +1564,12 @@
 (define (build-load-package-lock [manifest-dir : String]) : ResultBuildPackageLockState
   (let
     [path : String (build-package-lock-path manifest-dir)]
-    (if (io.file-exists? (owned_view.compiler-owned-shared-view path))
-      (match (io.try-read-file (& path))
-        [(io.ErrIoBytes error)
-          (ResultBuildPackageLockState.Err
-            (str_cat.str-cat
-              "build: cannot read package lock '"
-              path
-              "': "
-              (io.error-message error)))]
-        [(io.OkIoBytes source)
-          (match (package_lock_core.package-lock-parse
-            (byte_buf.to-string source))
+    (match (package_lock_core.package-lock-transaction-read (clone path))
+      [(package_lock_core.ResultPackageLockSnapshot.Err message)
+        (ResultBuildPackageLockState.Err (str_cat.str-cat "build: " message))]
+      [(package_lock_core.ResultPackageLockSnapshot.Ok snapshot)
+        (if snapshot.existed
+          (match (package_lock_core.package-lock-parse (clone snapshot.source))
             [(package_lock_core.ResultPackageLockFile.Err message)
               (ResultBuildPackageLockState.Err
                 (str_cat.str-cat
@@ -1584,9 +1579,9 @@
                   message))]
             [(package_lock_core.ResultPackageLockFile.Ok lock)
               (ResultBuildPackageLockState.Ok
-                (BuildPackageLockState path lock.entries true))])])
-      (ResultBuildPackageLockState.Ok
-        (BuildPackageLockState path (package_lock_entry_vec.new) false)))))
+                (BuildPackageLockState path lock.entries true snapshot.source))])
+          (ResultBuildPackageLockState.Ok
+            (BuildPackageLockState path (package_lock_entry_vec.new) false "")))])))
 
 (define (build-write-package-lock
   [state : BuildPackageLockState]
@@ -1598,15 +1593,16 @@
         entries)]
     [text : String (package_lock_core.package-lock-emit lock)]
     [path : String state.path]
-    (match (io.try-write-file (& path) (byte_buf.str-as-bytes (& text)))
-      [(io.OkIoUnit) (ResultBuildString.Ok path)]
-      [(io.ErrIoUnit error)
-        (ResultBuildString.Err
-          (str_cat.str-cat
-            "build: cannot write package lock '"
-            path
-            "': "
-            (io.error-message error)))])))
+    [snapshot : package_lock_core.PackageLockSnapshot
+      (package_lock_core.PackageLockSnapshot
+        (clone path)
+        state.original-source
+        state.has-lock)]
+    (match (package_lock_core.package-lock-transaction-commit snapshot text)
+      [(package_lock_core.ResultPackageLockCommit.Ok _)
+        (ResultBuildString.Ok path)]
+      [(package_lock_core.ResultPackageLockCommit.Err message)
+        (ResultBuildString.Err (str_cat.str-cat "build: " message))])))
 
 (define (build-package-lock-entry-matches?
   [entry : package_lock_core.PackageLockEntry]

@@ -168,8 +168,25 @@ Dependencies may be local paths or git/GitHub pins (`rev`, `tag`, or
 S-expression lockfile recording alias, normalized URL, pin, and exact commit —
 and a content-keyed package cache under `target/typelisp/cache/`. `--locked`
 requires matching lock entries and never rewrites the lockfile; `--update-lock`
-intentionally refreshes remote pins. The executable root owns every lock entry;
+intentionally refreshes remote pins and commits only changed canonical bytes.
+The executable root owns every lock entry;
 a fetched or local library's own lockfile is never consulted.
+
+Lock updates are transactional. If canonical output is byte-identical to the
+generation used for resolution, TypeLisp leaves the file and its modification
+time untouched. Otherwise it exclusively creates a process-unique sibling,
+flushes and reparses the complete stage, then serializes committers with a
+crash-released guard under `target/typelisp/locks`. After acquiring the guard it
+rechecks the exact original generation: an identical concurrent winner is
+reused, while a different winner produces a conflict and asks the command to be
+rerun instead of overwriting it. The final substitution is `rename(2)` on Linux
+or replacing `MoveFileExA` on Windows; Windows never deletes the old lock first.
+Concurrent readers therefore see a complete old or new lock, including
+`--locked` builds. Handled failures remove their own stage, and stages abandoned
+by termination are ignored because only the exact `typelisp.lock` path is read.
+The staged file is flushed, but TypeLisp does not yet flush the parent directory,
+so this guarantees atomic visibility rather than durability across sudden power
+loss.
 
 Every dependency package must be a dependency-free static library. The graph
 is therefore exactly one level deep, with every normal edge and remote pin

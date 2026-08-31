@@ -1745,6 +1745,9 @@ if [ "$NL_HOST_OS" = windows ]; then
     # corpus, and regression coverage cross macro_expand from 74 to 75 segments:
     # the authoritative Windows CI probe measured 4,851,619 used nodes,
     # 4,915,200 capacity, and 157,286,400 physical payload bytes.
+    # #6984's package-lock transaction independently crossed the same boundary
+    # on its pre-#7133 base (4,850,511 used nodes); their rebased composition
+    # remains pinned to the exact 75-segment capacity below.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 75 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

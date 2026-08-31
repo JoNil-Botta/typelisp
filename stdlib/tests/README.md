@@ -12,6 +12,10 @@ for exact expected output bytes. Check-only rows map a fixture path to `pass` or
 
 Coverage notes:
 
+The package-lock inline transaction test exercises `io.OpenWriteCreateNew`,
+file flushing, atomic sibling replacement, advisory coordination locks,
+collision ownership, and pre-replacement fault cleanup on both host targets.
+
 Fixture rows in this directory remain for checks that need a standalone entry
 point, exact process I/O, stdin, host fixture setup, negative checker behavior,
 or external runtime orchestration. Pure stdlib API coverage that can run through

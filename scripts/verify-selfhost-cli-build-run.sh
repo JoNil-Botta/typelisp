@@ -148,6 +148,38 @@ assert_occurrences() {
     fi
 }
 
+wait_for_package_lock_stage() {
+    _wait_root=$1
+    _wait_pid=$2
+    _wait_label=$3
+    _wait_attempt=0
+    while [ "$_wait_attempt" -lt 600 ]; do
+        _wait_stage=$(find "$_wait_root" -maxdepth 1 -type f -name 'typelisp.lock.stage.*' -print -quit)
+        [ -z "$_wait_stage" ] || return 0
+        kill -0 "$_wait_pid" 2>/dev/null || fail "$_wait_label exited before publishing its staging file"
+        sleep 0.1
+        _wait_attempt=$((_wait_attempt + 1))
+    done
+    fail "$_wait_label did not publish a staging file within 60s"
+}
+
+wait_for_package_lock_text() {
+    _wait_path=$1
+    _wait_text=$2
+    _wait_pid=$3
+    _wait_label=$4
+    _wait_attempt=0
+    while [ "$_wait_attempt" -lt 600 ]; do
+        if [ -f "$_wait_path" ] && grep -F -- "$_wait_text" "$_wait_path" >/dev/null; then
+            return 0
+        fi
+        kill -0 "$_wait_pid" 2>/dev/null || fail "$_wait_label exited before committing the expected lock"
+        sleep 0.1
+        _wait_attempt=$((_wait_attempt + 1))
+    done
+    fail "$_wait_label did not commit the expected lock within 60s"
+}
+
 generated_path() {
     if command -v cygpath >/dev/null 2>&1; then
         cygpath -m "$1"
@@ -1276,6 +1308,9 @@ git -C "$GITHUB_LOCK_REMOTE" \
     commit -q -m "move branch after lock"
 GITHUB_LOCK_REV2=$(git -C "$GITHUB_LOCK_REMOTE" rev-parse HEAD)
 rm -rf "$GITHUB_LOCK_ROOT/target/typelisp/git-deps"
+GITHUB_LOCK_MTIME_SENTINEL="$WORKDIR/package-graph-github-lock-before-replay.mtime"
+touch -r "$GITHUB_LOCK_ROOT/typelisp.lock" "$GITHUB_LOCK_MTIME_SENTINEL"
+sleep 2
 set +e
 # cli-gate-case selfhost-cli-package-graph-github-lock-replay direct GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV"
 GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-github-lock-replay.out" 2> "$WORKDIR/package-graph-github-lock-replay.err"
@@ -1284,6 +1319,10 @@ set -e
 assert_status package-graph-github-lock-replay "$status" 0
 assert_empty package-graph-github-lock-replay "$WORKDIR/package-graph-github-lock-replay.err"
 assert_contains package-graph-github-lock-replay "$GITHUB_LOCK_ROOT/typelisp.lock" "(commit \"$GITHUB_LOCK_REV1\")"
+if [ "$GITHUB_LOCK_ROOT/typelisp.lock" -nt "$GITHUB_LOCK_MTIME_SENTINEL" ] ||
+   [ "$GITHUB_LOCK_MTIME_SENTINEL" -nt "$GITHUB_LOCK_ROOT/typelisp.lock" ]; then
+    fail "equivalent default build changed typelisp.lock mtime"
+fi
 set +e
 "$GITHUB_LOCK_EXE" > "$WORKDIR/package-graph-github-lock-replay-program.out" 2> "$WORKDIR/package-graph-github-lock-replay-program.err"
 status=$?
@@ -1335,6 +1374,23 @@ assert_contains package-graph-github-lock-stale "$WORKDIR/package-graph-github-l
 cmp -s "$WORKDIR/package-graph-github-lock-before-stale" "$GITHUB_LOCK_ROOT/typelisp.lock" || fail "locked stale package build rewrote typelisp.lock"
 
 rm -rf "$GITHUB_LOCK_ROOT/target/typelisp/git-deps"
+for lock_fault in before-stage during-stage before-replace; do
+    fault_label="package-graph-github-lock-fault-$lock_fault"
+    cp "$GITHUB_LOCK_ROOT/typelisp.lock" "$WORKDIR/$fault_label.before"
+    set +e
+    TYPELISP_PACKAGE_LOCK_TEST_FAULT=$lock_fault \
+        GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV" \
+        "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --update-lock > "$WORKDIR/$fault_label.out" 2> "$WORKDIR/$fault_label.err"
+    status=$?
+    set -e
+    assert_status "$fault_label" "$status" 1
+    assert_empty "$fault_label" "$WORKDIR/$fault_label.out"
+    assert_contains "$fault_label" "$WORKDIR/$fault_label.err" "package-lock transaction $lock_fault failed"
+    cmp -s "$WORKDIR/$fault_label.before" "$GITHUB_LOCK_ROOT/typelisp.lock" || fail "$fault_label changed the old lock"
+    leftover_stage=$(find "$GITHUB_LOCK_ROOT" -maxdepth 1 -type f -name 'typelisp.lock.stage.*' -print -quit)
+    [ -z "$leftover_stage" ] || fail "$fault_label left staging file $leftover_stage"
+done
+
 set +e
 # cli-gate-case selfhost-cli-package-graph-github-lock-update direct GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV"
 GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --update-lock > "$WORKDIR/package-graph-github-lock-update.out" 2> "$WORKDIR/package-graph-github-lock-update.err"
@@ -1351,6 +1407,98 @@ set -e
 assert_status package-graph-github-lock-update-program "$status" 52
 assert_empty package-graph-github-lock-update-program "$WORKDIR/package-graph-github-lock-update-program.out"
 assert_empty package-graph-github-lock-update-program "$WORKDIR/package-graph-github-lock-update-program.err"
+
+GITHUB_LOCK_REV2_FILE="$WORKDIR/package-graph-github-lock-rev2"
+cp "$GITHUB_LOCK_ROOT/typelisp.lock" "$GITHUB_LOCK_REV2_FILE"
+cp "$WORKDIR/package-graph-github-lock-before-stale" "$GITHUB_LOCK_ROOT/typelisp.lock"
+GITHUB_LOCK_IDENTICAL_RELEASE="$WORKDIR/package-lock-identical.release"
+GITHUB_LOCK_IDENTICAL_RELEASE_ENV=$(compiler_batch_path "$GITHUB_LOCK_IDENTICAL_RELEASE")
+touch "$GITHUB_LOCK_IDENTICAL_RELEASE"
+TYPELISP_PACKAGE_LOCK_TEST_PAUSE=before-lock \
+    TYPELISP_PACKAGE_LOCK_TEST_RELEASE_FILE="$GITHUB_LOCK_IDENTICAL_RELEASE_ENV" \
+    GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV" \
+    "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --update-lock > "$WORKDIR/package-lock-identical-first.out" 2> "$WORKDIR/package-lock-identical-first.err" &
+identical_first_pid=$!
+wait_for_package_lock_stage "$GITHUB_LOCK_ROOT" "$identical_first_pid" package-lock-identical-first
+cp "$GITHUB_LOCK_ROOT/typelisp.lock" "$WORKDIR/package-lock-concurrent-locked.before"
+set +e
+GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV" \
+    "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --locked > "$WORKDIR/package-lock-concurrent-locked.out" 2> "$WORKDIR/package-lock-concurrent-locked.err"
+concurrent_locked_status=$?
+set -e
+assert_status package-lock-concurrent-locked "$concurrent_locked_status" 1
+assert_empty package-lock-concurrent-locked "$WORKDIR/package-lock-concurrent-locked.out"
+assert_contains package-lock-concurrent-locked "$WORKDIR/package-lock-concurrent-locked.err" 'build: package lock entry for remote dependency `remote` is stale'
+cmp -s "$WORKDIR/package-lock-concurrent-locked.before" "$GITHUB_LOCK_ROOT/typelisp.lock" || fail "concurrent locked reader changed or observed a partial lock"
+GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV" \
+    "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --update-lock > "$WORKDIR/package-lock-identical-second.out" 2> "$WORKDIR/package-lock-identical-second.err" &
+identical_second_pid=$!
+wait_for_package_lock_text "$GITHUB_LOCK_ROOT/typelisp.lock" "$GITHUB_LOCK_REV2" "$identical_second_pid" package-lock-identical-second
+rm -f "$GITHUB_LOCK_IDENTICAL_RELEASE"
+set +e
+wait "$identical_first_pid"
+identical_first_status=$?
+wait "$identical_second_pid"
+identical_second_status=$?
+set -e
+assert_status package-lock-identical-first "$identical_first_status" 0
+assert_status package-lock-identical-second "$identical_second_status" 0
+assert_empty package-lock-identical-first "$WORKDIR/package-lock-identical-first.err"
+assert_empty package-lock-identical-second "$WORKDIR/package-lock-identical-second.err"
+cmp -s "$GITHUB_LOCK_REV2_FILE" "$GITHUB_LOCK_ROOT/typelisp.lock" || fail "equivalent concurrent writers did not reuse one canonical winner"
+
+cp "$WORKDIR/package-graph-github-lock-before-stale" "$GITHUB_LOCK_ROOT/typelisp.lock"
+git -C "$GITHUB_LOCK_REMOTE" branch -f next "$GITHUB_LOCK_REV2"
+GITHUB_LOCK_CONFLICT_RELEASE="$WORKDIR/package-lock-conflict.release"
+GITHUB_LOCK_CONFLICT_RELEASE_ENV=$(compiler_batch_path "$GITHUB_LOCK_CONFLICT_RELEASE")
+touch "$GITHUB_LOCK_CONFLICT_RELEASE"
+TYPELISP_PACKAGE_LOCK_TEST_PAUSE=before-lock \
+    TYPELISP_PACKAGE_LOCK_TEST_RELEASE_FILE="$GITHUB_LOCK_CONFLICT_RELEASE_ENV" \
+    GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV" \
+    "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --update-lock > "$WORKDIR/package-lock-conflict-first.out" 2> "$WORKDIR/package-lock-conflict-first.err" &
+conflict_first_pid=$!
+wait_for_package_lock_stage "$GITHUB_LOCK_ROOT" "$conflict_first_pid" package-lock-conflict-first
+cat > "$GITHUB_LOCK_REMOTE/src/lib.tl" <<'EOF'
+(define (remote-answer) : i64 53)
+EOF
+git -C "$GITHUB_LOCK_REMOTE" add src/lib.tl
+git -C "$GITHUB_LOCK_REMOTE" \
+    -c user.email=typelisp@example.invalid \
+    -c user.name=typelisp \
+    commit -q -m "move branch during competing lock update"
+GITHUB_LOCK_REV3=$(git -C "$GITHUB_LOCK_REMOTE" rev-parse HEAD)
+git -C "$GITHUB_LOCK_REMOTE" branch -f next "$GITHUB_LOCK_REV3"
+cat > "$GITHUB_LOCK_ROOT/typelisp.pkg" <<'EOF'
+(package
+  (name "gl_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (other (github "l/b" (branch "next")))))
+EOF
+cat > "$GITHUB_LOCK_ROOT/src/main.tl" <<'EOF'
+(import other.src.lib as other)
+(define (main) : i64 (other.remote-answer))
+EOF
+GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV" \
+    "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --update-lock > "$WORKDIR/package-lock-conflict-second.out" 2> "$WORKDIR/package-lock-conflict-second.err" &
+conflict_second_pid=$!
+wait_for_package_lock_text "$GITHUB_LOCK_ROOT/typelisp.lock" "$GITHUB_LOCK_REV3" "$conflict_second_pid" package-lock-conflict-second
+rm -f "$GITHUB_LOCK_CONFLICT_RELEASE"
+set +e
+wait "$conflict_first_pid"
+conflict_first_status=$?
+wait "$conflict_second_pid"
+conflict_second_status=$?
+set -e
+assert_status package-lock-conflict-first "$conflict_first_status" 1
+assert_status package-lock-conflict-second "$conflict_second_status" 0
+assert_empty package-lock-conflict-first "$WORKDIR/package-lock-conflict-first.out"
+assert_empty package-lock-conflict-second "$WORKDIR/package-lock-conflict-second.err"
+assert_contains package-lock-conflict-first "$WORKDIR/package-lock-conflict-first.err" "lock changed since resolution; rerun against the current lock"
+assert_contains package-lock-conflict-second "$GITHUB_LOCK_ROOT/typelisp.lock" "(commit \"$GITHUB_LOCK_REV3\")"
+leftover_stage=$(find "$GITHUB_LOCK_ROOT" -maxdepth 1 -type f -name 'typelisp.lock.stage.*' -print -quit)
+[ -z "$leftover_stage" ] || fail "concurrent lock tests left staging file $leftover_stage"
 
 SHALLOW_DIR="$WORKDIR/package-graph-shallow"
 SHALLOW_ROOT="$SHALLOW_DIR/root"

@@ -1,6 +1,7 @@
 ;; compiler_backend_tests.tl - Selfhost backend test helpers split from production backend.
 (import stdlib.io)
 (import compiler_object as cobj)
+(import compiler_object_asm as object_asm)
 (import compiler_object_coff as coff)
 (import compiler_object_elf as elf)
 (import compiler_backend_object_target as object_target)
@@ -4902,8 +4903,9 @@
     [init-symbol : String (str_cat.str-cat "_tl___global_init_" name)]
     (and
       (compiler_backend.backend-and4
-        ;; A register-group global (e.g. `pair`) reserves 16 inline bytes;
-        ;; an 8-byte handle/scalar global reserves 8. Accept either.
+        ;; A register-group global (e.g. `pair`) reserves 16 inline bytes; an
+        ;; IAG-1 inline aggregate global (e.g. `nested`) reserves its own byte
+        ;; size; an 8-byte handle/scalar global reserves 8. Accept any of them.
         (or
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
@@ -4916,19 +4918,35 @@
             (str_cat.str-cat
               "    .comm "
               (owned_view.compiler-owned-shared-view symbol)
-              ", 16, 8\n")))
+              ", 16, 8\n"))
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            (str_cat.str-cat
+              "    .comm "
+              (owned_view.compiler-owned-shared-view symbol)
+              ", 24, 8\n")))
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           (str_cat.str-cat
             "    call "
             (owned_view.compiler-owned-shared-view init-symbol)
             "\n"))
-        (compiler_backend.compiler-backend-string-contains?
-          (owned_view.compiler-owned-shared-view asm)
-          (str_cat.str-cat
-            "    movq %rax, "
-            (owned_view.compiler-owned-shared-view symbol)
-            "(%rip)\n"))
+        ;; The startup sequence installs the initializer result: a pointer
+        ;; store for a boxed cell, or the IAG-1 byte copy for an inline
+        ;; aggregate cell.
+        (or
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            (str_cat.str-cat
+              "    movq %rax, "
+              (owned_view.compiler-owned-shared-view symbol)
+              "(%rip)\n"))
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            (str_cat.str-cat
+              "    movups (%rax), %xmm0\n    movups %xmm0, "
+              (owned_view.compiler-owned-shared-view symbol)
+              "(%rip)\n")))
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           (str_cat.str-cat init-symbol ":\n" "")))
@@ -54492,10 +54510,249 @@ b_keep:
     (compiler-backend-placement-entry-stays-first-ok?)
     (compiler-backend-placement-windows-seh-shape-ok?)))
 
+;; ---------------------------------------------------------------------------
+;; IAG-1: inline storage for runtime-initialised aggregate globals.
+;; ---------------------------------------------------------------------------
+;; `install!` / `install3!` are the only cell writers and nothing that READS
+;; either global can reach them, so the safety rule keeps both inline: `cell` is
+;; a 16-byte memory aggregate and `triple` a 24-byte one.
+(define (compiler-backend-inline-aggregate-global-source) : String
+  "(defstruct Cell (slots (__tl_dyn-array i64)) (len i64))
+(defstruct Triple (a i64) (b i64) (c i64))
+(define cell : Cell (Cell (__tl_make-array i64 4) 4))
+(define triple : Triple (Triple 1 2 3))
+(define (install! [n : i64]) : unit
+  (set! cell (Cell (__tl_make-array i64 n) n)))
+(define (install3! [n : i64]) : unit
+  (set! triple (Triple n n n)))
+(define (peek [c : (& Cell)]) : i64 c.len)
+(define (read-len) : i64 (+ (peek (& cell)) (+ cell.len triple.c)))
+(define (main) : i64 (begin (install! 3) (install3! 4) (read-len)))")
+
+;; The t2 shape: `observe` holds a borrow of `cell` across a call that rebinds
+;; it, so the box identity is observable and the global must stay boxed.
+(define (compiler-backend-inline-aggregate-global-escape-source) : String
+  "(defstruct Cell (slots (__tl_dyn-array i64)) (len i64))
+(define cell : Cell (Cell (__tl_make-array i64 4) 4))
+(define (install! [n : i64]) : unit
+  (set! cell (Cell (__tl_make-array i64 n) n)))
+(define (observe [c : (& Cell)]) : i64 (begin (install! 9) c.len))
+(define (main) : i64 (observe (& cell)))")
+
+;; `through` reads `cell` and calls through a function VALUE, so its callee set
+;; is not enumerable and the global must stay boxed.
+(define (compiler-backend-inline-aggregate-global-indirect-source) : String
+  "(defstruct Cell (slots (__tl_dyn-array i64)) (len i64))
+(define cell : Cell (Cell (__tl_make-array i64 4) 4))
+(define (install! [n : i64]) : unit
+  (set! cell (Cell (__tl_make-array i64 n) n)))
+(define (through [f : (-> i64 i64)] [n : i64]) : i64 (+ (f n) cell.len))
+(define (twice [n : i64]) : i64 (* n 2))
+(define (main) : i64 (begin (install! 3) (through twice 4)))")
+
+(define (compiler-backend-inline-aggregate-global-shape-ok?) : bool
+  (match (compiler_backend.compiler-backend-emit-source
+    (compiler-backend-inline-aggregate-global-source))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.backend-and8
+          ;; (i) the cell reserves the aggregate itself, not a box pointer.
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    .comm _tl_cell, 16, 8\n")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    .comm _tl_triple, 24, 8\n")
+          ;; (i) `CompilerIrValue.Global` materialises as the symbol's address.
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    leaq _tl_cell(%rip), %rdi\n")
+          ;; (ii) a constant-offset field read folds to ONE rip-relative load.
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    movq _tl_cell+8(%rip), %r8\n")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    movq _tl_triple+16(%rip), %r8\n")
+          ;; ... and the cell is never read as a pointer any more.
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    movq _tl_cell(%rip), %"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    movq _tl_triple(%rip), %"))
+          ;; (iii) the startup initializer copies the aggregate into the cell.
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    call _tl___global_init_cell\n    movups (%rax), %xmm0\n    movups %xmm0, _tl_cell(%rip)\n"))
+        (compiler_backend.backend-and4
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    call _tl___global_init_triple\n    movups (%rax), %xmm0\n    movups %xmm0, _tl_triple(%rip)\n    movq 16(%rax), %r10\n    movq %r10, _tl_triple+16(%rip)\n")
+          ;; (iii) and `(set! g v)` copies the same bytes at the rebind.
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    movq (%r10), %r11\n    movq %r11, _tl_cell(%rip)\n    movq 8(%r10), %r11\n    movq %r11, _tl_cell+8(%rip)\n")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    movq (%r10), %r11\n    movq %r11, _tl_triple(%rip)\n    movq 8(%r10), %r11\n    movq %r11, _tl_triple+8(%rip)\n    movq 16(%r10), %r11\n    movq %r11, _tl_triple+16(%rip)\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    movq %rax, _tl_cell(%rip)\n"))))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; (iv) Windows keeps its own `.comm` alignment convention; every other inline
+;; aggregate shape is target-independent.
+(define (compiler-backend-inline-aggregate-global-windows-shape-ok?) : bool
+  (match (compiler_backend.compiler-backend-emit-source-for-target
+    (compiler-backend-inline-aggregate-global-source)
+    (compiler_backend.CompilerBackendTarget.Windows))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (compiler_backend.backend-and8
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view asm)
+          "    .comm _tl_cell, 16, 3\n")
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view asm)
+          "    .comm _tl_triple, 24, 3\n")
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view asm)
+          "    leaq _tl_cell(%rip), %rcx\n")
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view asm)
+          "    movq _tl_cell+8(%rip), %r8\n")
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view asm)
+          "    movq _tl_triple+16(%rip), %r8\n")
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view asm)
+          "    movups %xmm0, _tl_cell(%rip)\n")
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view asm)
+          "    movq %r11, _tl_triple+16(%rip)\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    movq _tl_cell(%rip), %")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; (v) the safety rule: a global the reader's call graph can rebind keeps the
+;; BOXED 8-byte cell -- the pointer cell, the pointer store the pre-IAG backend
+;; emitted, and a cell READ at every use. This is the property the escape
+;; program actually has; its printed value is optimization-dependent for
+;; reasons that predate IAG-1 (the borrow is materialized after the rebind once
+;; the setter is inlined), so it is deliberately pinned HERE on the emitted
+;; shape rather than on an opt-level-specific runtime value.
+(define (compiler-backend-inline-aggregate-global-excluded-shape-ok?
+  [src : String]) : bool
+  (match (compiler_backend.compiler-backend-emit-source src)
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.backend-and4
+          ;; The cell is one word and holds a POINTER to the arena box.
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    .comm _tl_cell, 8, 8\n")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    movq %rax, _tl_cell(%rip)\n")
+          ;; ... which the rebind replaces with a pointer store, never a byte
+          ;; copy, so the box identity the program can observe is preserved.
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    movups %xmm0, _tl_cell(%rip)\n"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    .comm _tl_cell, 16, 8\n")))
+        (compiler_backend.backend-and4
+          ;; No inline-cell spelling anywhere: no field displacement operand,
+          ;; and no address materialisation standing in for a cell read.
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "_tl_cell+8(%rip)"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    leaq _tl_cell(%rip), "))
+          ;; ... and every read of the global is still the cell LOAD.
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    movq _tl_cell(%rip), ")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              (compiler-backend-todo-marker)))))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-inline-aggregate-global-safety-ok?) : bool
+  (and
+    (compiler-backend-inline-aggregate-global-excluded-shape-ok?
+      (compiler-backend-inline-aggregate-global-escape-source))
+    (compiler-backend-inline-aggregate-global-excluded-shape-ok?
+      (compiler-backend-inline-aggregate-global-indirect-source))))
+
+;; The object image mirrors the text backend: a `.bss` reservation of the whole
+;; aggregate, the symbol's ADDRESS for a `Global` read, and a byte copy for the
+;; rebind rather than a pointer store.
+(define (compiler-backend-inline-aggregate-global-object-shape-ok?) : bool
+  (match (compiler_backend.compiler-backend-emit-source-object-image
+    (compiler-backend-inline-aggregate-global-source))
+    [(compiler_backend.ResultCompilerBackendObject.Ok image)
+      (and
+        (compiler_backend.backend-and4
+          ;; The rebind's byte copy, and the cell address it copies into.
+          (cobj.compiler-object-section-contains-bytes?
+            (owned_view.compiler-owned-shared-view image.sections)
+            (compiler_backend.compiler-backend-object-inline-aggregate-copy-bytes
+              16))
+          (cobj.compiler-object-section-contains-bytes?
+            (owned_view.compiler-owned-shared-view image.sections)
+            (compiler_backend.compiler-backend-object-inline-aggregate-copy-bytes
+              24))
+          (cobj.compiler-object-relocation-list-contains?
+            (owned_view.compiler-owned-shared-view image.relocations)
+            (cobj.CompilerObjectRelocationKind.RipAddress)
+            "_tl_cell")
+          (cobj.compiler-object-section-contains-label?
+            (owned_view.compiler-owned-shared-view image.sections)
+            (cobj.CompilerObjectSectionKind.Bss)
+            "_tl_cell"))
+        (match (object_asm.compiler-object-asm-render
+          (owned_view.compiler-owned-shared-view image))
+          [(object_asm.ResultCompilerObjectAsm.Ok text)
+            (compiler_backend.backend-and4
+              ;; The .bss reservation is the aggregate, not a box pointer.
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view text)
+                "_tl_cell:\n    .zero 16\n")
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view text)
+                "_tl_triple:\n    .zero 24\n")
+              ;; A `Global` read materialises the symbol's ADDRESS.
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view text)
+                "    leaq _tl_cell(%rip), %rax\n")
+              (not
+                (compiler_backend.compiler-backend-string-contains?
+                  (owned_view.compiler-owned-shared-view text)
+                  "    movq _tl_cell(%rip), %rax\n")))]
+          [(object_asm.ResultCompilerObjectAsm.Err _) false]))]
+    [(compiler_backend.ResultCompilerBackendObject.Err _) false]))
+
 (define (compiler-backend-self-test) : i64
   (if (and
     (compiler-backend-lazy-table-storage-ok?)
     (compiler-backend-resetting-entry-live-session-guard-ok?)
+    (compiler-backend-inline-aggregate-global-shape-ok?)
+    (compiler-backend-inline-aggregate-global-windows-shape-ok?)
+    (compiler-backend-inline-aggregate-global-safety-ok?)
+    (compiler-backend-inline-aggregate-global-object-shape-ok?)
     (compiler_backend.backend-and8
       (and
         (compiler_backend.compiler-backend-global-type-table-ok?)

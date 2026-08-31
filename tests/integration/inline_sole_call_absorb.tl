@@ -41,28 +41,20 @@
     [weight : i64 1]
     [carry : i64 (+ salt depth)]
     (begin
-      (if (< byte 32)
-        (set! kind 1)
-        (if (< byte 48)
-          (set! kind 2)
-          (if (< byte 58)
-            (set! kind 3)
-            (if (< byte 65)
-              (set! kind 4)
-              (if (< byte 91)
-                (set! kind 5)
-                (if (< byte 97)
-                  (set! kind 6)
-                  (if (< byte 123)
-                    (set! kind 7)
-                    (set! kind 8))))))))
-      (if (= kind 3)
-        (set! weight 5)
-        (if (= kind 5)
-          (set! weight 3)
-          (if (= kind 7)
-            (set! weight 2)
-            (set! weight 1))))
+      (cond
+        [(< byte 32) (set! kind 1)]
+        [(< byte 48) (set! kind 2)]
+        [(< byte 58) (set! kind 3)]
+        [(< byte 65) (set! kind 4)]
+        [(< byte 91) (set! kind 5)]
+        [(< byte 97) (set! kind 6)]
+        [(< byte 123) (set! kind 7)]
+        [else (set! kind 8)])
+      (cond
+        [(= kind 3) (set! weight 5)]
+        [(= kind 5) (set! weight 3)]
+        [(= kind 7) (set! weight 2)]
+        [else (set! weight 1)])
       (if (= prev kind)
         (set! carry (+ carry 7))
         (set! carry (+ carry 11)))
@@ -101,36 +93,24 @@
     [next : i64 acc]
     [mix : i64 (+ salt round)]
     (begin
-      (if (= kind 0)
-        (set! next (+ (* acc 31) value))
-        (if (= kind 1)
-          (set! next (+ (* acc 17) value))
-          (if (= kind 2)
-            (set! next (+ (* acc 13) (* value 3)))
-            (if (= kind 3)
-              (set! next (+ (* acc 7) (* value 5)))
-              (if (= kind 4)
-                (set! next (- (* acc 11) value))
-                (if (= kind 5)
-                  (set! next (+ (* acc 23) (* value 2)))
-                  (if (= kind 6)
-                    (set! next (+ (* acc 29) (- value 1)))
-                    (set! next (+ (* acc 3) (+ value 9))))))))))
-      (if (< value 16)
-        (set! mix (+ mix 1))
-        (if (< value 32)
-          (set! mix (+ mix 2))
-          (if (< value 48)
-            (set! mix (+ mix 3))
-            (if (< value 64)
-              (set! mix (+ mix 4))
-              (if (< value 80)
-                (set! mix (+ mix 5))
-                (if (< value 96)
-                  (set! mix (+ mix 6))
-                  (if (< value 112)
-                    (set! mix (+ mix 7))
-                    (set! mix (+ mix 8)))))))))
+      (cond
+        [(= kind 0) (set! next (+ (* acc 31) value))]
+        [(= kind 1) (set! next (+ (* acc 17) value))]
+        [(= kind 2) (set! next (+ (* acc 13) (* value 3)))]
+        [(= kind 3) (set! next (+ (* acc 7) (* value 5)))]
+        [(= kind 4) (set! next (- (* acc 11) value))]
+        [(= kind 5) (set! next (+ (* acc 23) (* value 2)))]
+        [(= kind 6) (set! next (+ (* acc 29) (- value 1)))]
+        [else (set! next (+ (* acc 3) (+ value 9)))])
+      (cond
+        [(< value 16) (set! mix (+ mix 1))]
+        [(< value 32) (set! mix (+ mix 2))]
+        [(< value 48) (set! mix (+ mix 3))]
+        [(< value 64) (set! mix (+ mix 4))]
+        [(< value 80) (set! mix (+ mix 5))]
+        [(< value 96) (set! mix (+ mix 6))]
+        [(< value 112) (set! mix (+ mix 7))]
+        [else (set! mix (+ mix 8))])
       (if (= (% mix 3) 0)
         (set! next (+ next 101))
         (if (= (% mix 3) 1)

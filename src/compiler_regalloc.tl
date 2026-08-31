@@ -6401,6 +6401,36 @@
 ;; parameters that follow it. An EMPTY array is the legacy request -- alloc-one!
 ;; then keeps every parameter class callee-saved-only, byte-for-byte as before.
 ;;
+;; FLT-1 (wrong-code fix): the parameter shapes whose position -> ABI slot map
+;; NEITHER this constraint nor the pin walk below models.
+;;   * a register GROUP occupies TWO parameter positions, with the bank of each
+;;     word chosen from the aggregate's SSE class mask;
+;;   * an internal by-memory ABI transport -- the nominal
+;;     `__tl_internal_abi_mem_s<size>__<key>` struct lower-internal-transport-type
+;;     emits for a >16-byte by-value Tuple/Array parameter -- arrives entirely in
+;;     the incoming STACK area and advances NEITHER argument bank (the
+;;     private-memory arm of compiler-backend-emit-param-spills-from), consuming
+;;     `stack-slots-for-size` stack words instead.
+;; The second was invisible to both walks: the transport is a nominal Struct, so
+;; it is register-eligible and is not a register group, and it therefore passed
+;; `compiler-reg-integer-param-type?` and consumed an integer ABI slot that the
+;; backend never gave it. See the pin walk's own note for the miscompile that
+;; produced.
+;; `compiler-ir-representation-internal-transport?` is the shared recogniser for
+;; the whole `__tl_internal_abi_` family, so a malformed encoding -- which the
+;; backend's own size parser answers 0 for -- is refused here as well rather
+;; than silently mis-walked.
+(define (compiler-reg-param-abi-opaque?
+  [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
+  [ty : ast.AstType]) : bool
+  (or
+    (compiler-reg-type-register-group?
+      type-segment-bases
+      representations
+      (compiler-reg-global-shared-view ty))
+    (ir.compiler-ir-representation-internal-transport? type-segment-bases ty)))
+
 ;; Fail-closed shape gate. When every parameter is a non-group, non-float,
 ;; register-eligible value the integer ABI index of position p is exactly p on
 ;; both ABIs: no parameter consumes two argument slots, none diverts to the
@@ -6409,6 +6439,9 @@
 ;; (compiler-reg-param-assign-walk's own note: a register-group parameter
 ;; occupies two slots and disables every pin past it), so the whole function
 ;; falls back to the callee-saved-only rule rather than guess.
+;; FLT-1: `compiler-reg-integer-param-type?` alone did not enforce "none is
+;; passed by memory" -- a by-memory ABI transport satisfies every one of its
+;; three tests. The explicit opaque test below is what closes that.
 (define (compiler-reg-param-entry-simple-shape?
   [type-segment-bases : i64]
   [representations : ir.CompilerIrRepresentationIndex]
@@ -6425,6 +6458,11 @@
             type-segment-bases
             (compiler-reg-global-shared-view representations)
             (compiler-reg-global-shared-view ty))
+          (not
+            (compiler-reg-param-abi-opaque?
+              type-segment-bases
+              (compiler-reg-global-shared-view representations)
+              (compiler-reg-global-shared-view ty)))
           (compiler-reg-param-entry-simple-shape?
             type-segment-bases
             representations
@@ -6780,8 +6818,8 @@
         (let
           [is-float : bool
             (compiler-reg-float-type? (compiler-reg-global-shared-view ty))]
-          [is-group : bool
-            (compiler-reg-type-register-group?
+          [is-opaque : bool
+            (compiler-reg-param-abi-opaque?
               type-segment-bases
               (compiler-reg-global-shared-view representations)
               (compiler-reg-global-shared-view ty))]
@@ -6794,12 +6832,37 @@
               (+ float-idx 1)
               float-idx)]
           [next-position : i64 (+ position 1)]
-          ;; A register-group param occupies TWO ABI slots; this walk's
-          ;; int-idx accounting does not model that, so every pin PAST a
-          ;; group param is disabled (the group itself never pins).
-          [tail-pins-ok? : bool (and pins-ok? (not is-group))]
+          ;; This walk's bank accounting models one ABI slot per position, which
+          ;; is false for BOTH opaque shapes (compiler-reg-param-abi-opaque?): a
+          ;; register group occupies TWO positions, and a Linux by-memory ABI
+          ;; transport occupies NONE.
+          ;;
+          ;; FLT-1 WRONG-CODE FIX. The group half of that was already fenced;
+          ;; the transport half was not, and it MISCOMPILED. The backend's
+          ;; private-memory arm leaves int-idx and float-idx untouched and reads
+          ;; the incoming stack area, while this walk advanced int-idx for it
+          ;; (the transport type is a nominal Struct, so it is register-eligible
+          ;; and not a register group -- it passed
+          ;; compiler-reg-integer-param-type? outright). Every parameter after
+          ;; such a transport was therefore pinned to the incoming register of
+          ;; its SUCCESSOR, and the prologue's position-ordered entry copies then
+          ;; destroyed each source before the next copy read it. At
+          ;; --opt-level 2 (only the scalar-opt2 stage reaches the pin path;
+          ;; opt0/opt1 were correct, which is why no gate caught it)
+          ;;     (define (f [v (Array i64 3)] [a i64] [b i64] [c i64]) ...)
+          ;; emitted
+          ;;     movq %rdi, %rsi ; movq %rsi, %rdx ; movq %rdx, %rcx
+          ;;     leaq 8(%rsp), %rdi
+          ;; giving a == b == c. tests/integration/param_memory_transport_abi.tl
+          ;; is the regression fixture.
+          ;;
+          ;; Fail closed for both shapes: an opaque parameter never pins, and
+          ;; every pin PAST one is disabled, so the stale bank index is inert.
+          ;; compiler-reg-param-entry-simple-shape? refuses the same two shapes
+          ;; for the other consumer of the same map.
+          [tail-pins-ok? : bool (and pins-ok? (not is-opaque))]
           [reg : CompilerRegMaybeId
-            (if (and pins-ok? (not is-group))
+            (if (and pins-ok? (not is-opaque))
               (if is-float
                 (compiler-reg-param-float-reg target-abi float-idx position)
                 (if (compiler-reg-integer-param-type?

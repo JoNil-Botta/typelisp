@@ -206,14 +206,26 @@ runnable-doctest failure. Fences in other languages are ignored; unknown
 TypeLisp fence options, empty TypeLisp examples, and unterminated TypeLisp
 fences are malformed doctests.
 
-`typelisp doc` generates Markdown documentation. Rendering
+`typelisp doc` generates package documentation. From a package directory, the
+bare command discovers the nearest manifest and deterministically writes an
+offline HTML site to `<package>/target/doc/`, with `index.html`, local CSS, a
+dependency-free search client, and its identity-bound search index. `--open`
+passes the generated index as one argument to the platform opener on graphical
+Linux and Windows hosts; a headless, unavailable, or failing opener is
+non-fatal and the command prints the exact generated index path.
+`TYPELISP_DOC_OPEN_PROGRAM` may select a different opener executable without
+changing that one-argument, no-shell boundary. `--no-deps`
+guarantees root-package-only output. Until resolved package-graph documentation
+is available, the default package site is also root-only.
+
+Explicit `-o <out.md>` preserves deterministic single-file Markdown output and
+cannot be combined with `--open`. Rendering
 `typelisp doc input.tl -o output.md` loads the entry file with the normal
 import resolver and emits one deterministic Markdown document for the entry
 plus each reachable imported module once, including module navigation and
 source/module sections. Package documentation uses the package source
 discovery path selected by `--manifest-path <typelisp.pkg>`, or the nearest
-manifest when no explicit input is supplied; package doc generation requires
-`-o <out.md>`.
+manifest when no explicit input is supplied.
 
 The composed static documentation site emits a deterministic
 `typelisp-docs-search-index.js` beside its pages. The index records modules,
@@ -8170,7 +8182,10 @@ integration paths containing the substring. `test --list` lists the selected
 tests without running them. `test` defaults to the host target unless
 `--target <target>` is supplied.
 
-`doc` generates markdown documentation for a source file or package.
+`doc` generates an offline HTML site at `target/doc/index.html` for the nearest
+package; `-o <out.md>` selects the compatible single-file Markdown form,
+`--open` opens the generated HTML index when supported, and `--no-deps` limits
+generation to the root package.
 `doc --test` checks TypeLisp fenced examples in documentation files, with
 `--batch <inputs.txt>` reading a newline-separated input list; `doc --html`
 renders HTML documentation. `clean` removes build artifacts for a source

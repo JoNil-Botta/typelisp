@@ -81,6 +81,7 @@ typelisp run <file.tl>         Build and run
 typelisp test <file.tl>        Run inline tests
 typelisp fmt --check <file.tl>
 typelisp lint <file.tl>
+typelisp doc                    Build target/doc/index.html for the nearest package
 typelisp doc --test <file.tl>
 typelisp explain <code>         Explain a diagnostic code
 typelisp explain --list         List diagnostic codes

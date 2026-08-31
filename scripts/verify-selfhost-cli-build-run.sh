@@ -188,6 +188,14 @@ generated_path() {
     fi
 }
 
+doc_generated_path() {
+    if [ "$HOST_OS" = windows ] && command -v cygpath >/dev/null 2>&1; then
+        cygpath -w "$1"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
 assert_file_exists() {
     _assert_label=$1
     _assert_file=$2
@@ -541,6 +549,65 @@ assert_active_cli_surface_command() {
             if [ "$HOST_OS" = linux ]; then
                 assert_contains "$package_label" "$package_doc_out" "Package extra docs."
             fi
+            package_label="${label}-package-default-site"
+            package_doc_dir="$CLI_SURFACE_DOC_PKG/target/doc"
+            package_doc_index="$package_doc_dir/index.html"
+            package_doc_index_display=$(doc_generated_path "$package_doc_index")
+            # cli-gate-case selfhost-cli-surface-doc-package-default-site wrapper run_cli_capture
+            run_cli_capture "$package_label" "$COMPILER" doc --manifest-path "$CLI_SURFACE_DOC_PKG/typelisp.pkg"
+            assert_status "$package_label" "$status" 0
+            assert_empty "$package_label" "$WORKDIR/$package_label.err"
+            assert_contains "$package_label" "$WORKDIR/$package_label.out" "Wrote $package_doc_index_display"
+            assert_file_nonempty "$package_label" "$package_doc_index"
+            assert_file_nonempty "$package_label" "$package_doc_dir/typelisp-docs.css"
+            assert_file_nonempty "$package_label" "$package_doc_dir/typelisp-docs.js"
+            assert_file_nonempty "$package_label" "$package_doc_dir/typelisp-docs-search-index.js"
+            assert_contains "$package_label" "$package_doc_index" "Package entry docs."
+            assert_contains "$package_label" "$package_doc_index" "typelisp-package-identity"
+            assert_contains "$package_label" "$package_doc_index" "surface_doc@0.1.0"
+            assert_contains "$package_label" "$package_doc_index" "data-doc-search-input"
+            assert_contains "$package_label" "$package_doc_dir/typelisp-docs-search-index.js" '"packageIdentity":"surface_doc@0.1.0"'
+            assert_contains "$package_label" "$package_doc_dir/typelisp-docs.js" "Search index identity does not match this page."
+            cp "$package_doc_index" "$CLI_SURFACE_DOC_PKG/default-index.first"
+            cp "$package_doc_dir/typelisp-docs.css" "$CLI_SURFACE_DOC_PKG/default-css.first"
+            cp "$package_doc_dir/typelisp-docs.js" "$CLI_SURFACE_DOC_PKG/default-client.first"
+            cp "$package_doc_dir/typelisp-docs-search-index.js" "$CLI_SURFACE_DOC_PKG/default-search.first"
+            package_label="${label}-package-no-deps"
+            # cli-gate-case selfhost-cli-surface-doc-package-no-deps wrapper run_cli_capture
+            run_cli_capture "$package_label" "$COMPILER" doc --manifest-path "$CLI_SURFACE_DOC_PKG/typelisp.pkg" --no-deps
+            assert_status "$package_label" "$status" 0
+            assert_empty "$package_label" "$WORKDIR/$package_label.err"
+            assert_contains "$package_label" "$WORKDIR/$package_label.out" "Wrote $package_doc_index_display"
+            cmp -s "$CLI_SURFACE_DOC_PKG/default-index.first" "$package_doc_index" || fail "$package_label changed deterministic index bytes"
+            cmp -s "$CLI_SURFACE_DOC_PKG/default-css.first" "$package_doc_dir/typelisp-docs.css" || fail "$package_label changed deterministic CSS bytes"
+            cmp -s "$CLI_SURFACE_DOC_PKG/default-client.first" "$package_doc_dir/typelisp-docs.js" || fail "$package_label changed deterministic client bytes"
+            cmp -s "$CLI_SURFACE_DOC_PKG/default-search.first" "$package_doc_dir/typelisp-docs-search-index.js" || fail "$package_label changed deterministic search-index bytes"
+            if find "$package_doc_dir" -type f ! -name index.html ! -name typelisp-docs.css ! -name typelisp-docs.js ! -name typelisp-docs-search-index.js | grep . >/dev/null; then
+                fail "$package_label left an unexpected or scratch file in the site"
+            fi
+            package_label="${label}-package-open"
+            if [ "$HOST_OS" = windows ]; then
+                package_doc_open_program=where.exe
+            else
+                package_doc_open_program=/usr/bin/test
+            fi
+            # cli-gate-case selfhost-cli-surface-doc-package-open wrapper run_cli_capture
+            run_cli_capture "$package_label" env DISPLAY=:typelisp-doc-test WAYLAND_DISPLAY= SESSIONNAME=Console TYPELISP_DOC_OPEN_PROGRAM="$package_doc_open_program" "$COMPILER" doc --manifest-path "$CLI_SURFACE_DOC_PKG/typelisp.pkg" --open --no-deps
+            assert_status "$package_label" "$status" 0
+            assert_empty "$package_label" "$WORKDIR/$package_label.err"
+            assert_contains "$package_label" "$WORKDIR/$package_label.out" "Opened $package_doc_index_display"
+            package_label="${label}-package-open-headless"
+            # cli-gate-case selfhost-cli-surface-doc-package-open-headless wrapper run_cli_capture
+            run_cli_capture "$package_label" env DISPLAY= WAYLAND_DISPLAY= SESSIONNAME=Services WT_SESSION= TYPELISP_DOC_OPEN_PROGRAM=typelisp-doc-opener-must-not-run "$COMPILER" doc --manifest-path "$CLI_SURFACE_DOC_PKG/typelisp.pkg" --open
+            assert_status "$package_label" "$status" 0
+            assert_empty "$package_label" "$WORKDIR/$package_label.err"
+            assert_contains "$package_label" "$WORKDIR/$package_label.out" "Open skipped; generated index: $package_doc_index_display"
+            package_label="${label}-package-open-unsupported"
+            # cli-gate-case selfhost-cli-surface-doc-package-open-unsupported wrapper run_cli_capture
+            run_cli_capture "$package_label" env DISPLAY=:typelisp-doc-test WAYLAND_DISPLAY= SESSIONNAME=Console TYPELISP_DOC_OPEN_PROGRAM=typelisp-doc-opener-missing-7156 "$COMPILER" doc --manifest-path "$CLI_SURFACE_DOC_PKG/typelisp.pkg" --open
+            assert_status "$package_label" "$status" 0
+            assert_empty "$package_label" "$WORKDIR/$package_label.err"
+            assert_contains "$package_label" "$WORKDIR/$package_label.out" "Open failed; generated index: $package_doc_index_display"
             package_label="${label}-package-test"
             # cli-gate-case selfhost-cli-surface-doc-package-test wrapper run_cli_capture
             run_cli_capture "$package_label" "$COMPILER" doc --test --manifest-path "$CLI_SURFACE_DOC_PKG/typelisp.pkg"
@@ -551,6 +618,17 @@ assert_active_cli_surface_command() {
             if [ "$HOST_OS" = linux ]; then
                 assert_contains "$package_label" "$WORKDIR/$package_label.out" "extra.tl"
             fi
+            package_label="${label}-package-default-nearest"
+            if [ "$HOST_OS" = windows ]; then
+                package_doc_nearest_index='..\target\doc\index.html'
+            else
+                package_doc_nearest_index='../target/doc/index.html'
+            fi
+            # cli-gate-case selfhost-cli-surface-doc-package-default-nearest wrapper run_cli_capture_in_dir
+            run_cli_capture_in_dir "$package_label" "$CLI_SURFACE_DOC_PKG/src" "$COMPILER" doc
+            assert_status "$package_label" "$status" 0
+            assert_empty "$package_label" "$WORKDIR/$package_label.err"
+            assert_contains "$package_label" "$WORKDIR/$package_label.out" "Wrote $package_doc_nearest_index"
             package_label="${label}-package-test-nearest"
             # cli-gate-case selfhost-cli-surface-doc-package-test-nearest wrapper run_cli_capture_in_dir
             run_cli_capture_in_dir "$package_label" "$CLI_SURFACE_DOC_PKG/src" "$COMPILER" doc --test
@@ -573,12 +651,30 @@ assert_active_cli_surface_command() {
             assert_contains "$package_label" "$WORKDIR/$package_label.out" "doc-main.tl"
             assert_contains "$package_label" "$WORKDIR/$package_label.out" "main.tl"
             assert_contains "$package_label" "$WORKDIR/$package_label.out" "Doc tests passed:"
-            package_label="${label}-package-missing-output"
-            # cli-gate-case selfhost-cli-surface-doc-package-missing-output wrapper run_cli_capture
-            run_cli_capture "$package_label" "$COMPILER" doc --manifest-path "$CLI_SURFACE_DOC_PKG/typelisp.pkg"
+            package_label="${label}-package-open-explicit-output"
+            # cli-gate-case selfhost-cli-surface-doc-package-open-explicit-output wrapper run_cli_capture
+            run_cli_capture "$package_label" "$COMPILER" doc --manifest-path "$CLI_SURFACE_DOC_PKG/typelisp.pkg" -o "$package_doc_out" --open
             assert_status "$package_label" "$status" 1
             assert_empty "$package_label" "$WORKDIR/$package_label.out"
-            assert_contains "$package_label" "$WORKDIR/$package_label.err" "package documentation requires -o"
+            assert_contains "$package_label" "$WORKDIR/$package_label.err" "--open requires local HTML site output"
+            package_label="${label}-package-unknown-flag"
+            # cli-gate-case selfhost-cli-surface-doc-package-unknown-flag wrapper run_cli_capture
+            run_cli_capture "$package_label" "$COMPILER" doc --manifest-path "$CLI_SURFACE_DOC_PKG/typelisp.pkg" --unknown-doc-flag
+            assert_status "$package_label" "$status" 1
+            assert_empty "$package_label" "$WORKDIR/$package_label.out"
+            assert_contains "$package_label" "$WORKDIR/$package_label.err" "unknown flag --unknown-doc-flag"
+            package_label="${label}-package-duplicate-open"
+            # cli-gate-case selfhost-cli-surface-doc-package-duplicate-open wrapper run_cli_capture
+            run_cli_capture "$package_label" "$COMPILER" doc --manifest-path "$CLI_SURFACE_DOC_PKG/typelisp.pkg" --open --open
+            assert_status "$package_label" "$status" 1
+            assert_empty "$package_label" "$WORKDIR/$package_label.out"
+            assert_contains "$package_label" "$WORKDIR/$package_label.err" "duplicate --open"
+            package_label="${label}-package-duplicate-no-deps"
+            # cli-gate-case selfhost-cli-surface-doc-package-duplicate-no-deps wrapper run_cli_capture
+            run_cli_capture "$package_label" "$COMPILER" doc --manifest-path "$CLI_SURFACE_DOC_PKG/typelisp.pkg" --no-deps --no-deps
+            assert_status "$package_label" "$status" 1
+            assert_empty "$package_label" "$WORKDIR/$package_label.out"
+            assert_contains "$package_label" "$WORKDIR/$package_label.err" "duplicate --no-deps"
             package_label="${label}-package-mixed-input"
             # cli-gate-case selfhost-cli-surface-doc-package-mixed-input wrapper run_cli_capture
             run_cli_capture "$package_label" "$COMPILER" doc --test --manifest-path "$CLI_SURFACE_DOC_PKG/typelisp.pkg" "$CLI_SURFACE_DOC_SRC"

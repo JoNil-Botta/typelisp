@@ -1,28 +1,28 @@
 # cli-gate-coverage-schema	1
 # cli-gate-coverage-counts	1
-# count	total	all	rows	510
-# count	total	all	annotations	510
+# count	total	all	rows	519
+# count	total	all	annotations	519
 # count	total	all	sources	3
-# count	total	all	source-sites	382
+# count	total	all	source-sites	391
 # count	total	all	expanded-cases	162
 # count	gate	public-tools	rows	325
 # count	gate	public-tools	source-sites	214
 # count	gate	public-tools	expanded-cases	127
-# count	gate	selfhost-cli	rows	80
-# count	gate	selfhost-cli	source-sites	79
+# count	gate	selfhost-cli	rows	89
+# count	gate	selfhost-cli	source-sites	88
 # count	gate	selfhost-cli	expanded-cases	17
 # count	gate	stage1-wrapper	rows	105
 # count	gate	stage1-wrapper	source-sites	89
 # count	gate	stage1-wrapper	expanded-cases	18
-# count	host	all	rows	384
+# count	host	all	rows	393
 # count	host	linux	rows	123
 # count	host	windows	rows	3
-# count	platform	linux	rows	507
-# count	platform	windows	rows	387
+# count	platform	linux	rows	516
+# count	platform	windows	rows	396
 # count	kind	delegated	rows	9
 # count	kind	direct	rows	54
-# count	kind	wrapper	rows	447
-# count	process	compiler	rows	337
+# count	kind	wrapper	rows	456
+# count	process	compiler	rows	344
 # count	process	compiler+assembler+archiver	rows	1
 # count	process	compiler+assembler+archiver+linker	rows	4
 # count	process	compiler+assembler+linker	rows	2
@@ -34,7 +34,7 @@
 # count	process	compiler+assembler+linker+two-test-programs	rows	2
 # count	process	compiler+git	rows	1
 # count	process	compiler+git+native-tools	rows	7
-# count	process	compiler+native-tools	rows	64
+# count	process	compiler+native-tools	rows	66
 # count	process	compiler+native-tools+program	rows	60
 # count	process	compiler+native-tools+programs	rows	5
 # count	process	compiler+native-tools+scratch-program	rows	1
@@ -513,10 +513,19 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	selfhost-cli-surface-test	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp test --check <cli-surface>/main.tl	source-with-zero-inline-tests	inherited	repository	compiler	inherited	0	contains:test-typecheck-passed	empty	none	selfhost-cli-surface-test	-
 1	selfhost-cli-surface-doc	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp doc <cli-surface>/doc-main.tl <cli-surface>/doc.md	documented-main-source	inherited	repository	compiler	inherited	0	not-asserted	empty	writes:nonempty-doc.md	selfhost-cli-surface-doc	-
 1	selfhost-cli-surface-doc-package-generate	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp doc --manifest-path <cli-surface>/doc-package/typelisp.pkg -o <cli-surface>/doc-package/package-doc.md	package-with-entry-and-extra-docs	inherited	repository	compiler	inherited	0	contains:Wrote	empty	writes:entry-docs;linux-writes-extra-docs	selfhost-cli-surface-doc-package-generate	-
+1	selfhost-cli-surface-doc-package-default-site	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp doc --manifest-path <cli-surface>/doc-package/typelisp.pkg	package-with-entry-and-extra-docs	inherited	repository	compiler	inherited	0	contains:Wrote-exact-index	empty	writes:index,css,client,search-index;identity-bound-search	selfhost-cli-surface-doc-package-default-site	-
+1	selfhost-cli-surface-doc-package-no-deps	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp doc --manifest-path <cli-surface>/doc-package/typelisp.pkg --no-deps	root-package-repeat	inherited	repository	compiler	inherited	0	contains:Wrote-exact-index	empty	four-assets-byte-identical;no-scratch	selfhost-cli-surface-doc-package-no-deps	-
+1	selfhost-cli-surface-doc-package-open	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp doc --manifest-path <cli-surface>/doc-package/typelisp.pkg --open --no-deps	generated-index-and-vector-opener	inherited	repository	compiler+native-tools	DISPLAY=test;SESSIONNAME=Console;TYPELISP_DOC_OPEN_PROGRAM=test-boundary	0	contains:Opened-exact-index	empty	writes:site;opens:index-as-one-argument	selfhost-cli-surface-doc-package-open	-
+1	selfhost-cli-surface-doc-package-open-headless	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp doc --manifest-path <cli-surface>/doc-package/typelisp.pkg --open	generated-index-without-graphical-session	inherited	repository	compiler	DISPLAY=empty;WAYLAND_DISPLAY=empty;SESSIONNAME=Services	0	contains:Open-skipped-and-exact-index	empty	writes:site;does-not-start-opener	selfhost-cli-surface-doc-package-open-headless	-
+1	selfhost-cli-surface-doc-package-open-unsupported	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp doc --manifest-path <cli-surface>/doc-package/typelisp.pkg --open	generated-index-with-missing-opener	inherited	repository	compiler+native-tools	DISPLAY=test;SESSIONNAME=Console;TYPELISP_DOC_OPEN_PROGRAM=missing	0	contains:Open-failed-and-exact-index	empty	writes:site;opener-failure-nonfatal	selfhost-cli-surface-doc-package-open-unsupported	-
 1	selfhost-cli-surface-doc-package-test	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp doc --test --manifest-path <cli-surface>/doc-package/typelisp.pkg	package-with-two-doctests	inherited	repository	compiler+native-tools+programs	inherited	0	contains:separator,main.tl;linux-contains-extra.tl	empty	temporary-doctest-execution	selfhost-cli-surface-doc-package-test	-
+1	selfhost-cli-surface-doc-package-default-nearest	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture_in_dir	typelisp doc	nearest-doc-package-discovery	inherited	<cli-surface>/doc-package/src	compiler	inherited	0	contains:Wrote-exact-index	empty	writes:site-under-package-target	selfhost-cli-surface-doc-package-default-nearest	-
 1	selfhost-cli-surface-doc-package-test-nearest	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture_in_dir	typelisp doc --test	nearest-doc-package-discovery	inherited	<cli-surface>/doc-package/src	compiler+native-tools+programs	inherited	0	contains:main.tl;linux-contains-extra.tl	empty	temporary-doctest-execution	selfhost-cli-surface-doc-package-test-nearest	-
 1	selfhost-cli-surface-doc-batch-test	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp doc --test --batch <cli-surface>/doc-batch.txt --stdlib-root <repo>/stdlib	two-path-doc-batch-list	inherited	repository	compiler+native-tools+programs	inherited	0	contains:doc-main.tl,main.tl,Doc-tests-passed	empty	temporary-doctest-execution	selfhost-cli-surface-doc-batch-test	-
-1	selfhost-cli-surface-doc-package-missing-output	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp doc --manifest-path <cli-surface>/doc-package/typelisp.pkg	package-doc-without-output	inherited	repository	compiler	inherited	1	empty	contains:package-documentation-requires-output	none	selfhost-cli-surface-doc-package-missing-output	-
+1	selfhost-cli-surface-doc-package-open-explicit-output	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp doc --manifest-path <cli-surface>/doc-package/typelisp.pkg -o <out.md> --open	explicit-markdown-and-open-conflict	inherited	repository	compiler	inherited	1	empty	contains:open-requires-local-HTML-site	none	selfhost-cli-surface-doc-package-open-explicit-output	-
+1	selfhost-cli-surface-doc-package-unknown-flag	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp doc --manifest-path <cli-surface>/doc-package/typelisp.pkg --unknown-doc-flag	unknown-doc-option	inherited	repository	compiler	inherited	1	empty	contains:unknown-flag	none	selfhost-cli-surface-doc-package-unknown-flag	-
+1	selfhost-cli-surface-doc-package-duplicate-open	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp doc --manifest-path <cli-surface>/doc-package/typelisp.pkg --open --open	duplicate-open-option	inherited	repository	compiler	inherited	1	empty	contains:duplicate-open	none	selfhost-cli-surface-doc-package-duplicate-open	-
+1	selfhost-cli-surface-doc-package-duplicate-no-deps	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp doc --manifest-path <cli-surface>/doc-package/typelisp.pkg --no-deps --no-deps	duplicate-no-deps-option	inherited	repository	compiler	inherited	1	empty	contains:duplicate-no-deps	none	selfhost-cli-surface-doc-package-duplicate-no-deps	-
 1	selfhost-cli-surface-doc-package-mixed-input	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp doc --test --manifest-path <cli-surface>/doc-package/typelisp.pkg <cli-surface>/doc-main.tl	manifest-and-input-conflict	inherited	repository	compiler	inherited	1	empty	contains:cannot-combine-input-paths-with-manifest	none	selfhost-cli-surface-doc-package-mixed-input	-
 1	selfhost-cli-surface-doc-batch-mixed-input	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp doc --test --batch <cli-surface>/doc-batch.txt <cli-surface>/doc-main.tl	batch-and-input-conflict	inherited	repository	compiler	inherited	1	empty	contains:cannot-combine-input-paths-with-batch	none	selfhost-cli-surface-doc-batch-mixed-input	-
 1	selfhost-cli-surface-doc-batch-empty	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	wrapper	all	stage2/run_cli_capture	typelisp doc --test --batch <cli-surface>/doc-empty-batch.txt	empty-doc-batch-list	inherited	repository	compiler	inherited	1	empty	contains:batch-list-is-empty	none	selfhost-cli-surface-doc-batch-empty	-

@@ -69205,6 +69205,23 @@
 (defenum OptUnrollResult
   (Result ir.CompilerIrBlockList i64 bool))
 
+;; The cascade's second group, or `No` when the class factor is already the
+;; smallest the ladder offers. Carries the two blocks it emits, their labels,
+;; and the loop-carried state on each of the two edges that reach the final
+;; remainder loop: the guard's skip edge (counter value, other-phi values) and
+;; the group's exit edge.
+(defenum OptUnrollCascade
+  (No)
+  (Some
+    ir.CompilerIrBlock
+    ir.CompilerIrBlock
+    i64
+    i64
+    ir.CompilerIrValue
+    ir.CompilerIrValueSeq
+    ir.CompilerIrValue
+    ir.CompilerIrValueSeq))
+
 (define (opt-unroll-phi-prefix-count
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]) : i64
@@ -70069,6 +70086,87 @@
 (define (opt-unroll-group-copies) : i64
   16)
 
+;; The CASCADE factor: a second, smaller group spliced between the class group
+;; above and the one-at-a-time remainder loop.
+;;
+;; Why a second level rather than a smaller first one. For this compiler the
+;; class factor is not only the 3 - 3/K loop-control trade the comment above
+;; describes: at K=16 the affine pass composes a group's chained
+;; `acc = acc*A + C` into ONE mul+add and folds the sixteen `i+1..i+15` into
+;; parallel offsets off the group counter, so lowering K multiplies the whole
+;; body, not just the latch. Measured on this tree, 21 rows, one rebuilt
+;; compiler per rung against the same base:
+;;   K=8:  cfg_domloops -2,826,720, but arith_loop +312,500,000 (+100.0%),
+;;         array_sum +225,037,500, spmd_reduce +223,201,224, opt_crc32
+;;         +10,080,224, string_scan +225,000,009, spmd_zip +1,496.
+;;   K=4:  cfg_domloops -3,161,508, but arith_loop +937,500,000 (+300.0%),
+;;         array_sum +675,112,500, spmd_reduce +680,403,756, opt_crc32
+;;         +32,400,720, string_scan +450,000,018, spmd_zip +4,548.
+;; string_scan and spmd_zip are zero-tolerance heavy-baseline rows, so both
+;; rungs are unshippable -- and the cfg win in each is COVERAGE of the sub-16
+;; tail, not the steady state: cfg_function's two hash loops average ~9 trips,
+;; so the x16 group never runs for about half their elements and those pay the
+;; remainder's 3 control instructions apiece.
+;;
+;; The second level buys that coverage without touching the first factor. Per
+;; loop ENTRY it costs one extra guard (5 instructions, and only on the path
+;; that skipped or fell out of the first group) against 3 - 3/4 = 2.25
+;; instructions recovered per element it covers, so it breaks even at ~3
+;; covered elements. Its guard admits only `counter < bound - 4`, so a loop
+;; leaving fewer than 5 trips pays the guard and nothing more. K=4 and not 8
+;; because the tail it divides is already shorter than the first factor.
+(define (opt-unroll-cascade-copies) : i64
+  4)
+
+;; The cascade only ever refines a group the class already chose, and only
+;; when that group is strictly coarser than the cascade factor: the
+;; load-and-store class (K=2) and the word-merge tier (K=4) keep exactly the
+;; shapes they were measured at.
+(define (opt-unroll-cascade-count [copies : i64]) : i64
+  (if (> copies (opt-unroll-cascade-copies))
+    (opt-unroll-cascade-copies)
+    0))
+
+;; ...and only for the LOAD-BEARING compute class. Two exclusions, both
+;; measured, both with a reason that is not the benchmark:
+;;
+;;  * A store-only FILL is excluded. Its sub-16 tail is already the target of
+;;    the `fill_call` rewrite below, whose comment records that the corpus's
+;;    fills average ~20 slots -- so the tail a second group would divide is a
+;;    handful of stores, while the guard is paid on every entry. Measured with
+;;    fills included: liveness_scan +494,690 on one two-array zeroing loop
+;;    (`while_body.5`), which is the whole of that row's regression.
+;;  * A body with NO Load at all -- a pure counter/accumulator recurrence -- is
+;;    excluded. The affine pass composes such a group into one mul+add, so the
+;;    first group already costs ~5 instructions per 16 iterations and the tail
+;;    is at most 15 iterations of a two-instruction body; there is nothing for
+;;    a second group to recover. Measured with them included: arith_loop +4.
+;;
+;; What remains is the streaming shape the cascade is for: hash/scan/reduction
+;; loops that read one element per trip, whose remainder genuinely costs 3
+;; control instructions per element and which are entered many times with
+;; short trip counts.
+(define (opt-unroll-cascade-body-ok?
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [index : i64]
+  [last : i64]) : bool
+  (and
+    (opt-unroll-body-ok? (compiler-opt-global-shared-view slots) index last)
+    (opt-unroll-body-has-load?
+      (compiler-opt-global-shared-view slots)
+      index
+      last)))
+
+(define (opt-unroll-body-has-load?
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [index : i64]
+  [last : i64]) : bool
+  (if (>= index last)
+    false
+    (match (compiler-opt-global-array-element-shared-view slots index)
+      [(ir.CompilerIrInstr.Load _ _ _) true]
+      [_ (opt-unroll-body-has-load? slots (+ index 1) last)])))
+
 ;; Why the load-and-store class gets K=2 rather than the K above. The refusal
 ;; recorded on opt-unroll-body-instr-ok? is not about unrolling stores as such;
 ;; it is about the SIXTEEN-copy clone of a body that keeps a container pointer
@@ -70655,6 +70753,7 @@
   [remap : (__tl_dyn-array ir.CompilerIrValue)]
   [cell : (__tl_dyn-array i64)]
   [copy : i64]
+  [suffix-base : i64]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (if (>= index last)
     unit
@@ -70667,13 +70766,17 @@
         remap
         cell
         copy
+        suffix-base
         builder)
       (let
+        ;; `suffix-base` keeps the cloned BoundsCheck ok-labels unique ACROSS
+        ;; unroll levels: the cascade's second group re-clones the same body,
+        ;; so its copies are numbered from the first group's factor onward.
         [cloned : ir.CompilerIrInstr
           (opt-unroll-clone-instr
             (compiler-opt-global-shared-view remap)
             (compiler-opt-global-shared-view cell)
-            copy
+            (+ suffix-base copy)
             (ir.compiler-ir-instr-seq-ref instrs index))]
         (begin
           (ir.compiler-ir-instr-builder-push! builder cloned)
@@ -70685,6 +70788,7 @@
             remap
             cell
             copy
+            suffix-base
             builder))))))
 
 (define (opt-unroll-push-copies!
@@ -70701,6 +70805,7 @@
   [cell : (__tl_dyn-array i64)]
   [iu : i64]
   [copies : i64]
+  [suffix-base : i64]
   [copy : i64]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (if (>= copy copies)
@@ -70743,6 +70848,7 @@
           (compiler-opt-global-shared-view remap)
           (compiler-opt-global-shared-view cell)
           copy
+          suffix-base
           builder)
         (opt-unroll-push-copies!
           instrs
@@ -70758,6 +70864,7 @@
           cell
           iu
           copies
+          suffix-base
           (+ copy 1)
           builder)))))
 
@@ -70774,7 +70881,8 @@
   [remap : (__tl_dyn-array ir.CompilerIrValue)]
   [cell : (__tl_dyn-array i64)]
   [iu : i64]
-  [copies : i64]) : ir.CompilerIrInstrSeq
+  [copies : i64]
+  [suffix-base : i64]) : ir.CompilerIrInstrSeq
   (let
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity (* copies (- last phi-count)))]
@@ -70793,14 +70901,22 @@
         cell
         iu
         copies
+        suffix-base
         0
         (&mut builder))
       (ir.compiler-ir-instr-builder-to-seq builder))))
 
+;; The loop-carried phis of a two-input merge over the loop's `others`: one
+;; input per incoming edge, `inits` on `guard-label` and `chains` on
+;; `unrolled-label`. Both the unrolled body's own phis and the cascade's
+;; second-level join are this shape, so `inits` is passed in rather than read
+;; off the OptUnrollPhi record: the first level merges the loop's original
+;; outside init, the second merges the first level's join vars.
 (define (opt-unroll-push-unrolled-phis!
   [others : OptUnrollPhiList]
   [ku-ids : (__tl_dyn-array i64)]
   [index : i64]
+  [inits : ir.CompilerIrValueSeq]
   [chains : ir.CompilerIrValueSeq]
   [guard-label : i64]
   [unrolled-label : i64]
@@ -70811,8 +70927,8 @@
       (match (opt-unroll-phi-list-ref
         (compiler-opt-global-shared-view others)
         0)
-        [(OptUnrollPhi.Phi _ init _ ty)
-          (if (>= index chains.len)
+        [(OptUnrollPhi.Phi _ _ _ ty)
+          (if (or (>= index chains.len) (>= index inits.len))
             unit
             (begin
               (ir.compiler-ir-instr-builder-push!
@@ -70820,7 +70936,9 @@
                 (ir.CompilerIrInstr.Phi
                   (array-ref ku-ids index)
                   (ir.compiler-ir-phi-input-seq-prepend
-                    init
+                    (ir.compiler-ir-value-seq-ref
+                      (compiler-opt-global-shared-view inits)
+                      index)
                     guard-label
                     (ir.compiler-ir-phi-input-seq-prepend
                       (ir.compiler-ir-value-seq-ref
@@ -70833,6 +70951,7 @@
                 (opt-unroll-phi-list-tail others)
                 ku-ids
                 (+ index 1)
+                (compiler-opt-global-shared-view inits)
                 (compiler-opt-global-shared-view chains)
                 guard-label
                 unrolled-label
@@ -70851,6 +70970,7 @@
   [inext : i64]
   [inext3 : ir.CompilerIrValue]
   [others : OptUnrollPhiList]
+  [guard-values : ir.CompilerIrValueSeq]
   [chains : ir.CompilerIrValueSeq]
   [chain-index : i64]
   [guard-label : i64]
@@ -70887,6 +71007,7 @@
               inext
               inext3
               others
+              guard-values
               chains
               chain-index
               guard-label
@@ -70897,8 +71018,10 @@
               (match (opt-unroll-phi-list-ref
                 (compiler-opt-global-shared-view others)
                 0)
-                [(OptUnrollPhi.Phi _ init back _)
-                  (if (>= chain-index chains.len)
+                [(OptUnrollPhi.Phi _ _ back _)
+                  (if (or
+                    (>= chain-index chains.len)
+                    (>= chain-index guard-values.len))
                     unit
                     (begin
                       (ir.compiler-ir-instr-builder-push!
@@ -70906,7 +71029,9 @@
                         (ir.CompilerIrInstr.Phi
                           dst
                           (ir.compiler-ir-phi-input-seq-prepend
-                            init
+                            (ir.compiler-ir-value-seq-ref
+                              (compiler-opt-global-shared-view guard-values)
+                              chain-index)
                             guard-label
                             (ir.compiler-ir-phi-input-seq-prepend
                               back
@@ -70928,6 +71053,7 @@
                         inext
                         inext3
                         (opt-unroll-phi-list-tail others)
+                        guard-values
                         chains
                         (+ chain-index 1)
                         guard-label
@@ -70949,6 +71075,7 @@
             inext
             (compiler-opt-global-shared-view inext3)
             others
+            guard-values
             chains
             chain-index
             guard-label
@@ -70963,6 +71090,7 @@
   [inext : i64]
   [inext3 : ir.CompilerIrValue]
   [others : OptUnrollPhiList]
+  [guard-values : ir.CompilerIrValueSeq]
   [chains : ir.CompilerIrValueSeq]
   [guard-label : i64]
   [unrolled-label : i64]) : ir.CompilerIrInstrSeq
@@ -70981,6 +71109,7 @@
         inext
         inext3
         others
+        guard-values
         chains
         0
         guard-label
@@ -71037,12 +71166,292 @@
 ;; Replace B with guard + unrolled + tail (in place, so a fallthrough pred
 ;; keeps reaching the loop via the guard) and retarget P's jump/branch edges
 ;; from B to the guard.
+;; Build the cascade's guard G2 and group U2.
+;;
+;; G2 is a MERGE as well as a guard: it is reached from G1 (whose skip arm now
+;; lands here carrying the loop's original seed and inits) and from U1 (whose
+;; exit arm lands here carrying the first group's end-of-group state), so it
+;; opens with exactly the two-input phis `opt-unroll-push-unrolled-phis!`
+;; builds for any such merge. Its guard is the first level's, re-derived at the
+;; smaller factor against the SAME `bound`: `ngroup2 = bound - 4`,
+;; `gok2 = (ngroup2 <= bound) and (j < ngroup2)`, which admits the four copies
+;; and still leaves at least one trip for B -- the `bound - K` rather than
+;; `bound - (K-1)` argument of the first level, unchanged, because B is a
+;; do-while.
+;;
+;; U2 clones the body four more times from a FRESH remap, so its copies are
+;; independent of U1's, and numbers them from the first factor onward so the
+;; cloned BoundsCheck ok-labels of the two groups cannot collide.
+(define (opt-unroll-build-cascade
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [skip : i64]
+  [iphi : i64]
+  [iphi-ty : ast.AstType]
+  [inext : i64]
+  [ity : ast.AstType]
+  [bound : ir.CompilerIrValue]
+  [others : OptUnrollPhiList]
+  [other-count : i64]
+  [inits : ir.CompilerIrValueSeq]
+  [label : i64]
+  [guard-label : i64]
+  [unrolled-label : i64]
+  [seed : ir.CompilerIrValue]
+  [inext3 : ir.CompilerIrValue]
+  [chains : ir.CompilerIrValueSeq]
+  [cell : (__tl_dyn-array i64)]
+  [frame : i64]
+  [suffix-base : i64]) : OptUnrollCascade
+  (let
+    ;; Sized by the ORIGINAL frame: the remap is only ever indexed by the
+    ;; body's own pre-clone var ids, exactly as the first level's is.
+    [remap2 : (__tl_dyn-array ir.CompilerIrValue)
+      (__tl_make-array ir.CompilerIrValue frame)]
+    [_fill2 : unit
+      (opt-unroll-remap-fill (compiler-opt-global-shared-view remap2) 0)]
+    [cguard-label : i64
+      (ir.compiler-ir-label
+        (str_cat.str-cat (ir.compiler-ir-label-text label) "__unroll_guard2"))]
+    [cunrolled-label : i64
+      (ir.compiler-ir-label
+        (str_cat.str-cat (ir.compiler-ir-label-text label) "__unroll_body2"))]
+    [j : i64 (opt-unroll-alloc-var (compiler-opt-global-shared-view cell))]
+    [kj-ids : (__tl_dyn-array i64)
+      (__tl_make-array
+        i64
+        (if (< other-count 1)
+          1
+          other-count))]
+    [_kj : unit
+      (opt-unroll-alloc-ku-ids
+        (compiler-opt-global-shared-view kj-ids)
+        0
+        other-count
+        (compiler-opt-global-shared-view cell))]
+    [kj-values : ir.CompilerIrValueSeq
+      (opt-unroll-ku-values
+        (compiler-opt-global-shared-view kj-ids)
+        0
+        other-count)]
+    [iu2 : i64 (opt-unroll-alloc-var (compiler-opt-global-shared-view cell))]
+    [ku2-ids : (__tl_dyn-array i64)
+      (__tl_make-array
+        i64
+        (if (< other-count 1)
+          1
+          other-count))]
+    [_ku2 : unit
+      (opt-unroll-alloc-ku-ids
+        (compiler-opt-global-shared-view ku2-ids)
+        0
+        other-count
+        (compiler-opt-global-shared-view cell))]
+    [copies2 : ir.CompilerIrInstrSeq
+      (opt-unroll-copies
+        (compiler-opt-global-shared-view instrs)
+        phi-count
+        last
+        skip
+        iphi
+        inext
+        (compiler-opt-global-shared-view others)
+        (compiler-opt-global-shared-view ku2-ids)
+        other-count
+        (compiler-opt-global-shared-view remap2)
+        (compiler-opt-global-shared-view cell)
+        iu2
+        (opt-unroll-cascade-copies)
+        suffix-base)]
+    [inext3-2 : ir.CompilerIrValue
+      (opt-unroll-subst-value
+        (compiler-opt-global-shared-view remap2)
+        (ir.CompilerIrValue.Var inext))]
+    [chains2 : ir.CompilerIrValueSeq
+      (opt-unroll-phi-chain-values
+        (compiler-opt-global-shared-view remap2)
+        (compiler-opt-global-shared-view others))]
+    [ngroup2 : i64
+      (opt-unroll-alloc-var (compiler-opt-global-shared-view cell))]
+    [gwrap2 : i64 (opt-unroll-alloc-var (compiler-opt-global-shared-view cell))]
+    [gfirst2 : i64
+      (opt-unroll-alloc-var (compiler-opt-global-shared-view cell))]
+    [gok2 : i64 (opt-unroll-alloc-var (compiler-opt-global-shared-view cell))]
+    [gu2 : i64 (opt-unroll-alloc-var (compiler-opt-global-shared-view cell))]
+    [cguard-builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (+ 6 other-count))]
+    [_build-cguard : unit
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          (&mut cguard-builder)
+          (ir.CompilerIrInstr.Phi
+            j
+            (ir.compiler-ir-phi-input-seq-prepend
+              (compiler-opt-global-shared-view seed)
+              guard-label
+              (ir.compiler-ir-phi-input-seq-prepend
+                (compiler-opt-global-shared-view inext3)
+                unrolled-label
+                (ir.compiler-ir-phi-input-seq-empty)))
+            (compiler-opt-global-shared-view iphi-ty)))
+        (opt-unroll-push-unrolled-phis!
+          (compiler-opt-global-shared-view others)
+          (compiler-opt-global-shared-view kj-ids)
+          0
+          (compiler-opt-global-shared-view inits)
+          (compiler-opt-global-shared-view chains)
+          guard-label
+          unrolled-label
+          (&mut cguard-builder))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut cguard-builder)
+          (ir.CompilerIrInstr.BinOp
+            ngroup2
+            (ir.CompilerIrBinOp.Sub)
+            (compiler-opt-global-shared-view bound)
+            (ir.CompilerIrValue.I64 (opt-unroll-cascade-copies))
+            (compiler-opt-global-shared-view ity)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut cguard-builder)
+          (ir.CompilerIrInstr.BinOp
+            gwrap2
+            (ir.CompilerIrBinOp.Le)
+            (ir.CompilerIrValue.Var ngroup2)
+            (compiler-opt-global-shared-view bound)
+            (compiler-opt-global-shared-view ity)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut cguard-builder)
+          (ir.CompilerIrInstr.BinOp
+            gfirst2
+            (ir.CompilerIrBinOp.Lt)
+            (ir.CompilerIrValue.Var j)
+            (ir.CompilerIrValue.Var ngroup2)
+            (compiler-opt-global-shared-view ity)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut cguard-builder)
+          (ir.CompilerIrInstr.BinOp
+            gok2
+            (ir.CompilerIrBinOp.And)
+            (ir.CompilerIrValue.Var gwrap2)
+            (ir.CompilerIrValue.Var gfirst2)
+            (ast.AstType.Bool)))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut cguard-builder)
+          (ir.CompilerIrInstr.Branch
+            (ir.CompilerIrValue.Var gok2)
+            cunrolled-label
+            label)))]
+    [cguard-block : ir.CompilerIrBlock
+      (ir.CompilerIrBlock.Block
+        cguard-label
+        (ir.compiler-ir-instr-builder-to-seq cguard-builder))]
+    [cunrolled-builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity
+        (+ 3 (+ other-count (ir.compiler-ir-instr-seq-count copies2))))]
+    [_build-cunrolled : unit
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          (&mut cunrolled-builder)
+          (ir.CompilerIrInstr.Phi
+            iu2
+            (ir.compiler-ir-phi-input-seq-prepend
+              (ir.CompilerIrValue.Var j)
+              cguard-label
+              (ir.compiler-ir-phi-input-seq-prepend
+                (compiler-opt-global-shared-view inext3-2)
+                cunrolled-label
+                (ir.compiler-ir-phi-input-seq-empty)))
+            iphi-ty))
+        (opt-unroll-push-unrolled-phis!
+          (compiler-opt-global-shared-view others)
+          (compiler-opt-global-shared-view ku2-ids)
+          0
+          (compiler-opt-global-shared-view kj-values)
+          (compiler-opt-global-shared-view chains2)
+          cguard-label
+          cunrolled-label
+          (&mut cunrolled-builder))
+        (ir.compiler-ir-instr-builder-append-seq-range!
+          (&mut cunrolled-builder)
+          (compiler-opt-global-shared-view copies2)
+          0
+          (ir.compiler-ir-instr-seq-count copies2))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut cunrolled-builder)
+          (ir.CompilerIrInstr.BinOp
+            gu2
+            (ir.CompilerIrBinOp.Lt)
+            (compiler-opt-global-shared-view inext3-2)
+            (ir.CompilerIrValue.Var ngroup2)
+            ity))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut cunrolled-builder)
+          (ir.CompilerIrInstr.Branch
+            (ir.CompilerIrValue.Var gu2)
+            cunrolled-label
+            label)))]
+    [cunrolled-block : ir.CompilerIrBlock
+      (ir.CompilerIrBlock.Block
+        cunrolled-label
+        (ir.compiler-ir-instr-builder-to-seq cunrolled-builder))]
+    (OptUnrollCascade.Some
+      cguard-block
+      cunrolled-block
+      cguard-label
+      cunrolled-label
+      (ir.CompilerIrValue.Var j)
+      kj-values
+      inext3-2
+      chains2)))
+
+;; Where the first level's two exits go: the cascade's guard when there is
+;; one, otherwise the caller's fallback (B for the branch targets, the first
+;; level's own labels when the remainder's phis are being built).
+(define (opt-unroll-cascade-entry [cascade : OptUnrollCascade] [fallback : i64]) : i64
+  (match (compiler-opt-global-shared-view cascade)
+    [(OptUnrollCascade.No) fallback]
+    [(OptUnrollCascade.Some _ _ cguard-label _ _ _ _ _) cguard-label]))
+
+(define (opt-unroll-cascade-exit [cascade : OptUnrollCascade] [fallback : i64]) : i64
+  (match (compiler-opt-global-shared-view cascade)
+    [(OptUnrollCascade.No) fallback]
+    [(OptUnrollCascade.Some _ _ _ cunrolled-label _ _ _ _) cunrolled-label]))
+
+;; The blocks that replace B, in emission order: the first level's guard and
+;; group, then -- when the ladder stepped down -- the cascade's guard and
+;; group, then B itself as the final remainder loop.
+(define (opt-unroll-new-blocks
+  [guard-block : ir.CompilerIrBlock]
+  [unrolled-block : ir.CompilerIrBlock]
+  [cascade : OptUnrollCascade]
+  [tail-block : ir.CompilerIrBlock]
+  [rest : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-block-cons
+    (compiler-opt-global-shared-view guard-block)
+    (ir.compiler-ir-block-cons
+      (compiler-opt-global-shared-view unrolled-block)
+      (match (compiler-opt-global-shared-view cascade)
+        [(OptUnrollCascade.No)
+          (ir.compiler-ir-block-cons
+            (compiler-opt-global-shared-view tail-block)
+            rest)]
+        [(OptUnrollCascade.Some cguard cunrolled _ _ _ _ _ _)
+          (ir.compiler-ir-block-cons
+            cguard
+            (ir.compiler-ir-block-cons
+              cunrolled
+              (ir.compiler-ir-block-cons
+                (compiler-opt-global-shared-view tail-block)
+                rest)))]))))
+
 (define (opt-unroll-rewrite-blocks
   [blocks : ir.CompilerIrBlockList]
   [pred-label : i64]
   [loop-label : i64]
   [guard-block : ir.CompilerIrBlock]
   [unrolled-block : ir.CompilerIrBlock]
+  [cascade : OptUnrollCascade]
   [tail-block : ir.CompilerIrBlock]
   [guard-label : i64]) : ir.CompilerIrBlockList
   (match blocks
@@ -71051,20 +71460,20 @@
       (match (compiler-opt-global-shared-view block)
         [(ir.CompilerIrBlock.Block label instrs)
           (if (= label loop-label)
-            (ir.compiler-ir-block-cons
+            (opt-unroll-new-blocks
               (compiler-opt-global-shared-view guard-block)
-              (ir.compiler-ir-block-cons
-                (compiler-opt-global-shared-view unrolled-block)
-                (ir.compiler-ir-block-cons
-                  (compiler-opt-global-shared-view tail-block)
-                  (opt-unroll-rewrite-blocks
-                    (compiler-opt-box-shared-view rest)
-                    pred-label
-                    loop-label
-                    guard-block
-                    unrolled-block
-                    tail-block
-                    guard-label))))
+              (compiler-opt-global-shared-view unrolled-block)
+              (compiler-opt-global-shared-view cascade)
+              (compiler-opt-global-shared-view tail-block)
+              (opt-unroll-rewrite-blocks
+                (compiler-opt-box-shared-view rest)
+                pred-label
+                loop-label
+                guard-block
+                unrolled-block
+                cascade
+                tail-block
+                guard-label))
             (ir.compiler-ir-block-cons
               (if (= label pred-label)
                 (ir.CompilerIrBlock.Block
@@ -71077,6 +71486,7 @@
                 loop-label
                 guard-block
                 unrolled-block
+                cascade
                 tail-block
                 guard-label)))])]
     [(ir.CompilerIrBlockList.Array seq)
@@ -71086,6 +71496,7 @@
         loop-label
         guard-block
         unrolled-block
+        cascade
         tail-block
         guard-label)]))
 
@@ -71140,7 +71551,11 @@
             (compiler-opt-global-shared-view cell))]
         ;; One answer sizes the clone and the guard: the shape scan admitted
         ;; this body only because the same call returned at least two.
-        [copy-count : i64 (opt-unroll-body-copies instrs.slots phi-count last)]
+        [copy-count : i64
+          (opt-unroll-body-copies
+            (compiler-opt-global-shared-view instrs.slots)
+            phi-count
+            last)]
         [copies : ir.CompilerIrInstrSeq
           (opt-unroll-copies
             (compiler-opt-global-shared-view instrs)
@@ -71155,7 +71570,8 @@
             (compiler-opt-global-shared-view remap)
             (compiler-opt-global-shared-view cell)
             iu
-            copy-count)]
+            copy-count
+            0)]
         ;; End-of-last-copy state: the counter and chain values the next group
         ;; iteration (and the remainder loop's phis) receive.
         [inext3 : ir.CompilerIrValue
@@ -71166,6 +71582,52 @@
           (opt-unroll-phi-chain-values
             (compiler-opt-global-shared-view remap)
             (compiler-opt-global-shared-view others))]
+        ;; The values the loop-carried phis hold on the edge that SKIPS the
+        ;; first group -- the loop's own inits. The first level reads them off
+        ;; the OptUnrollPhi records; passing them as a sequence lets the
+        ;; cascade's merge and the remainder's phis share one builder.
+        [inits : ir.CompilerIrValueSeq
+          (opt-unroll-const-init-values
+            (compiler-opt-global-shared-view others))]
+        [cascade-count : i64
+          (if (opt-unroll-cascade-body-ok?
+            (compiler-opt-global-shared-view instrs.slots)
+            phi-count
+            last)
+            (opt-unroll-cascade-count copy-count)
+            0)]
+        [cascade : OptUnrollCascade
+          (if (< cascade-count 1)
+            (OptUnrollCascade.No)
+            (opt-unroll-build-cascade
+              (compiler-opt-global-shared-view instrs)
+              phi-count
+              last
+              cond-index
+              iphi
+              (compiler-opt-global-shared-view iphi-ty)
+              inext
+              (compiler-opt-global-shared-view ity)
+              (compiler-opt-global-shared-view bound)
+              (compiler-opt-global-shared-view others)
+              other-count
+              (compiler-opt-global-shared-view inits)
+              label
+              guard-label
+              unrolled-label
+              (compiler-opt-global-shared-view seed)
+              (compiler-opt-global-shared-view inext3)
+              (compiler-opt-global-shared-view chains)
+              (compiler-opt-global-shared-view cell)
+              frame
+              copy-count))]
+        ;; Both of the first level's exits -- the guard's skip arm and the
+        ;; group's fall-out -- go to the cascade when there is one, and
+        ;; straight to B when there is not.
+        [next-label : i64
+          (opt-unroll-cascade-entry
+            (compiler-opt-global-shared-view cascade)
+            label)]
         [ngroup : i64
           (opt-unroll-alloc-var (compiler-opt-global-shared-view cell))]
         [gwrap : i64
@@ -71217,7 +71679,7 @@
               (ir.CompilerIrInstr.Branch
                 (ir.CompilerIrValue.Var gok)
                 unrolled-label
-                label)))]
+                next-label)))]
         [guard-block : ir.CompilerIrBlock
           (ir.CompilerIrBlock.Block
             guard-label
@@ -71243,6 +71705,7 @@
               (compiler-opt-global-shared-view others)
               (compiler-opt-global-shared-view ku-ids)
               0
+              (compiler-opt-global-shared-view inits)
               (compiler-opt-global-shared-view chains)
               guard-label
               unrolled-label
@@ -71265,11 +71728,31 @@
               (ir.CompilerIrInstr.Branch
                 (ir.CompilerIrValue.Var gu)
                 unrolled-label
-                label)))]
+                next-label)))]
         [unrolled-block : ir.CompilerIrBlock
           (ir.CompilerIrBlock.Block
             unrolled-label
             (ir.compiler-ir-instr-builder-to-seq unrolled-builder))]
+        ;; B's phis merge whichever level actually precedes it: the first
+        ;; level's guard/group without a cascade, the cascade's guard/group
+        ;; with one. Same three inputs either way -- skip edge, latch, group
+        ;; exit -- so one builder serves both.
+        [tail-seed : ir.CompilerIrValue
+          (match (compiler-opt-global-shared-view cascade)
+            [(OptUnrollCascade.No) (compiler-opt-global-shared-view seed)]
+            [(OptUnrollCascade.Some _ _ _ _ jvalue _ _ _) jvalue])]
+        [tail-guard-values : ir.CompilerIrValueSeq
+          (match (compiler-opt-global-shared-view cascade)
+            [(OptUnrollCascade.No) (compiler-opt-global-shared-view inits)]
+            [(OptUnrollCascade.Some _ _ _ _ _ jothers _ _) jothers])]
+        [tail-inext3 : ir.CompilerIrValue
+          (match (compiler-opt-global-shared-view cascade)
+            [(OptUnrollCascade.No) (compiler-opt-global-shared-view inext3)]
+            [(OptUnrollCascade.Some _ _ _ _ _ _ cnext _) cnext])]
+        [tail-chains : ir.CompilerIrValueSeq
+          (match (compiler-opt-global-shared-view cascade)
+            [(OptUnrollCascade.No) (compiler-opt-global-shared-view chains)]
+            [(OptUnrollCascade.Some _ _ _ _ _ _ _ cchains) cchains])]
         [tail-block : ir.CompilerIrBlock
           (ir.CompilerIrBlock.Block
             label
@@ -71277,13 +71760,18 @@
               (compiler-opt-global-shared-view instrs)
               label
               iphi
-              seed
+              tail-seed
               inext
-              inext3
+              tail-inext3
               others
-              chains
-              guard-label
-              unrolled-label))]
+              tail-guard-values
+              tail-chains
+              (opt-unroll-cascade-entry
+                (compiler-opt-global-shared-view cascade)
+                guard-label)
+              (opt-unroll-cascade-exit
+                (compiler-opt-global-shared-view cascade)
+                unrolled-label)))]
         (OptUnrollResult.Result
           (opt-unroll-rewrite-blocks
             blocks
@@ -71291,6 +71779,7 @@
             label
             guard-block
             unrolled-block
+            cascade
             tail-block
             guard-label)
           (array-ref cell 0)
@@ -75335,12 +75824,15 @@
                 [(OptUceExitBuild.Result exit-phis exit-env)
                   (OptUnrollResult.Result
                     (opt-unroll-const-guard-rewrite-exit
+                      ;; The consolidated-guard rewrite versions a loop; it
+                      ;; does not group iterations, so it never cascades.
                       (opt-unroll-rewrite-blocks
                         blocks
                         pred-label
                         label
                         guard-block
                         fast-block
+                        (OptUnrollCascade.No)
                         slow-block
                         guard-label)
                       exit-label

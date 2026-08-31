@@ -41210,6 +41210,90 @@
                 (compiler_ir_types.CompilerIrValue.Var 3)))))
         (compiler_ir_types.CompilerIrBlockList.Nil)))))
 
+;; A canonical counted loop whose store-free body READS one element per trip:
+;; `acc = acc + base[i]`. This is the streaming shape the unroll cascade is
+;; restricted to -- the hash/scan/reduction family -- and the only fixture here
+;; whose body satisfies both halves of `opt-unroll-cascade-body-ok?` (admitted
+;; by the store-free whitelist AND containing a Load).
+(define (opt-unroll-cascade-test-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "body"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "body")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Phi
+            2
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Phi
+            3
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 8)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Gep
+            7
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Load
+            4
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            8
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            5
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            6
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 6)
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-label "exit"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "exit")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 3)))))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-unroll-cascade-test-function) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "unroll_cascade_fixture")
+    (opt-unroll-vector-test-params)
+    (compiler_ast_types.AstType.I64)
+    9
+    (opt-unroll-cascade-test-blocks)))
+
 (define (opt-unroll-vector-test-params) : compiler_ir_types.CompilerIrParamSeq
   (compiler_ir_types.compiler-ir-param-seq-prepend
     (compiler_ir_types.CompilerIrParam.Param
@@ -89232,9 +89316,126 @@
         14]
       [else 42])))
 
+;; UN-1: the unroll CASCADE -- a second, smaller group between the class group
+;; and the one-at-a-time remainder, and the body gate that decides who gets one.
+(define (compiler-optimize-unroll-cascade-self-test) : i64
+  (let
+    [func : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-unroll-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-unroll-cascade-test-function))]
+    [out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view func))]
+    [round2 : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-unroll-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.compiler-opt-global-shared-view func))]
+    [round2-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view round2))]
+    ;; The nearest refused neighbour: same class factor (16), same counted
+    ;; shape, but the body only STORES -- no Load -- so the gate refuses it a
+    ;; cascade and it keeps the five-block single-group form.
+    [fill-func : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-unroll-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-unroll-load-store-test-function 2))]
+    [fill : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view fill-func))]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view func))))
+        1]
+      ;; entry, guard, group, cascade guard, cascade group, remainder, exit.
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count
+              (compiler_ir_types.compiler-ir-global-shared-view out))
+            7))
+        2]
+      [(match (compiler_optimize.opt-cfg-find-block
+          (compiler_ir_types.compiler-ir-global-shared-view out)
+          (compiler_ir_types.compiler-ir-label "body__unroll_guard2"))
+          [(compiler_optimize.OptMaybeBlock.No) true]
+          [(compiler_optimize.OptMaybeBlock.Some _) false])
+        3]
+      ;; Sixteen element reads in the first group, FOUR in the cascade, and the
+      ;; remainder loop still reads exactly one per trip.
+      [(not
+          (=
+            (opt-unroll-test-count-load-in-block
+              (compiler_ir_types.compiler-ir-global-shared-view out)
+              (compiler_ir_types.compiler-ir-label "body__unroll_body"))
+            16))
+        4]
+      [(not
+          (=
+            (opt-unroll-test-count-load-in-block
+              (compiler_ir_types.compiler-ir-global-shared-view out)
+              (compiler_ir_types.compiler-ir-label "body__unroll_body2"))
+            4))
+        5]
+      [(not
+          (=
+            (opt-unroll-test-count-load-in-block
+              (compiler_ir_types.compiler-ir-global-shared-view out)
+              (compiler_ir_types.compiler-ir-label "body"))
+            1))
+        6]
+      ;; Idempotent: the generated labels and the body-size cap reject every
+      ;; block the first invocation produced, cascade included.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view round2))))
+        7]
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count
+              (compiler_ir_types.compiler-ir-global-shared-view round2-out))
+            7))
+        8]
+      ;; The factor table itself.
+      [(not (= (compiler_optimize.opt-unroll-cascade-copies) 4)) 9]
+      ;; A class factor at or below the cascade factor never cascades, so the
+      ;; load-and-store class (2) and the word-merge tier (4) are untouched.
+      [(not (= (compiler_optimize.opt-unroll-cascade-count 2) 0)) 10]
+      [(not (= (compiler_optimize.opt-unroll-cascade-count 4) 0)) 11]
+      [(not (= (compiler_optimize.opt-unroll-cascade-count 16) 4)) 12]
+      ;; The store-only neighbour keeps its single group.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view fill-func))))
+        13]
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count
+              (compiler_ir_types.compiler-ir-global-shared-view fill))
+            5))
+        14]
+      [(match (compiler_optimize.opt-cfg-find-block
+          (compiler_ir_types.compiler-ir-global-shared-view fill)
+          (compiler_ir_types.compiler-ir-label "body__unroll_body2"))
+          [(compiler_optimize.OptMaybeBlock.No) false]
+          [(compiler_optimize.OptMaybeBlock.Some _) true])
+        15]
+      [else 42])))
+
 (test
   guard-dedup-below-fixpoint
   (test.assert-i64-eq
     (compiler-optimize-guard-dedup-self-test)
     42
     "IT-2 moves a guarded arm's descriptor pair onto the bypass edge and retires the join's re-derivation, refuses that CSE across a store, an unsummarized call and a call whose row writes a global cell, admits it across a callee proven to write nothing, and retires a conjunct chain only when EVERY conjunct is decided by a dominating branch's taken edge"))
+
+(test
+  unroll-cascade-second-group
+  (test.assert-i64-eq
+    (compiler-optimize-unroll-cascade-self-test)
+    42
+    "a store-free counted body that reads one element per trip gets a second, four-copy group between its sixteen-copy group and the one-at-a-time remainder, the rewrite stays idempotent, and the nearest store-only neighbour is refused a cascade so the load-and-store and word-merge tiers keep the factors they were measured at"))

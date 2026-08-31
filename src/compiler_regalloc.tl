@@ -6351,11 +6351,12 @@
 
 ;; M-A (RC1): a non-group register-eligible param that did NOT get
 ;; an ABI pin stays OUT of the ineligible/blocked sets and becomes an ordinary
-;; greedy candidate. Its greedy home is restricted to the CALLEE-SAVED pool
-;; (compiler-reg-greedy-alloc-one! `is-param`): the backend's entry copy writes
-;; the home register in the prologue (after the callee-saved saves), and a
-;; callee-saved home can neither clobber another param's incoming arg register
-;; nor be clobbered by a call. Handle types (Array/String/enum/struct -- 8-byte
+;; greedy candidate. R3S-1 restated: its greedy home is no longer restricted to
+;; the CALLEE-SAVED pool. The backend's entry copy still writes the home in the
+;; prologue, but the property that matters is only that the home is not the
+;; incoming argument register of a LATER param -- `compiler-reg-param-entry-forbidden`
+;; states exactly that per class, and `spans-call` keeps a call-crossing param
+;; callee-saved-only as before. Handle types (Array/String/enum/struct -- 8-byte
 ;; descriptors) qualify exactly like scalars. Floats use the same rule over the
 ;; ABI XMM bank: SysV has no nonvolatile suffix, while Win64 may keep an unpinned
 ;; parameter in XMM6-XMM15. Two-word register groups keep the legacy stack home.
@@ -6367,6 +6368,170 @@
     (compiler-reg-register-eligible-type? (compiler-reg-global-shared-view ty))
     (not
       (compiler-reg-type-register-group? type-segment-bases representations ty))))
+
+;; ---------------------------------------------------------------------------
+;; R3S-1: the parameter entry copies as one scheduled parallel move.
+;;
+;; The backend copies every register-passed parameter out of its incoming ABI
+;; register into its plan home before instruction 0
+;; (compiler-backend-emit-param-spills-from). Those copies are emitted in
+;; strictly increasing parameter POSITION: each arm of that walk concatenates
+;; the current parameter's copy ahead of the tail (`head ++ tail`), and the two
+;; arms that concatenate the other way round -- the by-memory aggregate address
+;; and the stack-passed group words -- read the incoming STACK area, never a
+;; register, so they contribute no source another copy could destroy.
+;;
+;; That fixed schedule IS a parallel move: sequentialising a move graph in a
+;; given order is correct exactly when, for every pair i < j, the destination of
+;; copy i is not a source of copy j. Here the sources are the incoming argument
+;; registers, so the schedule is correct exactly when no parameter's home is the
+;; incoming argument register of a LATER parameter.
+;;
+;; That single condition is the whole content of the old `is-param -> csr-only`
+;; rule: the callee-saved set was copy-safe only because it is disjoint from the
+;; incoming argument registers, and paying for it whole-class cost every leaf
+;; helper with more parameters than free callee-saved registers a spill of
+;; parameters that span no call at all. Constraining the HOME instead of the
+;; register class lets a parameter that spans no clobber point take a
+;; caller-saved register like any other value; a parameter that does span a call
+;; is still callee-saved-only through `spans-call`.
+;;
+;; `compiler-reg-param-entry-forbidden` builds that constraint per coalesce
+;; ROOT (the unit the greedy allocates): the incoming argument registers of the
+;; parameters that follow it. An EMPTY array is the legacy request -- alloc-one!
+;; then keeps every parameter class callee-saved-only, byte-for-byte as before.
+;;
+;; Fail-closed shape gate. When every parameter is a non-group, non-float,
+;; register-eligible value the integer ABI index of position p is exactly p on
+;; both ABIs: no parameter consumes two argument slots, none diverts to the
+;; float bank, and none is passed by memory. Any other shape makes the
+;; position -> ABI index map depend on bookkeeping this walk does not carry
+;; (compiler-reg-param-assign-walk's own note: a register-group parameter
+;; occupies two slots and disables every pin past it), so the whole function
+;; falls back to the callee-saved-only rule rather than guess.
+(define (compiler-reg-param-entry-simple-shape?
+  [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
+  [params : ir.CompilerIrParamSeq]
+  [position : i64]) : bool
+  (if (>= position params.len)
+    true
+    (match (ir.compiler-ir-param-seq-ref
+      (compiler-reg-global-shared-view params)
+      position)
+      [(ir.CompilerIrParam.Param _ ty _)
+        (and
+          (compiler-reg-integer-param-type?
+            type-segment-bases
+            (compiler-reg-global-shared-view representations)
+            (compiler-reg-global-shared-view ty))
+          (compiler-reg-param-entry-simple-shape?
+            type-segment-bases
+            representations
+            params
+            (+ position 1)))])))
+
+;; The incoming argument registers of the parameters AFTER `position` -- the
+;; sources of every entry copy the backend emits later than this one. Positions
+;; past the ABI's argument-register count are stack-passed and answer invalid,
+;; contributing nothing: their entry copy reads the incoming stack area.
+(define (compiler-reg-param-entry-later-arg-regs
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [count : i64]
+  [position : i64]
+  [index : i64]
+  [out : CompilerRegIdSeq]) : CompilerRegIdSeq
+  (if (>= index count)
+    out
+    (compiler-reg-param-entry-later-arg-regs
+      target-abi
+      count
+      position
+      (+ index 1)
+      (if (> index position)
+        (let
+          [reg : i64 (cabi.compiler-abi-gp-arg-register-id target-abi index)]
+          (if (= reg cabi.compiler-reg-id-invalid)
+            out
+            (compiler-reg-id-seq-push out reg)))
+        out))))
+
+(define (compiler-reg-param-entry-forbidden-fill!
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [params : ir.CompilerIrParamSeq]
+  [parents : (__tl_dyn-array i64)]
+  [out : (__tl_dyn-array CompilerRegIdSeq)]
+  [position : i64]) : unit
+  (if (>= position params.len)
+    unit
+    (begin
+      (match (ir.compiler-ir-param-seq-ref
+        (compiler-reg-global-shared-view params)
+        position)
+        [(ir.CompilerIrParam.Param _ _ var)
+          (let
+            [root : i64
+              (if (and (>= var 0) (< var (array-length parents)))
+                (array-ref parents var)
+                var)]
+            (if (and (>= root 0) (< root (array-length out)))
+              (set!
+                (array-ref out root)
+                (compiler-reg-id-seq-append
+                  (compiler-reg-global-array-element-shared-view out root)
+                  (compiler-reg-param-entry-later-arg-regs
+                    target-abi
+                    params.len
+                    position
+                    0
+                    (compiler-reg-id-seq-empty))))
+              unit))])
+      (compiler-reg-param-entry-forbidden-fill!
+        target-abi
+        params
+        parents
+        out
+        (+ position 1)))))
+
+;; Per-coalesce-root entry-copy constraint, or an empty array when the function
+;; must keep the legacy callee-saved-only parameter rule. A class containing a
+;; parameter carries that parameter's constraint; two parameters never share a
+;; class (the M-A entry reservation makes every used parameter live at point 0,
+;; so they all interfere), and a class that merges a parameter with ordinary
+;; values inherits the constraint because the class has one home.
+(define (compiler-reg-param-entry-forbidden
+  [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [params : ir.CompilerIrParamSeq]
+  [parents : (__tl_dyn-array i64)]
+  [vars : i64]) : (__tl_dyn-array CompilerRegIdSeq)
+  (if (or
+    (< params.len 1)
+    (< vars 1)
+    (not
+      (compiler-reg-param-entry-simple-shape?
+        type-segment-bases
+        (compiler-reg-global-shared-view representations)
+        (compiler-reg-global-shared-view params)
+        0)))
+    (__tl_make-array CompilerRegIdSeq 0)
+    (let
+      [out : (__tl_dyn-array CompilerRegIdSeq)
+        (__tl_make-array CompilerRegIdSeq vars)]
+      [index : i64 0]
+      (begin
+        (while (< index vars)
+          (begin
+            (set! (array-ref out index) (compiler-reg-id-seq-empty))
+            (set! index (+ index 1))))
+        (compiler-reg-param-entry-forbidden-fill!
+          target-abi
+          params
+          parents
+          (compiler-reg-global-shared-view out)
+          0)
+        out))))
 
 (define (compiler-reg-param-int-reg
   [target-abi : cabi.CompilerRegTargetAbi]
@@ -9715,7 +9880,10 @@
 ;; exactly the OUTER endpoint's hull, so the class carries precisely the clobber
 ;; spans that endpoint already carried, and the greedy's csr-only restriction,
 ;; call-region parking and regmask model answer for the class exactly what they
-;; answered for the outer member on its own.
+;; answered for the outer member on its own. (R3S-1: csr-only is now exactly
+;; that clobber-span rule, so the argument is unchanged; a merged class
+;; containing a param additionally inherits the param's entry-copy schedule set,
+;; which is a property of the PARAM's ABI position, not of either hull.)
 ;;
 ;; It is also the shape in which a merge cannot cost pressure. Register pressure
 ;; at a point is the number of values live there needing a home; with nesting,
@@ -11334,10 +11502,14 @@
         ;; -- a parameter used only by arm 3 has an interval hull covering every
         ;; sibling arm, so it "spans" their tail calls in linear point space
         ;; even though no CFG path carries it across one. Under kind 0 the ABI
-        ;; pin is revoked and the greedy's csr-only rule homes it in
-        ;; %r12-%r15/%rbx/%rbp, and the prologue then pays 2n callee-saved
+        ;; pin is revoked and the greedy's csr-only rule homed it in
+        ;; %r12-%r15/%rbx/%rbp, and the prologue then paid 2n callee-saved
         ;; push/mov pairs on every invocation of a function that contains no
-        ;; real call at all.
+        ;; real call at all. R3S-1 restated: a revoked pin no longer implies a
+        ;; callee-saved home -- the class competes for the whole pool minus the
+        ;; entry-copy schedule set -- but kind 6 still matters here, because
+        ;; under kind 0 the class would read `spans-call` and be forced
+        ;; callee-saved-only for a crossing no path takes.
         ;;
         ;; Kind 6 is used by the ABI-pin gate and the scalar greedy only. The
         ;; conservative kind-0 set stays in force for the consumers that model
@@ -21650,9 +21822,11 @@
 ;;     almost never runs. This is what the inliner's merged kernels are made of:
 ;;     a hot straight path with no call plus a cold grow/rehash/OOM arm that
 ;;     calls, in which every value the hot path uses is live across the arm.
-;;     For a PARAMETER it costs more than the pair, because the greedy's
-;;     `is-param -> csr-only` rule means a param that cannot keep its incoming
-;;     ABI register has to be copied out of it in the prologue as well.
+;;     For a PARAMETER it costs more than the pair, because a param that cannot
+;;     keep its incoming ABI register has to be copied out of it in the prologue
+;;     as well. (R3S-1 restated: the copy is still paid, but its destination is
+;;     no longer forced callee-saved, so the push/pop half of the price is now
+;;     charged only to params that genuinely span a call.)
 ;;
 ;; Both classes get the same rewrite and the same replan; they differ only in
 ;; what qualifies (`compiler-reg-call-hole-qualifies?`), in what counts as an
@@ -22506,10 +22680,11 @@
 ;; explicit Spill -- a missing assignment is the representation of a value the
 ;; planner never admitted at all), it is a GP register-eligible scalar, and it
 ;; is not one of the values the planner holds ineligible (address-taken, stack
-;; call argument, non-scalar). Params qualify: `compiler-reg-greedy-alloc-one!`'s
-;; `is-param -> csr-only` rule stays in force, so a split param only gains when
-;; a callee-saved register is free -- which is exactly the case where splitting
-;; it is what frees one.
+;; call argument, non-scalar). Params qualify. R3S-1 restated: the old
+;; `is-param -> csr-only` rule no longer stands, so a split param gains whenever
+;; ANY pool register is free for the pieces -- carrying its crossings away drops
+;; `spans-call`, and the pieces then reach the caller-saved prefix too, not only
+;; a free callee-saved register.
 ;;
 ;; P3c's loop-boundary parking round shares this predicate and wants exactly
 ;; this class, so the second (csr) class below is a separate predicate rather
@@ -22610,10 +22785,11 @@
 ;; instructions in the PROLOGUE and EPILOGUE of every call of the function --
 ;; on the hot path, whether or not the arm that forced the callee-saved home
 ;; ever runs. A value whose only call crossings are on a cold side arm should
-;; instead live in a caller-saved register (an unpinned param cannot: the
-;; greedy's `is-param -> csr-only` rule means its only caller-saved home is its
-;; incoming ABI register, which the pin walk hands back once its crossings are
-;; carried away) and pay carriers around the cold calls.
+;; instead live in a caller-saved register and pay carriers around the cold
+;; calls. R3S-1 restated: an unpinned param can now do this directly -- once the
+;; rewrite carries its crossings away, `spans-call` is false and the class
+;; reaches the whole caller-saved prefix, not just the incoming ABI register the
+;; pin walk hands back.
 ;;
 ;; The type and ineligibility conditions are the memory class's, unchanged: the
 ;; rewrite is the same rewrite and the replan is the same replan.
@@ -24380,9 +24556,12 @@
 ;; How many parameters the plan does NOT leave in their incoming ABI register.
 ;; Each one costs exactly one instruction in the PROLOGUE -- `mov home, arg` for
 ;; a register home, `mov slot(%rsp), arg` for a memory one -- and it is the
-;; other half of what an unpinned parameter costs, next to the push and pop of
-;; the callee-saved home the greedy's `is-param -> csr-only` rule then forces on
-;; it. Without this term the model cannot see the difference between a param the
+;; other half of what an unpinned parameter costs. R3S-1 restated: the push/pop
+;; that used to accompany it is no longer automatic (the home is forced
+;; callee-saved only when the param spans a call), so this term is now the WHOLE
+;; price for a non-spanning param and the CSR term below charges the rest only
+;; when a callee-saved home was actually taken.
+;; Without this term the model cannot see the difference between a param the
 ;; replan pinned and one it merely moved to a different register, which is
 ;; exactly the difference the csr class buys.
 ;;
@@ -33429,6 +33608,7 @@
   [arg-prefs : (__tl_dyn-array i64)]
   [group-vars : live.CompilerLiveI64Set]
   [param-roots : live.CompilerLiveI64Set]
+  [param-entry-forbidden : (__tl_dyn-array CompilerRegIdSeq)]
   [regs : CompilerRegIdSeq]
   [reg-arr : (__tl_dyn-array i64)]
   [rcount : i64]
@@ -33456,29 +33636,67 @@
       ;; the caller-saved regs that op does NOT clobber: it searches the whole pool
       ;; (start-idx 0) with `forbidden` excluding just {rax,rdx} (div) and/or
       ;; {rcx} (shift).
-      [spans-call : bool
-        (compiler-reg-greedy-var-spans-clobber?
-          (compiler-reg-global-shared-view interval-index)
-          call-points
-          var)]
-      [spans-div : bool
-        (compiler-reg-greedy-var-spans-clobber?
-          (compiler-reg-global-shared-view interval-index)
-          div-points
-          var)]
-      [spans-shift : bool
-        (compiler-reg-greedy-var-spans-clobber?
-          (compiler-reg-global-shared-view interval-index)
-          shift-points
-          var)]
-      ;; M-A (RC1) v1: a param (or a coalesce class containing one) is restricted
-      ;; to CALLEE-SAVED homes regardless of call-spanning. The entry copy writes
-      ;; the home in the prologue; a caller-saved home could be clobbered by a
-      ;; later param's entry-copy scratch or an early scavenge, and the incoming
-      ;; SysV arg registers are all caller-saved, so CSR homes are the copy-safe
-      ;; set (the prologue saves CSRs BEFORE the param copies run).
+      ;; M-A (RC1): a param (or a coalesce class containing one) is DEFINED by
+      ;; the prologue, before point 0, and its interval is entry-extended to
+      ;; start there. A clobber point AT the interval start is therefore already
+      ;; inside its live range, which the ordinary strict-interior test would
+      ;; miss (GAP3c, compiler-reg-param-pin-clobber-free?): a function that
+      ;; opens with a call at point 0 and reads the param afterwards would keep a
+      ;; caller-saved home across it. The pin gate's inclusive-start test answers
+      ;; the same question for the same reason, so param classes use it for all
+      ;; three clobber kinds.
       [is-param : bool (live.compiler-live-set-contains? param-roots var)]
-      [csr-only : bool (or spans-call is-param)]
+      [spans-call : bool
+        (if is-param
+          (compiler-reg-param-pin-spans-clobber?
+            (compiler-reg-global-shared-view interval-index)
+            call-points
+            var)
+          (compiler-reg-greedy-var-spans-clobber?
+            (compiler-reg-global-shared-view interval-index)
+            call-points
+            var))]
+      [spans-div : bool
+        (if is-param
+          (compiler-reg-param-pin-spans-clobber?
+            (compiler-reg-global-shared-view interval-index)
+            div-points
+            var)
+          (compiler-reg-greedy-var-spans-clobber?
+            (compiler-reg-global-shared-view interval-index)
+            div-points
+            var))]
+      [spans-shift : bool
+        (if is-param
+          (compiler-reg-param-pin-spans-clobber?
+            (compiler-reg-global-shared-view interval-index)
+            shift-points
+            var)
+          (compiler-reg-greedy-var-spans-clobber?
+            (compiler-reg-global-shared-view interval-index)
+            shift-points
+            var))]
+      ;; R3S-1. The old rule was `csr-only = (or spans-call is-param)`: a param
+      ;; class took a CALLEE-SAVED home whatever its interval did, because the
+      ;; entry copy writes the home in the prologue and a caller-saved home could
+      ;; be the incoming argument register of a LATER param, whose entry copy had
+      ;; not run yet. The callee-saved set is copy-safe only because it is
+      ;; disjoint from the incoming argument registers.
+      ;;
+      ;; `param-entry-forbidden` states that condition directly, per class: the
+      ;; incoming argument registers of the params that follow this one (see
+      ;; compiler-reg-param-entry-forbidden -- the backend emits the entry copies
+      ;; in parameter order, so excluding exactly those makes the emitted
+      ;; sequence a correct sequentialisation of the entry parallel move). With
+      ;; the constraint in force a param that spans no clobber point competes for
+      ;; a caller-saved register like any other value; one that DOES span a call
+      ;; is still callee-saved-only through `spans-call`.
+      ;;
+      ;; An EMPTY array is the legacy request (a function whose parameter shape
+      ;; the constraint builder refuses): the class stays callee-saved-only.
+      [param-entry-scheduled? : bool (> (array-length param-entry-forbidden) 0)]
+      [csr-only : bool
+        (or spans-call (and is-param (not param-entry-scheduled?)))]
       [start-idx : i64
         (if csr-only
           caller-saved-count
@@ -33491,6 +33709,17 @@
         (if (and (>= var 0) (< var (array-length scratch-excluded)))
           (array-ref scratch-excluded var)
           (compiler-reg-id-seq-empty))]
+      ;; The entry-copy schedule constraint. Empty for every non-param class and
+      ;; for every class in a legacy-mode function, so the appended sequence is
+      ;; identical to the old one there.
+      [param-forbidden : CompilerRegIdSeq
+        (if (and
+          is-param
+          param-entry-scheduled?
+          (>= var 0)
+          (< var (array-length param-entry-forbidden)))
+          (array-ref param-entry-forbidden var)
+          (compiler-reg-id-seq-empty))]
       [forbidden : CompilerRegIdSeq
         (let
           [base : CompilerRegIdSeq
@@ -33498,12 +33727,14 @@
               (compiler-reg-id-seq-empty)
               (compiler-reg-greedy-forbidden-regs spans-div spans-shift))]
           (compiler-reg-id-seq-append
-            scratch-forbidden
-            (if (and (>= unspillable-from 0) (>= var unspillable-from))
-              (compiler-reg-id-seq-append
-                (compiler-reg-scratch-div-fixed-registers)
-                base)
-              base)))]
+            param-forbidden
+            (compiler-reg-id-seq-append
+              scratch-forbidden
+              (if (and (>= unspillable-from 0) (>= var unspillable-from))
+                (compiler-reg-id-seq-append
+                  (compiler-reg-scratch-div-fixed-registers)
+                  base)
+                base))))]
       ;; Highest-priority bias: if this var is an outgoing call argument, try its
       ;; ABI arg register first (free-only, never evicting). Falls through to the
       ;; copy-hint / first-free / evict pick when the arg register is unavailable.
@@ -34070,6 +34301,7 @@
   [arg-prefs : (__tl_dyn-array i64)]
   [group-vars : live.CompilerLiveI64Set]
   [param-roots : live.CompilerLiveI64Set]
+  [param-entry-forbidden : (__tl_dyn-array CompilerRegIdSeq)]
   [regs : CompilerRegIdSeq]
   [reg-arr : (__tl_dyn-array i64)]
   [rcount : i64]
@@ -34105,6 +34337,7 @@
               (compiler-reg-global-shared-view arg-prefs)
               (compiler-reg-global-shared-view group-vars)
               (compiler-reg-global-shared-view param-roots)
+              (compiler-reg-global-shared-view param-entry-forbidden)
               (compiler-reg-global-shared-view regs)
               (compiler-reg-global-shared-view reg-arr)
               rcount
@@ -34134,6 +34367,7 @@
           arg-prefs
           (compiler-reg-global-shared-view group-vars)
           param-roots
+          param-entry-forbidden
           regs
           reg-arr
           rcount
@@ -34168,6 +34402,7 @@
   [arg-prefs : (__tl_dyn-array i64)]
   [group-vars : live.CompilerLiveI64Set]
   [param-roots : live.CompilerLiveI64Set]
+  [param-entry-forbidden : (__tl_dyn-array CompilerRegIdSeq)]
   [regs : CompilerRegIdSeq]
   [reg-arr : (__tl_dyn-array i64)]
   [rcount : i64]
@@ -34245,6 +34480,7 @@
         (compiler-reg-global-shared-view arg-prefs)
         (compiler-reg-global-shared-view group-vars)
         (compiler-reg-global-shared-view param-roots)
+        (compiler-reg-global-shared-view param-entry-forbidden)
         (compiler-reg-global-shared-view regs)
         (compiler-reg-global-shared-view reg-arr)
         rcount
@@ -34280,6 +34516,7 @@
             arg-prefs
             group-vars
             param-roots
+            param-entry-forbidden
             regs
             reg-arr
             rcount
@@ -34672,9 +34909,11 @@
 ;; every var defined by a call-like instruction with a GP-scalar result. Same
 ;; substrate and consumption as the outgoing-arg preference: first-wins per
 ;; coalesce root, tried free-only in alloc-one! (never evicts), declined for
-;; csr-only roots (call-spanning or param classes -- %rax is illegal across a
-;; kind-0 clobber anyway), and filtered against the per-root forbidden set (a
-;; div-spanning root already excludes %rax). Float results return in %xmm0 --
+;; csr-only roots (%rax is illegal across a kind-0 clobber anyway), and filtered
+;; against the per-root forbidden set (a div-spanning root already excludes
+;; %rax). R3S-1 restated: csr-only is now exactly the clobber-span rule, so a
+;; PARAM class may reach this bias -- it is still free-only, and the param's
+;; entry-copy schedule set is part of the same per-root forbidden sequence. Float results return in %xmm0 --
 ;; skipped. Group results use the return register PAIR -- their dst is a group
 ;; var alloc-one! skips before reading prefs, so a stray pref would be inert;
 ;; the C-ABI StoreResult forms write memory slots and are omitted entirely.
@@ -35489,6 +35728,7 @@
   [interval-index : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [param-roots : live.CompilerLiveI64Set]
+  [param-entry-forbidden : (__tl_dyn-array CompilerRegIdSeq)]
   [ref-counts : (__tl_dyn-array i64)]
   [copy-hints : (__tl_dyn-array i64)]
   [arg-prefs : (__tl_dyn-array i64)]
@@ -35549,6 +35789,7 @@
             arg-prefs
             group-vars
             param-roots
+            param-entry-forbidden
             regs
             reg-arr
             rcount
@@ -35572,6 +35813,7 @@
   [interval-index : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [param-roots : live.CompilerLiveI64Set]
+  [param-entry-forbidden : (__tl_dyn-array CompilerRegIdSeq)]
   [ref-counts : (__tl_dyn-array i64)]
   [copy-hints : (__tl_dyn-array i64)]
   [arg-prefs : (__tl_dyn-array i64)]
@@ -35588,6 +35830,7 @@
     interval-index
     group-vars
     param-roots
+    param-entry-forbidden
     ref-counts
     copy-hints
     arg-prefs
@@ -37196,10 +37439,13 @@
           (compiler-reg-global-shared-view blocked))
         (compiler-reg-global-shared-view blocked))]
     ;; M-A (RC1): param var ids mapped to their coalesce ROOTS -- each greedy
-    ;; allocates class roots, and a class containing a param must be restricted
-    ;; to callee-saved homes (alloc-one! `is-param`; the entry copy writes the
-    ;; home in the prologue). Reuses the ineligible-params walk as a plain
-    ;; param-id collector. Scalar-opt2 only: the SIMD path stack-homes every
+    ;; allocates class roots. R3S-1 restated: a class containing a param is no
+    ;; longer restricted to callee-saved homes; this set now marks the classes
+    ;; that (a) take the inclusive-start clobber-span test, because a param is
+    ;; defined by the prologue before point 0, and (b) carry the entry-copy
+    ;; schedule constraint below. It still forces callee-saved-only whenever
+    ;; that constraint is refused (an empty `param-entry-forbidden`). Reuses the
+    ;; ineligible-params walk as a plain param-id collector. Scalar-opt2 only: the SIMD path stack-homes every
     ;; param (ineligible-vars-simd). Integer and float candidates consume the
     ;; same root set over their respective callee-saved banks.
     [param-roots : live.CompilerLiveI64Set
@@ -37212,6 +37458,23 @@
                 (compiler-reg-global-shared-view params)
                 (live.compiler-live-set-empty))]))
         (live.compiler-live-set-empty))]
+    ;; R3S-1: the entry-copy schedule constraint that REPLACES the
+    ;; `is-param -> csr-only` rule for the classes it covers (see
+    ;; compiler-reg-param-entry-forbidden). Empty -> alloc-one! keeps the legacy
+    ;; callee-saved-only rule, which is what a refused parameter shape and every
+    ;; non-scalar-opt2 stage get.
+    [param-entry-forbidden : (__tl_dyn-array CompilerRegIdSeq)
+      (if allow-caller-saved-zero-call
+        (match (compiler-reg-global-shared-view func)
+          [(ir.CompilerIrFunction.Function _ params _ _ _)
+            (compiler-reg-param-entry-forbidden
+              type-segment-bases
+              (compiler-reg-global-shared-view type-info.representations)
+              target-abi
+              (compiler-reg-global-shared-view params)
+              (compiler-reg-global-shared-view coalesce.parents)
+              (array-length interval-index.starts))])
+        (__tl_make-array CompilerRegIdSeq 0))]
     [integer-candidates : CompilerRegIntervalSeq
       (compiler-reg-candidates
         (compiler-reg-global-shared-view eff-intervals)
@@ -37313,6 +37576,7 @@
           (compiler-reg-global-shared-view eff-index)
           (compiler-reg-global-shared-view group-vars)
           (compiler-reg-global-shared-view param-roots)
+          (compiler-reg-global-shared-view param-entry-forbidden)
           (compiler-reg-global-shared-view base-eviction-ref-counts)
           (compiler-reg-global-shared-view copy-hints)
           (compiler-reg-global-shared-view arg-prefs)
@@ -37335,6 +37599,7 @@
           (compiler-reg-global-shared-view eff-index)
           (compiler-reg-global-shared-view group-vars)
           (live.compiler-live-set-empty)
+          (__tl_make-array CompilerRegIdSeq 0)
           (compiler-reg-global-shared-view base-eviction-ref-counts)
           (compiler-reg-global-shared-view copy-hints)
           (__tl_make-array i64 0)
@@ -37386,6 +37651,7 @@
           (compiler-reg-global-shared-view allocation-index)
           (compiler-reg-global-shared-view group-vars)
           (compiler-reg-global-shared-view param-roots)
+          (compiler-reg-global-shared-view param-entry-forbidden)
           (compiler-reg-global-shared-view eviction-ref-counts)
           (compiler-reg-global-shared-view copy-hints)
           (compiler-reg-global-shared-view arg-prefs)
@@ -37463,6 +37729,7 @@
         (compiler-reg-global-shared-view eff-index)
         (compiler-reg-global-shared-view group-vars)
         (compiler-reg-global-shared-view param-roots)
+        (compiler-reg-global-shared-view param-entry-forbidden)
         (compiler-reg-global-shared-view base-eviction-ref-counts)
         (compiler-reg-global-shared-view copy-hints)
         (compiler-reg-global-shared-view float-arg-prefs)
@@ -37550,6 +37817,7 @@
           (compiler-reg-global-shared-view interval-index)
           (live.compiler-live-set-empty)
           (live.compiler-live-set-empty)
+          (__tl_make-array CompilerRegIdSeq 0)
           (__tl_make-array i64 0)
           (compiler-reg-global-shared-view vector-preferences)
           (__tl_make-array i64 0)

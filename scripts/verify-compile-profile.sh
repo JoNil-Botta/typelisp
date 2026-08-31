@@ -1750,8 +1750,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # #6984's package-lock transaction independently crossed the same boundary
     # on its pre-#7133 base (4,850,511 used nodes); their rebased composition
     # remains pinned to the exact 75-segment capacity below.
+    # #7083's spmd-compact surface node and complete compiler walkers cross the
+    # composed graph from 75 to 76 segments: the authoritative Windows CI probe
+    # measured 4,915,346 used nodes, 4,980,736 capacity, and 159,383,552 physical
+    # payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 75 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 76 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking

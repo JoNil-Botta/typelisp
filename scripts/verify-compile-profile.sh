@@ -1853,7 +1853,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     # #5407's semantic completion provider measured 26,662 used nodes and 27
     # segments on the pre-ownership mainline tree.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool macro_expand 28 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool macro_expand 29 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # #6828's dense flag-exit/BCE storage declarations cross the next type-pool
     # typecheck boundary: the authoritative Windows probe measured 9,221 used

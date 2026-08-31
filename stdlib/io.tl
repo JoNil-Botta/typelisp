@@ -100,6 +100,9 @@
   (extern (io-win-close-handle [arg0 : i64]) : i32 (:symbol "CloseHandle")))
 (cfg
   windows
+  (extern (io-win-flush-file-buffers [arg0 : i64]) : i32 (:symbol "FlushFileBuffers")))
+(cfg
+  windows
   (extern (io-win-set-file-pointer-ex
     [arg0 : i64]
     [arg1 : i64]
@@ -211,19 +214,40 @@
             0xc0000000)
           0x4)]
       [disp : i64
-        (if (= (bit-and f 0x100) 0)
-          (if (= (bit-and f 0x200) 0)
-            3
-            5)
-          (if (= (bit-and f 0x200) 0)
-            4
-            2))]
+        (if (not (= (bit-and f 0x400) 0))
+          1
+          (if (= (bit-and f 0x100) 0)
+            (if (= (bit-and f 0x200) 0)
+              3
+              5)
+            (if (= (bit-and f 0x200) 0)
+              4
+              2)))]
       [handle : i64 (io-win-create-file path access 0x3 0 disp 0x80 0)]
       (if (= handle -1)
         (begin
-          (set-error-code 2)
+          (let
+            [code : i64 (cast (io-win-get-last-error) : i64)]
+            (set-error-code
+              (if (or (= code 80) (= code 183))
+                17
+                (if (= code 5)
+                  13
+                  (if (or (= code 2) (= code 3))
+                    2
+                    code)))))
           (cast -1 : i32))
         (cast handle : i32)))))
+
+;: Windows write-handle flush via FlushFileBuffers.
+(cfg
+  windows
+  (define (io-windows-flush [fd : i32]) : i32
+    (if (= (io-win-flush-file-buffers (io-windows-fd-handle fd)) (cast 0 : i32))
+      (begin
+        (set-error-code (cast (io-win-get-last-error) : i64))
+        (cast -1 : i32))
+      (cast 0 : i32))))
 
 ;: Windows `_access` replacement via GetFileAttributesA existence probe.
 (cfg
@@ -389,6 +413,15 @@
       (unsafe
         (syscall 8 fd offset whence)))))
 
+;: Linux `fsync` via syscall number 74.
+(define (linux-syscall-fsync [fd : i64]) : i64
+  (cfg
+    windows
+    -1
+    (linux-syscall-status
+      (unsafe
+        (syscall 74 fd)))))
+
 ;: Linux `access` via the `access` syscall (number 21).
 (define (linux-syscall-access [path : (Ptr u8)] [mode : i64]) : i64
   (cfg
@@ -442,6 +475,13 @@
     (cast (io-windows-close (cast fd : i32)) : i64)
     (linux-syscall-close fd)))
 
+;: Flush an open file's accepted writes to the host storage boundary.
+(define (platform-flush [fd : i64]) : i64
+  (cfg
+    windows
+    (cast (io-windows-flush (cast fd : i32)) : i64)
+    (linux-syscall-fsync fd)))
+
 ;: Dispatch a platform seek call and return the resulting offset or negative status.
 (define (platform-lseek [fd : i64] [offset : i64] [whence : i64]) : i64
   (cfg
@@ -468,17 +508,21 @@
 (define (open-write-append-flags) : i64
   (cfg windows 33033 1089))
 
+;: Return platform flags for creating a new write-only path exclusively.
+(define (open-write-create-new-flags) : i64
+  (cfg windows 34049 193))
+
 ;: Return platform permissions for creating files.
 (define (open-mode) : i64
   384)
 
 ;: Return platform open flags for stdlib file mode `mode`.
 (define (open-flags-for-mode [mode : i64]) : i64
-  (if (= mode 0)
-    (open-read-flags)
-    (if (= mode 1)
-      (open-write-truncate-flags)
-      (open-write-append-flags))))
+  (cond
+    [(= mode 0) (open-read-flags)]
+    [(= mode 1) (open-write-truncate-flags)]
+    [(= mode 2) (open-write-append-flags)]
+    [else (open-write-create-new-flags)]))
 
 ;: Return `code` as a negative status value.
 (define (neg-status [code : i64]) : i64
@@ -1399,7 +1443,13 @@
     38
     (if (= (io_core.io-file-i64-ref (io_core.io-file-modes-ptr) raw) 0)
       38
-      0)))
+      (let
+        [status : i64
+          (stdlib.io.platform-flush
+            (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) raw))]
+        (if (< status 0)
+          (stdlib.io.last-error-code)
+          0)))))
 
 ;: Return the owned buffer from the last successful file chunk read.
 (define (file-read-chunk-bytes [raw : i64]) : byte_buf.ByteBuf
@@ -1631,7 +1681,8 @@
 (defenum OpenMode
   (OpenRead)
   (OpenWriteTruncate)
-  (OpenWriteAppend))
+  (OpenWriteAppend)
+  (OpenWriteCreateNew))
 
 ;: Result type for file-handle opening.
 (defenum ResultIoFile
@@ -1793,7 +1844,8 @@
   (match mode
     [(OpenRead) 0]
     [(OpenWriteTruncate) 1]
-    [(OpenWriteAppend) 2]))
+    [(OpenWriteAppend) 2]
+    [(OpenWriteCreateNew) 3]))
 
 ;: Diagnostic payload for invalid or already-closed file handles.
 (define (file-handle-invalid-message) : String

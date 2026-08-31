@@ -5,7 +5,8 @@
 ;# top of direct platform FFI bindings:
 ;#
 ;# `mkdir-status`, `remove-file-status`, `remove-dir-status`,
-;# `rename-status`, `read-dir-status`, `read-dir`,
+;# `rename-status`, `try-atomic-replace`, `file-lock-acquire`,
+;# `file-lock-release`, `read-dir-status`, `read-dir`,
 ;# `file-kind-status`, `file-size-status`, `file-size`,
 ;# `process-id`, `current-dir-status`, and `current-dir`.
 ;#
@@ -105,6 +106,15 @@
     (io.linux-syscall-status
       (unsafe
         (syscall 82 (io.linux-ptr-arg source) (io.linux-ptr-arg destination))))))
+
+;: Linux advisory whole-file lock via the `flock` syscall (number 73).
+(define (linux-syscall-flock [fd : i64] [operation : i64]) : i64
+  (cfg
+    windows
+    -1
+    (io.linux-syscall-status
+      (unsafe
+        (syscall 73 fd operation)))))
 
 ;: Linux `getpid` via the `getpid` syscall (number 39); never fails.
 (define (linux-syscall-getpid) : i64
@@ -240,6 +250,38 @@
   windows
   (extern (fs-win-move-file-ex [arg0 : (Ptr u8)] [arg1 : (Ptr u8)] [arg2 : i32]) : i32 (:symbol "MoveFileExA")))
 
+;: Windows kernel32 bindings for a crash-released advisory byte-range lock.
+(cfg
+  windows
+  (extern (fs-win-create-file
+    [arg0 : (Ptr u8)]
+    [arg1 : i64]
+    [arg2 : i64]
+    [arg3 : i64]
+    [arg4 : i64]
+    [arg5 : i64]
+    [arg6 : i64]) : i64 (:symbol "CreateFileA")))
+(cfg
+  windows
+  (extern (fs-win-lock-file-ex
+    [arg0 : i64]
+    [arg1 : i32]
+    [arg2 : i32]
+    [arg3 : i32]
+    [arg4 : i32]
+    [arg5 : (MutPtr u8)]) : i32 (:symbol "LockFileEx")))
+(cfg
+  windows
+  (extern (fs-win-unlock-file-ex
+    [arg0 : i64]
+    [arg1 : i32]
+    [arg2 : i32]
+    [arg3 : i32]
+    [arg4 : (MutPtr u8)]) : i32 (:symbol "UnlockFileEx")))
+(cfg
+  windows
+  (extern (fs-win-close-handle [arg0 : i64]) : i32 (:symbol "CloseHandle")))
+
 ;: Windows `rename` replacement via MoveFileExA with MOVEFILE_REPLACE_EXISTING.
 (cfg
   windows
@@ -249,6 +291,22 @@
       (cast 0 : i32))
       (begin
         (io.set-error-code 2)
+        (cast -1 : i32))
+      (cast 0 : i32))))
+
+;: Windows atomic replacement through MoveFileExA. WRITE_THROUGH requests that
+;: the move complete before returning; directory-entry durability is still not
+;: promised by the public transaction contract.
+(cfg
+  windows
+  (define (fs-windows-atomic-replace
+    [source : (Ptr u8)]
+    [destination : (Ptr u8)]) : i32
+    (if (=
+      (fs-win-move-file-ex source destination (cast 9 : i32))
+      (cast 0 : i32))
+      (begin
+        (io.set-error-code (fs-windows-last-error-status))
         (cast -1 : i32))
       (cast 0 : i32))))
 
@@ -334,6 +392,109 @@
     [source-text : String (string.copy source)]
     [destination-text : String (string.copy destination)]
     (rename-status-owned source-text destination-text)))
+
+;: Atomically replace an owned destination path with an owned sibling source.
+(define (atomic-replace-status-owned [source : String] [destination : String]) : i64
+  (let
+    [source-bytes : (__tl_dyn-array u8) (io.c-string source)]
+    [destination-bytes : (__tl_dyn-array u8) (io.c-string destination)]
+    (status-from-result
+      (cfg
+        windows
+        (cast
+          (fs-windows-atomic-replace
+            (io.array-const-ptr source-bytes)
+            (io.array-const-ptr destination-bytes))
+          : i64)
+        (linux-syscall-rename
+          (io.array-const-ptr source-bytes)
+          (io.array-const-ptr destination-bytes))))))
+
+;: Acquire a blocking crash-released advisory lock on an owned path.
+(define (file-lock-open-owned [path : String]) : i64
+  (cfg
+    windows
+    (let
+      [path-bytes : (__tl_dyn-array u8) (io.c-string path)]
+      [handle : i64
+        (fs-win-create-file
+          (io.array-const-ptr path-bytes)
+          0xc0000000
+          7
+          0
+          4
+          0x80
+          0)]
+      (if (= handle -1)
+        (- 0 (fs-windows-last-error-status))
+        (let
+          [overlapped : (__tl_dyn-array u8) (__tl_make-array u8 32)]
+          [locked : i32
+            (fs-win-lock-file-ex
+              handle
+              (cast 2 : i32)
+              (cast 0 : i32)
+              (cast 1 : i32)
+              (cast 0 : i32)
+              (io.array-ptr overlapped))]
+          (if (= locked (cast 0 : i32))
+            (let
+              [status : i64 (fs-windows-last-error-status)]
+              (begin
+                (fs-win-close-handle handle)
+                (- 0 status)))
+            handle))))
+    (let
+      [path-bytes : (__tl_dyn-array u8) (io.c-string path)]
+      [fd : i64
+        (io.linux-syscall-open (io.array-const-ptr path-bytes) 524354 384)]
+      (if (< fd 0)
+        (- 0 (io.last-error-code))
+        (let
+          [status : i64 (linux-syscall-flock fd 2)]
+          (if (< status 0)
+            (let
+              [error-status : i64 (io.last-error-code)]
+              (begin
+                (io.linux-syscall-close fd)
+                (- 0 error-status)))
+            fd))))))
+
+;: Release an advisory file lock and close its host handle.
+(define (file-lock-close-status [handle : i64]) : i64
+  (cfg
+    windows
+    (let
+      [overlapped : (__tl_dyn-array u8) (__tl_make-array u8 32)]
+      [unlocked : i32
+        (fs-win-unlock-file-ex
+          handle
+          (cast 0 : i32)
+          (cast 1 : i32)
+          (cast 0 : i32)
+          (io.array-ptr overlapped))]
+      [unlock-status : i64
+        (if (= unlocked (cast 0 : i32))
+          (fs-windows-last-error-status)
+          0)]
+      [closed : i32 (fs-win-close-handle handle)]
+      (if (not (= unlock-status 0))
+        unlock-status
+        (if (= closed (cast 0 : i32))
+          (fs-windows-last-error-status)
+          0)))
+    (let
+      [unlock-status : i64 (linux-syscall-flock handle 8)]
+      [unlock-error : i64
+        (if (< unlock-status 0)
+          (io.last-error-code)
+          0)]
+      [close-status : i64 (io.linux-syscall-close handle)]
+      (if (not (= unlock-error 0))
+        unlock-error
+        (if (< close-status 0)
+          (io.last-error-code)
+          0)))))
 
 ;: Return the host process id.
 (define (process-id) : i64
@@ -964,6 +1125,15 @@
   (kind FsFileKind)
   (size i64))
 
+;: Host handle for a crash-released advisory file lock.
+(defstruct FsFileLock
+  (handle i64))
+
+;: Result of acquiring an advisory file lock.
+(defenum ResultFsFileLock
+  (OkFsFileLock FsFileLock)
+  (ErrFsFileLock io.IoError))
+
 ;: Result type for file-kind probes.
 (defenum ResultFsFileKind
   (OkFsFileKind FsFileKind)
@@ -1381,7 +1551,7 @@
 ;: Rename `source` to `destination`, returning a structured status.
 ;:
 ;: Host replacement behavior is target-defined: Linux follows `rename(2)`;
-;: Windows follows the CRT rename policy.
+;: Windows uses MoveFileExA with replacement enabled.
 (define (try-rename
   [source : (& source str)]
   [destination : (& destination str)]) : io.ResultIoUnit
@@ -1400,6 +1570,56 @@
         (if (= status io.io-status-ok)
           io.OkIoUnit
           (io.ErrIoUnit (io.error-from-owned-status path status)))))))
+
+;: Atomically replace `destination` with the sibling file at `source`.
+;:
+;: Linux uses `rename(2)`. Windows uses MoveFileExA with
+;: MOVEFILE_REPLACE_EXISTING and MOVEFILE_WRITE_THROUGH; it never falls back to
+;: deleting the destination. The replacement is atomically visible to readers.
+;: This API does not flush the containing directory and therefore does not
+;: promise that the chosen directory entry survives sudden power loss.
+(define (try-atomic-replace
+  [source : (& source str)]
+  [destination : (& destination str)]) : io.ResultIoUnit
+  (if (= (string-length source) 0)
+    (io.ErrIoUnit (io.IoInvalidPath (string.copy source)))
+    (if (= (string-length destination) 0)
+      (io.ErrIoUnit (io.IoInvalidPath (string.copy destination)))
+      (let
+        [source-text : String (string.copy source)]
+        [destination-text : String (string.copy destination)]
+        [arrow : String " -> "]
+        [source-arrow : String (str_cat.str-cat source arrow)]
+        [path : String (str_cat.str-cat source-arrow destination)]
+        [status : i64
+          (stdlib.fs.atomic-replace-status-owned source-text destination-text)]
+        (if (= status io.io-status-ok)
+          io.OkIoUnit
+          (io.ErrIoUnit (io.error-from-owned-status path status)))))))
+
+;: Acquire a blocking cross-process advisory lock on `path`.
+;:
+;: The lock is released by `file-lock-release` or automatically by the host if
+;: the process terminates. Callers should keep a stable coordination path; the
+;: file may remain after release and must not be unlinked while users can race.
+(define (file-lock-acquire [path : (& path str)]) : ResultFsFileLock
+  (let
+    [path-text : String (string.copy path)]
+    (if (io.empty-path? path)
+      (ErrFsFileLock (io.invalid-path-error path))
+      (let
+        [handle : i64 (stdlib.fs.file-lock-open-owned path-text)]
+        (if (< handle 0)
+          (ErrFsFileLock (io.error-from-status path (- 0 handle)))
+          (OkFsFileLock (FsFileLock handle)))))))
+
+;: Release a file lock acquired by `file-lock-acquire`.
+(define (file-lock-release [lock : FsFileLock]) : io.ResultIoUnit
+  (let
+    [status : i64 (stdlib.fs.file-lock-close-status lock.handle)]
+    (if (= status io.io-status-ok)
+      io.OkIoUnit
+      (io.ErrIoUnit (io.error-from-label "file-lock-release" status)))))
 
 ;: Probe the coarse filesystem kind of `path`.
 ;:

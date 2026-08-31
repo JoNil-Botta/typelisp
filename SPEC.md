@@ -3292,9 +3292,24 @@ Example:
   dependency to the recorded exact commit before fetching. Missing or stale
   entries are resolved from the manifest pin and included in the next emitted
   lockfile; a deterministic lockfile is written whenever the executable root
-  has remote dependencies or a prior lockfile exists. A dependency library's
-  own lockfile is never part of resolution: all normal remote pins are visible
-  in and owned by the consuming executable root.
+  has remote dependencies or a prior lockfile exists. The writer retains the
+  exact bytes read for resolution and does nothing when the new canonical bytes
+  are identical, preserving both contents and modification time. A changed
+  lock is written to an exclusively created, process-unique sibling, flushed,
+  reparsed, and atomically substituted with `rename(2)` on Linux or
+  `MoveFileExA(MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)` on Windows;
+  there is no delete-then-rename fallback. Writers serialize through a stable
+  crash-released advisory guard under `target/typelisp/locks`, recheck the exact
+  destination bytes after acquiring it, reuse an equivalent winner, and reject
+  a different winner as a deterministic conflict requiring resolution to be
+  rerun. Readers therefore observe one complete old or new generation, and
+  `--locked` remains read-only. Staging files are never lock inputs and are
+  removed on handled failures; a stage abandoned by process termination is
+  ignored. File contents are flushed before replacement, but the containing
+  directory is not yet flushed, so this is an atomic-visibility guarantee, not
+  a promise that the chosen generation survives sudden power loss. A dependency
+  library's own lockfile is never part of resolution: all normal remote pins are
+  visible in and owned by the consuming executable root.
 - The remote package cache is a deterministic v1 root at
   `target/typelisp/cache/packages/v1` below the package root. Entry paths are
   derived from the normalized remote URL and an exact commit; `tag` and
@@ -8070,8 +8085,9 @@ than retaining every manifest entry in the process arena.
 `--manifest-path <file>` uses an explicit package manifest (default: the
 nearest `typelisp.pkg` upward). `--locked` requires a matching
 `typelisp.lock` and does not rewrite it; `--update-lock` refreshes remote
-pins and rewrites `typelisp.lock`. The lock-policy flags are valid only for
-package builds. `--opt-level <0|1|2>` selects the optimizer level; for
+pins and transactionally commits changed canonical lock bytes. The lock-policy
+flags are valid only for package builds. `--opt-level <0|1|2>` selects the
+optimizer level; for
 package builds it overrides the profile default (release `2`, dev `0`).
 Source-file `build` and `run` accept `--link-lib <name>` (link a named
 native library), `--link-search <dir>` (linker search directory), and

@@ -10,7 +10,6 @@
 ;; the populated list, with a hit and a miss. The printed numbers must not depend
 ;; on any of that.
 (import stdlib.io)
-(import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector i64) as i64vec)
 
@@ -20,10 +19,7 @@
 (define (vec-ref [items : (& items i64vec.Vec)] [index : i64]) : i64
   (array-ref (i64vec.slots items) index))
 
-(define (vec-set!
-  [items : (&mut items i64vec.Vec)]
-  [index : i64]
-  [value : i64]) : unit
+(define (vec-set! [items : (&mut items i64vec.Vec)] [index : i64] [value : i64]) : unit
   (set! (array-ref (i64vec.slots-mut items) index) value))
 
 (define gs-next : i64vec.Vec
@@ -45,16 +41,13 @@
     [node : i64 gs-head]
     [found : bool false]
     (begin
-      (while
-        (and (>= node 0) (not found))
+      (while (and (>= node 0) (not found))
         (begin
           (set! gs-steps (+ gs-steps 1))
           (if (gs-mentions? node var)
             (set! found true)
             (set! node (vec-ref (& gs-next) node)))))
-      (when
-        found
-        (set! gs-hits (+ gs-hits 1))))))
+      (when found (set! gs-hits (+ gs-hits 1))))))
 
 (define (gs-build! [count : i64]) : unit
   (let
@@ -62,8 +55,7 @@
     (begin
       (set! gs-next (zero-vec count))
       (set! gs-key (zero-vec count))
-      (while
-        (< i count)
+      (while (< i count)
         (begin
           (vec-set! (&mut gs-next) i (- i 1))
           (vec-set! (&mut gs-key) i (* i 10))
@@ -75,8 +67,7 @@
     [empty-calls : i64 0]
     (begin
       ;; Empty list: every call takes the guard's bypass.
-      (while
-        (< empty-calls 4)
+      (while (< empty-calls 4)
         (begin
           (gs-invalidate (* empty-calls 10))
           (set! empty-calls (+ empty-calls 1))))

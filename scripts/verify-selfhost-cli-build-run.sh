@@ -1479,11 +1479,11 @@ assert_status package-graph-failure "$status" 1
 assert_contains package-graph-failure "$WORKDIR/package-graph-failure.err" "typecheck:"
 assert_contains package-graph-failure "$WORKDIR/package-graph-failure.err" 'build: package dependency `fail_bad` failed with status 1'
 
-REMOTE_LIBDEP_DIR="$WORKDIR/package-library-dependency-remote"
+REMOTE_LIBDEP_DIR="$WORKDIR/gld"
 REMOTE_LIBDEP_ROOT="$REMOTE_LIBDEP_DIR/root"
 REMOTE_LIBDEP_REPO="$REMOTE_LIBDEP_DIR/remote"
 REMOTE_LIBDEP_CONFIG="$REMOTE_LIBDEP_DIR/gitconfig"
-REMOTE_LIBDEP_URL="https://github.com/forbidden/library-dependency.git"
+REMOTE_LIBDEP_URL="https://github.com/f/l.git"
 mkdir -p "$REMOTE_LIBDEP_ROOT/src" "$REMOTE_LIBDEP_REPO/src"
 cat > "$REMOTE_LIBDEP_REPO/typelisp.pkg" <<'EOF'
 (package
@@ -1491,7 +1491,7 @@ cat > "$REMOTE_LIBDEP_REPO/typelisp.pkg" <<'EOF'
   (version "0.1.0")
   (kind staticlib)
   (dependencies
-    (runtime (github "forbidden/runtime" (rev "must-not-resolve")))))
+    (runtime (github "f/r" (rev "must-not-resolve")))))
 EOF
 cat > "$REMOTE_LIBDEP_REPO/src/lib.tl" <<'EOF'
 (define (layer-answer) : i64 42)
@@ -1513,7 +1513,7 @@ cat > "$REMOTE_LIBDEP_ROOT/typelisp.pkg" <<EOF
   (version "0.1.0")
   (kind bin)
   (dependencies
-    (layer (github "forbidden/library-dependency" (rev "$REMOTE_LIBDEP_REV")))))
+    (layer (github "f/l" (rev "$REMOTE_LIBDEP_REV")))))
 EOF
 cat > "$REMOTE_LIBDEP_ROOT/src/main.tl" <<'EOF'
 (define (main) : i64 0)

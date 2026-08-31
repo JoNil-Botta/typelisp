@@ -2107,7 +2107,18 @@ for resolution_metric in \
     name_lookup_calls \
     name_cache_hits \
     name_cache_misses \
-    type_symbol_probes; do
+    type_symbol_probes \
+    type_handle_lookups \
+    type_handle_cache_hits \
+    type_handle_cache_misses \
+    type_handle_symbol_probes \
+    type_handle_resolver_lookups \
+    type_handle_nominal_lifetime_lookups \
+    type_handle_constructor_lookups \
+    type_handle_aggregate_layout_lookups \
+    type_handle_move_kind_lookups \
+    type_handle_qualified_owner_lookups \
+    type_handle_lazy_unique_lookups; do
     assert_contains \
         "$CHECK_STDERR" \
         "compile-profile|typecheck.resolve.typecheck.$resolution_metric|"
@@ -2152,6 +2163,62 @@ RESOLUTION_TYPE_SYMBOL_PROBES=$(profile_counter_value_in \
     show_failure_logs "$CHECK_STDOUT" "$CHECK_STDERR"
     fail "type-name resolution probe accounting mismatch: misses=$RESOLUTION_NAME_CACHE_MISSES probes=$RESOLUTION_TYPE_SYMBOL_PROBES"
 }
+TYPE_HANDLE_LOOKUPS=$(profile_counter_value_in \
+    "$CHECK_STDERR" \
+    "typecheck.resolve.typecheck.type_handle_lookups")
+TYPE_HANDLE_CACHE_HITS=$(profile_counter_value_in \
+    "$CHECK_STDERR" \
+    "typecheck.resolve.typecheck.type_handle_cache_hits")
+TYPE_HANDLE_CACHE_MISSES=$(profile_counter_value_in \
+    "$CHECK_STDERR" \
+    "typecheck.resolve.typecheck.type_handle_cache_misses")
+TYPE_HANDLE_SYMBOL_PROBES=$(profile_counter_value_in \
+    "$CHECK_STDERR" \
+    "typecheck.resolve.typecheck.type_handle_symbol_probes")
+TYPE_HANDLE_CALLER_LOOKUPS=0
+for type_handle_caller in \
+    resolver \
+    nominal_lifetime \
+    constructor \
+    aggregate_layout \
+    move_kind \
+    qualified_owner \
+    lazy_unique; do
+    type_handle_caller_value=$(profile_counter_value_in \
+        "$CHECK_STDERR" \
+        "typecheck.resolve.typecheck.type_handle_${type_handle_caller}_lookups")
+    TYPE_HANDLE_CALLER_LOOKUPS=$((TYPE_HANDLE_CALLER_LOOKUPS + type_handle_caller_value))
+done
+[ "$TYPE_HANDLE_LOOKUPS" -eq \
+    "$((TYPE_HANDLE_CACHE_HITS + TYPE_HANDLE_CACHE_MISSES))" ] || {
+    show_failure_logs "$CHECK_STDOUT" "$CHECK_STDERR"
+    fail "type-handle cache accounting mismatch: lookups=$TYPE_HANDLE_LOOKUPS hits=$TYPE_HANDLE_CACHE_HITS misses=$TYPE_HANDLE_CACHE_MISSES"
+}
+[ "$TYPE_HANDLE_CACHE_MISSES" -eq "$TYPE_HANDLE_SYMBOL_PROBES" ] || {
+    show_failure_logs "$CHECK_STDOUT" "$CHECK_STDERR"
+    fail "type-handle probe accounting mismatch: misses=$TYPE_HANDLE_CACHE_MISSES probes=$TYPE_HANDLE_SYMBOL_PROBES"
+}
+[ "$TYPE_HANDLE_LOOKUPS" -eq "$TYPE_HANDLE_CALLER_LOOKUPS" ] || {
+    show_failure_logs "$CHECK_STDOUT" "$CHECK_STDERR"
+    fail "type-handle caller accounting mismatch: lookups=$TYPE_HANDLE_LOOKUPS callers=$TYPE_HANDLE_CALLER_LOOKUPS"
+}
+for type_handle_exercised_caller in \
+    resolver \
+    nominal_lifetime \
+    constructor; do
+    assert_profile_counter_at_least_in \
+        "$CHECK_STDERR" \
+        "typecheck.resolve.typecheck.type_handle_${type_handle_exercised_caller}_lookups" \
+        1 \
+        "$CHECK_STDOUT" \
+        "$CHECK_STDERR"
+done
+assert_profile_counter_at_least_in \
+    "$CHECK_STDERR" \
+    "typecheck.resolve.typecheck.type_handle_cache_hits" \
+    1 \
+    "$CHECK_STDOUT" \
+    "$CHECK_STDERR"
 assert_profile_counter_at_least_in \
     "$CHECK_STDERR" \
     "typecheck.resolve.typecheck.concrete_composite_calls" \

@@ -323,6 +323,25 @@
 (defstruct TcAggScalarCacheState
   (address i64))
 
+;; Direct nominal type handles are memoized per compiler job. Both positive and
+;; negative entries belong to one append-only CompilerSymbols type-map stamp;
+;; a rebuilt table or an in-place addition rebinds the whole direct-map view.
+(defstruct TcTypeHandleCacheStateData
+  (owner-arena i64)
+  ;; Raw pointers into fixed arena-owned lanes keep the multi-million-call hit
+  ;; path to scalar loads. The arena retains both allocations for the job.
+  (keys-address i64)
+  (handles-address i64)
+  (symbols-owner i64)
+  (symbols-generation i64))
+
+(defstruct TcTypeHandleCacheState
+  (address i64))
+
+(defenum TcTypeHandleCacheLookup
+  (Miss)
+  (Hit i64))
+
 ;; Nominal owner names and the one-entry type-name lookup memo can retain
 ;; scratch-owned strings and negative answers. Keep their compact storage in
 ;; one compiler job so another job's declaration or scratch reset cannot clear
@@ -333,7 +352,8 @@
   (type-name-valid bool)
   (type-name-found bool)
   (type-name-key i64)
-  (type-name-handle i64))
+  (type-name-handle i64)
+  (type-handles TcTypeHandleCacheState))
 
 (defstruct TcNominalCacheState
   (address i64))
@@ -1095,6 +1115,21 @@
     (ptr-read
       (int->ptr (cast state.address : u64) : (Ptr TcNominalCacheStateData)))))
 
+(define (tc-type-handle-cache-state-data [state : TcTypeHandleCacheState]) : TcTypeHandleCacheStateData
+  (unsafe
+    (ptr-read
+      (int->ptr (cast state.address : u64) : (Ptr TcTypeHandleCacheStateData)))))
+
+(define (tc-type-handle-cache-state-data-set!
+  [state : TcTypeHandleCacheState]
+  [data : TcTypeHandleCacheStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast state.address : u64)
+        : (MutPtr TcTypeHandleCacheStateData))
+      data)))
+
 (define (tc-nominal-cache-state-data-set!
   [state : TcNominalCacheState]
   [data : TcNominalCacheStateData]) : unit
@@ -1115,6 +1150,23 @@
       (int->ptr (cast state.address : u64) : (MutPtr TcCloneStateData))
       data)))
 
+(define (tc-type-handle-cache-state-new [owner : i64]) : TcTypeHandleCacheState
+  (in-arena
+    (arena.Arena owner)
+    (let
+      [cell : (__tl_dyn-array TcTypeHandleCacheStateData)
+        (__tl_make-array TcTypeHandleCacheStateData 1)]
+      (begin
+        (set! (array-ref cell 0) (TcTypeHandleCacheStateData owner 0 0 -1 -1))
+        (TcTypeHandleCacheState
+          (cast
+            (unsafe
+              (ptr->int
+                (ptr-cast
+                  (__tl_array-data cell)
+                  : (Ptr TcTypeHandleCacheStateData))))
+            : i64))))))
+
 (define (tc-nominal-cache-state-new [owner : i64]) : TcNominalCacheState
   (in-arena
     (arena.Arena owner)
@@ -1132,7 +1184,14 @@
             (set! index (+ index 1))))
         (set!
           (array-ref cell 0)
-          (TcNominalCacheStateData handles names false false -1 0))
+          (TcNominalCacheStateData
+            handles
+            names
+            false
+            false
+            -1
+            0
+            (tc-type-handle-cache-state-new owner)))
         (TcNominalCacheState
           (cast
             (unsafe
@@ -8469,6 +8528,50 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-type-handle-profile-lookups : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-type-handle-profile-cache-hits : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-type-handle-profile-cache-misses : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-type-handle-profile-symbol-probes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-type-handle-profile-resolver-lookups : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-type-handle-profile-nominal-lifetime-lookups : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-type-handle-profile-constructor-lookups : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-type-handle-profile-aggregate-layout-lookups : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-type-handle-profile-move-kind-lookups : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-type-handle-profile-qualified-owner-lookups : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-type-handle-profile-lazy-unique-lookups : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-env-profile-binds : i64
     0))
 (cfg
@@ -8686,7 +8789,88 @@
       (set! compiler-tc-resolution-profile-name-lookup-calls 0)
       (set! compiler-tc-resolution-profile-name-cache-hits 0)
       (set! compiler-tc-resolution-profile-name-cache-misses 0)
-      (set! compiler-tc-resolution-profile-type-symbol-probes 0))))
+      (set! compiler-tc-resolution-profile-type-symbol-probes 0)
+      (set! compiler-tc-type-handle-profile-lookups 0)
+      (set! compiler-tc-type-handle-profile-cache-hits 0)
+      (set! compiler-tc-type-handle-profile-cache-misses 0)
+      (set! compiler-tc-type-handle-profile-symbol-probes 0)
+      (set! compiler-tc-type-handle-profile-resolver-lookups 0)
+      (set! compiler-tc-type-handle-profile-nominal-lifetime-lookups 0)
+      (set! compiler-tc-type-handle-profile-constructor-lookups 0)
+      (set! compiler-tc-type-handle-profile-aggregate-layout-lookups 0)
+      (set! compiler-tc-type-handle-profile-move-kind-lookups 0)
+      (set! compiler-tc-type-handle-profile-qualified-owner-lookups 0)
+      (set! compiler-tc-type-handle-profile-lazy-unique-lookups 0))))
+
+(define tc-type-handle-lookup-caller-resolver : i64
+  0)
+(define tc-type-handle-lookup-caller-nominal-lifetime : i64
+  1)
+(define tc-type-handle-lookup-caller-constructor : i64
+  2)
+(define tc-type-handle-lookup-caller-aggregate-layout : i64
+  3)
+(define tc-type-handle-lookup-caller-move-kind : i64
+  4)
+(define tc-type-handle-lookup-caller-qualified-owner : i64
+  5)
+(define tc-type-handle-lookup-caller-lazy-unique : i64
+  6)
+
+(cfg
+  compile-profile
+  (define (compiler-tc-type-handle-profile-note-lookup [caller : i64]) : unit
+    (begin
+      (set!
+        compiler-tc-type-handle-profile-lookups
+        (+ compiler-tc-type-handle-profile-lookups 1))
+      (cond
+        [(= caller tc-type-handle-lookup-caller-resolver)
+          (set!
+            compiler-tc-type-handle-profile-resolver-lookups
+            (+ compiler-tc-type-handle-profile-resolver-lookups 1))]
+        [(= caller tc-type-handle-lookup-caller-nominal-lifetime)
+          (set!
+            compiler-tc-type-handle-profile-nominal-lifetime-lookups
+            (+ compiler-tc-type-handle-profile-nominal-lifetime-lookups 1))]
+        [(= caller tc-type-handle-lookup-caller-constructor)
+          (set!
+            compiler-tc-type-handle-profile-constructor-lookups
+            (+ compiler-tc-type-handle-profile-constructor-lookups 1))]
+        [(= caller tc-type-handle-lookup-caller-aggregate-layout)
+          (set!
+            compiler-tc-type-handle-profile-aggregate-layout-lookups
+            (+ compiler-tc-type-handle-profile-aggregate-layout-lookups 1))]
+        [(= caller tc-type-handle-lookup-caller-move-kind)
+          (set!
+            compiler-tc-type-handle-profile-move-kind-lookups
+            (+ compiler-tc-type-handle-profile-move-kind-lookups 1))]
+        [(= caller tc-type-handle-lookup-caller-qualified-owner)
+          (set!
+            compiler-tc-type-handle-profile-qualified-owner-lookups
+            (+ compiler-tc-type-handle-profile-qualified-owner-lookups 1))]
+        [else
+          (set!
+            compiler-tc-type-handle-profile-lazy-unique-lookups
+            (+ compiler-tc-type-handle-profile-lazy-unique-lookups 1))]))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-type-handle-profile-note-cache-hit) : unit
+    (set!
+      compiler-tc-type-handle-profile-cache-hits
+      (+ compiler-tc-type-handle-profile-cache-hits 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-type-handle-profile-note-cache-miss) : unit
+    (begin
+      (set!
+        compiler-tc-type-handle-profile-cache-misses
+        (+ compiler-tc-type-handle-profile-cache-misses 1))
+      (set!
+        compiler-tc-type-handle-profile-symbol-probes
+        (+ compiler-tc-type-handle-profile-symbol-probes 1)))))
 
 (cfg
   compile-profile
@@ -9641,9 +9825,53 @@
         "name_cache_misses"
         compiler-tc-resolution-profile-name-cache-misses)
       (compiler-tc-resolution-profile-line
-        scope
+        (tc-global-shared-view scope)
         "type_symbol_probes"
-        compiler-tc-resolution-profile-type-symbol-probes))))
+        compiler-tc-resolution-profile-type-symbol-probes)
+      (compiler-tc-resolution-profile-line
+        (tc-global-shared-view scope)
+        "type_handle_lookups"
+        compiler-tc-type-handle-profile-lookups)
+      (compiler-tc-resolution-profile-line
+        (tc-global-shared-view scope)
+        "type_handle_cache_hits"
+        compiler-tc-type-handle-profile-cache-hits)
+      (compiler-tc-resolution-profile-line
+        (tc-global-shared-view scope)
+        "type_handle_cache_misses"
+        compiler-tc-type-handle-profile-cache-misses)
+      (compiler-tc-resolution-profile-line
+        (tc-global-shared-view scope)
+        "type_handle_symbol_probes"
+        compiler-tc-type-handle-profile-symbol-probes)
+      (compiler-tc-resolution-profile-line
+        (tc-global-shared-view scope)
+        "type_handle_resolver_lookups"
+        compiler-tc-type-handle-profile-resolver-lookups)
+      (compiler-tc-resolution-profile-line
+        (tc-global-shared-view scope)
+        "type_handle_nominal_lifetime_lookups"
+        compiler-tc-type-handle-profile-nominal-lifetime-lookups)
+      (compiler-tc-resolution-profile-line
+        (tc-global-shared-view scope)
+        "type_handle_constructor_lookups"
+        compiler-tc-type-handle-profile-constructor-lookups)
+      (compiler-tc-resolution-profile-line
+        (tc-global-shared-view scope)
+        "type_handle_aggregate_layout_lookups"
+        compiler-tc-type-handle-profile-aggregate-layout-lookups)
+      (compiler-tc-resolution-profile-line
+        (tc-global-shared-view scope)
+        "type_handle_move_kind_lookups"
+        compiler-tc-type-handle-profile-move-kind-lookups)
+      (compiler-tc-resolution-profile-line
+        (tc-global-shared-view scope)
+        "type_handle_qualified_owner_lookups"
+        compiler-tc-type-handle-profile-qualified-owner-lookups)
+      (compiler-tc-resolution-profile-line
+        scope
+        "type_handle_lazy_unique_lookups"
+        compiler-tc-type-handle-profile-lazy-unique-lookups))))
 
 (cfg
   compile-profile
@@ -25933,7 +26161,11 @@
                 [key-id : i64
                   (csym.compiler-symbol-module-key-id-by-id target-id base-id)]
                 [handle : i64
-                  (csym.compiler-symbols-lookup-type-id-or symbols key-id -1)]
+                  (tc-type-handle-lookup-id
+                    (tc-macro-state-nominal-cache state)
+                    symbols
+                    key-id
+                    tc-type-handle-lookup-caller-lazy-unique)]
                 (if (csym.compiler-symbols-handle-found? handle)
                   (if (< found-handle 0)
                     (begin
@@ -27088,6 +27320,342 @@
       (set! data.type-name-valid true)
       (tc-nominal-cache-state-data-set! state data))))
 
+(define tc-type-handle-cache-capacity : i64
+  4096)
+
+(defmacro (tc-type-handle-cache-field [state : Expr] [field : Expr] [_T : type]) : Expr
+  `(unsafe
+    (ptr-read
+      (ptr-cast
+        (ptr-offset
+          (int->ptr
+            (cast ,(comptime.expr-struct-get state "address") : u64)
+            : (Ptr u8))
+          (comptime (offset-of (type TcTypeHandleCacheStateData) ,field)))
+        : (Ptr ,_T)))))
+
+(define (tc-nominal-cache-type-handles [state : TcNominalCacheState]) : TcTypeHandleCacheState
+  (unsafe
+    (ptr-read
+      (ptr-cast
+        (ptr-offset
+          (int->ptr (cast state.address : u64) : (Ptr u8))
+          (comptime (offset-of (type TcNominalCacheStateData) type-handles)))
+        : (Ptr TcTypeHandleCacheState)))))
+
+(defmacro (tc-type-handle-cache-slot [key : Expr]) : Expr
+  `(let
+    [folded : i64 (bit-xor ,key (bit-xor (shr ,key 17) (shr ,key 34)))]
+    (bit-and (* folded 6364136223846793005) (- tc-type-handle-cache-capacity 1))))
+
+(define (tc-type-handle-cache-clear-keys! [keys-address : i64]) : unit
+  (let
+    [keys : (MutPtr i64)
+      (unsafe
+        (int->ptr (cast keys-address : u64) : (MutPtr i64)))]
+    [index : i64 0]
+    (while (< index tc-type-handle-cache-capacity)
+      (begin
+        (unsafe
+          (ptr-write! (ptr-offset keys index) -1))
+        (set! index (+ index 1))))))
+
+;; Symbol construction is append-only, but an addition may retain the same
+;; backing allocation. Rebind on either the owner pointer or map generation;
+;; clearing the direct map also prevents stale entries if a job later returns
+;; to a previously observed table stamp.
+(define (tc-type-handle-cache-rebind-and-probe!
+  [state : TcTypeHandleCacheState]
+  [symbols : (& symbols csym.CompilerSymbols)]
+  [lookup-id : i64]
+  [key : i64]) : i64
+  (let
+    [stamp : csym.CompilerSymbolsTypeMapStamp
+      (csym.compiler-symbols-type-map-stamp symbols)]
+    [data : TcTypeHandleCacheStateData (tc-type-handle-cache-state-data state)]
+    [keys-address : i64
+      (if (> data.keys-address 0)
+        data.keys-address
+        (in-arena
+          (arena.Arena data.owner-arena)
+          (let
+            [keys : (__tl_dyn-array i64)
+              (__tl_make-array i64 tc-type-handle-cache-capacity)]
+            (cast
+              (unsafe
+                (ptr->int (ptr-cast (__tl_array-data keys) : (Ptr i64))))
+              : i64))))]
+    [handles-address : i64
+      (if (> data.handles-address 0)
+        data.handles-address
+        (in-arena
+          (arena.Arena data.owner-arena)
+          (let
+            [handles : (__tl_dyn-array i64)
+              (__tl_make-array i64 tc-type-handle-cache-capacity)]
+            (cast
+              (unsafe
+                (ptr->int (ptr-cast (__tl_array-data handles) : (Ptr i64))))
+              : i64))))]
+    (begin
+      (tc-type-handle-cache-clear-keys! keys-address)
+      (set! data.keys-address keys-address)
+      (set! data.handles-address handles-address)
+      (set! data.symbols-owner stamp.owner)
+      (set! data.symbols-generation stamp.generation)
+      (tc-type-handle-cache-state-data-set! state data)
+      (cfg compile-profile (compiler-tc-type-handle-profile-note-cache-miss))
+      (tc-type-handle-cache-probe-and-store! state symbols lookup-id key))))
+
+(define (tc-type-handle-cache-entry-lookup
+  [state : TcTypeHandleCacheState]
+  [key : i64]) : TcTypeHandleCacheLookup
+  (let
+    [data : TcTypeHandleCacheStateData (tc-type-handle-cache-state-data state)]
+    (if (> data.keys-address 0)
+      (let
+        [slot : i64 (tc-type-handle-cache-slot key)]
+        [keys : (Ptr i64)
+          (unsafe
+            (int->ptr (cast data.keys-address : u64) : (Ptr i64)))]
+        [handles : (Ptr i64)
+          (unsafe
+            (int->ptr (cast data.handles-address : u64) : (Ptr i64)))]
+        (if (=
+          (unsafe
+            (ptr-read (ptr-offset keys slot)))
+          key)
+          (TcTypeHandleCacheLookup.Hit
+            (unsafe
+              (ptr-read (ptr-offset handles slot))))
+          TcTypeHandleCacheLookup.Miss))
+      TcTypeHandleCacheLookup.Miss)))
+
+(define (tc-type-handle-cache-probe-and-store!
+  [state : TcTypeHandleCacheState]
+  [symbols : (& symbols csym.CompilerSymbols)]
+  [lookup-id : i64]
+  [key : i64]) : i64
+  (let
+    [handle : i64
+      (csym.compiler-symbols-lookup-type-id-or
+        symbols
+        lookup-id
+        (csym.compiler-symbols-missing-handle))]
+    [slot : i64 (tc-type-handle-cache-slot key)]
+    [keys : (MutPtr i64)
+      (unsafe
+        (int->ptr
+          (cast (tc-type-handle-cache-field state keys-address i64) : u64)
+          : (MutPtr i64)))]
+    [handles : (MutPtr i64)
+      (unsafe
+        (int->ptr
+          (cast (tc-type-handle-cache-field state handles-address i64) : u64)
+          : (MutPtr i64)))]
+    (begin
+      (unsafe
+        (ptr-write! (ptr-offset keys slot) key)
+        (ptr-write! (ptr-offset handles slot) handle))
+      handle)))
+
+(define (tc-type-handle-cache-lookup-id
+  [nominal-state : TcNominalCacheState]
+  [symbols : (& symbols csym.CompilerSymbols)]
+  [lookup-id : i64]) : i64
+  (let
+    [state : TcTypeHandleCacheState
+      (tc-nominal-cache-type-handles nominal-state)]
+    [stamp : csym.CompilerSymbolsTypeMapStamp
+      (csym.compiler-symbols-type-map-stamp symbols)]
+    ;; Cache the caller's exact identity. The backing symbol probe performs
+    ;; nominal-name normalization on a miss; hits therefore avoid that generic
+    ;; normalization call while aliases with distinct source IDs remain exact.
+    [key : i64 lookup-id]
+    [bound? : bool
+      (and
+        (= (tc-type-handle-cache-field state symbols-owner i64) stamp.owner)
+        (=
+          (tc-type-handle-cache-field state symbols-generation i64)
+          stamp.generation))]
+    (if bound?
+      (let
+        [slot : i64 (tc-type-handle-cache-slot key)]
+        [keys : (Ptr i64)
+          (unsafe
+            (int->ptr
+              (cast (tc-type-handle-cache-field state keys-address i64) : u64)
+              : (Ptr i64)))]
+        [handles : (Ptr i64)
+          (unsafe
+            (int->ptr
+              (cast
+                (tc-type-handle-cache-field state handles-address i64)
+                : u64)
+              : (Ptr i64)))]
+        (if (=
+          (unsafe
+            (ptr-read (ptr-offset keys slot)))
+          key)
+          (begin
+            (cfg
+              compile-profile
+              (compiler-tc-type-handle-profile-note-cache-hit))
+            (unsafe
+              (ptr-read (ptr-offset handles slot))))
+          (begin
+            (cfg
+              compile-profile
+              (compiler-tc-type-handle-profile-note-cache-miss))
+            (tc-type-handle-cache-probe-and-store! state symbols lookup-id key))))
+      (tc-type-handle-cache-rebind-and-probe! state symbols lookup-id key))))
+
+(defmacro (tc-type-handle-lookup-id
+  [nominal-state : Expr]
+  [symbols : Expr]
+  [lookup-id : Expr]
+  [caller : Expr]) : Expr
+  `(begin
+    (cfg compile-profile (compiler-tc-type-handle-profile-note-lookup ,caller))
+    (tc-type-handle-cache-lookup-id ,nominal-state ,symbols ,lookup-id)))
+
+(cfg
+  test
+  (test
+    tc-type-handle-cache-job-isolation-and-symbol-rebinding
+    (let
+      [job-a : TcJobState (tc-job-state-new)]
+      [job-b : TcJobState (tc-job-state-new)]
+      [job-growth : TcJobState (tc-job-state-new)]
+      [state-a : TcNominalCacheState (tc-job-state-nominal-cache job-a)]
+      [state-b : TcNominalCacheState (tc-job-state-nominal-cache job-b)]
+      [state-growth : TcNominalCacheState
+        (tc-job-state-nominal-cache job-growth)]
+      [name-id : i64 137]
+      [cache-key : i64 name-id]
+      [map-key : i64 (csym.compiler-symbol-name-id-key name-id)]
+      [symbols-a : csym.CompilerSymbols
+        (csym.compiler-symbols-add-type-alias-key-id
+          (csym.compiler-symbols-empty)
+          map-key
+          101)]
+      [symbols-b : csym.CompilerSymbols
+        (csym.compiler-symbols-add-type-alias-key-id
+          (csym.compiler-symbols-empty)
+          map-key
+          202)]
+      [symbols-growth : csym.CompilerSymbols (csym.compiler-symbols-empty)]
+      [stamp-a : csym.CompilerSymbolsTypeMapStamp
+        (csym.compiler-symbols-type-map-stamp (& symbols-a))]
+      [stamp-b : csym.CompilerSymbolsTypeMapStamp
+        (csym.compiler-symbols-type-map-stamp (& symbols-b))]
+      [positive-a : i64
+        (tc-type-handle-lookup-id
+          state-a
+          (& symbols-a)
+          name-id
+          tc-type-handle-lookup-caller-resolver)]
+      [positive-a-hit : i64
+        (tc-type-handle-lookup-id
+          state-a
+          (& symbols-a)
+          name-id
+          tc-type-handle-lookup-caller-resolver)]
+      [positive-a-entry? : bool
+        (match (tc-type-handle-cache-entry-lookup
+          (tc-nominal-cache-type-handles state-a)
+          cache-key)
+          [(TcTypeHandleCacheLookup.Hit handle) (= handle 101)]
+          [(TcTypeHandleCacheLookup.Miss) false])]
+      [positive-b : i64
+        (tc-type-handle-lookup-id
+          state-b
+          (& symbols-b)
+          name-id
+          tc-type-handle-lookup-caller-resolver)]
+      [positive-b-hit : i64
+        (tc-type-handle-lookup-id
+          state-b
+          (& symbols-b)
+          name-id
+          tc-type-handle-lookup-caller-resolver)]
+      [negative : i64
+        (tc-type-handle-lookup-id
+          state-growth
+          (& symbols-growth)
+          name-id
+          tc-type-handle-lookup-caller-resolver)]
+      [negative-hit : i64
+        (tc-type-handle-lookup-id
+          state-growth
+          (& symbols-growth)
+          name-id
+          tc-type-handle-lookup-caller-resolver)]
+      [negative-entry? : bool
+        (match (tc-type-handle-cache-entry-lookup
+          (tc-nominal-cache-type-handles state-growth)
+          cache-key)
+          [(TcTypeHandleCacheLookup.Hit handle) (= handle -1)]
+          [(TcTypeHandleCacheLookup.Miss) false])]
+      [growth-before : csym.CompilerSymbolsTypeMapStamp
+        (csym.compiler-symbols-type-map-stamp (& symbols-growth))]
+      [symbols-growth-next : csym.CompilerSymbols
+        (csym.compiler-symbols-add-type-alias-key-id symbols-growth map-key 303)]
+      [growth-after : csym.CompilerSymbolsTypeMapStamp
+        (csym.compiler-symbols-type-map-stamp (& symbols-growth-next))]
+      [after-add : i64
+        (tc-type-handle-lookup-id
+          state-growth
+          (& symbols-growth-next)
+          name-id
+          tc-type-handle-lookup-caller-resolver)]
+      [owner-rebound : i64
+        (tc-type-handle-lookup-id
+          state-a
+          (& symbols-b)
+          name-id
+          tc-type-handle-lookup-caller-resolver)]
+      [owner-returned : i64
+        (tc-type-handle-lookup-id
+          state-a
+          (& symbols-a)
+          name-id
+          tc-type-handle-lookup-caller-resolver)]
+      [data-a : TcTypeHandleCacheStateData
+        (tc-type-handle-cache-state-data
+          (tc-nominal-cache-type-handles state-a))]
+      [data-b : TcTypeHandleCacheStateData
+        (tc-type-handle-cache-state-data
+          (tc-nominal-cache-type-handles state-b))]
+      [data-growth : TcTypeHandleCacheStateData
+        (tc-type-handle-cache-state-data
+          (tc-nominal-cache-type-handles state-growth))]
+      (if (and
+        (not (= state-a.address state-b.address))
+        (not (= stamp-a.owner stamp-b.owner))
+        (= positive-a 101)
+        (= positive-a-hit 101)
+        positive-a-entry?
+        (= positive-b 202)
+        (= positive-b-hit 202)
+        (= negative -1)
+        (= negative-hit -1)
+        negative-entry?
+        (= growth-before.owner growth-after.owner)
+        (= growth-after.generation (+ growth-before.generation 1))
+        (= after-add 303)
+        (= owner-rebound 202)
+        (= owner-returned 101)
+        (= data-a.symbols-owner stamp-a.owner)
+        (= data-a.symbols-generation stamp-a.generation)
+        (= data-b.symbols-owner stamp-b.owner)
+        (= data-b.symbols-generation stamp-b.generation)
+        (= data-growth.symbols-owner growth-after.owner)
+        (= data-growth.symbols-generation growth-after.generation))
+        unit
+        (io.panic
+          "typecheck: type-handle cache isolation/rebinding self-test failed")))))
+
 (define (tc-resolve-type-name-symbol-lookup-id
   [state : TcNominalCacheState]
   [symbols : csym.CompilerSymbols]
@@ -27108,10 +27676,11 @@
     [(TcTypeNameLookupCache.Miss)
       (let
         [handle : i64
-          (csym.compiler-symbols-lookup-type-id-or
+          (tc-type-handle-lookup-id
+            state
             symbols
             lookup-id
-            (csym.compiler-symbols-missing-handle))]
+            tc-type-handle-lookup-caller-resolver)]
         (begin
           (cfg
             compile-profile
@@ -27921,15 +28490,19 @@
         source-module-id)]
     [symbols (tc-context-symbols ctx)]
     [handle : i64
-      (csym.compiler-symbols-lookup-type-id-or
+      (tc-type-handle-lookup-id
+        (tc-job-state-nominal-cache
+          (tc-context-job-state (tc-global-shared-view ctx)))
         symbols
         (tc-qualified-name-key-id lookup-module-id base-id)
-        (csym.compiler-symbols-missing-handle))]
+        tc-type-handle-lookup-caller-qualified-owner)]
     [flat-handle : i64
-      (csym.compiler-symbols-lookup-type-id-or
+      (tc-type-handle-lookup-id
+        (tc-job-state-nominal-cache
+          (tc-context-job-state (tc-global-shared-view ctx)))
         symbols
         base-id
-        (csym.compiler-symbols-missing-handle))]
+        tc-type-handle-lookup-caller-qualified-owner)]
     [flat-root? : bool
       (and
         (csym.compiler-symbols-handle-found? flat-handle)
@@ -27980,16 +28553,20 @@
             (tc-qualified-name-key-id resolution-module-id source-name-id))]
         [resolution-handle : i64
           (if (>= resolution-id 0)
-            (csym.compiler-symbols-lookup-type-id-or
+            (tc-type-handle-lookup-id
+              (tc-job-state-nominal-cache
+                (tc-context-job-state (tc-global-shared-view ctx)))
               symbols
               resolution-id
-              (csym.compiler-symbols-missing-handle))
+              tc-type-handle-lookup-caller-qualified-owner)
             (csym.compiler-symbols-missing-handle))]
         [handle : i64
-          (csym.compiler-symbols-lookup-type-id-or
+          (tc-type-handle-lookup-id
+            (tc-job-state-nominal-cache
+              (tc-context-job-state (tc-global-shared-view ctx)))
             symbols
             source-name-id
-            (csym.compiler-symbols-missing-handle))]
+            tc-type-handle-lookup-caller-qualified-owner)]
         (if (csym.compiler-symbols-handle-found? handle)
           (let
             [owner-id : i64
@@ -28358,10 +28935,12 @@
     [(TcContext program symbols _ _ _ _ _ _ _)
       (let
         [handle : i64
-          (csym.compiler-symbols-lookup-type-id-or
-            symbols
+          (tc-type-handle-lookup-id
+            (tc-job-state-nominal-cache
+              (tc-context-job-state (tc-global-shared-view ctx)))
+            (& symbols)
             name-id
-            (csym.compiler-symbols-missing-handle))]
+            tc-type-handle-lookup-caller-nominal-lifetime)]
         (if (csym.compiler-symbols-handle-found? handle)
           (match (csym.compiler-symbols-decl-at-index
             symbols
@@ -32262,10 +32841,12 @@
   [stack : TcNameIdList]) : TcMoveKind
   (let
     [handle : i64
-      (csym.compiler-symbols-lookup-type-id-or
+      (tc-type-handle-lookup-id
+        (tc-job-state-nominal-cache
+          (tc-context-job-state (tc-global-shared-view ctx)))
         (tc-context-symbols-ref (& ctx))
         name-id
-        (csym.compiler-symbols-missing-handle))]
+        tc-type-handle-lookup-caller-move-kind)]
     (if (not (csym.compiler-symbols-handle-found? handle))
       (TcMoveKind.MoveOnly)
       (let
@@ -40291,10 +40872,12 @@
             (csym.compiler-composite-pair-key-id module-id name-id)
             name-id)]
         [handle : i64
-          (csym.compiler-symbols-lookup-type-id-or
-            symbols
+          (tc-type-handle-lookup-id
+            (tc-job-state-nominal-cache
+              (tc-context-job-state (tc-global-shared-view ctx)))
+            (& symbols)
             name-id
-            (csym.compiler-symbols-missing-handle))]
+            tc-type-handle-lookup-caller-constructor)]
         [variant-found : bool
           (if (and
             (not non-root-bare?)
@@ -61397,10 +61980,12 @@
     [source-names : ci.InternSourceNameSessionHandle
       (tc-context-source-names (tc-global-shared-view ctx))]
     [handle : i64
-      (csym.compiler-symbols-lookup-type-id-or
+      (tc-type-handle-lookup-id
+        (tc-job-state-nominal-cache
+          (tc-context-job-state (tc-global-shared-view ctx)))
         (tc-context-symbols ctx)
         name-id
-        (csym.compiler-symbols-missing-handle))]
+        tc-type-handle-lookup-caller-aggregate-layout)]
     (if (csym.compiler-symbols-handle-found? handle)
       (begin
         (tc-agg-layout-cache-ensure-for-state!

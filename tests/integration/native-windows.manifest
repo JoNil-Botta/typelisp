@@ -163,6 +163,7 @@ group_pair_phi_home|tests/integration/group_pair_phi_home.tl|42|-|-|stdlib/io.tl
 param_shift_pin|tests/integration/param_shift_pin.tl|42|-|-|stdlib/io.tl
 handle_param_pin|tests/integration/handle_param_pin.tl|42|-|-|stdlib/io.tl
 param_pin_interval|tests/integration/param_pin_interval.tl|42|-|-|stdlib/io.tl
+param_memory_transport_abi|tests/integration/param_memory_transport_abi.tl|42|77\n|-|stdlib/io.tl stdlib/string.tl
 crossblock_reload_elide|tests/integration/crossblock_reload_elide.tl|42|-|-|stdlib/io.tl
 licm_desc_hoist|tests/integration/licm_desc_hoist.tl|42|-|-|stdlib/io.tl
 licm_memclean_global_promote|tests/integration/licm_memclean_global_promote.tl|42|-|-|stdlib/io.tl

@@ -5988,6 +5988,43 @@
 
 (cfg
   test
+  ;; FLT-1: an internal by-memory ABI transport parameter -- what
+  ;; lower-internal-transport-type emits for a >16-byte by-value Tuple/Array.
+  ;; It arrives in the incoming STACK area and advances NEITHER argument bank,
+  ;; yet it is a nominal Struct: register-eligible, not a register group, so it
+  ;; satisfied every test compiler-reg-integer-param-type? makes.
+  (define (compiler-reg-entry-forbidden-memory-params-3) : ir.CompilerIrParamSeq
+    (ir.compiler-ir-param-seq-prepend
+      (ir.CompilerIrParam.Param
+        "pm"
+        (ast.AstType.Struct
+          (ir.compiler-ir-symbol "__tl_internal_abi_mem_s24__flt_probe"))
+        0)
+      (ir.compiler-ir-param-seq-prepend
+        (ir.CompilerIrParam.Param "p1" (compiler-reg-i64-ty) 1)
+        (ir.compiler-ir-param-seq-prepend
+          (ir.CompilerIrParam.Param "p2" (compiler-reg-i64-ty) 2)
+          (ir.compiler-ir-param-seq-empty))))))
+
+(cfg
+  test
+  ;; FLT-1 fail-closed shape gate, the by-memory half: the transport used to
+  ;; pass the gate, and both this constraint and the pin walk then shifted every
+  ;; LATER position's ABI index by one -- a wrong-code bug, not a missed
+  ;; optimisation (see compiler-reg-param-assign-walk's note and
+  ;; tests/integration/param_memory_transport_abi.tl). The builder must answer
+  ;; an EMPTY array so the whole function keeps the legacy rule. The seven-i64
+  ;; positive case above is what pins that the refusal is not over-broad.
+  (define (compiler-reg-param-entry-forbidden-refuses-memory-ok?) : bool
+    (=
+      (array-length
+        (compiler-reg-entry-forbidden-rows
+          3
+          (compiler-reg-entry-forbidden-memory-params-3)))
+      0)))
+
+(cfg
+  test
   (define (compiler-reg-scalar-float-param-registers-ok?) : bool
     (match (reg.compiler-reg-plan-function-scalar-for-abi
       cabi.CompilerRegTargetAbi.Linux
@@ -22137,6 +22174,9 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-param-entry-forbidden-refuses-float-ok?"
       (cfg test (compiler-reg-param-entry-forbidden-refuses-float-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-param-entry-forbidden-refuses-memory-ok?"
+      (cfg test (compiler-reg-param-entry-forbidden-refuses-memory-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-scalar-float-param-registers-ok?"
       (cfg test (compiler-reg-scalar-float-param-registers-ok?) true))

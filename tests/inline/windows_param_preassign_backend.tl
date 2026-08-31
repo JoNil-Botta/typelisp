@@ -143,18 +143,14 @@
   ;; home across the div. Pre-campaign the allocator forced it to the stack
   ;; (ineligible + unassigned). The M-A campaign made params greedy candidates,
   ;; so b is register-homed instead of stack-homed.
-  ;; R3S-1: the home is no longer forced CALLEE-SAVED. b is the LAST parameter,
-  ;; so no entry copy is emitted after its own and its home carries no schedule
-  ;; constraint; it spans no call; and the div narrowing forbids exactly the
-  ;; idiv pair {%rax,%rdx}. The soundness property asserted here is that pair --
-  ;; b must not be left in a div-clobbered register -- and the concrete pick is
-  ;; pinned as %rcx, in a function that now pushes no callee-saved register at
-  ;; all. %rcx is param a's INCOMING argument register, and taking it is sound
-  ;; for exactly the reason the schedule constraint encodes: a sits at an
-  ;; EARLIER position, so its entry copy has already been emitted by the time
-  ;; b's runs and there is nothing left in %rcx to destroy. The old
-  ;; `is-param -> csr-only` rule could not express that and paid a
-  ;; callee-saved push/pop for it.
+  ;; b is register-homed in a CALLEE-SAVED register that survives the clobber
+  ;; instead of being stack-homed -- the same soundness property (b is not left
+  ;; in a div-clobbered register) with a better home.
+  ;; WIN1: R3S-1's entry-copy schedule constraint is Linux-only
+  ;; (compiler-reg-param-entry-forbidden answers the legacy empty array for
+  ;; every non-Linux ABI), so a Windows parameter class is still
+  ;; callee-saved-only here. The two negative clauses below stay as the
+  ;; ABI-independent statement of the property the constraint encodes.
   (match (regalloc.compiler-reg-plan-function-scalar-for-abi
     abi.CompilerRegTargetAbi.Windows
     (win-param-preassign-safe-div-function))
@@ -168,7 +164,9 @@
                 (and
                   (not (= r abi.compiler-reg-id-rax))
                   (not (= r abi.compiler-reg-id-rdx))
-                  (= r abi.compiler-reg-id-rcx))]
+                  (regalloc.compiler-reg-id-seq-contains?
+                    (regalloc.compiler-reg-win64-callee-saved-integer-registers)
+                    r))]
               [_ false])]
           [(regalloc.CompilerRegMaybeLocation.No) false]))]))
 
@@ -219,17 +217,15 @@
           ;; emit scratch register, so it cannot stay there: it is
           ;; relocated and stored from the new home -- NOT stacked, and
           ;; never stored directly out of %r8.
-          ;; R3S-1: the new home is the caller-saved %rax, not a callee-saved
-          ;; register. c's entry copy is emitted before d's, so the ONE home
-          ;; the schedule forbids it is d's incoming %r9; every other free
-          ;; pool register is legal and %rax is the first. The function
-          ;; contains no call, so it now pushes no callee-saved register.
+          ;; WIN1: on Windows the home is a callee-saved register (%r12) --
+          ;; R3S-1's caller-saved widening is Linux-only, so this is the
+          ;; pre-constraint expectation.
           (compiler_backend.compiler-backend-string-contains?
             (compiler_backend.compiler-backend-global-shared-view asm)
-            "    movq %r8, %rax\n")
+            "    movq %r8, %r12\n")
           (compiler_backend.compiler-backend-string-contains?
             (compiler_backend.compiler-backend-global-shared-view asm)
-            "    movq %rax, _tl_win_pc(%rip)\n")
+            "    movq %r12, _tl_win_pc(%rip)\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
               (compiler_backend.compiler-backend-global-shared-view asm)
@@ -240,21 +236,17 @@
           (not
             (compiler_backend.compiler-backend-string-contains?
               (compiler_backend.compiler-backend-global-shared-view asm)
-              "    movq %r8, %r9\n"))
-          (not
-            (compiler_backend.compiler-backend-string-contains?
-              (compiler_backend.compiler-backend-global-shared-view asm)
-              "    pushq %r12\n")))]
+              "    movq %r8, %r9\n")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
 (test
   windows-param-preassign-backend
   (win-param-preassign-assert-true
     (win-param-preassign-backend-ok?)
-    "Windows scalar param preassignment should keep rcx/rdx/r9 homes and relocate r8 to a caller-saved home that is not a later param's incoming register"))
+    "Windows scalar param preassignment should keep rcx/rdx/r9 homes and relocate r8 to a callee-saved register"))
 
 (test
   windows-param-preassign-safe-div-regalloc
   (win-param-preassign-assert-true
     (win-param-preassign-safe-div-regalloc-ok?)
-    "Windows rdx parameter home should be blocked across safe div/mod clobbers, relocating the param off the idiv pair"))
+    "Windows rdx parameter home should be blocked across safe div/mod clobbers, relocating the param to a callee-saved register"))

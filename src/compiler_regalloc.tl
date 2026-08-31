@@ -6537,6 +6537,35 @@
 ;; class (the M-A entry reservation makes every used parameter live at point 0,
 ;; so they all interfere), and a class that merges a parameter with ordinary
 ;; values inherits the constraint because the class has one home.
+;; WIN1 (fail-closed target gate). The schedule constraint above is ABI-neutral
+;; on paper -- it reads the argument registers out of the target ABI -- but the
+;; INVARIANT it removes is not. Dropping `is-param -> csr-only` also drops
+;; "no parameter is ever homed in a volatile register", and the Win64 volatile
+;; prefix is exactly the four argument registers plus %rax/%r10/%r11, so on
+;; Windows the change is far more aggressive than on SysV:
+;;   * %r8 is Win64 ARGUMENT 2 (SysV argument 4) and sits at pool index 3
+;;     (SysV: index 8, last of the volatile prefix). It is also the backend's
+;;     fixed integer scratch register -- `compiler-reg-param-int-reg` refuses to
+;;     PIN a parameter there for that reason, and the shrink-wrap prefix guard
+;;     (compiler-backend-shrinkwrap-compare-value-ready?) records a Win64
+;;     miscompile of the shape "a large literal staged into %r8 before returning
+;;     the third argument from %r8". Measured on src/main.tl at --cfg
+;;     scratch-vreg: this constraint leaves a parameter in %r8 in 1,256 Windows
+;;     functions against 360 on Linux.
+;;   * %rsi/%rdi are Win64 NONVOLATILE but SysV volatile, while the late scratch
+;;     planner deliberately uses the SysV pool ORDER on both targets
+;;     (compiler-reg-scratch-default-pool), so Win64 scratch demand reaches
+;;     them early -- and whether they must then be preserved is decided by a
+;;     separate plan bit (compiler-backend-scavenge-plan-win64-bit).
+;; CI evidence: the scratch-vreg + TLCI-mutation bootstrap fixpoint segfaults on
+;; Windows only, bisected to this constraint; Linux passes the same gate. This
+;; worktree cannot execute Windows binaries, so no Windows-side narrowing can be
+;; validated here -- and shipping an unvalidated one is what produced the
+;; failure. Answer the legacy empty array for every non-Linux ABI: Windows
+;; codegen is then byte-identical to the pre-constraint compiler by
+;; construction, which restores the gate without guessing. Re-enabling Windows
+;; needs a host that can run the fixpoint, and should start from the two items
+;; above.
 (define (compiler-reg-param-entry-forbidden
   [type-segment-bases : i64]
   [representations : ir.CompilerIrRepresentationIndex]
@@ -6545,6 +6574,7 @@
   [parents : (__tl_dyn-array i64)]
   [vars : i64]) : (__tl_dyn-array CompilerRegIdSeq)
   (if (or
+    (not (compiler-reg-linux-abi? target-abi))
     (< params.len 1)
     (< vars 1)
     (not

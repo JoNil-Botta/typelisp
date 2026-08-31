@@ -5804,10 +5804,12 @@
   test
   ;; Win64 zero-clobber pins: params 0/1 keep %rcx/%rdx. Param 2's incoming
   ;; register (%r8) is excluded from the legacy pin set, but M-A (RC1) makes it
-  ;; a greedy candidate. R3S-1: it is the LAST parameter, so no entry copy is
-  ;; emitted after its own and its home carries no schedule constraint -- it
-  ;; takes the first pool register, the caller-saved %rax, instead of forcing a
-  ;; %r12 push/pop pair onto a function that contains no call at all.
+  ;; a greedy candidate: it takes the first callee-saved home instead of being
+  ;; stack-homed.
+  ;; WIN1: R3S-1's entry-copy schedule constraint is answered EMPTY for every
+  ;; non-Linux ABI (compiler-reg-param-entry-forbidden), so a Windows parameter
+  ;; class stays callee-saved-only and this expectation is the pre-R3S-1 one.
+  ;; The companion test below pins that refusal directly.
   (define (compiler-reg-scalar-windows-param-registers-ok?) : bool
     (match (reg.compiler-reg-plan-function-scalar-for-abi
       cabi.CompilerRegTargetAbi.Windows
@@ -5840,7 +5842,7 @@
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
               2)
-            cabi.compiler-reg-id-rax))])))
+            cabi.compiler-reg-id-r12))])))
 
 (cfg
   test
@@ -5971,6 +5973,35 @@
             (reg.compiler-reg-global-shared-view rows)
             6
             cabi.compiler-reg-id-r9))))))
+
+(cfg
+  test
+  ;; WIN1: the entry-copy schedule constraint is Linux-only. The SAME seven i64
+  ;; parameters that produce a full constraint on SysV must answer the legacy
+  ;; EMPTY array on Win64, so alloc-one! keeps every Windows parameter class
+  ;; callee-saved-only and Windows codegen is byte-identical to the compiler
+  ;; before the constraint existed.
+  (define (compiler-reg-param-entry-forbidden-refuses-windows-ok?) : bool
+    (let
+      [coalesce : reg.CompilerRegCoalesceMap
+        (compiler-reg-test-identity-coalesce 7)]
+      (and
+        (=
+          (array-length
+            (reg.compiler-reg-param-entry-forbidden
+              (ast.ast-node-pool-reader-type-segment-bases)
+              (ir.compiler-ir-representation-index-empty)
+              cabi.CompilerRegTargetAbi.Windows
+              (compiler-reg-entry-forbidden-i64-params-7)
+              coalesce.parents
+              7))
+          0)
+        (>
+          (array-length
+            (compiler-reg-entry-forbidden-rows
+              7
+              (compiler-reg-entry-forbidden-i64-params-7)))
+          0)))))
 
 (cfg
   test
@@ -22171,6 +22202,9 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-param-entry-forbidden-ok?"
       (cfg test (compiler-reg-param-entry-forbidden-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-param-entry-forbidden-refuses-windows-ok?"
+      (cfg test (compiler-reg-param-entry-forbidden-refuses-windows-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-param-entry-forbidden-refuses-float-ok?"
       (cfg test (compiler-reg-param-entry-forbidden-refuses-float-ok?) true))

@@ -16,14 +16,15 @@ native_link_detect_host
 
 # Target-conditioned prefix declarations change the skip totals. The explicit
 # compiler-owned-view import from the by-value ownership cutover contributes
-# one declaration on both hosts. Windows also builds dependency nodes serially
-# in one process, while Linux workers isolate child-node fallback accounting
-# from the root build.
+# one declaration on both hosts. Windows builds dependency nodes serially in
+# one process, which still changes prefix skip totals. All three library nodes
+# are dependency-free, however, so forced-source fallback happens only for the
+# root consumer on both hosts.
 case "$NL_HOST_OS" in
     windows)
         TRUSTED_PREFIX_SKIPPED=220
         FAILURE_PREFIX_SKIPPED=205
-        FORCED_SOURCE_FALLBACKS=3
+        FORCED_SOURCE_FALLBACKS=1
         ;;
     *)
         TRUSTED_PREFIX_SKIPPED=215
@@ -267,11 +268,17 @@ assert_surface_route() {
     macro_skipped=$6
     typecheck_skipped=$7
     decls=$8
-    grep -F "dependency-tlci-verification|phase=finished|requests=-1|entries=3" \
+    if ! grep -F \
+        "dependency-tlci-verification|phase=finished|requests=-1|entries=3" \
         "$file" |
-        grep -F "|surface-enabled=$enabled|surface-fragments=3|surface-hits=$hits|surface-fallbacks=$fallbacks|" \
-        | grep -F "|surface-decls=$decls|surface-macro-skipped=$macro_skipped|surface-typecheck-skipped=$typecheck_skipped" \
-        >/dev/null || fail "$label dependency surface route mismatch"
+        grep -F "|surface-enabled=$enabled|surface-fragments=3|surface-hits=$hits|surface-fallbacks=$fallbacks|" |
+        grep -F "|surface-decls=$decls|surface-macro-skipped=$macro_skipped|surface-typecheck-skipped=$typecheck_skipped" \
+            >/dev/null; then
+        grep -F \
+            "dependency-tlci-verification|phase=finished|requests=-1|entries=3" \
+            "$file" >&2 || true
+        fail "$label dependency surface route mismatch"
+    fi
 }
 
 case "$WORKDIR" in

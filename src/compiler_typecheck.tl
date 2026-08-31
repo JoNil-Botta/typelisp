@@ -541,7 +541,7 @@
       2)
     (compiler-typecheck-rendered-error-ok?
       (compiler-typecheck-direct-borrow-temporary-diagnostic-source)
-      "error[E0200]: typecheck: borrow requires a local, parameter, or aggregate place
+      "error[E0207]: typecheck: borrow requires a local, parameter, or aggregate place
   --> :3:9
    |
  3 |   (take (& (+ n 1))))
@@ -554,7 +554,7 @@
 ")
     (compiler-typecheck-rendered-error-ok?
       (compiler-typecheck-auto-borrow-temporary-diagnostic-source)
-      "error[E0200]: typecheck: borrow requires a local, parameter, or aggregate place
+      "error[E0207]: typecheck: borrow requires a local, parameter, or aggregate place
   --> :3:9
    |
  3 |   (take (+ n 1)))
@@ -567,7 +567,7 @@
 ")
     (compiler-typecheck-rendered-error-ok?
       (compiler-typecheck-region-call-diagnostic-source)
-      "error[E0200]: typecheck: cannot pass region-tagged value to function parameter; region value would escape
+      "error[E0205]: typecheck: cannot pass region-tagged value to function parameter; region value would escape
   --> :13:26
    |
 13 |   (with-arena phase (use (string.int->string 42))))
@@ -600,7 +600,7 @@
       "parse")
     (compiler-typecheck-error-code-ok?
       (compiler-typecheck-branch-mismatch-source)
-      (cdiag.compiler-diagnostic-code-typecheck)
+      (cdiag.compiler-diagnostic-code-typecheck-type-mismatch)
       "typecheck")))
 
 (define (compiler-typecheck-type-parameter-source) : String

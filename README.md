@@ -83,6 +83,8 @@ typelisp fmt --check <file.tl>
 typelisp lint <file.tl>
 typelisp doc --test <file.tl>
 typelisp explain <code>         Explain a diagnostic code
+typelisp explain --list         List diagnostic codes
+typelisp explain --search TERM  Search diagnostic explanations
 ```
 
 Run `typelisp <command> --help` for the current command-specific options.

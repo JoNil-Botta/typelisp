@@ -3,13 +3,27 @@
 (cfg (any compiler-arena-debug test) (import stdlib.string))
 (import stdlib.str_cat_runtime as str_cat)
 
-(define (compiler-backend-runtime-arena-data [_arena-debug : bool]) : String
+(define (compiler-backend-runtime-arena-data
+  [_arena-debug : bool]
+  [backtrace : bool]) : String
   (str_cat.str-cat
     "    .section .tbss,\"awT\",@nobits
     .balign 8
     .globl tl_current_arena
 tl_current_arena:
     .zero 8
+"
+    (if backtrace
+      "    .globl tl_backtrace_stack_low
+tl_backtrace_stack_low:
+    .zero 8
+    .globl tl_backtrace_stack_high
+tl_backtrace_stack_high:
+    .zero 8
+
+"
+      "")
+    "
 
     .section .bss
     .balign 8
@@ -68,7 +82,8 @@ tl_current_arena:
   (runtime_common.compiler-backend-runtime-common-data
     features
     (compiler-backend-runtime-arena-data
-      (runtime_common.compiler-backend-runtime-features-arena-debug? features))))
+      (runtime_common.compiler-backend-runtime-features-arena-debug? features)
+      (runtime_common.compiler-backend-runtime-features-backtrace? features))))
 
 (define (compiler-backend-runtime-linux-alloc-functions-base [profile : bool]) : String
   (let
@@ -1092,6 +1107,66 @@ tl_tlci_call_macro_entry:
 
 ")
 
+(define (compiler-backend-runtime-backtrace-functions) : String
+  "    .globl tl_backtrace_map_begin
+    .type tl_backtrace_map_begin,@function
+tl_backtrace_map_begin:
+    leaq tl_backtrace_map_data_begin(%rip), %rax
+    ret
+    .size tl_backtrace_map_begin, . - tl_backtrace_map_begin
+
+    .globl tl_backtrace_map_end
+    .type tl_backtrace_map_end,@function
+tl_backtrace_map_end:
+    leaq tl_backtrace_map_data_end(%rip), %rax
+    ret
+    .size tl_backtrace_map_end, . - tl_backtrace_map_end
+
+    .globl tl_backtrace_string_begin
+    .type tl_backtrace_string_begin,@function
+tl_backtrace_string_begin:
+    leaq tl_backtrace_string_data_begin(%rip), %rax
+    ret
+    .size tl_backtrace_string_begin, . - tl_backtrace_string_begin
+
+    .globl tl_backtrace_string_end
+    .type tl_backtrace_string_end,@function
+tl_backtrace_string_end:
+    leaq tl_backtrace_string_data_end(%rip), %rax
+    ret
+    .size tl_backtrace_string_end, . - tl_backtrace_string_end
+
+    .globl tl_backtrace_frame_pointer
+    .type tl_backtrace_frame_pointer,@function
+tl_backtrace_frame_pointer:
+    movq %rbp, %rax
+    ret
+    .size tl_backtrace_frame_pointer, . - tl_backtrace_frame_pointer
+
+    .globl tl_backtrace_stack_low_get
+    .type tl_backtrace_stack_low_get,@function
+tl_backtrace_stack_low_get:
+    movq %fs:tl_backtrace_stack_low@tpoff, %rax
+    ret
+    .size tl_backtrace_stack_low_get, . - tl_backtrace_stack_low_get
+
+    .globl tl_backtrace_stack_high_get
+    .type tl_backtrace_stack_high_get,@function
+tl_backtrace_stack_high_get:
+    movq %fs:tl_backtrace_stack_high@tpoff, %rax
+    ret
+    .size tl_backtrace_stack_high_get, . - tl_backtrace_stack_high_get
+
+    .globl tl_backtrace_stack_set
+    .type tl_backtrace_stack_set,@function
+tl_backtrace_stack_set:
+    movq %rdi, %fs:tl_backtrace_stack_low@tpoff
+    movq %rsi, %fs:tl_backtrace_stack_high@tpoff
+    ret
+    .size tl_backtrace_stack_set, . - tl_backtrace_stack_set
+
+")
+
 (define (compiler-backend-runtime-functions
   [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]) : String
   (let
@@ -1133,6 +1208,10 @@ tl_tlci_call_macro_entry:
         features)
         (compiler-backend-runtime-tlci-macro-entry-functions)
         "")]
+    [backtrace-asm : String
+      (if (runtime_common.compiler-backend-runtime-features-backtrace? features)
+        (compiler-backend-runtime-backtrace-functions)
+        "")]
     [runtime-front-asm : String
       (str_cat.str-cat
         memcpy-asm
@@ -1141,6 +1220,7 @@ tl_tlci_call_macro_entry:
         mem-fill8-asm
         tlci-entry-asm
         tlci-macro-entry-asm
+        backtrace-asm
         arena-asm
         profile-asm
         (str_cat.str-cat

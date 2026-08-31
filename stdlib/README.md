@@ -456,8 +456,12 @@ Vec bang place macros as available yet.
 - `runtime.tl`: always-linked runtime prelude. Holds the fault/abort handlers
   (out-of-bounds, divide-by-zero, shift) the backend emits checks against, plus
   the low-level OS write/exit primitives they use, as TypeLisp exported under
-  fixed symbols via `(:export-symbol …)` (#2143/#2142). Imported implicitly into
-  every executable; programs do not import it by hand.
+  fixed symbols via `(:export-symbol …)` (#2143/#2142). Debug/backtrace builds
+  also use its bounded, allocation-free fatal stack renderer: Linux validates
+  frame pointers against per-thread stack bounds, while Windows captures frames
+  with `RtlCaptureStackBackTrace`; both symbolize through a compiler-emitted
+  compact read-only map. Imported implicitly into every executable; programs do
+  not import it by hand.
 - `string.tl`: string utility functions built on compiler/runtime primitives,
   including append/concat-all, substring, equality, integer rendering, and
   integer parsing helpers. Import it with `(import stdlib.string)`.

@@ -1314,6 +1314,29 @@ tl_thread_entry_ptr:
 
 ")
 
+(define (compiler-backend-runtime-windows-backtrace-functions) : String
+  "    .globl tl_backtrace_map_begin
+tl_backtrace_map_begin:
+    leaq tl_backtrace_map_data_begin(%rip), %rax
+    ret
+
+    .globl tl_backtrace_map_end
+tl_backtrace_map_end:
+    leaq tl_backtrace_map_data_end(%rip), %rax
+    ret
+
+    .globl tl_backtrace_string_begin
+tl_backtrace_string_begin:
+    leaq tl_backtrace_string_data_begin(%rip), %rax
+    ret
+
+    .globl tl_backtrace_string_end
+tl_backtrace_string_end:
+    leaq tl_backtrace_string_data_end(%rip), %rax
+    ret
+
+")
+
 ;; This is a standalone private runtime function body with its own Win64-local
 ;; volatile-register plan. Its XMM0-XMM3 uses cannot overlap allocator-assigned
 ;; homes in a compiler-emitted user function: the only boundary is the call,
@@ -1692,7 +1715,16 @@ tl_tlci_call_macro_entry:
     [libc-shims-asm : String
       (compiler-backend-runtime-windows-libc-shim-functions startup-profile)]
     [thread-asm : String (compiler-backend-runtime-windows-thread-functions)]
-    (str_cat.str-cat runtime-front-asm thread-asm libc-shims-asm "")))
+    [backtrace-asm : String
+      (if (runtime_common.compiler-backend-runtime-features-backtrace? features)
+        (compiler-backend-runtime-windows-backtrace-functions)
+        "")]
+    (str_cat.str-cat
+      runtime-front-asm
+      thread-asm
+      backtrace-asm
+      libc-shims-asm
+      "")))
 
 (define (compiler-backend-runtime-externs
   [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]) : String

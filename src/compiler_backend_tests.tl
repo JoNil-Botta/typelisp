@@ -17433,6 +17433,83 @@ g:
       (arena.mark-eq? owner-mark-before owner-mark-after)
       (arena.eq? (arena.current) caller))))
 
+(define (compiler-backend-debug-path-remap-ok?) : bool
+  (let
+    [_clear : unit (compiler_ir_types.compiler-debug-path-remap-clear!)]
+    [invalid-ok : bool
+      (not (compiler_ir_types.compiler-debug-path-remap-set! "missing-equals"))]
+    [configured : bool
+      (compiler_ir_types.compiler-debug-path-remap-set!
+        "/private/build=WORKSPACE")]
+    [mapped : String
+      (compiler_ir_types.compiler-debug-path-remap "/private/build/src/main.tl")]
+    [unchanged : String
+      (compiler_ir_types.compiler-debug-path-remap "/other/src/main.tl")]
+    [_restore : unit (compiler_ir_types.compiler-debug-path-remap-clear!)]
+    (and
+      invalid-ok
+      configured
+      (string.eq mapped "WORKSPACE/src/main.tl")
+      (string.eq unchanged "/other/src/main.tl")
+      (not (compiler_ir_types.compiler-debug-path-remap-enabled?)))))
+
+(define (compiler-backend-backtrace-metadata-shape-ok?) : bool
+  (let
+    [previous-debug : bool (compiler_ir_types.compiler-debug-info-enabled?)]
+    [_disable : unit (compiler_ir_types.compiler-debug-info-set-enabled! false)]
+    [disabled-ok : bool
+      (match (compiler_backend.compiler-backend-emit-source
+        "(define (main) : i64 0)")
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (and
+            (not
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view asm)
+                "tl_backtrace_map_data_begin"))
+            (not
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view asm)
+                "tl_backtrace_map_begin:")))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false])]
+    [_enable : unit (compiler_ir_types.compiler-debug-info-set-enabled! true)]
+    [linux-ok : bool
+      (match (compiler_backend.compiler-backend-emit-source
+        "(define (main) : i64 0)")
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (and
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              ".section .typelisp_backtrace,\"a\",@progbits")
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "tl_backtrace_string_data_begin:")
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "tl_backtrace_map_data_end:")
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              ".quad main"))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false])]
+    [windows-ok : bool
+      (match (compiler_backend.compiler-backend-emit-source-for-target
+        "(define (main) : i64 0)"
+        (compiler_backend.CompilerBackendTarget.Windows))
+        [(compiler_backend.ResultCompilerBackend.Ok asm)
+          (and
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              ".section .rdata$TLBT,\"dr\"")
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              ".section .rdata$TLBS,\"dr\"")
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "tl_backtrace_map_begin:"))]
+        [(compiler_backend.ResultCompilerBackend.Err _) false])]
+    [_restore : unit
+      (compiler_ir_types.compiler-debug-info-set-enabled! previous-debug)]
+    (and disabled-ok linux-ok windows-ok)))
+
 ;; Representation facts are per compile entry even when the explicit backend
 ;; state is reused by a batch. Rebuilding them must rewind their dedicated
 ;; arena rather than extending the persistent state owner on every entry.
@@ -55321,6 +55398,8 @@ b_keep:
         (compiler-backend-instr-diagnostics-ok?)
         (compiler-backend-source-span-symbol-provenance-ok?)
         (compiler-backend-debug-disabled-sparse-paths-ok?)
+        (compiler-backend-debug-path-remap-ok?)
+        (compiler-backend-backtrace-metadata-shape-ok?)
         (compiler-backend-debug-file-index-emission-arena-ok?)
         (compiler-backend-user-symbol-cache-emission-arena-ok?)
         (compiler-backend-representation-arena-reuse-ok?)

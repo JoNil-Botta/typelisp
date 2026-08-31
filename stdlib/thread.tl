@@ -260,6 +260,13 @@
   linux
   (extern (thread-linux-runtime-init) : unit (:symbol "tl_thread_init")))
 
+;: Install the raw-clone worker's stack bounds for allocation-free debug-build
+;: fatal backtraces. The declaration and call disappear outside backtrace
+;: builds, so ordinary thread startup remains byte-for-byte unchanged.
+(cfg
+  (all linux compiler-backtrace)
+  (extern (thread-linux-backtrace-stack-set [low : i64] [high : i64]) : unit (:symbol "tl_backtrace_stack_set")))
+
 ;: Windows kernel32 `CreateThread`.
 (cfg
   windows
@@ -525,9 +532,15 @@
   [entry : (-> i64 i64)]
   [arg : i64]
   [result-addr : i64]
-  [started-addr : i64]) : never
+  [started-addr : i64]
+  [stack-low : i64]
+  [stack-high : i64]) : never
   (begin
     (cfg linux (thread-linux-runtime-init) unit)
+    (cfg
+      (all linux compiler-backtrace)
+      (thread-linux-backtrace-stack-set stack-low stack-high)
+      unit)
     (write-i32! started-addr (cast 1 : i32))
     (linux-futex-wake started-addr)
     (let
@@ -563,7 +576,13 @@
         (if (< tid 0)
           (ThreadSpawnErr "thread: spawn failed")
           (if (= tid 0)
-            (linux-child-main entry arg result-addr started-addr)
+            (linux-child-main
+              entry
+              arg
+              result-addr
+              started-addr
+              (array-u8-addr stack)
+              stack-top)
             (begin
               (linux-wait-i32-change started-addr (cast 0 : i32))
               (ThreadSpawnOk (Thread tid clear-addr result-addr "")))))))))

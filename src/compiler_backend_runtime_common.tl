@@ -11,7 +11,8 @@
   (profile bool)
   (tlci-macro-entry bool)
   (write-exit bool)
-  (startup-profile bool))
+  (startup-profile bool)
+  (backtrace bool))
 
 (define (compiler-backend-runtime-features-alloc?
   [features : (& features CompilerBackendRuntimeFeatures)]) : bool
@@ -44,6 +45,10 @@
 (define (compiler-backend-runtime-features-startup-profile?
   [features : (& features CompilerBackendRuntimeFeatures)]) : bool
   features.startup-profile)
+
+(define (compiler-backend-runtime-features-backtrace?
+  [features : (& features CompilerBackendRuntimeFeatures)]) : bool
+  features.backtrace)
 
 (define (compiler-backend-runtime-fast-alloc-label [size : i64]) : String
   (str_cat.str-cat ".L_tl_alloc" (string.int->string size) "" ""))

@@ -97869,12 +97869,6 @@
             keep-box
             body-box)
           (let
-            [start : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases start-box)]
-            [end : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases end-box)]
-            [init : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases init-box)]
             [keep : ast.AstExpr
               (ast.ast-expr-segment-bases-get expr-bases keep-box)]
             [body : ast.AstExpr

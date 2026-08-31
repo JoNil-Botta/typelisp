@@ -48,12 +48,49 @@
     `(unsafe
       (ptr-read (ptr-offset (__tl_array-data ,items) ,index)))))
 
+;; CompilerProfileState slot 350 is the load lifetime ledger's exact source
+;; payload count. The active loader session already owns an explicit interner
+;; whose profile-metrics address names that job's storage, so this adds no
+;; process-global counter and no field/allocation to ordinary loader state.
+(cfg
+  (any compile-profile test)
+  (define compiler-load-profile-input-bytes-metric : i64
+    350))
+
+(cfg
+  (any compile-profile test)
+  (define (compiler-load-profile-note-input-bytes! [count : i64]) : unit
+    ;; Standalone `check`, manifest, and test readers intentionally use the
+    ;; compatibility session, whose interner may expose a narrower leaf metric
+    ;; view. Only an installed driver-owned load session carries the full
+    ;; CompilerProfileState address used by slot 350.
+    (if (not (compiler-load-active-session-live?))
+      unit
+      (let
+        [load-state : CompilerLoadSessionState
+          (compiler-load-active-session-state-shared-view)]
+        [intern-state : ci.InternCompatState
+          (compiler-load-session-state-interns load-state)]
+        [metrics-address : u64
+          (ci.intern-compat-state-profile-metrics-address-ref (& intern-state))]
+        (if (= metrics-address (cast 0 : u64))
+          unit
+          (unsafe
+            (let
+              [slot : (MutPtr i64)
+                (ptr-offset
+                  (int->ptr metrics-address : (MutPtr i64))
+                  compiler-load-profile-input-bytes-metric)]
+              (ptr-write! slot (+ (ptr-read slot) count)))))))))
+
 ;; Sources, manifests, and include payloads are interpreted as text here.
 ;; Make that conversion explicit at the binary IO boundary.
 (define (compiler-load-read-file-text [path : (& path str)]) : String
   (let
     [contents : byte_buf.ByteBuf (io.read-file (string.copy path))]
     [count : i64 (byte_buf.len contents)]
+    [_profile-input : unit
+      (cfg compile-profile (compiler-load-profile-note-input-bytes! count) unit)]
     (if (= count 0)
       ""
       ;; `contents` is a fresh, unaliased read result and is never mutated or
@@ -70,7 +107,13 @@
 
 (define (compiler-load-try-read-file-text [path : (& source str)]) : io.ResultIoString
   (match (io.try-read-file path)
-    [(io.OkIoBytes contents) (io.OkIoString (byte_buf.to-string contents))]
+    [(io.OkIoBytes contents)
+      (begin
+        (cfg
+          compile-profile
+          (compiler-load-profile-note-input-bytes! (byte_buf.len contents))
+          unit)
+        (io.OkIoString (byte_buf.to-string contents)))]
     [(io.ErrIoBytes error) (io.ErrIoString error)]))
 
 (define (compiler-load-try-write-file-text

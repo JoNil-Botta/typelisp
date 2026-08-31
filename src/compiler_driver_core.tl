@@ -1299,6 +1299,66 @@
   (define compiler-driver-batch-profile-first-live-metric : i64
     18))
 
+;; Job-owned load lifetime boundary starts (CompilerProfileState 350-361).
+;; Slot 350 is incremented by compiler_load through this job's explicit
+;; interner metrics address; the driver owns the remaining boundary snapshots.
+(cfg
+  (any compile-profile test)
+  (define compiler-driver-load-profile-input-bytes-metric : i64
+    350))
+(cfg
+  (any compile-profile test)
+  (define compiler-driver-load-profile-start-total-metric : i64
+    351))
+(cfg
+  (any compile-profile test)
+  (define compiler-driver-load-profile-start-live-metric : i64
+    352))
+(cfg
+  (any compile-profile test)
+  (define compiler-driver-load-profile-start-peak-metric : i64
+    353))
+(cfg
+  (any compile-profile test)
+  (define compiler-driver-load-profile-token-start-metric : i64
+    354))
+(cfg
+  (any compile-profile test)
+  (define compiler-driver-load-profile-sexpr-start-metric : i64
+    355))
+(cfg
+  (any compile-profile test)
+  (define compiler-driver-load-profile-origin-start-metric : i64
+    356))
+(cfg
+  (any compile-profile test)
+  (define compiler-driver-load-profile-pool-base-start-metric : i64
+    357))
+(cfg
+  (any compile-profile test)
+  (define compiler-driver-load-profile-expr-start-metric : i64
+    358))
+(cfg
+  (any compile-profile test)
+  (define compiler-driver-load-profile-type-start-metric : i64
+    359))
+(cfg
+  (any compile-profile test)
+  (define compiler-driver-load-profile-surface-start-metric : i64
+    360))
+(cfg
+  (any compile-profile test)
+  (define compiler-driver-load-profile-intern-start-metric : i64
+    361))
+(cfg
+  (any compile-profile test)
+  (define compiler-driver-load-profile-enclosing-handle-metric : i64
+    368))
+(cfg
+  (any compile-profile test)
+  (define compiler-driver-load-profile-enclosing-start-metric : i64
+    369))
+
 (cfg
   (any compile-profile test)
   (define (compiler-driver-profile-value
@@ -1629,6 +1689,322 @@
       (compiler-driver-profile-field live-delta)
       (compiler-driver-profile-field peak-delta)
       "\n")))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-profile-lifetime-line
+    [boundary : String]
+    [owner : String]
+    [lifetime : String]
+    [cumulative-alloc : i64]
+    [retained-live : i64]
+    [peak-delta : i64]) : String
+    (str_cat.str-cat
+      "compile-profile-lifetime|"
+      boundary
+      "|"
+      owner
+      "|"
+      lifetime
+      (compiler-driver-profile-field cumulative-alloc)
+      (compiler-driver-profile-field retained-live)
+      (compiler-driver-profile-field peak-delta)
+      "\n")))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-profile-arena-bytes [owner : i64]) : i64
+    (allocation_profile.compiler-allocation-profile-arena-bump-bytes owner)))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-profile-owner-delta [owner : i64] [start : i64]) : i64
+    (compiler-driver-profile-nonnegative
+      (- (compiler-driver-profile-arena-bytes owner) start))))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-profile-start-load-lifetime!
+    [state : profile_state.CompilerProfileState]
+    [pools : compiler_ast_types.AstNodePoolContext]
+    [surface-arena : i64]) : unit
+    (begin
+      (compiler-driver-profile-set!
+        (profile_state.compiler-profile-state-shared-view state)
+        compiler-driver-load-profile-input-bytes-metric
+        0)
+      (compiler-driver-profile-set!
+        (profile_state.compiler-profile-state-shared-view state)
+        compiler-driver-load-profile-start-total-metric
+        (profile.alloc-total))
+      (compiler-driver-profile-set!
+        (profile_state.compiler-profile-state-shared-view state)
+        compiler-driver-load-profile-start-live-metric
+        (profile.alloc-live))
+      (compiler-driver-profile-set!
+        (profile_state.compiler-profile-state-shared-view state)
+        compiler-driver-load-profile-start-peak-metric
+        (profile.compile-wide-peak-current))
+      (compiler-driver-profile-set!
+        (profile_state.compiler-profile-state-shared-view state)
+        compiler-driver-load-profile-token-start-metric
+        (compiler-driver-profile-arena-bytes
+          (compiler_load.compiler-load-lex-token-buffer-arena-handle)))
+      (compiler-driver-profile-set!
+        (profile_state.compiler-profile-state-shared-view state)
+        compiler-driver-load-profile-sexpr-start-metric
+        (compiler-driver-profile-arena-bytes
+          (compiler_load.compiler-load-reader-sexpr-pool-arena-handle)))
+      (compiler-driver-profile-set!
+        (profile_state.compiler-profile-state-shared-view state)
+        compiler-driver-load-profile-origin-start-metric
+        (compiler-driver-profile-arena-bytes
+          (compiler_load.compiler-load-reader-node-pool-arena-handle)))
+      (compiler-driver-profile-set!
+        (profile_state.compiler-profile-state-shared-view state)
+        compiler-driver-load-profile-pool-base-start-metric
+        (compiler-driver-profile-arena-bytes
+          (compiler_ast_types.ast-node-pool-context-base-arena pools)))
+      (compiler-driver-profile-set!
+        (profile_state.compiler-profile-state-shared-view state)
+        compiler-driver-load-profile-expr-start-metric
+        (compiler-driver-profile-arena-bytes
+          (compiler_ast_types.ast-node-pool-context-expr-storage-arena pools)))
+      (compiler-driver-profile-set!
+        (profile_state.compiler-profile-state-shared-view state)
+        compiler-driver-load-profile-type-start-metric
+        (compiler-driver-profile-arena-bytes
+          (compiler_ast_types.ast-node-pool-context-type-storage-arena pools)))
+      (compiler-driver-profile-set!
+        (profile_state.compiler-profile-state-shared-view state)
+        compiler-driver-load-profile-surface-start-metric
+        (compiler-driver-profile-arena-bytes surface-arena))
+      (compiler-driver-profile-set!
+        (profile_state.compiler-profile-state-shared-view state)
+        compiler-driver-load-profile-intern-start-metric
+        (compiler-driver-profile-arena-bytes
+          (ci.intern-persistent-arena-handle)))
+      (compiler-driver-profile-set!
+        (profile_state.compiler-profile-state-shared-view state)
+        compiler-driver-load-profile-enclosing-handle-metric
+        (arena.tl_arena_current))
+      (compiler-driver-profile-set!
+        (profile_state.compiler-profile-state-shared-view state)
+        compiler-driver-load-profile-enclosing-start-metric
+        (compiler-driver-profile-arena-bytes (arena.tl_arena_current))))))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-profile-emit-load-lifetime!
+    [state : profile_state.CompilerProfileState]
+    [pools : compiler_ast_types.AstNodePoolContext]
+    [surface-arena : i64]
+    [boundary : String]) : unit
+    (let
+      [cumulative-alloc : i64
+        (-
+          (profile.alloc-total)
+          (compiler-driver-profile-value
+            (profile_state.compiler-profile-state-shared-view state)
+            compiler-driver-load-profile-start-total-metric))]
+      [live-delta : i64
+        (compiler-driver-profile-nonnegative
+          (-
+            (profile.alloc-live)
+            (compiler-driver-profile-value
+              (profile_state.compiler-profile-state-shared-view state)
+              compiler-driver-load-profile-start-live-metric)))]
+      [peak-delta : i64
+        (compiler-driver-profile-nonnegative
+          (-
+            (profile.compile-wide-peak-current)
+            (compiler-driver-profile-value
+              (profile_state.compiler-profile-state-shared-view state)
+              compiler-driver-load-profile-start-peak-metric)))]
+      [input-bytes : i64
+        (compiler-driver-profile-value
+          (profile_state.compiler-profile-state-shared-view state)
+          compiler-driver-load-profile-input-bytes-metric)]
+      [tokens : i64
+        (compiler-driver-profile-owner-delta
+          (compiler_load.compiler-load-lex-token-buffer-arena-handle)
+          (compiler-driver-profile-value
+            (profile_state.compiler-profile-state-shared-view state)
+            compiler-driver-load-profile-token-start-metric))]
+      [sexprs : i64
+        (compiler-driver-profile-owner-delta
+          (compiler_load.compiler-load-reader-sexpr-pool-arena-handle)
+          (compiler-driver-profile-value
+            (profile_state.compiler-profile-state-shared-view state)
+            compiler-driver-load-profile-sexpr-start-metric))]
+      [origins : i64
+        (compiler-driver-profile-owner-delta
+          (compiler_load.compiler-load-reader-node-pool-arena-handle)
+          (compiler-driver-profile-value
+            (profile_state.compiler-profile-state-shared-view state)
+            compiler-driver-load-profile-origin-start-metric))]
+      [pool-base : i64
+        (compiler-driver-profile-owner-delta
+          (compiler_ast_types.ast-node-pool-context-base-arena pools)
+          (compiler-driver-profile-value
+            (profile_state.compiler-profile-state-shared-view state)
+            compiler-driver-load-profile-pool-base-start-metric))]
+      [expr-pool : i64
+        (compiler-driver-profile-owner-delta
+          (compiler_ast_types.ast-node-pool-context-expr-storage-arena pools)
+          (compiler-driver-profile-value
+            (profile_state.compiler-profile-state-shared-view state)
+            compiler-driver-load-profile-expr-start-metric))]
+      [type-pool : i64
+        (compiler-driver-profile-owner-delta
+          (compiler_ast_types.ast-node-pool-context-type-storage-arena pools)
+          (compiler-driver-profile-value
+            (profile_state.compiler-profile-state-shared-view state)
+            compiler-driver-load-profile-type-start-metric))]
+      [surface : i64
+        (compiler-driver-profile-owner-delta
+          surface-arena
+          (compiler-driver-profile-value
+            (profile_state.compiler-profile-state-shared-view state)
+            compiler-driver-load-profile-surface-start-metric))]
+      [interns : i64
+        (compiler-driver-profile-owner-delta
+          (ci.intern-persistent-arena-handle)
+          (compiler-driver-profile-value
+            (profile_state.compiler-profile-state-shared-view state)
+            compiler-driver-load-profile-intern-start-metric))]
+      [enclosing-handle : i64
+        (compiler-driver-profile-value
+          (profile_state.compiler-profile-state-shared-view state)
+          compiler-driver-load-profile-enclosing-handle-metric)]
+      [enclosing : i64
+        (if (or
+          (=
+            enclosing-handle
+            (compiler_ast_types.ast-node-pool-context-base-arena pools))
+          (=
+            enclosing-handle
+            (compiler_ast_types.ast-node-pool-context-expr-storage-arena pools))
+          (=
+            enclosing-handle
+            (compiler_ast_types.ast-node-pool-context-type-storage-arena pools))
+          (= enclosing-handle surface-arena)
+          (= enclosing-handle (ci.intern-persistent-arena-handle)))
+          0
+          (compiler-driver-profile-owner-delta
+            enclosing-handle
+            (compiler-driver-profile-value
+              (profile_state.compiler-profile-state-shared-view state)
+              compiler-driver-load-profile-enclosing-start-metric)))]
+      [named : i64
+        (+
+          enclosing
+          (+
+            tokens
+            (+
+              sexprs
+              (+
+                origins
+                (+ pool-base (+ expr-pool (+ type-pool (+ surface interns))))))))]
+      [remainder : i64 (- live-delta named)]
+      (with-scratch
+        (begin
+          (io.print-error
+            (compiler-driver-profile-lifetime-line
+              (owned_view.compiler-owned-shared-view boundary)
+              "total"
+              "boundary-total"
+              cumulative-alloc
+              live-delta
+              peak-delta))
+          (io.print-error
+            (compiler-driver-profile-lifetime-line
+              (owned_view.compiler-owned-shared-view boundary)
+              "input-bytes"
+              "payload-detail"
+              cumulative-alloc
+              input-bytes
+              peak-delta))
+          (io.print-error
+            (compiler-driver-profile-lifetime-line
+              (owned_view.compiler-owned-shared-view boundary)
+              "frontend-read-parse"
+              "transfer"
+              cumulative-alloc
+              enclosing
+              peak-delta))
+          (io.print-error
+            (compiler-driver-profile-lifetime-line
+              (owned_view.compiler-owned-shared-view boundary)
+              "token-storage"
+              "scan-scratch"
+              cumulative-alloc
+              tokens
+              peak-delta))
+          (io.print-error
+            (compiler-driver-profile-lifetime-line
+              (owned_view.compiler-owned-shared-view boundary)
+              "reader-sexpr-storage"
+              "scan-scratch"
+              cumulative-alloc
+              sexprs
+              peak-delta))
+          (io.print-error
+            (compiler-driver-profile-lifetime-line
+              (owned_view.compiler-owned-shared-view boundary)
+              "reader-origin-storage"
+              "transfer"
+              cumulative-alloc
+              origins
+              peak-delta))
+          (io.print-error
+            (compiler-driver-profile-lifetime-line
+              (owned_view.compiler-owned-shared-view boundary)
+              "parsed-source-base"
+              "transfer"
+              cumulative-alloc
+              pool-base
+              peak-delta))
+          (io.print-error
+            (compiler-driver-profile-lifetime-line
+              (owned_view.compiler-owned-shared-view boundary)
+              "parsed-expr-pool"
+              "transfer"
+              cumulative-alloc
+              expr-pool
+              peak-delta))
+          (io.print-error
+            (compiler-driver-profile-lifetime-line
+              (owned_view.compiler-owned-shared-view boundary)
+              "parsed-type-pool"
+              "transfer"
+              cumulative-alloc
+              type-pool
+              peak-delta))
+          (io.print-error
+            (compiler-driver-profile-lifetime-line
+              (owned_view.compiler-owned-shared-view boundary)
+              "loader-session-surface"
+              "session"
+              cumulative-alloc
+              surface
+              peak-delta))
+          (io.print-error
+            (compiler-driver-profile-lifetime-line
+              (owned_view.compiler-owned-shared-view boundary)
+              "intern-storage"
+              "session"
+              cumulative-alloc
+              interns
+              peak-delta))
+          (io.print-error
+            (compiler-driver-profile-lifetime-line
+              (owned_view.compiler-owned-shared-view boundary)
+              "remainder"
+              "unattributed"
+              cumulative-alloc
+              remainder
+              peak-delta)))))))
 
 (cfg
   compile-profile
@@ -2006,6 +2382,8 @@
         unit)
       (io.print-error
         "compile-profile|phase|elapsed_ms|alloc_delta_bytes|live_delta_bytes|peak_live_delta_bytes\n")
+      (io.print-error
+        "compile-profile-lifetime|boundary|owner|lifetime|cumulative_alloc_bytes|retained_live_bytes|peak_delta_bytes\n")
       (cfg
         compile-profile-summary
         (io.print-error
@@ -4512,6 +4890,16 @@
     [_install-interns : unit
       (compiler-driver-state-install-interns!
         (owned_view.compiler-owned-shared-view state))]
+    [_profile-load-lifetime-start : unit
+      (cfg
+        compile-profile
+        (compiler-driver-profile-start-load-lifetime!
+          (compiler-driver-state-profile
+            (owned_view.compiler-owned-shared-view state))
+          (owned_view.compiler-owned-shared-view pools)
+          (compiler-driver-state-surface-arena
+            (owned_view.compiler-owned-shared-view state)))
+        unit)]
     [parser-state : compiler_parse_core.CompilerParseState
       (owned_view.compiler-owned-shared-view state.parser-state)]
     [parse-cfgs : sym_i64_env.SymI64Env
@@ -4530,6 +4918,15 @@
         (owned_view.compiler-owned-shared-view state)))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
         (begin
+          (cfg
+            compile-profile
+            (compiler-driver-profile-emit-load-lifetime!
+              (compiler-driver-state-profile
+                (owned_view.compiler-owned-shared-view state))
+              (owned_view.compiler-owned-shared-view pools)
+              (compiler-driver-state-surface-arena
+                (owned_view.compiler-owned-shared-view state))
+              "load.complete"))
           (cfg
             compile-profile
             (compiler-driver-profile-finish-phase
@@ -4563,6 +4960,15 @@
           (if route-source-allocations?
             (compiler_load.compiler-load-release-frontend-scan-arenas!)
             unit)
+          (cfg
+            compile-profile
+            (compiler-driver-profile-emit-load-lifetime!
+              (compiler-driver-state-profile
+                (owned_view.compiler-owned-shared-view state))
+              (owned_view.compiler-owned-shared-view pools)
+              (compiler-driver-state-surface-arena
+                (owned_view.compiler-owned-shared-view state))
+              "load.handoff"))
           (cfg
             compile-profile
             (compiler-driver-profile-start-phase
@@ -4813,6 +5219,15 @@
         (begin
           (cfg
             compile-profile
+            (compiler-driver-profile-emit-load-lifetime!
+              (compiler-driver-state-profile
+                (owned_view.compiler-owned-shared-view state))
+              (owned_view.compiler-owned-shared-view pools)
+              (compiler-driver-state-surface-arena
+                (owned_view.compiler-owned-shared-view state))
+              "load.complete"))
+          (cfg
+            compile-profile
             (compiler-driver-profile-finish-phase
               (compiler-driver-state-profile
                 (owned_view.compiler-owned-shared-view state))
@@ -4837,6 +5252,16 @@
     [_install-interns : unit
       (compiler-driver-state-install-interns!
         (owned_view.compiler-owned-shared-view state))]
+    [_profile-load-lifetime-start : unit
+      (cfg
+        compile-profile
+        (compiler-driver-profile-start-load-lifetime!
+          (compiler-driver-state-profile
+            (owned_view.compiler-owned-shared-view state))
+          (owned_view.compiler-owned-shared-view pools)
+          (compiler-driver-state-surface-arena
+            (owned_view.compiler-owned-shared-view state)))
+        unit)]
     [parser-state : compiler_parse_core.CompilerParseState
       (owned_view.compiler-owned-shared-view state.parser-state)]
     [parse-cfgs : sym_i64_env.SymI64Env
@@ -4851,6 +5276,15 @@
       (owned_view.compiler-owned-shared-view pools))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
         (begin
+          (cfg
+            compile-profile
+            (compiler-driver-profile-emit-load-lifetime!
+              (compiler-driver-state-profile
+                (owned_view.compiler-owned-shared-view state))
+              (owned_view.compiler-owned-shared-view pools)
+              (compiler-driver-state-surface-arena
+                (owned_view.compiler-owned-shared-view state))
+              "load.complete"))
           (cfg
             compile-profile
             (compiler-driver-profile-finish-phase
@@ -4874,6 +5308,15 @@
               (owned_view.compiler-owned-shared-view state)))
             (compiler_load.compiler-load-release-frontend-scan-arenas!)
             unit)
+          (cfg
+            compile-profile
+            (compiler-driver-profile-emit-load-lifetime!
+              (compiler-driver-state-profile
+                (owned_view.compiler-owned-shared-view state))
+              (owned_view.compiler-owned-shared-view pools)
+              (compiler-driver-state-surface-arena
+                (owned_view.compiler-owned-shared-view state))
+              "load.handoff"))
           (cfg
             compile-profile
             (compiler-driver-profile-start-phase
@@ -5079,6 +5522,15 @@
                   (ResultCompilerDriverLowered.Err diag))])))]
       [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
         (begin
+          (cfg
+            compile-profile
+            (compiler-driver-profile-emit-load-lifetime!
+              (compiler-driver-state-profile
+                (owned_view.compiler-owned-shared-view state))
+              (owned_view.compiler-owned-shared-view pools)
+              (compiler-driver-state-surface-arena
+                (owned_view.compiler-owned-shared-view state))
+              "load.complete"))
           (cfg
             compile-profile
             (compiler-driver-profile-finish-phase

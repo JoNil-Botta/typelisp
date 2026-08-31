@@ -15,6 +15,70 @@
 (define (compiler-allocation-profile-entry-arena-handle) : i64
   compiler-allocation-profile-entry-arena)
 
+;; Return the allocator-accounted live payload owned by one arena root. This is
+;; the same bump-byte quantity used by `tl_profile_alloc_live`, restricted to a
+;; named owner. It walks arena segments, never compiler objects, and allocates
+;; no measurement storage. Compile-profile lifetime rows use it even when the
+;; opt-in verbose allocation profiler is inactive.
+(cfg
+  (any compile-profile test)
+  (define (compiler-allocation-profile-arena-bump-bytes [arena-handle : i64]) : i64
+    (if (= arena-handle 0)
+      0
+      (let
+        [root-candidate : i64
+          (unsafe
+            (ptr-read (ptr-offset (int->ptr arena-handle : (Ptr i64)) 5)))]
+        [root : i64
+          (if (= root-candidate 0)
+            arena-handle
+            root-candidate)]
+        [active-candidate : i64
+          (unsafe
+            (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 7)))]
+        [active : i64
+          (if (= active-candidate 0)
+            root
+            active-candidate)]
+        [retired : i64
+          (unsafe
+            (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 4)))]
+        [used : i64 0]
+        [cursor : i64 active]
+        (begin
+          (while (not (= cursor 0))
+            (begin
+              (set!
+                used
+                (+
+                  used
+                  (-
+                    (unsafe
+                      (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 2)))
+                    (unsafe
+                      (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 1))))))
+              (set!
+                cursor
+                (unsafe
+                  (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 0))))))
+          (set! cursor retired)
+          (while (not (= cursor 0))
+            (begin
+              (set!
+                used
+                (+
+                  used
+                  (-
+                    (unsafe
+                      (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 2)))
+                    (unsafe
+                      (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 1))))))
+              (set!
+                cursor
+                (unsafe
+                  (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 4))))))
+          used)))))
+
 (define (compiler-allocation-profile-control!
   [action : i64]
   [phase : String]

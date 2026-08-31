@@ -8070,6 +8070,24 @@ make cross-entry retention visible without reconstructing interval rows.
 Normal compiler builds emit no such rows and produce byte-identical assembly.
 The measurement harnesses keep the ordinal-to-input mapping separately.
 
+The same build emits `compile-profile-lifetime` rows for `load.complete`,
+`load.handoff`, `macro.pre-detach`, and `macro.lower-handoff`. Each row has
+`boundary|owner|lifetime|cumulative_alloc_bytes|retained_live_bytes|peak_delta_bytes`.
+Load owners distinguish input payload detail, frontend/read/parse transfer,
+token and reader scan scratch, parsed AST pools, loader-session surface state,
+and intern storage. Macro owners distinguish the enclosing session, job-owned
+registries/caches, the scoped-environment index, lower-handoff AST pools, live
+and retired symbol registries, expansion scratch, and active/retired generation
+pools. Owner rows are exclusive except `input-bytes`, whose `payload-detail`
+lifetime identifies it as a logical subset of frontend storage. Exclusive
+owners plus the signed `remainder|unattributed` row equal the `total` retained
+row exactly; the checked fixture requires at least 90% attribution. Rendering
+uses scratch storage after taking the boundary snapshot, so telemetry does not
+retain itself. Cumulative and peak fields repeat on every owner row to keep
+each row independently useful. Peak is the serial process-wide compile
+high-water mark; simultaneous per-job peak attribution remains tracked by
+#4959.
+
 The same build emits a deterministic `compile-profile|intern.*` storage block
 after the existing interning activity rows. It reports source/generated record
 live counts and capacities, source/canonical-map occupancy and capacities,

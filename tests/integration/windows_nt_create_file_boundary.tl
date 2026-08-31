@@ -40,18 +40,22 @@
   (process.result-success?
     (process.output
       (process.command
-        "cmd.exe"
+        "C:\\Windows\\System32\\cmd.exe"
         (process.args-cons
-          "/d"
+          "/D"
           (process.args-cons
-            "/c"
+            "/E:ON"
             (process.args-cons
-              "mklink"
+              "/C"
               (process.args-cons
-                "/J"
+                "mklink"
                 (process.args-cons
-                  (string.copy junction)
-                  (process.args-cons (string.copy target) (process.args-empty)))))))))))
+                  "/J"
+                  (process.args-cons
+                    (string.copy junction)
+                    (process.args-cons
+                      (string.copy target)
+                      (process.args-empty))))))))))))
 
 (define (fixture-write-handle [handle : i64]) : bool
   (let

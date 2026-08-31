@@ -3346,6 +3346,8 @@ assert_profile_counter_eq_in \
     "$VECTOR_FIVE_STDERR"
 
 # The constrained vector type operand is validated once at definition time.
+# The explicit-clone producer contributes two more definition-time proofs for
+# the constrained type operands of `clone-nominal-value` and `gen-clone`.
 # The first concrete identity still checks all fifteen generated declarations,
 # including the two public place macros reconstructed by #5262.
 # Later distinct identities may reuse persisted proofs for the six declarations
@@ -3354,13 +3356,13 @@ assert_profile_counter_eq_in \
 assert_profile_counter_eq_in \
     "$VECTOR_ONE_STDERR" \
     "typecheck.macro.generated_module_abstract_proofs" \
-    1 \
+    3 \
     "$VECTOR_ONE_STDOUT" \
     "$VECTOR_ONE_STDERR"
 assert_profile_counter_eq_in \
     "$VECTOR_FIVE_STDERR" \
     "typecheck.macro.generated_module_abstract_proofs" \
-    1 \
+    3 \
     "$VECTOR_FIVE_STDOUT" \
     "$VECTOR_FIVE_STDERR"
 assert_profile_counter_eq_in \

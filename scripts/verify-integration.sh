@@ -1792,6 +1792,8 @@ run_linux_fatal_backtrace_fixture() {
     _thread_obj="$_dir/$_label.thread.o"
     _thread_bin="$_dir/$_label.thread"
     _thread_stderr="$_dir/$_label.thread.stderr"
+    _crt_bin="$_dir/$_label.crt"
+    _crt_stderr="$_dir/$_label.crt.stderr"
 
     echo "[$_label] compile --backtrace -> run mode matrix"
     run_build "$COMPILER" compile "$_source" \
@@ -1933,6 +1935,27 @@ run_linux_fatal_backtrace_fixture() {
     assert_contains "$_thread_stderr" 'stack backtrace:' "$_label worker"
     assert_contains "$_thread_stderr" 'fatal_backtrace_thread.tl::backtrace-worker-leaf' "$_label worker"
     assert_contains "$_thread_stderr" 'fatal_backtrace_thread.tl::backtrace-worker' "$_label worker"
+
+    # Native link inputs select the hosted C-runtime `main` entry instead of
+    # `_tl_start`. That path has no backend-installed TLS stack bounds, so pin
+    # its allocation-free fallback against the captured initial ENVP vector.
+    run_build "$COMPILER" build "$_source" --backtrace --link-lib m \
+        --stdlib-root "$ROOT/src" --opt-level 0 -o "$_crt_bin"
+    [ "$build_rc" -eq 0 ] || {
+        echo "FAIL: $_label CRT-entry build failed" >&2
+        exit 1
+    }
+    set +e
+    TYPELISP_BACKTRACE=full "$_crt_bin" > /dev/null 2> "$_crt_stderr"
+    _crt_got=$?
+    set -e
+    [ "$_crt_got" -eq 134 ] || {
+        echo "FAIL: $_label CRT-entry expected exit 134, got $_crt_got" >&2
+        exit 1
+    }
+    assert_contains "$_crt_stderr" 'stack backtrace:' "$_label CRT entry"
+    assert_contains "$_crt_stderr" 'fatal_backtrace.tl::backtrace-leaf' "$_label CRT entry"
+    assert_contains "$_crt_stderr" 'main at tests/integration/fatal_backtrace.tl:28:3' "$_label CRT entry"
 
     run_linux_backtrace_fatal_value_fixture \
         fatal-backtrace-bounds-values tests/integration/red_zone_abort_trap.tl 134 \

@@ -748,9 +748,30 @@
         (if (= mode 1)
           8
           64)]
-      [low : i64 (runtime-backtrace-stack-low)]
-      [high : i64 (runtime-backtrace-stack-high)]
       [frame : (Ptr i64) (runtime-backtrace-frame-pointer)]
+      [initial-frame-address : i64
+        (cast
+          (unsafe
+            (ptr->int frame))
+          : i64)]
+      [installed-low : i64 (runtime-backtrace-stack-low)]
+      [installed-high : i64 (runtime-backtrace-stack-high)]
+      ;; Freestanding main and raw-clone workers install exact stack bounds.
+      ;; A Linux CRT calls `main` directly, but its captured ENVP vector still
+      ;; lives above every active main-stack frame in the same contiguous stack
+      ;; mapping. Start the fallback at the known-live current frame and stop at
+      ;; that vector, so a corrupt saved frame cannot escape mapped stack memory.
+      [low : i64
+        (if (> installed-low 0)
+          installed-low
+          initial-frame-address)]
+      [high : i64
+        (if (> installed-high 0)
+          installed-high
+          (cast
+            (unsafe
+              (ptr->int (program-envp)))
+            : i64))]
       [addresses : (Array i64 64) (init)]
       [count : i64 0]
       [done : bool (= mode 0)]

@@ -101894,35 +101894,64 @@
             out))))))
 
 (defstruct MacroSegmentedProgramIter
-  (prefix-rev ast.AstDeclList)
-  (prefix-paths-rev ast.AstDeclPathList)
-  (prefix-index i64)
-  (node-address i64)
-  (node-index i64))
-
-(defstruct MacroSegmentedProgramBorrow
+  ;; The current row descriptors are owned by the iterator. They change only
+  ;; when the cursor leaves the reversed prefix or enters another segment;
+  ;; advancing within one segment updates scalar indexes only.
   (decls ast.AstDeclList)
   (paths ast.AstDeclPathList)
-  (index i64))
+  (index i64)
+  (prefix-index i64)
+  (node-address i64)
+  (node-index i64)
+  (has-current bool))
 
-(defenum MacroSegmentedProgramStep
-  (Nil)
-  (Cons MacroSegmentedProgramBorrow MacroSegmentedProgramIter))
+(define (macro-segmented-program-iter-current-decl
+  [iter : (& iter MacroSegmentedProgramIter)]) : ast.AstDecl
+  (tc-global-array-element-shared-view
+    iter.decls.slots
+    (+ iter.decls.offset iter.index)))
 
-(define (macro-segmented-program-borrow-decl
-  [item : MacroSegmentedProgramBorrow]) : ast.AstDecl
-  (ast.ast-decl-list-ref item.decls item.index))
+(define (macro-segmented-program-iter-current-path
+  [iter : (& iter MacroSegmentedProgramIter)]) : String
+  (ast.ast-decl-path-list-get (& iter.paths) iter.index ""))
 
-(define (macro-segmented-program-borrow-path
-  [item : MacroSegmentedProgramBorrow]) : String
-  (ast.ast-decl-path-list-get (& item.paths) item.index ""))
-
-(define (macro-segmented-program-borrow-owner-id
-  [item : MacroSegmentedProgramBorrow]) : i64
+(define (macro-segmented-program-iter-current-owner-id
+  [iter : (& iter MacroSegmentedProgramIter)]) : i64
   (ast.ast-decl-path-list-owner-id
-    (& item.paths)
-    item.index
+    (& iter.paths)
+    iter.index
     cbi.compiler-builtin-id-fix-empty))
+
+(define (macro-segmented-program-iter-current-provenance-id
+  [iter : (& iter MacroSegmentedProgramIter)]) : i64
+  (ast.ast-decl-path-list-provenance-id
+    (& iter.paths)
+    iter.index
+    cbi.compiler-builtin-id-fix-empty))
+
+;; Move an exhausted prefix or segment cursor to the next non-empty segment.
+;; Descriptor copies happen once per segment rather than once per declaration.
+(define (macro-segmented-program-iter-normalize-node!
+  [iter : (&mut iter MacroSegmentedProgramIter)]) : unit
+  (let
+    [done : bool false]
+    (begin
+      (set! iter.has-current false)
+      (while (and (not done) (> iter.node-address 0))
+        (let
+          [node : MacroProgramSegmentNodeData
+            (macro-program-segment-node-data iter.node-address)]
+          [decls : ast.AstDeclList node.decls]
+          (if (< iter.node-index (ast.ast-decl-list-len (& decls)))
+            (begin
+              (set! iter.decls decls)
+              (set! iter.paths node.paths)
+              (set! iter.index iter.node-index)
+              (set! iter.has-current true)
+              (set! done true))
+            (begin
+              (set! iter.node-address node.next)
+              (set! iter.node-index 0))))))))
 
 (define (macro-segmented-program-iter [state : TcJobState]) : MacroSegmentedProgramIter
   (let
@@ -101930,54 +101959,43 @@
       (macro-segmented-program-view-data
         (tc-job-state-macro-program-view-address state))]
     [prefix : ast.AstDeclList data.prefix-rev]
-    (MacroSegmentedProgramIter
-      (tc-global-shared-view prefix)
-      data.prefix-paths-rev
-      (- (ast.ast-decl-list-len (& prefix)) 1)
-      data.head
-      data.cursor)))
+    [prefix-index : i64 (- (ast.ast-decl-list-len (& prefix)) 1)]
+    [iter : MacroSegmentedProgramIter
+      (MacroSegmentedProgramIter
+        (tc-global-shared-view prefix)
+        data.prefix-paths-rev
+        prefix-index
+        prefix-index
+        data.head
+        data.cursor
+        (>= prefix-index 0))]
+    (begin
+      (if iter.has-current
+        unit
+        (macro-segmented-program-iter-normalize-node! (&mut iter)))
+      iter)))
 
-;; Allocation-free logical step across the reversed prefix and ordered segment
-;; chain. Expansion-time derived indexes use this instead of restarting an
-;; indexed head scan for every declaration.
-(define (macro-segmented-program-step [iter : MacroSegmentedProgramIter]) : MacroSegmentedProgramStep
-  (if (>= iter.prefix-index 0)
-    (let
-      [index : i64 iter.prefix-index]
-      (MacroSegmentedProgramStep.Cons
-        (MacroSegmentedProgramBorrow
-          (tc-global-shared-view iter.prefix-rev)
-          (tc-global-shared-view iter.prefix-paths-rev)
-          index)
-        (MacroSegmentedProgramIter
-          iter.prefix-rev
-          iter.prefix-paths-rev
-          (- index 1)
-          iter.node-address
-          iter.node-index)))
-    (if (= iter.node-address 0)
-      (MacroSegmentedProgramStep.Nil)
-      (let
-        [node : MacroProgramSegmentNodeData
-          (macro-program-segment-node-data iter.node-address)]
-        [index : i64 iter.node-index]
-        [decls : ast.AstDeclList node.decls]
-        (if (>= index (ast.ast-decl-list-len (& decls)))
-          (macro-segmented-program-step
-            (MacroSegmentedProgramIter
-              iter.prefix-rev
-              iter.prefix-paths-rev
-              -1
-              node.next
-              0))
-          (MacroSegmentedProgramStep.Cons
-            (MacroSegmentedProgramBorrow decls node.paths index)
-            (MacroSegmentedProgramIter
-              iter.prefix-rev
-              iter.prefix-paths-rev
-              -1
-              iter.node-address
-              (+ index 1))))))))
+;; Allocation-free logical cursor across the reversed prefix and ordered
+;; segment chain. The caller consumes the current row immediately, then moves
+;; the job-local iterator in place; no borrow-plus-successor step aggregate is
+;; constructed or retained across pool/segment mutation.
+(define (macro-segmented-program-iter-advance!
+  [iter : (&mut iter MacroSegmentedProgramIter)]) : unit
+  (if (not iter.has-current)
+    unit
+    (if (>= iter.prefix-index 0)
+      (if (> iter.prefix-index 0)
+        (begin
+          (set! iter.prefix-index (- iter.prefix-index 1))
+          (set! iter.index iter.prefix-index))
+        (begin
+          (set! iter.prefix-index -1)
+          (macro-segmented-program-iter-normalize-node! iter)))
+      (begin
+        (set! iter.node-index (+ iter.node-index 1))
+        (if (< iter.node-index (ast.ast-decl-list-len (& iter.decls)))
+          (set! iter.index iter.node-index)
+          (macro-segmented-program-iter-normalize-node! iter))))))
 
 (define (macro-segmented-clone-name-set-note-decl
   [names : clone_support.CloneNameSet]
@@ -102016,37 +102034,31 @@
         empty.aliases)]
     [module-id : i64 (clone_support.clone-root-module-id)]
     [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
-    [done : bool false]
     (begin
-      (while (not done)
-        (match (macro-segmented-program-step (tc-global-shared-view iter))
-          [(MacroSegmentedProgramStep.Nil) (set! done true)]
-          [(MacroSegmentedProgramStep.Cons item rest)
-            (begin
-              (set! iter rest)
-              (if (or
-                (ast.ast-decl-list-unwrapped-module-or-import-at?
-                  (& item.decls)
-                  item.index)
-                (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
-                  (& item.decls)
-                  item.index))
-                (let
-                  [decl : ast.AstDecl
-                    (ast.ast-decl-unwrapped
-                      (macro-segmented-program-borrow-decl item))]
-                  (match (tc-global-shared-view decl)
-                    [(ast.AstDecl.Module next-module)
-                      (set! module-id next-module)]
-                    [_
-                      (set!
-                        names
-                        (macro-segmented-clone-name-set-note-decl
-                          names
-                          module-id
-                          decl))]))
-                unit)
-              unit)]))
+      (while iter.has-current
+        (begin
+          (if (or
+            (ast.ast-decl-list-unwrapped-module-or-import-at?
+              (& iter.decls)
+              iter.index)
+            (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
+              (& iter.decls)
+              iter.index))
+            (let
+              [decl : ast.AstDecl
+                (ast.ast-decl-unwrapped
+                  (macro-segmented-program-iter-current-decl (& iter)))]
+              (match (tc-global-shared-view decl)
+                [(ast.AstDecl.Module next-module) (set! module-id next-module)]
+                [_
+                  (set!
+                    names
+                    (macro-segmented-clone-name-set-note-decl
+                      names
+                      module-id
+                      decl))]))
+            unit)
+          (macro-segmented-program-iter-advance! (&mut iter))))
       names)))
 
 (define (macro-segmented-clone-fixpoint-step
@@ -102060,52 +102072,42 @@
         (clone names.aliases))]
     [module-id : i64 (clone_support.clone-root-module-id)]
     [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
-    [done : bool false]
     (begin
-      (while (not done)
-        (match (macro-segmented-program-step (tc-global-shared-view iter))
-          [(MacroSegmentedProgramStep.Nil) (set! done true)]
-          [(MacroSegmentedProgramStep.Cons item rest)
-            (begin
-              (set! iter rest)
-              (if (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
-                (& item.decls)
-                item.index)
-                (match (ast.ast-decl-unwrapped
-                  (macro-segmented-program-borrow-decl item))
-                  [(ast.AstDecl.Module next-module)
-                    (set! module-id next-module)]
-                  [(ast.AstDecl.DefEnum _ name _ variants)
-                    (if (clone_support.clone-variant-list-able?
-                      pools
-                      variants
-                      names
-                      module-id)
-                      (set!
-                        out
-                        (clone_support.clone-name-set-insert-id
-                          out
-                          (clone_support.clone-name-key-id-in-module
-                            module-id
-                            name)))
-                      unit)]
-                  [(ast.AstDecl.DefStruct _ name _ _ fields)
-                    (if (clone_support.clone-struct-fields-able?
-                      pools
-                      fields
-                      names
-                      module-id)
-                      (set!
-                        out
-                        (clone_support.clone-name-set-insert-id
-                          out
-                          (clone_support.clone-name-key-id-in-module
-                            module-id
-                            name)))
-                      unit)]
-                  [_ unit])
-                unit)
-              unit)]))
+      (while iter.has-current
+        (begin
+          (if (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
+            (& iter.decls)
+            iter.index)
+            (match (ast.ast-decl-unwrapped
+              (macro-segmented-program-iter-current-decl (& iter)))
+              [(ast.AstDecl.Module next-module) (set! module-id next-module)]
+              [(ast.AstDecl.DefEnum _ name _ variants)
+                (if (clone_support.clone-variant-list-able?
+                  pools
+                  variants
+                  names
+                  module-id)
+                  (set!
+                    out
+                    (clone_support.clone-name-set-insert-id
+                      out
+                      (clone_support.clone-name-key-id-in-module module-id name)))
+                  unit)]
+              [(ast.AstDecl.DefStruct _ name _ _ fields)
+                (if (clone_support.clone-struct-fields-able?
+                  pools
+                  fields
+                  names
+                  module-id)
+                  (set!
+                    out
+                    (clone_support.clone-name-set-insert-id
+                      out
+                      (clone_support.clone-name-key-id-in-module module-id name)))
+                  unit)]
+              [_ unit])
+            unit)
+          (macro-segmented-program-iter-advance! (&mut iter))))
       out)))
 
 (define (macro-segmented-clone-able-set-build
@@ -102263,46 +102265,40 @@
     [message : String ""]
     [ok : bool true]
     [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
-    [done : bool false]
     (begin
-      (while (and ok (not done))
-        (match (macro-segmented-program-step (tc-global-shared-view iter))
-          [(MacroSegmentedProgramStep.Nil) (set! done true)]
-          [(MacroSegmentedProgramStep.Cons item rest)
-            (begin
-              (set! iter rest)
-              (match (macro-segmented-program-borrow-decl
-                (tc-global-shared-view item))
-                [(ast.AstDecl.Module _)
-                  (set!
-                    cur-module-id
-                    (ast.ast-decl-list-module-id-at
-                      (& item.decls)
-                      item.index
-                      cbi.compiler-builtin-id-fix-empty))]
-                [(ast.AstDecl.Import _ _) unit]
-                [(ast.AstDecl.IncludeStr _ _) unit]
-                [(ast.AstDecl.IncludeStrComptime _ _) unit]
-                [(ast.AstDecl.IncludeStrLzss _ _) unit]
-                [(ast.AstDecl.IncludeBin _ _) unit]
-                [(ast.AstDecl.Test _ _ _) unit]
-                [_
-                  (if (= cur-module-id target-module)
-                    (match (tc-bind-import-alias-decl-in-module
-                      (tc-global-shared-view ctx)
-                      cur-env
-                      alias
-                      importer-module
-                      import-unqualified
-                      cur-module-id
-                      (macro-segmented-program-borrow-decl item))
-                      [(ResultTcEnv.Ok next-env) (set! cur-env next-env)]
-                      [(ResultTcEnv.Err step-message)
-                        (begin
-                          (set! message step-message)
-                          (set! ok false))])
-                    unit)])
-              unit)]))
+      (while (and ok iter.has-current)
+        (begin
+          (match (macro-segmented-program-iter-current-decl (& iter))
+            [(ast.AstDecl.Module _)
+              (set!
+                cur-module-id
+                (ast.ast-decl-list-module-id-at
+                  (& iter.decls)
+                  iter.index
+                  cbi.compiler-builtin-id-fix-empty))]
+            [(ast.AstDecl.Import _ _) unit]
+            [(ast.AstDecl.IncludeStr _ _) unit]
+            [(ast.AstDecl.IncludeStrComptime _ _) unit]
+            [(ast.AstDecl.IncludeStrLzss _ _) unit]
+            [(ast.AstDecl.IncludeBin _ _) unit]
+            [(ast.AstDecl.Test _ _ _) unit]
+            [_
+              (if (= cur-module-id target-module)
+                (match (tc-bind-import-alias-decl-in-module
+                  (tc-global-shared-view ctx)
+                  cur-env
+                  alias
+                  importer-module
+                  import-unqualified
+                  cur-module-id
+                  (macro-segmented-program-iter-current-decl (& iter)))
+                  [(ResultTcEnv.Ok next-env) (set! cur-env next-env)]
+                  [(ResultTcEnv.Err step-message)
+                    (begin
+                      (set! message step-message)
+                      (set! ok false))])
+                unit)])
+          (macro-segmented-program-iter-advance! (&mut iter))))
       (if (string.eq message "")
         (ResultTcEnv.Ok cur-env)
         (ResultTcEnv.Err message)))))
@@ -102316,42 +102312,37 @@
     [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
     [module-id : i64 cbi.compiler-builtin-id-fix-empty]
     [found : bool false]
-    [done : bool false]
     (begin
-      (while (and (not found) (not done))
-        (match (macro-segmented-program-step (tc-global-shared-view iter))
-          [(MacroSegmentedProgramStep.Nil) (set! done true)]
-          [(MacroSegmentedProgramStep.Cons item rest)
-            (begin
-              (set! iter rest)
-              ;; The iterator's declaration storage outlives this immediate
-              ;; tag/payload probe. Keep the row borrowed: neither the segment
-              ;; chain nor its pool context can grow, rotate, or reset inside
-              ;; this match.
-              (match (ast.ast-decl-list-ref-borrowed (& item.decls) item.index)
-                [(ast.AstDecl.Module _)
-                  (set!
-                    module-id
-                    (ast.ast-decl-list-module-id-at
-                      (& item.decls)
-                      item.index
-                      cbi.compiler-builtin-id-fix-empty))]
-                [(ast.AstDecl.Import
-                    _
-                    (ast.AstImportSpec.Spec _ _ expected _ _))
-                  (if (= module-id current-module-id)
-                    (match expected
-                      [(ast.AstMaybeModuleName.Some target)
-                        (if (tc-module-identity-id-eq?
-                          session
-                          (deref target)
-                          target-id)
-                          (set! found true)
-                          unit)]
-                      [(ast.AstMaybeModuleName.No) unit])
-                    unit)]
-                [_ unit])
-              unit)]))
+      (while (and (not found) iter.has-current)
+        (let
+          [decls : ast.AstDeclList (tc-global-shared-view iter.decls)]
+          [index : i64 iter.index]
+          (begin
+            ;; The iterator owns these row descriptors through this immediate
+            ;; tag/payload probe. Advance only after the borrow ends; no row
+            ;; survives segment growth, pool rotation, or reset.
+            (match (ast.ast-decl-list-ref-borrowed (& decls) index)
+              [(ast.AstDecl.Module _)
+                (set!
+                  module-id
+                  (ast.ast-decl-list-module-id-at
+                    (& decls)
+                    index
+                    cbi.compiler-builtin-id-fix-empty))]
+              [(ast.AstDecl.Import _ (ast.AstImportSpec.Spec _ _ expected _ _))
+                (if (= module-id current-module-id)
+                  (match expected
+                    [(ast.AstMaybeModuleName.Some target)
+                      (if (tc-module-identity-id-eq?
+                        session
+                        (deref target)
+                        target-id)
+                        (set! found true)
+                        unit)]
+                    [(ast.AstMaybeModuleName.No) unit])
+                  unit)]
+              [_ unit])
+            (macro-segmented-program-iter-advance! (&mut iter)))))
       found)))
 
 (define (macro-segmented-module-local-root-shadow-note-at!
@@ -102531,6 +102522,42 @@
     [(ast.AstDecl.Module name) name]
     [_ fallback]))
 
+(define (macro-segmented-program-empty-head-inject! [state : TcJobState]) : unit
+  (let
+    [address : i64 (tc-job-state-macro-program-view-address state)]
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-view-data address)]
+    [empty-head : i64
+      (in-arena
+        (arena.Arena
+          (macro-expand-scratch-arena-get (tc-job-state-macro-state state)))
+        (macro-program-segment-node-new-current
+          (ast.ast-decl-list-new)
+          (ast.ast-decl-path-list-new)
+          data.head))]
+    (begin
+      (set! data.head empty-head)
+      (macro-segmented-program-view-data-set! address data))))
+
+(define (macro-segmented-program-empty-boundary-smoke?
+  [state : TcJobState]
+  [expected : i64]) : bool
+  (let
+    [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
+    (begin
+      ;; Consume the two reversed-prefix rows. The next advance must skip the
+      ;; injected empty head and install the first non-empty segment once.
+      (macro-segmented-program-iter-advance! (&mut iter))
+      (macro-segmented-program-iter-advance! (&mut iter))
+      (and
+        iter.has-current
+        (match (macro-segmented-program-iter-current-decl (& iter))
+          [(ast.AstDecl.Module name) (= name expected)]
+          [_ false])
+        (string.eq (macro-segmented-program-iter-current-path (& iter)) "a")
+        (= (macro-segmented-program-iter-current-owner-id (& iter)) 20)
+        (= (macro-segmented-program-iter-current-provenance-id (& iter)) 20)))))
+
 (define (macro-segmented-program-boundary-smoke?) : bool
   (let
     [p0 : i64 (ci.intern "seg-prefix-0")]
@@ -102597,7 +102624,10 @@
         (tc-global-shared-view out-paths-rev)
         source
         source-paths)
+      (macro-segmented-program-empty-head-inject! state)
       (let
+        [empty-boundary-ok : bool
+          (macro-segmented-program-empty-boundary-smoke? state a)]
         [initial-ok : bool
           (and
             (= (macro-segmented-program-decl-count state) 5)
@@ -102644,7 +102674,6 @@
                   (macro-segmented-program-iter state)]
                 [iter-index : i64 0]
                 [iter-ok : bool true]
-                [iter-done : bool false]
                 [nested-ok : bool
                   (and
                     (= (ast.ast-decl-list-len (& flat-decls)) 6)
@@ -102666,49 +102695,47 @@
                   ;; The derived-index iterator must preserve declaration,
                   ;; path, and owner alignment across prefix, split, and
                   ;; inserted-segment boundaries.
-                  (while (and iter-ok (not iter-done))
-                    (match (macro-segmented-program-step
-                      (tc-global-shared-view iter))
-                      [(MacroSegmentedProgramStep.Nil) (set! iter-done true)]
-                      [(MacroSegmentedProgramStep.Cons item rest)
-                        (begin
-                          (if (>= iter-index 6)
-                            (set! iter-ok false)
-                            (let
-                              [expected-id : i64
-                                (match (ast.ast-decl-list-ref
-                                  (tc-global-shared-view flat-decls)
-                                  iter-index)
-                                  [(ast.AstDecl.Module name) name]
-                                  [_ -1])]
-                              [actual-id : i64
-                                (match (macro-segmented-program-borrow-decl
-                                  (tc-global-shared-view item))
-                                  [(ast.AstDecl.Module name) name]
-                                  [_ -1])]
-                              (if (and
-                                (= actual-id expected-id)
-                                (string.eq
-                                  (macro-segmented-program-borrow-path
-                                    (tc-global-shared-view item))
-                                  (ast.ast-decl-path-list-get
-                                    (& flat-paths)
-                                    iter-index
-                                    ""))
-                                (=
-                                  (macro-segmented-program-borrow-owner-id item)
-                                  (ast.ast-decl-path-list-owner-id
-                                    (& flat-paths)
-                                    iter-index
-                                    -1)))
-                                unit
-                                (set! iter-ok false))))
-                          (set! iter rest)
-                          (set! iter-index (+ iter-index 1)))]))
+                  (while (and iter-ok iter.has-current)
+                    (begin
+                      (if (>= iter-index 6)
+                        (set! iter-ok false)
+                        (let
+                          [expected-id : i64
+                            (match (ast.ast-decl-list-ref
+                              (tc-global-shared-view flat-decls)
+                              iter-index)
+                              [(ast.AstDecl.Module name) name]
+                              [_ -1])]
+                          [actual-id : i64
+                            (match (macro-segmented-program-iter-current-decl
+                              (& iter))
+                              [(ast.AstDecl.Module name) name]
+                              [_ -1])]
+                          (if (and
+                            (= actual-id expected-id)
+                            (string.eq
+                              (macro-segmented-program-iter-current-path
+                                (& iter))
+                              (ast.ast-decl-path-list-get
+                                (& flat-paths)
+                                iter-index
+                                ""))
+                            (=
+                              (macro-segmented-program-iter-current-owner-id
+                                (& iter))
+                              (ast.ast-decl-path-list-owner-id
+                                (& flat-paths)
+                                iter-index
+                                -1)))
+                            unit
+                            (set! iter-ok false))))
+                      (macro-segmented-program-iter-advance! (&mut iter))
+                      (set! iter-index (+ iter-index 1))))
                   (macro-segmented-program-end! state)
                   (macro-expand-scratch-release!
                     (tc-job-state-macro-state state))
                   (and
+                    empty-boundary-ok
                     initial-ok
                     first-splice-ok
                     nested-ok
@@ -102723,6 +102750,106 @@
     (if (macro-segmented-program-boundary-smoke?)
       unit
       (io.panic "typecheck: segmented macro program boundary smoke failed"))))
+
+(define (macro-segmented-program-job-reset-smoke?) : bool
+  (let
+    [left-id : i64 (ci.intern "seg-job-left")]
+    [right-id : i64 (ci.intern "seg-job-right")]
+    [left-decls : ast.AstDeclList
+      (ast.ast-decl-cons (ast.AstDecl.Module left-id) (ast.ast-decl-list-new))]
+    [right-decls : ast.AstDeclList
+      (ast.ast-decl-cons (ast.AstDecl.Module right-id) (ast.ast-decl-list-new))]
+    [left-paths : ast.AstDeclPathList
+      (ast.ast-decl-path-cons-with-owner-id
+        "left"
+        51
+        (ast.ast-decl-path-list-new))]
+    [right-paths : ast.AstDeclPathList
+      (ast.ast-decl-path-cons-with-owner-id
+        "right"
+        61
+        (ast.ast-decl-path-list-new))]
+    [left-state : TcJobState (tc-job-state-new)]
+    [right-state : TcJobState (tc-job-state-new)]
+    (begin
+      (macro-expand-scratch-begin! (tc-job-state-macro-state left-state))
+      (macro-expand-scratch-begin! (tc-job-state-macro-state right-state))
+      (macro-segmented-program-begin!
+        left-state
+        (ast.ast-decl-list-new)
+        (ast.ast-decl-path-list-new)
+        left-decls
+        left-paths)
+      (macro-segmented-program-begin!
+        right-state
+        (ast.ast-decl-list-new)
+        (ast.ast-decl-path-list-new)
+        right-decls
+        right-paths)
+      (let
+        [left-iter : MacroSegmentedProgramIter
+          (macro-segmented-program-iter left-state)]
+        [right-iter : MacroSegmentedProgramIter
+          (macro-segmented-program-iter right-state)]
+        [initial-ok : bool
+          (and
+            left-iter.has-current
+            right-iter.has-current
+            (string.eq
+              (macro-segmented-program-iter-current-path (& left-iter))
+              "left")
+            (string.eq
+              (macro-segmented-program-iter-current-path (& right-iter))
+              "right"))]
+        (begin
+          ;; File-state reset is job-local and does not own either segmented
+          ;; cursor. Acquire row views only after the reset and consume them
+          ;; before mutating the corresponding iterator.
+          (tc-job-state-reset-file-state! left-state)
+          (tc-job-state-reset-file-state! right-state)
+          (let
+            [reset-ok : bool
+              (and
+                (macro-segmented-program-active? left-state)
+                (macro-segmented-program-active? right-state)
+                (match (macro-segmented-program-iter-current-decl (& left-iter))
+                  [(ast.AstDecl.Module name) (= name left-id)]
+                  [_ false])
+                (match (macro-segmented-program-iter-current-decl
+                  (& right-iter))
+                  [(ast.AstDecl.Module name) (= name right-id)]
+                  [_ false])
+                (=
+                  (macro-segmented-program-iter-current-owner-id (& left-iter))
+                  51)
+                (=
+                  (macro-segmented-program-iter-current-provenance-id
+                    (& right-iter))
+                  61))]
+            (begin
+              (macro-segmented-program-iter-advance! (&mut left-iter))
+              (macro-segmented-program-iter-advance! (&mut right-iter))
+              (macro-segmented-program-end! left-state)
+              (macro-segmented-program-end! right-state)
+              (macro-expand-scratch-release!
+                (tc-job-state-macro-state left-state))
+              (macro-expand-scratch-release!
+                (tc-job-state-macro-state right-state))
+              (and
+                initial-ok
+                reset-ok
+                (not left-iter.has-current)
+                (not right-iter.has-current)
+                (not (macro-segmented-program-active? left-state))
+                (not (macro-segmented-program-active? right-state))))))))))
+
+(cfg
+  test
+  (test
+    macro-segmented-program-job-reset
+    (if (macro-segmented-program-job-reset-smoke?)
+      unit
+      (io.panic "typecheck: segmented macro program job/reset smoke failed"))))
 
 (define (macro-expand-scratch-program
   [state : TcMacroState]
@@ -104771,42 +104898,40 @@
     [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
     [module : String ""]
     [found : bool false]
-    [done : bool false]
     [out-rev : ast.AstDeclList (ast.ast-decl-list-new)]
     (begin
-      (while (not done)
-        (match (macro-segmented-program-step (tc-global-shared-view iter))
-          [(MacroSegmentedProgramStep.Nil) (set! done true)]
-          [(MacroSegmentedProgramStep.Cons item rest)
-            (begin
-              (set! iter rest)
-              ;; This first pass is tag-only for almost every declaration. The
-              ;; iterator owns the segment descriptor through the match; a full
-              ;; row is copied below only when it is appended to `out-rev`.
-              (match (ast.ast-decl-list-ref-borrowed (& item.decls) item.index)
-                [(ast.AstDecl.Module _)
-                  (begin
-                    (set!
-                      module
-                      (tc-env-key-name-text
-                        (ast.ast-decl-list-module-id-at
-                          (& item.decls)
-                          item.index
-                          cbi.compiler-builtin-id-fix-empty)))
-                    (if (string.eq module target-module)
-                      (set! found true)
-                      unit))]
-                [_
+      (while iter.has-current
+        (let
+          [decls : ast.AstDeclList (tc-global-shared-view iter.decls)]
+          [index : i64 iter.index]
+          (begin
+            ;; This pass is tag-only for almost every declaration. The iterator
+            ;; owns the current row descriptor until the final in-place advance;
+            ;; a full row is copied only when it is appended to `out-rev`.
+            (match (ast.ast-decl-list-ref-borrowed (& decls) index)
+              [(ast.AstDecl.Module _)
+                (begin
+                  (set!
+                    module
+                    (tc-env-key-name-text
+                      (ast.ast-decl-list-module-id-at
+                        (& decls)
+                        index
+                        cbi.compiler-builtin-id-fix-empty)))
                   (if (string.eq module target-module)
-                    (set!
-                      out-rev
-                      (ast.ast-decl-list-prepend-builder
-                        (tc-global-array-element-shared-view
-                          item.decls.slots
-                          (+ item.decls.offset item.index))
-                        out-rev))
-                    unit)])
-              unit)]))
+                    (set! found true)
+                    unit))]
+              [_
+                (if (string.eq module target-module)
+                  (set!
+                    out-rev
+                    (ast.ast-decl-list-prepend-builder
+                      (tc-global-array-element-shared-view
+                        decls.slots
+                        (+ decls.offset index))
+                      out-rev))
+                  unit)])
+            (macro-segmented-program-iter-advance! (&mut iter)))))
       (if found
         (MacroMaybeDeclList.Some (macro-decl-list-reverse out-rev))
         (MacroMaybeDeclList.No)))))

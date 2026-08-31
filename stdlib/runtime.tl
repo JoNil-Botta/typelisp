@@ -819,6 +819,7 @@
       ;; Keep ADDRESSES live across rendering; see the Linux path above.
       unit)))
 
+;: Emit the optional fatal backtrace, then terminate with `code`.
 (define (abort-exit [code : i64]) : never
   (cfg
     compiler-backtrace

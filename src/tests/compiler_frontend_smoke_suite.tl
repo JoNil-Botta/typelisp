@@ -323,7 +323,7 @@
     [clauses : ast.AstExprClauseList (ast.ast-expr-clause-list-new)]
     [binding : ast.AstExprBindingClause
       (ast.ast-expr-binding-clause-id
-        (ci.intern "answer")
+        (ci.intern-syntax-id-from-raw (ci.intern "answer"))
         true
         true-node
         false-node

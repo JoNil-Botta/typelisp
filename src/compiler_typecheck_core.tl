@@ -36085,7 +36085,7 @@
                       (ast.AstExpr.Literal (ast.AstLiteral.Unit)))]
                   (ctfe_support.CompilerCtfeValue.ExprBindingClause
                     (ast.ast-expr-binding-clause-id
-                      name
+                      (ci.intern-syntax-id-from-raw name)
                       false
                       unit-expr
                       (ast.ast-node-pool-context-expr-push
@@ -115734,7 +115734,7 @@
           (if (= len 3)
             (ResultMacroBindingClause.Ok
               (ast.ast-expr-binding-clause-id
-                name
+                (ci.intern-syntax-id-from-raw name)
                 true
                 (ast.ast-expr-list-get (& rest) 1 0)
                 (ast.ast-expr-list-get (& rest) 2 0)
@@ -115744,7 +115744,7 @@
           (if (= len 1)
             (ResultMacroBindingClause.Ok
               (ast.ast-expr-binding-clause-id
-                name
+                (ci.intern-syntax-id-from-raw name)
                 false
                 (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Unit)))
                 first

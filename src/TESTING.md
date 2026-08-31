@@ -1011,13 +1011,13 @@ reserved payload bytes, and bounded total/maximum probe accounting. The inline
 reset/interleaving proof for equal numeric IDs in distinct profile owners.
 
 Package dependency images also carry relocatable checked frontend surfaces.
-`verify-package-surface-tlci.sh` builds a two-parent diamond with a shared
-transitive dependency, colliding local names, aliases, repeated imports and
-generated keys, a generic macro, ordered `Module` and `Decls` results, a
-registration shell, and dependency SPMD metadata. The trusted consumer maps
-exactly three code catalogs and records 9 catalog hits, 8 native dispatches, 4
-native/direct `Expr` results, 1 `Module` result, 2 `Decls` results, and one shell
-learn/cache-hit pair. Package-qualified rows pin two calls to the shared-base
+`verify-package-surface-tlci.sh` builds one executable with three directly
+declared dependency-free libraries, colliding local names, aliases, repeated
+imports and generated keys, a generic macro, ordered `Module` and `Decls`
+results, a registration shell, and dependency SPMD metadata. The trusted
+consumer maps exactly three code catalogs and records 9 catalog hits, 8 native
+dispatches, 4 native/direct `Expr` results, 1 `Module` result, 2 `Decls` results,
+and one shell learn/cache-hit pair. Package-qualified rows pin two calls to the shared-base
 macro, the left/right defining identities, and repeated generated/shell calls.
 All three surface fragments hydrate transactionally into consumer-owned
 AST/fact/SPMD storage. The forced-source twin maps zero code, records zero hits

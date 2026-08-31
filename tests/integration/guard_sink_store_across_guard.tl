@@ -5,7 +5,6 @@
 ;; IAG-2's storage row) is what refuses it, and the printed sum is the proof: the
 ;; loop must accumulate the value the cell held BEFORE the store.
 (import stdlib.io)
-(import stdlib.string)
 
 (define gs-cell : i64
   0)
@@ -20,8 +19,7 @@
           [acc : i64 0]
           [i : i64 0]
           (begin
-            (while
-              (< i n)
+            (while (< i n)
               (begin
                 (set! acc (+ acc snapshot))
                 (set! i (+ i 1))))

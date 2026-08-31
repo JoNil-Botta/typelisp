@@ -73558,6 +73558,7 @@
       (compiler_optimize.compiler-opt-global-shared-view cells.len-eq-clean)
       (opt_i64_i64_map.with-capacity 1)
       (compiler_optimize.compiler-opt-global-shared-view cells.arg-global)
+      (compiler_optimize.compiler-opt-global-shared-view cells.content)
       (compiler_optimize.opt-cfg-context-build
         (compiler_optimize.compiler-opt-global-shared-view blocks))
       (opt-le-blocks-function
@@ -74705,6 +74706,7 @@
           (compiler_optimize.compiler-opt-global-shared-view cells.len-eq-clean)
           (opt_i64_i64_map.with-capacity 1)
           facts
+          (opt_i64_i64_map.with-capacity 1)
           (compiler_optimize.opt-cfg-context-build blocks)
           func)))))
 
@@ -75383,6 +75385,7 @@
           (opt_i64_i64_map.with-capacity 1)
           (opt_i64_i64_map.with-capacity 1)
           (opt_i64_i64_map.with-capacity 1)
+          (opt_i64_i64_map.with-capacity 1)
           (compiler_optimize.opt-cfg-context-build blocks)
           func)))))
 
@@ -75598,6 +75601,7 @@
       (compiler_optimize.opt-function-blocks
         (compiler_optimize.opt-len-eq-late-sweep
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (opt_i64_i64_map.with-capacity 1)
           (opt_i64_i64_map.with-capacity 1)
           (opt_i64_i64_map.with-capacity 1)
           (opt_i64_i64_map.with-capacity 1)
@@ -75901,6 +75905,7 @@
       (compiler_optimize.opt-function-blocks
         (compiler_optimize.opt-len-eq-late-sweep
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (opt_i64_i64_map.with-capacity 1)
           (opt_i64_i64_map.with-capacity 1)
           (opt_i64_i64_map.with-capacity 1)
           (opt_i64_i64_map.with-capacity 1)
@@ -85926,7 +85931,9 @@
         empty.len-eq
         empty.len-eq-clean
         empty.arg-global
-        (compiler_optimize.OptGlobalObjModRef true obj-index obj-writes)))))
+        (compiler_optimize.OptGlobalObjModRef true obj-index obj-writes)
+        empty.len-reset
+        empty.content))))
 
 (define (opt-guard-sink-run
   [name : String]
@@ -86603,3 +86610,634 @@
     (compiler-optimize-guard-sink-self-test)
     42
     "Guard-first sinking moves global-rooted reads below an early-exit guard, refuses them without a landing block, across a writing call, without the mod-ref tables and at a merge, and the uniform-phi substitution unlocks the rotation only when the preheader feeds the loop"))
+
+;; --- CB-1: whole-program element content bounds ------------------------------
+;;
+;; One program carrying every case the summary has to tell apart. `cb_b` and
+;; `cb_c` are a length family; every other array is reset in the SAME region
+;; with a different length, so none of them is length-equal to the family and
+;; each one's admission rests on its own element stores:
+;;
+;;   cb_a  every store's value passed a `cb_b` check EARLIER in the block
+;;   cb_p  the check follows the store in the same block with nothing between
+;;   cb_q  the same, with a CALL between: the callee may read the array
+;;   cb_u  the value is never checked at all
+;;   cb_l  a non-zero literal is stored
+;;   cb_z  admitted stores, but the array is built by a ctor that does not zero
+;;   cb_r  admitted stores, but reset in its OWN region: clause (4) refuses it
+(defstruct OptCbTestSymbols
+  (a i64)
+  (b i64)
+  (c i64)
+  (p i64)
+  (q i64)
+  (u i64)
+  (l i64)
+  (r i64)
+  (z i64)
+  (init-a i64)
+  (init-b i64)
+  (init-c i64)
+  (init-p i64)
+  (init-q i64)
+  (init-u i64)
+  (init-l i64)
+  (init-r i64)
+  (init-z i64)
+  (ctor i64)
+  (raw-ctor i64)
+  (reset i64)
+  (reader i64)
+  (nop i64)
+  (w-a i64)
+  (w-p i64)
+  (w-q i64)
+  (w-u i64)
+  (w-l i64)
+  (w-r i64)
+  (w-z i64))
+
+(define (opt-cb-test-symbols) : OptCbTestSymbols
+  (OptCbTestSymbols
+    (opt-test-symbol "cb_a")
+    (opt-test-symbol "cb_b")
+    (opt-test-symbol "cb_c")
+    (opt-test-symbol "cb_p")
+    (opt-test-symbol "cb_q")
+    (opt-test-symbol "cb_u")
+    (opt-test-symbol "cb_l")
+    (opt-test-symbol "cb_r")
+    (opt-test-symbol "cb_z")
+    (opt-test-symbol "cb_init_a")
+    (opt-test-symbol "cb_init_b")
+    (opt-test-symbol "cb_init_c")
+    (opt-test-symbol "cb_init_p")
+    (opt-test-symbol "cb_init_q")
+    (opt-test-symbol "cb_init_u")
+    (opt-test-symbol "cb_init_l")
+    (opt-test-symbol "cb_init_r")
+    (opt-test-symbol "cb_init_z")
+    (opt-test-symbol "cb_ctor")
+    (opt-test-symbol "cb_raw_ctor")
+    (opt-test-symbol "cb_reset")
+    (opt-test-symbol "cb_reader")
+    (opt-test-symbol "cb_nop")
+    (opt-test-symbol "cb_w_a")
+    (opt-test-symbol "cb_w_p")
+    (opt-test-symbol "cb_w_q")
+    (opt-test-symbol "cb_w_u")
+    (opt-test-symbol "cb_w_l")
+    (opt-test-symbol "cb_w_r")
+    (opt-test-symbol "cb_w_z")))
+
+(define (opt-cb-function
+  [name : i64]
+  [params : compiler_ir_types.CompilerIrParamSeq]
+  [frame : i64]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    name
+    params
+    (compiler_ast_types.AstType.I64)
+    frame
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        instrs)
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; `(Vec (make-array i64 n) n)`: the allocation is covered by a `tl_array_zero`
+;; of the same byte count, which is what clause (3) reads.
+(define (opt-cb-ctor-function [name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-cb-function
+    name
+    (opt-le-params 2)
+    64
+    (opt-test-instr-seq-prepend
+      (compiler_ir_types.CompilerIrInstr.Call
+        2
+        cbi.compiler-builtin-id-tl-alloc
+        (compiler_ir_types.CompilerIrCallArgs.One
+          (compiler_ir_types.CompilerIrValue.Var 0))
+        (compiler_ast_types.AstType.I64))
+      (opt-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.Call
+          3
+          cbi.compiler-builtin-id-tl-array-zero
+          (compiler_ir_types.CompilerIrCallArgs.Two
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.Var 0))
+          (compiler_ast_types.AstType.I64))
+        (opt-test-instr-seq-prepend
+          (opt-le-alloc16 4)
+          (opt-le-word-store
+            5
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            0
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (opt-le-word-store
+              6
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              1
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (opt-le-word-store
+                7
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                0
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (opt-le-word-store
+                  8
+                  (compiler_ir_types.CompilerIrValue.Var 1)
+                  1
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (opt-fz-return-var 1))))))))))
+
+;; `gep (load (gep (load (gep @g, 0)), 0)), index` -- one element's address.
+(define (opt-cb-elem-instrs
+  [base : compiler_ir_types.CompilerIrValue]
+  [first : i64]
+  [index : compiler_ir_types.CompilerIrValue]
+  [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instr-seq-prepend
+    (compiler_ir_types.CompilerIrInstr.Gep
+      first
+      base
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.U8))
+    (opt-test-instr-seq-prepend
+      (compiler_ir_types.CompilerIrInstr.Load
+        (+ first 1)
+        (compiler_ir_types.CompilerIrValue.Var first)
+        (compiler_ast_types.AstType.DynArray 0))
+      (opt-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.Gep
+          (+ first 2)
+          (compiler_ir_types.CompilerIrValue.Var (+ first 1))
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (opt-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Load
+            (+ first 3)
+            (compiler_ir_types.CompilerIrValue.Var (+ first 2))
+            (compiler_ast_types.AstType.U64))
+          (opt-test-instr-seq-prepend
+            (compiler_ir_types.CompilerIrInstr.Gep
+              (+ first 4)
+              (compiler_ir_types.CompilerIrValue.Var (+ first 3))
+              index
+              (compiler_ast_types.AstType.I64))
+            tail))))))
+
+(define (opt-cb-check-instr [value : i64] [length : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BoundsCheck
+    (compiler_ir_types.CompilerIrValue.Var value)
+    (compiler_ir_types.CompilerIrValue.Var length)
+    0))
+
+(define (opt-cb-elem-store
+  [addr : i64]
+  [value : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.StorePtr
+    (compiler_ir_types.CompilerIrValue.Var addr)
+    value
+    (compiler_ast_types.AstType.I64)))
+
+;; The check dominates the store: the ordinary CSR shape.
+(define (opt-cb-writer-dominating [name : i64] [cell : i64] [len-cell : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-cb-function
+    name
+    (opt-le-params 1)
+    64
+    (opt-fz-chain-instrs
+      (compiler_ir_types.CompilerIrValue.Global len-cell)
+      1
+      (opt-test-instr-seq-prepend
+        (opt-cb-check-instr 0 4)
+        (opt-cb-elem-instrs
+          (compiler_ir_types.CompilerIrValue.Global cell)
+          5
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (opt-test-instr-seq-prepend
+            (opt-cb-elem-store 9 (compiler_ir_types.CompilerIrValue.Var 0))
+            (opt-mr-return-zero)))))))
+
+;; The check FOLLOWS the store, with nothing that can observe the array in
+;; between: an out-of-range value aborts before anything reads it.
+(define (opt-cb-writer-post [name : i64] [cell : i64] [len-cell : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-cb-function
+    name
+    (opt-le-params 1)
+    64
+    (opt-cb-elem-instrs
+      (compiler_ir_types.CompilerIrValue.Global cell)
+      5
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (opt-test-instr-seq-prepend
+        (opt-cb-elem-store 9 (compiler_ir_types.CompilerIrValue.Var 0))
+        (opt-fz-chain-instrs
+          (compiler_ir_types.CompilerIrValue.Global len-cell)
+          1
+          (opt-test-instr-seq-prepend
+            (opt-cb-check-instr 0 4)
+            (opt-mr-return-zero)))))))
+
+;; The same with a call in between: the callee may read the array, so the
+;; post-dominating check rescues nothing.
+(define (opt-cb-writer-post-call
+  [name : i64]
+  [cell : i64]
+  [len-cell : i64]
+  [callee : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-cb-function
+    name
+    (opt-le-params 1)
+    64
+    (opt-cb-elem-instrs
+      (compiler_ir_types.CompilerIrValue.Global cell)
+      5
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (opt-test-instr-seq-prepend
+        (opt-cb-elem-store 9 (compiler_ir_types.CompilerIrValue.Var 0))
+        (opt-test-instr-seq-prepend
+          (opt-le-call-instr 20 callee)
+          (opt-fz-chain-instrs
+            (compiler_ir_types.CompilerIrValue.Global len-cell)
+            1
+            (opt-test-instr-seq-prepend
+              (opt-cb-check-instr 0 4)
+              (opt-mr-return-zero))))))))
+
+(define (opt-cb-writer-plain
+  [name : i64]
+  [cell : i64]
+  [value : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrFunction
+  (opt-cb-function
+    name
+    (opt-le-params 1)
+    64
+    (opt-cb-elem-instrs
+      (compiler_ir_types.CompilerIrValue.Global cell)
+      5
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (opt-test-instr-seq-prepend
+        (opt-cb-elem-store 9 value)
+        (opt-mr-return-zero)))))
+
+(define (opt-cb-reader-function [name : i64] [cell : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-cb-function
+    name
+    (opt-le-params 0)
+    64
+    (opt-fz-chain-instrs
+      (compiler_ir_types.CompilerIrValue.Global cell)
+      1
+      (opt-fz-return-var 4))))
+
+(define (opt-cb-nop-function [name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-cb-function name (opt-le-params 0) 64 (opt-mr-return-zero)))
+
+(define (opt-cb-reset-step
+  [ctor : i64]
+  [first : i64]
+  [cell : i64]
+  [length : compiler_ir_types.CompilerIrValue]
+  [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-le-build-instrs
+    ctor
+    first
+    length
+    (opt-test-instr-seq-prepend (opt-le-store-instr cell (+ first 3)) tail)))
+
+;; One reset region for everything but `cb_r`, which lands after a call to a
+;; reader of a candidate global and therefore in a region of its own.
+(define (opt-cb-reset-function [symbols : OptCbTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-cb-function
+    symbols.reset
+    (opt-le-params 2)
+    256
+    (opt-cb-reset-step
+      symbols.ctor
+      10
+      symbols.b
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (opt-cb-reset-step
+        symbols.ctor
+        20
+        symbols.c
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (opt-cb-reset-step
+          symbols.ctor
+          30
+          symbols.a
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (opt-cb-reset-step
+            symbols.ctor
+            40
+            symbols.p
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (opt-cb-reset-step
+              symbols.ctor
+              50
+              symbols.q
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (opt-cb-reset-step
+                symbols.ctor
+                60
+                symbols.u
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (opt-cb-reset-step
+                  symbols.ctor
+                  70
+                  symbols.l
+                  (compiler_ir_types.CompilerIrValue.Var 1)
+                  (opt-cb-reset-step
+                    symbols.raw-ctor
+                    80
+                    symbols.z
+                    (compiler_ir_types.CompilerIrValue.Var 1)
+                    (opt-test-instr-seq-prepend
+                      (opt-le-call-instr 90 symbols.reader)
+                      (opt-cb-reset-step
+                        symbols.ctor
+                        100
+                        symbols.r
+                        (compiler_ir_types.CompilerIrValue.Var 1)
+                        (opt-mr-return-zero)))))))))))))
+
+(define (opt-cb-test-globals [symbols : OptCbTestSymbols]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 16)]
+    (begin
+      (opt-le-runtime-global (&mut builder) symbols.a symbols.init-a)
+      (opt-le-runtime-global (&mut builder) symbols.b symbols.init-b)
+      (opt-le-runtime-global (&mut builder) symbols.c symbols.init-c)
+      (opt-le-runtime-global (&mut builder) symbols.p symbols.init-p)
+      (opt-le-runtime-global (&mut builder) symbols.q symbols.init-q)
+      (opt-le-runtime-global (&mut builder) symbols.u symbols.init-u)
+      (opt-le-runtime-global (&mut builder) symbols.l symbols.init-l)
+      (opt-le-runtime-global (&mut builder) symbols.r symbols.init-r)
+      (opt-le-runtime-global (&mut builder) symbols.z symbols.init-z)
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+
+(define (opt-cb-test-functions [symbols : OptCbTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-cb-ctor-function symbols.ctor)
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-le-ctor-function
+        symbols.raw-ctor
+        (compiler_ir_types.CompilerIrValue.Var 0))
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-le-init-function symbols.init-a symbols.ctor)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-le-init-function symbols.init-b symbols.ctor)
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-le-init-function symbols.init-c symbols.ctor)
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (opt-le-init-function symbols.init-p symbols.ctor)
+              (compiler_ir_types.compiler-ir-function-seq-prepend
+                (opt-le-init-function symbols.init-q symbols.ctor)
+                (compiler_ir_types.compiler-ir-function-seq-prepend
+                  (opt-le-init-function symbols.init-u symbols.ctor)
+                  (compiler_ir_types.compiler-ir-function-seq-prepend
+                    (opt-le-init-function symbols.init-l symbols.ctor)
+                    (compiler_ir_types.compiler-ir-function-seq-prepend
+                      (opt-le-init-function symbols.init-r symbols.ctor)
+                      (compiler_ir_types.compiler-ir-function-seq-prepend
+                        (opt-le-init-function symbols.init-z symbols.raw-ctor)
+                        (opt-cb-test-driver-functions symbols)))))))))))))
+
+(define (opt-cb-test-driver-functions [symbols : OptCbTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-cb-reset-function symbols)
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-cb-reader-function symbols.reader symbols.b)
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-cb-nop-function symbols.nop)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-cb-writer-dominating symbols.w-a symbols.a symbols.b)
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-cb-writer-post symbols.w-p symbols.p symbols.b)
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (opt-cb-writer-post-call
+                symbols.w-q
+                symbols.q
+                symbols.b
+                symbols.nop)
+              (compiler_ir_types.compiler-ir-function-seq-prepend
+                (opt-cb-writer-plain
+                  symbols.w-u
+                  symbols.u
+                  (compiler_ir_types.CompilerIrValue.Var 0))
+                (compiler_ir_types.compiler-ir-function-seq-prepend
+                  (opt-cb-writer-plain
+                    symbols.w-l
+                    symbols.l
+                    (compiler_ir_types.CompilerIrValue.I64 7))
+                  (compiler_ir_types.compiler-ir-function-seq-prepend
+                    (opt-cb-writer-dominating symbols.w-r symbols.r symbols.b)
+                    (compiler_ir_types.compiler-ir-function-seq-prepend
+                      (opt-cb-writer-dominating symbols.w-z symbols.z symbols.b)
+                      (compiler_ir_types.compiler-ir-function-seq-empty))))))))))))
+
+(define (opt-cb-test-cells [symbols : OptCbTestSymbols]) : compiler_optimize.OptGlobalCellSummary
+  (compiler_optimize.opt-cb-attach
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-cb-test-globals symbols)
+    (opt-cb-test-functions symbols)
+    64
+    (compiler_optimize.opt-global-cell-summary-build-with-call-memory
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (opt-cb-test-globals symbols)
+      (opt-cb-test-functions symbols)
+      (opt_i64_i64_map.with-capacity 1))))
+
+(define (opt-cb-content
+  [cells : compiler_optimize.OptGlobalCellSummary]
+  [name : i64]) : i64
+  (compiler_optimize.opt-len-eq-lookup cells.content name))
+
+;; `marks[edges[0]]`: the element load feeding a check against a family member.
+(define (opt-cb-use-blocks [array-cell : i64] [len-cell : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-cb-elem-instrs
+        (compiler_ir_types.CompilerIrValue.Global array-cell)
+        1
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (opt-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Load
+            6
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (compiler_ast_types.AstType.I64))
+          (opt-fz-chain-instrs
+            (compiler_ir_types.CompilerIrValue.Global len-cell)
+            7
+            (opt-test-instr-seq-prepend
+              (opt-cb-check-instr 6 10)
+              (opt-mr-return-zero))))))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+(define (opt-cb-covers?
+  [cells : compiler_optimize.OptGlobalCellSummary]
+  [name : i64]
+  [array-cell : i64]
+  [len-cell : i64]
+  [facts : compiler_optimize.OptBoundsFacts]) : bool
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-cb-use-blocks array-cell len-cell)]
+    (compiler_optimize.opt-cb-content-covers?
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler_optimize.opt-len-eq-use-with-content
+        (compiler_optimize.opt-len-eq-use-build-late
+          (compiler_optimize.compiler-opt-global-shared-view cells.len-eq)
+          (compiler_optimize.compiler-opt-global-shared-view cells.len-eq-clean)
+          name
+          64
+          (compiler_optimize.compiler-opt-global-shared-view blocks)
+          (compiler_optimize.compiler-opt-global-shared-view cells.arg-global)
+          (opt-le-params 0))
+        (compiler_optimize.compiler-opt-global-shared-view cells.content))
+      (opt_i64_i64_map.with-capacity 1)
+      facts
+      0
+      (compiler_ir_types.CompilerIrValue.Var 6)
+      (compiler_ir_types.CompilerIrValue.Var 10))))
+
+;; A dominating passed check against a family member's length, which is what
+;; discharges the zero fill (`v <u L` forces `L >= 1`).
+(define (opt-cb-fill-fact) : compiler_optimize.OptBoundsFacts
+  (compiler_optimize.OptBoundsFacts.Cons
+    (compiler_optimize.OptBoundsFact.Fact
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ir_types.CompilerIrValue.Var 10))
+    (box (compiler_optimize.OptBoundsFacts.Nil))))
+
+(define (compiler-optimize-content-bounds-self-test) : i64
+  (let
+    [symbols : OptCbTestSymbols (opt-cb-test-symbols)]
+    [cells : compiler_optimize.OptGlobalCellSummary
+      (opt-cb-test-cells
+        (compiler_optimize.compiler-opt-global-shared-view symbols))]
+    [family-b : i64
+      (opt-len-eq-family-of
+        (compiler_optimize.compiler-opt-global-shared-view cells)
+        symbols.b)]
+    (cond
+      ;; the family the content facts must name
+      [(= family-b 0) 1]
+      [(not
+          (=
+            family-b
+            (opt-len-eq-family-of
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.c)))
+        2]
+      ;; --- the summary ---
+      ;; every store's value passed a dominating check against the family
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.a)
+            (+ family-b 1)))
+        3]
+      ;; a check that follows the store in the same block admits it too
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.p)
+            (+ family-b 1)))
+        4]
+      ;; unless a call sits between them
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.q)
+            0))
+        5]
+      ;; an unchecked store refuses the array
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.u)
+            0))
+        6]
+      ;; and so does a non-zero literal
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.l)
+            0))
+        7]
+      ;; the fill clause: an array whose constructor does not zero its buffer
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.z)
+            0))
+        8]
+      ;; the epoch clause: an array reset in a region of its own
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.r)
+            0))
+        9]
+      ;; --- the retirement ---
+      ;; the element load, checked against a family member, with the fill
+      ;; covered by a dominating passed check
+      [(not
+          (opt-cb-covers?
+            (compiler_optimize.compiler-opt-global-shared-view cells)
+            symbols.reader
+            symbols.a
+            symbols.c
+            (opt-cb-fill-fact)))
+        10]
+      ;; without that fact the zero fill is not covered
+      [(opt-cb-covers?
+          (compiler_optimize.compiler-opt-global-shared-view cells)
+          symbols.reader
+          symbols.a
+          symbols.c
+          (compiler_optimize.OptBoundsFacts.Nil))
+        11]
+      ;; an array with no content fact retires nothing
+      [(opt-cb-covers?
+          (compiler_optimize.compiler-opt-global-shared-view cells)
+          symbols.reader
+          symbols.u
+          symbols.c
+          (opt-cb-fill-fact))
+        12]
+      ;; and neither does a length outside the fact's family
+      [(opt-cb-covers?
+          (compiler_optimize.compiler-opt-global-shared-view cells)
+          symbols.reader
+          symbols.a
+          symbols.p
+          (opt-cb-fill-fact))
+        13]
+      [else 42])))
+
+(define (opt-len-eq-family-of
+  [cells : compiler_optimize.OptGlobalCellSummary]
+  [name : i64]) : i64
+  (compiler_optimize.opt-len-eq-encoded-family
+    (compiler_optimize.opt-len-eq-lookup cells.len-eq name)))
+
+(test
+  content-bounds-per-global
+  (test.assert-i64-eq
+    (compiler-optimize-content-bounds-self-test)
+    42
+    "CB-1 admits an array every element store of which passed a dominating or same-block post-dominating check against one length family, refuses an unchecked store, a non-zero literal, a call between the store and its check, an array whose fill is not zero and one reset in its own region, and retires the load-side check only with the fill covered and the length in the family"))

@@ -149,7 +149,12 @@
       (in-arena
         (arena.Arena surface-arena)
         (CompilerDriverSurfaceState.State
-          (compiler_typecheck_core.tc-job-state-new)
+          (cfg
+            (any compile-profile test)
+            (compiler_typecheck_core.tc-job-state-new-with-profile-metrics-address
+              (profile_state.compiler-profile-state-typecheck-metrics-address
+                (owned_view.compiler-owned-shared-view profile-state)))
+            (compiler_typecheck_core.tc-job-state-new))
           (__tl-project-field
             (compiler_lower.compiler-lower-state-new-with-intern-state-and-profile-state
               (owned_view.compiler-owned-shared-view intern-state)

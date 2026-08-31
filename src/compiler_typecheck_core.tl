@@ -27514,9 +27514,9 @@
   [nominal-state : Expr]
   [symbols : Expr]
   [lookup-id : Expr]
-  [caller : Expr]) : Expr
+  [_caller : Expr]) : Expr
   `(begin
-    (cfg compile-profile (compiler-tc-type-handle-profile-note-lookup ,caller))
+    (cfg compile-profile (compiler-tc-type-handle-profile-note-lookup ,_caller))
     (tc-type-handle-cache-lookup-id ,nominal-state ,symbols ,lookup-id)))
 
 (cfg

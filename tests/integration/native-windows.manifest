@@ -21,6 +21,8 @@ content_bounds_induction_abort|tests/integration/content_bounds_induction_abort.
 guard_dedup_bypass_descriptor|tests/integration/guard_dedup_bypass_descriptor.tl|42|-5915004525821994045\n|24|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 guard_dedup_mutated_slice|tests/integration/guard_dedup_mutated_slice.tl|42|172085089044\n|20 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 guard_dedup_mutated_slice_abort|tests/integration/guard_dedup_mutated_slice.tl|134|-|20 17|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/windows/guard_dedup_mutated_slice_abort/guard_dedup_mutated_slice_abort.tl:62:57: array index out of bounds: index=17 length=17\n
+inline_sole_call_absorb|tests/integration/inline_sole_call_absorb.tl|42|339292\n|64 3|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+inline_sole_call_abort|tests/integration/inline_sole_call_abort.tl|134|-|8 8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/windows/inline_sole_call_abort/inline_sole_call_abort.tl:64:37: array index out of bounds: index=8 length=8\n
 bce_range_two_loops|tests/integration/bce_range_two_loops.tl|42|-5915004525821994045\n|24|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 bce_range_negative_span|tests/integration/bce_range_negative_span.tl|134|-|24|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/windows/bce_range_negative_span/bce_range_negative_span.tl:15:36: array index out of bounds: index=-17 length=24\n
 shrink_wrap_general|tests/integration/shrink_wrap_general.tl|42|7100\n7048\n14\n|-|stdlib/io.tl stdlib/string.tl

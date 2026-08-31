@@ -50,7 +50,8 @@
       [(Choice.Item leaf text)
         (and
           (string.eq leaf.label "enum")
-          (and (= leaf.rank 9) (string.eq text "payload")))])
+          (= leaf.rank 9)
+          (string.eq text "payload"))])
     (string.eq (tuple-ref packet.pair 0) "tuple")
     (= (tuple-ref packet.pair 1) 11)
     (string.eq (array-ref packet.fixed 0) "fixed")

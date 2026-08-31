@@ -10,7 +10,7 @@
 ;# `synthesize-helpers` remains temporarily while compiler and repository call
 ;# sites migrate away from the semantic `(clone value)` form.
 (import stdlib.comptime)
-(import stdlib.string as string)
+(import stdlib.string)
 
 ;: Emit ordinary cloning for a fixed array whose source is a shared reference.
 (defmacro (clone-fixed-array
@@ -194,19 +194,33 @@
                   (if (= code 45)
                     true
                     (= code 95))]
+                [category : i64 4]
                 (begin
                   (if separator?
-                    (if (if (= index 0)
-                      true
-                      last-was-separator)
-                      (comptime.comptime-error
-                        "gen-clone: nominal name has an ambiguous separator")
-                      (begin
-                        (set!
-                          function-name
-                          (comptime.string-append function-name "-"))
-                        (set! last-was-separator true)))
-                    (if upper?
+                    (set! category 0)
+                    unit)
+                  (if upper?
+                    (set! category 1)
+                    unit)
+                  (if lower?
+                    (set! category 2)
+                    unit)
+                  (if digit?
+                    (set! category 3)
+                    unit)
+                  (match category
+                    [0
+                      (if (if (= index 0)
+                        true
+                        last-was-separator)
+                        (comptime.comptime-error
+                          "gen-clone: nominal name has an ambiguous separator")
+                        (begin
+                          (set!
+                            function-name
+                            (comptime.string-append function-name "-"))
+                          (set! last-was-separator true)))]
+                    [1
                       (let
                         [previous-code : i64
                           (if (> index 0)
@@ -236,23 +250,23 @@
                           (if (>= next-code 97)
                             (<= next-code 122)
                             false)]
-                        [word-boundary? : bool
-                          (if (= index 0)
-                            false
-                            (if previous-lower?
-                              true
-                              (if previous-digit?
-                                true
-                                (if previous-upper?
-                                  next-lower?
-                                  false))))]
+                        [word-boundary? : bool false]
                         (begin
-                          (if (if word-boundary?
-                            (= last-was-separator false)
-                            false)
-                            (set!
-                              function-name
-                              (comptime.string-append function-name "-"))
+                          (if previous-lower?
+                            (set! word-boundary? true)
+                            unit)
+                          (if previous-digit?
+                            (set! word-boundary? true)
+                            unit)
+                          (if previous-upper?
+                            (set! word-boundary? next-lower?)
+                            unit)
+                          (if word-boundary?
+                            (if (= last-was-separator false)
+                              (set!
+                                function-name
+                                (comptime.string-append function-name "-"))
+                              unit)
                             unit)
                           (set!
                             function-name
@@ -262,31 +276,29 @@
                                 lowercase-alphabet
                                 (- code 65)
                                 1)))
-                          (set! last-was-separator false)))
-                      (if lower?
-                        (begin
-                          (set!
+                          (set! last-was-separator false)))]
+                    [2
+                      (begin
+                        (set!
+                          function-name
+                          (comptime.string-append
                             function-name
-                            (comptime.string-append
-                              function-name
-                              (comptime.string-slice
-                                lowercase-alphabet
-                                (- code 97)
-                                1)))
-                          (set! last-was-separator false))
-                        (if digit?
-                          (begin
-                            (set!
-                              function-name
-                              (comptime.string-append
-                                function-name
-                                (comptime.string-slice
-                                  decimal-digits
-                                  (- code 48)
-                                  1)))
-                            (set! last-was-separator false))
-                          (comptime.comptime-error
-                            "gen-clone: unsupported character in nominal name")))))
+                            (comptime.string-slice
+                              lowercase-alphabet
+                              (- code 97)
+                              1)))
+                        (set! last-was-separator false))]
+                    [3
+                      (begin
+                        (set!
+                          function-name
+                          (comptime.string-append
+                            function-name
+                            (comptime.string-slice decimal-digits (- code 48) 1)))
+                        (set! last-was-separator false))]
+                    [_
+                      (comptime.comptime-error
+                        "gen-clone: unsupported character in nominal name")])
                   (set! index (+ index 1)))))
             (if last-was-separator
               (comptime.comptime-error
@@ -330,7 +342,6 @@
   (let
     [kind : String (type-kind T)]
     [path : String (comptime.expr-string-value path-expr)]
-    [root-key : String (comptime.expr-string-value root-key-expr)]
     (match kind
       ["unit" `unit]
       ["never" `(deref ,source)]
@@ -569,19 +580,33 @@
             (if (= code 45)
               true
               (= code 95))]
+          [category : i64 4]
           (begin
             (if separator?
-              (if (if (= index 0)
-                true
-                last-was-separator)
-                (comptime.comptime-error
-                  "gen-clone: nominal name has an ambiguous separator")
-                (begin
-                  (set!
-                    function-name-text
-                    (comptime.string-append function-name-text "-"))
-                  (set! last-was-separator true)))
-              (if upper?
+              (set! category 0)
+              unit)
+            (if upper?
+              (set! category 1)
+              unit)
+            (if lower?
+              (set! category 2)
+              unit)
+            (if digit?
+              (set! category 3)
+              unit)
+            (match category
+              [0
+                (if (if (= index 0)
+                  true
+                  last-was-separator)
+                  (comptime.comptime-error
+                    "gen-clone: nominal name has an ambiguous separator")
+                  (begin
+                    (set!
+                      function-name-text
+                      (comptime.string-append function-name-text "-"))
+                    (set! last-was-separator true)))]
+              [1
                 (let
                   [previous-code : i64
                     (if (> index 0)
@@ -607,48 +632,49 @@
                     (if (>= next-code 97)
                       (<= next-code 122)
                       false)]
-                  [word-boundary? : bool
-                    (if (= index 0)
-                      false
-                      (if previous-lower?
-                        true
-                        (if previous-digit?
-                          true
-                          (if previous-upper?
-                            next-lower?
-                            false))))]
+                  [word-boundary? : bool false]
                   (begin
-                    (if (if word-boundary?
-                      (= last-was-separator false)
-                      false)
-                      (set!
-                        function-name-text
-                        (comptime.string-append function-name-text "-"))
+                    (if previous-lower?
+                      (set! word-boundary? true)
+                      unit)
+                    (if previous-digit?
+                      (set! word-boundary? true)
+                      unit)
+                    (if previous-upper?
+                      (set! word-boundary? next-lower?)
+                      unit)
+                    (if word-boundary?
+                      (if (= last-was-separator false)
+                        (set!
+                          function-name-text
+                          (comptime.string-append function-name-text "-"))
+                        unit)
                       unit)
                     (set!
                       function-name-text
                       (comptime.string-append
                         function-name-text
                         (comptime.string-slice lowercase-alphabet (- code 65) 1)))
-                    (set! last-was-separator false)))
-                (if lower?
-                  (begin
-                    (set!
+                    (set! last-was-separator false)))]
+              [2
+                (begin
+                  (set!
+                    function-name-text
+                    (comptime.string-append
                       function-name-text
-                      (comptime.string-append
-                        function-name-text
-                        (comptime.string-slice lowercase-alphabet (- code 97) 1)))
-                    (set! last-was-separator false))
-                  (if digit?
-                    (begin
-                      (set!
-                        function-name-text
-                        (comptime.string-append
-                          function-name-text
-                          (comptime.string-slice decimal-digits (- code 48) 1)))
-                      (set! last-was-separator false))
-                    (comptime.comptime-error
-                      "gen-clone: unsupported character in nominal name")))))
+                      (comptime.string-slice lowercase-alphabet (- code 97) 1)))
+                  (set! last-was-separator false))]
+              [3
+                (begin
+                  (set!
+                    function-name-text
+                    (comptime.string-append
+                      function-name-text
+                      (comptime.string-slice decimal-digits (- code 48) 1)))
+                  (set! last-was-separator false))]
+              [_
+                (comptime.comptime-error
+                  "gen-clone: unsupported character in nominal name")])
             (set! index (+ index 1)))))
       (if last-was-separator
         (comptime.comptime-error "gen-clone: nominal name ends in a separator")

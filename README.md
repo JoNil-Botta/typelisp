@@ -83,6 +83,8 @@ typelisp fmt --check <file.tl>
 typelisp lint <file.tl>
 typelisp doc --test <file.tl>
 typelisp explain <code>         Explain a diagnostic code
+typelisp explain --list         List diagnostic codes
+typelisp explain --search TERM  Search diagnostic explanations
 ```
 
 Run `typelisp <command> --help` for the current command-specific options.
@@ -126,6 +128,9 @@ The following parts are implemented and actively tested:
   inline tests, doctests, formatting, linting, documentation generation, and a
   stdio language server with a deterministic multi-root workspace index and
   open-document overlays.
+- Shallow application-owned package graphs: executables declare every normal
+  dependency directly, and reusable TypeLisp static libraries are
+  dependency-free.
 - Rust-style primitive Debug selectors with byte-safe quoted text, source-width
   float behavior, hexadecimal integer leaves, checked-reference forwarding,
   and shared String/writer/stdout/stderr dispatch.

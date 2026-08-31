@@ -281,7 +281,7 @@ else
 fi
 # The single-binary cli.tl stage0 shares the selfhost frontend with the stage1
 # wrapper, so its typecheck diagnostics use the selfhost wording (no legacy
-# `error[E0200]`/`got <a> -> <b>` annotations). Treat cli.tl (host-action
+# rich `error[Exxxx]`/`got <a> -> <b>` annotations). Treat cli.tl (host-action
 # disabled) like the wrapper for those diagnostic-text branches, while keeping
 # legacy diagnostic expectations isolated to compatibility branches (#1327).
 SELFHOST_FRONTEND_DIAGNOSTICS=1
@@ -428,12 +428,38 @@ if [ "$HAS_EXPLAIN_COMMAND" -eq 1 ]; then
     assert_contains "$out" "Minimal failing example:"
     assert_contains "$out" "Fix:"
 
-    # cli-gate-case explain-known-without-prose wrapper run_cmd
-    run_cmd explain-known-without-prose "$COMPILER" explain E0100
+    # cli-gate-case explain-generic-detailed wrapper run_cmd
+    run_cmd explain-generic-detailed "$COMPILER" explain E0100
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "E0100: this diagnostic code is recognized"
-    assert_contains "$out" "no long-form explanation is available yet"
+    assert_contains "$out" "E0100: parse error"
+    assert_contains "$out" "Minimal failing example:"
+    assert_contains "$out" "See also:"
+
+    # cli-gate-case explain-lowercase wrapper run_cmd
+    run_cmd explain-lowercase "$COMPILER" explain e0207
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "E0207: borrow violation"
+
+    # cli-gate-case explain-list wrapper run_cmd
+    run_cmd explain-list "$COMPILER" explain --list
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "E0100: parse error"
+    assert_contains "$out" "E0212: arena ownership violation"
+
+    # cli-gate-case explain-search wrapper run_cmd
+    run_cmd explain-search "$COMPILER" explain --search BORROW
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "E0207: borrow violation"
+
+    # cli-gate-case explain-search-empty wrapper run_cmd
+    run_cmd explain-search-empty "$COMPILER" explain --search no-such-diagnostic-family
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" 'explain: no diagnostic codes match `no-such-diagnostic-family`'
 
     # cli-gate-case explain-unknown wrapper run_cmd
     run_cmd explain-unknown "$COMPILER" explain E9999
@@ -445,7 +471,7 @@ if [ "$HAS_EXPLAIN_COMMAND" -eq 1 ]; then
     run_cmd explain-missing-code "$COMPILER" explain
     assert_failure
     assert_stdout_empty
-    assert_contains "$err" "explain: expected one diagnostic code"
+    assert_contains "$err" "Usage:"
 fi
 
 # cli-gate-case missing-command wrapper run_cmd
@@ -767,7 +793,7 @@ INLINE_BAD_DIAG=$(native_arg_path "$INLINE_BAD")
 
 assert_rich_inline_diagnostic() {
     if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ]; then
-        assert_contains "$err" "error[E0200]"
+        assert_contains "$err" "error[E0206]"
         assert_contains "$err" "3 |   (+ true 1))"
         assert_contains "$err" "|   ^^^^^^^^^"
     fi
@@ -1297,7 +1323,7 @@ assert_contains_any "$err" \
     "cast requires integer/char source and target"
 if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 0 ]; then
     assert_contains "$err" "got bool -> i64"
-    assert_contains "$err" "error[E0200]"
+    assert_contains "$err" "error[E0206]"
 fi
 
 cat > "$CLI_MATRIX/inexact-f32-literal.tl" <<'EOF'
@@ -3271,14 +3297,14 @@ cat > "$SPLIT_PKG/typelisp.pkg" <<'EOF'
 (package
   (name "split_pkg")
   (version "0.1.0")
-  (kind "lib")
-  (entry "src/lib.tl")
+  (kind "bin")
+  (entry "src/main.tl")
   (dependencies
     (math "vendor/math")
     (util "vendor/util")))
 EOF
 maybe_strip_manifest_kind "$SPLIT_PKG/typelisp.pkg"
-cat > "$SPLIT_PKG/src/lib.tl" <<'EOF'
+cat > "$SPLIT_PKG/src/main.tl" <<'EOF'
 (import math.src.lib as math)
 (import util.src.lib as util)
 (import stdlib.comptime)
@@ -3294,6 +3320,7 @@ cat > "$SPLIT_PKG/src/lib.tl" <<'EOF'
     true))
 (defmacro (split-unsupported [value : Expr]) : Expr
   (match value [(comptime.Expr.If c t e) c] [_ value]))
+(define (main) : i64 (split-root 0))
 EOF
 cat > "$SPLIT_PKG/vendor/math/typelisp.pkg" <<'EOF'
 (package
@@ -3318,13 +3345,12 @@ cat > "$SPLIT_PKG/vendor/util/src/lib.tl" <<'EOF'
 (define (split-util [x : i64]) : i64 (+ x 2))
 EOF
 
-SPLIT_ROOT_ARCHIVE="$SPLIT_PKG/target/release/${PACKAGE_SPLIT_STATIC_LIB_PREFIX}split_pkg${PACKAGE_SPLIT_STATIC_LIB_SUFFIX}"
+SPLIT_ROOT_RUNTIME="$SPLIT_PKG/target/release/split_pkg$HOST_EXE_SUFFIX"
 SPLIT_MATH_ARCHIVE="$SPLIT_PKG/vendor/math/target/release/${PACKAGE_SPLIT_STATIC_LIB_PREFIX}split_math${PACKAGE_SPLIT_STATIC_LIB_SUFFIX}"
 SPLIT_UTIL_ARCHIVE="$SPLIT_PKG/vendor/util/target/release/${PACKAGE_SPLIT_STATIC_LIB_PREFIX}split_util${PACKAGE_SPLIT_STATIC_LIB_SUFFIX}"
 SPLIT_ROOT_TLCI="$SPLIT_PKG/target/release/split_pkg.tlci"
 SPLIT_MATH_TLCI="$SPLIT_PKG/vendor/math/target/release/split_math.tlci"
 SPLIT_UTIL_TLCI="$SPLIT_PKG/vendor/util/target/release/split_util.tlci"
-SPLIT_ROOT_HOST_ARCHIVE="$SPLIT_PKG/target/release/${HOST_STATIC_LIB_PREFIX}split_pkg${HOST_STATIC_LIB_SUFFIX}"
 SPLIT_MATH_HOST_ARCHIVE="$SPLIT_PKG/vendor/math/target/release/${HOST_STATIC_LIB_PREFIX}split_math${HOST_STATIC_LIB_SUFFIX}"
 SPLIT_UTIL_HOST_ARCHIVE="$SPLIT_PKG/vendor/util/target/release/${HOST_STATIC_LIB_PREFIX}split_util${HOST_STATIC_LIB_SUFFIX}"
 
@@ -3332,7 +3358,7 @@ SPLIT_UTIL_HOST_ARCHIVE="$SPLIT_PKG/vendor/util/target/release/${HOST_STATIC_LIB
 run_cmd package-host-target-split "$COMPILER" build --manifest-path "$SPLIT_PKG/typelisp.pkg" --target "$PACKAGE_SPLIT_TARGET"
 assert_success
 assert_stderr_empty
-[ -s "$SPLIT_ROOT_ARCHIVE" ] || fail "package split build did not write root target archive $SPLIT_ROOT_ARCHIVE"
+[ -s "$SPLIT_ROOT_RUNTIME" ] || fail "package split build did not write root target executable $SPLIT_ROOT_RUNTIME"
 [ -s "$SPLIT_MATH_ARCHIVE" ] || fail "package split build did not write math target archive $SPLIT_MATH_ARCHIVE"
 [ -s "$SPLIT_UTIL_ARCHIVE" ] || fail "package split build did not write util target archive $SPLIT_UTIL_ARCHIVE"
 [ -s "$SPLIT_ROOT_TLCI" ] || fail "package split build did not write root host tlci $SPLIT_ROOT_TLCI"
@@ -3340,13 +3366,10 @@ assert_stderr_empty
 [ -s "$SPLIT_UTIL_TLCI" ] || fail "package split build did not write util host tlci $SPLIT_UTIL_TLCI"
 assert_contains "$out" "Built $(native_arg_path "$SPLIT_MATH_ARCHIVE")"
 assert_contains "$out" "Built $(native_arg_path "$SPLIT_UTIL_ARCHIVE")"
-assert_contains "$out" "Built $(native_arg_path "$SPLIT_ROOT_ARCHIVE")"
+assert_contains "$out" "Built $(native_arg_path "$SPLIT_ROOT_RUNTIME")"
 assert_contains "$out" "Built $(native_arg_path "$SPLIT_MATH_TLCI")"
 assert_contains "$out" "Built $(native_arg_path "$SPLIT_UTIL_TLCI")"
 assert_contains "$out" "Built $(native_arg_path "$SPLIT_ROOT_TLCI")"
-if [ "$SPLIT_ROOT_HOST_ARCHIVE" != "$SPLIT_ROOT_ARCHIVE" ]; then
-    [ ! -e "$SPLIT_ROOT_HOST_ARCHIVE" ] || fail "package split build wrote host runtime archive $SPLIT_ROOT_HOST_ARCHIVE"
-fi
 if [ "$SPLIT_MATH_HOST_ARCHIVE" != "$SPLIT_MATH_ARCHIVE" ]; then
     [ ! -e "$SPLIT_MATH_HOST_ARCHIVE" ] || fail "package split build wrote math host runtime archive $SPLIT_MATH_HOST_ARCHIVE"
 fi
@@ -3396,7 +3419,7 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_contains "$out" "code: offset=0 bytes=0"
 fi
 
-SPLIT_ROOT_DEV_ARCHIVE="$SPLIT_PKG/target/dev/${PACKAGE_SPLIT_STATIC_LIB_PREFIX}split_pkg${PACKAGE_SPLIT_STATIC_LIB_SUFFIX}"
+SPLIT_ROOT_DEV_RUNTIME="$SPLIT_PKG/target/dev/split_pkg$HOST_EXE_SUFFIX"
 SPLIT_MATH_DEV_ARCHIVE="$SPLIT_PKG/vendor/math/target/dev/${PACKAGE_SPLIT_STATIC_LIB_PREFIX}split_math${PACKAGE_SPLIT_STATIC_LIB_SUFFIX}"
 SPLIT_UTIL_DEV_ARCHIVE="$SPLIT_PKG/vendor/util/target/dev/${PACKAGE_SPLIT_STATIC_LIB_PREFIX}split_util${PACKAGE_SPLIT_STATIC_LIB_SUFFIX}"
 SPLIT_ROOT_DEV_TLCI="$SPLIT_PKG/target/dev/split_pkg.tlci"
@@ -3406,7 +3429,7 @@ SPLIT_UTIL_DEV_TLCI="$SPLIT_PKG/vendor/util/target/dev/split_util.tlci"
 run_cmd package-host-target-split-dev "$COMPILER" build --manifest-path "$SPLIT_PKG/typelisp.pkg" --target "$PACKAGE_SPLIT_TARGET" --profile dev
 assert_success
 assert_stderr_empty
-[ -s "$SPLIT_ROOT_DEV_ARCHIVE" ] || fail "package split dev build did not write root target archive $SPLIT_ROOT_DEV_ARCHIVE"
+[ -s "$SPLIT_ROOT_DEV_RUNTIME" ] || fail "package split dev build did not write root target executable $SPLIT_ROOT_DEV_RUNTIME"
 [ -s "$SPLIT_MATH_DEV_ARCHIVE" ] || fail "package split dev build did not write math target archive $SPLIT_MATH_DEV_ARCHIVE"
 [ -s "$SPLIT_UTIL_DEV_ARCHIVE" ] || fail "package split dev build did not write util target archive $SPLIT_UTIL_DEV_ARCHIVE"
 [ -s "$SPLIT_ROOT_DEV_TLCI" ] || fail "package split dev build did not write root host tlci $SPLIT_ROOT_DEV_TLCI"

@@ -1,8 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
-# Exercise dependency native macros and frontend surfaces with two direct
-# packages sharing one transitive dependency. Exact route counters, physical
+# Exercise dependency native macros and frontend surfaces with three direct,
+# dependency-free packages. Exact route counters, physical
 # defining-catalog rows, repeated generated identities, a terminal shell, and
 # bounded failure twins make this a non-vacuous native/source differential. One
 # malformed surface must still disable the complete hydrated set rather than
@@ -16,18 +16,19 @@ native_link_detect_host
 
 # Target-conditioned prefix declarations change the skip totals. The explicit
 # compiler-owned-view import from the by-value ownership cutover contributes
-# one declaration on both hosts. Windows also builds dependency nodes serially
-# in one process, while Linux workers isolate child-node fallback accounting
-# from the root build.
+# one declaration on both hosts. Windows builds dependency nodes serially in
+# one process, which still changes prefix skip totals. All three library nodes
+# are dependency-free, however, so forced-source fallback happens only for the
+# root consumer on both hosts.
 case "$NL_HOST_OS" in
     windows)
-        TRUSTED_PREFIX_SKIPPED=221
-        FAILURE_PREFIX_SKIPPED=209
-        FORCED_SOURCE_FALLBACKS=3
+        TRUSTED_PREFIX_SKIPPED=220
+        FAILURE_PREFIX_SKIPPED=205
+        FORCED_SOURCE_FALLBACKS=1
         ;;
     *)
-        TRUSTED_PREFIX_SKIPPED=216
-        FAILURE_PREFIX_SKIPPED=204
+        TRUSTED_PREFIX_SKIPPED=215
+        FAILURE_PREFIX_SKIPPED=200
         FORCED_SOURCE_FALLBACKS=1
         ;;
 esac
@@ -180,7 +181,7 @@ run_failure_pair() {
         "$WORKDIR/failure-$case_name-native.err" 0 3
     assert_surface_route "$case_name native" \
         "$WORKDIR/failure-$case_name-native.err" 1 1 0 \
-        "$FAILURE_PREFIX_SKIPPED" 0 14
+        "$FAILURE_PREFIX_SKIPPED" 0 10
     assert_macro_row "$case_name native" \
         right.src.lib/$case_name-failure 1 1 \
         "$WORKDIR/failure-$case_name-native.err"
@@ -267,11 +268,17 @@ assert_surface_route() {
     macro_skipped=$6
     typecheck_skipped=$7
     decls=$8
-    grep -F "dependency-tlci-verification|phase=finished|requests=-1|entries=3" \
+    if ! grep -F \
+        "dependency-tlci-verification|phase=finished|requests=-1|entries=3" \
         "$file" |
-        grep -F "|surface-enabled=$enabled|surface-fragments=3|surface-hits=$hits|surface-fallbacks=$fallbacks|" \
-        | grep -F "|surface-decls=$decls|surface-macro-skipped=$macro_skipped|surface-typecheck-skipped=$typecheck_skipped" \
-        >/dev/null || fail "$label dependency surface route mismatch"
+        grep -F "|surface-enabled=$enabled|surface-fragments=3|surface-hits=$hits|surface-fallbacks=$fallbacks|" |
+        grep -F "|surface-decls=$decls|surface-macro-skipped=$macro_skipped|surface-typecheck-skipped=$typecheck_skipped" \
+            >/dev/null; then
+        grep -F \
+            "dependency-tlci-verification|phase=finished|requests=-1|entries=3" \
+            "$file" >&2 || true
+        fail "$label dependency surface route mismatch"
+    fi
 }
 
 case "$WORKDIR" in
@@ -302,17 +309,13 @@ cat > "$LEFT/typelisp.pkg" <<'EOF'
 (package
   (name "surface_left")
   (version "1.0.0")
-  (kind "lib")
-  (dependencies
-    (base "../base")))
+  (kind "lib"))
 EOF
 cat > "$LEFT/src/lib.tl" <<'EOF'
 (module left.src.lib)
 
-(import base.src.lib as base)
-
 (defmacro (adjust [value : Expr]) : Expr
-  `(base.typed-add i64 (+ ,value 3)))
+  `(+ ,value 3))
 
 (defmacro (generated) : Module
   `(begin
@@ -348,18 +351,15 @@ cat > "$RIGHT/typelisp.pkg" <<'EOF'
 (package
   (name "surface_right")
   (version "1.0.0")
-  (kind "lib")
-  (dependencies
-    (base "../base")))
+  (kind "lib"))
 EOF
 cat > "$RIGHT/src/lib.tl" <<'EOF'
 (module right.src.lib)
 
-(import base.src.lib as base)
 (import stdlib.comptime)
 
 (defmacro (adjust [value : Expr]) : Expr
-  `(base.typed-add i64 (+ ,value 5)))
+  `(+ ,value 5))
 
 (defmacro (generated) : Decls
   `(begin
@@ -406,12 +406,14 @@ cat > "$CONSUMER/typelisp.pkg" <<'EOF'
   (version "1.0.0")
   (kind "bin")
   (dependencies
+    (base "../base")
     (left "../left")
     (right "../right")))
 EOF
 cat > "$CONSUMER/src/main.tl" <<'EOF'
 (module consumer.src.main)
 
+(import base.src.lib as base)
 (import left.src.lib as left)
 (import right.src.lib as right)
 (import (left.generated) as left-generated)
@@ -438,8 +440,8 @@ cat > "$CONSUMER/src/main.tl" <<'EOF'
         (= (left-generated.value) 4)
         (= (left-generated-repeat.ordered-value) 4))
         (+
-          (left.left-value (left.adjust 1))
-          (right.right-value (right.adjust 1))
+          (left.left-value (base.typed-add i64 (left.adjust 1)))
+          (right.right-value (base.typed-add i64 (right.adjust 1)))
           (left.same 1)
           (right.same 1)
           (left-generated.value)
@@ -453,7 +455,7 @@ TYPELISP_DEPENDENCY_TLCI_VERIFY=1
 export TYPELISP_DEPENDENCY_TLCI_VERIFY
 unset TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE || true
 
-echo "[package-surface-tlci] trusted two-package diamond"
+echo "[package-surface-tlci] trusted direct dependency set"
 if ! "$COMPILER" build \
     --manifest-path "$CONSUMER/typelisp.pkg" \
     --target "$NL_BOOTSTRAP_TARGET" \
@@ -461,14 +463,14 @@ if ! "$COMPILER" build \
     --opt-level 0 > "$WORKDIR/native.out" 2> "$WORKDIR/native.err"; then
     cat "$WORKDIR/native.out" >&2
     cat "$WORKDIR/native.err" >&2
-    fail "trusted diamond build failed"
+    fail "trusted direct dependency build failed"
 fi
 [ -s "$CONSUMER_ASM" ] || fail "trusted consumer assembly is missing"
 [ -x "$CONSUMER_BIN" ] || fail "trusted consumer executable is missing"
 [ -s "$RIGHT_TLCI" ] || fail "right dependency TLCI is missing"
 assert_catalog_state trusted "$WORKDIR/native.err" 0 3
-assert_surface_route trusted "$WORKDIR/native.err" 1 2 0 \
-    "$TRUSTED_PREFIX_SKIPPED" "$TRUSTED_PREFIX_SKIPPED" 24
+assert_surface_route trusted "$WORKDIR/native.err" 1 3 0 \
+    "$TRUSTED_PREFIX_SKIPPED" "$TRUSTED_PREFIX_SKIPPED" 21
 # The package build and its isolated doctest worker each load the dependency
 # closure.  Profile rows are emitted by both contexts into this shared log.
 assert_profile_eq dependency_tlci_catalog_hits 18 "$WORKDIR/native.err"
@@ -505,7 +507,7 @@ rm -rf "$CONSUMER/target"
 TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE=1
 export TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE
 
-echo "[package-surface-tlci] forced-source diamond"
+echo "[package-surface-tlci] forced-source direct dependency set"
 if ! "$COMPILER" build \
     --manifest-path "$CONSUMER/typelisp.pkg" \
     --target "$NL_BOOTSTRAP_TARGET" \
@@ -513,7 +515,7 @@ if ! "$COMPILER" build \
     --opt-level 0 > "$WORKDIR/source.out" 2> "$WORKDIR/source.err"; then
     cat "$WORKDIR/source.out" >&2
     cat "$WORKDIR/source.err" >&2
-    fail "forced-source diamond build failed"
+    fail "forced-source direct dependency build failed"
 fi
 assert_catalog_state forced-source "$WORKDIR/source.err" 3 0
 assert_surface_route forced-source "$WORKDIR/source.err" 0 0 \
@@ -535,7 +537,7 @@ assert_macro_row forced-source left.src.lib/unsupported 1 2 "$WORKDIR/source.err
 assert_macro_row forced-source right.src.lib/adjust 1 1 "$WORKDIR/source.err"
 assert_macro_row forced-source right.src.lib/generated 0 2 "$WORKDIR/source.err"
 cmp "$NATIVE_ASM" "$CONSUMER_ASM" >/dev/null ||
-    fail "trusted and forced-source diamond assembly differ"
+    fail "trusted and forced-source direct dependency assembly differ"
 run_consumer_90 forced-source
 cmp "$WORKDIR/trusted.program.out" "$WORKDIR/forced-source.program.out" >/dev/null ||
     fail "trusted and forced-source consumer stdout differ"
@@ -564,8 +566,8 @@ if ! "$COMPILER" build \
 fi
 assert_surface_route malformed "$WORKDIR/malformed.err" 0 0 1 0 0 0
 cmp "$NATIVE_ASM" "$CONSUMER_ASM" >/dev/null ||
-    fail "malformed fallback and trusted diamond assembly differ"
+    fail "malformed fallback and trusted direct dependency assembly differ"
 run_consumer_90 malformed
 unset TYPELISP_DEPENDENCY_TLCI_VERIFY_SURFACE_REJECT_LAST || true
 
-echo "[package-surface-tlci] diamond hydration, parity, and rollback passed"
+echo "[package-surface-tlci] direct hydration, parity, and rollback passed"

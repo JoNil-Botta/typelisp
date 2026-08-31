@@ -19,6 +19,7 @@ Local packages are described by a std-only S-expression manifest named
 (package
   (name "my-app")
   (version "0.1.0")
+  (kind bin)
   (dependencies
     (math "../math")
     (lint (github "JoNil-Botta/typelisp-lint" (rev "abc123"))))
@@ -39,6 +40,13 @@ its selected runtime target. `kind "bin"` builds the executable; `kind
 "staticlib"` builds the archive. When both are omitted, `bin` is inferred from
 `src/main.tl` and `staticlib` from `src/lib.tl`.
 
+Normal TypeLisp package dependencies belong to executable roots. A `staticlib`
+must be dependency-free: if it declares `(dependencies ...)`, validation stops
+at the first alias before resolving a local path or fetching a Git source. Move
+that dependency into the consuming `bin` manifest, combine the libraries, or
+use `(link ...)` when the input is a native library rather than a TypeLisp
+package. The compiler-owned standard library is not a package dependency.
+
 Macro-free packages use a metadata-only image. Macro-defining packages include
 one deterministic registration-table record per package-owned macro. Supported
 expression/value transformer bodies compile into native template (nested calls,
@@ -57,12 +65,12 @@ typelisp inspect target/release/my-app.tlci
 The command validates and renders the image header, sections, package metadata,
 source binding, and frontend-surface inventory. It does not execute image code.
 
-Package builds discover dependency images from the resolved package DAG and
-retain their admission state in a job-owned registry. Container integrity,
-package name/version, and the exact package-owned source set are checked before
-native use. A code-bearing image must also match the compiler's build-host
-platform and callback ABI, and every named host import must resolve before the
-loader maps it. The producer-compiler identity participates in the stable image
+Package builds discover dependency images from the executable root's direct
+dependency set and retain their admission state in a job-owned registry.
+Container integrity, package name/version, and the exact package-owned source
+set are checked before native use. A code-bearing image must also match the
+compiler's build-host platform and callback ABI, and every named host import
+must resolve before the loader maps it. The producer-compiler identity participates in the stable image
 key; exact identity with the running compiler is additionally required before
 hydrating compiler-internal frontend payloads. Native callback catalogs remain
 governed by their format, source, host, and callback-schema checks.
@@ -157,21 +165,52 @@ than silently producing a timestamp-bearing archive.
 
 Dependencies may be local paths or git/GitHub pins (`rev`, `tag`, or
 `branch`). Remote pins resolve through `typelisp.lock` — a deterministic
-S-expression lockfile recording alias, normalized URL, pin, and exact
-commit — and a content-keyed package cache under
-`target/typelisp/cache/`. `--locked` requires matching lock entries and
-never rewrites the lockfile; `--update-lock` intentionally refreshes remote
-pins. Dependency packages must be static libraries; transitive dependencies
-build once per invocation as a DAG (concurrently where the host supports
-it), and cycles fail with a diagnostic. Inside a package build, an import
+S-expression lockfile recording alias, normalized URL, pin, and exact commit —
+and a content-keyed package cache under `target/typelisp/cache/`. `--locked`
+requires matching lock entries and never rewrites the lockfile; `--update-lock`
+intentionally refreshes remote pins and commits only changed canonical bytes.
+The executable root owns every lock entry;
+a fetched or local library's own lockfile is never consulted.
+
+Lock updates are transactional. If canonical output is byte-identical to the
+generation used for resolution, TypeLisp leaves the file and its modification
+time untouched. Otherwise it exclusively creates a process-unique sibling,
+flushes and reparses the complete stage, then serializes committers with a
+crash-released guard under `target/typelisp/locks`. After acquiring the guard it
+rechecks the exact original generation: an identical concurrent winner is
+reused, while a different winner produces a conflict and asks the command to be
+rerun instead of overwriting it. The final substitution is `rename(2)` on Linux
+or replacing `MoveFileExA` on Windows; Windows never deletes the old lock first.
+Concurrent readers therefore see a complete old or new lock, including
+`--locked` builds. Handled failures remove their own stage, and stages abandoned
+by termination are ignored because only the exact `typelisp.lock` path is read.
+The staged file is flushed, but TypeLisp does not yet flush the parent directory,
+so this guarantees atomic visibility rather than durability across sudden power
+loss.
+
+Every dependency package must be a dependency-free static library. The graph
+is therefore exactly one level deep, with every normal edge and remote pin
+visible in the executable root manifest. Direct libraries may build
+concurrently where the host supports it. Inside a package build, an import
 whose leading segment is a dependency alias, such as `(import math.src.lib)`,
-resolves from that dependency root. The optional `(link ...)` section declares
-native link inputs per target; on Linux any non-empty link input switches the
-package to linking through `cc` instead of freestanding `ld`. Registry support,
-semantic-version solving, and workspaces are deferred by design: the model
-is deterministic zero-dependency builds through the host `git` CLI plus
-checked-in lockfile replay. See [SPEC.md §4.6](../SPEC.md) for the full
-contract.
+resolves from that dependency root.
+
+The optional `(link ...)` section declares native link inputs per target and is
+not a TypeLisp package edge, so it is valid in a `staticlib` manifest. Today
+those inputs affect only a `bin` artifact and are not propagated from a wrapper
+library; repeat required native inputs in the consuming executable until
+exported native requirements land. On Linux any non-empty active link input
+switches the package to linking through `cc` instead of freestanding `ld`.
+
+Test/dev-only and target-specific dependency contexts are future syntax. If
+added, library test dependencies must remain isolated from normal archives,
+TLCI images, locks, and consumer graphs, and dependency eligibility must be
+checked for each consuming target. Future `tree` and metadata commands must
+show only direct normal root edges and reject deeper edges as invalid input.
+Registry support, semantic-version solving, and workspaces are deferred by
+design: the model is deterministic zero-dependency builds through the host
+`git` CLI plus checked-in root-lock replay. See [SPEC.md §4.6](../SPEC.md) for
+the full contract.
 
 Package source discovery walks `.tl` files below the manifest directory,
 skipping build/VCS state, nested package roots, and `tests` directories

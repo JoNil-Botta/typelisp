@@ -426,8 +426,16 @@ assert_macro_profile_counts \
     "$NATIVE_STDERR" stdlib.core_macros/__tl-box-place 1 1 1 "$ROW_COUNT"
 assert_macro_profile_counts \
     "$NATIVE_STDERR" stdlib.core_macros/and 2 71 71 "$ROW_COUNT"
+# #6984's Windows open-error mapping adds two `or` expansions to every Windows
+# compiler batch entry. The Linux route remains at 14; the authoritative
+# Windows stress artifact pins 16.
+CORE_OR_CALLS=14
+if [ "$NL_HOST_OS" = windows ]; then
+    CORE_OR_CALLS=16
+fi
 assert_macro_profile_counts \
-    "$NATIVE_STDERR" stdlib.core_macros/or 2 14 14 "$ROW_COUNT"
+    "$NATIVE_STDERR" stdlib.core_macros/or 2 \
+    "$CORE_OR_CALLS" "$CORE_OR_CALLS" "$ROW_COUNT"
 assert_macro_profile_counts \
     "$NATIVE_STDERR" stdlib.core_macros/unless 2 1 1 "$ROW_COUNT"
 assert_macro_profile_counts \

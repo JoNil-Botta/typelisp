@@ -199,7 +199,8 @@
 (defstruct BuildPackageLockState
   (path String)
   (entries package_lock_entry_vec.Vec)
-  (has-lock bool))
+  (has-lock bool)
+  (original-source String))
 
 (defenum ResultBuildPackageLockState
   (Ok BuildPackageLockState)
@@ -221,13 +222,6 @@
 (defenum ResultBuildResolvedPkgDeps
   (Ok BuildResolvedPkgDeps)
   (Err String))
-
-;; DFS call stack used only for cycle diagnostics. Pushes follow recursion
-;; depth and siblings keep the shallower stack alive, so each descent
-;; right-sizes a fresh array rather than sharing one growable buffer.
-(defstruct BuildPackagePathSeq
-  (slots (__tl_dyn-array String))
-  (len i64))
 
 (defstruct BuildPackageWorkerConfig
   (manifest-path String)
@@ -288,10 +282,6 @@
   (Err String))
 
 (define build-package-release-opt-level : i64
-  2)
-(define build-package-visit-visiting : i64
-  1)
-(define build-package-visit-done : i64
   2)
 (define build-status-ok : i64
   0)
@@ -1574,18 +1564,12 @@
 (define (build-load-package-lock [manifest-dir : String]) : ResultBuildPackageLockState
   (let
     [path : String (build-package-lock-path manifest-dir)]
-    (if (io.file-exists? (owned_view.compiler-owned-shared-view path))
-      (match (io.try-read-file (& path))
-        [(io.ErrIoBytes error)
-          (ResultBuildPackageLockState.Err
-            (str_cat.str-cat
-              "build: cannot read package lock '"
-              path
-              "': "
-              (io.error-message error)))]
-        [(io.OkIoBytes source)
-          (match (package_lock_core.package-lock-parse
-            (byte_buf.to-string source))
+    (match (package_lock_core.package-lock-transaction-read (clone path))
+      [(package_lock_core.ResultPackageLockSnapshot.Err message)
+        (ResultBuildPackageLockState.Err (str_cat.str-cat "build: " message))]
+      [(package_lock_core.ResultPackageLockSnapshot.Ok snapshot)
+        (if snapshot.existed
+          (match (package_lock_core.package-lock-parse (clone snapshot.source))
             [(package_lock_core.ResultPackageLockFile.Err message)
               (ResultBuildPackageLockState.Err
                 (str_cat.str-cat
@@ -1595,9 +1579,9 @@
                   message))]
             [(package_lock_core.ResultPackageLockFile.Ok lock)
               (ResultBuildPackageLockState.Ok
-                (BuildPackageLockState path lock.entries true))])])
-      (ResultBuildPackageLockState.Ok
-        (BuildPackageLockState path (package_lock_entry_vec.new) false)))))
+                (BuildPackageLockState path lock.entries true snapshot.source))])
+          (ResultBuildPackageLockState.Ok
+            (BuildPackageLockState path (package_lock_entry_vec.new) false "")))])))
 
 (define (build-write-package-lock
   [state : BuildPackageLockState]
@@ -1609,15 +1593,16 @@
         entries)]
     [text : String (package_lock_core.package-lock-emit lock)]
     [path : String state.path]
-    (match (io.try-write-file (& path) (byte_buf.str-as-bytes (& text)))
-      [(io.OkIoUnit) (ResultBuildString.Ok path)]
-      [(io.ErrIoUnit error)
-        (ResultBuildString.Err
-          (str_cat.str-cat
-            "build: cannot write package lock '"
-            path
-            "': "
-            (io.error-message error)))])))
+    [snapshot : package_lock_core.PackageLockSnapshot
+      (package_lock_core.PackageLockSnapshot
+        (clone path)
+        state.original-source
+        state.has-lock)]
+    (match (package_lock_core.package-lock-transaction-commit snapshot text)
+      [(package_lock_core.ResultPackageLockCommit.Ok _)
+        (ResultBuildString.Ok path)]
+      [(package_lock_core.ResultPackageLockCommit.Err message)
+        (ResultBuildString.Err (str_cat.str-cat "build: " message))])))
 
 (define (build-package-lock-entry-matches?
   [entry : package_lock_core.PackageLockEntry]
@@ -2467,91 +2452,63 @@
   [manifest-path : String]
   [manifest : load.CompilerPkgManifest]
   [lock-policy : BuildPackageLockPolicy]) : ResultBuildManifest
-  (let
-    [manifest-dir : String (load.compiler-load-dirname manifest-path)]
-    (match (build-load-package-lock
-      (owned_view.compiler-owned-shared-view manifest-dir))
-      [(ResultBuildPackageLockState.Err message)
-        (ResultBuildManifest.Err message)]
-      [(ResultBuildPackageLockState.Ok lock-state)
-        (match (build-package-resolve-deps-with-lock
-          manifest-dir
-          (owned_view.compiler-owned-shared-view lock-state.entries)
-          lock-policy
-          (load.compiler-pkg-deps-list manifest.deps)
-          0)
-          [(ResultBuildResolvedPkgDeps.Err message)
+  (match manifest.kind
+    [(CompilerPkgKindLib)
+      ;; Libraries have no normal dependency resolution or lock contract.
+      ;; Validate again here so a future acquired/binary manifest format cannot
+      ;; bypass source-manifest validation and trigger a nested fetch.
+      (match (load.compiler-pkg-manifest-first-library-dependency (& manifest))
+        [(load.CompilerPkgMaybeDependency.NoDependency)
+          (ResultBuildManifest.Ok manifest)]
+        [(load.CompilerPkgMaybeDependency.Dependency dep)
+          (ResultBuildManifest.Err
+            (str_cat.str-cat
+              "build: "
+              (load.compiler-pkg-library-dependency-message
+                manifest.name
+                dep.alias)))])]
+    [(CompilerPkgKindBin)
+      (let
+        [manifest-dir : String (load.compiler-load-dirname manifest-path)]
+        (match (build-load-package-lock
+          (owned_view.compiler-owned-shared-view manifest-dir))
+          [(ResultBuildPackageLockState.Err message)
             (ResultBuildManifest.Err message)]
-          [(ResultBuildResolvedPkgDeps.Ok resolved)
-            (match (build-package-lock-policy-check
+          [(ResultBuildPackageLockState.Ok lock-state)
+            (match (build-package-resolve-deps-with-lock
+              manifest-dir
+              (owned_view.compiler-owned-shared-view lock-state.entries)
               lock-policy
-              (owned_view.compiler-owned-shared-view lock-state)
-              (owned_view.compiler-owned-shared-view resolved))
-              [(ResultBuildString.Err message)
+              (load.compiler-pkg-deps-list manifest.deps)
+              0)
+              [(ResultBuildResolvedPkgDeps.Err message)
                 (ResultBuildManifest.Err message)]
-              [(ResultBuildString.Ok _)
-                (match (build-package-maybe-write-lock
+              [(ResultBuildResolvedPkgDeps.Ok resolved)
+                (match (build-package-lock-policy-check
                   lock-policy
                   (owned_view.compiler-owned-shared-view lock-state)
                   (owned_view.compiler-owned-shared-view resolved))
                   [(ResultBuildString.Err message)
                     (ResultBuildManifest.Err message)]
                   [(ResultBuildString.Ok _)
-                    (ResultBuildManifest.Ok
-                      (load.CompilerPkgManifest
-                        manifest.name
-                        manifest.version
-                        manifest.kind
-                        manifest.entry
-                        (load.compiler-pkg-deps-from-list resolved.deps)
-                        manifest.link))])])])])))
+                    (match (build-package-maybe-write-lock
+                      lock-policy
+                      (owned_view.compiler-owned-shared-view lock-state)
+                      (owned_view.compiler-owned-shared-view resolved))
+                      [(ResultBuildString.Err message)
+                        (ResultBuildManifest.Err message)]
+                      [(ResultBuildString.Ok _)
+                        (ResultBuildManifest.Ok
+                          (load.CompilerPkgManifest
+                            manifest.name
+                            manifest.version
+                            manifest.kind
+                            manifest.entry
+                            (load.compiler-pkg-deps-from-list resolved.deps)
+                            manifest.link))])])])]))]))
 
 (define (build-package-normalize-manifest-path [manifest-path : String]) : String
   (load.compiler-load-normalize-path manifest-path))
-
-(define (build-package-path-seq-push
-  [paths : BuildPackagePathSeq]
-  [path : String]) : BuildPackagePathSeq
-  (let
-    [count : i64 paths.len]
-    [slots : (__tl_dyn-array String) (__tl_make-array String (+ count 1))]
-    [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set! (array-ref slots index) (array-ref paths.slots index))
-          (set! index (+ index 1))))
-      (set! (array-ref slots count) path)
-      (BuildPackagePathSeq slots (+ count 1)))))
-
-(define (build-package-path-seq-render [paths : BuildPackagePathSeq]) : String
-  (let
-    [out : String ""]
-    [index : i64 0]
-    (begin
-      (while (< index paths.len)
-        (let
-          [path : String
-            (owned_view.compiler-owned-array-element-shared-view
-              paths.slots
-              index)]
-          (begin
-            (set!
-              out
-              (if (= index 0)
-                path
-                (str_cat.str-cat out " -> " path)))
-            (set! index (+ index 1)))))
-      out)))
-
-(define (build-package-cycle-message
-  [stack : BuildPackagePathSeq]
-  [manifest-path : String]) : String
-  (str_cat.str-cat
-    "build: dependency cycle: "
-    (build-package-path-seq-render stack)
-    " -> "
-    manifest-path))
 
 (define (build-package-graph-node-vec-len [v : BuildPackageGraphNodeVec]) : i64
   v.len)
@@ -2646,8 +2603,7 @@
 
 (define (build-package-load-dep-node
   [manifest-dir : String]
-  [dep : load.CompilerPkgDep]
-  [lock-policy : BuildPackageLockPolicy]) : ResultBuildPackageGraphNode
+  [dep : load.CompilerPkgDep]) : ResultBuildPackageGraphNode
   (match (build-package-resolve-dep
     (owned_view.compiler-owned-shared-view manifest-dir)
     dep)
@@ -2664,92 +2620,69 @@
             (ResultBuildPackageGraphNode.Err
               (str_cat.str-cat "dependency `" resolved-dep.alias "`: " message))]
           [(ResultBuildManifest.Ok dep-manifest)
-            (match (build-package-resolve-manifest-deps
-              (owned_view.compiler-owned-shared-view dep-manifest-path)
-              dep-manifest
-              lock-policy)
-              [(ResultBuildManifest.Err message)
-                (ResultBuildPackageGraphNode.Err message)]
-              [(ResultBuildManifest.Ok resolved-manifest)
-                (if (not (build-package-kind-lib? resolved-manifest.kind))
-                  (ResultBuildPackageGraphNode.Err
-                    (str_cat.str-cat
-                      "build: dependency `"
-                      resolved-dep.alias
-                      "` at "
-                      dep-manifest-path
-                      " must be a staticlib package"))
-                  (ResultBuildPackageGraphNode.Ok
-                    (BuildPackageGraphNode dep-manifest-path resolved-manifest)))])]))]))
+            (if (not (build-package-kind-lib? dep-manifest.kind))
+              (ResultBuildPackageGraphNode.Err
+                (str_cat.str-cat
+                  "build: dependency `"
+                  resolved-dep.alias
+                  "` at "
+                  dep-manifest-path
+                  " must be a staticlib package"))
+              ;; Do not resolve or read the acquired library's lock. Its
+              ;; dependency-free invariant is checked when the node enters the
+              ;; graph below.
+              (ResultBuildPackageGraphNode.Ok
+                (BuildPackageGraphNode dep-manifest-path dep-manifest)))]))]))
+
+(define (build-package-acquired-library-dependency-message
+  [node : (& node BuildPackageGraphNode)]
+  [dep : load.CompilerPkgDep]) : String
+  (str_cat.str-cat
+    "build: acquired manifest at "
+    (clone node.manifest-path)
+    ": "
+    (load.compiler-pkg-library-dependency-message
+      (clone node.manifest.name)
+      dep.alias)))
 
 (define (build-package-graph-add-node
   [node : BuildPackageGraphNode]
-  [state : BuildPackageGraphState]
-  [stack : BuildPackagePathSeq]
-  [lock-policy : BuildPackageLockPolicy]) : ResultBuildPackageGraphState
-  (let
-    [manifest-path : String node.manifest-path]
-    (match (build_string_i64_map.get
-      (& state.seen)
-      (owned_view.compiler-owned-shared-view manifest-path))
-      [(build_string_i64_map.LookupFound mark)
-        (if (= mark build-package-visit-visiting)
-          (ResultBuildPackageGraphState.Err
-            (build-package-cycle-message stack manifest-path))
-          (ResultBuildPackageGraphState.Ok state))]
-      [(build_string_i64_map.LookupMissing)
-        (let
-          [visiting : BuildPackageGraphState
-            (build-package-graph-state-mark
-              state
-              (owned_view.compiler-owned-shared-view manifest-path)
-              build-package-visit-visiting)]
-          [manifest : load.CompilerPkgManifest
-            (owned_view.compiler-owned-shared-view node.manifest)]
-          [manifest-dir : String (load.compiler-load-dirname manifest-path)]
-          [next-stack : BuildPackagePathSeq
-            (build-package-path-seq-push
-              stack
-              (owned_view.compiler-owned-shared-view manifest-path))]
-          (match (build-package-graph-add-deps
-            manifest-dir
-            (load.compiler-pkg-deps-list manifest.deps)
-            0
-            visiting
-            next-stack
-            lock-policy)
-            [(ResultBuildPackageGraphState.Err message)
-              (ResultBuildPackageGraphState.Err message)]
-            [(ResultBuildPackageGraphState.Ok with-deps)
-              (ResultBuildPackageGraphState.Ok
-                (build-package-graph-state-add-order
-                  (build-package-graph-state-mark
-                    with-deps
-                    manifest-path
-                    build-package-visit-done)
-                  (owned_view.compiler-owned-shared-view node)))]))])))
+  [state : BuildPackageGraphState]) : ResultBuildPackageGraphState
+  ;; This second policy boundary is deliberately independent of source
+  ;; parsing. Any future acquired manifest representation must still fail
+  ;; before it can create a deeper graph edge.
+  (match (load.compiler-pkg-manifest-first-library-dependency (& node.manifest))
+    [(load.CompilerPkgMaybeDependency.Dependency dep)
+      (ResultBuildPackageGraphState.Err
+        (build-package-acquired-library-dependency-message (& node) dep))]
+    [(load.CompilerPkgMaybeDependency.NoDependency)
+      (let
+        [manifest-path : String (clone node.manifest-path)]
+        (match (build_string_i64_map.get
+          (& state.seen)
+          (owned_view.compiler-owned-shared-view manifest-path))
+          [(build_string_i64_map.LookupFound _)
+            (ResultBuildPackageGraphState.Ok state)]
+          [(build_string_i64_map.LookupMissing)
+            (ResultBuildPackageGraphState.Ok
+              (build-package-graph-state-add-order
+                (build-package-graph-state-mark state manifest-path 1)
+                node))]))]))
 
 (define (build-package-graph-add-deps
   [manifest-dir : String]
   [deps : load.CompilerPkgDepList]
   [index : i64]
-  [state : BuildPackageGraphState]
-  [stack : BuildPackagePathSeq]
-  [lock-policy : BuildPackageLockPolicy]) : ResultBuildPackageGraphState
+  [state : BuildPackageGraphState]) : ResultBuildPackageGraphState
   (if (>= index (load.compiler-pkg-dep-list-count deps))
     (ResultBuildPackageGraphState.Ok state)
     (match (build-package-load-dep-node
       (owned_view.compiler-owned-shared-view manifest-dir)
-      (load.compiler-pkg-dep-list-at (& deps) index)
-      lock-policy)
+      (load.compiler-pkg-dep-list-at (& deps) index))
       [(ResultBuildPackageGraphNode.Err message)
         (ResultBuildPackageGraphState.Err message)]
       [(ResultBuildPackageGraphNode.Ok node)
-        (match (build-package-graph-add-node
-          node
-          state
-          (owned_view.compiler-owned-shared-view stack)
-          lock-policy)
+        (match (build-package-graph-add-node node state)
           [(ResultBuildPackageGraphState.Err message)
             (ResultBuildPackageGraphState.Err message)]
           [(ResultBuildPackageGraphState.Ok next-state)
@@ -2757,14 +2690,11 @@
               (owned_view.compiler-owned-shared-view manifest-dir)
               (owned_view.compiler-owned-shared-view deps)
               (+ index 1)
-              next-state
-              stack
-              lock-policy)])])))
+              next-state)])])))
 
 (define (build-package-dependency-graph
   [manifest-path : String]
-  [manifest : load.CompilerPkgManifest]
-  [lock-policy : BuildPackageLockPolicy]) : ResultBuildPackageGraph
+  [manifest : load.CompilerPkgManifest]) : ResultBuildPackageGraph
   (let
     [root-path : String (build-package-normalize-manifest-path manifest-path)]
     [root-dir : String (load.compiler-load-dirname root-path)]
@@ -2773,19 +2703,13 @@
         (build-string-index-map-put
           (build_string_i64_map.with-capacity 32)
           (owned_view.compiler-owned-shared-view root-path)
-          build-package-visit-visiting)
+          1)
         (build-package-graph-node-vec-new))]
-    [stack : BuildPackagePathSeq
-      (build-package-path-seq-push
-        (BuildPackagePathSeq (__tl_make-array String 0) 0)
-        (owned_view.compiler-owned-shared-view root-path))]
     (match (build-package-graph-add-deps
       root-dir
       (load.compiler-pkg-deps-list manifest.deps)
       0
-      initial
-      stack
-      lock-policy)
+      initial)
       [(ResultBuildPackageGraphState.Err message)
         (ResultBuildPackageGraph.Err message)]
       [(ResultBuildPackageGraphState.Ok state)
@@ -3666,12 +3590,45 @@
               pass.scheduled
               "root/app/typelisp.pkg")))])))
 
+(define (build-package-library-dependency-policy-smoke-ok?) : bool
+  (let
+    [dep : load.CompilerPkgDep (load.CompilerPkgDep "runtime" "../runtime")]
+    [deps : load.CompilerPkgDepList
+      (load.compiler-pkg-dep-list-push (load.compiler-pkg-dep-list-empty) dep)]
+    [resolve-manifest : load.CompilerPkgManifest
+      (build-package-graph-test-manifest-with-deps "layer" (clone deps))]
+    [graph-node : BuildPackageGraphNode
+      (BuildPackageGraphNode
+        "acquired/layer/typelisp.pkg"
+        (build-package-graph-test-manifest-with-deps "layer" deps))]
+    [state : BuildPackageGraphState
+      (BuildPackageGraphState
+        (build_string_i64_map.with-capacity 4)
+        (build-package-graph-node-vec-new))]
+    (and
+      (match (build-package-resolve-manifest-deps
+        "unreadable/typelisp.pkg"
+        resolve-manifest
+        (BuildPackageLockPolicy.Locked))
+        [(ResultBuildManifest.Err message)
+          (string.eq
+            message
+            "build: library package `layer` cannot declare normal dependency `runtime`; declare `runtime` directly in the consuming application, remove or combine the library dependency, or use `link` for native libraries")]
+        [(ResultBuildManifest.Ok _) false])
+      (match (build-package-graph-add-node graph-node state)
+        [(ResultBuildPackageGraphState.Err message)
+          (string.eq
+            message
+            "build: acquired manifest at acquired/layer/typelisp.pkg: library package `layer` cannot declare normal dependency `runtime`; declare `runtime` directly in the consuming application, remove or combine the library dependency, or use `link` for native libraries")]
+        [(ResultBuildPackageGraphState.Ok _) false]))))
+
 (test
   build-package-graph-vector-smoke
   (unless
     (and
       (build-package-graph-vector-smoke-ok?)
-      (build-package-graph-scheduler-no-progress-smoke-ok?))
+      (build-package-graph-scheduler-no-progress-smoke-ok?)
+      (build-package-library-dependency-policy-smoke-ok?))
     (io.panic "build package graph vector smoke failed")))
 
 (cfg
@@ -7699,8 +7656,7 @@
           [(ResultBuildManifest.Ok resolved-manifest)
             (match (build-package-dependency-graph
               (owned_view.compiler-owned-shared-view normalized-path)
-              (owned_view.compiler-owned-shared-view resolved-manifest)
-              lock-policy)
+              (owned_view.compiler-owned-shared-view resolved-manifest))
               [(ResultBuildPackageGraph.Err message)
                 (begin
                   (io.print-error

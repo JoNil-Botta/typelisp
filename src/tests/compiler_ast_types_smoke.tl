@@ -1219,7 +1219,7 @@
       (ast.ast-expr-binding-clause-list-push
         (&mut bindings)
         (ast.ast-expr-binding-clause-id
-          10
+          (ci.intern-syntax-id-from-raw 10)
           false
           0
           100
@@ -1228,7 +1228,7 @@
       (ast.ast-expr-binding-clause-list-push
         (&mut bindings)
         (ast.ast-expr-binding-clause-id
-          11
+          (ci.intern-syntax-id-from-raw 11)
           false
           0
           101
@@ -1237,7 +1237,7 @@
       (ast.ast-expr-binding-clause-list-push
         (&mut bindings)
         (ast.ast-expr-binding-clause-id
-          12
+          (ci.intern-syntax-id-from-raw 12)
           false
           0
           102
@@ -1263,7 +1263,9 @@
           (= first-clause.first 3)
           (= first-clause.second 4)
           (= binding-tail.len 2)
-          (= first-binding.name 11)
+          (ci.intern-syntax-id-eq?
+            first-binding.name
+            (ci.intern-syntax-id-from-raw 11))
           (= first-binding.init 101))))))
 
 (define (compiler-ast-generated-path-owner-smoke?) : bool
@@ -1762,6 +1764,50 @@
       (compiler-ast-field-syntax-id-round-trip? hygiene)
       (compiler-ast-field-syntax-id-round-trip? structural))))
 
+(define (compiler-ast-expr-binding-clause-syntax-id-round-trip?
+  [expected : ci.InternSyntaxId]) : bool
+  (let
+    [clause : ast.AstExprBindingClause
+      (ast.ast-expr-binding-clause-id
+        expected
+        false
+        0
+        0
+        (ast.AstType.Var -3)
+        (ast.ast-source-span 0 0 0 0))]
+    (ci.intern-syntax-id-eq? clause.name expected)))
+
+(define (compiler-ast-expr-binding-clause-syntax-identity-smoke?) : bool
+  (let
+    [source-id : i64 (ci.intern "binding-clause-source")]
+    [module-id : i64 (ci.intern "binding-clause-module")]
+    [base-id : i64 (ci.intern "binding-clause-base")]
+    [source : ci.InternSyntaxId (ci.intern-syntax-id-from-raw source-id)]
+    [generated : ci.InternSyntaxId
+      (ci.intern-syntax-id-from-raw
+        (ci.intern-generated-name "binding-clause-generated"))]
+    [qualified : ci.InternSyntaxId
+      (ci.intern-syntax-id-from-raw
+        (ci.intern-generated-qualified-name
+          "binding-clause-module/binding-clause-base"
+          module-id
+          base-id))]
+    [builtin : ci.InternSyntaxId
+      (ci.intern-syntax-id-from-raw cbi.compiler-builtin-id-fix-name)]
+    [hygiene : ci.InternSyntaxId
+      (ci.intern-syntax-id-from-raw
+        (compiler-ast-test-fresh-local-id 13 source-id))]
+    [structural : ci.InternSyntaxId
+      (ci.intern-syntax-id-from-raw
+        (ci.intern-composite-pair-id module-id base-id))]
+    (and
+      (compiler-ast-expr-binding-clause-syntax-id-round-trip? source)
+      (compiler-ast-expr-binding-clause-syntax-id-round-trip? generated)
+      (compiler-ast-expr-binding-clause-syntax-id-round-trip? qualified)
+      (compiler-ast-expr-binding-clause-syntax-id-round-trip? builtin)
+      (compiler-ast-expr-binding-clause-syntax-id-round-trip? hygiene)
+      (compiler-ast-expr-binding-clause-syntax-id-round-trip? structural))))
+
 (define (main) : i64
   (begin
     (unless (= (ast.compiler-ast-smoke) 23) (return 2))
@@ -1789,4 +1835,7 @@
     (unless (compiler-ast-macro-type-kind-dense-compaction-smoke?) (return 16))
     (unless (compiler-ast-cleanup-syntax-identity-smoke?) (return 20))
     (unless (compiler-ast-field-syntax-identity-smoke?) (return 21))
+    (unless
+      (compiler-ast-expr-binding-clause-syntax-identity-smoke?)
+      (return 23))
     42))

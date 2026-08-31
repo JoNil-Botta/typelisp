@@ -451,6 +451,11 @@
 (defstruct InternSyntaxId
   (value u64))
 
+(cfg
+  test
+  (define (intern-syntax-id-size) : i64
+    (comptime (size-of (type InternSyntaxId)))))
+
 (defmacro (intern-syntax-id-value [id : Expr]) : i64
   `(cast (__tl-project-field-name ,id "value") : i64))
 

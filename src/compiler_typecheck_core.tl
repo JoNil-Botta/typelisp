@@ -543,6 +543,21 @@
 (define tc-unbound-near-miss-memo-capacity : i64
   256)
 
+;; Every near-miss scan rebuilds the visible-candidate list by walking the
+;; persistent environment chain, and successive scans in one job usually share
+;; the same environment identity (macro-fired code retries a handful of unbound
+;; names per scope). This direct-mapped cache stores one built candidate list
+;; per (intern stamp, pool length, qualification scope, target module,
+;; environment identity) key so the repeat scans reuse the list instead of
+;; re-walking the environment. Entries are owned by the same job-scoped memo
+;; carrier as the near-miss memo itself.
+(define tc-unbound-visible-names-cache-capacity : i64
+  512)
+(define tc-unbound-visible-names-cache-mask : i64
+  511)
+(define tc-unbound-visible-names-ids-capacity : i64
+  4096)
+
 ;; A near-miss memo belongs to one compiler job. Array descriptors are retained
 ;; in one typed cell in the scoped-state arena; scalar mutation also uses a
 ;; one-element lane so reading this carrier by value never loses the next-slot
@@ -557,7 +572,18 @@
   (name-ids (__tl_dyn-array i64))
   (env-stores (__tl_dyn-array i64))
   (env-heads (__tl_dyn-array i64))
-  (best-ids (__tl_dyn-array i64)))
+  (best-ids (__tl_dyn-array i64))
+  (names-valids (__tl_dyn-array u8))
+  (names-stamps (__tl_dyn-array i64))
+  (names-pool-lens (__tl_dyn-array i64))
+  (names-scope-keys (__tl_dyn-array i64))
+  (names-module-ids (__tl_dyn-array i64))
+  (names-env-stores (__tl_dyn-array i64))
+  (names-env-heads (__tl_dyn-array i64))
+  (names-offsets (__tl_dyn-array i64))
+  (names-lens (__tl_dyn-array i64))
+  (names-ids (__tl_dyn-array i64))
+  (names-ids-len (__tl_dyn-array i64)))
 
 (defstruct TcTypeEnvScopedStateData
   (owner-arena i64)
@@ -1336,7 +1362,18 @@
             (__tl_make-array i64 tc-unbound-near-miss-memo-capacity)
             (__tl_make-array i64 tc-unbound-near-miss-memo-capacity)
             (__tl_make-array i64 tc-unbound-near-miss-memo-capacity)
-            (__tl_make-array i64 tc-unbound-near-miss-memo-capacity)))
+            (__tl_make-array i64 tc-unbound-near-miss-memo-capacity)
+            (__tl_make-array u8 tc-unbound-visible-names-cache-capacity)
+            (__tl_make-array i64 tc-unbound-visible-names-cache-capacity)
+            (__tl_make-array i64 tc-unbound-visible-names-cache-capacity)
+            (__tl_make-array i64 tc-unbound-visible-names-cache-capacity)
+            (__tl_make-array i64 tc-unbound-visible-names-cache-capacity)
+            (__tl_make-array i64 tc-unbound-visible-names-cache-capacity)
+            (__tl_make-array i64 tc-unbound-visible-names-cache-capacity)
+            (__tl_make-array i64 tc-unbound-visible-names-cache-capacity)
+            (__tl_make-array i64 tc-unbound-visible-names-cache-capacity)
+            (__tl_make-array i64 tc-unbound-visible-names-ids-capacity)
+            (__tl_make-array i64 1)))
         (set!
           (array-ref carrier-cell 0)
           (TcTypeEnvScopedCarrier
@@ -36048,7 +36085,7 @@
                       (ast.AstExpr.Literal (ast.AstLiteral.Unit)))]
                   (ctfe_support.CompilerCtfeValue.ExprBindingClause
                     (ast.ast-expr-binding-clause-id
-                      name
+                      (ci.intern-syntax-id-from-raw name)
                       false
                       unit-expr
                       (ast.ast-node-pool-context-expr-push
@@ -40986,6 +41023,107 @@
               result.best-id)
             result.text))))))
 
+(define (tc-unbound-visible-names-cache-scope-key
+  [module-qualified : bool]
+  [wanted-qualified : bool]) : i64
+  (+
+    (if module-qualified
+      1
+      0)
+    (if wanted-qualified
+      2
+      0)))
+
+(define (tc-unbound-visible-names-cache-slot
+  [env-store : i64]
+  [env-head : i64]
+  [pool-len : i64]
+  [module-qualified : bool]
+  [wanted-qualified : bool]
+  [target-module-id : i64]) : i64
+  (bit-and
+    (bit-xor
+      env-store
+      (bit-xor
+        env-head
+        (bit-xor
+          (* pool-len 2654435761)
+          (bit-xor
+            target-module-id
+            (*
+              (tc-unbound-visible-names-cache-scope-key
+                module-qualified
+                wanted-qualified)
+              2246822519)))))
+    tc-unbound-visible-names-cache-mask))
+
+(define (tc-unbound-visible-names-cache-match?
+  [memo : (& memo TcUnboundNearMissMemoState)]
+  [slot : i64]
+  [owner-stamp : i64]
+  [pool-len : i64]
+  [module-qualified : bool]
+  [wanted-qualified : bool]
+  [target-module-id : i64]
+  [env-store : i64]
+  [env-head : i64]) : bool
+  (and
+    (= (array-ref memo.names-valids slot) 1)
+    (= (array-ref memo.names-stamps slot) owner-stamp)
+    (= (array-ref memo.names-pool-lens slot) pool-len)
+    (=
+      (array-ref memo.names-scope-keys slot)
+      (tc-unbound-visible-names-cache-scope-key
+        module-qualified
+        wanted-qualified))
+    (= (array-ref memo.names-module-ids slot) target-module-id)
+    (= (array-ref memo.names-env-stores slot) env-store)
+    (= (array-ref memo.names-env-heads slot) env-head)))
+
+;; Copy one built candidate list into the shared pooled-ids lane and record the
+;; (offset, len) slot. The pool has a fixed capacity: when it saturates the
+;; cache simply stops storing new lists, and every later scan rebuilds.
+(define (tc-unbound-visible-names-cache-store!
+  [memo : (& memo TcUnboundNearMissMemoState)]
+  [slot : i64]
+  [owner-stamp : i64]
+  [pool-len : i64]
+  [module-qualified : bool]
+  [wanted-qualified : bool]
+  [target-module-id : i64]
+  [env-store : i64]
+  [env-head : i64]
+  [ids : (& ids (__tl_dyn-array i64))]
+  [count : i64]) : unit
+  (let
+    [pooled-len : i64 (array-ref memo.names-ids-len 0)]
+    [needed : i64 (+ pooled-len count)]
+    (if (> needed tc-unbound-visible-names-ids-capacity)
+      unit
+      (let
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (set!
+                (array-ref memo.names-ids (+ pooled-len index))
+                (array-ref ids index))
+              (set! index (+ index 1))))
+          (set! (array-ref memo.names-ids-len 0) needed)
+          (set! (array-ref memo.names-valids slot) 1)
+          (set! (array-ref memo.names-stamps slot) owner-stamp)
+          (set! (array-ref memo.names-pool-lens slot) pool-len)
+          (set!
+            (array-ref memo.names-scope-keys slot)
+            (tc-unbound-visible-names-cache-scope-key
+              module-qualified
+              wanted-qualified))
+          (set! (array-ref memo.names-module-ids slot) target-module-id)
+          (set! (array-ref memo.names-env-stores slot) env-store)
+          (set! (array-ref memo.names-env-heads slot) env-head)
+          (set! (array-ref memo.names-offsets slot) pooled-len)
+          (set! (array-ref memo.names-lens slot) count))))))
+
 (define (tc-unbound-near-miss-scan
   [module-qualified : bool]
   [module-id : i64]
@@ -41016,14 +41154,76 @@
     [wanted-len : i64
       (string.string-length (tc-global-shared-view wanted-text))]
     [max-distance : i64 (tc-unbound-suggestion-max-distance wanted-len)]
-    [visible : TcUnboundVisibleNames
-      (tc-unbound-visible-names
+    [target-module-id : i64
+      (if wanted-qualified
+        wanted-qualifier-id
+        module-id)]
+    [cacheable : bool (not (tc-type-env-scoped-runtime-active? env))]
+    [env-store : i64 env.store]
+    [env-head : i64 env.head]
+    [pool-len : i64 (ci.intern-pool-len)]
+    [owner-stamp : i64
+      (bit-or
+        (shl (ci.intern-active-table-id) 32)
+        (bit-and (ci.intern-generation) 4294967295))]
+    [memo-state : TcUnboundNearMissMemoState
+      (tc-unbound-near-miss-memo-for-env env)]
+    [cache-slot : i64
+      (tc-unbound-visible-names-cache-slot
+        env-store
+        env-head
+        pool-len
         module-qualified
-        (if wanted-qualified
-          wanted-qualifier-id
-          module-id)
         wanted-qualified
-        env)]
+        target-module-id)]
+    [cache-hit : bool
+      (and
+        cacheable
+        (tc-unbound-visible-names-cache-match?
+          memo-state
+          cache-slot
+          owner-stamp
+          pool-len
+          module-qualified
+          wanted-qualified
+          target-module-id
+          env-store
+          env-head))]
+    ;; Cached hits iterate the stored candidate list in the pooled-ids lane;
+    ;; misses (and scoped-active environments, which never cache) iterate the
+    ;; freshly built list directly.
+    [iter-ids : (__tl_dyn-array i64) memo-state.names-ids]
+    [iter-offset : i64 0]
+    [built-len : i64
+      (if cache-hit
+        (begin
+          (set! iter-offset (array-ref memo-state.names-offsets cache-slot))
+          (array-ref memo-state.names-lens cache-slot))
+        (let
+          [names : TcUnboundVisibleNames
+            (tc-unbound-visible-names
+              module-qualified
+              target-module-id
+              wanted-qualified
+              env)]
+          [fresh-len : i64 names.len]
+          (begin
+            (if cacheable
+              (tc-unbound-visible-names-cache-store!
+                memo-state
+                cache-slot
+                owner-stamp
+                pool-len
+                module-qualified
+                wanted-qualified
+                target-module-id
+                env-store
+                env-head
+                (& names.ids)
+                fresh-len)
+              unit)
+            (set! iter-ids names.ids)
+            fresh-len)))]
     [previous-previous-row : (__tl_dyn-array i64)
       (__tl_make-array i64 (+ wanted-len 1))]
     [previous-row : (__tl_dyn-array i64) (__tl_make-array i64 (+ wanted-len 1))]
@@ -41034,9 +41234,10 @@
     [best : String ""]
     (begin
       (cfg compile-profile (compiler-tc-env-profile-note-unbound-scan))
-      (while (< candidate-index visible.len)
+      (while (< candidate-index built-len)
         (let
-          [candidate-id : i64 (array-ref visible.ids candidate-index)]
+          [candidate-id : i64
+            (array-ref iter-ids (+ iter-offset candidate-index))]
           [candidate : String (ci.intern-str candidate-id)]
           [candidate-len : i64
             (string.string-length (tc-global-shared-view candidate))]
@@ -41107,6 +41308,10 @@
         [other-module-id : i64 (ci.intern "suggest-other")]
         [candidate-id : i64 (ci.intern "render-value")]
         [wanted-id : i64 (ci.intern "render-valuf")]
+        [qualified-wanted-id : i64 (ci.intern "alias.render-valuf")]
+        [plain-id : i64 (ci.intern "plain-value")]
+        [plain-wanted-id : i64 (ci.intern "plain-valuf")]
+        [qualified-plain-wanted-id : i64 (ci.intern "alias.plain-valuf")]
         [base : TcTypeEnv (tc-empty-env)]
         [session : cis.InternStructuralSessionHandle
           (tc-type-env-structural-session base)]
@@ -41123,11 +41328,14 @@
           (tc-env-with-cache
             (tc-bind-id
               (tc-bind-id
-                (tc-bind-id base candidate-key (ast.AstType.I64))
-                candidate-key
-                (ast.AstType.Bool))
-              other-key
-              (ast.AstType.String)))]
+                (tc-bind-id
+                  (tc-bind-id base candidate-key (ast.AstType.I64))
+                  candidate-key
+                  (ast.AstType.Bool))
+                other-key
+                (ast.AstType.String))
+              plain-id
+              (ast.AstType.I64)))]
         [visible : TcUnboundVisibleNames
           (tc-unbound-visible-names true module-id false env)]
         [unqualified : String
@@ -41138,13 +41346,29 @@
             module-id
             env
             "alias.render-valuf"
-            (ci.intern "alias.render-valuf"))]
+            qualified-wanted-id)]
+        [plain : String
+          (tc-unbound-near-miss
+            true
+            module-id
+            env
+            "plain-valuf"
+            plain-wanted-id)]
+        [qualified-plain : String
+          (tc-unbound-near-miss
+            true
+            module-id
+            env
+            "alias.plain-valuf"
+            qualified-plain-wanted-id)]
         (begin
           (unless
             (and
-              (= visible.len 1)
+              (= visible.len 2)
               (string.eq unqualified "render-value")
-              (string.eq qualified "alias.render-value"))
+              (string.eq qualified "alias.render-value")
+              (string.eq plain "plain-value")
+              (string.eq qualified-plain ""))
             (io.panic
               "typecheck: persistent/qualified visible-name enumeration failed"))
           (ci.intern-reset!)
@@ -115510,7 +115734,7 @@
           (if (= len 3)
             (ResultMacroBindingClause.Ok
               (ast.ast-expr-binding-clause-id
-                name
+                (ci.intern-syntax-id-from-raw name)
                 true
                 (ast.ast-expr-list-get (& rest) 1 0)
                 (ast.ast-expr-list-get (& rest) 2 0)
@@ -115520,7 +115744,7 @@
           (if (= len 1)
             (ResultMacroBindingClause.Ok
               (ast.ast-expr-binding-clause-id
-                name
+                (ci.intern-syntax-id-from-raw name)
                 false
                 (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Unit)))
                 first

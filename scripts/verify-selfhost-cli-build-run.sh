@@ -148,6 +148,38 @@ assert_occurrences() {
     fi
 }
 
+wait_for_package_lock_stage() {
+    _wait_root=$1
+    _wait_pid=$2
+    _wait_label=$3
+    _wait_attempt=0
+    while [ "$_wait_attempt" -lt 600 ]; do
+        _wait_stage=$(find "$_wait_root" -maxdepth 1 -type f -name 'typelisp.lock.stage.*' -print -quit)
+        [ -z "$_wait_stage" ] || return 0
+        kill -0 "$_wait_pid" 2>/dev/null || fail "$_wait_label exited before publishing its staging file"
+        sleep 0.1
+        _wait_attempt=$((_wait_attempt + 1))
+    done
+    fail "$_wait_label did not publish a staging file within 60s"
+}
+
+wait_for_package_lock_text() {
+    _wait_path=$1
+    _wait_text=$2
+    _wait_pid=$3
+    _wait_label=$4
+    _wait_attempt=0
+    while [ "$_wait_attempt" -lt 600 ]; do
+        if [ -f "$_wait_path" ] && grep -F -- "$_wait_text" "$_wait_path" >/dev/null; then
+            return 0
+        fi
+        kill -0 "$_wait_pid" 2>/dev/null || fail "$_wait_label exited before committing the expected lock"
+        sleep 0.1
+        _wait_attempt=$((_wait_attempt + 1))
+    done
+    fail "$_wait_label did not commit the expected lock within 60s"
+}
+
 generated_path() {
     if command -v cygpath >/dev/null 2>&1; then
         cygpath -m "$1"
@@ -994,71 +1026,55 @@ assert_status root-package-downstream-run "$status" 29
 assert_empty root-package-downstream-run "$WORKDIR/root-package-downstream-run.out"
 assert_empty root-package-downstream-run "$WORKDIR/root-package-downstream-run.err"
 
-CHAIN_DIR="$WORKDIR/package-graph-chain"
-CHAIN_ROOT="$CHAIN_DIR/root"
-CHAIN_MID="$CHAIN_DIR/mid"
-CHAIN_LEAF="$CHAIN_DIR/leaf"
-mkdir -p "$CHAIN_ROOT/src" "$CHAIN_MID/src" "$CHAIN_LEAF/src"
-cat > "$CHAIN_ROOT/typelisp.pkg" <<'EOF'
+LIBDEP_PATH_DIR="$WORKDIR/package-library-dependency-path"
+LIBDEP_PATH_ROOT="$LIBDEP_PATH_DIR/root"
+LIBDEP_PATH_LAYER="$LIBDEP_PATH_DIR/layer"
+LIBDEP_PATH_RUNTIME="$LIBDEP_PATH_DIR/runtime"
+mkdir -p "$LIBDEP_PATH_ROOT/src" "$LIBDEP_PATH_LAYER/src" "$LIBDEP_PATH_RUNTIME/src"
+cat > "$LIBDEP_PATH_ROOT/typelisp.pkg" <<'EOF'
 (package
-  (name "chain_root")
+  (name "library_dependency_path_root")
   (version "0.1.0")
   (kind bin)
   (dependencies
-    (mid "../mid")))
+    (layer "../layer")))
 EOF
-cat > "$CHAIN_ROOT/src/main.tl" <<'EOF'
-(import mid.src.lib as mid)
-(define (main) : i64 (mid.mid-answer))
+cat > "$LIBDEP_PATH_ROOT/src/main.tl" <<'EOF'
+(define (main) : i64 0)
 EOF
-cat > "$CHAIN_MID/typelisp.pkg" <<'EOF'
+cat > "$LIBDEP_PATH_LAYER/typelisp.pkg" <<'EOF'
 (package
-  (name "chain_mid")
+  (name "path_layer")
   (version "0.1.0")
   (kind staticlib)
   (dependencies
-    (leaf "../leaf")))
+    (runtime "../runtime")))
 EOF
-cat > "$CHAIN_MID/src/lib.tl" <<'EOF'
-(import leaf.src.lib as leaf)
-(define (mid-answer) : i64 (leaf.leaf-answer))
+cat > "$LIBDEP_PATH_LAYER/src/lib.tl" <<'EOF'
+(define (layer-answer) : i64 42)
 EOF
-cat > "$CHAIN_LEAF/typelisp.pkg" <<'EOF'
+cat > "$LIBDEP_PATH_RUNTIME/typelisp.pkg" <<'EOF'
 (package
-  (name "chain_leaf")
+  (name "path_runtime")
   (version "0.1.0")
   (kind staticlib))
 EOF
-cat > "$CHAIN_LEAF/src/lib.tl" <<'EOF'
-(define (leaf-answer) : i64 42)
+cat > "$LIBDEP_PATH_RUNTIME/src/lib.tl" <<'EOF'
+(define (runtime-answer) : i64 42)
 EOF
-CHAIN_EXE="$CHAIN_ROOT/target/release/chain_root"
-CHAIN_MID_ARCHIVE="$CHAIN_MID/target/release/libchain_mid.a"
-CHAIN_LEAF_ARCHIVE="$CHAIN_LEAF/target/release/libchain_leaf.a"
-if [ "$HOST_OS" = windows ]; then
-    CHAIN_EXE="$CHAIN_EXE.exe"
-    CHAIN_MID_ARCHIVE="$CHAIN_MID/target/release/chain_mid.lib"
-    CHAIN_LEAF_ARCHIVE="$CHAIN_LEAF/target/release/chain_leaf.lib"
-fi
 
 set +e
-# cli-gate-case selfhost-cli-package-graph-chain direct "$ROOT_PKG_EXE"
-"$ROOT_PKG_EXE" build --manifest-path "$CHAIN_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-chain.out" 2> "$WORKDIR/package-graph-chain.err"
+# cli-gate-case selfhost-cli-package-library-dependency-path direct "$ROOT_PKG_EXE"
+"$ROOT_PKG_EXE" build --manifest-path "$LIBDEP_PATH_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-library-dependency-path.out" 2> "$WORKDIR/package-library-dependency-path.err"
 status=$?
 set -e
-assert_status package-graph-chain "$status" 0
-assert_empty package-graph-chain "$WORKDIR/package-graph-chain.err"
-assert_contains package-graph-chain "$WORKDIR/package-graph-chain.out" "Built $(generated_path "$CHAIN_LEAF_ARCHIVE")"
-assert_contains package-graph-chain "$WORKDIR/package-graph-chain.out" "Built $(generated_path "$CHAIN_MID_ARCHIVE")"
-assert_contains package-graph-chain "$WORKDIR/package-graph-chain.out" "Built $(generated_path "$CHAIN_EXE")"
-
-set +e
-"$CHAIN_EXE" > "$WORKDIR/package-graph-chain-program.out" 2> "$WORKDIR/package-graph-chain-program.err"
-status=$?
-set -e
-assert_status package-graph-chain-program "$status" 42
-assert_empty package-graph-chain-program "$WORKDIR/package-graph-chain-program.out"
-assert_empty package-graph-chain-program "$WORKDIR/package-graph-chain-program.err"
+assert_status package-library-dependency-path "$status" 1
+assert_empty package-library-dependency-path "$WORKDIR/package-library-dependency-path.out"
+assert_contains package-library-dependency-path "$WORKDIR/package-library-dependency-path.err" 'library package `path_layer` cannot declare normal dependency `runtime`'
+assert_contains package-library-dependency-path "$WORKDIR/package-library-dependency-path.err" 'declare `runtime` directly in the consuming application'
+assert_contains package-library-dependency-path "$WORKDIR/package-library-dependency-path.err" 'use `link` for native libraries'
+[ ! -d "$LIBDEP_PATH_LAYER/target" ] || fail "forbidden path library dependency built its parent archive"
+[ ! -d "$LIBDEP_PATH_RUNTIME/target" ] || fail "forbidden path library dependency resolved or built its child"
 
 GITHUB_DIR="$WORKDIR/package-graph-github-prefetch"
 GITHUB_ROOT="$GITHUB_DIR/root"
@@ -1292,6 +1308,9 @@ git -C "$GITHUB_LOCK_REMOTE" \
     commit -q -m "move branch after lock"
 GITHUB_LOCK_REV2=$(git -C "$GITHUB_LOCK_REMOTE" rev-parse HEAD)
 rm -rf "$GITHUB_LOCK_ROOT/target/typelisp/git-deps"
+GITHUB_LOCK_MTIME_SENTINEL="$WORKDIR/package-graph-github-lock-before-replay.mtime"
+touch -r "$GITHUB_LOCK_ROOT/typelisp.lock" "$GITHUB_LOCK_MTIME_SENTINEL"
+sleep 2
 set +e
 # cli-gate-case selfhost-cli-package-graph-github-lock-replay direct GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV"
 GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-github-lock-replay.out" 2> "$WORKDIR/package-graph-github-lock-replay.err"
@@ -1300,6 +1319,10 @@ set -e
 assert_status package-graph-github-lock-replay "$status" 0
 assert_empty package-graph-github-lock-replay "$WORKDIR/package-graph-github-lock-replay.err"
 assert_contains package-graph-github-lock-replay "$GITHUB_LOCK_ROOT/typelisp.lock" "(commit \"$GITHUB_LOCK_REV1\")"
+if [ "$GITHUB_LOCK_ROOT/typelisp.lock" -nt "$GITHUB_LOCK_MTIME_SENTINEL" ] ||
+   [ "$GITHUB_LOCK_MTIME_SENTINEL" -nt "$GITHUB_LOCK_ROOT/typelisp.lock" ]; then
+    fail "equivalent default build changed typelisp.lock mtime"
+fi
 set +e
 "$GITHUB_LOCK_EXE" > "$WORKDIR/package-graph-github-lock-replay-program.out" 2> "$WORKDIR/package-graph-github-lock-replay-program.err"
 status=$?
@@ -1351,6 +1374,23 @@ assert_contains package-graph-github-lock-stale "$WORKDIR/package-graph-github-l
 cmp -s "$WORKDIR/package-graph-github-lock-before-stale" "$GITHUB_LOCK_ROOT/typelisp.lock" || fail "locked stale package build rewrote typelisp.lock"
 
 rm -rf "$GITHUB_LOCK_ROOT/target/typelisp/git-deps"
+for lock_fault in before-stage during-stage before-replace; do
+    fault_label="package-graph-github-lock-fault-$lock_fault"
+    cp "$GITHUB_LOCK_ROOT/typelisp.lock" "$WORKDIR/$fault_label.before"
+    set +e
+    TYPELISP_PACKAGE_LOCK_TEST_FAULT=$lock_fault \
+        GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV" \
+        "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --update-lock > "$WORKDIR/$fault_label.out" 2> "$WORKDIR/$fault_label.err"
+    status=$?
+    set -e
+    assert_status "$fault_label" "$status" 1
+    assert_empty "$fault_label" "$WORKDIR/$fault_label.out"
+    assert_contains "$fault_label" "$WORKDIR/$fault_label.err" "package-lock transaction $lock_fault failed"
+    cmp -s "$WORKDIR/$fault_label.before" "$GITHUB_LOCK_ROOT/typelisp.lock" || fail "$fault_label changed the old lock"
+    leftover_stage=$(find "$GITHUB_LOCK_ROOT" -maxdepth 1 -type f -name 'typelisp.lock.stage.*' -print -quit)
+    [ -z "$leftover_stage" ] || fail "$fault_label left staging file $leftover_stage"
+done
+
 set +e
 # cli-gate-case selfhost-cli-package-graph-github-lock-update direct GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV"
 GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV" "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --update-lock > "$WORKDIR/package-graph-github-lock-update.out" 2> "$WORKDIR/package-graph-github-lock-update.err"
@@ -1368,89 +1408,178 @@ assert_status package-graph-github-lock-update-program "$status" 52
 assert_empty package-graph-github-lock-update-program "$WORKDIR/package-graph-github-lock-update-program.out"
 assert_empty package-graph-github-lock-update-program "$WORKDIR/package-graph-github-lock-update-program.err"
 
-DIAMOND_DIR="$WORKDIR/package-graph-diamond"
-DIAMOND_ROOT="$DIAMOND_DIR/root"
-DIAMOND_LEFT="$DIAMOND_DIR/left"
-DIAMOND_RIGHT="$DIAMOND_DIR/right"
-DIAMOND_SHARED="$DIAMOND_DIR/shared"
-mkdir -p "$DIAMOND_ROOT/src" "$DIAMOND_LEFT/src" "$DIAMOND_RIGHT/src" "$DIAMOND_SHARED/src"
-cat > "$DIAMOND_ROOT/typelisp.pkg" <<'EOF'
+GITHUB_LOCK_REV2_FILE="$WORKDIR/package-graph-github-lock-rev2"
+cp "$GITHUB_LOCK_ROOT/typelisp.lock" "$GITHUB_LOCK_REV2_FILE"
+cp "$WORKDIR/package-graph-github-lock-before-stale" "$GITHUB_LOCK_ROOT/typelisp.lock"
+GITHUB_LOCK_IDENTICAL_RELEASE="$WORKDIR/package-lock-identical.release"
+GITHUB_LOCK_IDENTICAL_RELEASE_ENV=$(compiler_batch_path "$GITHUB_LOCK_IDENTICAL_RELEASE")
+touch "$GITHUB_LOCK_IDENTICAL_RELEASE"
+TYPELISP_PACKAGE_LOCK_TEST_PAUSE=before-lock \
+    TYPELISP_PACKAGE_LOCK_TEST_RELEASE_FILE="$GITHUB_LOCK_IDENTICAL_RELEASE_ENV" \
+    GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV" \
+    "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --update-lock > "$WORKDIR/package-lock-identical-first.out" 2> "$WORKDIR/package-lock-identical-first.err" &
+identical_first_pid=$!
+wait_for_package_lock_stage "$GITHUB_LOCK_ROOT" "$identical_first_pid" package-lock-identical-first
+cp "$GITHUB_LOCK_ROOT/typelisp.lock" "$WORKDIR/package-lock-concurrent-locked.before"
+set +e
+GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV" \
+    "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --locked > "$WORKDIR/package-lock-concurrent-locked.out" 2> "$WORKDIR/package-lock-concurrent-locked.err"
+concurrent_locked_status=$?
+set -e
+assert_status package-lock-concurrent-locked "$concurrent_locked_status" 1
+assert_empty package-lock-concurrent-locked "$WORKDIR/package-lock-concurrent-locked.out"
+assert_contains package-lock-concurrent-locked "$WORKDIR/package-lock-concurrent-locked.err" 'build: package lock entry for remote dependency `remote` is stale'
+cmp -s "$WORKDIR/package-lock-concurrent-locked.before" "$GITHUB_LOCK_ROOT/typelisp.lock" || fail "concurrent locked reader changed or observed a partial lock"
+GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV" \
+    "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --update-lock > "$WORKDIR/package-lock-identical-second.out" 2> "$WORKDIR/package-lock-identical-second.err" &
+identical_second_pid=$!
+wait_for_package_lock_text "$GITHUB_LOCK_ROOT/typelisp.lock" "$GITHUB_LOCK_REV2" "$identical_second_pid" package-lock-identical-second
+rm -f "$GITHUB_LOCK_IDENTICAL_RELEASE"
+set +e
+wait "$identical_first_pid"
+identical_first_status=$?
+wait "$identical_second_pid"
+identical_second_status=$?
+set -e
+assert_status package-lock-identical-first "$identical_first_status" 0
+assert_status package-lock-identical-second "$identical_second_status" 0
+assert_empty package-lock-identical-first "$WORKDIR/package-lock-identical-first.err"
+assert_empty package-lock-identical-second "$WORKDIR/package-lock-identical-second.err"
+cmp -s "$GITHUB_LOCK_REV2_FILE" "$GITHUB_LOCK_ROOT/typelisp.lock" || fail "equivalent concurrent writers did not reuse one canonical winner"
+
+cp "$WORKDIR/package-graph-github-lock-before-stale" "$GITHUB_LOCK_ROOT/typelisp.lock"
+git -C "$GITHUB_LOCK_REMOTE" branch -f next "$GITHUB_LOCK_REV2"
+GITHUB_LOCK_CONFLICT_RELEASE="$WORKDIR/package-lock-conflict.release"
+GITHUB_LOCK_CONFLICT_RELEASE_ENV=$(compiler_batch_path "$GITHUB_LOCK_CONFLICT_RELEASE")
+touch "$GITHUB_LOCK_CONFLICT_RELEASE"
+TYPELISP_PACKAGE_LOCK_TEST_PAUSE=before-lock \
+    TYPELISP_PACKAGE_LOCK_TEST_RELEASE_FILE="$GITHUB_LOCK_CONFLICT_RELEASE_ENV" \
+    GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV" \
+    "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --update-lock > "$WORKDIR/package-lock-conflict-first.out" 2> "$WORKDIR/package-lock-conflict-first.err" &
+conflict_first_pid=$!
+wait_for_package_lock_stage "$GITHUB_LOCK_ROOT" "$conflict_first_pid" package-lock-conflict-first
+cat > "$GITHUB_LOCK_REMOTE/src/lib.tl" <<'EOF'
+(define (remote-answer) : i64 53)
+EOF
+git -C "$GITHUB_LOCK_REMOTE" add src/lib.tl
+git -C "$GITHUB_LOCK_REMOTE" \
+    -c user.email=typelisp@example.invalid \
+    -c user.name=typelisp \
+    commit -q -m "move branch during competing lock update"
+GITHUB_LOCK_REV3=$(git -C "$GITHUB_LOCK_REMOTE" rev-parse HEAD)
+git -C "$GITHUB_LOCK_REMOTE" branch -f next "$GITHUB_LOCK_REV3"
+cat > "$GITHUB_LOCK_ROOT/typelisp.pkg" <<'EOF'
 (package
-  (name "diamond_root")
+  (name "gl_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (other (github "l/b" (branch "next")))))
+EOF
+cat > "$GITHUB_LOCK_ROOT/src/main.tl" <<'EOF'
+(import other.src.lib as other)
+(define (main) : i64 (other.remote-answer))
+EOF
+GIT_CONFIG_GLOBAL="$GITHUB_LOCK_CONFIG_ENV" \
+    "$COMPILER" build --manifest-path "$GITHUB_LOCK_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --update-lock > "$WORKDIR/package-lock-conflict-second.out" 2> "$WORKDIR/package-lock-conflict-second.err" &
+conflict_second_pid=$!
+wait_for_package_lock_text "$GITHUB_LOCK_ROOT/typelisp.lock" "$GITHUB_LOCK_REV3" "$conflict_second_pid" package-lock-conflict-second
+rm -f "$GITHUB_LOCK_CONFLICT_RELEASE"
+set +e
+wait "$conflict_first_pid"
+conflict_first_status=$?
+wait "$conflict_second_pid"
+conflict_second_status=$?
+set -e
+assert_status package-lock-conflict-first "$conflict_first_status" 1
+assert_status package-lock-conflict-second "$conflict_second_status" 0
+assert_empty package-lock-conflict-first "$WORKDIR/package-lock-conflict-first.out"
+assert_empty package-lock-conflict-second "$WORKDIR/package-lock-conflict-second.err"
+assert_contains package-lock-conflict-first "$WORKDIR/package-lock-conflict-first.err" "lock changed since resolution; rerun against the current lock"
+assert_contains package-lock-conflict-second "$GITHUB_LOCK_ROOT/typelisp.lock" "(commit \"$GITHUB_LOCK_REV3\")"
+leftover_stage=$(find "$GITHUB_LOCK_ROOT" -maxdepth 1 -type f -name 'typelisp.lock.stage.*' -print -quit)
+[ -z "$leftover_stage" ] || fail "concurrent lock tests left staging file $leftover_stage"
+
+SHALLOW_DIR="$WORKDIR/package-graph-shallow"
+SHALLOW_ROOT="$SHALLOW_DIR/root"
+SHALLOW_LEFT="$SHALLOW_DIR/left"
+SHALLOW_RIGHT="$SHALLOW_DIR/right"
+SHALLOW_SHARED="$SHALLOW_DIR/shared"
+mkdir -p "$SHALLOW_ROOT/src" "$SHALLOW_LEFT/src" "$SHALLOW_RIGHT/src" "$SHALLOW_SHARED/src"
+cat > "$SHALLOW_ROOT/typelisp.pkg" <<'EOF'
+(package
+  (name "shallow_root")
   (version "0.1.0")
   (kind bin)
   (dependencies
     (left "../left")
-    (right "../right")))
+    (right "../right")
+    (shared "../shared")))
 EOF
-cat > "$DIAMOND_ROOT/src/main.tl" <<'EOF'
+cat > "$SHALLOW_ROOT/src/main.tl" <<'EOF'
 (import left.src.lib as left)
 (import right.src.lib as right)
-(define (main) : i64 (+ (left.left-answer) (right.right-answer)))
-EOF
-cat > "$DIAMOND_LEFT/typelisp.pkg" <<'EOF'
-(package
-  (name "diamond_left")
-  (version "0.1.0")
-  (kind staticlib)
-  (dependencies
-    (shared "../shared")))
-EOF
-cat > "$DIAMOND_LEFT/src/lib.tl" <<'EOF'
 (import shared.src.lib as shared)
-(define (left-answer) : i64 (shared.shared-answer))
+(define (main) : i64
+  (+ (left.left-answer) (right.right-answer) (shared.shared-answer)))
 EOF
-cat > "$DIAMOND_RIGHT/typelisp.pkg" <<'EOF'
+cat > "$SHALLOW_LEFT/typelisp.pkg" <<'EOF'
 (package
-  (name "diamond_right")
-  (version "0.1.0")
-  (kind staticlib)
-  (dependencies
-    (shared "../shared")))
-EOF
-cat > "$DIAMOND_RIGHT/src/lib.tl" <<'EOF'
-(import shared.src.lib as shared)
-(define (right-answer) : i64 (shared.shared-answer))
-EOF
-cat > "$DIAMOND_SHARED/typelisp.pkg" <<'EOF'
-(package
-  (name "diamond_shared")
+  (name "shallow_left")
   (version "0.1.0")
   (kind staticlib))
 EOF
-cat > "$DIAMOND_SHARED/src/lib.tl" <<'EOF'
+cat > "$SHALLOW_LEFT/src/lib.tl" <<'EOF'
+(define (left-answer) : i64 10)
+EOF
+cat > "$SHALLOW_RIGHT/typelisp.pkg" <<'EOF'
+(package
+  (name "shallow_right")
+  (version "0.1.0")
+  (kind staticlib))
+EOF
+cat > "$SHALLOW_RIGHT/src/lib.tl" <<'EOF'
+(define (right-answer) : i64 11)
+EOF
+cat > "$SHALLOW_SHARED/typelisp.pkg" <<'EOF'
+(package
+  (name "shallow_shared")
+  (version "0.1.0")
+  (kind staticlib))
+EOF
+cat > "$SHALLOW_SHARED/src/lib.tl" <<'EOF'
 (define (shared-answer) : i64 21)
 EOF
-DIAMOND_EXE="$DIAMOND_ROOT/target/release/diamond_root"
-DIAMOND_SHARED_ARCHIVE="$DIAMOND_SHARED/target/release/libdiamond_shared.a"
-DIAMOND_LEFT_ARCHIVE="$DIAMOND_LEFT/target/release/libdiamond_left.a"
-DIAMOND_RIGHT_ARCHIVE="$DIAMOND_RIGHT/target/release/libdiamond_right.a"
+SHALLOW_EXE="$SHALLOW_ROOT/target/release/shallow_root"
+SHALLOW_SHARED_ARCHIVE="$SHALLOW_SHARED/target/release/libshallow_shared.a"
+SHALLOW_LEFT_ARCHIVE="$SHALLOW_LEFT/target/release/libshallow_left.a"
+SHALLOW_RIGHT_ARCHIVE="$SHALLOW_RIGHT/target/release/libshallow_right.a"
 if [ "$HOST_OS" = windows ]; then
-    DIAMOND_EXE="$DIAMOND_EXE.exe"
-    DIAMOND_SHARED_ARCHIVE="$DIAMOND_SHARED/target/release/diamond_shared.lib"
-    DIAMOND_LEFT_ARCHIVE="$DIAMOND_LEFT/target/release/diamond_left.lib"
-    DIAMOND_RIGHT_ARCHIVE="$DIAMOND_RIGHT/target/release/diamond_right.lib"
+    SHALLOW_EXE="$SHALLOW_EXE.exe"
+    SHALLOW_SHARED_ARCHIVE="$SHALLOW_SHARED/target/release/shallow_shared.lib"
+    SHALLOW_LEFT_ARCHIVE="$SHALLOW_LEFT/target/release/shallow_left.lib"
+    SHALLOW_RIGHT_ARCHIVE="$SHALLOW_RIGHT/target/release/shallow_right.lib"
 fi
 
 set +e
-# cli-gate-case selfhost-cli-package-graph-diamond direct "$COMPILER"
-"$COMPILER" build --manifest-path "$DIAMOND_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-diamond.out" 2> "$WORKDIR/package-graph-diamond.err"
+# cli-gate-case selfhost-cli-package-graph-shallow direct "$COMPILER"
+"$COMPILER" build --manifest-path "$SHALLOW_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-graph-shallow.out" 2> "$WORKDIR/package-graph-shallow.err"
 status=$?
 set -e
-assert_status package-graph-diamond "$status" 0
-assert_empty package-graph-diamond "$WORKDIR/package-graph-diamond.err"
-assert_occurrences package-graph-diamond "$WORKDIR/package-graph-diamond.out" "Built $(generated_path "$DIAMOND_SHARED_ARCHIVE")" 1
-assert_contains package-graph-diamond "$WORKDIR/package-graph-diamond.out" "Built $(generated_path "$DIAMOND_LEFT_ARCHIVE")"
-assert_contains package-graph-diamond "$WORKDIR/package-graph-diamond.out" "Built $(generated_path "$DIAMOND_RIGHT_ARCHIVE")"
-assert_contains package-graph-diamond "$WORKDIR/package-graph-diamond.out" "Built $(generated_path "$DIAMOND_EXE")"
+assert_status package-graph-shallow "$status" 0
+assert_empty package-graph-shallow "$WORKDIR/package-graph-shallow.err"
+assert_occurrences package-graph-shallow "$WORKDIR/package-graph-shallow.out" "Built $(generated_path "$SHALLOW_SHARED_ARCHIVE")" 1
+assert_contains package-graph-shallow "$WORKDIR/package-graph-shallow.out" "Built $(generated_path "$SHALLOW_LEFT_ARCHIVE")"
+assert_contains package-graph-shallow "$WORKDIR/package-graph-shallow.out" "Built $(generated_path "$SHALLOW_RIGHT_ARCHIVE")"
+assert_contains package-graph-shallow "$WORKDIR/package-graph-shallow.out" "Built $(generated_path "$SHALLOW_EXE")"
 
 set +e
-"$DIAMOND_EXE" > "$WORKDIR/package-graph-diamond-program.out" 2> "$WORKDIR/package-graph-diamond-program.err"
+"$SHALLOW_EXE" > "$WORKDIR/package-graph-shallow-program.out" 2> "$WORKDIR/package-graph-shallow-program.err"
 status=$?
 set -e
-assert_status package-graph-diamond-program "$status" 42
-assert_empty package-graph-diamond-program "$WORKDIR/package-graph-diamond-program.out"
-assert_empty package-graph-diamond-program "$WORKDIR/package-graph-diamond-program.err"
+assert_status package-graph-shallow-program "$status" 42
+assert_empty package-graph-shallow-program "$WORKDIR/package-graph-shallow-program.out"
+assert_empty package-graph-shallow-program "$WORKDIR/package-graph-shallow-program.err"
 
 FAIL_DIR="$WORKDIR/package-graph-failure"
 FAIL_ROOT="$FAIL_DIR/root"
@@ -1498,56 +1627,67 @@ assert_status package-graph-failure "$status" 1
 assert_contains package-graph-failure "$WORKDIR/package-graph-failure.err" "typecheck:"
 assert_contains package-graph-failure "$WORKDIR/package-graph-failure.err" 'build: package dependency `fail_bad` failed with status 1'
 
-CYCLE_DIR="$WORKDIR/package-graph-cycle"
-CYCLE_ROOT="$CYCLE_DIR/root"
-CYCLE_A="$CYCLE_DIR/cycle_a"
-CYCLE_B="$CYCLE_DIR/cycle_b"
-mkdir -p "$CYCLE_ROOT/src" "$CYCLE_A/src" "$CYCLE_B/src"
-cat > "$CYCLE_ROOT/typelisp.pkg" <<'EOF'
+REMOTE_LIBDEP_DIR="$WORKDIR/gld"
+REMOTE_LIBDEP_ROOT="$REMOTE_LIBDEP_DIR/root"
+REMOTE_LIBDEP_REPO="$REMOTE_LIBDEP_DIR/remote"
+REMOTE_LIBDEP_CONFIG="$REMOTE_LIBDEP_DIR/gitconfig"
+REMOTE_LIBDEP_URL="https://github.com/f/l.git"
+mkdir -p "$REMOTE_LIBDEP_ROOT/src" "$REMOTE_LIBDEP_REPO/src"
+cat > "$REMOTE_LIBDEP_REPO/typelisp.pkg" <<'EOF'
 (package
-  (name "cycle_root")
+  (name "remote_layer")
+  (version "0.1.0")
+  (kind staticlib)
+  (dependencies
+    (runtime (github "f/r" (rev "must-not-resolve")))))
+EOF
+cat > "$REMOTE_LIBDEP_REPO/src/lib.tl" <<'EOF'
+(define (layer-answer) : i64 42)
+EOF
+# A fetched library's private lock must not participate in root resolution.
+cat > "$REMOTE_LIBDEP_REPO/typelisp.lock" <<'EOF'
+not-a-valid-lock
+EOF
+git -C "$REMOTE_LIBDEP_REPO" init -q
+git -C "$REMOTE_LIBDEP_REPO" add typelisp.pkg typelisp.lock src/lib.tl
+git -C "$REMOTE_LIBDEP_REPO" \
+    -c user.email=typelisp@example.invalid \
+    -c user.name=typelisp \
+    commit -q -m "seed forbidden library dependency remote"
+REMOTE_LIBDEP_REV=$(git -C "$REMOTE_LIBDEP_REPO" rev-parse HEAD)
+cat > "$REMOTE_LIBDEP_ROOT/typelisp.pkg" <<EOF
+(package
+  (name "remote_library_dependency_root")
   (version "0.1.0")
   (kind bin)
   (dependencies
-    (a "../cycle_a")))
+    (layer (github "f/l" (rev "$REMOTE_LIBDEP_REV")))))
 EOF
-cat > "$CYCLE_ROOT/src/main.tl" <<'EOF'
-(import a.src.lib as a)
-(define (main) : i64 (a.a-answer))
+cat > "$REMOTE_LIBDEP_ROOT/src/main.tl" <<'EOF'
+(define (main) : i64 0)
 EOF
-cat > "$CYCLE_A/typelisp.pkg" <<'EOF'
-(package
-  (name "cycle_a")
-  (version "0.1.0")
-  (kind staticlib)
-  (dependencies
-    (b "../cycle_b")))
+cat > "$REMOTE_LIBDEP_CONFIG" <<EOF
+[url "$REMOTE_LIBDEP_REPO"]
+    insteadOf = $REMOTE_LIBDEP_URL
 EOF
-cat > "$CYCLE_A/src/lib.tl" <<'EOF'
-(define (a-answer) : i64 1)
-EOF
-cat > "$CYCLE_B/typelisp.pkg" <<'EOF'
-(package
-  (name "cycle_b")
-  (version "0.1.0")
-  (kind staticlib)
-  (dependencies
-    (a "../cycle_a")))
-EOF
-cat > "$CYCLE_B/src/lib.tl" <<'EOF'
-(define (b-answer) : i64 2)
-EOF
+# Native Windows typelisp.exe launches git.exe outside Git Bash path rewriting.
+REMOTE_LIBDEP_CONFIG_ENV=$(compiler_batch_path "$REMOTE_LIBDEP_CONFIG")
 
 set +e
-# cli-gate-case selfhost-cli-package-graph-cycle direct "$COMPILER"
-"$COMPILER" build --manifest-path "$CYCLE_ROOT/typelisp.pkg" --target "$BUILD_TARGET" > "$WORKDIR/package-graph-cycle.out" 2> "$WORKDIR/package-graph-cycle.err"
+# cli-gate-case selfhost-cli-package-library-dependency-remote direct GIT_CONFIG_GLOBAL="$REMOTE_LIBDEP_CONFIG_ENV"
+GIT_CONFIG_GLOBAL="$REMOTE_LIBDEP_CONFIG_ENV" "$COMPILER" build --manifest-path "$REMOTE_LIBDEP_ROOT/typelisp.pkg" --target "$BUILD_TARGET" > "$WORKDIR/package-library-dependency-remote.out" 2> "$WORKDIR/package-library-dependency-remote.err"
 status=$?
 set -e
-assert_status package-graph-cycle "$status" 1
-assert_empty package-graph-cycle "$WORKDIR/package-graph-cycle.out"
-assert_contains package-graph-cycle "$WORKDIR/package-graph-cycle.err" "build: dependency cycle:"
-assert_contains package-graph-cycle "$WORKDIR/package-graph-cycle.err" "cycle_a"
-assert_contains package-graph-cycle "$WORKDIR/package-graph-cycle.err" "cycle_b"
+assert_status package-library-dependency-remote "$status" 1
+assert_empty package-library-dependency-remote "$WORKDIR/package-library-dependency-remote.out"
+assert_contains package-library-dependency-remote "$WORKDIR/package-library-dependency-remote.err" 'library package `remote_layer` cannot declare normal dependency `runtime`'
+assert_contains package-library-dependency-remote "$WORKDIR/package-library-dependency-remote.err" 'declare `runtime` directly in the consuming application'
+assert_not_contains package-library-dependency-remote "$WORKDIR/package-library-dependency-remote.err" "not-a-valid-lock"
+assert_not_contains package-library-dependency-remote "$WORKDIR/package-library-dependency-remote.err" "must-not-resolve"
+REMOTE_LIBDEP_ENTRY_MANIFEST=$(find "$REMOTE_LIBDEP_ROOT/target/typelisp/cache/packages/v1/git" -name typelisp.pkg -print | head -n 1)
+[ -n "$REMOTE_LIBDEP_ENTRY_MANIFEST" ] || fail "forbidden remote library dependency was not acquired for manifest validation"
+REMOTE_LIBDEP_ENTRY=${REMOTE_LIBDEP_ENTRY_MANIFEST%/typelisp.pkg}
+[ ! -d "$REMOTE_LIBDEP_ENTRY/target" ] || fail "forbidden remote library dependency built or loaded its artifact"
 
 BADKIND_DIR="$WORKDIR/package-graph-bad-kind"
 BADKIND_ROOT="$BADKIND_DIR/root"

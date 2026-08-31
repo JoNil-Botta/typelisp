@@ -120,6 +120,18 @@ fi
     exit 1
 }
 
+TYPELISP_DOC_SOURCE_IDENTITY=${TYPELISP_DOC_SOURCE_IDENTITY:-$(git rev-parse HEAD)}
+TYPELISP_DOC_COMPILER_IDENTITY=${TYPELISP_DOC_COMPILER_IDENTITY:-$(
+    "$COMPILER" --version 2>/dev/null | awk 'NR == 1 && $1 == "typelisp" { print $2 }'
+)}
+case "$TYPELISP_DOC_SOURCE_IDENTITY" in
+    "" | *[!0-9a-f]*) fail "invalid docs source identity: $TYPELISP_DOC_SOURCE_IDENTITY" ;;
+esac
+case "$TYPELISP_DOC_COMPILER_IDENTITY" in
+    "" | *[!0-9a-f]*) fail "invalid docs compiler identity: $TYPELISP_DOC_COMPILER_IDENTITY" ;;
+esac
+export TYPELISP_DOC_SOURCE_IDENTITY TYPELISP_DOC_COMPILER_IDENTITY
+
 SITE=${DOC_SITE_OUT:-"$ROOT/target/doc-site-verify"}
 WORK=${DOC_SITE_WORK:-"$ROOT/target/doc-site-verify-work"}
 
@@ -277,7 +289,8 @@ if [ "$md_smoke_code" -ne 42 ]; then
 fi
 
 # Required pages and assets.
-for required in index.html readme.html spec.html stdlib.html typelisp-docs.css; do
+for required in index.html readme.html spec.html stdlib.html typelisp-docs.css \
+    typelisp-docs.js typelisp-docs-search-index.js; do
     [ -f "$SITE/$required" ] || fail "missing required output: $required"
 done
 
@@ -285,9 +298,9 @@ grep -q 'stdlib.vector.generated.i64' "$SITE/stdlib-vector.html" \
     || fail "stdlib-vector.html is missing generated vector module docs"
 grep -q 'generated-module-import' "$SITE/stdlib-vector.html" \
     || fail "stdlib-vector.html is missing generated module import docs"
-grep -q 'href="#tl-push-ref-33"' "$SITE/stdlib-vector.html" \
+grep -q 'href="#tl-stdlib-46vector-46generated-46i64-58-58generated-58-58push-ref-33"' "$SITE/stdlib-vector.html" \
     || fail "stdlib-vector.html is missing generated push-ref! API docs"
-grep -q 'href="#tl-push-33"' "$SITE/stdlib-vector.html" \
+grep -q 'href="#tl-stdlib-46vector-46generated-46i64-58-58generated-58-58push-33"' "$SITE/stdlib-vector.html" \
     || fail "stdlib-vector.html is missing generated push! API docs"
 
 hidden_payload=$(find "$SITE" -mindepth 1 -maxdepth 1 -name '.*' | head -n 1)
@@ -323,10 +336,50 @@ echo "[doc-site] published all $expected_stdlib_modules top-level stdlib module(
 # Validate every local link and anchor across all generated pages.
 pages=$(find "$SITE" -maxdepth 1 -type f -name '*.html')
 link_count=0
+SEARCH_INDEX="$SITE/typelisp-docs-search-index.js"
+search_record_count=$(grep -o '"identity":"[^"]*"' "$SEARCH_INDEX" | wc -l | tr -d ' ')
+[ "$search_record_count" -gt 0 ] || fail "documentation search index is empty"
+duplicate_search_identity=$(grep -o '"identity":"[^"]*"' "$SEARCH_INDEX" \
+    | LC_ALL=C sort | uniq -d | head -n 1)
+[ -z "$duplicate_search_identity" ] \
+    || fail "duplicate search identity: $duplicate_search_identity"
+
 for page in $pages; do
+    page_base=$(basename "$page")
     # Each HTML page should reference the stylesheet.
     grep -q 'href="typelisp-docs.css"' "$page" \
         || fail "$(basename "$page") does not reference typelisp-docs.css"
+    grep -q 'src="typelisp-docs-search-index.js"' "$page" \
+        || fail "$(basename "$page") does not reference the search index"
+    grep -q 'src="typelisp-docs.js"' "$page" \
+        || fail "$(basename "$page") does not reference the search client"
+    grep -q 'data-doc-search-input' "$page" \
+        || fail "$(basename "$page") does not expose the search control"
+
+    compiler_identity=$(sed -n 's/.*name="typelisp-compiler-identity" content="\([^"]*\)".*/\1/p' "$page" | head -n 1)
+    source_identity=$(sed -n 's/.*name="typelisp-source-identity" content="\([^"]*\)".*/\1/p' "$page" | head -n 1)
+    package_identity=$(sed -n 's/.*name="typelisp-package-identity" content="\([^"]*\)".*/\1/p' "$page" | head -n 1)
+    [ -n "$compiler_identity" ] || fail "$(basename "$page") is missing compiler identity"
+    [ -n "$source_identity" ] || fail "$(basename "$page") is missing source identity"
+    [ -n "$package_identity" ] || fail "$(basename "$page") is missing package identity"
+    grep -Fq "\"compilerIdentity\":\"$compiler_identity\"" "$SEARCH_INDEX" \
+        || fail "$(basename "$page") compiler identity disagrees with search index"
+    grep -Fq "\"sourceIdentity\":\"$source_identity\"" "$SEARCH_INDEX" \
+        || fail "$(basename "$page") source identity disagrees with search index"
+    grep -Fq "\"packageIdentity\":\"$package_identity\"" "$SEARCH_INDEX" \
+        || fail "$(basename "$page") package identity disagrees with search index"
+
+    duplicate_anchor=$(grep -o 'id="[^"]*"' "$page" | LC_ALL=C sort | uniq -d | head -n 1)
+    [ -z "$duplicate_anchor" ] \
+        || fail "$(basename "$page") contains duplicate anchor $duplicate_anchor"
+
+    searchable_ids=$(grep -o 'id="tl-[^"]*"' "$page" \
+        | sed 's/^id="//; s/"$//' \
+        | grep -v '^tl-doc-search-' || true)
+    for searchable_id in $searchable_ids; do
+        grep -Fq "\"href\":\"$page_base#$searchable_id\"" "$SEARCH_INDEX" \
+            || fail "$(basename "$page"): anchor '$searchable_id' is missing from search index"
+    done
 
     # Each page should expose the persistent composed documentation sidebar.
     grep -q '<nav class="tl-doc-stdlib-sidebar" aria-label="Documentation tree">' "$page" \
@@ -340,7 +393,6 @@ for page in $pages; do
     grep -q 'href="spec.html"' "$page" \
         || fail "$(basename "$page") does not include the SPEC language page link"
 
-    page_base=$(basename "$page")
     case "$page_base" in
         readme.html | spec.html)
             grep -q "class=\"tl-doc-tree-link is-current\" aria-current=\"page\" href=\"$page_base\"" "$page" \
@@ -387,13 +439,21 @@ for page in $pages; do
     done
 done
 
+search_index_bytes=$(wc -c < "$SEARCH_INDEX" | tr -d ' ')
+DOC_SITE_MAX_SEARCH_INDEX_BYTES=${DOC_SITE_MAX_SEARCH_INDEX_BYTES:-4000000}
+case "$DOC_SITE_MAX_SEARCH_INDEX_BYTES" in
+    "" | *[!0-9]* | 0) fail "DOC_SITE_MAX_SEARCH_INDEX_BYTES must be a positive integer" ;;
+esac
+[ "$search_index_bytes" -le "$DOC_SITE_MAX_SEARCH_INDEX_BYTES" ] \
+    || fail "docs search index is $search_index_bytes bytes (limit: $DOC_SITE_MAX_SEARCH_INDEX_BYTES)"
+
 grep -q 'id="tl-TypeLisp"' "$SITE/readme.html" \
     || fail "readme.html is missing the TypeLisp heading anchor"
 grep -q 'id="tl-TypeLisp-32Language-32Specification"' "$SITE/spec.html" \
     || fail "spec.html is missing the language specification heading anchor"
 grep -q 'href="spec.html"' "$SITE/readme.html" \
     || fail "readme.html did not rewrite SPEC.md links to spec.html"
-grep -q 'href="https://github.com/JoNil-Botta/typelisp/blob/main/CONTRIBUTING.md"' "$SITE/readme.html" \
+grep -q "href=\"https://github.com/JoNil-Botta/typelisp/blob/$TYPELISP_DOC_SOURCE_IDENTITY/CONTRIBUTING.md\"" "$SITE/readme.html" \
     || fail "readme.html did not rewrite repository source links to GitHub"
 
-echo "doc-site verification passed: $stdlib_pages module page(s), $link_count local link(s) checked"
+echo "doc-site verification passed: $stdlib_pages module page(s), $link_count local link(s), $search_record_count search record(s), $search_index_bytes index byte(s) checked"

@@ -24,6 +24,17 @@
 (define (bridge-doc-html-page-open [title : String]) : String
   (doc_html.doc-html-page-open title))
 
+(define (bridge-doc-html-page-open-with-metadata
+  [title : String]
+  [compiler-identity : String]
+  [source-identity : String]
+  [package-identity : String]) : String
+  (doc_html.doc-html-page-open-with-metadata
+    title
+    compiler-identity
+    source-identity
+    package-identity))
+
 (define (bridge-doc-html-header [title : String] [subtitle : String]) : String
   (doc_html.doc-html-header title subtitle))
 
@@ -47,3 +58,41 @@
   [source : String]) : String
   (doc_html.doc-html-module-section
     (doc_render.DocModule.Module path (doc_extract.doc-extract-source source))))
+
+(define (bridge-doc-html-module-section-source-url
+  [path : String]
+  [source : String]
+  [source-url : String]) : String
+  (doc_html.doc-html-module-section-with-source-url
+    (doc_render.DocModule.Module path (doc_extract.doc-extract-source source))
+    source-url))
+
+(define (bridge-doc-html-search-records-for-module
+  [page : String]
+  [path : String]
+  [source : String]) : String
+  (doc_html.doc-html-search-records-for-module
+    page
+    (doc_render.DocModule.Module path (doc_extract.doc-extract-source source))))
+
+(define (bridge-doc-html-json-string [text : (& text str)]) : String
+  (doc_html.doc-html-json-string text))
+
+(define (bridge-doc-html-search-record
+  [identity : String]
+  [kind : String]
+  [label : String]
+  [module-path : String]
+  [href : String]
+  [signature : String]
+  [doc-text : String]
+  [source-line : i64]) : String
+  (doc_html.doc-html-search-record
+    identity
+    kind
+    label
+    module-path
+    href
+    signature
+    doc-text
+    source-line))

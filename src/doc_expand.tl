@@ -956,35 +956,40 @@
           (doc_extract.DocItemKind.Define)
           (doc-expand-source-name ctx name)
           ""
-          (doc-ast-define-signature ctx name maybe-ty)))]
+          (doc-ast-define-signature ctx name maybe-ty)
+          0))]
     [(ast.AstDecl.DefFn decl-meta name params ret _ _)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.Function)
           (doc-expand-source-name ctx name)
           ""
-          (doc-ast-function-signature ctx name params ret)))]
+          (doc-ast-function-signature ctx name params ret)
+          0))]
     [(ast.AstDecl.DefMacro decl-meta name params ret _)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.DefMacro)
           (doc-expand-source-name ctx name)
           ""
-          (doc-ast-macro-signature ctx name params ret)))]
+          (doc-ast-macro-signature ctx name params ret)
+          0))]
     [(ast.AstDecl.Extern decl-meta name _ _ ty)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.Extern)
           (doc-expand-source-name ctx name)
           ""
-          (doc-ast-extern-signature ctx name ty)))]
+          (doc-ast-extern-signature ctx name ty)
+          0))]
     [(ast.AstDecl.DefEnum decl-meta name _ variants)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.DefEnum)
           (doc-expand-source-name ctx name)
           ""
-          (doc-ast-enum-signature ctx name "" variants)))]
+          (doc-ast-enum-signature ctx name "" variants)
+          0))]
     [(ast.AstDecl.DefEnumLifetimes decl-meta name lifetimes _ variants)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
@@ -995,14 +1000,16 @@
             ctx
             name
             (doc-ast-lifetime-list-source ctx lifetimes)
-            variants)))]
+            variants)
+          0))]
     [(ast.AstDecl.DefStruct decl-meta name _ _ fields)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.DefStruct)
           (doc-expand-source-name ctx name)
           ""
-          (doc-ast-struct-signature ctx name "" fields)))]
+          (doc-ast-struct-signature ctx name "" fields)
+          0))]
     [(ast.AstDecl.DefStructLifetimes decl-meta name lifetimes _ _ fields)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
@@ -1013,7 +1020,8 @@
             ctx
             name
             (doc-ast-lifetime-list-source ctx lifetimes)
-            fields)))]
+            fields)
+          0))]
     [(ast.AstDecl.Unsafe inner-box)
       (doc-ast-decl-item
         ctx
@@ -1033,7 +1041,8 @@
     (doc_extract.DocItemKind.GeneratedImport)
     "import"
     "Concrete generated-module import that produced this API."
-    form))
+    form
+    0))
 
 (define (doc-generated-copy-items
   [out : (&mut out doc_item_vec.Vec)]
@@ -1500,7 +1509,8 @@
               (doc_extract.DocItemKind.Define)
               (string.int->string index)
               ""
-              ""))
+              ""
+              0))
           (doc_import_form_vec.push-ref!
             (&mut forms)
             (string.int->string index))

@@ -122,4 +122,11 @@ every push to `main`; pull requests build and validate it without publishing.
 Build locally with
 `typelisp run tools/doc-site/doc_site.tl --stdlib-root stdlib --stdlib-root src -- target/site`,
 or run `scripts/verify-doc-site.sh` to build and validate links the way CI
-does.
+does. The generated site includes an offline static search index and a
+keyboard-accessible search box (`/` focuses it). Results cover guide headings,
+modules, declaration names, signatures, and documentation text. API entries
+link to their exact source line at the recorded source revision, while page
+metadata records the compiler, source, and package identities used for the
+build. The verifier rejects broken links, duplicate anchors/search identities,
+stale page/index identity pairs, missing search records, and an unexpectedly
+large index.

@@ -94,6 +94,28 @@
             (set! i (+ i 1)))))
       out)))
 
+;; Canonical declaration identity shared by HTML, search metadata, and future
+;; semantic/LSP links. Module + kind + public name is unique for source
+;; declarations. Synthetic generated imports also include their form because
+;; a generated module can expose more than one import record.
+(define (doc-render-item-anchor
+  [module-path : String]
+  [item : doc_extract.DocItem]) : String
+  (let
+    [kind : doc_extract.DocItemKind
+      (doc_extract.doc-item-kind (owned_view.compiler-owned-shared-view item))]
+    [base : String
+      (str_cat.str-cat
+        module-path
+        "::"
+        (doc_extract.doc-kind-name kind)
+        "::"
+        (doc_extract.doc-item-name (owned_view.compiler-owned-shared-view item)))]
+    (doc-render-anchor
+      (if (= (doc_extract.doc-kind-tag kind) 7)
+        (str_cat.str-cat base "::" (doc_extract.doc-item-signature item))
+        base))))
+
 (define (doc-render-escape-one [text : String] [idx : i64]) : String
   (let
     [c : char (string.string-ref text idx)]
@@ -168,6 +190,56 @@
     "\n"
     (doc-render-item-doc (doc_extract.doc-item-doc item))
     "\n"))
+
+(define (doc-render-module-item-heading
+  [path : String]
+  [item : doc_extract.DocItem]) : String
+  (str_cat.str-cat
+    "<a id=\""
+    (doc-render-item-anchor path (owned_view.compiler-owned-shared-view item))
+    "\"></a>\n\n### "
+    (doc-render-escape-markdown (doc_extract.doc-item-name item))
+    "\n\n"))
+
+(define (doc-render-module-item [path : String] [item : doc_extract.DocItem]) : String
+  (str_cat.str-cat
+    (doc-render-module-item-heading
+      path
+      (owned_view.compiler-owned-shared-view item))
+    "Kind: "
+    (doc_extract.doc-kind-name
+      (doc_extract.doc-item-kind (owned_view.compiler-owned-shared-view item)))
+    "\n\n"
+    (doc-render-code-block
+      (doc_extract.doc-item-signature
+        (owned_view.compiler-owned-shared-view item)))
+    "\n"
+    (doc-render-item-doc (doc_extract.doc-item-doc item))
+    "\n"))
+
+(define (doc-render-module-item-list-from
+  [path : String]
+  [items : doc_item_vec.Vec]
+  [index : i64]
+  [count : i64]) : String
+  (if (>= index count)
+    ""
+    (str_cat.str-cat
+      (doc-render-module-item
+        (owned_view.compiler-owned-shared-view path)
+        (doc_extract.doc-item-list-ref
+          (owned_view.compiler-owned-shared-view items)
+          index))
+      (doc-render-module-item-list-from path items (+ index 1) count))))
+
+(define (doc-render-module-items [path : String] [items : doc_item_vec.Vec]) : String
+  (let
+    [count : i64
+      (doc_extract.doc-item-list-count
+        (owned_view.compiler-owned-shared-view items))]
+    (if (= count 0)
+      "_No documented declarations._\n"
+      (doc-render-module-item-list-from path items 0 count))))
 
 (define (doc-render-item-list-from
   [items : doc_item_vec.Vec]
@@ -245,12 +317,12 @@
       "\"></a>\n\n## "
       (doc-render-escape-markdown (owned_view.compiler-owned-shared-view path))
       "\n\nSource: `"
-      (doc-render-escape-markdown path)
+      (doc-render-escape-markdown (owned_view.compiler-owned-shared-view path))
       "`\n\n"
       (doc-render-module-doc
         (doc_extract.doc-extraction-module-doc
           (owned_view.compiler-owned-shared-view docs)))
-      (doc-render-items (doc_extract.doc-extraction-items docs)))))
+      (doc-render-module-items path (doc_extract.doc-extraction-items docs)))))
 
 (define (doc-render-module-sections-from
   [modules : doc_module_vec.Vec]

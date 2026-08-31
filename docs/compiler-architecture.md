@@ -77,10 +77,19 @@ or stable flat diagnostic representations. Diagnostic codes are append-only:
 published numbers are never renumbered or reused. The currently classified
 typecheck codes are `E0201` (unbound name), `E0202` (arity mismatch), `E0203`
 (non-exhaustive match), `E0204` (unknown struct field), `E0205` (region
-escape), and `E0206` (type mismatch). Run `typelisp explain <code>` for a
-description, minimal failing example, and suggested fix. The generic `E0100`
-parse and `E0200` typecheck codes remain recognized even when no long-form
-entry is available yet.
+escape), `E0206` (type mismatch), `E0207` (borrow violation), `E0208` (move
+violation), `E0209` (unsafe context required), `E0210` (lifetime mismatch),
+`E0211` (resource ownership violation), `E0212` (arena ownership violation),
+`E0213` (invalid pattern), `E0214` (SPMD restriction), `E0215`
+(invalid storage place), `E0216` (control-flow misuse), `E0217` (thread-safety
+violation), and `E0218` (compile-time constraint). Run
+`typelisp explain <code>` for a description, minimal failing
+example, suggested fix, and related references. Code lookup is ASCII
+case-insensitive. `typelisp explain --list` prints the registry and
+`typelisp explain --search <term>` searches its titles and prose. The generic
+`E0100` parse and `E0200` unclassified typecheck entries also have complete
+explanations. The checked-in ownership and construction-site inventory is in
+[diagnostic-codes.md](diagnostic-codes.md).
 
 Disposable measurements and diagnostics belong under `target/exp/<name>/`;
 `typelisp clean --experiments` removes that subtree at the nearest package root

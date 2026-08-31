@@ -281,7 +281,7 @@ else
 fi
 # The single-binary cli.tl stage0 shares the selfhost frontend with the stage1
 # wrapper, so its typecheck diagnostics use the selfhost wording (no legacy
-# `error[E0200]`/`got <a> -> <b>` annotations). Treat cli.tl (host-action
+# rich `error[Exxxx]`/`got <a> -> <b>` annotations). Treat cli.tl (host-action
 # disabled) like the wrapper for those diagnostic-text branches, while keeping
 # legacy diagnostic expectations isolated to compatibility branches (#1327).
 SELFHOST_FRONTEND_DIAGNOSTICS=1
@@ -428,12 +428,38 @@ if [ "$HAS_EXPLAIN_COMMAND" -eq 1 ]; then
     assert_contains "$out" "Minimal failing example:"
     assert_contains "$out" "Fix:"
 
-    # cli-gate-case explain-known-without-prose wrapper run_cmd
-    run_cmd explain-known-without-prose "$COMPILER" explain E0100
+    # cli-gate-case explain-generic-detailed wrapper run_cmd
+    run_cmd explain-generic-detailed "$COMPILER" explain E0100
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "E0100: this diagnostic code is recognized"
-    assert_contains "$out" "no long-form explanation is available yet"
+    assert_contains "$out" "E0100: parse error"
+    assert_contains "$out" "Minimal failing example:"
+    assert_contains "$out" "See also:"
+
+    # cli-gate-case explain-lowercase wrapper run_cmd
+    run_cmd explain-lowercase "$COMPILER" explain e0207
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "E0207: borrow violation"
+
+    # cli-gate-case explain-list wrapper run_cmd
+    run_cmd explain-list "$COMPILER" explain --list
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "E0100: parse error"
+    assert_contains "$out" "E0212: arena ownership violation"
+
+    # cli-gate-case explain-search wrapper run_cmd
+    run_cmd explain-search "$COMPILER" explain --search BORROW
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "E0207: borrow violation"
+
+    # cli-gate-case explain-search-empty wrapper run_cmd
+    run_cmd explain-search-empty "$COMPILER" explain --search no-such-diagnostic-family
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" 'explain: no diagnostic codes match `no-such-diagnostic-family`'
 
     # cli-gate-case explain-unknown wrapper run_cmd
     run_cmd explain-unknown "$COMPILER" explain E9999
@@ -445,7 +471,7 @@ if [ "$HAS_EXPLAIN_COMMAND" -eq 1 ]; then
     run_cmd explain-missing-code "$COMPILER" explain
     assert_failure
     assert_stdout_empty
-    assert_contains "$err" "explain: expected one diagnostic code"
+    assert_contains "$err" "Usage:"
 fi
 
 # cli-gate-case missing-command wrapper run_cmd
@@ -767,7 +793,7 @@ INLINE_BAD_DIAG=$(native_arg_path "$INLINE_BAD")
 
 assert_rich_inline_diagnostic() {
     if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ]; then
-        assert_contains "$err" "error[E0200]"
+        assert_contains "$err" "error[E0206]"
         assert_contains "$err" "3 |   (+ true 1))"
         assert_contains "$err" "|   ^^^^^^^^^"
     fi
@@ -1297,7 +1323,7 @@ assert_contains_any "$err" \
     "cast requires integer/char source and target"
 if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 0 ]; then
     assert_contains "$err" "got bool -> i64"
-    assert_contains "$err" "error[E0200]"
+    assert_contains "$err" "error[E0206]"
 fi
 
 cat > "$CLI_MATRIX/inexact-f32-literal.tl" <<'EOF'

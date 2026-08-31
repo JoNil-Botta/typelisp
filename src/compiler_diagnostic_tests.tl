@@ -402,7 +402,13 @@
       "typecheck: unbound name io/print-line"
       (compiler_diagnostic.compiler-diagnostic-code-typecheck-unbound-name))
     (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: unknown type MissingType"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-unbound-name))
+    (compiler-diagnostic-typecheck-code-kind-is?
       "typecheck: call arity mismatch: f expected 1 argument, got 2 arguments"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-arity-mismatch))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: slice-view expected 3 arguments"
       (compiler_diagnostic.compiler-diagnostic-code-typecheck-arity-mismatch))
     (compiler-diagnostic-typecheck-code-kind-is?
       "typecheck: pattern arity mismatch"
@@ -425,15 +431,135 @@
     (compiler-diagnostic-typecheck-code-kind-is?
       "typecheck: region-tagged value cannot escape its arena"
       (compiler_diagnostic.compiler-diagnostic-code-typecheck-region-escape))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: cannot pass region-tagged value to function parameter; region value would escape; borrow slots from a vector place"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-region-escape))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: borrow requires a local, parameter, or aggregate place"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-borrow-violation))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: cannot mutably borrow borrowed place `items[0]`"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-borrow-violation))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: cannot move borrowed place `handle`"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-borrow-violation))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: use of moved value `ticket`"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-move-violation))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: cannot move out of global `items`; borrow the global instead"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-move-violation))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: ptr-read requires unsafe context"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-unsafe-context))
+    ;; A lifetime cause appended to a type-mismatch prefix must win over E0206.
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: call argument type mismatch; source lifetime `short` does not outlive required lifetime `long`"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-lifetime-mismatch))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: cleanup owner `handle` moved before with scope exit"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-resource-ownership))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: arena.destroy-safe! requires a direct arena owner"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-arena-ownership))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: elided reference return is ambiguous; write an explicit lifetime"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-lifetime-mismatch))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: integer operator expects matching integer operands"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-type-mismatch))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: arithmetic operator requires numeric types"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-type-mismatch))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: integer literal 256 does not fit expected type u8"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-type-mismatch))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: unreachable match arm after wildcard `_`"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-pattern))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: SPMD masked if does not support nested foreach"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-spmd))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: expression is not a storage place"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-place))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: break requires enclosing scalar while"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-control-flow))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: raw pointers cannot cross thread boundaries in safe code"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-thread-safety))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: make-array length must be a non-negative compile-time integer"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-comptime-constraint))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: if branches must match"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-type-mismatch))
     ;; an unclassified kind keeps the generic code
     (compiler-diagnostic-typecheck-code-kind-is?
-      "typecheck: nominal type not found Foo"
+      "typecheck: internal unclassified fixture"
       (compiler_diagnostic.compiler-diagnostic-code-typecheck))
     ;; the codes must actually differ from one another
     (not
       (string.eq
         (compiler_diagnostic.compiler-diagnostic-code-typecheck-arity-mismatch)
         (compiler_diagnostic.compiler-diagnostic-code-typecheck-type-mismatch)))))
+
+(define (compiler-diagnostic-code-registry-ok?) : bool
+  (let
+    [count : i64 (compiler_diagnostic.compiler-diagnostic-code-registry-count)]
+    [index : i64 0]
+    [ok : bool (= count 20)]
+    (begin
+      (while (and ok (< index count))
+        (let
+          [code : String
+            (compiler_diagnostic.compiler-diagnostic-code-registry-code index)]
+          [other : i64 (+ index 1)]
+          (begin
+            (if (and
+              (> (string.string-length code) 0)
+              (>
+                (string.string-length
+                  (compiler_diagnostic.compiler-diagnostic-code-registry-title
+                    index))
+                0)
+              (>
+                (string.string-length
+                  (compiler_diagnostic.compiler-diagnostic-code-registry-category
+                    index))
+                0)
+              (>
+                (string.string-length
+                  (compiler_diagnostic.compiler-diagnostic-code-registry-owner
+                    index))
+                0))
+              unit
+              (set! ok false))
+            (while (and ok (< other count))
+              (begin
+                (if (string.eq
+                  code
+                  (compiler_diagnostic.compiler-diagnostic-code-registry-code
+                    other))
+                  (set! ok false)
+                  unit)
+                (set! other (+ other 1))))))
+        (set! index (+ index 1)))
+      (and
+        ok
+        (string.eq
+          (compiler_diagnostic.compiler-diagnostic-code-registry-code count)
+          "")
+        (string.eq
+          (compiler_diagnostic.compiler-diagnostic-code-registry-title count)
+          "")
+        (string.eq
+          (compiler_diagnostic.compiler-diagnostic-code-registry-category count)
+          "")
+        (string.eq
+          (compiler_diagnostic.compiler-diagnostic-code-registry-owner count)
+          "")))))
 
 (define (compiler-diagnostic-self-test) : i64
   (begin
@@ -453,5 +579,6 @@
     (unless (compiler-diagnostic-metadata-ok?) (return 4))
     (unless (compiler-diagnostic-code-or-empty-ok?) (return 4))
     (unless (compiler-diagnostic-dense-sequences-ok?) (return 4))
+    (unless (compiler-diagnostic-code-registry-ok?) (return 4))
     (unless (compiler-diagnostic-typecheck-code-kinds-ok?) (return 5))
     42))

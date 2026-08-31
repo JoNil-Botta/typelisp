@@ -1805,9 +1805,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     # 4,915,200 capacity, and 157,286,400 physical payload bytes.
     # #6984's package-lock transaction independently crossed the same boundary
     # on its pre-#7133 base (4,850,511 used nodes); their rebased composition
-    # remains pinned to the exact 75-segment capacity below.
+    # remained pinned to the exact 75-segment capacity before #7083.
+    # #7083's spmd-compact surface node and complete compiler walkers cross the
+    # composed graph from 75 to 76 segments: the authoritative Windows CI probe
+    # measured 4,915,346 used nodes, 4,980,736 capacity, and 159,383,552 physical
+    # payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 75 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 76 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking
@@ -1874,8 +1878,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # graph across the next boundary: the authoritative Windows CI probe
     # measured 3,736,675 used nodes, 3,801,088 capacity, and 121,634,816
     # physical payload bytes.
+    # #7083's spmd-compact typechecking and borrow-check walkers cross the
+    # composed graph from 58 to 59 segments: the authoritative Windows CI probe
+    # measured 3,806,383 used nodes, 3,866,624 capacity, and 123,731,968 physical
+    # payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 58 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 59 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain

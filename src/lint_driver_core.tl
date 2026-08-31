@@ -2687,6 +2687,31 @@
                     (selfhost-lint-dead-type-refs
                       prefix-ty
                       (selfhost-lint-dead-type-refs index-ty refs)))))))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            _
+            index-ty
+            start
+            end
+            _
+            slot-ty
+            init
+            keep
+            body)
+          (selfhost-lint-dead-expr-refs
+            (ast.ast-node-get body)
+            (selfhost-lint-dead-expr-refs
+              (ast.ast-node-get keep)
+              (selfhost-lint-dead-expr-refs
+                (ast.ast-node-get init)
+                (selfhost-lint-dead-expr-refs
+                  (ast.ast-node-get end)
+                  (selfhost-lint-dead-expr-refs
+                    (ast.ast-node-get start)
+                    (selfhost-lint-dead-type-refs
+                      slot-ty
+                      (selfhost-lint-dead-type-refs index-ty refs)))))))])]
     [(ast.AstExpr.SpmdBroadcast value lane)
       (selfhost-lint-dead-expr-refs
         (ast.ast-node-get lane)

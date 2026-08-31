@@ -3239,10 +3239,10 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     fi
     assert_package_surface_inspect() {
         assert_contains "$out" "surface-package-identity: present schema-version=2 bytes="
-        assert_contains "$out" "surface-frontend-ast: present schema-version=6 bytes="
+        assert_contains "$out" "surface-frontend-ast: present schema-version=7 bytes="
         assert_contains "$out" "surface-frontend-facts: present schema-version=1 bytes="
         assert_not_contains "$out" "surface-package-identity: present schema-version=2 bytes=0"
-        assert_not_contains "$out" "surface-frontend-ast: present schema-version=6 bytes=0"
+        assert_not_contains "$out" "surface-frontend-ast: present schema-version=7 bytes=0"
         assert_not_contains "$out" "surface-frontend-facts: present schema-version=1 bytes=0"
         assert_contains "$out" "surface-trust-producer-identity: $PRODUCER_IDENTITY"
         assert_contains "$out" "surface-trust-policy: exact-producer-and-source-binding-required"

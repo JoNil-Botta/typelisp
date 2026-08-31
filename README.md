@@ -134,7 +134,7 @@ The following parts are implemented and actively tested:
 - Rust-style primitive Debug selectors with byte-safe quoted text, source-width
   float behavior, hexadecimal integer leaves, checked-reference forwarding,
   and shared String/writer/stdout/stderr dispatch.
-- SPMD `foreach`, `spmd-reduce`, `spmd-scan`, `spmd-broadcast`, and
+- SPMD `foreach`, `spmd-reduce`, `spmd-scan`, `spmd-compact`, `spmd-broadcast`, and
   `spmd-shuffle`, plus `program-index` / `program-count` lane identity, with
   scalar reference lowering and native AVX2/AVX-512 lowering for eligible
   shapes.

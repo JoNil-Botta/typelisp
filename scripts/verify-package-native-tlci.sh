@@ -18,10 +18,11 @@ native_link_detect_host
 # Target-conditioned prefix declarations change how much source work the
 # hydrated dependency surface bypasses. Removing stdlib.array removes ten
 # declarations from the consumer prefix on both hosts; the by-value ownership
-# cutover's explicit compiler-owned-view import adds one back.
+# cutover's explicit compiler-owned-view import adds one back. Explicit clone
+# generation adds seven public declaration macros to the loaded prefix.
 case "$NL_HOST_OS" in
-    windows) TRUSTED_PREFIX_SKIPPED=215 ;;
-    *) TRUSTED_PREFIX_SKIPPED=210 ;;
+    windows) TRUSTED_PREFIX_SKIPPED=222 ;;
+    *) TRUSTED_PREFIX_SKIPPED=217 ;;
 esac
 
 COMPILER=${1:-${TYPELISP_BIN:-}}

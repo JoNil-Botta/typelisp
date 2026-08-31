@@ -85872,3 +85872,734 @@
     (compiler-optimize-range-normal-shape-self-test)
     42
     "a unit family against a container length versions through two unsigned compares and one subtraction whether or not it spans an offset range, and the signed chain is kept when the length's non-negativity is not proved and when two families share one base"))
+
+;; --- GS-1: guard-first dominator sinking ------------------------------------
+;;
+;; Fixtures use two parameters (`cond` = v0, `value` = v1) and a 32-slot frame.
+;; `@gs_g` is the global every admitted fixture derives from: the pass only sinks
+;; a value rooted at a global, because a parameter-rooted chain trades the move
+;; for the base pointer's live range (see opt-guard-sink-note-ptr!).
+(define (opt-guard-sink-test-function
+  [name : String]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol name)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "cond"
+        (compiler_ast_types.AstType.Bool)
+        0)
+      (compiler_ir_types.compiler-ir-param-seq-prepend
+        (compiler_ir_types.CompilerIrParam.Param
+          "value"
+          (compiler_ast_types.AstType.I64)
+          1)
+        (compiler_ir_types.compiler-ir-param-seq-empty)))
+    (compiler_ast_types.AstType.I64)
+    32
+    blocks))
+
+;; A summary whose two per-global tables are BUILT, so `Cell`/`Storage` reads are
+;; answered by name instead of by the absent-table fallback. `callee` is given the
+;; write set `mask` over the one indexed global.
+(define (opt-guard-sink-test-summary [global : i64] [callee : i64] [mask : i64]) : compiler_optimize.OptGlobalCellSummary
+  (let
+    [cell-index : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 4)]
+    [cell-writes : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 4)]
+    [obj-index : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 4)]
+    [obj-writes : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 4)]
+    [empty : compiler_optimize.OptGlobalCellSummary
+      (compiler_optimize.opt-global-cell-summary-empty)]
+    (begin
+      (opt_i64_i64_map.insert-ref! (&mut cell-index) global 0)
+      (opt_i64_i64_map.insert-ref! (&mut obj-index) global 0)
+      (opt_i64_i64_map.insert-ref! (&mut cell-writes) callee mask)
+      (opt_i64_i64_map.insert-ref! (&mut obj-writes) callee mask)
+      (compiler_optimize.OptGlobalCellSummary
+        empty.addr-taken
+        empty.type-index
+        empty.types
+        empty.word-cell
+        (compiler_optimize.OptGlobalModRef true cell-index cell-writes)
+        empty.frozen
+        empty.nonneg
+        empty.len-eq
+        empty.len-eq-clean
+        empty.arg-global
+        (compiler_optimize.OptGlobalObjModRef true obj-index obj-writes)))))
+
+(define (opt-guard-sink-run
+  [name : String]
+  [cells : compiler_optimize.OptGlobalCellSummary]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-function-blocks
+    (compiler_optimize.opt-guard-sink-function
+      cells
+      (opt-guard-sink-test-function name blocks))))
+
+;; A global-rooted `gep; load` chain derived in the entry block and read only
+;; inside the loop. The rotated loop's landing block `pre` is the deepest
+;; dominator of the read whose loop depth is still the entry block's, so the
+;; load moves there and the address chain follows it in the next round.
+(define (opt-guard-sink-loop-blocks [global : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Gep
+          2
+          (compiler_ir_types.CompilerIrValue.Global global)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.U8))
+        (compiler_ir_types.CompilerIrInstr.Load
+          3
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          4
+          (compiler_ir_types.CompilerIrBinOp.Ge)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          (compiler_ir_types.compiler-ir-label "pre")
+          (compiler_ir_types.compiler-ir-label "done"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "pre")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "body"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "body")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Phi
+              5
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.compiler-ir-label "pre")
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var 6)
+                  (compiler_ir_types.compiler-ir-label "body")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              6
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              7
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 6)
+              (compiler_ir_types.CompilerIrValue.I64 100)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 7)
+              (compiler_ir_types.compiler-ir-label "body")
+              (compiler_ir_types.compiler-ir-label "done"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "done")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 0)))))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+;; The same loop WITHOUT the depth-0 landing block: every dominator of the read
+;; below the entry block is inside the loop, so there is nowhere to put it.
+(define (opt-guard-sink-no-preheader-blocks [global : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Gep
+          2
+          (compiler_ir_types.CompilerIrValue.Global global)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.U8))
+        (compiler_ir_types.CompilerIrInstr.Load
+          3
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          4
+          (compiler_ir_types.CompilerIrBinOp.Ge)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-label "done"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "body")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Phi
+            5
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 6)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            6
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            7
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 6)
+            (compiler_ir_types.CompilerIrValue.I64 100)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-label "done"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "done")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.I64 0)))))
+        compiler_ir_types.CompilerIrBlockList.Nil))))
+
+;; `Mov @g` is a cell read, and its one reader sits under the guard's true arm.
+;; With `call?` the guard block also holds a call whose mod-ref row names the
+;; global, which is the barrier that refuses the same move.
+(define (opt-guard-sink-cell-blocks
+  [global : i64]
+  [callee : i64]
+  [call? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (if call?
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Mov
+            2
+            (compiler_ir_types.CompilerIrValue.Global global)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Call
+            8
+            callee
+            (compiler_ir_types.CompilerIrCallArgs.Nil)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            3
+            (compiler_ir_types.CompilerIrBinOp.Ge)
+            (compiler_ir_types.CompilerIrValue.Var 8)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.compiler-ir-label "use")
+            (compiler_ir_types.compiler-ir-label "done")))
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Mov
+            2
+            (compiler_ir_types.CompilerIrValue.Global global)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            3
+            (compiler_ir_types.CompilerIrBinOp.Ge)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.compiler-ir-label "use")
+            (compiler_ir_types.compiler-ir-label "done")))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "use")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            4
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 4)))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "done")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.I64 0)))))
+        compiler_ir_types.CompilerIrBlockList.Nil))))
+
+;; Both arms of the guard feed the same merge phi, so the nearest common
+;; dominator of the read's POSITIONS is the defining block itself.
+(define (opt-guard-sink-merge-blocks [global : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Gep
+          2
+          (compiler_ir_types.CompilerIrValue.Global global)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.U8))
+        (compiler_ir_types.CompilerIrInstr.Load
+          3
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "a")
+          (compiler_ir_types.compiler-ir-label "b"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "a")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "m"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "b")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "m"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "m")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Phi
+                4
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var 3)
+                  (compiler_ir_types.compiler-ir-label "a")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                    (compiler_ir_types.CompilerIrValue.Var 3)
+                    (compiler_ir_types.compiler-ir-label "b")
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 4)))))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+;; A multi-exit loop whose header carries the constant phi `flag_exit` leaves
+;; behind, read at the join of the two exit paths, and whose preheader derives
+;; the global-rooted load the body is the only reader of. With `feed?` false the
+;; preheader derives nothing the loop reads, which is the plain counted header
+;; the existing rotation pricing already owns.
+(define (opt-gs-uniform-phi-loop-blocks [global : i64] [feed? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (if feed?
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Gep
+            2
+            (compiler_ir_types.CompilerIrValue.Global global)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ast_types.AstType.U8))
+          (compiler_ir_types.CompilerIrInstr.Load
+            3
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "header")))
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Mov
+            3
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "header")))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "header")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Phi
+            4
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 9)
+                (compiler_ir_types.compiler-ir-label "latch")
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Phi
+            5
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+              (compiler_ir_types.CompilerIrValue.Bool false)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Bool false)
+                (compiler_ir_types.compiler-ir-label "latch")
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            6
+            (compiler_ir_types.CompilerIrBinOp.Ge)
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 6)
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-label "exit_a"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "body")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              7
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              8
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 7)
+              (compiler_ir_types.CompilerIrValue.I64 100)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 8)
+              (compiler_ir_types.compiler-ir-label "latch")
+              (compiler_ir_types.compiler-ir-label "exit_b"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "latch")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                9
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "header"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "exit_a")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "merge"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "exit_b")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "merge"))))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "merge")
+                  (opt-test-instrs
+                    (compiler_ir_types.CompilerIrInstr.Phi
+                      10
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                        (compiler_ir_types.CompilerIrValue.Var 5)
+                        (compiler_ir_types.compiler-ir-label "exit_a")
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                          (compiler_ir_types.CompilerIrValue.Bool true)
+                          (compiler_ir_types.compiler-ir-label "exit_b")
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+                      (compiler_ast_types.AstType.Bool))
+                    (compiler_ir_types.CompilerIrInstr.Branch
+                      (compiler_ir_types.CompilerIrValue.Var 10)
+                      (compiler_ir_types.compiler-ir-label "r1")
+                      (compiler_ir_types.compiler-ir-label "r0"))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.CompilerIrBlock.Block
+                    (compiler_ir_types.compiler-ir-label "r1")
+                    (opt-test-instrs
+                      (compiler_ir_types.CompilerIrInstr.Return
+                        (compiler_ir_types.CompilerIrMaybeValue.Some
+                          (compiler_ir_types.CompilerIrValue.I64 1)))))
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (compiler_ir_types.CompilerIrBlock.Block
+                      (compiler_ir_types.compiler-ir-label "r0")
+                      (opt-test-instrs
+                        (compiler_ir_types.CompilerIrInstr.Return
+                          (compiler_ir_types.CompilerIrMaybeValue.Some
+                            (compiler_ir_types.CompilerIrValue.I64 0)))))
+                    compiler_ir_types.CompilerIrBlockList.Nil))))))))))
+
+;; The guard-first rematerialization shape: the entry block's cell read is the
+;; comparison's operand, so it cannot move, and its other reader sits under the
+;; guarded arm -- which calls, giving the function a frame SW-1 could place. The
+;; read is cloned into that arm and the entry copy is left to die at the branch.
+;; `call?` false removes the call and with it the whole reason to pay for a
+;; clone.
+(define (opt-guard-sink-remat-blocks
+  [global : i64]
+  [callee : i64]
+  [call? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Mov
+          2
+          (compiler_ir_types.CompilerIrValue.Global global)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          3
+          (compiler_ir_types.CompilerIrBinOp.Ge)
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.compiler-ir-label "use")
+          (compiler_ir_types.compiler-ir-label "done"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "use")
+        (if call?
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Call
+              5
+              callee
+              (compiler_ir_types.CompilerIrCallArgs.One
+                (compiler_ir_types.CompilerIrValue.Var 2))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              4
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 4))))
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              4
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 4))))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "done")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.I64 0)))))
+        compiler_ir_types.CompilerIrBlockList.Nil))))
+
+(define (opt-gs-uniform-phi-run
+  [name : String]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-function-blocks
+    (compiler_optimize.opt-uniform-phi-rotate-gated
+      (opt-guard-sink-test-function name blocks))))
+
+(define (compiler-optimize-guard-sink-self-test) : i64
+  (let
+    [global : i64 (opt-test-symbol "gs_g")]
+    [callee : i64 (opt-test-symbol "gs_writer")]
+    [clean : compiler_optimize.OptGlobalCellSummary
+      (opt-guard-sink-test-summary global callee 0)]
+    [dirty : compiler_optimize.OptGlobalCellSummary
+      (opt-guard-sink-test-summary global callee 1)]
+    [loop : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-sink-run
+        "guard_sink_loop"
+        (compiler_optimize.compiler-opt-global-shared-view clean)
+        (opt-guard-sink-loop-blocks global))]
+    [no-preheader : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-sink-run
+        "guard_sink_no_preheader"
+        (compiler_optimize.compiler-opt-global-shared-view clean)
+        (opt-guard-sink-no-preheader-blocks global))]
+    [cell : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-sink-run
+        "guard_sink_cell"
+        (compiler_optimize.compiler-opt-global-shared-view clean)
+        (opt-guard-sink-cell-blocks global callee false))]
+    [cell-barrier : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-sink-run
+        "guard_sink_cell_barrier"
+        (compiler_optimize.compiler-opt-global-shared-view dirty)
+        (opt-guard-sink-cell-blocks global callee true))]
+    [no-summary : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-sink-run
+        "guard_sink_no_summary"
+        (compiler_optimize.opt-global-cell-summary-empty)
+        (opt-guard-sink-cell-blocks global callee false))]
+    [remat-function : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-guard-sink-function
+        (compiler_optimize.compiler-opt-global-shared-view clean)
+        (opt-guard-sink-test-function
+          "guard_sink_remat"
+          (opt-guard-sink-remat-blocks global callee true)))]
+    [remat : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view remat-function))]
+    [no-frame : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-sink-run
+        "guard_sink_remat_no_frame"
+        (compiler_optimize.compiler-opt-global-shared-view clean)
+        (opt-guard-sink-remat-blocks global callee false))]
+    [merge : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-sink-run
+        "guard_sink_merge"
+        (compiler_optimize.compiler-opt-global-shared-view clean)
+        (opt-guard-sink-merge-blocks global))]
+    [rotated : compiler_ir_types.CompilerIrBlockList
+      (opt-gs-uniform-phi-run
+        "guard_sink_uniform_phi"
+        (opt-gs-uniform-phi-loop-blocks global true))]
+    [unrotated : compiler_ir_types.CompilerIrBlockList
+      (opt-gs-uniform-phi-run
+        "guard_sink_uniform_phi_counted"
+        (opt-gs-uniform-phi-loop-blocks global false))]
+    (begin
+      ;; The load reaches the landing block, and its address chain follows it.
+      (unless
+        (=
+          (opt-successor-sink-def-label
+            (compiler_optimize.compiler-opt-global-shared-view loop)
+            3
+            (compiler_ir_types.compiler-ir-label-none))
+          (compiler_ir_types.compiler-ir-label "pre"))
+        (return 1))
+      (unless
+        (=
+          (opt-successor-sink-def-label
+            loop
+            2
+            (compiler_ir_types.compiler-ir-label-none))
+          (compiler_ir_types.compiler-ir-label "pre"))
+        (return 2))
+      ;; No depth-0 dominator below the entry block: nowhere to sink to.
+      (unless
+        (=
+          (opt-successor-sink-def-label
+            no-preheader
+            3
+            (compiler_ir_types.compiler-ir-label-none))
+          (compiler_ir_types.compiler-ir-label "entry"))
+        (return 3))
+      ;; A cell read moves under the guard when the tables say nothing writes it.
+      (unless
+        (=
+          (opt-successor-sink-def-label
+            cell
+            2
+            (compiler_ir_types.compiler-ir-label-none))
+          (compiler_ir_types.compiler-ir-label "use"))
+        (return 4))
+      ;; A call whose mod-ref row names the global is a barrier.
+      (unless
+        (=
+          (opt-successor-sink-def-label
+            cell-barrier
+            2
+            (compiler_ir_types.compiler-ir-label-none))
+          (compiler_ir_types.compiler-ir-label "entry"))
+        (return 5))
+      ;; Without the tables a cell read has no proof at all.
+      (unless
+        (=
+          (opt-successor-sink-def-label
+            no-summary
+            2
+            (compiler_ir_types.compiler-ir-label-none))
+          (compiler_ir_types.compiler-ir-label "entry"))
+        (return 6))
+      ;; Both edges of the merge phi read it, so the nearest common dominator of
+      ;; the positions is the defining block.
+      (unless
+        (=
+          (opt-successor-sink-def-label
+            merge
+            3
+            (compiler_ir_types.compiler-ir-label-none))
+          (compiler_ir_types.compiler-ir-label "entry"))
+        (return 7))
+      ;; The guard's own read is cloned into the calling arm: the entry copy
+      ;; stays where the comparison needs it and a fresh var carries the value
+      ;; into the guarded region.
+      (unless
+        (=
+          (opt-successor-sink-def-label
+            (compiler_optimize.compiler-opt-global-shared-view remat)
+            2
+            (compiler_ir_types.compiler-ir-label-none))
+          (compiler_ir_types.compiler-ir-label "entry"))
+        (return 11))
+      (unless
+        (=
+          (opt-successor-sink-def-label
+            remat
+            32
+            (compiler_ir_types.compiler-ir-label-none))
+          (compiler_ir_types.compiler-ir-label "use"))
+        (return 12))
+      (unless
+        (=
+          (compiler_optimize.opt-function-frame
+            (compiler_optimize.compiler-opt-global-shared-view remat-function))
+          33)
+        (return 13))
+      ;; With no call in the guarded region there is no frame to place and the
+      ;; clone would be a pure cost.
+      (unless
+        (=
+          (opt-successor-sink-def-label
+            no-frame
+            32
+            (compiler_ir_types.compiler-ir-label-none))
+          (compiler_ir_types.compiler-ir-label-none))
+        (return 14))
+      ;; The constant header phi is gone and the loop rotated.
+      (unless
+        (=
+          (opt-successor-sink-def-label
+            (compiler_optimize.compiler-opt-global-shared-view rotated)
+            5
+            (compiler_ir_types.compiler-ir-label-none))
+          (compiler_ir_types.compiler-ir-label-none))
+        (return 8))
+      (unless
+        (compiler_optimize.opt-cfg-block-exists?
+          rotated
+          (compiler_optimize.opt-rotate-ssa-land-label
+            (compiler_ir_types.compiler-ir-label "header")))
+        (return 9))
+      ;; The counted header the old pricing owns keeps its phi -- the rotation
+      ;; relocates it to the body block, so what is asserted is that it is still
+      ;; defined somewhere rather than substituted away.
+      (unless
+        (not
+          (=
+            (opt-successor-sink-def-label
+              unrotated
+              5
+              (compiler_ir_types.compiler-ir-label-none))
+            (compiler_ir_types.compiler-ir-label-none)))
+        (return 10))
+      42)))
+
+(test
+  guard-first-dominator-sinking
+  (test.assert-i64-eq
+    (compiler-optimize-guard-sink-self-test)
+    42
+    "Guard-first sinking moves global-rooted reads below an early-exit guard, refuses them without a landing block, across a writing call, without the mod-ref tables and at a merge, and the uniform-phi substitution unlocks the rotation only when the preheader feeds the loop"))

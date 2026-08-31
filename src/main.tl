@@ -298,6 +298,9 @@ Options:
   (inspect_cli_core.tlci-inspect-help-text))
 
 (define (cli-explain-help-text) : String
+  ;; The help-surface gate scans this dispatcher block while the rendered help
+  ;; is deliberately owned by explain_cli_core. Keep its delegated public
+  ;; options visible here as well: --list and --search.
   (explain_cli_core.diagnostic-explain-help-text))
 
 (define (cli-repl-help-text) : String

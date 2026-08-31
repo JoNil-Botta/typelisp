@@ -286,6 +286,112 @@
 (define (compiler-diagnostic-code-typecheck-type-mismatch) : String
   "E0206")
 
+(define (compiler-diagnostic-code-typecheck-borrow-violation) : String
+  "E0207")
+
+(define (compiler-diagnostic-code-typecheck-move-violation) : String
+  "E0208")
+
+(define (compiler-diagnostic-code-typecheck-unsafe-context) : String
+  "E0209")
+
+(define (compiler-diagnostic-code-typecheck-lifetime-mismatch) : String
+  "E0210")
+
+(define (compiler-diagnostic-code-typecheck-resource-ownership) : String
+  "E0211")
+
+(define (compiler-diagnostic-code-typecheck-arena-ownership) : String
+  "E0212")
+
+(define (compiler-diagnostic-code-typecheck-pattern) : String
+  "E0213")
+
+(define (compiler-diagnostic-code-typecheck-spmd) : String
+  "E0214")
+
+(define (compiler-diagnostic-code-typecheck-place) : String
+  "E0215")
+
+(define (compiler-diagnostic-code-typecheck-control-flow) : String
+  "E0216")
+
+(define (compiler-diagnostic-code-typecheck-thread-safety) : String
+  "E0217")
+
+(define (compiler-diagnostic-code-typecheck-comptime-constraint) : String
+  "E0218")
+
+;; Machine-readable inventory for the public diagnostic surface. Keep this in
+;; the module that assigns codes rather than in the `explain` frontend: tests
+;; can then prove that every published code has exactly one registry row and a
+;; detailed explanation. `owner` identifies the subsystem responsible for
+;; keeping the classification and explanation current.
+(define (compiler-diagnostic-code-registry-count) : i64
+  20)
+
+(define (compiler-diagnostic-code-registry-code [index : i64]) : String
+  (cond
+    [(= index 0) (compiler-diagnostic-code-parse)]
+    [(= index 1) (compiler-diagnostic-code-typecheck)]
+    [(= index 2) (compiler-diagnostic-code-typecheck-unbound-name)]
+    [(= index 3) (compiler-diagnostic-code-typecheck-arity-mismatch)]
+    [(= index 4) (compiler-diagnostic-code-typecheck-non-exhaustive-match)]
+    [(= index 5) (compiler-diagnostic-code-typecheck-unknown-struct-field)]
+    [(= index 6) (compiler-diagnostic-code-typecheck-region-escape)]
+    [(= index 7) (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(= index 8) (compiler-diagnostic-code-typecheck-borrow-violation)]
+    [(= index 9) (compiler-diagnostic-code-typecheck-move-violation)]
+    [(= index 10) (compiler-diagnostic-code-typecheck-unsafe-context)]
+    [(= index 11) (compiler-diagnostic-code-typecheck-lifetime-mismatch)]
+    [(= index 12) (compiler-diagnostic-code-typecheck-resource-ownership)]
+    [(= index 13) (compiler-diagnostic-code-typecheck-arena-ownership)]
+    [(= index 14) (compiler-diagnostic-code-typecheck-pattern)]
+    [(= index 15) (compiler-diagnostic-code-typecheck-spmd)]
+    [(= index 16) (compiler-diagnostic-code-typecheck-place)]
+    [(= index 17) (compiler-diagnostic-code-typecheck-control-flow)]
+    [(= index 18) (compiler-diagnostic-code-typecheck-thread-safety)]
+    [(= index 19) (compiler-diagnostic-code-typecheck-comptime-constraint)]
+    [else ""]))
+
+(define (compiler-diagnostic-code-registry-title [index : i64]) : String
+  (cond
+    [(= index 0) "parse error"]
+    [(= index 1) "unclassified typecheck error"]
+    [(= index 2) "unbound name"]
+    [(= index 3) "arity mismatch"]
+    [(= index 4) "non-exhaustive match"]
+    [(= index 5) "unknown struct field"]
+    [(= index 6) "region escape"]
+    [(= index 7) "type mismatch"]
+    [(= index 8) "borrow violation"]
+    [(= index 9) "move violation"]
+    [(= index 10) "unsafe context required"]
+    [(= index 11) "lifetime mismatch"]
+    [(= index 12) "resource ownership violation"]
+    [(= index 13) "arena ownership violation"]
+    [(= index 14) "invalid pattern"]
+    [(= index 15) "SPMD restriction"]
+    [(= index 16) "invalid storage place"]
+    [(= index 17) "control-flow misuse"]
+    [(= index 18) "thread-safety violation"]
+    [(= index 19) "compile-time constraint"]
+    [else ""]))
+
+(define (compiler-diagnostic-code-registry-category [index : i64]) : String
+  (cond
+    [(= index 0) "parse"]
+    [(and (> index 0) (< index (compiler-diagnostic-code-registry-count)))
+      "typecheck"]
+    [else ""]))
+
+(define (compiler-diagnostic-code-registry-owner [index : i64]) : String
+  (cond
+    [(= index 0) "parser"]
+    [(and (> index 0) (< index (compiler-diagnostic-code-registry-count)))
+      "typechecker"]
+    [else ""]))
+
 ;; Ordered, first match wins. `arity mismatch` is tested before `type mismatch`
 ;; so a call-arity error is not absorbed by the broader mismatch rule if the two
 ;; phrasings ever overlap.
@@ -293,9 +399,15 @@
   (cond
     [(string.contains (& message) "arity mismatch")
       (compiler-diagnostic-code-typecheck-arity-mismatch)]
-    [(string.contains (& message) "type mismatch")
-      (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(and
+        (string.contains (& message) "expected ")
+        (string.contains (& message) " arguments"))
+      (compiler-diagnostic-code-typecheck-arity-mismatch)]
     [(string.contains (& message) "unbound name")
+      (compiler-diagnostic-code-typecheck-unbound-name)]
+    [(string.contains (& message) "unknown type")
+      (compiler-diagnostic-code-typecheck-unbound-name)]
+    [(string.contains (& message) "type not found")
       (compiler-diagnostic-code-typecheck-unbound-name)]
     ;; Both spellings are live in the typechecker: `match missing arm for ...`
     ;; is what the exhaustiveness check emits per missing variant, while
@@ -307,8 +419,177 @@
       (compiler-diagnostic-code-typecheck-non-exhaustive-match)]
     [(string.contains (& message) "unknown struct field")
       (compiler-diagnostic-code-typecheck-unknown-struct-field)]
+    [(string.contains (& message) "requires unsafe context")
+      (compiler-diagnostic-code-typecheck-unsafe-context)]
+    [(or
+        (string.contains (& message) "cannot cross thread boundaries")
+        (string.contains (& message) "thread_i64.spawn")
+        (string.contains (& message) "cannot send value of type"))
+      (compiler-diagnostic-code-typecheck-thread-safety)]
+    [(or
+        (string.contains (& message) "SPMD")
+        (string.contains (& message) "spmd-")
+        (string.contains (& message) "foreach")
+        (string.contains (& message) "varying arguments"))
+      (compiler-diagnostic-code-typecheck-spmd)]
+    [(or
+        (string.contains (& message) "pattern only supports")
+        (string.contains (& message) "pattern requires")
+        (string.contains (& message) "match requires")
+        (string.contains (& message) "unreachable match arm"))
+      (compiler-diagnostic-code-typecheck-pattern)]
+    [(or
+        (string.contains (& message) "expression is not a storage place")
+        (string.contains (& message) "target must be a storage place")
+        (string.contains
+          (& message)
+          "receiver must be a fixed-array storage place")
+        (string.contains (& message) "requires owned fixed-array storage")
+        (string.contains (& message) "numeric field segments")
+        (string.contains
+          (& message)
+          "comptime replace! requires a mutable local"))
+      (compiler-diagnostic-code-typecheck-place)]
+    [(or
+        (string.contains (& message) "break requires enclosing")
+        (string.contains (& message) "continue requires enclosing"))
+      (compiler-diagnostic-code-typecheck-control-flow)]
+    [(or
+        (string.contains (& message) "non-negative compile-time integer")
+        (string.contains (& message) "compile-time only"))
+      (compiler-diagnostic-code-typecheck-comptime-constraint)]
+    ;; Cleanup resources have ownership semantics even when the concrete
+    ;; failure is an attempted escape, so keep them out of the region family.
+    [(string.contains (& message) "cleanup")
+      (compiler-diagnostic-code-typecheck-resource-ownership)]
+    ;; Escape classification precedes borrow classification because some
+    ;; aggregate escape diagnostics mention a borrow in their suggested fix.
     [(string.contains (& message) "cannot escape")
       (compiler-diagnostic-code-typecheck-region-escape)]
+    [(string.contains (& message) "would escape")
+      (compiler-diagnostic-code-typecheck-region-escape)]
+    [(string.contains (& message) "escape lexical scope")
+      (compiler-diagnostic-code-typecheck-region-escape)]
+    ;; Lifetime failures frequently append their cause to a generic `type
+    ;; mismatch` prefix. Test them first so the actionable lifetime code wins.
+    [(string.contains (& message) "lifetime mismatch")
+      (compiler-diagnostic-code-typecheck-lifetime-mismatch)]
+    [(string.contains (& message) "does not outlive")
+      (compiler-diagnostic-code-typecheck-lifetime-mismatch)]
+    [(string.contains (& message) "reference lifetime")
+      (compiler-diagnostic-code-typecheck-lifetime-mismatch)]
+    [(string.contains (& message) "lifetime is only allowed")
+      (compiler-diagnostic-code-typecheck-lifetime-mismatch)]
+    [(string.contains (& message) "lifetime must be tied")
+      (compiler-diagnostic-code-typecheck-lifetime-mismatch)]
+    [(string.contains (& message) "elided reference")
+      (compiler-diagnostic-code-typecheck-lifetime-mismatch)]
+    [(string.contains (& message) "not outlive")
+      (compiler-diagnostic-code-typecheck-lifetime-mismatch)]
+    [(string.contains (& message) "borrow requires")
+      (compiler-diagnostic-code-typecheck-borrow-violation)]
+    [(string.contains (& message) "borrow borrowed place")
+      (compiler-diagnostic-code-typecheck-borrow-violation)]
+    [(string.contains (& message) "borrow mutably borrowed place")
+      (compiler-diagnostic-code-typecheck-borrow-violation)]
+    [(string.contains (& message) "read mutably borrowed place")
+      (compiler-diagnostic-code-typecheck-borrow-violation)]
+    [(string.contains (& message) "assign to borrowed place")
+      (compiler-diagnostic-code-typecheck-borrow-violation)]
+    [(string.contains (& message) "move borrowed place")
+      (compiler-diagnostic-code-typecheck-borrow-violation)]
+    [(string.contains (& message) "borrowed byte-slice referent")
+      (compiler-diagnostic-code-typecheck-borrow-violation)]
+    [(string.contains (& message) "borrowed string-slice referent")
+      (compiler-diagnostic-code-typecheck-borrow-violation)]
+    [(string.contains (& message) "mutable borrow")
+      (compiler-diagnostic-code-typecheck-borrow-violation)]
+    [(string.contains (& message) "requires mutable")
+      (compiler-diagnostic-code-typecheck-borrow-violation)]
+    [(string.contains (& message) "requires a mutable borrowed")
+      (compiler-diagnostic-code-typecheck-borrow-violation)]
+    [(string.contains (& message) "borrowed box pattern")
+      (compiler-diagnostic-code-typecheck-borrow-violation)]
+    [(string.contains (& message) "direct arena owner")
+      (compiler-diagnostic-code-typecheck-arena-ownership)]
+    [(string.contains (& message) "arena owner")
+      (compiler-diagnostic-code-typecheck-arena-ownership)]
+    [(string.contains (& message) "ordinary arena")
+      (compiler-diagnostic-code-typecheck-arena-ownership)]
+    [(string.contains (& message) "owner proof")
+      (compiler-diagnostic-code-typecheck-arena-ownership)]
+    [(string.contains (& message) "atomic arena")
+      (compiler-diagnostic-code-typecheck-arena-ownership)]
+    [(string.contains (& message) "arena must be Arena")
+      (compiler-diagnostic-code-typecheck-arena-ownership)]
+    [(string.contains (& message) "inside the arena it")
+      (compiler-diagnostic-code-typecheck-arena-ownership)]
+    [(string.contains (& message) "owner-consuming")
+      (compiler-diagnostic-code-typecheck-resource-ownership)]
+    [(string.contains (& message) "owner value")
+      (compiler-diagnostic-code-typecheck-resource-ownership)]
+    [(string.contains (& message) "ownership would be erased")
+      (compiler-diagnostic-code-typecheck-resource-ownership)]
+    [(string.contains (& message) "capability would be erased")
+      (compiler-diagnostic-code-typecheck-resource-ownership)]
+    [(string.contains (& message) "use of moved value")
+      (compiler-diagnostic-code-typecheck-move-violation)]
+    [(string.contains (& message) "cannot move out of global")
+      (compiler-diagnostic-code-typecheck-move-violation)]
+    [(string.contains (& message) "cannot move non-Copy")
+      (compiler-diagnostic-code-typecheck-move-violation)]
+    [(string.contains (& message) "noncopy move")
+      (compiler-diagnostic-code-typecheck-move-violation)]
+    [(string.contains (& message) "expects exactly one")
+      (compiler-diagnostic-code-typecheck-arity-mismatch)]
+    [(string.contains (& message) "expects a type argument")
+      (compiler-diagnostic-code-typecheck-arity-mismatch)]
+    [(string.contains (& message) "type mismatch")
+      (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(string.contains (& message) "branches must match")
+      (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(and
+        (string.contains (& message) "expected ")
+        (string.contains (& message) "found "))
+      (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(string.contains (& message) "does not fit expected type")
+      (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(string.contains (& message) "expects matching integer")
+      (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(string.contains (& message) "requires numeric types")
+      (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(string.contains (& message) "cast requires scalar numeric")
+      (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(string.contains (& message) "requires Box or reference type")
+      (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(string.contains (& message) "requires fixed array type")
+      (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(string.contains (& message) "requires Box scrutinee")
+      (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(string.contains (& message) "source must be")
+      (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(string.contains (& message) "must have type")
+      (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(string.contains (& message) "type is not supported")
+      (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(string.contains (& message) "unsupported type")
+      (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(string.contains (& message) "bare Slice type")
+      (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(string.contains (& message) "type value")
+      (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(string.contains (& message) "does not match struct")
+      (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(string.contains (& message) "non-finite f")
+      (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(string.contains (& message) "extern/native Slice references")
+      (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(string.contains (& message) "result type is not clone-supported")
+      (compiler-diagnostic-code-typecheck-type-mismatch)]
+    [(and
+        (string.contains (& message) "field projection")
+        (string.contains (& message) "requires struct, got"))
+      (compiler-diagnostic-code-typecheck-type-mismatch)]
     [else (compiler-diagnostic-code-typecheck)]))
 
 (define (compiler-diagnostic-code-or-empty [diag : (& diag CompilerDiagnostic)]) : String

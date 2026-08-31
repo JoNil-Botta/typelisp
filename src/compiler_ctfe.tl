@@ -8054,7 +8054,8 @@
                   (ResultCtfe.Ok
                     (ctfe-name-value-for-session
                       (ctfe-env-structural-session env)
-                      (ctfe-expr-binding-clause-name-id clause))
+                      (ci.intern-syntax-id-value
+                        (ctfe-expr-binding-clause-name-id clause)))
                     arg-fuel)]
                 [(string.eq name "expr-binding-clause-has-type?")
                   (ResultCtfe.Ok
@@ -10757,7 +10758,8 @@
             (ResultCtfe.Ok
               (ctfe-name-value-for-session
                 session
-                (ctfe-expr-binding-clause-name-id clause))
+                (ci.intern-syntax-id-value
+                  (ctfe-expr-binding-clause-name-id clause)))
               fuel)]
           [(= field-kind cbi.compiler-builtin-id-fix-has_type)
             (ResultCtfe.Ok
@@ -15696,7 +15698,7 @@
     [a-init : ast.AstExpr (ctfe-ast-get env a.init)]
     [b-init : ast.AstExpr (ctfe-ast-get env b.init)]
     (and
-      (= a.name b.name)
+      (ci.intern-syntax-id-eq? a.name b.name)
       (= a.has-type b.has-type)
       (ctfe-expr-eq-in-env (ctfe-env-shared-view (& env)) a-ty b-ty)
       (ctfe-expr-eq-in-env env a-init b-init))))
@@ -15908,7 +15910,7 @@
             (ast.ast-expr-clause-fallback))))
       (ctfe-expr-clause-list->expr-list-into env lst (+ index 1) out))))
 
-(define (ctfe-expr-binding-clause-name-id [clause : ast.AstExprBindingClause]) : i64
+(define (ctfe-expr-binding-clause-name-id [clause : ast.AstExprBindingClause]) : ci.InternSyntaxId
   clause.name)
 
 (define (ctfe-expr-binding-clause-has-type? [clause : ast.AstExprBindingClause]) : bool
@@ -15929,7 +15931,7 @@
     [unit-expr : i64
       (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Unit)))]
     (ast.ast-expr-binding-clause-id
-      0
+      (ci.intern-syntax-id-from-raw 0)
       false
       unit-expr
       unit-expr
@@ -15950,7 +15952,10 @@
   [env : CtfeEnv]
   [clause : ast.AstExprBindingClause]) : i64
   (let
-    [name-expr : i64 (ctfe-ast-push env (ast.AstExpr.Var clause.name))]
+    [name-expr : i64
+      (ctfe-ast-push
+        env
+        (ast.AstExpr.Var (ci.intern-syntax-id-value clause.name)))]
     [bracket : i64
       (if clause.has-type
         (ast.ast-expr-bracket-clause-with-pools
@@ -19898,7 +19903,7 @@
       [clauses : ast.AstExprClauseList (ast.ast-expr-clause-list-new)]
       [binding : ast.AstExprBindingClause
         (ast.ast-expr-binding-clause-id
-          cbi.compiler-builtin-id-fix-name
+          (ci.intern-syntax-id-from-raw cbi.compiler-builtin-id-fix-name)
           false
           0
           0
@@ -19915,6 +19920,9 @@
         (ctfe-reflect-variant-list-with-capacity 0)]
       [generated-items : i64 (ci.intern-generated-canonical-name "items")]
       (and
+        (ci.intern-syntax-id-eq?
+          (ctfe-expr-binding-clause-name-id (clone binding))
+          (ci.intern-syntax-id-from-raw cbi.compiler-builtin-id-fix-name))
         (compiler-ctfe-structural-field-ok?
           (CompilerCtfeValue.ExprList (clone exprs))
           cbi.compiler-builtin-id-fix-items

@@ -3729,7 +3729,8 @@
             (cond
               [(= selector 0)
                 (ctfe_support.ctfe-name-value
-                  (ctfe_support.ctfe-expr-binding-clause-name-id clause))]
+                  (ci.intern-syntax-id-value
+                    (ctfe_support.ctfe-expr-binding-clause-name-id clause)))]
               [(= selector 1)
                 (ctfe_support.CompilerCtfeValue.Expr
                   (ctfe_support.ctfe-expr-binding-clause-type clause)

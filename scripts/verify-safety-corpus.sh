@@ -318,6 +318,9 @@ run_manifest_case() {
             [ "$code" -ne 0 ] || fail "$case_id expected check failure"
             [ "$stderr_contains" != "-" ] || fail "$case_id check-fail missing stderr expectation"
             assert_contains "$err" "$stderr_contains" || fail "$case_id stderr did not match expectation"
+            if grep -Fq 'error[E0200]' "$err"; then
+                fail "$case_id regressed to generic E0200; assign a specific code or update the taxonomy"
+            fi
             ;;
         run-exit)
             echo "[safety-corpus] run-exit $case_id"

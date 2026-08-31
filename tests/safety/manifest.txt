@@ -125,8 +125,9 @@ compiler_intern_raw_to_syntax_reject|check-fail|tests/safety/compiler_intern_raw
 compiler_intern_syntax_to_name_reject|check-fail|tests/safety/compiler_intern_syntax_to_name_reject.tl|-|expected compiler_intern/InternId, found compiler_intern/InternSyntaxId
 compiler_lower_private_to_name_reject|check-fail|tests/safety/compiler_lower_private_to_name_reject.tl|-|expected compiler_intern/InternId, found compiler_intern_state/InternLowerPrivateIdentity
 compiler_ast_structural_export_reject|check-fail|tests/safety/compiler_ast_structural_export_reject.tl|-|expected compiler_intern/InternId, found compiler_intern/InternSyntaxId
-compiler_ast_raw_extern_symbol_reject|check-fail|tests/safety/compiler_ast_raw_extern_symbol_reject.tl|-|expected compiler_intern/InternId, found i64
 compiler_ast_raw_cleanup_name_reject|check-fail|tests/safety/compiler_ast_raw_cleanup_name_reject.tl|-|expected compiler_intern/InternSyntaxId, found i64
+compiler_ast_raw_expr_binding_clause_name_reject|check-fail|tests/safety/compiler_ast_raw_expr_binding_clause_name_reject.tl|-|expected compiler_intern/InternSyntaxId, found i64
+compiler_ast_raw_extern_symbol_reject|check-fail|tests/safety/compiler_ast_raw_extern_symbol_reject.tl|-|expected compiler_intern/InternId, found i64
 compiler_ast_raw_field_name_reject|check-fail|tests/safety/compiler_ast_raw_field_name_reject.tl|-|expected compiler_intern/InternSyntaxId, found i64
 compiler_ir_raw_source_span_function_reject|check-fail|tests/safety/compiler_ir_raw_source_span_function_reject.tl|-|expected compiler_ir_types/CompilerIrSymbolId, found i64
 reader_view_raw_symbol_reject|check-fail|tests/safety/reader_view_raw_symbol_reject.tl|-|expected compiler_intern/InternSyntaxId, found i64

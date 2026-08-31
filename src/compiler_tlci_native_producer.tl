@@ -5480,9 +5480,11 @@
             (cond
               [(< slot 0) (embedded-native-data-value-none)]
               [(and
-                  (embedded-native-stdlib-string-call?
-                    (owned_view.compiler-owned-shared-view head)
-                    "string-length")
+                  (or
+                    (embedded-native-stdlib-string-call?
+                      (owned_view.compiler-owned-shared-view head)
+                      "string-length")
+                    (string.eq head "__tl_string_length"))
                   (= argc 1))
                 (embedded-native-data-probe-value
                   (tlci_core.tlci-host-callback-name-shared-view
@@ -5494,7 +5496,10 @@
                     (embedded-native-stdlib-string-call?
                       (owned_view.compiler-owned-shared-view head)
                       "string-ref")
-                    (embedded-native-stdlib-string-call? head "char-at"))
+                    (embedded-native-stdlib-string-call?
+                      (owned_view.compiler-owned-shared-view head)
+                      "char-at")
+                    (string.eq head "__tl_string_ref"))
                   (= argc 2))
                 (let
                   [index : EmbeddedNativeDataValue
@@ -5535,7 +5540,9 @@
 ;: reach the producer. This mirrors `ctfe-stdlib-string-helper-name?`, which is
 ;: what decides the same call under interpretation: a module separator is
 ;: required, so a local function named `string-length` is never mistaken for
-;: the stdlib one. Refs #5701.
+;: the stdlib one. The exact `__tl_string_*` intrinsic spellings admitted by
+;: the caller above are reserved compiler builtins and therefore cannot be a
+;: shadowed local function. Refs #5701, #7141.
 (define (embedded-native-stdlib-string-call? [head : String] [base : String]) : bool
   (or
     (string.eq

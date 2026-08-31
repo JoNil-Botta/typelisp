@@ -10,7 +10,6 @@
 ;# `synthesize-helpers` remains temporarily while compiler and repository call
 ;# sites migrate away from the semantic `(clone value)` form.
 (import stdlib.comptime)
-(import stdlib.string)
 
 ;: Emit ordinary cloning for a fixed array whose source is a shared reference.
 (defmacro (clone-fixed-array
@@ -164,7 +163,7 @@
               "<root>"
               owner)]
           [type-name : String (type-nominal-name T)]
-          [length : i64 (string.string-length type-name)]
+          [length : i64 (__tl_string_length type-name)]
           [index : i64 0]
           [lowercase-alphabet : String "abcdefghijklmnopqrstuvwxyz"]
           [decimal-digits : String "0123456789"]
@@ -177,7 +176,7 @@
               unit)
             (while (< index length)
               (let
-                [code : i64 (cast (string.string-ref type-name index) : i64)]
+                [code : i64 (cast (__tl_string_ref type-name index) : i64)]
                 [upper? : bool
                   (if (>= code 65)
                     (<= code 90)
@@ -224,15 +223,11 @@
                       (let
                         [previous-code : i64
                           (if (> index 0)
-                            (cast
-                              (string.string-ref type-name (- index 1))
-                              : i64)
+                            (cast (__tl_string_ref type-name (- index 1)) : i64)
                             0)]
                         [next-code : i64
                           (if (< (+ index 1) length)
-                            (cast
-                              (string.string-ref type-name (+ index 1))
-                              : i64)
+                            (cast (__tl_string_ref type-name (+ index 1)) : i64)
                             0)]
                         [previous-lower? : bool
                           (if (>= previous-code 97)
@@ -545,7 +540,7 @@
         "<root>"
         owner)]
     [type-name : String (type-nominal-name T)]
-    [length : i64 (string.string-length type-name)]
+    [length : i64 (__tl_string_length type-name)]
     [index : i64 0]
     [lowercase-alphabet : String "abcdefghijklmnopqrstuvwxyz"]
     [decimal-digits : String "0123456789"]
@@ -563,7 +558,7 @@
         unit)
       (while (< index length)
         (let
-          [code : i64 (cast (string.string-ref type-name index) : i64)]
+          [code : i64 (cast (__tl_string_ref type-name index) : i64)]
           [upper? : bool
             (if (>= code 65)
               (<= code 90)
@@ -610,11 +605,11 @@
                 (let
                   [previous-code : i64
                     (if (> index 0)
-                      (cast (string.string-ref type-name (- index 1)) : i64)
+                      (cast (__tl_string_ref type-name (- index 1)) : i64)
                       0)]
                   [next-code : i64
                     (if (< (+ index 1) length)
-                      (cast (string.string-ref type-name (+ index 1)) : i64)
+                      (cast (__tl_string_ref type-name (+ index 1)) : i64)
                       0)]
                   [previous-lower? : bool
                     (if (>= previous-code 97)
@@ -701,8 +696,14 @@
                 (comptime.string-append
                   "gen-clone: expected a nominal aggregate, got "
                   (type-key T)))])]
-        `(define (,function-name [value : (& value ,T)]) : ,T
-          ,body)))))
+        `(begin
+          ;; Keep the runtime string dependency in the generated owner. The
+          ;; clone producer is loaded by core_macros for every source file, so
+          ;; importing stdlib.string at producer scope would leak its public
+          ;; definitions into unrelated static-library archives.
+          (import stdlib.string)
+          (define (,function-name [value : (& value ,T)]) : ,T
+            ,body))))))
 
 ;: Emit clone helper declarations for all requested reachable aggregates.
 (defmacro (synthesize-helpers [types : comptime.Expr ...]) : Decls

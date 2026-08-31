@@ -8,9 +8,9 @@ benchmark/c-scalar/spmd_mask	9833444481
 benchmark/typelisp/spmd_short_tail	4798054555
 benchmark/c/spmd_short_tail	2773008013
 benchmark/c-scalar/spmd_short_tail	6030013011
-benchmark/typelisp/spmd_zip	8303096092
+benchmark/typelisp/spmd_zip	8303696095
 benchmark/c/spmd_zip	10755056774
 benchmark/c-scalar/spmd_zip	9218460867
-benchmark/typelisp/string_scan	5050000272
+benchmark/typelisp/string_scan	5050000268
 benchmark/c/string_scan	4850001652
 benchmark/c-scalar/string_scan	4850001652

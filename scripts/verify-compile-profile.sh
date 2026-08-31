@@ -1741,6 +1741,8 @@ if [ "$NL_HOST_OS" = windows ]; then
     # 4,849,664 capacity, and 155,189,248 physical payload bytes.
     # #6996 (inline aggregate globals, ~2,400 backend lines): Windows CI probe
     # 74 macro_expand / 58 typecheck expr-pool segments.
+    # #7104's optimizer/backend additions independently carried macro_expand
+    # from 74 to 75 segments on its prior base.
     # #7133's checked diagnostic registry, complete typecheck taxonomy, explain
     # corpus, and regression coverage cross macro_expand from 74 to 75 segments:
     # the authoritative Windows CI probe measured 4,851,619 used nodes,
@@ -1854,7 +1856,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     # #5407's semantic completion provider measured 26,662 used nodes and 27
     # segments on the pre-ownership mainline tree.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool macro_expand 28 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool macro_expand 29 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # #6828's dense flag-exit/BCE storage declarations cross the next type-pool
     # typecheck boundary: the authoritative Windows probe measured 9,221 used

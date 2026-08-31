@@ -10,6 +10,13 @@ inline_aggregate_global_escape|tests/integration/inline_aggregate_global_escape.
 inline_aggregate_global_three_field|tests/integration/inline_aggregate_global_three_field.tl|42|327\n669\n|-|stdlib/io.tl stdlib/string.tl
 inline_aggregate_global_nested|tests/integration/inline_aggregate_global_nested.tl|42|555\n897\n|-|stdlib/io.tl stdlib/string.tl
 cli_common_option|tests/integration/cli_common_option.tl|42|-|-|cli_option_core.tl stdlib/io.tl stdlib/string.tl
+arg_global_len_eq_pair|tests/integration/arg_global_len_eq_pair.tl|42|711\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+arg_global_len_eq_split|tests/integration/arg_global_len_eq_split.tl|134|-|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/windows/arg_global_len_eq_split/arg_global_len_eq_split.tl:32:64: array index out of bounds: index=7 length=7\n
+bce_range_two_loops|tests/integration/bce_range_two_loops.tl|42|-5915004525821994045\n|24|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+bce_range_negative_span|tests/integration/bce_range_negative_span.tl|134|-|24|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/windows/bce_range_negative_span/bce_range_negative_span.tl:15:36: array index out of bounds: index=-17 length=24\n
+shrink_wrap_general|tests/integration/shrink_wrap_general.tl|42|7100\n7048\n14\n|-|stdlib/io.tl stdlib/string.tl
+global_header_hoist_loop|tests/integration/global_header_hoist_loop.tl|42|885\n|12|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+global_header_hoist_grow|tests/integration/global_header_hoist_grow.tl|42|397\n|12|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 generated_hashmap_global_mutation|tests/integration/generated_hashmap_global_mutation.tl|42|-|-|stdlib/hashmap.tl
 hashmap_slot_update_shape|tests/integration/hashmap_slot_update_shape.tl|42|-|-|stdlib/hashmap.tl
 hashmap_nominal_value_local_smoke|tests/integration/hashmap_nominal_value_local_smoke.tl|42|-|-|stdlib/hashmap.tl

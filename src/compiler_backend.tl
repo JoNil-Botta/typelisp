@@ -2477,8 +2477,15 @@
 ;; never moves %rsp.
 (define compiler-backend-function-i64-red-zone-guard : i64
   20)
-(define compiler-backend-function-i64-count : i64
+
+;; SW-1: the label of the block this function's prologue is spliced at when the
+;; general shrink-wrap placement is applied, or the no-label sentinel. Read by
+;; the jump-forward builder, which must never forward a jump past the saving
+;; block: doing so would step over the spliced prologue.
+(define compiler-backend-function-i64-swb-saving-label : i64
   21)
+(define compiler-backend-function-i64-count : i64
+  22)
 (define compiler-backend-function-bool-current-fn-win64 : i64
   0)
 (define compiler-backend-function-bool-addr-of-forwarding-enabled : i64
@@ -2582,8 +2589,16 @@
 ;; jump-only blocks. Empty for every function that has none.
 (define compiler-backend-function-i64-array-jump-forward : i64
   6)
-(define compiler-backend-function-i64-array-count : i64
+
+;; SW-1: label ids of the blocks that return BEFORE the general shrink-wrap
+;; placement's prologue. Their `Return` emits a bare `ret` -- no callee-saved
+;; pops, no `add rsp` -- and they are excluded from the shared-epilogue census
+;; for the same reason form (a)'s bare exits are. Empty for every function whose
+;; prologue stays at entry.
+(define compiler-backend-function-i64-array-swb-bare-labels : i64
   7)
+(define compiler-backend-function-i64-array-count : i64
+  8)
 (define compiler-backend-function-live-set-group-vars : i64
   0)
 (define compiler-backend-function-live-set-addressable-group-vars : i64
@@ -48645,6 +48660,12 @@
       (compiler_regalloc.compiler-reg-early-exit-prefix-count-current)]
     [saving-label : i64
       (compiler_regalloc.compiler-reg-early-exit-saving-label-current)]
+    ;; SW-1: the general placement's saving block is off limits for the same
+    ;; reason -- its label is where the prologue is spliced in.
+    [swb-saving-label : i64
+      (compiler-backend-function-state-i64
+        (compiler-backend-state-function-state backend-state)
+        compiler-backend-function-i64-swb-saving-label)]
     [i : i64 guard-prefix]
     (begin
       (while (< i n)
@@ -48653,7 +48674,7 @@
             (compiler-backend-const-hoist-block-label
               (compiler_ir_types.compiler-ir-block-seq-ref seq i))]
           [target : i64
-            (if (= label saving-label)
+            (if (or (= label saving-label) (= label swb-saving-label))
               (compiler_ir_types.compiler-ir-label-none)
               (compiler-backend-jump-only-target
                 backend-state
@@ -49377,6 +49398,25 @@
           (set! index (+ index 1))))
       out)))
 
+(define (compiler-backend-swb-bare-label?
+  [backend-state : CompilerBackendState]
+  [label : i64]) : bool
+  (let
+    [labels : (__tl_dyn-array i64)
+      (compiler-backend-function-state-i64-array
+        (compiler-backend-state-function-state backend-state)
+        compiler-backend-function-i64-array-swb-bare-labels)]
+    [i : i64 0]
+    [hit : bool false]
+    (begin
+      (while (and (not hit) (< i (array-length labels)))
+        (begin
+          (if (= (array-ref labels i) label)
+            (set! hit true)
+            unit)
+          (set! i (+ i 1))))
+      hit)))
+
 (define (compiler-backend-shared-return-block-count
   [backend-state : CompilerBackendState]
   [label : i64]
@@ -49392,12 +49432,14 @@
       (compiler-backend-function-state-string
         function-state
         compiler-backend-function-string-shrinkwrap-bare-label)]
-    (if (and
-      (not (string.eq bare-label ""))
-      (compiler-backend-string-prefix-at?
-        (compiler_ir_types.compiler-ir-label-text label)
-        bare-label
-        0))
+    (if (or
+      (and
+        (not (string.eq bare-label ""))
+        (compiler-backend-string-prefix-at?
+          (compiler_ir_types.compiler-ir-label-text label)
+          bare-label
+          0))
+      (compiler-backend-swb-bare-label? backend-state label))
       0
       (compiler-backend-instr-seq-return-count instrs))))
 
@@ -49486,15 +49528,21 @@
       (compiler-backend-function-state-string
         function-state
         compiler-backend-function-string-shrinkwrap-bare-label)]
-    (if (and
-      (not (string.eq bare-label ""))
-      (compiler-backend-string-prefix-at?
-        (compiler_ir_types.compiler-ir-label-text
-          (compiler-backend-function-state-i64
-            function-state
-            compiler-backend-function-i64-current-block-label))
-        bare-label
-        0))
+    (if (or
+      (and
+        (not (string.eq bare-label ""))
+        (compiler-backend-string-prefix-at?
+          (compiler_ir_types.compiler-ir-label-text
+            (compiler-backend-function-state-i64
+              function-state
+              compiler-backend-function-i64-current-block-label))
+          bare-label
+          0))
+      (compiler-backend-swb-bare-label?
+        backend-state
+        (compiler-backend-function-state-i64
+          function-state
+          compiler-backend-function-i64-current-block-label)))
       "    ret\n"
       (if (compiler-backend-use-shared-return-count?
         backend-state
@@ -77743,6 +77791,1360 @@
                           n))))))])]
         [_ blocks]))))
 
+;; ---------------------------------------------------------------------------
+;; SW-1: general shrink-wrapping -- the prologue at the dominator of the frame's
+;; uses, the epilogue at the returns that dominator dominates.
+;;
+;; Form (a) (`compiler_regalloc.compiler-reg-early-exit-shrinkwrap-function`) is
+;; an IR rewrite admitting ONE CFG shape: a prefix of blocks each proven to be a
+;; compare+branch on parameters or a bare return.  Anything richer in the prefix
+;; -- a global load, a descriptor derivation, a bounds check -- defeats it.
+;;
+;; Form (b) below is LLVM's rule (llvm/lib/CodeGen/ShrinkWrap.cpp:11-52) applied
+;; to the FINAL emitted text of the function, after the register plan, the
+;; scavenger, the const-hoist, the peephole owners and the rsp rebase have all
+;; run:
+;;
+;;   U = every emitted block whose text names a callee-saved register, names
+;;       %rsp or %rbp (ANY frame reference, including the ones no IR
+;;       instruction implies: emergency saves, cycle temps, outgoing stack
+;;       arguments, const-hoist slots, scavenged spills), pushes or pops,
+;;       contains a `call`, or leaves through a tail `jmp`.
+;;   S = the nearest common dominator of U, hoisted out of every loop.
+;;
+;; The text is the complete evidence.  A frame or callee-saved use that no IR
+;; instruction mentions is still a line naming %rsp or %r12, so the analysis
+;; cannot miss a user -- which is the property the placement needs, because a
+;; block emitted before the prologue that touches the frame is a miscompile,
+;; not a lost optimization.  Deriving U from the IR plus the assignment table
+;; would have to model every one of those emitter-internal frame consumers.
+;;
+;; Well-formedness (ShrinkWrap.cpp's "give up when the pair is not
+;; well-formed"): S must not be the entry (else nothing changes); every block
+;; reachable from S must be dominated by S, so the framed region is
+;; single-entry and no bypass path can merge into it before a return; no block
+;; outside that region may be in U; and S must not sit inside a loop.  The
+;; loop rule is the whole cost model: a block at loop depth 0 executes at most
+;; once per activation, so a depth-0 Save can never be hotter than entry and no
+;; block-frequency model is needed for the static form.
+;;
+;; Emission reuses form (a)'s splices unchanged.  The callee-save block and the
+;; prologue are spliced at S's label instead of at the function symbol, and
+;; every Return outside the framed region emits a bare `ret` -- no pops, no
+;; `add rsp`.  Because the analysis runs on the emitted text, the placement is
+;; decided by a first emission and applied by a second; the second re-runs the
+;; analysis and falls back to entry placement if it does not reproduce the same
+;; block, exactly as the three textual splices already fail closed.
+;;
+;; Windows keeps entry placement: its unwind program describes a fixed entry
+;; prologue and the `.seh_*` opcodes may not follow an interior label.  The
+;; target-parity gate therefore has to accept a Linux/Windows mismatch for a
+;; shrink-wrapped fixture explicitly.
+;;
+;; Interaction with form (a): form (a) still runs first, as an IR rewrite before
+;; allocation.  Where it fires, form (b) sees its saving block as an ordinary
+;; bypass block and may sink the prologue FURTHER; where it does not, form (b)
+;; runs on the plain CFG.  Both bare-return mechanisms coexist: form (a) marks
+;; its returns by label prefix, form (b) by label id.  The red-zone leaf
+;; decision is unchanged and takes precedence -- a function whose frame already
+;; lives in the red zone has no prologue to move, and form (b) is refused for it
+;; so the red zone is never traded away for a placement.
+(defstruct CompilerBackendSwbPlan
+  (label i64)
+  (bare (__tl_dyn-array i64))
+  (bare-count i64))
+
+(define (compiler-backend-swb-no-plan) : CompilerBackendSwbPlan
+  (CompilerBackendSwbPlan
+    (compiler_ir_types.compiler-ir-label-none)
+    (__tl_make-array i64 0)
+    0))
+
+;; A function whose emitted text carries more label nodes than this is not
+;; analysed.  The placement is a whole-function dominator computation with a
+;; linear label lookup, and the shapes it exists for are small; the cap keeps it
+;; off the compile-time critical path for the few very large emitted functions.
+(define compiler-backend-swb-node-limit : i64
+  384)
+
+;; Not a label: the sentinel that turns the placement off for one function after
+;; an applied placement failed to reproduce.
+(define compiler-backend-swb-refused : i64
+  -2)
+(define compiler-backend-swb-flag-frame : i64
+  1)
+(define compiler-backend-swb-flag-return : i64
+  2)
+(define compiler-backend-swb-flag-opaque : i64
+  4)
+
+;; `.L<name>:` -- the only label shape the emitter produces inside a function.
+(define (compiler-backend-swb-label-line?
+  [data : (Ptr u8)]
+  [start : i64]
+  [stop : i64]) : bool
+  (and
+    (>= (- stop start) 4)
+    (= (compiler-backend-peephole-byte-at data start) 46)
+    (= (compiler-backend-peephole-byte-at data (+ start 1)) 76)
+    (= (compiler-backend-peephole-byte-at data (- stop 1)) 58)))
+
+(define (compiler-backend-swb-count-nodes [text : String]) : i64
+  (let
+    [n : i64 (string.string-length text)]
+    [data : (Ptr u8)
+      (unsafe
+        (string-data text))]
+    [i : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< i n)
+        (let
+          [stop : i64 (compiler-backend-peephole-scan-byte-range data i n 10)]
+          (begin
+            (if (compiler-backend-swb-label-line? data i stop)
+              (set! count (+ count 1))
+              unit)
+            (set! i (+ stop 1)))))
+      count)))
+
+(define (compiler-backend-swb-count-lines [text : String]) : i64
+  (let
+    [n : i64 (string.string-length text)]
+    [data : (Ptr u8)
+      (unsafe
+        (string-data text))]
+    [i : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (set! i (+ (compiler-backend-peephole-scan-byte-range data i n 10) 1))
+          (set! count (+ count 1))))
+      count)))
+
+;; Label name span [lab-start, lab-end) excludes the trailing colon; the body of
+;; a node runs from the line after its label to the label line of the next node.
+(define (compiler-backend-swb-collect-nodes!
+  [text : String]
+  [lab-start : (__tl_dyn-array i64)]
+  [lab-end : (__tl_dyn-array i64)]
+  [body-start : (__tl_dyn-array i64)]
+  [body-end : (__tl_dyn-array i64)]) : unit
+  (let
+    [n : i64 (string.string-length text)]
+    [data : (Ptr u8)
+      (unsafe
+        (string-data text))]
+    [i : i64 0]
+    [k : i64 0]
+    (begin
+      (while (< i n)
+        (let
+          [stop : i64 (compiler-backend-peephole-scan-byte-range data i n 10)]
+          (begin
+            (if (compiler-backend-swb-label-line? data i stop)
+              (begin
+                (if (> k 0)
+                  (set! (array-ref body-end (- k 1)) i)
+                  unit)
+                (set! (array-ref lab-start k) i)
+                (set! (array-ref lab-end k) (- stop 1))
+                (set! (array-ref body-start k) (+ stop 1))
+                (set! k (+ k 1)))
+              unit)
+            (set! i (+ stop 1)))))
+      (if (> k 0)
+        (set! (array-ref body-end (- k 1)) n)
+        unit))))
+
+(define (compiler-backend-swb-span-eq?
+  [data : (Ptr u8)]
+  [a0 : i64]
+  [a1 : i64]
+  [b0 : i64]
+  [b1 : i64]) : bool
+  (if (not (= (- a1 a0) (- b1 b0)))
+    false
+    (let
+      [i : i64 0]
+      [len : i64 (- a1 a0)]
+      [ok : bool true]
+      (begin
+        (while (and ok (< i len))
+          (if (=
+            (compiler-backend-peephole-byte-at data (+ a0 i))
+            (compiler-backend-peephole-byte-at data (+ b0 i)))
+            (set! i (+ i 1))
+            (set! ok false)))
+        ok))))
+
+(define (compiler-backend-swb-span-eq-text?
+  [data : (Ptr u8)]
+  [a0 : i64]
+  [a1 : i64]
+  [needle : String]) : bool
+  (if (not (= (- a1 a0) (string.string-length needle)))
+    false
+    (let
+      [i : i64 0]
+      [len : i64 (- a1 a0)]
+      [ok : bool true]
+      (begin
+        (while (and ok (< i len))
+          (if (=
+            (compiler-backend-peephole-byte-at data (+ a0 i))
+            (cast (string.string-ref needle i) : i64))
+            (set! i (+ i 1))
+            (set! ok false)))
+        ok))))
+
+(define (compiler-backend-swb-find-node
+  [data : (Ptr u8)]
+  [lab-start : (__tl_dyn-array i64)]
+  [lab-end : (__tl_dyn-array i64)]
+  [count : i64]
+  [t0 : i64]
+  [t1 : i64]) : i64
+  (let
+    [i : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< found 0) (< i count))
+        (begin
+          (if (compiler-backend-swb-span-eq?
+            data
+            (array-ref lab-start i)
+            (array-ref lab-end i)
+            t0
+            t1)
+            (set! found i)
+            unit)
+          (set! i (+ i 1))))
+      found)))
+
+;; %rsp/%esp/%spl, %rbp/%ebp/%bpl/%bp, %rbx/%ebx/%bx/%bl/%bh and %r12..%r15 in
+;; every width.  The System V callee-saved set is GP-only -- every xmm register
+;; is caller-saved -- so no vector spelling can name a saved register, and the
+;; Windows path never reaches here.
+(define (compiler-backend-swb-frame-reg-at?
+  [data : (Ptr u8)]
+  [pos : i64]
+  [stop : i64]) : bool
+  (let
+    [b1 : i64
+      (if (< (+ pos 1) stop)
+        (compiler-backend-peephole-byte-at data (+ pos 1))
+        0)]
+    [b2 : i64
+      (if (< (+ pos 2) stop)
+        (compiler-backend-peephole-byte-at data (+ pos 2))
+        0)]
+    [b3 : i64
+      (if (< (+ pos 3) stop)
+        (compiler-backend-peephole-byte-at data (+ pos 3))
+        0)]
+    (cond
+      [(and (= b1 114) (= b2 49) (or (= b3 50) (= b3 51) (= b3 52) (= b3 53)))
+        true]
+      [(and (or (= b1 114) (= b1 101)) (= b2 115) (= b3 112)) true]
+      [(and (or (= b1 114) (= b1 101)) (= b2 98) (or (= b3 112) (= b3 120)))
+        true]
+      [(and (= b1 115) (= b2 112) (= b3 108)) true]
+      [(and (= b1 98) (or (= b2 112) (= b2 108) (= b2 120) (= b2 104))) true]
+      [else false])))
+
+(define (compiler-backend-swb-line-names-frame?
+  [data : (Ptr u8)]
+  [start : i64]
+  [stop : i64]) : bool
+  (let
+    [i : i64 start]
+    [hit : bool false]
+    (begin
+      (while (and (not hit) (< i stop))
+        (let
+          [at : i64 (compiler-backend-peephole-scan-byte-range data i stop 37)]
+          (if (>= at stop)
+            (set! i stop)
+            (begin
+              (if (compiler-backend-swb-frame-reg-at? data at stop)
+                (set! hit true)
+                unit)
+              (set! i (+ at 1))))))
+      hit)))
+
+(define (compiler-backend-swb-call-mnemonic?
+  [data : (Ptr u8)]
+  [start : i64]
+  [len : i64]) : bool
+  (and
+    (>= len 4)
+    (= (compiler-backend-peephole-byte-at data start) 99)
+    (= (compiler-backend-peephole-byte-at data (+ start 1)) 97)
+    (= (compiler-backend-peephole-byte-at data (+ start 2)) 108)
+    (= (compiler-backend-peephole-byte-at data (+ start 3)) 108)))
+
+;; Canonical register bit for the `%name` at `pos`: 0..15 for the general
+;; purpose file in encoding order, 16 for the whole vector file (collapsed --
+;; the saving prologue never needs finer resolution), -1 for anything that is
+;; not a register operand (`%rip`).
+(define (compiler-backend-swb-gp-pair-bit [c1 : i64] [c2 : i64]) : i64
+  (cond
+    [(and (= c1 97) (= c2 120)) 0]
+    [(and (= c1 99) (= c2 120)) 1]
+    [(and (= c1 100) (= c2 120)) 2]
+    [(and (= c1 98) (= c2 120)) 3]
+    [(and (= c1 115) (= c2 112)) 4]
+    [(and (= c1 98) (= c2 112)) 5]
+    [(and (= c1 115) (= c2 105)) 6]
+    [(and (= c1 100) (= c2 105)) 7]
+    [(and (= c1 97) (or (= c2 108) (= c2 104))) 0]
+    [(and (= c1 99) (or (= c2 108) (= c2 104))) 1]
+    [(and (= c1 100) (or (= c2 108) (= c2 104))) 2]
+    [(and (= c1 98) (or (= c2 108) (= c2 104))) 3]
+    [else -1]))
+
+(define (compiler-backend-swb-reg-bit
+  [data : (Ptr u8)]
+  [pos : i64]
+  [stop : i64]) : i64
+  (let
+    [b1 : i64
+      (if (< (+ pos 1) stop)
+        (compiler-backend-peephole-byte-at data (+ pos 1))
+        0)]
+    [b2 : i64
+      (if (< (+ pos 2) stop)
+        (compiler-backend-peephole-byte-at data (+ pos 2))
+        0)]
+    [b3 : i64
+      (if (< (+ pos 3) stop)
+        (compiler-backend-peephole-byte-at data (+ pos 3))
+        0)]
+    (cond
+      [(and (or (= b1 120) (= b1 121) (= b1 122)) (= b2 109) (= b3 109)) 16]
+      [(= b1 114)
+        (cond
+          [(or (= b2 56) (= b2 57)) (- b2 48)]
+          [(and (= b2 49) (>= b3 48) (<= b3 53)) (+ 10 (- b3 48))]
+          [else (compiler-backend-swb-gp-pair-bit b2 b3)])]
+      [(= b1 101) (compiler-backend-swb-gp-pair-bit b2 b3)]
+      [else (compiler-backend-swb-gp-pair-bit b1 b2)])))
+
+;; The register file a stretch of emitted text names, as a bitmask.
+(define (compiler-backend-swb-text-reg-mask [text : String]) : i64
+  (let
+    [n : i64 (string.string-length text)]
+    [data : (Ptr u8)
+      (unsafe
+        (string-data text))]
+    [i : i64 0]
+    [mask : i64 0]
+    (begin
+      (while (< i n)
+        (let
+          [at : i64 (compiler-backend-peephole-scan-byte-range data i n 37)]
+          (if (>= at n)
+            (set! i n)
+            (let
+              [bit : i64 (compiler-backend-swb-reg-bit data at n)]
+              (begin
+                (if (>= bit 0)
+                  (set! mask (bit-or mask (shl 1 bit)))
+                  unit)
+                (set! i (+ at 1)))))))
+      mask)))
+
+(define (compiler-backend-swb-line-names-mask?
+  [data : (Ptr u8)]
+  [start : i64]
+  [stop : i64]
+  [mask : i64]) : bool
+  (if (= mask 0)
+    false
+    (let
+      [i : i64 start]
+      [hit : bool false]
+      (begin
+        (while (and (not hit) (< i stop))
+          (let
+            [at : i64
+              (compiler-backend-peephole-scan-byte-range data i stop 37)]
+            (if (>= at stop)
+              (set! i stop)
+              (let
+                [bit : i64 (compiler-backend-swb-reg-bit data at stop)]
+                (begin
+                  (if (and (>= bit 0) (not (= (bit-and mask (shl 1 bit)) 0)))
+                    (set! hit true)
+                    unit)
+                  (set! i (+ at 1)))))))
+        hit))))
+
+;; The last `%` of a line -- the destination register of a two-operand form.
+(define (compiler-backend-swb-line-tail-reg
+  [data : (Ptr u8)]
+  [start : i64]
+  [stop : i64]) : i64
+  (let
+    [i : i64 (- stop 1)]
+    [found : i64 -1]
+    (begin
+      (while (and (< found 0) (>= i start))
+        (begin
+          (if (= (compiler-backend-peephole-byte-at data i) 37)
+            (set! found i)
+            unit)
+          (set! i (- i 1))))
+      found)))
+
+(define (compiler-backend-swb-line-has-rbp-mem?
+  [data : (Ptr u8)]
+  [start : i64]
+  [stop : i64]) : bool
+  (let
+    [i : i64 start]
+    [hit : bool false]
+    (begin
+      (while (and (not hit) (< i stop))
+        (let
+          [at : i64 (compiler-backend-peephole-scan-byte-range data i stop 37)]
+          (if (>= at stop)
+            (set! i stop)
+            (begin
+              (if (and
+                (< (+ at 4) stop)
+                (= (compiler-backend-peephole-byte-at data (+ at 1)) 114)
+                (= (compiler-backend-peephole-byte-at data (+ at 2)) 98)
+                (= (compiler-backend-peephole-byte-at data (+ at 3)) 112)
+                (= (compiler-backend-peephole-byte-at data (+ at 4)) 41))
+                (set! hit true)
+                unit)
+              (set! i (+ at 1))))))
+      hit)))
+
+;; The epilogue is the code being PLACED, not a use of the frame: a bypass
+;; return whose only frame reference is its own `add rsp` / pop run / `leave`
+;; is exactly the block the placement exists to make bare. Recognize the
+;; trailing epilogue run in front of a `ret` and exclude it from U.
+;; The shapes the emitter produces here are `addq $N, %rsp` / `leaq D(%r_), %rsp`
+;; (rsp restore), a `popq` run (FPO push mode), `leave`, and the rbp-frame
+;; callee-save reloads `movq D(%rbp), %CSR`. A reload from an %rsp-relative slot
+;; is NOT one of them and keeps its block in U.
+(define (compiler-backend-swb-epilogue-line?
+  [data : (Ptr u8)]
+  [start : i64]
+  [stop : i64]
+  [kind : i64]) : bool
+  (cond
+    [(= kind compiler-backend-control-mnemonic-pop) true]
+    [(= kind compiler-backend-control-mnemonic-leave) true]
+    [(or
+        (= kind compiler-backend-control-mnemonic-addq)
+        (= kind compiler-backend-control-mnemonic-leaq))
+      (let
+        [pct : i64 (compiler-backend-swb-line-tail-reg data start stop)]
+        (and
+          (>= pct 0)
+          (= (+ pct 4) stop)
+          (= (compiler-backend-peephole-byte-at data (+ pct 1)) 114)
+          (= (compiler-backend-peephole-byte-at data (+ pct 2)) 115)
+          (= (compiler-backend-peephole-byte-at data (+ pct 3)) 112)))]
+    [(= kind compiler-backend-control-mnemonic-movq)
+      (let
+        [pct : i64 (compiler-backend-swb-line-tail-reg data start stop)]
+        (and
+          (>= pct 0)
+          (compiler-backend-swb-frame-reg-at? data pct stop)
+          (compiler-backend-swb-line-has-rbp-mem? data start stop)))]
+    [else false]))
+
+;; First byte of the trailing epilogue run in front of this node's `ret`, or the
+;; node end when it has none.
+(define (compiler-backend-swb-epilogue-start
+  [data : (Ptr u8)]
+  [body-start : i64]
+  [body-stop : i64]) : i64
+  (let
+    [i : i64 body-start]
+    [run : i64 -1]
+    [answer : i64 body-stop]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< i body-stop))
+        (let
+          [stop : i64
+            (compiler-backend-peephole-scan-byte-range data i body-stop 10)]
+          [m : i64 i]
+          (begin
+            (while (and
+              (< m stop)
+              (= (compiler-backend-peephole-byte-at data m) 32))
+              (set! m (+ m 1)))
+            (if (>= m stop)
+              unit
+              (let
+                [tok : i64
+                  (-
+                    (compiler-backend-peephole-scan-byte-range data m stop 32)
+                    m)]
+                [kind : i64 (compiler-backend-control-mnemonic-kind data m tok)]
+                (cond
+                  [(= kind compiler-backend-control-mnemonic-ret)
+                    (begin
+                      (set!
+                        answer
+                        (if (>= run 0)
+                          run
+                          m))
+                      (set! done true))]
+                  [(compiler-backend-swb-epilogue-line? data m stop kind)
+                    (if (< run 0)
+                      (set! run m)
+                      unit)]
+                  [else (set! run -1)])))
+            (set! i (+ stop 1)))))
+      answer)))
+
+;; Scan one node's body: classify it for U, record whether it returns, and
+;; append its successors.  Returns the flag word; `succ-count` is written
+;; through the supplied one-element array so the edge list stays flat.
+(define (compiler-backend-swb-scan-node!
+  [data : (Ptr u8)]
+  [lab-start : (__tl_dyn-array i64)]
+  [lab-end : (__tl_dyn-array i64)]
+  [node-count : i64]
+  [index : i64]
+  [body-start : i64]
+  [body-stop : i64]
+  [return-label : String]
+  [prologue-mask : i64]
+  [succ : (__tl_dyn-array i64)]
+  [succ-cursor : (__tl_dyn-array i64)]) : i64
+  (let
+    [epilogue : i64
+      (compiler-backend-swb-epilogue-start data body-start body-stop)]
+    [i : i64 body-start]
+    [flags : i64 0]
+    [falls : bool true]
+    (begin
+      (while (< i body-stop)
+        (let
+          [stop : i64
+            (compiler-backend-peephole-scan-byte-range data i body-stop 10)]
+          [m : i64 i]
+          (begin
+            (while (and
+              (< m stop)
+              (= (compiler-backend-peephole-byte-at data m) 32))
+              (set! m (+ m 1)))
+            (if (>= m stop)
+              unit
+              (let
+                [tok : i64
+                  (-
+                    (compiler-backend-peephole-scan-byte-range data m stop 32)
+                    m)]
+                [kind : i64 (compiler-backend-control-mnemonic-kind data m tok)]
+                [arg : i64 (+ m tok)]
+                (begin
+                  (while (and
+                    (< arg stop)
+                    (= (compiler-backend-peephole-byte-at data arg) 32))
+                    (set! arg (+ arg 1)))
+                  (cond
+                    [(compiler-backend-swb-call-mnemonic? data m tok)
+                      (set!
+                        flags
+                        (bit-or flags compiler-backend-swb-flag-frame))]
+                    [(>= m epilogue)
+                      ;; The trailing epilogue run: the code being placed.
+                      (if (= kind compiler-backend-control-mnemonic-ret)
+                        (begin
+                          (set!
+                            flags
+                            (bit-or flags compiler-backend-swb-flag-return))
+                          (set! falls false))
+                        unit)]
+                    [(= kind compiler-backend-control-mnemonic-ret)
+                      (begin
+                        (set!
+                          flags
+                          (bit-or flags compiler-backend-swb-flag-return))
+                        (set! falls false))]
+                    [(or
+                        (= kind compiler-backend-control-mnemonic-push)
+                        (= kind compiler-backend-control-mnemonic-pop)
+                        (= kind compiler-backend-control-mnemonic-leave))
+                      (set!
+                        flags
+                        (bit-or flags compiler-backend-swb-flag-frame))]
+                    [(and
+                        (>= tok 1)
+                        (= (compiler-backend-peephole-byte-at data m) 106))
+                      ;; Every `j*` mnemonic: `jmp` ends the node, a conditional
+                      ;; jump keeps its fall-through edge.
+                      (let
+                        [target-stop : i64 stop]
+                        (begin
+                          (if (= kind compiler-backend-control-mnemonic-jmp)
+                            (set! falls false)
+                            unit)
+                          (cond
+                            [(>= arg stop)
+                              (set!
+                                flags
+                                (bit-or flags compiler-backend-swb-flag-opaque))]
+                            [(= (compiler-backend-peephole-byte-at data arg) 42)
+                              (set!
+                                flags
+                                (bit-or flags compiler-backend-swb-flag-opaque))]
+                            [(not
+                                (and
+                                  (=
+                                    (compiler-backend-peephole-byte-at data arg)
+                                    46)
+                                  (=
+                                    (compiler-backend-peephole-byte-at
+                                      data
+                                      (+ arg 1))
+                                    76)))
+                              ;; A tail `jmp` to another function: the frame has
+                              ;; to be gone before it, so this block uses it.
+                              (set!
+                                flags
+                                (bit-or flags compiler-backend-swb-flag-frame))]
+                            [(compiler-backend-swb-span-eq-text?
+                                data
+                                arg
+                                target-stop
+                                (compiler-backend-global-shared-view
+                                  return-label))
+                              ;; The shared epilogue is the epilogue being
+                              ;; placed, not a use of it: this edge is a return.
+                              (set!
+                                flags
+                                (bit-or flags compiler-backend-swb-flag-return))]
+                            [else
+                              (let
+                                [t : i64
+                                  (compiler-backend-swb-find-node
+                                    data
+                                    (compiler-backend-global-shared-view
+                                      lab-start)
+                                    (compiler-backend-global-shared-view
+                                      lab-end)
+                                    node-count
+                                    arg
+                                    target-stop)]
+                                (if (< t 0)
+                                  (set!
+                                    flags
+                                    (bit-or
+                                      flags
+                                      compiler-backend-swb-flag-opaque))
+                                  (begin
+                                    (set!
+                                      (array-ref succ (array-ref succ-cursor 0))
+                                      t)
+                                    (set!
+                                      (array-ref succ-cursor 0)
+                                      (+ (array-ref succ-cursor 0) 1)))))])))]
+                    [else unit])
+                  (if (and
+                    (< m epilogue)
+                    (or
+                      (compiler-backend-swb-line-names-frame? data m stop)
+                      ;; A register the saving prologue writes (a parameter
+                      ;; home) or still has to read (an incoming argument
+                      ;; register) may not be named before that prologue runs.
+                      (compiler-backend-swb-line-names-mask?
+                        data
+                        m
+                        stop
+                        prologue-mask)))
+                    (set! flags (bit-or flags compiler-backend-swb-flag-frame))
+                    unit))))
+            (set! i (+ stop 1)))))
+      (if (and falls (< (+ index 1) node-count))
+        (begin
+          (set! (array-ref succ (array-ref succ-cursor 0)) (+ index 1))
+          (set! (array-ref succ-cursor 0) (+ (array-ref succ-cursor 0) 1)))
+        unit)
+      flags)))
+
+;; The entry block decides almost every function: if it already names the frame
+;; or a callee-saved register there is nothing to sink, and the whole placement
+;; is refused before any edge is resolved.  This is the filter that keeps the
+;; analysis off the compile-time critical path.
+(define (compiler-backend-swb-node-holds-frame?
+  [data : (Ptr u8)]
+  [body-start : i64]
+  [body-stop : i64]
+  [prologue-mask : i64]) : bool
+  (let
+    [epilogue : i64
+      (compiler-backend-swb-epilogue-start data body-start body-stop)]
+    [i : i64 body-start]
+    [hit : bool false]
+    (begin
+      (while (and (not hit) (< i body-stop))
+        (let
+          [stop : i64
+            (compiler-backend-peephole-scan-byte-range data i body-stop 10)]
+          [m : i64 i]
+          (begin
+            (while (and
+              (< m stop)
+              (= (compiler-backend-peephole-byte-at data m) 32))
+              (set! m (+ m 1)))
+            (if (or (>= m stop) (>= m epilogue))
+              unit
+              (let
+                [tok : i64
+                  (-
+                    (compiler-backend-peephole-scan-byte-range data m stop 32)
+                    m)]
+                [kind : i64 (compiler-backend-control-mnemonic-kind data m tok)]
+                (if (or
+                  (compiler-backend-swb-call-mnemonic? data m tok)
+                  (= kind compiler-backend-control-mnemonic-push)
+                  (= kind compiler-backend-control-mnemonic-pop)
+                  (= kind compiler-backend-control-mnemonic-leave)
+                  (compiler-backend-swb-line-names-frame? data m stop)
+                  (compiler-backend-swb-line-names-mask?
+                    data
+                    m
+                    stop
+                    prologue-mask))
+                  (set! hit true)
+                  unit)))
+            (set! i (+ stop 1)))))
+      hit)))
+
+(define (compiler-backend-swb-postorder!
+  [succ-start : (__tl_dyn-array i64)]
+  [succ-count : (__tl_dyn-array i64)]
+  [succ : (__tl_dyn-array i64)]
+  [node-count : i64]
+  [po : (__tl_dyn-array i64)]
+  [order : (__tl_dyn-array i64)]
+  [root : i64]) : i64
+  (let
+    [stack : (__tl_dyn-array i64) (__tl_make-array i64 node-count)]
+    [cursor : (__tl_dyn-array i64) (__tl_make-array i64 node-count)]
+    [visited : (__tl_dyn-array i64) (__tl_make-array i64 node-count)]
+    [sp : i64 1]
+    [count : i64 0]
+    (begin
+      (set! (array-ref visited root) 1)
+      (set! (array-ref cursor root) 0)
+      (set! (array-ref stack 0) root)
+      (while (> sp 0)
+        (let
+          [v : i64 (array-ref stack (- sp 1))]
+          (if (< (array-ref cursor v) (array-ref succ-count v))
+            (let
+              [w : i64
+                (array-ref
+                  succ
+                  (+ (array-ref succ-start v) (array-ref cursor v)))]
+              (begin
+                (set! (array-ref cursor v) (+ (array-ref cursor v) 1))
+                (if (= (array-ref visited w) 0)
+                  (begin
+                    (set! (array-ref visited w) 1)
+                    (set! (array-ref cursor w) 0)
+                    (set! (array-ref stack sp) w)
+                    (set! sp (+ sp 1)))
+                  unit)))
+            (begin
+              (set! sp (- sp 1))
+              (set! (array-ref po v) count)
+              (set! (array-ref order count) v)
+              (set! count (+ count 1))))))
+      count)))
+
+;; Cooper/Harvey/Kennedy: walk both nodes up the partially built dominator tree
+;; until they meet, ordering the walk by postorder number.
+(define (compiler-backend-swb-intersect
+  [idom : (__tl_dyn-array i64)]
+  [po : (__tl_dyn-array i64)]
+  [left : i64]
+  [right : i64]) : i64
+  (let
+    [a : i64 left]
+    [b : i64 right]
+    (begin
+      (while (not (= a b))
+        (begin
+          (while (< (array-ref po a) (array-ref po b))
+            (set! a (array-ref idom a)))
+          (while (< (array-ref po b) (array-ref po a))
+            (set! b (array-ref idom b)))))
+      a)))
+
+(define (compiler-backend-swb-build-idom!
+  [pred-start : (__tl_dyn-array i64)]
+  [pred-count : (__tl_dyn-array i64)]
+  [pred : (__tl_dyn-array i64)]
+  [po : (__tl_dyn-array i64)]
+  [order : (__tl_dyn-array i64)]
+  [reach : i64]
+  [idom : (__tl_dyn-array i64)]
+  [root : i64]) : unit
+  (let
+    [changed : bool true]
+    (begin
+      (set! (array-ref idom root) root)
+      (while changed
+        (begin
+          (set! changed false)
+          (let
+            [i : i64 (- reach 1)]
+            (while (>= i 0)
+              (let
+                [b : i64 (array-ref order i)]
+                (begin
+                  (if (= b root)
+                    unit
+                    (let
+                      [j : i64 0]
+                      [best : i64 -1]
+                      (begin
+                        (while (< j (array-ref pred-count b))
+                          (let
+                            [p : i64
+                              (array-ref pred (+ (array-ref pred-start b) j))]
+                            (begin
+                              (if (and
+                                (>= (array-ref po p) 0)
+                                (>= (array-ref idom p) 0))
+                                (set!
+                                  best
+                                  (if (< best 0)
+                                    p
+                                    (compiler-backend-swb-intersect
+                                      (compiler-backend-global-shared-view idom)
+                                      (compiler-backend-global-shared-view po)
+                                      p
+                                      best)))
+                                unit)
+                              (set! j (+ j 1)))))
+                        (if (and (>= best 0) (not (= (array-ref idom b) best)))
+                          (begin
+                            (set! (array-ref idom b) best)
+                            (set! changed true))
+                          unit))))
+                  (set! i (- i 1)))))))))))
+
+(define (compiler-backend-swb-dominates?
+  [idom : (__tl_dyn-array i64)]
+  [node : i64]
+  [dominator : i64]
+  [root : i64]) : bool
+  (let
+    [x : i64 node]
+    [done : bool false]
+    [ok : bool false]
+    (begin
+      (while (not done)
+        (cond
+          [(= x dominator)
+            (begin
+              (set! ok true)
+              (set! done true))]
+          [(< x 0) (set! done true)]
+          [(= x root) (set! done true)]
+          [else (set! x (array-ref idom x))]))
+      ok)))
+
+;; Reachability from `from`, written into `mark` (1 = reached).  Marking on
+;; push keeps every node on the stack at most once.
+(define (compiler-backend-swb-reach!
+  [succ-start : (__tl_dyn-array i64)]
+  [succ-count : (__tl_dyn-array i64)]
+  [succ : (__tl_dyn-array i64)]
+  [node-count : i64]
+  [from : i64]
+  [mark : (__tl_dyn-array i64)]) : unit
+  (let
+    [stack : (__tl_dyn-array i64) (__tl_make-array i64 node-count)]
+    [sp : i64 0]
+    [i : i64 0]
+    (begin
+      (while (< i node-count)
+        (begin
+          (set! (array-ref mark i) 0)
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (< i (array-ref succ-count from))
+        (let
+          [w : i64 (array-ref succ (+ (array-ref succ-start from) i))]
+          (begin
+            (if (= (array-ref mark w) 0)
+              (begin
+                (set! (array-ref mark w) 1)
+                (set! (array-ref stack sp) w)
+                (set! sp (+ sp 1)))
+              unit)
+            (set! i (+ i 1)))))
+      (while (> sp 0)
+        (let
+          [v : i64 (array-ref stack (- sp 1))]
+          (begin
+            (set! sp (- sp 1))
+            (let
+              [j : i64 0]
+              (while (< j (array-ref succ-count v))
+                (let
+                  [w : i64 (array-ref succ (+ (array-ref succ-start v) j))]
+                  (begin
+                    (if (= (array-ref mark w) 0)
+                      (begin
+                        (set! (array-ref mark w) 1)
+                        (set! (array-ref stack sp) w)
+                        (set! sp (+ sp 1)))
+                      unit)
+                    (set! j (+ j 1))))))))))))
+
+;; Walk the chosen dominator up until it satisfies every well-formedness rule,
+;; or give up.  Moving up can only shrink the bypass region, so the "no frame
+;; use outside the region" and "the region is single-entry" tests improve
+;; monotonically; only "the bypass still returns" can be lost by moving up, so
+;; it is tested last, once.
+(define (compiler-backend-swb-choose-node
+  [succ-start : (__tl_dyn-array i64)]
+  [succ-count : (__tl_dyn-array i64)]
+  [succ : (__tl_dyn-array i64)]
+  [flags : (__tl_dyn-array i64)]
+  [po : (__tl_dyn-array i64)]
+  [idom : (__tl_dyn-array i64)]
+  [block-start : (__tl_dyn-array i64)]
+  [node-count : i64]) : i64
+  (let
+    [mark : (__tl_dyn-array i64) (__tl_make-array i64 node-count)]
+    [candidate : i64 -1]
+    [i : i64 0]
+    [steps : i64 0]
+    [answer : i64 -1]
+    [done : bool false]
+    (begin
+      ;; S starts at the nearest common dominator of every block that uses the
+      ;; frame or a callee-saved register.
+      (while (< i node-count)
+        (begin
+          (if (and
+            (>= (array-ref po i) 0)
+            (not
+              (=
+                (bit-and (array-ref flags i) compiler-backend-swb-flag-frame)
+                0)))
+            (set!
+              candidate
+              (if (< candidate 0)
+                i
+                (compiler-backend-swb-intersect
+                  (compiler-backend-global-shared-view idom)
+                  (compiler-backend-global-shared-view po)
+                  candidate
+                  i)))
+            unit)
+          (set! i (+ i 1))))
+      (while (not done)
+        (cond
+          [(< candidate 0) (set! done true)]
+          [(= candidate 0) (set! done true)]
+          [(> steps node-count) (set! done true)]
+          [else
+            (let
+              [reject : bool false]
+              (begin
+                (set! steps (+ steps 1))
+                ;; The prologue may not run more than once per activation.
+                (compiler-backend-swb-reach!
+                  (compiler-backend-global-shared-view succ-start)
+                  (compiler-backend-global-shared-view succ-count)
+                  (compiler-backend-global-shared-view succ)
+                  node-count
+                  candidate
+                  (compiler-backend-global-shared-view mark))
+                (if (= (array-ref mark candidate) 1)
+                  (set! reject true)
+                  unit)
+                ;; Every block reachable from S is dominated by S: the framed
+                ;; region is single-entry and no bypass path merges into it.
+                (if reject
+                  unit
+                  (let
+                    [j : i64 0]
+                    (while (< j node-count)
+                      (begin
+                        (if (and
+                          (= (array-ref mark j) 1)
+                          (not
+                            (compiler-backend-swb-dominates?
+                              (compiler-backend-global-shared-view idom)
+                              j
+                              candidate
+                              0)))
+                          (set! reject true)
+                          unit)
+                        (set! j (+ j 1))))))
+                ;; Nothing outside the region may touch the frame.  By
+                ;; construction of U this holds; assert it against the text.
+                (if reject
+                  unit
+                  (let
+                    [j : i64 0]
+                    (while (< j node-count)
+                      (begin
+                        (if (and
+                          (>= (array-ref po j) 0)
+                          (not
+                            (compiler-backend-swb-dominates?
+                              (compiler-backend-global-shared-view idom)
+                              j
+                              candidate
+                              0))
+                          (not
+                            (=
+                              (bit-and
+                                (array-ref flags j)
+                                compiler-backend-swb-flag-frame)
+                              0)))
+                          (set! reject true)
+                          unit)
+                        (set! j (+ j 1))))))
+                ;; The prologue is spliced at a block label, so S has to be one.
+                (if (= (array-ref block-start candidate) 0)
+                  (set! reject true)
+                  unit)
+                (if reject
+                  (set! candidate (array-ref idom candidate))
+                  (begin
+                    (set! answer candidate)
+                    (set! done true)))))]))
+      ;; A placement that bypasses no return saves nothing.
+      (if (< answer 0)
+        -1
+        (let
+          [j : i64 0]
+          [bypass-return : bool false]
+          (begin
+            (while (< j node-count)
+              (begin
+                (if (and
+                  (>= (array-ref po j) 0)
+                  (not
+                    (compiler-backend-swb-dominates?
+                      (compiler-backend-global-shared-view idom)
+                      j
+                      answer
+                      0))
+                  (not
+                    (=
+                      (bit-and
+                        (array-ref flags j)
+                        compiler-backend-swb-flag-return)
+                      0)))
+                  (set! bypass-return true)
+                  unit)
+                (set! j (+ j 1))))
+            (if bypass-return
+              answer
+              -1)))))))
+
+(define (compiler-backend-swb-plan-for
+  [text : String]
+  [label-scope : String]
+  [return-label : String]
+  [prologue-mask : i64]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : CompilerBackendSwbPlan
+  (let
+    [data : (Ptr u8)
+      (unsafe
+        (string-data text))]
+    [node-count : i64
+      (compiler-backend-swb-count-nodes
+        (compiler-backend-global-shared-view text))]
+    (if (or (< node-count 3) (> node-count compiler-backend-swb-node-limit))
+      (compiler-backend-swb-no-plan)
+      (let
+        [lab-start : (__tl_dyn-array i64) (__tl_make-array i64 node-count)]
+        [lab-end : (__tl_dyn-array i64) (__tl_make-array i64 node-count)]
+        [body-start : (__tl_dyn-array i64) (__tl_make-array i64 node-count)]
+        [body-end : (__tl_dyn-array i64) (__tl_make-array i64 node-count)]
+        [_collect : unit
+          (compiler-backend-swb-collect-nodes!
+            (compiler-backend-global-shared-view text)
+            (compiler-backend-global-shared-view lab-start)
+            (compiler-backend-global-shared-view lab-end)
+            (compiler-backend-global-shared-view body-start)
+            (compiler-backend-global-shared-view body-end))]
+        (if (compiler-backend-swb-node-holds-frame?
+          data
+          (array-ref body-start 0)
+          (array-ref body-end 0)
+          prologue-mask)
+          (compiler-backend-swb-no-plan)
+          (let
+            [edge-cap : i64
+              (+
+                (compiler-backend-swb-count-lines
+                  (compiler-backend-global-shared-view text))
+                node-count)]
+            [succ : (__tl_dyn-array i64) (__tl_make-array i64 edge-cap)]
+            [succ-start : (__tl_dyn-array i64) (__tl_make-array i64 node-count)]
+            [succ-count : (__tl_dyn-array i64) (__tl_make-array i64 node-count)]
+            [flags : (__tl_dyn-array i64) (__tl_make-array i64 node-count)]
+            [cursor : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+            [opaque : bool false]
+            [_scan : unit
+              (let
+                [i : i64 0]
+                (while (< i node-count)
+                  (begin
+                    (set! (array-ref succ-start i) (array-ref cursor 0))
+                    (set!
+                      (array-ref flags i)
+                      (compiler-backend-swb-scan-node!
+                        data
+                        (compiler-backend-global-shared-view lab-start)
+                        (compiler-backend-global-shared-view lab-end)
+                        node-count
+                        i
+                        (array-ref body-start i)
+                        (array-ref body-end i)
+                        (compiler-backend-global-shared-view return-label)
+                        prologue-mask
+                        (compiler-backend-global-shared-view succ)
+                        (compiler-backend-global-shared-view cursor)))
+                    (set!
+                      (array-ref succ-count i)
+                      (- (array-ref cursor 0) (array-ref succ-start i)))
+                    (if (not
+                      (=
+                        (bit-and
+                          (array-ref flags i)
+                          compiler-backend-swb-flag-opaque)
+                        0))
+                      (set! opaque true)
+                      unit)
+                    (set! i (+ i 1)))))]
+            (if opaque
+              (compiler-backend-swb-no-plan)
+              (let
+                [po : (__tl_dyn-array i64) (__tl_make-array i64 node-count)]
+                [order : (__tl_dyn-array i64) (__tl_make-array i64 node-count)]
+                [idom : (__tl_dyn-array i64) (__tl_make-array i64 node-count)]
+                [pred-start : (__tl_dyn-array i64)
+                  (__tl_make-array i64 node-count)]
+                [pred-count : (__tl_dyn-array i64)
+                  (__tl_make-array i64 node-count)]
+                [pred : (__tl_dyn-array i64) (__tl_make-array i64 edge-cap)]
+                [block-start : (__tl_dyn-array i64)
+                  (__tl_make-array i64 node-count)]
+                [_init : unit
+                  (let
+                    [i : i64 0]
+                    (while (< i node-count)
+                      (begin
+                        (set! (array-ref po i) -1)
+                        (set! (array-ref idom i) -1)
+                        (set! (array-ref pred-count i) 0)
+                        (set! i (+ i 1)))))]
+                [reach : i64
+                  (compiler-backend-swb-postorder!
+                    (compiler-backend-global-shared-view succ-start)
+                    (compiler-backend-global-shared-view succ-count)
+                    (compiler-backend-global-shared-view succ)
+                    node-count
+                    (compiler-backend-global-shared-view po)
+                    (compiler-backend-global-shared-view order)
+                    0)]
+                [_preds : unit
+                  (let
+                    [i : i64 0]
+                    [fill : i64 0]
+                    (begin
+                      (while (< i node-count)
+                        (let
+                          [j : i64 0]
+                          (begin
+                            (while (< j (array-ref succ-count i))
+                              (begin
+                                (set!
+                                  (array-ref
+                                    pred-count
+                                    (array-ref
+                                      succ
+                                      (+ (array-ref succ-start i) j)))
+                                  (+
+                                    (array-ref
+                                      pred-count
+                                      (array-ref
+                                        succ
+                                        (+ (array-ref succ-start i) j)))
+                                    1))
+                                (set! j (+ j 1))))
+                            (set! i (+ i 1)))))
+                      (set! i 0)
+                      (while (< i node-count)
+                        (begin
+                          (set! (array-ref pred-start i) fill)
+                          (set! fill (+ fill (array-ref pred-count i)))
+                          (set! (array-ref pred-count i) 0)
+                          (set! i (+ i 1))))
+                      (set! i 0)
+                      (while (< i node-count)
+                        (let
+                          [j : i64 0]
+                          (begin
+                            (while (< j (array-ref succ-count i))
+                              (let
+                                [w : i64
+                                  (array-ref
+                                    succ
+                                    (+ (array-ref succ-start i) j))]
+                                (begin
+                                  (set!
+                                    (array-ref
+                                      pred
+                                      (+
+                                        (array-ref pred-start w)
+                                        (array-ref pred-count w)))
+                                    i)
+                                  (set!
+                                    (array-ref pred-count w)
+                                    (+ (array-ref pred-count w) 1))
+                                  (set! j (+ j 1)))))
+                            (set! i (+ i 1)))))
+                      unit))]
+                [_idom : unit
+                  (compiler-backend-swb-build-idom!
+                    (compiler-backend-global-shared-view pred-start)
+                    (compiler-backend-global-shared-view pred-count)
+                    (compiler-backend-global-shared-view pred)
+                    (compiler-backend-global-shared-view po)
+                    (compiler-backend-global-shared-view order)
+                    reach
+                    (compiler-backend-global-shared-view idom)
+                    0)]
+                [seq : compiler_ir_types.CompilerIrBlockSeq
+                  (compiler_liveness.compiler-live-ir-block-list-to-seq blocks)]
+                [block-count : i64
+                  (compiler_ir_types.compiler-ir-block-seq-count
+                    (compiler-backend-global-shared-view seq))]
+                [block-index : (__tl_dyn-array i64)
+                  (__tl_make-array i64 block-count)]
+                [_blocks : unit
+                  (let
+                    [b : i64 0]
+                    [scan : i64 0]
+                    (while (< b block-count)
+                      (match (compiler_ir_types.compiler-ir-block-seq-ref
+                        (compiler-backend-global-shared-view seq)
+                        b)
+                        [(compiler_ir_types.CompilerIrBlock.Block label _)
+                          (let
+                            [asm : String
+                              (compiler-backend-asm-label
+                                (compiler-backend-global-shared-view
+                                  label-scope)
+                                label)]
+                            [found : i64 -1]
+                            [i : i64 scan]
+                            (begin
+                              (while (and (< found 0) (< i node-count))
+                                (begin
+                                  (if (compiler-backend-swb-span-eq-text?
+                                    data
+                                    (array-ref lab-start i)
+                                    (array-ref lab-end i)
+                                    (compiler-backend-global-shared-view asm))
+                                    (set! found i)
+                                    unit)
+                                  (set! i (+ i 1))))
+                              (set! (array-ref block-index b) found)
+                              (if (>= found 0)
+                                (begin
+                                  (set! (array-ref block-start found) 1)
+                                  (set! scan (+ found 1)))
+                                unit)
+                              (set! b (+ b 1))))])))]
+                [chosen : i64
+                  (compiler-backend-swb-choose-node
+                    (compiler-backend-global-shared-view succ-start)
+                    (compiler-backend-global-shared-view succ-count)
+                    (compiler-backend-global-shared-view succ)
+                    (compiler-backend-global-shared-view flags)
+                    (compiler-backend-global-shared-view po)
+                    (compiler-backend-global-shared-view idom)
+                    (compiler-backend-global-shared-view block-start)
+                    node-count)]
+                (if (< chosen 0)
+                  (compiler-backend-swb-no-plan)
+                  (let
+                    [bare : (__tl_dyn-array i64)
+                      (__tl_make-array i64 block-count)]
+                    [bare-count : i64 0]
+                    [saving : i64 (compiler_ir_types.compiler-ir-label-none)]
+                    (begin
+                      (let
+                        [b : i64 0]
+                        (while (< b block-count)
+                          (match (compiler_ir_types.compiler-ir-block-seq-ref
+                            (compiler-backend-global-shared-view seq)
+                            b)
+                            [(compiler_ir_types.CompilerIrBlock.Block
+                                label
+                                _instrs)
+                              (let
+                                [node : i64 (array-ref block-index b)]
+                                (begin
+                                  (if (= node chosen)
+                                    (set! saving label)
+                                    unit)
+                                  ;; Every reachable block outside the framed
+                                  ;; region returns bare. The set is NOT
+                                  ;; filtered by the block's IR `Return` count:
+                                  ;; the emitter also folds a `Jump` whose
+                                  ;; target is a return-only block into an
+                                  ;; inline return, so a block with no `Return`
+                                  ;; instruction can still emit a `ret` -- and
+                                  ;; that `ret` would carry an epilogue for a
+                                  ;; prologue this path never ran. Marking a
+                                  ;; block that does not return is inert.
+                                  (if (and
+                                    (>= node 0)
+                                    (>= (array-ref po node) 0)
+                                    (not
+                                      (compiler-backend-swb-dominates?
+                                        (compiler-backend-global-shared-view
+                                          idom)
+                                        node
+                                        chosen
+                                        0)))
+                                    (begin
+                                      (set! (array-ref bare bare-count) label)
+                                      (set! bare-count (+ bare-count 1)))
+                                    unit)
+                                  (set! b (+ b 1))))])))
+                      (if (= saving (compiler_ir_types.compiler-ir-label-none))
+                        (compiler-backend-swb-no-plan)
+                        (let
+                          [packed : (__tl_dyn-array i64)
+                            (__tl_make-array i64 bare-count)]
+                          [k : i64 0]
+                          (begin
+                            (while (< k bare-count)
+                              (begin
+                                (set! (array-ref packed k) (array-ref bare k))
+                                (set! k (+ k 1))))
+                            (CompilerBackendSwbPlan saving packed bare-count)))))))))))))))
+
 (define (compiler-backend-emit-function
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
@@ -77759,7 +79161,13 @@
   [emit-entry : bool]
   [crt-entry : bool]
   [allow-rbp : bool]
-  [shrinkwrap-enabled : bool]) : ResultCompilerBackend
+  [shrinkwrap-enabled : bool]
+  ;; SW-1 general shrink-wrap placement, threaded through this function's own
+  ;; retries. `compiler-ir-label-none` asks for the analysis, a real label
+  ;; applies that placement, and `compiler-backend-swb-refused` disables it for
+  ;; this function (used when an applied placement no longer reproduces).
+  [swb-label : i64]
+  [swb-bare : (__tl_dyn-array i64)]) : ResultCompilerBackend
   (match (compiler-backend-global-shared-view func)
     [(compiler_ir_types.CompilerIrFunction.Function
         name
@@ -78662,6 +80070,28 @@
             function-state
             compiler-backend-function-i64-array-jump-forward
             (__tl_make-array i64 0))]
+        ;; SW-1: the general placement is decided by a first emission and
+        ;; applied by a second, so an applied placement is already known here.
+        ;; Both facts have to be installed before the body is emitted: the
+        ;; bare-return set changes what every Return in the bypass renders, and
+        ;; the saving label keeps the jump-forward table from forwarding a jump
+        ;; past the block the prologue is spliced at.
+        [swb-active? : bool
+          (compiler_ir_types.compiler-ir-label-some? swb-label)]
+        [_swb-install : unit
+          (begin
+            (compiler-backend-function-state-set-i64!
+              function-state
+              compiler-backend-function-i64-swb-saving-label
+              (if swb-active?
+                swb-label
+                (compiler_ir_types.compiler-ir-label-none)))
+            (compiler-backend-function-state-set-i64-array!
+              function-state
+              compiler-backend-function-i64-array-swb-bare-labels
+              (if swb-active?
+                swb-bare
+                (__tl_make-array i64 0))))]
         [shrinkwrap-saving-label : i64
           (compiler_regalloc.compiler-reg-early-exit-saving-label-current)]
         [shrinkwrap-bare-label : String
@@ -78793,6 +80223,15 @@
         ;; still prologued before their guard. Candidate proof plus the verified
         ;; textual splices is the complete activation condition.
         [shrinkwrap-active? : bool shrinkwrap-candidate?]
+        ;; Either form places the prologue at an interior label; the general
+        ;; form wins the placement when both apply, because its saving block is
+        ;; at or below form (a)'s frontier (form (a)'s prefix is frame-free by
+        ;; construction, so it is never in U).
+        [wrap-active? : bool (or shrinkwrap-active? swb-active?)]
+        [wrap-saving-label : i64
+          (if swb-active?
+            swb-label
+            shrinkwrap-saving-label)]
         [scavenge-base-vars : i64
           (compiler-backend-const-hoist-extend-vars
             (compiler-backend-global-shared-view const-hoist-synth)
@@ -79189,10 +80628,21 @@
                                 "")
                               spills
                               "")]
+                          ;; SW-1: the saving prologue runs at the placement's
+                          ;; saving edge, so a bypass block emitted ahead of it
+                          ;; may neither read a parameter home it has not
+                          ;; written yet nor clobber an incoming argument
+                          ;; register it still has to read. Every such register
+                          ;; is named in this text; a block naming one of them
+                          ;; joins U and pushes the placement above itself.
+                          [swb-prologue-mask : i64
+                            (compiler-backend-swb-text-reg-mask
+                              (compiler-backend-global-shared-view
+                                saving-prologue-body))]
                           [saving-asm-label : String
                             (compiler-backend-asm-label
                               (compiler-backend-global-shared-view label-scope)
-                              shrinkwrap-saving-label)]
+                              wrap-saving-label)]
                           [guarded-body : String
                             (if shrinkwrap-active?
                               (string.replace
@@ -79203,7 +80653,7 @@
                                   shrinkwrap-incoming-guard))
                               (compiler-backend-global-shared-view body))]
                           [framed-body : String
-                            (if shrinkwrap-active?
+                            (if wrap-active?
                               (let
                                 [label-line : String
                                   (str_cat.str-cat
@@ -79383,7 +80833,7 @@
                               fpo-attempt
                               fpo-frame
                               outgoing-frame-space
-                              shrinkwrap-active?)]
+                              wrap-active?)]
                           [rebase-result : CompilerBackendRspRebaseResult
                             (compiler-backend-rsp-rebase-full-result
                               (compiler-backend-global-shared-view
@@ -79448,7 +80898,9 @@
                                 emit-entry
                                 crt-entry
                                 false
-                                shrinkwrap-enabled))
+                                shrinkwrap-enabled
+                                swb-label
+                                swb-bare))
                             (let
                               [final-body : String
                                 (if fpo-ok
@@ -79463,8 +80915,78 @@
                                       false
                                       program-index.backend-state)
                                     rebased))]
+                              ;; SW-1: the placement analysis reads the FINAL
+                              ;; text -- prologue not yet spliced, rsp rebased,
+                              ;; FPO decided -- so every frame and callee-saved
+                              ;; reference the emitter introduced on its own is
+                              ;; visible to it. A function with no param spill
+                              ;; is the only shape whose bypass can be emitted
+                              ;; verbatim before the prologue: with spills the
+                              ;; bypass would read a parameter from a home the
+                              ;; saving edge has not written yet. `main`, the
+                              ;; Windows unwind program, the debug-info CFI
+                              ;; program and a red-zone frame each keep entry
+                              ;; placement.
+                              [swb-candidate? : bool
+                                (and
+                                  shrinkwrap-enabled
+                                  target-policy.linux
+                                  (compiler-backend-mode-scalar? mode)
+                                  scalar-registers-enabled
+                                  (not
+                                    (compiler_ir_types.compiler-debug-info-enabled?))
+                                  (not
+                                    (compiler-backend-current-fn-win64?
+                                      program-index.backend-state))
+                                  (not identity-tail-forwarder?)
+                                  (not
+                                    (compiler-backend-function-state-bool?
+                                      function-state
+                                      compiler-backend-function-bool-red-zone))
+                                  (or
+                                    (> push-count 0)
+                                    (>
+                                      (if fpo-ok
+                                        fpo-frame
+                                        frame)
+                                      0))
+                                  (not
+                                    (string.eq
+                                      (compiler-backend-symbol-text-index
+                                        (compiler-backend-global-shared-view
+                                          program-index)
+                                        (compiler-backend-global-shared-view
+                                          name))
+                                      "main")))]
+                              [swb-plan : CompilerBackendSwbPlan
+                                (if (and
+                                  swb-candidate?
+                                  (or
+                                    swb-active?
+                                    (=
+                                      swb-label
+                                      (compiler_ir_types.compiler-ir-label-none))))
+                                  (compiler-backend-swb-plan-for
+                                    (compiler-backend-global-shared-view
+                                      final-body)
+                                    (compiler-backend-global-shared-view
+                                      label-scope)
+                                    (compiler-backend-return-label
+                                      program-index.backend-state
+                                      (compiler-backend-global-shared-view name))
+                                    swb-prologue-mask
+                                    (compiler-backend-global-shared-view
+                                      emit-blocks-list))
+                                  (compiler-backend-swb-no-plan))]
+                              ;; An applied placement that the second emission
+                              ;; no longer reproduces is drift, not a placement:
+                              ;; retry with the general form disabled.
+                              [swb-drift? : bool
+                                (and
+                                  swb-active?
+                                  (not (= swb-plan.label swb-label)))]
                               [entry-symbol : String
-                                (if shrinkwrap-active?
+                                (if wrap-active?
                                   (compiler-backend-global-shared-view
                                     saving-asm-label)
                                   (compiler-backend-global-shared-view symbol))]
@@ -79502,7 +81024,7 @@
                                     slot-vars
                                     program-index.backend-state))]
                               [emitted-body : String
-                                (if shrinkwrap-active?
+                                (if wrap-active?
                                   (string.replace
                                     (compiler-backend-global-shared-view
                                       final-body)
@@ -79515,148 +81037,220 @@
                                       selected-prologue))
                                   (compiler-backend-global-shared-view
                                     final-body))]
-                              (if (or
-                                ;; The IR was split before allocation. If later
-                                ;; admission cannot render both scratch-free
-                                ;; prefixes (or intentionally excludes `main`),
-                                ;; do not leave the duplicated CFG under an
-                                ;; always-framed prologue: retry from the original
-                                ;; function with the rewrite disabled.
-                                (and
-                                  (not shrinkwrap-active?)
-                                  (not
-                                    (=
-                                      shrinkwrap-saving-label
-                                      (compiler_ir_types.compiler-ir-label-none))))
-                                (compiler-backend-shrinkwrap-splice-fallback-required?
-                                  shrinkwrap-active?
-                                  body
-                                  shrinkwrap-planned-guard
-                                  guarded-body
-                                  (str_cat.str-cat saving-asm-label ":\n" "")
-                                  final-body))
-                                ;; A textual invariant drifted. Re-run the full
-                                ;; unwrapped pipeline so the IR split, bare return,
-                                ;; register plan, and prologue placement are all
-                                ;; consistently disabled together.
-                                (compiler-backend-emit-function
-                                  type-segment-bases
-                                  target
-                                  mode
-                                  (compiler-backend-global-shared-view func)
-                                  (compiler-backend-global-shared-view
-                                    functions)
-                                  (compiler-backend-global-shared-view globals)
-                                  (compiler-backend-global-shared-view
-                                    global-types)
-                                  (compiler-backend-global-shared-view externs)
-                                  (compiler-backend-global-shared-view plan)
-                                  (compiler-backend-global-shared-view
-                                    program-index)
-                                  (compiler-backend-global-shared-view spans)
-                                  (compiler-backend-global-shared-view
-                                    span-index)
-                                  emit-entry
-                                  crt-entry
-                                  allow-rbp
-                                  false)
-                                (begin
-                                  ;; Publish carry-safe labels transactionally:
-                                  ;; shrinkwrap/FPO attempts may recursively
-                                  ;; retry this function with different final
-                                  ;; blocks but reuse its assembly label scope.
-                                  ;; An abandoned attempt must not leave labels
-                                  ;; that make the accepted body inherit an
-                                  ;; owner map across a non-fallthrough edge.
-                                  (compiler-backend-peephole-collect-carry-safe!
-                                    program-index.backend-state
-                                    (compiler-backend-state-stream-state
-                                      program-index.backend-state)
-                                    (compiler-backend-state-function-state
-                                      program-index.backend-state)
-                                    (compiler-backend-global-shared-view
-                                      label-scope)
-                                    (compiler-backend-global-shared-view
-                                      emit-blocks-list))
-                                  (compiler-backend-commit-frame-layout!
-                                    program-index.backend-state
+                              (cond
+                                ;; SW-1: the first emission found a placement.
+                                ;; Re-emit applying it, so the bypass returns
+                                ;; render bare and the prologue is spliced at
+                                ;; the saving block.
+                                [(and
+                                    (not swb-active?)
+                                    (compiler_ir_types.compiler-ir-label-some?
+                                      swb-plan.label))
+                                  (compiler-backend-emit-function
+                                    type-segment-bases
                                     target
+                                    mode
+                                    (compiler-backend-global-shared-view func)
                                     (compiler-backend-global-shared-view
-                                      assignments)
-                                    (compiler-backend-global-shared-view symbol)
-                                    frame
-                                    push-count
-                                    slot-vars
-                                    outgoing-frame-space
-                                    fpo-ok
-                                    rebase-ok
-                                    shrinkwrap-active?)
-                                  (ResultCompilerBackend.Ok
-                                    (str_cat.str-cat
-                                      (compiler-backend-function-symbol-map-comment
-                                        (compiler-backend-global-shared-view
-                                          program-index)
-                                        (compiler-backend-global-shared-view
-                                          name))
-                                      ".globl "
+                                      functions)
+                                    (compiler-backend-global-shared-view
+                                      globals)
+                                    (compiler-backend-global-shared-view
+                                      global-types)
+                                    (compiler-backend-global-shared-view
+                                      externs)
+                                    (compiler-backend-global-shared-view plan)
+                                    (compiler-backend-global-shared-view
+                                      program-index)
+                                    (compiler-backend-global-shared-view spans)
+                                    (compiler-backend-global-shared-view
+                                      span-index)
+                                    emit-entry
+                                    crt-entry
+                                    allow-rbp
+                                    shrinkwrap-enabled
+                                    swb-plan.label
+                                    swb-plan.bare)]
+                                ;; SW-1: an applied placement the re-emission
+                                ;; does not reproduce. Refuse it for this
+                                ;; function and keep entry placement.
+                                [swb-drift?
+                                  (compiler-backend-emit-function
+                                    type-segment-bases
+                                    target
+                                    mode
+                                    (compiler-backend-global-shared-view func)
+                                    (compiler-backend-global-shared-view
+                                      functions)
+                                    (compiler-backend-global-shared-view
+                                      globals)
+                                    (compiler-backend-global-shared-view
+                                      global-types)
+                                    (compiler-backend-global-shared-view
+                                      externs)
+                                    (compiler-backend-global-shared-view plan)
+                                    (compiler-backend-global-shared-view
+                                      program-index)
+                                    (compiler-backend-global-shared-view spans)
+                                    (compiler-backend-global-shared-view
+                                      span-index)
+                                    emit-entry
+                                    crt-entry
+                                    allow-rbp
+                                    shrinkwrap-enabled
+                                    compiler-backend-swb-refused
+                                    (__tl_make-array i64 0))]
+                                [(or
+                                    ;; The IR was split before allocation. If later
+                                    ;; admission cannot render both scratch-free
+                                    ;; prefixes (or intentionally excludes `main`),
+                                    ;; do not leave the duplicated CFG under an
+                                    ;; always-framed prologue: retry from the original
+                                    ;; function with the rewrite disabled.
+                                    (and
+                                      (not shrinkwrap-active?)
+                                      (not
+                                        (=
+                                          shrinkwrap-saving-label
+                                          (compiler_ir_types.compiler-ir-label-none))))
+                                    (compiler-backend-shrinkwrap-splice-fallback-required?
+                                      shrinkwrap-active?
+                                      body
+                                      shrinkwrap-planned-guard
+                                      guarded-body
+                                      (str_cat.str-cat
+                                        saving-asm-label
+                                        ":\n"
+                                        "")
+                                      final-body))
+                                  ;; A textual invariant drifted. Re-run the full
+                                  ;; unwrapped pipeline so the IR split, bare return,
+                                  ;; register plan, and prologue placement are all
+                                  ;; consistently disabled together.
+                                  (compiler-backend-emit-function
+                                    type-segment-bases
+                                    target
+                                    mode
+                                    (compiler-backend-global-shared-view func)
+                                    (compiler-backend-global-shared-view
+                                      functions)
+                                    (compiler-backend-global-shared-view
+                                      globals)
+                                    (compiler-backend-global-shared-view
+                                      global-types)
+                                    (compiler-backend-global-shared-view
+                                      externs)
+                                    (compiler-backend-global-shared-view plan)
+                                    (compiler-backend-global-shared-view
+                                      program-index)
+                                    (compiler-backend-global-shared-view spans)
+                                    (compiler-backend-global-shared-view
+                                      span-index)
+                                    emit-entry
+                                    crt-entry
+                                    allow-rbp
+                                    false
+                                    compiler-backend-swb-refused
+                                    (__tl_make-array i64 0))]
+                                [else
+                                  (begin
+                                    ;; Publish carry-safe labels transactionally:
+                                    ;; shrinkwrap/FPO attempts may recursively
+                                    ;; retry this function with different final
+                                    ;; blocks but reuse its assembly label scope.
+                                    ;; An abandoned attempt must not leave labels
+                                    ;; that make the accepted body inherit an
+                                    ;; owner map across a non-fallthrough edge.
+                                    (compiler-backend-peephole-collect-carry-safe!
+                                      program-index.backend-state
+                                      (compiler-backend-state-stream-state
+                                        program-index.backend-state)
+                                      (compiler-backend-state-function-state
+                                        program-index.backend-state)
+                                      (compiler-backend-global-shared-view
+                                        label-scope)
+                                      (compiler-backend-global-shared-view
+                                        emit-blocks-list))
+                                    (compiler-backend-commit-frame-layout!
+                                      program-index.backend-state
+                                      target
+                                      (compiler-backend-global-shared-view
+                                        assignments)
                                       (compiler-backend-global-shared-view
                                         symbol)
-                                      "\n"
-                                      (compiler-backend-debug-function-location
-                                        target
-                                        (compiler-backend-global-shared-view
-                                          program-index)
-                                        (compiler-backend-global-shared-view
-                                          span-index)
-                                        (compiler-backend-global-shared-view
-                                          spans)
-                                        (compiler-backend-global-shared-view
-                                          name))
-                                      ;; Immediately before the entry label:
-                                      ;; the shrinkwrap and ordinary prologues
-                                      ;; both open with `symbol:`.
-                                      (compiler-backend-emit-function-type-directive
-                                        target
-                                        (compiler-backend-global-shared-view
-                                          symbol))
-                                      (if shrinkwrap-active?
-                                        (str_cat.str-cat
+                                      frame
+                                      push-count
+                                      slot-vars
+                                      outgoing-frame-space
+                                      fpo-ok
+                                      rebase-ok
+                                      wrap-active?)
+                                    (ResultCompilerBackend.Ok
+                                      (str_cat.str-cat
+                                        (compiler-backend-function-symbol-map-comment
                                           (compiler-backend-global-shared-view
-                                            symbol)
-                                          ":\n"
+                                            program-index)
+                                          (compiler-backend-global-shared-view
+                                            name))
+                                        ".globl "
+                                        (compiler-backend-global-shared-view
+                                          symbol)
+                                        "\n"
+                                        (compiler-backend-debug-function-location
+                                          target
+                                          (compiler-backend-global-shared-view
+                                            program-index)
+                                          (compiler-backend-global-shared-view
+                                            span-index)
+                                          (compiler-backend-global-shared-view
+                                            spans)
+                                          (compiler-backend-global-shared-view
+                                            name))
+                                        ;; Immediately before the entry label:
+                                        ;; the shrinkwrap and ordinary prologues
+                                        ;; both open with `symbol:`.
+                                        (compiler-backend-emit-function-type-directive
+                                          target
+                                          (compiler-backend-global-shared-view
+                                            symbol))
+                                        (if wrap-active?
+                                          (str_cat.str-cat
+                                            (compiler-backend-global-shared-view
+                                              symbol)
+                                            ":\n"
+                                            "")
+                                          (compiler-backend-global-shared-view
+                                            selected-prologue))
+                                        ""
+                                        ""
+                                        ;; The text is final here (prologue
+                                        ;; spliced, rsp rebased, FPO decided);
+                                        ;; the fallthrough-`jmp` deletion runs
+                                        ;; later, folded into the streaming
+                                        ;; records parse, over the same bytes.
+                                        (compiler-backend-global-shared-view
+                                          emitted-body)
+                                        (compiler-backend-debug-function-end-label
+                                          target
+                                          (compiler-backend-global-shared-view
+                                            program-index)
+                                          (compiler-backend-global-shared-view
+                                            name))
+                                        (if (and
+                                          (compiler_ir_types.compiler-debug-info-enabled?)
+                                          target-policy.linux)
+                                          "    .cfi_endproc\n"
                                           "")
-                                        (compiler-backend-global-shared-view
-                                          selected-prologue))
-                                      ""
-                                      ""
-                                      ;; The text is final here (prologue
-                                      ;; spliced, rsp rebased, FPO decided);
-                                      ;; the fallthrough-`jmp` deletion runs
-                                      ;; later, folded into the streaming
-                                      ;; records parse, over the same bytes.
-                                      (compiler-backend-global-shared-view
-                                        emitted-body)
-                                      (compiler-backend-debug-function-end-label
-                                        target
-                                        (compiler-backend-global-shared-view
-                                          program-index)
-                                        (compiler-backend-global-shared-view
-                                          name))
-                                      (if (and
-                                        (compiler_ir_types.compiler-debug-info-enabled?)
-                                        target-policy.linux)
-                                        "    .cfi_endproc\n"
-                                        "")
-                                      (compiler-backend-emit-windows-seh-endproc
-                                        target)
-                                      ;; Closes the function at its last
-                                      ;; emitted byte, before the next
-                                      ;; function's `.globl`/`.type`.
-                                      (compiler-backend-emit-function-size-directive
-                                        target
-                                        (compiler-backend-global-shared-view
-                                          symbol))
-                                      "\n"))))))))]
+                                        (compiler-backend-emit-windows-seh-endproc
+                                          target)
+                                        ;; Closes the function at its last
+                                        ;; emitted byte, before the next
+                                        ;; function's `.globl`/`.type`.
+                                        (compiler-backend-emit-function-size-directive
+                                          target
+                                          (compiler-backend-global-shared-view
+                                            symbol))
+                                        "\n")))])))))]
                     [(ResultCompilerBackend.Err message)
                       (let
                         [_addr-forward-done : unit
@@ -79770,7 +81364,9 @@
               emit-entry
               crt-entry
               true
-              true)]
+              true
+              (compiler_ir_types.compiler-ir-label-none)
+              (__tl_make-array i64 0))]
           [wrapped : ResultCompilerBackend
             (match emitted
               [(ResultCompilerBackend.Ok head)
@@ -79836,7 +81432,9 @@
               emit-entry
               crt-entry
               true
-              true)]
+              true
+              (compiler_ir_types.compiler-ir-label-none)
+              (__tl_make-array i64 0))]
           [wrapped : ResultCompilerBackend
             (match emitted
               [(ResultCompilerBackend.Ok head)

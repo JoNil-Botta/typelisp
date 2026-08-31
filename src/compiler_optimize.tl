@@ -134383,6 +134383,14 @@
 (define (opt-cb-check-cap) : i64
   2048)
 
+;; CB-3 clause (b)'s separate rows, and the bound on CB-3 clause (c)'s
+;; composition fixpoint. Both are documented at the CB-3 section header.
+(define (opt-cb3-multi-check-cap) : i64
+  512)
+
+(define (opt-cb3-compose-rounds) : i64
+  4)
+
 ;; One function's element stores and passed-check candidates, in program order.
 (defstruct OptCbSites
   (s-global (__tl_dyn-array i64))
@@ -134393,7 +134401,16 @@
   (c-len (__tl_dyn-array i64))
   (c-label (__tl_dyn-array i64))
   (c-index (__tl_dyn-array i64))
-  ;; [0] store rows, [1] check rows, [2] overflow flag
+  ;; CB-3 clause (b): the same four columns for a check whose index var has
+  ;; MORE THAN ONE definition. They are kept apart from the `c-*` rows so the
+  ;; single-definition lookup clause (2) rests on answers exactly what it
+  ;; answered before this packet, and so filling them can never crowd out a
+  ;; `c-*` row and trip the overflow flag.
+  (m-var (__tl_dyn-array i64))
+  (m-len (__tl_dyn-array i64))
+  (m-label (__tl_dyn-array i64))
+  (m-index (__tl_dyn-array i64))
+  ;; [0] store rows, [1] check rows, [2] overflow flag, [3] multi-def check rows
   (count (__tl_dyn-array i64)))
 
 (define (opt-cb-sites-new) : OptCbSites
@@ -134406,13 +134423,18 @@
     (__tl_make-array i64 (opt-cb-check-cap))
     (__tl_make-array i64 (opt-cb-check-cap))
     (__tl_make-array i64 (opt-cb-check-cap))
-    (__tl_make-array i64 3)))
+    (__tl_make-array i64 (opt-cb3-multi-check-cap))
+    (__tl_make-array i64 (opt-cb3-multi-check-cap))
+    (__tl_make-array i64 (opt-cb3-multi-check-cap))
+    (__tl_make-array i64 (opt-cb3-multi-check-cap))
+    (__tl_make-array i64 4)))
 
 (define (opt-cb-sites-reset! [sites : OptCbSites]) : unit
   (begin
     (set! (array-ref sites.count 0) 0)
     (set! (array-ref sites.count 1) 0)
-    (set! (array-ref sites.count 2) 0)))
+    (set! (array-ref sites.count 2) 0)
+    (set! (array-ref sites.count 3) 0)))
 
 (define (opt-cb-sites-push-store!
   [sites : OptCbSites]
@@ -134447,6 +134469,29 @@
         (set! (array-ref sites.c-label at) label)
         (set! (array-ref sites.c-index at) index)
         (set! (array-ref sites.count 1) (+ at 1))))))
+
+;; CB-3 clause (b): a check on a MULTIPLY ASSIGNED index var. A full table
+;; DROPS the row instead of raising the overflow flag: an unrecorded check
+;; refuses stores this class might otherwise have admitted, it never admits
+;; one, so losing a row is the conservative side. The `c-*` rows keep their own
+;; flag because losing a STORE row -- or a check a store already resolved
+;; against -- is not.
+(define (opt-cb3-sites-push-multi-check!
+  [sites : OptCbSites]
+  [var : i64]
+  [len-global : i64]
+  [label : i64]
+  [index : i64]) : unit
+  (let
+    [at : i64 (array-ref sites.count 3)]
+    (if (>= at (opt-cb3-multi-check-cap))
+      unit
+      (begin
+        (set! (array-ref sites.m-var at) var)
+        (set! (array-ref sites.m-len at) len-global)
+        (set! (array-ref sites.m-label at) label)
+        (set! (array-ref sites.m-index at) index)
+        (set! (array-ref sites.count 3) (+ at 1))))))
 
 ;; Two names for one value. The lowering emits a `Mov` for every `let` binding
 ;; and an identity `Cast` for every same-type coercion, so the var a check names
@@ -134676,19 +134721,22 @@
       [(ir.CompilerIrInstr.BoundsCheck idx len _)
         (match (compiler-opt-global-shared-view idx)
           [(ir.CompilerIrValue.Var var)
-            (if (<=
-              (opt-len-eq-def-count (compiler-opt-global-shared-view defs) var)
-              1)
-              (let
-                [owner : i64
-                  (opt-cb-length-owner
-                    type-segment-bases
-                    (compiler-opt-global-shared-view scan)
-                    (compiler-opt-global-shared-view cand)
-                    (compiler-opt-global-shared-view use)
-                    (compiler-opt-global-shared-view copies)
-                    len)]
-                (if (>= owner 0)
+            (let
+              [owner : i64
+                (opt-cb-length-owner
+                  type-segment-bases
+                  (compiler-opt-global-shared-view scan)
+                  (compiler-opt-global-shared-view cand)
+                  (compiler-opt-global-shared-view use)
+                  (compiler-opt-global-shared-view copies)
+                  len)]
+              (if (< owner 0)
+                unit
+                (if (<=
+                  (opt-len-eq-def-count
+                    (compiler-opt-global-shared-view defs)
+                    var)
+                  1)
                   (opt-cb-sites-push-check!
                     (compiler-opt-global-shared-view sites)
                     (opt-cb-canonical-var
@@ -134699,8 +134747,15 @@
                     owner
                     label
                     index)
-                  unit))
-              unit)]
+                  ;; CB-3 clause (b): a multiply-assigned index var
+                  ;; canonicalises to itself, so the row names the var the
+                  ;; check tested and the region walk discharges the rest.
+                  (opt-cb3-sites-push-multi-check!
+                    (compiler-opt-global-shared-view sites)
+                    var
+                    owner
+                    label
+                    index))))]
           [_ unit])]
       [_ unit])))
 
@@ -136099,14 +136154,535 @@
         store-id
         total))))
 
+;; --- CB-3: widening what counts as a RECORDED check --------------------------
+;;
+;; CB-1 admits an element store when the stored value is the literal 0 (the
+;; FILL) or when a `bounds_check` on it dominates or post-dominates the store
+;; (the CHECKED class); CB-2 adds the affine induction class for a multiply
+;; assigned counter. Instrumenting every remaining refusal in `cfg_domloops`
+;; shows the largest group left is not a missing CLASS but a missing
+;; RECOGNITION: three shapes whose proof CB-1 already has, spelled in a way its
+;; recorder does not read.
+;;
+;; (a) THE FILL BEHIND A COPY. `(set! (array-ref stack-node 0) 0)` reaches this
+;;     walk as `mov t, 0` followed by `store_ptr p, t`, so the stored value is a
+;;     `Var`, not the `I64 0` clause (3) matches on, and it falls through to the
+;;     CHECKED class -- which finds no check on a literal and refuses the global.
+;;     `opt-cb-canonical-var` cannot rescue it: it maps a var to the var it
+;;     copies, and there is no var under a literal.
+;;
+;;     BEFORE: the fill is recognised only where the literal is the store's
+;;     IMMEDIATE operand. AFTER: the stored value is resolved to a literal
+;;     through the same `Mov` / identity-`Cast` chain `opt-cb2-literal-of`
+;;     already walks for CB-2's seeds and steps, each hop licensed by the
+;;     temporary it crosses having a single definition, which makes the two
+;;     names one runtime value everywhere. Only the literal 0 is the fill; every
+;;     other literal still refuses, because `k <u len(F)` for `k > 0` would need
+;;     a static LOWER bound on the family's length and nothing in this compiler
+;;     records one (the same input CB-2's clause (III) found missing).
+;;
+;;     This is what refused `cfg-stack-node`, and with it site 39 (`tout[node]`,
+;;     1.4M dynamic checks). Three of its four stores were already provable:
+;;     `stack-node[sp] = next` by the dominating `reachable[next]` check,
+;;     `stack-node[0] = entry` by the post-dominating `child-off[entry]` check,
+;;     and `stack-node[sp] = child` by the dominating `tin[child]` check. The
+;;     zero fill at the top of the walk refused the global for all three.
+;;
+;; (b) THE CHECKED CLASS FOR A MULTIPLY ASSIGNED VALUE. CB-1 requires the stored
+;;     value to have ONE definition, because that is what makes "the check saw
+;;     the value the store writes" free -- its proof is quoted at clause (2).
+;;     BEFORE: a stored value with two or more definitions can reach only the
+;;     induction class, which needs a governing loop condition. AFTER: a
+;;     dominating recorded `bounds_check v, len(g)` admits it as well, once the
+;;     no-redefinition-between rule CB-2's clause (II) already carries is
+;;     discharged for the CHECK in place of the loop test. For a store at
+;;     instruction `at` of block `S` and a check at instruction `ci` of block
+;;     `C`:
+;;
+;;       - `C` dominates `S`, or `C` is `S` and `ci < at`. Every execution that
+;;         reaches the store therefore ran the check, and a block runs all of
+;;         its instructions or aborts inside one.
+;;       - No definition of `v` stands in `C` after `ci`.
+;;       - No definition of `v` stands in the BETWEEN region -- the blocks on a
+;;         `C`-free path from `C` to `S`, which is `opt-cb2-mark-forward!` from
+;;         `C` intersected with `opt-cb2-mark-backward!` from `S` stopping at
+;;         `C` -- other than in `S` at or after `at`.
+;;       - BETWEEN is acyclic on reverse-postorder numbers, so a definition
+;;         placed after the store cannot come round and precede it.
+;;       - Nothing takes the address of `v`'s frame slot, so the definitions
+;;         `opt-instr-def-var` enumerates are all of them.
+;;
+;;     Then the last execution of `C` before the store is followed by a `C`-free
+;;     segment lying inside BETWEEN, no definition of `v` runs in it, and `v` at
+;;     the store is the value the check tested -- which the check proved
+;;     `<u len(g)`, and so also non-negative. Unlike CB-2's clause (II) this
+;;     needs no SOLE-PREDECESSOR rule on the region's entry block: re-entering
+;;     `C` re-runs the CHECK, which is the event the argument wants, whereas
+;;     re-entering CB-2's body block would have skipped the test.
+;;
+;;     Checks on multiply-assigned index vars are recorded in rows of their own
+;;     (`m-*`), so `opt-cb-dominating-check` answers exactly what it answered
+;;     before, and an overflow of the new rows drops them rather than refusing
+;;     the function.
+;;
+;; (c) CONTENT FACTS COMPOSE AT THE RECORDING SIDE. `opt-cb-content-covers?`
+;;     already reads a content fact at the CONSUMPTION side: `A[j]` needs no
+;;     check when `A` has one. The same fact is a store-side proof, and this is
+;;     the half CB-1 did not have: a value LOADED out of a content-proven array
+;;     IS a checked value for that array's family, so
+;;     `stack-node[sp] = succ-edge[cursor]` is admissible from
+;;     `content(succ-edge)` alone, with no per-store check anywhere in the
+;;     program. The owner a composed store names is the length owner recorded
+;;     for the array it read, so the all-or-nothing family join, the zero-fill
+;;     clause (3) and the reset-group clause (4) go on reading exactly what they
+;;     always read. The stored value must have a single definition -- the load
+;;     -- for the same reason clause (2) demands one.
+;;
+;;     THE FIXPOINT, AND WHY IT IS THE LEAST ONE. That clause reads the table
+;;     this walk is building, so the walk runs more than once: round 0 against
+;;     an EMPTY content table, and each further round against the table the
+;;     previous round emitted. Every fact a round admits is therefore justified
+;;     by facts a STRICTLY EARLIER round established, the derivations are
+;;     well-founded, and no fact is its own premise. A global whose only
+;;     unproven store loads out of ITSELF can never bootstrap: round 0 has no
+;;     fact for it, so round 0 refuses it, so it never enters the table at all.
+;;     Starting from a full table and shrinking would be the GREATEST fixpoint
+;;     and would believe exactly those circular derivations.
+;;
+;;     The rounds are monotone. Composition is tried only after every clause
+;;     that does not read the table has failed, so a store admitted in one round
+;;     is admitted the same way, naming the same owner, in every later one, and
+;;     a global admitted once stays admitted -- which is what lets the walk stop
+;;     as soon as a round adds nothing a refused store could use.
+;;     `opt-cb3-round-again?` asks exactly that: did this round newly admit an
+;;     array that some REFUSED store loads out of? A program with no such store
+;;     pays one walk, the same as before this packet.
+;;     `opt-cb3-compose-rounds` bounds the chain; a program needing a longer one
+;;     stops with FEWER facts, which is the safe direction.
+;;
+;; WHICH REPRESENTATION THE WALK READS, AND WHY THE FACTS SURVIVE RETIREMENT.
+;; `opt-cb-attach` is called once, from `opt-build-program-summaries`, on the
+;; post-inline pruned function sequence -- BEFORE any function is optimized. The
+;; retirements CB-1, CB-2 and `bounds_dom` perform happen later, per function,
+;; and are never written back into that sequence, so the check set this recorder
+;; reads is the ORIGINAL one and a check an earlier round of the pipeline
+;; retires is still there for the walk. The ordering is load-bearing here rather
+;; than incidental: `cfg-stack-node`'s fourth store is admitted by the
+;; `bounds_check child, len(tin)` that CB-2 itself retires. A recorder reading
+;; EMITTED checks would withdraw the very fact that justified the retirement,
+;; and the analysis would depend on its own output. `opt-cb3-summary-precedes-
+;; optimization?` pins the ordering from the test suite.
+;;
+;; THE ABORT CONTRACT is CB-1's, unchanged: nothing here retires a store-side
+;; check. Clause (a) admits only the value 0, which no check can reject once any
+;; dominating passed check has forced the length to at least one -- exactly the
+;; discharge clause (3) already performs at the use. Clause (b) reads a check
+;; that is still emitted and still aborts at its own instruction with its own
+;; message. Clause (c) reads a fact whose own store-side checks are still
+;; emitted for the same reason. A corpus that would abort at a load of `A[j]`
+;; aborts at exactly the instruction it aborted at before.
+;;
+;; DELIBERATELY EXCLUDED. A check that guards the store only through a value
+;; test -- the `bounds_check entry, len(reachable)` on the second operand of a
+;; short-circuit `(and (> count 0) (= (array-ref reachable entry) 1))`, whose
+;; block does not DOMINATE the guarded body because the join's other in-edge
+;; carries the false value -- is not admitted. Every execution reaching the body
+;; did run that check, but the reason is a phi's value, not the control-flow
+;; graph, and this walk has no value lattice to read it with. Clause (a) makes
+;; the point moot for `cfg-stack-node` (the post-dominating `child-off[entry]`
+;; check in the body's own block admits that store), so the shape is recorded
+;; here rather than approximated.
+;; Does any instruction in the function take the ADDRESS of `var`'s frame slot?
+;; A pointer to the slot can be stored through, which would change `var` without
+;; any instruction naming it as a destination, and clause (b)'s enumeration of
+;; the definitions would be reading a variable it cannot see all the writes to.
+(define (opt-cb3-address-taken? [index : OptCfgIndex] [var : i64] [total : i64]) : bool
+  (let
+    [id : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< id total))
+        (begin
+          (match (opt-cfg-index-block
+            (compiler-opt-global-shared-view index)
+            id)
+            [(OptMaybeBlock.No) unit]
+            [(OptMaybeBlock.Some block)
+              (match (compiler-opt-global-shared-view block)
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (let
+                    [count : i64
+                      (ir.compiler-ir-instr-seq-count
+                        (compiler-opt-global-shared-view instrs))]
+                    [at : i64 0]
+                    (while (and (not found) (< at count))
+                      (begin
+                        (if (opt-cb2-address-taken?
+                          var
+                          (ir.compiler-ir-instr-seq-ref
+                            (compiler-opt-global-shared-view instrs)
+                            at))
+                          (set! found true)
+                          unit)
+                        (set! at (+ at 1)))))])])
+          (set! id (+ id 1))))
+      found)))
+
+;; `opt-cb2-region-clean?` with the CHECK's own block exempted. A definition of
+;; `var` BEFORE the check in that block is the value the check tested, and one
+;; AFTER it is refused by the caller's own test -- the region walk cannot tell
+;; the two apart because it works a block at a time.
+(define (opt-cb3-region-clean?
+  [index : OptCfgIndex]
+  [fwd : (__tl_dyn-array i64)]
+  [bwd : (__tl_dyn-array i64)]
+  [total : i64]
+  [var : i64]
+  [check-id : i64]
+  [store-id : i64]
+  [store-at : i64]) : bool
+  (let
+    [id : i64 0]
+    [ok? : bool true]
+    (begin
+      (while (and ok? (< id total))
+        (begin
+          (if (and
+            (= (array-ref fwd id) 1)
+            (= (array-ref bwd id) 1)
+            (not (= id check-id)))
+            (if (opt-cb2-block-defines?
+              (compiler-opt-global-shared-view index)
+              id
+              var
+              0
+              (if (= id store-id)
+                store-at
+                (- 0 1)))
+              (set! ok? false)
+              unit)
+            unit)
+          (set! id (+ id 1))))
+      ok?)))
+
+;; Clause (b)'s BETWEEN region: the blocks on a check-free path from the check
+;; to the store, acyclic and free of definitions of the stored value.
+(define (opt-cb3-region-ok?
+  [index : OptCfgIndex]
+  [fwd : (__tl_dyn-array i64)]
+  [bwd : (__tl_dyn-array i64)]
+  [queue : (__tl_dyn-array i64)]
+  [total : i64]
+  [var : i64]
+  [check-id : i64]
+  [store-id : i64]
+  [store-at : i64]) : bool
+  (begin
+    (opt-cfg-fill-i64! (compiler-opt-global-shared-view fwd) total 0)
+    (opt-cfg-fill-i64! (compiler-opt-global-shared-view bwd) total 0)
+    (opt-cb2-mark-forward!
+      (compiler-opt-global-shared-view index)
+      (compiler-opt-global-shared-view fwd)
+      (compiler-opt-global-shared-view queue)
+      check-id)
+    (opt-cb2-mark-backward!
+      (compiler-opt-global-shared-view index)
+      (compiler-opt-global-shared-view bwd)
+      (compiler-opt-global-shared-view queue)
+      store-id
+      check-id)
+    (and
+      (= (array-ref fwd store-id) 1)
+      (= (array-ref bwd check-id) 1)
+      (opt-cb2-region-acyclic?
+        (compiler-opt-global-shared-view index)
+        (compiler-opt-global-shared-view fwd)
+        (compiler-opt-global-shared-view bwd)
+        total)
+      (opt-cb3-region-clean?
+        (compiler-opt-global-shared-view index)
+        (compiler-opt-global-shared-view fwd)
+        (compiler-opt-global-shared-view bwd)
+        total
+        var
+        check-id
+        store-id
+        store-at))))
+
+;; Clause (b): the length owner of a recorded check that governs this store of a
+;; MULTIPLY ASSIGNED value, or -1. A function past the block cap declines rather
+;; than paying for a region walk per store row.
+(define (opt-cb3-multi-owner
+  [sites : OptCbSites]
+  [context : OptCfgContext]
+  [var : i64]
+  [label : i64]
+  [at : i64]) : i64
+  (let
+    [index : OptCfgIndex (compiler-opt-global-shared-view context.index)]
+    [doms : OptDomInfo (compiler-opt-global-shared-view context.doms)]
+    [rows : i64 (array-ref sites.count 3)]
+    [total : i64
+      (opt-cfg-index-block-count (compiler-opt-global-shared-view index))]
+    [store-id : i64
+      (opt-cb-block-id (compiler-opt-global-shared-view index) label)]
+    (if (or
+      (<= rows 0)
+      (< store-id 0)
+      (<= total 0)
+      (> total (opt-cb2-block-cap))
+      (opt-cb3-address-taken? (compiler-opt-global-shared-view index) var total))
+      (- 0 1)
+      (let
+        [fwd : (__tl_dyn-array i64) (__tl_make-array i64 total)]
+        [bwd : (__tl_dyn-array i64) (__tl_make-array i64 total)]
+        [queue : (__tl_dyn-array i64) (__tl_make-array i64 total)]
+        [j : i64 0]
+        [owner : i64 (- 0 1)]
+        (begin
+          (while (and (< owner 0) (< j rows))
+            (begin
+              (if (= (array-ref sites.m-var j) var)
+                (let
+                  [check-at : i64 (array-ref sites.m-index j)]
+                  [check-id : i64
+                    (opt-cb-block-id
+                      (compiler-opt-global-shared-view index)
+                      (array-ref sites.m-label j))]
+                  (if (= check-id store-id)
+                    ;; One straight-line run: the check and the store are the
+                    ;; same execution of one block, so the instructions between
+                    ;; them are exactly the ones that ran.
+                    (if (and
+                      (< check-at at)
+                      (not
+                        (opt-cb2-block-defines?
+                          (compiler-opt-global-shared-view index)
+                          store-id
+                          var
+                          (+ check-at 1)
+                          at)))
+                      (set! owner (array-ref sites.m-len j))
+                      unit)
+                    (if (and
+                      (>= check-id 0)
+                      (opt-dom-info-dominates-id?
+                        (compiler-opt-global-shared-view doms)
+                        check-id
+                        store-id)
+                      (not
+                        (opt-cb2-block-defines?
+                          (compiler-opt-global-shared-view index)
+                          check-id
+                          var
+                          (+ check-at 1)
+                          (- 0 1)))
+                      (opt-cb3-region-ok?
+                        (compiler-opt-global-shared-view index)
+                        (compiler-opt-global-shared-view fwd)
+                        (compiler-opt-global-shared-view bwd)
+                        (compiler-opt-global-shared-view queue)
+                        total
+                        var
+                        check-id
+                        store-id
+                        at))
+                      (set! owner (array-ref sites.m-len j))
+                      unit)))
+                unit)
+              (set! j (+ j 1))))
+          owner)))))
+
+;; Clause (c): the stored value is an element LOAD out of an array that already
+;; carries a content fact, which makes it a checked value for that array's
+;; family. Answers with the length owner recorded for the array it read, or -1.
+;; The array is noted in `pending` either way, because a store this clause
+;; cannot resolve YET is the only thing a further round can decide differently.
+(define (opt-cb3-composed-owner
+  [scan : OptCbScan]
+  [cand : opt_i64_i64_map.Map]
+  [defs : OptLenEqDefs]
+  [content : opt_i64_i64_map.Map]
+  [owners : opt_i64_i64_map.Map]
+  [pending : (&mut pending opt_i64_i64_map.Map)]
+  [var : i64]) : i64
+  (match (opt-len-eq-def (compiler-opt-global-shared-view defs) var)
+    [(OptBoolBranchDef.No) (- 0 1)]
+    [(OptBoolBranchDef.Some instr _)
+      (match (compiler-opt-global-shared-view instr)
+        [(ir.CompilerIrInstr.Load _ src _)
+          (let
+            [tag : i64
+              (opt-cb-value-tag
+                (compiler-opt-global-shared-view scan)
+                (compiler-opt-global-shared-view cand)
+                src)]
+            [level : i64 (opt-cb-tag-level tag)]
+            [source : i64
+              (if (and
+                (>= level (opt-cb-level-data))
+                (<= level (opt-cb-level-elem)))
+                (opt-cb-tag-global tag)
+                (- 0 1))]
+            (if (< source 0)
+              (- 0 1)
+              (let
+                [encoded : i64
+                  (opt-len-eq-lookup
+                    (compiler-opt-global-shared-view content)
+                    source)]
+                [owner : i64
+                  (-
+                    (opt-len-eq-lookup
+                      (compiler-opt-global-shared-view owners)
+                      source)
+                    1)]
+                (begin
+                  (opt_i64_i64_map.insert-ref! pending source 1)
+                  (if (or (<= encoded 0) (< owner 0))
+                    (- 0 1)
+                    owner)))))]
+        [_ (- 0 1)])]))
+
+;; The length owner recorded for each ADMITTED global, which is what clause (c)
+;; hands to `opt-cb-note-family!` for a store that reads it. `leng` also holds
+;; rows for globals a LATER store refused, so the table is filtered through the
+;; emitted content table rather than used raw.
+(define (opt-cb3-owners
+  [globals : ir.CompilerIrGlobalSeq]
+  [content : opt_i64_i64_map.Map]
+  [leng : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map]
+  [at : i64]) : opt_i64_i64_map.Map
+  (if (>=
+    at
+    (ir.compiler-ir-global-seq-count (compiler-opt-global-shared-view globals)))
+    out
+    (opt-cb3-owners
+      (compiler-opt-global-shared-view globals)
+      (compiler-opt-global-shared-view content)
+      (compiler-opt-global-shared-view leng)
+      (match (ir.compiler-ir-global-seq-ref
+        (compiler-opt-global-shared-view globals)
+        at)
+        [(ir.CompilerIrGlobal.Global name _ _)
+          (let
+            [id : i64 (ir.compiler-ir-symbol-id name)]
+            [next : opt_i64_i64_map.Map (compiler-opt-global-shared-view out)]
+            [recorded : i64
+              (opt-len-eq-lookup (compiler-opt-global-shared-view leng) id)]
+            (begin
+              (if (and
+                (>
+                  (opt-len-eq-lookup
+                    (compiler-opt-global-shared-view content)
+                    id)
+                  0)
+                (> recorded 0))
+                (opt_i64_i64_map.insert-ref! (&mut next) id recorded)
+                unit)
+              next))])
+      (+ at 1))))
+
+;; Is another round worth running? Only when this one NEWLY admitted an array
+;; that some refused store loads out of: that store is the only thing a further
+;; round can decide differently, because every other clause ignores the table.
+(define (opt-cb3-round-again?
+  [globals : ir.CompilerIrGlobalSeq]
+  [pending : opt_i64_i64_map.Map]
+  [before : opt_i64_i64_map.Map]
+  [after : opt_i64_i64_map.Map]
+  [at : i64]) : bool
+  (if (>=
+    at
+    (ir.compiler-ir-global-seq-count (compiler-opt-global-shared-view globals)))
+    false
+    (or
+      (match (ir.compiler-ir-global-seq-ref
+        (compiler-opt-global-shared-view globals)
+        at)
+        [(ir.CompilerIrGlobal.Global name _ _)
+          (let
+            [id : i64 (ir.compiler-ir-symbol-id name)]
+            (and
+              (opt_i64_i64_map.contains? (& pending) id)
+              (>
+                (opt-len-eq-lookup (compiler-opt-global-shared-view after) id)
+                0)
+              (<=
+                (opt-len-eq-lookup (compiler-opt-global-shared-view before) id)
+                0)))])
+      (opt-cb3-round-again?
+        (compiler-opt-global-shared-view globals)
+        (compiler-opt-global-shared-view pending)
+        (compiler-opt-global-shared-view before)
+        (compiler-opt-global-shared-view after)
+        (+ at 1)))))
+
+;; What one round of the walk produced: the content table, the length owner each
+;; admitted global's stores named, and whether a further round could add
+;; anything.
+(defstruct OptCb3Round
+  (content opt_i64_i64_map.Map)
+  (owners opt_i64_i64_map.Map)
+  (again bool))
+
+;; CB-1's per-global `--trace-passes` line, emitted ONCE on the table the last
+;; round settled on rather than once per round. (`opt-cb2-trace-admit!` still
+;; fires from inside the classification and therefore repeats its per-store line
+;; once per round; the rounds are monotone, so the last occurrence of each line
+;; is the settled one.)
+(define (opt-cb3-trace!
+  [globals : ir.CompilerIrGlobalSeq]
+  [content : opt_i64_i64_map.Map]
+  [owners : opt_i64_i64_map.Map]
+  [at : i64]) : unit
+  (if (or
+    (not compiler-opt-debug-trace-passes)
+    compiler-opt-debug-suppressed?
+    (>=
+      at
+      (ir.compiler-ir-global-seq-count
+        (compiler-opt-global-shared-view globals))))
+    unit
+    (begin
+      (match (ir.compiler-ir-global-seq-ref
+        (compiler-opt-global-shared-view globals)
+        at)
+        [(ir.CompilerIrGlobal.Global name _ _)
+          (let
+            [id : i64 (ir.compiler-ir-symbol-id name)]
+            [encoded : i64
+              (opt-len-eq-lookup (compiler-opt-global-shared-view content) id)]
+            (opt-cb-trace-global!
+              name
+              (if (> encoded 0)
+                (- encoded 1)
+                0)
+              (if (> encoded 0)
+                (-
+                  (opt-len-eq-lookup
+                    (compiler-opt-global-shared-view owners)
+                    id)
+                  1)
+                (- 0 1))))])
+      (opt-cb3-trace!
+        (compiler-opt-global-shared-view globals)
+        (compiler-opt-global-shared-view content)
+        (compiler-opt-global-shared-view owners)
+        (+ at 1)))))
+
 (define (opt-cb-classify!
   [type-segment-bases : i64]
   [scan : OptCbScan]
   [cand : opt_i64_i64_map.Map]
   [table : opt_i64_i64_map.Map]
+  [content : opt_i64_i64_map.Map]
+  [owners : opt_i64_i64_map.Map]
   [bad : (&mut bad opt_i64_i64_map.Map)]
   [fam : (&mut fam opt_i64_i64_map.Map)]
   [leng : (&mut leng opt_i64_i64_map.Map)]
+  [pending : (&mut pending opt_i64_i64_map.Map)]
   [sites : OptCbSites]
   [use : OptLenEqUse]
   [copies : opt_i64_i64_map.Map]
@@ -136123,95 +136699,123 @@
           [at : i64 (array-ref sites.s-index i)]
           (if (opt_i64_i64_map.contains? (& bad) global)
             unit
-            (match (compiler-opt-global-array-element-shared-view
-              sites.s-value
-              i)
-              ;; The zero fill is clause (3)'s value and constrains no family.
-              [(ir.CompilerIrValue.I64 literal)
+            ;; CB-3 clause (a): clause (3)'s zero fill, reached through the
+            ;; copy chain the lowering leaves between the literal and the
+            ;; store. It constrains no family; every other literal refuses.
+            (match (opt-cb2-literal-of
+              type-segment-bases
+              (compiler-opt-global-shared-view defs)
+              (compiler-opt-global-array-element-shared-view sites.s-value i)
+              4)
+              [(option_i64.Some literal)
                 (if (= literal 0)
                   unit
                   (opt-cb-refuse! bad global))]
-              [(ir.CompilerIrValue.Var var)
-                (if (>
-                  (opt-len-eq-def-count
-                    (compiler-opt-global-shared-view defs)
-                    var)
-                  1)
-                  ;; CB-2: a multiply-assigned stored value is not lost. An
-                  ;; affine induction variable bounded by its governing loop
-                  ;; condition is admitted by the class above, which names the
-                  ;; same kind of length owner a CHECKED store does.
-                  (let
-                    [induction : i64
-                      (opt-cb2-induction-owner
-                        type-segment-bases
-                        (compiler-opt-global-shared-view scan)
-                        (compiler-opt-global-shared-view cand)
-                        (compiler-opt-global-shared-view use)
-                        (compiler-opt-global-shared-view copies)
-                        (compiler-opt-global-shared-view defs)
-                        (compiler-opt-global-shared-view sites)
-                        (compiler-opt-global-shared-view context)
-                        var
-                        label
-                        at)]
-                    (if (< induction 0)
-                      (opt-cb-refuse! bad global)
-                      (begin
-                        (opt-cb2-trace-admit! global var induction)
+              [(option_i64.None)
+                (match (compiler-opt-global-array-element-shared-view
+                  sites.s-value
+                  i)
+                  [(ir.CompilerIrValue.Var var)
+                    (let
+                      [resolved : i64
+                        (if (>
+                          (opt-len-eq-def-count
+                            (compiler-opt-global-shared-view defs)
+                            var)
+                          1)
+                          ;; CB-2: a multiply-assigned stored value is not
+                          ;; lost. An affine induction variable bounded by its
+                          ;; governing loop condition is admitted by the class
+                          ;; above, which names the same kind of length owner a
+                          ;; CHECKED store does; CB-3 clause (b) then admits one
+                          ;; a recorded check governs instead.
+                          (let
+                            [induction : i64
+                              (opt-cb2-induction-owner
+                                type-segment-bases
+                                (compiler-opt-global-shared-view scan)
+                                (compiler-opt-global-shared-view cand)
+                                (compiler-opt-global-shared-view use)
+                                (compiler-opt-global-shared-view copies)
+                                (compiler-opt-global-shared-view defs)
+                                (compiler-opt-global-shared-view sites)
+                                (compiler-opt-global-shared-view context)
+                                var
+                                label
+                                at)]
+                            (if (>= induction 0)
+                              (begin
+                                (opt-cb2-trace-admit! global var induction)
+                                induction)
+                              (opt-cb3-multi-owner
+                                (compiler-opt-global-shared-view sites)
+                                (compiler-opt-global-shared-view context)
+                                var
+                                label
+                                at)))
+                          (let
+                            [root : i64
+                              (opt-cb-canonical-var
+                                type-segment-bases
+                                (compiler-opt-global-shared-view defs)
+                                var
+                                4)]
+                            [owner : i64
+                              (opt-cb-dominating-check
+                                (compiler-opt-global-shared-view sites)
+                                (compiler-opt-global-shared-view context.doms)
+                                (compiler-opt-global-shared-view context.index)
+                                root
+                                label
+                                at)]
+                            [posted : i64
+                              (if (>= owner 0)
+                                owner
+                                (match (opt-cfg-index-find-block
+                                  (compiler-opt-global-shared-view
+                                    context.index)
+                                  label)
+                                  [(OptMaybeBlock.Some block)
+                                    (match (compiler-opt-global-shared-view
+                                      block)
+                                      [(ir.CompilerIrBlock.Block _ instrs)
+                                        (opt-cb-post-check
+                                          type-segment-bases
+                                          (compiler-opt-global-shared-view scan)
+                                          (compiler-opt-global-shared-view cand)
+                                          (compiler-opt-global-shared-view use)
+                                          (compiler-opt-global-shared-view
+                                            copies)
+                                          (compiler-opt-global-shared-view defs)
+                                          global
+                                          root
+                                          instrs
+                                          at)])]
+                                  [(OptMaybeBlock.No) (- 0 1)]))]
+                            ;; CB-3 clause (c) is tried LAST, so a store every
+                            ;; table-free clause already resolved keeps naming
+                            ;; the owner it always named and the rounds stay
+                            ;; monotone.
+                            (if (>= posted 0)
+                              posted
+                              (opt-cb3-composed-owner
+                                (compiler-opt-global-shared-view scan)
+                                (compiler-opt-global-shared-view cand)
+                                (compiler-opt-global-shared-view defs)
+                                (compiler-opt-global-shared-view content)
+                                (compiler-opt-global-shared-view owners)
+                                pending
+                                root))))]
+                      (if (< resolved 0)
+                        (opt-cb-refuse! bad global)
                         (opt-cb-note-family!
                           (compiler-opt-global-shared-view table)
                           bad
                           fam
                           leng
                           global
-                          induction))))
-                  (let
-                    [root : i64
-                      (opt-cb-canonical-var
-                        type-segment-bases
-                        (compiler-opt-global-shared-view defs)
-                        var
-                        4)]
-                    [owner : i64
-                      (opt-cb-dominating-check
-                        (compiler-opt-global-shared-view sites)
-                        (compiler-opt-global-shared-view context.doms)
-                        (compiler-opt-global-shared-view context.index)
-                        root
-                        label
-                        at)]
-                    [resolved : i64
-                      (if (>= owner 0)
-                        owner
-                        (match (opt-cfg-index-find-block
-                          (compiler-opt-global-shared-view context.index)
-                          label)
-                          [(OptMaybeBlock.Some block)
-                            (match (compiler-opt-global-shared-view block)
-                              [(ir.CompilerIrBlock.Block _ instrs)
-                                (opt-cb-post-check
-                                  type-segment-bases
-                                  (compiler-opt-global-shared-view scan)
-                                  (compiler-opt-global-shared-view cand)
-                                  (compiler-opt-global-shared-view use)
-                                  (compiler-opt-global-shared-view copies)
-                                  (compiler-opt-global-shared-view defs)
-                                  global
-                                  root
-                                  instrs
-                                  at)])]
-                          [(OptMaybeBlock.No) (- 0 1)]))]
-                    (if (< resolved 0)
-                      (opt-cb-refuse! bad global)
-                      (opt-cb-note-family!
-                        (compiler-opt-global-shared-view table)
-                        bad
-                        fam
-                        leng
-                        global
-                        resolved))))]
-              [_ (opt-cb-refuse! bad global)])))
+                          resolved)))]
+                  [_ (opt-cb-refuse! bad global)])])))
         (set! i (+ i 1))))))
 
 (define (opt-cb-refuse-all-tagged!
@@ -136247,9 +136851,12 @@
   [arg-global : opt_i64_i64_map.Map]
   [ctors : opt_i64_i64_map.Map]
   [cand : opt_i64_i64_map.Map]
+  [content : opt_i64_i64_map.Map]
+  [owners : opt_i64_i64_map.Map]
   [bad : (&mut bad opt_i64_i64_map.Map)]
   [fam : (&mut fam opt_i64_i64_map.Map)]
   [leng : (&mut leng opt_i64_i64_map.Map)]
+  [pending : (&mut pending opt_i64_i64_map.Map)]
   [func : ir.CompilerIrFunction]) : unit
   (match (compiler-opt-global-shared-view func)
     [(ir.CompilerIrFunction.Function name params _ frame blocks)
@@ -136353,9 +136960,12 @@
                         (compiler-opt-global-shared-view scan)
                         (compiler-opt-global-shared-view cand)
                         (compiler-opt-global-shared-view table)
+                        (compiler-opt-global-shared-view content)
+                        (compiler-opt-global-shared-view owners)
                         bad
                         fam
                         leng
+                        pending
                         (compiler-opt-global-shared-view sites)
                         (compiler-opt-global-shared-view use)
                         (compiler-opt-global-shared-view copies)
@@ -136499,23 +137109,129 @@
                   (compiler-opt-global-shared-view ctors)
                   value))]
             (begin
-              (opt-cb-trace-global!
-                name
-                (if admitted?
-                  (- encoded 1)
-                  0)
-                (if admitted?
-                  owner
-                  (- 0 1)))
               (if admitted?
                 (opt_i64_i64_map.insert-ref! (&mut next) id encoded)
                 unit)
               next))])
       (+ at 1))))
 
+;; One round of the walk: classify every function against the content facts
+;; `content` and `owners` carry IN, and emit the table they justify. Round 0 is
+;; handed empty tables, so it decides exactly what the walk decided before CB-3
+;; clause (c) existed.
+(define (opt-cb3-round
+  [type-segment-bases : i64]
+  [globals : ir.CompilerIrGlobalSeq]
+  [functions : ir.CompilerIrFunctionSeq]
+  [cell : OptGlobalCellSummary]
+  [cand : opt_i64_i64_map.Map]
+  [ctors : opt_i64_i64_map.Map]
+  [content : opt_i64_i64_map.Map]
+  [owners : opt_i64_i64_map.Map]
+  [capacity : i64]) : OptCb3Round
+  (let
+    [bad : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
+    [fam : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
+    [leng : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
+    [pending : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
+    [position : i64 0]
+    (begin
+      (while (< position functions.len)
+        (begin
+          (opt-cb-function!
+            type-segment-bases
+            (compiler-opt-global-shared-view cell.len-eq)
+            (compiler-opt-global-shared-view cell.len-eq-clean)
+            (compiler-opt-global-shared-view cell.arg-global)
+            (compiler-opt-global-shared-view ctors)
+            (compiler-opt-global-shared-view cand)
+            (compiler-opt-global-shared-view content)
+            (compiler-opt-global-shared-view owners)
+            (&mut bad)
+            (&mut fam)
+            (&mut leng)
+            (&mut pending)
+            (compiler-opt-global-array-element-shared-view
+              functions.slots
+              position))
+          (set! position (+ position 1))))
+      (let
+        [next : opt_i64_i64_map.Map
+          (opt-cb-emit
+            (compiler-opt-global-shared-view globals)
+            (compiler-opt-global-shared-view cell.len-reset)
+            (compiler-opt-global-shared-view ctors)
+            (compiler-opt-global-shared-view bad)
+            (compiler-opt-global-shared-view fam)
+            (compiler-opt-global-shared-view leng)
+            (opt_i64_i64_map.with-capacity capacity)
+            0)]
+        (OptCb3Round
+          (compiler-opt-global-shared-view next)
+          (opt-cb3-owners
+            (compiler-opt-global-shared-view globals)
+            (compiler-opt-global-shared-view next)
+            (compiler-opt-global-shared-view leng)
+            (opt_i64_i64_map.with-capacity capacity)
+            0)
+          (opt-cb3-round-again?
+            (compiler-opt-global-shared-view globals)
+            (compiler-opt-global-shared-view pending)
+            (compiler-opt-global-shared-view content)
+            (compiler-opt-global-shared-view next)
+            0))))))
+
+;; The LEAST fixpoint of the rounds: start from nothing and grow, stopping as
+;; soon as a round adds nothing a refused store could read, or when the round
+;; budget runs out -- which stops with FEWER facts and is therefore safe.
+(define (opt-cb3-drive
+  [type-segment-bases : i64]
+  [globals : ir.CompilerIrGlobalSeq]
+  [functions : ir.CompilerIrFunctionSeq]
+  [cell : OptGlobalCellSummary]
+  [cand : opt_i64_i64_map.Map]
+  [ctors : opt_i64_i64_map.Map]
+  [content : opt_i64_i64_map.Map]
+  [owners : opt_i64_i64_map.Map]
+  [capacity : i64]
+  [remaining : i64]) : opt_i64_i64_map.Map
+  (let
+    [round : OptCb3Round
+      (opt-cb3-round
+        type-segment-bases
+        (compiler-opt-global-shared-view globals)
+        (compiler-opt-global-shared-view functions)
+        (compiler-opt-global-shared-view cell)
+        (compiler-opt-global-shared-view cand)
+        (compiler-opt-global-shared-view ctors)
+        (compiler-opt-global-shared-view content)
+        (compiler-opt-global-shared-view owners)
+        capacity)]
+    (if (or (<= remaining 1) (not round.again))
+      (begin
+        (opt-cb3-trace!
+          (compiler-opt-global-shared-view globals)
+          (compiler-opt-global-shared-view round.content)
+          (compiler-opt-global-shared-view round.owners)
+          0)
+        (compiler-opt-global-shared-view round.content))
+      (opt-cb3-drive
+        type-segment-bases
+        (compiler-opt-global-shared-view globals)
+        (compiler-opt-global-shared-view functions)
+        (compiler-opt-global-shared-view cell)
+        (compiler-opt-global-shared-view cand)
+        (compiler-opt-global-shared-view ctors)
+        (compiler-opt-global-shared-view round.content)
+        (compiler-opt-global-shared-view round.owners)
+        capacity
+        (- remaining 1)))))
+
 ;; Build the content table, or decline. P-B's families are the precondition
 ;; clause (1) rests on, and its reset groups are clause (4); without either
-;; there is nothing to build.
+;; there is nothing to build. CB-3 clause (c)'s rounds are driven from here, so
+;; the candidate set and the zero-fill constructors are computed once and read
+;; by every round.
 (define (opt-cb-build
   [type-segment-bases : i64]
   [globals : ir.CompilerIrGlobalSeq]
@@ -136541,38 +137257,19 @@
           type-segment-bases
           (compiler-opt-global-shared-view functions)
           capacity)]
-      [bad : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
-      [fam : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
-      [leng : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
-      [position : i64 0]
       (if (= (opt_i64_i64_map.len (& cand)) 0)
         (opt_i64_i64_map.with-capacity 1)
-        (begin
-          (while (< position functions.len)
-            (begin
-              (opt-cb-function!
-                type-segment-bases
-                (compiler-opt-global-shared-view cell.len-eq)
-                (compiler-opt-global-shared-view cell.len-eq-clean)
-                (compiler-opt-global-shared-view cell.arg-global)
-                (compiler-opt-global-shared-view ctors)
-                (compiler-opt-global-shared-view cand)
-                (&mut bad)
-                (&mut fam)
-                (&mut leng)
-                (compiler-opt-global-array-element-shared-view
-                  functions.slots
-                  position))
-              (set! position (+ position 1))))
-          (opt-cb-emit
-            (compiler-opt-global-shared-view globals)
-            (compiler-opt-global-shared-view cell.len-reset)
-            (compiler-opt-global-shared-view ctors)
-            (compiler-opt-global-shared-view bad)
-            (compiler-opt-global-shared-view fam)
-            (compiler-opt-global-shared-view leng)
-            (opt_i64_i64_map.with-capacity capacity)
-            0))))))
+        (opt-cb3-drive
+          type-segment-bases
+          (compiler-opt-global-shared-view globals)
+          (compiler-opt-global-shared-view functions)
+          (compiler-opt-global-shared-view cell)
+          (compiler-opt-global-shared-view cand)
+          (compiler-opt-global-shared-view ctors)
+          (opt_i64_i64_map.with-capacity 1)
+          (opt_i64_i64_map.with-capacity 1)
+          capacity
+          (opt-cb3-compose-rounds))))))
 
 ;; CB's table rides the global-cell summary beside P-B's families and GAP-1's
 ;; identity facts, and is attached from the same place for the same reason:

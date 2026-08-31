@@ -135034,6 +135034,888 @@
             (opt_i64_i64_map.insert-ref! fam global (+ family 1))
             (opt_i64_i64_map.insert-ref! leng global (+ owner 1)))]))))
 
+;; --- CB-2: the AFFINE INDUCTION store class ----------------------------------
+;;
+;; CB-1's clause (2) needs the stored value to have exactly ONE definition,
+;; because that is what lets a dominating `bounds_check` speak for the value the
+;; store actually writes. The second-largest class left in cfg_domloops does not
+;; have one:
+;;
+;;   (while (< i count)
+;;     (begin
+;;       ...
+;;       (set! (array-ref child-edge (array-ref child-fill parent)) i)
+;;       (set! i (+ i 1))))
+;;
+;; `i` is written by every `set!` the function makes -- four `(set! i 0)` and
+;; four `(set! i (+ i 1))` in `cfg-build-euler-tree` alone -- so
+;; `opt-len-eq-def-count` answers 8 and clause (2) refuses `cfg-child-edge`.
+;; The stored value is in range all the same, and for a reason CB-1's own
+;; machinery can check: it is an affine induction variable, and the bound is the
+;; loop's OWN condition rather than a per-store check.
+;;
+;; WHAT IS PROVEN, for a store `A[..] = v` at instruction `at` of block `S`.
+;;
+;; (I) v >= 0 AT EVERY POINT OF THE FUNCTION. Every definition of `v` anywhere
+;;     in the function assigns one of three things: a non-negative literal (the
+;;     literal SEED); a value `w` that a dominating `bounds_check w, len(g)`
+;;     proved `w <u len(g)`, which forces `w >= 0` (the checked SEED); or
+;;     `v + c` for a non-negative literal `c` (the affine STEP, written either
+;;     as one `BinOp` or as the `add`/`Mov` pair the lowering emits for a
+;;     `set!`).
+;;
+;;     Two further conditions make those definitions the WHOLE story. Nothing
+;;     may take the address of `v`'s frame slot (`AddrOf`), because a pointer to
+;;     the slot can be stored through and would change `v` without any
+;;     instruction naming it as a destination. And the FIRST definition of `v`
+;;     in the ENTRY block must be a SEED: the entry block dominates every block,
+;;     so that seed runs before every other definition and before the store, and
+;;     it is the base case the induction needs -- it is also what rules out a
+;;     store reading an uninitialised frame slot. (A counter first assigned
+;;     inside a branch is refused by this rule rather than analysed.)
+;;
+;;     With those in place the assignments are the only way `v` changes, and
+;;     none of them turns a non-negative `v` negative, so by induction over the
+;;     instructions an execution retires, `v` is non-negative wherever it is
+;;     read. (Signed wrap-around would need 2^63 retired increments. A program
+;;     that retires them does not terminate, which is the same finiteness the
+;;     counted-loop machinery in this file already rests on.)
+;;
+;; (II) v < bound AT THE STORE. Some block `H` ends in `branch t, T, F` where
+;;     `t = lt v, bound` is defined in `H` and `t` has a single definition;
+;;     `T`'s ONLY predecessor is `H`; and `T` dominates `S`. Every execution
+;;     that reaches `S` therefore passed through `T`, and the only edge into `T`
+;;     is the one `H` takes when `t` holds -- so the test ran, and it passed.
+;;
+;;     WHY THE TEST SAW THE VALUE THE STORE WRITES. No definition of `v` lies
+;;     between the two. Let BETWEEN be the blocks that lie on a `T`-free path
+;;     from `T` to `S` -- forward-reachable from `T` without re-entering `T`,
+;;     and backward-reachable from `S` without passing `T`. Re-entering `T`
+;;     would mean coming through `H` again (that is `T`'s only predecessor) and
+;;     hence re-running the test, so the last test before `S` is the one that
+;;     starts the `T`-free segment, and BETWEEN is exactly that segment's
+;;     blocks. The class requires: no definition of `v` in `H` after the
+;;     compare; none in any block of BETWEEN other than `S`'s; and none in `S`
+;;     before instruction `at`.
+;;
+;;     BETWEEN must also be ACYCLIC, checked on the index's reverse-postorder
+;;     numbers -- every edge inside the region runs forward. Without it a
+;;     definition placed AFTER the store could come back round and precede it.
+;;     Those two rules are what refuse the DO-WHILE shape and the OVERSHOOT
+;;     shape: a bottom-tested loop's body block has a predecessor other than
+;;     the test, and a step placed on the path from the test to the store puts
+;;     a definition of `v` inside BETWEEN. A step that could run one extra time
+;;     before the store would need a cycle inside BETWEEN, which the
+;;     reverse-postorder rule forbids.
+;;
+;; (III) bound IS FAMILY-TIED. Either `bound` is literally the `array-length` of
+;;     a candidate global's element buffer (clause a: `v < len(g)` together with
+;;     `v >= 0` is `v <u len(g)`), or `bound` is a single-definition value that a
+;;     recorded `bounds_check bound, len(g)` dominates (clause b:
+;;     `bound <u len(g)` gives `bound <= len(g) - 1`, so
+;;     `0 <= v < bound <= len(g) - 1`, and `v <u len(g)` again). A third form
+;;     one might expect -- a literal bound not above the family's STATIC
+;;     MINIMUM length -- is deliberately absent: nothing in this compiler
+;;     records a static lower bound on a family's length (every candidate is a
+;;     `(cfg-zero-vec (+ n 1))` whose length is a runtime value), so such a
+;;     clause would have no input to read.
+;;
+;; The owner `g` that clause (III) names is handed to `opt-cb-note-family!`
+;; exactly as a CHECKED store's is, so the ALL-OR-NOTHING join, the zero-fill
+;; clause (3) and the reset-group clause (4) apply to an induction store
+;; unchanged, and one inadmissible store still refuses the whole global.
+;;
+;; THE ABORT CONTRACT is CB-1's, with the loop bound standing where the
+;; store-side check stood. Nothing here retires a check. A corpus whose data
+;; would drive `v` past the bound never reaches the store carrying that `v` --
+;; the loop condition is what stops it -- and clause (b)'s
+;; `bounds_check bound, len(g)` is still emitted and still aborts at its own
+;; instruction with its own message. A corpus that would have aborted at the
+;; LOAD of `A[j]` therefore aborts at exactly the place it aborted before.
+;;
+;; COST. A region walk costs one word per block and is run per multiply-assigned
+;; stored value; a function past the cap declines rather than paying for a
+;; search whose result the store cap would drop anyway.
+(define (opt-cb2-block-cap) : i64
+  1024)
+
+;; `--trace-passes` observability for the induction class: one line per store it
+;; admits, naming the global, the induction variable and the length owner its
+;; governing condition tied the variable to. The string is built inside the
+;; guard, so a compile without the flag pays one boolean test.
+(define (opt-cb2-trace-admit! [global : i64] [var : i64] [owner : i64]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (io.print-error
+      (str_cat.str-cat
+        "content-induction|"
+        (ir.compiler-ir-symbol-text global)
+        "|var="
+        (string.int->string var)
+        "|bound-owner="
+        (ir.compiler-ir-symbol-text owner)
+        "\n"))
+    unit))
+
+;; The governing test of a candidate header: the bound it compares the induction
+;; variable against, the label of the branch's TRUE target, and the compare's
+;; own instruction index inside the header.
+(defenum OptCb2Test
+  (No)
+  (Some ir.CompilerIrValue i64 i64))
+
+;; Does block `id` define `var` at an instruction index in [from, to)? `to`
+;; below zero means "to the end of the block".
+(define (opt-cb2-block-defines?
+  [index : OptCfgIndex]
+  [id : i64]
+  [var : i64]
+  [from : i64]
+  [to : i64]) : bool
+  (match (opt-cfg-index-block (compiler-opt-global-shared-view index) id)
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match (compiler-opt-global-shared-view block)
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64
+              (ir.compiler-ir-instr-seq-count
+                (compiler-opt-global-shared-view instrs))]
+            [stop : i64
+              (if (or (< to 0) (> to count))
+                count
+                to)]
+            [at : i64
+              (if (< from 0)
+                0
+                from)]
+            [found : bool false]
+            (begin
+              (while (and (not found) (< at stop))
+                (begin
+                  (match (opt-instr-def-var
+                    (ir.compiler-ir-instr-seq-ref
+                      (compiler-opt-global-shared-view instrs)
+                      at))
+                    [(option_i64.Some dst)
+                      (if (= dst var)
+                        (set! found true)
+                        unit)]
+                    [(option_i64.None) unit])
+                  (set! at (+ at 1))))
+              found))])]))
+
+;; The literal a value names, followed through the `Mov` chain the lowering
+;; leaves behind: it materialises every literal into its own `mov` and every
+;; `let` binding into another, so `(set! i 0)` reaches the IR as `mov t, 0`
+;; followed by `mov i, t`, and `(+ i 1)` as `mov t, 1` then `add r, i, t`. Each
+;; hop is licensed by the temporary it crosses having a single definition, which
+;; makes the two names one runtime value everywhere.
+(define (opt-cb2-literal-of
+  [type-segment-bases : i64]
+  [defs : OptLenEqDefs]
+  [value : ir.CompilerIrValue]
+  [depth : i64]) : option_i64.Option
+  (match (compiler-opt-global-shared-view value)
+    [(ir.CompilerIrValue.I64 literal) (option_i64.Some literal)]
+    [(ir.CompilerIrValue.Var raw)
+      (if (or
+        (<= depth 0)
+        (> (opt-len-eq-def-count (compiler-opt-global-shared-view defs) raw) 1))
+        (option_i64.None)
+        (match (opt-len-eq-def (compiler-opt-global-shared-view defs) raw)
+          [(OptBoolBranchDef.No) (option_i64.None)]
+          [(OptBoolBranchDef.Some instr _)
+            (match (compiler-opt-global-shared-view instr)
+              [(ir.CompilerIrInstr.Mov _ src _)
+                (opt-cb2-literal-of
+                  type-segment-bases
+                  (compiler-opt-global-shared-view defs)
+                  (compiler-opt-global-shared-view src)
+                  (- depth 1))]
+              [(ir.CompilerIrInstr.Cast _ src from to)
+                (if (opt-type-eq
+                  type-segment-bases
+                  (compiler-opt-global-shared-view from)
+                  (compiler-opt-global-shared-view to))
+                  (opt-cb2-literal-of
+                    type-segment-bases
+                    (compiler-opt-global-shared-view defs)
+                    (compiler-opt-global-shared-view src)
+                    (- depth 1))
+                  (option_i64.None))]
+              [_ (option_i64.None)])]))]
+    [_ (option_i64.None)]))
+
+;; A non-negative literal, reached through that chain.
+(define (opt-cb2-nonneg-literal?
+  [type-segment-bases : i64]
+  [defs : OptLenEqDefs]
+  [value : ir.CompilerIrValue]) : bool
+  (match (opt-cb2-literal-of
+    type-segment-bases
+    (compiler-opt-global-shared-view defs)
+    (compiler-opt-global-shared-view value)
+    4)
+    [(option_i64.Some literal) (>= literal 0)]
+    [(option_i64.None) false]))
+
+;; Is `src` the value `var + c` for a non-negative literal `c`? The `Mov` the
+;; lowering leaves between the `add` and the assignment is followed the way
+;; clause (2) follows one (`opt-cb-canonical-var`), licensed by each
+;; intermediate temporary having a single definition.
+(define (opt-cb2-step-source?
+  [type-segment-bases : i64]
+  [defs : OptLenEqDefs]
+  [var : i64]
+  [src : ir.CompilerIrValue]) : bool
+  (match (compiler-opt-global-shared-view src)
+    [(ir.CompilerIrValue.Var raw)
+      (match (opt-len-eq-def
+        (compiler-opt-global-shared-view defs)
+        (opt-cb-canonical-var
+          type-segment-bases
+          (compiler-opt-global-shared-view defs)
+          raw
+          4))
+        [(OptBoolBranchDef.No) false]
+        [(OptBoolBranchDef.Some instr _)
+          (opt-cb2-affine-step?
+            type-segment-bases
+            (compiler-opt-global-shared-view defs)
+            var
+            (compiler-opt-global-shared-view instr))])]
+    [_ false]))
+
+;; `v = v + c` with `c` a non-negative integer literal, written as one BinOp.
+(define (opt-cb2-affine-step?
+  [type-segment-bases : i64]
+  [defs : OptLenEqDefs]
+  [var : i64]
+  [instr : ir.CompilerIrInstr]) : bool
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+      (and
+        (opt-binop-eq op (ir.CompilerIrBinOp.Add))
+        (opt-integer-type? ty)
+        (match (compiler-opt-global-shared-view lhs)
+          [(ir.CompilerIrValue.Var base) (= base var)]
+          [_ false])
+        (opt-cb2-nonneg-literal?
+          type-segment-bases
+          (compiler-opt-global-shared-view defs)
+          (compiler-opt-global-shared-view rhs)))]
+    [_ false]))
+
+;; Clause (I) for ONE definition: 1 for a SEED (a non-negative literal, or a
+;; value a dominating `bounds_check` proved `<u` some length and therefore
+;; non-negative), 2 for the affine STEP, 0 for anything else.
+(define (opt-cb2-def-kind
+  [type-segment-bases : i64]
+  [sites : OptCbSites]
+  [doms : OptDomInfo]
+  [index : OptCfgIndex]
+  [defs : OptLenEqDefs]
+  [var : i64]
+  [label : i64]
+  [at : i64]
+  [instr : ir.CompilerIrInstr]) : i64
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Mov _ src _)
+      (match (compiler-opt-global-shared-view src)
+        [(ir.CompilerIrValue.I64 seed)
+          (if (>= seed 0)
+            1
+            0)]
+        [(ir.CompilerIrValue.Var raw)
+          (cond
+            [(opt-cb2-nonneg-literal?
+                type-segment-bases
+                (compiler-opt-global-shared-view defs)
+                (compiler-opt-global-shared-view src))
+              1]
+            [(opt-cb2-step-source?
+                type-segment-bases
+                (compiler-opt-global-shared-view defs)
+                var
+                src)
+              2]
+            [(and
+                (<=
+                  (opt-len-eq-def-count
+                    (compiler-opt-global-shared-view defs)
+                    raw)
+                  1)
+                (>=
+                  (opt-cb-dominating-check
+                    (compiler-opt-global-shared-view sites)
+                    (compiler-opt-global-shared-view doms)
+                    (compiler-opt-global-shared-view index)
+                    (opt-cb-canonical-var
+                      type-segment-bases
+                      (compiler-opt-global-shared-view defs)
+                      raw
+                      4)
+                    label
+                    at)
+                  0))
+              1]
+            [else 0])]
+        [_ 0])]
+    [_
+      (if (opt-cb2-affine-step?
+        type-segment-bases
+        (compiler-opt-global-shared-view defs)
+        var
+        (compiler-opt-global-shared-view instr))
+        2
+        0)]))
+
+;; Does this instruction take the ADDRESS of `var`'s frame slot? A pointer to
+;; the slot can be stored through, which would change `var` without any
+;; instruction naming it as a destination, and the whole-function induction
+;; argument would be reading a variable it cannot see all the writes to.
+(define (opt-cb2-address-taken? [var : i64] [instr : ir.CompilerIrInstr]) : bool
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.AddrOf _ src) (= src var)]
+    [_ false]))
+
+;; Clause (I): EVERY definition of `var` in the function is admissible, nothing
+;; takes the address of its slot, and the FIRST definition the ENTRY block makes
+;; is a SEED. A `var` with no definition at all is a parameter, which carries no
+;; lower bound here and which clause (2) already handles on its own.
+;;
+;; The entry-seed condition is the induction's BASE CASE, and it is why the
+;; store can never read an uninitialised frame slot: the entry block dominates
+;; every block of the function, so that seed runs before any other definition of
+;; `var` and before the store, and it makes `var` non-negative. Every definition
+;; after it is a seed (non-negative outright) or a step (`var + c` with `c >= 0`,
+;; non-negative because `var` already was), so `var` is non-negative wherever it
+;; is read. A counter first assigned inside a branch is refused by this rule
+;; rather than analysed, which is the conservative side.
+(define (opt-cb2-induction-var?
+  [type-segment-bases : i64]
+  [sites : OptCbSites]
+  [context : OptCfgContext]
+  [defs : OptLenEqDefs]
+  [var : i64]
+  [total : i64]) : bool
+  (let
+    [index : OptCfgIndex (compiler-opt-global-shared-view context.index)]
+    [doms : OptDomInfo (compiler-opt-global-shared-view context.doms)]
+    [entry-id : i64
+      (opt-cb-block-id
+        (compiler-opt-global-shared-view index)
+        context.entry-label)]
+    [id : i64 0]
+    [seen : i64 0]
+    [entry-first : i64 (- 0 1)]
+    [ok? : bool true]
+    (begin
+      (while (and ok? (< id total))
+        (begin
+          (match (opt-cfg-index-block
+            (compiler-opt-global-shared-view index)
+            id)
+            [(OptMaybeBlock.No) unit]
+            [(OptMaybeBlock.Some block)
+              (match (compiler-opt-global-shared-view block)
+                [(ir.CompilerIrBlock.Block label instrs)
+                  (let
+                    [count : i64
+                      (ir.compiler-ir-instr-seq-count
+                        (compiler-opt-global-shared-view instrs))]
+                    [at : i64 0]
+                    (while (and ok? (< at count))
+                      (let
+                        [instr : ir.CompilerIrInstr
+                          (ir.compiler-ir-instr-seq-ref
+                            (compiler-opt-global-shared-view instrs)
+                            at)]
+                        (begin
+                          (if (opt-cb2-address-taken?
+                            var
+                            (compiler-opt-global-shared-view instr))
+                            (set! ok? false)
+                            unit)
+                          (match (opt-instr-def-var
+                            (compiler-opt-global-shared-view instr))
+                            [(option_i64.Some dst)
+                              (if (= dst var)
+                                (let
+                                  [kind : i64
+                                    (opt-cb2-def-kind
+                                      type-segment-bases
+                                      (compiler-opt-global-shared-view sites)
+                                      (compiler-opt-global-shared-view doms)
+                                      (compiler-opt-global-shared-view index)
+                                      (compiler-opt-global-shared-view defs)
+                                      var
+                                      label
+                                      at
+                                      (compiler-opt-global-shared-view instr))]
+                                  (begin
+                                    (set! seen (+ seen 1))
+                                    (if (and (= id entry-id) (< entry-first 0))
+                                      (set! entry-first kind)
+                                      unit)
+                                    (if (= kind 0)
+                                      (set! ok? false)
+                                      unit)))
+                                unit)]
+                            [(option_i64.None) unit])
+                          (set! at (+ at 1))))))])])
+          (set! id (+ id 1))))
+      (and ok? (> seen 0) (= entry-first 1)))))
+
+;; The compare that defines the branch condition, searched inside the header
+;; itself. `test` has a single definition, so the first match is the only one.
+(define (opt-cb2-compare-in-block
+  [instrs : ir.CompilerIrInstrSeq]
+  [count : i64]
+  [test : i64]
+  [var : i64]
+  [yes : i64]
+  [at : i64]) : OptCb2Test
+  (if (>= at count)
+    (OptCb2Test.No)
+    (match (ir.compiler-ir-instr-seq-ref
+      (compiler-opt-global-shared-view instrs)
+      at)
+      [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
+        (if (and
+          (= dst test)
+          (opt-binop-eq op (ir.CompilerIrBinOp.Lt))
+          (opt-integer-type? ty)
+          (match (compiler-opt-global-shared-view lhs)
+            [(ir.CompilerIrValue.Var base) (= base var)]
+            [_ false]))
+          (OptCb2Test.Some rhs yes at)
+          (opt-cb2-compare-in-block
+            (compiler-opt-global-shared-view instrs)
+            count
+            test
+            var
+            yes
+            (+ at 1)))]
+      [_
+        (opt-cb2-compare-in-block
+          (compiler-opt-global-shared-view instrs)
+          count
+          test
+          var
+          yes
+          (+ at 1))])))
+
+;; Does block `id` end in `branch (lt var, bound), T, F` with the compare
+;; defined in `id`? Answers with the bound, `T`'s label and the compare's index.
+(define (opt-cb2-header-test
+  [defs : OptLenEqDefs]
+  [index : OptCfgIndex]
+  [id : i64]
+  [var : i64]) : OptCb2Test
+  (match (opt-cfg-index-block (compiler-opt-global-shared-view index) id)
+    [(OptMaybeBlock.No) (OptCb2Test.No)]
+    [(OptMaybeBlock.Some block)
+      (match (compiler-opt-global-shared-view block)
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64
+              (ir.compiler-ir-instr-seq-count
+                (compiler-opt-global-shared-view instrs))]
+            (if (<= count 0)
+              (OptCb2Test.No)
+              (match (ir.compiler-ir-instr-seq-ref
+                (compiler-opt-global-shared-view instrs)
+                (- count 1))
+                [(ir.CompilerIrInstr.Branch cond yes _)
+                  (match (compiler-opt-global-shared-view cond)
+                    [(ir.CompilerIrValue.Var test)
+                      (if (=
+                        (opt-len-eq-def-count
+                          (compiler-opt-global-shared-view defs)
+                          test)
+                        1)
+                        (opt-cb2-compare-in-block
+                          (compiler-opt-global-shared-view instrs)
+                          count
+                          test
+                          var
+                          yes
+                          0)
+                        (OptCb2Test.No))]
+                    [_ (OptCb2Test.No)])]
+                [_ (OptCb2Test.No)])))])]))
+
+;; `want` is the ONLY predecessor of `id`: the edge that carries the passed test
+;; is the only way in.
+(define (opt-cb2-sole-pred? [index : OptCfgIndex] [id : i64] [want : i64]) : bool
+  (let
+    [preds : OptCfgCsr (compiler-opt-global-shared-view index.preds)]
+    [edge : i64 (array-ref preds.offsets id)]
+    [end : i64 (array-ref preds.offsets (+ id 1))]
+    (and (= (- end edge) 1) (= (array-ref preds.edges edge) want))))
+
+;; Blocks reachable from `start` without re-entering it. `start` is marked
+;; before the walk begins, so the ordinary "already seen" test is what keeps the
+;; walk out of it.
+(define (opt-cb2-mark-forward!
+  [index : OptCfgIndex]
+  [mark : (__tl_dyn-array i64)]
+  [queue : (__tl_dyn-array i64)]
+  [start : i64]) : unit
+  (let
+    [succs : OptCfgCsr (compiler-opt-global-shared-view index.succs)]
+    [head : i64 0]
+    [tail : i64 0]
+    (begin
+      (set! (array-ref mark start) 1)
+      (set! (array-ref queue tail) start)
+      (set! tail (+ tail 1))
+      (while (< head tail)
+        (let
+          [id : i64 (array-ref queue head)]
+          [edge : i64 (array-ref succs.offsets id)]
+          [end : i64 (array-ref succs.offsets (+ id 1))]
+          (begin
+            (set! head (+ head 1))
+            (while (< edge end)
+              (let
+                [next : i64 (array-ref succs.edges edge)]
+                (begin
+                  (if (= (array-ref mark next) 0)
+                    (begin
+                      (set! (array-ref mark next) 1)
+                      (set! (array-ref queue tail) next)
+                      (set! tail (+ tail 1)))
+                    unit)
+                  (set! edge (+ edge 1)))))))))))
+
+;; Blocks that reach `start` without passing `stop`. `stop` is marked when it is
+;; met but never expanded, so no path is counted that runs through it.
+(define (opt-cb2-mark-backward!
+  [index : OptCfgIndex]
+  [mark : (__tl_dyn-array i64)]
+  [queue : (__tl_dyn-array i64)]
+  [start : i64]
+  [stop : i64]) : unit
+  (let
+    [preds : OptCfgCsr (compiler-opt-global-shared-view index.preds)]
+    [head : i64 0]
+    [tail : i64 0]
+    (begin
+      (set! (array-ref mark start) 1)
+      (set! (array-ref queue tail) start)
+      (set! tail (+ tail 1))
+      (while (< head tail)
+        (let
+          [id : i64 (array-ref queue head)]
+          (begin
+            (set! head (+ head 1))
+            (if (= id stop)
+              unit
+              (let
+                [edge : i64 (array-ref preds.offsets id)]
+                [end : i64 (array-ref preds.offsets (+ id 1))]
+                (while (< edge end)
+                  (let
+                    [prev : i64 (array-ref preds.edges edge)]
+                    (begin
+                      (if (= (array-ref mark prev) 0)
+                        (begin
+                          (set! (array-ref mark prev) 1)
+                          (set! (array-ref queue tail) prev)
+                          (set! tail (+ tail 1)))
+                        unit)
+                      (set! edge (+ edge 1)))))))))))))
+
+;; Every edge inside the region runs forward in reverse-postorder, so the region
+;; holds no cycle and each of its blocks runs at most once between the test and
+;; the store. An unreachable block has no reverse-postorder number and refuses.
+(define (opt-cb2-region-acyclic?
+  [index : OptCfgIndex]
+  [fwd : (__tl_dyn-array i64)]
+  [bwd : (__tl_dyn-array i64)]
+  [total : i64]) : bool
+  (let
+    [preds : OptCfgCsr (compiler-opt-global-shared-view index.preds)]
+    [rpo-num : (__tl_dyn-array i64) index.rpo-num]
+    [id : i64 0]
+    [ok? : bool true]
+    (begin
+      (while (and ok? (< id total))
+        (begin
+          (if (and (= (array-ref fwd id) 1) (= (array-ref bwd id) 1))
+            (if (< (array-ref rpo-num id) 0)
+              (set! ok? false)
+              (let
+                [edge : i64 (array-ref preds.offsets id)]
+                [end : i64 (array-ref preds.offsets (+ id 1))]
+                (while (and ok? (< edge end))
+                  (let
+                    [prev : i64 (array-ref preds.edges edge)]
+                    (begin
+                      (if (and
+                        (= (array-ref fwd prev) 1)
+                        (= (array-ref bwd prev) 1)
+                        (>= (array-ref rpo-num prev) (array-ref rpo-num id)))
+                        (set! ok? false)
+                        unit)
+                      (set! edge (+ edge 1)))))))
+            unit)
+          (set! id (+ id 1))))
+      ok?)))
+
+;; No definition of the induction variable stands between the test and the
+;; store. A definition placed AFTER the store in the store's own block is fine:
+;; the region is acyclic, so that block cannot run again before the store does.
+(define (opt-cb2-region-clean?
+  [index : OptCfgIndex]
+  [fwd : (__tl_dyn-array i64)]
+  [bwd : (__tl_dyn-array i64)]
+  [total : i64]
+  [var : i64]
+  [store-id : i64]
+  [store-at : i64]) : bool
+  (let
+    [id : i64 0]
+    [ok? : bool true]
+    (begin
+      (while (and ok? (< id total))
+        (begin
+          (if (and (= (array-ref fwd id) 1) (= (array-ref bwd id) 1))
+            (if (opt-cb2-block-defines?
+              (compiler-opt-global-shared-view index)
+              id
+              var
+              0
+              (if (= id store-id)
+                store-at
+                (- 0 1)))
+              (set! ok? false)
+              unit)
+            unit)
+          (set! id (+ id 1))))
+      ok?)))
+
+;; Clause (II)'s region conditions for one candidate header.
+(define (opt-cb2-region-ok?
+  [index : OptCfgIndex]
+  [fwd : (__tl_dyn-array i64)]
+  [bwd : (__tl_dyn-array i64)]
+  [queue : (__tl_dyn-array i64)]
+  [total : i64]
+  [var : i64]
+  [body-id : i64]
+  [store-id : i64]
+  [store-at : i64]) : bool
+  (begin
+    (opt-cfg-fill-i64! (compiler-opt-global-shared-view fwd) total 0)
+    (opt-cfg-fill-i64! (compiler-opt-global-shared-view bwd) total 0)
+    (opt-cb2-mark-forward!
+      (compiler-opt-global-shared-view index)
+      (compiler-opt-global-shared-view fwd)
+      (compiler-opt-global-shared-view queue)
+      body-id)
+    (opt-cb2-mark-backward!
+      (compiler-opt-global-shared-view index)
+      (compiler-opt-global-shared-view bwd)
+      (compiler-opt-global-shared-view queue)
+      store-id
+      body-id)
+    (and
+      (= (array-ref fwd store-id) 1)
+      (= (array-ref bwd body-id) 1)
+      (opt-cb2-region-acyclic?
+        (compiler-opt-global-shared-view index)
+        (compiler-opt-global-shared-view fwd)
+        (compiler-opt-global-shared-view bwd)
+        total)
+      (opt-cb2-region-clean?
+        (compiler-opt-global-shared-view index)
+        (compiler-opt-global-shared-view fwd)
+        (compiler-opt-global-shared-view bwd)
+        total
+        var
+        store-id
+        store-at))))
+
+;; Clause (III): the global whose length the bound is tied to, or -1.
+(define (opt-cb2-bound-owner
+  [type-segment-bases : i64]
+  [scan : OptCbScan]
+  [cand : opt_i64_i64_map.Map]
+  [use : OptLenEqUse]
+  [copies : opt_i64_i64_map.Map]
+  [defs : OptLenEqDefs]
+  [sites : OptCbSites]
+  [doms : OptDomInfo]
+  [index : OptCfgIndex]
+  [bound : ir.CompilerIrValue]
+  [label : i64]
+  [at : i64]) : i64
+  (let
+    [direct : i64
+      (opt-cb-length-owner
+        type-segment-bases
+        (compiler-opt-global-shared-view scan)
+        (compiler-opt-global-shared-view cand)
+        (compiler-opt-global-shared-view use)
+        (compiler-opt-global-shared-view copies)
+        (compiler-opt-global-shared-view bound))]
+    (if (>= direct 0)
+      direct
+      (match (compiler-opt-global-shared-view bound)
+        [(ir.CompilerIrValue.Var raw)
+          (if (>
+            (opt-len-eq-def-count (compiler-opt-global-shared-view defs) raw)
+            1)
+            (- 0 1)
+            (opt-cb-dominating-check
+              (compiler-opt-global-shared-view sites)
+              (compiler-opt-global-shared-view doms)
+              (compiler-opt-global-shared-view index)
+              (opt-cb-canonical-var
+                type-segment-bases
+                (compiler-opt-global-shared-view defs)
+                raw
+                4)
+              label
+              at))]
+        [_ (- 0 1)]))))
+
+;; Walk the candidate headers. The first one whose test governs the store AND
+;; whose bound is family-tied answers; a header that governs the store but whose
+;; bound is not tied to a length leaves the search running, because an outer
+;; loop may still supply one.
+(define (opt-cb2-scan-headers
+  [type-segment-bases : i64]
+  [scan : OptCbScan]
+  [cand : opt_i64_i64_map.Map]
+  [use : OptLenEqUse]
+  [copies : opt_i64_i64_map.Map]
+  [defs : OptLenEqDefs]
+  [sites : OptCbSites]
+  [context : OptCfgContext]
+  [var : i64]
+  [label : i64]
+  [at : i64]
+  [store-id : i64]
+  [total : i64]) : i64
+  (let
+    [index : OptCfgIndex (compiler-opt-global-shared-view context.index)]
+    [doms : OptDomInfo (compiler-opt-global-shared-view context.doms)]
+    [fwd : (__tl_dyn-array i64) (__tl_make-array i64 total)]
+    [bwd : (__tl_dyn-array i64) (__tl_make-array i64 total)]
+    [queue : (__tl_dyn-array i64) (__tl_make-array i64 total)]
+    [id : i64 0]
+    [owner : i64 (- 0 1)]
+    (begin
+      (while (and (< owner 0) (< id total))
+        (begin
+          (match (opt-cb2-header-test
+            (compiler-opt-global-shared-view defs)
+            (compiler-opt-global-shared-view index)
+            id
+            var)
+            [(OptCb2Test.No) unit]
+            [(OptCb2Test.Some bound yes cmp-at)
+              (let
+                [body-id : i64
+                  (opt-cb-block-id (compiler-opt-global-shared-view index) yes)]
+                (if (and
+                  (>= body-id 0)
+                  (opt-cb2-sole-pred?
+                    (compiler-opt-global-shared-view index)
+                    body-id
+                    id)
+                  (opt-dom-info-dominates-id?
+                    (compiler-opt-global-shared-view doms)
+                    body-id
+                    store-id)
+                  (not
+                    (opt-cb2-block-defines?
+                      (compiler-opt-global-shared-view index)
+                      id
+                      var
+                      (+ cmp-at 1)
+                      (- 0 1)))
+                  (opt-cb2-region-ok?
+                    (compiler-opt-global-shared-view index)
+                    (compiler-opt-global-shared-view fwd)
+                    (compiler-opt-global-shared-view bwd)
+                    (compiler-opt-global-shared-view queue)
+                    total
+                    var
+                    body-id
+                    store-id
+                    at))
+                  (set!
+                    owner
+                    (opt-cb2-bound-owner
+                      type-segment-bases
+                      (compiler-opt-global-shared-view scan)
+                      (compiler-opt-global-shared-view cand)
+                      (compiler-opt-global-shared-view use)
+                      (compiler-opt-global-shared-view copies)
+                      (compiler-opt-global-shared-view defs)
+                      (compiler-opt-global-shared-view sites)
+                      (compiler-opt-global-shared-view doms)
+                      (compiler-opt-global-shared-view index)
+                      bound
+                      label
+                      at))
+                  unit))])
+          (set! id (+ id 1))))
+      owner)))
+
+;; The stored value is an affine induction variable bounded by its governing
+;; loop condition: the length owner that condition ties it to, or -1.
+(define (opt-cb2-induction-owner
+  [type-segment-bases : i64]
+  [scan : OptCbScan]
+  [cand : opt_i64_i64_map.Map]
+  [use : OptLenEqUse]
+  [copies : opt_i64_i64_map.Map]
+  [defs : OptLenEqDefs]
+  [sites : OptCbSites]
+  [context : OptCfgContext]
+  [var : i64]
+  [label : i64]
+  [at : i64]) : i64
+  (let
+    [index : OptCfgIndex (compiler-opt-global-shared-view context.index)]
+    [total : i64
+      (opt-cfg-index-block-count (compiler-opt-global-shared-view index))]
+    [store-id : i64
+      (opt-cb-block-id (compiler-opt-global-shared-view index) label)]
+    (if (or
+      (< store-id 0)
+      (<= total 0)
+      (> total (opt-cb2-block-cap))
+      (not
+        (opt-cb2-induction-var?
+          type-segment-bases
+          (compiler-opt-global-shared-view sites)
+          (compiler-opt-global-shared-view context)
+          (compiler-opt-global-shared-view defs)
+          var
+          total)))
+      (- 0 1)
+      (opt-cb2-scan-headers
+        type-segment-bases
+        (compiler-opt-global-shared-view scan)
+        (compiler-opt-global-shared-view cand)
+        (compiler-opt-global-shared-view use)
+        (compiler-opt-global-shared-view copies)
+        (compiler-opt-global-shared-view defs)
+        (compiler-opt-global-shared-view sites)
+        (compiler-opt-global-shared-view context)
+        var
+        label
+        at
+        store-id
+        total))))
+
 (define (opt-cb-classify!
   [type-segment-bases : i64]
   [scan : OptCbScan]
@@ -135072,7 +135954,35 @@
                     (compiler-opt-global-shared-view defs)
                     var)
                   1)
-                  (opt-cb-refuse! bad global)
+                  ;; CB-2: a multiply-assigned stored value is not lost. An
+                  ;; affine induction variable bounded by its governing loop
+                  ;; condition is admitted by the class above, which names the
+                  ;; same kind of length owner a CHECKED store does.
+                  (let
+                    [induction : i64
+                      (opt-cb2-induction-owner
+                        type-segment-bases
+                        (compiler-opt-global-shared-view scan)
+                        (compiler-opt-global-shared-view cand)
+                        (compiler-opt-global-shared-view use)
+                        (compiler-opt-global-shared-view copies)
+                        (compiler-opt-global-shared-view defs)
+                        (compiler-opt-global-shared-view sites)
+                        (compiler-opt-global-shared-view context)
+                        var
+                        label
+                        at)]
+                    (if (< induction 0)
+                      (opt-cb-refuse! bad global)
+                      (begin
+                        (opt-cb2-trace-admit! global var induction)
+                        (opt-cb-note-family!
+                          (compiler-opt-global-shared-view table)
+                          bad
+                          fam
+                          leng
+                          global
+                          induction))))
                   (let
                     [root : i64
                       (opt-cb-canonical-var

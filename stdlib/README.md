@@ -405,19 +405,21 @@ Vec bang place macros as available yet.
   success/error pair share the generated module/type.
 - `serialize.tl`: format-generic value serializer macro. Import it with
   `(import stdlib.serialize)`, import a format strategy module, then instantiate
-  with `(import (serialize.serialize fmt Person) as person_ser)` or a scalar or
-  fixed-array root such as
+  with `(import (serialize.serialize fmt Person) as person_ser)` or a scalar,
+  non-empty tuple, or fixed-array root such as
+  `(import (serialize.serialize fmt (Tuple i64 bool)) as pair_ser)` or
   `(import (serialize.serialize fmt (Array i64 4)) as i64x4_ser)`.
   The generated module exposes `encode` / `decode` over the strategy's `Value`
   type, a local `Result` enum, and any format-specific declarations emitted by
   the strategy's `extra-decls` hook. Current serializers cover primitive roots,
-  fixed-array roots, dynamic-array roots, struct roots, module-backed enum roots,
-  nested structs, arrays, enum values, and tuples within supported roots. Enums
-  reuse object and sequence hooks as `{ tag: String, payload: [...] }`, with
-  payload elements in declaration order. Direct struct payloads and generated
-  option/result families serialize as ordinary concrete nominal enums. The JSON
-  strategy deterministically emits `tag` before `payload`. Tuple values are
-  supported recursively; tuple roots remain a follow-up.
+  fixed-array roots, dynamic-array roots, non-empty tuple roots, struct roots,
+  module-backed enum roots, and nested structs, arrays, tuples, and enum values.
+  Enums reuse object and sequence hooks as `{ tag: String, payload: [...] }`,
+  with payload elements in declaration order. Direct struct payloads and
+  generated option/result families serialize as ordinary concrete nominal
+  enums. The JSON strategy deterministically emits `tag` before `payload`.
+  Empty tuple roots remain unavailable under the language's zero-sized internal
+  aggregate ABI.
   Strategy hooks own object and sequence representation, decode diagnostics, and
   helper aliases. The checked toy format exercises the hook contract, and
   `json.tl` provides the JSON integration strategy.

@@ -40,6 +40,18 @@
 (import (serialize.serialize toy enum_fixture.Status) as status_ser)
 (import (serialize.serialize toy option_i64.Option) as option_i64_ser)
 (import (serialize.serialize toy result_i64_string.Result) as result_i64_string_ser)
+(import (serialize.serialize toy (Tuple i64 i64)) as tuple_i64_i64_ser)
+(import (serialize.serialize toy (Tuple i64 i64)) as tuple_i64_i64_ser_again)
+(import (serialize.serialize toy (Tuple i64)) as tuple_i64_ser)
+(import (serialize.serialize toy (Tuple i64 bool)) as tuple_i64_bool_ser)
+(import (serialize.serialize
+  toy
+  (Tuple
+    Address
+    (Array i64 2)
+    (__tl_dyn-array i64)
+    enum_fixture.Status
+    (Tuple String bool))) as tuple_aggregate_ser)
 
 (defstruct Person
   (name String)
@@ -90,6 +102,29 @@
     (serialize-samples-ok? (tuple-ref combo 3))
     (string.eq (tuple-ref (tuple-ref combo 4) 0) "inner")
     (tuple-ref (tuple-ref combo 4) 1)))
+
+(define (serialize-tuple-pair-ok?
+  [value : (Tuple i64 i64)]
+  [first : i64]
+  [second : i64]) : bool
+  (and (= (tuple-ref value 0) first) (= (tuple-ref value 1) second)))
+
+(define (serialize-tuple-aggregate-ok?
+  [value
+    : (Tuple
+      Address
+      (Array i64 2)
+      (__tl_dyn-array i64)
+      enum_fixture.Status
+      (Tuple String bool))]) : bool
+  (and
+    (serialize-address-eq? (tuple-ref value 0) 333 "Rome")
+    (= (array-ref (tuple-ref value 1) 0) 9)
+    (= (array-ref (tuple-ref value 1) 1) 10)
+    (serialize-samples-ok? (tuple-ref value 2))
+    (enum_fixture.moved? (tuple-ref value 3))
+    (string.eq (tuple-ref (tuple-ref value 4) 0) "inner")
+    (tuple-ref (tuple-ref value 4) 1)))
 
 (define (serialize-person-ok? [person : Person]) : bool
   (and
@@ -459,6 +494,80 @@
         [(address_array_ser.Ok parsed) (serialize-previous-ok? parsed)]
         [(address_array_ser.Err _) false]))))
 
+(define (serialize-tuple-i64-root-roundtrip-ok?) : bool
+  (let
+    [encoded : toy.Value (tuple_i64_i64_ser.encode (tuple 11 12))]
+    (and
+      (match (toy.toy-shared-view encoded)
+        [(toy.Sequence items)
+          (and
+            (= (toy.value-list-count (& (__tl-box-place items))) 2)
+            (match (toy.value-list-get (& (__tl-box-place items)) 0)
+              [(toy.Found first)
+                (match first
+                  [(toy.Int value) (= value 11)]
+                  [_ false])]
+              [(toy.Missing) false]))]
+        [_ false])
+      (match (tuple_i64_i64_ser_again.decode encoded)
+        [(tuple_i64_i64_ser_again.Ok parsed)
+          (serialize-tuple-pair-ok? parsed 11 12)]
+        [(tuple_i64_i64_ser_again.Err _) false]))))
+
+(define (serialize-tuple-single-and-mixed-roots-ok?) : bool
+  (and
+    (match (tuple_i64_ser.decode (tuple_i64_ser.encode (tuple 17)))
+      [(tuple_i64_ser.Ok parsed) (= (tuple-ref parsed 0) 17)]
+      [(tuple_i64_ser.Err _) false])
+    (match (tuple_i64_bool_ser.decode
+      (tuple_i64_bool_ser.encode (tuple 23 true)))
+      [(tuple_i64_bool_ser.Ok parsed)
+        (and (= (tuple-ref parsed 0) 23) (tuple-ref parsed 1))]
+      [(tuple_i64_bool_ser.Err _) false])))
+
+(define (serialize-tuple-aggregate-root-roundtrip-ok?) : bool
+  (let
+    [value : (Tuple
+      Address
+      (Array i64 2)
+      (__tl_dyn-array i64)
+      enum_fixture.Status
+      (Tuple String bool))
+      (tuple
+        (Address 333 "Rome")
+        (array 9 10)
+        (serialize-make-samples)
+        (enum_fixture.moved)
+        (tuple "inner" true))]
+    [encoded : toy.Value (tuple_aggregate_ser.encode value)]
+    (match (tuple_aggregate_ser.decode encoded)
+      [(tuple_aggregate_ser.Ok parsed) (serialize-tuple-aggregate-ok? parsed)]
+      [(tuple_aggregate_ser.Err _) false])))
+
+(define (serialize-tuple-short-sequence) : toy.Value
+  (toy.Sequence
+    (box (toy.value-list-prepend (toy.Int 1) (toy.value-list-empty)))))
+
+(define (serialize-tuple-long-sequence) : toy.Value
+  (toy.Sequence
+    (box
+      (toy.value-list-prepend
+        (toy.Int 1)
+        (toy.value-list-prepend
+          (toy.Int 2)
+          (toy.value-list-prepend (toy.Int 3) (toy.value-list-empty)))))))
+
+(define (serialize-tuple-length-mismatch-ok?) : bool
+  (and
+    (match (tuple_i64_i64_ser.decode (serialize-tuple-short-sequence))
+      [(tuple_i64_i64_ser.Ok _) false]
+      [(tuple_i64_i64_ser.Err message)
+        (string.eq message "serialize: sequence length mismatch")])
+    (match (tuple_i64_i64_ser.decode (serialize-tuple-long-sequence))
+      [(tuple_i64_i64_ser.Ok _) false]
+      [(tuple_i64_i64_ser.Err message)
+        (string.eq message "serialize: sequence length mismatch")])))
+
 (define (serialize-status-nullary-unary-roundtrip-ok?) : bool
   (and
     (match (status_ser.decode (status_ser.encode (enum_fixture.idle)))
@@ -623,4 +732,8 @@
     (unless (= (option_type_info.score) 1) (return 20))
     (unless (= (result_type_info.score) 1) (return 21))
     (unless (serialize-status-struct-payload-roundtrip-ok?) (return 22))
+    (unless (serialize-tuple-i64-root-roundtrip-ok?) (return 23))
+    (unless (serialize-tuple-single-and-mixed-roots-ok?) (return 24))
+    (unless (serialize-tuple-aggregate-root-roundtrip-ok?) (return 25))
+    (unless (serialize-tuple-length-mismatch-ok?) (return 26))
     42))

@@ -105,9 +105,15 @@
   (root-compiler bool)
   (error String))
 
+(defenum BuildPackageSourceProvenance
+  (Local)
+  ;; Declared dependency alias followed by its locked physical checkout root.
+  (Fetched String String))
+
 (defstruct BuildPackageGraphNode
   (manifest-path String)
-  (manifest load.CompilerPkgManifest))
+  (manifest load.CompilerPkgManifest)
+  (provenance BuildPackageSourceProvenance))
 
 (defstruct BuildPackageArtifactPaths
   (runtime String)
@@ -612,7 +618,10 @@
             stdlib-roots)]
         [(cli_option.CliCommonOption.NotCommon)
           (cond
-            [(or (string.eq current "--debug") (string.eq current "-g"))
+            [(or
+                (string.eq current "--debug")
+                (string.eq current "-g")
+                (string.eq current "--backtrace"))
               (begin
                 (ir.compiler-debug-info-set-enabled! true)
                 (build-parse-options
@@ -987,7 +996,10 @@
             resolved-deps)]
         [(cli_option.CliCommonOption.NotCommon)
           (cond
-            [(or (string.eq current "--debug") (string.eq current "-g"))
+            [(or
+                (string.eq current "--debug")
+                (string.eq current "-g")
+                (string.eq current "--backtrace"))
               (begin
                 (ir.compiler-debug-info-set-enabled! true)
                 (build-package-worker-parse-options
@@ -1474,6 +1486,57 @@
     (load.compiler-load-join-root-path
       (build-package-dep-root manifest-dir dep)
       "typelisp.pkg")))
+
+(define (build-package-dep-provenance
+  [manifest-dir : String]
+  [declared : load.CompilerPkgDep]
+  [resolved : load.CompilerPkgDep]) : BuildPackageSourceProvenance
+  (if (load.compiler-load-github-dependency-path? (clone declared.path))
+    (BuildPackageSourceProvenance.Fetched
+      declared.alias
+      (build-package-dep-root manifest-dir resolved))
+    (BuildPackageSourceProvenance.Local)))
+
+(define (build-package-validate-fetched-checkout-before-manifest
+  [provenance : BuildPackageSourceProvenance]) : ResultBuildString
+  (match provenance
+    [(BuildPackageSourceProvenance.Local) (ResultBuildString.Ok "")]
+    [(BuildPackageSourceProvenance.Fetched alias checkout-root)
+      (match (package_source_core.package-source-confined-existing-file
+        alias
+        "manifest"
+        "typelisp.pkg"
+        (owned_view.compiler-owned-shared-view checkout-root))
+        [(package_source_core.ResultPackageSourceConfinedPath.Err message)
+          (ResultBuildString.Err message)]
+        [(package_source_core.ResultPackageSourceConfinedPath.Ok _)
+          (ResultBuildString.Ok "")])]))
+
+(define (build-package-validate-fetched-checkout
+  [provenance : BuildPackageSourceProvenance]
+  [manifest : load.CompilerPkgManifest]) : ResultBuildString
+  (match provenance
+    [(BuildPackageSourceProvenance.Local) (ResultBuildString.Ok "")]
+    [(BuildPackageSourceProvenance.Fetched _ checkout-root)
+      (match (package_source_core.package-source-confined-existing-file
+        (owned_view.compiler-owned-shared-view manifest.name)
+        "entry"
+        (owned_view.compiler-owned-shared-view manifest.entry)
+        (owned_view.compiler-owned-shared-view checkout-root))
+        [(package_source_core.ResultPackageSourceConfinedPath.Err message)
+          (ResultBuildString.Err message)]
+        [(package_source_core.ResultPackageSourceConfinedPath.Ok _)
+          (match (package_source_core.package-source-fetched-checkout-audit
+            (owned_view.compiler-owned-shared-view manifest.name)
+            checkout-root)
+            [(package_source_core.ResultPackageSourceConfinedPath.Err message)
+              (ResultBuildString.Err message)]
+            [(package_source_core.ResultPackageSourceConfinedPath.Ok _)
+              (ResultBuildString.Ok "")])])]))
+
+(define (build-package-validate-graph-node-checkout
+  [node : BuildPackageGraphNode]) : ResultBuildString
+  (build-package-validate-fetched-checkout node.provenance node.manifest))
 
 (define (build-string-index-from
   [s : (& s str)]
@@ -2603,36 +2666,51 @@
 
 (define (build-package-load-dep-node
   [manifest-dir : String]
-  [dep : load.CompilerPkgDep]) : ResultBuildPackageGraphNode
-  (match (build-package-resolve-dep
-    (owned_view.compiler-owned-shared-view manifest-dir)
-    dep)
-    [(ResultBuildPkgDep.Err message) (ResultBuildPackageGraphNode.Err message)]
-    [(ResultBuildPkgDep.Ok resolved-dep)
-      (let
-        [dep-manifest-path : String
-          (build-package-dep-manifest-path
-            (owned_view.compiler-owned-shared-view manifest-dir)
-            (owned_view.compiler-owned-shared-view resolved-dep))]
+  [declared-dep : load.CompilerPkgDep]
+  [resolved-dep : load.CompilerPkgDep]) : ResultBuildPackageGraphNode
+  (let
+    [provenance : BuildPackageSourceProvenance
+      (build-package-dep-provenance
+        (owned_view.compiler-owned-shared-view manifest-dir)
+        (owned_view.compiler-owned-shared-view declared-dep)
+        (owned_view.compiler-owned-shared-view resolved-dep))]
+    [dep-manifest-path : String
+      (build-package-dep-manifest-path
+        (owned_view.compiler-owned-shared-view manifest-dir)
+        (owned_view.compiler-owned-shared-view resolved-dep))]
+    (match (build-package-validate-fetched-checkout-before-manifest
+      (owned_view.compiler-owned-shared-view provenance))
+      [(ResultBuildString.Err message)
+        (ResultBuildPackageGraphNode.Err message)]
+      [(ResultBuildString.Ok _)
         (match (build-load-manifest
           (owned_view.compiler-owned-shared-view dep-manifest-path))
           [(ResultBuildManifest.Err message)
             (ResultBuildPackageGraphNode.Err
               (str_cat.str-cat "dependency `" resolved-dep.alias "`: " message))]
           [(ResultBuildManifest.Ok dep-manifest)
-            (if (not (build-package-kind-lib? dep-manifest.kind))
-              (ResultBuildPackageGraphNode.Err
-                (str_cat.str-cat
-                  "build: dependency `"
-                  resolved-dep.alias
-                  "` at "
-                  dep-manifest-path
-                  " must be a staticlib package"))
-              ;; Do not resolve or read the acquired library's lock. Its
-              ;; dependency-free invariant is checked when the node enters the
-              ;; graph below.
-              (ResultBuildPackageGraphNode.Ok
-                (BuildPackageGraphNode dep-manifest-path dep-manifest)))]))]))
+            (match (build-package-validate-fetched-checkout
+              (owned_view.compiler-owned-shared-view provenance)
+              (owned_view.compiler-owned-shared-view dep-manifest))
+              [(ResultBuildString.Err message)
+                (ResultBuildPackageGraphNode.Err message)]
+              [(ResultBuildString.Ok _)
+                (if (not (build-package-kind-lib? dep-manifest.kind))
+                  (ResultBuildPackageGraphNode.Err
+                    (str_cat.str-cat
+                      "build: dependency `"
+                      resolved-dep.alias
+                      "` at "
+                      dep-manifest-path
+                      " must be a staticlib package"))
+                  ;; Do not resolve or read the acquired library's lock. Its
+                  ;; dependency-free invariant is checked when the node enters
+                  ;; the graph below.
+                  (ResultBuildPackageGraphNode.Ok
+                    (BuildPackageGraphNode
+                      dep-manifest-path
+                      dep-manifest
+                      provenance)))])])])))
 
 (define (build-package-acquired-library-dependency-message
   [node : (& node BuildPackageGraphNode)]
@@ -2671,14 +2749,16 @@
 
 (define (build-package-graph-add-deps
   [manifest-dir : String]
-  [deps : load.CompilerPkgDepList]
+  [declared-deps : load.CompilerPkgDepList]
+  [resolved-deps : load.CompilerPkgDepList]
   [index : i64]
   [state : BuildPackageGraphState]) : ResultBuildPackageGraphState
-  (if (>= index (load.compiler-pkg-dep-list-count deps))
+  (if (>= index (load.compiler-pkg-dep-list-count resolved-deps))
     (ResultBuildPackageGraphState.Ok state)
     (match (build-package-load-dep-node
       (owned_view.compiler-owned-shared-view manifest-dir)
-      (load.compiler-pkg-dep-list-at (& deps) index))
+      (load.compiler-pkg-dep-list-at (& declared-deps) index)
+      (load.compiler-pkg-dep-list-at (& resolved-deps) index))
       [(ResultBuildPackageGraphNode.Err message)
         (ResultBuildPackageGraphState.Err message)]
       [(ResultBuildPackageGraphNode.Ok node)
@@ -2688,13 +2768,15 @@
           [(ResultBuildPackageGraphState.Ok next-state)
             (build-package-graph-add-deps
               (owned_view.compiler-owned-shared-view manifest-dir)
-              (owned_view.compiler-owned-shared-view deps)
+              (owned_view.compiler-owned-shared-view declared-deps)
+              (owned_view.compiler-owned-shared-view resolved-deps)
               (+ index 1)
               next-state)])])))
 
 (define (build-package-dependency-graph
   [manifest-path : String]
-  [manifest : load.CompilerPkgManifest]) : ResultBuildPackageGraph
+  [declared-manifest : load.CompilerPkgManifest]
+  [resolved-manifest : load.CompilerPkgManifest]) : ResultBuildPackageGraph
   (let
     [root-path : String (build-package-normalize-manifest-path manifest-path)]
     [root-dir : String (load.compiler-load-dirname root-path)]
@@ -2707,7 +2789,8 @@
         (build-package-graph-node-vec-new))]
     (match (build-package-graph-add-deps
       root-dir
-      (load.compiler-pkg-deps-list manifest.deps)
+      (load.compiler-pkg-deps-list declared-manifest.deps)
+      (load.compiler-pkg-deps-list resolved-manifest.deps)
       0
       initial)
       [(ResultBuildPackageGraphState.Err message)
@@ -3251,6 +3334,26 @@
     [manifest-dir : String (load.compiler-load-dirname manifest-path)]
     (build-package-tlci-path-profile manifest-dir manifest.name profile)))
 
+(define (build-package-validate-graph-checkouts-from
+  [nodes : BuildPackageGraphNodeVec]
+  [index : i64]) : ResultBuildString
+  (if (>=
+    index
+    (build-package-graph-node-vec-len
+      (owned_view.compiler-owned-shared-view nodes)))
+    (ResultBuildString.Ok "")
+    (match (build-package-validate-graph-node-checkout
+      (build-package-graph-node-vec-at
+        (owned_view.compiler-owned-shared-view nodes)
+        index))
+      [(ResultBuildString.Err message) (ResultBuildString.Err message)]
+      [(ResultBuildString.Ok _)
+        (build-package-validate-graph-checkouts-from nodes (+ index 1))])))
+
+(define (build-package-validate-graph-checkouts
+  [nodes : BuildPackageGraphNodeVec]) : ResultBuildString
+  (build-package-validate-graph-checkouts-from nodes 0))
+
 (define (build-package-graph-link-libs
   [nodes : BuildPackageGraphNodeVec]
   [profile : BuildProfile]
@@ -3394,7 +3497,10 @@
     (load.compiler-pkg-link-empty)))
 
 (define (build-package-graph-test-node [manifest-path : String] [name : String]) : BuildPackageGraphNode
-  (BuildPackageGraphNode manifest-path (build-package-graph-test-manifest name)))
+  (BuildPackageGraphNode
+    manifest-path
+    (build-package-graph-test-manifest name)
+    (BuildPackageSourceProvenance.Local)))
 
 (define (build-package-graph-test-link-arg-target
   [node : BuildPackageGraphNode]
@@ -3528,7 +3634,10 @@
           (load.compiler-pkg-deps-empty)
           (load.compiler-pkg-link-empty))]
       [bin-node : BuildPackageGraphNode
-        (BuildPackageGraphNode "root/app/typelisp.pkg" bin-manifest)]
+        (BuildPackageGraphNode
+          "root/app/typelisp.pkg"
+          bin-manifest
+          (BuildPackageSourceProvenance.Local))]
       [dep-node : BuildPackageGraphNode
         (build-package-graph-test-node "root/dep/typelisp.pkg" "dep")]
       [bin-artifacts : BuildPackageArtifactPaths
@@ -3565,7 +3674,8 @@
     [node : BuildPackageGraphNode
       (BuildPackageGraphNode
         "root/app/typelisp.pkg"
-        (build-package-graph-test-manifest-with-deps "app" deps))]
+        (build-package-graph-test-manifest-with-deps "app" deps)
+        (BuildPackageSourceProvenance.Local))]
     [nodes : BuildPackageGraphNodeVec
       (build-package-graph-node-vec-push
         (build-package-graph-node-vec-new)
@@ -3600,7 +3710,8 @@
     [graph-node : BuildPackageGraphNode
       (BuildPackageGraphNode
         "acquired/layer/typelisp.pkg"
-        (build-package-graph-test-manifest-with-deps "layer" deps))]
+        (build-package-graph-test-manifest-with-deps "layer" deps)
+        (BuildPackageSourceProvenance.Local))]
     [state : BuildPackageGraphState
       (BuildPackageGraphState
         (build_string_i64_map.with-capacity 4)
@@ -7165,20 +7276,25 @@
         mode
         lock-policy
         stdlib-roots)]
-    (match (process.start command)
-      [(process.OkProcessChild child)
-        (ResultBuildPackageGraphWorker.Ok
-          (BuildPackageGraphWorker
-            (owned_view.compiler-owned-shared-view node)
-            artifacts
-            child))]
-      [(process.ErrProcessChild error)
-        (ResultBuildPackageGraphWorker.Err
-          (str_cat.str-cat
-            "build: failed to start package dependency `"
-            name
-            "`: "
-            (process.error-message error)))])))
+    (match (build-package-validate-graph-node-checkout
+      (owned_view.compiler-owned-shared-view node))
+      [(ResultBuildString.Err message)
+        (ResultBuildPackageGraphWorker.Err message)]
+      [(ResultBuildString.Ok _)
+        (match (process.start command)
+          [(process.OkProcessChild child)
+            (ResultBuildPackageGraphWorker.Ok
+              (BuildPackageGraphWorker
+                (owned_view.compiler-owned-shared-view node)
+                artifacts
+                child))]
+          [(process.ErrProcessChild error)
+            (ResultBuildPackageGraphWorker.Err
+              (str_cat.str-cat
+                "build: failed to start package dependency `"
+                name
+                "`: "
+                (process.error-message error)))])])))
 
 (define (build-package-schedule-pass
   [nodes : BuildPackageGraphNodeVec]
@@ -7492,22 +7608,31 @@
             (build-package-graph-node-vec-at
               (owned_view.compiler-owned-shared-view nodes)
               index)]
+          [validation : ResultBuildString
+            (build-package-validate-graph-node-checkout
+              (owned_view.compiler-owned-shared-view node))]
           [manifest-path : String node.manifest-path]
           [manifest : load.CompilerPkgManifest node.manifest]
           [node-status : i64
-            (build-package-emit-one
-              manifest-path
-              (owned_view.compiler-owned-shared-view manifest)
-              target
-              opt-level
-              profile
-              mode
-              lock-policy
-              (owned_view.compiler-owned-shared-view stdlib-roots)
-              (process.args-empty)
-              (load.compiler-pkg-deps-list manifest.deps)
-              (owned_view.compiler-owned-shared-view producer-identity)
-              announce)]
+            (match validation
+              [(ResultBuildString.Err message)
+                (begin
+                  (io.print-error message)
+                  1)]
+              [(ResultBuildString.Ok _)
+                (build-package-emit-one
+                  manifest-path
+                  (owned_view.compiler-owned-shared-view manifest)
+                  target
+                  opt-level
+                  profile
+                  mode
+                  lock-policy
+                  (owned_view.compiler-owned-shared-view stdlib-roots)
+                  (process.args-empty)
+                  (load.compiler-pkg-deps-list manifest.deps)
+                  (owned_view.compiler-owned-shared-view producer-identity)
+                  announce)])]
           (if (= node-status 0)
             (set! index (+ index 1))
             (begin
@@ -7647,7 +7772,7 @@
           (build-package-normalize-manifest-path manifest-path)]
         (match (build-package-resolve-manifest-deps
           (owned_view.compiler-owned-shared-view normalized-path)
-          manifest
+          (owned_view.compiler-owned-shared-view manifest)
           lock-policy)
           [(ResultBuildManifest.Err message)
             (begin
@@ -7656,6 +7781,7 @@
           [(ResultBuildManifest.Ok resolved-manifest)
             (match (build-package-dependency-graph
               (owned_view.compiler-owned-shared-view normalized-path)
+              (owned_view.compiler-owned-shared-view manifest)
               (owned_view.compiler-owned-shared-view resolved-manifest))
               [(ResultBuildPackageGraph.Err message)
                 (begin
@@ -7677,25 +7803,34 @@
                       (owned_view.compiler-owned-shared-view producer-identity)
                       announce)]
                   (if (= dep-status 0)
-                    (build-package-emit-one
-                      (owned_view.compiler-owned-shared-view normalized-path)
-                      (owned_view.compiler-owned-shared-view resolved-manifest)
-                      target
-                      opt-level
-                      profile
-                      mode
-                      lock-policy
-                      stdlib-roots
-                      (build-package-graph-link-libs
-                        (owned_view.compiler-owned-shared-view nodes)
-                        profile
-                        target)
-                      (build-package-graph-catalog-deps
-                        nodes
-                        (load.compiler-load-dirname normalized-path)
-                        (load.compiler-pkg-deps-list resolved-manifest.deps))
-                      producer-identity
-                      announce)
+                    (match (build-package-validate-graph-checkouts
+                      (owned_view.compiler-owned-shared-view nodes))
+                      [(ResultBuildString.Err message)
+                        (begin
+                          (io.print-error message)
+                          1)]
+                      [(ResultBuildString.Ok _)
+                        (build-package-emit-one
+                          (owned_view.compiler-owned-shared-view
+                            normalized-path)
+                          (owned_view.compiler-owned-shared-view
+                            resolved-manifest)
+                          target
+                          opt-level
+                          profile
+                          mode
+                          lock-policy
+                          stdlib-roots
+                          (build-package-graph-link-libs
+                            (owned_view.compiler-owned-shared-view nodes)
+                            profile
+                            target)
+                          (build-package-graph-catalog-deps
+                            nodes
+                            (load.compiler-load-dirname normalized-path)
+                            (load.compiler-pkg-deps-list resolved-manifest.deps))
+                          producer-identity
+                          announce)])
                     dep-status))])]))]))
 
 (define (build-package-emit
@@ -7921,7 +8056,10 @@
 (define (build-cli-option [current : String]) : BuildCliOption
   (cond
     [(string.eq current "-o") (BuildCliOption.Output)]
-    [(or (string.eq current "--debug") (string.eq current "-g"))
+    [(or
+        (string.eq current "--debug")
+        (string.eq current "-g")
+        (string.eq current "--backtrace"))
       (BuildCliOption.Debug)]
     [else (build-cli-option-rest0 current)]))
 
@@ -8285,6 +8423,7 @@
   [producer-identity : String]) : i64
   (begin
     (ir.compiler-debug-info-set-enabled! false)
+    (ir.compiler-debug-path-remap-clear!)
     (cond
       [(and (> count start) (string.eq (io.arg start) "--package-worker"))
         (build-package-worker-run-from (+ start 1) count producer-identity)]

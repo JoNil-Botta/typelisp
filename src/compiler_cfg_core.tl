@@ -74,6 +74,23 @@
 (define (compiler-cfg-enable-id [cfgs : sym_i64_env.SymI64Env] [name-id : i64]) : sym_i64_env.SymI64Env
   (compiler-cfg-bind-id cfgs name-id 1))
 
+;; Remove every binding for NAME-ID. Compiler-private cfgs use this before
+;; deriving their value from driver state so a user `--cfg` cannot spoof an
+;; internal code-generation contract.
+(define (compiler-cfg-remove-id [cfgs : sym_i64_env.SymI64Env] [name-id : i64]) : sym_i64_env.SymI64Env
+  (let
+    [remove-key : i64
+      (compiler-cfg-key-id (compiler-cfg-key-from-name-id name-id))]
+    (match (sym_i64_env.sym-i64-view cfgs)
+      [(sym_i64_env.SymI64ViewNil) (compiler-cfg-empty)]
+      [(sym_i64_env.SymI64ViewBind key value rest)
+        (let
+          [clean-rest : sym_i64_env.SymI64Env
+            (compiler-cfg-remove-id rest name-id)]
+          (if (= key remove-key)
+            clean-rest
+            (sym_i64_env.sym-i64-bind-id clean-rest key value)))])))
+
 (define (compiler-cfg-bind-id
   [cfgs : sym_i64_env.SymI64Env]
   [name-id : i64]
@@ -145,6 +162,34 @@
   (=
     (sym_i64_env.sym-i64-lookup-id-or dispatch (compiler-cfg-key-id key) 0)
     (compiler-cfg-union-value)))
+
+(cfg
+  test
+  (test
+    compiler-cfg-remove-id-removes-all-bindings
+    (let
+      [private-id : i64 (ci.intern "compiler-private-test")]
+      [public-id : i64 (ci.intern "public-test")]
+      [cfgs : sym_i64_env.SymI64Env
+        (compiler-cfg-bind-id
+          (compiler-cfg-bind-id
+            (compiler-cfg-bind-id (compiler-cfg-empty) private-id 1)
+            public-id
+            7)
+          private-id
+          2)]
+      [clean : sym_i64_env.SymI64Env (compiler-cfg-remove-id cfgs private-id)]
+      (begin
+        (test.assert-false
+          (compiler-cfg-enabled? clean private-id)
+          "private cfg removes every shadowed binding")
+        (test.assert-i64-eq
+          (sym_i64_env.sym-i64-lookup-id-or
+            clean
+            (compiler-cfg-key-id (compiler-cfg-key-from-name-id public-id))
+            -1)
+          7
+          "private cfg removal preserves unrelated values")))))
 
 (cfg
   test

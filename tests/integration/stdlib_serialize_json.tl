@@ -13,6 +13,9 @@
 (import (serialize.serialize json (type (__tl_dyn-array i64))) as dyn_i64_json)
 (import (serialize.serialize json (Array Address 2)) as address_array_json)
 (import (serialize.serialize json enum_fixture.Status) as status_json)
+(import (serialize.serialize json (Tuple i64 i64)) as tuple_i64_i64_json)
+(import (serialize.serialize json (Tuple i64 i64)) as tuple_i64_i64_json_again)
+(import (serialize.serialize json (Tuple i64 bool)) as tuple_i64_bool_json)
 
 (defstruct Person
   (name String)
@@ -346,6 +349,30 @@
         [(address_array_json.Ok parsed) (serialize-json-previous-ok? parsed)]
         [(address_array_json.Err _) false]))))
 
+(define (serialize-json-tuple-root-roundtrip-ok?) : bool
+  (let
+    [json : json.Json (tuple_i64_i64_json.to-json (tuple 11 12))]
+    [encoded : String
+      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
+    (and
+      (string.eq encoded "[11,12]")
+      (match (tuple_i64_i64_json_again.from-json json)
+        [(tuple_i64_i64_json_again.Ok parsed)
+          (and (= (tuple-ref parsed 0) 11) (= (tuple-ref parsed 1) 12))]
+        [(tuple_i64_i64_json_again.Err _) false]))))
+
+(define (serialize-json-distinct-tuple-root-ok?) : bool
+  (let
+    [json : json.Json (tuple_i64_bool_json.to-json (tuple 23 true))]
+    [encoded : String
+      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
+    (and
+      (string.eq encoded "[23,true]")
+      (match (tuple_i64_bool_json.from-json json)
+        [(tuple_i64_bool_json.Ok parsed)
+          (and (= (tuple-ref parsed 0) 23) (tuple-ref parsed 1))]
+        [(tuple_i64_bool_json.Err _) false]))))
+
 (define (serialize-json-status-nullary-unary-roundtrip-ok?) : bool
   (and
     (match (status_json.from-json (status_json.to-json (enum_fixture.idle)))
@@ -458,4 +485,6 @@
     (unless (serialize-json-status-payload-length-ok?) (return 16))
     (unless (serialize-json-status-wide-roundtrip-ok?) (return 17))
     (unless (serialize-json-status-struct-payload-roundtrip-ok?) (return 18))
+    (unless (serialize-json-tuple-root-roundtrip-ok?) (return 19))
+    (unless (serialize-json-distinct-tuple-root-ok?) (return 20))
     42))

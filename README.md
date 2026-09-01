@@ -90,6 +90,14 @@ typelisp explain --search TERM  Search diagnostic explanations
 
 Run `typelisp <command> --help` for the current command-specific options.
 
+Pass `--backtrace` (or `--debug`/`-g`) to `compile`, `build`, or `run` to
+embed fatal-error symbol metadata. Such binaries default to a full trace;
+`TYPELISP_BACKTRACE=off|short|full` selects silence, eight captured frames, or
+64 captured frames at runtime. Ordinary builds contain no backtrace metadata or
+runtime hooks. For reproducible debug artifacts,
+`TYPELISP_REMAP_PATH_PREFIX=FROM=TO` rewrites matching source-path prefixes in
+line tables, fatal-site descriptors, and the embedded map.
+
 ## A small example
 
 ```lisp

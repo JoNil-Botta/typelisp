@@ -140,12 +140,22 @@
 (define sexpr-builder-count : i64
   0)
 
+;; Permanent zero-length replacements used when a retained-origin compaction
+;; finds no live rows.  Like the unspanned sentinels below, these are allocated
+;; by global initialization and therefore remain valid after a reader-owned
+;; growth arena is destroyed.
+(define sp-node-pool-released-slots : (__tl_dyn-array SpannedSexpr)
+  (__tl_make-array SpannedSexpr 0))
+(define sp-builder-released-slots : (__tl_dyn-array SpannedSexpr)
+  (__tl_make-array SpannedSexpr 0))
+
 ;; Permanent zero-length replacements installed by `sexpr-node-pool-release!`.
 ;; Both are materialized once during global initialization, in the process
 ;; entry arena, so the pool globals still name live storage after the shared
 ;; growth arena is unmapped and the next push grows from zero into a fresh
-;; arena. The spanned pool has no counterpart on purpose: its records outlive
-;; parsing (see `sexpr-node-pool-release!`).
+;; arena. The spanned pool cannot be released outright because its origin
+;; records outlive parsing; its sentinels above support the exact-prefix
+;; transfer performed at load handoff instead.
 (define sexpr-node-pool-released-slots : (__tl_dyn-array Sexpr)
   (__tl_make-array Sexpr 0))
 (define sexpr-builder-released-slots : (__tl_dyn-array Sexpr)
@@ -382,6 +392,74 @@
     (set! sp-builder-count 0)
     (set! sp-node-pool-reset-generation (+ sp-node-pool-reset-generation 1))))
 
+;; Re-home the live spanned-node prefix in an exact-capacity transfer owner.
+;; At a whole-program load handoff, parser compaction has removed every source
+;; form and left only declaration/member/semantic-origin marker rows.  The
+;; geometrically grown pool capacity still reflects the largest transient form,
+;; however, and otherwise retains that broad read arena through macro expansion.
+;;
+;; Row ids deliberately remain unchanged: every origin side table names this
+;; dense prefix by integer range, never by backing-array address.  No builder may
+;; be live at the handoff; accepting one would preserve an in-flight reader form
+;; whose list ranges are not part of the origin transfer graph.
+(define (sp-node-pool-compact-retained!) : unit
+  (if (= sp-node-pool-base-arena 0)
+    unit
+    (let
+      [count : i64 sp-node-pool-count]
+      [capacity : i64 (array-length sp-node-pool-slots)]
+      [builder-capacity : i64 (array-length sp-builder-slots)]
+      (if (!= sp-builder-count 0)
+        (io.panic "reader: cannot compact retained origins with a live builder")
+        (if (and (= capacity count) (= builder-capacity 0))
+          unit
+          (let
+            [retire-arena : i64 sp-node-pool-base-arena]
+            [active-arena : i64 (arena.tl_arena_current)]
+            [transfer-arena : i64
+              (if (> count 0)
+                (arena.tl_arena_make)
+                0)]
+            [next-slots : (__tl_dyn-array SpannedSexpr)
+              (if (> count 0)
+                (in-arena
+                  (arena.Arena transfer-arena)
+                  (__tl_make-array SpannedSexpr count))
+                (unsafe
+                  (ptr-read (ptr-addr-of sp-node-pool-released-slots))))]
+            [next-builders : (__tl_dyn-array SpannedSexpr)
+              (if (> count 0)
+                (in-arena
+                  (arena.Arena transfer-arena)
+                  (__tl_make-array SpannedSexpr 0))
+                (unsafe
+                  (ptr-read (ptr-addr-of sp-builder-released-slots))))]
+            [index : i64 0]
+            (begin
+              (while (< index count)
+                (begin
+                  (set!
+                    (array-ref next-slots index)
+                    (sp-node-pool-shared-view index))
+                  (set! index (+ index 1))))
+              (set! sp-node-pool-slots next-slots)
+              (set! sp-builder-slots next-builders)
+              (set! sp-node-pool-base-arena transfer-arena)
+              ;; A defensive direct caller may compact while the reader arena
+              ;; is current.  Move to the replacement before unmapping it; the
+              ;; ordinary load-handoff caller instead restores its frontend or
+              ;; destination owner unchanged.
+              (if (= active-arena retire-arena)
+                (unsafe
+                  (arena.tl_arena_set transfer-arena))
+                unit)
+              (unsafe
+                (begin
+                  (arena.tl_arena_destroy retire-arena)
+                  (if (= active-arena retire-arena)
+                    unit
+                    (arena.tl_arena_set active-arena)))))))))))
+
 (define (sexpr-node-pool-truncate! [mark : i64]) : unit
   (set! sexpr-node-pool-count mark))
 
@@ -549,6 +627,17 @@
           (spanned-sexpr-list1
             (SpannedSexpr.Sym (ci.intern-syntax-id-from-raw 7) span)
             span)]
+        [sp-count-before-transfer : i64 (sp-node-pool-len)]
+        [sp-arena-before-transfer : i64 sp-node-pool-base-arena]
+        [_compact-retained-origins : unit (sp-node-pool-compact-retained!)]
+        [retained-transfer-ok : bool
+          (and
+            (> sp-count-before-transfer 0)
+            (= (sp-node-pool-len) sp-count-before-transfer)
+            (= (array-length sp-node-pool-slots) sp-count-before-transfer)
+            (= (array-length sp-builder-slots) 0)
+            (!= sp-node-pool-base-arena 0)
+            (!= sp-node-pool-base-arena sp-arena-before-transfer))]
         [sexpr-list : Sexpr
           (sexpr-list-from-builder
             (sexpr-builder-push
@@ -564,7 +653,8 @@
                   (= sp-span.start-line 1)
                   (= sexpr-start 0)
                   (= sexpr-length 1)
-                  growth-ok)
+                  growth-ok
+                  retained-transfer-ok)
                   (match (sp-node-get sp-start)
                     [(SpannedSexpr.Sym sp-value _)
                       (match (sexpr-node-get sexpr-start)

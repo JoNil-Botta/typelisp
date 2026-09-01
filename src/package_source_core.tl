@@ -32,6 +32,18 @@
   (Ok svec.Vec)
   (Err String))
 
+;; A fetched checkout is an authority boundary, not merely a lexical prefix.
+;; Callers must validate a package-controlled path without following symbolic
+;; links or Windows reparse points before any later API is allowed to open it.
+(defenum ResultPackageSourceConfinedPath
+  (Ok String)
+  (Err String))
+
+(defenum PackageSourceConfinedPathKind
+  (File)
+  (Directory)
+  (Any))
+
 (defenum ResultPackageSourceDigest
   (Ok i64)
   (Err String))
@@ -226,6 +238,299 @@
     (compiler_load.compiler-load-join-root-path
       (string.copy root)
       (string.copy relative))))
+
+(define (package-source-fetched-boundary-message
+  [package-name : String]
+  [field : String]
+  [requested : String]
+  [checkout-root : String]) : String
+  (str_cat.str-cat
+    "build: fetched package `"
+    package-name
+    "` field `"
+    field
+    "` path `"
+    requested
+    "` is not confined to locked checkout `"
+    checkout-root
+    "`"))
+
+(define (package-source-confined-kind-ok?
+  [kind : fs.FsFileKind]
+  [expected : PackageSourceConfinedPathKind]) : bool
+  (match expected
+    [(PackageSourceConfinedPathKind.File) (fs.file-kind-regular? kind)]
+    [(PackageSourceConfinedPathKind.Directory) (fs.file-kind-directory? kind)]
+    [(PackageSourceConfinedPathKind.Any)
+      (or (fs.file-kind-regular? kind) (fs.file-kind-directory? kind))]))
+
+(define (package-source-confined-existing-path-from
+  [package-name : String]
+  [field : String]
+  [requested : String]
+  [checkout-root : String]
+  [normalized : String]
+  [cursor : i64]
+  [prefix : String]
+  [expected : PackageSourceConfinedPathKind]) : ResultPackageSourceConfinedPath
+  (let
+    [n : i64 (string.string-length normalized)]
+    [separator : i64
+      (package-source-relative-separator
+        (owned_view.compiler-owned-shared-view normalized)
+        cursor
+        n)]
+    [segment : String (string.substring normalized cursor (- separator cursor))]
+    [next-prefix : String
+      (package-source-relative-join
+        (owned_view.compiler-owned-shared-view prefix)
+        (owned_view.compiler-owned-shared-view segment))]
+    [candidate : String
+      (package-source-root-join
+        (owned_view.compiler-owned-shared-view checkout-root)
+        (owned_view.compiler-owned-shared-view next-prefix))]
+    [last : bool (>= separator n)]
+    (match (fs.try-file-kind-no-follow (& candidate))
+      [(fs.ErrFsFileKind _)
+        (ResultPackageSourceConfinedPath.Err
+          (package-source-fetched-boundary-message
+            package-name
+            field
+            requested
+            checkout-root))]
+      [(fs.OkFsFileKind kind)
+        (if (if last
+          (package-source-confined-kind-ok? kind expected)
+          (fs.file-kind-directory? kind))
+          (if last
+            (ResultPackageSourceConfinedPath.Ok candidate)
+            (package-source-confined-existing-path-from
+              package-name
+              field
+              requested
+              checkout-root
+              normalized
+              (+ separator 1)
+              next-prefix
+              expected))
+          (ResultPackageSourceConfinedPath.Err
+            (package-source-fetched-boundary-message
+              package-name
+              field
+              requested
+              checkout-root)))])))
+
+;; Resolve one package-controlled suffix below a fetched checkout. Every path
+;; segment must already exist and be an ordinary directory or regular file;
+;; links/reparse points and missing components fail with the same deterministic
+;; boundary diagnostic, so an outside target is never probed.
+(define (package-source-confined-existing-path
+  [package-name : String]
+  [field : String]
+  [requested : String]
+  [checkout-root : String]
+  [expected : PackageSourceConfinedPathKind]) : ResultPackageSourceConfinedPath
+  (let
+    [normalized-root : String
+      (compiler_load.compiler-load-normalize-path checkout-root)]
+    [normalized-request : String (fs.path-normalize (& requested))]
+    (if (not (fs.path-safe-relative? (& requested)))
+      (ResultPackageSourceConfinedPath.Err
+        (package-source-fetched-boundary-message
+          package-name
+          field
+          requested
+          normalized-root))
+      (match (fs.try-file-kind-no-follow (& normalized-root))
+        [(fs.ErrFsFileKind _)
+          (ResultPackageSourceConfinedPath.Err
+            (package-source-fetched-boundary-message
+              package-name
+              field
+              requested
+              normalized-root))]
+        [(fs.OkFsFileKind root-kind)
+          (if (fs.file-kind-directory? root-kind)
+            (package-source-confined-existing-path-from
+              package-name
+              field
+              requested
+              normalized-root
+              normalized-request
+              0
+              ""
+              expected)
+            (ResultPackageSourceConfinedPath.Err
+              (package-source-fetched-boundary-message
+                package-name
+                field
+                requested
+                normalized-root)))]))))
+
+(define (package-source-confined-existing-file
+  [package-name : String]
+  [field : String]
+  [requested : String]
+  [checkout-root : String]) : ResultPackageSourceConfinedPath
+  (package-source-confined-existing-path
+    package-name
+    field
+    requested
+    checkout-root
+    (PackageSourceConfinedPathKind.File)))
+
+(define (package-source-fetched-checkout-audit-entry
+  [package-name : String]
+  [checkout-root : String]
+  [relative : String]
+  [name : String]) : ResultPackageSourceConfinedPath
+  ;; The checkout implementation owns the root `.git` directory; it is not a
+  ;; package-controlled input. A nested `.git` remains subject to the audit.
+  (if (and (string.eq relative "") (string.eq name ".git"))
+    (ResultPackageSourceConfinedPath.Ok checkout-root)
+    (let
+      [child-relative : String (package-source-relative-join relative name)]
+      [child : String (package-source-root-join checkout-root child-relative)]
+      (match (fs.try-file-kind-no-follow (& child))
+        [(fs.ErrFsFileKind _)
+          (ResultPackageSourceConfinedPath.Err
+            (package-source-fetched-boundary-message
+              package-name
+              "checkout path"
+              child-relative
+              checkout-root))]
+        [(fs.OkFsFileKind kind)
+          (if (fs.file-kind-directory? kind)
+            (package-source-fetched-checkout-audit-dir
+              package-name
+              checkout-root
+              child-relative)
+            (if (fs.file-kind-regular? kind)
+              (ResultPackageSourceConfinedPath.Ok child)
+              (ResultPackageSourceConfinedPath.Err
+                (package-source-fetched-boundary-message
+                  package-name
+                  "checkout path"
+                  child-relative
+                  checkout-root))))]))))
+
+(define (package-source-fetched-checkout-audit-entries-from
+  [package-name : String]
+  [checkout-root : String]
+  [relative : String]
+  [entries : svec.Vec]
+  [index : i64]) : ResultPackageSourceConfinedPath
+  (if (>= index (svec.len (& entries)))
+    (ResultPackageSourceConfinedPath.Ok checkout-root)
+    (match (package-source-fetched-checkout-audit-entry
+      (owned_view.compiler-owned-shared-view package-name)
+      (owned_view.compiler-owned-shared-view checkout-root)
+      (owned_view.compiler-owned-shared-view relative)
+      (svec.get (& entries) index ""))
+      [(ResultPackageSourceConfinedPath.Err message)
+        (ResultPackageSourceConfinedPath.Err message)]
+      [(ResultPackageSourceConfinedPath.Ok _)
+        (package-source-fetched-checkout-audit-entries-from
+          package-name
+          checkout-root
+          relative
+          entries
+          (+ index 1))])))
+
+(define (package-source-fetched-checkout-audit-dir
+  [package-name : String]
+  [checkout-root : String]
+  [relative : String]) : ResultPackageSourceConfinedPath
+  (let
+    [dir : String (package-source-root-join checkout-root relative)]
+    (match (fs.try-read-dir (& dir))
+      [(fs.ErrIoStringVector _)
+        (ResultPackageSourceConfinedPath.Err
+          (package-source-fetched-boundary-message
+            package-name
+            "checkout path"
+            (if (string.eq relative "")
+              "."
+              relative)
+            checkout-root))]
+      [(fs.OkIoStringVector entries)
+        (package-source-fetched-checkout-audit-entries-from
+          package-name
+          checkout-root
+          relative
+          (package-source-sort-entries entries)
+          0)])))
+
+;; Refuse any package-controlled symbolic link, junction, reparse point, or
+;; other special filesystem object before graph loading starts. This is a
+;; conservative physical-containment proof: ordinary in-checkout layouts and
+;; normalized `..` segments remain valid, while links are never followed.
+(define (package-source-fetched-checkout-audit
+  [package-name : String]
+  [checkout-root : String]) : ResultPackageSourceConfinedPath
+  (let
+    [normalized-root : String
+      (compiler_load.compiler-load-normalize-path checkout-root)]
+    (match (fs.try-file-kind-no-follow (& normalized-root))
+      [(fs.ErrFsFileKind _)
+        (ResultPackageSourceConfinedPath.Err
+          (package-source-fetched-boundary-message
+            package-name
+            "checkout root"
+            "."
+            normalized-root))]
+      [(fs.OkFsFileKind kind)
+        (if (fs.file-kind-directory? kind)
+          (package-source-fetched-checkout-audit-dir
+            package-name
+            normalized-root
+            "")
+          (ResultPackageSourceConfinedPath.Err
+            (package-source-fetched-boundary-message
+              package-name
+              "checkout root"
+              "."
+              normalized-root)))])))
+
+(define (package-source-fetched-boundary-lexical-smoke-ok?) : bool
+  (and
+    (string.eq
+      (package-source-fetched-boundary-message
+        "dep"
+        "entry"
+        "../outside.tl"
+        "cache/checkout")
+      "build: fetched package `dep` field `entry` path `../outside.tl` is not confined to locked checkout `cache/checkout`")
+    (match (package-source-confined-existing-file
+      "dep"
+      "entry"
+      "../outside.tl"
+      "cache/checkout")
+      [(ResultPackageSourceConfinedPath.Err message)
+        (string.eq
+          message
+          "build: fetched package `dep` field `entry` path `../outside.tl` is not confined to locked checkout `cache/checkout`")]
+      [_ false])
+    (match (package-source-confined-existing-file
+      "dep"
+      "entry"
+      "C:outside.tl"
+      "cache/checkout")
+      [(ResultPackageSourceConfinedPath.Err _) true]
+      [_ false])
+    (match (package-source-confined-existing-file
+      "dep"
+      "entry"
+      "\\\\server\\share\\outside.tl"
+      "cache/checkout")
+      [(ResultPackageSourceConfinedPath.Err _) true]
+      [_ false])))
+
+(test
+  package-source-fetched-boundary-rejects-lexical-escapes-before-io
+  (unless
+    (package-source-fetched-boundary-lexical-smoke-ok?)
+    (io.panic "package-source: fetched boundary lexical smoke failed")))
 
 (define (package-source-internal-dir? [name : String]) : bool
   (or

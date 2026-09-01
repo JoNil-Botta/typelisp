@@ -20,6 +20,7 @@
 (import compiler_ctfe)
 (import compiler_object as cobj)
 (import compiler_builtin_ids as cbi)
+(import compiler_cfg_core as cfg_core)
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_diagnostic)
 (import compiler_intern as ci)
@@ -2670,25 +2671,47 @@
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
-    (match target
-      [(compiler_backend.CompilerBackendTarget.Linux)
-        (compiler-driver-enable-linux-cfgs cfgs)]
-      [(compiler_backend.CompilerBackendTarget.Windows)
-        (compiler-driver-enable-windows-cfgs cfgs)])))
+    (let
+      [target-cfgs : sym_i64_env.SymI64Env
+        (match target
+          [(compiler_backend.CompilerBackendTarget.Linux)
+            (compiler-driver-enable-linux-cfgs cfgs)]
+          [(compiler_backend.CompilerBackendTarget.Windows)
+            (compiler-driver-enable-windows-cfgs cfgs)])]
+      [backtrace-id : i64 (ci.intern "compiler-backtrace")]
+      [public-cfgs : sym_i64_env.SymI64Env
+        (cfg_core.compiler-cfg-remove-id target-cfgs backtrace-id)]
+      (if (compiler_ir_types.compiler-debug-info-enabled?)
+        (cfg_core.compiler-cfg-enable public-cfgs "compiler-backtrace")
+        public-cfgs))))
 
 (define (compiler-driver-state-target-cfgs
   [state : CompilerDriverState]
   [target : compiler_backend.CompilerBackendTarget]
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (match target
-    [(compiler_backend.CompilerBackendTarget.Linux)
-      (compiler-driver-enable-linux-cfgs-with-intern-state
-        cfgs
-        (&mut (array-ref state.intern-state 0)))]
-    [(compiler_backend.CompilerBackendTarget.Windows)
-      (compiler-driver-enable-windows-cfgs-with-intern-state
-        cfgs
-        (&mut (array-ref state.intern-state 0)))]))
+  (let
+    [target-cfgs : sym_i64_env.SymI64Env
+      (match target
+        [(compiler_backend.CompilerBackendTarget.Linux)
+          (compiler-driver-enable-linux-cfgs-with-intern-state
+            cfgs
+            (&mut (array-ref state.intern-state 0)))]
+        [(compiler_backend.CompilerBackendTarget.Windows)
+          (compiler-driver-enable-windows-cfgs-with-intern-state
+            cfgs
+            (&mut (array-ref state.intern-state 0)))])]
+    [backtrace-id : i64
+      (ci.intern-compat-state-intern
+        (&mut (array-ref state.intern-state 0))
+        "compiler-backtrace")]
+    [public-cfgs : sym_i64_env.SymI64Env
+      (cfg_core.compiler-cfg-remove-id target-cfgs backtrace-id)]
+    (if (compiler_ir_types.compiler-debug-info-enabled?)
+      (cfg_core.compiler-cfg-enable-with-intern-state
+        public-cfgs
+        "compiler-backtrace"
+        (&mut (array-ref state.intern-state 0)))
+      public-cfgs)))
 
 (define (compiler-driver-emit-lowered-with-level
   [input-path : String]
@@ -4958,7 +4981,7 @@
           ;; single-entry gate the source-arena retirement uses, so a session
           ;; that reuses loader state across jobs keeps its warm capacity.
           (if route-source-allocations?
-            (compiler_load.compiler-load-release-frontend-scan-arenas!)
+            (compiler_load.compiler-load-transfer-frontend-handoff!)
             unit)
           (cfg
             compile-profile
@@ -5140,7 +5163,7 @@
                   ;; Retire them again now that no frontend work remains: the
                   ;; optimizer, backend, and writer never lex or read.
                   (if route-source-allocations?
-                    (compiler_load.compiler-load-release-frontend-scan-arenas!)
+                    (compiler_load.compiler-load-transfer-frontend-handoff!)
                     unit)
                   (compiler-driver-state-prefix-cache-allocation-profile-snapshot!
                     (owned_view.compiler-owned-shared-view state)
@@ -5306,7 +5329,7 @@
             retire-after-lower?
             (compiler-driver-state-can-release-checked-lower-source-pools?
               (owned_view.compiler-owned-shared-view state)))
-            (compiler_load.compiler-load-release-frontend-scan-arenas!)
+            (compiler_load.compiler-load-transfer-frontend-handoff!)
             unit)
           (cfg
             compile-profile
@@ -5477,7 +5500,7 @@
                     unit)
                   ;; Same post-lower retirement as the escaping path above.
                   (if (and retire-after-lower? release-source-pools?)
-                    (compiler_load.compiler-load-release-frontend-scan-arenas!)
+                    (compiler_load.compiler-load-transfer-frontend-handoff!)
                     unit)
                   (if (compiler_ast_types.ast-node-pool-context-type-exhausted?
                     pools)

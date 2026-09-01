@@ -3113,7 +3113,7 @@
         (fs-test-assert-windows-nt-create-abi)
         (fs-test-assert-owned-string-eq
           joined
-          (clone expected-join)
+          (string.copy expected-join)
           "path join inserts separator")
         (fs-test-assert-owned-string-eq
           (fs-api-test-fs-path-join "left/" "/right")

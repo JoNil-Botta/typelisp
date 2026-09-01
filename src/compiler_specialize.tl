@@ -6348,6 +6348,66 @@
                       [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
                   [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
               [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr (spec-state-expr-get state start-box)]
+            [end : ast.AstExpr (spec-state-expr-get state end-box)]
+            [init : ast.AstExpr (spec-state-expr-get state init-box)]
+            [keep : ast.AstExpr (spec-state-expr-get state keep-box)]
+            [body : ast.AstExpr (spec-state-expr-get state body-box)]
+            [keep-templates : SpecTemplateEnv
+              (spec-template-env-shadow-name templates index)]
+            [body-templates : SpecTemplateEnv
+              (spec-template-env-shadow-name keep-templates slot)]
+            (match (spec-rewrite-expr
+              start
+              templates
+              (spec-place-shared-view state))
+              [(ResultSpecExpr.Ok rewritten-start start-state)
+                (match (spec-rewrite-expr end templates start-state)
+                  [(ResultSpecExpr.Ok rewritten-end end-state)
+                    (match (spec-rewrite-expr init templates end-state)
+                      [(ResultSpecExpr.Ok rewritten-init init-state)
+                        (match (spec-rewrite-expr
+                          keep
+                          keep-templates
+                          init-state)
+                          [(ResultSpecExpr.Ok rewritten-keep keep-state)
+                            (match (spec-rewrite-expr
+                              body
+                              body-templates
+                              keep-state)
+                              [(ResultSpecExpr.Ok rewritten-body body-state)
+                                (ResultSpecExpr.Ok
+                                  (ast.ast-expr-spmd-compact-id-with-pools
+                                    (spec-state-pools state)
+                                    index
+                                    index-ty
+                                    rewritten-start
+                                    rewritten-end
+                                    slot
+                                    slot-ty
+                                    rewritten-init
+                                    rewritten-keep
+                                    rewritten-body)
+                                  body-state)]
+                              [(ResultSpecExpr.Err diag)
+                                (ResultSpecExpr.Err diag)])]
+                          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+                      [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+                  [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : ast.AstExpr (spec-state-expr-get state value-box)]
@@ -7608,6 +7668,67 @@
                         (ResultSpecSubExpr.Err diag)])]
                   [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
               [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr (spec-owner-expr-get owner start-box)]
+            [end : ast.AstExpr (spec-owner-expr-get owner end-box)]
+            [init : ast.AstExpr (spec-owner-expr-get owner init-box)]
+            [keep : ast.AstExpr (spec-owner-expr-get owner keep-box)]
+            [body : ast.AstExpr (spec-owner-expr-get owner body-box)]
+            [keep-subs : SpecValueSubst
+              (spec-value-subst-remove-name subs index)]
+            [body-subs : SpecValueSubst
+              (spec-value-subst-remove-name keep-subs slot)]
+            (match (spec-substitute-values-expr-with-owner owner start subs)
+              [(ResultSpecSubExpr.Ok rewritten-start)
+                (match (spec-substitute-values-expr-with-owner owner end subs)
+                  [(ResultSpecSubExpr.Ok rewritten-end)
+                    (match (spec-substitute-values-expr-with-owner
+                      owner
+                      init
+                      subs)
+                      [(ResultSpecSubExpr.Ok rewritten-init)
+                        (match (spec-substitute-values-expr-with-owner
+                          owner
+                          keep
+                          keep-subs)
+                          [(ResultSpecSubExpr.Ok rewritten-keep)
+                            (match (spec-substitute-values-expr-with-owner
+                              owner
+                              body
+                              body-subs)
+                              [(ResultSpecSubExpr.Ok rewritten-body)
+                                (ResultSpecSubExpr.Ok
+                                  (ast.ast-expr-spmd-compact-id-with-pools
+                                    (spec-owner-pools owner)
+                                    index
+                                    index-ty
+                                    rewritten-start
+                                    rewritten-end
+                                    slot
+                                    slot-ty
+                                    rewritten-init
+                                    rewritten-keep
+                                    rewritten-body))]
+                              [(ResultSpecSubExpr.Err diag)
+                                (ResultSpecSubExpr.Err diag)])]
+                          [(ResultSpecSubExpr.Err diag)
+                            (ResultSpecSubExpr.Err diag)])]
+                      [(ResultSpecSubExpr.Err diag)
+                        (ResultSpecSubExpr.Err diag)])]
+                  [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : ast.AstExpr (spec-owner-expr-get owner value-box)]
@@ -8518,6 +8639,72 @@
                                       subs)
                                     rewritten-init
                                     rewritten-value
+                                    rewritten-body))]
+                              [(ResultSpecSubExpr.Err diag)
+                                (ResultSpecSubExpr.Err diag)])]
+                          [(ResultSpecSubExpr.Err diag)
+                            (ResultSpecSubExpr.Err diag)])]
+                      [(ResultSpecSubExpr.Err diag)
+                        (ResultSpecSubExpr.Err diag)])]
+                  [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr (spec-owner-expr-get owner start-box)]
+            [end : ast.AstExpr (spec-owner-expr-get owner end-box)]
+            [init : ast.AstExpr (spec-owner-expr-get owner init-box)]
+            [keep : ast.AstExpr (spec-owner-expr-get owner keep-box)]
+            [body : ast.AstExpr (spec-owner-expr-get owner body-box)]
+            [keep-subs : SpecTypeSubst (spec-type-subst-remove-name subs index)]
+            [body-subs : SpecTypeSubst
+              (spec-type-subst-remove-name keep-subs slot)]
+            (match (spec-substitute-types-expr-with-owner owner start subs)
+              [(ResultSpecSubExpr.Ok rewritten-start)
+                (match (spec-substitute-types-expr-with-owner owner end subs)
+                  [(ResultSpecSubExpr.Ok rewritten-end)
+                    (match (spec-substitute-types-expr-with-owner
+                      owner
+                      init
+                      subs)
+                      [(ResultSpecSubExpr.Ok rewritten-init)
+                        (match (spec-substitute-types-expr-with-owner
+                          owner
+                          keep
+                          keep-subs)
+                          [(ResultSpecSubExpr.Ok rewritten-keep)
+                            (match (spec-substitute-types-expr-with-owner
+                              owner
+                              body
+                              body-subs)
+                              [(ResultSpecSubExpr.Ok rewritten-body)
+                                (ResultSpecSubExpr.Ok
+                                  (ast.ast-expr-spmd-compact-id-with-pools
+                                    (spec-owner-pools owner)
+                                    index
+                                    (spec-substitute-type-with-owner
+                                      owner
+                                      index-ty
+                                      subs)
+                                    rewritten-start
+                                    rewritten-end
+                                    slot
+                                    (spec-substitute-type-with-owner
+                                      owner
+                                      slot-ty
+                                      subs)
+                                    rewritten-init
+                                    rewritten-keep
                                     rewritten-body))]
                               [(ResultSpecSubExpr.Err diag)
                                 (ResultSpecSubExpr.Err diag)])]

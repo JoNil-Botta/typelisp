@@ -135,6 +135,41 @@ cat > "$ALLOWED_EXTERN_SOURCE" <<'EOF'
     (win-get-std-handle -11)
     42))
 EOF
+NT_CREATE_FILE_SOURCE="$WORKDIR/nt_create_file.tl"
+cat > "$NT_CREATE_FILE_SOURCE" <<'EOF'
+(extern (win-nt-create-file
+  [file-handle : i64]
+  [desired-access : i64]
+  [object-attributes : i64]
+  [io-status-block : i64]
+  [allocation-size : i64]
+  [file-attributes : i64]
+  [share-access : i64]
+  [create-disposition : i64]
+  [create-options : i64]
+  [ea-buffer : i64]
+  [ea-length : i64]) : i32 (:symbol "NtCreateFile"))
+
+(define (main) : i64
+  (begin
+    (win-nt-create-file 0 0 0 0 0 0 0 0 0 0 0)
+    42))
+EOF
+NT_OPEN_FILE_SOURCE="$WORKDIR/nt_open_file.tl"
+cat > "$NT_OPEN_FILE_SOURCE" <<'EOF'
+(extern (win-nt-open-file
+  [file-handle : i64]
+  [desired-access : i64]
+  [object-attributes : i64]
+  [io-status-block : i64]
+  [share-access : i64]
+  [open-options : i64]) : i32 (:symbol "NtOpenFile"))
+
+(define (main) : i64
+  (begin
+    (win-nt-open-file 0 0 0 0 0 0)
+    42))
+EOF
 
 write_differential_rows() {
     _name=$1
@@ -149,6 +184,8 @@ write_differential_rows() {
 write_differential_rows ordinary tests/integration/hello.tl
 write_differential_rows string_data tests/integration/string_length.tl
 write_differential_rows allowed_external "$ALLOWED_EXTERN_SOURCE"
+write_differential_rows nt_create_file "$NT_CREATE_FILE_SOURCE"
+write_differential_rows nt_open_file "$NT_OPEN_FILE_SOURCE"
 write_differential_rows runtime_trap tests/integration/div_zero_trap.tl
 write_differential_rows wide_immediate tests/integration/integer_literal_boundary_matrix.tl
 write_differential_rows branch_phi_switch tests/integration/enum_match.tl
@@ -186,6 +223,7 @@ write_differential_expected() {
 write_differential_expected ordinary tests/integration/hello.tl
 write_differential_expected string_data tests/integration/string_length.tl
 write_differential_expected allowed_external "$ALLOWED_EXTERN_SOURCE"
+write_differential_expected nt_create_file "$NT_CREATE_FILE_SOURCE"
 write_fallback_differential_expected() {
     _name=$1
     _source=$2
@@ -194,6 +232,10 @@ write_fallback_differential_expected() {
     printf '%s|assembly|%s/%s.forced.s|forced-assembly\n' \
         "$_source" "$WORKDIR" "$_name" >> "$DIFFERENTIAL_EXPECTED"
 }
+printf '%s|assembly|%s/%s.direct.s|unsupported-external-relocation\n' \
+    "$NT_OPEN_FILE_SOURCE" "$WORKDIR" nt_open_file >> "$DIFFERENTIAL_EXPECTED"
+printf '%s|assembly|%s/%s.forced.s|forced-assembly\n' \
+    "$NT_OPEN_FILE_SOURCE" "$WORKDIR" nt_open_file >> "$DIFFERENTIAL_EXPECTED"
 write_fallback_differential_expected runtime_trap tests/integration/div_zero_trap.tl
 write_fallback_differential_expected wide_immediate tests/integration/integer_literal_boundary_matrix.tl
 write_fallback_differential_expected branch_phi_switch tests/integration/enum_match.tl
@@ -206,7 +248,7 @@ write_fallback_differential_expected u64_float_casts tests/integration/u64_float
 cmp "$DIFFERENTIAL_EXPECTED" "$DIFFERENTIAL_PLAN" ||
     fail "Windows COFF differential plan changed classification"
 
-for differential_case in ordinary string_data allowed_external; do
+for differential_case in ordinary string_data allowed_external nt_create_file; do
     [ -s "$WORKDIR/$differential_case.direct.obj" ] ||
         fail "differential direct object missing: $differential_case"
     [ ! -e "$WORKDIR/$differential_case.direct.s" ] ||
@@ -216,7 +258,7 @@ for differential_case in ordinary string_data allowed_external; do
     [ ! -e "$WORKDIR/$differential_case.forced-unused.obj" ] ||
         fail "differential forced row wrote an object: $differential_case"
 done
-for differential_case in runtime_trap wide_immediate branch_phi_switch \
+for differential_case in nt_open_file runtime_trap wide_immediate branch_phi_switch \
     tail_call register_group pointer_copy bounds_check string_match \
     u64_float_casts; do
     [ -s "$WORKDIR/$differential_case.direct.s" ] ||
@@ -322,7 +364,8 @@ if [ "$HOST_OS" = windows ]; then
         /NODEFAULTLIB \
         /DYNAMICBASE:NO \
         /STACK:268435456 \
-        kernel32.lib
+        kernel32.lib \
+        ntdll.lib
 
     set +e
     "$DIRECT_EXE" > "$WORKDIR/direct.stdout" 2> "$WORKDIR/direct.stderr"
@@ -347,7 +390,8 @@ if [ "$HOST_OS" = windows ]; then
             /NODEFAULTLIB \
             /DYNAMICBASE:NO \
             /STACK:268435456 \
-            kernel32.lib
+            kernel32.lib \
+            ntdll.lib
     }
 
     run_differential_executable() {
@@ -371,7 +415,8 @@ if [ "$HOST_OS" = windows ]; then
     }
 
     echo "[compile-batch-windows-coff] direct-object/forced-assembly differential"
-    for differential_case in ordinary string_data allowed_external runtime_trap \
+    for differential_case in ordinary string_data allowed_external nt_create_file \
+        nt_open_file runtime_trap \
         wide_immediate branch_phi_switch tail_call register_group pointer_copy \
         bounds_check string_match u64_float_casts; do
         differential_direct_object="$WORKDIR/$differential_case.direct.obj"
@@ -406,7 +451,8 @@ if [ "$HOST_OS" = windows ]; then
             fail "Windows COFF differential stderr mismatch: $differential_case"
 
         case "$differential_case" in
-            ordinary | allowed_external | wide_immediate | branch_phi_switch | \
+            ordinary | allowed_external | nt_create_file | nt_open_file | \
+                wide_immediate | branch_phi_switch | \
                 tail_call | register_group | bounds_check | string_match)
                 [ "$differential_direct_exit" = 42 ] ||
                     fail "Windows COFF differential expected exit 42 for $differential_case, got $differential_direct_exit"

@@ -267,7 +267,10 @@ Vec bang place macros as available yet.
   current-directory lookup, lexical path normalization, safe relative suffix
   checks, temporary directories, cleanup, process ids, coarse file-kind probes,
   and vector-backed directory listing, with public status helpers bound directly
-  to platform externs where available. Import it with `(import stdlib.fs)`.
+  to platform externs where available. Its Windows rooted-operation foundation
+  is a narrow, reparse-refusing `NtCreateFile` boundary whose private NTSTATUS
+  values map once into stable filesystem outcomes. Import it with
+  `(import stdlib.fs)`.
 - `ffi.tl`: FFI buffer helpers, including explicit NUL-terminated borrowed
   `bytes` copies into caller-owned `(MutPtr u8)` storage and active-arena
   `(Ptr u8)` C string allocation. Compatibility `String` wrappers borrow their

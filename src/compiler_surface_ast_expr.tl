@@ -585,6 +585,29 @@
               (codec.surface-ast-write-i64! out init)
               (codec.surface-ast-write-i64! out value)
               (codec.surface-ast-write-i64! out body))])]
+      [(ast.AstExpr.SpmdCompact payload)
+        (match (ast.ast-spmd-compact-box-shared-view payload)
+          [(ast.AstSpmdCompact.Compact
+              index
+              index-ty
+              start
+              end
+              slot
+              slot-ty
+              init
+              keep
+              body)
+            (begin
+              (codec.surface-ast-write-i64! out 86)
+              (codec.surface-ast-write-name! out context index)
+              (codec.surface-ast-write-type! out context index-ty)
+              (codec.surface-ast-write-i64! out start)
+              (codec.surface-ast-write-i64! out end)
+              (codec.surface-ast-write-name! out context slot)
+              (codec.surface-ast-write-type! out context slot-ty)
+              (codec.surface-ast-write-i64! out init)
+              (codec.surface-ast-write-i64! out keep)
+              (codec.surface-ast-write-i64! out body))])]
       [(ast.AstExpr.SpmdBroadcast value lane)
         (begin
           (codec.surface-ast-write-i64! out 30)
@@ -894,6 +917,19 @@
         (ast.AstExpr.FixedMakeArray
           (codec.surface-ast-read-i64! reader)
           (codec.surface-ast-read-i64! reader))]
+      [(= tag 86)
+        (ast.AstExpr.SpmdCompact
+          (box
+            (ast.AstSpmdCompact.Compact
+              (codec.surface-ast-read-name! reader)
+              (codec.surface-ast-read-type! reader)
+              (codec.surface-ast-read-i64! reader)
+              (codec.surface-ast-read-i64! reader)
+              (codec.surface-ast-read-name! reader)
+              (codec.surface-ast-read-type! reader)
+              (codec.surface-ast-read-i64! reader)
+              (codec.surface-ast-read-i64! reader)
+              (codec.surface-ast-read-i64! reader))))]
       [(= tag 13)
         (ast.AstExpr.MakeArray
           (codec.surface-ast-read-i64! reader)

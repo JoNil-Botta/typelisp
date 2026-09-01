@@ -327,6 +327,9 @@ valid_scalar_shift_matrix|tests/integration/valid_scalar_shift_matrix.tl|42|-|-|
 runtime_panic_site_trap|tests/integration/runtime_panic_site_trap.tl|134|-|-|stdlib/io.tl|expected-stderr:tl: target/integration-verify/linux/runtime_panic_site_trap/runtime_panic_site_trap.tl:4:4: panic: boom\n
 fatal_backtrace|tests/integration/fatal_backtrace.tl|134|-|-|stdlib/io.tl|expected-stderr:tl: target/integration-verify/linux/fatal_backtrace/fatal_backtrace.tl:8:6: panic: fatal backtrace fixture\n
 fatal_backtrace_thread|tests/integration/fatal_backtrace_thread.tl|134|-|-|stdlib/io.tl stdlib/thread.tl|expected-stderr:tl: target/integration-verify/linux/fatal_backtrace_thread/fatal_backtrace_thread.tl:6:6: panic: worker backtrace fixture\n
+spmd_compact_scalar|tests/integration/spmd_compact_scalar.tl|42|-|-|-
+spmd_compact_overflow_trap|tests/integration/spmd_compact_overflow_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
+spmd_compact_destination_oob_trap|tests/integration/spmd_compact_destination_oob_trap.tl|134|-|-|-|expected-stderr:tl: target/integration-verify/linux/spmd_compact_destination_oob_trap/spmd_compact_destination_oob_trap.tl:10:30: array index out of bounds: index=1 length=1\n
 spmd_foreach|tests/integration/spmd_foreach.tl|42|-|-|spmd_vec_support.tl
 spmd_gather_read|tests/integration/spmd_gather_read.tl|42|-|-|spmd_vec_support.tl
 spmd_gather_oob|tests/integration/spmd_gather_oob.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: target/integration-verify/linux/spmd_gather_oob/spmd_gather_oob.tl:31:33: array index out of bounds: index=9223372036854775807 length=8\n

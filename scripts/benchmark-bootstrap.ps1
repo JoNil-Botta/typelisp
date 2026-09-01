@@ -170,7 +170,8 @@ function Invoke-AssembleAndLink {
                 "/NODEFAULTLIB",
                 "/DYNAMICBASE:NO",
                 "/STACK:268435456",
-                "kernel32.lib"
+                "kernel32.lib",
+                "ntdll.lib"
             ) `
             (Join-Path $RunDir "link.stdout") `
             (Join-Path $RunDir "link.stderr")

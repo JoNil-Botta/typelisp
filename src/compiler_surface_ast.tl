@@ -82,6 +82,8 @@
 (define surface-ast-magic : i64
   3544386045472754772)
 (define surface-ast-schema-version : i64
+  ;; 7: AstExpr tag 86 adds the boxed SpmdCompact payload.
+  ;;
   ;; 6: identity references use surface-identity schema 2, whose template-source
   ;; and fresh-local records are capacity-independent portable components.
   ;;
@@ -110,7 +112,7 @@
   ;; requires TlciProducerIdentityAdmission.ExactMatch and degrades to re-parse),
   ;; so this is a deployment invariant rather than a format-compatibility one --
   ;; but the version still moves whenever the encoding shape does.
-  6)
+  7)
 
 (cfg
   (any
@@ -1925,6 +1927,53 @@
 
 (cfg
   compiler-surface-selftest
+  (define (surface-ast-hydrated-spmd-compact-ok?
+    [pools : ast.AstNodePoolContext]) : bool
+    (let
+      [id : i64 0]
+      [ok : bool false]
+      (begin
+        (while (and (not ok) (< id (ast.ast-node-pool-context-expr-len pools)))
+          (begin
+            (match (ast.ast-node-pool-context-expr-get pools id)
+              [(ast.AstExpr.SpmdCompact compact-box)
+                (match (ast.ast-spmd-compact-box-shared-view compact-box)
+                  [(ast.AstSpmdCompact.Compact
+                      index
+                      (ast.AstType.I64)
+                      start
+                      end
+                      slot
+                      (ast.AstType.I64)
+                      init
+                      keep
+                      body)
+                    (set!
+                      ok
+                      (and
+                        (surface_identity.surface-identity-string-eq?
+                          (ci.intern-str index)
+                          "compact-index")
+                        (surface_identity.surface-identity-string-eq?
+                          (ci.intern-str slot)
+                          "compact-slot")
+                        (surface-ast-int-node-value? (& pools) start 20)
+                        (surface-ast-int-node-value? (& pools) end 22)
+                        (surface-ast-int-node-value? (& pools) init 20)
+                        (match (ast.ast-node-pool-context-expr-get pools keep)
+                          [(ast.AstExpr.Literal (ast.AstLiteral.Bool true))
+                            true]
+                          [_ false])
+                        (match (ast.ast-node-pool-context-expr-get pools body)
+                          [(ast.AstExpr.Literal (ast.AstLiteral.Unit)) true]
+                          [_ false])))]
+                  [_ unit])]
+              [_ unit])
+            (set! id (+ id 1))))
+        ok))))
+
+(cfg
+  compiler-surface-selftest
   (define (surface-ast-tests-ok?) : bool
     (let
       [_reset : unit (ci.intern-reset!)]
@@ -1934,6 +1983,8 @@
       [macro-id : i64 (ci.intern "catalog")]
       [macro-param-id : i64 (ci.intern "T")]
       [macro-type-id : i64 (ci.intern "type")]
+      [compact-index-id : i64 (ci.intern "compact-index")]
+      [compact-slot-id : i64 (ci.intern "compact-slot")]
       [kind-i64-id : i64 (ci.intern "i64")]
       [kind-struct-id : i64 (ci.intern "struct")]
       [kind-type-var-id : i64 (ci.intern "type-var")]
@@ -1987,14 +2038,34 @@
             left
             (ast.ast-tuple-set-field-id-from-index 3)
             right))]
-      [body-items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+      [compact-keep : i64
+        (ast.ast-node-pool-context-expr-push
+          (owned_view.compiler-owned-shared-view source-pools)
+          (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
+      [compact-body : i64
+        (ast.ast-node-pool-context-expr-push
+          (owned_view.compiler-owned-shared-view source-pools)
+          (ast.AstExpr.Literal ast.AstLiteral.Unit))]
+      [compact : i64
+        (ast.ast-expr-spmd-compact-id-with-pools
+          (owned_view.compiler-owned-shared-view source-pools)
+          compact-index-id
+          (ast.AstType.I64)
+          left
+          right
+          compact-slot-id
+          (ast.AstType.I64)
+          left
+          compact-keep
+          compact-body)]
+      [body-items : (__tl_dyn-array i64) (__tl_make-array i64 3)]
       [combined-body : i64
         (ast.ast-node-pool-context-expr-push
           (owned_view.compiler-owned-shared-view source-pools)
           (ast.AstExpr.Begin
             (ast.AstExprList
               (owned_view.compiler-owned-shared-view body-items)
-              2)))]
+              3)))]
       [macro-type-kinds : ast.AstMacroTypeKindList
         (ast.ast-macro-type-kind-list-with-length 3)]
       [macro-param-slots : (__tl_dyn-array ast.AstMacroParam)
@@ -2010,6 +2081,7 @@
       (begin
         (set! (array-ref body-items 0) body)
         (set! (array-ref body-items 1) tuple-set)
+        (set! (array-ref body-items 2) compact)
         (ast.ast-macro-type-kind-list-set!
           (&mut macro-type-kinds)
           0
@@ -2138,7 +2210,7 @@
                                     (ast.ast-node-pool-context-expr-len
                                       (owned_view.compiler-owned-shared-view
                                         hydration.pools))
-                                    8)
+                                    11)
                                   (ast.ast-node-pool-context-expr-span-oracle-ok?
                                     hydration.pools)
                                   (=
@@ -2334,6 +2406,9 @@
                                           [_ false]))]
                                     [_ false])
                                   (surface-ast-hydrated-tuple-set-ok?
+                                    (owned_view.compiler-owned-shared-view
+                                      hydration.pools))
+                                  (surface-ast-hydrated-spmd-compact-ok?
                                     hydration.pools))]))])))])]))))))
 
 (cfg

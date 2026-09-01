@@ -4,8 +4,8 @@ set -eu
 # verify-no-libc.sh - guard that the compiler and the programs it builds depend
 # on NO C runtime. On Linux that means no dynamic libc (the binary is fully
 # static, no DT_NEEDED, no interpreter); on Windows that means no
-# vcruntime140 / ucrtbase / api-ms-win-crt-* / msvcrt imports (only Win32
-# system DLLs such as kernel32). A regression here means someone reintroduced a
+# vcruntime140 / ucrtbase / api-ms-win-crt-* / msvcrt imports (only the audited
+# kernel32 and ntdll system DLLs). A regression here means someone reintroduced a
 # libc/CRT dependency (e.g. a new stdlib FFI to a libc symbol, or a backend
 # helper that calls the CRT instead of a syscall / Win32 API).
 #
@@ -57,17 +57,18 @@ inspect_linux() {
 inspect_windows() {
     _bin=$1
     _label=$2
-    # The freestanding runtime depends on exactly one DLL: kernel32. Anything
-    # else (a CRT DLL, advapi32, ole32, ...) is a regression.
+    # The freestanding runtime admits only kernel32 and the narrow ntdll
+    # NtCreateFile boundary. Anything else (a CRT DLL, advapi32, ole32, ...)
+    # is a regression.
     _dlls=$(llvm-readobj --coff-imports "$_bin" 2>/dev/null \
         | grep -iE 'Name:.*\.dll' | sed -E 's/.*Name:[[:space:]]*//' | tr -d '\r')
-    _bad=$(printf '%s\n' "$_dlls" | grep -ivE '^kernel32\.dll$' | grep -vE '^$' || true)
+    _bad=$(printf '%s\n' "$_dlls" | grep -ivE '^(kernel32|ntdll)\.dll$' | grep -vE '^$' || true)
     if [ -n "$_bad" ]; then
-        echo "FAIL [$_label]: imports a DLL other than kernel32.dll:" >&2
+        echo "FAIL [$_label]: imports a DLL other than kernel32.dll/ntdll.dll:" >&2
         printf '%s\n' "$_bad" | sed 's/^/  /' >&2
         return 1
     fi
-    echo "ok [$_label]: kernel32.dll only"
+    echo "ok [$_label]: audited kernel32.dll/ntdll.dll set only"
 }
 
 build_probe() {

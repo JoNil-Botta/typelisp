@@ -3446,6 +3446,9 @@ typecheck: return type mismatch"))]
       (build_run_core.source-tool-windows-stack-reserve-smoke-ok?)
       (return (io.panic "source-tool: windows stack reserve smoke regressed")))
     (unless
+      (build_run_core.source-tool-windows-system-libs-smoke-ok?)
+      (return (io.panic "source-tool: windows system libs smoke regressed")))
+    (unless
       (build_run_core.source-tool-windows-debug-linker-smoke-ok?)
       (return (io.panic "source-tool: windows debug linker smoke regressed")))
     (unless

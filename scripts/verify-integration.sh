@@ -686,6 +686,7 @@ EOF
 #   c_abi_win64_small_*      Win64 small aggregate register ABI
 #   c_abi_win64_nested_*     Win64 nested aggregate C ABI fixtures
 #   windows_allocation_abort  Win32 VirtualAlloc provenance reporter transcript
+#   windows_nt_create_file_boundary  rooted NtCreateFile and reparse refusal
 linux_integration_non_applicable_cases() {
     cat <<'EOF'
 c_abi_win64_sret_return
@@ -694,6 +695,7 @@ c_abi_win64_enum_aggregate
 c_abi_win64_small_aggregate_float_mixed
 c_abi_win64_nested_aggregate
 windows_allocation_abort
+windows_nt_create_file_boundary
 EOF
 }
 
@@ -1104,7 +1106,8 @@ windows_queue_manifest_link() {
         -STACK:268435456 \
         -ENTRY:_tl_start \
         -NODEFAULTLIB \
-        kernel32.lib
+        kernel32.lib \
+        ntdll.lib
     windows_link_queue_append_request \
         "$WINDOWS_LINK_REQUEST" \
         "$_link_name" \
@@ -2323,7 +2326,7 @@ assemble_link_windows() {
         exit 1
     }
     lld-link -NOLOGO "$(cygpath -aw "$_obj")" "-OUT:$(cygpath -aw "$_bin")" -SUBSYSTEM:CONSOLE \
-        -STACK:268435456 -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib || {
+        -STACK:268435456 -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib ntdll.lib || {
         echo "FAIL: $_label link failed" >&2
         exit 1
     }

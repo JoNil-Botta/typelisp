@@ -1270,12 +1270,23 @@
               bin-path
               (source-tool-link-inputs-linux-args link-inputs))))))))
 
-;; Freestanding Win32: no CRT (no vcruntime140/ucrt/msvcrt) and only kernel32.
+;; Freestanding Win32: no CRT (no vcruntime140/ucrt/msvcrt) and only the
+;; audited kernel32 plus ntdll system boundary.
 ;; The backend emits its own entry (_tl_start) plus kernel32-backed shims for the
 ;; CRT-ABI symbols the runtime/stdlib reference. Stdlib random seeding uses
 ;; kernel32 FFI only, so no advapi32; no COM (ole32/oleaut32) is needed either.
 (define (source-tool-windows-link-libs) : process.ProcessStringList
-  (process.args-cons "kernel32.lib" (process.args-empty)))
+  (process.args-cons
+    "kernel32.lib"
+    (process.args-cons "ntdll.lib" (process.args-empty))))
+
+(define (source-tool-windows-system-libs-smoke-ok?) : bool
+  (let
+    [libs : process.ProcessStringList (source-tool-windows-link-libs)]
+    (and
+      (= (process.args-count libs) 2)
+      (string.eq (process.args-ref libs 0) "kernel32.lib")
+      (string.eq (process.args-ref libs 1) "ntdll.lib"))))
 
 ;; Keep this in sync with scripts/lib-native-link.sh's NL_WINDOWS_STACK_RESERVE.
 ;; The selfhost backend still needs more than 64MB on Windows for compiler-sized
@@ -1403,7 +1414,7 @@
 (define (source-tool-windows-direct-object-relocation-gate-smoke-ok?) : bool
   (let
     [symbols0 : cobj.CompilerObjectSymbolBuilder
-      (cobj.compiler-object-symbol-builder-with-capacity 2)]
+      (cobj.compiler-object-symbol-builder-with-capacity 4)]
     [symbols1 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-push
         symbols0
@@ -1416,25 +1427,47 @@
       (cobj.compiler-object-symbol-builder-push
         symbols1
         (cobj.CompilerObjectSymbol.Symbol
+          "NtCreateFile"
+          (cobj.CompilerObjectSymbolBinding.Extern)
+          (cobj.CompilerObjectSymbolKind.Function)
+          cobj.CompilerObjectMaybeSection.No))]
+    [symbols3 : cobj.CompilerObjectSymbolBuilder
+      (cobj.compiler-object-symbol-builder-push
+        symbols2
+        (cobj.CompilerObjectSymbol.Symbol
           "GetCurrentProcessId"
           (cobj.CompilerObjectSymbolBinding.Extern)
           (cobj.CompilerObjectSymbolKind.Function)
           cobj.CompilerObjectMaybeSection.No))]
+    [symbols4 : cobj.CompilerObjectSymbolBuilder
+      (cobj.compiler-object-symbol-builder-push
+        symbols3
+        (cobj.CompilerObjectSymbol.Symbol
+          "NtOpenFile"
+          (cobj.CompilerObjectSymbolBinding.Extern)
+          (cobj.CompilerObjectSymbolKind.Function)
+          cobj.CompilerObjectMaybeSection.No))]
     [symbols : cobj.CompilerObjectSymbolList
-      (cobj.compiler-object-symbol-builder-finish symbols2)]
+      (cobj.compiler-object-symbol-builder-finish symbols4)]
     [empty-relocs : cobj.CompilerObjectRelocationList
       (cobj.compiler-object-relocation-builder-finish
         (cobj.compiler-object-relocation-builder-with-capacity 1))]
     [allowed-relocs : cobj.CompilerObjectRelocationList
       (cobj.compiler-object-relocation-builder-finish
         (cobj.compiler-object-relocation-builder-push
-          (cobj.compiler-object-relocation-builder-with-capacity 1)
+          (cobj.compiler-object-relocation-builder-push
+            (cobj.compiler-object-relocation-builder-with-capacity 2)
+            (cobj.CompilerObjectRelocation.Relocation
+              (cobj.CompilerObjectSectionKind.Text)
+              "main"
+              (cobj.CompilerObjectRelocationKind.Call)
+              "GetStdHandle"))
           (cobj.CompilerObjectRelocation.Relocation
             (cobj.CompilerObjectSectionKind.Text)
             "main"
             (cobj.CompilerObjectRelocationKind.Call)
-            "GetStdHandle")))]
-    [blocked-relocs : cobj.CompilerObjectRelocationList
+            "NtCreateFile")))]
+    [blocked-win32-relocs : cobj.CompilerObjectRelocationList
       (cobj.compiler-object-relocation-builder-finish
         (cobj.compiler-object-relocation-builder-push
           (cobj.compiler-object-relocation-builder-with-capacity 1)
@@ -1443,6 +1476,15 @@
             "main"
             (cobj.CompilerObjectRelocationKind.Call)
             "GetCurrentProcessId")))]
+    [blocked-ntdll-relocs : cobj.CompilerObjectRelocationList
+      (cobj.compiler-object-relocation-builder-finish
+        (cobj.compiler-object-relocation-builder-push
+          (cobj.compiler-object-relocation-builder-with-capacity 1)
+          (cobj.CompilerObjectRelocation.Relocation
+            (cobj.CompilerObjectSectionKind.Text)
+            "main"
+            (cobj.CompilerObjectRelocationKind.Call)
+            "NtOpenFile")))]
     (and
       (source-tool-windows-direct-object-relocations-linkable?
         (owned_view.compiler-owned-shared-view symbols)
@@ -1452,8 +1494,12 @@
         allowed-relocs)
       (not
         (source-tool-windows-direct-object-relocations-linkable?
+          (owned_view.compiler-owned-shared-view symbols)
+          blocked-win32-relocs))
+      (not
+        (source-tool-windows-direct-object-relocations-linkable?
           symbols
-          blocked-relocs)))))
+          blocked-ntdll-relocs)))))
 
 (define (source-tool-windows-linker-fallback-command
   [obj-path : String]

@@ -189,6 +189,7 @@ tests/spmd/bool_lanes.tl
 tests/spmd/map_compare_surface.tl
 tests/spmd/map_fused_reduce_i64.tl
 tests/integration/spmd_foreach.tl
+tests/integration/spmd_compact_scalar.tl
 tests/integration/spmd_gather_read.tl
 tests/integration/spmd_reduce_scalar.tl
 tests/integration/spmd_scan_scalar.tl
@@ -1526,6 +1527,32 @@ do
             echo "$shift_trap $mode (expected shift abort 129, got $mode_code)" >> "$FAILURES"
         else
             echo "[spmd-simd] $shift_trap $mode -> shift abort OK"
+        fi
+    done
+done
+
+# Compact deliberately uses the same ordered scalar scaffold in every mode.
+# Both cursor overflow and an invalid selected destination must reach the
+# ordinary bounds abort before the selected body can perform a later effect.
+for compact_oob in \
+    tests/integration/spmd_compact_overflow_trap.tl \
+    tests/integration/spmd_compact_destination_oob_trap.tl
+do
+    for pair in "scalar scalar" "avx2 avx2" "avx512 avx512"; do
+        mode=${pair%% *}
+        isa=${pair##* }
+        if [ "$mode" != scalar ] && ! isa_available "$isa"; then
+            echo "[spmd-simd]   skip compact-oob $compact_oob $mode ($isa not runnable)"
+            continue
+        fi
+        run_spmd_mode "$compact_oob" "$mode"
+        if [ "$mode_code" != 134 ] ||
+            ! grep -F -- "array index out of bounds" "$mode_err" > /dev/null; then
+            echo "[spmd-simd] compact-oob $compact_oob $mode did not preserve the bounds abort:" >&2
+            sed 's/^/    /' "$mode_err" >&2
+            echo "$compact_oob $mode (expected bounds abort 134, got $mode_code)" >> "$FAILURES"
+        else
+            echo "[spmd-simd] compact-oob $compact_oob $mode -> bounds abort OK"
         fi
     done
 done

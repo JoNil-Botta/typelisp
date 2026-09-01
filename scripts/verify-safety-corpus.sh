@@ -135,7 +135,7 @@ assemble_link_windows() {
         fail "$_label assemble failed"
     fi
     if ! lld-link -NOLOGO "$(cygpath -aw "$_obj")" "-OUT:$(cygpath -aw "$_bin")" \
-        -SUBSYSTEM:CONSOLE -STACK:268435456 -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib \
+        -SUBSYSTEM:CONSOLE -STACK:268435456 -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib ntdll.lib \
         < /dev/null >> "$_out" 2>> "$_err"; then
         show_stream_if_nonempty stderr "$_err"
         fail "$_label link failed"

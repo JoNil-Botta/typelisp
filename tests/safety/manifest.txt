@@ -454,6 +454,21 @@ arena_branded_in_arena_plain_field_reject|check-fail|tests/safety/arena_branded_
 arena_phase_rewind_token_reuse_reject|check-fail|tests/safety/arena_phase_rewind_token_reuse_reject.tl|-|use of moved value `phase`
 arena_destroy_owner_use_after_reject|check-fail|tests/safety/arena_destroy_owner_use_after_reject.tl|-|use of moved value `owner`
 arena_destroy_value_use_after_reject|check-fail|tests/safety/arena_destroy_value_use_after_reject.tl|-|use of moved value `text`
+arena_branded_destroy_owner_field_reuse_reject|check-fail|tests/safety/arena_branded_destroy_owner_field_reuse_reject.tl|-|use of moved value `state`
+arena_branded_destroy_value_use_reject|check-fail|tests/safety/arena_branded_destroy_value_use_reject.tl|-|use of moved value `text`
+arena_branded_destroy_nested_field_use_reject|check-fail|tests/safety/arena_branded_destroy_nested_field_use_reject.tl|-|use of moved value `payload`
+arena_branded_destroy_container_use_reject|check-fail|tests/safety/arena_branded_destroy_container_use_reject.tl|-|use of moved value `items`
+arena_branded_destroy_borrow_use_reject|check-fail|tests/safety/arena_branded_destroy_borrow_use_reject.tl|-|use of moved value `view`
+arena_branded_destroy_closure_use_reject|check-fail|tests/safety/arena_branded_destroy_closure_use_reject.tl|-|use of moved value `read-text`
+arena_branded_destroy_closure_alias_use_reject|check-fail|tests/safety/arena_branded_destroy_closure_alias_use_reject.tl|-|use of moved value `read-alias`
+arena_branded_destroy_parameter_reject|check-fail|tests/safety/arena_branded_destroy_parameter_reject.tl|-|arena.destroy-safe! requires a direct arena owner or branded local owner place
+arena_branded_destroy_parameter_field_reject|check-fail|tests/safety/arena_branded_destroy_parameter_field_reject.tl|-|arena.destroy-safe! requires a direct arena owner or branded local owner place
+arena_branded_destroy_parameter_alias_reject|check-fail|tests/safety/arena_branded_destroy_parameter_alias_reject.tl|-|arena.destroy-safe! requires a direct arena owner or branded local owner place
+arena_destroy_copied_bare_owner_reject|check-fail|tests/safety/arena_destroy_copied_bare_owner_reject.tl|-|arena.destroy-safe! requires a direct arena owner or branded local owner place
+arena_branded_destroy_inside_field_owner_reject|check-fail|tests/safety/arena_branded_destroy_inside_field_owner_reject.tl|-|arena.destroy-safe! cannot run inside the arena it destroys
+arena_branded_destroy_branch_double_reject|check-fail|tests/safety/arena_branded_destroy_branch_double_reject.tl|-|use of moved value `state`
+arena_branded_destroy_loop_reject|check-fail|tests/safety/arena_branded_destroy_loop_reject.tl|-|cannot move loop-carried owner value `state.arena`
+arena_branded_atomic_destroy_before_join_reject|check-fail|tests/safety/arena_branded_atomic_destroy_before_join_reject.tl|-|requires atomic arena user `worker` to be joined or released
 arena_cookbook_double_buffer_stale_reject|check-fail|tests/safety/arena_cookbook_double_buffer_stale_reject.tl|-|use of moved value `previous`
 arena_cookbook_longer_lived_store_reject|check-fail|tests/safety/arena_cookbook_longer_lived_store_reject.tl|-|cannot store region-tagged value into struct field
 arena_cookbook_closure_capture_reject|check-fail|tests/safety/arena_cookbook_closure_capture_reject.tl|-|lambda cannot capture region-tagged value

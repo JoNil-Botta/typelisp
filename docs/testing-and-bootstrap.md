@@ -82,6 +82,39 @@ exists only for runtime protocols whose migration is tracked separately.
 Dead-code lint treats library packages as external API roots and reports
 unreachable declarations in `bin` packages.
 
+### Cross-mode differential corpus
+
+The required CI suite runs one compact cross-cutting semantic and ABI corpus
+after its exhaustive producer gates. The checked manifest at
+[`../tests/cross-mode/corpus.tsv`](../tests/cross-mode/corpus.tsv) pairs
+high-risk routes across optimizer levels, internal/C ABI calls, bootstrap
+generations, source/native comptime, scalar/SIMD lowering, Windows
+assembly/direct-object emission, and platform-independent target behavior.
+The shared `verify-cross-mode-differential.sh` oracle canonicalizes only the
+declared observations—exit status, exact stdout/stderr, normalized diagnostic,
+or artifact digest—rather than requiring unrelated machine code to be
+byte-identical.
+
+The corpus deliberately reuses binaries and observations left by integration,
+TLCI, SPMD, and Windows COFF gates. Its only fresh compiles are one compact
+fixture with the previous and successor compiler binaries already built by the
+same bootstrap. Host and ISA exclusions are written to
+`target/cross-mode-differential/applicability.tsv`; an absent prerequisite for
+an active row is a failure, never a silent skip. Run a retained failing row
+with:
+
+```sh
+TYPELISP_BIN=path/to/successor \
+TYPELISP_CROSS_MODE_PREVIOUS_COMPILER=path/to/previous \
+scripts/verify-cross-mode-differential.sh --case CASE
+```
+
+`scripts/verify-cross-mode-differential.sh --self-test` applies controlled
+changes to both sides of every manifest pair and requires the oracle to report
+the first differing axis, observation, route, and reproduction command.
+Feature-local gates remain authoritative for exhaustive coverage; this corpus
+only supplies representative cross-mode witnesses.
+
 ## Self-hosting and bootstrap
 
 The compiler front end, IR, optimizer, backends, and all tooling under

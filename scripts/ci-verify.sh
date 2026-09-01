@@ -793,14 +793,15 @@ if [ "$HOST_OS" = linux ]; then
         --runs 1 \
         --output target/instruction-count-heavy
     run_with_compiler "$STAGE2_BIN" "stage2 native link generated programs" scripts/verify-native-link-linux.sh
+    run_with_compiler "$STAGE2_BIN" "stage2 rooted Linux filesystem boundary" scripts/verify-fs-rooted-linux.sh
 else
     run_with_compiler "$STAGE2_BIN" "windows native link build/run" scripts/verify-native-link-windows.sh
     echo
     echo "[ci-verify] Linux-only gates not applicable on Windows:"
     echo "[ci-verify]   opt1/opt2 build-invariance, host-action smoke (as/ld),"
     echo "[ci-verify]   stdlib documentation (doc target selection), instruction"
-    echo "[ci-verify]   counts (valgrind), native link generated programs"
-    echo "[ci-verify]   (Linux linker inputs)"
+    echo "[ci-verify]   counts (valgrind), native link generated programs,"
+    echo "[ci-verify]   rooted Linux filesystem boundary (Linux syscalls/linker inputs)"
 fi
 
 if [ -n "${TYPELISP_CI_COMPILER_ARTIFACT_TRACE:-}" ]; then

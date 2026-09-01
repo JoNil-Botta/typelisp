@@ -253,6 +253,7 @@ Options:
 (define (cli-doc-help-text) : String
   "Usage:
     typelisp doc <file.tl> [<out.md>|-o <out.md>] [--stdlib-root <dir>...]
+    typelisp doc [--manifest-path <typelisp.pkg>] [--open] [--no-deps]
     typelisp doc -o <out.md> [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
     typelisp doc --test [<file.tl>...] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
     typelisp doc --test --batch <inputs.txt> [--stdlib-root <dir>...] [--prefix-cache-stats]
@@ -263,12 +264,18 @@ Summary:
     Generate documentation or check TypeLisp fenced examples.
 
 Options:
-    -o <out.md>                    Output markdown path
+    -o <out.md>                    Preserve single-file Markdown output; omit for target/doc/index.html
+    --open                         Open the generated local HTML index when a graphical session is available
+    --no-deps                      Generate documentation for the root package only
     --test                         Check TypeLisp fenced examples in docs
     --batch <file>                 Read newline-separated doc-test input paths
     --prefix-cache-stats           Print typecheck prefix-cache stats for a batch
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward for package docs
     --stdlib-root <dir>            Search root for stdlib/... imports
+
+Output:
+    Package docs default to the offline HTML site target/doc/index.html beside the manifest.
+    Explicit -o remains deterministic single-file Markdown output and cannot be combined with --open.
 ")
 
 (define (cli-compile-help-text) : String

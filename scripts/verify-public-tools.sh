@@ -2703,20 +2703,32 @@ assert_failure
 assert_stdout_empty
 assert_contains "$err" "doc: cannot combine input paths with --manifest-path"
 
-# cli-gate-case doc-usage-missing wrapper run_cmd
-run_cmd doc-usage-missing "$COMPILER" doc
-assert_failure
-assert_stdout_empty
-if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ]; then
-    # cli.tl's selfhost doc driver reports missing paths with its own wording
-    # instead of the Rust CLI `Usage:` block. Assert the selfhost diagnostic until
-    # the wording is unified (#1327).
-    assert_contains "$err" "doc: expected input and output paths"
-else
-    assert_contains "$err" "Usage:"
-    assert_contains "$err" "typelisp doc <file.tl>"
-    assert_contains "$err" "typelisp doc --test <file.tl>"
-fi
+DOC_DEFAULT_PKG="$WORKDIR/doc-default-package"
+DOC_DEFAULT_SITE="$DOC_DEFAULT_PKG/target/doc"
+mkdir -p "$DOC_DEFAULT_PKG/src"
+cat > "$DOC_DEFAULT_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "public_docs")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+EOF
+cat > "$DOC_DEFAULT_PKG/src/lib.tl" <<'EOF'
+;# Public package docs.
+;: Documented value.
+(define documented-value : i64 42)
+EOF
+# cli-gate-case doc-package-default-site wrapper run_cmd_cwd
+run_cmd_cwd doc-package-default-site "$DOC_DEFAULT_PKG/src" "$COMPILER" doc
+assert_success
+assert_stderr_empty
+assert_contains "$out" "Wrote "
+for asset in index.html typelisp-docs.css typelisp-docs.js typelisp-docs-search-index.js; do
+    [ -s "$DOC_DEFAULT_SITE/$asset" ] \
+        || fail "$case_name did not write nonempty $asset"
+done
+assert_contains "$DOC_DEFAULT_SITE/index.html" "Public package docs."
+assert_contains "$DOC_DEFAULT_SITE/index.html" "documented-value"
 
 if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ]; then
     DOC_NO_PACKAGE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-public-doc-nopkg.XXXXXX")

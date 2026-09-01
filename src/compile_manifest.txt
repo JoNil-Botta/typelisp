@@ -208,6 +208,7 @@ contains|phi-input-entries
 # doc
 contains|_tl_doc_generate_file:
 contains|_tl_doc_generate_package:
+contains|_tl_doc_generate_package_local_site:
 contains|_tl_doc_generate_html_file:
 contains|_tl_doc_generate_html_module_graph:
 contains|_tl_doc_test_file:
@@ -227,7 +228,8 @@ contains|_tl_write_file:
 contains|Doc tests passed:
 contains|doc tests failed:
 contains|: could not find typelisp.pkg from '.' or any parent directory
-contains|doc: package documentation requires -o <out.md>
+contains|doc: --open requires local HTML site output; omit -o
+contains|Open skipped; generated index:
 contains|doc: cannot combine input paths with --manifest-path
 contains|doc: expected --html input and output paths
 contains|<!doctype html>
@@ -324,6 +326,8 @@ decision|src/package_cache_core.tl|package cache helper layer (#2002): parses no
 decision|src/package_lock_core.tl|package lockfile parser/emitter and atomic transaction boundary (#1993/#6984): models typelisp.lock v1 entries, parses selfhost S-expressions with duplicate/missing/type diagnostics, emits stable alias-sorted text, preserves exact no-op bytes/mtime, and commits validated sibling stages under a crash-released cross-process guard with conflict detection; main-less and exercised through inline tests plus selfhost CLI package-lock gates
 decision|src/format_cli_core.tl|fmt command logic (#522/#1987): --check vs rewrite over explicit input paths or discovered package sources; main-less, imported by src/main.tl and exercised through the selfhost_main case
 decision|src/test_cli_core.tl|test command logic: config parsing and test run dispatch; main-less, imported by src/main.tl and exercised through the selfhost_main case
+decision|src/doc_site_search_asset.tl|shared dependency-free browser search client (#7156): emitted byte-for-byte by package-local and composed documentation sites; main-less, imported by src/doc_local_site.tl and tools/doc-site and exercised through selfhost CLI/doc-site gates
+decision|src/doc_local_site.tl|generic package-local HTML site composition (#7156): combines canonical doc rendering, identity metadata, deterministic search records, CSS, and the shared search client without importing the TypeLisp bookshelf; main-less, imported by src/doc_cli_core.tl and exercised through the selfhost_main case
 decision|src/doc_cli_core.tl|doc command logic: kind dispatch (test/html/load/default) with a base-offset arg model; main-less, imported by src/main.tl and exercised through the selfhost_main case
 decision|src/doc_expand.tl|expansion-aware generated module doc extraction helper; main-less, imported by src/doc_cli_core.tl and exercised through the selfhost_main case and doc_expand smoke
 decision|src/doc_site_doc_bridge.tl|doc-site tool bridge for dotted imports over the legacy doc renderer stack; main-less, imported by tools/doc-site and exercised through the doc-site smokes/build path
@@ -398,6 +402,8 @@ decision|src/lint_core_tests.tl|lint self-test companion split from lint_core.tl
 decision|src/lint_driver_core_tests.tl|lint driver self-test companion split from lint_driver_core.tl (simplify.md A1, #5169 pattern): main-less, imported by src/tests/lint_driver_smoke.tl; holds the fixture sources/decls builders, finding helpers, and the six self-test entries; lint_driver_core.tl itself stays decision-only
 decision|src/git_delta_core.tl|bounded pure Git pack delta instruction decoder and dependency resolver (#7076): main-less library with caller-supplied inflated bytes and lookup tables; exercised through focused inline tests and the cross-platform git_delta_smoke native integration case
 decision|src/git_delta_tests.tl|focused Git delta varint, instruction, budget, OFS/REF/thin dependency, malformed-input, and graph-resolution fixtures (#7076): main-less test companion imported by src/tests/git_delta_smoke.tl and discovered by typelisp test
+decision|src/git_ssh_remote_core.tl|pure structured Git-over-SSH remote parser and fixed git-upload-pack request encoder (#7228): main-less library with no network or process effects; exercised through focused parser/command-safety tests and the cross-platform git_ssh_remote_smoke native integration case
+decision|src/git_ssh_remote_tests.tl|focused Git-over-SSH normalization, malformed-input, byte-domain, command-framing, structured-handoff, and credential-free diagnostic fixtures (#7228): main-less test companion imported by src/tests/git_ssh_remote_smoke.tl and discovered by typelisp test
 case|selfhost_compiler_check_core|src/compiler_check_core.tl|assembly|skip|direct
 contains|_tl_compiler_check_file_with_roots:
 contains|_tl_compiler_check_file_with_roots_and_cfg:

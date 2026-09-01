@@ -215,6 +215,7 @@ env.tl
 eq.tl
 cpu.tl
 fs.tl
+fs_rooted_linux.tl
 format.tl
 ffi.tl
 hash.tl

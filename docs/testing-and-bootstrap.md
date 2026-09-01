@@ -37,9 +37,13 @@ contain checked examples:
 
 `typelisp doc --test <file.tl>` type-checks every fenced `typelisp`/`tl`
 example (add `expect-error` for intended failures; `typelisp run` fences
-compile, run, and compare exit/stdout/stderr on Linux). `typelisp doc
-input.tl -o output.md` renders Markdown docs for the entry file and its
-import graph; `--manifest-path` documents a package.
+compile, run, and compare exit/stdout/stderr on Linux). `typelisp doc input.tl
+-o output.md` renders Markdown docs for the entry file and its import graph.
+Bare `typelisp doc` discovers the nearest package and writes a deterministic
+offline site to `target/doc/index.html`; `--open` opens that index when a
+graphical platform opener is available and otherwise prints its path without
+failing. `--no-deps` guarantees root-package-only output. An explicit package
+`-o <out.md>` retains the single-file Markdown form.
 
 TypeLisp names follow the project-wide convention: top-level values,
 functions, macros, parameters, and local binders use kebab-case; struct and enum

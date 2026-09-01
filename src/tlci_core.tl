@@ -2211,7 +2211,7 @@
   (let
     [name : String callable.name]
     [signature : String callable.signature]
-    [param-count : i64 (tlci-signature-param-count (clone signature))]
+    [param-count : i64 (tlci-signature-param-count (string.copy signature))]
     (cond
       [(string.eq name "") "tlci metadata: helper name must not be empty"]
       [(string.eq signature "")
@@ -2910,12 +2910,19 @@
             [code : i64 (tlci-char-code-at text i)]
             (cond
               [(= code 34)
-                (set! out (str_cat.str-cat out (clone slash) (clone quote)))]
+                (set!
+                  out
+                  (str_cat.str-cat out (string.copy slash) (string.copy quote)))]
               [(= code 92)
-                (set! out (str_cat.str-cat out (clone slash) (clone slash)))]
-              [(= code 10) (set! out (str_cat.str-cat out (clone slash) "n"))]
-              [(= code 9) (set! out (str_cat.str-cat out (clone slash) "t"))]
-              [(= code 13) (set! out (str_cat.str-cat out (clone slash) "r"))]
+                (set!
+                  out
+                  (str_cat.str-cat out (string.copy slash) (string.copy slash)))]
+              [(= code 10)
+                (set! out (str_cat.str-cat out (string.copy slash) "n"))]
+              [(= code 9)
+                (set! out (str_cat.str-cat out (string.copy slash) "t"))]
+              [(= code 13)
+                (set! out (str_cat.str-cat out (string.copy slash) "r"))]
               [else
                 (set! out (str_cat.str-cat out (string.substring text i 1)))]))
           (set! i (+ i 1))))
@@ -3927,7 +3934,7 @@
 (define (tlci-test-metadata-emit-parse?) : bool
   (let
     [source : String (tlci-metadata-emit (tlci-test-metadata))]
-    (match (tlci-metadata-parse (clone source))
+    (match (tlci-metadata-parse (string.copy source))
       [(ResultTlciMetadata.Err _) false]
       [(ResultTlciMetadata.Ok parsed)
         (and
@@ -3974,7 +3981,7 @@
 (define (tlci-test-v2-metadata-emit-parse?) : bool
   (let
     [source : String (tlci-metadata-emit (tlci-test-v2-metadata))]
-    (match (tlci-metadata-parse (clone source))
+    (match (tlci-metadata-parse (string.copy source))
       [(ResultTlciMetadata.Err _) false]
       [(ResultTlciMetadata.Ok parsed)
         (and
@@ -4283,9 +4290,15 @@
         0
         "__tl_spmd_alpha_scalar")]
     [alpha : String
-      (tlci-test-spmd-helper-source "demo.alpha" "(-> i64 i64)" (clone avx))]
+      (tlci-test-spmd-helper-source
+        "demo.alpha"
+        "(-> i64 i64)"
+        (string.copy avx))]
     [beta : String
-      (tlci-test-spmd-helper-source "demo.beta" "(-> i64 i64)" (clone avx))]
+      (tlci-test-spmd-helper-source
+        "demo.beta"
+        "(-> i64 i64)"
+        (string.copy avx))]
     (and
       (tlci-test-metadata-rejects?
         (str_cat.str-cat
@@ -4293,7 +4306,7 @@
           "(version \"v1\") "
           "(package (name \"demo\") (version \"0.1.0\")) "
           "(spmd-callables "
-          (clone alpha)
+          (string.copy alpha)
           "))")
         "tlci metadata: field `spmd-callables` requires version `v2`")
       (tlci-test-metadata-rejects?
@@ -4343,7 +4356,7 @@
           (tlci-test-spmd-helper-source
             "demo.alpha"
             "(-> i64 i64 i64)"
-            (clone avx)))
+            (string.copy avx)))
         "tlci metadata: specialization args length must equal signature parameter count")
       (tlci-test-metadata-rejects?
         (tlci-test-v2-source
@@ -4375,11 +4388,11 @@
         "tlci metadata: specialization index-param must name a varying argument")
       (tlci-test-metadata-rejects?
         (tlci-test-v2-source
-          (tlci-test-spmd-helper-source "" "(-> i64 i64)" (clone avx)))
+          (tlci-test-spmd-helper-source "" "(-> i64 i64)" (string.copy avx)))
         "tlci metadata: helper name must not be empty")
       (tlci-test-metadata-rejects?
         (tlci-test-v2-source
-          (tlci-test-spmd-helper-source "demo.alpha" "" (clone avx)))
+          (tlci-test-spmd-helper-source "demo.alpha" "" (string.copy avx)))
         "tlci metadata: helper signature must not be empty")
       (tlci-test-metadata-rejects?
         (tlci-test-v2-source
@@ -4400,20 +4413,22 @@
           (tlci-test-spmd-helper-source
             "demo.alpha"
             "(-> i64 i64)"
-            (str_cat.str-cat (clone avx) (clone avx))))
+            (str_cat.str-cat (string.copy avx) (string.copy avx))))
         "tlci metadata: duplicate specialization record")
       (tlci-test-metadata-rejects?
         (tlci-test-v2-source
           (tlci-test-spmd-helper-source
             "demo.alpha"
             "(-> i64 i64)"
-            (str_cat.str-cat (clone scalar) (clone avx))))
+            (str_cat.str-cat (string.copy scalar) (string.copy avx))))
         "tlci metadata: specialization records are not in stable order")
       (tlci-test-metadata-rejects?
-        (tlci-test-v2-source (str_cat.str-cat (clone alpha) (clone alpha)))
+        (tlci-test-v2-source
+          (str_cat.str-cat (string.copy alpha) (string.copy alpha)))
         "tlci metadata: duplicate helper record")
       (tlci-test-metadata-rejects?
-        (tlci-test-v2-source (str_cat.str-cat (clone beta) (clone alpha)))
+        (tlci-test-v2-source
+          (str_cat.str-cat (string.copy beta) (string.copy alpha)))
         "tlci metadata: helper records are not in stable order")
       (tlci-test-metadata-rejects?
         (tlci-test-v2-source

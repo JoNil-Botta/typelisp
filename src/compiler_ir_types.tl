@@ -2606,8 +2606,8 @@
     [(CompilerIrValue.F64 n) (CompilerIrValue.F64 n)]
     [(CompilerIrValue.Bool b) (CompilerIrValue.Bool b)]
     [(CompilerIrValue.Char c) (CompilerIrValue.Char c)]
-    [(CompilerIrValue.String s) (CompilerIrValue.String (clone s))]
-    [(CompilerIrValue.Bytes s) (CompilerIrValue.Bytes (clone s))]
+    [(CompilerIrValue.String s) (CompilerIrValue.String (string.copy s))]
+    [(CompilerIrValue.Bytes s) (CompilerIrValue.Bytes (string.copy s))]
     [(CompilerIrValue.RuntimeGlobal init)
       (CompilerIrValue.RuntimeGlobal (compiler-ir-symbol-clone init))]
     [(CompilerIrValue.Unit) (CompilerIrValue.Unit)]))
@@ -2782,7 +2782,7 @@
               (&mut builder)
               (CompilerIrPhiInput
                 (compiler-ir-clone-value input.value)
-                (clone input.label)))
+                input.label))
             (set! index (+ index 1)))))
       (compiler-ir-phi-input-builder-to-seq builder))))
 
@@ -2810,7 +2810,7 @@
 (define (compiler-ir-clone-switch-case [case : CompilerIrSwitchCase]) : CompilerIrSwitchCase
   (match case
     [(CompilerIrSwitchCase.Case tag label)
-      (CompilerIrSwitchCase.Case tag (clone label))]))
+      (CompilerIrSwitchCase.Case tag label)]))
 
 (define (compiler-ir-clone-switch-case-seq [cases : CompilerIrSwitchCaseSeq]) : CompilerIrSwitchCaseSeq
   (let
@@ -2888,7 +2888,7 @@
             (ast.ast-node-pool-context-type-get (& pools) elem))))]
     [(ast.AstType.Region region inner)
       (ast.AstType.Region
-        (clone region)
+        region
         (ast.ast-node-pool-context-type-push
           (compiler-ir-global-shared-view pools)
           (compiler-ir-clone-type
@@ -2896,7 +2896,7 @@
             (ast.ast-node-pool-context-type-get (& pools) inner))))]
     [(ast.AstType.Ref region inner)
       (ast.AstType.Ref
-        (clone region)
+        region
         (ast.ast-node-pool-context-type-push
           (compiler-ir-global-shared-view pools)
           (compiler-ir-clone-type
@@ -2904,7 +2904,7 @@
             (ast.ast-node-pool-context-type-get (& pools) inner))))]
     [(ast.AstType.MutRef region inner)
       (ast.AstType.MutRef
-        (clone region)
+        region
         (ast.ast-node-pool-context-type-push
           (compiler-ir-global-shared-view pools)
           (compiler-ir-clone-type
@@ -3292,17 +3292,17 @@
         (compiler-ir-symbol-clone name)
         (compiler-ir-clone-value value)
         (compiler-ir-clone-type (compiler-ir-global-shared-view pools) ty))]
-    [(CompilerIrInstr.Jump label) (CompilerIrInstr.Jump (clone label))]
+    [(CompilerIrInstr.Jump label) (CompilerIrInstr.Jump label)]
     [(CompilerIrInstr.Branch cond true-label false-label)
       (CompilerIrInstr.Branch
         (compiler-ir-clone-value cond)
-        (clone true-label)
-        (clone false-label))]
+        true-label
+        false-label)]
     [(CompilerIrInstr.TotalEnumBranch cond true-label false-label)
       (CompilerIrInstr.TotalEnumBranch
         (compiler-ir-clone-value cond)
-        (clone true-label)
-        (clone false-label))]
+        true-label
+        false-label)]
     [(CompilerIrInstr.Return value)
       (CompilerIrInstr.Return (compiler-ir-clone-maybe-value value))]
     [(CompilerIrInstr.Phi dst inputs ty)
@@ -3331,16 +3331,16 @@
         (compiler-ir-clone-value index)
         base
         (compiler-ir-clone-switch-case-seq cases)
-        (clone default-label))]
+        default-label)]
     [(CompilerIrInstr.TotalEnumSwitch index base cases default-label trap-label)
       (CompilerIrInstr.TotalEnumSwitch
         (compiler-ir-clone-value index)
         base
         (compiler-ir-clone-switch-case-seq cases)
-        (clone default-label)
+        default-label
         (if (= trap-label (compiler-ir-label-none))
           trap-label
-          (clone trap-label)))]))
+          trap-label))]))
 
 (define (compiler-ir-clone-instr-seq-fill
   [pools : ast.AstNodePoolContext]
@@ -3448,7 +3448,7 @@
   (match param
     [(CompilerIrParam.Param name ty id)
       (CompilerIrParam.Param
-        (clone name)
+        (string.copy name)
         (compiler-ir-clone-type (compiler-ir-global-shared-view pools) ty)
         id)]))
 
@@ -3553,7 +3553,7 @@
       (CompilerIrExtern.Extern
         name-id
         source-name-id
-        (clone name)
+        (string.copy name)
         (compiler-ir-clone-type (compiler-ir-global-shared-view pools) ty)
         (clone abi)
         symbol-id

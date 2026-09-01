@@ -75,7 +75,7 @@
   [message : String]) : unit
   (assert-owned-string-eq
     (process.result-error-message-or result "<process-ok>")
-    (clone message)
+    (string.copy message)
     message))
 
 (define (assert-process-child-unsupported
@@ -83,7 +83,7 @@
   [message : String]) : unit
   (assert-owned-string-eq
     (process.child-result-error-message-or result "<process-ok>")
-    (clone message)
+    (string.copy message)
     message))
 
 (define (process-runtime-simple-command) : process.ProcessCommand

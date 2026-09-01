@@ -4,6 +4,7 @@
 ;; expression/type references are dense image-pool indices, and every compiler
 ;; nominal is repacked through compiler_surface_identity. No arena address,
 ;; pointer, Box address, or producer-generation intern id is serialized.
+(import stdlib.string)
 (import compiler_ast_types as ast)
 (import compiler_intern_state as cis)
 (import compiler_owned_view as owned_view)
@@ -199,7 +200,7 @@
   (array-ref reader.valid 0))
 
 (define (surface-ast-reader-message [reader : (& reader SurfaceAstReader)]) : String
-  (clone (array-ref reader.message 0)))
+  (string.copy (array-ref reader.message 0)))
 
 (define (surface-ast-reader-offset [reader : (& reader SurfaceAstReader)]) : i64
   (array-ref reader.offset 0))

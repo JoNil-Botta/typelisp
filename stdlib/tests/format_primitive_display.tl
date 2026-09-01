@@ -111,7 +111,7 @@
             ok
             (display-eq
               (format.format "{}" (math.f64-from-bits (array-ref bits i)))
-              (clone (array-ref expected i))))
+              (string.copy (array-ref expected i))))
           (set! i (+ i 1))))
       ok)))
 
@@ -175,7 +175,7 @@
             ok
             (display-eq
               (format.format "{}" (math.f32-from-bits (array-ref bits i)))
-              (clone (array-ref expected i))))
+              (string.copy (array-ref expected i))))
           (set! i (+ i 1))))
       ok)))
 

@@ -877,7 +877,7 @@
   (if (package-lock-transaction-fault? "during-stage")
     (begin
       (io.file-close handle)
-      (package-lock-remove-stage (clone path))
+      (package-lock-remove-stage (string.copy path))
       (ResultPackageLockString.Err
         (package-lock-transaction-error
           "during-stage"
@@ -887,7 +887,7 @@
       [(io.ErrIoUnit error)
         (begin
           (io.file-close handle)
-          (package-lock-remove-stage (clone path))
+          (package-lock-remove-stage (string.copy path))
           (ResultPackageLockString.Err
             (package-lock-transaction-error
               "stage-write"
@@ -898,7 +898,7 @@
           [(io.ErrIoUnit error)
             (begin
               (io.file-close handle)
-              (package-lock-remove-stage (clone path))
+              (package-lock-remove-stage (string.copy path))
               (ResultPackageLockString.Err
                 (package-lock-transaction-error
                   "stage-flush"
@@ -908,7 +908,7 @@
             (match (io.file-close handle)
               [(io.ErrIoUnit error)
                 (begin
-                  (package-lock-remove-stage (clone path))
+                  (package-lock-remove-stage (string.copy path))
                   (ResultPackageLockString.Err
                     (package-lock-transaction-error
                       "stage-close"
@@ -929,7 +929,7 @@
         "could not allocate a unique sibling staging path"))
     (let
       [path : String
-        (package-lock-stage-path (clone destination) sequence attempt)]
+        (package-lock-stage-path (string.copy destination) sequence attempt)]
       (match (io.file-open (& path) (io.OpenWriteCreateNew))
         [(io.OkIoFile handle)
           (package-lock-stage-write-opened path source handle)]
@@ -1019,7 +1019,7 @@
   (let
     [cleanup : ResultPackageLockString
       (if remove-stage
-        (package-lock-remove-stage (clone stage))
+        (package-lock-remove-stage (string.copy stage))
         (ResultPackageLockString.Ok ""))]
     [release : io.ResultIoUnit (fs.file-lock-release lock)]
     (match cleanup
@@ -1060,7 +1060,7 @@
   [source : String]
   [stage : String]
   [lock : fs.FsFileLock]) : ResultPackageLockCommit
-  (match (package-lock-transaction-read (clone snapshot.path))
+  (match (package-lock-transaction-read (string.copy snapshot.path))
     [(ResultPackageLockSnapshot.Err message)
       (package-lock-transaction-finish
         lock
@@ -1069,7 +1069,7 @@
         (ResultPackageLockCommit.Err message))]
     [(ResultPackageLockSnapshot.Ok current)
       (cond
-        [(package-lock-snapshot-is-source? (& current) (clone source))
+        [(package-lock-snapshot-is-source? (& current) (string.copy source))
           (package-lock-transaction-finish
             lock
             stage
@@ -1098,8 +1098,8 @@
                 "injected test failure")))]
         [else
           (match (package-lock-atomic-replace-attempt
-            (clone stage)
-            (clone snapshot.path)
+            (string.copy stage)
+            (string.copy snapshot.path)
             0)
             [(ResultPackageLockString.Err message)
               (package-lock-transaction-finish
@@ -1147,7 +1147,7 @@
   [source : String]
   [guard : String]
   [stage : String]) : ResultPackageLockCommit
-  (match (package-lock-stage-validate (clone stage) (clone source))
+  (match (package-lock-stage-validate (string.copy stage) (string.copy source))
     [(ResultPackageLockString.Err message)
       (begin
         (package-lock-remove-stage stage)
@@ -1167,7 +1167,9 @@
   [snapshot : PackageLockSnapshot]
   [source : String]
   [guard : String]) : ResultPackageLockCommit
-  (match (package-lock-stage-write (clone snapshot.path) (clone source))
+  (match (package-lock-stage-write
+    (string.copy snapshot.path)
+    (string.copy source))
     [(ResultPackageLockString.Err message)
       (ResultPackageLockCommit.Err message)]
     [(ResultPackageLockString.Ok stage)
@@ -1176,12 +1178,12 @@
 (define (package-lock-transaction-commit
   [snapshot : PackageLockSnapshot]
   [source : String]) : ResultPackageLockCommit
-  (match (package-lock-parse (clone source))
+  (match (package-lock-parse (string.copy source))
     [(ResultPackageLockFile.Err message)
       (ResultPackageLockCommit.Err
         (package-lock-transaction-error "validate" snapshot.path message))]
     [(ResultPackageLockFile.Ok _)
-      (if (package-lock-snapshot-is-source? (& snapshot) (clone source))
+      (if (package-lock-snapshot-is-source? (& snapshot) (string.copy source))
         (ResultPackageLockCommit.Ok
           (PackageLockCommitOutcome.Unchanged snapshot.path))
         (if (package-lock-transaction-fault? "before-stage")
@@ -1190,7 +1192,8 @@
               "before-stage"
               snapshot.path
               "injected test failure"))
-          (match (package-lock-transaction-lock-path (clone snapshot.path))
+          (match (package-lock-transaction-lock-path
+            (string.copy snapshot.path))
             [(ResultPackageLockString.Err message)
               (ResultPackageLockCommit.Err message)]
             [(ResultPackageLockString.Ok guard)
@@ -1476,7 +1479,7 @@
           [path : String (fs.path-join (& root) (& lock-name))]
           [collision : String
             (package-lock-stage-path
-              (clone path)
+              (string.copy path)
               (+ package-lock-stage-sequence 1)
               0)]
           [collision-source : String "unrelated staging owner\n"]
@@ -1494,22 +1497,22 @@
                 (package-lock-transaction-test-fail (io.error-message error))]
               [(io.OkIoUnit) unit])
             (package-lock-transaction-test-expect-commit
-              (package-lock-transaction-test-snapshot (clone path))
-              (clone source-a)
+              (package-lock-transaction-test-snapshot (string.copy path))
+              (string.copy source-a)
               2)
             (if (string.eq
-              (package-lock-transaction-test-read (clone path))
+              (package-lock-transaction-test-read (string.copy path))
               source-a)
               unit
               (package-lock-transaction-test-fail
                 "package-lock transaction: initial replacement mismatch"))
             (package-lock-transaction-test-expect-commit
-              (package-lock-transaction-test-snapshot (clone path))
-              (clone source-a)
+              (package-lock-transaction-test-snapshot (string.copy path))
+              (string.copy source-a)
               0)
             (let
               [snapshot-a : PackageLockSnapshot
-                (package-lock-transaction-test-snapshot (clone path))]
+                (package-lock-transaction-test-snapshot (string.copy path))]
               (begin
                 (match (io.try-write-file
                   (& path)
@@ -1520,7 +1523,7 @@
                   [(io.OkIoUnit) unit])
                 (package-lock-transaction-test-expect-error
                   snapshot-a
-                  (clone source-c)
+                  (string.copy source-c)
                   "changed since resolution")))
             (match (io.file-open (& path) (io.OpenWriteCreateNew))
               [(io.OkIoFile handle)
@@ -1530,37 +1533,37 @@
                     "package-lock transaction: exclusive create reopened lock"))]
               [(io.ErrIoFile _) unit])
             (if (string.eq
-              (package-lock-transaction-test-read (clone path))
+              (package-lock-transaction-test-read (string.copy path))
               source-b)
               unit
               (package-lock-transaction-test-fail
                 "package-lock transaction: conflict overwrote winner"))
             (package-lock-transaction-test-set-fault "before-stage")
             (package-lock-transaction-test-expect-error
-              (package-lock-transaction-test-snapshot (clone path))
-              (clone source-c)
+              (package-lock-transaction-test-snapshot (string.copy path))
+              (string.copy source-c)
               "before-stage")
             (package-lock-transaction-test-clear-fault)
             (package-lock-transaction-test-set-fault "during-stage")
             (package-lock-transaction-test-expect-error
-              (package-lock-transaction-test-snapshot (clone path))
-              (clone source-c)
+              (package-lock-transaction-test-snapshot (string.copy path))
+              (string.copy source-c)
               "during-stage")
             (package-lock-transaction-test-clear-fault)
             (if (string.eq
-              (package-lock-transaction-test-read (clone collision))
+              (package-lock-transaction-test-read (string.copy collision))
               collision-source)
               unit
               (package-lock-transaction-test-fail
                 "package-lock transaction: removed another staging owner"))
             (package-lock-transaction-test-set-fault "before-replace")
             (package-lock-transaction-test-expect-error
-              (package-lock-transaction-test-snapshot (clone path))
+              (package-lock-transaction-test-snapshot (string.copy path))
               source-c
               "before-replace")
             (package-lock-transaction-test-clear-fault)
             (if (string.eq
-              (package-lock-transaction-test-read (clone path))
+              (package-lock-transaction-test-read (string.copy path))
               source-b)
               unit
               (package-lock-transaction-test-fail

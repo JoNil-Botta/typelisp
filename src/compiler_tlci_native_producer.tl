@@ -1622,7 +1622,8 @@
                           (tlci_core.tlci-host-callback-name-shared-view
                             tlci_core.tlci-host-callback-name-expr-lambda)
                           (embedded-native-name-arg
-                            (embedded-native-escape-string (clone payload)))
+                            (embedded-native-escape-string
+                              (string.copy payload)))
                           (string.int->string (string.string-length payload))
                           (string.int->string
                             (+

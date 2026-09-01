@@ -574,7 +574,7 @@
       (compiler_semantic_index.compiler-semantic-index-smoke-timing-start)]
     [result : process.ResultProcessOutput
       (process.output
-        (process.command (io.arg 0) (process.args-single (clone name))))]
+        (process.command (io.arg 0) (process.args-single (string.copy name))))]
     [status : i64 (process.result-status-or (clone result) -1)]
     [timing-ok : bool
       (compiler_semantic_index.compiler-semantic-index-smoke-timing-record

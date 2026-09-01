@@ -264,7 +264,7 @@
       (let
         [items : svec.Vec (svec.new)]
         (begin
-          (svec.push-ref! (&mut items) (clone root))
+          (svec.push-ref! (&mut items) (string.copy root))
           items))]
     (begin
       (load.compiler-load-test-mkdir root)
@@ -275,7 +275,7 @@
 (define (maybe-string-single [value : String]) : MaybeString
   (MaybeString.Some value))")
       (compiler-lower-smoke-write-text
-        (clone entry)
+        (string.copy entry)
         "(import stdlib.maybe_string)
 (define (main) : i64
   (__tl_string_length
@@ -283,7 +283,7 @@
       [(maybe_string.MaybeString.No) \"\"]
       [(maybe_string.MaybeString.Some head) head])))")
       (match (load.compiler-load-file-with-paths-and-roots
-        (clone entry)
+        (string.copy entry)
         (sym_i64_env.sym-i64-empty)
         roots)
         [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
@@ -324,9 +324,9 @@
   (let
     [dir : String "target/lower_macro_prepass_diagnostic"]
     [leaf : String
-      (load.compiler-load-join-root-path (clone dir) "issue6339_leaf.tl")]
+      (load.compiler-load-join-root-path (string.copy dir) "issue6339_leaf.tl")]
     [entry : String
-      (load.compiler-load-join-root-path (clone dir) "issue6339_root.tl")]
+      (load.compiler-load-join-root-path (string.copy dir) "issue6339_root.tl")]
     [roots : svec.Vec
       (let
         [items : svec.Vec (svec.new)]
@@ -336,14 +336,14 @@
     (begin
       (load.compiler-load-test-mkdir dir)
       (compiler-lower-smoke-write-text
-        (clone leaf)
+        (string.copy leaf)
         "(module issue6339_leaf)
 (import stdlib.core_macros)
 (import stdlib.fs as fs)
 (define bad-path : String
   (fs.path-join-many missing))")
       (compiler-lower-smoke-write-text
-        (clone entry)
+        (string.copy entry)
         "(import issue6339_leaf as leaf)
 (define (main) : i64
   (__tl_string_length leaf.bad-path))")
@@ -351,7 +351,7 @@
       (let
         [ok : bool
           (match (compiler_driver_core.compiler-driver-load-and-lower-escaping
-            (clone entry)
+            (string.copy entry)
             (backend.CompilerBackendTarget.Linux)
             roots
             (backend.CompilerBackendMode.Scalar)
@@ -429,7 +429,7 @@
           items))]
     (begin
       (compiler-lower-smoke-write-text
-        (clone path)
+        (string.copy path)
         (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-source))
       (match (compiler_driver_core.compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
         path
@@ -454,7 +454,7 @@
           items))]
     (begin
       (compiler-lower-smoke-write-text
-        (clone path)
+        (string.copy path)
         "(define (no-main-direct-helper) : i64 7)")
       (compiler_driver_core.compiler-driver-reset-file-state!)
       (match (compiler_driver_core.compiler-driver-emit-file-buffer-with-target-roots-level-mode-and-cfg

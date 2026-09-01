@@ -1209,20 +1209,20 @@
       (diagnostic.compiler-diagnostic-text-edit-span (clone edit))]
     [start : i64
       (compiler-diagnostic-test-source-position-index
-        (clone source)
+        (string.copy source)
         (diagnostic.compiler-diagnostic-span-start-line span)
         (diagnostic.compiler-diagnostic-span-start-col span))]
     [end : i64
       (compiler-diagnostic-test-source-position-index
-        (clone source)
+        (string.copy source)
         (diagnostic.compiler-diagnostic-span-end-line span)
         (diagnostic.compiler-diagnostic-span-end-col span))]
-    [source-len : i64 (string.string-length (clone source))]
+    [source-len : i64 (string.string-length (string.copy source))]
     (if (or (< start 0) (< end start))
       CompilerDiagnosticNoString
       (CompilerDiagnosticSomeString
         (str_cat.str-cat
-          (string.substring (clone source) 0 start)
+          (string.substring (string.copy source) 0 start)
           (diagnostic.compiler-diagnostic-text-edit-replacement edit)
           (string.substring source end (- source-len end)))))))
 

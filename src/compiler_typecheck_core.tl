@@ -8119,16 +8119,16 @@
       [left-address : u64 (compiler-tc-profile-metrics-address left)]
       [right-address : u64 (compiler-tc-profile-metrics-address right)]
       [site : String "move.call_func"]
-      [index : i64 (compiler-tc-reinfer-profile-site-index (clone site))]
+      [index : i64 (compiler-tc-reinfer-profile-site-index (string.copy site))]
       (begin
         (compiler-tc-reinfer-profile-reset left)
         (compiler-tc-reinfer-profile-reset right)
         (compiler-tc-body-fact-profile-reset left)
         (compiler-tc-body-fact-profile-reset right)
-        (compiler-tc-reinfer-profile-note left (clone site) 7 11 13)
-        (compiler-tc-body-fact-profile-hit left (clone site))
-        (compiler-tc-reinfer-profile-note right (clone site) 17 19 23)
-        (compiler-tc-body-fact-profile-miss right (clone site))
+        (compiler-tc-reinfer-profile-note left (string.copy site) 7 11 13)
+        (compiler-tc-body-fact-profile-hit left (string.copy site))
+        (compiler-tc-reinfer-profile-note right (string.copy site) 17 19 23)
+        (compiler-tc-body-fact-profile-miss right (string.copy site))
         (compiler-tc-reinfer-profile-reset right)
         (compiler-tc-body-fact-profile-reset right)
         (test.assert-i64-eq
@@ -41787,7 +41787,7 @@
             (csym.compiler-symbol-module-key
               (tc-global-shared-view wanted-qualifier)
               candidate)))
-        (clone candidate)))))
+        (string.copy candidate)))))
 
 (define (tc-unbound-near-miss
   [module-qualified : bool]
@@ -42117,7 +42117,7 @@
                             (csym.compiler-symbol-module-key
                               (tc-global-shared-view wanted-qualifier)
                               candidate))
-                          (clone candidate))))
+                          (string.copy candidate))))
                     unit)))
               unit)
             (set! candidate-index (+ candidate-index 1)))))
@@ -64140,11 +64140,11 @@
               [(TcTryNotCarrier message)
                 (TcTryQueryIncompatible
                   (TcTryCarrier operand-info)
-                  (TcTryNotCarrier (clone message))
+                  (TcTryNotCarrier (string.copy message))
                   (TcTryEnclosingReturnNotCarrier message))])]
           [(TcTryNotCarrier message)
             (TcTryQueryIncompatible
-              (TcTryNotCarrier (clone message))
+              (TcTryNotCarrier (string.copy message))
               enclosing-return
               (TcTryOperandNotCarrier message))])]
       [(TcTryIncompatible reason)
@@ -119974,12 +119974,12 @@
       [left-ids : sym_i64_env.SymI64Env
         (sym_i64_env.sym-i64-bind-id
           (sym_i64_env.sym-i64-empty)
-          (ci.intern (clone left-module))
+          (ci.intern (string.copy left-module))
           1)]
       [right-ids : sym_i64_env.SymI64Env
         (sym_i64_env.sym-i64-bind-id
           (sym_i64_env.sym-i64-empty)
-          (ci.intern (clone right-module))
+          (ci.intern (string.copy right-module))
           1)]
       (begin
         (tc-macro-walk-set!
@@ -119997,17 +119997,17 @@
         (test.assert-true
           (macro-expand-stdlib-tlci-module-id?
             (tc-global-shared-view left)
-            (clone left-module))
+            (string.copy left-module))
           "right provenance reset preserves left snapshot")
         (test.assert-false
           (macro-expand-stdlib-tlci-module-id?
             (tc-global-shared-view left)
-            (clone right-module))
+            (string.copy right-module))
           "left snapshot does not trust right module")
         (test.assert-false
           (macro-expand-stdlib-tlci-module-id?
             (tc-global-shared-view right)
-            (clone right-module))
+            (string.copy right-module))
           "right provenance reset is job-local")))))
 
 ;; Both embedded stdlib and dependency catalogs enter through this selection
@@ -131616,7 +131616,7 @@
                 [(ResultTcUnit.Ok) ResultTcUnit.Ok]
                 [(ResultTcUnit.Err message)
                   (ResultTcUnit.Err
-                    (clone
+                    (stdlib.string.copy
                       (tc-unbound-finalize-located-error
                         (tc-global-shared-view message))))])]
             [new-enclosing : i64 (arena.tl_arena_current)]
@@ -131739,7 +131739,8 @@
                     [(ResultTcUnit.Ok) ResultTcUnit.Ok]
                     [(ResultTcUnit.Err message)
                       (ResultTcUnit.Err
-                        (clone (tc-unbound-finalize-located-error message)))])]
+                        (stdlib.string.copy
+                          (tc-unbound-finalize-located-error message)))])]
                 [new-enclosing : i64 (arena.tl_arena_current)]
                 (begin
                   (unsafe
@@ -133278,7 +133279,7 @@
     [cur-paths : ast.AstDeclPathList paths]
     [cur-summary : CompilerTypecheckSummary summary]
     [cur-module-id : i64 module-id]
-    [cur-module : String (clone module)]
+    [cur-module : String (string.copy module)]
     [cur-cache : TcModuleLocalEnvCache cache]
     [cur-local-env : TcTypeEnv local-env]
     [cur-global-env : TcTypeEnv global-env]

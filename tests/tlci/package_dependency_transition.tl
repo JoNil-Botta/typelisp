@@ -119,7 +119,7 @@
     [old-slot : i64
       (dependency_tlci.compiler-dependency-tlci-prepare-source-set!
         (owned_view.compiler-owned-shared-view state)
-        (package-dependency-transition-source-set (clone manifest-path)))]
+        (package-dependency-transition-source-set (string.copy manifest-path)))]
     [old-observed : load.CompilerLoadDependencyCatalogObservation
       (load.compiler-load-dependency-catalog-observe
         (owned_view.compiler-owned-shared-view state))]
@@ -127,7 +127,7 @@
       (package-dependency-transition-capability
         (owned_view.compiler-owned-shared-view state)
         old-slot
-        (clone identity))]
+        (string.copy identity))]
     (begin
       (package-dependency-transition-require
         (and
@@ -136,12 +136,13 @@
         "package tlci transition: old image was not admitted once")
       (package-dependency-transition-copy-file
         new-source-path
-        (clone source-path))
+        (string.copy source-path))
       (let
         [stale-slot : i64
           (dependency_tlci.compiler-dependency-tlci-prepare-source-set!
             (owned_view.compiler-owned-shared-view state)
-            (package-dependency-transition-source-set (clone manifest-path)))]
+            (package-dependency-transition-source-set
+              (string.copy manifest-path)))]
         [stale-observed : load.CompilerLoadDependencyCatalogObservation
           (load.compiler-load-dependency-catalog-observe
             (owned_view.compiler-owned-shared-view state))]
@@ -160,12 +161,13 @@
             "package tlci transition: stale image retained its mapped capability")
           (package-dependency-transition-copy-file
             new-image-path
-            (clone artifact-path))
+            (string.copy artifact-path))
           (let
             [rebuilt-slot : i64
               (dependency_tlci.compiler-dependency-tlci-prepare-source-set!
                 (owned_view.compiler-owned-shared-view state)
-                (package-dependency-transition-source-set (clone manifest-path)))]
+                (package-dependency-transition-source-set
+                  (string.copy manifest-path)))]
             [rebuilt-observed : load.CompilerLoadDependencyCatalogObservation
               (load.compiler-load-dependency-catalog-observe
                 (owned_view.compiler-owned-shared-view state))]
@@ -173,7 +175,7 @@
               (package-dependency-transition-capability
                 (owned_view.compiler-owned-shared-view state)
                 rebuilt-slot
-                (clone identity))]
+                (string.copy identity))]
             (begin
               (package-dependency-transition-require
                 (and
@@ -189,16 +191,16 @@
                 "package tlci transition: rebuilt image key was not admitted")
               (package-dependency-transition-copy-file
                 old-source-path
-                (clone source-path))
+                (string.copy source-path))
               (package-dependency-transition-copy-file
                 old-image-path
-                (clone artifact-path))
+                (string.copy artifact-path))
               (let
                 [restored-slot : i64
                   (dependency_tlci.compiler-dependency-tlci-prepare-source-set!
                     (owned_view.compiler-owned-shared-view state)
                     (package-dependency-transition-source-set
-                      (clone manifest-path)))]
+                      (string.copy manifest-path)))]
                 [restored-observed : load.CompilerLoadDependencyCatalogObservation
                   (load.compiler-load-dependency-catalog-observe
                     (owned_view.compiler-owned-shared-view state))]
@@ -206,7 +208,7 @@
                   (package-dependency-transition-capability
                     (owned_view.compiler-owned-shared-view state)
                     restored-slot
-                    (clone identity))]
+                    (string.copy identity))]
                 [reused-slot : i64
                   (dependency_tlci.compiler-dependency-tlci-prepare-source-set!
                     (owned_view.compiler-owned-shared-view state)

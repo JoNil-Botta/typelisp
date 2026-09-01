@@ -542,11 +542,11 @@
     (begin
       (while (and (< i last) (not failed))
         (let
-          [current : String (clone (array-ref argv i))]
+          [current : String (string.copy (array-ref argv i))]
           [has-next : bool (< (+ i 1) last)]
           [next-value : String
             (if has-next
-              (clone (array-ref argv (+ i 1)))
+              (string.copy (array-ref argv (+ i 1)))
               "")]
           (cond
             [stop-options

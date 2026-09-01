@@ -427,7 +427,7 @@
   (match result
     [(OkRandomBounded state value)
       (begin
-        (test-assert-i64-eq (state-seed state) want-state (clone message))
+        (test-assert-i64-eq (state-seed state) want-state (string.copy message))
         (test-assert-i64-eq value want-value message))]
     [(ErrRandomBounded err) (io.panic err)]))
 
@@ -438,7 +438,7 @@
   (match result
     [(OkRandomBounded _ _) (io.panic "expected bounded random error")]
     [(ErrRandomBounded err)
-      (test-assert-owned-string-eq err (clone want-message) want-message)]))
+      (test-assert-owned-string-eq err (string.copy want-message) want-message)]))
 
 ;: Assert that a weighted-index draw succeeded with expected state and index.
 (define (test-assert-weighted-ok
@@ -449,7 +449,7 @@
   (match result
     [(OkRandomWeightedIndex state index)
       (begin
-        (test-assert-i64-eq (state-seed state) want-state (clone message))
+        (test-assert-i64-eq (state-seed state) want-state (string.copy message))
         (test-assert-i64-eq index want-index message))]
     [(ErrRandomWeightedIndex err) (io.panic err)]))
 
@@ -460,7 +460,7 @@
   (match result
     [(OkRandomWeightedIndex _ _) (io.panic "expected weighted random error")]
     [(ErrRandomWeightedIndex err)
-      (test-assert-owned-string-eq err (clone want-message) want-message)]))
+      (test-assert-owned-string-eq err (string.copy want-message) want-message)]))
 
 ;: Assert the first MINSTD draws from seed one.
 (define (test-assert-sequence-from-one) : unit

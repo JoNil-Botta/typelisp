@@ -823,9 +823,9 @@
     [(CompilerCtfeValue.Bool enabled) (CompilerCtfeValue.Bool enabled)]
     [(CompilerCtfeValue.Char ch) (CompilerCtfeValue.Char ch)]
     [(CompilerCtfeValue.String text identity)
-      (CompilerCtfeValue.String (clone text) identity)]
+      (CompilerCtfeValue.String (string.copy text) identity)]
     [(CompilerCtfeValue.Name text identity)
-      (CompilerCtfeValue.Name (clone text) identity)]
+      (CompilerCtfeValue.Name (string.copy text) identity)]
     [(CompilerCtfeValue.Unit) CompilerCtfeValue.Unit]
     [(CompilerCtfeValue.Type ty) (CompilerCtfeValue.Type (clone ty))]
     [(CompilerCtfeValue.Expr node ty) (CompilerCtfeValue.Expr node (clone ty))]
@@ -873,7 +873,7 @@
     [(CompilerCtfeValue.TypeInfoList types)
       (CompilerCtfeValue.TypeInfoList (clone types))]
     [(CompilerCtfeValue.TypeField name ty)
-      (CompilerCtfeValue.TypeField (clone name) (clone ty))]
+      (CompilerCtfeValue.TypeField (string.copy name) (clone ty))]
     [(CompilerCtfeValue.TypeFieldList fields)
       (CompilerCtfeValue.TypeFieldList (clone fields))]
     [(CompilerCtfeValue.TypeVariantPayload ty)
@@ -881,7 +881,7 @@
     [(CompilerCtfeValue.TypeVariantPayloadList types)
       (CompilerCtfeValue.TypeVariantPayloadList (clone types))]
     [(CompilerCtfeValue.TypeVariant name payloads)
-      (CompilerCtfeValue.TypeVariant (clone name) (clone payloads))]
+      (CompilerCtfeValue.TypeVariant (string.copy name) (clone payloads))]
     [(CompilerCtfeValue.TypeVariantList variants)
       (CompilerCtfeValue.TypeVariantList (clone variants))]))
 
@@ -920,7 +920,7 @@
 
 (define (ctfe-generated-string-value [text : String]) : CompilerCtfeValue
   (CompilerCtfeValue.String
-    (clone text)
+    (string.copy text)
     (ctfe-materialize-generated-name-id text)))
 
 (define (ctfe-source-string-value-for-session
@@ -1043,7 +1043,7 @@
   [right : String]
   [right-id : i64]) : CompilerCtfeValue
   (let
-    [text : String (str_cat.str-cat (clone left) (clone right))]
+    [text : String (str_cat.str-cat (string.copy left) (string.copy right))]
     [right-len : i64 (string.string-length right)]
     (cond
       [(and
@@ -2277,7 +2277,7 @@
     [base-len : i64 (ctfe-private-string-length base)]
     (and
       (= name-len (+ prefix-len base-len))
-      (ctfe-string-prefix? (clone name) (clone prefix))
+      (ctfe-string-prefix? (string.copy name) (string.copy prefix))
       (ctfe-string-slice-eq? name prefix-len base))))
 
 (define (ctfe-string-suffix-with-prefix?
@@ -2291,7 +2291,7 @@
     [start : i64 (- name-len (+ prefix-len base-len))]
     (and
       (>= start 0)
-      (ctfe-string-slice-eq? (clone name) start prefix)
+      (ctfe-string-slice-eq? (string.copy name) start prefix)
       (ctfe-string-slice-eq? name (+ start prefix-len) base))))
 
 (define (ctfe-string-has-module-separator? [name : String]) : bool
@@ -2384,10 +2384,10 @@
       found)))
 
 (define (ctfe-hygiene-global-call-name [name : String]) : String
-  (if (ctfe-hygiene-global-name? (clone name))
+  (if (ctfe-hygiene-global-name? (string.copy name))
     (let
       [payload : String (ctfe-hygiene-global-base name)]
-      [sep : i64 (ctfe-hygiene-context-separator-index (clone payload))]
+      [sep : i64 (ctfe-hygiene-context-separator-index (string.copy payload))]
       (if (< sep 0)
         payload
         (let
@@ -2653,7 +2653,7 @@
     [(ast.AstStructCleanup.Fn name)
       (CtfeReflectCleanup.Fn
         (ctfe-symbol-module-key
-          (clone module)
+          (string.copy module)
           (ci.intern-syntax-name-text-or
             (ci.intern-syntax-id-value name)
             "<structural-name>"))
@@ -2672,7 +2672,7 @@
     [(ast.AstEnumCleanup.Fn name)
       (CtfeReflectCleanup.Fn
         (ctfe-symbol-module-key
-          (clone module)
+          (string.copy module)
           (ci.intern-syntax-name-text-or
             (ci.intern-syntax-id-value name)
             "<structural-name>"))
@@ -2707,8 +2707,8 @@
     [name-str : String (ci.intern-syntax-name-text-or name "<structural-name>")]
     [key : String
       (if (= (string.string-length module) 0)
-        (clone name-str)
-        (str_cat.str-cat (clone module) "/" (clone name-str)))]
+        (string.copy name-str)
+        (str_cat.str-cat (string.copy module) "/" (string.copy name-str)))]
     [key-id : i64
       (if (= (string.string-length module) 0)
         name
@@ -2716,10 +2716,10 @@
     [info : CtfeReflectInfo
       (CtfeReflectInfo.Struct
         key
-        (clone module)
-        (clone name-str)
+        (string.copy module)
+        (string.copy name-str)
         key-id
-        (ctfe-reflect-struct-cleanup (clone module) module-id cleanup)
+        (ctfe-reflect-struct-cleanup (string.copy module) module-id cleanup)
         (ctfe-reflect-field-list-from-fields fields))]
     (ctfe-reflect-info-add-names infos info key-id name-str name module)))
 
@@ -2734,8 +2734,8 @@
     [name-str : String (ci.intern-syntax-name-text-or name "<structural-name>")]
     [key : String
       (if (= (string.string-length module) 0)
-        (clone name-str)
-        (str_cat.str-cat (clone module) "/" (clone name-str)))]
+        (string.copy name-str)
+        (str_cat.str-cat (string.copy module) "/" (string.copy name-str)))]
     [key-id : i64
       (if (= (string.string-length module) 0)
         name
@@ -2743,10 +2743,10 @@
     [info : CtfeReflectInfo
       (CtfeReflectInfo.Enum
         key
-        (clone module)
-        (clone name-str)
+        (string.copy module)
+        (string.copy name-str)
         key-id
-        (ctfe-reflect-enum-cleanup (clone module) module-id cleanup)
+        (ctfe-reflect-enum-cleanup (string.copy module) module-id cleanup)
         (ctfe-reflect-variant-list-from-variants variants))]
     (ctfe-reflect-info-add-names infos info key-id name-str name module)))
 
@@ -2785,7 +2785,7 @@
                 current-infos
                 (ctfe-reflections-add-struct
                   current-infos
-                  (clone current-module)
+                  (string.copy current-module)
                   current-module-id
                   name
                   cleanup
@@ -2795,7 +2795,7 @@
                 current-infos
                 (ctfe-reflections-add-struct
                   current-infos
-                  (clone current-module)
+                  (string.copy current-module)
                   current-module-id
                   name
                   cleanup
@@ -2805,7 +2805,7 @@
                 current-infos
                 (ctfe-reflections-add-enum
                   current-infos
-                  (clone current-module)
+                  (string.copy current-module)
                   current-module-id
                   name
                   cleanup
@@ -2815,7 +2815,7 @@
                 current-infos
                 (ctfe-reflections-add-enum
                   current-infos
-                  (clone current-module)
+                  (string.copy current-module)
                   current-module-id
                   name
                   cleanup
@@ -3097,7 +3097,7 @@
     [(ast.AstLiteral.Char c) (ResultCtfe.Ok (CompilerCtfeValue.Char c) fuel)]
     [(ast.AstLiteral.Unit) (ResultCtfe.Ok (CompilerCtfeValue.Unit) fuel)]
     [(ast.AstLiteral.Float text)
-      (match (cfloat.compiler-float-parse-f64 (clone text))
+      (match (cfloat.compiler-float-parse-f64 (string.copy text))
         [(CompilerFloatSomeF64 value)
           (if (cfloat.compiler-float-f64-finite? value)
             (ResultCtfe.Ok (CompilerCtfeValue.F64 value) fuel)
@@ -4502,7 +4502,7 @@
       (match value
         [(CompilerCtfeValue.String text string-id)
           (ResultCtfeStringArg.Ok
-            (clone text)
+            (string.copy text)
             (ctfe-string-syntax-name-id
               (ctfe-env-source-names env)
               text
@@ -4755,7 +4755,7 @@
       [(ast.AstType.EnumArgs _ _)
         (ctfe-match-type-info-nominal variant args resolved env false)]
       [_
-        (if (ctfe-type-info-builtin-kind? (clone kind))
+        (if (ctfe-type-info-builtin-kind? (string.copy kind))
           (if (ctfe-pattern-variant-name? variant "Builtin")
             (ctfe-match-pattern-list
               args
@@ -5124,7 +5124,7 @@
                 [answer : i64
                   (ctfe-layout-query-value-with-pools
                     (ctfe-env-pools env)
-                    (clone name)
+                    (string.copy name)
                     (ctfe-env-layouts env)
                     ty)]
                 (if (< answer 0)
@@ -5270,7 +5270,7 @@
   (if (= (ctfe-expr-arg-count args) 1)
     (let
       [type-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
-      (match (ctfe-eval-type-arg type-arg expr env fuel (clone name))
+      (match (ctfe-eval-type-arg type-arg expr env fuel (string.copy name))
         [(ResultCtfeTypeArg.Err d) (ResultCtfe.Err d)]
         [(ResultCtfeTypeArg.Ok ty arg-fuel)
           (let
@@ -5637,10 +5637,15 @@
     (let
       [type-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
       [index-arg : ast.AstExpr (ctfe-expr-arg args 1 env)]
-      (match (ctfe-eval-type-arg type-arg expr env fuel (clone name))
+      (match (ctfe-eval-type-arg type-arg expr env fuel (string.copy name))
         [(ResultCtfeTypeArg.Err d) (ResultCtfe.Err d)]
         [(ResultCtfeTypeArg.Ok ty type-fuel)
-          (match (ctfe-eval-i64-arg index-arg expr env type-fuel (clone name))
+          (match (ctfe-eval-i64-arg
+            index-arg
+            expr
+            env
+            type-fuel
+            (string.copy name))
             [(result_ctfe_i64_arg.Err d) (ResultCtfe.Err d)]
             [(result_ctfe_i64_arg.Ok index-arg-value)
               (ctfe-eval-struct-field-from-type
@@ -5726,10 +5731,15 @@
     (let
       [type-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
       [index-arg : ast.AstExpr (ctfe-expr-arg args 1 env)]
-      (match (ctfe-eval-type-arg type-arg expr env fuel (clone name))
+      (match (ctfe-eval-type-arg type-arg expr env fuel (string.copy name))
         [(ResultCtfeTypeArg.Err d) (ResultCtfe.Err d)]
         [(ResultCtfeTypeArg.Ok ty type-fuel)
-          (match (ctfe-eval-i64-arg index-arg expr env type-fuel (clone name))
+          (match (ctfe-eval-i64-arg
+            index-arg
+            expr
+            env
+            type-fuel
+            (string.copy name))
             [(result_ctfe_i64_arg.Err d) (ResultCtfe.Err d)]
             [(result_ctfe_i64_arg.Ok index-arg-value)
               (ctfe-eval-enum-variant-from-type
@@ -6002,7 +6012,7 @@
     (let
       [left : ast.AstExpr (ctfe-expr-arg args 0 env)]
       [right : ast.AstExpr (ctfe-expr-arg args 1 env)]
-      (match (ctfe-eval-string-arg left expr env fuel (clone name))
+      (match (ctfe-eval-string-arg left expr env fuel (string.copy name))
         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
         [(ResultCtfeStringArg.Ok l _ left-fuel)
           (match (ctfe-eval-string-arg right expr env left-fuel name)
@@ -6024,7 +6034,7 @@
     (let
       [left : ast.AstExpr (ctfe-expr-arg args 0 env)]
       [right : ast.AstExpr (ctfe-expr-arg args 1 env)]
-      (match (ctfe-eval-string-arg left expr env fuel (clone name))
+      (match (ctfe-eval-string-arg left expr env fuel (string.copy name))
         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
         [(ResultCtfeStringArg.Ok l left-id left-fuel)
           (match (ctfe-eval-string-arg right expr env left-fuel name)
@@ -6111,7 +6121,7 @@
     (let
       [text : ast.AstExpr (ctfe-expr-arg args 0 env)]
       [index : ast.AstExpr (ctfe-expr-arg args 1 env)]
-      (match (ctfe-eval-string-arg text expr env fuel (clone name))
+      (match (ctfe-eval-string-arg text expr env fuel (string.copy name))
         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
         [(ResultCtfeStringArg.Ok s _ text-fuel)
           (ctfe-eval-string-ref-index s index expr env text-fuel name)]))
@@ -6183,36 +6193,42 @@
   (and
     (ctfe-string-has-module-separator? (string.copy name))
     (or
-      (ctfe-string-eq-after-prefix? (string.copy name) "string." (clone base))
-      (ctfe-string-eq-after-prefix? (string.copy name) "string/" (clone base))
+      (ctfe-string-eq-after-prefix?
+        (string.copy name)
+        "string."
+        (string.copy base))
+      (ctfe-string-eq-after-prefix?
+        (string.copy name)
+        "string/"
+        (string.copy base))
       (ctfe-string-eq-after-prefix?
         (string.copy name)
         "stdlib.string."
-        (clone base))
+        (string.copy base))
       (ctfe-string-eq-after-prefix?
         (string.copy name)
         "stdlib.string/"
-        (clone base))
+        (string.copy base))
       (ctfe-string-eq-after-prefix?
         (string.copy name)
         "stdlib/string."
-        (clone base))
+        (string.copy base))
       (ctfe-string-eq-after-prefix?
         (string.copy name)
         "stdlib/string/"
-        (clone base))
+        (string.copy base))
       (ctfe-string-eq-after-prefix?
         (string.copy name)
         "stdlib/string.tl."
-        (clone base))
+        (string.copy base))
       (ctfe-string-eq-after-prefix?
         (string.copy name)
         "stdlib/string.tl/"
-        (clone base))
+        (string.copy base))
       (ctfe-string-suffix-with-prefix?
         (string.copy name)
         "/stdlib/string.tl."
-        (clone base))
+        (string.copy base))
       (ctfe-string-suffix-with-prefix?
         (string.copy name)
         "/stdlib/string.tl/"
@@ -6228,23 +6244,23 @@
 
 (define (ctfe-comptime-helper-lookup-name [name : String]) : String
   (cond
-    [(ctfe-string-prefix? (clone name) "comptime.")
+    [(ctfe-string-prefix? (string.copy name) "comptime.")
       (ctfe-comptime-helper-base-after-prefix name "comptime.")]
-    [(ctfe-string-prefix? (clone name) "comptime/")
+    [(ctfe-string-prefix? (string.copy name) "comptime/")
       (ctfe-comptime-helper-base-after-prefix name "comptime/")]
-    [(ctfe-string-prefix? (clone name) "stdlib.comptime.")
+    [(ctfe-string-prefix? (string.copy name) "stdlib.comptime.")
       (ctfe-comptime-helper-base-after-prefix name "stdlib.comptime.")]
-    [(ctfe-string-prefix? (clone name) "stdlib.comptime/")
+    [(ctfe-string-prefix? (string.copy name) "stdlib.comptime/")
       (ctfe-comptime-helper-base-after-prefix name "stdlib.comptime/")]
-    [(ctfe-string-prefix? (clone name) "stdlib/comptime.")
+    [(ctfe-string-prefix? (string.copy name) "stdlib/comptime.")
       (ctfe-comptime-helper-base-after-prefix name "stdlib/comptime.")]
-    [(ctfe-string-prefix? (clone name) "stdlib/comptime/")
+    [(ctfe-string-prefix? (string.copy name) "stdlib/comptime/")
       (ctfe-comptime-helper-base-after-prefix name "stdlib/comptime/")]
     [else name]))
 
 (define (ctfe-comptime-error-helper-name? [name : String]) : bool
   (and
-    (ctfe-string-has-module-separator? (clone name))
+    (ctfe-string-has-module-separator? (string.copy name))
     (string.eq (ctfe-comptime-helper-lookup-name name) "error")))
 
 (define (ctfe-string-eq-helper-name-id? [name : String] [name-id : i64]) : bool
@@ -9207,8 +9223,11 @@
             (&mut patterns)
             (let
               [name : String
-                (str_cat.str-cat (clone prefix) (string.int->string index))]
-              [name-id : i64 (ctfe-materialize-generated-name-id (clone name))]
+                (str_cat.str-cat
+                  (string.copy prefix)
+                  (string.int->string index))]
+              [name-id : i64
+                (ctfe-materialize-generated-name-id (string.copy name))]
               (ctfe-pat-binding-id
                 (ctfe-string-syntax-name-id
                   (ctfe-env-source-names env)
@@ -9972,7 +9991,7 @@
         [(ResultCtfeStringArg.Ok text _ next-fuel)
           (ResultCtfe.Ok
             (CompilerCtfeValue.Name
-              (clone text)
+              (string.copy text)
               (ctfe-materialize-generated-name-id text))
             next-fuel)]
         [(ResultCtfeStringArg.Err diag) (ResultCtfe.Err diag)]))
@@ -11315,10 +11334,10 @@
   (let
     [actual : String (ci.intern-str name)]
     (or
-      (string.eq (clone actual) (clone expected))
+      (string.eq (string.copy actual) (string.copy expected))
       (ctfe-string-suffix?
-        (clone actual)
-        (str_cat.str-cat "." (clone expected)))
+        (string.copy actual)
+        (str_cat.str-cat "." (string.copy expected)))
       (ctfe-string-suffix? actual (str_cat.str-cat "/" expected)))))
 
 (define (ctfe-literal-matches-value?

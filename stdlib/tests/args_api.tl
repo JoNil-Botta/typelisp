@@ -113,8 +113,11 @@
   [second : String]
   [message : String]) : unit
   (begin
-    (args-api-assert-i64-eq (svec.len items) 2 (clone message))
-    (args-api-assert-string-eq (svec.get items 0 "") first (clone message))
+    (args-api-assert-i64-eq (svec.len items) 2 (string.copy message))
+    (args-api-assert-string-eq
+      (svec.get items 0 "")
+      first
+      (string.copy message))
     (args-api-assert-string-eq (svec.get items 1 "") second message)))
 
 (define (args-api-assert-vec3
@@ -124,9 +127,15 @@
   [third : String]
   [message : String]) : unit
   (begin
-    (args-api-assert-i64-eq (svec.len items) 3 (clone message))
-    (args-api-assert-string-eq (svec.get items 0 "") first (clone message))
-    (args-api-assert-string-eq (svec.get items 1 "") second (clone message))
+    (args-api-assert-i64-eq (svec.len items) 3 (string.copy message))
+    (args-api-assert-string-eq
+      (svec.get items 0 "")
+      first
+      (string.copy message))
+    (args-api-assert-string-eq
+      (svec.get items 1 "")
+      second
+      (string.copy message))
     (args-api-assert-string-eq (svec.get items 2 "") third message)))
 
 (test

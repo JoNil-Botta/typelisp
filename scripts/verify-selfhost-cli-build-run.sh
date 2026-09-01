@@ -317,8 +317,12 @@ assert_cli_surface_help_matches_manifest() {
 
 prepare_cli_surface_files() {
     mkdir -p "$CLI_SURFACE_DIR" "$CLI_SURFACE_DOC_PKG/src" "$CLI_SURFACE_CHECK_PKG/src" "$CLI_SURFACE_FMTLINT_PKG/src" "$CLI_SURFACE_INSPECT_PKG/src"
-    printf '%s' '(define (main) : i64
-  0)' > "$CLI_SURFACE_SRC"
+    printf '%s' '(import stdlib.io)
+
+(define (main) : i64
+  (if (= (io.arg-count) 2)
+    0
+    71))' > "$CLI_SURFACE_SRC"
     cat > "$CLI_SURFACE_RUN_SRC" <<'EOF'
 (import stdlib.io)
 (import stdlib.byte_buf)
@@ -596,7 +600,9 @@ assert_active_cli_surface_command() {
             fi
             package_label="${label}-package-open"
             if [ "$HOST_OS" = windows ]; then
-                package_doc_open_program=sort.exe
+                # The audited build command runs first. Its fixture succeeds
+                # only when the opener supplies exactly one user argument.
+                package_doc_open_program=$(generated_path "$CLI_SURFACE_DIR/build-surface.exe")
             else
                 package_doc_open_program=/usr/bin/test
             fi

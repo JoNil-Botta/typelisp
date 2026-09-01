@@ -95,7 +95,7 @@ make_directory_link() {
     if [ "$HOST_OS" = windows ]; then
         _directory_link_win=$(cygpath -aw "$_directory_link")
         _directory_target_win=$(cygpath -aw "$_directory_target")
-        cmd.exe //c "mklink /J \"$_directory_link_win\" \"$_directory_target_win\"" > /dev/null
+        MSYS2_ARG_CONV_EXCL='*' cmd.exe /d /s /c "mklink /J \"$_directory_link_win\" \"$_directory_target_win\"" > /dev/null
     else
         ln -s "$_directory_target" "$_directory_link"
     fi
@@ -105,7 +105,7 @@ remove_directory_link() {
     _directory_link=$1
     if [ "$HOST_OS" = windows ]; then
         _directory_link_win=$(cygpath -aw "$_directory_link")
-        cmd.exe //c "rmdir \"$_directory_link_win\"" > /dev/null
+        MSYS2_ARG_CONV_EXCL='*' cmd.exe /d /s /c "rmdir \"$_directory_link_win\"" > /dev/null
     else
         rm "$_directory_link"
     fi

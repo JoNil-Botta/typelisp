@@ -1136,6 +1136,15 @@ verify generated file-to-file assembly for multi-file imports, stdlib imports,
 runtime helpers, dynamic arrays, traps, and stack-argument call shape, plus the
 direct-object (no-assembler) ELF link path via `cli build --direct`.
 
+`scripts/verify-fs-rooted-linux.sh` owns the private rooted exclusive-create
+filesystem boundary. It runs retained-descriptor rename, final-component and
+child symlink refusal, deterministic mkdir/reacquire substitution, competing
+`O_EXCL` writers, short-write/EINTR/cancellation and stage-specific failure
+injection, exact close-attempt accounting, mode/content checks, and the
+direct-object-enabled semantic-fallback planner. It also exercises a real
+`RESOLVE_NO_XDEV` bind-mount race when the runner has mount permission and
+prints an explicit limitation when it does not.
+
 This runner is intentionally separate from the plain integration manifest:
 manifest rows cover source programs built by the public compiler, while this
 script covers generated-program behavior where the generated `.s` is the test

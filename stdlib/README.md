@@ -271,6 +271,21 @@ Vec bang place macros as available yet.
   is a narrow, reparse-refusing `NtCreateFile` boundary whose private NTSTATUS
   values map once into stable filesystem outcomes. Import it with
   `(import stdlib.fs)`.
+- `fs_rooted_linux.tl`: private Linux leaf for capability-relative staging-tree
+  construction. A trusted root prefix is opened once with a final-node
+  `O_NOFOLLOW` directory check; descendants accept one validated component and
+  use only descriptor-relative `mkdirat` plus `openat2` with
+  `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS |
+  RESOLVE_NO_XDEV`. Directory and exclusive-create file capabilities are
+  cleanup-owning and expose stable operation and independent close outcomes,
+  never raw errno or descriptors. File finish writes an exact promised byte
+  count with partial-write/EINTR handling, applies `0644` or `0755`, optionally
+  flushes, and closes exactly once. Opaque state uses the active arena;
+  TypeLisp's region checker keeps a capability inside a caller-selected
+  lexical arena until cleanup, while default-arena state lasts for the program.
+  There is deliberately no weaker `openat` fallback for descendant acquisition.
+  This is an internal backend for the future portable rooted adapter, not a
+  general path API.
 - `ffi.tl`: FFI buffer helpers, including explicit NUL-terminated borrowed
   `bytes` copies into caller-owned `(MutPtr u8)` storage and active-arena
   `(Ptr u8)` C string allocation. Compatibility `String` wrappers borrow their

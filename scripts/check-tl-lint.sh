@@ -65,9 +65,13 @@ NAME_CASE_PROBE_STDERR="$WORKDIR/name-case-probe.stderr"
 # units:
 #   - tests/format_golden/ intentionally preserves formatter fixture text.
 #   - tests/safety/ includes intentional check-fail/runtime-trap corpus inputs.
+#   - tests/spmd/package_consumer/ imports through a dependency alias whose
+#     module identity is resolved only by the package build path. The later
+#     package/TLCI gates compile this fixture in its required manifest context.
 git ls-files '*.tl' \
     | grep -v '^tests/format_golden/' \
     | grep -v '^tests/safety/' \
+    | grep -v '^tests/spmd/package_consumer/' \
     | sort > "$FILES"
 
 : > "$CURRENT_SYNTAX_FILES"

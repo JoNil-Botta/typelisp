@@ -43,13 +43,13 @@ esac
 
 PRODUCER="$ROOT/tests/spmd/package_callable"
 CONSUMER="$ROOT/tests/spmd/package_consumer"
-UNSAFE_CONSUMER="$ROOT/tests/spmd/package_unsafe_consumer"
 PRODUCER_TARGET="$PRODUCER/target/release"
 CONSUMER_TARGET="$CONSUMER/target/release"
 PRODUCER_TLCI="$PRODUCER_TARGET/spmd_fixture.tlci"
 CONSUMER_ASM="$CONSUMER_TARGET/spmd_consumer.s"
 CONSUMER_BIN="$CONSUMER_TARGET/spmd_consumer$NL_BIN_EXT"
 WORKDIR="$ROOT/target/package-native-tlci/$NL_HOST_OS"
+UNSAFE_CONSUMER="$WORKDIR/package-unsafe-consumer"
 NATIVE_OUT="$WORKDIR/native.out"
 NATIVE_ERR="$WORKDIR/native.err"
 SOURCE_OUT="$WORKDIR/source.out"
@@ -163,8 +163,31 @@ rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
 mkdir -p \
+    "$UNSAFE_CONSUMER/src" \
     "$TRANSITION_PRODUCER/src" \
     "$TRANSITION_CONSUMER/src"
+cat > "$UNSAFE_CONSUMER/typelisp.pkg" <<'EOF'
+(package
+  (name "spmd_unsafe_consumer")
+  (version "0.1.0")
+  (kind "bin")
+  (dependencies
+    (fixture "../../../../tests/spmd/package_callable")))
+EOF
+cat > "$UNSAFE_CONSUMER/src/main.tl" <<'EOF'
+(module spmd_unsafe_consumer)
+
+(import fixture.src.lib as fixture)
+
+(fixture.package-decls)
+
+(define (main) : i64
+  (let
+    [leaked : (-> i64 i64)
+      (unsafe
+        package-unsafe-answer)]
+    (leaked 42)))
+EOF
 cat > "$TRANSITION_MANIFEST" <<'EOF'
 (package
   (name "rebuild_fixture")
@@ -201,11 +224,10 @@ cat > "$TRANSITION_CONSUMER/src/main.tl" <<'EOF'
   (fixture.package-answer))
 EOF
 
-for target in "$PRODUCER/target" "$CONSUMER/target" "$UNSAFE_CONSUMER/target"; do
+for target in "$PRODUCER/target" "$CONSUMER/target"; do
     case "$target" in
         "$ROOT"/tests/spmd/package_callable/target | \
-        "$ROOT"/tests/spmd/package_consumer/target | \
-        "$ROOT"/tests/spmd/package_unsafe_consumer/target) ;;
+        "$ROOT"/tests/spmd/package_consumer/target) ;;
         *) fail "refusing unsafe package target cleanup: $target" ;;
     esac
     rm -rf "$target"
@@ -275,7 +297,7 @@ TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE=1
 export TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE
 
 case "$UNSAFE_CONSUMER/target" in
-    "$ROOT"/tests/spmd/package_unsafe_consumer/target) ;;
+    "$WORKDIR"/package-unsafe-consumer/target) ;;
     *) fail "refusing unsafe unsafe-value consumer target cleanup" ;;
 esac
 rm -rf "$UNSAFE_CONSUMER/target"

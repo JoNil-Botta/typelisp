@@ -181,6 +181,7 @@ global_cmp_mem_fold|tests/integration/global_cmp_mem_fold.tl|42|-|-|-
 load_widen_cast_fold|tests/integration/load_widen_cast_fold.tl|42|-|-|-
 gep_load_cmp_spilled_stage|tests/integration/gep_load_cmp_spilled_stage.tl|42|-|-|-
 alu_mem_operand_tie|tests/integration/alu_mem_operand_tie.tl|42|-|-|-
+rmw_mem_operand_fold|tests/integration/rmw_mem_operand_fold.tl|42|8 -24\n7 1024 0\n24 108\n36 24\n6 3\n|8 3|stdlib/io.tl stdlib/string.tl
 mem_dest_rmw_fold|tests/integration/mem_dest_rmw_fold.tl|42|-|-|-
 copy_call_word|tests/integration/copy_call_word.tl|42|-|-|-
 load_sink_trap_parity|tests/integration/load_sink_trap_parity.tl|134|rows\n|-|stdlib/io.tl|expected-stderr:tl: target/integration-verify/windows/load_sink_trap_parity/load_sink_trap_parity.tl:33:37: array index out of bounds: index=4 length=4\n

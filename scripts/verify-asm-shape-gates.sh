@@ -860,6 +860,46 @@ check_global_cmp_mem_fold() {
     done
 }
 
+check_rmw_mem_operand_fold() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "rmw_mem_operand_fold_$_suffix" \
+            tests/integration/rmw_mem_operand_fold.tl "$_target")
+        _bump=$(function_body "$_asm" _tl_rmw_mem_operand_fold_rmw_bump)
+        _read=$(function_body "$_asm" _tl_rmw_mem_operand_fold_rmw_bump_and_read)
+
+        # RMW-1: five `g = g op k` updates, five different ops, both operand
+        # forms -- two immediates and three registers. Each was
+        # `movq g(%rip),%rX ; op src,%rX ; movq %rX,g(%rip)` before the fold and
+        # is ONE memory-operand instruction after it.
+        assert_regex_count_eq "$_bump" \
+            '^[[:space:]]+(addq|subq|orq|andq|xorq) (\$[0-9-]+|%r[a-z0-9]+), _tl_rmw_mem_operand_fold_rmw_[a-z]+\(%rip\)$' 5 \
+            "rmw-mem-operand-fold-$_target"
+        # Nothing stages a cell into a register first: the loads the fold
+        # consumed are gone, and so are the stores that closed each triple.
+        assert_not_matches "$_bump" \
+            '^[[:space:]]+movq _tl_rmw_mem_operand_fold_rmw_[a-z]+\(%rip\), %r' \
+            "rmw-mem-operand-fold-$_target"
+        assert_not_matches "$_bump" \
+            '^[[:space:]]+movq %r[a-z0-9]+, _tl_rmw_mem_operand_fold_rmw_[a-z]+\(%rip\)$' \
+            "rmw-mem-operand-fold-$_target"
+
+        # The read-after-write neighbour. The update still folds -- the emitter
+        # answers the read with a RELOAD rather than by keeping the register, so
+        # the register dies at the store exactly as in the loop above -- and the
+        # reload that follows reads back the cell the folded instruction wrote.
+        # That ordering is the fold's correctness in one line: the memory write
+        # must happen at the folded instruction, not later.
+        assert_regex_count_eq "$_read" \
+            '^[[:space:]]+addq %r[a-z0-9]+, _tl_rmw_mem_operand_fold_rmw_hits\(%rip\)$' 1 \
+            "rmw-mem-operand-fold-read-$_target"
+        assert_next_line_matches "$_read" \
+            'addq %r[a-z0-9]+, _tl_rmw_mem_operand_fold_rmw_hits[(]%rip[)]' \
+            '^[[:space:]]+movq _tl_rmw_mem_operand_fold_rmw_hits[(]%rip[)], %r' \
+            "rmw-mem-operand-fold-read-$_target"
+    done
+}
+
 check_alu_mem_operand_tie() {
     _asm=$(compile_gate alu_mem_operand_tie tests/integration/alu_mem_operand_tie.tl)
     _body=$(function_body "$_asm" _tl_alu_mem_operand_tie_fold_words)
@@ -1823,6 +1863,7 @@ check_loadcse_forward
 check_switch_dispatch_scavenge
 check_cmp_fold_load
 check_global_cmp_mem_fold
+check_rmw_mem_operand_fold
 check_alu_mem_operand_tie
 check_alu_mem_operand_sink
 check_const_index_bounds

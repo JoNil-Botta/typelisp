@@ -75,8 +75,12 @@
   160)
 (define compiler-backend-sweep-dropped-bytes-cap-metric : i64
   161)
-(define compiler-backend-census-metric-end : i64
+(define compiler-backend-peephole-rmw-folded-metric : i64
   162)
+(define compiler-backend-peephole-rmw-refused-metric : i64
+  163)
+(define compiler-backend-census-metric-end : i64
+  164)
 
 ;; Raw active-arena bytes for the assembly-text builder below -- the same
 ;; allocator `stdlib.string`'s concat helpers use for every String they build.
@@ -95660,6 +95664,940 @@
           (unsafe
             (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))))
 
+;; ---------------------------------------------------------------------------
+;; RMW-1: fold an adjacent load / ALU / store of ONE memory location into a
+;; single memory-operand ALU instruction.
+;;
+;;     movq   M, %rX          -->    op {$imm|%rY}, M
+;;     op     {$imm|%rY}, %rX
+;;     movq   %rX, M
+;;
+;; x86 executes the folded form as ONE instruction where we emit three, and the
+;; three are TEXTUALLY ADJACENT in our output at every site: the scalar-global
+;; counter bumps (`g += 1`) and the frame-slot accumulator bumps (`slot += k`)
+;; the emitter produces from a load/binop/store IR triple.
+;;
+;; ADMISSION -- LLVM's `isFusableLoadOpStorePattern`
+;; (llvm/lib/Target/X86/X86ISelDAGToDAG.cpp:3732) plus `foldLoadStoreIntoMemOperand`
+;; (:3863), transposed to text:
+;;   * the load's value has exactly one use, the op   -- guaranteed here by
+;;     ADJACENCY: nothing sits between the load and the op, and the op reads %rX;
+;;   * the op's result has exactly one use, the store -- guaranteed by adjacency
+;;     plus the register-death scan below, which is the textual form of LLVM's
+;;     "the store is the only use";
+;;   * load and store name the SAME address -- byte-identical operand text, and
+;;     both shapes are addressed by a register the triple cannot write (`%rip`
+;;     is not writable; `%rsp`/`%rbp` are outside the allocator's tracked set, so
+;;     the folded triple's %rX is never one of them);
+;;   * the op is in {add,sub,and,or,xor,neg,not}. LLVM's list also names inc/dec;
+;;     our emitter never spells those (an increment is `addq $1`) and the report's
+;;     rule is to keep spelling it that way, which is why no carry-flag analysis
+;;     is needed here: `incq m` differs from `addq $1, m` only in CF, and we emit
+;;     the `addq` form on both sides of the fold.
+;;   * `%rY` != `%rX`: `addq %rax, %rax` doubles the LOADED value, which the
+;;     folded `addq %rax, M` would not reproduce.
+;;
+;; FLAGS. The fold is flags-exact by construction, in both directions:
+;;   * `movq` writes no flags, so the flags after the original triple are exactly
+;;     the flags the ALU op wrote, and the flags after the folded instruction are
+;;     the flags the same ALU op writes on the same operand values. A following
+;;     `jcc` reading the op's flags therefore reads an IDENTICAL EFLAGS word --
+;;     this is the case the packet asks to verify, and it is FINE, so no
+;;     flags-consumer refusal is needed or wanted.
+;;   * a `jcc` reading the LOAD's flags is impossible: `movq` sets none, so any
+;;     flags live INTO the triple are killed by the op in both forms alike.
+;;   * nothing can sit between the op and the store to observe an intermediate
+;;     state, because the three lines are adjacent.
+;;
+;; PLACEMENT. This runs over the FINAL record stream -- after the walk's pair
+;; rules, after the owner-map reload rewrites, and after the dead-frame-store
+;; sweep -- not inside the pair walk. That is a soundness requirement, not a
+;; convenience: the owner map may have rewritten a LATER reload `movq M, %rY`
+;; into `movq %rX, %rY` (reload reuse from the register that mirrors the slot).
+;; That rewrite is a genuine use of %rX, and it exists only in the emitted text.
+;; Scanning the post-walk stream is what makes the death scan below see it and
+;; refuse; a rule inside the walk would fold the triple and then mint a read of
+;; a register that no longer holds the value.
+;;
+;; FOLD ORDER. Candidates are folded in a forward pass, and an earlier fold can
+;; delete the very `movq M, %rX` a later candidate's death scan used as its kill
+;; of %rX. That stays sound: the fold that deletes the kill deletes, in the same
+;; step, the only two reads of %rX between it and its own store (the op and the
+;; store), and its own scan proves nothing reads %rX after it. Composing the two
+;; proofs leaves the whole region read-free for %rX, which is what deadness
+;; means.
+(define compiler-backend-peephole-rmw-scan-cap : i64
+  256)
+(define compiler-backend-peephole-rmw-branch-cap : i64
+  32)
+
+;; How far from the branch a label definition may sit to be resolvable, and how
+;; many resolutions one candidate may spend. Both are COST bounds, not
+;; correctness bounds: exceeding either refuses the fold. Without them the scan
+;; is quadratic -- one unresolved branch walks the whole group, a group is up to
+;; 64 emitted functions, and the walk over a self-compile's 2.7M lines then
+;; costs more than the fold saves. Emitted branch targets are function-local and
+;; overwhelmingly within a few dozen lines, so the window keeps the folds and
+;; drops the tail that was paying for them.
+(define compiler-backend-peephole-rmw-label-window : i64
+  256)
+(define compiler-backend-peephole-rmw-label-lookup-cap : i64
+  8)
+
+;; `%ah`/`%ch`/`%dh`/`%bh` -- the four high-byte spellings the shared owner-map
+;; token classifier deliberately leaves unmapped. It can afford to: the one
+;; emitter that spells a high byte writes `%al` on the same line, so the owner
+;; map invalidates %rax anyway. A liveness scan cannot afford to, so they are
+;; classified HERE rather than added to the shared table, which would change
+;; owner-map decisions and therefore emitted assembly.
+(define (compiler-backend-peephole-rmw-high-byte-reg-index
+  [data : (Ptr u8)]
+  [ts : i64]
+  [te : i64]) : i64
+  (cond
+    [(not (= (- te ts) 3)) -1]
+    [(not (= (compiler-backend-peephole-byte-at data ts) 37)) -1]
+    [(not (= (compiler-backend-peephole-byte-at data (+ ts 2)) 104)) -1]
+    [else
+      (let
+        [b1 : i64 (compiler-backend-peephole-byte-at data (+ ts 1))]
+        (cond
+          [(= b1 97) 0]
+          [(= b1 99) 1]
+          [(= b1 100) 2]
+          [(= b1 98) 3]
+          [else -1]))]))
+
+;; True iff [start,end) mentions the tracked GP register `reg` in any spelling.
+;; Every register mention in an AT&T operand starts with '%', so the scan walks
+;; '%'-prefixed tokens and classifies each; sub-register and high-byte spellings
+;; map to their 64-bit parent, and memory operands are covered because their
+;; base/index tokens are '%'-prefixed too. A MENTION is treated as a READ, which
+;; is the conservative direction: over-counting reads only refuses folds.
+(define (compiler-backend-peephole-rmw-mentions-reg?
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]
+  [reg : i64]) : bool
+  (if (< reg 0)
+    false
+    (let
+      [i : i64 start]
+      [found : bool false]
+      (begin
+        (while (and (not found) (< i end))
+          (if (= (compiler-backend-peephole-byte-at data i) 37)
+            (let
+              [j : i64 (+ i 1)]
+              (begin
+                (while (and
+                  (< j end)
+                  (let
+                    [b : i64 (compiler-backend-peephole-byte-at data j)]
+                    (or (and (>= b 97) (<= b 122)) (and (>= b 48) (<= b 57)))))
+                  (set! j (+ j 1)))
+                (when
+                  (or
+                    (=
+                      (compiler-backend-peephole-token-reg-index-range data i j)
+                      reg)
+                    (=
+                      (compiler-backend-peephole-rmw-high-byte-reg-index
+                        data
+                        i
+                        j)
+                      reg))
+                  (set! found true))
+                (set! i j)))
+            (set! i (+ i 1))))
+        found))))
+
+;; True iff [start,end) is exactly one of the two foldable memory shapes: a
+;; rip-relative global (`sym(%rip)`, `sym+8(%rip)`) or a frame slot (`N(%rsp)`,
+;; `-N(%rbp)`, `(%rsp)`). The single-'%' requirement is what rejects every other
+;; memory operand -- indexed forms, r10 bases, bare registers -- and with it the
+;; only way the triple's own register could appear in the address.
+(define (compiler-backend-peephole-rmw-mem-operand?
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : bool
+  (if (< (- end start) 6)
+    false
+    (let
+      [suffix : i64 (- end 6)]
+      [base-ok : bool
+        (or
+          (compiler-backend-peephole-range-eq? data suffix end "(%rip)")
+          (compiler-backend-peephole-range-eq? data suffix end "(%rsp)")
+          (compiler-backend-peephole-range-eq? data suffix end "(%rbp)"))]
+      [i : i64 start]
+      [clean : bool true]
+      (begin
+        (unless base-ok (return false))
+        (while (and clean (< i suffix))
+          (begin
+            (when
+              (= (compiler-backend-peephole-byte-at data i) 37)
+              (set! clean false))
+            (set! i (+ i 1))))
+        clean))))
+
+;; 1 for a two-operand foldable ALU mnemonic, 2 for a one-operand one, 0 for
+;; anything else.
+(define (compiler-backend-peephole-rmw-alu-kind
+  [data : (Ptr u8)]
+  [ms : i64]
+  [me : i64]) : i64
+  (cond
+    [(compiler-backend-peephole-range-eq? data ms me "addq") 1]
+    [(compiler-backend-peephole-range-eq? data ms me "subq") 1]
+    [(compiler-backend-peephole-range-eq? data ms me "andq") 1]
+    [(compiler-backend-peephole-range-eq? data ms me "orq") 1]
+    [(compiler-backend-peephole-range-eq? data ms me "xorq") 1]
+    [(compiler-backend-peephole-range-eq? data ms me "negq") 2]
+    [(compiler-backend-peephole-range-eq? data ms me "notq") 2]
+    [else 0]))
+
+;; End of the mnemonic token that starts at `ms`.
+(define (compiler-backend-peephole-rmw-mnemonic-end
+  [data : (Ptr u8)]
+  [ms : i64]
+  [end : i64]) : i64
+  (compiler-backend-peephole-scan-byte-range data ms end 32))
+
+;; Mnemonics whose register reads and writes are ENTIRELY explicit in their
+;; operand text, so "the line does not mention %rX" proves "the line does not
+;; read %rX". This is an ALLOW list and the default is refusal, which is what
+;; keeps the scan sound against every instruction with an implicit register
+;; operand: `cqto`/`cltq`/`cdq`/`cbw` (read %rax), `divq`/`idivq`/`mulq`
+;; (read %rdx:%rax), `rep movsb` (reads %rcx/%rsi/%rdi), `syscall`, `leave`,
+;; `cpuid` -- none of them is on this list, so a scan that reaches one refuses.
+;; `call` and `ret` are classified before this test, not here.
+;;
+;; `pushq`/`popq` ARE listed: their only implicit operand is %rsp, which the
+;; token classifier maps to -1 and which can never be the folded register.
+;; `%cl`-counted shifts spell `%cl`, so the mention scan sees them.
+(define (compiler-backend-peephole-rmw-transparent-mnemonic?
+  [data : (Ptr u8)]
+  [ms : i64]
+  [me : i64]) : bool
+  (let
+    [b0 : i64 (compiler-backend-peephole-byte-at data ms)]
+    (cond
+      [(= b0 109)
+        (or
+          (compiler-backend-peephole-range-eq? data ms me "movq")
+          (compiler-backend-peephole-range-eq? data ms me "movl")
+          (compiler-backend-peephole-range-eq? data ms me "movb")
+          (compiler-backend-peephole-range-eq? data ms me "movw")
+          (compiler-backend-peephole-range-eq? data ms me "movabsq")
+          (compiler-backend-peephole-range-eq? data ms me "movzbq")
+          (compiler-backend-peephole-range-eq? data ms me "movzbl")
+          (compiler-backend-peephole-range-eq? data ms me "movzwq")
+          (compiler-backend-peephole-range-eq? data ms me "movzwl")
+          (compiler-backend-peephole-range-eq? data ms me "movsbq")
+          (compiler-backend-peephole-range-eq? data ms me "movsbl")
+          (compiler-backend-peephole-range-eq? data ms me "movswq")
+          (compiler-backend-peephole-range-eq? data ms me "movswl")
+          (compiler-backend-peephole-range-eq? data ms me "movslq")
+          (compiler-backend-peephole-range-eq? data ms me "movups")
+          (compiler-backend-peephole-range-eq? data ms me "movaps")
+          (compiler-backend-peephole-range-eq? data ms me "movsd")
+          (compiler-backend-peephole-range-eq? data ms me "movss")
+          (compiler-backend-peephole-range-eq? data ms me "movdqu")
+          (compiler-backend-peephole-range-eq? data ms me "movdqa"))]
+      [(= b0 97)
+        (or
+          (compiler-backend-peephole-range-eq? data ms me "addq")
+          (compiler-backend-peephole-range-eq? data ms me "addl")
+          (compiler-backend-peephole-range-eq? data ms me "addb")
+          (compiler-backend-peephole-range-eq? data ms me "addw")
+          (compiler-backend-peephole-range-eq? data ms me "andq")
+          (compiler-backend-peephole-range-eq? data ms me "andl")
+          (compiler-backend-peephole-range-eq? data ms me "andb")
+          (compiler-backend-peephole-range-eq? data ms me "andw"))]
+      [(= b0 115)
+        (or
+          (compiler-backend-peephole-range-eq? data ms me "subq")
+          (compiler-backend-peephole-range-eq? data ms me "subl")
+          (compiler-backend-peephole-range-eq? data ms me "shlq")
+          (compiler-backend-peephole-range-eq? data ms me "shll")
+          (compiler-backend-peephole-range-eq? data ms me "shrq")
+          (compiler-backend-peephole-range-eq? data ms me "shrl")
+          (compiler-backend-peephole-range-eq? data ms me "sarq")
+          (compiler-backend-peephole-range-eq? data ms me "sarl")
+          (and
+            (>= (- me ms) 4)
+            (compiler-backend-peephole-range-eq? data ms (+ ms 3) "set")))]
+      [(= b0 111)
+        (or
+          (compiler-backend-peephole-range-eq? data ms me "orq")
+          (compiler-backend-peephole-range-eq? data ms me "orl")
+          (compiler-backend-peephole-range-eq? data ms me "orb")
+          (compiler-backend-peephole-range-eq? data ms me "orw"))]
+      [(= b0 120)
+        (or
+          (compiler-backend-peephole-range-eq? data ms me "xorq")
+          (compiler-backend-peephole-range-eq? data ms me "xorl")
+          (compiler-backend-peephole-range-eq? data ms me "xorb")
+          (compiler-backend-peephole-range-eq? data ms me "xorw"))]
+      [(= b0 99)
+        (or
+          (compiler-backend-peephole-range-eq? data ms me "cmpq")
+          (compiler-backend-peephole-range-eq? data ms me "cmpl")
+          (compiler-backend-peephole-range-eq? data ms me "cmpb")
+          (compiler-backend-peephole-range-eq? data ms me "cmpw")
+          (and
+            (>= (- me ms) 5)
+            (compiler-backend-peephole-range-eq? data ms (+ ms 4) "cmov")))]
+      [(= b0 116)
+        (or
+          (compiler-backend-peephole-range-eq? data ms me "testq")
+          (compiler-backend-peephole-range-eq? data ms me "testl")
+          (compiler-backend-peephole-range-eq? data ms me "testb")
+          (compiler-backend-peephole-range-eq? data ms me "testw"))]
+      [(= b0 105)
+        (or
+          (compiler-backend-peephole-range-eq? data ms me "imulq")
+          (compiler-backend-peephole-range-eq? data ms me "imull"))]
+      [(= b0 110)
+        (or
+          (compiler-backend-peephole-range-eq? data ms me "negq")
+          (compiler-backend-peephole-range-eq? data ms me "negl")
+          (compiler-backend-peephole-range-eq? data ms me "notq")
+          (compiler-backend-peephole-range-eq? data ms me "notl")
+          (compiler-backend-peephole-range-eq? data ms me "nop")
+          (compiler-backend-peephole-range-eq? data ms me "nopl")
+          (compiler-backend-peephole-range-eq? data ms me "nopw"))]
+      [(= b0 112)
+        (or
+          (compiler-backend-peephole-range-eq? data ms me "pushq")
+          (compiler-backend-peephole-range-eq? data ms me "popq"))]
+      [(= b0 100)
+        (or
+          (compiler-backend-peephole-range-eq? data ms me "decq")
+          (compiler-backend-peephole-range-eq? data ms me "decl"))]
+      [(= b0 108)
+        (or
+          (compiler-backend-peephole-range-eq? data ms me "leaq")
+          (compiler-backend-peephole-range-eq? data ms me "leal"))]
+      [(= b0 98)
+        (or
+          (compiler-backend-peephole-range-eq? data ms me "btq")
+          (compiler-backend-peephole-range-eq? data ms me "btsq")
+          (compiler-backend-peephole-range-eq? data ms me "btrq"))]
+      ;; Every AVX form reads and writes exactly the registers it names, with
+      ;; ONE exception: `vmaskmovdqu` stores through an implicit %rdi.
+      [(= b0 118)
+        (not (compiler-backend-peephole-range-eq? data ms me "vmaskmovdqu"))]
+      [else false])))
+
+;; True iff the record's line fully overwrites `reg` without reading it, which
+;; ends the death scan on this path. Restricted to `movq SRC, %rX`: the kill set
+;; may be UNDER-approximated (a missed kill only refuses a fold), so the one
+;; shape the emitter reloads with is enough and no wider parse is needed.
+(define (compiler-backend-peephole-rmw-clean-overwrite?
+  [data : (Ptr u8)]
+  [ms : i64]
+  [me : i64]
+  [end : i64]
+  [reg : i64]) : bool
+  (let
+    [ops : i64
+      (if (< me end)
+        (+ me 1)
+        end)]
+    [comma : i64
+      (compiler-backend-peephole-find-comma-space-range data ops end)]
+    [dst : i64
+      (if (and (> comma ops) (< (+ comma 2) end))
+        (compiler-backend-peephole-token-reg-index-range data (+ comma 2) end)
+        -1)]
+    (cond
+      [(not (= dst reg)) false]
+      ;; `xorl %eX, %eX` / `xorq %rX, %rX` is the zeroing idiom: it names the
+      ;; register twice but reads neither copy, so it is a kill even though the
+      ;; mention scan would call it a use. Tested BEFORE the width list because
+      ;; the general arm below would reject it on exactly that mention.
+      [(and
+          (or
+            (compiler-backend-peephole-range-eq? data ms me "xorl")
+            (compiler-backend-peephole-range-eq? data ms me "xorq"))
+          (=
+            (compiler-backend-peephole-token-reg-index-range data ops comma)
+            reg))
+        true]
+      ;; Every mnemonic here writes its destination register in FULL: `movq`,
+      ;; `movabsq` and `leaq` at 64 bits, `movl` at 32 with the zero-extension
+      ;; x86-64 gives every 32-bit destination. A narrower write (`movb`,
+      ;; `setcc`) would leave the upper bytes live and is deliberately absent.
+      [(not
+          (or
+            (compiler-backend-peephole-range-eq? data ms me "movq")
+            (compiler-backend-peephole-range-eq? data ms me "movl")
+            (compiler-backend-peephole-range-eq? data ms me "movabsq")
+            (compiler-backend-peephole-range-eq? data ms me "leaq")))
+        false]
+      [else
+        (not (compiler-backend-peephole-rmw-mentions-reg? data ops comma reg))])))
+
+;; The record index of the label definition named [ts,te), or -1 when it is not
+;; in this group. Labels are file-scope in the emitted assembly -- the assembler
+;; rejects a duplicate -- so the first match IS the only match. The scan starts
+;; just after `from` and wraps, because a jump target is usually the next label
+;; forward.
+(define (compiler-backend-peephole-rmw-find-label
+  [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)]
+  [live : (__tl_dyn-array i64)]
+  [count : i64]
+  [from : i64]
+  [data : (Ptr u8)]
+  [ts : i64]
+  [te : i64]) : i64
+  (let
+    [lo : i64
+      (if (> (- from compiler-backend-peephole-rmw-label-window) 0)
+        (- from compiler-backend-peephole-rmw-label-window)
+        0)]
+    [hi : i64
+      (if (< (+ from compiler-backend-peephole-rmw-label-window) count)
+        (+ from compiler-backend-peephole-rmw-label-window)
+        count)]
+    [i : i64 (- lo 1)]
+    (begin
+      (while (< (+ i 1) hi)
+        (begin
+          (set! i (+ i 1))
+          (when
+            (= (array-ref live i) 1)
+            (let
+              [rec : CompilerBackendPeepholeLineRecord
+                (compiler-backend-global-array-element-shared-view recs i)]
+              [kind : i64
+                (compiler-backend-peephole-record-kind
+                  (compiler-backend-global-shared-view rec))]
+              [rdata : (Ptr u8)
+                (compiler-backend-peephole-record-data
+                  (compiler-backend-global-shared-view rec))]
+              [rstart : i64
+                (compiler-backend-peephole-record-start
+                  (compiler-backend-global-shared-view rec))]
+              [rend : i64 (compiler-backend-peephole-record-end rec)]
+              (when
+                (and
+                  (= kind compiler-backend-sweep-line-kind-label)
+                  (> rend rstart)
+                  (compiler-backend-peephole-ranges-eq?
+                    rdata
+                    rstart
+                    (- rend 1)
+                    data
+                    ts
+                    te))
+                (return i))))))
+      -1)))
+
+;; The bare-symbol branch operand of [start,end), as a [lo,hi) range, or an
+;; empty range when the operand is not a bare symbol (an indirect `jmp *%rax`,
+;; a memory or table form, anything with a suffix or comment).
+(define (compiler-backend-peephole-rmw-branch-target-end
+  [data : (Ptr u8)]
+  [ops : i64]
+  [end : i64]) : i64
+  (let
+    [i : i64 ops]
+    [ok : bool (< ops end)]
+    (begin
+      (while (and ok (< i end))
+        (let
+          [b : i64 (compiler-backend-peephole-byte-at data i)]
+          (begin
+            (when
+              (or (= b 32) (= b 9) (= b 42) (= b 37) (= b 40) (= b 44))
+              (set! ok false))
+            (set! i (+ i 1)))))
+      (if ok
+        end
+        ops))))
+
+;; Is `reg` a register whose value a `ret` may still carry? %rax and %rdx are
+;; the SysV integer return pair; Win64 returns in %rax alone, so refusing both
+;; is correct for either target. Nothing else can be read by a return.
+(define (compiler-backend-peephole-rmw-return-reg? [reg : i64]) : bool
+  (or (= reg 0) (= reg 2)))
+
+;; Is `reg` callee-saved under BOTH supported ABIs (SysV and Win64)? Such a
+;; register is never an argument register on either, so a `call` cannot read the
+;; value it holds: the callee may save and restore it, which is not a use of the
+;; value. Every other register is refused at a call, because if the folded
+;; register happened to be an argument register the call WOULD read it and no
+;; text between the store and the call would say so.
+(define (compiler-backend-peephole-rmw-callee-saved-reg? [reg : i64]) : bool
+  (or (= reg 3) (= reg 10) (= reg 11) (= reg 12) (= reg 13)))
+
+;; True iff `reg` is dead at record `start`: on every path forward from there,
+;; `reg` is fully overwritten, the function returns without carrying it, or a
+;; call that cannot read it is reached -- and no path reads it first.
+;;
+;; This is a bounded forward reachability walk over the record stream, not a
+;; dataflow fixpoint: deadness at a point depends only on what is REACHABLE from
+;; that point, so a DFS with a visited stamp answers it exactly. Every arm that
+;; cannot be classified refuses, so the answer is conservative by construction:
+;; an unknown mnemonic, an unresolvable or indirect branch, a directive (which
+;; is where a function body ends), an exhausted budget, and a call that could be
+;; passing the register all return false.
+(define (compiler-backend-peephole-rmw-reg-dead-after?
+  [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)]
+  [live : (__tl_dyn-array i64)]
+  [count : i64]
+  [visited : (__tl_dyn-array i64)]
+  [generation : i64]
+  [start : i64]
+  [reg : i64]) : bool
+  (let
+    [pending : (__tl_dyn-array i64)
+      (__tl_make-array i64 compiler-backend-peephole-rmw-branch-cap)]
+    [pending-len : i64 1]
+    [budget : i64 compiler-backend-peephole-rmw-scan-cap]
+    [lookups : i64 0]
+    [pc : i64 0]
+    [walking : bool false]
+    (begin
+      (set! (array-ref pending 0) start)
+      (while (or walking (> pending-len 0))
+        (begin
+          (unless
+            walking
+            (begin
+              (set! pending-len (- pending-len 1))
+              (set! pc (array-ref pending pending-len))
+              (set! walking true)))
+          (when (>= pc count) (return false))
+          (if (= (array-ref visited pc) generation)
+            ;; This record, and therefore everything reachable from it, was
+            ;; already proven safe on an earlier path.
+            (set! walking false)
+            (begin
+              (set! (array-ref visited pc) generation)
+              (set! budget (- budget 1))
+              (when (<= budget 0) (return false))
+              (if (not (= (array-ref live pc) 1))
+                (set! pc (+ pc 1))
+                (let
+                  [rec : CompilerBackendPeepholeLineRecord
+                    (compiler-backend-global-array-element-shared-view recs pc)]
+                  [kind : i64
+                    (compiler-backend-peephole-record-kind
+                      (compiler-backend-global-shared-view rec))]
+                  [data : (Ptr u8)
+                    (compiler-backend-peephole-record-data
+                      (compiler-backend-global-shared-view rec))]
+                  [rend : i64
+                    (compiler-backend-peephole-record-end
+                      (compiler-backend-global-shared-view rec))]
+                  [ms : i64
+                    (compiler-backend-peephole-record-mnemonic-start rec)]
+                  (if (not
+                    (= kind compiler-backend-sweep-line-kind-instruction))
+                    ;; A blank line or a label definition emits no bytes and
+                    ;; reads nothing; fall through it.
+                    (set! pc (+ pc 1))
+                    (let
+                      [me : i64
+                        (compiler-backend-peephole-rmw-mnemonic-end
+                          data
+                          ms
+                          rend)]
+                      [b0 : i64 (compiler-backend-peephole-byte-at data ms)]
+                      (cond
+                        ;; A directive ends the function body. Nothing after it
+                        ;; is reachable from here, and reading on would classify
+                        ;; the NEXT function's text as this path's successor.
+                        [(= b0 46) (return false)]
+                        [(compiler-backend-peephole-rmw-clean-overwrite?
+                            data
+                            ms
+                            me
+                            rend
+                            reg)
+                          (set! walking false)]
+                        [(compiler-backend-peephole-rmw-mentions-reg?
+                            data
+                            ms
+                            rend
+                            reg)
+                          (return false)]
+                        [(compiler-backend-peephole-range-eq? data ms me "ret")
+                          (if (compiler-backend-peephole-rmw-return-reg? reg)
+                            (return false)
+                            (set! walking false))]
+                        [(compiler-backend-peephole-range-eq? data ms me "call")
+                          (if (compiler-backend-peephole-rmw-callee-saved-reg?
+                            reg)
+                            (set! pc (+ pc 1))
+                            (return false))]
+                        [(= b0 106)
+                          (let
+                            [ops : i64
+                              (if (< (+ me 1) rend)
+                                (+ me 1)
+                                rend)]
+                            [te : i64
+                              (compiler-backend-peephole-rmw-branch-target-end
+                                data
+                                ops
+                                rend)]
+                            [_spend : unit (set! lookups (+ lookups 1))]
+                            [target : i64
+                              (if (and
+                                (> te ops)
+                                (<=
+                                  lookups
+                                  compiler-backend-peephole-rmw-label-lookup-cap))
+                                (compiler-backend-peephole-rmw-find-label
+                                  (compiler-backend-global-shared-view recs)
+                                  (compiler-backend-global-shared-view live)
+                                  count
+                                  pc
+                                  data
+                                  ops
+                                  te)
+                                -1)]
+                            (begin
+                              (when (< target 0) (return false))
+                              (if (compiler-backend-peephole-range-eq?
+                                data
+                                ms
+                                me
+                                "jmp")
+                                (set! pc target)
+                                (begin
+                                  (when
+                                    (>=
+                                      pending-len
+                                      compiler-backend-peephole-rmw-branch-cap)
+                                    (return false))
+                                  (set! (array-ref pending pending-len) target)
+                                  (set! pending-len (+ pending-len 1))
+                                  (set! pc (+ pc 1))))))]
+                        [(compiler-backend-peephole-rmw-transparent-mnemonic?
+                            data
+                            ms
+                            me)
+                          (set! pc (+ pc 1))]
+                        [else (return false)])))))))))
+      true)))
+
+;; The folded line's text, built from the three records' own bytes.
+(define (compiler-backend-peephole-rmw-folded-line
+  [op-src : String]
+  [op-ms : i64]
+  [op-me : i64]
+  [src-start : i64]
+  [src-end : i64]
+  [mem-src : String]
+  [mem-start : i64]
+  [mem-end : i64]
+  [two-operand? : bool]) : String
+  (let
+    [mnemonic : String
+      (string.substring
+        (compiler-backend-global-shared-view op-src)
+        op-ms
+        (- op-me op-ms))]
+    [mem : String (string.substring mem-src mem-start (- mem-end mem-start))]
+    (if two-operand?
+      (str_cat.str-cat
+        (str_cat.str-cat
+          "    "
+          mnemonic
+          " "
+          (string.substring op-src src-start (- src-end src-start)))
+        ", "
+        mem
+        "")
+      (str_cat.str-cat "    " mnemonic " " mem))))
+
+;; The one-byte pre-filter that guards the whole candidate probe. Reads the
+;; record's first mnemonic byte and answers whether it could open a foldable
+;; ALU line. Kept as its own function so the driver's window test stays a single
+;; cheap call and no record is copied to answer it.
+(define (compiler-backend-peephole-rmw-alu-first-byte?
+  [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord)]
+  [at : i64]) : bool
+  (let
+    [rec : CompilerBackendPeepholeLineRecord
+      (compiler-backend-global-array-element-shared-view recs at)]
+    [data : (Ptr u8)
+      (compiler-backend-peephole-record-data
+        (compiler-backend-global-shared-view rec))]
+    [end : i64
+      (compiler-backend-peephole-record-end
+        (compiler-backend-global-shared-view rec))]
+    [ms : i64 (compiler-backend-peephole-record-mnemonic-start rec)]
+    [b0 : i64
+      (if (< ms end)
+        (compiler-backend-peephole-byte-at data ms)
+        0)]
+    (or (= b0 97) (= b0 115) (= b0 111) (= b0 120) (= b0 110))))
+
+;; Fold every admissible load/op/store triple in one group's record stream.
+;; Triples are recognized over the three consecutive SURVIVING records, so a
+;; line an earlier rule dropped does not hide one and a line it left in the
+;; middle does not get folded through.
+(define (compiler-backend-peephole-rmw-fold-records!
+  [backend-state : CompilerBackendState]
+  [stream : CompilerBackendStreamState]
+  [v : CompilerBackendPeepholeLineVec]) : unit
+  (let
+    [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord) v.lines]
+    [live : (__tl_dyn-array i64) v.live]
+    [count : i64 v.len]
+    [visited : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [visited-ready : bool false]
+    [generation : i64 0]
+    [load-at : i64 -1]
+    [alu-at : i64 -1]
+    [store-at : i64 -1]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (when
+            (= (array-ref live i) 1)
+            (begin
+              (set! load-at alu-at)
+              (set! alu-at store-at)
+              (set! store-at i)
+              (when
+                (and
+                  (>= load-at 0)
+                  ;; ONE byte of the middle line rejects almost every window
+                  ;; before anything else runs -- no second and third record
+                  ;; copy, no mnemonic compares. This pass visits every emitted
+                  ;; line of the program, so the common path has to stop here:
+                  ;; only add/and (a), sub (s), or (o), xor (x) and neg/not (n)
+                  ;; can open a foldable middle line.
+                  (compiler-backend-peephole-rmw-alu-first-byte?
+                    (compiler-backend-global-shared-view recs)
+                    alu-at))
+                (let
+                  [lrec : CompilerBackendPeepholeLineRecord
+                    (compiler-backend-global-array-element-shared-view
+                      recs
+                      load-at)]
+                  [arec : CompilerBackendPeepholeLineRecord
+                    (compiler-backend-global-array-element-shared-view
+                      recs
+                      alu-at)]
+                  [srec : CompilerBackendPeepholeLineRecord
+                    (compiler-backend-global-array-element-shared-view
+                      recs
+                      store-at)]
+                  [ldata : (Ptr u8)
+                    (compiler-backend-peephole-record-data
+                      (compiler-backend-global-shared-view lrec))]
+                  [lstart : i64
+                    (compiler-backend-peephole-record-start
+                      (compiler-backend-global-shared-view lrec))]
+                  [lend : i64
+                    (compiler-backend-peephole-record-end
+                      (compiler-backend-global-shared-view lrec))]
+                  [adata : (Ptr u8)
+                    (compiler-backend-peephole-record-data
+                      (compiler-backend-global-shared-view arec))]
+                  [aend : i64
+                    (compiler-backend-peephole-record-end
+                      (compiler-backend-global-shared-view arec))]
+                  [ams : i64
+                    (compiler-backend-peephole-record-mnemonic-start
+                      (compiler-backend-global-shared-view arec))]
+                  [sdata : (Ptr u8)
+                    (compiler-backend-peephole-record-data
+                      (compiler-backend-global-shared-view srec))]
+                  [sstart : i64
+                    (compiler-backend-peephole-record-start
+                      (compiler-backend-global-shared-view srec))]
+                  [send : i64
+                    (compiler-backend-peephole-record-end
+                      (compiler-backend-global-shared-view srec))]
+                  [ame : i64
+                    (compiler-backend-peephole-rmw-mnemonic-end adata ams aend)]
+                  [alu-kind : i64
+                    (compiler-backend-peephole-rmw-alu-kind adata ams ame)]
+                  ;; The ALU mnemonic is the cheapest discriminator in the
+                  ;; window, so it gates every other probe: the two movq shapes
+                  ;; are common, an ALU line between two of them is not.
+                  [candidate? : bool
+                    (and
+                      (> alu-kind 0)
+                      (compiler-backend-peephole-movq-prefix-at-range?
+                        ldata
+                        lstart
+                        lend)
+                      (compiler-backend-peephole-movq-prefix-at-range?
+                        sdata
+                        sstart
+                        send))]
+                  [lops : i64
+                    (+ lstart (compiler-backend-peephole-movq-prefix-len))]
+                  [sops : i64
+                    (+ sstart (compiler-backend-peephole-movq-prefix-len))]
+                  [lcomma : i64
+                    (if candidate?
+                      (compiler-backend-peephole-find-comma-space-range
+                        ldata
+                        lops
+                        lend)
+                      -1)]
+                  [scomma : i64
+                    (if candidate?
+                      (compiler-backend-peephole-find-comma-space-range
+                        sdata
+                        sops
+                        send)
+                      -1)]
+                  [aops : i64
+                    (if (< (+ ame 1) aend)
+                      (+ ame 1)
+                      aend)]
+                  [acomma : i64
+                    (if (and candidate? (= alu-kind 1))
+                      (compiler-backend-peephole-find-comma-space-range
+                        adata
+                        aops
+                        aend)
+                      -1)]
+                  ;; The register the triple loads, operates on and stores.
+                  [reg : i64
+                    (if (and candidate? (> lcomma lops) (< (+ lcomma 2) lend))
+                      (compiler-backend-peephole-reg-index-range
+                        ldata
+                        (+ lcomma 2)
+                        lend)
+                      -1)]
+                  [alu-dst : i64
+                    (cond
+                      [(not candidate?) -1]
+                      [(= alu-kind 2)
+                        (compiler-backend-peephole-reg-index-range
+                          adata
+                          aops
+                          aend)]
+                      [(and (> acomma aops) (< (+ acomma 2) aend))
+                        (compiler-backend-peephole-reg-index-range
+                          adata
+                          (+ acomma 2)
+                          aend)]
+                      [else -1])]
+                  [store-src : i64
+                    (if (and candidate? (> scomma sops) (< (+ scomma 2) send))
+                      (compiler-backend-peephole-reg-index-range
+                        sdata
+                        sops
+                        scomma)
+                      -1)]
+                  ;; The ALU source: `$imm`, or a tracked register that is not
+                  ;; the triple's own register.
+                  [alu-src-ok : bool
+                    (or
+                      (= alu-kind 2)
+                      (and
+                        (> acomma aops)
+                        (or
+                          (= (compiler-backend-peephole-byte-at adata aops) 36)
+                          (let
+                            [sreg : i64
+                              (compiler-backend-peephole-reg-index-range
+                                adata
+                                aops
+                                acomma)]
+                            (and (>= sreg 0) (not (= sreg reg)))))))]
+                  [shape-ok : bool
+                    (and
+                      candidate?
+                      (>= reg 0)
+                      (= alu-dst reg)
+                      (= store-src reg)
+                      alu-src-ok
+                      (compiler-backend-peephole-rmw-mem-operand?
+                        ldata
+                        lops
+                        lcomma)
+                      (compiler-backend-peephole-ranges-eq?
+                        ldata
+                        lops
+                        lcomma
+                        sdata
+                        (+ scomma 2)
+                        send))]
+                  (when
+                    shape-ok
+                    (begin
+                      (unless
+                        visited-ready
+                        (begin
+                          (set! visited (__tl_make-array i64 count))
+                          (let
+                            [k : i64 0]
+                            (while (< k count)
+                              (begin
+                                (set! (array-ref visited k) 0)
+                                (set! k (+ k 1)))))
+                          (set! visited-ready true)))
+                      (set! generation (+ generation 1))
+                      (if (compiler-backend-peephole-rmw-reg-dead-after?
+                        (compiler-backend-global-shared-view recs)
+                        (compiler-backend-global-shared-view live)
+                        count
+                        (compiler-backend-global-shared-view visited)
+                        generation
+                        (+ store-at 1)
+                        reg)
+                        (let
+                          [folded : String
+                            (compiler-backend-peephole-rmw-folded-line
+                              (compiler-backend-global-shared-view arec.src)
+                              ams
+                              ame
+                              aops
+                              acomma
+                              (compiler-backend-global-shared-view lrec.src)
+                              lops
+                              lcomma
+                              (= alu-kind 1))]
+                          [line : CompilerBackendPeepholeLine
+                            (compiler-backend-peephole-owned-line
+                              backend-state
+                              stream
+                              folded
+                              (compiler-backend-peephole-record-newline? srec))]
+                          (begin
+                            (set!
+                              (array-ref recs load-at)
+                              (compiler-backend-peephole-line-record line))
+                            (set! (array-ref live alu-at) 0)
+                            (set! (array-ref live store-at) 0)
+                            (set! load-at -1)
+                            (set! alu-at -1)
+                            (set! store-at -1)
+                            (cfg
+                              (any regalloc-census test)
+                              (compiler-backend-metric-add!
+                                backend-state
+                                compiler-backend-peephole-rmw-folded-metric
+                                1)
+                              unit)))
+                        (cfg
+                          (any regalloc-census test)
+                          (compiler-backend-metric-add!
+                            backend-state
+                            compiler-backend-peephole-rmw-refused-metric
+                            1)
+                          unit))))))))
+          (set! i (+ i 1))))
+      unit)))
+
 ;; Optimize only the accumulated function group.  The group's chunks are parsed
 ;; in place; the complete peephole result is allocated in the caller arena
 ;; before the scoped record arena is released.
@@ -95683,6 +96621,13 @@
                 stream
                 chunks
                 false)]
+            ;; RMW-1 runs on the FINAL record stream of the group -- see the
+            ;; PLACEMENT note on the pass.
+            [_folded : unit
+              (compiler-backend-peephole-rmw-fold-records!
+                backend-state
+                stream
+                (compiler-backend-global-shared-view records))]
             [rendered : String
               (in-arena
                 output-arena
@@ -95806,6 +96751,14 @@
           stream
           (compiler-backend-global-shared-view records)
           state.sweep-cursor)]
+      ;; AFTER the dead-frame-store sweep: a triple whose store the sweep proved
+      ;; dead is not a triple any more, and folding first would hide the store
+      ;; the sweep is looking for behind a mnemonic it does not recognize.
+      [_folded : unit
+        (compiler-backend-peephole-rmw-fold-records!
+          backend-state
+          stream
+          (compiler-backend-global-shared-view records))]
       [finished : CompilerBackendPeepholeSweepChunkState
         (in-arena
           home-arena
@@ -99051,6 +100004,11 @@
         stream
         (compiler-backend-global-shared-view asm)
         false)]
+    [_folded : unit
+      (compiler-backend-peephole-rmw-fold-records!
+        backend-state
+        stream
+        (compiler-backend-global-shared-view records))]
     [result : String
       (text_buf_borrowed.render
         (compiler-backend-peephole-records-buffer
@@ -99094,6 +100052,11 @@
         stream
         (compiler-backend-global-shared-view records)
         0)]
+    [_folded : unit
+      (compiler-backend-peephole-rmw-fold-records!
+        backend-state
+        stream
+        (compiler-backend-global-shared-view records))]
     [buf : text_buf.TextBuf
       (compiler-backend-borrowed-copy-to-owned
         (compiler-backend-peephole-records-buffer

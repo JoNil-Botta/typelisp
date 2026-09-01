@@ -398,6 +398,8 @@ decision|src/lint_core_tests.tl|lint self-test companion split from lint_core.tl
 decision|src/lint_driver_core_tests.tl|lint driver self-test companion split from lint_driver_core.tl (simplify.md A1, #5169 pattern): main-less, imported by src/tests/lint_driver_smoke.tl; holds the fixture sources/decls builders, finding helpers, and the six self-test entries; lint_driver_core.tl itself stays decision-only
 decision|src/git_delta_core.tl|bounded pure Git pack delta instruction decoder and dependency resolver (#7076): main-less library with caller-supplied inflated bytes and lookup tables; exercised through focused inline tests and the cross-platform git_delta_smoke native integration case
 decision|src/git_delta_tests.tl|focused Git delta varint, instruction, budget, OFS/REF/thin dependency, malformed-input, and graph-resolution fixtures (#7076): main-less test companion imported by src/tests/git_delta_smoke.tl and discovered by typelisp test
+decision|src/git_ssh_remote_core.tl|pure structured Git-over-SSH remote parser and fixed git-upload-pack request encoder (#7228): main-less library with no network or process effects; exercised through focused parser/command-safety tests and the cross-platform git_ssh_remote_smoke native integration case
+decision|src/git_ssh_remote_tests.tl|focused Git-over-SSH normalization, malformed-input, byte-domain, command-framing, structured-handoff, and credential-free diagnostic fixtures (#7228): main-less test companion imported by src/tests/git_ssh_remote_smoke.tl and discovered by typelisp test
 case|selfhost_compiler_check_core|src/compiler_check_core.tl|assembly|skip|direct
 contains|_tl_compiler_check_file_with_roots:
 contains|_tl_compiler_check_file_with_roots_and_cfg:

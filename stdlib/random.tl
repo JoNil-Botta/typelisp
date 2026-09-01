@@ -7,6 +7,11 @@
 ;# variation. The optional `system-seed` wrapper reads a platform seed
 ;# through direct FFI.
 ;#
+;# This entire module remains noncryptographic, including `system-seed` and
+;# `from-system`: they only seed the deterministic MINSTD state. They are
+;# forbidden for keys, nonces, challenges, blinding values, and protocol
+;# secrets. Use `stdlib.crypto_random.fill-random!` for cryptographic bytes.
+;#
 ;# Usage: `(import stdlib.random)`
 ;#
 ;# ```typelisp

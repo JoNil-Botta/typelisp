@@ -13,6 +13,7 @@ cli_common_option|tests/integration/cli_common_option.tl|42|-|-|cli_option_core.
 arg_global_len_eq_pair|tests/integration/arg_global_len_eq_pair.tl|42|711\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 guard_sink_invalidate_walk|tests/integration/guard_sink_invalidate_walk.tl|42|0\n0\n2\n13\n|-|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 guard_sink_store_across_guard|tests/integration/guard_sink_store_across_guard.tl|42|25\n210\n-1\n|-|stdlib/io.tl stdlib/string.tl
+swb_frontier_line_eq|tests/integration/swb_frontier_line_eq.tl|34|6\n2\n34\n|-|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 arg_global_len_eq_split|tests/integration/arg_global_len_eq_split.tl|134|-|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/windows/arg_global_len_eq_split/arg_global_len_eq_split.tl:32:64: array index out of bounds: index=7 length=7\n
 content_bounds_csr|tests/integration/content_bounds_csr.tl|42|26\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 content_bounds_abort|tests/integration/content_bounds_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/windows/content_bounds_abort/content_bounds_abort.tl:40:57: array index out of bounds: index=8 length=8\n

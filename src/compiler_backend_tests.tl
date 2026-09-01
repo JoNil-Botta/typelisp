@@ -49736,6 +49736,259 @@ g:
       (owned_view.compiler-owned-shared-view out)
       ".Le:\n    jl .Lt__swb_tail\n.Lt:\n    jmp .Lt__swb_tail\n.Lt__swb_tail:\n    ret\n")))
 
+;; ---------------------------------------------------------------------------
+;; SWB-FIX-1: the general placement may never sit above form (a)'s frontier.
+;;
+;; Form (a) mints `<entry>__shrinkwrap_bare<N>` return clones that the backend
+;; renders as an UNCONDITIONAL bare `ret`, and a `<entry>__shrinkwrap_save`
+;; block that is the single entry of its framed body.  A form (a) guard that
+;; compares an incoming argument register whose parameter has a callee-saved
+;; home names a register the saving prologue reads, so the guard joins U and
+;; the general form's S can land ON that guard -- strictly above form (a)'s
+;; frontier.  Every bare clone at or below S then pops nothing.
+;;
+;; These fixtures drive `compiler-backend-swb-plan-for` on emitted text
+;; directly, so the refusal is pinned independently of any allocator decision
+;; that happens to hide the shape today.
+(define compiler-backend-swb-fix-prologue-source : String
+  "    pushq %r12\n    movq %r8, %r12\n")
+
+(define (compiler-backend-swb-fix-prologue-mask) : i64
+  (compiler_backend.compiler-backend-swb-text-reg-mask
+    (string.copy (& compiler-backend-swb-fix-prologue-source))))
+
+(define (compiler-backend-swb-fix-block-list [labels : (__tl_dyn-array i64)]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [out : compiler_ir_types.CompilerIrBlockList
+      compiler_ir_types.CompilerIrBlockList.Nil]
+    [i : i64 (array-length labels)]
+    (begin
+      (while (> i 0)
+        (begin
+          (set! i (- i 1))
+          (set!
+            out
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (array-ref labels i)
+                (compiler_ir_types.compiler-ir-instr-seq-empty))
+              out))))
+      out)))
+
+;; The four-label variant-(ii) shape and the five-label variant-(i) shape share
+;; this driver: build the IR block list whose labels are the text's, in text
+;; order, and ask for a plan under the given form (a) saving label.
+(define (compiler-backend-swb-fix-plan-for
+  [text : String]
+  [scope : String]
+  [return-label : String]
+  [labels : (__tl_dyn-array i64)]
+  [form-a-saving-label : i64]) : compiler_backend.CompilerBackendSwbPlan
+  (compiler_backend.compiler-backend-swb-plan-for
+    (owned_view.compiler-owned-shared-view text)
+    (owned_view.compiler-owned-shared-view scope)
+    (owned_view.compiler-owned-shared-view return-label)
+    (compiler-backend-swb-fix-prologue-mask)
+    form-a-saving-label
+    (compiler-backend-swb-fix-block-list
+      (owned_view.compiler-owned-shared-view labels))))
+
+;; (8a) Variant (i): the form (a) bare clone lies INSIDE the would-be framed
+;; region.  No duplication is involved -- the region is single-entry -- so only
+;; the frontier rule can refuse it.  `.Lswbfixa_if_then.0` names the incoming
+;; `%r8` the prologue reads, which is what puts it in U.
+(define compiler-backend-swb-fix-inside-text : String
+  ".Lswbfixa_entry:\n    cmpq %rdx, %rsi\n    jge .Lswbfixa_entry__shrinkwrap_bare0\n.Lswbfixa_if_then.0:\n    cmpq %r9, %r8\n    jl .Lswbfixa_entry__shrinkwrap_save\n.Lswbfixa_entry__shrinkwrap_bare1:\n    xorl %eax, %eax\n    ret\n.Lswbfixa_entry__shrinkwrap_save:\n    callq _tl_swbfix_opaque\n    jmp .Lswbfixa_ret\n.Lswbfixa_entry__shrinkwrap_bare0:\n    movl $1, %eax\n    ret\n")
+
+(define (compiler-backend-swb-fix-inside-labels) : (__tl_dyn-array i64)
+  (__tl_make-array
+    (compiler_ir_types.compiler-ir-label "entry")
+    (compiler_ir_types.compiler-ir-label "if_then.0")
+    (compiler_ir_types.compiler-ir-label "entry__shrinkwrap_bare1")
+    (compiler_ir_types.compiler-ir-label "entry__shrinkwrap_save")
+    (compiler_ir_types.compiler-ir-label "entry__shrinkwrap_bare0")))
+
+(define (compiler-backend-swb-fix-inside-refused-ok?) : bool
+  (let
+    [refused : compiler_backend.CompilerBackendSwbPlan
+      (compiler-backend-swb-fix-plan-for
+        (string.copy (& compiler-backend-swb-fix-inside-text))
+        "swbfixa"
+        ".Lswbfixa_ret"
+        (compiler-backend-swb-fix-inside-labels)
+        (compiler_ir_types.compiler-ir-label "entry__shrinkwrap_save"))]
+    [unguarded : compiler_backend.CompilerBackendSwbPlan
+      (compiler-backend-swb-fix-plan-for
+        (string.copy (& compiler-backend-swb-fix-inside-text))
+        "swbfixa"
+        ".Lswbfixa_ret"
+        (compiler-backend-swb-fix-inside-labels)
+        (compiler_ir_types.compiler-ir-label-none))]
+    (and
+      ;; With form (a) active the guard block is above its frontier: refused.
+      (not (compiler_ir_types.compiler-ir-label-some? refused.label))
+      ;; The refusal is the frontier rule and nothing else: the very same text
+      ;; still places when no form (a) frontier is declared.
+      (compiler_ir_types.compiler-ir-label-some? unguarded.label)
+      (= unguarded.label (compiler_ir_types.compiler-ir-label "if_then.0")))))
+
+;; (8b) Variant (ii), the observed `fmt-diff-line-eq?` shape: the bare clone is
+;; reachable from the guard AND from the entry, so TD-1 sees a single
+;; well-formedness violator and would duplicate it -- keeping the bare clone as
+;; "the framed original".  Refused twice over: by the frontier rule, and by the
+;; dup-candidate rule that never lets a bare clone be that original.
+(define compiler-backend-swb-fix-shared-text : String
+  ".Lswbfixb_entry:\n    cmpq %rdx, %rsi\n    jge .Lswbfixb_entry__shrinkwrap_bare0\n.Lswbfixb_if_then.0:\n    cmpq %r9, %r8\n    jl .Lswbfixb_entry__shrinkwrap_save\n.Lswbfixb_entry__shrinkwrap_bare0:\n    xorl %eax, %eax\n    ret\n.Lswbfixb_entry__shrinkwrap_save:\n    callq _tl_swbfix_opaque\n    jmp .Lswbfixb_ret\n")
+
+(define (compiler-backend-swb-fix-shared-labels) : (__tl_dyn-array i64)
+  (__tl_make-array
+    (compiler_ir_types.compiler-ir-label "entry")
+    (compiler_ir_types.compiler-ir-label "if_then.0")
+    (compiler_ir_types.compiler-ir-label "entry__shrinkwrap_bare0")
+    (compiler_ir_types.compiler-ir-label "entry__shrinkwrap_save")))
+
+;; The same shape with ordinary block names: no form (a) label anywhere, so the
+;; tail IS duplicable and the placement lands on the guard.  This is the control
+;; that proves (8b) is refused for the bare-clone reason alone.
+(define compiler-backend-swb-fix-plain-text : String
+  ".Lswbfixd_entry:\n    cmpq %rdx, %rsi\n    jge .Lswbfixd_join.0\n.Lswbfixd_if_then.0:\n    cmpq %r9, %r8\n    jl .Lswbfixd_body.0\n.Lswbfixd_join.0:\n    xorl %eax, %eax\n    ret\n.Lswbfixd_body.0:\n    callq _tl_swbfix_opaque\n    jmp .Lswbfixd_ret\n")
+
+(define (compiler-backend-swb-fix-plain-labels) : (__tl_dyn-array i64)
+  (__tl_make-array
+    (compiler_ir_types.compiler-ir-label "entry")
+    (compiler_ir_types.compiler-ir-label "if_then.0")
+    (compiler_ir_types.compiler-ir-label "join.0")
+    (compiler_ir_types.compiler-ir-label "body.0")))
+
+(define (compiler-backend-swb-fix-shared-refused-ok?) : bool
+  (let
+    [refused : compiler_backend.CompilerBackendSwbPlan
+      (compiler-backend-swb-fix-plan-for
+        (string.copy (& compiler-backend-swb-fix-shared-text))
+        "swbfixb"
+        ".Lswbfixb_ret"
+        (compiler-backend-swb-fix-shared-labels)
+        (compiler_ir_types.compiler-ir-label "entry__shrinkwrap_save"))]
+    [dup-refused : compiler_backend.CompilerBackendSwbPlan
+      (compiler-backend-swb-fix-plan-for
+        (string.copy (& compiler-backend-swb-fix-shared-text))
+        "swbfixb"
+        ".Lswbfixb_ret"
+        (compiler-backend-swb-fix-shared-labels)
+        (compiler_ir_types.compiler-ir-label-none))]
+    [plain : compiler_backend.CompilerBackendSwbPlan
+      (compiler-backend-swb-fix-plan-for
+        (string.copy (& compiler-backend-swb-fix-plain-text))
+        "swbfixd"
+        ".Lswbfixd_ret"
+        (compiler-backend-swb-fix-plain-labels)
+        (compiler_ir_types.compiler-ir-label-none))]
+    (and
+      ;; The frontier rule refuses it ...
+      (not (compiler_ir_types.compiler-ir-label-some? refused.label))
+      ;; ... and so does the dup-candidate rule on its own.
+      (not (compiler_ir_types.compiler-ir-label-some? dup-refused.label))
+      ;; The identical shape with ordinary names still places, with the tail
+      ;; duplicated -- so the two refusals above are about the labels, not
+      ;; about the shape being inadmissible.
+      (compiler_ir_types.compiler-ir-label-some? plain.label)
+      (= plain.label (compiler_ir_types.compiler-ir-label "if_then.0"))
+      (> plain.dup-site-count 0))))
+
+;; (8c) The positive control: S IS form (a)'s saving block.  The refusal is
+;; precise, not blanket -- the general form is still allowed to confirm form
+;; (a)'s own frontier.
+(define compiler-backend-swb-fix-frontier-text : String
+  ".Lswbfixc_entry:\n    cmpq %rdx, %rsi\n    jge .Lswbfixc_entry__shrinkwrap_bare0\n.Lswbfixc_entry__shrinkwrap_save:\n    callq _tl_swbfix_opaque\n    jmp .Lswbfixc_ret\n.Lswbfixc_entry__shrinkwrap_bare0:\n    xorl %eax, %eax\n    ret\n")
+
+(define (compiler-backend-swb-fix-frontier-labels) : (__tl_dyn-array i64)
+  (__tl_make-array
+    (compiler_ir_types.compiler-ir-label "entry")
+    (compiler_ir_types.compiler-ir-label "entry__shrinkwrap_save")
+    (compiler_ir_types.compiler-ir-label "entry__shrinkwrap_bare0")))
+
+(define (compiler-backend-swb-fix-frontier-placed-ok?) : bool
+  (let
+    [plan : compiler_backend.CompilerBackendSwbPlan
+      (compiler-backend-swb-fix-plan-for
+        (string.copy (& compiler-backend-swb-fix-frontier-text))
+        "swbfixc"
+        ".Lswbfixc_ret"
+        (compiler-backend-swb-fix-frontier-labels)
+        (compiler_ir_types.compiler-ir-label "entry__shrinkwrap_save"))]
+    [missing : compiler_backend.CompilerBackendSwbPlan
+      (compiler-backend-swb-fix-plan-for
+        (string.copy (& compiler-backend-swb-fix-frontier-text))
+        "swbfixc"
+        ".Lswbfixc_ret"
+        (compiler-backend-swb-fix-frontier-labels)
+        (compiler_ir_types.compiler-ir-label "entry__shrinkwrap_absent"))]
+    (and
+      (compiler_ir_types.compiler-ir-label-some? plan.label)
+      (=
+        plan.label
+        (compiler_ir_types.compiler-ir-label "entry__shrinkwrap_save"))
+      ;; Fail closed: form (a) active but its saving block does not resolve to
+      ;; a node of the analysed text.
+      (not (compiler_ir_types.compiler-ir-label-some? missing.label)))))
+
+;; (8d) The dup-candidate refusal on its own, plus the label classifier it is
+;; built from.  A bare clone is never the framed original; the same node with
+;; an ordinary name is.
+(define (compiler-backend-swb-fix-label-clone? [label : String]) : bool
+  (let
+    [data : (Ptr u8)
+      (unsafe
+        (string-data label))]
+    (compiler_backend.compiler-backend-swb-bare-clone-label?
+      data
+      0
+      (string.string-length (owned_view.compiler-owned-shared-view label)))))
+
+(define (compiler-backend-swb-fix-dup-candidate-ok?) : bool
+  (let
+    [flags : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [succ-count : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [block-start : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [clone : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [plain : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [_init : unit
+      (begin
+        (set!
+          (array-ref flags 1)
+          compiler_backend.compiler-backend-swb-flag-return)
+        (set! (array-ref succ-count 1) 0)
+        (set! (array-ref block-start 1) 1)
+        (set! (array-ref clone 1) 1)
+        (set! (array-ref plain 1) 0))]
+    (and
+      ;; A tail whose label is a form (a) bare clone is never duplicable ...
+      (not
+        (compiler_backend.compiler-backend-swb-dup-candidate?
+          (owned_view.compiler-owned-shared-view flags)
+          (owned_view.compiler-owned-shared-view succ-count)
+          (owned_view.compiler-owned-shared-view block-start)
+          (owned_view.compiler-owned-shared-view clone)
+          1
+          0))
+      ;; ... while the identical node with an ordinary label still is.
+      (compiler_backend.compiler-backend-swb-dup-candidate?
+        (owned_view.compiler-owned-shared-view flags)
+        (owned_view.compiler-owned-shared-view succ-count)
+        (owned_view.compiler-owned-shared-view block-start)
+        (owned_view.compiler-owned-shared-view plain)
+        1
+        0)
+      ;; The classifier: prefix plus at least one digit, nothing else.
+      (compiler-backend-swb-fix-label-clone? ".Lf17263_entry__shrinkwrap_bare0")
+      (compiler-backend-swb-fix-label-clone? ".Lf1_e__shrinkwrap_bare12")
+      (not (compiler-backend-swb-fix-label-clone? ".Lf1_e__shrinkwrap_bare"))
+      (not (compiler-backend-swb-fix-label-clone? ".Lf1_e__shrinkwrap_save"))
+      (not (compiler-backend-swb-fix-label-clone? ".Lf1_if_then.0"))
+      (not (compiler-backend-swb-fix-label-clone? ".Lf1_e__shrinkwrap_bar0"))
+      ;; The span is what is tested, so a truncated span cannot match either.
+      (not (compiler-backend-swb-fix-label-clone? "_bare0")))))
+
 ;; (7) Windows is unchanged. Its unwind program describes a prologue at the
 ;; function symbol and the `.seh_*` opcodes may not follow an interior label, so
 ;; the same source that shrink-wraps on Linux keeps entry placement here. The
@@ -55418,6 +55671,10 @@ b_keep:
         (compiler-backend-swb-merge-ok?)
         (compiler-backend-swb-dup-tail-bound-ok?)
         (compiler-backend-swb-apply-dup-ok?)
+        (compiler-backend-swb-fix-inside-refused-ok?)
+        (compiler-backend-swb-fix-shared-refused-ok?)
+        (compiler-backend-swb-fix-frontier-placed-ok?)
+        (compiler-backend-swb-fix-dup-candidate-ok?)
         (compiler-backend-swb-windows-unchanged-ok?)
         (compiler-backend-scavenge-occupancy-cache-ok?)
         (compiler-backend-scavenge-segment-occupancy-ok?)

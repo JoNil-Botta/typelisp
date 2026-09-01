@@ -78923,6 +78923,33 @@
 (define compiler-backend-swb-dup-site-limit : i64
   16)
 
+;; SWB-FIX-1: form (a)'s bare-return clones are labelled
+;; `<entry>__shrinkwrap_bare<digits>`, and the backend renders EVERY label with
+;; that prefix as an unconditional bare `ret`
+;; (`compiler-backend-return-tail-for-return-count`).  Such a block can
+;; therefore never serve as the framed original of a duplicated tail: TD-1
+;; would retarget the outside predecessors to the clone and keep the original
+;; "framed", but the original still emits a bare `ret` and the general form's
+;; pushes would never be popped on that path.  The test is a byte check on the
+;; label span, like the rest of the swb code: strip the trailing decimal run,
+;; then compare the 17 bytes before it against the fixed part of the suffix.
+(define (compiler-backend-swb-bare-clone-label?
+  [data : (Ptr u8)]
+  [lab-start : i64]
+  [lab-end : i64]) : bool
+  (let
+    [i : i64 lab-end]
+    (begin
+      (while (and
+        (> i lab-start)
+        (>= (compiler-backend-peephole-byte-at data (- i 1)) 48)
+        (<= (compiler-backend-peephole-byte-at data (- i 1)) 57))
+        (set! i (- i 1)))
+      (and
+        (< i lab-end)
+        (>= (- i 17) lab-start)
+        (compiler-backend-swb-span-eq-text? data (- i 17) i "__shrinkwrap_bare")))))
+
 ;; The tail that may be duplicated: an IR block (so the bare-return set can name
 ;; it), which returns, has no resolved successor, and whose pre-epilogue body
 ;; never names the frame, a callee-saved register, or a register the saving
@@ -78932,12 +78959,16 @@
   [flags : (__tl_dyn-array i64)]
   [succ-count : (__tl_dyn-array i64)]
   [block-start : (__tl_dyn-array i64)]
+  [bare-clone : (__tl_dyn-array i64)]
   [node : i64]
   [candidate : i64]) : bool
   (and
     (not (= node candidate))
     (= (array-ref succ-count node) 0)
     (= (array-ref block-start node) 1)
+    ;; SWB-FIX-1: a form (a) bare clone is rendered bare unconditionally, so it
+    ;; cannot be the framed original the duplication leaves behind.
+    (= (array-ref bare-clone node) 0)
     (not
       (= (bit-and (array-ref flags node) compiler-backend-swb-flag-return) 0))
     (= (bit-and (array-ref flags node) compiler-backend-swb-flag-frame) 0)))
@@ -79259,6 +79290,7 @@
   [po : (__tl_dyn-array i64)]
   [idom : (__tl_dyn-array i64)]
   [block-start : (__tl_dyn-array i64)]
+  [bare-clone : (__tl_dyn-array i64)]
   [dup-out : (__tl_dyn-array i64)]
   [allow-dup : bool]
   [node-count : i64]) : i64
@@ -79353,6 +79385,7 @@
                             (compiler-backend-global-shared-view flags)
                             (compiler-backend-global-shared-view succ-count)
                             (compiler-backend-global-shared-view block-start)
+                            (compiler-backend-global-shared-view bare-clone)
                             viol
                             candidate))
                           (set! (array-ref dup-out 0) viol)
@@ -79425,11 +79458,38 @@
                 (set! (array-ref dup-out 0) (- 0 1))
                 -1))))))))
 
+;; SWB-FIX-1: the analysed text node of one IR block, resolved through the
+;; label-to-node map `plan-for` already built.  -1 when the label is not a block
+;; of this function or its block did not resolve to a label line.
+(define (compiler-backend-swb-node-for-label
+  [blocks : compiler_ir_types.CompilerIrBlockSeq]
+  [block-index : (__tl_dyn-array i64)]
+  [block-count : i64]
+  [label : i64]) : i64
+  (let
+    [b : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< found 0) (< b block-count))
+        (begin
+          (match (compiler_ir_types.compiler-ir-block-seq-ref
+            (compiler-backend-global-shared-view blocks)
+            b)
+            [(compiler_ir_types.CompilerIrBlock.Block block-label _instrs)
+              (if (= block-label label)
+                (set! found (array-ref block-index b))
+                unit)])
+          (set! b (+ b 1))))
+      found)))
+
 (define (compiler-backend-swb-plan-for
   [text : String]
   [label-scope : String]
   [return-label : String]
   [prologue-mask : i64]
+  ;; SWB-FIX-1: form (a)'s saving block (the single entry of ITS framed body),
+  ;; or label-none when form (a) is not active for this function.
+  [form-a-saving-label : i64]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : CompilerBackendSwbPlan
   (let
     [data : (Ptr u8)
@@ -79515,6 +79575,23 @@
                 [pred : (__tl_dyn-array i64) (__tl_make-array i64 edge-cap)]
                 [block-start : (__tl_dyn-array i64)
                   (__tl_make-array i64 node-count)]
+                ;; SWB-FIX-1: which nodes are form (a) bare-return clones.
+                [bare-clone : (__tl_dyn-array i64)
+                  (__tl_make-array i64 node-count)]
+                [_bare-clone : unit
+                  (let
+                    [i : i64 0]
+                    (while (< i node-count)
+                      (begin
+                        (set!
+                          (array-ref bare-clone i)
+                          (if (compiler-backend-swb-bare-clone-label?
+                            data
+                            (array-ref lab-start i)
+                            (array-ref lab-end i))
+                            1
+                            0))
+                        (set! i (+ i 1)))))]
                 [_init : unit
                   (let
                     [i : i64 0]
@@ -79643,6 +79720,17 @@
                                   (set! scan (+ found 1)))
                                 unit)
                               (set! b (+ b 1))))])))]
+                ;; SWB-FIX-1: the text node of form (a)'s saving block, or -1
+                ;; when it does not resolve (which is a refusal, not a pass).
+                [saving-node : i64
+                  (if (compiler_ir_types.compiler-ir-label-some?
+                    form-a-saving-label)
+                    (compiler-backend-swb-node-for-label
+                      (compiler-backend-global-shared-view seq)
+                      (compiler-backend-global-shared-view block-index)
+                      block-count
+                      form-a-saving-label)
+                    (- 0 1))]
                 [dup-out : (__tl_dyn-array i64) (__tl_make-array i64 1)]
                 [_dup-init : unit (set! (array-ref dup-out 0) (- 0 1))]
                 [chosen-dup : i64
@@ -79654,6 +79742,7 @@
                     (compiler-backend-global-shared-view po)
                     (compiler-backend-global-shared-view idom)
                     (compiler-backend-global-shared-view block-start)
+                    (compiler-backend-global-shared-view bare-clone)
                     (compiler-backend-global-shared-view dup-out)
                     true
                     node-count)]
@@ -79695,6 +79784,7 @@
                       (compiler-backend-global-shared-view po)
                       (compiler-backend-global-shared-view idom)
                       (compiler-backend-global-shared-view block-start)
+                      (compiler-backend-global-shared-view bare-clone)
                       (compiler-backend-global-shared-view dup-retry)
                       false
                       node-count))]
@@ -79706,7 +79796,31 @@
                   (if dup-usable?
                     dup-first
                     (compiler-backend-swb-no-dup))]
-                (if (< chosen 0)
+                ;; SWB-FIX-1: form (a) has already placed a Save at ITS
+                ;; frontier, and every block of its prefix returns through a
+                ;; label the backend renders as an unconditional bare `ret`.
+                ;; The general form may only sink FURTHER: a chosen S strictly
+                ;; above that frontier puts those bare returns inside the
+                ;; framed region, where the pushes spliced at S are never
+                ;; popped.  So accept S only when form (a)'s saving block
+                ;; dominates it (S == the saving node counts), and fail closed
+                ;; when the saving block does not resolve to a node of the
+                ;; analysed text.  Form (a)'s own placement is kept instead --
+                ;; it is the better one anyway, being at the frontier and below
+                ;; every guard.
+                [form-a-frontier-ok? : bool
+                  (or
+                    (not
+                      (compiler_ir_types.compiler-ir-label-some?
+                        form-a-saving-label))
+                    (and
+                      (>= saving-node 0)
+                      (compiler-backend-swb-dominates?
+                        (compiler-backend-global-shared-view idom)
+                        chosen
+                        saving-node
+                        0)))]
+                (if (or (< chosen 0) (not form-a-frontier-ok?))
                   (compiler-backend-swb-no-plan)
                   (let
                     [bare : (__tl_dyn-array i64)
@@ -80858,9 +80972,16 @@
         ;; textual splices is the complete activation condition.
         [shrinkwrap-active? : bool shrinkwrap-candidate?]
         ;; Either form places the prologue at an interior label; the general
-        ;; form wins the placement when both apply, because its saving block is
-        ;; at or below form (a)'s frontier (form (a)'s prefix is frame-free by
-        ;; construction, so it is never in U).
+        ;; form wins the placement when both apply, because SWB-FIX-1 ENFORCES
+        ;; that its saving block is at or below form (a)'s frontier: form (a)'s
+        ;; saving label is handed to `compiler-backend-swb-plan-for`, which
+        ;; refuses any S that the saving block does not dominate (and refuses
+        ;; outright when form (a) is active and its saving block does not
+        ;; resolve).  The prefix is NOT frame-free by construction -- a guard
+        ;; comparing an incoming argument register whose parameter has a
+        ;; callee-saved home names a register the saving prologue reads, so it
+        ;; joins U -- and without the enforced invariant S could land on that
+        ;; guard, above form (a)'s unconditional bare returns.
         [wrap-active? : bool (or shrinkwrap-active? swb-active?)]
         [wrap-saving-label : i64
           (if swb-active?
@@ -81609,6 +81730,12 @@
                                       program-index.backend-state
                                       (compiler-backend-global-shared-view name))
                                     swb-prologue-mask
+                                    ;; SWB-FIX-1: form (a)'s frontier, so the
+                                    ;; general placement can never be chosen
+                                    ;; above it.
+                                    (if shrinkwrap-active?
+                                      shrinkwrap-saving-label
+                                      (compiler_ir_types.compiler-ir-label-none))
                                     (compiler-backend-global-shared-view
                                       emit-blocks-list))
                                   (compiler-backend-swb-no-plan))]

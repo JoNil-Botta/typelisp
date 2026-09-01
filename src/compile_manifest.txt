@@ -208,6 +208,7 @@ contains|phi-input-entries
 # doc
 contains|_tl_doc_generate_file:
 contains|_tl_doc_generate_package:
+contains|_tl_doc_generate_package_local_site:
 contains|_tl_doc_generate_html_file:
 contains|_tl_doc_generate_html_module_graph:
 contains|_tl_doc_test_file:
@@ -227,7 +228,8 @@ contains|_tl_write_file:
 contains|Doc tests passed:
 contains|doc tests failed:
 contains|: could not find typelisp.pkg from '.' or any parent directory
-contains|doc: package documentation requires -o <out.md>
+contains|doc: --open requires local HTML site output; omit -o
+contains|Open skipped; generated index:
 contains|doc: cannot combine input paths with --manifest-path
 contains|doc: expected --html input and output paths
 contains|<!doctype html>

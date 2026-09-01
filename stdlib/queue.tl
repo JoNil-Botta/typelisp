@@ -12,6 +12,11 @@
 ;# with only the removed value. Peeks and indexed reads use caller-supplied
 ;# fallbacks.
 ;#
+;# Cleanup-owning element types are rejected at the macro boundary. The
+;# current circular buffer initializes every capacity slot and overwrites
+;# storage during growth, so supporting cleanup owners requires a separately
+;# designed liveness-aware representation.
+;#
 ;# Usage:
 ;#
 ;# ```typelisp
@@ -31,8 +36,16 @@
 ;: Emit a generated growable deque module for element type `T`.
 (defmacro (deque [T : type]) : Module
   (let
+    [element-type-key : String (type-key T)]
     [module-name-text : String
-      (comptime.string-append "stdlib.queue.deque.generated." (type-key T))]
+      (if (type-cleanup-owning? T)
+        (comptime.comptime-error
+          (comptime.string-append
+            "queue.deque: cleanup-owning element type "
+            (comptime.string-append element-type-key " is unsupported")))
+        (comptime.string-append
+          "stdlib.queue.deque.generated."
+          element-type-key))]
     [module-name : comptime.Expr (comptime.expr-var module-name-text)]
     [deque-name : comptime.Expr (comptime.expr-var "Deque")]
     [pop-name : comptime.Expr (comptime.expr-var "Pop")]

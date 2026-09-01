@@ -127,6 +127,30 @@ echo "[stage0-smoke] compare source-root and embedded stdlib diagnostics"
         diff -u source-root.stderr embedded.stderr >&2 || true
         exit 1
     fi
+    if [ "$(grep -c '^error' source-root.stderr)" -ne 1 ]; then
+        echo "deque cleanup boundary emitted more than one diagnostic" >&2
+        sed 's/^/  /' source-root.stderr >&2 || true
+        exit 1
+    fi
+    if ! grep -F \
+        "queue.deque: cleanup-owning element type struct_CleanupToken is unsupported" \
+        source-root.stderr >/dev/null; then
+        echo "deque cleanup boundary diagnostic changed" >&2
+        sed 's/^/  /' source-root.stderr >&2 || true
+        exit 1
+    fi
+    if ! grep -F "diagnostic_parity.tl:12:9" source-root.stderr >/dev/null; then
+        echo "deque cleanup boundary diagnostic lost its request location" >&2
+        sed 's/^/  /' source-root.stderr >&2 || true
+        exit 1
+    fi
+    if grep -E \
+        'generated declaration: (Deque|Pop|copy-live!|grow|pop-front-ref!|pop-back-ref!)' \
+        source-root.stderr >/dev/null; then
+        echo "deque cleanup boundary leaked a partial generated declaration" >&2
+        sed 's/^/  /' source-root.stderr >&2 || true
+        exit 1
+    fi
 )
 
 echo "[stage0-smoke] check src/main.tl with compiler roots"

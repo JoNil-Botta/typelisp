@@ -288,6 +288,7 @@ stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/process_api.tl|42|-|-|-
 stdlib/tests/process_runtime.tl|42|-|-
 stdlib/tests/process_runtime_stderr.tl|42|-|-
+stdlib/tests/queue_api.tl|42|-|-
 stdlib/tests/result_api.tl|42|-|-|-
 stdlib/tests/sync_api.tl|42|-|-
 stdlib/tests/thread_api.tl|42|-|-|-
@@ -394,6 +395,7 @@ stdlib/tests/hashmap_macro_value_borrow_insert_live.tl|fail|typecheck: cannot mu
 stdlib/tests/hashmap_macro_mut_entry_insert_live.tl|fail|typecheck: cannot read mutably borrowed place `m`
 stdlib/tests/core_macros_for_missing_protocol.tl|fail|is missing protocol function
 stdlib/tests/process_borrowed_escape.tl|fail|typecheck: reference value would escape lexical scope
+stdlib/tests/queue_cleanup_element_reject.tl|fail|queue.deque: cleanup-owning element type struct_QueueCleanupElement is unsupported
 stdlib/tests/string_caller_result_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/vector_native_slice_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/vector_native_slice_grow_live.tl|fail|typecheck: cannot mutably borrow borrowed place `items`

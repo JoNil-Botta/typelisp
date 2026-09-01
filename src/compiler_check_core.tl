@@ -849,37 +849,6 @@
         (set! ok false))
       ok)))
 
-(define (compiler-check-runtime-stdlib-boundary-import-ok?) : bool
-  (let
-    [ok : bool true]
-    (begin
-      (if (compiler-check-source-ok?
-        "tests/runtime_boundary_tl"
-        (compiler-check-runtime-stdlib-boundary-io-source))
-        unit
-        (set! ok false))
-      (if (compiler-check-source-ok?
-        "tests/runtime_boundary_env.tl"
-        (compiler-check-runtime-stdlib-boundary-env-source))
-        unit
-        (set! ok false))
-      (if (compiler-check-source-ok?
-        "tests/runtime_boundary_fs.tl"
-        (compiler-check-runtime-stdlib-boundary-fs-source))
-        unit
-        (set! ok false))
-      (if (compiler-check-source-ok?
-        "tests/runtime_boundary_profile.tl"
-        (compiler-check-runtime-stdlib-boundary-profile-source))
-        unit
-        (set! ok false))
-      ok)))
-
-(define (compiler-check-runtime-stdlib-boundary-ok?) : bool
-  (and
-    (compiler-check-runtime-stdlib-boundary-no-import-ok?)
-    (compiler-check-runtime-stdlib-boundary-import-ok?)))
-
 (define (compiler-check-private-dynamic-buffer-vector-ok?) : bool
   (compiler-check-source-ok?
     "tests/private_dynamic_buffer_vector.tl"

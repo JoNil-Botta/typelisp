@@ -47353,6 +47353,38 @@
     (ResultTcType.Err
       "typecheck: arena.rewind-safe! expects exactly one argument")))
 
+;; Safe destroy has two identities to preserve. The normalized expression is
+;; the exact place consumed by the move checker, while a branded Arena's
+;; lifetime is the stable owner identity used for region and atomic-user
+;; invalidation. Legacy bare owners retain the direct-local name-marker path.
+(define (tc-destroy-safe-owner-place-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [owner-expr : ast.AstExpr]
+  [owner-ty : ast.AstType]) : TcMaybeNameId
+  (match (tc-move-direct-root-base-path
+    (tc-context-expr-bases (tc-global-shared-view ctx))
+    (tc-global-shared-view owner-expr))
+    [(TcMaybeMovePath.Some place)
+      (match (tc-arena-branded-region
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view owner-ty))
+        [(TcMaybeNameId.Some brand)
+          (if (or
+            (tc-generated-ordinary-arena-brand-id? brand)
+            (tc-generated-atomic-arena-brand-id? brand))
+            (TcMaybeNameId.Some brand)
+            (TcMaybeNameId.No))]
+        [(TcMaybeNameId.No)
+          (if (and
+            (= place.segments.len 0)
+            (or
+              (tc-ordinary-arena-owner-active-id? env place.root)
+              (tc-atomic-arena-owner-active-id? env place.root)))
+            (TcMaybeNameId.Some place.root)
+            (TcMaybeNameId.No))])]
+    [(TcMaybeMovePath.No) (TcMaybeNameId.No)]))
+
 (define (tc-destroy-safe-call
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -47374,31 +47406,34 @@
       [(ResultTcType.Ok owner-ty)
         (begin
           (unless
-            (tc-arena-type? (tc-global-shared-view ctx) owner-ty)
+            (tc-arena-type?
+              (tc-global-shared-view ctx)
+              (tc-global-shared-view owner-ty))
             (return
               (ResultTcType.Err
                 (tc-locate-error-at-expr
                   (tc-global-shared-view owner-expr)
                   "typecheck: arena.destroy-safe! arena must be Arena"))))
           (let
-            [oid : i64 (tc-expr-var-name-id (tc-global-shared-view owner-expr))]
-            (unless
-              (and
-                (>= oid 0)
-                (or
-                  (tc-ordinary-arena-owner-active-id? env oid)
-                  (tc-atomic-arena-owner-active-id? env oid)))
-              (return
+            [owner-id : TcMaybeNameId
+              (tc-destroy-safe-owner-place-id
+                (tc-global-shared-view ctx)
+                env
+                (tc-global-shared-view owner-expr)
+                (tc-global-shared-view owner-ty))]
+            (match owner-id
+              [(TcMaybeNameId.Some oid)
+                (if (tc-active-region-owned-by-arena-id? env oid)
+                  (ResultTcType.Err
+                    (tc-locate-error-at-expr
+                      owner-expr
+                      "typecheck: arena.destroy-safe! cannot run inside the arena it destroys"))
+                  (ResultTcType.Ok (ast.AstType.Unit)))]
+              [(TcMaybeNameId.No)
                 (ResultTcType.Err
                   (tc-locate-error-at-expr
                     (tc-global-shared-view owner-expr)
-                    "typecheck: arena.destroy-safe! requires a direct arena owner"))))
-            (if (tc-active-region-owned-by-arena-id? env oid)
-              (ResultTcType.Err
-                (tc-locate-error-at-expr
-                  owner-expr
-                  "typecheck: arena.destroy-safe! cannot run inside the arena it destroys"))
-              (ResultTcType.Ok (ast.AstType.Unit)))))]
+                    "typecheck: arena.destroy-safe! requires a direct arena owner or branded local owner place"))])))]
       [(ResultTcType.Err message) (ResultTcType.Err message)])))
 
 (define (tc-call-expr-ordinary-id
@@ -80560,7 +80595,11 @@
   ;; A scoped liveness guard for a lending binding used after the expression
   ;; currently being checked. The scope id lets nested ordered walkers remove
   ;; only their own guard while preserving an outer pending-use horizon.
-  (BorrowPending i64))
+  (BorrowPending i64)
+  ;; A direct local closure captures a value owned by this arena brand. This
+  ;; checker-only fact lets destroy-safe! invalidate the closure binding even
+  ;; though its source-level function type has no capture parameters.
+  (OwnerDependency i64))
 
 (defstruct TcMovedPathFact
   (path TcMovePath)
@@ -80805,7 +80844,9 @@
                       [(TcMovedPathKind.BorrowLendingUsed binding-id)
                         (TcMovedPathKind.BorrowLendingUsed binding-id)]
                       [(TcMovedPathKind.BorrowPending scope-id)
-                        (TcMovedPathKind.BorrowPending scope-id)])]
+                        (TcMovedPathKind.BorrowPending scope-id)]
+                      [(TcMovedPathKind.OwnerDependency owner-id)
+                        (TcMovedPathKind.OwnerDependency owner-id)])]
                   (begin
                     (set!
                       (array-ref next index)
@@ -81454,6 +81495,10 @@
     [(TcMovedPathKind.BorrowPending a-id)
       (match b
         [(TcMovedPathKind.BorrowPending b-id) (= a-id b-id)]
+        [_ false])]
+    [(TcMovedPathKind.OwnerDependency a-id)
+      (match b
+        [(TcMovedPathKind.OwnerDependency b-id) (= a-id b-id)]
         [_ false])]))
 
 (define (tc-move-path-hash-combine [seed : i64] [component : i64]) : i64
@@ -81619,6 +81664,101 @@
           fact)
         (tc-moved-hidden-atomic-users (tc-global-shared-view set))
         (tc-moved-param-storage-origins set)))))
+
+(define (tc-moved-owner-dependency-at?
+  [facts : TcMovedPathFacts]
+  [local-id : i64]
+  [owner-id : i64]) : bool
+  (if (tc-moved-path-facts-empty? facts)
+    false
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      (if (and
+        (= fact.path.root local-id)
+        (match fact.kind
+          [(TcMovedPathKind.OwnerDependency dependency-owner-id)
+            (= dependency-owner-id owner-id)]
+          [_ false]))
+        true
+        (tc-moved-owner-dependency-at? rest local-id owner-id)))))
+
+(define (tc-moved-owner-dependency?
+  [set : TcMovedSet]
+  [local-id : i64]
+  [owner-id : i64]) : bool
+  (tc-moved-owner-dependency-at? (tc-moved-paths set) local-id owner-id))
+
+(define (tc-moved-add-owner-dependencies
+  [moved : TcMovedSet]
+  [local-id : i64]
+  [owners : TcNameIdList]
+  [origin : ast.AstExpr]) : TcMovedSet
+  (let
+    [cursor : TcNameIdList owners]
+    [out : TcMovedSet moved]
+    [path : TcMovePath (TcMovePath local-id (tc-move-path-segments-empty))]
+    (begin
+      (while (not (tc-name-id-list-empty? cursor))
+        (begin
+          (set!
+            out
+            (tc-moved-add-path-fact
+              out
+              (tc-global-shared-view path)
+              (TcMovedPathKind.OwnerDependency (tc-name-id-list-head cursor))
+              (ast.ast-node-push (tc-global-shared-view origin))))
+          (set! cursor (tc-name-id-list-rest cursor))))
+      out)))
+
+(define (tc-moved-copy-owner-dependencies-at
+  [facts : TcMovedPathFacts]
+  [source-id : i64]
+  [target-id : i64]
+  [out : TcMovedSet]) : TcMovedSet
+  (if (tc-moved-path-facts-empty? facts)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
+      [out2 : TcMovedSet
+        (if (= fact.path.root source-id)
+          (match fact.kind
+            [(TcMovedPathKind.OwnerDependency owner-id)
+              (tc-moved-add-path-fact
+                out
+                (TcMovePath target-id (tc-move-path-segments-empty))
+                (TcMovedPathKind.OwnerDependency owner-id)
+                fact.origin)]
+            [_ out])
+          out)]
+      (tc-moved-copy-owner-dependencies-at rest source-id target-id out2))))
+
+(define (tc-move-rebind-lambda-owner-dependencies
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [moved : TcMovedSet]
+  [local-id : i64]
+  [init : ast.AstExpr]) : TcMovedSet
+  (match (ast.ast-expr-unspan-with-segment-bases
+    expr-bases
+    (tc-global-shared-view init))
+    [(ast.AstExpr.Lambda _)
+      (tc-moved-add-owner-dependencies
+        moved
+        local-id
+        (tc-thread-safe-spawn-direct-lambda-owner-regions
+          expr-bases
+          env
+          (tc-global-shared-view init))
+        init)]
+    [(ast.AstExpr.Var source-id)
+      (tc-moved-copy-owner-dependencies-at
+        (tc-moved-paths (tc-global-shared-view moved))
+        source-id
+        local-id
+        moved)]
+    [_ moved]))
 
 (define (tc-moved-remove-path-kind
   [set : TcMovedSet]
@@ -84003,14 +84143,19 @@
     [(tc-moved-contains? (tc-global-shared-view moved) name-id)
       (TcMoveResult.Ok moved)]
     [(tc-moved-partial? (tc-global-shared-view moved) name-id)
-      (let
-        [name : String (tc-hygiene-name-text-id name-id)]
-        (tc-move-rich-use-conflict-result
+      ;; Region invalidation does not read the remaining fields. Collapse an
+      ;; already-partial local (including the owner field just consumed by
+      ;; destroy-safe!) into one whole-root invalidation fact.
+      (if (tc-moved-contains? loop-carried name-id)
+        (tc-move-rich-loop-carried-result
           expr-bases
-          (tc-moved-root-conflict (tc-global-shared-view moved) name-id)
-          (tc-global-shared-view name)
-          origin
-          name))]
+          (tc-hygiene-name-text-id name-id)
+          origin)
+        (TcMoveResult.Ok
+          (tc-moved-add-origin
+            (tc-moved-remove-root-state moved name-id)
+            name-id
+            origin)))]
     [(tc-moved-contains? loop-carried name-id)
       (tc-move-rich-loop-carried-result
         expr-bases
@@ -84169,7 +84314,12 @@
               (tc-name-id-list-add seen key)
               remaining
               origin)]
-          [(tc-type-contains-arena-owner-region? env ty owner)
+          [(or
+              (tc-type-contains-arena-owner-region? env ty owner)
+              (tc-moved-owner-dependency?
+                (tc-global-shared-view moved)
+                key
+                owner))
             (match (tc-move-invalidate-local
               expr-bases
               (tc-global-shared-view locals)
@@ -84446,40 +84596,61 @@
       [owner-box : i64 (ast.ast-expr-list-get (& args) 0 0)]
       [owner-expr : ast.AstExpr
         (ast.ast-expr-segment-bases-get expr-bases owner-box)]
-      [oid : i64 (tc-expr-var-name-id owner-expr)]
-      (if (>= oid 0)
-        (if (or
-          (tc-ordinary-arena-owner-active-id? env oid)
-          (tc-atomic-arena-owner-active-id? env oid))
-          (match (if (tc-atomic-arena-owner-active-id? env oid)
-            (tc-move-check-atomic-arena-users-released
-              ctx
-              env
-              (tc-global-shared-view locals)
-              moved
-              oid)
-            (TcMoveResult.Ok moved))
-            [(TcMoveResult.Ok moved1)
-              (match (tc-move-consume-local
+      (match (tc-body-type-fact-expr-id
+        "move.safe_arena_destroy_owner"
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
+        owner-box)
+        [(ResultTcType.Ok owner-ty)
+          (match (tc-destroy-safe-owner-place-id
+            (tc-global-shared-view ctx)
+            env
+            (tc-global-shared-view owner-expr)
+            (tc-global-shared-view owner-ty))
+            [(TcMaybeNameId.Some owner-id)
+              (match (tc-move-direct-root-base-path
                 expr-bases
-                (tc-global-shared-view locals)
-                (tc-global-shared-view loop-carried)
-                moved1
-                oid
-                (tc-global-shared-view origin))
-                [(TcMoveResult.Ok moved2)
-                  (tc-move-mark-owner-region-locals
-                    expr-bases
-                    env
-                    locals
-                    loop-carried
-                    moved2
-                    oid
-                    origin)]
-                [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-            [(TcMoveResult.Err message) (TcMoveResult.Err message)])
-          (TcMoveResult.Ok moved))
-        (TcMoveResult.Ok moved)))))
+                (tc-global-shared-view owner-expr))
+                [(TcMaybeMovePath.Some owner-place)
+                  (if (tc-moved-contains?
+                    (tc-global-shared-view loop-carried)
+                    owner-place.root)
+                    (tc-move-rich-loop-carried-result
+                      expr-bases
+                      (tc-move-path-render owner-place)
+                      origin)
+                    (match (if (tc-atomic-arena-owner-active-id? env owner-id)
+                      (tc-move-check-atomic-arena-users-released
+                        (tc-global-shared-view ctx)
+                        (tc-global-shared-view env)
+                        (tc-global-shared-view locals)
+                        (tc-global-shared-view moved)
+                        owner-id)
+                      (TcMoveResult.Ok moved))
+                      [(TcMoveResult.Ok moved1)
+                        (match (tc-move-after-consuming-projection
+                          (tc-global-shared-view ctx)
+                          expr-bases
+                          (tc-global-shared-view env)
+                          (tc-global-shared-view locals)
+                          (tc-global-shared-view loop-carried)
+                          moved1
+                          (tc-global-shared-view owner-expr))
+                          [(TcMoveResult.Ok moved2)
+                            (tc-move-mark-owner-region-locals
+                              expr-bases
+                              env
+                              locals
+                              loop-carried
+                              moved2
+                              owner-id
+                              origin)]
+                          [(TcMoveResult.Err message)
+                            (TcMoveResult.Err message)])]
+                      [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
+                [(TcMaybeMovePath.No) (TcMoveResult.Ok moved)])]
+            [(TcMaybeNameId.No) (TcMoveResult.Ok moved)])]
+        [(ResultTcType.Err _) (TcMoveResult.Ok moved)]))))
 
 (define (tc-move-check-safe-arena-call-effects
   [ctx : TcContext]
@@ -85706,13 +85877,18 @@
                       (tc-moved-remove-root-state
                         (tc-global-shared-view loop-carried)
                         name)
-                      (tc-param-storage-rebind-from-init
-                        (tc-global-shared-view ctx)
+                      (tc-move-rebind-lambda-owner-dependencies
                         expr-bases
                         (tc-global-shared-view env)
-                        moved2
+                        (tc-param-storage-rebind-from-init
+                          (tc-global-shared-view ctx)
+                          expr-bases
+                          (tc-global-shared-view env)
+                          moved2
+                          name
+                          (tc-global-shared-view binding-ty)
+                          (tc-global-shared-view init))
                         name
-                        (tc-global-shared-view binding-ty)
                         init)
                       bindings
                       (+ index 1))]
@@ -88271,13 +88447,18 @@
                           (match (tc-lookup-id env name)
                             [(ResultTcType.Ok binding-ty)
                               (TcMoveResult.Ok
-                                (tc-param-storage-rebind-from-init
-                                  ctx
+                                (tc-move-rebind-lambda-owner-dependencies
                                   expr-bases
                                   env
-                                  moved2
+                                  (tc-param-storage-rebind-from-init
+                                    (tc-global-shared-view ctx)
+                                    expr-bases
+                                    (tc-global-shared-view env)
+                                    moved2
+                                    name
+                                    (tc-global-shared-view binding-ty)
+                                    (tc-global-shared-view rhs))
                                   name
-                                  binding-ty
                                   rhs))]
                             [(ResultTcType.Err _)
                               (TcMoveResult.Ok
@@ -93021,30 +93202,43 @@
       [owner-box : i64 (ast.ast-expr-list-get (& args) 0 0)]
       [owner-expr : ast.AstExpr
         (ast.ast-expr-segment-bases-get expr-bases owner-box)]
-      [oid : i64 (tc-expr-var-name-id owner-expr)]
-      (if (>= oid 0)
-        (if (or
-          (tc-ordinary-arena-owner-active-id? env oid)
-          (tc-atomic-arena-owner-active-id? env oid))
-          (match (tc-borrow-check-assign-conflict
-            expr-bases
-            (tc-global-shared-view borrowed)
-            (TcMovePath oid (tc-move-path-segments-empty))
-            (tc-global-shared-view primary))
-            [(ResultTcUnit.Ok)
-              (tc-borrow-check-owner-invalidation-scan
-                ctx
+      (match (tc-body-type-fact-expr-id
+        "borrow.safe_arena_destroy_owner"
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
+        owner-box)
+        [(ResultTcType.Ok owner-ty)
+          (match (tc-destroy-safe-owner-place-id
+            (tc-global-shared-view ctx)
+            env
+            (tc-global-shared-view owner-expr)
+            (tc-global-shared-view owner-ty))
+            [(TcMaybeNameId.Some owner-id)
+              (match (tc-move-direct-root-base-path
                 expr-bases
-                env
-                (tc-global-shared-view locals)
-                borrowed
-                oid
-                TcNameIdList.Nil
-                (tc-moved-len locals)
-                primary)]
-            [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])
-          (TcBorrowCheckResult.Ok borrowed))
-        (TcBorrowCheckResult.Ok borrowed)))))
+                (tc-global-shared-view owner-expr))
+                [(TcMaybeMovePath.Some owner-place)
+                  (match (tc-borrow-check-assign-conflict
+                    expr-bases
+                    (tc-global-shared-view borrowed)
+                    owner-place
+                    (tc-global-shared-view primary))
+                    [(ResultTcUnit.Ok)
+                      (tc-borrow-check-owner-invalidation-scan
+                        ctx
+                        expr-bases
+                        env
+                        (tc-global-shared-view locals)
+                        borrowed
+                        owner-id
+                        TcNameIdList.Nil
+                        (tc-moved-len locals)
+                        primary)]
+                    [(ResultTcUnit.Err message)
+                      (TcBorrowCheckResult.Err message)])]
+                [(TcMaybeMovePath.No) (TcBorrowCheckResult.Ok borrowed)])]
+            [(TcMaybeNameId.No) (TcBorrowCheckResult.Ok borrowed)])]
+        [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed)]))))
 
 (define (tc-borrow-check-safe-arena-call-effects
   [ctx : TcContext]

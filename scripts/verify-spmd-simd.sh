@@ -231,8 +231,10 @@ run_spmd_mode() {
     _tag=$(printf '%s' "$_prog" | sed 's#[/.]#_#g')
     mode_out="$WORKDIR/$_tag.$_mode.out"
     mode_err="$WORKDIR/$_tag.$_mode.err"
+    mode_exit="$WORKDIR/$_tag.$_mode.exit"
     : > "$mode_out"
     : > "$mode_err"
+    rm -f "$mode_exit"
 
     if [ "$HOST_OS" = linux ]; then
         _asm="$WORKDIR/$_tag.$_mode.s"
@@ -262,6 +264,7 @@ run_spmd_mode() {
         mode_code=$?
         set -e
     fi
+    printf '%s\n' "$mode_code" > "$mode_exit"
 }
 
 # Compile $1 at backend mode $2; sets `mode_code` to the compiler exit status

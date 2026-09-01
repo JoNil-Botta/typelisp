@@ -77,7 +77,8 @@ call_eval_order|tests/integration/call_eval_order.tl|42|-|-|-
 include_bin|tests/integration/include_bin.tl|42|-|-|include_bin_payload.bin
 include_str_comptime|tests/integration/include_str_comptime.tl|42|-|-|include/str/comptime/owner.tl include_str_comptime_payload.txt include_bin_payload.bin stdlib/comptime.tl
 embedded_stdlib_exact_include|tests/integration/embedded_stdlib_exact_include.tl|42|-|-|stdlib/string.tl
-c_abi_aggregate_color|tests/integration/c_abi_aggregate_color.tl|42|-|-|benchmarks/c_abi_aggregate_color/baseline.c
+c_abi_aggregate_color|tests/integration/c_abi_aggregate_color.tl|42|color=104:36\n|-|benchmarks/c_abi_aggregate_color/baseline.c stdlib/io.tl stdlib/string.tl
+cross_mode_internal_color|tests/integration/cross_mode_internal_color.tl|42|color=104:36\n|-|stdlib/io.tl stdlib/string.tl
 c_abi_f32_scalar|tests/integration/c_abi_f32_scalar.tl|42|-|-|benchmarks/c_abi_f32_scalar/baseline.c
 c_abi_win64_sret_return|tests/integration/c_abi_win64_sret_return.tl|42|-|-|benchmarks/c_abi_win64_sret_return/baseline.c
 c_abi_win64_aggregate_args|tests/integration/c_abi_win64_aggregate_args.tl|42|-|-|benchmarks/c_abi_win64_aggregate_args/baseline.c
@@ -457,6 +458,7 @@ lint_smoke|src/tests/lint_smoke.tl|42|-|-|lint_core_tests.tl lint_core.tl lex.tl
 lint_driver_smoke|src/tests/lint_driver_smoke.tl|42|target/lint_unsafe_surface/safe.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/shadow.tl:5:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/macro.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/local_value.tl:2:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/callable_value.tl:4:5: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\nlint: 0 finding(s)\ntarget/lint_unsafe_surface/macro.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\ntarget/lint_unsafe_surface/macro.tl:3:3: unused unsafe block: body does not require unsafe context\nlint: 1 finding(s)\nlint: 0 finding(s)\nlint: 0 finding(s)\nlint: 0 finding(s)\nlint: 0 finding(s)\n|-|lint_driver_core_tests.tl compiler_check_core.tl compiler_load.tl compiler_embedded_stdlib.tl compiler_typecheck.tl compiler_typecheck_api.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_float.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl compiler_intern.tl compiler_builtin_ids.tl sym_i64_env.tl read.tl lex.tl token.tl lint_core.tl lint_driver_core.tl package_source_core.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl compiler_clone.tl tlci_core.tl|expected-stderr:target/lint_unsafe_surface/type_error.tl:3:21: typecheck: unbound name missing-value\nrelated: target/lint_unsafe_surface/type_error.tl:3:11: in expansion of macro `identity` invoked here\ntarget/lint_unsafe_surface/type_error.tl:3:21: typecheck: unbound name missing-value\nrelated: target/lint_unsafe_surface/type_error.tl:3:11: in expansion of macro `identity` invoked here\ntarget/lint_unsafe_surface/type_error.tl:3:21: typecheck: unbound name missing-value\nrelated: target/lint_unsafe_surface/type_error.tl:3:11: in expansion of macro `identity` invoked here\n
 package_cache_smoke|src/tests/package_cache_smoke.tl|42|-|-|package_cache_core.tl stdlib/fs.tl stdlib/env.tl stdlib/vector.tl stdlib/io.tl stdlib/string.tl
 git_delta_smoke|src/tests/git_delta_smoke.tl|42|-|-|git_delta_tests.tl git_delta_core.tl stdlib/byte_buf_core.tl stdlib/io.tl stdlib/string.tl
+git_ssh_remote_smoke|src/tests/git_ssh_remote_smoke.tl|42|-|-|git_ssh_remote_tests.tl git_ssh_remote_core.tl stdlib/byte_buf_core.tl stdlib/io.tl stdlib/string.tl
 array_push_aggregate|tests/integration/array_push_aggregate.tl|42|-|-|-
 nested_repr_c_aggregate|tests/integration/nested_repr_c_aggregate.tl|42|-|-|-
 nested_tuple_array_projection|tests/integration/nested_tuple_array_projection.tl|0|7\n3\n|-|stdlib/io.tl
@@ -478,12 +480,14 @@ in_arena|tests/integration/in_arena.tl|42|-|-|-
 arena_phase_rewind_destroy|tests/integration/arena_phase_rewind_destroy.tl|42|-|-|-
 arena_branded_handle|tests/integration/arena_branded_handle.tl|42|-|-|stdlib/arena.tl
 arena_branded_in_arena|tests/integration/arena_branded_in_arena.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
+arena_branded_place_destroy|tests/integration/arena_branded_place_destroy.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 arena_rewind_make_array_zero|tests/integration/arena_rewind_make_array_zero.tl|42|-|-|-
 make_array_default_reads_zero|tests/integration/make_array_default_reads_zero.tl|42|-|-|stdlib/arena.tl
 mem_fill8_runtime_contract|tests/integration/mem_fill8_runtime_contract.tl|42|-|-|stdlib/arena.tl stdlib/runtime.tl
 mem_copy_fwd_runtime_contract|tests/integration/mem_copy_fwd_runtime_contract.tl|42|-|-|stdlib/runtime.tl
 arena_atomic_rewind_destroy_safe|tests/integration/arena_atomic_rewind_destroy_safe.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 arena_branded_atomic_aggregate|tests/integration/arena_branded_atomic_aggregate.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
+arena_branded_atomic_place_destroy|tests/integration/arena_branded_atomic_place_destroy.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 resource_with_order|tests/integration/resource_with_order.tl|42|-|-|-
 resource_with_arg_cycle|tests/integration/resource_with_arg_cycle.tl|42|-|-|-
 sync_channel_thread_runtime|tests/integration/sync_channel_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl

@@ -193,6 +193,10 @@ run_gate "CLI gate inventory and ownership" scripts/check-cli-gate-coverage.sh -
 # verification uses the branch-built compiler because compression is part of
 # the new loader surface.
 run_gate "CI timing helper self-tests" scripts/verify-ci-timing.sh
+run_gate \
+    "cross-mode differential oracle self-tests" \
+    scripts/verify-cross-mode-differential.sh \
+    --self-test
 if [ "$HOST_OS" = linux ]; then
     run_gate \
         "Linux resident memory limit helper self-tests" \
@@ -431,6 +435,12 @@ export TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE
 run_gate "bootstrap adaptive control flow" scripts/verify-bootstrap-fixpoint-control.sh
 run_gate "bootstrap fixpoint" scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"
 unset TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE
+if [ ! -s "$STAGE1_PATH_FILE" ]; then
+    required_gate_unavailable "bootstrap previous-stage compiler capture" \
+        "bootstrap did not persist the previous compiler path used by the cross-mode differential"
+fi
+STAGE1_BIN=$(sed -n '1p' "$STAGE1_PATH_FILE")
+ensure_executable "previous-stage" "$STAGE1_BIN"
 if [ ! -s "$STAGE2_PATH_FILE" ]; then
     required_gate_unavailable "bootstrap fixpoint compiler capture" \
         "bootstrap did not persist a converged compiler path for the downstream gates"
@@ -753,6 +763,11 @@ fi
 run_with_compiler "$STAGE2_BIN" "stage2 stdlib modules and fixtures" scripts/verify-stdlib.sh
 run_with_compiler "$STAGE2_BIN" "stage2 stdlib selfhost verifier" scripts/verify-stdlib-selfhost.sh
 run_with_compiler "$STAGE2_BIN" "stage2 SPMD SIMD comparison" scripts/verify-spmd-simd.sh
+run_with_compiler \
+    "$STAGE2_BIN" \
+    "stage2 cross-mode semantic/ABI differential" \
+    env TYPELISP_CROSS_MODE_PREVIOUS_COMPILER="$STAGE1_BIN" \
+    scripts/verify-cross-mode-differential.sh
 run_with_compiler "$STAGE2_BIN" "stage2 SPMD lane identity" scripts/verify-spmd-lane-identity.sh
 run_with_compiler "$STAGE2_BIN" "stage2 SPMD broadcast" scripts/verify-spmd-broadcast.sh
 DOC_SITE_OUT="$ROOT/target/ci-verify-docs-pages-site"
@@ -778,14 +793,15 @@ if [ "$HOST_OS" = linux ]; then
         --runs 1 \
         --output target/instruction-count-heavy
     run_with_compiler "$STAGE2_BIN" "stage2 native link generated programs" scripts/verify-native-link-linux.sh
+    run_with_compiler "$STAGE2_BIN" "stage2 rooted Linux filesystem boundary" scripts/verify-fs-rooted-linux.sh
 else
     run_with_compiler "$STAGE2_BIN" "windows native link build/run" scripts/verify-native-link-windows.sh
     echo
     echo "[ci-verify] Linux-only gates not applicable on Windows:"
     echo "[ci-verify]   opt1/opt2 build-invariance, host-action smoke (as/ld),"
     echo "[ci-verify]   stdlib documentation (doc target selection), instruction"
-    echo "[ci-verify]   counts (valgrind), native link generated programs"
-    echo "[ci-verify]   (Linux linker inputs)"
+    echo "[ci-verify]   counts (valgrind), native link generated programs,"
+    echo "[ci-verify]   rooted Linux filesystem boundary (Linux syscalls/linker inputs)"
 fi
 
 if [ -n "${TYPELISP_CI_COMPILER_ARTIFACT_TRACE:-}" ]; then

@@ -661,11 +661,7 @@ assert_active_cli_surface_command() {
                 assert_contains "$package_label" "$WORKDIR/$package_label.out" "extra.tl"
             fi
             package_label="${label}-package-default-nearest"
-            if [ "$HOST_OS" = windows ]; then
-                package_doc_nearest_index='..\target\doc\index.html'
-            else
-                package_doc_nearest_index='../target/doc/index.html'
-            fi
+            package_doc_nearest_index=$(doc_generated_path '../target/doc/index.html')
             # cli-gate-case selfhost-cli-surface-doc-package-default-nearest wrapper run_cli_capture_in_dir
             run_cli_capture_in_dir "$package_label" "$CLI_SURFACE_DOC_PKG/src" "$COMPILER" doc
             assert_status "$package_label" "$status" 0

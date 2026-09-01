@@ -207,6 +207,7 @@ byte_buf_core.tl
 clone.tl
 comptime.tl
 core_macros.tl
+crypto_random.tl
 io_core.tl
 io.tl
 io_caller_result.tl

@@ -44701,6 +44701,20 @@
         (and
           (tc-expr-c-abi-fnptr? (tc-global-shared-view ctx) env then-branch)
           (tc-expr-c-abi-fnptr? ctx env else-branch)))]
+    [(ast.AstExpr.Call func-box _)
+      (let
+        [func : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) func-box)]
+        (match (tc-call-extern-abi
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view func))
+          ;; A C-ABI call that returns a function value returns a raw C
+          ;; function pointer. The caller separately establishes that the
+          ;; expression's type is a function before recording this provenance.
+          [(TcMaybeExternAbi.Some _) true]
+          ;; Preserve the provenance through factories reached via an already
+          ;; raw C function pointer as well.
+          [(TcMaybeExternAbi.No) (tc-expr-c-abi-fnptr? ctx env func)]))]
     [_ false]))
 
 (define (tc-name-base-eq? [name : String] [base : String]) : bool

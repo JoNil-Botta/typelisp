@@ -2764,7 +2764,12 @@ data symbol whose value is loaded when the name is used. If that bare-name type
 is a function type, the loaded value is a raw C function pointer and calling the
 name or a local copy of that value emits an indirect C ABI call through the
 loaded pointer. Raw C function-pointer values are ABI-distinct from ordinary
-TypeLisp function and closure descriptor values.
+TypeLisp function and closure descriptor values. A direct C-ABI extern call
+whose declared return type is a function type likewise returns a raw C function
+pointer; that provenance is retained through local bindings, annotations,
+`begin`, and branches whose alternatives are both raw C function pointers. This
+supports validated dynamic symbol resolvers without treating the returned
+address as an ordinary TypeLisp callable.
 
 The name is a TypeLisp identifier used for source lookup; it defaults to the
 target C ABI and uses the local name as the external linker symbol unless

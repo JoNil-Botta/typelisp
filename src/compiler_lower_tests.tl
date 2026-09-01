@@ -7204,10 +7204,12 @@
   "(extern raw-value (:symbol \"tl_test_raw_value\") : i64)
 (extern raw-fn (:symbol \"tl_test_raw_fn\") : (-> i64 i64))
 (extern (direct-fn [x : i64]) : i64 (:symbol \"tl_test_direct_fn\"))
+(extern (resolve [name : (Ptr u8)]) : (-> i64 i64) (:symbol \"tl_test_resolve\"))
 (define (main) : i64
   (let
     [copied : (-> i64 i64) raw-fn]
-    (+ raw-value (+ (raw-fn 41) (+ (copied 40) (direct-fn 1))))))")
+    [resolved : (-> i64 i64) (resolve (ptr-null : (Ptr u8)))]
+    (+ raw-value (+ (raw-fn 41) (+ (copied 40) (+ (resolved 39) (direct-fn 1)))))))")
 
 (define (compiler-lower-extern-value-fnptr-shape-ok?) : bool
   (match (compiler_lower.lower-compiler-source-with-mode
@@ -7230,6 +7232,12 @@
                 "direct-fn")
               1)
             (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "resolve")
+              1)
+            (=
               (lower-test-function-indirect-call-count
                 (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main")
@@ -7238,8 +7246,28 @@
               (lower-test-function-indirect-c-call-count
                 (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main")
-              2))])]
+              3))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(test
+  compiler-lower-extern-value-fnptr-shape
+  (test.assert-true
+    (compiler-lower-extern-value-fnptr-shape-ok?)
+    "bare and dynamically returned raw C function pointers use indirect C ABI calls"))
+
+(define (compiler-lower-extern-returned-fnptr-to-tl-param-source) : String
+  "(extern (resolve [name : (Ptr u8)]) : (-> i64 i64) (:symbol \"tl_test_resolve\"))
+(define (apply1 [f : (-> i64 i64)] [x : i64]) : i64 (f x))
+(define (main) : i64
+  (apply1 (resolve (ptr-null : (Ptr u8))) 41))")
+
+(test
+  compiler-lower-extern-returned-fnptr-flow-reject
+  (test.assert-true
+    (compiler-lower-error-ok?
+      (compiler-lower-extern-returned-fnptr-to-tl-param-source)
+      "typecheck: raw C function pointer cannot be used as a TypeLisp function value")
+    "dynamically returned raw C function pointers cannot flow into TypeLisp callback positions"))
 
 (define (compiler-lower-c-abi-linux-tag-only-enum-source) : String
   "(defenum Status (Ready) (Done) (Failed))

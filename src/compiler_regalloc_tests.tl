@@ -13878,6 +13878,57 @@
             (not (= value cabi.compiler-reg-id-r10))))])
     true))
 
+;; StoreOwned is a real store until the ownership proof's optimizer window has
+;; closed. Cheap/no-opt compilation can therefore hand it directly to the
+;; scratch planner, where it must reserve exactly the StorePtr machine shape.
+(define (compiler-reg-owned-store-scratch-parity-ok?) : bool
+  (let
+    [plain : ir.CompilerIrInstr
+      (ir.CompilerIrInstr.StorePtr
+        (ir.CompilerIrValue.Var 0)
+        (ir.CompilerIrValue.Var 1)
+        (ast.AstType.I64))]
+    [owned : ir.CompilerIrInstr
+      (ir.CompilerIrInstr.StoreOwned
+        (ir.CompilerIrValue.Var 0)
+        (ir.CompilerIrValue.Var 1)
+        (ast.AstType.I64))]
+    [assignments : reg.CompilerRegAssignmentTable
+      (reg.compiler-reg-assignment-table-empty)]
+    [types : reg.CompilerRegVarTypes (reg.compiler-reg-var-types-empty)]
+    [groups : live.CompilerLiveI64Set (live.compiler-live-set-empty)]
+    [labels : reg.CompilerRegLabelSeq (reg.compiler-reg-label-seq-empty)]
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [plain-slots : i64
+      (reg.compiler-reg-scratch-vreg-slots-with-groups
+        bases
+        (cabi.CompilerRegTargetAbi.Linux)
+        (reg.compiler-reg-global-shared-view assignments)
+        (reg.compiler-reg-global-shared-view types)
+        (reg.compiler-reg-global-shared-view groups)
+        (reg.compiler-reg-global-shared-view plain)
+        (reg.compiler-reg-global-shared-view labels)
+        (reg.compiler-reg-global-shared-view labels)
+        false)]
+    [owned-slots : i64
+      (reg.compiler-reg-scratch-vreg-slots-with-groups
+        bases
+        (cabi.CompilerRegTargetAbi.Linux)
+        (reg.compiler-reg-global-shared-view assignments)
+        (reg.compiler-reg-global-shared-view types)
+        (reg.compiler-reg-global-shared-view groups)
+        (reg.compiler-reg-global-shared-view owned)
+        (reg.compiler-reg-global-shared-view labels)
+        (reg.compiler-reg-global-shared-view labels)
+        false)]
+    (and
+      (reg.compiler-reg-scratch-instr-store-ptr?
+        (reg.compiler-reg-global-shared-view plain))
+      (reg.compiler-reg-scratch-instr-store-ptr?
+        (reg.compiler-reg-global-shared-view owned))
+      (= plain-slots owned-slots)
+      (= owned-slots (cfg scratch-vreg 2 0)))))
+
 (define (compiler-reg-scalar-mov-scratch-test-plan) : reg.CompilerRegPlan
   (reg.CompilerRegPlan.Plan
     (reg.compiler-reg-assignments-prepend
@@ -22237,6 +22288,9 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-memory-scratch-vregs-ok?"
       (compiler-reg-memory-scratch-vregs-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-owned-store-scratch-parity-ok?"
+      (compiler-reg-owned-store-scratch-parity-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-scalar-mov-scratch-vregs-ok?"
       (compiler-reg-scalar-mov-scratch-vregs-ok?))

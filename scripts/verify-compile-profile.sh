@@ -1724,10 +1724,15 @@ if [ "$NL_HOST_OS" = windows ]; then
     # on the Windows CI probe; raised one more step.
     # #6996's inline aggregate globals (~2,400 backend-source lines) carried
     # it to 27,064 KiB on the Windows CI probe; raised one more step.
+    # #6692's explicit owning-handle provenance and fail-closed optimizer,
+    # verifier, backend, and regalloc coverage (~5,500 compiler-source lines)
+    # carried it to 28,278 KiB on the authoritative Windows probe; raised one
+    # more step with the usual headroom. The four pool families stayed within
+    # their existing segment counts.
     assert_profile_counter_at_most_in \
         "$SELFHOST_STDERR" \
         "typecheck.macro.walk_sp_reresolve_alloc_kb" \
-        28000 \
+        29200 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     # One constant per boundary: the segment count. capacity and segment_bytes

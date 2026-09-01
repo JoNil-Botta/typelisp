@@ -10426,7 +10426,155 @@
         after-alias)
       after-alias)))
 
+;; Keep the common declaration walk out of the large import-expansion frame.
+;; The import worker below has enough branch-local aggregate state to reserve
+;; tens of KiB on Win64. Recursing through every ordinary declaration in that
+;; frame made compiler source growth consume the entire 256 MiB selfhost stack.
+;; This small dispatcher carries ordinary declarations; only imports, module
+;; bodies, and include forms enter the heavyweight worker.
 (define (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+  [traversal : CompilerLoadTraversalContext]
+  [decls : ast.AstDeclList]
+  [importer-path : String]
+  [importer-module : String]
+  [importer-module-id : i64]
+  [importer-source-module : String]
+  [importer-source-module-id : i64]
+  [seen : sym_i64_env.SymI64Env]
+  [stdlib-roots : svec.Vec]
+  [import-root : String]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (match (ast.ast-decl-list-step (ast.ast-place-shared-view decls))
+    [(ast.AstDeclListStep.Nil)
+      (ResultCompilerLoadWithPaths.Ok
+        (ast.ast-decl-list-new)
+        (ast.ast-decl-path-list-new)
+        (ast.ast-decl-module-list-new)
+        seen)]
+    [(ast.AstDeclListStep.Cons decl rest)
+      (match (ast.ast-place-shared-view decl)
+        [(ast.AstDecl.ModuleBody _ _)
+          (compiler-load-decls-with-module-and-roots-cfg-root-with-pools-one
+            traversal
+            decls
+            importer-path
+            importer-module
+            importer-module-id
+            importer-source-module
+            importer-source-module-id
+            seen
+            stdlib-roots
+            import-root
+            cfgs
+            pools)]
+        [(ast.AstDecl.Import _ _)
+          (compiler-load-decls-with-module-and-roots-cfg-root-with-pools-one
+            traversal
+            decls
+            importer-path
+            importer-module
+            importer-module-id
+            importer-source-module
+            importer-source-module-id
+            seen
+            stdlib-roots
+            import-root
+            cfgs
+            pools)]
+        [(ast.AstDecl.IncludeStr _ _)
+          (compiler-load-decls-with-module-and-roots-cfg-root-with-pools-one
+            traversal
+            decls
+            importer-path
+            importer-module
+            importer-module-id
+            importer-source-module
+            importer-source-module-id
+            seen
+            stdlib-roots
+            import-root
+            cfgs
+            pools)]
+        [(ast.AstDecl.IncludeStrComptime _ _)
+          (compiler-load-decls-with-module-and-roots-cfg-root-with-pools-one
+            traversal
+            decls
+            importer-path
+            importer-module
+            importer-module-id
+            importer-source-module
+            importer-source-module-id
+            seen
+            stdlib-roots
+            import-root
+            cfgs
+            pools)]
+        [(ast.AstDecl.IncludeStrLzss _ _)
+          (compiler-load-decls-with-module-and-roots-cfg-root-with-pools-one
+            traversal
+            decls
+            importer-path
+            importer-module
+            importer-module-id
+            importer-source-module
+            importer-source-module-id
+            seen
+            stdlib-roots
+            import-root
+            cfgs
+            pools)]
+        [(ast.AstDecl.IncludeBin _ _)
+          (compiler-load-decls-with-module-and-roots-cfg-root-with-pools-one
+            traversal
+            decls
+            importer-path
+            importer-module
+            importer-module-id
+            importer-source-module
+            importer-source-module-id
+            seen
+            stdlib-roots
+            import-root
+            cfgs
+            pools)]
+        [_
+          (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+            (ast.ast-place-shared-view traversal)
+            rest
+            (string.copy importer-path)
+            importer-module
+            importer-module-id
+            (string.copy importer-source-module)
+            importer-source-module-id
+            (sym_i64_env.sym-i64-shared-view (& seen))
+            (ast.ast-place-shared-view stdlib-roots)
+            (string.copy import-root)
+            (sym_i64_env.sym-i64-shared-view (& cfgs))
+            (ast.ast-place-shared-view pools))
+            [(ResultCompilerLoadWithPaths.Ok
+                rest-decls
+                rest-paths
+                rest-modules
+                rest-seen)
+              (ResultCompilerLoadWithPaths.Ok
+                (compiler-load-decl-list-prepend-from-source
+                  decl
+                  (ast.ast-place-shared-view decls)
+                  rest-decls)
+                (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
+                  (string.copy importer-path)
+                  traversal.importer-decl-owner-id
+                  traversal.importer-path-id
+                  rest-paths)
+                (ast.ast-decl-module-list-prepend-builder-id
+                  importer-source-module-id
+                  rest-modules)
+                rest-seen)]
+            [(ResultCompilerLoadWithPaths.Err diag)
+              (ResultCompilerLoadWithPaths.Err diag)])])]))
+
+(define (compiler-load-decls-with-module-and-roots-cfg-root-with-pools-one
   [traversal : CompilerLoadTraversalContext]
   [decls : ast.AstDeclList]
   [importer-path : String]

@@ -712,7 +712,18 @@
   (Alloc i64 ast.AstType)
   (AddrOf i64 i64)
   (Gep i64 CompilerIrValue CompilerIrValue ast.AstType)
+  ;; Checked internal by-value ownership boundary. This is a physical move,
+  ;; but `dst` starts a private ownership tree in the receiving function.
+  (OwnRoot i64 CompilerIrValue ast.AstType)
   (Load i64 CompilerIrValue ast.AstType)
+  ;; Load an owning handle through an explicitly checked ownership edge.
+  ;; `dst` belongs to the same ownership tree as `owner`; unlike `Load`, this
+  ;; capability is never inferred from `ty` or address shape alone.
+  (LoadOwned i64 CompilerIrValue i64 ast.AstType)
+  ;; Checked non-Copy move into an owned aggregate field/path. This is the
+  ;; actual typed store, not a second proof-only record; raw/unsafe writes use
+  ;; StorePtr and cannot establish an ownership edge.
+  (StoreOwned CompilerIrValue CompilerIrValue ast.AstType)
   (StorePtr CompilerIrValue CompilerIrValue ast.AstType)
   (CopyBytes CompilerIrValue CompilerIrValue i64)
   (BoundsCheck CompilerIrValue CompilerIrValue i64)
@@ -1476,8 +1487,10 @@
   [fallback : i64]) : i64
   (match (compiler-ir-global-shared-view instr)
     [(CompilerIrInstr.Mov dst _ _) dst]
+    [(CompilerIrInstr.OwnRoot dst _ _) dst]
     [(CompilerIrInstr.Gep dst _ _ _) dst]
     [(CompilerIrInstr.Load dst _ _) dst]
+    [(CompilerIrInstr.LoadOwned dst _ _ _) dst]
     [(CompilerIrInstr.Cast dst _ _ _) dst]
     [(CompilerIrInstr.Bitcast dst _ _ _) dst]
     [(CompilerIrInstr.BinOp dst _ _ _ _) dst]
@@ -2988,6 +3001,22 @@
         dst
         (compiler-ir-clone-value src)
         (compiler-ir-clone-type (compiler-ir-global-shared-view pools) ty))]
+    [(CompilerIrInstr.LoadOwned dst src owner ty)
+      (CompilerIrInstr.LoadOwned
+        dst
+        (compiler-ir-clone-value src)
+        owner
+        (compiler-ir-clone-type (compiler-ir-global-shared-view pools) ty))]
+    [(CompilerIrInstr.OwnRoot dst src ty)
+      (CompilerIrInstr.OwnRoot
+        dst
+        (compiler-ir-clone-value src)
+        (compiler-ir-clone-type (compiler-ir-global-shared-view pools) ty))]
+    [(CompilerIrInstr.StoreOwned dst src ty)
+      (CompilerIrInstr.StoreOwned
+        (compiler-ir-clone-value dst)
+        (compiler-ir-clone-value src)
+        (compiler-ir-clone-type (compiler-ir-global-shared-view pools) ty))]
     [(CompilerIrInstr.StorePtr dst src ty)
       (CompilerIrInstr.StorePtr
         (compiler-ir-clone-value dst)
@@ -4260,6 +4289,30 @@
           type-segment-bases
           source
           ty))]
+    [(CompilerIrInstr.LoadOwned dst source owner ty)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "load_owned "
+        (compiler-ir-value-render source)
+        ", owner %"
+        (string.int->string owner)
+        " : "
+        (compiler-ir-type-render structural-session type-segment-bases ty))]
+    [(CompilerIrInstr.OwnRoot dst source ty)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "own_root "
+        (compiler-ir-value-render source)
+        " : "
+        (compiler-ir-type-render structural-session type-segment-bases ty))]
+    [(CompilerIrInstr.StoreOwned ptr value ty)
+      (str_cat.str-cat
+        "  store_owned "
+        (compiler-ir-value-render value)
+        " -> "
+        (compiler-ir-value-render ptr)
+        " : "
+        (compiler-ir-type-render structural-session type-segment-bases ty))]
     [(CompilerIrInstr.StorePtr ptr value ty)
       (str_cat.str-cat
         "  store_ptr "
@@ -5251,6 +5304,9 @@
     [(CompilerIrInstr.Select _) CompilerIrEffect.Pure]
     [(CompilerIrInstr.TailMask _ _ _ _) CompilerIrEffect.Pure]
     [(CompilerIrInstr.Load _ _ _) CompilerIrEffect.MemoryRead]
+    [(CompilerIrInstr.LoadOwned _ _ _ _) CompilerIrEffect.MemoryRead]
+    [(CompilerIrInstr.OwnRoot _ _ _) CompilerIrEffect.Pure]
+    [(CompilerIrInstr.StoreOwned _ _ _) CompilerIrEffect.MemoryWrite]
     [(CompilerIrInstr.VectorLoad _ _ _ _ _) CompilerIrEffect.MemoryRead]
     [(CompilerIrInstr.PredicatedLoad _) CompilerIrEffect.MemoryRead]
     [(CompilerIrInstr.GatherLoad _) CompilerIrEffect.MemoryRead]
@@ -5794,6 +5850,16 @@
         spans
         (CompilerSourceSpansInstrKey.Value function dst)
         span)]
+    [(CompilerIrInstr.LoadOwned dst _ _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (CompilerSourceSpansInstrKey.Value function dst)
+        span)]
+    [(CompilerIrInstr.OwnRoot dst _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (CompilerSourceSpansInstrKey.Value function dst)
+        span)]
     [(CompilerIrInstr.Cast dst _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
@@ -6161,6 +6227,14 @@
             instr-entries
             (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.Load dst _ _)
+          (compiler-source-spans-instr-entry-list-lookup
+            instr-entries
+            (CompilerSourceSpansInstrKey.Value function dst))]
+        [(CompilerIrInstr.LoadOwned dst _ _ _)
+          (compiler-source-spans-instr-entry-list-lookup
+            instr-entries
+            (CompilerSourceSpansInstrKey.Value function dst))]
+        [(CompilerIrInstr.OwnRoot dst _ _)
           (compiler-source-spans-instr-entry-list-lookup
             instr-entries
             (CompilerSourceSpansInstrKey.Value function dst))]
@@ -8179,6 +8253,10 @@
       (compiler-ir-representation-var-type-set! types dst ty)]
     [(CompilerIrInstr.Load dst _ ty)
       (compiler-ir-representation-var-type-set! types dst ty)]
+    [(CompilerIrInstr.LoadOwned dst _ _ ty)
+      (compiler-ir-representation-var-type-set! types dst ty)]
+    [(CompilerIrInstr.OwnRoot dst _ ty)
+      (compiler-ir-representation-var-type-set! types dst ty)]
     [(CompilerIrInstr.Cast dst _ _ ty)
       (compiler-ir-representation-var-type-set! types dst ty)]
     [(CompilerIrInstr.Bitcast dst _ _ ty)
@@ -8665,6 +8743,12 @@
     [(CompilerIrInstr.Gep _ _ _ ty)
       (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
     [(CompilerIrInstr.Load _ _ ty)
+      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
+    [(CompilerIrInstr.LoadOwned _ _ _ ty)
+      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
+    [(CompilerIrInstr.OwnRoot _ _ ty)
+      (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
+    [(CompilerIrInstr.StoreOwned _ _ ty)
       (compiler-ir-representation-collect-one-type type-segment-bases index ty)]
     [(CompilerIrInstr.StorePtr _ _ ty)
       (compiler-ir-representation-collect-one-type type-segment-bases index ty)]

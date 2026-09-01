@@ -19224,6 +19224,33 @@
     [(LowerExpr.Expr ptr-state ptr _)
       (lower-state-emit ptr-state (ir.CompilerIrInstr.StorePtr ptr value ty))]))
 
+;; A checked TypeLisp move into an owned aggregate place. StoreOwned is the
+;; actual typed store and the explicit ownership-transfer proof. Unsafe/raw
+;; writes use StorePtr and cannot manufacture an edge from payload type alone.
+(define (lower-store-owned-at-offset
+  [state : LowerState]
+  [base : ir.CompilerIrValue]
+  [offset : i64]
+  [value : ir.CompilerIrValue]
+  [ty : ast.AstType]) : LowerState
+  (match (lower-gep-byte state base offset)
+    [(LowerExpr.Expr ptr-state ptr _)
+      (lower-state-emit ptr-state (ir.CompilerIrInstr.StoreOwned ptr value ty))]))
+
+(define (lower-store-checked-value-at-offset
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [base : ir.CompilerIrValue]
+  [offset : i64]
+  [value : ir.CompilerIrValue]
+  [ty : ast.AstType]
+  [size : i64]) : LowerState
+  (if (lower-owned-handle-type?
+    (lower-global-shared-view ctx)
+    (lower-global-shared-view ty))
+    (lower-store-owned-at-offset state base offset value ty)
+    (lower-store-inline-value-at-offset ctx state base offset value ty size)))
+
 (define (lower-load-at-offset
   [state : LowerState]
   [base : ir.CompilerIrValue]
@@ -22824,14 +22851,18 @@
               (lower-global-shared-view resolved)))]
         (lower-store-values-at
           (lower-global-shared-view ctx)
-          (lower-store-at-offset
+          (lower-store-checked-value-at-offset
+            (lower-global-shared-view ctx)
             state
             (lower-global-shared-view base)
             offset
             (ir.compiler-ir-value-seq-ref
               (lower-global-shared-view values)
               type-index)
-            (lower-global-shared-view resolved))
+            (lower-global-shared-view resolved)
+            (lower-type-size
+              (lower-global-shared-view ctx)
+              (lower-global-shared-view resolved)))
           base
           (lower-global-shared-view values)
           types
@@ -22960,7 +22991,7 @@
                     [stored-state : LowerState
                       (if (<= (tc_core.tc-layout-info-size info) 0)
                         state
-                        (lower-store-inline-value-at-offset
+                        (lower-store-checked-value-at-offset
                           (lower-global-shared-view ctx)
                           state
                           (lower-global-shared-view base)
@@ -23049,7 +23080,7 @@
                 (lower-global-shared-view ctx)
                 (if (<= (tc_core.tc-layout-info-size info) 0)
                   state
-                  (lower-store-inline-value-at-offset
+                  (lower-store-checked-value-at-offset
                     (lower-global-shared-view ctx)
                     state
                     (lower-global-shared-view base)
@@ -35593,6 +35624,12 @@
             [_ (lower-expr-and-coerce ctx state env type-env expr expected-ty)])))]
     [_ (lower-expr-and-coerce ctx state env type-env expr expected-ty)]))
 
+(define (lower-owned-handle-type? [ctx : tc_core.TcContext] [ty : ast.AstType]) : bool
+  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+    [(ast.AstType.DynArray _) true]
+    [(ast.AstType.String) true]
+    [_ false]))
+
 (define (lower-struct-get-named
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -47565,14 +47602,18 @@
       (LowerExpr.Expr state ir.CompilerIrValue.Unit (ast.AstType.Unit)))
     (ResultLowerExpr.Ok
       (LowerExpr.Expr
-        (lower-store-inline-value-at-offset
+        (if (lower-owned-handle-type?
           (lower-global-shared-view ctx)
-          state
-          field-ptr
-          0
-          value-ir
-          (lower-global-shared-view field-ir-ty)
-          (lower-type-size ctx field-ir-ty))
+          (lower-global-shared-view field-ir-ty))
+          (lower-store-owned-at-offset state field-ptr 0 value-ir field-ir-ty)
+          (lower-store-inline-value-at-offset
+            (lower-global-shared-view ctx)
+            state
+            field-ptr
+            0
+            value-ir
+            (lower-global-shared-view field-ir-ty)
+            (lower-type-size ctx field-ir-ty)))
         ir.CompilerIrValue.Unit
         (ast.AstType.Unit)))))
 

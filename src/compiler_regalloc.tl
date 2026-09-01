@@ -1810,6 +1810,8 @@
         (compiler-reg-addr-of-result-type))]
     [(ir.CompilerIrInstr.Load dst _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
+    [(ir.CompilerIrInstr.LoadOwned dst _ _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
     [(ir.CompilerIrInstr.Cast dst _ _ to-ty)
       (compiler-reg-var-type-array-set! present types dst to-ty)]
     [(ir.CompilerIrInstr.Bitcast dst _ _ to-ty)
@@ -10886,7 +10888,10 @@
     [(ir.CompilerIrInstr.AddrOf _ _) true]
     [(ir.CompilerIrInstr.Gep _ _ _ _) true]
     [(ir.CompilerIrInstr.Load _ _ _) true]
+    [(ir.CompilerIrInstr.LoadOwned _ _ _ _) true]
     [(ir.CompilerIrInstr.StorePtr _ _ _) true]
+    [(ir.CompilerIrInstr.StoreOwned _ _ _) true]
+    [(ir.CompilerIrInstr.OwnRoot _ _ _) true]
     [(ir.CompilerIrInstr.CopyBytes _ _ _) true]
     [(ir.CompilerIrInstr.Cast _ _ _ _) true]
     [(ir.CompilerIrInstr.Bitcast _ _ _ _) true]
@@ -13629,6 +13634,21 @@
     [(ir.CompilerIrInstr.Phi dst _ _)
       (compiler-reg-invariant-set-at! phi-defs dst 1)]
     [(ir.CompilerIrInstr.StorePtr addr _ ty)
+      (let
+        [element? : bool
+          (match addr
+            [(ir.CompilerIrValue.Var p)
+              (=
+                (compiler-reg-invariant-array-at addr-kinds p)
+                (compiler-reg-invariant-addr-element))]
+            [_ false])]
+        [class : i64 (compiler-reg-invariant-alias-class ty)]
+        (if (and element? (> class 0))
+          (set!
+            (array-ref writes 1)
+            (bit-or (array-ref writes 1) (shl 1 class)))
+          (set! (array-ref writes 0) 1)))]
+    [(ir.CompilerIrInstr.StoreOwned addr _ ty)
       (let
         [element? : bool
           (match addr
@@ -39351,6 +39371,11 @@
         (compiler-reg-global-shared-view roots)
         (compiler-reg-global-shared-view invalid)
         src)]
+    [(ir.CompilerIrInstr.StoreOwned dst src _)
+      (compiler-reg-color-invalidate-value!
+        (compiler-reg-global-shared-view roots)
+        (compiler-reg-global-shared-view invalid)
+        src)]
     [(ir.CompilerIrInstr.BoundsCheck index length _)
       (begin
         (compiler-reg-color-invalidate-value!
@@ -42430,6 +42455,11 @@
         (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
         (compiler-reg-remap-value (compiler-reg-global-shared-view remap) value)
         ty)]
+    [(ir.CompilerIrInstr.OwnRoot dst value ty)
+      (ir.CompilerIrInstr.Mov
+        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
+        (compiler-reg-remap-value (compiler-reg-global-shared-view remap) value)
+        ty)]
     [(ir.CompilerIrInstr.Alloc dst ty)
       (ir.CompilerIrInstr.Alloc
         (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
@@ -42451,7 +42481,20 @@
         (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
         (compiler-reg-remap-value (compiler-reg-global-shared-view remap) src)
         ty)]
+    [(ir.CompilerIrInstr.LoadOwned dst src _ ty)
+      ;; The capability has served its purpose once optimization is complete.
+      ;; Erase it at the SSA-to-home boundary so a home id reused by register
+      ;; allocation can never be mistaken for the original owner identity.
+      (ir.CompilerIrInstr.Load
+        (compiler-reg-remap-id (compiler-reg-global-shared-view remap) dst)
+        (compiler-reg-remap-value (compiler-reg-global-shared-view remap) src)
+        ty)]
     [(ir.CompilerIrInstr.StorePtr ptr value ty)
+      (ir.CompilerIrInstr.StorePtr
+        (compiler-reg-remap-value (compiler-reg-global-shared-view remap) ptr)
+        (compiler-reg-remap-value (compiler-reg-global-shared-view remap) value)
+        ty)]
+    [(ir.CompilerIrInstr.StoreOwned ptr value ty)
       (ir.CompilerIrInstr.StorePtr
         (compiler-reg-remap-value (compiler-reg-global-shared-view remap) ptr)
         (compiler-reg-remap-value (compiler-reg-global-shared-view remap) value)
@@ -44295,10 +44338,23 @@
             ;; A direct allocator home may become a forwarded address at
             ;; emission time, so the address ordinal remains shape-stable.
             1))]
+      [(ir.CompilerIrInstr.LoadOwned dst _ _ ty)
+        (let
+          [value? : bool
+            (and
+              (compiler-reg-register-eligible-type? ty)
+              (not (compiler-reg-scratch-var-register-homed? _assignments dst)))]
+          (if value?
+            2
+            1))]
       [(ir.CompilerIrInstr.StorePtr dst src ty)
         ;; A value home can be invalidated by address forwarding before the
         ;; fused Gep+StorePtr emitter runs. Reserve its staging ordinal even
         ;; when the allocation-time view currently looks direct.
+        (if (compiler-reg-register-eligible-type? ty)
+          2
+          1)]
+      [(ir.CompilerIrInstr.StoreOwned dst src ty)
         (if (compiler-reg-register-eligible-type? ty)
           2
           1)]
@@ -44882,7 +44938,23 @@
         (compiler-reg-scratch-value-registers
           (compiler-reg-global-shared-view assignments)
           src))]
+    [(ir.CompilerIrInstr.LoadOwned dst src _ _)
+      (compiler-reg-id-seq-append
+        (compiler-reg-scratch-location-registers
+          (compiler-reg-global-shared-view assignments)
+          dst)
+        (compiler-reg-scratch-value-registers
+          (compiler-reg-global-shared-view assignments)
+          src))]
     [(ir.CompilerIrInstr.StorePtr dst src _)
+      (compiler-reg-id-seq-append
+        (compiler-reg-scratch-value-registers
+          (compiler-reg-global-shared-view assignments)
+          dst)
+        (compiler-reg-scratch-value-registers
+          (compiler-reg-global-shared-view assignments)
+          src))]
+    [(ir.CompilerIrInstr.StoreOwned dst src _)
       (compiler-reg-id-seq-append
         (compiler-reg-scratch-value-registers
           (compiler-reg-global-shared-view assignments)
@@ -46130,7 +46202,49 @@
         point
         (+ point 1)
         var)]
+    [(ir.CompilerIrInstr.LoadOwned _ _ _ ty)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (if (= ordinal 0)
+          (CompilerRegScratchRole.MemoryAddress)
+          (if (compiler-reg-float-type? (compiler-reg-global-shared-view ty))
+            (CompilerRegScratchRole.FloatMemoryValueXmm)
+            (CompilerRegScratchRole.MemoryValue)))
+        (if (and
+          (> ordinal 0)
+          (compiler-reg-float-type? (compiler-reg-global-shared-view ty)))
+          (compiler-reg-scratch-xmm-constraint
+            (compiler-reg-global-shared-view assignments)
+            instr)
+          (compiler-reg-scratch-memory-constraint
+            (compiler-reg-global-shared-view assignments)
+            instr))
+        point
+        (+ point 1)
+        var)]
     [(ir.CompilerIrInstr.StorePtr _ _ ty)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (if (= ordinal 0)
+          (CompilerRegScratchRole.MemoryAddress)
+          (if (compiler-reg-float-type? (compiler-reg-global-shared-view ty))
+            (CompilerRegScratchRole.FloatMemoryValueXmm)
+            (CompilerRegScratchRole.MemoryValue)))
+        (if (and
+          (> ordinal 0)
+          (compiler-reg-float-type? (compiler-reg-global-shared-view ty)))
+          (compiler-reg-scratch-xmm-constraint
+            (compiler-reg-global-shared-view assignments)
+            instr)
+          (compiler-reg-scratch-memory-constraint
+            (compiler-reg-global-shared-view assignments)
+            instr))
+        point
+        (+ point 1)
+        var)]
+    [(ir.CompilerIrInstr.StoreOwned _ _ ty)
       (CompilerRegScratchRequirement
         point
         ordinal
@@ -46604,11 +46718,13 @@
 (define (compiler-reg-scratch-instr-load? [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.Load _ _ _) true]
+    [(ir.CompilerIrInstr.LoadOwned _ _ _ _) true]
     [_ false]))
 
 (define (compiler-reg-scratch-instr-store-ptr? [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.StorePtr _ _ _) true]
+    [(ir.CompilerIrInstr.StoreOwned _ _ _) true]
     [_ false]))
 
 (define (compiler-reg-scratch-instr-copy-bytes? [instr : ir.CompilerIrInstr]) : bool
@@ -47434,6 +47550,7 @@
   [index : i64]) : i64
   (match instr
     [(ir.CompilerIrInstr.StorePtr _ _ _) 1]
+    [(ir.CompilerIrInstr.StoreOwned _ _ _) 1]
     [_ index]))
 
 (define (compiler-reg-early-scratch-count-seq [instrs : ir.CompilerIrInstrSeq]) : i64
@@ -47549,6 +47666,33 @@
             ;; before the fused group so address/value operands cannot donate
             ;; their home to the StorePtr value scratch that is consumed by the
             ;; same machine store.
+            (CompilerRegScratchRequirement
+              base.point
+              base.ordinal
+              base.role
+              base.constraint
+              (compiler-reg-max 0 (- group-lo 1))
+              base.hi
+              base.var))]
+        [(ir.CompilerIrInstr.StoreOwned _ _ _)
+          (let
+            [base : CompilerRegScratchRequirement
+              (compiler-reg-scratch-requirement
+                type-segment-bases
+                target-abi
+                policy
+                assignment-view
+                var-types
+                (live.compiler-live-set-empty)
+                (compiler-reg-global-shared-view instr)
+                point
+                ordinal
+                var
+                binop-return
+                group-lo
+                group-hi
+                group-excluded
+                memory-address-excluded)]
             (CompilerRegScratchRequirement
               base.point
               base.ordinal
@@ -47689,6 +47833,7 @@
                         (array-ref scratch-weights (+ scratch ordinal))
                         (match instr
                           [(ir.CompilerIrInstr.StorePtr _ _ _) block-weight]
+                          [(ir.CompilerIrInstr.StoreOwned _ _ _) block-weight]
                           [_
                             (if (>= ordinal 2)
                               block-weight

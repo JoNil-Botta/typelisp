@@ -4,7 +4,7 @@
 (import stdlib.io)
 (import stdlib.string)
 
-(define (git-ssh-test-string=? [left : (& left str)] [right : (& right str)]) : bool
+(define (git-ssh-test-string-eq? [left : (& left str)] [right : (& right str)]) : bool
   (let
     [left-length : i64 (string.string-length left)]
     [right-length : i64 (string.string-length right)]
@@ -133,13 +133,13 @@
       (and
         (= (git-ssh-test-syntax-code (& remote.syntax)) syntax-code)
         (= remote.endpoint.has-user (> (string.string-length user) 0))
-        (git-ssh-test-string=? (& remote.endpoint.user) user)
-        (git-ssh-test-string=? (& remote.endpoint.host) host)
+        (git-ssh-test-string-eq? (& remote.endpoint.user) user)
+        (git-ssh-test-string-eq? (& remote.endpoint.host) host)
         (=
           (git-ssh-test-host-kind-code (& remote.endpoint.host-kind))
           host-kind-code)
         (= remote.endpoint.port port)
-        (git-ssh-test-string=? (& remote.path) path)
+        (git-ssh-test-string-eq? (& remote.path) path)
         (= (git-ssh-test-path-kind-code (& remote.path-kind)) path-kind-code)
         (match (git_ssh.git-ssh-upload-pack-command (& remote))
           [(git_ssh.ResultGitSshCommand.Err _) false]
@@ -456,13 +456,13 @@
         (let
           [summary : String (git_ssh.git-ssh-remote-summary (& request.remote))]
           (and
-            (git-ssh-test-string=?
+            (git-ssh-test-string-eq?
               (& request.remote.endpoint.host)
               "example.com")
             (git-ssh-test-command-decodes-to?
               (& request.command)
               "team/repo.git")
-            (git-ssh-test-string=?
+            (git-ssh-test-string-eq?
               (& summary)
               "ssh{syntax=scp,user=git,host=example.com,host-kind=name,port=22,path-kind=relative,path=team/repo.git}")))])
     (match (git_ssh.git-ssh-remote-parse "ssh://user:secret@host/repo")
@@ -470,7 +470,7 @@
       [(git_ssh.ResultGitSshRemote.Err error)
         (let
           [message : String (git_ssh.git-ssh-remote-error-message error)]
-          (git-ssh-test-string=?
+          (git-ssh-test-string-eq?
             (& message)
             "git ssh remote: password-bearing userinfo is forbidden"))])))
 

@@ -221,10 +221,13 @@ Inline stdlib coverage:
   collision behavior, hash range normalization, string edge cases, and
   generated nested struct/enum/tuple/fixed-array hashes. Safety fixtures reject
   floats and nested identity-bearing shapes with component paths.
-- `queue.tl` owns inline tests for the generated `(deque i64)` module API:
+- `queue.tl` owns inline tests for the generated `(deque i64)` module API, and
+  `queue_api.tl` covers supported `String` and move-only aggregate elements:
   capacity clamping, push/pop from both ends through `&mut`, fallback reads,
   wraparound growth, reuse after draining, duplicate generated-module imports,
-  and explicit empty-pop results.
+  and explicit empty-pop results. `queue_cleanup_element_reject.tl` verifies
+  that cleanup-owning elements fail at the macro boundary without partial
+  generated storage diagnostics.
 - `test.tl` owns inline tests for successful assertion helpers, including the
   borrowed `assert-string-eq` path with explicit borrows.
 - `arena.tl` owns inline tests for first-class arena helpers, including safe

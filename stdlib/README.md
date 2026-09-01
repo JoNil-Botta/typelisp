@@ -469,6 +469,9 @@ Vec bang place macros as available yet.
   generated module namespace. Public mutators take a storage place and expand
   to explicit `&mut` `*-ref!` calls; reads take `&`, peeks/get use caller
   fallbacks, and empty pops return `Pop.Empty`.
+  Cleanup-owning element types are rejected at the `queue.deque` request before
+  any partial generated declarations are emitted; scalars, `String`, and
+  move-only aggregates without cleanup metadata remain supported.
   Import the macro with `(import stdlib.queue)`.
 - `random.tl`: deterministic, seeded, non-cryptographic random helpers,
   array/vector/list weighted-index selection for selfhost tools, and an

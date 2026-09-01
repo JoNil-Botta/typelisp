@@ -1424,7 +1424,10 @@
   ;; Bounds plus finite fuel admit that case while cycles still fail closed.
   (if (or (< id 0) (>= id count) (<= fuel 0))
     -1
-    (match (ast-expr-segment-bases-get expr-segment-bases id)
+    ;; The row view is consumed by this match before recursion. This walker
+    ;; never installs, resets, grows, or rewrites an expression pool, so no
+    ;; view survives a generation or exact-row mutation boundary.
+    (match (ast-expr-segment-bases-shared-view expr-segment-bases id)
       [(AstExpr.Spanned inner _)
         (if (or (< inner 0) (>= inner count) (= inner id))
           -1
@@ -11027,11 +11030,13 @@
       [(AstExpr.Spanned inner-id _)
         (ast-expr-unspan-with-segment-bases
           segment-bases
-          (ast-expr-segment-bases-get segment-bases inner-id))]
+          ;; The callee receives the row directly. Neither this frame nor the
+          ;; recursive walk mutates or installs an expression-pool context.
+          (ast-expr-segment-bases-shared-view segment-bases inner-id))]
       [(AstExpr.MacroExpansion inner-id _ _)
         (ast-expr-unspan-with-segment-bases
           segment-bases
-          (ast-expr-segment-bases-get segment-bases inner-id))]
+          (ast-expr-segment-bases-shared-view segment-bases inner-id))]
       [_ fallback])))
 
 (define (ast-decl-tag [decl : AstDecl]) : i64

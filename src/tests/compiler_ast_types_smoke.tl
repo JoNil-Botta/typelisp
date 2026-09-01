@@ -284,6 +284,131 @@
         [_ false])]
     [_ false]))
 
+(define (compiler-ast-expr-int-lit-value? [expr : ast.AstExpr] [expected : i64]) : bool
+  (match expr
+    [(ast.AstExpr.Literal lit)
+      (match lit
+        [(ast.AstLiteral.Int value _) (= value expected)]
+        [_ false])]
+    [_ false]))
+
+;; The stable-segment walkers consume each row view immediately. Exercise the
+;; boundaries that end one view and require a fresh read: exact-row rewrite,
+;; truncation/reuse, and selecting another context with the same numeric ids.
+(define (compiler-ast-stable-expr-row-view-boundaries-smoke?) : bool
+  (let
+    [a : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [b : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [a-literal : i64
+      (ast.ast-node-pool-context-expr-push
+        (owned_view.compiler-owned-shared-view a)
+        (ast.AstExpr.Literal (ast.ast-lit-int 11)))]
+    [a-spanned : i64
+      (ast.ast-node-pool-context-expr-push
+        (owned_view.compiler-owned-shared-view a)
+        (ast.AstExpr.Spanned a-literal (ast.ast-source-span 1 1 1 2)))]
+    [a-macro : i64
+      (ast.ast-node-pool-context-expr-push
+        (owned_view.compiler-owned-shared-view a)
+        (ast.AstExpr.MacroExpansion a-spanned 101 201))]
+    [b-literal : i64
+      (ast.ast-node-pool-context-expr-push
+        (owned_view.compiler-owned-shared-view b)
+        (ast.AstExpr.Literal (ast.ast-lit-int 91)))]
+    [b-spanned : i64
+      (ast.ast-node-pool-context-expr-push
+        (owned_view.compiler-owned-shared-view b)
+        (ast.AstExpr.Spanned b-literal (ast.ast-source-span 2 1 2 2)))]
+    [b-macro : i64
+      (ast.ast-node-pool-context-expr-push
+        (owned_view.compiler-owned-shared-view b)
+        (ast.AstExpr.MacroExpansion b-spanned 102 202))]
+    [a-bases : i64 (ast.ast-node-pool-context-expr-segment-bases (& a))]
+    [b-bases : i64 (ast.ast-node-pool-context-expr-segment-bases (& b))]
+    [initial-ok : bool
+      (and
+        (= a-literal b-literal)
+        (= a-spanned b-spanned)
+        (= a-macro b-macro)
+        (not (= a-bases b-bases))
+        (= (ast.ast-expr-semantic-node-from-bases a-bases 3 a-macro) a-literal)
+        (= (ast.ast-expr-semantic-node-from-bases b-bases 3 b-macro) b-literal)
+        (compiler-ast-expr-int-lit-value?
+          (ast.ast-expr-unspan-with-segment-bases
+            a-bases
+            (ast.ast-node-pool-context-expr-get (& a) a-macro))
+          11)
+        (compiler-ast-expr-int-lit-value?
+          (ast.ast-expr-unspan-with-segment-bases
+            b-bases
+            (ast.ast-node-pool-context-expr-get (& b) b-macro))
+          91))]
+    [_rewrite-inner : unit
+      (ast.ast-node-pool-context-expr-set!
+        (owned_view.compiler-owned-shared-view a)
+        a-literal
+        (ast.AstExpr.Literal (ast.ast-lit-int 12)))]
+    [rewrite-ok : bool
+      (compiler-ast-expr-int-lit-value?
+        (ast.ast-expr-unspan-with-segment-bases
+          (ast.ast-node-pool-context-expr-segment-bases (& a))
+          (ast.ast-node-pool-context-expr-get (& a) a-macro))
+        12)]
+    [mark : i64 (ast.ast-node-pool-context-expr-len a)]
+    [retired-literal : i64
+      (ast.ast-node-pool-context-expr-push
+        (owned_view.compiler-owned-shared-view a)
+        (ast.AstExpr.Literal (ast.ast-lit-int 13)))]
+    [retired-wrapper : i64
+      (ast.ast-node-pool-context-expr-push
+        (owned_view.compiler-owned-shared-view a)
+        (ast.AstExpr.Spanned retired-literal (ast.ast-source-span 3 1 3 2)))]
+    [retired-ok : bool
+      (compiler-ast-expr-int-lit-value?
+        (ast.ast-expr-unspan-with-segment-bases
+          (ast.ast-node-pool-context-expr-segment-bases (& a))
+          (ast.ast-node-pool-context-expr-get (& a) retired-wrapper))
+        13)]
+    [_truncate : unit
+      (ast.ast-node-pool-context-expr-truncate!
+        (owned_view.compiler-owned-shared-view a)
+        mark)]
+    [replacement-literal : i64
+      (ast.ast-node-pool-context-expr-push
+        (owned_view.compiler-owned-shared-view a)
+        (ast.AstExpr.Literal (ast.ast-lit-int 14)))]
+    [replacement-wrapper : i64
+      (ast.ast-node-pool-context-expr-push
+        (owned_view.compiler-owned-shared-view a)
+        (ast.AstExpr.MacroExpansion replacement-literal 103 203))]
+    [reset-ok : bool
+      (and
+        (= replacement-literal retired-literal)
+        (= replacement-wrapper retired-wrapper)
+        (=
+          (ast.ast-expr-semantic-node-from-bases
+            (ast.ast-node-pool-context-expr-segment-bases (& a))
+            (ast.ast-node-pool-context-expr-len a)
+            replacement-wrapper)
+          replacement-literal)
+        (compiler-ast-expr-int-lit-value?
+          (ast.ast-expr-unspan-with-segment-bases
+            (ast.ast-node-pool-context-expr-segment-bases (& a))
+            (ast.ast-node-pool-context-expr-get (& a) replacement-wrapper))
+          14)
+        ;; The unrelated context must retain its own generation and rows.
+        (compiler-ast-expr-int-lit-value?
+          (ast.ast-expr-unspan-with-segment-bases
+            (ast.ast-node-pool-context-expr-segment-bases (& b))
+            (ast.ast-node-pool-context-expr-get (& b) b-macro))
+          91))]
+    (begin
+      (ast.ast-node-pool-context-destroy-storage! a)
+      (ast.ast-node-pool-context-destroy-storage! b)
+      (and initial-ok rewrite-ok retired-ok reset-ok))))
+
 (define (compiler-ast-context-base-arenas-match?
   [pools : (& pools ast.AstNodePoolContext)]) : bool
   (let
@@ -1584,6 +1709,10 @@
         1
         1
         (arena.raw-handle b-arena))]
+    [a-expr-bases-before : i64
+      (ast.ast-node-pool-context-expr-segment-bases (& a))]
+    [b-expr-bases-before : i64
+      (ast.ast-node-pool-context-expr-segment-bases (& b))]
     [expr-index : i64 0]
     [type-index : i64 0]
     [a-last-expr : i64 -1]
@@ -1645,6 +1774,12 @@
             (= (ast.ast-node-pool-context-expr-segment-count b) 2)
             (= (ast.ast-node-pool-context-type-segment-count a) 3)
             (= (ast.ast-node-pool-context-type-segment-count b) 2)
+            (=
+              a-expr-bases-before
+              (ast.ast-node-pool-context-expr-segment-bases (& a)))
+            (=
+              b-expr-bases-before
+              (ast.ast-node-pool-context-expr-segment-bases (& b)))
             (compiler-ast-context-expr-int-lit? a 0 0)
             (compiler-ast-context-expr-int-lit? a 65535 65535)
             (compiler-ast-context-expr-int-lit? a 65536 65536)
@@ -1655,6 +1790,17 @@
             (compiler-ast-maybe-span-start-line?
               (ast.ast-node-pool-context-expr-view-span a a-growth-view)
               31)
+            (=
+              (ast.ast-expr-semantic-node-from-bases
+                a-expr-bases-before
+                (ast.ast-node-pool-context-expr-len a)
+                a-growth-view)
+              a-last-expr)
+            (compiler-ast-expr-int-lit-value?
+              (ast.ast-expr-unspan-with-segment-bases
+                a-expr-bases-before
+                (ast.ast-node-pool-context-expr-get (& a) a-growth-view))
+              131072)
             (match (ast.ast-node-pool-context-type-get a 1024)
               [(ast.AstType.Var name) (= name 1024)]
               [_ false])
@@ -1826,6 +1972,7 @@
     (unless (compiler-ast-generated-path-owner-smoke?) (return 12))
     (unless (compiler-ast-context-owned-arena-smoke?) (return 13))
     (unless (compiler-ast-compaction-borrow-child-smoke?) (return 14))
+    (unless (compiler-ast-stable-expr-row-view-boundaries-smoke?) (return 24))
     (unless
       (compiler-ast-stale-canonical-span-slot-recovery-smoke?)
       (return 20))

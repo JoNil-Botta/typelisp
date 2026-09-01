@@ -40,6 +40,10 @@ data-parallel lowering inside one task. `compile`, `run`, and `build` accept
   additionally vectorize canonical contiguous range-wide scans for i32/i64
   `sum`/`min`/`max` and bool `all`/`any`, carrying the final prefix between
   full gangs and resuming with an in-order scalar tail.
+- `spmd-compact` evaluates a varying predicate over an input range, exposes a
+  checked contiguous output `slot` only to selected bodies, and returns the
+  final cursor. It intentionally uses the same ordered scalar reference in
+  scalar, AVX2, and AVX-512 modes.
 - Masked varying `if` (including nested masks and value-producing selects),
   varying `while` with loop-carried active masks, and varying `match`
   (including AVX2/AVX-512 enum tags and scalar-lane payload bindings) run in the

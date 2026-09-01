@@ -249,8 +249,9 @@ assemble_and_link_windows() {
     fi
     echo "[native-link] link $label with Windows COFF linker (freestanding: no CRT)"
     # Freestanding Win32: the backend emits its own entry (_tl_start) plus
-    # kernel32-backed shims for the CRT-ABI symbols the runtime/stdlib use, so
-    # the binary links against no C runtime (no vcruntime140/ucrt/msvcrt).
+    # kernel32-backed shims for the CRT-ABI symbols the runtime/stdlib use plus
+    # the audited ntdll rooted-filesystem boundary, so the binary links against
+    # no C runtime (no vcruntime140/ucrt/msvcrt).
     # /NODEFAULTLIB keeps link.exe from pulling a default CRT for the entry.
     MSYS2_ARG_CONV_EXCL='*' "$TYPELISP_WINDOWS_LINK_POSIX" \
         /NOLOGO \
@@ -262,7 +263,8 @@ assemble_and_link_windows() {
         /NODEFAULTLIB \
         /DYNAMICBASE:NO \
         "/STACK:$NL_WINDOWS_STACK_RESERVE" \
-        kernel32.lib
+        kernel32.lib \
+        ntdll.lib
 }
 
 assemble_and_link() {

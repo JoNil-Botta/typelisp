@@ -4325,6 +4325,35 @@
               scope
               env
               body))])]
+    [(ast.AstExpr.SpmdCompact payload)
+      (match (__tl-box-place payload)
+        [(ast.AstSpmdCompact.Compact _ _ start end _ _ init keep body)
+          (begin
+            (compiler-semantic-walk-quasiquote-node!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              start)
+            (compiler-semantic-walk-quasiquote-node!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              end)
+            (compiler-semantic-walk-quasiquote-node!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              init)
+            (compiler-semantic-walk-quasiquote-node!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              keep)
+            (compiler-semantic-walk-quasiquote-node!
+              (owned_view.compiler-owned-shared-view state)
+              scope
+              env
+              body))])]
     [(ast.AstExpr.SpmdBroadcast value lane)
       (begin
         (compiler-semantic-walk-quasiquote-node!
@@ -4998,6 +5027,117 @@
         (owned_view.compiler-owned-shared-view state)
         prefix-bound.scope
         prefix-bound.env
+        body-id))))
+
+(define (compiler-semantic-walk-spmd-compact!
+  [state : CompilerSemanticWalkState]
+  [scope : CompilerSemanticBindingSnapshot]
+  [env : tc.TcTypeEnv]
+  [index-name : i64]
+  [index-ty : ast.AstType]
+  [start-id : i64]
+  [end-id : i64]
+  [slot-name : i64]
+  [slot-ty : ast.AstType]
+  [init-id : i64]
+  [keep-id : i64]
+  [body-id : i64]
+  [maybe-span : CompilerSemanticMaybeSpan]) : unit
+  (let
+    [form-start : i64
+      (compiler-semantic-maybe-span-start
+        (owned_view.compiler-owned-shared-view state)
+        maybe-span
+        0)]
+    [start-offset : i64
+      (compiler-semantic-expr-start-offset
+        (owned_view.compiler-owned-shared-view state)
+        start-id
+        (string.string-length state.source))]
+    [index-bound : CompilerSemanticBindResult
+      (compiler-semantic-bind-local!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        index-name
+        CompilerSemanticSymbolKind.Local
+        (ast.AstMaybeType.Some
+          (tc.tc-resolve-type
+            (owned_view.compiler-owned-shared-view state.ctx)
+            (owned_view.compiler-owned-shared-view index-ty)))
+        (compiler-semantic-form-head-end
+          (owned_view.compiler-owned-shared-view state.source)
+          form-start)
+        start-offset)]
+    [init-offset : i64
+      (compiler-semantic-expr-start-offset
+        (owned_view.compiler-owned-shared-view state)
+        init-id
+        (string.string-length state.source))]
+    [slot-bound : CompilerSemanticBindResult
+      (compiler-semantic-bind-local!
+        (owned_view.compiler-owned-shared-view state)
+        index-bound.scope
+        index-bound.env
+        slot-name
+        CompilerSemanticSymbolKind.Local
+        (ast.AstMaybeType.Some
+          (tc.tc-resolve-type
+            (owned_view.compiler-owned-shared-view state.ctx)
+            (owned_view.compiler-owned-shared-view slot-ty)))
+        (compiler-semantic-expr-end-offset
+          (owned_view.compiler-owned-shared-view state)
+          end-id
+          index-bound.next-search)
+        init-offset)]
+    (begin
+      (compiler-semantic-walk-type!
+        (owned_view.compiler-owned-shared-view state)
+        (owned_view.compiler-owned-shared-view index-ty))
+      (compiler-semantic-walk-type!
+        (owned_view.compiler-owned-shared-view state)
+        (owned_view.compiler-owned-shared-view slot-ty))
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        start-id)
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        end-id)
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        init-id)
+      (compiler-semantic-scope-region-add!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        index-bound.scope
+        (compiler-semantic-expr-start-offset
+          (owned_view.compiler-owned-shared-view state)
+          keep-id
+          -1)
+        (compiler-semantic-expr-end-offset
+          (owned_view.compiler-owned-shared-view state)
+          body-id
+          (string.string-length state.source)))
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        index-bound.scope
+        index-bound.env
+        keep-id)
+      (compiler-semantic-scope-node-region-add!
+        (owned_view.compiler-owned-shared-view state)
+        index-bound.scope
+        slot-bound.scope
+        body-id)
+      (compiler-semantic-walk-node!
+        (owned_view.compiler-owned-shared-view state)
+        slot-bound.scope
+        slot-bound.env
         body-id))))
 
 (define (compiler-semantic-walk-set!
@@ -6419,6 +6559,32 @@
             prefix-ty
             init
             value
+            body
+            maybe-span)])]
+    [(ast.AstExpr.SpmdCompact payload)
+      (match (__tl-box-place payload)
+        [(ast.AstSpmdCompact.Compact
+            index
+            index-ty
+            start
+            end
+            slot
+            slot-ty
+            init
+            keep
+            body)
+          (compiler-semantic-walk-spmd-compact!
+            state
+            scope
+            env
+            index
+            index-ty
+            start
+            end
+            slot
+            slot-ty
+            init
+            keep
             body
             maybe-span)])]
     [(ast.AstExpr.SpmdBroadcast value lane)

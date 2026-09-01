@@ -2988,6 +2988,7 @@
     [(ast.AstExpr.Foreach _) "foreach"]
     [(ast.AstExpr.SpmdReduce _) "spmd-reduce"]
     [(ast.AstExpr.SpmdScan _) "spmd-scan"]
+    [(ast.AstExpr.SpmdCompact _) "spmd-compact"]
     [(ast.AstExpr.SpmdBroadcast _ _) "spmd-broadcast"]
     [(ast.AstExpr.SpmdShuffle _ _) "spmd-shuffle"]
     [(ast.AstExpr.SpmdProgramIndex) "program-index"]
@@ -13466,6 +13467,61 @@
                   [(ResultCtfeQuoteExpr.Err diag)
                     (ResultCtfeQuoteExpr.Err diag)])]
               [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr (ctfe-ast-get env start-box)]
+            [end : ast.AstExpr (ctfe-ast-get env end-box)]
+            [init : ast.AstExpr (ctfe-ast-get env init-box)]
+            [keep : ast.AstExpr (ctfe-ast-get env keep-box)]
+            [body : ast.AstExpr (ctfe-ast-get env body-box)]
+            (match (ctfe-quote-expr start env fuel quasiquote)
+              [(ResultCtfeQuoteExpr.Ok quoted-start _ start-fuel)
+                (match (ctfe-quote-expr end env start-fuel quasiquote)
+                  [(ResultCtfeQuoteExpr.Ok quoted-end _ end-fuel)
+                    (match (ctfe-quote-expr init env end-fuel quasiquote)
+                      [(ResultCtfeQuoteExpr.Ok quoted-init _ init-fuel)
+                        (match (ctfe-quote-expr keep env init-fuel quasiquote)
+                          [(ResultCtfeQuoteExpr.Ok quoted-keep _ keep-fuel)
+                            (match (ctfe-quote-expr
+                              body
+                              env
+                              keep-fuel
+                              quasiquote)
+                              [(ResultCtfeQuoteExpr.Ok quoted-body _ body-fuel)
+                                (ResultCtfeQuoteExpr.Ok
+                                  (ast.ast-expr-spmd-compact-id-with-pools
+                                    (ctfe-env-pools env)
+                                    (ctfe-quote-name-id env index)
+                                    index-ty
+                                    quoted-start
+                                    quoted-end
+                                    (ctfe-quote-name-id env slot)
+                                    slot-ty
+                                    quoted-init
+                                    quoted-keep
+                                    quoted-body)
+                                  (ast.AstType.Expr)
+                                  body-fuel)]
+                              [(ResultCtfeQuoteExpr.Err diag)
+                                (ResultCtfeQuoteExpr.Err diag)])]
+                          [(ResultCtfeQuoteExpr.Err diag)
+                            (ResultCtfeQuoteExpr.Err diag)])]
+                      [(ResultCtfeQuoteExpr.Err diag)
+                        (ResultCtfeQuoteExpr.Err diag)])]
+                  [(ResultCtfeQuoteExpr.Err diag)
+                    (ResultCtfeQuoteExpr.Err diag)])]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : ast.AstExpr (ctfe-ast-get env value-box)]
@@ -15138,6 +15194,66 @@
                           (ctfe-env-shared-view (& env))
                           a-value
                           b-value)
+                        (ctfe-expr-eq-in-env env a-body b-body)))])]
+              [_ false]))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            a-index
+            a-index-ty
+            a-start-box
+            a-end-box
+            a-slot
+            a-slot-ty
+            a-init-box
+            a-keep-box
+            a-body-box)
+          (let
+            [a-start : ast.AstExpr (ctfe-ast-get env a-start-box)]
+            [a-end : ast.AstExpr (ctfe-ast-get env a-end-box)]
+            [a-init : ast.AstExpr (ctfe-ast-get env a-init-box)]
+            [a-keep : ast.AstExpr (ctfe-ast-get env a-keep-box)]
+            [a-body : ast.AstExpr (ctfe-ast-get env a-body-box)]
+            (match b
+              [(ast.AstExpr.SpmdCompact compact-box-2)
+                (match (__tl-box-place compact-box-2)
+                  [(ast.AstSpmdCompact.Compact
+                      b-index
+                      b-index-ty
+                      b-start-box
+                      b-end-box
+                      b-slot
+                      b-slot-ty
+                      b-init-box
+                      b-keep-box
+                      b-body-box)
+                    (let
+                      [b-start : ast.AstExpr (ctfe-ast-get env b-start-box)]
+                      [b-end : ast.AstExpr (ctfe-ast-get env b-end-box)]
+                      [b-init : ast.AstExpr (ctfe-ast-get env b-init-box)]
+                      [b-keep : ast.AstExpr (ctfe-ast-get env b-keep-box)]
+                      [b-body : ast.AstExpr (ctfe-ast-get env b-body-box)]
+                      (and
+                        (= a-index b-index)
+                        (ctfe-type-eq-in-env env a-index-ty b-index-ty)
+                        (ctfe-expr-eq-in-env
+                          (ctfe-env-shared-view (& env))
+                          a-start
+                          b-start)
+                        (ctfe-expr-eq-in-env
+                          (ctfe-env-shared-view (& env))
+                          a-end
+                          b-end)
+                        (= a-slot b-slot)
+                        (ctfe-type-eq-in-env env a-slot-ty b-slot-ty)
+                        (ctfe-expr-eq-in-env
+                          (ctfe-env-shared-view (& env))
+                          a-init
+                          b-init)
+                        (ctfe-expr-eq-in-env
+                          (ctfe-env-shared-view (& env))
+                          a-keep
+                          b-keep)
                         (ctfe-expr-eq-in-env env a-body b-body)))])]
               [_ false]))])]
     [(ast.AstExpr.SpmdBroadcast a-value-box a-lane-box)

@@ -842,6 +842,20 @@
     (unsafe
       (ptr-read (int->ptr (cast address : u64) : (Ptr AstSpmdScan))))))
 
+;; Boxed payload for `AstExpr.SpmdCompact`. The compact surface carries the
+;; logical range binding, the selected-output slot binding, its uniform initial
+;; cursor, the predicate, and the selected-only body.
+(defenum AstSpmdCompact
+  (Compact i64 AstType i64 i64 i64 AstType i64 i64 i64))
+
+(define (ast-spmd-compact-box-shared-view [value : (Box AstSpmdCompact)]) : AstSpmdCompact
+  (let
+    [address : i64
+      (unsafe
+        (ptr-read (ptr-cast (ptr-addr-of value) : (Ptr i64))))]
+    (unsafe
+      (ptr-read (int->ptr (cast address : u64) : (Ptr AstSpmdCompact))))))
+
 ;; Boxed payloads for the 104 B AstExpr tier.
 ;; AstExpr.Let inlines AstLetBindingList; AstExpr.SpmdReduce has
 ;; an inline AstType plus six scalars. Boxing both drops the node to 80 B.
@@ -956,6 +970,7 @@
   (Foreach (Box AstForeach))
   (SpmdReduce (Box AstSpmdReduce))
   (SpmdScan (Box AstSpmdScan))
+  (SpmdCompact (Box AstSpmdCompact))
   (SpmdBroadcast i64 i64)
   (SpmdShuffle i64 i64)
   (SpmdProgramIndex)
@@ -7855,6 +7870,32 @@
           value
           body)))))
 
+(define (ast-expr-spmd-compact-id-with-pools
+  [pools : AstNodePoolContext]
+  [index : i64]
+  [index-ty : AstType]
+  [start : i64]
+  [end : i64]
+  [slot : i64]
+  [slot-ty : AstType]
+  [init : i64]
+  [keep : i64]
+  [body : i64]) : i64
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExpr.SpmdCompact
+      (box
+        (AstSpmdCompact.Compact
+          index
+          index-ty
+          start
+          end
+          slot
+          slot-ty
+          init
+          keep
+          body)))))
+
 (define (ast-expr-spmd-broadcast-with-pools
   [pools : AstNodePoolContext]
   [value : i64]
@@ -10312,6 +10353,30 @@
                 (ast-compaction-remap-expr-id remap init)
                 (ast-compaction-remap-expr-id remap value)
                 (ast-compaction-remap-expr-id remap body))))])]
+    [(AstExpr.SpmdCompact payload)
+      (match (__tl-box-place payload)
+        [(AstSpmdCompact.Compact
+            index
+            index-ty
+            start
+            end
+            slot
+            slot-ty
+            init
+            keep
+            body)
+          (AstExpr.SpmdCompact
+            (box
+              (AstSpmdCompact.Compact
+                index
+                (ast-compaction-remap-type remap index-ty)
+                (ast-compaction-remap-expr-id remap start)
+                (ast-compaction-remap-expr-id remap end)
+                slot
+                (ast-compaction-remap-type remap slot-ty)
+                (ast-compaction-remap-expr-id remap init)
+                (ast-compaction-remap-expr-id remap keep)
+                (ast-compaction-remap-expr-id remap body))))])]
     [(AstExpr.SpmdBroadcast value lane)
       (AstExpr.SpmdBroadcast
         (ast-compaction-remap-expr-id remap value)
@@ -10895,6 +10960,7 @@
     [(AstExpr.Comptime _) 27]
     [(AstExpr.SpmdReduce _) 28]
     [(AstExpr.SpmdScan _) 68]
+    [(AstExpr.SpmdCompact _) 82]
     [(AstExpr.SpmdBroadcast _ _) 64]
     [(AstExpr.SpmdShuffle _ _) 71]
     [(AstExpr.SpmdProgramIndex) 69]

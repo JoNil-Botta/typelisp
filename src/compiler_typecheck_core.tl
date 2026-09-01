@@ -3610,6 +3610,39 @@
   (Ok TcResultInfo)
   (Err String))
 
+;; Whether a propagation-style early exit is legal at the queried source
+;; position. The scalar checker uses Allowed; semantic tooling can pass the
+;; SPMD fact it recorded without pretending that an otherwise compatible
+;; carrier makes `(try ...)` legal inside foreach.
+(defenum TcTryEarlyExitContext
+  (TcTryEarlyExitAllowed)
+  (TcTryEarlyExitForbiddenSpmd))
+
+;; Classification is kept in the incompatible result as well as the reason.
+;; A tooling consumer can therefore inspect every carrier identity and payload
+;; that was successfully resolved without repeating the language convention.
+(defenum TcTryCarrierClassification
+  (TcTryCarrier TcResultInfo)
+  (TcTryNotCarrier String))
+
+(defenum TcTryIncompatibility
+  (TcTryOperandNotCarrier String)
+  (TcTryEnclosingReturnNotCarrier String)
+  (TcTryCarrierKindMismatch TcTryKind TcTryKind)
+  (TcTryResidualTypeMismatch ast.AstType ast.AstType)
+  (TcTryEarlyExitForbidden TcTryEarlyExitContext))
+
+(defenum TcTryCompatibility
+  (TcTryCompatible)
+  (TcTryIncompatible TcTryIncompatibility))
+
+(defenum TcTryQueryResult
+  (TcTryQueryCompatible TcResultInfo TcResultInfo)
+  (TcTryQueryIncompatible
+    TcTryCarrierClassification
+    TcTryCarrierClassification
+    TcTryIncompatibility))
+
 (defenum TcMaybeString
   (No)
   (Some String))
@@ -3836,7 +3869,9 @@
 
 (defenum TcSpmdRole
   (Value)
-  (ForeachIndex))
+  (ForeachIndex)
+  (CompactIndex)
+  (CompactSlot))
 
 (defstruct TcSpmdBinding
   (name i64)
@@ -8764,6 +8799,42 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-retired-symbol-rotations : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-expansion-scratch-creations : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-splice-generation-rotations : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-retired-generation-rotations : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-live-symbols-max-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-retired-symbols-max-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-expansion-scratch-max-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-active-generations-max-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-retired-generations-max-bytes : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-stdlib-tlci-catalog-hits : i64
     0))
 (cfg
@@ -9273,6 +9344,15 @@
       (set! compiler-tc-macro-live-reuses 0)
       (set! compiler-tc-macro-live-registry-rebuilds 0)
       (set! compiler-tc-macro-live-registry-reuses 0)
+      (set! compiler-tc-macro-retired-symbol-rotations 0)
+      (set! compiler-tc-macro-expansion-scratch-creations 0)
+      (set! compiler-tc-macro-splice-generation-rotations 0)
+      (set! compiler-tc-macro-retired-generation-rotations 0)
+      (set! compiler-tc-macro-live-symbols-max-bytes 0)
+      (set! compiler-tc-macro-retired-symbols-max-bytes 0)
+      (set! compiler-tc-macro-expansion-scratch-max-bytes 0)
+      (set! compiler-tc-macro-active-generations-max-bytes 0)
+      (set! compiler-tc-macro-retired-generations-max-bytes 0)
       (set! compiler-tc-macro-stdlib-tlci-catalog-hits 0)
       (set! compiler-tc-macro-stdlib-tlci-catalog-misses 0)
       (set! compiler-tc-macro-stdlib-tlci-load-failures 0)
@@ -10117,6 +10197,35 @@
       (compiler-tc-macro-counter-profile-line
         "live_registry_reuses"
         compiler-tc-macro-live-registry-reuses)
+      (compiler-tc-macro-counter-profile-line
+        "retention_retired_symbol_rotations"
+        compiler-tc-macro-retired-symbol-rotations)
+      (compiler-tc-macro-counter-profile-line
+        "retention_expansion_scratch_creations"
+        compiler-tc-macro-expansion-scratch-creations)
+      (compiler-tc-macro-counter-profile-line
+        "retention_active_generation_rotations"
+        (+
+          compiler-tc-walk-decl-generation-rotations
+          compiler-tc-macro-splice-generation-rotations))
+      (compiler-tc-macro-counter-profile-line
+        "retention_retired_generation_rotations"
+        compiler-tc-macro-retired-generation-rotations)
+      (compiler-tc-macro-counter-profile-line
+        "retention_live_symbols_max_bytes"
+        compiler-tc-macro-live-symbols-max-bytes)
+      (compiler-tc-macro-counter-profile-line
+        "retention_retired_symbols_max_bytes"
+        compiler-tc-macro-retired-symbols-max-bytes)
+      (compiler-tc-macro-counter-profile-line
+        "retention_expansion_scratch_max_bytes"
+        compiler-tc-macro-expansion-scratch-max-bytes)
+      (compiler-tc-macro-counter-profile-line
+        "retention_active_generations_max_bytes"
+        compiler-tc-macro-active-generations-max-bytes)
+      (compiler-tc-macro-counter-profile-line
+        "retention_retired_generations_max_bytes"
+        compiler-tc-macro-retired-generations-max-bytes)
       (compiler-tc-macro-counter-profile-line
         "stdlib_tlci_catalog_hits"
         compiler-tc-macro-stdlib-tlci-catalog-hits)
@@ -30174,6 +30283,47 @@
                       true)]
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            _
+            _
+            start-box
+            end-box
+            _
+            _
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases start-box)]
+            [end : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases end-box)]
+            [init : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases init-box)]
+            [keep : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases keep-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            (match (tc-source-expr-triple-spmd-broadcast-scope-ok
+              expr-bases
+              start
+              end
+              init
+              false)
+              [(ResultTcUnit.Ok)
+                (match (tc-source-expr-spmd-broadcast-scope-ok
+                  expr-bases
+                  keep
+                  false)
+                  [(ResultTcUnit.Ok)
+                    (tc-source-expr-spmd-broadcast-scope-ok
+                      expr-bases
+                      body
+                      true)]
+                  [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (if allow
         (let
@@ -30785,6 +30935,55 @@
                           (tc-global-shared-view ctx)
                           expr-bases
                           value)
+                          [(ResultTcUnit.Ok)
+                            (tc-source-expr-policy-ok ctx expr-bases body)]
+                          [(ResultTcUnit.Err message)
+                            (ResultTcUnit.Err message)])]
+                      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+                  [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            _
+            index-ty
+            start-box
+            end-box
+            _
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases start-box)]
+            [end : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases end-box)]
+            [init : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases init-box)]
+            [keep : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases keep-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            (match (tc-source-type-policy-ok
+              (tc-global-shared-view ctx)
+              index-ty)
+              [(ResultTcUnit.Ok)
+                (match (tc-source-type-policy-ok
+                  (tc-global-shared-view ctx)
+                  slot-ty)
+                  [(ResultTcUnit.Ok)
+                    (match (tc-source-expr-triple-policy-ok
+                      (tc-global-shared-view ctx)
+                      expr-bases
+                      start
+                      end
+                      init)
+                      [(ResultTcUnit.Ok)
+                        (match (tc-source-expr-policy-ok
+                          (tc-global-shared-view ctx)
+                          expr-bases
+                          keep)
                           [(ResultTcUnit.Ok)
                             (tc-source-expr-policy-ok ctx expr-bases body)]
                           [(ResultTcUnit.Err message)
@@ -40155,6 +40354,7 @@
     [(ast.AstExpr.Foreach _) true]
     [(ast.AstExpr.SpmdReduce _) true]
     [(ast.AstExpr.SpmdScan _) true]
+    [(ast.AstExpr.SpmdCompact _) true]
     [(ast.AstExpr.WithResource _) true]
     [_ false]))
 
@@ -50554,6 +50754,59 @@
                 (tc-global-shared-view name)
                 index-bound)
               (tc-ref-closure-local-uses-ok? expr-bases body name body-bound)))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            _
+            start-box
+            end-box
+            slot
+            _
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases start-box)]
+            [end : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases end-box)]
+            [init : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases init-box)]
+            [keep : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases keep-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            [index-bound : TcStringList
+              (tc-string-list-add
+                (tc-global-shared-view bound)
+                (tc-env-key-name-text index))]
+            [body-bound : TcStringList
+              (tc-string-list-add
+                (tc-global-shared-view index-bound)
+                (tc-env-key-name-text slot))]
+            (and
+              (tc-ref-closure-local-uses-ok?
+                expr-bases
+                start
+                (tc-global-shared-view name)
+                (tc-global-shared-view bound))
+              (tc-ref-closure-local-uses-ok?
+                expr-bases
+                end
+                (tc-global-shared-view name)
+                (tc-global-shared-view bound))
+              (tc-ref-closure-local-uses-ok?
+                expr-bases
+                init
+                (tc-global-shared-view name)
+                (tc-global-shared-view bound))
+              (tc-ref-closure-local-uses-ok?
+                expr-bases
+                keep
+                (tc-global-shared-view name)
+                index-bound)
+              (tc-ref-closure-local-uses-ok? expr-bases body name body-bound)))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : ast.AstExpr
@@ -51850,7 +52103,7 @@
         spmd-env
         (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [(ast.AstExpr.Var name)
-      (match (tc-spmd-env-lookup-id spmd-env name)
+      (match (tc-spmd-env-lookup-id (tc-global-shared-view spmd-env) name)
         [(TcSpmdLookup.Found _ _ _ role) role]
         [(TcSpmdLookup.Missing) TcSpmdRole.Value])]
     [_ TcSpmdRole.Value]))
@@ -52662,11 +52915,62 @@
         (TcSpmdScope.Local)
         (TcSpmdRole.ForeachIndex))
       true]
+    [(TcSpmdLookup.Found
+        _
+        (TcSpmdClass.Varying)
+        (TcSpmdScope.Local)
+        (TcSpmdRole.CompactIndex))
+      true]
+    [(TcSpmdLookup.Found
+        _
+        (TcSpmdClass.Varying)
+        (TcSpmdScope.Local)
+        (TcSpmdRole.CompactSlot))
+      true]
     [_ false]))
 
-(define (tc-spmd-foreach-index-unsupported) : ResultTcUnit
-  (ResultTcUnit.Err
-    "typecheck: foreach does not support non-contiguous array element destination indexes; use the foreach index plus a uniform offset"))
+(define (tc-spmd-foreach-write-index-var?
+  [spmd-env : TcSpmdEnv]
+  [name-id : i64]) : bool
+  (match (tc-spmd-env-lookup-id spmd-env name-id)
+    [(TcSpmdLookup.Found
+        _
+        (TcSpmdClass.Varying)
+        (TcSpmdScope.Local)
+        (TcSpmdRole.ForeachIndex))
+      true]
+    [(TcSpmdLookup.Found
+        _
+        (TcSpmdClass.Varying)
+        (TcSpmdScope.Local)
+        (TcSpmdRole.CompactSlot))
+      true]
+    [_ false]))
+
+(define (tc-spmd-env-has-compact-slot-at?
+  [bindings : (__tl_dyn-array TcSpmdBinding)]
+  [index : i64]) : bool
+  (if (< index 0)
+    false
+    (match (tc-spmd-binding-at
+      (owned_view.compiler-owned-shared-view bindings)
+      index)
+      [(TcSpmdBinding _ _ _ _ role)
+        (match role
+          [(TcSpmdRole.CompactSlot) true]
+          [_ (tc-spmd-env-has-compact-slot-at? bindings (- index 1))])])))
+
+(define (tc-spmd-env-has-compact-slot? [env : TcSpmdEnv]) : bool
+  (tc-spmd-env-has-compact-slot-at?
+    (tc-spmd-env-bindings (tc-global-shared-view env))
+    (- (tc-spmd-env-len env) 1)))
+
+(define (tc-spmd-foreach-index-unsupported [spmd-env : TcSpmdEnv]) : ResultTcUnit
+  (if (tc-spmd-env-has-compact-slot? (tc-global-shared-view spmd-env))
+    (ResultTcUnit.Err
+      "typecheck: spmd-compact varying array destination indexes must use the compact slot plus a uniform offset")
+    (ResultTcUnit.Err
+      "typecheck: foreach does not support non-contiguous array element destination indexes; use the foreach index plus a uniform offset")))
 
 (define (tc-spmd-foreach-uniform-offset
   [ctx : TcContext]
@@ -52674,12 +52978,12 @@
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr : ast.AstExpr]) : ResultTcUnit
-  (match (tc-spmd-expr ctx expr-bases env spmd-env expr)
+  (match (tc-spmd-expr ctx expr-bases env (tc-global-shared-view spmd-env) expr)
     [(ResultTcSpmdExprInfo.Ok info)
       (match info
         [(TcSpmdExprInfo _ class _)
           (if (tc-spmd-varying? class)
-            (tc-spmd-foreach-index-unsupported)
+            (tc-spmd-foreach-index-unsupported spmd-env)
             ResultTcUnit.Ok)])]
     [(ResultTcSpmdExprInfo.Err message) (ResultTcUnit.Err message)]))
 
@@ -52701,10 +53005,12 @@
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-spmd-foreach-direct-index expr-bases spmd-env inner))]
     [(ast.AstExpr.Var name)
-      (if (tc-spmd-masked-if-index-var? spmd-env name)
+      (if (tc-spmd-foreach-write-index-var?
+        (tc-global-shared-view spmd-env)
+        name)
         ResultTcUnit.Ok
-        (tc-spmd-foreach-index-unsupported))]
-    [_ (tc-spmd-foreach-index-unsupported)]))
+        (tc-spmd-foreach-index-unsupported spmd-env))]
+    [_ (tc-spmd-foreach-index-unsupported spmd-env)]))
 
 (define (tc-spmd-foreach-index
   [ctx : TcContext]
@@ -52770,7 +53076,7 @@
                   spmd-env
                   right)]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-          [_ (tc-spmd-foreach-index-unsupported)]))]
+          [_ (tc-spmd-foreach-index-unsupported spmd-env)]))]
     [_
       (tc-spmd-foreach-direct-index
         expr-bases
@@ -53262,6 +53568,9 @@
         "nested spmd-reduce inside masked branches")]
     [(ast.AstExpr.SpmdScan _)
       (tc-spmd-masked-if-unsupported "nested spmd-scan inside masked branches")]
+    [(ast.AstExpr.SpmdCompact _)
+      (tc-spmd-masked-if-unsupported
+        "nested spmd-compact inside masked branches")]
     [(ast.AstExpr.SpmdBroadcast _ _)
       (tc-spmd-masked-if-unsupported "spmd-broadcast inside masked branches")]
     [(ast.AstExpr.SpmdShuffle _ _)
@@ -54058,6 +54367,9 @@
     [(ast.AstExpr.SpmdScan _)
       (ResultTcUnit.Err
         "typecheck: nested spmd-scan inside spmd-scan is not supported")]
+    [(ast.AstExpr.SpmdCompact _)
+      (ResultTcUnit.Err
+        "typecheck: nested spmd-compact inside spmd-scan is not supported")]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (tc-spmd-scan-body-no-nested-pair
         expr-bases
@@ -54273,6 +54585,77 @@
             (tc-context-job-state (tc-global-shared-view ctx)))
           result)]
       [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
+
+(define (tc-spmd-check-compact
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [index-id : i64]
+  [index-ty : ast.AstType]
+  [slot-id : i64]
+  [slot-ty : ast.AstType]
+  [keep : ast.AstExpr]
+  [body : ast.AstExpr]) : ResultTcUnit
+  (let
+    [index-env : TcTypeEnv
+      (tc-bind-id env index-id (tc-global-shared-view index-ty))]
+    [body-env : TcTypeEnv
+      (tc-bind-id index-env slot-id (tc-global-shared-view slot-ty))]
+    [base-spmd-env : TcSpmdEnv
+      (tc-spmd-env-mark-outer (tc-spmd-env-from-type-env env))]
+    ;; The logical input index may participate in reads and predicates, but it
+    ;; must not authorize compact destination writes. Only the slot receives
+    ;; the dedicated write-index role.
+    [index-spmd-env : TcSpmdEnv
+      (tc-spmd-env-bind-role-id
+        base-spmd-env
+        index-id
+        index-ty
+        TcSpmdClass.Varying
+        TcSpmdScope.Local
+        TcSpmdRole.CompactIndex)]
+    [body-spmd-env : TcSpmdEnv
+      (tc-spmd-env-bind-role-id
+        (tc-global-shared-view index-spmd-env)
+        slot-id
+        slot-ty
+        TcSpmdClass.Varying
+        TcSpmdScope.Local
+        TcSpmdRole.CompactSlot)]
+    [result : ResultTcUnit ResultTcUnit.Ok]
+    (begin
+      (tc-spmd-inline-helper-stack-reset-for-job!
+        (tc-context-job-state (tc-global-shared-view ctx)))
+      (set!
+        result
+        (match (tc-spmd-masked-if-expr
+          (tc-global-shared-view ctx)
+          expr-bases
+          index-env
+          (tc-global-shared-view index-spmd-env)
+          (tc-global-shared-view keep))
+          [(ResultTcUnit.Ok)
+            (match (tc-spmd-expr
+              (tc-global-shared-view ctx)
+              expr-bases
+              index-env
+              (tc-global-shared-view index-spmd-env)
+              keep)
+              [(ResultTcSpmdExprInfo.Ok _)
+                (match (tc-spmd-expr
+                  (tc-global-shared-view ctx)
+                  expr-bases
+                  body-env
+                  body-spmd-env
+                  body)
+                  [(ResultTcSpmdExprInfo.Ok _) ResultTcUnit.Ok]
+                  [(ResultTcSpmdExprInfo.Err message)
+                    (ResultTcUnit.Err message)])]
+              [(ResultTcSpmdExprInfo.Err message) (ResultTcUnit.Err message)])]
+          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
+      (tc-spmd-inline-helper-stack-reset-for-job!
+        (tc-context-job-state (tc-global-shared-view ctx)))
+      result)))
 
 ;; `spmd-reduce` allows varying bool values for `all`/`any`, so it cannot reuse
 ;; the full foreach body checker: that checker applies foreach array-lane
@@ -55573,45 +55956,51 @@
     [(ast.AstExpr.Unsafe exprs)
       (tc-spmd-begin-list ctx expr-bases (tc-enter-unsafe env) spmd-env exprs)]
     [(ast.AstExpr.Set name value-box)
-      (let
-        [value : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
-          (match (tc-dotted-local-field-set-expr-id-after-check
-            (tc-context-structural-session ctx)
-            name
-            value-box)
-            [(ResultTcExprId.Ok virtual-id)
-              (tc-spmd-expr-typed
-                ctx
-                expr-bases
-                env
-                spmd-env
-                (ast.ast-expr-segment-bases-get expr-bases virtual-id)
-                expr-ty)]
-            [(ResultTcExprId.Err message) (ResultTcSpmdExprInfo.Err message)])
-          (match (tc-spmd-expr ctx expr-bases env spmd-env value)
-            [(ResultTcSpmdExprInfo.Ok value-info)
-              (match value-info
-                [(TcSpmdExprInfo _ value-class value-env)
-                  (if (tc-spmd-env-has-local-id?
-                    (tc-global-shared-view value-env)
-                    name)
-                    (tc-spmd-finish
-                      expr-ty
-                      TcSpmdClass.Uniform
-                      (tc-spmd-env-set-local-class-id
-                        value-env
-                        name
-                        value-class))
-                    (if (tc-spmd-env-has-outer-id?
-                      (tc-global-shared-view value-env)
-                      name)
-                      (ResultTcSpmdExprInfo.Err
-                        "typecheck: foreach cannot set binding declared outside foreach")
-                      (tc-spmd-finish expr-ty TcSpmdClass.Uniform value-env)))])]
-            [(ResultTcSpmdExprInfo.Err message)
-              (ResultTcSpmdExprInfo.Err message)])))]
+      (match (tc-spmd-env-lookup-id (tc-global-shared-view spmd-env) name)
+        [(TcSpmdLookup.Found _ _ _ (TcSpmdRole.CompactSlot))
+          (ResultTcSpmdExprInfo.Err
+            "typecheck: spmd-compact slot binding is read-only")]
+        [_
+          (let
+            [value : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases value-box)]
+            (if (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)
+              (match (tc-dotted-local-field-set-expr-id-after-check
+                (tc-context-structural-session ctx)
+                name
+                value-box)
+                [(ResultTcExprId.Ok virtual-id)
+                  (tc-spmd-expr-typed
+                    ctx
+                    expr-bases
+                    env
+                    spmd-env
+                    (ast.ast-expr-segment-bases-get expr-bases virtual-id)
+                    expr-ty)]
+                [(ResultTcExprId.Err message)
+                  (ResultTcSpmdExprInfo.Err message)])
+              (match (tc-spmd-expr ctx expr-bases env spmd-env value)
+                [(ResultTcSpmdExprInfo.Ok value-info)
+                  (match value-info
+                    [(TcSpmdExprInfo _ value-class value-env)
+                      (if (tc-spmd-env-has-local-id?
+                        (tc-global-shared-view value-env)
+                        name)
+                        (tc-spmd-finish
+                          expr-ty
+                          TcSpmdClass.Uniform
+                          (tc-spmd-env-set-local-class-id
+                            value-env
+                            name
+                            value-class))
+                        (if (tc-spmd-env-has-outer-id?
+                          (tc-global-shared-view value-env)
+                          name)
+                          (ResultTcSpmdExprInfo.Err
+                            "typecheck: foreach cannot set binding declared outside foreach")
+                          (tc-spmd-finish expr-ty TcSpmdClass.Uniform value-env)))])]
+                [(ResultTcSpmdExprInfo.Err message)
+                  (ResultTcSpmdExprInfo.Err message)])))])]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
         [(ast.AstMatch.Match scrutinee-box arms)
@@ -55717,6 +56106,9 @@
     [(ast.AstExpr.SpmdScan _)
       (ResultTcSpmdExprInfo.Err
         "typecheck: spmd-scan inside foreach is not supported")]
+    [(ast.AstExpr.SpmdCompact _)
+      (ResultTcSpmdExprInfo.Err
+        "typecheck: spmd-compact inside SPMD is not supported")]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : ast.AstExpr
@@ -56967,6 +57359,59 @@
                 value
                 (tc-global-shared-view name)
                 value-bound)
+              (tc-expr-uses-free-name? expr-bases body name body-bound)))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            _
+            start-box
+            end-box
+            slot
+            _
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases start-box)]
+            [end : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases end-box)]
+            [init : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases init-box)]
+            [keep : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases keep-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            [keep-bound : TcStringList
+              (tc-string-list-add
+                (tc-global-shared-view bound)
+                (tc-env-key-name-text index))]
+            [body-bound : TcStringList
+              (tc-string-list-add
+                (tc-global-shared-view keep-bound)
+                (tc-env-key-name-text slot))]
+            (or
+              (tc-expr-uses-free-name?
+                expr-bases
+                start
+                (tc-global-shared-view name)
+                (tc-global-shared-view bound))
+              (tc-expr-uses-free-name?
+                expr-bases
+                end
+                (tc-global-shared-view name)
+                (tc-global-shared-view bound))
+              (tc-expr-uses-free-name?
+                expr-bases
+                init
+                (tc-global-shared-view name)
+                bound)
+              (tc-expr-uses-free-name?
+                expr-bases
+                keep
+                (tc-global-shared-view name)
+                keep-bound)
               (tc-expr-uses-free-name? expr-bases body name body-bound)))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
@@ -58347,6 +58792,73 @@
                 target-1
                 target-2
                 body-bound)))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            _
+            start-box
+            end-box
+            slot
+            _
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases start-box)]
+            [end : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases end-box)]
+            [init : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases init-box)]
+            [keep : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases keep-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            [keep-bound : TcNameIdList
+              (tc-name-id-list-add
+                bound
+                (tc-env-key-source-id-or-neg session index))]
+            [body-bound : TcNameIdList
+              (tc-name-id-list-add
+                keep-bound
+                (tc-env-key-source-id-or-neg session slot))]
+            (or
+              (tc-expr-uses-free-source-id?
+                session
+                expr-bases
+                start
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                session
+                expr-bases
+                end
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                session
+                expr-bases
+                init
+                target-1
+                target-2
+                bound)
+              (tc-expr-uses-free-source-id?
+                session
+                expr-bases
+                keep
+                target-1
+                target-2
+                keep-bound)
+              (tc-expr-uses-free-source-id?
+                session
+                expr-bases
+                body
+                target-1
+                target-2
+                body-bound)))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : ast.AstExpr
@@ -59475,6 +59987,59 @@
                 (tc-global-shared-view name)
                 value-bound)
               (tc-expr-sets-free-name? expr-bases body name body-bound)))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            _
+            start-box
+            end-box
+            slot
+            _
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases start-box)]
+            [end : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases end-box)]
+            [init : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases init-box)]
+            [keep : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases keep-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            [keep-bound : TcStringList
+              (tc-string-list-add
+                (tc-global-shared-view bound)
+                (tc-env-key-name-text index))]
+            [body-bound : TcStringList
+              (tc-string-list-add
+                (tc-global-shared-view keep-bound)
+                (tc-env-key-name-text slot))]
+            (or
+              (tc-expr-sets-free-name?
+                expr-bases
+                start
+                (tc-global-shared-view name)
+                (tc-global-shared-view bound))
+              (tc-expr-sets-free-name?
+                expr-bases
+                end
+                (tc-global-shared-view name)
+                (tc-global-shared-view bound))
+              (tc-expr-sets-free-name?
+                expr-bases
+                init
+                (tc-global-shared-view name)
+                bound)
+              (tc-expr-sets-free-name?
+                expr-bases
+                keep
+                (tc-global-shared-view name)
+                keep-bound)
+              (tc-expr-sets-free-name? expr-bases body name body-bound)))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : ast.AstExpr
@@ -59926,6 +60491,31 @@
                 value
                 (tc-global-shared-view owners)
                 (tc-global-shared-view value-bound))
+              (tc-expr-result-uses-cleanup-owner?
+                expr-bases
+                body
+                owners
+                body-bound)))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact index _ _ _ slot _ _ keep-box body-box)
+          (let
+            [keep : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases keep-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            [keep-bound : TcStringList
+              (tc-string-list-add bound (tc-env-key-name-text index))]
+            [body-bound : TcStringList
+              (tc-string-list-add
+                (tc-global-shared-view keep-bound)
+                (tc-env-key-name-text slot))]
+            (or
+              (tc-expr-result-uses-cleanup-owner?
+                expr-bases
+                keep
+                (tc-global-shared-view owners)
+                (tc-global-shared-view keep-bound))
               (tc-expr-result-uses-cleanup-owner?
                 expr-bases
                 body
@@ -63434,70 +64024,164 @@
     [(ast.AstType.Enum enum-name)
       (let
         [enum-name-str : String (tc-nominal-name-id-display enum-name)]
+        [enum-ctx : TcContext
+          (tc-context-with-nominal-owner-module-id
+            (tc-global-shared-view ctx)
+            enum-name)]
         (match (tc-context-enum-variants-id
           (tc-global-shared-view ctx)
           enum-name
           enum-name-str)
           [(parser.ResultAstVariantDefList.Ok variants)
-            (tc-result-info-from-variants
-              (tc-global-shared-view ctx)
-              enum-name
-              variants)]
+            (tc-result-info-from-variants enum-ctx enum-name variants)]
           [(parser.ResultAstVariantDefList.Err message)
             (ResultTcResultInfo.Err message)]))]
     [(ast.AstType.EnumArgs enum-name _)
       (let
         [enum-name-str : String (tc-nominal-name-id-display enum-name)]
+        [enum-ctx : TcContext
+          (tc-context-with-nominal-owner-module-id
+            (tc-global-shared-view ctx)
+            enum-name)]
         (match (tc-context-enum-variants-id
           (tc-global-shared-view ctx)
           enum-name
           enum-name-str)
           [(parser.ResultAstVariantDefList.Ok variants)
-            (tc-result-info-from-variants ctx enum-name variants)]
+            (tc-result-info-from-variants enum-ctx enum-name variants)]
           [(parser.ResultAstVariantDefList.Err message)
             (ResultTcResultInfo.Err message)]))]
     [_ (ResultTcResultInfo.Err "typecheck: try requires Result-like enum")]))
 
-(define (tc-try-infos-compatible
+(define (tc-try-classify-carrier [ctx : TcContext] [ty : ast.AstType]) : TcTryCarrierClassification
+  (match (tc-result-info ctx ty)
+    [(ResultTcResultInfo.Ok info) (TcTryCarrier info)]
+    [(ResultTcResultInfo.Err message) (TcTryNotCarrier message)]))
+
+(define (tc-try-compatibility-for-infos
   [operand-info : TcResultInfo]
-  [return-info : TcResultInfo]) : ResultTcUnit
-  (match (tc-result-info-kind (tc-global-shared-view operand-info))
-    [(TcTryResult)
-      (match (tc-result-info-kind (tc-global-shared-view return-info))
-        [(TcTryResult)
-          (tc-expect
-            (tc-result-info-err-type operand-info)
-            (tc-result-info-err-type return-info)
-            "typecheck: try error type mismatch")]
-        [(TcTryOption) (ResultTcUnit.Err "typecheck: try carrier mismatch")])]
-    [(TcTryOption)
-      (match (tc-result-info-kind return-info)
-        [(TcTryOption) ResultTcUnit.Ok]
-        [(TcTryResult) (ResultTcUnit.Err "typecheck: try carrier mismatch")])]))
+  [return-info : TcResultInfo]) : TcTryCompatibility
+  (let
+    [operand-kind : TcTryKind
+      (tc-result-info-kind (tc-global-shared-view operand-info))]
+    [return-kind : TcTryKind
+      (tc-result-info-kind (tc-global-shared-view return-info))]
+    (match operand-kind
+      [(TcTryResult)
+        (match return-kind
+          [(TcTryResult)
+            (let
+              [operand-residual : ast.AstType
+                (tc-result-info-err-type (tc-global-shared-view operand-info))]
+              [return-residual : ast.AstType
+                (tc-result-info-err-type return-info)]
+              (if (tc-type-compatible?
+                (tc-global-shared-view return-residual)
+                (tc-global-shared-view operand-residual))
+                TcTryCompatible
+                (TcTryIncompatible
+                  (TcTryResidualTypeMismatch operand-residual return-residual))))]
+          [(TcTryOption)
+            (TcTryIncompatible
+              (TcTryCarrierKindMismatch operand-kind return-kind))])]
+      [(TcTryOption)
+        (match return-kind
+          [(TcTryOption) TcTryCompatible]
+          [(TcTryResult)
+            (TcTryIncompatible
+              (TcTryCarrierKindMismatch operand-kind return-kind))])])))
+
+(define (tc-try-compatibility-for-classifications
+  [operand : TcTryCarrierClassification]
+  [enclosing-return : TcTryCarrierClassification]
+  [early-exit : TcTryEarlyExitContext]) : TcTryCompatibility
+  (match early-exit
+    [(TcTryEarlyExitForbiddenSpmd)
+      (TcTryIncompatible (TcTryEarlyExitForbidden early-exit))]
+    [(TcTryEarlyExitAllowed)
+      (match (tc-global-shared-view operand)
+        [(TcTryNotCarrier message)
+          (TcTryIncompatible (TcTryOperandNotCarrier message))]
+        [(TcTryCarrier operand-info)
+          (match enclosing-return
+            [(TcTryNotCarrier message)
+              (TcTryIncompatible (TcTryEnclosingReturnNotCarrier message))]
+            [(TcTryCarrier return-info)
+              (tc-try-compatibility-for-infos operand-info return-info)])])]))
+
+;; Read-only semantic query over already-resolved operand/return types. It
+;; performs no expression checking and retains no TcTypeEnv or phase state.
+;; Both successful and unsuccessful results preserve every carrier fact that
+;; could be classified, including exact enum/variant ids and payload types.
+(define (tc-try-query
+  [ctx : TcContext]
+  [operand-ty : ast.AstType]
+  [return-ty : ast.AstType]
+  [early-exit : TcTryEarlyExitContext]) : TcTryQueryResult
+  (let
+    [operand : TcTryCarrierClassification
+      (tc-try-classify-carrier
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view operand-ty))]
+    [enclosing-return : TcTryCarrierClassification
+      (tc-try-classify-carrier
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view return-ty))]
+    (match (tc-try-compatibility-for-classifications
+      (tc-global-shared-view operand)
+      (tc-global-shared-view enclosing-return)
+      (tc-global-shared-view early-exit))
+      [(TcTryCompatible)
+        (match operand
+          [(TcTryCarrier operand-info)
+            (match enclosing-return
+              [(TcTryCarrier return-info)
+                (TcTryQueryCompatible operand-info return-info)]
+              [(TcTryNotCarrier message)
+                (TcTryQueryIncompatible
+                  (TcTryCarrier operand-info)
+                  (TcTryNotCarrier (clone message))
+                  (TcTryEnclosingReturnNotCarrier message))])]
+          [(TcTryNotCarrier message)
+            (TcTryQueryIncompatible
+              (TcTryNotCarrier (clone message))
+              enclosing-return
+              (TcTryOperandNotCarrier message))])]
+      [(TcTryIncompatible reason)
+        (TcTryQueryIncompatible operand enclosing-return reason)])))
+
+(define (tc-try-incompatibility-message [reason : TcTryIncompatibility]) : String
+  (match reason
+    [(TcTryOperandNotCarrier _)
+      "typecheck: try operand must be Result-like enum"]
+    [(TcTryEnclosingReturnNotCarrier _)
+      "typecheck: try requires enclosing Result-like function"]
+    [(TcTryCarrierKindMismatch _ _) "typecheck: try carrier mismatch"]
+    [(TcTryResidualTypeMismatch operand-residual return-residual)
+      (tc-type-mismatch-message
+        operand-residual
+        return-residual
+        "typecheck: try error type mismatch")]
+    [(TcTryEarlyExitForbidden _)
+      "typecheck: try inside foreach is not supported"]))
 
 (define (tc-try-expr [ctx : TcContext] [env : TcTypeEnv] [inner : ast.AstExpr]) : ResultTcType
   (match (tc-expr (tc-global-shared-view ctx) env inner)
     [(ResultTcType.Ok operand-ty)
-      (match (tc-result-info (tc-global-shared-view ctx) operand-ty)
-        [(ResultTcResultInfo.Ok operand-info)
-          (match (tc-current-return-type env)
-            [(ResultTcType.Ok return-ty)
-              (match (tc-result-info (tc-global-shared-view ctx) return-ty)
-                [(ResultTcResultInfo.Ok return-info)
-                  (match (tc-try-infos-compatible
-                    (tc-global-shared-view operand-info)
-                    return-info)
-                    [(ResultTcUnit.Ok)
-                      (ResultTcType.Ok (tc-result-info-ok-type operand-info))]
-                    [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-                [(ResultTcResultInfo.Err _)
-                  (ResultTcType.Err
-                    "typecheck: try requires enclosing Result-like function")])]
-            [(ResultTcType.Err _)
-              (ResultTcType.Err
-                "typecheck: try requires enclosing Result-like function")])]
-        [(ResultTcResultInfo.Err _)
-          (ResultTcType.Err "typecheck: try operand must be Result-like enum")])]
+      (match (tc-current-return-type env)
+        [(ResultTcType.Ok return-ty)
+          (match (tc-try-query
+            (tc-global-shared-view ctx)
+            operand-ty
+            return-ty
+            TcTryEarlyExitAllowed)
+            [(TcTryQueryCompatible operand-info _)
+              (ResultTcType.Ok (tc-result-info-ok-type operand-info))]
+            [(TcTryQueryIncompatible _ _ reason)
+              (ResultTcType.Err (tc-try-incompatibility-message reason))])]
+        [(ResultTcType.Err _)
+          (ResultTcType.Err
+            "typecheck: try requires enclosing Result-like function")])]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
 (define (tc-return-expr
@@ -68139,6 +68823,9 @@
     [(ast.AstExpr.SpmdScan _)
       (ResultTcUnit.Err
         "a nested spmd-scan is not allowed inside a spmd-reduce value expression (SPEC.md 5.15)")]
+    [(ast.AstExpr.SpmdCompact _)
+      (ResultTcUnit.Err
+        "a nested spmd-compact is not allowed inside a spmd-reduce value expression (SPEC.md 5.15)")]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (if in-index
         (ResultTcUnit.Err
@@ -68343,6 +69030,164 @@
             [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])
       (ResultTcType.Err (tc-scan-op-type-msg op)))))
+
+(define (tc-spmd-compact-expr-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [index : i64]
+  [index-ty : ast.AstType]
+  [start-box : i64]
+  [end-box : i64]
+  [slot : i64]
+  [slot-ty : ast.AstType]
+  [init-box : i64]
+  [keep-box : i64]
+  [body-box : i64]) : ResultTcType
+  (let
+    [resolved-index-ty : ast.AstType
+      (tc-resolve-type (tc-global-shared-view ctx) index-ty)]
+    [resolved-slot-ty : ast.AstType
+      (tc-resolve-type (tc-global-shared-view ctx) slot-ty)]
+    (if (= index slot)
+      (ResultTcType.Err
+        "typecheck: spmd-compact index and slot bindings must have distinct names")
+      (match (tc-expect
+        (tc-global-shared-view resolved-index-ty)
+        (ast.AstType.I64)
+        "typecheck: spmd-compact index type must be i64")
+        [(ResultTcUnit.Ok)
+          (match (tc-expect
+            (tc-global-shared-view resolved-slot-ty)
+            (ast.AstType.I64)
+            "typecheck: spmd-compact slot type must be i64")
+            [(ResultTcUnit.Ok)
+              (match (tc-expr-with-expected-or-actual-id
+                (tc-global-shared-view ctx)
+                (tc-global-shared-view env)
+                start-box
+                (ast.AstType.I64))
+                [(ResultTcType.Ok start-ty)
+                  (match (tc-expect
+                    (tc-resolve-type (tc-global-shared-view ctx) start-ty)
+                    (ast.AstType.I64)
+                    "typecheck: spmd-compact start expression must have type i64")
+                    [(ResultTcUnit.Ok)
+                      (match (tc-expr-with-expected-or-actual-id
+                        (tc-global-shared-view ctx)
+                        (tc-global-shared-view env)
+                        end-box
+                        (ast.AstType.I64))
+                        [(ResultTcType.Ok end-ty)
+                          (match (tc-expect
+                            (tc-resolve-type (tc-global-shared-view ctx) end-ty)
+                            (ast.AstType.I64)
+                            "typecheck: spmd-compact end expression must have type i64")
+                            [(ResultTcUnit.Ok)
+                              (match (tc-expr-with-expected-or-actual-id
+                                (tc-global-shared-view ctx)
+                                (tc-global-shared-view env)
+                                init-box
+                                (ast.AstType.I64))
+                                [(ResultTcType.Ok init-ty)
+                                  (match (tc-expect
+                                    (tc-resolve-type
+                                      (tc-global-shared-view ctx)
+                                      init-ty)
+                                    (ast.AstType.I64)
+                                    "typecheck: spmd-compact initial slot must have type i64")
+                                    [(ResultTcUnit.Ok)
+                                      (let
+                                        [index-env : TcTypeEnv
+                                          (tc-bind-id
+                                            (tc-global-shared-view env)
+                                            index
+                                            (tc-global-shared-view
+                                              resolved-index-ty))]
+                                        [body-env : TcTypeEnv
+                                          (tc-bind-id
+                                            (tc-global-shared-view index-env)
+                                            slot
+                                            (tc-global-shared-view
+                                              resolved-slot-ty))]
+                                        [keep : ast.AstExpr
+                                          (tc-context-expr-get
+                                            (tc-global-shared-view ctx)
+                                            keep-box)]
+                                        [body : ast.AstExpr
+                                          (tc-context-expr-get
+                                            (tc-global-shared-view ctx)
+                                            body-box)]
+                                        (match (tc-expr-with-expected-or-actual-id
+                                          (tc-global-shared-view ctx)
+                                          (tc-global-shared-view index-env)
+                                          keep-box
+                                          (ast.AstType.Bool))
+                                          [(ResultTcType.Ok keep-ty)
+                                            (match (tc-expect
+                                              (tc-resolve-type
+                                                (tc-global-shared-view ctx)
+                                                keep-ty)
+                                              (ast.AstType.Bool)
+                                              "typecheck: spmd-compact predicate must have type bool")
+                                              [(ResultTcUnit.Ok)
+                                                (match (tc-expr-id
+                                                  (tc-global-shared-view ctx)
+                                                  (tc-global-shared-view
+                                                    body-env)
+                                                  body-box)
+                                                  [(ResultTcType.Ok body-ty)
+                                                    (match (tc-expect
+                                                      (tc-global-shared-view
+                                                        body-ty)
+                                                      (ast.AstType.Unit)
+                                                      "typecheck: spmd-compact body must be unit")
+                                                      [(ResultTcUnit.Ok)
+                                                        (match (tc-spmd-check-compact
+                                                          (tc-global-shared-view
+                                                            ctx)
+                                                          (tc-context-expr-bases
+                                                            (tc-global-shared-view
+                                                              ctx))
+                                                          (tc-global-shared-view
+                                                            env)
+                                                          index
+                                                          (tc-global-shared-view
+                                                            resolved-index-ty)
+                                                          slot
+                                                          (tc-global-shared-view
+                                                            resolved-slot-ty)
+                                                          (tc-global-shared-view
+                                                            keep)
+                                                          (tc-global-shared-view
+                                                            body))
+                                                          [(ResultTcUnit.Ok)
+                                                            (ResultTcType.Ok
+                                                              (ast.AstType.I64))]
+                                                          [(ResultTcUnit.Err
+                                                              message)
+                                                            (ResultTcType.Err
+                                                              message)])]
+                                                      [(ResultTcUnit.Err
+                                                          message)
+                                                        (ResultTcType.Err
+                                                          message)])]
+                                                  [(ResultTcType.Err message)
+                                                    (ResultTcType.Err message)])]
+                                              [(ResultTcUnit.Err message)
+                                                (ResultTcType.Err message)])]
+                                          [(ResultTcType.Err message)
+                                            (ResultTcType.Err message)]))]
+                                    [(ResultTcUnit.Err message)
+                                      (ResultTcType.Err message)])]
+                                [(ResultTcType.Err message)
+                                  (ResultTcType.Err message)])]
+                            [(ResultTcUnit.Err message)
+                              (ResultTcType.Err message)])]
+                        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+                    [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+                [(ResultTcType.Err message) (ResultTcType.Err message)])]
+            [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+        [(ResultTcUnit.Err message) (ResultTcType.Err message)]))))
 
 (define (tc-ptr-addr-of-expr
   [ctx : TcContext]
@@ -71868,6 +72713,30 @@
                 [(ResultTcType.Err message) (ResultTcType.Err message)])
               (ResultTcType.Err
                 "typecheck: spmd-scan index type must be integer")))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (ast.ast-spmd-compact-box-shared-view compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (tc-spmd-compact-expr-type
+            (tc-global-shared-view ctx)
+            (tc-global-shared-view env)
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (match (tc-expr-with-expected-or-actual-id
         (tc-global-shared-view ctx)
@@ -73601,6 +74470,51 @@
                         template?
                         (tc-global-shared-view index-bound)
                         prefix)
+                      (tc-global-shared-view chain)
+                      (tc-global-shared-view seen)
+                      template?
+                      body)]
+                  [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
+            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact index _ start end slot _ init keep body)
+          (match (tc-comptime-purity-node3-mode
+            (tc-global-shared-view ctx)
+            expr-bases
+            (tc-global-shared-view env)
+            (tc-global-shared-view bound)
+            (tc-global-shared-view chain)
+            (tc-global-shared-view seen)
+            template?
+            start
+            end
+            init)
+            [(ResultTcUnit.Ok)
+              (let
+                [index-bound : TcStringList
+                  (tc-comptime-purity-template-bound
+                    template?
+                    (tc-global-shared-view bound)
+                    index)]
+                (match (tc-comptime-purity-node-mode
+                  (tc-global-shared-view ctx)
+                  expr-bases
+                  (tc-global-shared-view env)
+                  (tc-global-shared-view index-bound)
+                  (tc-global-shared-view chain)
+                  (tc-global-shared-view seen)
+                  template?
+                  keep)
+                  [(ResultTcUnit.Ok)
+                    (tc-comptime-purity-node-mode
+                      (tc-global-shared-view ctx)
+                      expr-bases
+                      (tc-global-shared-view env)
+                      (tc-comptime-purity-template-bound
+                        template?
+                        (tc-global-shared-view index-bound)
+                        slot)
                       (tc-global-shared-view chain)
                       (tc-global-shared-view seen)
                       template?
@@ -79006,6 +79920,40 @@
               (tc-generated-expr-dependent-construct?
                 (tc-global-shared-view ctx)
                 (tc-context-expr-get (tc-global-shared-view ctx) value-id))
+              (tc-generated-expr-dependent-construct?
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) body-id)))])]
+      [(ast.AstExpr.SpmdCompact compact-box)
+        (match (__tl-box-place compact-box)
+          [(ast.AstSpmdCompact.Compact
+              _
+              index-ty
+              start-id
+              end-id
+              _
+              slot-ty
+              init-id
+              keep-id
+              body-id)
+            (or
+              (tc-generated-type-dependent-construct?
+                (tc-global-shared-view ctx)
+                index-ty)
+              (tc-generated-type-dependent-construct?
+                (tc-global-shared-view ctx)
+                slot-ty)
+              (tc-generated-expr-dependent-construct?
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) start-id))
+              (tc-generated-expr-dependent-construct?
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) end-id))
+              (tc-generated-expr-dependent-construct?
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) init-id))
+              (tc-generated-expr-dependent-construct?
+                (tc-global-shared-view ctx)
+                (tc-context-expr-get (tc-global-shared-view ctx) keep-id))
               (tc-generated-expr-dependent-construct?
                 (tc-global-shared-view ctx)
                 (tc-context-expr-get (tc-global-shared-view ctx) body-id)))])]
@@ -86688,6 +87636,71 @@
                         body)]
                     [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
               [(TcMoveResult.Err message) (TcMoveResult.Err message)]))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (ast.ast-spmd-compact-box-shared-view compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (let
+            [keep-env : TcTypeEnv
+              (tc-bind-id
+                (tc-global-shared-view env)
+                index
+                (tc-resolve-type (tc-global-shared-view ctx) index-ty))]
+            [body-env : TcTypeEnv
+              (tc-bind-id
+                (tc-global-shared-view keep-env)
+                slot
+                (tc-resolve-type (tc-global-shared-view ctx) slot-ty))]
+            [keep-locals : TcMovedSet
+              (tc-moved-add
+                (tc-moved-clone (tc-global-shared-view locals))
+                index)]
+            [body-locals : TcMovedSet
+              (tc-moved-add
+                (tc-moved-clone (tc-global-shared-view keep-locals))
+                slot)]
+            (match (tc-move-check-exprs
+              (tc-global-shared-view ctx)
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              (tc-global-shared-view loop-carried)
+              (tc-global-shared-view moved)
+              (ast.ast-expr-cons
+                start-box
+                (ast.ast-expr-cons
+                  end-box
+                  (ast.ast-expr-cons init-box (ast.ast-expr-list-new)))))
+              [(TcMoveResult.Ok outer-moved)
+                (match (tc-move-check-expr-id
+                  (tc-global-shared-view ctx)
+                  expr-bases
+                  (tc-global-shared-view keep-env)
+                  (tc-global-shared-view keep-locals)
+                  (tc-global-shared-view loop-carried)
+                  (tc-global-shared-view outer-moved)
+                  keep-box)
+                  [(TcMoveResult.Ok keep-moved)
+                    (match (tc-move-check-expr-id
+                      (tc-global-shared-view ctx)
+                      expr-bases
+                      body-env
+                      body-locals
+                      (tc-global-shared-view loop-carried)
+                      (tc-global-shared-view keep-moved)
+                      body-box)
+                      [(TcMoveResult.Ok _) (TcMoveResult.Ok keep-moved)]
+                      [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)]))])]
     [(ast.AstExpr.Tuple exprs)
       (match (tc-body-type-fact-expr-list-types
         "move.tuple_list"
@@ -88658,6 +89671,31 @@
                   env
                   locals
                   (tc-name-id-list-add value-shadowed prefix)
+                  moved1
+                  body-box
+                  result-ty)]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)]))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact index _ _ _ slot _ _ keep-box body-box)
+          (let
+            [keep-shadowed : TcNameIdList (tc-name-id-list-add shadowed index)]
+            (match (tc-move-check-global-result-expr-id
+              (tc-global-shared-view ctx)
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              keep-shadowed
+              moved
+              keep-box
+              (tc-global-shared-view result-ty))
+              [(TcMoveResult.Ok moved1)
+                (tc-move-check-global-result-expr-id
+                  ctx
+                  expr-bases
+                  env
+                  locals
+                  (tc-name-id-list-add keep-shadowed slot)
                   moved1
                   body-box
                   result-ty)]
@@ -94389,6 +95427,102 @@
                   [(ResultTcType.Err message) (TcBorrowCheckResult.Err message)])]
               [(TcBorrowCheckResult.Err message)
                 (TcBorrowCheckResult.Err message)]))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (let
+            [keep : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases keep-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            [keep-env : TcTypeEnv
+              (tc-bind-id
+                (tc-global-shared-view env)
+                index
+                (tc-resolve-type (tc-global-shared-view ctx) index-ty))]
+            [body-env : TcTypeEnv
+              (tc-bind-id
+                (tc-global-shared-view keep-env)
+                slot
+                (tc-resolve-type (tc-global-shared-view ctx) slot-ty))]
+            [keep-locals : TcMovedSet
+              (tc-moved-add
+                (tc-moved-clone (tc-global-shared-view locals))
+                index)]
+            [body-locals : TcMovedSet
+              (tc-moved-add
+                (tc-moved-clone (tc-global-shared-view keep-locals))
+                slot)]
+            (match (tc-borrow-check-exprs
+              (tc-global-shared-view ctx)
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              (tc-global-shared-view borrowed)
+              (ast.ast-expr-cons
+                start-box
+                (ast.ast-expr-cons
+                  end-box
+                  (ast.ast-expr-cons init-box (ast.ast-expr-list-new)))))
+              [(TcBorrowCheckResult.Ok outer-borrowed)
+                (let
+                  [keep-entry : TcMovedSet
+                    (tc-borrow-check-remove-root-state
+                      (tc-moved-clone (tc-global-shared-view outer-borrowed))
+                      index)]
+                  (match (tc-borrow-check-expr-loop
+                    (tc-global-shared-view ctx)
+                    expr-bases
+                    (tc-global-shared-view keep-env)
+                    (tc-global-shared-view env)
+                    (tc-global-shared-view keep-locals)
+                    (tc-global-shared-view keep-entry)
+                    keep-entry
+                    keep)
+                    [(TcBorrowCheckResult.Ok keep-borrowed)
+                      (let
+                        [body-entry : TcMovedSet
+                          (tc-borrow-check-remove-root-state
+                            (tc-borrow-check-remove-root-state
+                              (tc-moved-clone
+                                (tc-global-shared-view keep-borrowed))
+                              index)
+                            slot)]
+                        (match (tc-borrow-check-expr-loop
+                          (tc-global-shared-view ctx)
+                          expr-bases
+                          body-env
+                          (tc-global-shared-view env)
+                          body-locals
+                          (tc-global-shared-view body-entry)
+                          body-entry
+                          body)
+                          [(TcBorrowCheckResult.Ok body-borrowed)
+                            (TcBorrowCheckResult.Ok
+                              (tc-borrow-check-loop-visible-body-borrows
+                                (tc-global-shared-view ctx)
+                                (tc-global-shared-view env)
+                                keep-borrowed
+                                (tc-borrow-check-remove-root-state
+                                  (tc-borrow-check-remove-root-state
+                                    body-borrowed
+                                    index)
+                                  slot)))]
+                          [(TcBorrowCheckResult.Err message)
+                            (TcBorrowCheckResult.Err message)]))]
+                    [(TcBorrowCheckResult.Err message)
+                      (TcBorrowCheckResult.Err message)]))]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)]))])]
     [_
       (tc-borrow-check-expr
         ctx
@@ -96966,6 +98100,102 @@
                     (TcBorrowCheckResult.Err message)])]
               [(TcBorrowCheckResult.Err message)
                 (TcBorrowCheckResult.Err message)]))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (let
+            [keep : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases keep-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            [keep-env : TcTypeEnv
+              (tc-bind-id
+                env
+                index
+                (tc-resolve-type (tc-global-shared-view ctx) index-ty))]
+            [body-env : TcTypeEnv
+              (tc-bind-id
+                (tc-global-shared-view keep-env)
+                slot
+                (tc-resolve-type (tc-global-shared-view ctx) slot-ty))]
+            [keep-locals : TcMovedSet
+              (tc-moved-add
+                (tc-moved-clone (tc-global-shared-view locals))
+                index)]
+            [body-locals : TcMovedSet
+              (tc-moved-add
+                (tc-moved-clone (tc-global-shared-view keep-locals))
+                slot)]
+            (match (tc-borrow-check-exprs
+              (tc-global-shared-view ctx)
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              (tc-global-shared-view borrowed)
+              (ast.ast-expr-cons
+                start-box
+                (ast.ast-expr-cons
+                  end-box
+                  (ast.ast-expr-cons init-box (ast.ast-expr-list-new)))))
+              [(TcBorrowCheckResult.Ok outer-borrowed)
+                (let
+                  [keep-entry : TcMovedSet
+                    (tc-borrow-check-remove-root-state
+                      (tc-moved-clone (tc-global-shared-view outer-borrowed))
+                      index)]
+                  (match (tc-borrow-check-expr-loop
+                    (tc-global-shared-view ctx)
+                    expr-bases
+                    (tc-global-shared-view keep-env)
+                    (tc-global-shared-view env)
+                    (tc-global-shared-view keep-locals)
+                    (tc-global-shared-view keep-entry)
+                    keep-entry
+                    keep)
+                    [(TcBorrowCheckResult.Ok keep-borrowed)
+                      (let
+                        [body-entry : TcMovedSet
+                          (tc-borrow-check-remove-root-state
+                            (tc-borrow-check-remove-root-state
+                              (tc-moved-clone
+                                (tc-global-shared-view keep-borrowed))
+                              index)
+                            slot)]
+                        (match (tc-borrow-check-expr-loop
+                          (tc-global-shared-view ctx)
+                          expr-bases
+                          body-env
+                          (tc-global-shared-view env)
+                          body-locals
+                          (tc-global-shared-view body-entry)
+                          body-entry
+                          body)
+                          [(TcBorrowCheckResult.Ok body-borrowed)
+                            (TcBorrowCheckResult.Ok
+                              (tc-borrow-check-loop-visible-body-borrows
+                                (tc-global-shared-view ctx)
+                                (tc-global-shared-view env)
+                                keep-borrowed
+                                (tc-borrow-check-remove-root-state
+                                  (tc-borrow-check-remove-root-state
+                                    body-borrowed
+                                    index)
+                                  slot)))]
+                          [(TcBorrowCheckResult.Err message)
+                            (TcBorrowCheckResult.Err message)]))]
+                    [(TcBorrowCheckResult.Err message)
+                      (TcBorrowCheckResult.Err message)]))]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)]))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : ast.AstExpr
@@ -97981,6 +99211,39 @@
               ctx
               expr-bases
               (ast.ast-expr-segment-bases-get expr-bases body-box)))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            _
+            _
+            start-box
+            end-box
+            _
+            _
+            init-box
+            keep-box
+            body-box)
+          (or
+            (tc-borrow-gate-expr-relevant?
+              (tc-global-shared-view ctx)
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases start-box))
+            (tc-borrow-gate-expr-relevant?
+              (tc-global-shared-view ctx)
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases end-box))
+            (tc-borrow-gate-expr-relevant?
+              (tc-global-shared-view ctx)
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases init-box))
+            (tc-borrow-gate-expr-relevant?
+              (tc-global-shared-view ctx)
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases keep-box))
+            (tc-borrow-gate-expr-relevant?
+              ctx
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases body-box)))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (or
         (tc-borrow-gate-expr-relevant?
@@ -98630,6 +99893,88 @@
   (dotted-macro-journal-exprs (__tl_dyn-array ast.AstExpr))
   (dotted-macro-journal-len i64)
   (dotted-macro-journal-depth i64))
+
+;; Cold compile-profile census of the five independently reclaimed macro owner
+;; classes. Sample only at generation handoffs and the final detach boundary;
+;; allocator hot paths remain unchanged.
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-retention-max [old : i64] [value : i64]) : i64
+    (if (> value old)
+      value
+      old)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-retention-arena-bytes [owner : i64]) : i64
+    (allocation_profile.compiler-allocation-profile-arena-bump-bytes owner)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-retention-sample-symbols! [state : TcMacroState]) : unit
+    (let
+      [live-symbols : i64
+        (compiler-tc-macro-retention-arena-bytes
+          (tc-macro-walk-field state macro-live-symbols-arena))]
+      [retired-symbols : i64
+        (compiler-tc-macro-retention-arena-bytes
+          (tc-macro-walk-field state macro-live-symbols-retired-arena))]
+      (begin
+        (set!
+          compiler-tc-macro-live-symbols-max-bytes
+          (compiler-tc-macro-retention-max
+            compiler-tc-macro-live-symbols-max-bytes
+            live-symbols))
+        (set!
+          compiler-tc-macro-retired-symbols-max-bytes
+          (compiler-tc-macro-retention-max
+            compiler-tc-macro-retired-symbols-max-bytes
+            retired-symbols))))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-retention-sample-generations!
+    [state : TcMacroState]) : unit
+    (let
+      [active-generations : i64
+        (+
+          (compiler-tc-macro-retention-arena-bytes
+            (tc-macro-walk-field state macro-decl-generation-arena))
+          (compiler-tc-macro-retention-arena-bytes
+            (tc-macro-walk-field state macro-splice-generation-arena)))]
+      [retired-generations : i64
+        (+
+          (compiler-tc-macro-retention-arena-bytes
+            (tc-macro-walk-field state macro-decl-generation-retired-arena))
+          (compiler-tc-macro-retention-arena-bytes
+            (tc-macro-walk-field state macro-splice-generation-retired-arena)))]
+      (begin
+        (set!
+          compiler-tc-macro-active-generations-max-bytes
+          (compiler-tc-macro-retention-max
+            compiler-tc-macro-active-generations-max-bytes
+            active-generations))
+        (set!
+          compiler-tc-macro-retired-generations-max-bytes
+          (compiler-tc-macro-retention-max
+            compiler-tc-macro-retired-generations-max-bytes
+            retired-generations))))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-retention-sample! [state : TcMacroState]) : unit
+    (let
+      [scratch : i64
+        (compiler-tc-macro-retention-arena-bytes
+          (tc-macro-walk-field state macro-expand-scratch-arena))]
+      (begin
+        (compiler-tc-macro-retention-sample-symbols! state)
+        (compiler-tc-macro-retention-sample-generations! state)
+        (set!
+          compiler-tc-macro-expansion-scratch-max-bytes
+          (compiler-tc-macro-retention-max
+            compiler-tc-macro-expansion-scratch-max-bytes
+            scratch))))))
 
 (define (tc-macro-walk-state-new) : TcMacroWalkStateData
   (TcMacroWalkStateData
@@ -99551,6 +100896,20 @@
         unit
         (macro-generation-destroy! retired)))))
 
+;; A conservative whole-program rebuild keeps the replaced symbols reachable
+;; while the replacement TcContext, top env, CTFE env, and hygiene state are
+;; assembled. Once that rebuild has completed, every continuing consumer uses
+;; the replacement context and the old registry has no escaping handle. Reclaim
+;; it at that explicit handoff instead of retaining it until macro detach.
+(define (macro-live-symbols-reclaim-retired! [state : TcMacroState]) : unit
+  (let
+    [retired : i64 (tc-macro-walk-field state macro-live-symbols-retired-arena)]
+    (begin
+      (tc-macro-walk-set! state macro-live-symbols-retired-arena 0)
+      (if (= retired 0)
+        unit
+        (macro-generation-destroy! retired)))))
+
 ;; Force the next pass to rebuild the live symbols/registries. Called from the
 ;; decl walk's non-inert splice arm: an arbitrary (potentially shadowing) splice
 ;; may have introduced a name the reused symbols would resolve differently, so
@@ -99725,6 +101084,15 @@
                 state
                 macro-live-symbols-retired-arena
                 previous)
+              (cfg
+                compile-profile
+                (begin
+                  (if (= previous 0)
+                    unit
+                    (set!
+                      compiler-tc-macro-retired-symbol-rotations
+                      (+ compiler-tc-macro-retired-symbol-rotations 1)))
+                  (compiler-tc-macro-retention-sample-symbols! state)))
               (macro-expand-allocation-profile-snapshot! state retired)
               (if (= retired 0)
                 unit
@@ -99932,11 +101300,13 @@
 ;; then grows by the survivors only, and the existing `macro_finalize`
 ;; compaction becomes incremental rather than the sole reclamation point.
 ;;
-;; Two generations, not one: the copy-out reads the generation it is retiring,
-;; and the walk's own step
-;; (`out-rev` prepend, module-id update, path reversal) runs after the copy but
-;; before the next expansion begins. Retiring one behind keeps a whole
-;; declaration boundary of slack over any reader the copy-out cannot see.
+;; One live declaration generation is sufficient at the next rotation boundary:
+;; the copy-out finishes before the expansion returns, and the walk's own step
+;; (`out-rev` prepend, module-id update, path reversal) finishes before the next
+;; expansion can call `macro-decl-generation-enter!`. Thus a previous batch has
+;; no reader when the next batch begins. The splice ring below deliberately keeps
+;; its separate two-generation reset cadence because its caches have a different
+;; proof.
 ;;
 ;; A generation spans a BATCH of firing declarations, not one. The survivor is
 ;; still copied out at every declaration boundary -- that is what makes the
@@ -99980,8 +101350,8 @@
 ;; Use that cadence for enough source-growth headroom that declaration ordering
 ;; cannot immediately move a large batch back across the proportional gate.
 ;;
-;; Retention is bounded by 2 batches, not by the walk. Make `next` the live
-;; generation and destroy the one retired a batch ago.
+;; Retention is bounded by one batch, not by the walk. Make `next` the live
+;; generation and destroy the completed batch at this next-entry handoff.
 ;; `tl_arena_destroy`, never `tl_region_reset`: resetting latches the "reused"
 ;; flag that disables the virgin-arena zero-fill elision permanently for
 ;; everything later allocated in it (#5599). `macro-decl-generation-arena`
@@ -99995,12 +101365,19 @@
     (begin
       (cfg
         compile-profile
-        (set!
-          compiler-tc-walk-decl-generation-rotations
-          (+ compiler-tc-walk-decl-generation-rotations 1)))
+        (begin
+          (compiler-tc-macro-retention-sample-generations! state)
+          (set!
+            compiler-tc-walk-decl-generation-rotations
+            (+ compiler-tc-walk-decl-generation-rotations 1))))
       (tc-macro-walk-set! state macro-decl-generation-arena next)
-      (tc-macro-walk-set! state macro-decl-generation-retired-arena previous)
-      (if (= retired 0)
+      (tc-macro-walk-set! state macro-decl-generation-retired-arena 0)
+      (if (= previous 0)
+        unit
+        (macro-generation-destroy! previous))
+      ;; Drain a legacy/test-injected retired slot without ever publishing two
+      ;; retired owners or destroying the same arena twice.
+      (if (or (= retired 0) (= retired previous))
         unit
         (macro-generation-destroy! retired)))))
 
@@ -100073,6 +101450,18 @@
       (tc-macro-walk-field state macro-splice-generation-retired-arena)]
     [next : i64 (arena.tl_arena_make)]
     (begin
+      (cfg
+        compile-profile
+        (begin
+          (compiler-tc-macro-retention-sample-generations! state)
+          (set!
+            compiler-tc-macro-splice-generation-rotations
+            (+ compiler-tc-macro-splice-generation-rotations 1))
+          (if (= previous 0)
+            unit
+            (set!
+              compiler-tc-macro-retired-generation-rotations
+              (+ compiler-tc-macro-retired-generation-rotations 1)))))
       (tc-macro-walk-set! state macro-splice-generation-arena next)
       (tc-macro-walk-set! state macro-splice-generation-retired-arena previous)
       (if (= retired 0)
@@ -100245,6 +101634,11 @@
       [scratch : i64 (arena.tl_arena_make)]
       (begin
         (tc-macro-walk-set! state macro-expand-scratch-arena scratch)
+        (cfg
+          compile-profile
+          (set!
+            compiler-tc-macro-expansion-scratch-creations
+            (+ compiler-tc-macro-expansion-scratch-creations 1)))
         scratch))
     (tc-macro-walk-field state macro-expand-scratch-arena)))
 
@@ -109935,6 +111329,44 @@
               expr-bases
               body-box
               shared-path?))])]
+    [(ast.AstExpr.SpmdCompact payload)
+      (match (__tl-box-place payload)
+        [(ast.AstSpmdCompact.Compact
+            _
+            _
+            start-box
+            end-box
+            _
+            _
+            init-box
+            keep-box
+            body-box)
+          (begin
+            (macro-hygiene-produced-note-id!
+              (tc-global-shared-view produced)
+              expr-bases
+              start-box
+              shared-path?)
+            (macro-hygiene-produced-note-id!
+              (tc-global-shared-view produced)
+              expr-bases
+              end-box
+              shared-path?)
+            (macro-hygiene-produced-note-id!
+              (tc-global-shared-view produced)
+              expr-bases
+              init-box
+              shared-path?)
+            (macro-hygiene-produced-note-id!
+              (tc-global-shared-view produced)
+              expr-bases
+              keep-box
+              shared-path?)
+            (macro-hygiene-produced-note-id!
+              (tc-global-shared-view produced)
+              expr-bases
+              body-box
+              shared-path?))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (begin
         (macro-hygiene-produced-note-id!
@@ -111903,6 +113335,78 @@
                         expr-bases
                         value
                         value-env
+                        (tc-global-shared-view macro-name)
+                        depth)
+                      (macro-hygiene-expr
+                        expr-bases
+                        body
+                        body-env
+                        (tc-global-shared-view macro-name)
+                        depth))])]))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : i64 start-box]
+            [end : i64 end-box]
+            [init : i64 init-box]
+            [keep : i64 keep-box]
+            [body : i64 body-box]
+            (match (macro-hygiene-bind-name-id
+              (macro-hygiene-env-shared-view env)
+              (tc-global-shared-view macro-name)
+              depth
+              index)
+              [(MacroHygieneName.Name nindex-id keep-env)
+                (match (macro-hygiene-bind-name-id
+                  (tc-global-shared-view keep-env)
+                  (tc-global-shared-view macro-name)
+                  depth
+                  slot)
+                  [(MacroHygieneName.Name nslot-id body-env)
+                    (ast.ast-expr-spmd-compact-id-with-pools
+                      (macro-hygiene-env-pools-shared-view env)
+                      nindex-id
+                      (macro-hygiene-type
+                        index-ty
+                        (macro-hygiene-env-shared-view env)
+                        (tc-global-shared-view macro-name))
+                      (macro-hygiene-expr
+                        expr-bases
+                        start
+                        (macro-hygiene-env-shared-view env)
+                        (tc-global-shared-view macro-name)
+                        depth)
+                      (macro-hygiene-expr
+                        expr-bases
+                        end
+                        (macro-hygiene-env-shared-view env)
+                        (tc-global-shared-view macro-name)
+                        depth)
+                      nslot-id
+                      (macro-hygiene-type
+                        slot-ty
+                        (tc-global-shared-view keep-env)
+                        (tc-global-shared-view macro-name))
+                      (macro-hygiene-expr
+                        expr-bases
+                        init
+                        (macro-hygiene-env-shared-view env)
+                        (tc-global-shared-view macro-name)
+                        depth)
+                      (macro-hygiene-expr
+                        expr-bases
+                        keep
+                        keep-env
                         (tc-global-shared-view macro-name)
                         depth)
                       (macro-hygiene-expr
@@ -114260,11 +115764,62 @@
               state-a
               (tc-global-shared-view empty-program)
               (tc-global-shared-view empty-paths))]
+          [symbols-a-rebuild : csym.ResultCompilerSymbols
+            (macro-live-symbols-build-fresh
+              state-a
+              (tc-global-shared-view empty-program)
+              (tc-global-shared-view empty-paths))]
+          [_reclaim-a-symbols : unit
+            (macro-live-symbols-reclaim-retired! state-a)]
+          [a-rebuild-reclaimed? : bool
+            (and
+              (tc-macro-walk-field state-a macro-live-symbols-ready)
+              (=
+                (tc-macro-walk-field state-a macro-live-symbols-retired-arena)
+                0))]
           [symbols-b : csym.ResultCompilerSymbols
-            (macro-live-symbols-build-fresh state-b empty-program empty-paths)]
+            (macro-live-symbols-build-fresh
+              state-b
+              (tc-global-shared-view empty-program)
+              (tc-global-shared-view empty-paths))]
+          [symbols-b-arena : i64
+            (tc-macro-walk-field state-b macro-live-symbols-arena)]
+          [symbols-b-reused : csym.ResultCompilerSymbols
+            (macro-live-symbols-build-or-reuse!
+              state-b
+              (tc-global-shared-view empty-program)
+              (tc-global-shared-view empty-paths))]
           [decl-arena-a : i64 (macro-decl-generation-enter! state-a)]
+          [decl-arena-a-same : i64 (macro-decl-generation-enter! state-a)]
+          [decl-arena-a-next : i64 (macro-decl-generation-enter! state-a)]
+          [a-decl-rotation-reclaimed? : bool
+            (and
+              (= decl-arena-a decl-arena-a-same)
+              (not (= decl-arena-a decl-arena-a-next))
+              (=
+                (tc-macro-walk-field state-a macro-decl-generation-arena)
+                decl-arena-a-next)
+              (=
+                (tc-macro-walk-field
+                  state-a
+                  macro-decl-generation-retired-arena)
+                0))]
           [decl-arena-b : i64 (macro-decl-generation-enter! state-b)]
           [splice-arena-a : i64 (macro-splice-generation-enter! state-a)]
+          [splice-arena-a-next : i64 (macro-splice-generation-enter! state-a)]
+          [splice-arena-a-third : i64 (macro-splice-generation-enter! state-a)]
+          [a-splice-ring-ok? : bool
+            (and
+              (not (= splice-arena-a splice-arena-a-next))
+              (not (= splice-arena-a-next splice-arena-a-third))
+              (=
+                (tc-macro-walk-field state-a macro-splice-generation-arena)
+                splice-arena-a-third)
+              (=
+                (tc-macro-walk-field
+                  state-a
+                  macro-splice-generation-retired-arena)
+                splice-arena-a-next))]
           [splice-arena-b : i64 (macro-splice-generation-enter! state-b)]
           [enclosing : i64 (arena.tl_arena_current)]
           [_switch-b : unit
@@ -114285,11 +115840,24 @@
                 (match symbols-a
                   [(csym.ResultCompilerSymbols.Ok _) true]
                   [_ false])
+                (match symbols-a-rebuild
+                  [(csym.ResultCompilerSymbols.Ok _) true]
+                  [_ false])
                 (match symbols-b
                   [(csym.ResultCompilerSymbols.Ok _) true]
                   [_ false])
-                (not (= decl-arena-a decl-arena-b))
-                (not (= splice-arena-a splice-arena-b))
+                (match symbols-b-reused
+                  [(csym.ResultCompilerSymbols.Ok _) true]
+                  [_ false])
+                a-rebuild-reclaimed?
+                a-decl-rotation-reclaimed?
+                a-splice-ring-ok?
+                (=
+                  (tc-macro-walk-field state-b macro-live-symbols-arena)
+                  symbols-b-arena)
+                (not (= decl-arena-a-next decl-arena-b))
+                (not (= splice-arena-a-next splice-arena-b))
+                (not (= splice-arena-a-third splice-arena-b))
                 (=
                   (tc-macro-walk-field state-b macro-decl-generation-arena)
                   decl-arena-b)
@@ -126175,6 +127743,35 @@
               (macro-expr-might-fire? state expr-bases init)
               (macro-expr-might-fire? state expr-bases value)
               (macro-expr-might-fire? state expr-bases body)))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            _
+            _
+            start-box
+            end-box
+            _
+            _
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases start-box)]
+            [end : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases end-box)]
+            [init : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases init-box)]
+            [keep : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases keep-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            (or
+              (macro-expr-might-fire? state expr-bases start)
+              (macro-expr-might-fire? state expr-bases end)
+              (macro-expr-might-fire? state expr-bases init)
+              (macro-expr-might-fire? state expr-bases keep)
+              (macro-expr-might-fire? state expr-bases body)))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : ast.AstExpr
@@ -127043,6 +128640,11 @@
                           (tc-global-shared-view next-ctx))
                         (macro-expand-ctfe-env-build-once!
                           (tc-global-shared-view next-ctx))
+                        ;; The replacement context, top env, CTFE env, hygiene
+                        ;; top env, and active pools are now complete. No value
+                        ;; returned to the continuing walk refers to the
+                        ;; replaced symbol/registry generation.
+                        (macro-live-symbols-reclaim-retired! state)
                         (ResultMacroSpliceRebuild.Ok
                           (tc-context-with-module-id next-ctx module module-id)
                           top-env))]
@@ -128926,6 +130528,12 @@
                     (ast.ast-place-shared-view pools)
                     0))
                 (let
+                  [_profile-retention-sample : unit
+                    (cfg
+                      compile-profile
+                      (compiler-tc-macro-retention-sample!
+                        (tc-job-state-macro-state job-state))
+                      unit)]
                   [_profile-lifetime-pre-detach : unit
                     (cfg
                       compile-profile
@@ -128996,12 +130604,21 @@
                   (compiler-tc-tlci-native-stress-pass-finish!
                     (ast.ast-place-shared-view pools)
                     1))
+                ;; A failed walk has no continuing context consumer. A
+                ;; replacement registry that failed during top-env/CTFE setup
+                ;; may still have its predecessor in the retired slot; reclaim
+                ;; that predecessor before publishing the failure boundary.
+                (macro-live-symbols-reclaim-retired!
+                  (tc-job-state-macro-state job-state))
                 (cfg
                   compile-profile
-                  (compiler-tc-macro-lifetime-emit!
-                    (tc-global-shared-view job-state)
-                    (ast.ast-place-shared-view pools)
-                    "macro.pre-detach"))
+                  (begin
+                    (compiler-tc-macro-retention-sample!
+                      (tc-job-state-macro-state job-state))
+                    (compiler-tc-macro-lifetime-emit!
+                      (tc-global-shared-view job-state)
+                      (ast.ast-place-shared-view pools)
+                      "macro.pre-detach")))
                 (macro-expand-allocation-profile-snapshot!
                   (tc-job-state-macro-state job-state)
                   0)

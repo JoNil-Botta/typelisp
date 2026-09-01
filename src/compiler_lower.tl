@@ -3936,6 +3936,14 @@
               (ir.CompilerMaybeSourceSpan.Some span)]
             [(ir.CompilerMaybeSourceSpan.No)
               (lower-expr-id-first-span2 pools value body)])])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact _ _ start end _ _ init keep body)
+          (match (lower-expr-id-first-span3 pools start end init)
+            [(ir.CompilerMaybeSourceSpan.Some span)
+              (ir.CompilerMaybeSourceSpan.Some span)]
+            [(ir.CompilerMaybeSourceSpan.No)
+              (lower-expr-id-first-span2 pools keep body)])])]
     [(ast.AstExpr.SpmdBroadcast value lane)
       (lower-expr-id-first-span2 pools value lane)]
     [(ast.AstExpr.SpmdShuffle value lane)
@@ -11562,6 +11570,105 @@
                         (ResultLowerAstExpr.Err diag)])]
                   [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)])]
               [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr
+              (lower-context-expr-get (lower-global-shared-view ctx) start-box)]
+            [end : ast.AstExpr
+              (lower-context-expr-get (lower-global-shared-view ctx) end-box)]
+            [init : ast.AstExpr
+              (lower-context-expr-get (lower-global-shared-view ctx) init-box)]
+            [keep : ast.AstExpr
+              (lower-context-expr-get (lower-global-shared-view ctx) keep-box)]
+            [body : ast.AstExpr
+              (lower-context-expr-get (lower-global-shared-view ctx) body-box)]
+            (match (lower-spmd-inline-expr
+              (lower-global-shared-view ctx)
+              function-state
+              env
+              type-env
+              start
+              (lower-global-shared-view subst)
+              (lower-global-shared-view shadowed))
+              [(ResultLowerAstExpr.Ok rewritten-start)
+                (match (lower-spmd-inline-expr
+                  (lower-global-shared-view ctx)
+                  function-state
+                  env
+                  type-env
+                  end
+                  (lower-global-shared-view subst)
+                  (lower-global-shared-view shadowed))
+                  [(ResultLowerAstExpr.Ok rewritten-end)
+                    (match (lower-spmd-inline-expr
+                      (lower-global-shared-view ctx)
+                      function-state
+                      env
+                      type-env
+                      init
+                      (lower-global-shared-view subst)
+                      (lower-global-shared-view shadowed))
+                      [(ResultLowerAstExpr.Ok rewritten-init)
+                        (match (lower-spmd-inline-expr
+                          (lower-global-shared-view ctx)
+                          function-state
+                          env
+                          type-env
+                          keep
+                          (lower-global-shared-view subst)
+                          (lower-global-shared-view shadowed))
+                          [(ResultLowerAstExpr.Ok rewritten-keep)
+                            (match (lower-spmd-inline-expr
+                              (lower-global-shared-view ctx)
+                              function-state
+                              env
+                              type-env
+                              body
+                              (lower-global-shared-view subst)
+                              shadowed)
+                              [(ResultLowerAstExpr.Ok rewritten-body)
+                                (ResultLowerAstExpr.Ok
+                                  (ast.AstExpr.SpmdCompact
+                                    (box
+                                      (ast.AstSpmdCompact.Compact
+                                        index
+                                        index-ty
+                                        (lower-context-expr-push
+                                          (lower-global-shared-view ctx)
+                                          rewritten-start)
+                                        (lower-context-expr-push
+                                          (lower-global-shared-view ctx)
+                                          rewritten-end)
+                                        slot
+                                        slot-ty
+                                        (lower-context-expr-push
+                                          (lower-global-shared-view ctx)
+                                          rewritten-init)
+                                        (lower-context-expr-push
+                                          (lower-global-shared-view ctx)
+                                          rewritten-keep)
+                                        (lower-context-expr-push
+                                          (lower-global-shared-view ctx)
+                                          rewritten-body)))))]
+                              [(ResultLowerAstExpr.Err diag)
+                                (ResultLowerAstExpr.Err diag)])]
+                          [(ResultLowerAstExpr.Err diag)
+                            (ResultLowerAstExpr.Err diag)])]
+                      [(ResultLowerAstExpr.Err diag)
+                        (ResultLowerAstExpr.Err diag)])]
+                  [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)])]
+              [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : ast.AstExpr
@@ -13612,6 +13719,55 @@
                     end)
                   init)
                 value)
+              body))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            _
+            _
+            start-box
+            end-box
+            _
+            _
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr
+              (ast.ast-node-pool-context-expr-get pools start-box)]
+            [end : ast.AstExpr
+              (ast.ast-node-pool-context-expr-get pools end-box)]
+            [init : ast.AstExpr
+              (ast.ast-node-pool-context-expr-get pools init-box)]
+            [keep : ast.AstExpr
+              (ast.ast-node-pool-context-expr-get pools keep-box)]
+            [body : ast.AstExpr
+              (ast.ast-node-pool-context-expr-get pools body-box)]
+            (lower-reach-expr
+              (lower-global-shared-view pools)
+              (lower-global-shared-view all-functions)
+              (lower-global-shared-view names)
+              (lower-reach-expr
+                (lower-global-shared-view pools)
+                (lower-global-shared-view all-functions)
+                (lower-global-shared-view names)
+                (lower-reach-expr
+                  (lower-global-shared-view pools)
+                  (lower-global-shared-view all-functions)
+                  (lower-global-shared-view names)
+                  (lower-reach-expr
+                    (lower-global-shared-view pools)
+                    (lower-global-shared-view all-functions)
+                    (lower-global-shared-view names)
+                    (lower-reach-expr
+                      (lower-global-shared-view pools)
+                      (lower-global-shared-view all-functions)
+                      names
+                      state
+                      start)
+                    end)
+                  init)
+                keep)
               body))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
@@ -15989,6 +16145,54 @@
                 init-box)
               (lower-global-shared-view module)
               value-box)
+            (lower-global-shared-view module)
+            body-box)])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (lower-box-shared-view compact-box)
+        [(ast.AstSpmdCompact.Compact
+            _
+            index-ty
+            start-box
+            end-box
+            _
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (lower-used-types-add-expr-id
+            session
+            (lower-global-shared-view pools)
+            (lower-used-types-add-expr-id
+              session
+              (lower-global-shared-view pools)
+              (lower-used-types-add-expr-id
+                session
+                (lower-global-shared-view pools)
+                (lower-used-types-add-expr-id
+                  session
+                  (lower-global-shared-view pools)
+                  (lower-used-types-add-expr-id
+                    session
+                    (lower-global-shared-view pools)
+                    (lower-used-types-add-type
+                      session
+                      (lower-global-shared-view pools)
+                      (lower-used-types-add-type
+                        session
+                        (lower-global-shared-view pools)
+                        used
+                        (lower-global-shared-view module)
+                        index-ty)
+                      (lower-global-shared-view module)
+                      slot-ty)
+                    (lower-global-shared-view module)
+                    start-box)
+                  (lower-global-shared-view module)
+                  end-box)
+                (lower-global-shared-view module)
+                init-box)
+              (lower-global-shared-view module)
+              keep-box)
             (lower-global-shared-view module)
             body-box)])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
@@ -27661,53 +27865,37 @@
     [(ResultLowerExpr.Ok lowered)
       (match lowered
         [(LowerExpr.Expr result-state result-value result-ty)
-          (match (tc_core.tc-result-info
-            (lower-global-shared-view ctx)
-            result-ty)
-            [(tc_core.ResultTcResultInfo.Ok operand-info)
-              (match (tc_core.tc-current-return-type type-env)
-                [(tc_core.ResultTcType.Ok return-ty)
-                  (match (tc_core.tc-result-info
+          (match (tc_core.tc-current-return-type type-env)
+            [(tc_core.ResultTcType.Ok return-ty)
+              (match (tc_core.tc-try-query
+                (lower-global-shared-view ctx)
+                result-ty
+                return-ty
+                tc_core.TcTryEarlyExitAllowed)
+                [(tc_core.TcTryQueryCompatible operand-info return-info)
+                  (lower-try-with-info
                     (lower-global-shared-view ctx)
-                    return-ty)
-                    [(tc_core.ResultTcResultInfo.Ok return-info)
-                      (match (tc_core.tc-try-infos-compatible
-                        (lower-global-shared-view operand-info)
-                        (lower-global-shared-view return-info))
-                        [(tc_core.ResultTcUnit.Ok)
-                          (lower-try-with-info
-                            ctx
-                            result-state
-                            env
-                            type-env
-                            result-value
-                            operand-info
-                            return-info
-                            origin)]
-                        [(tc_core.ResultTcUnit.Err message)
-                          (ResultLowerExpr.Err
-                            (box (lower-diagnostic-at-expr ctx origin message)))])]
-                    [(tc_core.ResultTcResultInfo.Err _)
-                      (ResultLowerExpr.Err
-                        (box
-                          (lower-diagnostic-at-expr
-                            ctx
-                            origin
-                            "typecheck: try requires enclosing Result-like function")))])]
-                [(tc_core.ResultTcType.Err _)
+                    result-state
+                    env
+                    type-env
+                    result-value
+                    operand-info
+                    return-info
+                    origin)]
+                [(tc_core.TcTryQueryIncompatible _ _ reason)
                   (ResultLowerExpr.Err
                     (box
                       (lower-diagnostic-at-expr
                         ctx
                         origin
-                        "typecheck: try requires enclosing Result-like function")))])]
-            [(tc_core.ResultTcResultInfo.Err _)
+                        (tc_core.tc-try-incompatibility-message reason))))])]
+            [(tc_core.ResultTcType.Err _)
               (ResultLowerExpr.Err
                 (box
                   (lower-diagnostic-at-expr
                     ctx
                     origin
-                    "typecheck: try operand must be Result-like enum")))])])]
+                    "typecheck: try requires enclosing Result-like function")))])])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
 (define (lower-top-level-value-defined-id?
@@ -34050,6 +34238,41 @@
               prefix-ty
               init
               value
+              body))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            _
+            start-box
+            end-box
+            slot
+            _
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr
+              (lower-context-expr-get (lower-global-shared-view ctx) start-box)]
+            [end : ast.AstExpr
+              (lower-context-expr-get (lower-global-shared-view ctx) end-box)]
+            [init : ast.AstExpr
+              (lower-context-expr-get (lower-global-shared-view ctx) init-box)]
+            [keep : ast.AstExpr
+              (lower-context-expr-get (lower-global-shared-view ctx) keep-box)]
+            [body : ast.AstExpr
+              (lower-context-expr-get (lower-global-shared-view ctx) body-box)]
+            (lower-spmd-compact
+              (lower-global-shared-view ctx)
+              state
+              (lower-global-shared-view env)
+              type-env
+              index
+              start
+              end
+              slot
+              init
+              keep
               body))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
@@ -50832,6 +51055,179 @@
         init
         scalar-prefix
         body))))
+
+;; `spmd-compact` deliberately has one lowering in every backend mode. Keeping
+;; the scalar reference scaffold here makes the source-order and overflow
+;; contract independent of whichever SIMD lowering happens to be selected for
+;; surrounding code.
+(define (lower-spmd-compact
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [index-id : i64]
+  [start : ast.AstExpr]
+  [end : ast.AstExpr]
+  [slot-id : i64]
+  [init : ast.AstExpr]
+  [keep : ast.AstExpr]
+  [body : ast.AstExpr]) : ResultLowerExpr
+  (let
+    [pools : ast.AstNodePoolContext
+      (tc_core.tc-context-pools (lower-global-shared-view ctx))]
+    [cursor-id : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-spmd-scan-acc-id (lower-global-shared-view state)))]
+    [end-id : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-spmd-scan-end-id (lower-global-shared-view state)))]
+    [zero-id : i64
+      (ast.ast-node-pool-context-expr-push
+        (lower-global-shared-view pools)
+        (ast.AstExpr.Literal (ast.ast-lit-int 0)))]
+    [one-id : i64
+      (ast.ast-node-pool-context-expr-push
+        (lower-global-shared-view pools)
+        (ast.AstExpr.Literal (ast.ast-lit-int 1)))]
+    [unit-id : i64
+      (ast.ast-node-pool-context-expr-push
+        (lower-global-shared-view pools)
+        (ast.AstExpr.Literal ast.AstLiteral.Unit))]
+    [max-id : i64
+      (ast.ast-node-pool-context-expr-push
+        (lower-global-shared-view pools)
+        (ast.AstExpr.Literal (ast.ast-lit-int 9223372036854775807)))]
+    ;; A zero-length fixed-array read is the compiler's existing typed OOB
+    ;; trap expression. It has unit type, so it composes with the unit body and
+    ;; reaches the same runtime abort path as ordinary checked array access.
+    [overflow-trap-id : i64
+      (ast.ast-expr-array-ref-with-pools
+        (lower-global-shared-view pools)
+        (ast.ast-expr-fixed-make-array-with-pools
+          (lower-global-shared-view pools)
+          (ast.AstType.Unit)
+          zero-id)
+        zero-id)]
+    [overflow-check-id : i64
+      (ast.ast-expr-if-with-pools
+        (lower-global-shared-view pools)
+        (ast.ast-expr-binary-with-pools
+          (lower-global-shared-view pools)
+          (ast.AstBinOp.Eq)
+          (ast.ast-node-pool-context-expr-push
+            (lower-global-shared-view pools)
+            (ast.AstExpr.Var slot-id))
+          max-id)
+        overflow-trap-id
+        unit-id)]
+    [selected-id : i64
+      (ast.ast-expr-let-with-pools
+        (lower-global-shared-view pools)
+        (ast.ast-let-binding-cons
+          (ast.ast-let-binding-id
+            slot-id
+            (ast.AstMaybeType.Some (ast.AstType.I64))
+            (ast.ast-node-pool-context-expr-push
+              (lower-global-shared-view pools)
+              (ast.AstExpr.Var cursor-id)))
+          (ast.ast-let-binding-list-new))
+        (ast.ast-node-pool-context-expr-push
+          (lower-global-shared-view pools)
+          (ast.AstExpr.Begin
+            (ast.ast-expr-cons
+              overflow-check-id
+              (ast.ast-expr-cons
+                (ast.ast-node-pool-context-expr-push
+                  (lower-global-shared-view pools)
+                  body)
+                (ast.ast-expr-cons
+                  (ast.ast-expr-set-id-with-pools
+                    (lower-global-shared-view pools)
+                    cursor-id
+                    (ast.ast-expr-binary-with-pools
+                      (lower-global-shared-view pools)
+                      (ast.AstBinOp.Add)
+                      (ast.ast-node-pool-context-expr-push
+                        (lower-global-shared-view pools)
+                        (ast.AstExpr.Var slot-id))
+                      one-id))
+                  (ast.ast-expr-list-new)))))))]
+    [loop-id : i64
+      (ast.ast-expr-while-with-pools
+        (lower-global-shared-view pools)
+        (ast.ast-expr-binary-with-pools
+          (lower-global-shared-view pools)
+          (ast.AstBinOp.Lt)
+          (ast.ast-node-pool-context-expr-push
+            (lower-global-shared-view pools)
+            (ast.AstExpr.Var index-id))
+          (ast.ast-node-pool-context-expr-push
+            (lower-global-shared-view pools)
+            (ast.AstExpr.Var end-id)))
+        (ast.ast-node-pool-context-expr-push
+          (lower-global-shared-view pools)
+          (ast.AstExpr.Begin
+            (ast.ast-expr-cons
+              (ast.ast-expr-if-with-pools
+                (lower-global-shared-view pools)
+                (ast.ast-node-pool-context-expr-push
+                  (lower-global-shared-view pools)
+                  keep)
+                selected-id
+                unit-id)
+              (ast.ast-expr-cons
+                (ast.ast-expr-set-id-with-pools
+                  (lower-global-shared-view pools)
+                  index-id
+                  (ast.ast-expr-binary-with-pools
+                    (lower-global-shared-view pools)
+                    (ast.AstBinOp.Add)
+                    (ast.ast-node-pool-context-expr-push
+                      (lower-global-shared-view pools)
+                      (ast.AstExpr.Var index-id))
+                    one-id))
+                (ast.ast-expr-list-new))))))]
+    [root-id : i64
+      (ast.ast-expr-let-with-pools
+        (lower-global-shared-view pools)
+        (ast.ast-let-binding-cons
+          (ast.ast-let-binding-id
+            index-id
+            (ast.AstMaybeType.Some (ast.AstType.I64))
+            (ast.ast-node-pool-context-expr-push
+              (lower-global-shared-view pools)
+              start))
+          (ast.ast-let-binding-cons
+            (ast.ast-let-binding-id
+              end-id
+              (ast.AstMaybeType.Some (ast.AstType.I64))
+              (ast.ast-node-pool-context-expr-push
+                (lower-global-shared-view pools)
+                end))
+            (ast.ast-let-binding-cons
+              (ast.ast-let-binding-id
+                cursor-id
+                (ast.AstMaybeType.Some (ast.AstType.I64))
+                (ast.ast-node-pool-context-expr-push
+                  (lower-global-shared-view pools)
+                  init))
+              (ast.ast-let-binding-list-new))))
+        (ast.ast-node-pool-context-expr-push
+          (lower-global-shared-view pools)
+          (ast.AstExpr.Begin
+            (ast.ast-expr-cons
+              loop-id
+              (ast.ast-expr-cons
+                (ast.ast-node-pool-context-expr-push
+                  (lower-global-shared-view pools)
+                  (ast.AstExpr.Var cursor-id))
+                (ast.ast-expr-list-new))))))]
+    (lower-expr
+      (lower-global-shared-view ctx)
+      state
+      env
+      type-env
+      (lower-context-expr-get ctx root-id))))
 
 (define (lower-spmd-broadcast
   [ctx : tc_core.TcContext]
@@ -72264,6 +72660,32 @@
               (lower-global-shared-view ctx)
               bindings)
             (lower-rvo-node-has-early-return? ctx body-box))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            _
+            _
+            start-box
+            end-box
+            _
+            _
+            init-box
+            keep-box
+            body-box)
+          (or
+            (lower-rvo-node-has-early-return?
+              (lower-global-shared-view ctx)
+              start-box)
+            (lower-rvo-node-has-early-return?
+              (lower-global-shared-view ctx)
+              end-box)
+            (lower-rvo-node-has-early-return?
+              (lower-global-shared-view ctx)
+              init-box)
+            (lower-rvo-node-has-early-return?
+              (lower-global-shared-view ctx)
+              keep-box)
+            (lower-rvo-node-has-early-return? ctx body-box))])]
     [(ast.AstExpr.Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda _ _ body-box)
@@ -79845,6 +80267,32 @@
             (lower-source-let-bindings-have-import-call?
               (lower-global-shared-view pools)
               bindings)
+            (lower-source-node-has-import-call? pools body-box))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            _
+            _
+            start-box
+            end-box
+            _
+            _
+            init-box
+            keep-box
+            body-box)
+          (or
+            (lower-source-node-has-import-call?
+              (lower-global-shared-view pools)
+              start-box)
+            (lower-source-node-has-import-call?
+              (lower-global-shared-view pools)
+              end-box)
+            (lower-source-node-has-import-call?
+              (lower-global-shared-view pools)
+              init-box)
+            (lower-source-node-has-import-call?
+              (lower-global-shared-view pools)
+              keep-box)
             (lower-source-node-has-import-call? pools body-box))])]
     [(ast.AstExpr.Lambda lambda-box)
       (match (__tl-box-place lambda-box)

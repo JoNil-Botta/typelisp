@@ -348,6 +348,7 @@ assert_lifetime_ledger_in() {
                 if (owners[boundary] * 100 < total[boundary] * 90) exit 1
             }
             if (value["load.handoff|token-storage"] != 0 || value["load.handoff|reader-sexpr-storage"] != 0) exit 1
+            if (value["macro.pre-detach|retired-symbols-registry"] != 0) exit 1
             if (value["macro.lower-handoff|live-symbols-registry"] != 0 || value["macro.lower-handoff|retired-symbols-registry"] != 0 || value["macro.lower-handoff|expansion-pool"] != 0 || value["macro.lower-handoff|active-generation-pools"] != 0 || value["macro.lower-handoff|retired-generation-pools"] != 0) exit 1
         }
     ' "$_lll_file"; then
@@ -1213,6 +1214,23 @@ assert_lifetime_ledger_in \
     "$DETACH_CHANGED_STDERR" \
     "$DETACH_CHANGED_STDOUT" \
     "$DETACH_CHANGED_STDERR"
+for retention_counter in \
+    retention_retired_symbol_rotations \
+    retention_expansion_scratch_creations \
+    retention_active_generation_rotations \
+    retention_retired_generation_rotations \
+    retention_live_symbols_max_bytes \
+    retention_retired_symbols_max_bytes \
+    retention_expansion_scratch_max_bytes \
+    retention_active_generations_max_bytes \
+    retention_retired_generations_max_bytes
+do
+    assert_contains_in \
+        "$DETACH_CHANGED_STDERR" \
+        "compile-profile|typecheck.macro.$retention_counter|" \
+        "$DETACH_CHANGED_STDOUT" \
+        "$DETACH_CHANGED_STDERR"
+done
 
 echo "[compile-profile] verify compile-wide peak survives nested reset"
 if ! "$PROFILE_BIN" run tests/integration/compile_profile_nested_peak_reset.tl \
@@ -1588,6 +1606,28 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
+    assert_lifetime_ledger_in \
+        "$SELFHOST_STDERR" \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    for retention_counter in \
+        retention_retired_symbol_rotations \
+        retention_expansion_scratch_creations \
+        retention_active_generation_rotations \
+        retention_retired_generation_rotations \
+        retention_live_symbols_max_bytes \
+        retention_retired_symbols_max_bytes \
+        retention_expansion_scratch_max_bytes \
+        retention_active_generations_max_bytes \
+        retention_retired_generations_max_bytes
+    do
+        assert_profile_counter_at_least_in \
+            "$SELFHOST_STDERR" \
+            "typecheck.macro.$retention_counter" \
+            1 \
+            "$SELFHOST_STDOUT" \
+            "$SELFHOST_STDERR"
+    done
     SELFHOST_SEGMENT_FILE_FLATTENS=$(profile_counter_value_in \
         "$SELFHOST_STDERR" \
         "typecheck.macro.walk_segment_fallback_file_flattens")
@@ -1805,9 +1845,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     # 4,915,200 capacity, and 157,286,400 physical payload bytes.
     # #6984's package-lock transaction independently crossed the same boundary
     # on its pre-#7133 base (4,850,511 used nodes); their rebased composition
-    # remains pinned to the exact 75-segment capacity below.
+    # remained pinned to the exact 75-segment capacity before #7083.
+    # #7083's spmd-compact surface node and complete compiler walkers cross the
+    # composed graph from 75 to 76 segments: the authoritative Windows CI probe
+    # measured 4,915,346 used nodes, 4,980,736 capacity, and 159,383,552 physical
+    # payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 75 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 76 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking
@@ -1874,8 +1918,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # graph across the next boundary: the authoritative Windows CI probe
     # measured 3,736,675 used nodes, 3,801,088 capacity, and 121,634,816
     # physical payload bytes.
+    # #7083's spmd-compact typechecking and borrow-check walkers cross the
+    # composed graph from 58 to 59 segments: the authoritative Windows CI probe
+    # measured 3,806,383 used nodes, 3,866,624 capacity, and 123,731,968 physical
+    # payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 58 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 59 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain
@@ -1909,6 +1957,10 @@ if [ "$NL_HOST_OS" = windows ]; then
     # Rebasing that cutover over #6843's dense-only instruction sequence surface
     # measures 27,698 used nodes and crosses to 28 segments, 28,672 capacity,
     # and 688,128 physical payload bytes on the authoritative Windows probe.
+    # #7106's admitted NtCreateFile boundary adds the audited Windows ABI types
+    # and stable result taxonomy: the authoritative Windows probe measured
+    # 28,710 used nodes and crossed to 29 segments, 29,696 capacity, and 712,704
+    # physical payload bytes.
     # #5407's semantic completion provider measured 26,662 used nodes and 27
     # segments on the pre-ownership mainline tree.
     assert_selfhost_pool_family \

@@ -38,7 +38,7 @@ contracts for each.
 - **Comptime as the abstraction mechanism.** No source-level generics,
   traits, interfaces, or `impl`; compile-time generation and typed macros
   produce concrete declarations (section 3.7).
-- **SPMD data parallelism.** ISPC-style `foreach`/`spmd-reduce`/`spmd-scan`
+- **SPMD data parallelism.** ISPC-style `foreach`/`spmd-reduce`/`spmd-scan`/`spmd-compact`
   with uniform/varying semantics and scalar-equivalent SIMD lowering
   (section 5.15).
 - **Module identity.** C3-style modules where module identity participates
@@ -4938,12 +4938,28 @@ Reductions and scans are explicit expression forms.
     (set! (array-ref out i) prefix)))
 ```
 
+```lisp test=check name=spmd-compact-positive-i64
+
+(define (compact-positive
+  [xs : (& (Slice i64))]
+  [out : (&mut (Slice i64))]
+  [n : i64]) : i64
+  (spmd-compact
+    ([i : i64 0 n] [slot : i64 0])
+    (> (array-ref xs i) 0)
+    (set! (array-ref out slot) (array-ref xs i))))
+```
+
 Syntax:
 
 - `(spmd-reduce op ([i : i64 start end]) init value)` evaluates to one scalar
   result.
 - `(spmd-scan op ([i : i64 start end] [prefix : T init]) value body)`
   evaluates a range-wide inclusive scan and has type `unit`. `prefix` is
+  visible only in `body`.
+- `(spmd-compact ([i : i64 start end] [slot : i64 init]) keep? body)`
+  filters a logical input range into contiguous output slots and evaluates to
+  the final output cursor. `i` is visible in `keep?` and `body`; `slot` is
   visible only in `body`.
 - `(spmd-broadcast value lane)` evaluates `value` for the selected source
   lane in the current SPMD gang and makes that scalar value available to
@@ -4972,6 +4988,18 @@ Evaluation and empty ranges:
   iteration. The `prefix` binding visible in `body` is the inclusive value
   after combining the current iteration's `value`; `value` and `body` are
   skipped for empty ranges.
+- For `spmd-compact`, `start`, `end`, and `init` are evaluated exactly once in
+  that source order. Logical inputs are visited with `i` increasing from
+  `start` to `end - 1`. `keep?` is evaluated exactly once per logical input.
+  A false predicate skips `body` and leaves the cursor unchanged. A true
+  predicate binds `slot` to `init + selected-before`, evaluates `body` once,
+  then advances the cursor by one. Empty and all-false ranges therefore return
+  `init`; otherwise the result is `init + selected-count`.
+- Before evaluating a selected `spmd-compact` body, the implementation checks
+  that `slot + 1` is representable as `i64`. `slot == 9223372036854775807`
+  traps through the standard bounds-check abort path before any body effect.
+  Unselected inputs do not perform this check, so an all-false range may
+  validly retain the maximum `i64` cursor.
 - Integer `sum` uses the modulo-wrapping integer `+` semantics.
 - `f32` and `f64` `sum` use the ordered scalar `+` semantics of an explicit
   loop in scalar backend modes. SIMD backend modes may use deterministic
@@ -5024,6 +5052,20 @@ Purity and varying rules:
 - `spmd-scan` applies the same purity and index restrictions to `value`.
   `body` must have type `unit` and follows the same side-effect rules as
   `foreach` bodies; nested public SPMD constructs are rejected.
+- `spmd-compact` requires both declared binders and all three bound/seed
+  expressions to have type `i64`; the two binder names must be distinct.
+  `keep?` has type `bool`, may be varying, and follows the ordinary safe SPMD
+  read and expression rules. `body` has type `unit` and follows the `foreach`
+  effect, call, control-flow, and nested-SPMD restrictions.
+- The compact `slot` is a read-only varying binding. Every varying array
+  destination index in `body`, including one propagated through an accepted
+  direct helper, must be exactly `slot`, `slot + uniform`,
+  `uniform + slot`, or `slot - uniform`. The logical input index `i` may be
+  used for ordinary SPMD-safe reads and computation but never proves a compact
+  destination write disjoint. This makes selected output writes contiguous by
+  construction while retaining the normal bounds checks on every write.
+- `spmd-compact` uses its ordered scalar reference lowering in scalar, AVX2,
+  and AVX-512 backend modes; no native SIMD compact path is selected.
 - Reductions by mutating an outer variable inside `foreach` are rejected. Use
   `spmd-reduce` so scalar and SIMD lowering share one explicit accumulator
   contract.
@@ -7803,6 +7845,7 @@ ordered or non-canonical execution; it is not an unsupported fallback.
 | Masked varying `if`, `while`, and scalar/enum `match` | Supported: reference semantics | Supported: native masked gangs | Supported: native masked gangs | Masked-control differential and shape gates, including packed `i8`/`u8` multiplication |
 | `spmd-reduce` | Supported: reference semantics | Supported: native eligible folds; scalar reference for other supported value shapes | Supported: native eligible folds; scalar reference for other supported value shapes | Reduction-matrix and gather-reduce gates; direct byte-product results receive the specified unsupported sum-result type diagnostic |
 | `spmd-scan` | Supported: reference semantics | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | AVX2 and AVX-512 prefix-shape gates |
+| `spmd-compact` | Supported: ordered scalar reference | Supported: ordered scalar reference | Supported: ordered scalar reference | Cross-mode runtime, overflow-order, and destination-proof gates |
 | `spmd-broadcast` | Supported: one-lane reference | Supported: gang-width semantics | Supported: gang-width semantics | `scripts/verify-spmd-broadcast.sh` |
 | `spmd-shuffle` | Supported: one-lane reference | Supported: native numeric permutations | Supported: native numeric permutations | Shuffle differential, trap, and shape gates |
 | `program-index` / `program-count` | Supported: `0` / `1` | Supported: backend gang identity | Supported: backend gang identity | `scripts/verify-spmd-lane-identity.sh` |
@@ -8595,6 +8638,7 @@ expr          ::= literal
                 | "(" "cfg" cfg-predicate expr [expr] ")"
                 | "(" "spmd-reduce" reduce-op foreach-clause expr expr ")"
                 | "(" "spmd-scan" reduce-op scan-clause expr expr ")"
+                | "(" "spmd-compact" compact-clause expr expr ")"
                 | "(" "spmd-broadcast" expr expr ")"
                 | "(" "spmd-shuffle" expr expr ")"
                 | "(" spmd-lane-form ")"
@@ -8662,6 +8706,8 @@ for-binding   ::= "[" ident [":" type] expr "]"
 foreach-clause ::= "(" "[" ident ":" type expr expr "]" ")"
 scan-clause   ::= "(" "[" ident ":" type expr expr "]"
                       "[" ident ":" type expr "]" ")"
+compact-clause ::= "(" "[" ident ":" type expr expr "]"
+                         "[" ident ":" type expr "]" ")"
 reduce-op     ::= "sum" | "min" | "max" | "all" | "any"
 spmd-lane-form ::= "program-index" | "program-count"
 match-arm     ::= "[" pattern expr "]"

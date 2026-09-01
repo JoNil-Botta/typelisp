@@ -1889,6 +1889,37 @@
                     session
                     end
                     (tltest-reach-mark-expr session start names))))))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            _
+            _
+            start-box
+            end-box
+            _
+            _
+            init-box
+            keep-box
+            body-box)
+          (let
+            [start : ast.AstExpr (ast.ast-node-get start-box)]
+            [end : ast.AstExpr (ast.ast-node-get end-box)]
+            [init : ast.AstExpr (ast.ast-node-get init-box)]
+            [keep : ast.AstExpr (ast.ast-node-get keep-box)]
+            [body : ast.AstExpr (ast.ast-node-get body-box)]
+            (tltest-reach-mark-expr
+              session
+              body
+              (tltest-reach-mark-expr
+                session
+                keep
+                (tltest-reach-mark-expr
+                  session
+                  init
+                  (tltest-reach-mark-expr
+                    session
+                    end
+                    (tltest-reach-mark-expr session start names))))))])]
     [(ast.AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : ast.AstExpr (ast.ast-node-get value-box)]

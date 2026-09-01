@@ -8535,6 +8535,89 @@
                         alias
                         summary
                         body-locals)))))))])]
+    [(ast.AstExpr.SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(ast.AstSpmdCompact.Compact
+            index
+            index-ty
+            start
+            end
+            slot
+            slot-ty
+            init
+            keep
+            body)
+          (let
+            [keep-locals : sym_i64_env.SymI64Env
+              (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
+                state)
+                (compiler-load-session-state-lazy-demand-bind-local-exhaustive
+                  state
+                  (sym_i64_env.sym-i64-shared-view (& locals))
+                  index)
+                (sym_i64_env.sym-i64-bind-id
+                  (sym_i64_env.sym-i64-shared-view (& locals))
+                  index
+                  1))]
+            [body-locals : sym_i64_env.SymI64Env
+              (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
+                state)
+                (compiler-load-session-state-lazy-demand-bind-local-exhaustive
+                  state
+                  (sym_i64_env.sym-i64-shared-view (& keep-locals))
+                  slot)
+                (sym_i64_env.sym-i64-bind-id
+                  (sym_i64_env.sym-i64-shared-view (& keep-locals))
+                  slot
+                  1))]
+            (compiler-load-lazy-alias-demand-merge
+              (compiler-load-session-state-lazy-type-demand
+                (compiler-load-session-state-shared-view (& state))
+                index-ty
+                alias
+                (ast.ast-place-shared-view summary)
+                (sym_i64_env.sym-i64-shared-view (& locals)))
+              (compiler-load-lazy-alias-demand-merge
+                (compiler-load-session-state-lazy-type-demand
+                  (compiler-load-session-state-shared-view (& state))
+                  slot-ty
+                  alias
+                  (ast.ast-place-shared-view summary)
+                  (sym_i64_env.sym-i64-shared-view (& locals)))
+                (compiler-load-lazy-alias-demand-merge
+                  (compiler-load-session-state-lazy-expr-demand
+                    (compiler-load-session-state-shared-view (& state))
+                    (ast.ast-node-get start)
+                    alias
+                    (ast.ast-place-shared-view summary)
+                    (sym_i64_env.sym-i64-shared-view (& locals)))
+                  (compiler-load-lazy-alias-demand-merge
+                    (compiler-load-session-state-lazy-expr-demand
+                      (compiler-load-session-state-shared-view (& state))
+                      (ast.ast-node-get end)
+                      alias
+                      (ast.ast-place-shared-view summary)
+                      (sym_i64_env.sym-i64-shared-view (& locals)))
+                    (compiler-load-lazy-alias-demand-merge
+                      (compiler-load-session-state-lazy-expr-demand
+                        (compiler-load-session-state-shared-view (& state))
+                        (ast.ast-node-get init)
+                        alias
+                        (ast.ast-place-shared-view summary)
+                        (sym_i64_env.sym-i64-shared-view (& locals)))
+                      (compiler-load-lazy-alias-demand-merge
+                        (compiler-load-session-state-lazy-expr-demand
+                          (compiler-load-session-state-shared-view (& state))
+                          (ast.ast-node-get keep)
+                          alias
+                          (ast.ast-place-shared-view summary)
+                          (sym_i64_env.sym-i64-shared-view (& keep-locals)))
+                        (compiler-load-session-state-lazy-expr-demand
+                          state
+                          (ast.ast-node-get body)
+                          alias
+                          summary
+                          body-locals))))))))])]
     [(ast.AstExpr.SpmdBroadcast value lane)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-expr-demand

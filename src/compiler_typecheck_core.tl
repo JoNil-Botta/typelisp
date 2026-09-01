@@ -37851,34 +37851,38 @@
     [modules : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity capacity)]
     [slot-count : i64 0]
     [count : i64 (ast.ast-decl-list-len (& all-decls))]
+    [source-offset : i64 all-decls.offset]
     [index : i64 0]
     [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     (begin
       (while (< index count)
         (begin
-          (let
-            [decl : ast.AstDecl
-              (ast.ast-decl-list-ref (tc-global-shared-view all-decls) index)]
-            (match (tc-global-shared-view decl)
-              [(ast.AstDecl.Module next-module)
-                (set! cur-module-id next-module)]
-              [_
-                (match (tc_i64_i64_map.get (& modules) cur-module-id)
-                  [(tc_i64_i64_map.LookupFound slot)
-                    (ast.ast-decl-list-push (&mut (array-ref decls slot)) decl)]
-                  [(tc_i64_i64_map.LookupMissing)
-                    (begin
-                      (tc_i64_i64_map.insert-ref!
-                        (&mut modules)
-                        cur-module-id
-                        slot-count)
-                      (set!
-                        (array-ref decls slot-count)
-                        (ast.ast-decl-list-new))
-                      (ast.ast-decl-list-push
-                        (&mut (array-ref decls slot-count))
-                        decl)
-                      (set! slot-count (+ slot-count 1)))])]))
+          ;; `all-decls` remains immutable for the complete index build. Keep
+          ;; the source row borrowed for this tag probe, then copy a non-marker
+          ;; row directly from the stable source slot into its owned module
+          ;; list. No borrow survives destination growth or map allocation, and
+          ;; the fresh destination lists cannot alias the source storage.
+          (match (array-ref all-decls.slots (+ source-offset index))
+            [(ast.AstDecl.Module next-module) (set! cur-module-id next-module)]
+            [_
+              (match (tc_i64_i64_map.get (& modules) cur-module-id)
+                [(tc_i64_i64_map.LookupFound slot)
+                  (ast.ast-decl-list-push-from
+                    (&mut (array-ref decls slot))
+                    (& all-decls.slots)
+                    (+ source-offset index))]
+                [(tc_i64_i64_map.LookupMissing)
+                  (begin
+                    (tc_i64_i64_map.insert-ref!
+                      (&mut modules)
+                      cur-module-id
+                      slot-count)
+                    (set! (array-ref decls slot-count) (ast.ast-decl-list-new))
+                    (ast.ast-decl-list-push-from
+                      (&mut (array-ref decls slot-count))
+                      (& all-decls.slots)
+                      (+ source-offset index))
+                    (set! slot-count (+ slot-count 1)))])])
           (set! index (+ index 1))))
       (TcImportAliasSummaryIndex modules decls slot-count))))
 
@@ -37894,6 +37898,182 @@
         (TcImportAliasSummaryLookup.Found slot)
         (TcImportAliasSummaryLookup.Missing))]
     [(tc_i64_i64_map.LookupMissing) (TcImportAliasSummaryLookup.Missing)]))
+
+(cfg
+  test
+  (define (tc-import-alias-summary-index-test-slot-or
+    [index : (& index TcImportAliasSummaryIndex)]
+    [module-id : i64]
+    [fallback : i64]) : i64
+    (match (tc-import-alias-summary-index-lookup index module-id)
+      [(TcImportAliasSummaryLookup.Found slot) slot]
+      [(TcImportAliasSummaryLookup.Missing) fallback])))
+
+(cfg
+  test
+  (define (tc-import-alias-summary-index-test-def-at?
+    [decls : ast.AstDeclList]
+    [index : i64]
+    [expected-name : i64]
+    [expected-value : i64]) : bool
+    (match (ast.ast-decl-list-ref decls index)
+      [(ast.AstDecl.Def _ name _ value)
+        (and (= name expected-name) (= value expected-value))]
+      [_ false])))
+
+(cfg
+  test
+  (define (tc-import-alias-summary-index-borrowed-rows-smoke?) : bool
+    (let
+      [module-a : i64 (ci.intern "summary-index-module-a")]
+      [module-b : i64 (ci.intern "summary-index-module-b")]
+      [root-name : i64 (ci.intern "summary-index-root")]
+      [generated-name : i64 (ci.intern "summary-index-generated")]
+      [test-name : i64 (ci.intern "summary-index-test")]
+      [bin-name : i64 (ci.intern "summary-index-bin")]
+      [str-name : i64 (ci.intern "summary-index-str")]
+      [last-a-name : i64 (ci.intern "summary-index-last-a")]
+      [b-name : i64 (ci.intern "summary-index-b")]
+      [base : ast.AstDeclList (ast.ast-decl-list-with-capacity 1)]
+      [_dummy : unit
+        (ast.ast-decl-list-push (&mut base) (ast.AstDecl.Module -101))]
+      [_module-a : unit
+        (ast.ast-decl-list-push (&mut base) (ast.AstDecl.Module module-a))]
+      [_generated : unit
+        (ast.ast-decl-list-push
+          (&mut base)
+          (ast.ast-decl-comptime-decl-with-meta
+            (ast.AstGeneratedDeclMeta.Some
+              "summary-generator"
+              "summary-item"
+              (ast.ast-expr-list-new)
+              "summary-key")
+            (ast.ast-decl-def-id generated-name (ast.AstMaybeType.No) 21)))]
+      [_test : unit
+        (ast.ast-decl-list-push
+          (&mut base)
+          (ast.ast-decl-test-id test-name 22 (ast.ast-source-span 1 2 3 4)))]
+      [_bin : unit
+        (ast.ast-decl-list-push
+          (&mut base)
+          (ast.AstDecl.IncludeBin bin-name "summary.bin"))]
+      [_str : unit
+        (ast.ast-decl-list-push
+          (&mut base)
+          (ast.AstDecl.IncludeStr str-name "summary.txt"))]
+      [_last-a : unit
+        (ast.ast-decl-list-push
+          (&mut base)
+          (ast.ast-decl-def-id last-a-name (ast.AstMaybeType.No) 25))]
+      [_module-b : unit
+        (ast.ast-decl-list-push (&mut base) (ast.AstDecl.Module module-b))]
+      [_b : unit
+        (ast.ast-decl-list-push
+          (&mut base)
+          (ast.ast-decl-def-id b-name (ast.AstMaybeType.No) 31))]
+      ;; Tail shares grown source storage but is not prependable. Rebuilding a
+      ;; root row in front gives the index a non-zero-offset source and mirrors
+      ;; the generated-list prepend/rebuild shapes used by macro expansion.
+      [tail : ast.AstDeclList (ast.ast-decl-list-tail base)]
+      [all-decls : ast.AstDeclList
+        (ast.ast-decl-list-prepend-builder
+          (ast.ast-decl-def-id root-name (ast.AstMaybeType.No) 11)
+          tail)]
+      [summary : TcImportAliasSummaryIndex
+        (tc-import-alias-summary-index-build-current
+          (tc-global-shared-view all-decls))]
+      [root-slot : i64
+        (tc-import-alias-summary-index-test-slot-or
+          (& summary)
+          cbi.compiler-builtin-id-fix-empty
+          -1)]
+      [a-slot : i64
+        (tc-import-alias-summary-index-test-slot-or (& summary) module-a -1)]
+      [b-slot : i64
+        (tc-import-alias-summary-index-test-slot-or (& summary) module-b -1)]
+      [root-decls : ast.AstDeclList
+        (unsafe
+          (ptr-read (ptr-offset (__tl_array-data summary.decls) root-slot)))]
+      [a-decls : ast.AstDeclList
+        (unsafe
+          (ptr-read (ptr-offset (__tl_array-data summary.decls) a-slot)))]
+      [b-decls : ast.AstDeclList
+        (unsafe
+          (ptr-read (ptr-offset (__tl_array-data summary.decls) b-slot)))]
+      [generated-meta-ok : bool
+        (match (ast.ast-decl-generated-meta
+          (ast.ast-decl-list-ref (tc-global-shared-view a-decls) 0))
+          [(ast.AstGeneratedDeclMeta.Some _ _ _ key)
+            (string.eq key "summary-key")]
+          [(ast.AstGeneratedDeclMeta.No) false])]
+      ;; A later source-slot write must not affect the owned per-module list.
+      [_rewrite-source : unit
+        (set!
+          (array-ref all-decls.slots (+ all-decls.offset 2))
+          (ast.ast-decl-def-id generated-name (ast.AstMaybeType.No) 99))]
+      [empty-summary : TcImportAliasSummaryIndex
+        (tc-import-alias-summary-index-build-current (ast.ast-decl-list-new))]
+      (and
+        (> all-decls.offset 0)
+        (= summary.count 3)
+        (>= root-slot 0)
+        (>= a-slot 0)
+        (>= b-slot 0)
+        (match (tc-import-alias-summary-index-lookup (& summary) -202)
+          [(TcImportAliasSummaryLookup.Missing) true]
+          [_ false])
+        (= (ast.ast-decl-list-len (& root-decls)) 1)
+        (tc-import-alias-summary-index-test-def-at?
+          (tc-global-shared-view root-decls)
+          0
+          root-name
+          11)
+        (= (ast.ast-decl-list-len (& a-decls)) 5)
+        (tc-import-alias-summary-index-test-def-at?
+          (tc-global-shared-view a-decls)
+          0
+          generated-name
+          21)
+        generated-meta-ok
+        (match (ast.ast-decl-list-ref (tc-global-shared-view a-decls) 1)
+          [(ast.AstDecl.Test name body span)
+            (and
+              (= name test-name)
+              (= body 22)
+              (= (ast.ast-source-span-start-line span) 1)
+              (= (ast.ast-source-span-end-line span) 3))]
+          [_ false])
+        (match (ast.ast-decl-list-ref (tc-global-shared-view a-decls) 2)
+          [(ast.AstDecl.IncludeBin name path)
+            (and (= name bin-name) (string.eq path "summary.bin"))]
+          [_ false])
+        (match (ast.ast-decl-list-ref (tc-global-shared-view a-decls) 3)
+          [(ast.AstDecl.IncludeStr name path)
+            (and (= name str-name) (string.eq path "summary.txt"))]
+          [_ false])
+        (tc-import-alias-summary-index-test-def-at?
+          (tc-global-shared-view a-decls)
+          4
+          last-a-name
+          25)
+        (= (ast.ast-decl-list-len (& b-decls)) 1)
+        (tc-import-alias-summary-index-test-def-at?
+          (tc-global-shared-view b-decls)
+          0
+          b-name
+          31)
+        (= empty-summary.count 0)
+        (match (tc-import-alias-summary-index-lookup (& empty-summary) module-a)
+          [(TcImportAliasSummaryLookup.Missing) true]
+          [_ false])))))
+
+(cfg
+  test
+  (test
+    import_alias_summary_index_borrowed_rows
+    (if (tc-import-alias-summary-index-borrowed-rows-smoke?)
+      unit
+      (io.panic "typecheck: import alias summary row borrowing failed"))))
 
 (define (tc-import-alias-surface-summary-backed-in?
   [summaries : cload.CompilerLoadSurfaceSummaryList]

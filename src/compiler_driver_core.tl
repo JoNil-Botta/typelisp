@@ -4958,7 +4958,7 @@
           ;; single-entry gate the source-arena retirement uses, so a session
           ;; that reuses loader state across jobs keeps its warm capacity.
           (if route-source-allocations?
-            (compiler_load.compiler-load-release-frontend-scan-arenas!)
+            (compiler_load.compiler-load-transfer-frontend-handoff!)
             unit)
           (cfg
             compile-profile
@@ -5140,7 +5140,7 @@
                   ;; Retire them again now that no frontend work remains: the
                   ;; optimizer, backend, and writer never lex or read.
                   (if route-source-allocations?
-                    (compiler_load.compiler-load-release-frontend-scan-arenas!)
+                    (compiler_load.compiler-load-transfer-frontend-handoff!)
                     unit)
                   (compiler-driver-state-prefix-cache-allocation-profile-snapshot!
                     (owned_view.compiler-owned-shared-view state)
@@ -5306,7 +5306,7 @@
             retire-after-lower?
             (compiler-driver-state-can-release-checked-lower-source-pools?
               (owned_view.compiler-owned-shared-view state)))
-            (compiler_load.compiler-load-release-frontend-scan-arenas!)
+            (compiler_load.compiler-load-transfer-frontend-handoff!)
             unit)
           (cfg
             compile-profile
@@ -5477,7 +5477,7 @@
                     unit)
                   ;; Same post-lower retirement as the escaping path above.
                   (if (and retire-after-lower? release-source-pools?)
-                    (compiler_load.compiler-load-release-frontend-scan-arenas!)
+                    (compiler_load.compiler-load-transfer-frontend-handoff!)
                     unit)
                   (if (compiler_ast_types.ast-node-pool-context-type-exhausted?
                     pools)

@@ -149,6 +149,17 @@
     (lexer.spanned-token-buffer-release!)
     (reader.sexpr-node-pool-release!)))
 
+;; Whole-program uncached handoff: release pure scan storage and transfer the
+;; compact declaration/member/semantic-origin prefix out of the reader arena
+;; whose capacity was sized by the largest transient source form.  Source text,
+;; token rows, unspanned forms, and reader builders are not part of this graph;
+;; the stable row ids and by-value spans are the only data later diagnostics,
+;; symbol collection, semantic indexing, and macro/typecheck paths consume.
+(define (compiler-load-transfer-frontend-handoff!) : unit
+  (begin
+    (compiler-load-release-frontend-scan-arenas!)
+    (reader.sp-node-pool-compact-retained!)))
+
 (defenum ResultCompilerLoad
   (Ok ast.AstDeclList sym_i64_env.SymI64Env)
   (Err (Box cdiag.CompilerDiagnostic)))

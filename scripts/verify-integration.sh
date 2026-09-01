@@ -143,6 +143,22 @@ run_fixture() {
 # crash notice goes to a diagnostic-only stream, while the program's stderr
 # stays isolated for the manifest comparison. Ending with an explicit exit
 # prevents shells from replacing themselves with the manifest binary.
+ensure_linux_signal_exit_diagnostic() {
+    _rc=$1
+    _run_shell_stderr=$2
+
+    # POSIX leaves signal-notice text to the shell, and some shells emit
+    # nothing for this nested-exec shape. Preserve a real notice when one was
+    # captured; otherwise retain the portable 128+signal evidence in the same
+    # diagnostic-only stream used by failed manifest cases.
+    if [ "$_rc" -gt 128 ] && [ "$_rc" -le 255 ] &&
+        [ ! -s "$_run_shell_stderr" ]; then
+        _signal=$((_rc - 128))
+        printf 'program terminated by signal %s (exit %s); shell emitted no notice\n' \
+            "$_signal" "$_rc" > "$_run_shell_stderr"
+    fi
+}
+
 run_linux_manifest_program() {
     _bin=$1
     _stdout=$2
@@ -163,6 +179,9 @@ run_linux_manifest_program() {
         exit "$_rc"
     ' typelisp-integration-run \
         "$_bin" "$_stdout" "$_stderr" "$@" 2> "$_run_shell_stderr"
+    _rc=$?
+    ensure_linux_signal_exit_diagnostic "$_rc" "$_run_shell_stderr"
+    return "$_rc"
 }
 
 if [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
@@ -1476,6 +1495,9 @@ run_signal_notice_capture_self_test() {
     _stdout="$_dir/program.stdout"
     _stderr="$_dir/program.stderr"
     _run_shell_stderr="$_dir/run-shell.stderr"
+    _synthesized_stderr="$_dir/synthesized.stderr"
+    _captured_stderr="$_dir/captured.stderr"
+    _ordinary_stderr="$_dir/ordinary.stderr"
     _global_stderr="$_dir/global.stderr"
     _rc_file="$_dir/exit-code.txt"
 
@@ -1505,6 +1527,24 @@ EOF
         echo "FAIL: signal-notice-capture expected captured shell diagnostics" >&2
         exit 1
     fi
+
+    : > "$_synthesized_stderr"
+    ensure_linux_signal_exit_diagnostic 139 "$_synthesized_stderr"
+    assert_file_text \
+        "$_synthesized_stderr" \
+        'program terminated by signal 11 (exit 139); shell emitted no notice' \
+        signal-notice-capture-synthesized
+
+    printf '%s\n' 'captured shell notice' > "$_captured_stderr"
+    ensure_linux_signal_exit_diagnostic 139 "$_captured_stderr"
+    assert_file_text \
+        "$_captured_stderr" \
+        'captured shell notice' \
+        signal-notice-capture-preserved
+
+    : > "$_ordinary_stderr"
+    ensure_linux_signal_exit_diagnostic 42 "$_ordinary_stderr"
+    assert_empty_file "$_ordinary_stderr" signal-notice-capture-ordinary-exit
 
     printf '%s\n' "verify-integration signal notice capture self-test passed"
 }

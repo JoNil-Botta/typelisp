@@ -12,6 +12,9 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.io)
+(import stdlib.fs)
+(import stdlib.env)
+(import stdlib.process)
 (import stdlib.vector)
 (import (vector.vector String) as doc_svec)
 (import cli_option_core as cli_option)
@@ -19,9 +22,11 @@
 (import doc_extract)
 (import (vector.vector doc_render.DocModule core) as doc_module_vec)
 (import doc_html)
+(import doc_local_site)
 (import doc_test)
 (import doc_expand)
 (import compiler_load)
+(import compiler_build_identity as build_identity)
 (import compiler_ast_types as ast)
 (import compiler_diagnostic as cdiag)
 (import compiler_typecheck_core as tc)
@@ -53,7 +58,7 @@
 
 (defenum DocDefaultCliConfig
   (Explicit doc_svec.Vec DocMaybeString doc_svec.Vec)
-  (Package String bool String))
+  (Package String bool DocMaybeString bool bool))
 
 (defenum ResultDocDefaultCliConfig
   (Ok DocDefaultCliConfig)
@@ -116,6 +121,46 @@
       (doc_module_vec.with-capacity (doc_svec.len (& paths)))]
     (begin
       (doc-modules-from-package-sources-from paths 0 (&mut modules))
+      modules)))
+
+(define (doc-modules-from-package-sources-relative-from
+  [paths : doc_svec.Vec]
+  [root : String]
+  [index : i64]
+  [modules : (&mut modules doc_module_vec.Vec)]) : unit
+  (if (>= index (doc_svec.len (& paths)))
+    unit
+    (let
+      [path : String (doc_svec.get (& paths) index "")]
+      [relative : String
+        (compiler_load.compiler-load-root-relative-path
+          (owned_view.compiler-owned-shared-view root)
+          (owned_view.compiler-owned-shared-view path))]
+      (begin
+        (doc_module_vec.push-ref!
+          modules
+          (doc_render.DocModule.Module
+            relative
+            (doc_extract.doc-extract-file path)))
+        (doc-modules-from-package-sources-relative-from
+          paths
+          root
+          (+ index 1)
+          modules)))))
+
+(define (doc-modules-from-package-source-set
+  [source-set : package_source_core.PackageSourceSet]) : doc_module_vec.Vec
+  (let
+    [root : String
+      (compiler_load.compiler-load-normalize-path source-set.manifest-dir)]
+    [modules : doc_module_vec.Vec
+      (doc_module_vec.with-capacity (doc_svec.len (& source-set.sources)))]
+    (begin
+      (doc-modules-from-package-sources-relative-from
+        source-set.sources
+        root
+        0
+        (&mut modules))
       modules)))
 
 (define (doc-path-set-new) : doc_path_map.Map
@@ -364,10 +409,152 @@
               (cdiag.compiler-diagnostic-box-shared-view diag)))
           1)])))
 
+(define (doc-ensure-directory [path : String]) : bool
+  (match (fs.try-mkdir-if-missing (& path))
+    [(io.OkIoUnit) true]
+    [(io.ErrIoUnit error)
+      (begin
+        (io.print-error
+          (str_cat.str-cat
+            "doc: cannot create output directory '"
+            path
+            "': "
+            (io.error-message error)
+            "\n"))
+        false)]))
+
+(define (doc-linux-graphical-session?) : bool
+  (let
+    [display-name : String "DISPLAY"]
+    [wayland-name : String "WAYLAND_DISPLAY"]
+    (or
+      (> (string.string-length (env.var-value (& display-name))) 0)
+      (> (string.string-length (env.var-value (& wayland-name))) 0))))
+
+(define (doc-windows-graphical-session?) : bool
+  (let
+    [session-name : String "SESSIONNAME"]
+    [terminal-name : String "WT_SESSION"]
+    [session : String (env.var-value (& session-name))]
+    (or
+      (> (string.string-length (env.var-value (& terminal-name))) 0)
+      (and
+        (> (string.string-length session) 0)
+        (not (string.eq session "Services"))))))
+
+(define (doc-graphical-session?) : bool
+  (cfg windows (doc-windows-graphical-session?) (doc-linux-graphical-session?)))
+
+(define (doc-open-program) : String
+  (let
+    [name : String "TYPELISP_DOC_OPEN_PROGRAM"]
+    (match (env.get (& name))
+      [(env.EnvSomeString value) value]
+      [(env.EnvNoString) (cfg windows "explorer.exe" "xdg-open")])))
+
+(define (doc-open-generated-index [index-path : String]) : unit
+  (if (not (doc-graphical-session?))
+    (io.print-format
+      "{}"
+      (str_cat.str-cat "Open skipped; generated index: " index-path "\n"))
+    (let
+      [result : process.ResultProcessOutput
+        (process.run
+          (process.command
+            (doc-open-program)
+            (process.args-single
+              (owned_view.compiler-owned-shared-view index-path))))]
+      (if (process.result-success? result)
+        (io.print-format "{}" (str_cat.str-cat "Opened " index-path "\n"))
+        (io.print-format
+          "{}"
+          (str_cat.str-cat "Open failed; generated index: " index-path "\n"))))))
+
+(define (doc-generate-package-local-site
+  [source-set : package_source_core.PackageSourceSet]
+  [open? : bool]
+  [_no-deps? : bool]) : i64
+  (match (package_source_core.package-source-set-digest
+    (owned_view.compiler-owned-shared-view source-set))
+    [(package_source_core.ResultPackageSourceDigest.Err message)
+      (begin
+        (io.print-error (str_cat.str-cat "doc: " message "\n"))
+        1)]
+    [(package_source_core.ResultPackageSourceDigest.Ok source-digest)
+      (let
+        [target-dir : String
+          (fs.path-join-owned-pair
+            (owned_view.compiler-owned-shared-view source-set.manifest-dir)
+            "target")]
+        [output-dir : String
+          (fs.path-join-owned-pair
+            (owned_view.compiler-owned-shared-view target-dir)
+            "doc")]
+        [index-path : String
+          (fs.path-join-owned-pair
+            (owned_view.compiler-owned-shared-view output-dir)
+            "index.html")]
+        [css-path : String
+          (fs.path-join-owned-pair
+            (owned_view.compiler-owned-shared-view output-dir)
+            "typelisp-docs.css")]
+        [client-path : String
+          (fs.path-join-owned-pair
+            (owned_view.compiler-owned-shared-view output-dir)
+            "typelisp-docs.js")]
+        [search-path : String
+          (fs.path-join-owned-pair
+            (owned_view.compiler-owned-shared-view output-dir)
+            "typelisp-docs-search-index.js")]
+        [manifest : compiler_load.CompilerPkgManifest source-set.manifest]
+        [package-identity : String
+          (doc_local_site.doc-local-site-package-identity
+            (owned_view.compiler-owned-shared-view manifest.name)
+            (owned_view.compiler-owned-shared-view manifest.version))]
+        [compiler-identity : String
+          (build_identity.compiler-build-git-hash-shared-view)]
+        [source-identity : String
+          (doc_local_site.doc-local-site-source-identity source-digest)]
+        [modules : doc_module_vec.Vec
+          (doc-modules-from-package-source-set
+            (owned_view.compiler-owned-shared-view source-set))]
+        (if (not (doc-ensure-directory target-dir))
+          1
+          (if (not (doc-ensure-directory output-dir))
+            1
+            (begin
+              (doc-write-text css-path (doc_local_site.doc-local-site-css))
+              (doc-write-text
+                client-path
+                (doc_local_site.doc-local-site-search-client))
+              (doc-write-text
+                search-path
+                (doc_local_site.doc-local-site-search-index
+                  (owned_view.compiler-owned-shared-view compiler-identity)
+                  (owned_view.compiler-owned-shared-view source-identity)
+                  (owned_view.compiler-owned-shared-view package-identity)
+                  (owned_view.compiler-owned-shared-view modules)))
+              (doc-write-text
+                (owned_view.compiler-owned-shared-view index-path)
+                (doc_local_site.doc-local-site-render-index
+                  (owned_view.compiler-owned-shared-view manifest.name)
+                  (owned_view.compiler-owned-shared-view compiler-identity)
+                  (owned_view.compiler-owned-shared-view source-identity)
+                  (owned_view.compiler-owned-shared-view package-identity)
+                  modules))
+              (doc-print-wrote
+                (owned_view.compiler-owned-shared-view index-path))
+              (if open?
+                (doc-open-generated-index index-path)
+                unit)
+              0))))]))
+
 (define (doc-generate-package
   [manifest-path : String]
   [has-manifest : bool]
-  [output-path : String]) : i64
+  [output-path : DocMaybeString]
+  [open? : bool]
+  [no-deps? : bool]) : i64
   (match (package_source_core.package-source-discover-for
     "doc"
     manifest-path
@@ -377,13 +564,17 @@
         (io.print-error (str_cat.str-cat message "\n"))
         1)]
     [(package_source_core.ResultPackageSourceSet.Ok source-set)
-      (begin
-        (doc-write-text
-          (owned_view.compiler-owned-shared-view output-path)
-          (doc_render.doc-render-module-graph-markdown
-            (doc-modules-from-package-sources source-set.sources)))
-        (doc-print-wrote output-path)
-        0)]))
+      (match output-path
+        [(DocMaybeString.Some out)
+          (begin
+            (doc-write-text
+              (owned_view.compiler-owned-shared-view out)
+              (doc_render.doc-render-module-graph-markdown
+                (doc-modules-from-package-sources source-set.sources)))
+            (doc-print-wrote out)
+            0)]
+        [(DocMaybeString.No)
+          (doc-generate-package-local-site source-set open? no-deps?)])]))
 
 (define (doc-generate-html-file [input-path : String] [output-path : String]) : i64
   (let
@@ -790,22 +981,45 @@
   [output-path : DocMaybeString]
   [manifest-path : String]
   [has-manifest : bool]
+  [open? : bool]
+  [no-deps? : bool]
   [stdlib-roots : doc_svec.Vec]) : ResultDocDefaultCliConfig
-  (if (doc_svec.is-empty? (& input-paths))
-    (match output-path
-      [(DocMaybeString.Some out)
-        (ResultDocDefaultCliConfig.Ok
-          (DocDefaultCliConfig.Package manifest-path has-manifest out))]
-      [(DocMaybeString.No)
-        (if has-manifest
+  (cond
+    [(not (doc_svec.is-empty? (& input-paths)))
+      (cond
+        [has-manifest
           (ResultDocDefaultCliConfig.Err
-            "doc: package documentation requires -o <out.md>")
-          (ResultDocDefaultCliConfig.Err "doc: expected input and output paths"))])
-    (if has-manifest
-      (ResultDocDefaultCliConfig.Err
-        "doc: cannot combine input paths with --manifest-path")
-      (ResultDocDefaultCliConfig.Ok
-        (DocDefaultCliConfig.Explicit input-paths output-path stdlib-roots)))))
+            "doc: cannot combine input paths with --manifest-path")]
+        [open?
+          (ResultDocDefaultCliConfig.Err
+            "doc: --open is only valid for package local HTML site output")]
+        [no-deps?
+          (ResultDocDefaultCliConfig.Err
+            "doc: --no-deps is only valid for package documentation")]
+        [else
+          (ResultDocDefaultCliConfig.Ok
+            (DocDefaultCliConfig.Explicit input-paths output-path stdlib-roots))])]
+    [else
+      (match output-path
+        [(DocMaybeString.Some out)
+          (if open?
+            (ResultDocDefaultCliConfig.Err
+              "doc: --open requires local HTML site output; omit -o")
+            (ResultDocDefaultCliConfig.Ok
+              (DocDefaultCliConfig.Package
+                manifest-path
+                has-manifest
+                (DocMaybeString.Some out)
+                false
+                no-deps?)))]
+        [(DocMaybeString.No)
+          (ResultDocDefaultCliConfig.Ok
+            (DocDefaultCliConfig.Package
+              manifest-path
+              has-manifest
+              (DocMaybeString.No)
+              open?
+              no-deps?))])]))
 
 (define (doc-default-parse-options
   [idx : i64]
@@ -813,6 +1027,8 @@
   [input-paths : doc_svec.Vec]
   [output-path : DocMaybeString]
   [manifest-path : String]
+  [open? : bool]
+  [no-deps? : bool]
   [stdlib-roots : doc_svec.Vec]) : ResultDocDefaultCliConfig
   (if (>= idx count)
     (doc-default-config-finish
@@ -820,6 +1036,8 @@
       output-path
       (owned_view.compiler-owned-shared-view manifest-path)
       (not (string.eq manifest-path ""))
+      open?
+      no-deps?
       stdlib-roots)
     (let
       [current : String (io.arg idx)]
@@ -838,6 +1056,8 @@
             input-paths
             output-path
             manifest-path
+            open?
+            no-deps?
             (let
               [next-roots : doc_svec.Vec
                 (owned_view.compiler-owned-shared-view stdlib-roots)]
@@ -859,6 +1079,8 @@
                       input-paths
                       (DocMaybeString.Some (io.arg (+ idx 1)))
                       manifest-path
+                      open?
+                      no-deps?
                       stdlib-roots)]))]
             [(string.eq current "--manifest-path")
               (if (>= (+ idx 1) count)
@@ -873,7 +1095,33 @@
                     input-paths
                     output-path
                     (io.arg (+ idx 1))
+                    open?
+                    no-deps?
                     stdlib-roots)))]
+            [(string.eq current "--open")
+              (if open?
+                (ResultDocDefaultCliConfig.Err "doc: duplicate --open")
+                (doc-default-parse-options
+                  (+ idx 1)
+                  count
+                  input-paths
+                  output-path
+                  manifest-path
+                  true
+                  no-deps?
+                  stdlib-roots))]
+            [(string.eq current "--no-deps")
+              (if no-deps?
+                (ResultDocDefaultCliConfig.Err "doc: duplicate --no-deps")
+                (doc-default-parse-options
+                  (+ idx 1)
+                  count
+                  input-paths
+                  output-path
+                  manifest-path
+                  open?
+                  true
+                  stdlib-roots))]
             [(doc-flag? (owned_view.compiler-owned-shared-view current))
               (ResultDocDefaultCliConfig.Err
                 (str_cat.str-cat "doc: unknown flag " current))]
@@ -889,6 +1137,8 @@
                     next-paths))
                 output-path
                 manifest-path
+                open?
+                no-deps?
                 stdlib-roots)])]))))
 
 (define (doc-default-config-from [base : i64] [count : i64]) : ResultDocDefaultCliConfig
@@ -898,6 +1148,8 @@
     (doc_svec.new)
     (DocMaybeString.No)
     ""
+    false
+    false
     (doc_svec.new)))
 
 (define (doc-invalid-args) : i64
@@ -1009,8 +1261,18 @@
       (match config
         [(DocDefaultCliConfig.Explicit input-paths output-path stdlib-roots)
           (doc-run-explicit-default input-paths output-path stdlib-roots)]
-        [(DocDefaultCliConfig.Package manifest-path has-manifest output-path)
-          (doc-generate-package manifest-path has-manifest output-path)])]
+        [(DocDefaultCliConfig.Package
+            manifest-path
+            has-manifest
+            output-path
+            open?
+            no-deps?)
+          (doc-generate-package
+            manifest-path
+            has-manifest
+            output-path
+            open?
+            no-deps?)])]
     [(ResultDocDefaultCliConfig.Err message)
       (begin
         (io.print-error message)

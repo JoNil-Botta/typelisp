@@ -60,6 +60,10 @@ UNSAFE_NATIVE_OUT="$WORKDIR/unsafe-native.out"
 UNSAFE_NATIVE_ERR="$WORKDIR/unsafe-native.err"
 UNSAFE_SOURCE_OUT="$WORKDIR/unsafe-source.out"
 UNSAFE_SOURCE_ERR="$WORKDIR/unsafe-source.err"
+UNSAFE_DIRECT_NATIVE_OUT="$WORKDIR/unsafe-direct-native.out"
+UNSAFE_DIRECT_NATIVE_ERR="$WORKDIR/unsafe-direct-native.err"
+UNSAFE_DIRECT_SOURCE_OUT="$WORKDIR/unsafe-direct-source.out"
+UNSAFE_DIRECT_SOURCE_ERR="$WORKDIR/unsafe-direct-source.err"
 TRANSITION="$WORKDIR/transition"
 TRANSITION_PRODUCER="$TRANSITION/producer"
 TRANSITION_CONSUMER="$TRANSITION/consumer"
@@ -133,6 +137,64 @@ expect_unsafe_value_rejection() {
         "$error" >/dev/null || fail "$label unsafe-value diagnostic mismatch"
 }
 
+reset_unsafe_consumer_target() {
+    case "$UNSAFE_CONSUMER/target" in
+        "$WORKDIR"/package-unsafe-consumer/target) ;;
+        *) fail "refusing unsafe unsafe-value consumer target cleanup" ;;
+    esac
+    rm -rf "$UNSAFE_CONSUMER/target"
+}
+
+write_unsafe_value_consumer() {
+    cat > "$UNSAFE_CONSUMER/src/main.tl" <<'EOF'
+(module spmd_unsafe_consumer)
+
+(import fixture.src.lib as fixture)
+
+(fixture.package-decls)
+
+(define (main) : i64
+  (let
+    [leaked : (-> i64 i64)
+      (unsafe
+        package-unsafe-answer)]
+    (leaked 42)))
+EOF
+}
+
+write_unsafe_direct_consumer() {
+    cat > "$UNSAFE_CONSUMER/src/main.tl" <<'EOF'
+(module spmd_unsafe_consumer)
+
+(import fixture.src.lib as fixture)
+
+(fixture.package-decls)
+
+(define (main) : i64
+  (unsafe
+    (package-unsafe-answer 42)))
+EOF
+}
+
+expect_unsafe_direct_success() {
+    label=$1
+    output=$2
+    error=$3
+    set +e
+    "$COMPILER" run \
+        --manifest-path "$UNSAFE_CONSUMER/typelisp.pkg" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        --backend-mode scalar \
+        --opt-level 0 > "$output" 2> "$error"
+    status=$?
+    set -e
+    [ "$status" -eq 42 ] || {
+        cat "$output" >&2
+        cat "$error" >&2
+        fail "$label unsafe direct-call consumer exited $status, expected 42"
+    }
+}
+
 run_transition_value() {
     label=$1
     wanted=$2
@@ -174,20 +236,7 @@ cat > "$UNSAFE_CONSUMER/typelisp.pkg" <<'EOF'
   (dependencies
     (fixture "../../../../tests/spmd/package_callable")))
 EOF
-cat > "$UNSAFE_CONSUMER/src/main.tl" <<'EOF'
-(module spmd_unsafe_consumer)
-
-(import fixture.src.lib as fixture)
-
-(fixture.package-decls)
-
-(define (main) : i64
-  (let
-    [leaked : (-> i64 i64)
-      (unsafe
-        package-unsafe-answer)]
-    (leaked 42)))
-EOF
+write_unsafe_value_consumer
 cat > "$TRANSITION_MANIFEST" <<'EOF'
 (package
   (name "rebuild_fixture")
@@ -288,6 +337,15 @@ grep -F "dependency-tlci-verification|phase=prepared|requests=1|entries=1" \
     fail "unsafe-value consumer did not admit the code-bearing dependency catalog"
 assert_profile_eq dependency_tlci_native_decls_results 1 "$UNSAFE_NATIVE_ERR"
 
+reset_unsafe_consumer_target
+write_unsafe_direct_consumer
+echo "[package-native-tlci] trusted native unsafe direct call"
+expect_unsafe_direct_success \
+    native \
+    "$UNSAFE_DIRECT_NATIVE_OUT" \
+    "$UNSAFE_DIRECT_NATIVE_ERR"
+assert_profile_eq dependency_tlci_native_decls_results 1 "$UNSAFE_DIRECT_NATIVE_ERR"
+
 case "$CONSUMER/target" in
     "$ROOT"/tests/spmd/package_consumer/target) ;;
     *) fail "refusing unsafe consumer target cleanup" ;;
@@ -296,16 +354,23 @@ rm -rf "$CONSUMER/target"
 TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE=1
 export TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE
 
-case "$UNSAFE_CONSUMER/target" in
-    "$WORKDIR"/package-unsafe-consumer/target) ;;
-    *) fail "refusing unsafe unsafe-value consumer target cleanup" ;;
-esac
-rm -rf "$UNSAFE_CONSUMER/target"
+reset_unsafe_consumer_target
+write_unsafe_value_consumer
 
 echo "[package-native-tlci] forced-source unsafe-value rejection"
 expect_unsafe_value_rejection source "$UNSAFE_SOURCE_OUT" "$UNSAFE_SOURCE_ERR"
 assert_profile_eq dependency_tlci_native_decls_results 0 "$UNSAFE_SOURCE_ERR"
 assert_profile_eq dependency_tlci_interpreted_fallbacks 1 "$UNSAFE_SOURCE_ERR"
+
+reset_unsafe_consumer_target
+write_unsafe_direct_consumer
+echo "[package-native-tlci] forced-source unsafe direct call"
+expect_unsafe_direct_success \
+    source \
+    "$UNSAFE_DIRECT_SOURCE_OUT" \
+    "$UNSAFE_DIRECT_SOURCE_ERR"
+assert_profile_eq dependency_tlci_native_decls_results 0 "$UNSAFE_DIRECT_SOURCE_ERR"
+assert_profile_eq dependency_tlci_interpreted_fallbacks 1 "$UNSAFE_DIRECT_SOURCE_ERR"
 
 echo "[package-native-tlci] forced-source dependency build"
 if ! "$COMPILER" build \

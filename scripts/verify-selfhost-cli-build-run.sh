@@ -110,7 +110,7 @@ remove_directory_link() {
         _directory_link_win=$(cygpath -aw "$_directory_link")
         TYPELISP_TEST_JUNCTION_LINK="$_directory_link_win" \
             powershell.exe -NoLogo -NoProfile -NonInteractive -Command \
-            'Remove-Item -LiteralPath $env:TYPELISP_TEST_JUNCTION_LINK -Force' > /dev/null
+            '[System.IO.Directory]::Delete($env:TYPELISP_TEST_JUNCTION_LINK)' > /dev/null
     else
         rm "$_directory_link"
     fi

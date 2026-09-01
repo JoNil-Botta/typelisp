@@ -143,7 +143,7 @@
   (let
     [level : arena.Arena (arena.make-atomic)]
     [level-name : String (in-arena level (str-cat.str-cat "level:" "docks"))]
-    [worker-level-name : String (in-arena level (clone level-name))]
+    [worker-level-name : String (in-arena level (string.copy level-name))]
     (match (thread-i64.spawn
       (lambda () : i64
         (string.string-length (& worker-level-name))))

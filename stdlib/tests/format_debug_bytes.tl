@@ -43,7 +43,7 @@
         "\""
         "'")]
     (str_cat.str-cat
-      (clone quote)
+      (string.copy quote)
       (debug-expected-byte-body code delimiter)
       quote)))
 

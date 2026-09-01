@@ -1491,7 +1491,7 @@
   [manifest-dir : String]
   [declared : load.CompilerPkgDep]
   [resolved : load.CompilerPkgDep]) : BuildPackageSourceProvenance
-  (if (load.compiler-load-github-dependency-path? (clone declared.path))
+  (if (load.compiler-load-github-dependency-path? (string.copy declared.path))
     (BuildPackageSourceProvenance.Fetched
       declared.alias
       (build-package-dep-root manifest-dir resolved))
@@ -1627,12 +1627,13 @@
 (define (build-load-package-lock [manifest-dir : String]) : ResultBuildPackageLockState
   (let
     [path : String (build-package-lock-path manifest-dir)]
-    (match (package_lock_core.package-lock-transaction-read (clone path))
+    (match (package_lock_core.package-lock-transaction-read (string.copy path))
       [(package_lock_core.ResultPackageLockSnapshot.Err message)
         (ResultBuildPackageLockState.Err (str_cat.str-cat "build: " message))]
       [(package_lock_core.ResultPackageLockSnapshot.Ok snapshot)
         (if snapshot.existed
-          (match (package_lock_core.package-lock-parse (clone snapshot.source))
+          (match (package_lock_core.package-lock-parse
+            (string.copy snapshot.source))
             [(package_lock_core.ResultPackageLockFile.Err message)
               (ResultBuildPackageLockState.Err
                 (str_cat.str-cat
@@ -1658,7 +1659,7 @@
     [path : String state.path]
     [snapshot : package_lock_core.PackageLockSnapshot
       (package_lock_core.PackageLockSnapshot
-        (clone path)
+        (string.copy path)
         state.original-source
         state.has-lock)]
     (match (package_lock_core.package-lock-transaction-commit snapshot text)
@@ -2717,10 +2718,10 @@
   [dep : load.CompilerPkgDep]) : String
   (str_cat.str-cat
     "build: acquired manifest at "
-    (clone node.manifest-path)
+    (string.copy node.manifest-path)
     ": "
     (load.compiler-pkg-library-dependency-message
-      (clone node.manifest.name)
+      (string.copy node.manifest.name)
       dep.alias)))
 
 (define (build-package-graph-add-node
@@ -2735,7 +2736,7 @@
         (build-package-acquired-library-dependency-message (& node) dep))]
     [(load.CompilerPkgMaybeDependency.NoDependency)
       (let
-        [manifest-path : String (clone node.manifest-path)]
+        [manifest-path : String (string.copy node.manifest-path)]
         (match (build_string_i64_map.get
           (& state.seen)
           (owned_view.compiler-owned-shared-view manifest-path))
@@ -4203,18 +4204,18 @@
     [index : i64 1]
     (while (< index count)
       (let
-        [value : String (clone (array-ref catalog index))]
+        [value : String (string.copy (array-ref catalog index))]
         [slot : i64 index]
         (begin
           (while (if (> slot 0)
             (package_source_core.package-source-string-less?
-              (clone value)
-              (clone (array-ref catalog (- slot 1))))
+              (string.copy value)
+              (string.copy (array-ref catalog (- slot 1))))
             false)
             (begin
               (set!
                 (array-ref catalog slot)
-                (clone (array-ref catalog (- slot 1))))
+                (string.copy (array-ref catalog (- slot 1))))
               (set! slot (- slot 1))))
           (set! (array-ref catalog slot) value)
           (set! index (+ index 1)))))))

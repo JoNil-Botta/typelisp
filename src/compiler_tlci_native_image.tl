@@ -1118,12 +1118,12 @@
         (cobj.compiler-object-instr-builder-push
           text1
           (if direct-extern-call
-            (cobj.CompilerObjectX64Instr.Call (clone import-name))
+            (cobj.CompilerObjectX64Instr.Call (string.copy import-name))
             (cobj.CompilerObjectX64Instr.Call "_helper")))]
       [text3 : cobj.CompilerObjectX64InstrBuilder
         (cobj.compiler-object-instr-builder-push
           text2
-          (cobj.CompilerObjectX64Instr.LoadRip (clone import-name)))]
+          (cobj.CompilerObjectX64Instr.LoadRip (string.copy import-name)))]
       [text4 : cobj.CompilerObjectX64InstrBuilder
         (cobj.compiler-object-instr-builder-push
           text3

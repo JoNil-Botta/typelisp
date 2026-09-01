@@ -3230,11 +3230,11 @@
       (opt.opt-function-index-build
         (ir.compiler-ir-function-seq-prepend
           (compiler_optimize_tests.opt-test-function-named
-            (clone qualified)
+            (string.copy qualified)
             (ir.compiler-ir-instr-seq-empty))
           (ir.compiler-ir-function-seq-prepend
             (compiler_optimize_tests.opt-test-function-named
-              (clone plain)
+              (string.copy plain)
               (ir.compiler-ir-instr-seq-empty))
             (ir.compiler-ir-function-seq-empty))))]
     [starts : (__tl_dyn-array i64) index.leaf-starts]

@@ -1912,7 +1912,8 @@
         [(OkFsFileKind kind)
           (if (stdlib.fs.file-kind-regular? kind)
             (let
-              [status : i64 (stdlib.fs.file-size-status (clone path-text))]
+              [status : i64
+                (stdlib.fs.file-size-status (string.copy path-text))]
               (if (= status io.io-status-ok)
                 (OkFsMetadata (FsMetadata kind (stdlib.fs.file-size path-text)))
                 (ErrFsMetadata (io.error-from-status path status))))
@@ -1956,7 +1957,7 @@
     (if (io.empty-path? path)
       (ErrIoStringVector (io.invalid-path-error path))
       (let
-        [status : i64 (stdlib.fs.read-dir-status (clone path-text))]
+        [status : i64 (stdlib.fs.read-dir-status (string.copy path-text))]
         (if (= status io.io-status-ok)
           (OkIoStringVector
             (stdlib.fs.read-dir-split-vec (stdlib.fs.read-dir path-text)))
@@ -2065,7 +2066,7 @@
               [separator : String (stdlib.fs.path-separator)]
               [root-with-separator : String (str_cat.str-cat root separator)]
               (str_cat.str-cat root-with-separator name))])]
-      [status : i64 (stdlib.fs.mkdir-status-owned (clone path))]
+      [status : i64 (stdlib.fs.mkdir-status-owned (string.copy path))]
       (if (= status io.io-status-ok)
         (io.OkIoString path)
         (if (= status stdlib.fs.fs-status-already-exists)
@@ -3112,7 +3113,7 @@
         (fs-test-assert-windows-nt-create-abi)
         (fs-test-assert-owned-string-eq
           joined
-          (clone expected-join)
+          (string.copy expected-join)
           "path join inserts separator")
         (fs-test-assert-owned-string-eq
           (fs-api-test-fs-path-join "left/" "/right")

@@ -9769,7 +9769,7 @@
         [package : CompilerLowerSpmdPackageState
           (CompilerLowerSpmdPackageState
             next
-            (clone name)
+            (string.copy name)
             (lower_i64_i64_map.with-capacity 8)
             (lower_i64_i64_map.with-capacity 8))]
         (begin
@@ -77137,11 +77137,11 @@
   [base : i64]
   [tail : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (let
-    [check-label : i64 (ir.compiler-ir-label (clone prefix))]
+    [check-label : i64 (ir.compiler-ir-label (string.copy prefix))]
     [osxsave-label : i64
-      (ir.compiler-ir-label (str_cat.str-cat (clone prefix) "_osxsave"))]
+      (ir.compiler-ir-label (str_cat.str-cat (string.copy prefix) "_osxsave"))]
     [xcr0-label : i64
-      (ir.compiler-ir-label (str_cat.str-cat (clone prefix) "_xcr0"))]
+      (ir.compiler-ir-label (str_cat.str-cat (string.copy prefix) "_xcr0"))]
     [leaf7-label : i64 (ir.compiler-ir-label (str_cat.str-cat prefix "_leaf7"))]
     [max-leaf-var : i64 base]
     [max-ok-var : i64 (+ base 1)]

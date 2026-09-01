@@ -79,7 +79,7 @@
               (unsafe
                 (arena.set! enclosing))
               (let
-                [escaped : String (clone raw)]
+                [escaped : String (string.copy raw)]
                 (begin
                   (unsafe
                     (arena.destroy scratch-head))

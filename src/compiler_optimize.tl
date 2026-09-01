@@ -4126,7 +4126,7 @@
   (match block
     [(ir.CompilerIrBlock.Block label instrs)
       (ir.CompilerIrBlock.Block
-        (clone label)
+        label
         (opt-dce-instr-seq-array-escape pools items instrs))]))
 
 (define (opt-dce-block-list-array-escape-fill
@@ -14228,7 +14228,7 @@
       [by-var : (__tl_dyn-array i64) blocks.by-var]
       [entries : (__tl_dyn-array OptSsaVarBlockEntry) blocks.entries]
       [entry-count : i64 blocks.entry-count]
-      [slot : i64 (clone (array-ref by-var var))]
+      [slot : i64 (array-ref by-var var)]
       (if (> slot 0)
         (let
           [entry-index : i64 (- slot 1)]
@@ -113146,8 +113146,8 @@
     [(ir.CompilerIrValue.F64 bits) (ir.CompilerIrValue.F64 bits)]
     [(ir.CompilerIrValue.Bool b) (ir.CompilerIrValue.Bool b)]
     [(ir.CompilerIrValue.Char c) (ir.CompilerIrValue.Char c)]
-    [(ir.CompilerIrValue.String s) (ir.CompilerIrValue.String (clone s))]
-    [(ir.CompilerIrValue.Bytes s) (ir.CompilerIrValue.Bytes (clone s))]
+    [(ir.CompilerIrValue.String s) (ir.CompilerIrValue.String (string.copy s))]
+    [(ir.CompilerIrValue.Bytes s) (ir.CompilerIrValue.Bytes (string.copy s))]
     [(ir.CompilerIrValue.RuntimeGlobal init)
       (ir.CompilerIrValue.RuntimeGlobal (ir.compiler-ir-symbol-clone init))]
     [(ir.CompilerIrValue.Unit) (ir.CompilerIrValue.Unit)]))

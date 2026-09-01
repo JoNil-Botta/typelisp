@@ -527,7 +527,7 @@
 ;: Return the entry at `index`, or the empty string when `index` is out of range.
 (define (string-list-ref [items : (& items EnvStringList)] [index : i64]) : String
   (if (and (>= index 0) (< index items.len))
-    (clone (array-ref items.slots index))
+    (string.copy (array-ref items.slots index))
     ""))
 
 ;: Prepend an owned string to an environment string list.
@@ -566,7 +566,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (svec.push-ref! out (clone (array-ref items.slots i)))
+        (svec.push-ref! out (string.copy (array-ref items.slots i)))
         (set! i (+ i 1))))))
 
 ;: Copy `items` into a fresh generated string vector, preserving list order.
@@ -585,7 +585,7 @@
 (define (get [name : (& name str)]) : EnvMaybeString
   (let
     [owned-name : String (string.copy name)]
-    (if (var-exists? (clone owned-name))
+    (if (var-exists? (string.copy owned-name))
       (some-string (var-value owned-name))
       EnvNoString)))
 
@@ -773,15 +773,15 @@
   [third : String]
   [message : String]) : unit
   (begin
-    (test-assert-i64-eq (string-list-count items) 3 (clone message))
+    (test-assert-i64-eq (string-list-count items) 3 (string.copy message))
     (test-assert-owned-string-eq
       (string-list-ref items 0)
       first
-      (clone message))
+      (string.copy message))
     (test-assert-owned-string-eq
       (string-list-ref items 1)
       second
-      (clone message))
+      (string.copy message))
     (test-assert-owned-string-eq (string-list-ref items 2) third message)))
 
 ;: Assert that an environment string list contains exactly five strings.
@@ -794,23 +794,23 @@
   [fifth : String]
   [message : String]) : unit
   (begin
-    (test-assert-i64-eq (string-list-count items) 5 (clone message))
+    (test-assert-i64-eq (string-list-count items) 5 (string.copy message))
     (test-assert-owned-string-eq
       (string-list-ref items 0)
       first
-      (clone message))
+      (string.copy message))
     (test-assert-owned-string-eq
       (string-list-ref items 1)
       second
-      (clone message))
+      (string.copy message))
     (test-assert-owned-string-eq
       (string-list-ref items 2)
       third
-      (clone message))
+      (string.copy message))
     (test-assert-owned-string-eq
       (string-list-ref items 3)
       fourth
-      (clone message))
+      (string.copy message))
     (test-assert-owned-string-eq (string-list-ref items 4) fifth message)))
 
 ;: Assert that a string vector contains exactly three strings.
@@ -821,15 +821,15 @@
   [third : String]
   [message : String]) : unit
   (begin
-    (test-assert-i64-eq (svec.len (& items)) 3 (clone message))
+    (test-assert-i64-eq (svec.len (& items)) 3 (string.copy message))
     (test-assert-owned-string-eq
       (svec.get (& items) 0 "missing")
       first
-      (clone message))
+      (string.copy message))
     (test-assert-owned-string-eq
       (svec.get (& items) 1 "missing")
       second
-      (clone message))
+      (string.copy message))
     (test-assert-owned-string-eq (svec.get (& items) 2 "missing") third message)))
 
 ;: Assert that a string vector contains exactly five strings.
@@ -842,23 +842,23 @@
   [fifth : String]
   [message : String]) : unit
   (begin
-    (test-assert-i64-eq (svec.len (& items)) 5 (clone message))
+    (test-assert-i64-eq (svec.len (& items)) 5 (string.copy message))
     (test-assert-owned-string-eq
       (svec.get (& items) 0 "missing")
       first
-      (clone message))
+      (string.copy message))
     (test-assert-owned-string-eq
       (svec.get (& items) 1 "missing")
       second
-      (clone message))
+      (string.copy message))
     (test-assert-owned-string-eq
       (svec.get (& items) 2 "missing")
       third
-      (clone message))
+      (string.copy message))
     (test-assert-owned-string-eq
       (svec.get (& items) 3 "missing")
       fourth
-      (clone message))
+      (string.copy message))
     (test-assert-owned-string-eq (svec.get (& items) 4 "missing") fifth message)))
 
 ;: Assert that a present path-list lookup contains exactly three strings.

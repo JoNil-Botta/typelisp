@@ -596,7 +596,7 @@ assert_active_cli_surface_command() {
             fi
             package_label="${label}-package-open"
             if [ "$HOST_OS" = windows ]; then
-                package_doc_open_program=where.exe
+                package_doc_open_program=sort.exe
             else
                 package_doc_open_program=/usr/bin/test
             fi

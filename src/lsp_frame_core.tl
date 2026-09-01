@@ -482,18 +482,6 @@
         (LspLengthParse.Err "lsp: invalid Content-Length")))
     LspLengthParse.Ignore))
 
-(define (lsp-string-vec-push-copy [items : lsp_svec.Vec] [value : String]) : lsp_svec.Vec
-  (let
-    [next-items : lsp_svec.Vec (owned_view.compiler-owned-shared-view items)]
-    (begin
-      (lsp_svec.push-ref! (&mut next-items) value)
-      next-items)))
-
-(define (lsp-string-vec-push-copy!
-  [items : (&mut items lsp_svec.Vec)]
-  [value : String]) : unit
-  (lsp_svec.push-ref! items value))
-
 ;; The LSP is serial, so the narrow frame boundary can select one active
 ;; memory transport without plumbing transport arguments through every request
 ;; handler. Stdio remains the default and the transcript wrapper always clears

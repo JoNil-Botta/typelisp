@@ -2508,32 +2508,6 @@
     member-handle
     -1))
 
-(define (compiler-semantic-field-handle-in-module
-  [ctx : tc.TcContext]
-  [module-id : i64]
-  [struct-name-id : i64]
-  [field-name-id : i64]) : CompilerSemanticMaybeHandle
-  (let
-    [registries : (& ctx csym.CompilerRegistries)
-      (tc.tc-context-registries ctx)]
-    (match (csym.compiler-registries-lookup-struct-field-id
-      registries
-      struct-name-id
-      field-name-id)
-      [(option_i64.Some handle) (CompilerSemanticMaybeHandle.Some handle)]
-      [(option_i64.None)
-        (match registries
-          [(csym.CompilerRegistries _ fields _)
-            (match (csym.compiler-symbol-map-lookup-id
-              (& fields)
-              (csym.compiler-struct-field-key-id-in-module-by-id
-                module-id
-                struct-name-id
-                field-name-id))
-              [(option_i64.Some handle)
-                (CompilerSemanticMaybeHandle.Some handle)]
-              [(option_i64.None) CompilerSemanticMaybeHandle.None])])])))
-
 (define (compiler-semantic-field-owner-handle [handle : i64]) : i64
   (csym.compiler-symbol-make-handle
     (csym.compiler-symbol-kind-defstruct)

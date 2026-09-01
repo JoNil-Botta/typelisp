@@ -8799,6 +8799,42 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-retired-symbol-rotations : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-expansion-scratch-creations : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-splice-generation-rotations : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-retired-generation-rotations : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-live-symbols-max-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-retired-symbols-max-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-expansion-scratch-max-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-active-generations-max-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-retired-generations-max-bytes : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-stdlib-tlci-catalog-hits : i64
     0))
 (cfg
@@ -9308,6 +9344,15 @@
       (set! compiler-tc-macro-live-reuses 0)
       (set! compiler-tc-macro-live-registry-rebuilds 0)
       (set! compiler-tc-macro-live-registry-reuses 0)
+      (set! compiler-tc-macro-retired-symbol-rotations 0)
+      (set! compiler-tc-macro-expansion-scratch-creations 0)
+      (set! compiler-tc-macro-splice-generation-rotations 0)
+      (set! compiler-tc-macro-retired-generation-rotations 0)
+      (set! compiler-tc-macro-live-symbols-max-bytes 0)
+      (set! compiler-tc-macro-retired-symbols-max-bytes 0)
+      (set! compiler-tc-macro-expansion-scratch-max-bytes 0)
+      (set! compiler-tc-macro-active-generations-max-bytes 0)
+      (set! compiler-tc-macro-retired-generations-max-bytes 0)
       (set! compiler-tc-macro-stdlib-tlci-catalog-hits 0)
       (set! compiler-tc-macro-stdlib-tlci-catalog-misses 0)
       (set! compiler-tc-macro-stdlib-tlci-load-failures 0)
@@ -10152,6 +10197,35 @@
       (compiler-tc-macro-counter-profile-line
         "live_registry_reuses"
         compiler-tc-macro-live-registry-reuses)
+      (compiler-tc-macro-counter-profile-line
+        "retention_retired_symbol_rotations"
+        compiler-tc-macro-retired-symbol-rotations)
+      (compiler-tc-macro-counter-profile-line
+        "retention_expansion_scratch_creations"
+        compiler-tc-macro-expansion-scratch-creations)
+      (compiler-tc-macro-counter-profile-line
+        "retention_active_generation_rotations"
+        (+
+          compiler-tc-walk-decl-generation-rotations
+          compiler-tc-macro-splice-generation-rotations))
+      (compiler-tc-macro-counter-profile-line
+        "retention_retired_generation_rotations"
+        compiler-tc-macro-retired-generation-rotations)
+      (compiler-tc-macro-counter-profile-line
+        "retention_live_symbols_max_bytes"
+        compiler-tc-macro-live-symbols-max-bytes)
+      (compiler-tc-macro-counter-profile-line
+        "retention_retired_symbols_max_bytes"
+        compiler-tc-macro-retired-symbols-max-bytes)
+      (compiler-tc-macro-counter-profile-line
+        "retention_expansion_scratch_max_bytes"
+        compiler-tc-macro-expansion-scratch-max-bytes)
+      (compiler-tc-macro-counter-profile-line
+        "retention_active_generations_max_bytes"
+        compiler-tc-macro-active-generations-max-bytes)
+      (compiler-tc-macro-counter-profile-line
+        "retention_retired_generations_max_bytes"
+        compiler-tc-macro-retired-generations-max-bytes)
       (compiler-tc-macro-counter-profile-line
         "stdlib_tlci_catalog_hits"
         compiler-tc-macro-stdlib-tlci-catalog-hits)
@@ -99820,6 +99894,88 @@
   (dotted-macro-journal-len i64)
   (dotted-macro-journal-depth i64))
 
+;; Cold compile-profile census of the five independently reclaimed macro owner
+;; classes. Sample only at generation handoffs and the final detach boundary;
+;; allocator hot paths remain unchanged.
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-retention-max [old : i64] [value : i64]) : i64
+    (if (> value old)
+      value
+      old)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-retention-arena-bytes [owner : i64]) : i64
+    (allocation_profile.compiler-allocation-profile-arena-bump-bytes owner)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-retention-sample-symbols! [state : TcMacroState]) : unit
+    (let
+      [live-symbols : i64
+        (compiler-tc-macro-retention-arena-bytes
+          (tc-macro-walk-field state macro-live-symbols-arena))]
+      [retired-symbols : i64
+        (compiler-tc-macro-retention-arena-bytes
+          (tc-macro-walk-field state macro-live-symbols-retired-arena))]
+      (begin
+        (set!
+          compiler-tc-macro-live-symbols-max-bytes
+          (compiler-tc-macro-retention-max
+            compiler-tc-macro-live-symbols-max-bytes
+            live-symbols))
+        (set!
+          compiler-tc-macro-retired-symbols-max-bytes
+          (compiler-tc-macro-retention-max
+            compiler-tc-macro-retired-symbols-max-bytes
+            retired-symbols))))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-retention-sample-generations!
+    [state : TcMacroState]) : unit
+    (let
+      [active-generations : i64
+        (+
+          (compiler-tc-macro-retention-arena-bytes
+            (tc-macro-walk-field state macro-decl-generation-arena))
+          (compiler-tc-macro-retention-arena-bytes
+            (tc-macro-walk-field state macro-splice-generation-arena)))]
+      [retired-generations : i64
+        (+
+          (compiler-tc-macro-retention-arena-bytes
+            (tc-macro-walk-field state macro-decl-generation-retired-arena))
+          (compiler-tc-macro-retention-arena-bytes
+            (tc-macro-walk-field state macro-splice-generation-retired-arena)))]
+      (begin
+        (set!
+          compiler-tc-macro-active-generations-max-bytes
+          (compiler-tc-macro-retention-max
+            compiler-tc-macro-active-generations-max-bytes
+            active-generations))
+        (set!
+          compiler-tc-macro-retired-generations-max-bytes
+          (compiler-tc-macro-retention-max
+            compiler-tc-macro-retired-generations-max-bytes
+            retired-generations))))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-retention-sample! [state : TcMacroState]) : unit
+    (let
+      [scratch : i64
+        (compiler-tc-macro-retention-arena-bytes
+          (tc-macro-walk-field state macro-expand-scratch-arena))]
+      (begin
+        (compiler-tc-macro-retention-sample-symbols! state)
+        (compiler-tc-macro-retention-sample-generations! state)
+        (set!
+          compiler-tc-macro-expansion-scratch-max-bytes
+          (compiler-tc-macro-retention-max
+            compiler-tc-macro-expansion-scratch-max-bytes
+            scratch))))))
+
 (define (tc-macro-walk-state-new) : TcMacroWalkStateData
   (TcMacroWalkStateData
     (__tl_make-array i64 0)
@@ -100740,6 +100896,20 @@
         unit
         (macro-generation-destroy! retired)))))
 
+;; A conservative whole-program rebuild keeps the replaced symbols reachable
+;; while the replacement TcContext, top env, CTFE env, and hygiene state are
+;; assembled. Once that rebuild has completed, every continuing consumer uses
+;; the replacement context and the old registry has no escaping handle. Reclaim
+;; it at that explicit handoff instead of retaining it until macro detach.
+(define (macro-live-symbols-reclaim-retired! [state : TcMacroState]) : unit
+  (let
+    [retired : i64 (tc-macro-walk-field state macro-live-symbols-retired-arena)]
+    (begin
+      (tc-macro-walk-set! state macro-live-symbols-retired-arena 0)
+      (if (= retired 0)
+        unit
+        (macro-generation-destroy! retired)))))
+
 ;; Force the next pass to rebuild the live symbols/registries. Called from the
 ;; decl walk's non-inert splice arm: an arbitrary (potentially shadowing) splice
 ;; may have introduced a name the reused symbols would resolve differently, so
@@ -100914,6 +101084,15 @@
                 state
                 macro-live-symbols-retired-arena
                 previous)
+              (cfg
+                compile-profile
+                (begin
+                  (if (= previous 0)
+                    unit
+                    (set!
+                      compiler-tc-macro-retired-symbol-rotations
+                      (+ compiler-tc-macro-retired-symbol-rotations 1)))
+                  (compiler-tc-macro-retention-sample-symbols! state)))
               (macro-expand-allocation-profile-snapshot! state retired)
               (if (= retired 0)
                 unit
@@ -101121,11 +101300,13 @@
 ;; then grows by the survivors only, and the existing `macro_finalize`
 ;; compaction becomes incremental rather than the sole reclamation point.
 ;;
-;; Two generations, not one: the copy-out reads the generation it is retiring,
-;; and the walk's own step
-;; (`out-rev` prepend, module-id update, path reversal) runs after the copy but
-;; before the next expansion begins. Retiring one behind keeps a whole
-;; declaration boundary of slack over any reader the copy-out cannot see.
+;; One live declaration generation is sufficient at the next rotation boundary:
+;; the copy-out finishes before the expansion returns, and the walk's own step
+;; (`out-rev` prepend, module-id update, path reversal) finishes before the next
+;; expansion can call `macro-decl-generation-enter!`. Thus a previous batch has
+;; no reader when the next batch begins. The splice ring below deliberately keeps
+;; its separate two-generation reset cadence because its caches have a different
+;; proof.
 ;;
 ;; A generation spans a BATCH of firing declarations, not one. The survivor is
 ;; still copied out at every declaration boundary -- that is what makes the
@@ -101169,8 +101350,8 @@
 ;; Use that cadence for enough source-growth headroom that declaration ordering
 ;; cannot immediately move a large batch back across the proportional gate.
 ;;
-;; Retention is bounded by 2 batches, not by the walk. Make `next` the live
-;; generation and destroy the one retired a batch ago.
+;; Retention is bounded by one batch, not by the walk. Make `next` the live
+;; generation and destroy the completed batch at this next-entry handoff.
 ;; `tl_arena_destroy`, never `tl_region_reset`: resetting latches the "reused"
 ;; flag that disables the virgin-arena zero-fill elision permanently for
 ;; everything later allocated in it (#5599). `macro-decl-generation-arena`
@@ -101184,12 +101365,19 @@
     (begin
       (cfg
         compile-profile
-        (set!
-          compiler-tc-walk-decl-generation-rotations
-          (+ compiler-tc-walk-decl-generation-rotations 1)))
+        (begin
+          (compiler-tc-macro-retention-sample-generations! state)
+          (set!
+            compiler-tc-walk-decl-generation-rotations
+            (+ compiler-tc-walk-decl-generation-rotations 1))))
       (tc-macro-walk-set! state macro-decl-generation-arena next)
-      (tc-macro-walk-set! state macro-decl-generation-retired-arena previous)
-      (if (= retired 0)
+      (tc-macro-walk-set! state macro-decl-generation-retired-arena 0)
+      (if (= previous 0)
+        unit
+        (macro-generation-destroy! previous))
+      ;; Drain a legacy/test-injected retired slot without ever publishing two
+      ;; retired owners or destroying the same arena twice.
+      (if (or (= retired 0) (= retired previous))
         unit
         (macro-generation-destroy! retired)))))
 
@@ -101262,6 +101450,18 @@
       (tc-macro-walk-field state macro-splice-generation-retired-arena)]
     [next : i64 (arena.tl_arena_make)]
     (begin
+      (cfg
+        compile-profile
+        (begin
+          (compiler-tc-macro-retention-sample-generations! state)
+          (set!
+            compiler-tc-macro-splice-generation-rotations
+            (+ compiler-tc-macro-splice-generation-rotations 1))
+          (if (= previous 0)
+            unit
+            (set!
+              compiler-tc-macro-retired-generation-rotations
+              (+ compiler-tc-macro-retired-generation-rotations 1)))))
       (tc-macro-walk-set! state macro-splice-generation-arena next)
       (tc-macro-walk-set! state macro-splice-generation-retired-arena previous)
       (if (= retired 0)
@@ -101434,6 +101634,11 @@
       [scratch : i64 (arena.tl_arena_make)]
       (begin
         (tc-macro-walk-set! state macro-expand-scratch-arena scratch)
+        (cfg
+          compile-profile
+          (set!
+            compiler-tc-macro-expansion-scratch-creations
+            (+ compiler-tc-macro-expansion-scratch-creations 1)))
         scratch))
     (tc-macro-walk-field state macro-expand-scratch-arena)))
 
@@ -115559,11 +115764,62 @@
               state-a
               (tc-global-shared-view empty-program)
               (tc-global-shared-view empty-paths))]
+          [symbols-a-rebuild : csym.ResultCompilerSymbols
+            (macro-live-symbols-build-fresh
+              state-a
+              (tc-global-shared-view empty-program)
+              (tc-global-shared-view empty-paths))]
+          [_reclaim-a-symbols : unit
+            (macro-live-symbols-reclaim-retired! state-a)]
+          [a-rebuild-reclaimed? : bool
+            (and
+              (tc-macro-walk-field state-a macro-live-symbols-ready)
+              (=
+                (tc-macro-walk-field state-a macro-live-symbols-retired-arena)
+                0))]
           [symbols-b : csym.ResultCompilerSymbols
-            (macro-live-symbols-build-fresh state-b empty-program empty-paths)]
+            (macro-live-symbols-build-fresh
+              state-b
+              (tc-global-shared-view empty-program)
+              (tc-global-shared-view empty-paths))]
+          [symbols-b-arena : i64
+            (tc-macro-walk-field state-b macro-live-symbols-arena)]
+          [symbols-b-reused : csym.ResultCompilerSymbols
+            (macro-live-symbols-build-or-reuse!
+              state-b
+              (tc-global-shared-view empty-program)
+              (tc-global-shared-view empty-paths))]
           [decl-arena-a : i64 (macro-decl-generation-enter! state-a)]
+          [decl-arena-a-same : i64 (macro-decl-generation-enter! state-a)]
+          [decl-arena-a-next : i64 (macro-decl-generation-enter! state-a)]
+          [a-decl-rotation-reclaimed? : bool
+            (and
+              (= decl-arena-a decl-arena-a-same)
+              (not (= decl-arena-a decl-arena-a-next))
+              (=
+                (tc-macro-walk-field state-a macro-decl-generation-arena)
+                decl-arena-a-next)
+              (=
+                (tc-macro-walk-field
+                  state-a
+                  macro-decl-generation-retired-arena)
+                0))]
           [decl-arena-b : i64 (macro-decl-generation-enter! state-b)]
           [splice-arena-a : i64 (macro-splice-generation-enter! state-a)]
+          [splice-arena-a-next : i64 (macro-splice-generation-enter! state-a)]
+          [splice-arena-a-third : i64 (macro-splice-generation-enter! state-a)]
+          [a-splice-ring-ok? : bool
+            (and
+              (not (= splice-arena-a splice-arena-a-next))
+              (not (= splice-arena-a-next splice-arena-a-third))
+              (=
+                (tc-macro-walk-field state-a macro-splice-generation-arena)
+                splice-arena-a-third)
+              (=
+                (tc-macro-walk-field
+                  state-a
+                  macro-splice-generation-retired-arena)
+                splice-arena-a-next))]
           [splice-arena-b : i64 (macro-splice-generation-enter! state-b)]
           [enclosing : i64 (arena.tl_arena_current)]
           [_switch-b : unit
@@ -115584,11 +115840,24 @@
                 (match symbols-a
                   [(csym.ResultCompilerSymbols.Ok _) true]
                   [_ false])
+                (match symbols-a-rebuild
+                  [(csym.ResultCompilerSymbols.Ok _) true]
+                  [_ false])
                 (match symbols-b
                   [(csym.ResultCompilerSymbols.Ok _) true]
                   [_ false])
-                (not (= decl-arena-a decl-arena-b))
-                (not (= splice-arena-a splice-arena-b))
+                (match symbols-b-reused
+                  [(csym.ResultCompilerSymbols.Ok _) true]
+                  [_ false])
+                a-rebuild-reclaimed?
+                a-decl-rotation-reclaimed?
+                a-splice-ring-ok?
+                (=
+                  (tc-macro-walk-field state-b macro-live-symbols-arena)
+                  symbols-b-arena)
+                (not (= decl-arena-a-next decl-arena-b))
+                (not (= splice-arena-a-next splice-arena-b))
+                (not (= splice-arena-a-third splice-arena-b))
                 (=
                   (tc-macro-walk-field state-b macro-decl-generation-arena)
                   decl-arena-b)
@@ -128371,6 +128640,11 @@
                           (tc-global-shared-view next-ctx))
                         (macro-expand-ctfe-env-build-once!
                           (tc-global-shared-view next-ctx))
+                        ;; The replacement context, top env, CTFE env, hygiene
+                        ;; top env, and active pools are now complete. No value
+                        ;; returned to the continuing walk refers to the
+                        ;; replaced symbol/registry generation.
+                        (macro-live-symbols-reclaim-retired! state)
                         (ResultMacroSpliceRebuild.Ok
                           (tc-context-with-module-id next-ctx module module-id)
                           top-env))]
@@ -130254,6 +130528,12 @@
                     (ast.ast-place-shared-view pools)
                     0))
                 (let
+                  [_profile-retention-sample : unit
+                    (cfg
+                      compile-profile
+                      (compiler-tc-macro-retention-sample!
+                        (tc-job-state-macro-state job-state))
+                      unit)]
                   [_profile-lifetime-pre-detach : unit
                     (cfg
                       compile-profile
@@ -130324,12 +130604,21 @@
                   (compiler-tc-tlci-native-stress-pass-finish!
                     (ast.ast-place-shared-view pools)
                     1))
+                ;; A failed walk has no continuing context consumer. A
+                ;; replacement registry that failed during top-env/CTFE setup
+                ;; may still have its predecessor in the retired slot; reclaim
+                ;; that predecessor before publishing the failure boundary.
+                (macro-live-symbols-reclaim-retired!
+                  (tc-job-state-macro-state job-state))
                 (cfg
                   compile-profile
-                  (compiler-tc-macro-lifetime-emit!
-                    (tc-global-shared-view job-state)
-                    (ast.ast-place-shared-view pools)
-                    "macro.pre-detach"))
+                  (begin
+                    (compiler-tc-macro-retention-sample!
+                      (tc-job-state-macro-state job-state))
+                    (compiler-tc-macro-lifetime-emit!
+                      (tc-global-shared-view job-state)
+                      (ast.ast-place-shared-view pools)
+                      "macro.pre-detach")))
                 (macro-expand-allocation-profile-snapshot!
                   (tc-job-state-macro-state job-state)
                   0)

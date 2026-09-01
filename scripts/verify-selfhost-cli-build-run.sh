@@ -95,7 +95,10 @@ make_directory_link() {
     if [ "$HOST_OS" = windows ]; then
         _directory_link_win=$(cygpath -aw "$_directory_link")
         _directory_target_win=$(cygpath -aw "$_directory_target")
-        MSYS2_ARG_CONV_EXCL='*' cmd.exe /d /s /c "mklink /J \"$_directory_link_win\" \"$_directory_target_win\"" > /dev/null
+        TYPELISP_TEST_JUNCTION_LINK="$_directory_link_win" \
+            TYPELISP_TEST_JUNCTION_TARGET="$_directory_target_win" \
+            powershell.exe -NoLogo -NoProfile -NonInteractive -Command \
+            '$null = New-Item -ItemType Junction -Path $env:TYPELISP_TEST_JUNCTION_LINK -Target $env:TYPELISP_TEST_JUNCTION_TARGET' > /dev/null
     else
         ln -s "$_directory_target" "$_directory_link"
     fi
@@ -105,7 +108,9 @@ remove_directory_link() {
     _directory_link=$1
     if [ "$HOST_OS" = windows ]; then
         _directory_link_win=$(cygpath -aw "$_directory_link")
-        MSYS2_ARG_CONV_EXCL='*' cmd.exe /d /s /c "rmdir \"$_directory_link_win\"" > /dev/null
+        TYPELISP_TEST_JUNCTION_LINK="$_directory_link_win" \
+            powershell.exe -NoLogo -NoProfile -NonInteractive -Command \
+            'Remove-Item -LiteralPath $env:TYPELISP_TEST_JUNCTION_LINK -Force' > /dev/null
     else
         rm "$_directory_link"
     fi

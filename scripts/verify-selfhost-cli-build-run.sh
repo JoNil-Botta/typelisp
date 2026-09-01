@@ -189,8 +189,14 @@ generated_path() {
 }
 
 doc_generated_path() {
-    if [ "$HOST_OS" = windows ] && command -v cygpath >/dev/null 2>&1; then
-        cygpath -w "$1"
+    if [ "$HOST_OS" = windows ]; then
+        _doc_index=$1
+        _doc_dir=$(dirname -- "$_doc_index")
+        _doc_target=$(dirname -- "$_doc_dir")
+        printf '%s\\%s\\%s\n' \
+            "$_doc_target" \
+            "$(basename -- "$_doc_dir")" \
+            "$(basename -- "$_doc_index")"
     else
         printf '%s\n' "$1"
     fi

@@ -55,8 +55,9 @@
 ;# as an object with a string `tag` field followed by a sequence `payload` field;
 ;# payload elements stay in declaration order. Direct struct payloads and
 ;# generated option/result families are handled as ordinary concrete nominal
-;# enums. Tuples are supported recursively inside supported roots; tuple roots
-;# remain a follow-up.
+;# enums. Non-empty tuples are supported as roots, and tuples are supported
+;# recursively inside other supported values. Empty tuple roots remain subject
+;# to the internal zero-sized aggregate ABI restriction.
 (import stdlib.comptime)
 (import stdlib.string)
 
@@ -1317,6 +1318,7 @@
             ["struct" true]
             ["array" true]
             ["dyn-array" true]
+            ["tuple" true]
             ["enum" true]
             [_ false])])]
     (if root-supported

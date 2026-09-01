@@ -89,6 +89,33 @@ compiler_batch_path() {
     fi
 }
 
+make_directory_link() {
+    _directory_link=$1
+    _directory_target=$2
+    if [ "$HOST_OS" = windows ]; then
+        _directory_link_win=$(cygpath -aw "$_directory_link")
+        _directory_target_win=$(cygpath -aw "$_directory_target")
+        TYPELISP_TEST_JUNCTION_LINK="$_directory_link_win" \
+            TYPELISP_TEST_JUNCTION_TARGET="$_directory_target_win" \
+            powershell.exe -NoLogo -NoProfile -NonInteractive -Command \
+            '$null = New-Item -ItemType Junction -Path $env:TYPELISP_TEST_JUNCTION_LINK -Target $env:TYPELISP_TEST_JUNCTION_TARGET' > /dev/null
+    else
+        ln -s "$_directory_target" "$_directory_link"
+    fi
+}
+
+remove_directory_link() {
+    _directory_link=$1
+    if [ "$HOST_OS" = windows ]; then
+        _directory_link_win=$(cygpath -aw "$_directory_link")
+        TYPELISP_TEST_JUNCTION_LINK="$_directory_link_win" \
+            powershell.exe -NoLogo -NoProfile -NonInteractive -Command \
+            '[System.IO.Directory]::Delete($env:TYPELISP_TEST_JUNCTION_LINK)' > /dev/null
+    else
+        rm "$_directory_link"
+    fi
+}
+
 fail() {
     echo "FAIL: $*" >&2
     exit 1
@@ -1203,6 +1230,48 @@ set -e
 assert_status package-graph-github-cache-hit "$status" 0
 assert_empty package-graph-github-cache-hit "$WORKDIR/package-graph-github-cache-hit.err"
 assert_contains package-graph-github-cache-hit "$WORKDIR/package-graph-github-cache-hit.out" "Fresh $(generated_path "$GITHUB_CACHE_EXE")"
+
+GITHUB_CACHE_ENTRY_SAVED="${GITHUB_CACHE_ENTRY}.saved"
+GITHUB_CACHE_MANIFEST_OUTSIDE="${GITHUB_CACHE_ENTRY}.manifest-outside"
+mv "$GITHUB_CACHE_ENTRY" "$GITHUB_CACHE_ENTRY_SAVED"
+cp -R "$GITHUB_CACHE_ENTRY_SAVED" "$GITHUB_CACHE_MANIFEST_OUTSIDE"
+cat > "$GITHUB_CACHE_MANIFEST_OUTSIDE/typelisp.pkg" <<'EOF'
+outside-manifest-sentinel-was-read
+EOF
+make_directory_link "$GITHUB_CACHE_ENTRY" "$GITHUB_CACHE_MANIFEST_OUTSIDE"
+set +e
+# cli-gate-case selfhost-cli-package-graph-github-cache-root-confined direct GIT_CONFIG_GLOBAL="$GITHUB_CACHE_CONFIG_ENV"
+GIT_CONFIG_GLOBAL="$GITHUB_CACHE_CONFIG_ENV" "$COMPILER" build --manifest-path "$GITHUB_CACHE_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --locked > "$WORKDIR/package-graph-github-cache-root-confined.out" 2> "$WORKDIR/package-graph-github-cache-root-confined.err"
+status=$?
+set -e
+assert_status package-graph-github-cache-root-confined "$status" 1
+assert_empty package-graph-github-cache-root-confined "$WORKDIR/package-graph-github-cache-root-confined.out"
+assert_contains package-graph-github-cache-root-confined "$WORKDIR/package-graph-github-cache-root-confined.err" 'build: fetched package `remote` field `manifest` path `typelisp.pkg` is not confined to locked checkout `'
+assert_not_contains package-graph-github-cache-root-confined "$WORKDIR/package-graph-github-cache-root-confined.err" "outside-manifest-sentinel-was-read"
+remove_directory_link "$GITHUB_CACHE_ENTRY"
+mv "$GITHUB_CACHE_ENTRY_SAVED" "$GITHUB_CACHE_ENTRY"
+rm -rf "$GITHUB_CACHE_MANIFEST_OUTSIDE"
+
+GITHUB_CACHE_SOURCE_SAVED="$GITHUB_CACHE_ENTRY/src.saved"
+GITHUB_CACHE_OUTSIDE="${GITHUB_CACHE_ENTRY}.outside"
+mv "$GITHUB_CACHE_ENTRY/src" "$GITHUB_CACHE_SOURCE_SAVED"
+mkdir -p "$GITHUB_CACHE_OUTSIDE"
+cat > "$GITHUB_CACHE_OUTSIDE/lib.tl" <<'EOF'
+outside-sentinel-was-read
+EOF
+make_directory_link "$GITHUB_CACHE_ENTRY/src" "$GITHUB_CACHE_OUTSIDE"
+set +e
+# cli-gate-case selfhost-cli-package-graph-github-cache-confined direct GIT_CONFIG_GLOBAL="$GITHUB_CACHE_CONFIG_ENV"
+GIT_CONFIG_GLOBAL="$GITHUB_CACHE_CONFIG_ENV" "$COMPILER" build --manifest-path "$GITHUB_CACHE_ROOT/typelisp.pkg" --target "$BUILD_TARGET" --opt-level 0 --locked > "$WORKDIR/package-graph-github-cache-confined.out" 2> "$WORKDIR/package-graph-github-cache-confined.err"
+status=$?
+set -e
+assert_status package-graph-github-cache-confined "$status" 1
+assert_empty package-graph-github-cache-confined "$WORKDIR/package-graph-github-cache-confined.out"
+assert_contains package-graph-github-cache-confined "$WORKDIR/package-graph-github-cache-confined.err" 'build: fetched package `gc_remote` field `entry` path `src/lib.tl` is not confined to locked checkout `'
+assert_not_contains package-graph-github-cache-confined "$WORKDIR/package-graph-github-cache-confined.err" "outside-sentinel-was-read"
+remove_directory_link "$GITHUB_CACHE_ENTRY/src"
+mv "$GITHUB_CACHE_SOURCE_SAVED" "$GITHUB_CACHE_ENTRY/src"
+rm -rf "$GITHUB_CACHE_OUTSIDE"
 
 mv "$GITHUB_CACHE_REMOTE_OFFLINE" "$GITHUB_CACHE_REMOTE"
 printf 'typelisp-package-cache-v1\nurl=%s\ncommit=stale\n' "$GITHUB_CACHE_URL" > "$GITHUB_CACHE_ENTRY/typelisp-cache-entry.txt"

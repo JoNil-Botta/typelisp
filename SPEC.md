@@ -3331,7 +3331,20 @@ Example:
   marker is valid, and the cached root contains `typelisp.pkg`; complete
   entries are reused without invoking `git`, including during locked replay.
   Partial or corrupt entries are never reused and are refetched through a
-  staging directory.
+  staging directory. A fetched dependency retains that provenance after its
+  remote declaration is rewritten to a cache path. Before reading its manifest
+  and again before compilation or root-package consumption, the compiler treats
+  the locked checkout as a physical authority boundary: the manifest, entry,
+  and every package-controlled checkout node must remain below that root without
+  traversing a symbolic link, Windows junction/reparse point, or other special
+  filesystem object. Lexical escapes and unsafe nodes fail with a deterministic
+  diagnostic naming the package, field, requested path, and allowed checkout
+  root before an outside target is read. Local root and path dependencies retain
+  their existing relative, absolute, and symlink behavior. Repository
+  subdirectories and propagated native inputs are not yet part of fetched
+  dependency graphs; when they land, their relative path fields must use this
+  same boundary. Raw linker arguments remain opaque policy inputs rather than
+  being guessed to be filesystem paths.
 - An executable's normal package graph is exactly one level deep: every edge is
   declared directly in its root manifest. Direct manifests are normalized and
   de-duplicated by manifest path before build execution. Independent dependency

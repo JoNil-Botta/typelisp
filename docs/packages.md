@@ -172,6 +172,15 @@ intentionally refreshes remote pins and commits only changed canonical bytes.
 The executable root owns every lock entry;
 a fetched or local library's own lockfile is never consulted.
 
+Fetched packages are confined to their locked cache checkout. TypeLisp carries
+the remote provenance after resolution rewrites a dependency to a local cache
+path, checks the manifest and entry without following links, and rejects any
+package-controlled symbolic link, Windows junction/reparse point, or other
+special node before compilation or root-package consumption. The diagnostic
+names the package, field, requested path, and allowed checkout root. This
+physical boundary applies only to fetched packages; local root and path
+dependencies keep their existing relative, absolute, and symlink behavior.
+
 Lock updates are transactional. If canonical output is byte-identical to the
 generation used for resolution, TypeLisp leaves the file and its modification
 time untouched. Otherwise it exclusively creates a process-unique sibling,

@@ -1,26 +1,26 @@
 # cli-gate-coverage-schema	1
 # cli-gate-coverage-counts	1
-# count	total	all	rows	510
-# count	total	all	annotations	510
+# count	total	all	rows	512
+# count	total	all	annotations	512
 # count	total	all	sources	3
-# count	total	all	source-sites	382
+# count	total	all	source-sites	384
 # count	total	all	expanded-cases	162
 # count	gate	public-tools	rows	325
 # count	gate	public-tools	source-sites	214
 # count	gate	public-tools	expanded-cases	127
-# count	gate	selfhost-cli	rows	80
-# count	gate	selfhost-cli	source-sites	79
+# count	gate	selfhost-cli	rows	82
+# count	gate	selfhost-cli	source-sites	81
 # count	gate	selfhost-cli	expanded-cases	17
 # count	gate	stage1-wrapper	rows	105
 # count	gate	stage1-wrapper	source-sites	89
 # count	gate	stage1-wrapper	expanded-cases	18
-# count	host	all	rows	384
+# count	host	all	rows	386
 # count	host	linux	rows	123
 # count	host	windows	rows	3
-# count	platform	linux	rows	507
-# count	platform	windows	rows	387
+# count	platform	linux	rows	509
+# count	platform	windows	rows	389
 # count	kind	delegated	rows	9
-# count	kind	direct	rows	54
+# count	kind	direct	rows	56
 # count	kind	wrapper	rows	447
 # count	process	compiler	rows	337
 # count	process	compiler+assembler+archiver	rows	1
@@ -34,7 +34,7 @@
 # count	process	compiler+assembler+linker+two-test-programs	rows	2
 # count	process	compiler+git	rows	1
 # count	process	compiler+git+native-tools	rows	7
-# count	process	compiler+native-tools	rows	64
+# count	process	compiler+native-tools	rows	66
 # count	process	compiler+native-tools+program	rows	60
 # count	process	compiler+native-tools+programs	rows	5
 # count	process	compiler+native-tools+scratch-program	rows	1
@@ -489,7 +489,7 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	spec-print-string	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp run <spec-work>/print-string.tl	<spec-work>/print-string.tl	inherited	repository	compiler+native-tools+program	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	check_text_file_exact stdout <spec-work>/print-string.stdout	empty	none	spec-print-string	-
 1	spec-extern-tl-alloc	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp run <spec-work>/extern-tl-alloc.tl	<spec-work>/extern-tl-alloc.tl	inherited	repository	compiler+native-tools+program	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	check_text_file_exact stdout <spec-work>/extern-tl-alloc.stdout	empty	none	spec-extern-tl-alloc	-
 # source	scripts/verify-selfhost-cli-build-run.sh
-# selfhost-cli inventory: 79 source sites and 80 behavior rows; the command
+# selfhost-cli inventory: 81 source sites and 82 behavior rows; the command
 # surface contributes 15 explicit one-case expansions, and the host-specific
 # REPL session expands one source site into Linux and Windows behavior rows.
 # The former delegated public LSP corpus duplicate was removed by #4923; its
@@ -547,6 +547,8 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	selfhost-cli-package-graph-github-prefetch	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --manifest-path <workdir>/package-graph-github-prefetch/root/typelisp.pkg --target <host-target> --opt-level 0	prepopulated-github-dependency-worktree	inherited	repository	compiler+native-tools	inherited	0	contains:remote-archive,root-executable	empty	writes:two-artifacts;separate-root-program-exits-43	selfhost-cli-package-graph-github-prefetch	-
 1	selfhost-cli-package-graph-github-cache-first	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --manifest-path <workdir>/ghc/root/typelisp.pkg --target <host-target> --opt-level 0	local-git-rewrite-with-empty-package-cache	inherited	repository	compiler+git+native-tools	GIT_CONFIG_GLOBAL=<workdir>/ghc/gitconfig	0	contains:root-executable	empty	writes:cache-entry-marker,metadata,lockfile,executable	selfhost-cli-package-graph-github-cache-first	-
 1	selfhost-cli-package-graph-github-cache-hit	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --manifest-path <workdir>/ghc/root/typelisp.pkg --target <host-target> --opt-level 0	offline-remote-with-valid-package-cache	inherited	repository	compiler+native-tools	GIT_CONFIG_GLOBAL=<workdir>/ghc/gitconfig	0	contains:Fresh-root-executable	empty	reuses:package-cache	selfhost-cli-package-graph-github-cache-hit	-
+1	selfhost-cli-package-graph-github-cache-root-confined	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --manifest-path <workdir>/ghc/root/typelisp.pkg --target <host-target> --opt-level 0 --locked	offline-remote-with-cache-checkout-replaced-by-symlink-or-junction-to-outside-manifest-sentinel	inherited	repository	compiler+native-tools	GIT_CONFIG_GLOBAL=<workdir>/ghc/gitconfig	1	empty	contains:fetched-package-manifest-confinement;excludes:outside-manifest-sentinel	rejects:checkout-root-link-before-manifest-read	selfhost-cli-package-graph-github-cache-root-confined	-
+1	selfhost-cli-package-graph-github-cache-confined	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --manifest-path <workdir>/ghc/root/typelisp.pkg --target <host-target> --opt-level 0 --locked	offline-remote-with-cached-src-replaced-by-symlink-or-junction-to-outside-sentinel	inherited	repository	compiler+native-tools	GIT_CONFIG_GLOBAL=<workdir>/ghc/gitconfig	1	empty	contains:fetched-package-checkout-confinement;excludes:outside-sentinel	rejects:link-before-outside-read	selfhost-cli-package-graph-github-cache-confined	-
 1	selfhost-cli-package-graph-github-cache-refetch	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --manifest-path <workdir>/ghc/root/typelisp.pkg --target <host-target> --opt-level 0	restored-remote-with-corrupt-cache-metadata	inherited	repository	compiler+git+native-tools	GIT_CONFIG_GLOBAL=<workdir>/ghc/gitconfig	0	contains:Fresh-root-executable	empty	preserves:corrupt.1;rewrites:valid-cache-metadata	selfhost-cli-package-graph-github-cache-refetch	-
 1	selfhost-cli-package-graph-github-lock-missing	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --manifest-path <workdir>/gl/root/typelisp.pkg --target <host-target> --opt-level 0 --locked	branch-dependency-without-lockfile	inherited	repository	compiler	GIT_CONFIG_GLOBAL=<workdir>/gl/gitconfig	1	empty	contains:locked-requires-lock-entry	does-not-write:lockfile	selfhost-cli-package-graph-github-lock-missing	-
 1	selfhost-cli-package-graph-github-lock-first	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp build --manifest-path <workdir>/gl/root/typelisp.pkg --target <host-target> --opt-level 0	branch-main-dependency-without-lockfile	inherited	repository	compiler+git+native-tools	GIT_CONFIG_GLOBAL=<workdir>/gl/gitconfig	0	contains:root-executable	empty	writes:lockfile-with-main-pin-and-rev1	selfhost-cli-package-graph-github-lock-first	-

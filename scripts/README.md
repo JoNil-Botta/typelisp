@@ -59,7 +59,7 @@ instead, which the sweep does not require to be reachable.
 | Check public CLI behavior | `verify-public-tools.sh`, `check-stage1-wrapper.sh` |
 | Check TLCI containers and package catalogs | `verify-tlci-corpus.sh`, `verify-tlci-native-route-stress.sh`, `verify-stdlib-tlci-identity-differential.sh` (all embedded identities; called by compile-profile), `verify-embedded-stdlib-tlci-resources.sh`, `verify-package-metadata-tlci.sh`, `verify-package-native-tlci.sh`, `verify-package-surface-tlci.sh` |
 | Check native behavior | `verify-integration.sh`, `verify-native-link-linux.sh`, `verify-native-link-windows.sh` |
-| Check codegen shape and parity | `verify-asm-shape-gates.sh`, `verify-by-value-aggregate-abi.sh` (internal Tuple/Array physical ABI shapes), `check-codegen-target-parity.sh`, `check-backend-target-asm-parity.sh` |
+| Check codegen shape and parity | `verify-cross-mode-differential.sh` (budgeted cross-gate semantic/ABI witnesses), `verify-asm-shape-gates.sh`, `verify-by-value-aggregate-abi.sh` (internal Tuple/Array physical ABI shapes), `check-codegen-target-parity.sh`, `check-backend-target-asm-parity.sh` |
 | Check SPMD behavior | `verify-spmd-simd.sh`, `verify-spmd-runtime-dispatch.sh`, `verify-spmd-package-calls.sh`, `verify-spmd-broadcast.sh`, `verify-spmd-lane-identity.sh` |
 | Check ISPC corpus contracts | `verify-ispc-perfbench-loads.sh`, `verify-ispc-perfbench-stores.sh`, `verify-ispc-perfbench-gathers.sh`, `verify-ispc-mandelbrot.sh`, `verify-ispc-point-transform.sh` |
 | Check gate wiring | `check-gate-reachability.sh`, `check-cli-gate-coverage.sh` |
@@ -68,6 +68,17 @@ instead, which the sweep does not require to be reachable.
 
 The complete and current invocation order remains in `ci-verify.sh`; this table
 is a map, not a second manifest.
+
+`verify-cross-mode-differential.sh` reads
+`tests/cross-mode/corpus.tsv` after its producer gates have run. It reuses the
+integration, TLCI, SPMD, Windows COFF, and same-run bootstrap artifacts instead
+of rebuilding their exhaustive corpora. Every manifest row records its axes,
+observations, route metadata, producer, and host/ISA applicability; the gate
+writes the evaluated state to
+`target/cross-mode-differential/applicability.tsv`. Use `--case NAME` to
+reproduce the first reported difference with retained producer artifacts, or
+`--self-test` to run controlled observation and mode-selection perturbations
+without a compiler.
 
 The focused inline profile-summary probe uses `lib-linux-memory-limit.sh` to
 enforce a 1 GiB resident-memory ceiling on Linux. A usable user-systemd manager

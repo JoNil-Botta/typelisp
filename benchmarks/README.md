@@ -61,6 +61,12 @@ Linux opt2 pass uses its positive case list from the CI suite manifest.
 | `cfg_domloops` | Optimizer CFG indexing, dominators, and natural-loop discovery over captured function graphs. |
 | `gvn_table` | Optimizer load-CSE state machine over a captured pre-GVN instruction tape. |
 | `peephole_lines` | Backend line peephole, reload elision, fallthrough scan, and dead-store sweep over captured self-compile assembly. |
+| `read_sexpr` | Reader recursive descent into the dense `Sexpr` node pool over the captured token stream of four compiler modules. |
+| `callgraph_scc` | Inliner function index, cons-list call graph, loop-depth-weighted census, and iterative Tarjan SCC over captured pre-inline programs. |
+| `ssa_construct` | Optimizer SSA construction (dominance-frontier phi insertion and checkpointed renaming) over captured pre-SSA function bodies. |
+| `sccp_lattice` | Optimizer sparse conditional constant propagation with the compiler's constant folder over captured instruction tapes. |
+| `regalloc_greedy` | Register allocator RAGreedy selectOrSplit pass (spill-weight heap, occupancy union, eviction cascade) over captured live intervals. |
+| `asm_render` | Backend assembly text emission (`str-cat` line assembly, text buffer appends, operand rendering) re-rendering a captured self-compile assembly slice. |
 | `spmd_map` | Data-parallel elementwise map (`out[i] = a[i] + b[i] + r`) via `foreach`, establishing the SPMD/SIMD-vs-clang baseline (refs #1125). |
 | `spmd_zip` | Data-parallel three-input fused multiply-add (`out[i] = a[i] * b[i] + c[i] + r`) via `foreach` (refs #1125). |
 | `spmd_mask` | Data-parallel masked conditional (`out[i] = (a[i] odd) ? a[i]+r : a[i]-r`) via `foreach`, exercising a divergent lane body (refs #1125). |

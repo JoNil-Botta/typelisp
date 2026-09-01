@@ -220,9 +220,13 @@ doc_generated_path() {
         _doc_index=$1
         _doc_dir=$(dirname -- "$_doc_index")
         _doc_target=$(dirname -- "$_doc_dir")
-        if command -v cygpath >/dev/null 2>&1; then
-            _doc_target=$(cygpath -m "$_doc_target")
-        fi
+        case "$_doc_target" in
+            /*)
+                if command -v cygpath >/dev/null 2>&1; then
+                    _doc_target=$(cygpath -m "$_doc_target")
+                fi
+                ;;
+        esac
         printf '%s\\%s\\%s\n' \
             "$_doc_target" \
             "$(basename -- "$_doc_dir")" \

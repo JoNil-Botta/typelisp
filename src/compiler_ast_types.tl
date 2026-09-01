@@ -1229,7 +1229,7 @@
 ;;   * A literal-initialised global folds to the same immediate, but naming the
 ;;     stride that way perturbs the SEED compiler's inliner. Measured:
 ;;     `target/stage0/typelisp` then inlines `ty-node-get` into
-;;     `ty-node-shallow-eq?`, moves 32k lines of stage1 assembly, and the
+;;     the type-node dedup equality path, moves 32k lines of stage1 assembly, and the
 ;;     resulting stage1 segfaults in `tc-move-check-expr`.
 ;;   * A `defmacro` was historically blocked because the macro expander did not
 ;;     descend into `(int->ptr x : (Ptr T))` operands. That traversal gap is
@@ -3106,6 +3106,27 @@
           ready.segment-count)
         id))))
 
+;; Immediate representation-level view of one type row in a stable pool
+;; segment. Segments never relocate, and callers consume the view before any
+;; grow, reset, context install, or exact-row rewrite. Keeping the address
+;; calculation in a macro lets aggregate call lowering pass the 24-byte row
+;; directly to hash/equality instead of first copying it through a return slot.
+(defmacro (ast-type-segment-bases-shared-view
+  [segment-bases : Expr]
+  [id : Expr]) : Expr
+  `(let
+    [bases-address : i64 ,segment-bases]
+    [row-id : i64 ,id]
+    [biased-base : i64
+      (unsafe
+        (ptr-read
+          (ptr-offset (int->ptr bases-address : (Ptr i64)) (shr row-id 10))))]
+    (unsafe
+      (ptr-read
+        (int->ptr
+          (+ biased-base (* row-id (ast-type-node-bytes)))
+          : (Ptr AstType))))))
+
 (define (ast-type-node-pool-state-push-dedup
   [pool : AstTypeNodePoolState]
   [node : AstType]
@@ -3132,7 +3153,7 @@
                 next.segment-count)
               id))])
       (if (ty-node-shallow-value-eq?
-        (ast-type-node-pool-state-get pool (- slot 1))
+        (ast-type-segment-bases-shared-view pool.segment-bases (- slot 1))
         (ast-global-shared-view node))
         (AstTypeNodePoolPushOk pool (- slot 1))
         (ast-type-node-pool-state-push-dedup
@@ -3269,6 +3290,84 @@
     (ptr->int (__tl_array-data ty-node-dedup-slots))))
 (define ty-node-dedup-count : i64
   0)
+
+;; The probe census is compile-profile-only so measurement cannot perturb the
+;; release path whose representation traffic it diagnoses.
+(cfg
+  compile-profile
+  (define ty-node-dedup-profile-probe-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define ty-node-dedup-profile-hits : i64
+    0))
+(cfg
+  compile-profile
+  (define ty-node-dedup-profile-misses : i64
+    0))
+(cfg
+  compile-profile
+  (define ty-node-dedup-profile-collision-steps : i64
+    0))
+(cfg
+  compile-profile
+  (define ty-node-dedup-profile-growths : i64
+    0))
+(cfg
+  compile-profile
+  (define ty-node-dedup-profile-max-fallbacks : i64
+    0))
+(cfg
+  compile-profile
+  (define ty-node-dedup-profile-capacity-high-water : i64
+    ty-node-dedup-capacity))
+
+(cfg
+  compile-profile
+  (define (ty-node-dedup-profile-reset!) : unit
+    (begin
+      (set! ty-node-dedup-profile-probe-calls 0)
+      (set! ty-node-dedup-profile-hits 0)
+      (set! ty-node-dedup-profile-misses 0)
+      (set! ty-node-dedup-profile-collision-steps 0)
+      (set! ty-node-dedup-profile-growths 0)
+      (set! ty-node-dedup-profile-max-fallbacks 0)
+      (set! ty-node-dedup-profile-capacity-high-water ty-node-dedup-capacity))))
+
+(cfg
+  compile-profile
+  (define (ty-node-dedup-profile-probe-call-count) : i64
+    ty-node-dedup-profile-probe-calls))
+
+(cfg
+  compile-profile
+  (define (ty-node-dedup-profile-hit-count) : i64
+    ty-node-dedup-profile-hits))
+
+(cfg
+  compile-profile
+  (define (ty-node-dedup-profile-miss-count) : i64
+    ty-node-dedup-profile-misses))
+
+(cfg
+  compile-profile
+  (define (ty-node-dedup-profile-collision-step-count) : i64
+    ty-node-dedup-profile-collision-steps))
+
+(cfg
+  compile-profile
+  (define (ty-node-dedup-profile-growth-count) : i64
+    ty-node-dedup-profile-growths))
+
+(cfg
+  compile-profile
+  (define (ty-node-dedup-profile-max-fallback-count) : i64
+    ty-node-dedup-profile-max-fallbacks))
+
+(cfg
+  compile-profile
+  (define (ty-node-dedup-profile-capacity-high-water-value) : i64
+    ty-node-dedup-profile-capacity-high-water))
 
 ;; Upper bound on the doubling above: 2^24 slots indexes 8.4M distinct type
 ;; nodes for 128 MiB of table. No self-host workload comes within an order of
@@ -3596,9 +3695,6 @@
         [(AstType.Slice b-elem) (= a-elem b-elem)]
         [_ false])]))
 
-(define (ty-node-shallow-eq? [a-id : i64] [b : AstType]) : bool
-  (ty-node-shallow-value-eq? (ty-node-get a-id) b))
-
 ;; Double the dedup table and reinsert every live entry, keeping the index
 ;; effective for the whole compile instead of switching itself off at half load.
 ;;
@@ -3635,7 +3731,10 @@
               (let
                 [idx : i64
                   (ty-node-dedup-slot-index
-                    (ty-node-hash-value (ty-node-get (- slot 1)))
+                    (ty-node-hash-value
+                      (ast-type-segment-bases-shared-view
+                        ty-node-pool-segment-bases
+                        (- slot 1)))
                     mask)]
                 (begin
                   (while (not (= (array-ref new-slots idx) 0))
@@ -3651,6 +3750,16 @@
         (unsafe
           (ptr->int (__tl_array-data ty-node-dedup-slots))))
       (set! ty-node-dedup-capacity new-capacity)
+      (cfg
+        compile-profile
+        (begin
+          (set!
+            ty-node-dedup-profile-growths
+            (+ ty-node-dedup-profile-growths 1))
+          (if (> new-capacity ty-node-dedup-profile-capacity-high-water)
+            (set! ty-node-dedup-profile-capacity-high-water new-capacity)
+            unit))
+        unit)
       ;; The pool state carries the slots array by reference, so the context
       ;; cell has to learn about the replacement here: the push that follows may
       ;; resolve to an existing id and never reach `ty-node-push-raw`'s capture.
@@ -3675,6 +3784,12 @@
         mask)]
     [result : i64 (- 0 1)]
     (begin
+      (cfg
+        compile-profile
+        (set!
+          ty-node-dedup-profile-probe-calls
+          (+ ty-node-dedup-profile-probe-calls 1))
+        unit)
       (while (< result 0)
         (let
           [slot : i64
@@ -3684,20 +3799,54 @@
             (let
               [id : i64 (ty-node-push-raw (ast-global-shared-view node))]
               (begin
+                (cfg
+                  compile-profile
+                  (set!
+                    ty-node-dedup-profile-misses
+                    (+ ty-node-dedup-profile-misses 1))
+                  unit)
                 (unsafe
                   (ptr-write! (ptr-offset slots idx) (+ id 1)))
                 (set! ty-node-dedup-count (+ ty-node-dedup-count 1))
                 (set! result id)))
-            (if (ty-node-shallow-eq? (- slot 1) (ast-global-shared-view node))
-              (set! result (- slot 1))
-              (set! idx (bit-and (+ idx 1) mask))))))
+            ;; Equality consumes the stable row view before the next loop step;
+            ;; this probe cannot grow or replace the pool, and a miss appends
+            ;; only after no occupied-row view remains live.
+            (if (ty-node-shallow-value-eq?
+              (ast-type-segment-bases-shared-view
+                ty-node-pool-segment-bases
+                (- slot 1))
+              (ast-global-shared-view node))
+              (begin
+                (cfg
+                  compile-profile
+                  (set!
+                    ty-node-dedup-profile-hits
+                    (+ ty-node-dedup-profile-hits 1))
+                  unit)
+                (set! result (- slot 1)))
+              (begin
+                (cfg
+                  compile-profile
+                  (set!
+                    ty-node-dedup-profile-collision-steps
+                    (+ ty-node-dedup-profile-collision-steps 1))
+                  unit)
+                (set! idx (bit-and (+ idx 1) mask)))))))
       result)))
 
 ;; Half load reached: grow and keep deduplicating. Only a table already at the
 ;; 2^24-slot bound falls back to a plain append.
 (define (ty-node-push-loaded [node : AstType]) : i64
   (if (>= ty-node-dedup-capacity ty-node-dedup-max-capacity)
-    (ty-node-push-raw node)
+    (begin
+      (cfg
+        compile-profile
+        (set!
+          ty-node-dedup-profile-max-fallbacks
+          (+ ty-node-dedup-profile-max-fallbacks 1))
+        unit)
+      (ty-node-push-raw node))
     (begin
       (ty-node-dedup-grow!)
       (ty-node-dedup-probe-push node))))

@@ -2372,6 +2372,7 @@
       (profile.compile-wide-peak-start!)
       (ci.intern-profile-reset!
         (compiler-driver-profile-intern-metrics-address state))
+      (compiler_ast_types.ty-node-dedup-profile-reset!)
       (compiler_ctfe.ctfe-env-profile-reset!)
       (cfg
         compile-profile-summary
@@ -2434,6 +2435,18 @@
     (io.print-error
       (str_cat.str-cat
         "compile-profile|ctfe_env."
+        name
+        (compiler-driver-profile-field value)
+        "|0|0|0\n"))))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-profile-ty-node-dedup-line
+    [name : String]
+    [value : i64]) : unit
+    (io.print-error
+      (str_cat.str-cat
+        "compile-profile|ty_node_dedup."
         name
         (compiler-driver-profile-field value)
         "|0|0|0\n"))))
@@ -2621,7 +2634,28 @@
           (compiler_ctfe.ctfe-env-profile-arena-roots-value))
         (compiler-driver-profile-ctfe-env-line
           "arena_grows"
-          (compiler_ctfe.ctfe-env-profile-arena-grows-value))))))
+          (compiler_ctfe.ctfe-env-profile-arena-grows-value))
+        (compiler-driver-profile-ty-node-dedup-line
+          "probe_calls"
+          (compiler_ast_types.ty-node-dedup-profile-probe-call-count))
+        (compiler-driver-profile-ty-node-dedup-line
+          "hits"
+          (compiler_ast_types.ty-node-dedup-profile-hit-count))
+        (compiler-driver-profile-ty-node-dedup-line
+          "misses"
+          (compiler_ast_types.ty-node-dedup-profile-miss-count))
+        (compiler-driver-profile-ty-node-dedup-line
+          "collision_steps"
+          (compiler_ast_types.ty-node-dedup-profile-collision-step-count))
+        (compiler-driver-profile-ty-node-dedup-line
+          "growths"
+          (compiler_ast_types.ty-node-dedup-profile-growth-count))
+        (compiler-driver-profile-ty-node-dedup-line
+          "max_fallbacks"
+          (compiler_ast_types.ty-node-dedup-profile-max-fallback-count))
+        (compiler-driver-profile-ty-node-dedup-line
+          "capacity_high_water"
+          (compiler_ast_types.ty-node-dedup-profile-capacity-high-water-value))))))
 
 (define (compiler-driver-lower-mode-for-target
   [target : compiler_backend.CompilerBackendTarget]

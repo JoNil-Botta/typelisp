@@ -267,6 +267,34 @@ profile_counter_value_in() {
     ' "$_file"
 }
 
+assert_ty_node_dedup_census_in() {
+    _tdc_file=$1
+    _tdc_stdout=$2
+    _tdc_stderr=$3
+
+    _tdc_probes=$(profile_counter_value_in "$_tdc_file" "ty_node_dedup.probe_calls") &&
+        _tdc_hits=$(profile_counter_value_in "$_tdc_file" "ty_node_dedup.hits") &&
+        _tdc_misses=$(profile_counter_value_in "$_tdc_file" "ty_node_dedup.misses") &&
+        _tdc_collisions=$(profile_counter_value_in "$_tdc_file" "ty_node_dedup.collision_steps") &&
+        _tdc_growths=$(profile_counter_value_in "$_tdc_file" "ty_node_dedup.growths") &&
+        _tdc_fallbacks=$(profile_counter_value_in "$_tdc_file" "ty_node_dedup.max_fallbacks") &&
+        _tdc_high_water=$(profile_counter_value_in "$_tdc_file" "ty_node_dedup.capacity_high_water") || {
+        show_failure_logs "$_tdc_stdout" "$_tdc_stderr"
+        fail "missing type-node dedup census counter"
+    }
+
+    [ "$_tdc_probes" -gt 0 ] &&
+        [ "$_tdc_misses" -gt 0 ] &&
+        [ "$_tdc_collisions" -gt 0 ] &&
+        [ "$_tdc_probes" -eq $((_tdc_hits + _tdc_misses)) ] &&
+        [ "$_tdc_growths" -ge 0 ] &&
+        [ "$_tdc_fallbacks" -eq 0 ] &&
+        [ "$_tdc_high_water" -ge 131072 ] || {
+        show_failure_logs "$_tdc_stdout" "$_tdc_stderr"
+        fail "invalid type-node dedup census: probes=$_tdc_probes hits=$_tdc_hits misses=$_tdc_misses collisions=$_tdc_collisions growths=$_tdc_growths fallbacks=$_tdc_fallbacks high_water=$_tdc_high_water"
+    }
+}
+
 assert_intern_storage_schema_in() {
     _iss_file=$1
     _iss_stdout=$2
@@ -1607,6 +1635,10 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     assert_lifetime_ledger_in \
+        "$SELFHOST_STDERR" \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    assert_ty_node_dedup_census_in \
         "$SELFHOST_STDERR" \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"

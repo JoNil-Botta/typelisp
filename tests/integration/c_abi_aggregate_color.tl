@@ -1,3 +1,5 @@
+(import stdlib.io)
+
 (defstruct Color
   (r u8)
   (g u8)
@@ -16,8 +18,10 @@
       (+
         (cast c.r : i64)
         (+ (cast c.g : i64) (+ (cast c.b : i64) (cast c.a : i64))))]
-    (if (= weighted 104)
-      (if (= sum 36)
-        42
-        2)
-      1)))
+    (begin
+      (io.print-format "color={}:{}\n" weighted sum)
+      (if (= weighted 104)
+        (if (= sum 36)
+          42
+          2)
+        1))))

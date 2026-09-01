@@ -805,9 +805,14 @@
   ;; of its process-global state before compiling. Driver-owned sessions must
   ;; instead keep every id-keyed cache valid until the driver retires them.
   (standalone-reset-safe (__tl_dyn-array bool))
+  ;; Surface summaries must outlive macro scratch, but no summary payload may
+  ;; accumulate in the process-lived session owner across batch entries. The
+  ;; mutable handle names a dedicated, resettable payload arena.
+  (surface-summary-owner-arena (__tl_dyn-array i64))
   ;; Stable arena address of the canonical shallow state record. Every field
   ;; is itself an arena-backed handle, so reading this record preserves the
   ;; session identity without a reference-typed temporary during bootstrap.
+  (owner-arena i64)
   (shared-address u64))
 
 ;; Per-source traversal data stays explicit without widening the hot recursive
@@ -942,6 +947,8 @@
         (__tl_make-array ci.InternCompatState 1)
         (compiler-load-session-state-bool-cell false)
         (compiler-load-session-state-bool-cell standalone-reset-safe)
+        (compiler-load-session-state-i64-cell 0)
+        (arena.tl_arena_current)
         0)]
     [cell : (__tl_dyn-array CompilerLoadSessionState) (__tl_make-array initial)]
     [address : u64
@@ -6241,13 +6248,49 @@
             (set! index (+ index 1)))))
       (ResultCompilerLoadAliasCheck.Ok))))
 
+(define (compiler-load-session-state-surface-summary-owner-arena
+  [state : (& state CompilerLoadSessionState)]) : i64
+  (array-ref state.surface-summary-owner-arena 0))
+
+(define (compiler-load-session-state-surface-summary-owner-arena-ensure!
+  [state : (& state CompilerLoadSessionState)]) : i64
+  (let
+    [owner : i64
+      (compiler-load-session-state-surface-summary-owner-arena (& state))]
+    (if (> owner 0)
+      owner
+      (let
+        [fresh : i64 (arena.tl_arena_make_small)]
+        (begin
+          (set! (array-ref state.surface-summary-owner-arena 0) fresh)
+          fresh)))))
+
 (define (compiler-load-session-state-surface-summaries-reset!
   [state : CompilerLoadSessionState]) : unit
-  (begin
-    (set!
-      (array-ref state.surface-summaries 0)
-      (compiler-load-surface-summary-list-empty))
-    (set! (array-ref state.lazy-import-skip-record-count 0) 0)))
+  (let
+    [payload-owner : i64
+      (compiler-load-session-state-surface-summary-owner-arena (& state))]
+    (begin
+      ;; Unpublish every summary before retiring the payload arena. Rebuild the
+      ;; empty descriptor in the stable session owner so the state never keeps
+      ;; a handle into the destroyed generation between batch entries.
+      (in-arena
+        (arena.Arena state.owner-arena)
+        (begin
+          (set!
+            (array-ref state.surface-summaries 0)
+            (compiler-load-surface-summary-list-empty))
+          (set! (array-ref state.lazy-import-skip-record-count 0) 0)))
+      (set! (array-ref state.surface-summary-owner-arena 0) 0)
+      (if (> payload-owner 0)
+        (begin
+          (if (= (arena.tl_arena_current) payload-owner)
+            (unsafe
+              (arena.tl_arena_set state.owner-arena))
+            unit)
+          (unsafe
+            (arena.tl_arena_destroy payload-owner)))
+        unit))))
 
 (define (compiler-load-surface-summaries-reset!) : unit
   (compiler-load-session-state-surface-summaries-reset!
@@ -6363,11 +6406,26 @@
     (compiler-load-session-state-surface-summaries state)
     summary.source-path-id)
     unit
-    (set!
-      (array-ref state.surface-summaries 0)
-      (compiler-load-surface-summary-list-record
-        (compiler-load-session-state-surface-summaries state)
-        summary))))
+    ;; Generated imports can build summaries while macro scratch is current.
+    ;; The lazy-import handoff reads them once after scratch release to distill
+    ;; definition-site aliases, so own both the summary payload and the dense
+    ;; list growth in the load session's resettable surface-summary arena.
+    (let
+      [payload-owner : i64
+        (compiler-load-session-state-surface-summary-owner-arena-ensure! state)]
+      [copy-into-owner? : bool (not (= (arena.tl_arena_current) payload-owner))]
+      (in-arena
+        (arena.Arena payload-owner)
+        (let
+          [owned : CompilerLoadSurfaceSummary
+            (if copy-into-owner?
+              (clone summary)
+              summary)]
+          (set!
+            (array-ref state.surface-summaries 0)
+            (compiler-load-surface-summary-list-record
+              (compiler-load-session-state-surface-summaries state)
+              owned)))))))
 
 (define (compiler-load-record-surface-summary!
   [summary : CompilerLoadSurfaceSummary]) : unit
@@ -6589,11 +6647,17 @@
 (define (compiler-load-session-state-surface-summary-remove-source!
   [state : CompilerLoadSessionState]
   [source-path-id : i64]) : unit
-  (set!
-    (array-ref state.surface-summaries 0)
-    (compiler-load-surface-summary-remove-source-in
-      (compiler-load-session-state-surface-summaries state)
-      source-path-id)))
+  (let
+    [payload-owner : i64
+      (compiler-load-session-state-surface-summary-owner-arena-ensure!
+        (& state))]
+    (in-arena
+      (arena.Arena payload-owner)
+      (set!
+        (array-ref state.surface-summaries 0)
+        (compiler-load-surface-summary-remove-source-in
+          (compiler-load-session-state-surface-summaries state)
+          source-path-id)))))
 
 (define (compiler-load-surface-summary-remove-source! [source-path-id : i64]) : unit
   (compiler-load-session-state-surface-summary-remove-source!
@@ -21100,6 +21164,111 @@
               [_ false]))]
         (and before-ok after-remove-ok reload-ok isolation-ok)))))
 
+;; A generated import records its surface summary while the macro walk's
+;; reclaimable arena is current, then the lazy-import handoff reads that summary
+;; after the macro arena has been destroyed. Pin that exact lifetime boundary:
+;; the session record must own the copied string and nested list descriptors.
+(define (compiler-load-surface-summary-scratch-handoff-ok?) : bool
+  (let
+    [home : i64 (arena.tl_arena_current)]
+    [state : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [module-id : i64 (ci.intern "surface-scratch.module")]
+    [source-id : i64 (ci.intern "target/surface-scratch.tl")]
+    [decl-id : i64 (ci.intern "surface-scratch-value")]
+    [scratch : i64 (arena.tl_arena_make)]
+    [_enter : unit
+      (unsafe
+        (arena.tl_arena_set scratch))]
+    [imports : (__tl_dyn-array CompilerLoadSurfaceImport)
+      (__tl_make-array CompilerLoadSurfaceImport 1)]
+    [decls : (__tl_dyn-array CompilerLoadSurfaceDecl)
+      (__tl_make-array CompilerLoadSurfaceDecl 1)]
+    [_fill-nested : unit
+      (begin
+        (set!
+          (array-ref imports 0)
+          (CompilerLoadSurfaceImport
+            (CompilerLoadSurfaceImportModule)
+            module-id
+            (string.copy "target/surface-scratch.tl")
+            (string.copy "surface.scratch.dep")
+            (CompilerLoadSurfaceSomeString (string.copy "surface.scratch.dep"))
+            (CompilerLoadSurfaceSomeString (string.copy "scratch-dep"))
+            (CompilerLoadSurfaceSomeString (string.copy "scratch-default"))
+            (compiler-load-surface-zero-span)))
+        (set!
+          (array-ref decls 0)
+          (CompilerLoadSurfaceDecl
+            (CompilerLoadSurfaceValue)
+            decl-id
+            module-id
+            (CompilerLoadSurfaceNoSignature)
+            (CompilerLoadSurfaceMacroOther)
+            false
+            false
+            false
+            false
+            (compiler-load-surface-zero-span))))]
+    [_record : unit
+      (compiler-load-session-state-record-surface-summary!
+        (& state)
+        (CompilerLoadSurfaceSummary
+          module-id
+          module-id
+          true
+          true
+          source-id
+          (string.copy "target/surface-scratch.tl")
+          (string.copy "surface-scratch-root")
+          (CompilerLoadSurfaceImportList imports 1)
+          (CompilerLoadSurfaceDeclList decls 1)
+          false
+          false
+          false
+          false
+          (CompilerLoadLazyImportDirect)))]
+    [_restore : unit
+      (unsafe
+        (arena.tl_arena_set home))]
+    [_release : unit
+      (unsafe
+        (arena.tl_arena_destroy scratch))]
+    [handoff-ok : bool
+      (match (compiler-load-session-state-surface-summary-find-source
+        state
+        source-id)
+        [(CompilerLoadSomeSurfaceSummary summary)
+          (let
+            [import-edge : CompilerLoadSurfaceImport
+              (compiler-load-surface-import-list-at (& summary.imports) 0)]
+            [decl : CompilerLoadSurfaceDecl
+              (compiler-load-surface-decl-list-at (& summary.decls) 0)]
+            (and
+              (= summary.module-id module-id)
+              (string.eq summary.source-path "target/surface-scratch.tl")
+              (string.eq summary.root-id "surface-scratch-root")
+              (=
+                (compiler-load-surface-import-list-count (& summary.imports))
+                1)
+              (string.eq import-edge.source-path "target/surface-scratch.tl")
+              (string.eq import-edge.import-path "surface.scratch.dep")
+              (= (compiler-load-surface-decl-list-count (& summary.decls)) 1)
+              (= decl.name decl-id)
+              (= decl.module module-id)))]
+        [_ false])]
+    (begin
+      (compiler-load-session-state-surface-summaries-reset!
+        (compiler-load-session-state-shared-view (& state)))
+      (and
+        handoff-ok
+        (=
+          (compiler-load-session-state-surface-summary-owner-arena (& state))
+          0)
+        (=
+          (compiler-load-surface-summary-list-count
+            (compiler-load-session-state-surface-summaries state))
+          0)))))
+
 (define (compiler-load-dependency-catalog-registry-ok?) : bool
   (let
     [state : CompilerLoadSessionState (compiler-load-session-state-new)]
@@ -21405,6 +21574,10 @@
       (compiler-load-surface-summary-dense-session-ok?)
       (return
         (io.panic "compiler-load: dense surface summary session mismatch")))
+    (unless
+      (compiler-load-surface-summary-scratch-handoff-ok?)
+      (return
+        (io.panic "compiler-load: surface summary scratch handoff mismatch")))
     (unless
       (compiler-load-lazy-qualified-observer-dense-stack-ok?)
       (return

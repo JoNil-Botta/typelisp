@@ -699,6 +699,17 @@ windows_nt_create_file_boundary
 EOF
 }
 
+# Linux rooted-filesystem fixtures are owned by verify-fs-rooted-linux.sh.
+# That gate supplies the descriptor-relative test root, fault hooks, and the
+# native assembler/linker flow that these fixtures require; on Windows the
+# rooted Linux API and its openat2 boundary are intentionally not applicable.
+fs_rooted_linux_gate_cases() {
+    cat <<'EOF'
+fs_rooted_linux_direct
+fs_rooted_linux_native
+EOF
+}
+
 # Cases covered by the selfhost-native generated-program gate rather than the
 # seed-backed integration manifests.
 # Immutable-reference native smoke fixtures are covered by
@@ -843,6 +854,7 @@ validate_manifest() {
     if [ "$HOST_OS" = linux ]; then
         linux_integration_non_applicable_cases >> "$_known"
     fi
+    fs_rooted_linux_gate_cases >> "$_known"
     selfhost_native_manifest_cases >> "$_known"
     spmd_simd_manifest_cases >> "$_known"
     compiler_cfg_native_fixture_cases >> "$_known"

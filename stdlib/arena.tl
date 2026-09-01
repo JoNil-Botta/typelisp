@@ -245,11 +245,13 @@
         (tl_region_reset (mark-raw-handle phase.mark))
         (tl_arena_set (raw-handle home))))))
 
-;: Safely destroy a direct-local arena owner after its values are dead.
+;: Safely destroy a direct-local owner or branded local aggregate owner place.
 ;:
-;: The compiler consumes the owner handle and rejects later use of that owner or
-;: values tagged with any of its generations. Atomic owners additionally require
-;: all checker-visible thread users to be joined or released before destruction.
+;: The compiler consumes the exact owner place and rejects later use of every
+;: current-function value carrying its brand. Parameters and parameter-rooted
+;: places require a future caller-visible invalidation effect and are rejected.
+;: Atomic owners additionally require all checker-visible thread users to be
+;: joined or released before destruction.
 (define (destroy-safe! [arena : Arena]) : unit
   (unsafe
     (tl_arena_destroy (raw-handle arena))))

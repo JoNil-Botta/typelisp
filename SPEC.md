@@ -5372,8 +5372,8 @@ proof in section 6.5.
 
 **Arena phase tokens:** `stdlib.arena` exposes `arena.ArenaPhase`,
 `arena.phase`, `arena.rewind-safe!`, and `arena.destroy-safe!` as the safe
-non-lexical invalidation surface for direct first-class arena owners. The
-checker recognizes these calls only for direct local owners initialized by
+non-lexical invalidation surface for first-class arena owners. `arena.phase`
+and `arena.rewind-safe!` remain limited to direct local owners initialized by
 `arena.make` or `arena.make-atomic`. `arena.phase` records the runtime mark and
 advances the checker's generation for later `(in-arena owner ...)` allocations.
 `arena.rewind-safe!` consumes a direct local phase token and is accepted only
@@ -5381,11 +5381,16 @@ when no live value, reference, borrow, closure capture, or container slot can
 reach an allocation from the token's generation. For atomic owners, the checker
 also requires every checker-visible thread user of the owner to have been joined
 or otherwise moved through an accepted release point before the rewind.
-`arena.destroy-safe!` consumes the direct local owner and is accepted only when
-no live value can reach any generation owned by that arena; atomic owners require
-the same joined-user proof. Both calls are rejected while executing inside the
-same owner through `in-arena`, because the active allocation target would be
-invalidated by the operation.
+`arena.destroy-safe!` consumes either such a direct local owner or a branded
+local/local-rooted aggregate place of type `(arena.Arena r)`. Branded destroy
+uses `r` as the stable invalidation identity: every current-function local,
+reference, borrow, closure, or aggregate/container value whose resolved type or
+capture provenance contains `r` becomes unusable. Parameter and
+parameter-rooted places are rejected until signatures can declare a
+caller-visible invalidation effect. Atomic brands require the same joined-user
+proof. Both calls are rejected while executing inside the same owner through
+`in-arena`, because the active allocation target would be invalidated by the
+operation.
 
 ### 5.17 Comptime type reflection
 
@@ -7248,9 +7253,10 @@ boundaries. The standard workflows are:
 - **Safe ordinary arena invalidation:** for a direct local `arena.make`
   owner, record a phase token with `arena.phase`, allocate phase-local values
   through `(in-arena owner ...)`, then call `arena.rewind-safe!` when the
-  checker can prove every value from that phase is dead. Call
-  `arena.destroy-safe!` only when all values from the ordinary owner are
-  dead.
+  checker can prove every value from that phase is dead. `arena.destroy-safe!`
+  may consume that direct local or its branded handle after it has moved into a
+  local aggregate; all current-function values carrying the brand are then
+  invalidated.
 - **Safe atomic arena invalidation:** for a direct local `arena.make-atomic`
   owner, use the same phase/destroy surface, but only after every
   checker-visible task, channel, mutex, or other user of that owner has been
@@ -7270,11 +7276,12 @@ the enclosing active arena. First-class level/frame arenas use
 `(in-arena owner ...)` when the result should stay owned by that arena; a
 direct local ordinary owner can be double-buffered by taking an `arena.phase`
 before a frame fill and calling `arena.rewind-safe!` once every value from
-the old frame phase is dead. Event-driven unload uses `arena.destroy-safe!`
-on a direct local owner only after all owner-tagged values, borrows, closure
-captures, container slots, and users are dead or released; for atomic owners
-a message still queued in a channel blocks unload. A runnable cookbook of
-these lifetime shapes is `examples/arena_lifetimes.tl`.
+the old frame phase is dead. Event-driven unload uses `arena.destroy-safe!` on
+a direct local owner or branded local aggregate field; the call invalidates all
+same-function owner-tagged values, borrows, closure captures, and container
+slots. Atomic users must first be joined or released, and a message still
+queued in a channel blocks unload. A runnable cookbook of these lifetime shapes
+is `examples/arena_lifetimes.tl`.
 
 #### Scoped regions — `with-arena`
 
@@ -7493,15 +7500,18 @@ needs safe non-lexical reclamation:
 ```
 
 The recognized safe surface is deliberately narrow: the owner argument to
-`arena.phase` and `arena.destroy-safe!` must be a direct local binding
-initialized by `arena.make` or `arena.make-atomic`, and the argument to
-`arena.rewind-safe!` must be a direct local `arena.ArenaPhase` returned by
-`arena.phase`. Creating a phase token stores the current runtime mark and
-records a checker generation for subsequent `in-arena` allocations through
-that owner. Rewinding consumes the token and causes values allocated in that
-phase generation to be treated as moved. Using the token again, using a phase
-value after rewind, using the owner after safe destroy, or using any value
-owned by a destroyed arena is rejected.
+`arena.phase` must be a direct local binding initialized by `arena.make` or
+`arena.make-atomic`, and the argument to `arena.rewind-safe!` must be a direct
+local `arena.ArenaPhase` returned by `arena.phase`. `arena.destroy-safe!` also
+accepts a branded local or local-rooted aggregate place `(arena.Arena r)` and
+consumes that exact place. Creating a phase token stores the current runtime
+mark and records a checker generation for subsequent `in-arena` allocations
+through that owner. Rewinding consumes the token and causes values allocated in
+that phase generation to be treated as moved. Using the token again, using a
+phase value after rewind, using the owner place after safe destroy, or using any
+current-function value carrying the destroyed brand is rejected. A parameter
+or parameter-rooted field cannot be destroyed directly; cross-function destroy
+requires an explicit signature effect.
 
 The safe phase-token proof does not make an ordinary arena a spanning
 task-thread owner. Atomic arenas remain spanning owners only for values
@@ -7548,8 +7558,8 @@ must not be used as a concurrent allocation target.
 Resetting or destroying an atomic arena while any worker can still allocate
 into it or hold a value it owns is rejected in safe code. The required proof
 shape is "join all users before reset/destroy": `arena.rewind-safe!` and
-`arena.destroy-safe!` accept direct atomic owners only after every
-checker-visible thread user carrying that owner has been consumed by join or
+`arena.destroy-safe!` accept direct or branded local-place atomic owners only
+after every checker-visible thread user carrying that owner has been consumed by join or
 an equivalent release point, and no live owner-tagged value or borrow
 remains usable after invalidation. The lower-level `arena.rewind` and
 `arena.destroy` helpers remain unsafe-only manual operations. The runtime
@@ -7595,7 +7605,7 @@ wrappers over the raw runtime handles. `arena.make`, `arena.make-atomic`, and
 `arena.current` safely create or read an `arena.Arena`; `arena.mark` safely
 records an `arena.ArenaMark` for the active arena; `arena.phase`,
 `arena.rewind-safe!`, and `arena.destroy-safe!` are safe only under the
-direct-owner checker proofs above. Raw `i64` values do not satisfy the public
+owner-place checker proofs above. Raw `i64` values do not satisfy the public
 arena helper signatures, and an `arena.Arena` cannot be passed where an
 `arena.ArenaMark` or `arena.ArenaPhase` is required. By themselves these
 values do not switch the active arena, free arena chains, rewind allocation,

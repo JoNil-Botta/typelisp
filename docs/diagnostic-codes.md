@@ -28,6 +28,7 @@ entry for every row. Its registry test rejects missing prose, while
 | E0216 | typecheck | control-flow misuse | typechecker | `tc-canonical-diagnostic` classifier | detailed |
 | E0217 | typecheck | thread-safety violation | typechecker | `tc-canonical-diagnostic` classifier | detailed |
 | E0218 | typecheck | compile-time constraint | typechecker | `tc-canonical-diagnostic` classifier | detailed |
+| E0219 | typecheck | unsafe callable effect erasure | typechecker | `tc-canonical-diagnostic` classifier | detailed |
 
 Parser and typechecker canonicalization are the current production sites for
 stable public codes. Loader, package, macro, lowering, backend, linker,

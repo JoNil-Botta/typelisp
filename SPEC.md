@@ -410,6 +410,18 @@ there is no public unsized `Array` alias.
   function values, `String` handles, array handles, and tuples of scalars
   (see §5.14).
 
+A function or extern declared with `(unsafe declaration)` has a checker-only
+unsafe-call effect even though its ABI remains the ordinary `(-> ...)` shape.
+It may be named only as the syntactically immediate target of a call inside an
+explicit `(unsafe ...)` expression. It cannot be materialized as a plain
+function value -- including through locals or globals, annotations, branches,
+arguments, returns, assignment, aggregates, boxes, arrays, or closure capture
+-- because the ordinary function type has no place to retain that effect. This
+restriction applies even while evaluating an `unsafe` block. A safe wrapper is
+an ordinary function or lambda whose own deferred body contains the explicit
+unsafe call; merely constructing a lambda inside an outer `unsafe` does not
+make its later execution unsafe.
+
 Every non-reference runtime parameter is an ordinary by-value parameter. At a
 call boundary, a `Copy` argument is copied and remains usable; a non-`Copy`
 argument is moved into an owned callee-local value and its source place becomes
@@ -2831,12 +2843,30 @@ An unsafe declaration is written by wrapping exactly one function `define` or
 
 The wrapper is declaration metadata, not a runtime expression. It is preserved
 through module loading, package transformation, imports, aliases, macro
-expansion, and lowering. Safe code may mention the declared name only by
-entering an explicit `(unsafe ...)` expression; a safe direct call or safe
-function-value reference is rejected and the diagnostic names the callee. An
-unsafe function body is still checked as ordinary safe code unless the body
-itself uses `(unsafe ...)`. A local or later declaration that shadows the same
-name does not inherit the unsafe marker.
+expansion, TLCI-backed generated declarations, and lowering. The declared name
+may be used only as the immediate call target inside an explicit `(unsafe ...)`
+expression. A safe direct call is rejected and names the callee. Any
+first-class reference is also rejected, even inside `unsafe`, because assigning
+the ordinary `(-> ...)` value would erase the checker-only unsafe-call effect.
+This fail-closed rule covers inferred and annotated locals and globals,
+branches, arguments and returns, assignment, aggregates, and captures.
+
+An unsafe function body is still checked as ordinary safe code unless the body
+itself uses `(unsafe ...)`. The same safe boundary applies to a lambda body:
+an outer unsafe context that constructs a lambda does not authorize operations
+when the lambda runs later. A wrapper may safely expose an ordinary callable by
+placing an explicit unsafe call in its own body. A local or later declaration
+that shadows the same name does not inherit the unsafe marker.
+
+```lisp test=ignore name=unsafe-declaration-call-and-value-boundary reason="contains an intentional rejection"
+(unsafe (define (danger [x : i64]) : i64 x))
+
+(define (direct [x : i64]) : i64
+  (unsafe (danger x))) ; allowed
+
+(define (leak) : (-> i64 i64)
+  (unsafe danger)) ; rejected: unsafe effect would be erased
+```
 
 ### 4.4 `(import module.path)` — modules and imports
 
@@ -6193,6 +6223,13 @@ that are rejected in safe code because they can violate memory safety, ABI
 contracts, aliasing assumptions, or region lifetime rules. Top-level unsafe
 function and extern declarations use the `(unsafe declaration)` wrapper
 described in section 4.3.1; there is no module-wide unsafe mode.
+
+Entering an unsafe expression authorizes the unsafe operations evaluated in
+that expression; it is not a coercion that removes checker-only effects. In
+particular, an unsafe declaration can be called directly there but cannot be
+returned, stored, captured, or otherwise converted to a plain function value.
+Deferred lambda bodies begin in a safe context and must contain their own
+explicit unsafe expression when they perform an unsafe call.
 
 The unsafe operation set:
 

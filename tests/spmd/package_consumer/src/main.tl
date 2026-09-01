@@ -188,6 +188,10 @@
         (= (fixture.package-unsupported 41) 41)
         (= (fixture-generated.answer) 41)
         (= (package-decl-answer) 40)
+        (=
+          (unsafe
+            (package-unsafe-answer 42))
+          42)
         (= (fixture.helper 2 3) 5)
         out-ok?
         masked-ok?

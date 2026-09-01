@@ -7898,6 +7898,63 @@
 (define (compiler-typecheck-unsafe-fn-body-still-safe-source) : String
   "(unsafe (define (read-it [p : (Ptr i64)]) : i64 (ptr-read p)))")
 
+(define (compiler-typecheck-unsafe-callable-value-source [body : String]) : String
+  (str_cat.str-cat
+    "(unsafe (define (danger [x : i64]) : i64 x))
+(define (safe [x : i64]) : i64 x)
+(define (consume [f : (-> i64 i64)]) : i64 (f 42))
+(defstruct CallbackHolder (callback (-> i64 i64)))
+"
+    body))
+
+(define (compiler-typecheck-unsafe-callable-value-error-ok? [body : String]) : bool
+  (compiler-typecheck-error-ok?
+    (compiler-typecheck-unsafe-callable-value-source body)
+    "typecheck: danger is an unsafe callable and cannot be used as a plain function value; call it directly inside unsafe"))
+
+(define (compiler-typecheck-unsafe-extern-value-source) : String
+  "(unsafe (extern (raw-call [arg0 : i64]) : i64))
+(define (main) : i64
+  (let [f : (-> i64 i64) (unsafe raw-call)]
+    (f 42)))")
+
+(define (compiler-typecheck-unsafe-import-value-source) : String
+  "(module foreign)
+(unsafe (define (danger [x : i64]) : i64 x))
+(module main)
+(import foreign as f)
+(define (main) : i64
+  (let [leaked : (-> i64 i64) (unsafe f.danger)]
+    (leaked 42)))")
+
+(define (compiler-typecheck-unsafe-callable-outer-lambda-source) : String
+  "(unsafe (define (danger [x : i64]) : i64 x))
+(define (main) : i64
+  (let [f : (-> i64 i64)
+    (unsafe (lambda ([x : i64]) : i64 (danger x)))]
+    (f 42)))")
+
+(define (compiler-typecheck-unsafe-callable-safe-wrapper-source) : String
+  "(unsafe (define (danger [x : i64]) : i64 x))
+(define (main) : i64
+  (let [f : (-> i64 i64)
+    (lambda ([x : i64]) : i64 (unsafe (danger x)))]
+    (f 42)))")
+
+(define (compiler-typecheck-unsafe-callable-macro-value-source) : String
+  "(unsafe (define (danger [x : i64]) : i64 x))
+(defmacro (danger-value) : Expr `(unsafe danger))
+(define (main) : i64
+  (let [f : (-> i64 i64) (danger-value)]
+    (f 42)))")
+
+(define (compiler-typecheck-unsafe-callable-reflected-value-source) : String
+  "(unsafe (define (danger [x : i64]) : i64 x))
+(defmacro (danger-value) : Expr (expr-var \"danger\"))
+(define (main) : i64
+  (let [f : (-> i64 i64) (unsafe (danger-value))]
+    (f 42)))")
+
 (define (compiler-typecheck-tls-current-arena-read-source) : String
   "(define (main) : i64 (tls-current-arena))")
 
@@ -8048,6 +8105,106 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-unsafe-fn-body-still-safe-source)
         "typecheck: ptr-read requires unsafe context")
+        unit
+        (set! ok false))
+      ;; A conservative v1 contract rejects every first-class flow at the
+      ;; unsafe declaration reference itself, before the destination can erase
+      ;; the checker-only call effect.
+      (if (compiler-typecheck-unsafe-callable-value-error-ok?
+        "(define (main) : i64
+  (let [f : (-> i64 i64) (unsafe danger)] (f 42)))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-unsafe-callable-value-error-ok?
+        "(define (main) : i64
+  (let [f (unsafe danger)] (f 42)))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-unsafe-callable-value-error-ok?
+        "(define (main [flag : bool]) : i64
+  (let [f : (-> i64 i64) (unsafe (if flag danger safe))] (f 42)))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-unsafe-callable-value-error-ok?
+        "(define (main) : i64 (unsafe (consume danger)))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-unsafe-callable-value-error-ok?
+        "(define (leak) : (-> i64 i64) (unsafe danger))
+(define (main) : i64 ((leak) 42))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-unsafe-callable-value-error-ok?
+        "(define leaked : (-> i64 i64) (unsafe danger))
+(define (main) : i64 (leaked 42))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-unsafe-callable-value-error-ok?
+        "(define (main) : i64
+  (let [f : (-> i64 i64) safe]
+    (unsafe (begin (set! f danger) (f 42)))))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-unsafe-callable-value-error-ok?
+        "(define (main) : i64
+  (let [pair : (Tuple (-> i64 i64) (-> i64 i64))
+    (unsafe (tuple danger safe))]
+    42))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-unsafe-callable-value-error-ok?
+        "(define (main) : i64
+  (let [items : (Array (-> i64 i64) 2)
+    (unsafe (array danger safe))]
+    42))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-unsafe-callable-value-error-ok?
+        "(define (main) : i64
+  (let [holder : CallbackHolder (unsafe (CallbackHolder danger))]
+    42))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-unsafe-callable-value-error-ok?
+        "(define (main) : i64
+  (let [holder : (Box (-> i64 i64)) (unsafe (box danger))]
+    42))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-unsafe-extern-value-source)
+        "typecheck: raw-call is an unsafe callable and cannot be used as a plain function value; call it directly inside unsafe")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-unsafe-import-value-source)
+        "typecheck: f/danger is an unsafe callable and cannot be used as a plain function value; call it directly inside unsafe")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-unsafe-callable-outer-lambda-source)
+        "typecheck: danger requires unsafe context")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-unsafe-callable-value-error-ok?
+        "(define (main) : i64
+  (let [factory : (-> (-> i64 i64))
+    (lambda () : (-> i64 i64) (unsafe danger))]
+    42))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-unsafe-callable-safe-wrapper-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-unsafe-callable-macro-value-source)
+        "typecheck: danger is an unsafe callable and cannot be used as a plain function value; call it directly inside unsafe")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-unsafe-callable-reflected-value-source)
+        "typecheck: danger is an unsafe callable and cannot be used as a plain function value; call it directly inside unsafe")
         unit
         (set! ok false))
       ok)))
@@ -8226,8 +8383,9 @@
         (compiler-typecheck-arena-unsafe-mutate-source))
         unit
         (set! ok false))
-      (if (compiler-typecheck-ok?
-        (compiler-typecheck-arena-unsafe-alias-source))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-arena-unsafe-alias-source)
+        "typecheck: arena-rewind is an unsafe callable and cannot be used as a plain function value; call it directly inside unsafe")
         unit
         (set! ok false))
       ok)))

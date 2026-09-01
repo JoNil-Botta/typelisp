@@ -241,6 +241,7 @@ byte_buf_view_mut_after_immut_reject|check-fail|tests/safety/byte_buf_view_mut_a
 byte_buf_view_double_mut_reject|check-fail|tests/safety/byte_buf_view_double_mut_reject.tl|-|cannot read mutably borrowed place `buf`
 byte_buf_view_arena_escape_reject|check-fail|tests/safety/byte_buf_view_arena_escape_reject.tl|-|region-tagged value cannot escape with-arena
 safe_raw_pointer_read_reject|check-fail|tests/safety/safe_raw_pointer_read_reject.tl|-|ptr-read requires unsafe context
+unsafe_callable_value_launder_reject|check-fail|tests/safety/unsafe_callable_value_launder_reject.tl|-|danger is an unsafe callable and cannot be used as a plain function value
 format_pointer_safe_reject|check-fail|tests/safety/format_pointer_safe_reject.tl|-|ptr->int requires unsafe context
 format_pointer_box_reject|check-fail|tests/safety/format_pointer_box_reject.tl|-|format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value
 format_pointer_checked_ref_reject|check-fail|tests/safety/format_pointer_checked_ref_reject.tl|-|format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value

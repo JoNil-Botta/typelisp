@@ -322,13 +322,16 @@
 (define (compiler-diagnostic-code-typecheck-comptime-constraint) : String
   "E0218")
 
+(define (compiler-diagnostic-code-typecheck-unsafe-callable-effect) : String
+  "E0219")
+
 ;; Machine-readable inventory for the public diagnostic surface. Keep this in
 ;; the module that assigns codes rather than in the `explain` frontend: tests
 ;; can then prove that every published code has exactly one registry row and a
 ;; detailed explanation. `owner` identifies the subsystem responsible for
 ;; keeping the classification and explanation current.
 (define (compiler-diagnostic-code-registry-count) : i64
-  20)
+  21)
 
 (define (compiler-diagnostic-code-registry-code [index : i64]) : String
   (cond
@@ -352,6 +355,7 @@
     [(= index 17) (compiler-diagnostic-code-typecheck-control-flow)]
     [(= index 18) (compiler-diagnostic-code-typecheck-thread-safety)]
     [(= index 19) (compiler-diagnostic-code-typecheck-comptime-constraint)]
+    [(= index 20) (compiler-diagnostic-code-typecheck-unsafe-callable-effect)]
     [else ""]))
 
 (define (compiler-diagnostic-code-registry-title [index : i64]) : String
@@ -376,6 +380,7 @@
     [(= index 17) "control-flow misuse"]
     [(= index 18) "thread-safety violation"]
     [(= index 19) "compile-time constraint"]
+    [(= index 20) "unsafe callable effect erasure"]
     [else ""]))
 
 (define (compiler-diagnostic-code-registry-category [index : i64]) : String
@@ -421,6 +426,10 @@
       (compiler-diagnostic-code-typecheck-unknown-struct-field)]
     [(string.contains (& message) "requires unsafe context")
       (compiler-diagnostic-code-typecheck-unsafe-context)]
+    [(string.contains
+        (& message)
+        "is an unsafe callable and cannot be used as a plain function value")
+      (compiler-diagnostic-code-typecheck-unsafe-callable-effect)]
     [(or
         (string.contains (& message) "cannot cross thread boundaries")
         (string.contains (& message) "thread_i64.spawn")

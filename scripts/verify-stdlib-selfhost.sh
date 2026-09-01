@@ -188,6 +188,8 @@ reject_diag() {
             printf 'typecheck: cannot read mutably borrowed place `m`' ;;
         stdlib/tests/process_borrowed_escape.tl)
             printf 'typecheck: reference value would escape lexical scope' ;;
+        stdlib/tests/queue_cleanup_element_reject.tl)
+            printf 'queue.deque: cleanup-owning element type struct_QueueCleanupElement is unsupported' ;;
         stdlib/tests/string_caller_result_escape.tl)
             printf 'typecheck: reference value would escape lexical scope' ;;
         stdlib/tests/vector_native_slice_escape.tl)

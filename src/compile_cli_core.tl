@@ -247,7 +247,7 @@
     (string.eq (string.substring value 0 6) "after-")))
 
 (define (compile-cli-usage) : String
-  "Usage:\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--debug|-g] [--emit-ir | --dump-ir [after-<pass>]] [--verify-ir] [--trace-passes] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--profile-allocations]\n  typelisp compile --batch <input-output-list> [--debug|-g] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]\n  typelisp compile --batch <artifact-list> --windows-coff-plan <result-plan> --target windows-x86_64 [--debug|-g] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]")
+  "Usage:\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--debug|-g|--backtrace] [--emit-ir | --dump-ir [after-<pass>]] [--verify-ir] [--trace-passes] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--profile-allocations]\n  typelisp compile --batch <input-output-list> [--debug|-g|--backtrace] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]\n  typelisp compile --batch <artifact-list> --windows-coff-plan <result-plan> --target windows-x86_64 [--debug|-g|--backtrace] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]")
 
 (define (compile-cli-message-with-usage [message : String]) : String
   (str_cat.str-cat message "\n\n" (compile-cli-usage)))
@@ -489,7 +489,10 @@
             backend-mode)]
         [(cli_option.CliCommonOption.NotCommon)
           (cond
-            [(or (string.eq current "--debug") (string.eq current "-g"))
+            [(or
+                (string.eq current "--debug")
+                (string.eq current "-g")
+                (string.eq current "--backtrace"))
               (begin
                 (ir.compiler-debug-info-set-enabled! true)
                 (compile-cli-parse-options
@@ -864,7 +867,10 @@
             windows-coff-plan-path)]
         [(cli_option.CliCommonOption.NotCommon)
           (cond
-            [(or (string.eq current "--debug") (string.eq current "-g"))
+            [(or
+                (string.eq current "--debug")
+                (string.eq current "-g")
+                (string.eq current "--backtrace"))
               (begin
                 (ir.compiler-debug-info-set-enabled! true)
                 (compile-cli-batch-parse-options
@@ -2609,6 +2615,7 @@
         (set! compile-cli-verify-ir-requested false)
         (set! compile-cli-trace-passes-requested false)
         (ir.compiler-debug-info-set-enabled! false)
+        (ir.compiler-debug-path-remap-clear!)
         (compile-cli-dispatch count))]
     [profile? : bool compile-cli-allocation-profile-requested]
     (begin

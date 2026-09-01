@@ -7880,6 +7880,42 @@ together with the `(try expr)` propagation form.
 - Panic is a terminal operation; it never returns normally.
 - `error` is an alias for `panic`.
 
+Fatal backtraces are an opt-in artifact property. Passing `--backtrace`,
+`--debug`, or `-g` to `compile`, `build`, or `run` emits frame pointers/unwind
+records plus a compact read-only function map; builds without one of these
+options emit no backtrace map, TLS bounds, accessors, or fatal-path call. Dev
+and release package profiles do not implicitly change that policy: either
+profile requires an explicit option.
+
+For an enabled artifact, `TYPELISP_BACKTRACE` has runtime precedence. `off`,
+`0`, or `disabled` suppresses the trace; `short` captures at most eight frames;
+`full` captures at most 64 frames. An unset or unrecognized value selects
+`full`. Rendering is deterministic, allocation-free, filters internal
+`stdlib/runtime.tl` frames, compresses adjacent identical PCs as
+`[repeated N frames]`, bounds each metadata string to 4096 bytes, and therefore
+bounds the complete 64-frame rendering below one MiB. Linux
+walks frame pointers only while they are aligned, monotonic, and inside the
+current main or worker-thread stack. Windows uses
+`RtlCaptureStackBackTrace`. Invalid map sizes or out-of-section string ranges
+degrade to an address/`<unknown>` frame; out-of-memory exits retain their
+minimal no-backtrace fallback. The map is an allocatable section linked from
+the same compile as its text ranges, so ordinary symbol stripping preserves
+its provenance and operation without consulting an external debugger file.
+
+Optimized inlined functions have no independent machine frame and therefore do
+not appear; the containing function does. Tail calls replace their caller's
+frame. Extern/system frames render as nonzero addresses when no TypeLisp map row
+exists. Bounds, division, shift, panic, region-reset, and ordinary abort paths
+print their existing source/value diagnostic before the trace. Reproducible
+debug builds may set `TYPELISP_REMAP_PATH_PREFIX=FROM=TO`; the first `=` splits
+the mapping and every matching source prefix is rewritten in line tables,
+fatal-site strings, and backtrace rows.
+
+A panic raised by a cleanup is rendered like any other panic; its cleanup
+function and surviving callers appear when they have machine frames. It keeps
+the ordinary cleanup rule above: abort does not unwind or guarantee remaining
+outer cleanups.
+
 The stdlib declarations give `panic` and `error` the `never` return type.
 `never` satisfies any expected type and merges with concrete `if` branch or
 `match` arm result types, so no dummy value is needed after a panicking
@@ -8067,10 +8103,14 @@ Common Command Options:
   --manifest-path <file>         Package manifest path
   --stdlib-root <dir>            Search root for stdlib/... imports
   --opt-level <0|1|2>            Select optimizer level
+  --debug, -g                    Emit source line and unwind debug information
+  --backtrace                    Emit fatal-backtrace metadata (implies --debug)
   --cfg <name>                   Enable a compile-time cfg predicate name
 
 Environment:
   TYPELISP_STDLIB_ROOT           Optional fallback root before embedded stdlib
+  TYPELISP_BACKTRACE             off, short, or full for backtrace-enabled binaries
+  TYPELISP_REMAP_PATH_PREFIX     FROM=TO mapping for debug and fatal-site paths
 
 Selected Command Forms:
   typelisp compile <file.tl> [-o <file>] [--emit-ir] [--pic]

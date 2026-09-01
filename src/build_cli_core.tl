@@ -612,7 +612,10 @@
             stdlib-roots)]
         [(cli_option.CliCommonOption.NotCommon)
           (cond
-            [(or (string.eq current "--debug") (string.eq current "-g"))
+            [(or
+                (string.eq current "--debug")
+                (string.eq current "-g")
+                (string.eq current "--backtrace"))
               (begin
                 (ir.compiler-debug-info-set-enabled! true)
                 (build-parse-options
@@ -987,7 +990,10 @@
             resolved-deps)]
         [(cli_option.CliCommonOption.NotCommon)
           (cond
-            [(or (string.eq current "--debug") (string.eq current "-g"))
+            [(or
+                (string.eq current "--debug")
+                (string.eq current "-g")
+                (string.eq current "--backtrace"))
               (begin
                 (ir.compiler-debug-info-set-enabled! true)
                 (build-package-worker-parse-options
@@ -7921,7 +7927,10 @@
 (define (build-cli-option [current : String]) : BuildCliOption
   (cond
     [(string.eq current "-o") (BuildCliOption.Output)]
-    [(or (string.eq current "--debug") (string.eq current "-g"))
+    [(or
+        (string.eq current "--debug")
+        (string.eq current "-g")
+        (string.eq current "--backtrace"))
       (BuildCliOption.Debug)]
     [else (build-cli-option-rest0 current)]))
 
@@ -8285,6 +8294,7 @@
   [producer-identity : String]) : i64
   (begin
     (ir.compiler-debug-info-set-enabled! false)
+    (ir.compiler-debug-path-remap-clear!)
     (cond
       [(and (> count start) (string.eq (io.arg start) "--package-worker"))
         (build-package-worker-run-from (+ start 1) count producer-identity)]

@@ -1729,7 +1729,250 @@ run_linux_program_fixture() {
         "$_stdout_spec" "$_dir"
 }
 
+run_linux_backtrace_fatal_value_fixture() {
+    _label=$1
+    _source=$2
+    _want=$3
+    _diagnostic=$4
+    _arg=${5:-}
+    _dir="$WORKDIR/$_label"
+    mkdir -p "$_dir"
+    _asm="$_dir/$_label.s"
+    _obj="$_dir/$_label.o"
+    _bin="$_dir/$_label"
+    _stderr="$_dir/$_label.stderr"
+
+    echo "[$_label] compile --backtrace -> preserve fatal values"
+    run_build "$COMPILER" compile "$_source" \
+        --backtrace --stdlib-root "$ROOT/src" --opt-level 0 -o "$_asm"
+    [ "$build_rc" -eq 0 ] || {
+        echo "FAIL: $_label compile failed" >&2
+        exit 1
+    }
+    as "$_asm" -o "$_obj"
+    ld -static -e "$(linux_entry_symbol_for_asm "$_asm")" "$_obj" -o "$_bin"
+    set +e
+    if [ -n "$_arg" ]; then
+        TYPELISP_BACKTRACE=full "$_bin" "$_arg" > /dev/null 2> "$_stderr"
+    else
+        TYPELISP_BACKTRACE=full "$_bin" > /dev/null 2> "$_stderr"
+    fi
+    _got=$?
+    set -e
+    [ "$_got" -eq "$_want" ] || {
+        echo "FAIL: $_label expected exit $_want, got $_got" >&2
+        exit 1
+    }
+    assert_contains "$_stderr" "$_diagnostic" "$_label diagnostic"
+    assert_contains "$_stderr" 'stack backtrace:' "$_label backtrace"
+}
+
+run_linux_fatal_backtrace_fixture() {
+    _label=fatal-backtrace-debug
+    _source=tests/integration/fatal_backtrace.tl
+    _dir="$WORKDIR/$_label"
+    mkdir -p "$_dir"
+    _asm="$_dir/$_label.s"
+    _obj="$_dir/$_label.o"
+    _bin="$_dir/$_label"
+    _stdout="$_dir/$_label.stdout"
+    _stderr="$_dir/$_label.stderr"
+    _off_stderr="$_dir/$_label.off.stderr"
+    _short_stderr="$_dir/$_label.short.stderr"
+    _remap_asm="$_dir/$_label.remap.s"
+    _spoof_asm="$_dir/$_label.spoof.s"
+    _opt2_asm="$_dir/$_label.opt2.s"
+    _opt2_obj="$_dir/$_label.opt2.o"
+    _opt2_bin="$_dir/$_label.opt2"
+    _opt2_stderr="$_dir/$_label.opt2.stderr"
+    _stripped_bin="$_dir/$_label.stripped"
+    _stripped_stderr="$_dir/$_label.stripped.stderr"
+    _corrupt_asm="$_dir/$_label.corrupt.s"
+    _corrupt_obj="$_dir/$_label.corrupt.o"
+    _corrupt_bin="$_dir/$_label.corrupt"
+    _corrupt_stderr="$_dir/$_label.corrupt.stderr"
+    _thread_asm="$_dir/$_label.thread.s"
+    _thread_obj="$_dir/$_label.thread.o"
+    _thread_bin="$_dir/$_label.thread"
+    _thread_stderr="$_dir/$_label.thread.stderr"
+    _crt_bin="$_dir/$_label.crt"
+    _crt_stderr="$_dir/$_label.crt.stderr"
+
+    echo "[$_label] compile --backtrace -> run mode matrix"
+    run_build "$COMPILER" compile "$_source" \
+        --backtrace --stdlib-root "$ROOT/src" --opt-level 0 -o "$_asm"
+    [ "$build_rc" -eq 0 ] || {
+        echo "FAIL: $_label compile failed" >&2
+        exit 1
+    }
+    assert_contains "$_asm" '.section .typelisp_backtrace,"a",@progbits' "$_label"
+    assert_contains "$_asm" 'tl_backtrace_string_data_begin:' "$_label"
+    assert_contains "$_asm" 'fatal_backtrace.tl::backtrace-leaf' "$_label"
+    assert_contains "$_asm" 'tl_backtrace_frame_pointer:' "$_label"
+    as "$_asm" -o "$_obj"
+    ld -static -e "$(linux_entry_symbol_for_asm "$_asm")" "$_obj" -o "$_bin"
+
+    set +e
+    TYPELISP_BACKTRACE=full "$_bin" > "$_stdout" 2> "$_stderr"
+    _got=$?
+    set -e
+    [ "$_got" -eq 134 ] || {
+        echo "FAIL: $_label full expected exit 134, got $_got" >&2
+        exit 1
+    }
+    assert_empty_file "$_stdout" "$_label full stdout"
+    assert_contains "$_stderr" 'stack backtrace:' "$_label full"
+    assert_contains "$_stderr" 'fatal_backtrace.tl::backtrace-leaf at tests/integration/fatal_backtrace.tl:7:3' "$_label full"
+    assert_contains "$_stderr" 'fatal_backtrace.tl::backtrace-recurse at tests/integration/fatal_backtrace.tl:12:3' "$_label full"
+    assert_contains "$_stderr" '[repeated 3 frames]' "$_label full"
+    assert_contains "$_stderr" 'fatal_backtrace.tl::backtrace-middle at tests/integration/fatal_backtrace.tl:17:3' "$_label full"
+    assert_contains "$_stderr" 'fatal_backtrace.tl::backtrace-outer at tests/integration/fatal_backtrace.tl:20:3' "$_label full"
+    assert_contains "$_stderr" 'fatal_backtrace.tl::backtrace-cleanup at tests/integration/fatal_backtrace.tl:23:3' "$_label full"
+    assert_contains "$_stderr" 'main at tests/integration/fatal_backtrace.tl:28:3' "$_label full"
+    assert_matches "$_stderr" '<unknown> \(0x[1-9a-f][0-9a-f]*\)' "$_label full"
+    assert_not_contains "$_stderr" 'stdlib/runtime.tl::' "$_label full"
+
+    set +e
+    TYPELISP_BACKTRACE=off "$_bin" > /dev/null 2> "$_off_stderr"
+    _off_got=$?
+    TYPELISP_BACKTRACE=short "$_bin" > /dev/null 2> "$_short_stderr"
+    _short_got=$?
+    set -e
+    [ "$_off_got" -eq 134 ] && [ "$_short_got" -eq 134 ] || {
+        echo "FAIL: $_label mode matrix exits full=$_got off=$_off_got short=$_short_got" >&2
+        exit 1
+    }
+    assert_not_contains "$_off_stderr" 'stack backtrace:' "$_label off"
+    assert_contains "$_short_stderr" 'stack backtrace:' "$_label short"
+    assert_contains "$_short_stderr" 'fatal_backtrace.tl::backtrace-leaf' "$_label short"
+
+    run_build "$COMPILER" compile "$_source" --cfg compiler-backtrace \
+        --stdlib-root "$ROOT/src" --opt-level 0 -o "$_spoof_asm"
+    [ "$build_rc" -eq 0 ] || {
+        echo "FAIL: $_label private-cfg spoof compile failed" >&2
+        exit 1
+    }
+    assert_not_contains "$_spoof_asm" 'tl_backtrace_map_data_begin' "$_label private cfg"
+    assert_not_contains "$_spoof_asm" 'tl_backtrace_map_begin:' "$_label private cfg"
+
+    run_build env "TYPELISP_REMAP_PATH_PREFIX=$ROOT=WORKSPACE" \
+        "$COMPILER" compile "$ROOT/$_source" --backtrace \
+        --stdlib-root "$ROOT/src" --opt-level 0 -o "$_remap_asm"
+    [ "$build_rc" -eq 0 ] || {
+        echo "FAIL: $_label remapped compile failed" >&2
+        exit 1
+    }
+    assert_not_contains "$_remap_asm" "$ROOT" "$_label path remap"
+    assert_contains "$_remap_asm" 'WORKSPACE/tests/integration/fatal_backtrace.tl' "$_label path remap"
+
+    run_build "$COMPILER" compile "$_source" \
+        --backtrace --stdlib-root "$ROOT/src" --opt-level 2 -o "$_opt2_asm"
+    [ "$build_rc" -eq 0 ] || {
+        echo "FAIL: $_label optimized compile failed" >&2
+        exit 1
+    }
+    as "$_opt2_asm" -o "$_opt2_obj"
+    ld -static -e "$(linux_entry_symbol_for_asm "$_opt2_asm")" "$_opt2_obj" -o "$_opt2_bin"
+    set +e
+    TYPELISP_BACKTRACE=full "$_opt2_bin" > /dev/null 2> "$_opt2_stderr"
+    _opt2_got=$?
+    set -e
+    [ "$_opt2_got" -eq 134 ] || {
+        echo "FAIL: $_label optimized expected exit 134, got $_opt2_got" >&2
+        exit 1
+    }
+    assert_contains "$_opt2_stderr" 'fatal_backtrace.tl::backtrace-leaf' "$_label optimized"
+    assert_contains "$_opt2_stderr" '[repeated 3 frames]' "$_label optimized"
+    assert_contains "$_opt2_stderr" 'main at tests/integration/fatal_backtrace.tl:28:3' "$_label optimized"
+    assert_not_contains "$_opt2_stderr" 'fatal_backtrace.tl::backtrace-middle' "$_label optimized inline"
+    assert_not_contains "$_opt2_stderr" 'fatal_backtrace.tl::backtrace-outer' "$_label optimized inline"
+
+    cp "$_bin" "$_stripped_bin"
+    strip --strip-all "$_stripped_bin"
+    set +e
+    TYPELISP_BACKTRACE=full "$_stripped_bin" > /dev/null 2> "$_stripped_stderr"
+    _stripped_got=$?
+    set -e
+    [ "$_stripped_got" -eq 134 ] || {
+        echo "FAIL: $_label stripped expected exit 134, got $_stripped_got" >&2
+        exit 1
+    }
+    assert_contains "$_stripped_stderr" 'fatal_backtrace.tl::backtrace-leaf' "$_label stripped"
+
+    sed '/^    \.quad _tl_fatal_backtrace_backtrace_leaf$/ {
+        n
+        n
+        s/^    \.quad .*$/    .quad 1/
+    }' "$_asm" > "$_corrupt_asm"
+    as "$_corrupt_asm" -o "$_corrupt_obj"
+    ld -static -e "$(linux_entry_symbol_for_asm "$_corrupt_asm")" \
+        "$_corrupt_obj" -o "$_corrupt_bin"
+    set +e
+    TYPELISP_BACKTRACE=full "$_corrupt_bin" > /dev/null 2> "$_corrupt_stderr"
+    _corrupt_got=$?
+    set -e
+    [ "$_corrupt_got" -eq 134 ] || {
+        echo "FAIL: $_label corrupt map expected exit 134, got $_corrupt_got" >&2
+        exit 1
+    }
+    assert_matches "$_corrupt_stderr" '  0: <unknown> \(0x[1-9a-f][0-9a-f]*\)' "$_label corrupt map"
+    assert_contains "$_corrupt_stderr" 'fatal_backtrace.tl::backtrace-recurse' "$_label corrupt map recovery"
+
+    run_build "$COMPILER" compile tests/integration/fatal_backtrace_thread.tl \
+        --backtrace --stdlib-root "$ROOT/src" --opt-level 0 -o "$_thread_asm"
+    [ "$build_rc" -eq 0 ] || {
+        echo "FAIL: $_label worker compile failed" >&2
+        exit 1
+    }
+    as "$_thread_asm" -o "$_thread_obj"
+    ld -static -e "$(linux_entry_symbol_for_asm "$_thread_asm")" \
+        "$_thread_obj" -o "$_thread_bin"
+    set +e
+    TYPELISP_BACKTRACE=full "$_thread_bin" > /dev/null 2> "$_thread_stderr"
+    _thread_got=$?
+    set -e
+    [ "$_thread_got" -eq 134 ] || {
+        echo "FAIL: $_label worker expected exit 134, got $_thread_got" >&2
+        exit 1
+    }
+    assert_contains "$_thread_stderr" 'stack backtrace:' "$_label worker"
+    assert_contains "$_thread_stderr" 'fatal_backtrace_thread.tl::backtrace-worker-leaf' "$_label worker"
+    assert_contains "$_thread_stderr" 'fatal_backtrace_thread.tl::backtrace-worker' "$_label worker"
+
+    # Native link inputs select the hosted C-runtime `main` entry instead of
+    # `_tl_start`. That path has no backend-installed TLS stack bounds, so pin
+    # its allocation-free fallback against the captured initial ENVP vector.
+    run_build "$COMPILER" build "$_source" --backtrace --link-lib m \
+        --stdlib-root "$ROOT/src" --opt-level 0 -o "$_crt_bin"
+    [ "$build_rc" -eq 0 ] || {
+        echo "FAIL: $_label CRT-entry build failed" >&2
+        exit 1
+    }
+    set +e
+    TYPELISP_BACKTRACE=full "$_crt_bin" > /dev/null 2> "$_crt_stderr"
+    _crt_got=$?
+    set -e
+    [ "$_crt_got" -eq 134 ] || {
+        echo "FAIL: $_label CRT-entry expected exit 134, got $_crt_got" >&2
+        exit 1
+    }
+    assert_contains "$_crt_stderr" 'stack backtrace:' "$_label CRT entry"
+    assert_contains "$_crt_stderr" 'fatal_backtrace.tl::backtrace-leaf' "$_label CRT entry"
+    assert_contains "$_crt_stderr" 'main at tests/integration/fatal_backtrace.tl:28:3' "$_label CRT entry"
+
+    run_linux_backtrace_fatal_value_fixture \
+        fatal-backtrace-bounds-values tests/integration/red_zone_abort_trap.tl 134 \
+        'array index out of bounds: index=4 length=4' trap
+    run_linux_backtrace_fatal_value_fixture \
+        fatal-backtrace-div-values tests/integration/div_zero_trap.tl 135 \
+        'integer division or remainder error: dividend=1 divisor=0'
+    run_linux_backtrace_fatal_value_fixture \
+        fatal-backtrace-shift-values tests/integration/shl_count_width_trap.tl 129 \
+        'shift count out of range: count=64 width=32'
+}
+
 run_linux_backend_fixtures() {
+    run_linux_fatal_backtrace_fixture
     # The opt0 row guards the lowerer's two-phase evaluate-before-write
     # contract. The opt2 row runs the same destination/argument aliases through
     # ctor_fwd and the complete optimizer pipeline (refs #6930).
@@ -2123,7 +2366,43 @@ run_windows_program_fixture() {
         "$_stdout_spec" "$_dir"
 }
 
+run_windows_fatal_backtrace_fixture() {
+    _label=fatal-backtrace-debug
+    _source=tests/integration/fatal_backtrace.tl
+    _dir="$WORKDIR/$_label"
+    mkdir -p "$_dir"
+    _asm="$_dir/$_label.s"
+    _obj="$_dir/$_label.obj"
+    _bin="$_dir/$_label.exe"
+    _stdout="$_dir/$_label.stdout"
+    _stderr="$_dir/$_label.stderr"
+    _code="$_dir/$_label.exit"
+
+    echo "[$_label] compile --backtrace -> run (windows)"
+    run_build "$COMPILER" compile "$_source" \
+        --target windows-x86_64 --cfg windows --backtrace \
+        --stdlib-root "$ROOT/src" --opt-level 2 -o "$_asm"
+    [ "$build_rc" -eq 0 ] || {
+        echo "FAIL: $_label Windows compile failed" >&2
+        exit 1
+    }
+    assert_contains "$_asm" '.section .rdata$TLBT,"dr"' "$_label Windows"
+    assert_contains "$_asm" '.section .rdata$TLBS,"dr"' "$_label Windows"
+    assert_contains "$_asm" 'call RtlCaptureStackBackTrace' "$_label Windows"
+    assemble_link_windows "$_asm" "$_obj" "$_bin" "$_label"
+    run_windows_program "$_bin" "$_stdout" "$_stderr" "$_code" 134
+    [ "$got" -eq 134 ] || {
+        echo "FAIL: $_label Windows expected exit 134, got $got" >&2
+        exit 1
+    }
+    assert_empty_file "$_stdout" "$_label Windows stdout"
+    assert_contains "$_stderr" 'stack backtrace:' "$_label Windows"
+    assert_contains "$_stderr" 'fatal_backtrace.tl::backtrace-leaf' "$_label Windows"
+    assert_contains "$_stderr" 'fatal_backtrace.tl:7:3' "$_label Windows"
+}
+
 run_windows_backend_fixtures() {
+    run_windows_fatal_backtrace_fixture
     run_windows_program_fixture \
         constructor-alias-two-phase-opt0 \
         tests/integration/constructor_alias_two_phase.tl \

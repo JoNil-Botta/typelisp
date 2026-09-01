@@ -19,10 +19,12 @@
     false
     false
     false
+    false
     false))
 
 (define (compiler-backend-runtime-test-full-features) : runtime_common.CompilerBackendRuntimeFeatures
   (runtime_common.CompilerBackendRuntimeFeatures
+    true
     true
     true
     true
@@ -65,6 +67,17 @@
       (test.assert-true
         (compiler-backend-runtime-test-contains? (& linux-min-data) ".tbss")
         "Linux runtime data owns the TLS arena slot")
+      (test.assert-true
+        (not
+          (compiler-backend-runtime-test-contains?
+            (& linux-min-data)
+            "tl_backtrace_stack_low"))
+        "minimal Linux data omits backtrace TLS bounds")
+      (test.assert-true
+        (compiler-backend-runtime-test-contains?
+          (& linux-full-data)
+          "tl_backtrace_stack_low")
+        "backtrace Linux data emits TLS bounds")
       (test.assert-true
         (not
           (compiler-backend-runtime-test-contains?
@@ -116,6 +129,26 @@
           (& windows-min-functions)
           ".globl tl_memcpy_fresh")
         "minimal Windows functions keep fresh-copy helper")
+      (test.assert-true
+        (and
+          (not
+            (compiler-backend-runtime-test-contains?
+              (& linux-min-functions)
+              "tl_backtrace_map_begin"))
+          (not
+            (compiler-backend-runtime-test-contains?
+              (& windows-min-functions)
+              "tl_backtrace_map_begin")))
+        "minimal runtimes omit backtrace accessors")
+      (test.assert-true
+        (and
+          (compiler-backend-runtime-test-contains?
+            (& linux-full-functions)
+            "tl_backtrace_map_begin")
+          (compiler-backend-runtime-test-contains?
+            (& windows-full-functions)
+            "tl_backtrace_map_begin"))
+        "backtrace runtimes emit map accessors")
       (test.assert-true
         (compiler-backend-runtime-test-contains?
           (& linux-min-functions)

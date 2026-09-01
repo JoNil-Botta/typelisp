@@ -19471,14 +19471,16 @@
                   (compiler-backend-escape-string
                     (if (compiler-backend-target-linux? target)
                       (string.replace
-                        (ci.intern-compat-state-str
-                          (compiler-backend-state-intern index.backend-state)
-                          path-id)
+                        (compiler_ir_types.compiler-debug-path-remap
+                          (ci.intern-compat-state-str
+                            (compiler-backend-state-intern index.backend-state)
+                            path-id))
                         "\\"
                         "/")
-                      (ci.intern-compat-state-str
-                        (compiler-backend-state-intern index.backend-state)
-                        path-id)))]
+                      (compiler_ir_types.compiler-debug-path-remap
+                        (ci.intern-compat-state-str
+                          (compiler-backend-state-intern index.backend-state)
+                          path-id))))]
                 [file-number : String (string.int->string (+ path-index 1))]
                 (begin
                   (set!
@@ -19690,6 +19692,158 @@
       "    .section .text.typelisp_runtime,\"ax\"\n"
       "")))
 
+;; Allocation-free fatal backtraces use a deliberately small, target-neutral
+;; map instead of teaching the runtime to parse DWARF, CodeView, or PDB files.
+;; One fixed eight-word row names a final text range and its source function.
+;; The source strings live in a separate read-only section, so the row section
+;; remains densely indexable and corruption checks can reject a non-multiple of
+;; 64 bytes before reading it. Non-debug builds emit neither rows nor accessors:
+;; compiler-driver installs `compiler-backtrace` together with debug-info, and
+;; direct-object release builds therefore keep their existing section model.
+(define (compiler-backend-backtrace-map-section
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "    .section .rdata$TLBT,\"dr\"\n"
+    "    .section .typelisp_backtrace,\"a\",@progbits\n"))
+
+(define (compiler-backend-backtrace-string-section
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "    .section .rdata$TLBS,\"dr\"\n"
+    "    .section .rodata.typelisp_backtrace,\"a\",@progbits\n"))
+
+(define (compiler-backend-backtrace-map-prefix [target : CompilerBackendTarget]) : String
+  (if (not (compiler_ir_types.compiler-debug-info-enabled?))
+    ""
+    (str_cat.str-cat
+      (compiler-backend-backtrace-string-section target)
+      "    .globl tl_backtrace_string_data_begin\ntl_backtrace_string_data_begin:\n"
+      (compiler-backend-backtrace-map-section target)
+      "    .balign 8\n    .globl tl_backtrace_map_data_begin\ntl_backtrace_map_data_begin:\n    .text\n")))
+
+(define (compiler-backend-backtrace-map-trailer
+  [target : CompilerBackendTarget]) : String
+  (if (not (compiler_ir_types.compiler-debug-info-enabled?))
+    ""
+    (str_cat.str-cat
+      (compiler-backend-backtrace-map-section target)
+      "    .globl tl_backtrace_map_data_end\ntl_backtrace_map_data_end:\n"
+      (compiler-backend-backtrace-string-section target)
+      "    .globl tl_backtrace_string_data_end\ntl_backtrace_string_data_end:\n    .text\n")))
+
+(define (compiler-backend-backtrace-function-id
+  [program-index : CompilerBackendProgramIndex]
+  [name : i64]) : i64
+  (match (compiler-backend-index-function-slot program-index name)
+    [(backend_i64_i64_map.LookupFound function-id) function-id]
+    [(backend_i64_i64_map.LookupMissing) -1]))
+
+(define (compiler-backend-backtrace-function-end-label
+  [program-index : CompilerBackendProgramIndex]
+  [name : i64]) : String
+  (if (not (compiler_ir_types.compiler-debug-info-enabled?))
+    ""
+    (let
+      [function-id : i64
+        (compiler-backend-backtrace-function-id
+          (compiler-backend-global-shared-view program-index)
+          name)]
+      (if (< function-id 0)
+        ""
+        (str_cat.str-cat
+          ".L_tl_backtrace_function_end_"
+          (string.int->string function-id)
+          ":\n")))))
+
+(define (compiler-backend-backtrace-function-entry
+  [target : CompilerBackendTarget]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : compiler_ir_types.CompilerSourceSpans]
+  [name : i64]
+  [symbol : String]) : String
+  (if (not (compiler_ir_types.compiler-debug-info-enabled?))
+    ""
+    (let
+      [function-id : i64
+        (compiler-backend-backtrace-function-id
+          (compiler-backend-global-shared-view program-index)
+          name)]
+      (if (< function-id 0)
+        ""
+        (let
+          [name-text : String
+            (compiler-backend-symbol-text-index
+              (compiler-backend-global-shared-view program-index)
+              name)]
+          [path : String ""]
+          [line : i64 0]
+          [column : i64 0]
+          [_location : unit
+            (match (compiler_ir_types.compiler-source-spans-lookup-location
+              spans
+              (compiler_ir_types.compiler-ir-symbol-typed-id name))
+              [(compiler_ir_types.CompilerMaybeSourceLocation.No) unit]
+              [(compiler_ir_types.CompilerMaybeSourceLocation.Some location)
+                (begin
+                  (set!
+                    path
+                    (compiler_ir_types.compiler-debug-path-remap
+                      (ci.intern-compat-state-str
+                        (compiler-backend-state-intern
+                          (compiler-backend-global-shared-view
+                            program-index.backend-state))
+                        location.path-id)))
+                  (set!
+                    line
+                    (compiler_ast_types.ast-source-span-start-line
+                      location.span))
+                  (set!
+                    column
+                    (compiler_ast_types.ast-source-span-start-col location.span)))])]
+          [id-text : String (string.int->string function-id)]
+          [name-label : String
+            (str_cat.str-cat
+              ".L_tl_backtrace_name_"
+              (compiler-backend-global-shared-view id-text))]
+          [path-label : String
+            (str_cat.str-cat
+              ".L_tl_backtrace_path_"
+              (compiler-backend-global-shared-view id-text))]
+          [end-label : String
+            (str_cat.str-cat
+              ".L_tl_backtrace_function_end_"
+              (compiler-backend-global-shared-view id-text))]
+          (str_cat.str-cat
+            (compiler-backend-backtrace-string-section target)
+            (compiler-backend-global-shared-view name-label)
+            ":\n    .ascii \""
+            (compiler-backend-escape-string
+              (compiler-backend-global-shared-view name-text))
+            "\"\n"
+            (compiler-backend-global-shared-view path-label)
+            ":\n    .ascii \""
+            (compiler-backend-escape-string
+              (compiler-backend-global-shared-view path))
+            "\"\n"
+            (compiler-backend-backtrace-map-section target)
+            "    .balign 8\n    .quad "
+            symbol
+            "\n    .quad "
+            end-label
+            "\n    .quad "
+            (compiler-backend-global-shared-view name-label)
+            "\n    .quad "
+            (string.int->string (string.string-length name-text))
+            "\n    .quad "
+            (compiler-backend-global-shared-view path-label)
+            "\n    .quad "
+            (string.int->string (string.string-length path))
+            "\n    .quad "
+            (string.int->string line)
+            "\n    .quad "
+            (string.int->string column)
+            "\n    .text\n"))))))
+
 (define (compiler-backend-string-label-suffix [text : String]) : String
   (let
     [n : i64 (string.string-length text)]
@@ -19825,9 +19979,10 @@
                   (compiler-backend-function-state-set-string!
                     function-state
                     compiler-backend-function-string-abort-site-path
-                    (ci.intern-compat-state-str
-                      (compiler-backend-state-intern ctx.backend-state)
-                      path-id))
+                    (compiler_ir_types.compiler-debug-path-remap
+                      (ci.intern-compat-state-str
+                        (compiler-backend-state-intern ctx.backend-state)
+                        path-id)))
                   (compiler-backend-function-state-set-i64!
                     function-state
                     compiler-backend-function-i64-abort-site-line
@@ -81236,6 +81391,11 @@
                                             program-index)
                                           (compiler-backend-global-shared-view
                                             name))
+                                        (compiler-backend-backtrace-function-end-label
+                                          (compiler-backend-global-shared-view
+                                            program-index)
+                                          (compiler-backend-global-shared-view
+                                            name))
                                         (if (and
                                           (compiler_ir_types.compiler-debug-info-enabled?)
                                           target-policy.linux)
@@ -81250,7 +81410,17 @@
                                           target
                                           (compiler-backend-global-shared-view
                                             symbol))
-                                        "\n")))])))))]
+                                        "\n"
+                                        (compiler-backend-backtrace-function-entry
+                                          target
+                                          (compiler-backend-global-shared-view
+                                            program-index)
+                                          (compiler-backend-global-shared-view
+                                            spans)
+                                          (compiler-backend-global-shared-view
+                                            name)
+                                          (compiler-backend-global-shared-view
+                                            symbol)))))])))))]
                     [(ResultCompilerBackend.Err message)
                       (let
                         [_addr-forward-done : unit
@@ -82922,9 +83092,10 @@
                       out
                       (compiler-backend-program-collections-add-string
                         out
-                        (ci.intern-compat-state-str
-                          (compiler-backend-state-intern backend-state)
-                          path-id))))])
+                        (compiler_ir_types.compiler-debug-path-remap
+                          (ci.intern-compat-state-str
+                            (compiler-backend-state-intern backend-state)
+                            path-id)))))])
               (set! index (+ index 1))))
           out))]))
 
@@ -85451,7 +85622,8 @@
             (compiler-backend-runtime-tail-profile? tail-plan)
             (compiler-backend-runtime-tail-tlci-macro-entry? tail-plan)
             write-exit
-            (compiler-backend-runtime-tail-startup-profile? tail-plan)))])))
+            (compiler-backend-runtime-tail-startup-profile? tail-plan)
+            (compiler_ir_types.compiler-debug-info-enabled?)))])))
 
 (define (compiler-backend-current-arena-load
   [target : CompilerBackendTarget]
@@ -85577,6 +85749,21 @@
   [emit-entry : bool]) : String
   (compiler-backend-target-entry-text-with-crt target emit-entry false))
 
+(define (compiler-backend-debug-path-remap-load-environment!) : unit
+  (begin
+    ;; The mapping strings belong to this emission arena. Reset and reload on
+    ;; every batch entry so no later compile observes storage after a rewind.
+    (compiler_ir_types.compiler-debug-path-remap-clear!)
+    (when
+      (compiler_ir_types.compiler-debug-info-enabled?)
+      (let
+        [spec : String (env.var-value "TYPELISP_REMAP_PATH_PREFIX")]
+        (when
+          (> (string.string-length spec) 0)
+          (begin
+            (compiler_ir_types.compiler-debug-path-remap-set! spec)
+            unit))))))
+
 ;; `_tl_start` is the freestanding Linux entry and the only function this
 ;; module emits outside compiler-backend-emit-function, so it carries the same
 ;; ELF symbol typing (see compiler-backend-emit-function-type-directive). This
@@ -85616,10 +85803,25 @@
     syscall
     testq %rax, %rax
     js .L_tl_main_stack_abort
-    addq $0x40000000, %rax
+"
+    (if (compiler_ir_types.compiler-debug-info-enabled?)
+      "    movq %rax, %fs:tl_backtrace_stack_low@tpoff
+"
+      "")
+    "    addq $0x40000000, %rax
     andq $-16, %rax
-    movq %rax, %rsp
-    call main
+"
+    (if (compiler_ir_types.compiler-debug-info-enabled?)
+      "    movq %rax, %fs:tl_backtrace_stack_high@tpoff
+"
+      "")
+    "    movq %rax, %rsp
+"
+    (if (compiler_ir_types.compiler-debug-info-enabled?)
+      "    xorl %ebp, %ebp
+"
+      "")
+    "    call main
     movq %rax, %rdi
     movq $60, %rax
     syscall
@@ -86140,12 +86342,14 @@
             crt-entry)]
         [prefix-buf : text_buf.TextBuf
           (text_buf.append
-            base-prefix-buf
-            (compiler-backend-debug-prefix
-              target
-              (compiler-backend-global-shared-view entry-functions)
-              (compiler-backend-global-shared-view program-index)
-              (compiler-backend-global-shared-view span-index)))]
+            (text_buf.append
+              base-prefix-buf
+              (compiler-backend-debug-prefix
+                target
+                (compiler-backend-global-shared-view entry-functions)
+                (compiler-backend-global-shared-view program-index)
+                (compiler-backend-global-shared-view span-index)))
+            (compiler-backend-backtrace-map-prefix target))]
         [function-input : text_buf.TextBuf
           (if (compiler-backend-assembly-stream-active?
             (compiler-backend-state-stream-state program-index.backend-state))
@@ -86232,10 +86436,12 @@
                   (compiler-backend-global-shared-view program-index)
                   (text_buf.append
                     with-functions
-                    (compiler-backend-debug-trailer
-                      target
-                      (compiler-backend-global-shared-view entry-functions)
-                      (compiler-backend-global-shared-view program-index))))
+                    (str_cat.str-cat
+                      (compiler-backend-backtrace-map-trailer target)
+                      (compiler-backend-debug-trailer
+                        target
+                        (compiler-backend-global-shared-view entry-functions)
+                        (compiler-backend-global-shared-view program-index)))))
                   [(ResultCompilerBackendBuffer.Ok with-adapters)
                     (begin
                       (cfg
@@ -86406,6 +86612,7 @@
   [pic-emit? : bool]
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendBuffer
   (begin
+    (compiler-backend-debug-path-remap-load-environment!)
     (compiler-backend-state-set-emission-target-policy!
       backend-state
       (compiler-backend-target-policy-new target))

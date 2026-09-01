@@ -5308,12 +5308,58 @@
 ;; are appended in lowering order and lookup scans newest-to-oldest.
 (define compiler-debug-info-enabled : bool
   false)
+(define compiler-debug-path-remap-from : String
+  "")
+(define compiler-debug-path-remap-to : String
+  "")
 
 (define (compiler-debug-info-set-enabled! [enabled : bool]) : unit
   (set! compiler-debug-info-enabled enabled))
 
 (define (compiler-debug-info-enabled?) : bool
   compiler-debug-info-enabled)
+
+(define (compiler-debug-path-remap-clear!) : unit
+  (begin
+    (set! compiler-debug-path-remap-from "")
+    (set! compiler-debug-path-remap-to "")))
+
+;; Configure the reproducible-build mapping spelled FROM=TO. The first equals
+;; sign is the separator so replacement prefixes may themselves contain `=`.
+(define (compiler-debug-path-remap-set! [spec : String]) : bool
+  (let
+    [length : i64 (string.string-length spec)]
+    [index : i64 0]
+    (begin
+      (while (and (< index length) (not (= (string.string-ref spec index) '=')))
+        (set! index (+ index 1)))
+      (if (or (= index 0) (>= index length))
+        false
+        (begin
+          (set! compiler-debug-path-remap-from (string.substring spec 0 index))
+          (set!
+            compiler-debug-path-remap-to
+            (string.substring spec (+ index 1) (- length (+ index 1))))
+          true)))))
+
+(define (compiler-debug-path-remap-enabled?) : bool
+  (> (string.string-length compiler-debug-path-remap-from) 0))
+
+(define (compiler-debug-path-remap [path : String]) : String
+  (let
+    [from-length : i64 (string.string-length compiler-debug-path-remap-from)]
+    [path-length : i64 (string.string-length path)]
+    (if (and
+      (> from-length 0)
+      (>= path-length from-length)
+      (string.eq
+        (string.substring path 0 from-length)
+        compiler-debug-path-remap-from))
+      (str_cat.str-cat
+        (string.copy (& compiler-debug-path-remap-to))
+        (string.substring path from-length (- path-length from-length))
+        "")
+      path)))
 
 (defstruct CompilerSourceLocation
   (path-id i64)

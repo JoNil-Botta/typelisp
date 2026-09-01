@@ -21,13 +21,14 @@ shares the repeated scaled-input subexpressions before the two ordered stores.
 Kernel-only metrics compare the complete exported output contract on the same
 fused shape; TypeLisp retains its checked full-width and tail paths.
 
-Five checked lengths cover empty (0), sub-gang (3), exact AVX2 and AVX-512
-gangs (8 and 16), and a tail (19). The fixtures include negative coordinates
-and scales, zero strength, and nontrivial `(sin, cos)` pairs. Identity-rotation
-cases are exact and checked against fixed formulas. Nontrivial rotations reject
-non-finite values and allow at most two ULPs relative to the scalar binary32
-operation sequence, accounting only for legal ISPC FMA contraction. Both output
-arrays retain an out-of-range sentinel.
+Six checked lengths cover empty (0), sub-gang (3), exact AVX2 and AVX-512
+gangs (8 and 16), a tail (19), and an unrolled full-gang path followed by a
+tail (275). The fixtures include negative coordinates and scales, zero
+strength, and nontrivial `(sin, cos)` pairs. Identity-rotation cases are exact
+and checked against fixed formulas. Nontrivial rotations reject non-finite
+values and allow at most two ULPs relative to the scalar binary32 operation
+sequence, accounting only for legal ISPC FMA contraction. Both output arrays
+retain an out-of-range sentinel.
 
 Run required TypeLisp and scalar-C correctness, optional real ISPC comparisons,
 and kernel-only assembly metrics with:

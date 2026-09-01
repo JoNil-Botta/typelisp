@@ -17,7 +17,7 @@
 #include "kernel_ispc.h"
 #endif
 
-enum { kCaseCount = 5, kCapacity = 20, kRepetitions = 100 };
+enum { kCaseCount = 6, kCapacity = 276, kRepetitions = 100 };
 
 typedef struct Case {
     int count;
@@ -36,6 +36,8 @@ static const Case kCases[kCaseCount] = {
     {16, 1.25f, -0.75f, -2.5f, 3.5f, 0.6000000238418579f,
      0.800000011920929f, 0.375f, 2},
     {19, -1.5f, 0.25f, 4.0f, -6.0f, -0.7071067690849304f,
+     0.7071067690849304f, 1.25f, 2},
+    {275, -1.5f, 0.25f, 4.0f, -6.0f, -0.7071067690849304f,
      0.7071067690849304f, 1.25f, 2},
 };
 

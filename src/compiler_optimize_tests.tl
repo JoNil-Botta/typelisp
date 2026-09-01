@@ -28428,6 +28428,385 @@
       ;; here, so they are covered by this suite's one registered entry point.
       [else (compiler-optimize-load-join-pre-self-test)])))
 
+(define (opt-global-simd-copy-select-var-instr-seq-from
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [dst : i64]
+  [read-mask? : bool]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    (- 0 1)
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(compiler_ir_types.CompilerIrInstr.Select payload-box)
+        (let
+          [actual-dst
+            (compiler_optimize.compiler-opt-box-field-shared-view
+              payload-box
+              dst)]
+          [value
+            (if read-mask?
+              (compiler_optimize.compiler-opt-box-field-shared-view
+                payload-box
+                mask)
+              (compiler_optimize.compiler-opt-box-field-shared-view
+                payload-box
+                on-true))]
+          (if (= actual-dst dst)
+            (match value
+              [(compiler_ir_types.CompilerIrValue.Var var) var]
+              [_ (- 0 1)])
+            (opt-global-simd-copy-select-var-instr-seq-from
+              instrs
+              (+ index 1)
+              dst
+              read-mask?)))]
+      [_
+        (opt-global-simd-copy-select-var-instr-seq-from
+          instrs
+          (+ index 1)
+          dst
+          read-mask?)])))
+
+(define (opt-global-simd-copy-select-var-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [dst : i64]
+  [read-mask? : bool]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) (- 0 1)]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (let
+            [found : i64
+              (opt-global-simd-copy-select-var-instr-seq-from
+                instrs
+                0
+                dst
+                read-mask?)]
+            (if (= found (- 0 1))
+              (opt-global-simd-copy-select-var-blocks
+                (compiler_ir_types.compiler-ir-box-shared-view rest)
+                dst
+                read-mask?)
+              found))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-global-simd-copy-select-var-blocks
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        dst
+        read-mask?)]))
+
+(define (opt-global-simd-copy-vector-lhs-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [dst : i64]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) (- 0 1)]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (let
+            [found : i64 (opt-vector-binop-lhs-var instrs dst)]
+            (if (= found (- 0 1))
+              (opt-global-simd-copy-vector-lhs-blocks
+                (compiler_ir_types.compiler-ir-box-shared-view rest)
+                dst)
+              found))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-global-simd-copy-vector-lhs-blocks
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        dst)]))
+
+(define (opt-global-simd-copy-reduce-src-instr-seq-from
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [dst : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    (- 0 1)
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(compiler_ir_types.CompilerIrInstr.VectorReduce actual _ src _ _)
+        (if (= actual dst)
+          (match src
+            [(compiler_ir_types.CompilerIrValue.Var var) var]
+            [_ (- 0 1)])
+          (opt-global-simd-copy-reduce-src-instr-seq-from
+            instrs
+            (+ index 1)
+            dst))]
+      [_
+        (opt-global-simd-copy-reduce-src-instr-seq-from instrs (+ index 1) dst)])))
+
+(define (opt-global-simd-copy-reduce-src-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [dst : i64]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) (- 0 1)]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (let
+            [found : i64
+              (opt-global-simd-copy-reduce-src-instr-seq-from instrs 0 dst)]
+            (if (= found (- 0 1))
+              (opt-global-simd-copy-reduce-src-blocks
+                (compiler_ir_types.compiler-ir-box-shared-view rest)
+                dst)
+              found))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-global-simd-copy-reduce-src-blocks
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        dst)]))
+
+;; A vector and mask alias are defined in the entry and consumed in its
+;; dominated body. The second Select uses a distinct computed mask, so the
+;; copy sweep must forward the aliases without conflating active masks.
+(define (opt-global-simd-copy-dominated-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.MaskNot
+          3
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          4)
+        (compiler_ir_types.CompilerIrInstr.Mov
+          4
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Mov
+          5
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "body"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "body")
+        (opt-test-instrs
+          (compiler_ir_types.ir-instr-vector-bin-op
+            6
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.ir-instr-select
+            7
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (compiler_ir_types.CompilerIrValue.Var 6)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.ir-instr-select
+            8
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.VectorReduce
+            9
+            (compiler_ir_types.CompilerIrVectorReduceOp.Sum)
+            (compiler_ir_types.CompilerIrValue.Var 8)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 9)))))
+      (compiler_ir_types.CompilerIrBlockList.Nil))))
+
+;; Duplicate definitions model a mutable pre-SSA clone destination. The global
+;; pass is SSA-gated, so it must return this input unchanged rather than treating
+;; the first copy fact as a function-wide vector identity.
+(define (opt-global-simd-copy-redefined-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "clone"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "clone")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Mov
+            3
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.VectorReduce
+            4
+            (compiler_ir_types.CompilerIrVectorReduceOp.Sum)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 4)))))
+      (compiler_ir_types.CompilerIrBlockList.Nil))))
+
+;; Each arm has its own vector alias. Edge-aware copy forwarding may simplify
+;; the Phi inputs, but it must not substitute either arm's value through the
+;; join's Phi destination.
+(define (opt-global-simd-copy-join-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "then")
+          (compiler_ir_types.compiler-ir-label "else"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "then")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Mov
+            3
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "join"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "else")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Mov
+              4
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "join"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "join")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Phi
+                5
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var 3)
+                  (compiler_ir_types.compiler-ir-label "then")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                    (compiler_ir_types.CompilerIrValue.Var 4)
+                    (compiler_ir_types.compiler-ir-label "else")
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.VectorReduce
+                6
+                (compiler_ir_types.CompilerIrVectorReduceOp.Sum)
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                4
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 6)))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-global-simd-copy-run
+  [name : String]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-function-blocks
+    (compiler_optimize.opt-global-value-number-function
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (opt-gvn-function
+        name
+        (opt-gvn-scalar-params)
+        (compiler_ast_types.AstType.I64)
+        blocks))))
+
+(define (opt-global-simd-copy-dominated-out) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [forwarded : compiler_ir_types.CompilerIrBlockList
+      (opt-global-simd-copy-run
+        "global_simd_copy_dominated"
+        (opt-global-simd-copy-dominated-blocks))]
+    [uses : (__tl_dyn-array i64)
+      (compiler_optimize.opt-collect-blocks-uses-array
+        16
+        (compiler_optimize.compiler-opt-global-shared-view forwarded))]
+    (compiler_optimize.opt-dce-block-list-array uses forwarded)))
+
+(define (compiler-optimize-global-simd-copy-self-test) : i64
+  (let
+    [dominated : compiler_ir_types.CompilerIrBlockList
+      (opt-global-simd-copy-dominated-out)]
+    [redefined : compiler_ir_types.CompilerIrBlockList
+      (opt-global-simd-copy-run
+        "global_simd_copy_redefined"
+        (opt-global-simd-copy-redefined-blocks))]
+    [join : compiler_ir_types.CompilerIrBlockList
+      (opt-global-simd-copy-run
+        "global_simd_copy_join"
+        (opt-global-simd-copy-join-blocks))]
+    (cond
+      [(not
+          (=
+            (opt-count-mov-dst-blocks
+              (compiler_optimize.compiler-opt-global-shared-view dominated)
+              4)
+            0))
+        1]
+      [(not
+          (=
+            (opt-count-mov-dst-blocks
+              (compiler_optimize.compiler-opt-global-shared-view dominated)
+              5)
+            0))
+        2]
+      [(not
+          (=
+            (opt-global-simd-copy-vector-lhs-blocks
+              (compiler_optimize.compiler-opt-global-shared-view dominated)
+              6)
+            1))
+        3]
+      [(not
+          (=
+            (opt-global-simd-copy-select-var-blocks
+              (compiler_optimize.compiler-opt-global-shared-view dominated)
+              7
+              true)
+            0))
+        4]
+      [(not
+          (=
+            (opt-global-simd-copy-select-var-blocks
+              (compiler_optimize.compiler-opt-global-shared-view dominated)
+              7
+              false)
+            6))
+        5]
+      ;; The second Select's distinct active mask must remain distinct.
+      [(not
+          (=
+            (opt-global-simd-copy-select-var-blocks
+              (compiler_optimize.compiler-opt-global-shared-view dominated)
+              8
+              true)
+            3))
+        6]
+      ;; The verifier rejects the duplicate clone destination, so no copy fact
+      ;; crosses its redefinition.
+      [(not
+          (=
+            (opt-count-mov-dst-blocks
+              (compiler_optimize.compiler-opt-global-shared-view redefined)
+              3)
+            2))
+        7]
+      [(not (= (opt-global-simd-copy-reduce-src-blocks redefined 4) 3)) 8]
+      ;; The join use still reads the Phi result rather than either arm-local
+      ;; alias.
+      [(not (= (opt-global-simd-copy-reduce-src-blocks join 6) 5)) 9]
+      [else 42])))
+
+(test
+  global-simd-copy-dominance
+  (test.assert-i64-eq
+    (compiler-optimize-global-simd-copy-self-test)
+    42
+    "global SIMD copies propagate only through dominating stable identities and keep masks and joins distinct"))
+
 (define (compiler-optimize-global-value-number-self-test) : i64
   (let
     [dominated : compiler_ir_types.CompilerIrBlockList
@@ -28728,7 +29107,7 @@
             0))
         36]
       [(not (= (opt-count-packs-blocks pack-word) 0)) 37]
-      [else 42])))
+      [else (compiler-optimize-global-simd-copy-self-test)])))
 
 ;; Regression fixture for the global-GVN stale-global-read miscompile: the
 ;; entry block computes a Gep off the CURRENT value of mutable global `pool`,

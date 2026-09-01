@@ -19,7 +19,10 @@
 (defmacro (package-decls) : Decls
   `(begin
     (define (package-decl-answer) : i64
-      40)))
+      40)
+    (unsafe
+      (define (package-unsafe-answer [value : i64]) : i64
+        value))))
 
 ;; Keep one intentionally unsupported producer shape in the catalog. Its first
 ;; native attempt learns the mapping-generation shell and its second call must

@@ -452,6 +452,9 @@
     (compiler-diagnostic-typecheck-code-kind-is?
       "typecheck: ptr-read requires unsafe context"
       (compiler_diagnostic.compiler-diagnostic-code-typecheck-unsafe-context))
+    (compiler-diagnostic-typecheck-code-kind-is?
+      "typecheck: danger is an unsafe callable and cannot be used as a plain function value; call it directly inside unsafe"
+      (compiler_diagnostic.compiler-diagnostic-code-typecheck-unsafe-callable-effect))
     ;; A lifetime cause appended to a type-mismatch prefix must win over E0206.
     (compiler-diagnostic-typecheck-code-kind-is?
       "typecheck: call argument type mismatch; source lifetime `short` does not outlive required lifetime `long`"
@@ -509,7 +512,7 @@
   (let
     [count : i64 (compiler_diagnostic.compiler-diagnostic-code-registry-count)]
     [index : i64 0]
-    [ok : bool (= count 20)]
+    [ok : bool (= count 21)]
     (begin
       (while (and ok (< index count))
         (let

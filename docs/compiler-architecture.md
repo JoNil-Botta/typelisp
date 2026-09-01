@@ -82,7 +82,8 @@ violation), `E0209` (unsafe context required), `E0210` (lifetime mismatch),
 `E0211` (resource ownership violation), `E0212` (arena ownership violation),
 `E0213` (invalid pattern), `E0214` (SPMD restriction), `E0215`
 (invalid storage place), `E0216` (control-flow misuse), `E0217` (thread-safety
-violation), and `E0218` (compile-time constraint). Run
+violation), `E0218` (compile-time constraint), and `E0219` (unsafe callable
+effect erasure). Run
 `typelisp explain <code>` for a description, minimal failing
 example, suggested fix, and related references. Code lookup is ASCII
 case-insensitive. `typelisp explain --list` prints the registry and

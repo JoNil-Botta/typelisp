@@ -13531,7 +13531,8 @@
 (define (tc-type-env-scoped-carrier-in-unsafe?
   [carrier : TcTypeEnvScopedCarrier]) : bool
   (match (tc-type-env-scoped-carrier-marker-type carrier (tc-unsafe-marker-id))
-    [(ast.AstMaybeType.Some _) true]
+    [(ast.AstMaybeType.Some (ast.AstType.Unit)) true]
+    [(ast.AstMaybeType.Some _) false]
     [(ast.AstMaybeType.No) false]))
 
 (define (tc-type-env-scoped-carrier-current-return-type
@@ -16167,6 +16168,17 @@
     (ast.AstType.Unit)
     TcTypeEnvScopedMarkerKind.UnsafeContext))
 
+;; Deferred bodies do not inherit permission from the expression that creates
+;; them. A Never marker shadows an enclosing Unit marker while retaining the
+;; same scoped-runtime marker identity; a nested explicit unsafe re-enters with
+;; Unit as usual.
+(define (tc-clear-unsafe-context [env : TcTypeEnv]) : TcTypeEnv
+  (tc-bind-runtime-marker-id
+    env
+    (tc-unsafe-marker-id)
+    (ast.AstType.Never)
+    TcTypeEnvScopedMarkerKind.UnsafeContext))
+
 (define (tc-env-marker-type-scan [env : TcTypeEnv] [name-id : i64]) : ast.AstMaybeType
   (let
     [store-handle : i64 env.store]
@@ -16229,7 +16241,8 @@
     (begin
       (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
       (match (tc-env-marker-type env (tc-unsafe-marker-id))
-        [(ast.AstMaybeType.Some _) true]
+        [(ast.AstMaybeType.Some (ast.AstType.Unit)) true]
+        [(ast.AstMaybeType.Some _) false]
         [(ast.AstMaybeType.No) false]))))
 
 (define (tc-unused-unsafe-no-span) : ast.AstSourceSpan
@@ -20046,11 +20059,32 @@
       [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
       [(ResultTcType.Err message) (ResultTcType.Err message)])))
 
-(define (tc-lookup-dotted-source-visible
+(define (tc-unsafe-callable-use
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : String]
-  [name-id : i64]) : ResultTcType
+  [ty : ast.AstType]
+  [direct-call-target : bool]) : ResultTcType
+  (match (tc-require-unsafe
+    (tc-global-shared-view ctx)
+    env
+    (tc-global-shared-view name))
+    [(ResultTcUnit.Ok)
+      (if direct-call-target
+        (ResultTcType.Ok ty)
+        (ResultTcType.Err
+          (str_cat.str-cat
+            "typecheck: "
+            name
+            " is an unsafe callable and cannot be used as a plain function value; call it directly inside unsafe")))]
+    [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
+
+(define (tc-lookup-dotted-source-visible-mode
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [name-id : i64]
+  [direct-call-target : bool]) : ResultTcType
   (match (tc-source-name-lookup-key-with-field-check-lookup
     (tc-global-shared-view ctx)
     env
@@ -20063,16 +20097,16 @@
         (tc-env-name-key-id (tc-type-env-structural-session env) lookup-id))
         [(ResultTcTypeUnsafe.Ok ty unsafe)
           (if unsafe
-            (match (tc-require-unsafe
+            (tc-unsafe-callable-use
               (tc-global-shared-view ctx)
               env
               (tc-source-lookup-display-name
                 (tc-global-shared-view ctx)
                 (tc-global-shared-view name)
                 name-id
-                lookup-name))
-              [(ResultTcUnit.Ok) (ResultTcType.Ok ty)]
-              [(ResultTcUnit.Err message) (ResultTcType.Err message)])
+                lookup-name)
+              ty
+              direct-call-target)
             (ResultTcType.Ok ty))]
         [(ResultTcTypeUnsafe.Err message)
           (match (tc-dotted-alias-variant-handle
@@ -20094,6 +20128,13 @@
                   lookup-name
                   message))])])]
     [(TcNameLookup.Err message) (ResultTcType.Err message)]))
+
+(define (tc-lookup-dotted-source-visible
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [name-id : i64]) : ResultTcType
+  (tc-lookup-dotted-source-visible-mode ctx env name name-id false))
 
 (define (tc-hygiene-definition-env-id-inner
   [ctx : TcContext]
@@ -20144,12 +20185,13 @@
       (tc-type-env-scoped-runtime-restore! saved)
       result)))
 
-(define (tc-lookup-hygiene-context-global-visible-id-inner
+(define (tc-lookup-hygiene-context-global-visible-id-inner-mode
   [ctx : TcContext]
   [env : TcTypeEnv]
   [module : String]
   [module-id : i64]
-  [name-id : i64]) : ResultTcType
+  [name-id : i64]
+  [direct-call-target : bool]) : ResultTcType
   (let
     [name : String (ci.intern-str name-id)]
     [def-ctx : TcContext
@@ -20168,7 +20210,12 @@
         (if (>=
           (tc-name-first-dot-id (tc-context-structural-session ctx) name-id)
           0)
-          (tc-lookup-dotted-source-visible def-ctx def-env name name-id)
+          (tc-lookup-dotted-source-visible-mode
+            def-ctx
+            def-env
+            name
+            name-id
+            direct-call-target)
           (let
             [env-name-id : i64
               (tc-env-name-key-id (tc-type-env-structural-session env) name-id)]
@@ -20200,12 +20247,32 @@
             (match found
               [(ResultTcTypeUnsafe.Ok ty unsafe)
                 (if unsafe
-                  (match (tc-require-unsafe ctx env name)
-                    [(ResultTcUnit.Ok) (ResultTcType.Ok ty)]
-                    [(ResultTcUnit.Err message) (ResultTcType.Err message)])
+                  (tc-unsafe-callable-use ctx env name ty direct-call-target)
                   (ResultTcType.Ok ty))]
               [(ResultTcTypeUnsafe.Err message) (ResultTcType.Err message)])))]
       [(ResultTcEnv.Err message) (ResultTcType.Err message)])))
+
+(define (tc-lookup-hygiene-context-global-visible-id-mode
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [module : String]
+  [module-id : i64]
+  [name-id : i64]
+  [direct-call-target : bool]) : ResultTcType
+  (let
+    [saved : TcTypeEnvScopedRuntimeSave
+      (tc-type-env-scoped-runtime-suspend! env)]
+    [result : ResultTcType
+      (tc-lookup-hygiene-context-global-visible-id-inner-mode
+        ctx
+        env
+        module
+        module-id
+        name-id
+        direct-call-target)]
+    (begin
+      (tc-type-env-scoped-runtime-restore! saved)
+      result)))
 
 (define (tc-lookup-hygiene-context-global-visible-id
   [ctx : TcContext]
@@ -20213,19 +20280,13 @@
   [module : String]
   [module-id : i64]
   [name-id : i64]) : ResultTcType
-  (let
-    [saved : TcTypeEnvScopedRuntimeSave
-      (tc-type-env-scoped-runtime-suspend! env)]
-    [result : ResultTcType
-      (tc-lookup-hygiene-context-global-visible-id-inner
-        ctx
-        env
-        module
-        module-id
-        name-id)]
-    (begin
-      (tc-type-env-scoped-runtime-restore! saved)
-      result)))
+  (tc-lookup-hygiene-context-global-visible-id-mode
+    ctx
+    env
+    module
+    module-id
+    name-id
+    false))
 
 (define (tc-hygiene-global-binding-unsafe-scan
   [root : TcTypeEnv]
@@ -47166,6 +47227,79 @@
             [(ResultTcType.Err message) (TcDirectLambdaCheck.Err message)])])]
     [_ (TcDirectLambdaCheck.No)]))
 
+;; Unsafe declarations deliberately keep the ordinary function type at the ABI
+;; boundary, but that type must never escape into a first-class value. Ordinary
+;; expression typing therefore runs first, preserving dotted-name normalization,
+;; diagnostics, facts, and every safe-call path. Only its specific unsafe-value
+;; rejection may be retried as a syntactically direct call target.
+(define (tc-unsafe-callable-value-error? [message : String]) : bool
+  (string.contains
+    message
+    " is an unsafe callable and cannot be used as a plain function value"))
+
+(define (tc-call-target-direct-name
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : ast.AstExpr]
+  [fallback-message : String]) : ResultTcType
+  (match (ast.ast-expr-unspan (tc-global-shared-view func))
+    [(ast.AstExpr.Var name)
+      (if (and
+        (or
+          (tc-env-key-has-name-id? name)
+          (macro-hygiene-global-id? (tc-context-structural-session ctx) name))
+        (not (tc-dotted-place-name-id? (tc-global-shared-view ctx) env name)))
+        (tc-var-expr-after-local-field-check-mode
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view env)
+          name
+          (tc-hygiene-name-text-id-for-session
+            (tc-context-structural-session ctx)
+            name)
+          true)
+        (ResultTcType.Err fallback-message))]
+    [_ (ResultTcType.Err fallback-message)]))
+
+(define (tc-call-target-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : ast.AstExpr]) : ResultTcType
+  (match (tc-expr (tc-global-shared-view ctx) env (tc-global-shared-view func))
+    [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+    [(ResultTcType.Err message)
+      (if (tc-unsafe-callable-value-error? (tc-global-shared-view message))
+        (tc-call-target-direct-name ctx env func message)
+        (ResultTcType.Err message))]))
+
+(define (tc-call-target-expr-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func-id : i64]) : ResultTcType
+  (let
+    [func : ast.AstExpr
+      (tc-context-expr-get (tc-global-shared-view ctx) func-id)]
+    (match (tc-expr-id (tc-global-shared-view ctx) env func-id)
+      [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+      [(ResultTcType.Err message)
+        (if (tc-unsafe-callable-value-error? (tc-global-shared-view message))
+          (let
+            [result : ResultTcType
+              (tc-call-target-direct-name
+                (tc-global-shared-view ctx)
+                env
+                func
+                message)]
+            (begin
+              (match (tc-global-shared-view result)
+                [(ResultTcType.Ok ty)
+                  (tc-body-type-fact-record!
+                    (tc-context-body-state (tc-global-shared-view ctx))
+                    func-id
+                    (tc-global-shared-view ty))]
+                [(ResultTcType.Err _) unit])
+              result))
+          (ResultTcType.Err message))])))
+
 (define (tc-call-expr-ordinary
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -47191,7 +47325,7 @@
           [_ (ResultTcType.Err "typecheck: call target is not a function")])]
       [(TcDirectLambdaCheck.Err message) (ResultTcType.Err message)]
       [(TcDirectLambdaCheck.No)
-        (match (tc-expr
+        (match (tc-call-target-expr
           (tc-global-shared-view ctx)
           env
           (tc-global-shared-view func))
@@ -47468,7 +47602,7 @@
             [_ (ResultTcType.Err "typecheck: call target is not a function")]))]
       [(TcDirectLambdaCheck.Err message) (ResultTcType.Err message)]
       [(TcDirectLambdaCheck.No)
-        (match (tc-expr-id (tc-global-shared-view ctx) env func-id)
+        (match (tc-call-target-expr-id (tc-global-shared-view ctx) env func-id)
           [(ResultTcType.Ok fn-ty)
             (match (tc-global-shared-view fn-ty)
               [(ast.AstType.Func params ret)
@@ -70821,14 +70955,14 @@
               (tc-bind-return-type
                 (tc-bind-params
                   (tc-global-shared-view ctx)
-                  (tc-clear-loop-target env)
+                  (tc-clear-unsafe-context (tc-clear-loop-target env))
                   (tc-global-shared-view params))
                 (tc-resolve-type (tc-global-shared-view ctx) ret))]
             [(ast.AstMaybeType.No)
               (tc-bind-return-type
                 (tc-bind-params
                   (tc-global-shared-view ctx)
-                  (tc-clear-loop-target env)
+                  (tc-clear-unsafe-context (tc-clear-loop-target env))
                   (tc-global-shared-view params))
                 (ast.AstType.Never))])]
         (match (match (tc-global-shared-view maybe-ret)
@@ -71549,11 +71683,12 @@
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ResultTcNameId.Err message) (ResultTcType.Err message)]))
 
-(define (tc-var-expr-after-local-field-check
+(define (tc-var-expr-after-local-field-check-mode
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : i64]
-  [name-text : String]) : ResultTcType
+  [name-text : String]
+  [direct-call-target : bool]) : ResultTcType
   (if (tc-hygiene-global-name-id? (tc-context-structural-session ctx) name)
     (let
       [global-id : i64
@@ -71576,33 +71711,44 @@
               (tc-context-structural-session ctx)
               name)
               (if (tc-hygiene-global-binding-unsafe-id? env global-id)
-                (match (tc-require-unsafe
+                (match (tc-lookup-hygiene-global-visible-id
                   (tc-global-shared-view ctx)
                   env
-                  (ci.intern-str global-id))
-                  [(ResultTcUnit.Ok)
-                    (tc-lookup-hygiene-global-visible-id ctx env global-id)]
-                  [(ResultTcUnit.Err message) (ResultTcType.Err message)])
+                  global-id)
+                  [(ResultTcType.Ok ty)
+                    (tc-unsafe-callable-use
+                      (tc-global-shared-view ctx)
+                      env
+                      (ci.intern-str global-id)
+                      ty
+                      direct-call-target)]
+                  [(ResultTcType.Err message) (ResultTcType.Err message)])
                 (tc-lookup-hygiene-global-visible-id ctx env global-id))
-              (tc-lookup-hygiene-context-global-visible-id
+              (tc-lookup-hygiene-context-global-visible-id-mode
                 ctx
                 env
                 (macro-decl-module-display module-id)
                 module-id
-                global-id)))
+                global-id
+                direct-call-target)))
           (match (tc-hygiene-global-decode name-text)
             [(TcHygieneGlobalName.Legacy global-name)
               (if (tc-hygiene-global-binding-unsafe-id? env global-id)
-                (match (tc-require-unsafe
+                (match (tc-lookup-hygiene-global-visible-id
                   (tc-global-shared-view ctx)
                   env
-                  global-name)
-                  [(ResultTcUnit.Ok)
-                    (tc-lookup-hygiene-global-visible-id ctx env global-id)]
-                  [(ResultTcUnit.Err message) (ResultTcType.Err message)])
+                  global-id)
+                  [(ResultTcType.Ok ty)
+                    (tc-unsafe-callable-use
+                      (tc-global-shared-view ctx)
+                      env
+                      global-name
+                      ty
+                      direct-call-target)]
+                  [(ResultTcType.Err message) (ResultTcType.Err message)])
                 (tc-lookup-hygiene-global-visible-id ctx env global-id))]
             [(TcHygieneGlobalName.Context module _)
-              (tc-lookup-hygiene-context-global-visible-id
+              (tc-lookup-hygiene-context-global-visible-id-mode
                 ctx
                 env
                 module
@@ -71611,7 +71757,8 @@
                   (if (< module-id 0)
                     cbi.compiler-builtin-id-fix-empty
                     module-id))
-                global-id)]))))
+                global-id
+                direct-call-target)]))))
     (match (tc-source-name-lookup-key-with-field-check-lookup
       (tc-global-shared-view ctx)
       env
@@ -71624,19 +71771,21 @@
           (tc-env-name-key-id (tc-type-env-structural-session env) lookup-id))
           [(ResultTcTypeUnsafe.Ok ty unsafe)
             (if unsafe
-              (match (tc-require-unsafe
+              (match (tc-unsafe-callable-use
                 (tc-global-shared-view ctx)
                 env
                 (tc-source-lookup-display-name
                   (tc-global-shared-view ctx)
                   name-text
                   name
-                  lookup-name))
-                [(ResultTcUnit.Ok)
+                  lookup-name)
+                ty
+                direct-call-target)
+                [(ResultTcType.Ok unsafe-ty)
                   (match (tc-unqualified-import-ambiguity-message ctx env name)
-                    [(TcMaybeString.No) (ResultTcType.Ok ty)]
+                    [(TcMaybeString.No) (ResultTcType.Ok unsafe-ty)]
                     [(TcMaybeString.Some message) (ResultTcType.Err message)])]
-                [(ResultTcUnit.Err message) (ResultTcType.Err message)])
+                [(ResultTcType.Err message) (ResultTcType.Err message)])
               (match (tc-unqualified-import-ambiguity-message ctx env name)
                 [(TcMaybeString.No) (ResultTcType.Ok ty)]
                 [(TcMaybeString.Some message) (ResultTcType.Err message)]))]
@@ -71659,6 +71808,13 @@
                     message))])])]
       [(TcNameLookup.Err message)
         (tc-source-lookup-error-or-variant-constructor ctx name message)])))
+
+(define (tc-var-expr-after-local-field-check
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]
+  [name-text : String]) : ResultTcType
+  (tc-var-expr-after-local-field-check-mode ctx env name name-text false))
 
 (define (tc-source-lookup-error-or-variant-constructor
   [ctx : TcContext]

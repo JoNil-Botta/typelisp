@@ -11,7 +11,10 @@
         (RawPointerHolder (int->ptr (cast 0 : u64) : (Ptr i64)))]
       (match (thread_i64.spawn
         (lambda () : i64
-          (if (= (ptr->int holder.ptr) (cast 0 : u64))
+          (if (=
+            (unsafe
+              (ptr->int holder.ptr))
+            (cast 0 : u64))
             1
             2)))
         [(thread_i64.I64SpawnErr _) 3]

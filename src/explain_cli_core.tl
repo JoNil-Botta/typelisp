@@ -436,6 +436,30 @@ See also:
     SPEC.md, \"Compile-time evaluation\"; tests/safety/fixed_make_array_runtime_count_reject.tl.
 ")
 
+(define (diagnostic-explain-e0219) : String
+  "E0219: unsafe callable effect erasure
+
+Description:
+    A function or extern declared unsafe was used as a plain function value.
+    The ordinary function-pointer type cannot retain its required unsafe-call
+    effect, so storing, passing, returning, branching over, or capturing the
+    value would allow a later safe call.
+
+Minimal failing example:
+    (unsafe (define (danger [value : i64]) : i64 value))
+    (define (main) : i64
+      (let [leaked : (-> i64 i64) (unsafe danger)]
+        (leaked 42)))
+
+Fix:
+    Call the unsafe declaration directly inside the smallest explicit unsafe
+    expression. To expose a safe callable, write a wrapper whose own body
+    performs that explicit unsafe call and documents the required invariant.
+
+See also:
+    SPEC.md, \"(unsafe declaration)\"; tests/safety/unsafe_callable_value_launder_reject.tl.
+")
+
 (define (diagnostic-explain-ascii-fold-char [c : char]) : char
   (if (and (>= c 'A') (<= c 'Z'))
     (cast (+ (cast c : i64) 32) : char)
@@ -572,6 +596,10 @@ See also:
         code
         (cdiag.compiler-diagnostic-code-typecheck-comptime-constraint))
       (DiagnosticExplainDetailed (diagnostic-explain-e0218))]
+    [(diagnostic-explain-ascii-case-eq
+        code
+        (cdiag.compiler-diagnostic-code-typecheck-unsafe-callable-effect))
+      (DiagnosticExplainDetailed (diagnostic-explain-e0219))]
     [else DiagnosticExplainUnknown]))
 
 (define (diagnostic-explain-print-registry-row [index : i64]) : unit

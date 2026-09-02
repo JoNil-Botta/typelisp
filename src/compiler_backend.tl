@@ -91115,8 +91115,14 @@
         (compiler-backend-object-semantic-binop-supported? op ty)
         (compiler-backend-object-semantic-value-supported? lhs)
         (compiler-backend-object-semantic-value-supported? rhs))]
-    [(compiler_ir_types.CompilerIrInstr.UnOp _ op src _)
+    [(compiler_ir_types.CompilerIrInstr.UnOp _ op src ty)
       (and
+        ;; The legacy object-only path has no production XMM-home plan. Its
+        ;; float-negation placeholder loads/stores GP bits around a hard-wired
+        ;; `%xmm0` XOR, so admitting it would silently preserve the old value.
+        ;; #7205 removes this exclusion only after scalar SSE unary operations
+        ;; are emitted from the shared post-regalloc machine program.
+        (not (compiler-backend-float-type? ty))
         (compiler-backend-object-semantic-value-supported? src)
         (match op
           [(compiler_ir_types.CompilerIrUnOp.Sqrt) false]

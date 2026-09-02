@@ -2712,6 +2712,153 @@
                 29))]
           [(compiler_optimize.OptMaybeFunction.No) false])])))
 
+;; ABT-1: the ok-label of the first BoundsCheck in a block list, or -1. A
+;; cloned check's label is freshened by the site prefix, so a test cannot spell
+;; the copy's key -- it has to read it back off the inlined body.
+(define (opt-first-bounds-ok-label-instr-seq-from
+  [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
+  [index : i64]
+  [count : i64]) : i64
+  (if (>= index count)
+    (- 0 1)
+    (match (array-ref slots index)
+      [(compiler_ir_types.CompilerIrInstr.BoundsCheck _ _ ok-label) ok-label]
+      [_
+        (opt-first-bounds-ok-label-instr-seq-from
+          (compiler_ir_types.compiler-ir-global-shared-view slots)
+          (+ index 1)
+          count)])))
+
+(define (opt-first-bounds-ok-label-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) (- 0 1)]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (let
+            [found : i64
+              (opt-first-bounds-ok-label-instr-seq-from
+                instrs.slots
+                0
+                instrs.len)]
+            (if (>= found 0)
+              found
+              (opt-first-bounds-ok-label-blocks
+                (compiler_ir_types.compiler-ir-box-shared-view rest))))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-first-bounds-ok-label-blocks
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
+
+;; The spans the ABT-1 scenario starts from: the CALLEE's check located in
+;; mb_bounds at 57:29 of path 613, and the CALL located in main at 12:5 of path
+;; 401. A correct clone answers with the callee's location under the caller's
+;; key; attributing it to the site would answer 401/12/5, and dropping the path
+;; would answer 0 -- which is what the backend's abort-site install reads as
+;; "no location" (compiler-backend-runtime-abort-site-install! requires a
+;; positive path id), degrading `tl_oob_abort_at` to the bare `tl_oob_abort`.
+(define (opt-inline-mb-bounds-located-spans
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerSourceSpans
+  (compiler_ir_types.compiler-source-spans-insert-instr-located
+    (compiler_ir_types.compiler-source-spans-insert-instr-located
+      (opt-spans-base)
+      (opt-test-span-symbol "mb_bounds")
+      (compiler_ir_types.CompilerIrInstr.BoundsCheck
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.compiler-ir-label "mb_ok"))
+      613
+      (opt-test-span 57 29))
+    (opt-test-span-symbol "main")
+    (compiler_ir_types.CompilerIrInstr.Call
+      2
+      symbols.mb-bounds
+      (compiler_ir_types.CompilerIrCallArgs.Two
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 1))
+      (compiler_ast_types.AstType.I64))
+    401
+    (opt-test-span 12 5)))
+
+(define (opt-inline-mb-bounds-located-clone-ok? [debug? : bool]) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [spans : compiler_ir_types.CompilerSourceSpans
+      (opt-inline-mb-bounds-located-spans symbols)]
+    [source-label : i64 (compiler_ir_types.compiler-ir-label "mb_ok")]
+    [previous-debug : bool (compiler_ir_types.compiler-debug-info-enabled?)]
+    [ok : bool
+      (begin
+        (compiler_ir_types.compiler-debug-info-set-enabled! debug?)
+        (match (compiler_optimize.opt-inline-program-functions-with-spans
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-inline-mb-bounds-caller symbols)
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (opt-inline-mb-bounds-callee symbols)
+              (compiler_ir_types.compiler-ir-function-seq-empty)))
+          2
+          spans)
+          [(compiler_optimize.OptInlineSpanProgram.Program
+              optimized
+              optimized-spans)
+            (match (compiler_optimize.opt-function-seq-find
+              (compiler_optimize.compiler-opt-global-shared-view optimized)
+              "main")
+              [(compiler_optimize.OptMaybeFunction.Some main)
+                (let
+                  [blocks : compiler_ir_types.CompilerIrBlockList
+                    (compiler_optimize.opt-function-blocks
+                      (compiler_optimize.compiler-opt-global-shared-view main))]
+                  [cloned-label : i64
+                    (opt-first-bounds-ok-label-blocks
+                      (compiler_ir_types.compiler-ir-global-shared-view blocks))]
+                  (and
+                    ;; The body really was copied, and the copy's ok-label is
+                    ;; the freshened one -- not the callee's own spelling.
+                    (=
+                      (opt-count-direct-call-name-blocks
+                        (compiler_ir_types.compiler-ir-global-shared-view
+                          blocks)
+                        "mb_bounds")
+                      0)
+                    (=
+                      (compiler_optimize.opt-count-bounds-blocks
+                        (compiler_optimize.compiler-opt-global-shared-view
+                          blocks))
+                      1)
+                    (>= cloned-label 0)
+                    (not (= cloned-label source-label))
+                    ;; The clone answers with the CALLEE's location, path id
+                    ;; included, under the caller's key.
+                    (opt-location-lookup-ok?
+                      optimized-spans
+                      (opt-test-symbol "main")
+                      (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                        (compiler_ir_types.CompilerIrValue.Var 0)
+                        (compiler_ir_types.CompilerIrValue.Var 1)
+                        cloned-label)
+                      613
+                      57
+                      29)))]
+              [(compiler_optimize.OptMaybeFunction.No) false])]))]
+    (begin
+      (compiler_ir_types.compiler-debug-info-set-enabled! previous-debug)
+      ok)))
+
+;; ABT-1: a BoundsCheck the multiblock with-spans path copies out of a callee
+;; keeps the CALLEE's LOCATED span. The ordinary (no `-g`) build is the one the
+;; driver compiles through and the one the defect was in: it recorded the
+;; clone's span unlocated, so every bounds abort raised inside an inlined body
+;; printed the bare `tl: array index out of bounds` at --opt-level 2 while the
+;; same body out of line printed file:line:col with index and length. The `-g`
+;; arm pins that the site's own location -- present here, and the fallback for
+;; a clone the callee never gave a span -- does not win over the callee's.
+(define (compiler-optimize-spans-inline-multiblock-bounds-located-ok?) : bool
+  (and
+    (opt-inline-mb-bounds-located-clone-ok? false)
+    (opt-inline-mb-bounds-located-clone-ok? true)))
+
 (define (compiler-optimize-spans-non-inline-call-ok?) : bool
   (let
     [call : compiler_ir_types.CompilerIrInstr

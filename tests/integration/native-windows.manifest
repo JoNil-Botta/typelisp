@@ -4,6 +4,10 @@
 # extra may be expected-stderr:<printf escapes>, stage-stdlib,
 # stage-stdlib+expected-stderr:<printf escapes>, or
 # suite-members:<space-separated smoke drivers> uses the eighth field.
+# extra may also carry an opt-level:<0|1|2>+ PREFIX in front of any of those:
+# the row then compiles standalone at that level instead of the default one the
+# batched pre-pass uses, so a claim that only holds at a particular level can be
+# pinned beside the default-level row for the same source.
 aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|stdlib/string.tl
 inline_aggregate_global|tests/integration/inline_aggregate_global.tl|42|98\n|-|stdlib/io.tl stdlib/string.tl
 inline_aggregate_global_escape|tests/integration/inline_aggregate_global_escape.tl|42|4\n|-|stdlib/io.tl stdlib/string.tl
@@ -194,14 +198,20 @@ alu_mem_operand_tie|tests/integration/alu_mem_operand_tie.tl|42|-|-|-
 checked_depth0_site|tests/integration/checked_depth0_site.tl|42|-|-|-
 checked_setup_helper|tests/integration/checked_setup_helper.tl|42|-|-|-
 checked_cheap_tier_claim|tests/integration/checked_cheap_tier_claim.tl|42|-|-|-
+checked_cheap_tier_claim_abort|tests/integration/checked_cheap_tier_claim_abort.tl|134|-|8 0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/checked_cheap_tier_claim_abort/checked_cheap_tier_claim_abort.tl:45:46: array index out of bounds: index=8 length=8\n
+checked_cheap_tier_claim_abort_opt2|tests/integration/checked_cheap_tier_claim_abort.tl|134|-|8 0|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/checked_cheap_tier_claim_abort_opt2/checked_cheap_tier_claim_abort_opt2.tl:45:46: array index out of bounds: index=8 length=8\n
+checked_cheap_tier_claim_leaf_abort|tests/integration/checked_cheap_tier_claim_abort.tl|134|-|32 20|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/checked_cheap_tier_claim_leaf_abort/checked_cheap_tier_claim_leaf_abort.tl:32:19: array index out of bounds: index=32 length=32\n
+checked_cheap_tier_claim_leaf_abort_opt2|tests/integration/checked_cheap_tier_claim_abort.tl|134|-|32 20|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/checked_cheap_tier_claim_leaf_abort_opt2/checked_cheap_tier_claim_leaf_abort_opt2.tl:32:19: array index out of bounds: index=32 length=32\n
 synth_wrapped_probe|tests/integration/synth_wrapped_probe.tl|42|-|-|-
 synth_wrapped_probe_abort|tests/integration/synth_wrapped_probe_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/synth_wrapped_probe_abort/synth_wrapped_probe_abort.tl:37:36: array index out of bounds: index=64 length=64\n
+synth_wrapped_probe_abort_opt2|tests/integration/synth_wrapped_probe_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/synth_wrapped_probe_abort_opt2/synth_wrapped_probe_abort_opt2.tl:37:36: array index out of bounds: index=64 length=64\n
 synth_tail_wrapper|tests/integration/synth_tail_wrapper.tl|42|-|-|-
 synth_tail_wrapper_abort|tests/integration/synth_tail_wrapper_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/synth_tail_wrapper_abort/synth_tail_wrapper_abort.tl:37:36: array index out of bounds: index=64 length=64\n
 synth_struct_accessor|tests/integration/synth_struct_accessor.tl|42|-|-|-
 synth_struct_accessor_abort|tests/integration/synth_struct_accessor_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/synth_struct_accessor_abort/synth_struct_accessor_abort.tl:38:32: array index out of bounds: index=71 length=64\n
 checked_arm_wrapper|tests/integration/checked_arm_wrapper.tl|42|-|-|-
 checked_arm_wrapper_abort|tests/integration/checked_arm_wrapper_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/checked_arm_wrapper_abort/checked_arm_wrapper_abort.tl:37:36: array index out of bounds: index=64 length=64\n
+synth_tail_wrapper_abort_opt2|tests/integration/synth_tail_wrapper_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/synth_tail_wrapper_abort_opt2/synth_tail_wrapper_abort_opt2.tl:37:36: array index out of bounds: index=64 length=64\n
 rmw_mem_operand_fold|tests/integration/rmw_mem_operand_fold.tl|42|8 -24\n7 1024 0\n24 108\n36 24\n6 3\n|8 3|stdlib/io.tl stdlib/string.tl
 mem_dest_rmw_fold|tests/integration/mem_dest_rmw_fold.tl|42|-|-|-
 copy_call_word|tests/integration/copy_call_word.tl|42|-|-|-

@@ -1219,6 +1219,63 @@ check_synth_wrapped_probe() {
     done
 }
 
+check_synth_tail_wrapper() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "synth_tail_wrapper_$_suffix" \
+            tests/integration/synth_tail_wrapper.tl "$_target")
+        _slot_id=$(function_body "$_asm" _tl_synth_tail_wrapper_sp_slot_id)
+
+        # INL-2: `sp-slot-id`'s whole body is `return sp-get-or(...)`, which
+        # lowers to a direct tail call. The checked tier's multiblock path now
+        # offers that site a verdict, and the verdict keeps it -- so the
+        # wrapper neither calls nor jumps to the accessor it used to forward
+        # to.
+        assert_not_matches "$_slot_id" \
+            '^[[:space:]]+call _tl_synth_tail_wrapper_sp_get_or$' \
+            "synth-tail-wrapper-$_target"
+        assert_not_matches "$_slot_id" \
+            '^[[:space:]]+jmp _tl_synth_tail_wrapper_sp_get_or$' \
+            "synth-tail-wrapper-$_target"
+        # ...and what landed there is the accessor's own body, through the
+        # wrapper the tail site copied: the probe's Knuth multiplier.
+        assert_matches "$_slot_id" '2654435761' "synth-tail-wrapper-$_target"
+        # The probe is not reached out of line from the merged body either.
+        assert_not_matches "$_slot_id" \
+            '^[[:space:]]+call _tl_synth_tail_wrapper_sp_probe$' \
+            "synth-tail-wrapper-$_target"
+
+        # The copied wrapper is COPIED, not absorbed: the cold second reference
+        # in `main` still calls the out-of-line body, so the keep is a real one
+        # and no single-site band could have taken it first.
+        assert_matches "$_asm" '^_tl_synth_tail_wrapper_sp_get_or:$' \
+            "synth-tail-wrapper-$_target"
+        assert_regex_count_eq "$_asm" \
+            '^[[:space:]]+call _tl_synth_tail_wrapper_sp_get_or$' 1 \
+            "synth-tail-wrapper-$_target"
+
+        # The splice retires no bounds check: every load the accessor makes is
+        # still checked inside the merged body, which is what the abort twin
+        # (tests/integration/synth_tail_wrapper_abort.tl) then runs into.
+        assert_regex_count_at_least "$_slot_id" \
+            '^[[:space:]]+call tl_oob_abort' 1 "synth-tail-wrapper-$_target"
+
+        _abort_asm=$(compile_gate "synth_tail_wrapper_abort_$_suffix" \
+            tests/integration/synth_tail_wrapper_abort.tl "$_target")
+        _abort_slot_id=$(function_body "$_abort_asm" \
+            _tl_synth_tail_wrapper_abort_sp_slot_id)
+        assert_not_matches "$_abort_slot_id" \
+            '^[[:space:]]+call _tl_synth_tail_wrapper_abort_sp_get_or$' \
+            "synth-tail-wrapper-abort-$_target"
+        assert_not_matches "$_abort_slot_id" \
+            '^[[:space:]]+jmp _tl_synth_tail_wrapper_abort_sp_get_or$' \
+            "synth-tail-wrapper-abort-$_target"
+        assert_regex_count_at_least "$_abort_slot_id" \
+            '^[[:space:]]+call tl_oob_abort' 1 \
+            "synth-tail-wrapper-abort-$_target"
+    done
+}
+
 check_const_index_bounds() {
     _asm=$(compile_gate const_index_bounds tests/integration/const_index_bounds.tl)
     _body=$(function_body "$_asm" _tl_const_index_bounds_get2)
@@ -2148,6 +2205,7 @@ check_checked_depth0_site
 check_checked_setup_helper
 check_checked_cheap_tier_claim
 check_synth_wrapped_probe
+check_synth_tail_wrapper
 check_const_index_bounds
 check_const_global_mask_unroll
 check_rbp_sixth_csr

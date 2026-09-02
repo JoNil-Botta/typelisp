@@ -45,24 +45,23 @@
         (let
           [k : i64 (array-ref keys slot)]
           [m : i64 (array-ref marks slot)]
-          (begin
-            (if (= m 0)
+          (if (= m 0)
+            (begin
+              (if (< free 0)
+                (set! free slot)
+                unit)
+              (set! found (- 0 (+ slot 2)))
+              (set! step cap))
+            (if (and (= m 1) (= k key))
               (begin
-                (if (< free 0)
+                (set! found slot)
+                (set! step cap))
+              (begin
+                (if (and (= m 2) (< free 0))
                   (set! free slot)
                   unit)
-                (set! found (- 0 (+ slot 2)))
-                (set! step cap))
-              (if (and (= m 1) (= k key))
-                (begin
-                  (set! found slot)
-                  (set! step cap))
-                (begin
-                  (if (and (= m 2) (< free 0))
-                    (set! free slot)
-                    unit)
-                  (set! slot (bit-and (+ slot 1) mask))
-                  (set! step (+ step 1))))))))
+                (set! slot (bit-and (+ slot 1) mask))
+                (set! step (+ step 1)))))))
       (if (>= found 0)
         found
         (if (>= free 0)

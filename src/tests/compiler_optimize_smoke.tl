@@ -4718,6 +4718,38 @@
     "the tier keeps a call-carrying site one loop deeper too, and both callers verify"))
 
 (test
+  inline-multiblock-tail-site-indirect-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-multiblock-tail-site-indirect-refusal-ok?)
+    "an indirect tail-call site is not a site: the multiblock path admits only the direct form"))
+
+(test
+  inline-checked-tail-site-verdicts
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-inline-checked-tail-site-self-test)
+    200
+    "the measured tier prices a tail-call site and keeps it, the caller inherits the callee's exits, and neither caller keeps a call or a tail call to the leaf"))
+
+(test
+  inline-checked-rescan-generations
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-inline-checked-rescan-self-test)
+    11001
+    "a keep exposes its copy's own sites, the rescan generation prices them, and the third level stays out of line"))
+
+(test
+  inline-checked-generation-carry
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-generation-carry-ok?)
+    "a rescan generation carries the caller's verdicts, accepted rows and callee lock, and retires the finished generation's site keys"))
+
+(test
+  inline-checked-generation-accept-cap
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-generation-accept-cap-ok?)
+    "the per-caller accept cap is not refunded by a rescan: a site that would exceed it is refused there"))
+
+(test
   inline-checked-call-carrying-revert
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-checked-call-carrying-revert-ok?)

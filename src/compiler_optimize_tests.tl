@@ -20695,6 +20695,655 @@
 (define (compiler-optimize-inline-checked-call-carrying-deep-ok?) : bool
   (= (compiler-optimize-inline-checked-call-carrying-deep-self-test) 200))
 
+;; --- INL-2: the tail-call SITE class ----------------------------------------
+;;
+;; A caller whose block ends in `return f(...)` -- the lowerer's fused
+;; `TailCall` -- is a site of the same standing as `dst = f(...)`, and the
+;; splice at it is the simpler of the two: the spliced body's exits become the
+;; CALLER's exits, so there is no continuation block, no result phi, and no
+;; destination. What the fixtures below pin is exactly that, in both exit forms
+;; a body can carry:
+;;
+;;   `Return v`     -> the caller's `Return v'`;
+;;   `TailCall h`   -> the caller's `TailCall h` -- never a call in tail
+;;                     position, because a chain that ran in constant stack
+;;                     before this class existed must still.
+;;
+;; The class belongs to the MEASURED tier alone: no band is asked about a tail
+;; site (see opt-inline-multiblock-build-site-rewrite-seq for the measurement
+;; that decides), so the fixtures that pin the splice arm the tier and use a
+;; callee every band refuses. opt-inline-tail-exit-leaf is that callee, and it
+;; carries one exit of each form.
+;; The callee the tail-site fixtures price: the call-carrying cyclic leaf the
+;; accept fixtures use, with its `zero` case rewritten from `t = helper(v0)`
+;; into `return helper(v0)`. It therefore carries BOTH exit forms -- the tail
+;; call in `zero` and the `Return` in `join` -- and nothing else about it
+;; changes, so it is refused by every band for exactly the reasons the accept
+;; fixtures' leaf is and only a re-plan can price it.
+(define (opt-inline-tail-exit-leaf [callee-name : i64] [helper-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (__tl_make-array compiler_ir_types.CompilerIrValue 1)]
+    (begin
+      (set! (array-ref args 0) (compiler_ir_types.CompilerIrValue.Var 0))
+      (compiler_ir_types.CompilerIrFunction.Function
+        callee-name
+        (opt-inline-switch-params)
+        (compiler_ast_types.AstType.I64)
+        5
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "entry")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "loop"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "loop")
+              (opt-test-instrs
+                (opt-inline-switch-loop-bounds-instr
+                  (compiler_ir_types.compiler-ir-label "switch_bounds_ok"))
+                (compiler_ir_types.CompilerIrInstr.Switch
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  0
+                  (opt-inline-switch-cases
+                    (compiler_ir_types.compiler-ir-label "zero")
+                    (compiler_ir_types.compiler-ir-label "one"))
+                  (compiler_ir_types.compiler-ir-label "loop"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "zero")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.TailCall
+                    helper-name
+                    (compiler_ir_types.CompilerIrCallArgs.Array args)
+                    (compiler_ast_types.AstType.I64))))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "one")
+                  (opt-test-instrs
+                    (compiler_ir_types.CompilerIrInstr.Jump
+                      (compiler_ir_types.compiler-ir-label "join"))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.CompilerIrBlock.Block
+                    (compiler_ir_types.compiler-ir-label "join")
+                    (opt-test-instrs
+                      (compiler_ir_types.CompilerIrInstr.Phi
+                        3
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                          (compiler_ir_types.CompilerIrValue.I64 20)
+                          (compiler_ir_types.compiler-ir-label "one")
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty))
+                        (compiler_ast_types.AstType.I64))
+                      (compiler_ir_types.CompilerIrInstr.Return
+                        (compiler_ir_types.CompilerIrMaybeValue.Some
+                          (compiler_ir_types.CompilerIrValue.Var 3)))))
+                  compiler_ir_types.CompilerIrBlockList.Nil)))))))))
+
+;; The nearest refused neighbour, and the reason it is written with a LOAD: an
+;; indirect tail call whose target is a spelled function is rewritten into a
+;; direct one by opt-devirt-known-function-instr before this pass runs, so a
+;; fixture written that way would pin the direct admission. A load from a global
+;; is a target devirtualization cannot see through, which is what leaves the
+;; refusal this test claims as the reason the site survives.
+(define (opt-inline-multiblock-tail-site-indirect-caller
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.main
+    (compiler_ir_types.compiler-ir-param-seq-empty)
+    (compiler_ast_types.AstType.I64)
+    1
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Load
+            0
+            (compiler_ir_types.CompilerIrValue.Global symbols.inline-nonleaf)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.TailCallIndirect
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            compiler_ir_types.CompilerIrCallArgs.Nil
+            (compiler_ast_types.AstType.I64))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-inline-multiblock-tail-site-indirect-functions
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-inline-multiblock-tail-site-indirect-caller symbols)
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-inline-tail-call-callee symbols)
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
+
+;; The same program with an INDIRECT tail-call site: nothing is spliced.
+(define (compiler-optimize-inline-multiblock-tail-site-indirect-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-multiblock-tail-site-indirect-functions symbols)
+        2)]
+    (match (compiler_optimize.opt-function-seq-find
+      (compiler_optimize.compiler-opt-global-shared-view optimized)
+      "main")
+      [(compiler_optimize.OptMaybeFunction.Some main)
+        (let
+          [blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-function-blocks main)]
+          (and
+            (=
+              (opt-count-tail-call-indirect-blocks
+                (compiler_optimize.compiler-opt-global-shared-view blocks))
+              1)
+            (=
+              (opt-count-tail-call-name-blocks
+                (compiler_optimize.compiler-opt-global-shared-view blocks)
+                "external_helper")
+              0)
+            (=
+              (opt-count-direct-call-name-blocks
+                (compiler_optimize.compiler-opt-global-shared-view blocks)
+                "external_helper")
+              0)
+            (compiler_optimize.opt-inline-structure-ok?
+              (compiler_optimize.compiler-opt-global-shared-view blocks))))]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
+;; --- the measured tier at a tail-call site ----------------------------------
+;;
+;; The same in-loop site the call-carrying fixtures use, with the call in TAIL
+;; position: the loop takes an early exit that forwards to the leaf, which is
+;; what `(return (f ...))` inside a `while` lowers to. Two callers share the
+;; leaf, so no single-site or duplicating band can claim it and the measured
+;; tier is what decides -- at a site class it could not see before INL-2.
+(define (opt-inline-tail-site-loop-call [callee-name : i64]) : compiler_ir_types.CompilerIrInstr
+  (let
+    [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (__tl_make-array compiler_ir_types.CompilerIrValue 3)]
+    (begin
+      (set! (array-ref args 0) (compiler_ir_types.CompilerIrValue.Var 1))
+      (set! (array-ref args 1) (compiler_ir_types.CompilerIrValue.Var 0))
+      (set! (array-ref args 2) (compiler_ir_types.CompilerIrValue.Var 2))
+      (compiler_ir_types.CompilerIrInstr.TailCall
+        callee-name
+        (compiler_ir_types.CompilerIrCallArgs.Array args)
+        (compiler_ast_types.AstType.I64)))))
+
+;; entry -> header -> {body -> {tail_site, latch}, exit}, latch -> header. The
+;; tail call sits in `tail_site`, which lies inside the back edge's range, so
+;; the site carries the census ladder's first rung exactly as the call-site
+;; fixture's `body` does.
+(define (opt-inline-tail-site-loop-blocks [callee-name : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-inline-loop-site-entry-instrs))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "header")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Phi
+            4
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.compiler-ir-label "latch")
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-label "exit"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "body")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              5
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.compiler-ir-label "tail_site")
+              (compiler_ir_types.compiler-ir-label "latch"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "tail_site")
+            (opt-test-instrs (opt-inline-tail-site-loop-call callee-name)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "latch")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "header"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "exit")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 4)))))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-inline-tail-site-loop-function
+  [func-name : i64]
+  [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    6
+    (opt-inline-tail-site-loop-blocks callee-name)))
+
+;; The encoding is `spent`, then the two callers' surviving references to the
+;; leaf -- counted as tail calls AND as calls, so a site "taken" by converting
+;; it into an ordinary call in tail position would fail this test rather than
+;; pass it.
+(define (compiler-optimize-inline-checked-tail-site-self-test) : i64
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    [_arm : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-set-active! true)
+        (compiler_optimize.opt-inline-checked-program-begin!))]
+    [armed : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-inline-tail-site-loop-function symbols.main callee-name)
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-inline-tail-site-loop-function
+              symbols.inline-nonleaf
+              callee-name)
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (opt-inline-tail-exit-leaf callee-name symbols.external-helper)
+              (compiler_ir_types.compiler-ir-function-seq-empty))))
+        2)]
+    [code : i64
+      (+
+        (*
+          10
+          (+
+            (opt-count-direct-call-name-function-seq
+              (compiler_optimize.compiler-opt-global-shared-view armed)
+              "main"
+              "inline_switch")
+            (opt-count-tail-call-name-function-seq
+              (compiler_optimize.compiler-opt-global-shared-view armed)
+              "main"
+              "inline_switch")))
+        (+
+          (opt-count-direct-call-name-function-seq
+            (compiler_optimize.compiler-opt-global-shared-view armed)
+            "inline_nonleaf"
+            "inline_switch")
+          (opt-count-tail-call-name-function-seq
+            (compiler_optimize.compiler-opt-global-shared-view armed)
+            "inline_nonleaf"
+            "inline_switch")))]
+    [spent : i64
+      (-
+        (compiler_optimize.opt-inline-checked-program-budget)
+        (compiler_optimize.opt-inline-checked-budget-current))]
+    ;; The exits the splice inherited, read off the merged caller: the leaf's
+    ;; `zero` arm was `return helper(...)` and it still is -- a TAIL call, not
+    ;; a call in tail position -- and its `join` arm's `Return` is the
+    ;; caller's, which is what leaves the merged caller verifying at all.
+    [exits-ok? : bool
+      (and
+        (=
+          (opt-count-tail-call-name-function-seq
+            (compiler_optimize.compiler-opt-global-shared-view armed)
+            "main"
+            "external_helper")
+          1)
+        (=
+          (opt-count-direct-call-name-function-seq
+            (compiler_optimize.compiler-opt-global-shared-view armed)
+            "main"
+            "external_helper")
+          0)
+        (=
+          (opt-count-tail-call-name-function-seq
+            (compiler_optimize.compiler-opt-global-shared-view armed)
+            "inline_nonleaf"
+            "external_helper")
+          1))]
+    [verified? : bool
+      (and
+        exits-ok?
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view armed)
+          "main")
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view armed)
+          "inline_nonleaf")
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view armed)
+          "inline_switch"))]
+    [_disarm : unit (compiler_optimize.opt-inline-checked-set-active! false)]
+    (if verified?
+      (+ (* 100 spent) code)
+      (- 0 1))))
+
+;; --- INL-2: the post-keep rescan -------------------------------------------
+;;
+;; A kept site puts a COPY of the callee's body into the caller, and the copy
+;; brings its own call sites. The walk that ranked the caller's candidates never
+;; saw them: the clone is built during the rewrite and the block walk does not
+;; re-enter it. So a caller whose rounds ended with a keep is scanned once more
+;; over the body those rounds left, and the sites the copies exposed get rounds
+;; of their own. See opt-inline-checked-max-generations.
+;;
+;; The chain below is three call-carrying bodies of the shape the accept
+;; fixtures use, each calling the next with the same arity, plus a cold second
+;; caller for each so no single-site or duplicating band can claim any of them.
+;; Every one of the chain's own sites sits in its `zero` block, which is outside
+;; its switch's self-loop and is not an entry block, so the depth floor refuses
+;; all of them where they stand: the ONLY site any of these bodies has that the
+;; tier will price is the one in `main`, which is in a loop.
+;;
+;; That is what makes the generations visible one at a time. Generation 1 prices
+;; `main`'s in-loop site of the first body; its copy carries the second body's
+;; site into `main`'s loop, where generation 2 prices it; and that copy carries
+;; the third body's site, which a third generation would price and which the
+;; bound stops. The encoding below reads all three off the surviving calls.
+(define (opt-inline-rescan-chain-leaf-zero-instrs [callee-name : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (let
+    [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (__tl_make-array compiler_ir_types.CompilerIrValue 3)]
+    (begin
+      (set! (array-ref args 0) (compiler_ir_types.CompilerIrValue.Var 0))
+      (set! (array-ref args 1) (compiler_ir_types.CompilerIrValue.Var 1))
+      (set! (array-ref args 2) (compiler_ir_types.CompilerIrValue.Var 2))
+      (opt-test-instrs-with-tail
+        (opt-inline-dup-leaf-jump-zero-instrs)
+        (compiler_ir_types.CompilerIrInstr.Call
+          4
+          callee-name
+          (compiler_ir_types.CompilerIrCallArgs.Array args)
+          (compiler_ast_types.AstType.I64))))))
+
+(define (opt-inline-rescan-chain-leaf [name : i64] [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-inline-dup-leaf-named
+    name
+    5
+    (opt-inline-rescan-chain-leaf-zero-instrs callee-name)))
+
+;; The cold second reference for each link of the chain, from one straight-line
+;; caller: three depth-0 sites of call-carrying bodies, which the depth floor
+;; refuses (the entry relaxation needs a call-free callee) and every band
+;; refuses on the callee's calls. It exists to keep the census's reference count
+;; at two per body, and does nothing else.
+(define (opt-inline-rescan-chain-cold-call [callee-name : i64] [dst : i64]) : compiler_ir_types.CompilerIrInstr
+  (let
+    [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (__tl_make-array compiler_ir_types.CompilerIrValue 3)]
+    (begin
+      (set! (array-ref args 0) (compiler_ir_types.CompilerIrValue.Var 0))
+      (set! (array-ref args 1) (compiler_ir_types.CompilerIrValue.Var 1))
+      (set! (array-ref args 2) (compiler_ir_types.CompilerIrValue.Var 2))
+      (compiler_ir_types.CompilerIrInstr.Call
+        dst
+        callee-name
+        (compiler_ir_types.CompilerIrCallArgs.Array args)
+        (compiler_ast_types.AstType.I64)))))
+
+(define (opt-inline-rescan-chain-cold-caller
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.inline-branch
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    7
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (opt-inline-rescan-chain-cold-call symbols.inline-loop 3)
+          (opt-inline-rescan-chain-cold-call symbols.inline-nonleaf 4)
+          (opt-inline-rescan-chain-cold-call symbols.inline-switch 5)
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 5)))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-inline-rescan-chain-functions
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-inline-loop-site-function
+      symbols.main
+      symbols.inline-loop
+      (opt-inline-loop-site-entry-instrs))
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-inline-rescan-chain-cold-caller symbols)
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-inline-rescan-chain-leaf
+          symbols.inline-loop
+          symbols.inline-nonleaf)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-inline-rescan-chain-leaf
+            symbols.inline-nonleaf
+            symbols.inline-switch)
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-inline-rescan-chain-leaf
+              symbols.inline-switch
+              symbols.external-helper)
+            (compiler_ir_types.compiler-ir-function-seq-empty)))))))
+
+;; The encoding is the core verdicts spent, then the relaxed ones, then main's
+;; surviving calls to the three links, one digit apiece, outermost link first.
+;;
+;; 11001 is: one core verdict (generation 1, the first link), one relaxed
+;; verdict (generation 2, the second link -- a second body in this caller, so a
+;; relaxed candidate by the lock), no call left to either of those two, and one
+;; call left to the third. Bound the generations to one and the same fixture
+;; reads 10010: the second link's site is never offered, which is the whole of
+;; what the rescan adds and the whole of what the bound stops.
+(define (compiler-optimize-inline-checked-rescan-self-test) : i64
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [_arm : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-set-active! true)
+        (compiler_optimize.opt-inline-checked-program-begin!))]
+    [armed : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-rescan-chain-functions symbols)
+        2)]
+    [code : i64
+      (+
+        (*
+          100
+          (opt-count-direct-call-name-function-seq
+            (compiler_optimize.compiler-opt-global-shared-view armed)
+            "main"
+            "inline_loop"))
+        (+
+          (*
+            10
+            (opt-count-direct-call-name-function-seq
+              (compiler_optimize.compiler-opt-global-shared-view armed)
+              "main"
+              "inline_nonleaf"))
+          (opt-count-direct-call-name-function-seq
+            (compiler_optimize.compiler-opt-global-shared-view armed)
+            "main"
+            "inline_switch")))]
+    ;; Core verdicts and RELAXED ones are counted apart, because the rescan's
+    ;; candidate is a second body in this caller and every second body is a
+    ;; relaxed candidate: reading only the core budget would not show that the
+    ;; rescan priced anything at all.
+    [spent : i64
+      (-
+        (compiler_optimize.opt-inline-checked-program-budget)
+        (compiler_optimize.opt-inline-checked-budget-current))]
+    [relaxed-spent : i64
+      (-
+        (compiler_optimize.opt-inline-checked-relaxed-program-budget)
+        (compiler_optimize.opt-inline-checked-relaxed-budget-current))]
+    [verified? : bool
+      (and
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view armed)
+          "main")
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view armed)
+          "inline_loop")
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view armed)
+          "inline_nonleaf"))]
+    [_disarm : unit (compiler_optimize.opt-inline-checked-set-active! false)]
+    (if verified?
+      (+ (* 10000 spent) (+ (* 1000 relaxed-spent) code))
+      (- 0 1))))
+
+;; --- what a generation carries, and what it retires -------------------------
+;;
+;; The accepted table is the caller's, not the generation's: a rescan does not
+;; refund the verdict caps, the callee lock's distinct bodies or the accept cap,
+;; because a caller does not get a fresh allowance by being walked twice. What
+;; the generation boundary DOES change is what a row names -- a row of a
+;; finished generation names a site of a function that no longer exists as such,
+;; since its inline is already inside the body this generation started from, so
+;; it must never match a site again.
+;;
+;; This drives the bookkeeping directly, the way the sequence fixtures drive the
+;; round bookkeeping: it is decidable without a fixture the size of a benchmark
+;; kernel, and it is exactly what decides whether a rescan can double-splice a
+;; body or take an allowance the first generation already spent.
+(define (compiler-optimize-inline-checked-generation-carry-ok?) : bool
+  (let
+    [a : i64 (opt-inline-checked-seq-callee-a)]
+    [b : i64 (opt-inline-checked-seq-callee-b)]
+    [_begin : unit (compiler_optimize.opt-inline-checked-program-begin!)]
+    [_scan : unit
+      (compiler_optimize.opt-inline-checked-scan-record! a 60 0 900 false false)]
+    [armed-first? : bool
+      (compiler_optimize.opt-inline-checked-arm-next-target!)]
+    [_keep : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-spend-verdict!)
+        (compiler_optimize.opt-inline-checked-accept-target!))]
+    [gen1-accepted? : bool
+      (compiler_optimize.opt-inline-checked-accepted? a 60 0)]
+    [gen1-verdicts : i64
+      (compiler_optimize.opt-inline-checked-caller-verdicts-current)]
+    [_next : unit (compiler_optimize.opt-inline-checked-generation-begin!)]
+    ;; the generation advanced, and the caller's own allowances did not reset
+    [gen2 : i64 (compiler_optimize.opt-inline-checked-generation-current)]
+    [gen2-verdicts : i64
+      (compiler_optimize.opt-inline-checked-caller-verdicts-current)]
+    [gen2-accepted-count : i64
+      (compiler_optimize.opt-inline-checked-accepted-current)]
+    ;; ...but the finished generation's row no longer names a live site
+    [gen1-row-retired? : bool
+      (not (compiler_optimize.opt-inline-checked-accepted? a 60 0))]
+    ;; ...while the lock still counts its body, so a second body in the rescan
+    ;; is a RELAXED candidate, ranked behind every core row and drawing on the
+    ;; relaxations' reserve
+    [_scan2 : unit
+      (compiler_optimize.opt-inline-checked-scan-record! b 61 1 800 false false)]
+    [armed-second? : bool
+      (compiler_optimize.opt-inline-checked-arm-next-target!)]
+    [second-relaxed? : bool
+      (compiler_optimize.opt-inline-checked-target-relaxed-current?)]
+    [_keep2 : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-spend-verdict!)
+        (compiler_optimize.opt-inline-checked-accept-target!))]
+    ;; the rescan's own row names its own site, and the accept cap counts both
+    [gen2-accepted? : bool
+      (compiler_optimize.opt-inline-checked-accepted? b 61 1)]
+    [final-accepted-count : i64
+      (compiler_optimize.opt-inline-checked-accepted-current)]
+    [_reset : unit (compiler_optimize.opt-inline-checked-program-begin!)]
+    (and
+      armed-first?
+      gen1-accepted?
+      (= gen1-verdicts 1)
+      (= gen2 2)
+      (= gen2-verdicts 1)
+      (= gen2-accepted-count 1)
+      gen1-row-retired?
+      armed-second?
+      second-relaxed?
+      gen2-accepted?
+      (= final-accepted-count 2)
+      ;; and a caller's own start does reset all of it
+      (= (compiler_optimize.opt-inline-checked-generation-current) 1)
+      (= (compiler_optimize.opt-inline-checked-accepted-current) 0))))
+
+;; The per-caller ACCEPT cap is one of the allowances a rescan carries: a caller
+;; whose generations have together filled the accepted table cannot bank another
+;; site in a later generation, because the table is the CALLER's and a rescan
+;; does not hand it back empty. Generation 1 banks one site here and the rescan
+;; banks the rest, so the row that finds the table full is one a generation
+;; boundary was crossed to reach.
+(define (opt-inline-checked-fill-accepts [taken : i64]) : i64
+  (if (>= taken (compiler_optimize.opt-inline-checked-max-caller-accepts))
+    taken
+    (begin
+      (compiler_optimize.opt-inline-checked-accept-target!)
+      (opt-inline-checked-fill-accepts (+ taken 1)))))
+
+(define (compiler-optimize-inline-checked-generation-accept-cap-ok?) : bool
+  (let
+    [a : i64 (opt-inline-checked-seq-callee-a)]
+    [b : i64 (opt-inline-checked-seq-callee-b)]
+    [cap : i64 (compiler_optimize.opt-inline-checked-max-caller-accepts)]
+    [_begin : unit (compiler_optimize.opt-inline-checked-program-begin!)]
+    [_scan : unit
+      (compiler_optimize.opt-inline-checked-scan-record! a 80 0 900 false false)]
+    [armed-first? : bool
+      (compiler_optimize.opt-inline-checked-arm-next-target!)]
+    [_keep : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-spend-verdict!)
+        (compiler_optimize.opt-inline-checked-accept-target!))]
+    [gen1-accepted : i64
+      (compiler_optimize.opt-inline-checked-accepted-current)]
+    [_next : unit (compiler_optimize.opt-inline-checked-generation-begin!)]
+    ;; the rescan starts from the table generation 1 left, not from an empty one
+    [carried : i64 (compiler_optimize.opt-inline-checked-accepted-current)]
+    [_scan2 : unit
+      (compiler_optimize.opt-inline-checked-scan-record! b 81 1 800 false false)]
+    [armed-second? : bool
+      (compiler_optimize.opt-inline-checked-arm-next-target!)]
+    [_keep2 : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-spend-verdict!)
+        (compiler_optimize.opt-inline-checked-accept-target!))]
+    ;; ...and the rest of the rescan's accepts fill it exactly to the cap
+    [filled : i64
+      (opt-inline-checked-fill-accepts
+        (compiler_optimize.opt-inline-checked-accepted-current))]
+    [at-cap : i64 (compiler_optimize.opt-inline-checked-accepted-current)]
+    ;; the accept past the cap banks nothing: the site is priced and reverted
+    ;; rather than kept, and no later walk of this caller rebuilds it
+    [_over : unit (compiler_optimize.opt-inline-checked-accept-target!)]
+    [after-over : i64 (compiler_optimize.opt-inline-checked-accepted-current)]
+    [gen1-row-still-counted? : bool
+      (> (compiler_optimize.opt-inline-checked-accepted-current) 1)]
+    [_reset : unit (compiler_optimize.opt-inline-checked-program-begin!)]
+    (and
+      armed-first?
+      (= gen1-accepted 1)
+      (= carried 1)
+      armed-second?
+      (= filled cap)
+      (= at-cap cap)
+      (= after-over cap)
+      gen1-row-still-counted?
+      (= (compiler_optimize.opt-inline-checked-accepted-current) 0))))
+
 ;; ...and the other side of the same check, on the same call-carrying body.
 ;;
 ;; The verdict is priced here against a plan that did NOT change: the same
@@ -20766,12 +21415,14 @@
           10
           1
           100
+          false
           false)
         (compiler_optimize.opt-inline-checked-scan-record!
           callee
           11
           2
           900
+          false
           false))]
     [armed-first? : bool
       (compiler_optimize.opt-inline-checked-arm-next-target!)]
@@ -20830,12 +21481,14 @@
           20
           0
           900
+          false
           false)
         (compiler_optimize.opt-inline-checked-scan-record!
           callee
           21
           3
           100
+          false
           false))]
     [_first : unit
       (begin
@@ -20896,6 +21549,7 @@
         (+ 100 row)
         row
         (- 1000 row)
+        false
         false)
       (opt-inline-checked-seq-fill-scan callee (+ row 1)))))
 
@@ -20942,8 +21596,20 @@
     ;; the OTHER callee's site is the richer of the two
     [_scan : unit
       (begin
-        (compiler_optimize.opt-inline-checked-scan-record! a 30 0 100 false)
-        (compiler_optimize.opt-inline-checked-scan-record! b 31 1 900 false))]
+        (compiler_optimize.opt-inline-checked-scan-record!
+          a
+          30
+          0
+          100
+          false
+          false)
+        (compiler_optimize.opt-inline-checked-scan-record!
+          b
+          31
+          1
+          900
+          false
+          false))]
     ;; before any accept, the richest wins outright
     [armed-first? : bool
       (compiler_optimize.opt-inline-checked-arm-next-target!)]
@@ -20963,8 +21629,20 @@
     ;; a fresh caller-scan holding both callees now offers only `a`
     [_next : unit
       (begin
-        (compiler_optimize.opt-inline-checked-scan-record! b 32 2 900 false)
-        (compiler_optimize.opt-inline-checked-scan-record! a 33 3 100 false))]
+        (compiler_optimize.opt-inline-checked-scan-record!
+          b
+          32
+          2
+          900
+          false
+          false)
+        (compiler_optimize.opt-inline-checked-scan-record!
+          a
+          33
+          3
+          100
+          false
+          false))]
     [armed-third? : bool
       (compiler_optimize.opt-inline-checked-arm-next-target!)]
     [third-callee : i64
@@ -21484,6 +22162,7 @@
         (+ 400 row)
         row
         (- 900 row)
+        false
         false)
       (opt-inline-checked-lock-bodies-fill (+ row 1) count))))
 
@@ -21525,7 +22204,7 @@
     [_begin : unit (compiler_optimize.opt-inline-checked-program-begin!)]
     [_slim : unit (compiler_optimize.opt-inline-checked-publish-margin! false)]
     [_scan-slim : unit
-      (compiler_optimize.opt-inline-checked-scan-record! a 50 0 900 false)]
+      (compiler_optimize.opt-inline-checked-scan-record! a 50 0 900 false false)]
     [armed-slim? : bool (compiler_optimize.opt-inline-checked-arm-next-target!)]
     [_keep-slim : unit
       (begin
@@ -21539,7 +22218,7 @@
     ;; ...and the armed second body is the one the verdict holds to the clear
     ;; margin, which is where that discipline decides something
     [_scan-second : unit
-      (compiler_optimize.opt-inline-checked-scan-record! b 51 1 800 false)]
+      (compiler_optimize.opt-inline-checked-scan-record! b 51 1 800 false false)]
     [armed-second? : bool
       (compiler_optimize.opt-inline-checked-arm-next-target!)]
     [second-callee : i64
@@ -21595,14 +22274,27 @@
     ;; two RELAXED rows, either of them nine times richer than the core one
     [_scan : unit
       (begin
-        (compiler_optimize.opt-inline-checked-scan-record! callee 70 0 900 true)
+        (compiler_optimize.opt-inline-checked-scan-record!
+          callee
+          70
+          0
+          900
+          true
+          false)
         (compiler_optimize.opt-inline-checked-scan-record!
           callee
           71
           1
           100
+          false
           false)
-        (compiler_optimize.opt-inline-checked-scan-record! callee 72 2 800 true))]
+        (compiler_optimize.opt-inline-checked-scan-record!
+          callee
+          72
+          2
+          800
+          true
+          false))]
     [armed-first? : bool
       (compiler_optimize.opt-inline-checked-arm-next-target!)]
     [first-pos : i64 (compiler_optimize.opt-inline-checked-target-pos-current)]
@@ -21675,7 +22367,8 @@
           (+ 200 row)
           row
           900
-          true)]
+          true
+          false)]
       [ok? : bool (compiler_optimize.opt-inline-checked-arm-next-target!)]
       [_spend : unit
         (if ok?
@@ -21707,12 +22400,24 @@
     ;; the next caller's relaxed row is refused for want of reserve...
     [_next : unit (compiler_optimize.opt-inline-checked-caller-begin!)]
     [_scan-relaxed : unit
-      (compiler_optimize.opt-inline-checked-scan-record! callee 300 0 900 true)]
+      (compiler_optimize.opt-inline-checked-scan-record!
+        callee
+        300
+        0
+        900
+        true
+        false)]
     [relaxed-again? : bool
       (compiler_optimize.opt-inline-checked-arm-next-target!)]
     ;; ...and its CORE row is armed anyway, which is the whole claim
     [_scan-core : unit
-      (compiler_optimize.opt-inline-checked-scan-record! callee 301 1 100 false)]
+      (compiler_optimize.opt-inline-checked-scan-record!
+        callee
+        301
+        1
+        100
+        false
+        false)]
     [core-armed? : bool (compiler_optimize.opt-inline-checked-arm-next-target!)]
     [core-relaxed? : bool
       (compiler_optimize.opt-inline-checked-target-relaxed-current?)]
@@ -22021,12 +22726,14 @@
           80
           0
           cold
+          false
           false)
         (compiler_optimize.opt-inline-checked-scan-record!
           callee
           81
           1
           hot
+          false
           false))]
     [armed-first? : bool
       (compiler_optimize.opt-inline-checked-arm-next-target!)]
@@ -28354,6 +29061,24 @@
       (opt-count-tail-call-name-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
         name)]))
+
+;; ...and the same count read through a program, the way
+;; opt-count-direct-call-name-function-seq reads its own: a site "taken" by
+;; converting a tail call into an ordinary call has to be visible as the
+;; difference between these two counts, so both are asked.
+(define (opt-count-tail-call-name-function-seq
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [func-name : String]
+  [call-name : String]) : i64
+  (match (compiler_optimize.opt-function-seq-find
+    (compiler_optimize.compiler-opt-global-shared-view functions)
+    func-name)
+    [(compiler_optimize.OptMaybeFunction.Some func)
+      (opt-count-tail-call-name-blocks
+        (compiler_optimize.opt-function-blocks
+          (compiler_optimize.compiler-opt-global-shared-view func))
+        call-name)]
+    [(compiler_optimize.OptMaybeFunction.No) (- 0 1)]))
 
 (define (opt-count-tail-call-indirect-instr-seq-from
   [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
@@ -57633,6 +58358,10 @@
       ;; base 5 + (callee frame 9 - 3 params). This callee carries no tail
       ;; call, so no block reads it.
       11
+      ;; A call SITE, so the clone's exits converge on `cont` as before; the
+      ;; site return type is unread on that path.
+      false
+      (compiler_ast_types.AstType.I64)
       (opt-merged-loop-test-callee-args)
       3
       5)

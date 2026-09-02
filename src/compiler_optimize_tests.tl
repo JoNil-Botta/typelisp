@@ -80160,6 +80160,396 @@
         11]
       [else 42])))
 
+;; --- ALIAS-1: a scalar element store cannot clobber a global's descriptor ----
+;;
+;; The whole chain a global vector's element access walks, in a loop whose ONLY
+;; write is a scalar element store through the loaded data pointer:
+;;
+;;   %6  = gep @g, 0        the head -- a fixed word of g's own storage
+;;   %7  = load %6          the descriptor handle the cell holds
+;;   %8  = gep %7, 1        the length slot          %9  = load %8
+;;   %10 = gep %7, 0        the data slot            %11 = load %10
+;;   %12 = gep %11, %4      one element of the buffer %11 names
+;;
+;; Element storage is a different allocation from the cell and from the
+;; descriptor's two header words, so the store through `%12` cannot change what
+;; any of the three loads reads and all three leave the loop. The negatives are
+;; the boundary opt-licm-header-slot-gep? records: an aggregate copy into
+;; element storage, a write to the global CELL, and a store through a raw
+;; pointer whose provenance the walk cannot resolve.
+(define (opt-al-chain-instrs
+  [global : i64]
+  [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instr-seq-prepend
+    (compiler_ir_types.CompilerIrInstr.Gep
+      6
+      (compiler_ir_types.CompilerIrValue.Global global)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.U8))
+    (opt-test-instr-seq-prepend
+      (compiler_ir_types.CompilerIrInstr.Load
+        7
+        (compiler_ir_types.CompilerIrValue.Var 6)
+        (compiler_ast_types.AstType.DynArray 0))
+      (opt-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.Gep
+          8
+          (compiler_ir_types.CompilerIrValue.Var 7)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (opt-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Load
+            9
+            (compiler_ir_types.CompilerIrValue.Var 8)
+            (compiler_ast_types.AstType.I64))
+          (opt-test-instr-seq-prepend
+            (compiler_ir_types.CompilerIrInstr.Gep
+              10
+              (compiler_ir_types.CompilerIrValue.Var 7)
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ast_types.AstType.U8))
+            (opt-test-instr-seq-prepend
+              (compiler_ir_types.CompilerIrInstr.Load
+                11
+                (compiler_ir_types.CompilerIrValue.Var 10)
+                (compiler_ast_types.AstType.U64))
+              (opt-test-instr-seq-prepend
+                (compiler_ir_types.CompilerIrInstr.Gep
+                  12
+                  (compiler_ir_types.CompilerIrValue.Var 11)
+                  (compiler_ir_types.CompilerIrValue.Var 4)
+                  (compiler_ast_types.AstType.I64))
+                tail))))))))
+
+(define (opt-al-loop-blocks
+  [global : i64]
+  [write : compiler_ir_types.CompilerIrInstr]) : compiler_ir_types.CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (opt-al-chain-instrs
+      global
+      (opt-test-instrs-with-tail (opt-licm-loop-finish-instrs) write))
+    9))
+
+;; One scalar element store: the shape the whole rule exists for.
+(define (opt-al-element-store) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.StorePtr
+    (compiler_ir_types.CompilerIrValue.Var 12)
+    (compiler_ir_types.CompilerIrValue.I64 100)
+    (compiler_ast_types.AstType.I64)))
+
+;; An AGGREGATE element copy into the same element storage.
+(define (opt-al-copy-bytes) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.CopyBytes
+    (compiler_ir_types.CompilerIrValue.Var 12)
+    (compiler_ir_types.CompilerIrValue.Var 11)
+    16))
+
+;; A write to the global CELL itself.
+(define (opt-al-cell-store [global : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Store
+    global
+    (compiler_ir_types.CompilerIrValue.Var 7)
+    (compiler_ast_types.AstType.DynArray 0)))
+
+;; A store through the raw `ptr` parameter: provenance the walk cannot resolve.
+(define (opt-al-raw-store) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.StorePtr
+    (compiler_ir_types.CompilerIrValue.Var 2)
+    (compiler_ir_types.CompilerIrValue.I64 100)
+    (compiler_ast_types.AstType.I64)))
+
+;; The PRE-BCE run: `late?` is false, which is the run whose memory conjunct
+;; ALIAS-1 changes and the only one whose verdict `bce_version` can still read.
+(define (opt-al-licm-early
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [cells : compiler_optimize.OptGlobalCellSummary]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-array-test-function
+        (compiler_ir_types.compiler-ir-global-shared-view blocks))]
+    (match (compiler_optimize.opt-licm-function-with-context-result-and-direct-call-clean
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler_optimize.opt-cfg-context-build
+        (compiler_ir_types.compiler-ir-global-shared-view blocks))
+      false
+      (opt_i64_i64_map.with-capacity 1)
+      (opt_i64_i64_map.with-capacity 1)
+      cells
+      false
+      func)
+      [(compiler_optimize.OptFunctionCtxResult.Result next _)
+        (compiler_optimize.opt-function-blocks next)])))
+
+(define (compiler-optimize-licm-element-store-descriptor-self-test) : i64
+  (let
+    [symbols : OptOgTestSymbols (opt-og-test-symbols)]
+    [cells : compiler_optimize.OptGlobalCellSummary
+      (opt-og-cells
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        (opt-og-base-functions
+          (compiler_optimize.compiler-opt-global-shared-view symbols)))]
+    ;; positive: the cell load, the length and the data pointer all leave
+    [element : compiler_ir_types.CompilerIrBlockList
+      (opt-al-licm-early
+        (opt-al-loop-blocks symbols.a (opt-al-element-store))
+        (compiler_optimize.compiler-opt-global-shared-view cells))]
+    ;; negative: an aggregate copy into element storage
+    [copy : compiler_ir_types.CompilerIrBlockList
+      (opt-al-licm-early
+        (opt-al-loop-blocks symbols.a (opt-al-copy-bytes))
+        (compiler_optimize.compiler-opt-global-shared-view cells))]
+    ;; negative: a write to the global cell itself
+    [cell-store : compiler_ir_types.CompilerIrBlockList
+      (opt-al-licm-early
+        (opt-al-loop-blocks symbols.a (opt-al-cell-store symbols.a))
+        (compiler_optimize.compiler-opt-global-shared-view cells))]
+    ;; negative: a store through a raw pointer of unknown provenance
+    [raw : compiler_ir_types.CompilerIrBlockList
+      (opt-al-licm-early
+        (opt-al-loop-blocks symbols.a (opt-al-raw-store))
+        (compiler_optimize.compiler-opt-global-shared-view cells))]
+    ;; control: the same positive loop in a program with no storage table --
+    ;; every level below 2 -- keeps the pre-ALIAS-1 verdict
+    [without : compiler_ir_types.CompilerIrBlockList
+      (opt-al-licm-early
+        (opt-al-loop-blocks symbols.a (opt-al-element-store))
+        (compiler_optimize.opt-global-cell-summary-empty))]
+    (cond
+      [(not
+          (=
+            (opt-fz-preheader-loads
+              (compiler_ir_types.compiler-ir-global-shared-view element))
+            3))
+        1]
+      [(not
+          (=
+            (opt-fz-body-loads
+              (compiler_ir_types.compiler-ir-global-shared-view element))
+            0))
+        2]
+      [(not
+          (=
+            (opt-fz-preheader-loads
+              (compiler_ir_types.compiler-ir-global-shared-view copy))
+            0))
+        3]
+      [(not
+          (=
+            (opt-fz-body-loads
+              (compiler_ir_types.compiler-ir-global-shared-view copy))
+            3))
+        4]
+      [(not
+          (=
+            (opt-fz-preheader-loads
+              (compiler_ir_types.compiler-ir-global-shared-view cell-store))
+            0))
+        5]
+      [(not
+          (=
+            (opt-fz-body-loads
+              (compiler_ir_types.compiler-ir-global-shared-view cell-store))
+            3))
+        6]
+      [(not
+          (=
+            (opt-fz-preheader-loads
+              (compiler_ir_types.compiler-ir-global-shared-view raw))
+            0))
+        7]
+      [(not
+          (=
+            (opt-fz-body-loads
+              (compiler_ir_types.compiler-ir-global-shared-view raw))
+            3))
+        8]
+      [(not
+          (=
+            (opt-fz-preheader-loads
+              (compiler_ir_types.compiler-ir-global-shared-view without))
+            0))
+        9]
+      [(not
+          (=
+            (opt-fz-body-loads
+              (compiler_ir_types.compiler-ir-global-shared-view without))
+            3))
+        10]
+      [else 42])))
+
+;; --- ALIAS-1: the DESCENDING shift loop the versioner has to admit -----------
+;;
+;; `i = phi(n, i - 1)` latched by `i - 1 >= 0`, reading `base + i` and writing
+;; `base + i + 3` against one invariant length: `rg-union-insert-segment!`'s
+;; shift, and the shape the ascending-only shape scan refused outright. Its
+;; counter executes over [0, n], which is the half-open [0, n + 1) every guard
+;; derivation in the pass is already stated over, so the two affine accesses
+;; take the same variable-base fan an ascending loop's would.
+;;
+;; `down-refused` is the same loop stepping by TWO. Its executed values are
+;; {n, n-2, ...}, which the ascending reading of [0, n+1) does not contain, so
+;; the shape scan must refuse it rather than guard the wrong set.
+(define (opt-al-down-loop-instrs
+  [step : i64]
+  [latch : compiler_ir_types.CompilerIrBinOp]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (compiler_ir_types.CompilerIrInstr.Phi
+      3
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+          (compiler_ir_types.CompilerIrValue.Var 6)
+          (compiler_ir_types.compiler-ir-label "loop")
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Phi
+      4
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+          (compiler_ir_types.CompilerIrValue.Var 5)
+          (compiler_ir_types.compiler-ir-label "loop")
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      7
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.BoundsCheck
+      (compiler_ir_types.CompilerIrValue.Var 7)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ir_types.compiler-ir-label "down_read"))
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      9
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Var 7)
+      (compiler_ir_types.CompilerIrValue.I64 3)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.BoundsCheck
+      (compiler_ir_types.CompilerIrValue.Var 9)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ir_types.compiler-ir-label "down_write"))
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      5
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Var 4)
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      6
+      (compiler_ir_types.CompilerIrBinOp.Sub)
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      (compiler_ir_types.CompilerIrValue.I64 step)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      10
+      latch
+      (compiler_ir_types.CompilerIrValue.Var 6)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.Bool))
+    (compiler_ir_types.CompilerIrInstr.Branch
+      (compiler_ir_types.CompilerIrValue.Var 10)
+      (compiler_ir_types.compiler-ir-label "loop")
+      (compiler_ir_types.compiler-ir-label "done"))))
+
+(define (opt-al-down-blocks
+  [step : i64]
+  [latch : compiler_ir_types.CompilerIrBinOp]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "loop"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (opt-al-down-loop-instrs step latch))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "done")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Phi
+              11
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.compiler-ir-label "loop")
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 11)))))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-al-down-versioned
+  [step : i64]
+  [latch : compiler_ir_types.CompilerIrBinOp]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-function-blocks
+    (compiler_optimize.opt-bce-version-function
+      (opt-bce-version-test-function (opt-al-down-blocks step latch)))))
+
+(define (compiler-optimize-bce-version-descending-self-test) : i64
+  (let
+    [down : compiler_ir_types.CompilerIrBlockList
+      (opt-al-down-versioned 1 (compiler_ir_types.CompilerIrBinOp.Ge))]
+    [down-gt : compiler_ir_types.CompilerIrBlockList
+      (opt-al-down-versioned 1 (compiler_ir_types.CompilerIrBinOp.Gt))]
+    [down-two : compiler_ir_types.CompilerIrBlockList
+      (opt-al-down-versioned 2 (compiler_ir_types.CompilerIrBinOp.Ge))]
+    (cond
+      ;; the fast clone exists and carries neither check
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              (compiler_ir_types.compiler-ir-global-shared-view down)
+              (compiler_ir_types.compiler-ir-label "loop__bce_fast"))
+            0))
+        1]
+      ;; the original loop keeps both, behind the guard
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              (compiler_ir_types.compiler-ir-global-shared-view down)
+              (compiler_ir_types.compiler-ir-label "loop"))
+            2))
+        2]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              (compiler_ir_types.compiler-ir-global-shared-view down)
+              (compiler_ir_types.compiler-ir-label "loop__bce_guard"))
+            0))
+        3]
+      ;; `> floor` states the same range and versions the same way
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              (compiler_ir_types.compiler-ir-global-shared-view down-gt)
+              (compiler_ir_types.compiler-ir-label "loop__bce_fast"))
+            0))
+        4]
+      ;; a magnitude of two visits a set the ascending interval does not
+      ;; enumerate, so no clone is minted at all
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              (compiler_ir_types.compiler-ir-global-shared-view down-two)
+              (compiler_ir_types.compiler-ir-label "loop__bce_fast"))
+            (- 0 1)))
+        5]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              (compiler_ir_types.compiler-ir-global-shared-view down-two)
+              (compiler_ir_types.compiler-ir-label "loop"))
+            2))
+        6]
+      [else 42])))
+
 ;; --- CK-1: local allocation-shape length-equality families -------------------
 ;;
 ;; Two spellings are keyed: a bare descriptor a `__tl_make-array` allocated
@@ -83788,6 +84178,20 @@
     (compiler-optimize-licm-global-header-hoist-self-test)
     42
     "the descriptor HANDLE a global's inline cell holds leaves a loop that calls an unknown callee every trip, and the length load behind it stays inside because the descriptor proofs still refuse that callee -- while an element-only callee lets the length load follow it out; a callee that writes that global's storage through a mutable reference parameter refuses the chain, the same callee leaves a different global's chain hoistable, and an indirect call or an absent storage table refuses it"))
+
+(test
+  licm-element-store-descriptor-invariance
+  (test.assert-i64-eq
+    (compiler-optimize-licm-element-store-descriptor-self-test)
+    42
+    "a scalar element store through a global vector's loaded data pointer cannot change the global's cell word, the descriptor handle it holds, or that descriptor's length and data words, so the whole chain leaves the loop in the PRE-BCE run; an aggregate copy into the same element storage, a write to the global cell itself, a store through a raw pointer of unknown provenance, and a program with no storage table each keep the whole chain inside"))
+
+(test
+  bce-version-descending-shift-loop
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-descending-self-test)
+    42
+    "a descending unit-step counter latched by `i - 1 >= floor` executes over the same closed interval an ascending counter's [seed, bound) states, so a shift loop reading `base + i` and writing `base + i + 3` against an invariant length versions through the ordinary variable-base fan and its fast clone carries neither check; `> floor` states the same interval, and a magnitude of two -- whose executed values the ascending reading of that interval does not enumerate -- is refused"))
 
 (test
   ck-local-allocation-shape-length-equality

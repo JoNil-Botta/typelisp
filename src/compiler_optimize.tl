@@ -25430,24 +25430,6 @@
     [(ir.CompilerIrValue.I64 value) (= value 0)]
     [_ false]))
 
-(define (opt-licm-header-slot-gep?
-  [type-segment-bases : i64]
-  [types : OptSsaVarTypes]
-  [base : ir.CompilerIrValue]
-  [offset : ir.CompilerIrValue]
-  [ty : ast.AstType]) : bool
-  (match base
-    [(ir.CompilerIrValue.Var base-var)
-      (and
-        (opt-licm-array-header-var? type-segment-bases types base-var)
-        (or
-          (opt-bounds-object-length-slot?
-            type-segment-bases
-            (compiler-opt-global-shared-view offset)
-            (compiler-opt-global-shared-view ty))
-          (opt-licm-data-slot? offset ty)))]
-    [_ false]))
-
 ;; The pointer classes whose target is a FIXED word of an object that element
 ;; storage is disjoint from: a descriptor's own header words, a global cell's
 ;; object, and (P16) a word of a frame object this function allocated. Element
@@ -25594,6 +25576,115 @@
   (match src
     [(ir.CompilerIrValue.Var ptr-var)
       (opt-licm-global-header-kind? facts (opt-licm-ptr-lookup ptrs ptr-var))]
+    [_ false]))
+
+;; ALIAS-1. The ADDRESS-formation twin of opt-licm-header-slot-source?: is the
+;; word this Gep computes an address OF one that ELEMENT STORAGE is disjoint
+;; from? The two are read by the same conjunct of opt-licm-memory-safe? for the
+;; two halves of one chain -- the address, and the load through it -- so a class
+;; one accepts and the other refuses stalls the chain at its first link.
+;;
+;; The first arm is the original spelling and decides every case it decided
+;; before: a Gep off a var whose TYPE is a descriptor handle, at the length or
+;; data offset, addresses a descriptor header word.
+;;
+;; The second arm is this packet's rule, and it is the HEAD of the chain:
+;; `gep @g, <literal>`, whose base is a `Global` operand rather than a var and
+;; which the type arm therefore refused outright while
+;; opt-licm-header-slot-ptr-kind? has always accepted the `GlobalSlot` it
+;; produces. Refusing the head refused everything behind it -- the handle load,
+;; and the descriptor's length and data words derived from that handle -- so a
+;; loop whose only write is a scalar element store still reloaded the global
+;; cell, the length and the data pointer on every trip, and `bce_version` saw a
+;; loop-VARIANT length.
+;;
+;; MEMORY-MODEL ARGUMENT. A literal-offset Gep off `@g` addresses a fixed word
+;; of the object g's cell designates -- after IAG-1, of g's own storage. A
+;; scalar element store writes ELEMENT storage: the heap block a descriptor's
+;; data slot names, which is a different allocation from every `.comm` cell and
+;; from every descriptor header, and which holds only values of the element
+;; type. That is the same disjointness opt-licm-store-obj-mask states when it
+;; answers 0 for a `DataBuffer`/`DataElement` address and the same one
+;; opt-licm-header-slot-ptr-kind? states for `GlobalSlot`. The conjunct that
+;; reads this predicate has already established the other half of the proof --
+;; opt-licm-store-summary-header-load-safe?: no call that may write and no
+;; header-or-unknown store anywhere in the body.
+;;
+;; BOUNDARY. Three writer classes keep exactly today's classification, and none
+;; of them reaches this predicate at all:
+;;
+;;   * an AGGREGATE element copy is a `CopyBytes`, which
+;;     opt-licm-store-state-instr classifies as a header-or-unknown store, so
+;;     header-load-safety fails before this arm is consulted;
+;;   * a store through a RAW POINTER of unknown provenance classifies
+;;     `OptLicmPtrKind.Unknown` and contributes the same header-or-unknown
+;;     store;
+;;   * a `Store` to the GLOBAL CELL itself does not write a descriptor word --
+;;     the two header words live in the object, never in the cell -- but it
+;;     raises the global-write flag explicitly, and that flag is what the
+;;     `Global` operand's own invariance question reads
+;;     (opt-licm-globals-clean?, the disjunct above this one in the Gep arm).
+;;     This predicate answers the address-class question only and cannot admit
+;;     that operand on its own.
+;;
+;; A VARIABLE offset is element indexing off the cell and carries no class,
+;; exactly as opt-licm-gep-kind's `Global` arm already decides it.
+;;
+;; PRESSURE, and why this arm names ONE class and asks IAG-2's gate for it.
+;; Soundness is the paragraphs above; what is left is the trade P18 measured
+;; and IAG-2 priced, and it is priced HERE by the gate IAG-2 already owns
+;; rather than by a second one. `opt-licm-global-header-value?` is the
+;; predicate the Gep arm's IAG-2 disjunct asks of this very operand: the loop
+;; writes neither g's cell nor g's storage (the per-global rows), and
+;; `header-hoist?` -- the live-in budget of opt-licm-global-header-hoist? --
+;; has admitted this loop for taking a handle out.
+;;
+;; Two wider readings were measured and rejected (cachegrind, one run each,
+;; against the bank tip):
+;;
+;;   * accepting EVERY class opt-licm-header-slot-ptr-kind? names -- which adds
+;;     P16's `LocalObject`/`LocalSlot` frame words -- costs intern_table
+;;     +62,547,644 (+17.35%): `it-bench`'s locally allocated Vec chains all
+;;     leave their loops at once and the function spills what it was holding in
+;;     registers. Only the global head is admitted here; a frame object's field
+;;     keeps today's classification;
+;;   * admitting the global head with NO pressure gate costs ssa_construct
+;;     +1,325,496, which the `header-hoist?` question removes exactly.
+;;
+;; What the gate does NOT remove is the residue this packet accepts: two loops
+;; whose chains it lets out are net losses (`rg-load-function` +2,699,823 and
+;; gvn_table's `gvn-run-function` +145,024) against the -52,227,539 it buys on
+;; `rg-union-insert-segment!`. Pricing the arm at the chain's three words
+;; instead of the one IAG-2 prices was measured too and is worse, not better:
+;; it leaves both of those alone and gives back `rg-merge-run!`'s -818,244.
+(define (opt-licm-header-slot-gep?
+  [type-segment-bases : i64]
+  [types : OptSsaVarTypes]
+  [globals : OptLicmGlobalFacts]
+  [base : ir.CompilerIrValue]
+  [offset : ir.CompilerIrValue]
+  [ty : ast.AstType]) : bool
+  (match (compiler-opt-global-shared-view base)
+    [(ir.CompilerIrValue.Var base-var)
+      (and
+        (opt-licm-array-header-var?
+          type-segment-bases
+          (compiler-opt-global-shared-view types)
+          base-var)
+        (or
+          (opt-bounds-object-length-slot?
+            type-segment-bases
+            (compiler-opt-global-shared-view offset)
+            (compiler-opt-global-shared-view ty))
+          (opt-licm-data-slot? offset ty)))]
+    [(ir.CompilerIrValue.Global _)
+      (and
+        (opt-licm-global-header-value?
+          (compiler-opt-global-shared-view globals)
+          (compiler-opt-global-shared-view base))
+        (match (compiler-opt-global-shared-view offset)
+          [(ir.CompilerIrValue.I64 _) true]
+          [_ false]))]
     [_ false]))
 
 (define (opt-licm-header-slot-source?
@@ -28104,6 +28195,7 @@
               (opt-licm-header-slot-gep?
                 type-segment-bases
                 types
+                globals
                 base
                 offset
                 ty)))))]
@@ -85574,6 +85666,75 @@
     (opt-bce-version-keep-new index-bound)
     0))
 
+;; ALIAS-1. The same start, over a PRELUDE the caller has already accumulated:
+;; the descending range's `seed + 1` and its no-wrap conjunct
+;; (opt-bce-version-down-range). An ascending loop passes the empty accumulator
+;; and gets exactly opt-bce-version-derive-start back.
+(define (opt-bce-version-derive-start-with
+  [index-bound : i64]
+  [pre : OptBceVersionGuardAcc]) : OptBceVersionDerive
+  (OptBceVersionDerive pre (opt-bce-version-keep-new index-bound) 0))
+
+;; ALIAS-1. The ascending RANGE a descending unit-step counter executes over,
+;; and the guard prelude that states it.
+;;
+;; A bottom-tested `i = phi(seed, i-1)` latched by `i-1 >= floor` runs its body
+;; at i = seed, seed-1, ..., floor: exactly the closed interval [floor, seed],
+;; which is exactly the half-open [floor, seed+1) every derivation in this pass
+;; is already stated over. So the whole derivation tree is reused unchanged by
+;; handing it `floor` as the seed and `seed + 1` as the bound; nothing below
+;; this point knows or needs to know which way the counter walks, because every
+;; condition it emits is a statement about the SET of counter values, and
+;; bounds checks do not care in which order that set is visited.
+;;
+;; `seed + 1` is a real value the guard block has to compute. Two things make
+;; that safe. It is formed from an invariant, so it is available in the
+;; preheader; and its only wrapping input, `seed = i64 MAX`, is refused --
+;; by folding at compile time for a literal seed, and by the emitted
+;; `seed + 1 > seed` conjunct for a variable one, which is false exactly when
+;; the addition wrapped and therefore deselects the fast clone.
+(defenum OptBceVersionDownRange
+  (No)
+  ;; the exclusive ascending bound, and the guard accumulator that computes it
+  (Some ir.CompilerIrValue OptBceVersionGuardAcc))
+
+(define (opt-bce-version-down-range
+  [seed : ir.CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]) : OptBceVersionDownRange
+  (match (compiler-opt-global-shared-view seed)
+    [(ir.CompilerIrValue.I64 k)
+      (if (= k 9223372036854775807)
+        (OptBceVersionDownRange.No)
+        (OptBceVersionDownRange.Some
+          (ir.CompilerIrValue.I64 (+ k 1))
+          (OptBceVersionGuardAcc.Some
+            (ir.compiler-ir-instr-builder-new)
+            (ir.compiler-ir-value-seq-empty)
+            false)))]
+    [(ir.CompilerIrValue.Var _)
+      (let
+        [dst : i64
+          (opt-bce-version-alloc-var (compiler-opt-global-shared-view cell))]
+        (OptBceVersionDownRange.Some
+          (ir.CompilerIrValue.Var dst)
+          (opt-bce-version-cond
+            cell
+            (ir.CompilerIrBinOp.Gt)
+            (ir.CompilerIrValue.Var dst)
+            (compiler-opt-global-shared-view seed)
+            (OptBceVersionGuardAcc.Some
+              (opt-bce-version-builder-push
+                (ir.compiler-ir-instr-builder-new)
+                (ir.CompilerIrInstr.BinOp
+                  dst
+                  (ir.CompilerIrBinOp.Add)
+                  seed
+                  (ir.CompilerIrValue.I64 1)
+                  (ast.AstType.I64)))
+              (ir.compiler-ir-value-seq-empty)
+              false))))]
+    [_ (OptBceVersionDownRange.No)]))
+
 ;; Assemble the single-block guard: derive the per-check conditions, then
 ;; finish them (seed compares + And chain).
 ;;
@@ -85600,7 +85761,11 @@
   [bound : ir.CompilerIrValue]
   [step : i64]
   [bound-nonneg? : bool]
-  [cell : (__tl_dyn-array i64)]) : OptBceVersionGuardOut
+  [cell : (__tl_dyn-array i64)]
+  ;; ALIAS-1: the descending range's prelude, empty for an ascending counter,
+  ;; and whether this counter descends at all (which re-prices the guard).
+  [pre : OptBceVersionGuardAcc]
+  [down? : bool]) : OptBceVersionGuardOut
   (let
     [census-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [_census-seed : unit (set! (array-ref census-cell 0) (array-ref cell 0))]
@@ -85657,10 +85822,28 @@
         (compiler-opt-global-shared-view cell)
         allow-scale1
         (compiler-opt-global-shared-view fan)
-        (opt-bce-version-derive-start last))]
+        (opt-bce-version-derive-start-with last pre))]
     ;; Partial versioning still needs at least one REMOVED check to pay for
     ;; the clone; with none, the loop is left untouched.
-    (if (= state.derived 0)
+    ;;
+    ;; ALIAS-1 RE-COSTS THE DESCENDING FORM BACK TO THE OLD FLOOR OF TWO. The
+    ;; three price cuts the note above records -- the one-Sub upper condition,
+    ;; the dropped once-only `seed < bound`, the collapsed multi-offset family
+    ;; -- are what took the floor from two eliminable checks to one, and a
+    ;; descending counter gets none of the last two: its bound is the
+    ;; synthesized `seed + 1`, which no dominating branch has decided and whose
+    ;; sign nothing knows, so the once-only pair is emitted in full and cannot
+    ;; merge into one unsigned compare, and the range costs an Add and a
+    ;; no-wrap compare on top (opt-bce-version-down-range). Measured on the
+    ;; corpus: with the one-check floor applied to it as well, intern_table's
+    ;; `it-hash-words` versions its short byte tail at round 1 and the shape
+    ;; that leaves displaces the step-8 word loop's own clone at round 2
+    ;; (100,598,868 -> 109,448,064 on that function, with `it-grow!`
+    ;; 4,237,956 -> 9,639,624 beside it, for +14,250,864 on the row); at the
+    ;; two-check floor both are refused, the word loop keeps its clone, and
+    ;; the row is unchanged. The shift loop this packet is about derives BOTH
+    ;; of its checks and clears the floor unaided.
+    (if (or (= state.derived 0) (and down? (< state.derived 2)))
       (OptBceVersionGuardOut.No)
       (match (opt-bce-version-guard-finish
         (compiler-opt-global-shared-view seed)
@@ -85722,6 +85905,25 @@
                           (opt-bce-version-resolve instrs phi-count last src 16)
                           iphi))
                         step
+                        0)]
+                    [_ 0])]
+                [_ 0])]
+            ;; ALIAS-1. A DESCENDING counter reports its step NEGATED. The two
+            ;; callers read the sign: the shape scan admits only a unit
+            ;; magnitude down (see opt-bce-version-shape-step), and
+            ;; opt-bce-version-apply-wired turns the sign into the ascending
+            ;; RANGE the guard derivations are stated over.
+            [(ir.CompilerIrBinOp.Sub)
+              (match lhs
+                [(ir.CompilerIrValue.Var src)
+                  (match rhs
+                    [(ir.CompilerIrValue.I64 step)
+                      (if (and
+                        (> step 0)
+                        (=
+                          (opt-bce-version-resolve instrs phi-count last src 16)
+                          iphi))
+                        (- 0 step)
                         0)]
                     [_ 0])]
                 [_ 0])]
@@ -85858,6 +86060,52 @@
                         (OptUnrollMaybeShape.No))]
                     [_ (OptUnrollMaybeShape.No)])]
                 [_ (OptUnrollMaybeShape.No)])]
+            ;; ALIAS-1. The DESCENDING counter: `i = i - 1`, latched by the
+            ;; `Ge`/`Gt` arm of opt-bce-version-shape-counter. A shift loop
+            ;; copying `a[i+k] = a[i]` downward has this shape and no other, so
+            ;; the whole derivation tree is unreachable for it while the scan
+            ;; admits only `Add`.
+            ;;
+            ;; UNIT MAGNITUDE ONLY, and the restriction is a soundness one
+            ;; rather than a budget. Every guard here is a statement about the
+            ;; SET of counter values the body executes at, and
+            ;; opt-bce-version-apply-wired hands the derivations that set as the
+            ;; ascending interval [bound, seed]. For a unit step the executed
+            ;; values ARE that interval. For a magnitude m > 1 they are
+            ;; {seed, seed-m, ...}, which is NOT a subset of
+            ;; {bound, bound+m, ...} -- the ascending reading of the same
+            ;; interval -- so a guard derived from the ascending walk would
+            ;; prove nothing about the values the loop really visits.
+            [(ir.CompilerIrBinOp.Sub)
+              (match add-lhs
+                [(ir.CompilerIrValue.Var add-src)
+                  (match add-rhs
+                    [(ir.CompilerIrValue.I64 step)
+                      (if (and
+                        (= step 1)
+                        (match (compiler-opt-global-shared-view ity)
+                          [(ast.AstType.I64) true]
+                          [_ false]))
+                        (opt-bce-version-shape-phi
+                          blocks
+                          label
+                          (compiler-opt-global-shared-view instrs)
+                          phi-count
+                          last
+                          cond-index
+                          cond-var
+                          inext
+                          ity
+                          bound
+                          (opt-unroll-resolve-copy
+                            instrs
+                            phi-count
+                            last
+                            add-src
+                            16))
+                        (OptUnrollMaybeShape.No))]
+                    [_ (OptUnrollMaybeShape.No)])]
+                [_ (OptUnrollMaybeShape.No)])]
             [_ (OptUnrollMaybeShape.No)])]
         [_ (OptUnrollMaybeShape.No)]))))
 
@@ -85879,6 +86127,63 @@
         [(ir.CompilerIrInstr.BinOp _ cmp-op cmp-lhs cmp-rhs _)
           (match cmp-op
             [(ir.CompilerIrBinOp.Lt)
+              (match cmp-lhs
+                [(ir.CompilerIrValue.Var cmp-src)
+                  (if (opt-unroll-invariant-bound?
+                    (compiler-opt-global-shared-view defs)
+                    (compiler-opt-global-shared-view cmp-rhs))
+                    (opt-bce-version-shape-step
+                      (compiler-opt-global-shared-view blocks)
+                      label
+                      (compiler-opt-global-shared-view instrs)
+                      phi-count
+                      last
+                      cond-var
+                      cond-index
+                      (opt-unroll-resolve-copy
+                        (compiler-opt-global-shared-view instrs)
+                        phi-count
+                        last
+                        cmp-src
+                        16)
+                      (compiler-opt-global-shared-view cmp-rhs))
+                    (OptUnrollMaybeShape.No))]
+                [_ (OptUnrollMaybeShape.No)])]
+            ;; ALIAS-1. The two latch forms of a DESCENDING counter,
+            ;; `next >= floor` and `next > floor`, in the same operand order the
+            ;; ascending `Lt` arm demands. `bound` still names the invariant the
+            ;; latch compares against; what changes is which END of the counter
+            ;; range it is, and opt-bce-version-apply-wired is where that is
+            ;; read -- there the range is handed to the derivations as the
+            ;; ascending interval [bound, seed].
+            ;;
+            ;; `Gt` is admitted with the SAME interval as `Ge`: it executes at
+            ;; [bound + 1, seed], a subset, so a guard derived over [bound, seed]
+            ;; is stronger than necessary and never weaker.
+            [(ir.CompilerIrBinOp.Ge)
+              (match cmp-lhs
+                [(ir.CompilerIrValue.Var cmp-src)
+                  (if (opt-unroll-invariant-bound?
+                    (compiler-opt-global-shared-view defs)
+                    (compiler-opt-global-shared-view cmp-rhs))
+                    (opt-bce-version-shape-step
+                      (compiler-opt-global-shared-view blocks)
+                      label
+                      (compiler-opt-global-shared-view instrs)
+                      phi-count
+                      last
+                      cond-var
+                      cond-index
+                      (opt-unroll-resolve-copy
+                        (compiler-opt-global-shared-view instrs)
+                        phi-count
+                        last
+                        cmp-src
+                        16)
+                      (compiler-opt-global-shared-view cmp-rhs))
+                    (OptUnrollMaybeShape.No))]
+                [_ (OptUnrollMaybeShape.No)])]
+            [(ir.CompilerIrBinOp.Gt)
               (match cmp-lhs
                 [(ir.CompilerIrValue.Var cmp-src)
                   (if (opt-unroll-invariant-bound?
@@ -86407,18 +86712,66 @@
             (compiler-opt-global-shared-view blocks)
             label)]
         ;; The guard's no-wrap condition needs the exact literal step; the
-        ;; shape scan verified this add but did not record it.
-        [step : i64
+        ;; shape scan verified this add but did not record it. ALIAS-1: the
+        ;; sign is the counter's DIRECTION -- see opt-bce-version-down-range.
+        [signed-step : i64
           (opt-bce-version-shape-step-value
             (compiler-opt-global-shared-view instrs)
             phi-count
             last
             iphi
             inext)]
+        [down? : bool (< signed-step 0)]
+        [step : i64
+          (if down?
+            (- 0 signed-step)
+            signed-step)]
+        ;; The counter's value set, stated as the ascending half-open interval
+        ;; every derivation below is written over. An ascending counter is
+        ;; [seed, bound) and needs no prelude; a descending one is
+        ;; [bound, seed + 1), whose upper end the prelude computes.
+        [literal-seed : ir.CompilerIrValue
+          (opt-bce-version-literal-of
+            (compiler-opt-global-shared-view blocks)
+            (compiler-opt-global-shared-view seed)
+            8)]
+        [down-range : OptBceVersionDownRange
+          (if down?
+            (opt-bce-version-down-range
+              (compiler-opt-global-shared-view literal-seed)
+              (compiler-opt-global-shared-view cell))
+            (OptBceVersionDownRange.No))]
+        [range-ok? : bool
+          (if down?
+            (match (compiler-opt-global-shared-view down-range)
+              [(OptBceVersionDownRange.No) false]
+              [(OptBceVersionDownRange.Some _ _) true])
+            true)]
+        [guard-seed : ir.CompilerIrValue
+          (if down?
+            (opt-bce-version-literal-of
+              (compiler-opt-global-shared-view blocks)
+              (compiler-opt-global-shared-view bound)
+              8)
+            (compiler-opt-global-shared-view literal-seed))]
+        [guard-bound : ir.CompilerIrValue
+          (match (compiler-opt-global-shared-view down-range)
+            [(OptBceVersionDownRange.Some top _) top]
+            [(OptBceVersionDownRange.No)
+              (compiler-opt-global-shared-view bound)])]
+        [guard-pre : OptBceVersionGuardAcc
+          (match down-range
+            [(OptBceVersionDownRange.Some _ acc) acc]
+            [(OptBceVersionDownRange.No)
+              (OptBceVersionGuardAcc.Some
+                (ir.compiler-ir-instr-builder-new)
+                (ir.compiler-ir-value-seq-empty)
+                false)])]
         (if (or
           (= exit-label label)
           (= exit-label pred-label)
           (<= step 0)
+          (not range-ok?)
           (opt-bce-version-defs-escape?
             (compiler-opt-global-shared-view (__tl-project-field instrs slots))
             0
@@ -86439,11 +86792,8 @@
             ;; The guard reads a copied constant as the constant it is: the
             ;; scaled seed products and the once-only compares then fold at
             ;; compile time instead of costing instructions per loop entry.
-            (opt-bce-version-literal-of
-              (compiler-opt-global-shared-view blocks)
-              (compiler-opt-global-shared-view seed)
-              8)
-            (compiler-opt-global-shared-view bound)
+            guard-seed
+            (compiler-opt-global-shared-view guard-bound)
             step
             ;; Merging the once-only pair into one unsigned compare needs the
             ;; bound's sign; the loop's blocks are where a length-slot load is
@@ -86451,8 +86801,10 @@
             (opt-ubound-len-nonneg?
               type-segment-bases
               (compiler-opt-global-shared-view blocks)
-              (compiler-opt-global-shared-view bound))
-            (compiler-opt-global-shared-view cell))
+              guard-bound)
+            (compiler-opt-global-shared-view cell)
+            guard-pre
+            down?)
             [(OptBceVersionGuardOut.No)
               (OptUnrollResult.Result original-blocks frame false)]
             [(OptBceVersionGuardOut.Some guard-instrs guard-value keep)

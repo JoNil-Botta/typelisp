@@ -2056,6 +2056,78 @@ truncate_at_seh_endproc() {
     printf '%s\n' "$_seh_out"
 }
 
+# ALIAS-1: the descending shift loop over a MODULE-GLOBAL vector.
+#
+# `a[i + 3] = a[i]` walked downward is `rg-union-insert-segment!`'s shift, and
+# three separate verdicts have to hold for it to reach its five-instruction
+# form. The loop's only write is a scalar element store through the data
+# pointer the global's descriptor holds, so LICM lifts the cell load, the
+# length and the data pointer into the preheader BEFORE `bce_version` runs
+# (opt-licm-header-slot-gep?'s `Global` arm); the versioner then reads an
+# invariant length off a descending counter and mints a fast clone with
+# neither bounds check; and `gep_offset` folds the loop-invariant base into the
+# clone's own preheader so the two accesses share one index register, the write
+# reaching its slot as a +24 displacement.
+#
+# The block extracted here is the self-looping `__bce_fast` body that carries
+# that displacement -- the only loop in the fixture that writes one -- and what
+# is pinned is what each verdict buys: no rip-relative reload of the cell, no
+# check, one load and one displaced store off the same base and index.
+extract_fast_self_loop_with() {
+    _body=$1
+    _needle=$2
+    _out="$_body.fastloop"
+    awk -v needle="$_needle" '
+        /__bce_fast:$/ {
+            label = $0
+            sub(/:$/, "", label)
+            inblk = 1
+            buf = ""
+            hit = 0
+            next
+        }
+        inblk {
+            buf = buf $0 "\n"
+            if (index($0, needle) > 0) { hit = 1 }
+            if (index($0, label) > 0) {
+                if (hit) { printf "%s", buf }
+                inblk = 0
+            } else if ($0 ~ /^\.L/) {
+                inblk = 0
+            }
+        }
+    ' "$_body" > "$_out"
+    printf '%s\n' "$_out"
+}
+
+check_alias_global_shift() {
+    _asm=$(compile_gate alias_global_shift tests/integration/alias_global_shift.tl)
+    _body=$(function_body "$_asm" main)
+    _fast=$(extract_fast_self_loop_with "$_body" ', 24(')
+    if [ ! -s "$_fast" ]; then
+        fail "alias-global-shift found no versioned shift loop with a folded +24 store"
+    fi
+    # The global's cell is read once, in the preheader: nothing rip-relative
+    # survives in the loop body.
+    assert_not_contains "$_fast" '_tl_alias_global_shift_al_vec(%rip)' \
+        alias-global-shift
+    # Both checks left with the clone.
+    assert_not_contains "$_fast" 'call tl_oob_abort' alias-global-shift
+    assert_regex_count_eq "$_fast" '^[[:space:]]+j(ae|b) ' 0 alias-global-shift
+    # One load and one store, sharing one base and one index register, the
+    # element offset folded into the store's displacement.
+    assert_regex_count_eq "$_fast" \
+        '^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' 1 \
+        alias-global-shift
+    assert_regex_count_eq "$_fast" \
+        '^[[:space:]]+movq %r[a-z0-9]+, 24\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$' 1 \
+        alias-global-shift
+    # ...and the descending latch, with no address arithmetic left over.
+    assert_regex_count_eq "$_fast" '^[[:space:]]+leaq ' 0 alias-global-shift
+    assert_matches "$_fast" '^[[:space:]]+subq \$1, %r[a-z0-9]+$' \
+        alias-global-shift
+}
+
 check_dce_late_flag_loop() {
     _asm=$(compile_gate dce_late_flag_loop tests/integration/dce_late_flag_loop.tl)
     _body=$(function_body "$_asm" main)
@@ -2407,5 +2479,6 @@ check_inline_alloc_unique_labels_link
 check_gep_load_cmp_spilled_stage
 check_range_merge_unsigned
 check_dce_late_flag_loop
+check_alias_global_shift
 
 echo "Assembly shape gates passed."

@@ -558,3 +558,5 @@ tlci_native_format_scanner|tests/integration/tlci_native_format_scanner.tl|42|sc
 inline_multiblock_call_carrying_clone|tests/integration/inline_multiblock_call_carrying_clone.tl|42|-|-|-
 inline_tail_call_boundary|tests/integration/inline_tail_call_boundary.tl|42|-|-|-
 dce_late_flag_loop|tests/integration/dce_late_flag_loop.tl|42|-|-|-
+alias_global_shift|tests/integration/alias_global_shift.tl|42|-2158726342577467478\n|5 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+alias_global_shift_abort|tests/integration/alias_global_shift.tl|134|-|5 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/alias_global_shift_abort/alias_global_shift_abort.tl:35:53: array index out of bounds: index=18 length=18\n

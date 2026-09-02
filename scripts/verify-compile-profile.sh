@@ -1857,8 +1857,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # lines), rebased over #7376, cross the composed graph from 76 to 77
     # segments: the authoritative Windows CI probe measured 5,028,561 used
     # nodes, 5,046,272 capacity, and 161,480,704 physical payload bytes.
+    # #7433's declaration-level test metadata and replayable selection support
+    # cross the composed graph from 77 to 78 segments: the authoritative Windows
+    # CI probe measured 5,047,053 used nodes, 5,111,808 capacity, and 163,577,856
+    # physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 77 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 78 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking

@@ -418,7 +418,9 @@ grep -Eq '^  code: .* bytes=[1-9][0-9]*$' "$WORKDIR/inspect.txt"
 rm -rf "$MUTATED_ROOT"
 mkdir -p "$MUTATED_ROOT"
 while IFS= read -r suffix; do
-    cp "stdlib/$suffix" "$MUTATED_ROOT/$suffix"
+    destination="$MUTATED_ROOT/$suffix"
+    mkdir -p "$(dirname -- "$destination")"
+    cp "stdlib/$suffix" "$destination"
 done < "$MANIFEST"
 printf '\n;; embedded stdlib tlci source binding probe\n' \
     >> "$MUTATED_ROOT/core_macros.tl"

@@ -26,7 +26,12 @@
     [(rooted.LinuxRootedModeFailure) 11]
     [(rooted.LinuxRootedFlushFailure) 12]
     [(rooted.LinuxRootedCloseFailure) 13]
-    [(rooted.LinuxRootedClosed) 14]))
+    [(rooted.LinuxRootedClosed) 14]
+    [(rooted.LinuxRootedCrossDevice) 15]
+    [(rooted.LinuxRootedDirectoryNotEmpty) 16]
+    [(rooted.LinuxRootedInvalidLength) 17]
+    [(rooted.LinuxRootedLengthMismatch) 18]
+    [(rooted.LinuxRootedReadFailure) 19]))
 
 (define (finish-code [result : rooted.FsLinuxRootedFinishResult]) : i64
   (+

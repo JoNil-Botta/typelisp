@@ -284,16 +284,26 @@ Vec bang place macros as available yet.
   `O_NOFOLLOW` directory check; descendants accept one validated component and
   use only descriptor-relative `mkdirat` plus `openat2` with
   `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS |
-  RESOLVE_NO_XDEV`. Directory and exclusive-create file capabilities are
-  cleanup-owning and expose stable operation and independent close outcomes,
-  never raw errno or descriptors. File finish writes an exact promised byte
-  count with partial-write/EINTR handling, applies `0644` or `0755`, optionally
-  flushes, and closes exactly once. Opaque state uses the active arena;
-  TypeLisp's region checker keeps a capability inside a caller-selected
-  lexical arena until cleanup, while default-arena state lasts for the program.
-  There is deliberately no weaker `openat` fallback for descendant acquisition.
-  This is an internal backend for the future portable rooted adapter, not a
-  general path API.
+  RESOLVE_NO_XDEV`. Directory, exclusive-create file, and verified regular-file
+  read capabilities are cleanup-owning and expose stable operation plus
+  independent close outcomes, never raw errno or descriptors. Bounded reads
+  allocate at most one MiB per call, report positive short reads separately
+  from zero-byte EOF, and support descriptor metadata/exact-length checks. File
+  finish writes an exact promised byte count with partial-write/EINTR handling,
+  applies `0644` or `0755`, optionally flushes, and closes exactly once.
+  Descriptor-relative `renameat` provides atomic replace-existing publication;
+  direct `renameat2(RENAME_NOREPLACE)` provides typed collision detection and
+  fails as unsupported rather than degrading to check-then-rename. Replace acts
+  on the destination entry current at syscall time (including replacing a
+  symlink as an entry); a prior identity check is not a hostile-writer
+  compare-and-swap guarantee. Exact `unlinkat` file/symlink and empty-directory
+  cleanup never traverses descendants. Explicit parent-directory `fsync`
+  distinguishes namespace durability from atomic visibility and file-data
+  durability. Opaque state uses the active arena; TypeLisp's region checker
+  keeps capabilities inside their cleanup scopes. There is deliberately no
+  weaker descendant fallback, `/proc/self/fd` synthesis, recursive deletion,
+  or delete-then-rename. This is an internal backend for the future portable
+  rooted adapter, not a general path API.
 - `ffi.tl`: FFI buffer helpers, including explicit NUL-terminated borrowed
   `bytes` copies into caller-owned `(MutPtr u8)` storage and active-arena
   `(Ptr u8)` C string allocation. Compatibility `String` wrappers borrow their

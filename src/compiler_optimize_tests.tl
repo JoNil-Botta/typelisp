@@ -77934,6 +77934,7 @@
         (opt-test-function (compiler_ir_types.compiler-ir-instr-seq-empty))]
       [structural-session : compiler_intern_state.InternStructuralSessionHandle
         (compiler_intern_state.InternStructuralSessionHandle 0)]
+      [home : arena.Arena (arena.current)]
       (with-arena
         dump-arena
         (let
@@ -77982,12 +77983,26 @@
                     (text_buf.length (& end-owned.debug-state.dump-buf))]
                   [first-half-bytes : i64 (- mid-bytes start-bytes)]
                   [second-half-bytes : i64 (- end-bytes mid-bytes)]
-                  (cond
-                    [(<= first-half-bytes 0) 1]
-                    [(<= mid-length 0) 2]
-                    [(not (= end-length (+ (* mid-length 2) 1))) 3]
-                    [(> second-half-bytes (* first-half-bytes 2)) 4]
-                    [else 42]))))))))))
+                  [result : i64
+                    (cond
+                      [(<= first-half-bytes 0) 1]
+                      [(<= mid-length 0) 2]
+                      [(not (= end-length (+ (* mid-length 2) 1))) 3]
+                      [(> second-half-bytes (* first-half-bytes 2)) 4]
+                      [else 42])]
+                  (in-arena
+                    home
+                    (begin
+                      ;; The batch runner continues with later tests in this
+                      ;; process. Move the global debug state back to the live
+                      ;; enclosing arena before retiring the measurement arena
+                      ;; and its retained chunks.
+                      (compiler_optimize.compiler-opt-debug-configure!
+                        structural-session
+                        false
+                        ""
+                        false)
+                      result)))))))))))
 
 (test
   compiler-optimize-debug-dump-linear-retention

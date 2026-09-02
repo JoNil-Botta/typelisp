@@ -93063,7 +93063,7 @@
                 (compiler_ir_types.CompilerIrValue.I64
                   (if both?
                     8
-                    9))
+                    7))
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrInstr.Branch
                 (compiler_ir_types.CompilerIrValue.Var 13)
@@ -93408,6 +93408,527 @@
     (compiler-optimize-guard-dedup-self-test)
     42
     "IT-2 moves a guarded arm's descriptor pair onto the bypass edge and retires the join's re-derivation, refuses that CSE across a store, an unsummarized call and a call whose row writes a global cell, admits it across a callee proven to write nothing, and retires a conjunct chain only when EVERY conjunct is decided by a dominating branch's taken edge"))
+
+;; --- CK-5: dominating-guard implication --------------------------------------
+;;
+;; The chain below the two dominating facts `0 < n` (the trip test, which is
+;; also the non-negativity the wrap argument needs) and `n < 8`. `mode` picks
+;; what the two conjuncts say: 0 = both WEAKENED by literal offsets in the safe
+;; direction, 1 = the second one weakened in the UNSAFE direction, 2 = both
+;; decided by the table with no fact at all, 3 = mode 0's conjuncts placed on
+;; the dominating branch's FALSE side, where neither fact reaches them.
+(define (opt-guard-imply-chain-cond [mode : i64] [slot : i64]) : compiler_ir_types.CompilerIrInstr
+  (cond
+    [(and (= mode 2) (= slot 0))
+      ;; `n <= n`: equal keys, equal offsets, no fact needed.
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        12
+        (compiler_ir_types.CompilerIrBinOp.Le)
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ast_types.AstType.I64))]
+    [(and (= mode 2) (= slot 1))
+      ;; `n - 4 <= n`: equal keys, offset moved down, `0 < n` above.
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        13
+        (compiler_ir_types.CompilerIrBinOp.Le)
+        (compiler_ir_types.CompilerIrValue.Var 14)
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ast_types.AstType.I64))]
+    [(= slot 0)
+      ;; `n < 9`, weakened from the dominating `n < 8`.
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        12
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ir_types.CompilerIrValue.I64 9)
+        (compiler_ast_types.AstType.I64))]
+    [(= mode 1)
+      ;; `n < 7` is STRONGER than the fact: nothing decides it.
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        13
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ir_types.CompilerIrValue.I64 7)
+        (compiler_ast_types.AstType.I64))]
+    [else
+      ;; `n <= 8`, weakened from `n < 8` across the comparison too.
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        13
+        (compiler_ir_types.CompilerIrBinOp.Le)
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ir_types.CompilerIrValue.I64 8)
+        (compiler_ast_types.AstType.I64))]))
+
+(define (opt-guard-imply-chain-c0 [mode : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "c0")
+      (opt-test-instrs
+        (opt-guard-imply-chain-cond mode 0)
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 12)
+          (compiler_ir_types.compiler-ir-label "c1")
+          (compiler_ir_types.compiler-ir-label "slow"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "c1")
+        (if (= mode 2)
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              14
+              (compiler_ir_types.CompilerIrBinOp.Sub)
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.I64 4)
+              (compiler_ast_types.AstType.I64))
+            (opt-guard-imply-chain-cond mode 1)
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 13)
+              (compiler_ir_types.compiler-ir-label "fast")
+              (compiler_ir_types.compiler-ir-label "slow")))
+          (opt-test-instrs
+            (opt-guard-imply-chain-cond mode 1)
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 13)
+              (compiler_ir_types.compiler-ir-label "fast")
+              (compiler_ir_types.compiler-ir-label "slow")))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "fast")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.I64 1)))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "slow")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 0)))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "exit")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.I64 2)))))
+            (compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-guard-imply-chain-blocks [mode : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          10
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 10)
+          (compiler_ir_types.compiler-ir-label "mid")
+          (compiler_ir_types.compiler-ir-label
+            (if (= mode 3)
+              "c0"
+              "exit")))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "mid")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            11
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.I64 8)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 11)
+            (compiler_ir_types.compiler-ir-label
+              (if (= mode 3)
+                "exit"
+                "c0"))
+            (compiler_ir_types.compiler-ir-label "exit"))))
+      (opt-guard-imply-chain-c0 mode))))
+
+;; The length-family swap: one `&Vec` parameter's length word read TWICE, once
+;; per guard, so the two conjuncts name one value through two different vars.
+;; The first guard states `n < len` and the second `n <= len`, a pair no
+;; structural test can match -- only the implication table decides it. `mode`:
+;; 0 = nothing between the two reads, 1 = a store between them, 2 = a call with
+;; no summary row, 3 = the second guard below a JOIN, where the first guard's
+;; taken edge does not dominate it.
+(define (opt-guard-imply-len-blocks [mode : i64] [callee : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Gep
+          20
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.U8))
+        (compiler_ir_types.CompilerIrInstr.Load
+          21
+          (compiler_ir_types.CompilerIrValue.Var 20)
+          (compiler_ast_types.AstType.DynArray 0))
+        (compiler_ir_types.CompilerIrInstr.Gep
+          22
+          (compiler_ir_types.CompilerIrValue.Var 21)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Load
+          23
+          (compiler_ir_types.CompilerIrValue.Var 22)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          24
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ir_types.CompilerIrValue.Var 23)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 24)
+          (compiler_ir_types.compiler-ir-label
+            (if (= mode 3)
+              "arm"
+              "mid"))
+          (compiler_ir_types.compiler-ir-label
+            (if (= mode 3)
+              "mid"
+              "slow1")))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "arm")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label
+              (if (= mode 3)
+                "mid"
+                "slow1")))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "mid")
+          (opt-test-instrs
+            (opt-guard-dedup-extra mode callee)
+            (compiler_ir_types.CompilerIrInstr.Gep
+              25
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ast_types.AstType.U8))
+            (compiler_ir_types.CompilerIrInstr.Load
+              26
+              (compiler_ir_types.CompilerIrValue.Var 25)
+              (compiler_ast_types.AstType.DynArray 0))
+            (compiler_ir_types.CompilerIrInstr.Gep
+              27
+              (compiler_ir_types.CompilerIrValue.Var 26)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Load
+              28
+              (compiler_ir_types.CompilerIrValue.Var 27)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              29
+              (compiler_ir_types.CompilerIrBinOp.Le)
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.Var 28)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 29)
+              (compiler_ir_types.compiler-ir-label "fast")
+              (compiler_ir_types.compiler-ir-label "slow2"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "fast")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 28)))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "slow1")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.I64 0)))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "slow2")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.I64 3)))))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+;; UNSIGNED literals: `x <u -1` is `x <u 2^64-1`, the weakest bound there is,
+;; and the SIGNED ordering of the two literals says the opposite. The table has
+;; to refuse every unsigned pair whose offsets differ, and this is the pair that
+;; would be wrong if it did not.
+(define (opt-guard-imply-unsigned-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          10
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ir_types.CompilerIrValue.I64 (- 0 1))
+          (compiler_ast_types.AstType.U64))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 10)
+          (compiler_ir_types.compiler-ir-label "c0")
+          (compiler_ir_types.compiler-ir-label "exit"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "c0")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            12
+            (compiler_ir_types.CompilerIrBinOp.Le)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.I64 5)
+            (compiler_ast_types.AstType.U64))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 12)
+            (compiler_ir_types.compiler-ir-label "fast")
+            (compiler_ir_types.compiler-ir-label "slow"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "fast")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.I64 1)))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "slow")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 0)))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "exit")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.I64 2)))))
+            (compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+;; The `Global` OPERAND: a read the IR spells inline, with no var to name it.
+;; Two of them are two reads, so the fact the first states about the cell is
+;; only about the second when nothing between them writes -- the shape
+;; `ssa-env-rollback` has, where the loop body stores the cell it tests.
+;; `mode` reuses the write ladder: 0 = nothing between, 1 = a store, 2 = a call
+;; with no summary row.
+(define (opt-guard-imply-cell-blocks [mode : i64] [callee : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          10
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ir_types.CompilerIrValue.Global (opt-test-symbol "gi_cell"))
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 10)
+          (compiler_ir_types.compiler-ir-label "mid")
+          (compiler_ir_types.compiler-ir-label "slow1"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "mid")
+        (opt-test-instrs
+          (opt-guard-dedup-extra mode callee)
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            11
+            (compiler_ir_types.CompilerIrBinOp.Le)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.Global
+              (opt-test-symbol "gi_cell"))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 11)
+            (compiler_ir_types.compiler-ir-label "fast")
+            (compiler_ir_types.compiler-ir-label "slow2"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "fast")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.I64 1)))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "slow1")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 0)))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "slow2")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.I64 3)))))
+            (compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (compiler-optimize-guard-imply-self-test) : i64
+  (let
+    [callee : i64 (opt-test-symbol "guard_imply_callee")]
+    [weakened : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-dedup-run
+        (opt-guard-dedup-summaries callee false 0)
+        (opt-guard-imply-chain-blocks 0))]
+    [unsafe : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-dedup-run
+        (opt-guard-dedup-summaries callee false 0)
+        (opt-guard-imply-chain-blocks 1))]
+    [factless : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-dedup-run
+        (opt-guard-dedup-summaries callee false 0)
+        (opt-guard-imply-chain-blocks 2))]
+    [undominated : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-dedup-run
+        (opt-guard-dedup-summaries callee false 0)
+        (opt-guard-imply-chain-blocks 3))]
+    [family : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-dedup-run
+        (opt-guard-dedup-summaries callee false 0)
+        (opt-guard-imply-len-blocks 0 callee))]
+    [family-stored : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-dedup-run
+        (opt-guard-dedup-summaries callee false 0)
+        (opt-guard-imply-len-blocks 1 callee))]
+    [family-called : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-dedup-run
+        (opt-guard-dedup-summaries callee false 0)
+        (opt-guard-imply-len-blocks 2 callee))]
+    [family-joined : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-dedup-run
+        (opt-guard-dedup-summaries callee false 0)
+        (opt-guard-imply-len-blocks 3 callee))]
+    [unsigned-pair : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-dedup-run
+        (opt-guard-dedup-summaries callee false 0)
+        (opt-guard-imply-unsigned-blocks))]
+    [cell : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-dedup-run
+        (opt-guard-dedup-summaries callee false 0)
+        (opt-guard-imply-cell-blocks 0 callee))]
+    [cell-stored : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-dedup-run
+        (opt-guard-dedup-summaries callee false 0)
+        (opt-guard-imply-cell-blocks 1 callee))]
+    [cell-called : compiler_ir_types.CompilerIrBlockList
+      (opt-guard-dedup-run
+        (opt-guard-dedup-summaries callee false 0)
+        (opt-guard-imply-cell-blocks 2 callee))]
+    (cond
+      ;; Literal-offset weakening in the direction the comparison allows:
+      ;; `n < 8` decides both `n < 9` and `n <= 8`, so the whole chain goes.
+      [(not
+          (=
+            (opt-guard-dedup-count-literal
+              (compiler_optimize.compiler-opt-global-shared-view weakened))
+            2))
+        1]
+      ;; The other direction is not implied, and all-or-nothing keeps BOTH.
+      [(not
+          (=
+            (opt-guard-dedup-count-literal
+              (compiler_optimize.compiler-opt-global-shared-view unsafe))
+            0))
+        2]
+      ;; Equal keys on the two sides: `n <= n` needs no fact, and `n - 4 <= n`
+      ;; needs only the `0 < n` the dominating trip test states.
+      [(not
+          (=
+            (opt-guard-dedup-count-literal
+              (compiler_optimize.compiler-opt-global-shared-view factless))
+            2))
+        3]
+      ;; The same conjuncts under the dominating branch's FALSE side reach
+      ;; neither fact.
+      [(not
+          (=
+            (opt-guard-dedup-count-literal
+              (compiler_optimize.compiler-opt-global-shared-view undominated))
+            0))
+        4]
+      ;; The length-family swap: two reads of one descriptor word are one key,
+      ;; so `n < len` decides `n <= len` across them.
+      [(not
+          (=
+            (opt-guard-dedup-count-literal
+              (compiler_optimize.compiler-opt-global-shared-view family))
+            1))
+        5]
+      ;; A store between the two reads is a write the key cannot see through.
+      [(not
+          (=
+            (opt-guard-dedup-count-literal
+              (compiler_optimize.compiler-opt-global-shared-view family-stored))
+            0))
+        6]
+      ;; So is a call with no whole-program summary row.
+      [(not
+          (=
+            (opt-guard-dedup-count-literal
+              (compiler_optimize.compiler-opt-global-shared-view family-called))
+            0))
+        7]
+      ;; And a guard below the JOIN is not on the fast edge at all.
+      [(not
+          (=
+            (opt-guard-dedup-count-literal
+              (compiler_optimize.compiler-opt-global-shared-view family-joined))
+            0))
+        8]
+      ;; The unsigned pair whose literal bounds order the wrong way round.
+      [(not
+          (=
+            (opt-guard-dedup-count-literal
+              (compiler_optimize.compiler-opt-global-shared-view unsigned-pair))
+            0))
+        12]
+      ;; A scalar global cell read twice: the fact carries across when nothing
+      ;; between the two reads writes.
+      [(not
+          (=
+            (opt-guard-dedup-count-literal
+              (compiler_optimize.compiler-opt-global-shared-view cell))
+            1))
+        9]
+      ;; A store between them is a write, and the two reads are two values --
+      ;; the `ssa-env-rollback` shape, whose latch test must NOT be decided by
+      ;; its own entry test.
+      [(not
+          (=
+            (opt-guard-dedup-count-literal
+              (compiler_optimize.compiler-opt-global-shared-view cell-stored))
+            0))
+        10]
+      [(not
+          (=
+            (opt-guard-dedup-count-literal
+              (compiler_optimize.compiler-opt-global-shared-view cell-called))
+            0))
+        11]
+      [else 42])))
+
+(test
+  guard-implication-below-fixpoint
+  (test.assert-i64-eq
+    (compiler-optimize-guard-imply-self-test)
+    42
+    "CK-5 retires a versioner guard chain whose every conjunct a dominating fast edge implies -- by literal-offset weakening in the safe direction, by the length-family swap that makes two reads of one descriptor word one key, and by the table's empty fact for a conjunct whose two sides share a key -- while refusing the unsafe offset direction, a chain only one of whose conjuncts is decided, a swap across a store or an unsummarized call, a guard below a join the fast edge does not dominate, and a scalar-cell fact across a store or an unsummarized call -- the `ssa-env-rollback` latch shape -- and an unsigned pair whose literal offsets differ"))
 
 (test
   unroll-cascade-second-group

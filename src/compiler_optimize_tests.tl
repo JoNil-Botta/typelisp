@@ -76196,6 +76196,403 @@
         11]
       [else 42])))
 
+;; --- CK-1: local allocation-shape length-equality families -------------------
+;;
+;; Two spellings are keyed: a bare descriptor a `__tl_make-array` allocated
+;; (level 0, `load (gep d, 1)`) and a Vec box a single-return allocating helper
+;; filled (level 1, `load (gep (load (gep v, 0)), 1)`). Every fixture below runs
+;; the BELOW-THE-FIXPOINT sweep with every whole-program table empty, so the only
+;; thing that can retire a check is the local channel.
+(defstruct OptCkTestSymbols
+  (ctor i64)
+  (writer i64)
+  (reader i64)
+  (host i64))
+
+(define (opt-ck-test-symbols) : OptCkTestSymbols
+  (OptCkTestSymbols
+    (opt-test-symbol "ck_ctor")
+    (opt-test-symbol "ck_writer")
+    (opt-test-symbol "ck_reader")
+    (opt-test-symbol "ck_host")))
+
+;; `ck_writer` writes through parameter 0; `ck_reader` writes nothing at all.
+(define (opt-ck-call-memory [symbols : OptCkTestSymbols]) : opt_i64_i64_map.Map
+  (let
+    [map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
+    (begin
+      (opt_i64_i64_map.insert-ref! (&mut map) symbols.writer 1)
+      (opt_i64_i64_map.insert-ref! (&mut map) symbols.reader 0)
+      map)))
+
+(define (opt-ck-ctors [symbols : OptCkTestSymbols]) : opt_i64_i64_map.Map
+  (compiler_optimize.opt-len-eq-ctors-build
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-le-ctor-function
+        symbols.ctor
+        (compiler_ir_types.CompilerIrValue.Var 0))
+      (compiler_ir_types.compiler-ir-function-seq-empty))
+    (opt_i64_i64_map.with-capacity 8)))
+
+;; `(__tl_make-array T n)` as the lowering emits it: a fresh 16-byte descriptor
+;; whose word 0 takes the data pointer and whose word 1 takes the length.
+;; Uses `first`, `first + 1`, `first + 2`.
+(define (opt-ck-descriptor
+  [first : i64]
+  [length : compiler_ir_types.CompilerIrValue]
+  [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instr-seq-prepend
+    (opt-le-alloc16 first)
+    (opt-le-word-store
+      (+ first 1)
+      (compiler_ir_types.CompilerIrValue.Var first)
+      0
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (opt-le-word-store
+        (+ first 2)
+        (compiler_ir_types.CompilerIrValue.Var first)
+        1
+        length
+        tail))))
+
+;; `load (gep base, 1)`: a descriptor's own length word. Uses `first` and
+;; `first + 1`; the loaded var is `first + 1`.
+(define (opt-ck-length-load
+  [first : i64]
+  [base : compiler_ir_types.CompilerIrValue]
+  [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instr-seq-prepend
+    (compiler_ir_types.CompilerIrInstr.Gep
+      first
+      base
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))
+    (opt-test-instr-seq-prepend
+      (compiler_ir_types.CompilerIrInstr.Load
+        (+ first 1)
+        (compiler_ir_types.CompilerIrValue.Var first)
+        (compiler_ast_types.AstType.I64))
+      tail)))
+
+;; `bounds_check param0, %len`.
+(define (opt-ck-check
+  [len-var : i64]
+  [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instr-seq-prepend
+    (compiler_ir_types.CompilerIrInstr.BoundsCheck
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var len-var)
+      0)
+    tail))
+
+(define (opt-ck-call-instr
+  [callee : i64]
+  [arg : i64]
+  [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instr-seq-prepend
+    (compiler_ir_types.CompilerIrInstr.Call
+      30
+      callee
+      (compiler_ir_types.CompilerIrCallArgs.One
+        (compiler_ir_types.CompilerIrValue.Var arg))
+      (compiler_ast_types.AstType.I64))
+    tail))
+
+;; Two `__tl_make-array` descriptors and one index checked against each length.
+;; `callee` is 0 for no call at all, otherwise the symbol the second descriptor
+;; is handed to.
+(define (opt-ck-twin-blocks
+  [length-a : compiler_ir_types.CompilerIrValue]
+  [length-b : compiler_ir_types.CompilerIrValue]
+  [callee : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-ck-descriptor
+        1
+        length-a
+        (opt-ck-descriptor 4 length-b (opt-ck-twin-tail callee))))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+(define (opt-ck-twin-tail [callee : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (let
+    [checks : compiler_ir_types.CompilerIrInstrSeq
+      (opt-ck-length-load
+        7
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (opt-ck-check
+          8
+          (opt-ck-length-load
+            9
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (opt-ck-check 10 (opt-mr-return-zero)))))]
+    (if (= callee 0)
+      checks
+      (opt-ck-call-instr callee 4 checks))))
+
+;; The constructor shape: two `__sret` buffers filled by the same single-return
+;; allocating helper, then the two-level length spelling on each box.
+(define (opt-ck-ctor-blocks
+  [symbols : OptCkTestSymbols]
+  [length-a : compiler_ir_types.CompilerIrValue]
+  [length-b : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-ck-ctor-call
+        symbols.ctor
+        1
+        length-a
+        (opt-ck-ctor-call
+          symbols.ctor
+          4
+          length-b
+          (opt-fz-chain-instrs
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            7
+            (opt-ck-check
+              10
+              (opt-fz-chain-instrs
+                (compiler_ir_types.CompilerIrValue.Var 6)
+                11
+                (opt-ck-check 14 (opt-mr-return-zero))))))))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+;; `alloc` / `addr_of` / `call ctor(length, sret)`: uses `first`, `first + 1`
+;; and `first + 2`, the last being the box the call defines.
+(define (opt-ck-ctor-call
+  [ctor : i64]
+  [first : i64]
+  [length : compiler_ir_types.CompilerIrValue]
+  [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instr-seq-prepend
+    (compiler_ir_types.CompilerIrInstr.Alloc
+      first
+      (compiler_ast_types.AstType.I64))
+    (opt-test-instr-seq-prepend
+      (compiler_ir_types.CompilerIrInstr.AddrOf (+ first 1) first)
+      (opt-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.Call
+          (+ first 2)
+          ctor
+          (compiler_ir_types.CompilerIrCallArgs.Two
+            length
+            (compiler_ir_types.CompilerIrValue.Var (+ first 1)))
+          (compiler_ast_types.AstType.I64))
+        tail))))
+
+;; A diamond whose join phis pick one of two twin PAIRS. The pairs carry
+;; different lengths, so no single family covers either phi: only the pairwise
+;; rule can decide them, and only when both input pairs resolve.
+(define (opt-ck-phi-blocks [second-b : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-ck-descriptor
+        1
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (opt-ck-descriptor
+          4
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (opt-ck-descriptor
+            7
+            (compiler_ir_types.CompilerIrValue.I64 7)
+            (opt-ck-descriptor
+              10
+              second-b
+              (opt-test-instr-seq-prepend
+                (compiler_ir_types.CompilerIrInstr.BinOp
+                  13
+                  (compiler_ir_types.CompilerIrBinOp.Lt)
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (compiler_ir_types.CompilerIrValue.I64 5)
+                  (compiler_ast_types.AstType.I64))
+                (opt-test-instr-seq-prepend
+                  (compiler_ir_types.CompilerIrInstr.Branch
+                    (compiler_ir_types.CompilerIrValue.Var 13)
+                    (compiler_ir_types.compiler-ir-label "then")
+                    (compiler_ir_types.compiler-ir-label "else"))
+                  (compiler_ir_types.compiler-ir-instr-seq-empty))))))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "then")
+        (opt-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "join"))
+          (compiler_ir_types.compiler-ir-instr-seq-empty)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "else")
+          (opt-test-instr-seq-prepend
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "join"))
+            (compiler_ir_types.compiler-ir-instr-seq-empty)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "join")
+            (opt-test-instr-seq-prepend
+              (opt-ck-phi 14 1 7)
+              (opt-test-instr-seq-prepend
+                (opt-ck-phi 15 4 10)
+                (opt-ck-length-load
+                  16
+                  (compiler_ir_types.CompilerIrValue.Var 14)
+                  (opt-ck-check
+                    17
+                    (opt-ck-length-load
+                      18
+                      (compiler_ir_types.CompilerIrValue.Var 15)
+                      (opt-ck-check 19 (opt-mr-return-zero))))))))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-ck-phi [dst : i64] [from-then : i64] [from-else : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Phi
+    dst
+    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+      (compiler_ir_types.CompilerIrValue.Var from-then)
+      (compiler_ir_types.compiler-ir-label "then")
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+        (compiler_ir_types.CompilerIrValue.Var from-else)
+        (compiler_ir_types.compiler-ir-label "else")
+        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+    (compiler_ast_types.AstType.I64)))
+
+;; The below-the-fixpoint sweep with every whole-program table empty except the
+;; constructor summaries, so nothing but CK-1 can retire a check.
+(define (opt-ck-sweep-checks
+  [symbols : OptCkTestSymbols]
+  [ctors : opt_i64_i64_map.Map]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (compiler_optimize.opt-count-bounds-blocks
+    (compiler_optimize.opt-function-blocks
+      (compiler_optimize.opt-len-eq-late-sweep-with-locals
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt_i64_i64_map.with-capacity 1)
+        (opt_i64_i64_map.with-capacity 1)
+        (opt_i64_i64_map.with-capacity 1)
+        (opt_i64_i64_map.with-capacity 1)
+        (opt_i64_i64_map.with-capacity 1)
+        (compiler_optimize.opt-ck-locals-build
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          ctors
+          (opt-ck-call-memory
+            (compiler_optimize.compiler-opt-global-shared-view symbols))
+          64
+          (compiler_optimize.compiler-opt-global-shared-view blocks))
+        (compiler_optimize.opt-cfg-context-build
+          (compiler_optimize.compiler-opt-global-shared-view blocks))
+        (opt-le-blocks-function symbols.host blocks)))))
+
+(define (compiler-optimize-ck-local-len-eq-self-test) : i64
+  (let
+    [symbols : OptCkTestSymbols (opt-ck-test-symbols)]
+    [ctors : opt_i64_i64_map.Map
+      (opt-ck-ctors (compiler_optimize.compiler-opt-global-shared-view symbols))]
+    [empty-ctors : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
+    ;; two `__tl_make-array` descriptors with the same length var
+    [twin : i64
+      (opt-ck-sweep-checks
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        (compiler_optimize.compiler-opt-global-shared-view empty-ctors)
+        (opt-ck-twin-blocks
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          0))]
+    ;; ...and with different lengths
+    [unrelated : i64
+      (opt-ck-sweep-checks
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        (compiler_optimize.compiler-opt-global-shared-view empty-ctors)
+        (opt-ck-twin-blocks
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 9)
+          0))]
+    ;; the second descriptor handed to a callee that writes through it
+    [written : i64
+      (opt-ck-sweep-checks
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        (compiler_optimize.compiler-opt-global-shared-view empty-ctors)
+        (opt-ck-twin-blocks
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          symbols.writer))]
+    ;; ...and to one whose summary proves it writes nothing
+    [read-only : i64
+      (opt-ck-sweep-checks
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        (compiler_optimize.compiler-opt-global-shared-view empty-ctors)
+        (opt-ck-twin-blocks
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          symbols.reader))]
+    ;; ...and to a callee with no summary at all
+    [unsummarised : i64
+      (opt-ck-sweep-checks
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        (compiler_optimize.compiler-opt-global-shared-view empty-ctors)
+        (opt-ck-twin-blocks
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          symbols.host))]
+    ;; through the single-return allocating helper
+    [ctor-twin : i64
+      (opt-ck-sweep-checks
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        (compiler_optimize.compiler-opt-global-shared-view ctors)
+        (opt-ck-ctor-blocks
+          (compiler_optimize.compiler-opt-global-shared-view symbols)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.Var 0)))]
+    ;; ...whose summary the program does not carry
+    [ctor-unknown : i64
+      (opt-ck-sweep-checks
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        (compiler_optimize.compiler-opt-global-shared-view empty-ctors)
+        (opt-ck-ctor-blocks
+          (compiler_optimize.compiler-opt-global-shared-view symbols)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.Var 0)))]
+    ;; ...and two helper calls with different lengths
+    [ctor-unrelated : i64
+      (opt-ck-sweep-checks
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        (compiler_optimize.compiler-opt-global-shared-view ctors)
+        (opt-ck-ctor-blocks
+          (compiler_optimize.compiler-opt-global-shared-view symbols)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 9)))]
+    ;; a phi of two twin pairs, both of which resolve
+    [phi-pairs : i64
+      (opt-ck-sweep-checks
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        (compiler_optimize.compiler-opt-global-shared-view empty-ctors)
+        (opt-ck-phi-blocks (compiler_ir_types.CompilerIrValue.I64 7)))]
+    ;; ...with one input pair that does not
+    [phi-mixed : i64
+      (opt-ck-sweep-checks
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        (compiler_optimize.compiler-opt-global-shared-view empty-ctors)
+        (opt-ck-phi-blocks (compiler_ir_types.CompilerIrValue.I64 9)))]
+    (cond
+      ;; --- the class itself ---
+      ;; two local arrays allocated with one length: the SECOND check goes, the
+      ;; first stays and aborts at its own site
+      [(not (= twin 1)) 1]
+      [(not (= unrelated 2)) 2]
+      ;; --- clause (3): nothing else may reach the object ---
+      [(not (= written 2)) 3]
+      [(not (= read-only 1)) 4]
+      [(not (= unsummarised 2)) 5]
+      ;; --- the single-return allocating helper ---
+      [(not (= ctor-twin 1)) 6]
+      [(not (= ctor-unknown 2)) 7]
+      [(not (= ctor-unrelated 2)) 8]
+      ;; --- phis, pairwise and fail-closed ---
+      [(not (= phi-pairs 1)) 9]
+      [(not (= phi-mixed 2)) 10]
+      [else 42])))
+
 (define (compiler-optimize-len-eq-families-self-test) : i64
   (let
     [symbols : OptLeTestSymbols (opt-le-test-symbols)]
@@ -79379,6 +79776,13 @@
     (compiler-optimize-licm-global-header-hoist-self-test)
     42
     "the descriptor HANDLE a global's inline cell holds leaves a loop that calls an unknown callee every trip, and the length load behind it stays inside because the descriptor proofs still refuse that callee -- while an element-only callee lets the length load follow it out; a callee that writes that global's storage through a mutable reference parameter refuses the chain, the same callee leaves a different global's chain hoistable, and an indirect call or an absent storage table refuses it"))
+
+(test
+  ck-local-allocation-shape-length-equality
+  (test.assert-i64-eq
+    (compiler-optimize-ck-local-len-eq-self-test)
+    42
+    "two arrays allocated in one function with GVN-equal length operands are proven length-equal, so a dominating check on one retires the second check of the pair while the first stays; different lengths, a descriptor handed to a callee that writes through that parameter, and a callee with no memory summary all refuse it, while a callee proven to write nothing does not; the same holds through a single-return allocating helper named by a constructor summary, and a phi is decided pairwise -- both input pairs resolving retires the check, one that does not refuses it"))
 
 (test
   len-eq-static-length-equality-families
@@ -88459,7 +88863,8 @@
         empty.arg-global
         (compiler_optimize.OptGlobalObjModRef true obj-index obj-writes)
         empty.len-reset
-        empty.content))))
+        empty.content
+        empty.len-ctors))))
 
 (define (opt-guard-sink-run
   [name : String]

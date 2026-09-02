@@ -35,11 +35,11 @@ benchmark/typelisp/peephole_lines	429845686
 benchmark/c-scalar/peephole_lines	442194744
 benchmark/typelisp/read_sexpr	749303042
 benchmark/c-scalar/read_sexpr	598159391
-benchmark/typelisp/callgraph_scc	691597554
+benchmark/typelisp/callgraph_scc	673288234
 benchmark/c-scalar/callgraph_scc	341685484
 benchmark/typelisp/ssa_construct	809576611
 benchmark/c-scalar/ssa_construct	448154599
-benchmark/typelisp/sccp_lattice	753702566
+benchmark/typelisp/sccp_lattice	749808678
 benchmark/c-scalar/sccp_lattice	400603744
 benchmark/typelisp/regalloc_greedy	812425616
 benchmark/c-scalar/regalloc_greedy	404020977

@@ -76918,6 +76918,445 @@
       [(not (= reset 2)) 23]
       [else 42])))
 
+;; --- LGA-1: literal-global argument specialization -----------------------------
+;;
+;; One program carrying every shape the census has to tell apart: a helper two
+;; sites hand the SAME global (specialized -- the parameter goes and its uses
+;; become `Global @g`), one two sites disagree about, one whose address the
+;; program takes, one that reaches a `(set! g ...)` through a direct callee, a
+;; `(&mut g)` helper that writes through the parameter (specialized, because
+;; IAG-2's row already models the write), and one that stores the parameter into
+;; memory. The level gate is checked with the same program.
+(defstruct OptLgaTestSymbols
+  (a i64)
+  (b i64)
+  (c i64)
+  (helper i64)
+  (helper-one i64)
+  (helper-two i64)
+  (mixed i64)
+  (mixed-caller i64)
+  (taken i64)
+  (taken-caller i64)
+  (rebind i64)
+  (rebind-caller i64)
+  (setter i64)
+  (mut i64)
+  (mut-caller i64)
+  (escape i64)
+  (escape-caller i64))
+
+(define (opt-lga-test-symbols) : OptLgaTestSymbols
+  (OptLgaTestSymbols
+    (opt-test-symbol "lga_a")
+    (opt-test-symbol "lga_b")
+    (opt-test-symbol "lga_c")
+    (opt-test-symbol "lga_helper")
+    (opt-test-symbol "lga_helper_one")
+    (opt-test-symbol "lga_helper_two")
+    (opt-test-symbol "lga_mixed")
+    (opt-test-symbol "lga_mixed_caller")
+    (opt-test-symbol "lga_taken")
+    (opt-test-symbol "lga_taken_caller")
+    (opt-test-symbol "lga_rebind")
+    (opt-test-symbol "lga_rebind_caller")
+    (opt-test-symbol "lga_setter")
+    (opt-test-symbol "lga_mut")
+    (opt-test-symbol "lga_mut_caller")
+    (opt-test-symbol "lga_escape")
+    (opt-test-symbol "lga_escape_caller")))
+
+(define (opt-lga-test-globals [symbols : OptLgaTestSymbols]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 3)]
+    (begin
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.a
+        (compiler_ast_types.AstType.DynArray 0)
+        (compiler_ir_types.CompilerIrValue.I64 1))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.b
+        (compiler_ast_types.AstType.DynArray 0)
+        (compiler_ir_types.CompilerIrValue.I64 2))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.c
+        (compiler_ast_types.AstType.DynArray 0)
+        (compiler_ir_types.CompilerIrValue.I64 3))
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+
+;; `load %1, %0` -- one dereference of the reference parameter and nothing else.
+(define (opt-lga-deref-function [name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    name
+    (opt-og-ref-param true)
+    (compiler_ast_types.AstType.I64)
+    8
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Load
+            1
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ast_types.AstType.I64))
+          (opt-mr-return-zero)))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; The same dereference, behind a direct call to a function that rebinds a cell.
+(define (opt-lga-rebind-function [name : i64] [callee : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    name
+    (opt-og-ref-param true)
+    (compiler_ast_types.AstType.I64)
+    8
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Call
+            9
+            callee
+            compiler_ir_types.CompilerIrCallArgs.Nil
+            (compiler_ast_types.AstType.I64))
+          (opt-test-instr-seq-prepend
+            (compiler_ir_types.CompilerIrInstr.Load
+              1
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ast_types.AstType.I64))
+            (opt-mr-return-zero))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; `store_ptr %5, %0` -- the parameter itself is the value STORED, which is the
+;; one position IAG-2's escape check does not license.
+(define (opt-lga-escape-function [name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    name
+    (opt-og-ref-param true)
+    (compiler_ast_types.AstType.I64)
+    8
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.StorePtr
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ast_types.AstType.U64))
+          (opt-mr-return-zero)))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; Two sites in one caller, the second passing a local.
+(define (opt-lga-mixed-caller-function [symbols : OptLgaTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-mr-one-block-function
+    symbols.mixed-caller
+    (opt-test-instr-seq-prepend
+      (opt-og-one-arg-call
+        20
+        symbols.mixed
+        (compiler_ir_types.CompilerIrValue.Global symbols.a))
+      (opt-test-instr-seq-prepend
+        (opt-og-one-arg-call
+          21
+          symbols.mixed
+          (compiler_ir_types.CompilerIrValue.Var 5))
+        (opt-mr-return-zero)))))
+
+;; One site, plus the callee's own ADDRESS.
+(define (opt-lga-taken-caller-function [symbols : OptLgaTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-mr-one-block-function
+    symbols.taken-caller
+    (opt-test-instr-seq-prepend
+      (opt-og-one-arg-call
+        22
+        symbols.taken
+        (compiler_ir_types.CompilerIrValue.Global symbols.a))
+      (opt-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.Mov
+          23
+          (compiler_ir_types.CompilerIrValue.Function symbols.taken)
+          (compiler_ast_types.AstType.U64))
+        (opt-mr-return-zero)))))
+
+(define (opt-lga-test-functions [symbols : OptLgaTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-lga-deref-function symbols.helper)
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-og-caller symbols.helper-one 10 symbols.helper symbols.a)
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-og-caller symbols.helper-two 11 symbols.helper symbols.a)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-lga-deref-function symbols.mixed)
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-lga-mixed-caller-function symbols)
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (opt-lga-deref-function symbols.taken)
+              (compiler_ir_types.compiler-ir-function-seq-prepend
+                (opt-lga-taken-caller-function symbols)
+                (compiler_ir_types.compiler-ir-function-seq-prepend
+                  (opt-lga-rebind-function symbols.rebind symbols.setter)
+                  (compiler_ir_types.compiler-ir-function-seq-prepend
+                    (opt-og-caller
+                      symbols.rebind-caller
+                      24
+                      symbols.rebind
+                      symbols.b)
+                    (compiler_ir_types.compiler-ir-function-seq-prepend
+                      (opt-mr-write-function symbols.setter symbols.b)
+                      (compiler_ir_types.compiler-ir-function-seq-prepend
+                        (opt-og-param-writer symbols.mut false)
+                        (compiler_ir_types.compiler-ir-function-seq-prepend
+                          (opt-og-caller
+                            symbols.mut-caller
+                            25
+                            symbols.mut
+                            symbols.c)
+                          (compiler_ir_types.compiler-ir-function-seq-prepend
+                            (opt-lga-escape-function symbols.escape)
+                            (compiler_ir_types.compiler-ir-function-seq-prepend
+                              (opt-og-caller
+                                symbols.escape-caller
+                                26
+                                symbols.escape
+                                symbols.a)
+                              (compiler_ir_types.compiler-ir-function-seq-empty))))))))))))))))
+
+(define (opt-lga-specialized [symbols : OptLgaTestSymbols] [level : i64]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_optimize.opt-lga-specialize-program
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-lga-test-globals symbols)
+    (compiler_ir_types.compiler-ir-extern-seq-empty)
+    (opt-lga-test-functions symbols)
+    level))
+
+(define (opt-lga-find
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : i64]
+  [index : i64]) : i64
+  (if (>= index functions.len)
+    (- 0 1)
+    (if (match (compiler_optimize.compiler-opt-global-array-element-shared-view
+      functions.slots
+      index)
+      [(compiler_ir_types.CompilerIrFunction.Function found _ _ _ _)
+        (= (compiler_ir_types.compiler-ir-symbol-id found) name)])
+      index
+      (opt-lga-find functions name (+ index 1)))))
+
+;; The surviving parameter count of a function, or -1 when it is not there.
+(define (opt-lga-params
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : i64]) : i64
+  (let
+    [index : i64
+      (opt-lga-find
+        (compiler_optimize.compiler-opt-global-shared-view functions)
+        name
+        0)]
+    (if (< index 0)
+      (- 0 1)
+      (match (compiler_optimize.compiler-opt-global-array-element-shared-view
+        functions.slots
+        index)
+        [(compiler_ir_types.CompilerIrFunction.Function _ params _ _ _)
+          params.len]))))
+
+;; The first instruction of a function's entry block, or a `Jump` sentinel no
+;; fixture builds.
+(define (opt-lga-first-instr
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : i64]) : compiler_ir_types.CompilerIrInstr
+  (let
+    [index : i64
+      (opt-lga-find
+        (compiler_optimize.compiler-opt-global-shared-view functions)
+        name
+        0)]
+    (if (< index 0)
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "missing"))
+      (match (compiler_optimize.compiler-opt-global-array-element-shared-view
+        functions.slots
+        index)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (match blocks
+            [(compiler_ir_types.CompilerIrBlockList.Cons block _)
+              (match block
+                [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+                  (if (<
+                    (compiler_ir_types.compiler-ir-instr-seq-count instrs)
+                    1)
+                    (compiler_ir_types.CompilerIrInstr.Jump
+                      (compiler_ir_types.compiler-ir-label "missing"))
+                    (compiler_ir_types.compiler-ir-instr-seq-ref instrs 0))])]
+            [_
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "missing"))])]))))
+
+;; The global symbol id the first instruction's POINTER operand names, or -1.
+(define (opt-lga-rooted-global
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : i64]) : i64
+  (match (opt-lga-first-instr functions name)
+    [(compiler_ir_types.CompilerIrInstr.Load _ src _)
+      (match src
+        [(compiler_ir_types.CompilerIrValue.Global cell)
+          (compiler_ir_types.compiler-ir-symbol-id cell)]
+        [_ (- 0 1)])]
+    [(compiler_ir_types.CompilerIrInstr.StorePtr ptr _ _)
+      (match ptr
+        [(compiler_ir_types.CompilerIrValue.Global cell)
+          (compiler_ir_types.compiler-ir-symbol-id cell)]
+        [_ (- 0 1)])]
+    [_ (- 0 1)]))
+
+;; The argument count of the first `Call` in a caller's entry block, or -1.
+(define (opt-lga-site-args
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : i64]) : i64
+  (match (opt-lga-first-instr functions name)
+    [(compiler_ir_types.CompilerIrInstr.Call _ _ args _)
+      (compiler_optimize.opt-arg-global-args-count args)]
+    [_ (- 0 1)]))
+
+(define (compiler-optimize-lga-specialization-self-test) : i64
+  (let
+    [symbols : OptLgaTestSymbols (opt-lga-test-symbols)]
+    [out : compiler_ir_types.CompilerIrFunctionSeq
+      (opt-lga-specialized
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        2)]
+    [level1 : compiler_ir_types.CompilerIrFunctionSeq
+      (opt-lga-specialized
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        1)]
+    (cond
+      ;; --- the admission ---
+      ;; every site passes @lga_a: the parameter goes and the dereference is
+      ;; rooted at the global instead
+      [(not
+          (=
+            (opt-lga-params
+              (compiler_optimize.compiler-opt-global-shared-view out)
+              symbols.helper)
+            0))
+        1]
+      [(not
+          (=
+            (opt-lga-rooted-global
+              (compiler_optimize.compiler-opt-global-shared-view out)
+              symbols.helper)
+            symbols.a))
+        2]
+      ;; and both sites drop the argument
+      [(not
+          (=
+            (opt-lga-site-args
+              (compiler_optimize.compiler-opt-global-shared-view out)
+              symbols.helper-one)
+            0))
+        3]
+      [(not
+          (=
+            (opt-lga-site-args
+              (compiler_optimize.compiler-opt-global-shared-view out)
+              symbols.helper-two)
+            0))
+        4]
+      ;; a `(&mut g)` helper that writes THROUGH the parameter is admitted, and
+      ;; the write lands on the global's own storage
+      [(not
+          (=
+            (opt-lga-params
+              (compiler_optimize.compiler-opt-global-shared-view out)
+              symbols.mut)
+            0))
+        5]
+      [(not
+          (=
+            (opt-lga-rooted-global
+              (compiler_optimize.compiler-opt-global-shared-view out)
+              symbols.mut)
+            symbols.c))
+        6]
+      [(not
+          (=
+            (opt-lga-site-args
+              (compiler_optimize.compiler-opt-global-shared-view out)
+              symbols.mut-caller)
+            0))
+        7]
+      ;; --- the refusals, one clause each ---
+      ;; two sites disagreeing about the position
+      [(not
+          (=
+            (opt-lga-params
+              (compiler_optimize.compiler-opt-global-shared-view out)
+              symbols.mixed)
+            1))
+        10]
+      [(not
+          (=
+            (opt-lga-site-args
+              (compiler_optimize.compiler-opt-global-shared-view out)
+              symbols.mixed-caller)
+            1))
+        11]
+      ;; a callee whose address the program takes can be entered without a site
+      [(not
+          (=
+            (opt-lga-params
+              (compiler_optimize.compiler-opt-global-shared-view out)
+              symbols.taken)
+            1))
+        12]
+      ;; a callee that reaches `(set! lga_b ...)` through a direct callee could
+      ;; read a different cell after the rebind than the caller marshalled
+      [(not
+          (=
+            (opt-lga-params
+              (compiler_optimize.compiler-opt-global-shared-view out)
+              symbols.rebind)
+            1))
+        13]
+      [(not
+          (=
+            (opt-lga-site-args
+              (compiler_optimize.compiler-opt-global-shared-view out)
+              symbols.rebind-caller)
+            1))
+        14]
+      ;; a parameter STORED into memory escapes the positions the storage
+      ;; analysis follows
+      [(not
+          (=
+            (opt-lga-params
+              (compiler_optimize.compiler-opt-global-shared-view out)
+              symbols.escape)
+            1))
+        15]
+      ;; --- the level gate ---
+      ;; every whole-program summary this pass rests on is level-2 only, so
+      ;; below it the program comes out untouched
+      [(not
+          (=
+            (opt-lga-params
+              (compiler_optimize.compiler-opt-global-shared-view level1)
+              symbols.helper)
+            1))
+        20]
+      [(not
+          (=
+            (opt-lga-site-args
+              (compiler_optimize.compiler-opt-global-shared-view level1)
+              symbols.helper-one)
+            1))
+        21]
+      [else 42])))
+
 ;; --- P-E: the header phi an exiting arm leaves alone --------------------------
 ;;
 ;; intern_table's probe loop reassigns `capacity` only on the MISS arm, and that
@@ -78954,6 +79393,13 @@
     (compiler-optimize-arg-global-facts-self-test)
     42
     "a function whose address is never taken and whose every direct call site passes the same global at a reference parameter position carries that identity as a whole-program fact, so two bounds checks of one index against two members of one length-equality family collapse to one INSIDE the callee, where no global is named at all; a second site passing a local kills that position only, an address-taken callee and a callee nothing calls carry nothing, a self-recursive site passing the parameter back refuses while one passing the global through does not, a callee named by a call form whose arguments are not read positionally is refused outright, and a body that redefines the parameter's own var is refused outright"))
+
+(test
+  lga-literal-global-argument-specialization
+  (test.assert-i64-eq
+    (compiler-optimize-lga-specialization-self-test)
+    42
+    "an internal helper whose every direct call site passes the same global at a reference parameter position loses that parameter, its uses are rewritten to the global itself, and every site drops the argument -- including a `(&mut g)` helper that writes through the parameter, whose write IAG-2's storage row already attributes to that global; two sites disagreeing about the position, a callee whose address the program takes, a callee that reaches a rebind of the cell through a direct callee, and a parameter stored into memory are each refused, and below opt level 2 the program comes out untouched"))
 
 (test
   lp-loop-postcondition-check-memo

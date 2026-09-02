@@ -143899,6 +143899,1284 @@
       (compiler-opt-global-shared-view cell.addr-taken)
       capacity)))
 
+;; --- LGA-1: literal-global argument specialization ---------------------------
+;;
+;; The phase-5 call-boundary packet named CB-1. The `opt-cb-*` prefix already
+;; belongs to the earlier content-bounds packet of that name, so this family is
+;; spelled `opt-lga-`.
+;;
+;; WHAT IT DOES. An internal function F whose EVERY direct call site passes the
+;; same `CompilerIrValue.Global g` for a `(& g T)` / `(&mut g T)` parameter p
+;; does not need p: inside F, `Global g` denotes exactly the address the caller
+;; marshalled. Substituting `Global g` for p's uses and dropping the argument at
+;; every site is IPSCCP's constant-argument propagation followed by dead
+;; argument elimination. No code MOVES, so unlike absorbing F into its callers
+;; it cannot raise register pressure at the site. The win is on both sides of
+;; the boundary: the caller stops materialising `leaq g(%rip)` into an argument
+;; register at every call, and the callee's `p -> slots -> len/data` descriptor
+;; chains become GLOBAL-ROOTED (`@g -> slots -> len/data`), which is the form
+;; IAG-1 lowers to a link-time constant address, IAG-2 admits to the entry, and
+;; MF/load-CSE hoists and reuses. GAP-1's per-parameter identity facts become
+;; ordinary intra-function facts for the same reason.
+;;
+;; WHERE IT RUNS. Once, BELOW the level-2 per-function pipeline: on the final
+;; pruned function sequence, immediately before the late pass list. It is not in
+;; the inline stage's slot, and the reason is measured.
+;;
+;; Placed before the summaries (the packet's first choice), the specialized
+;; operands are visible to the pipeline itself, and cfg_domloops REGRESSES by
+;; +36,728,422 Ir (551,773,899 -> 588,502,321). The call boundary still pays
+;; what it should -- cfg-function alone drops 7,367,556 Ir -- but every helper
+;; loses more than that. `--trace-passes` on `cfg-idom-iterate` names the
+;; mechanism exactly: with global-rooted lengths the round-1 `bounds_dom_le`
+;; slot retires four more checks (243 -> 238 instructions instead of 243 ->
+;; 242), which empties the derivation set the round-2 `bce_version` reads, and
+;; the versioner then clones 21 blocks instead of 33 (35 -> 56 instead of 35 ->
+;; 68). The inner loop's guard, hoisted to the function entry in the versioned
+;; form, goes back to running once per OUTER iteration. That is GAP-1's recorded
+;; interaction ("a round-1 retirement starving round-2 bce_version, +5.8M on
+;; cfg") reached through operands rather than through facts, and it is why
+;; GAP-1's own consumer sits below the fixpoint.
+;;
+;; Below the pipeline the same 47 parameters are specialized, every in-pipeline
+;; decision is taken on the operands the pipeline had before, and cfg_domloops
+;; drops 13,136,520 Ir (551,773,899 -> 538,637,379) with all ten of its
+;; functions improving. The census reads the same shapes there: no pipeline pass
+;; changes a signature or rewrites a `CompilerIrValue.Global` argument into a
+;; var, so the sites the walk needs are still the ones the front end lowered.
+;; The late pass list then runs over the specialized bodies, which is where the
+;; global-rooted chains get their cleanup.
+;;
+;; THE GATE. Both tables this pass rests on -- P18's cell mod-ref and IAG-2's
+;; storage-write table -- decline above `opt-loop-bce-summary-function-limit`
+;; and outside the empty-address-taken precondition, so above that limit every
+;; candidate would be refused anyway. Declining there up front keeps the census
+;; free for a big program instead of walking it to reach the same answer.
+;;
+;; WHY IT IS SOUND. `Global g` READS g's cell (`movq g(%rip)`; after IAG-1's
+;; inline-storage classification it is a `leaq` of a link-time constant, which
+;; is strictly stronger). The caller evaluated exactly that value at the call
+;; site, so the substitution is exact as long as no execution between the site
+;; and a use inside F can REBIND the cell. Four refusals close that:
+;;
+;;   (1) g's address is never taken -- it is not in the cell summary's
+;;       `addr-taken` set (opt-global-cell-addr-taken-fill: the globals a
+;;       `CompilerIrValue.GlobalAddr` operand names and no `Store` targets). A
+;;       pointer to the cell is the only way a `StorePtr` could write it without
+;;       a `Store g`. P18's table rests on the same fact and refuses to build at
+;;       all while that set is non-empty, so reaching the census already implies
+;;       it; the clause is kept per-global so the pass stays fail-closed if that
+;;       precondition is ever relaxed.
+;;   (2) P18's cell mod-ref row for F does not name g. That row is transitive
+;;       over direct call edges and answers "any cell" for an indirect one, so
+;;       it proves nothing F can reach performs `(set! g ...)`. A program
+;;       without the table refuses every candidate.
+;;   (3) p does not escape: every use of p inside F sits in a position IAG-2's
+;;       own cell-address escape check licenses (opt-lga-allowed-use, which
+;;       mirrors opt-global-obj-allowed-use minus `AddrOf`, whose operand is a
+;;       var slot rather than a value and so cannot carry a substitution). A
+;;       parameter that is STORED into memory, returned, handed to an indirect
+;;       call or used as an operand of anything the storage analysis does not
+;;       model is refused rather than re-rooted, and the same list is what
+;;       bounds the rewrite below to the ten instruction forms that can hold
+;;       the substituted operand.
+;;   (4) mixed sites, indirect activations and the shapes the positional walk
+;;       cannot read are already refused by GAP-1's census, which this pass
+;;       reuses rather than recomputing: an address-taken F, an F the program
+;;       can enter without a call site (the entry, a provided extern, a global's
+;;       hidden initializer), a `CallCAbiStoreResult` or `SpmdCall` naming F, an
+;;       argument count that does not match F's parameter list, and any position
+;;       two sites disagree about -- including a recursive edge that passes
+;;       something other than `@g`.
+;;
+;; The startup sequence's one non-IR cell write (`movq %rax, g(%rip)` after
+;; `call __global_init_g`, compiler_backend.tl) runs before `main`, hence before
+;; any activation of F that could observe a difference, and it writes the same
+;; cell the caller would have read; it is not a rebind this pass must exclude.
+;;
+;; A parameter F WRITES THROUGH is additionally required to be one IAG-2 already
+;; models as a write of g's own storage: its row for F must name g. Writing
+;; through p is exactly what the caller licensed, so this is a consistency
+;; condition rather than a soundness one -- if the storage table does not carry
+;; the write, the analysis and the code disagree about it, and this pass refuses
+;; rather than re-rooting the operand under a table that does not model it. The
+;; question is asked of the WRITE, not of the declared mutability: a `(&mut g)`
+;; helper that only writes ELEMENTS reaches them through the descriptor pointer
+;; it LOADS out of the cell, which addresses a different allocation and is no
+;; storage write at all (opt-lga-function-facts).
+;;
+;; SIGNATURE PLUMBING. A parameter carries an explicit var id
+;; (`CompilerIrParam.Param name ty var`) and every consumer below the inline
+;; stage reads that field, but the inline stage itself identifies a parameter by
+;; POSITION (`opt-inline-remap-value`'s `id < np`). This pass therefore refuses
+;; a function whose parameter var ids are not 0..n-1 in order, and after
+;; removing a parameter it leaves every surviving parameter's var id alone:
+;; positions shift, var ids do not, and the removed id becomes an unused slot of
+;; the unchanged frame. Call sites drop the same positions, so callee signature
+;; and argument list stay aligned.
+;;
+;; DETERMINISM. Every walk is by index over the function, parameter, block and
+;; instruction sequences; the tables are only looked up, never iterated. That is
+;; what the stage2.s == stage3.s fixpoint needs.
+;; The plan: which (function, parameter position) pairs lose their parameter,
+;; and which functions have at least one, so a caller with nothing to drop is
+;; recognised without a second lookup per argument.
+(defstruct OptLgaPlan
+  ;; opt-arg-global-key of (function symbol id, parameter position) ->
+  ;; 1 + the global symbol id substituted for that parameter.
+  (removals opt_i64_i64_map.Map)
+  ;; function symbol id -> 1 for every function with a removal.
+  (specialized opt_i64_i64_map.Map))
+
+(define (opt-lga-plan-empty [capacity : i64]) : OptLgaPlan
+  (OptLgaPlan
+    (opt_i64_i64_map.with-capacity capacity)
+    (opt_i64_i64_map.with-capacity capacity)))
+
+;; -2 licenses every use of the instruction (a direct call, whose var operands
+;; are arguments the callee accounts for, and a `Phi`, whose inputs the join
+;; accounts for). Otherwise the ONE var this instruction may hold at a cell
+;; address; a use anywhere else escapes. Mirrors opt-global-obj-allowed-use,
+;; minus its `AddrOf` arm: that arm's operand is a var SLOT, not a value, so a
+;; parameter used there cannot be rewritten to `Global g` at all.
+(define (opt-lga-allowed-use [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.Call _ _ _ _) -2]
+    [(ir.CompilerIrInstr.TailCall _ _ _) -2]
+    [(ir.CompilerIrInstr.Phi _ _ _) -2]
+    [(ir.CompilerIrInstr.Load _ src _) (opt-global-obj-value-var src)]
+    [(ir.CompilerIrInstr.Mov _ src _) (opt-global-obj-value-var src)]
+    [(ir.CompilerIrInstr.Cast _ src _ _) (opt-global-obj-value-var src)]
+    [(ir.CompilerIrInstr.Bitcast _ src _ _) (opt-global-obj-value-var src)]
+    [(ir.CompilerIrInstr.Gep _ base _ _) (opt-global-obj-value-var base)]
+    [(ir.CompilerIrInstr.StorePtr ptr _ _) (opt-global-obj-value-var ptr)]
+    [(ir.CompilerIrInstr.CopyBytes dst _ _) (opt-global-obj-value-var dst)]
+    [_ -1]))
+
+;; Mark every parameter var this instruction uses outside its allowed position.
+;; `uses` is scratch of exactly `np` counters, so a var above the parameter
+;; range is dropped by opt-used-array-add's own bounds guard.
+(define (opt-lga-mark-escapes-instr!
+  [instr : ir.CompilerIrInstr]
+  [np : i64]
+  [uses : (__tl_dyn-array i64)]
+  [escaped : (__tl_dyn-array bool)]) : unit
+  (let
+    [allowed : i64
+      (opt-lga-allowed-use (compiler-opt-global-shared-view instr))]
+    [index : i64 0]
+    (if (= allowed -2)
+      unit
+      (begin
+        (while (< index np)
+          (begin
+            (set! (array-ref uses index) 0)
+            (set! index (+ index 1))))
+        (opt-collect-instr-uses-array
+          (compiler-opt-global-shared-view uses)
+          instr)
+        (set! index 0)
+        (while (< index np)
+          (begin
+            (if (and (> (array-ref uses index) 0) (not (= index allowed)))
+              (set! (array-ref escaped index) true)
+              unit)
+            (set! index (+ index 1))))))))
+
+(define (opt-lga-mark-escapes-seq!
+  [instrs : ir.CompilerIrInstrSeq]
+  [position : i64]
+  [count : i64]
+  [np : i64]
+  [uses : (__tl_dyn-array i64)]
+  [escaped : (__tl_dyn-array bool)]) : unit
+  (if (>= position count)
+    unit
+    (begin
+      (opt-lga-mark-escapes-instr!
+        (ir.compiler-ir-instr-seq-ref
+          (compiler-opt-global-shared-view instrs)
+          position)
+        np
+        (compiler-opt-global-shared-view uses)
+        (compiler-opt-global-shared-view escaped))
+      (opt-lga-mark-escapes-seq! instrs (+ position 1) count np uses escaped))))
+
+(define (opt-lga-mark-escapes-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [np : i64]
+  [uses : (__tl_dyn-array i64)]
+  [escaped : (__tl_dyn-array bool)]) : unit
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match (compiler-opt-global-shared-view block)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-lga-mark-escapes-seq!
+              (compiler-opt-global-shared-view instrs)
+              0
+              (ir.compiler-ir-instr-seq-count instrs)
+              np
+              (compiler-opt-global-shared-view uses)
+              (compiler-opt-global-shared-view escaped))])
+        (opt-lga-mark-escapes-blocks!
+          (compiler-opt-box-shared-view rest)
+          np
+          uses
+          escaped))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64
+          (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+        [i : i64 0]
+        (while (< i count)
+          (begin
+            (match (ir.compiler-ir-block-seq-ref
+              (compiler-opt-global-shared-view seq)
+              i)
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (opt-lga-mark-escapes-seq!
+                  (compiler-opt-global-shared-view instrs)
+                  0
+                  (ir.compiler-ir-instr-seq-count instrs)
+                  np
+                  (compiler-opt-global-shared-view uses)
+                  (compiler-opt-global-shared-view escaped))])
+            (set! i (+ i 1)))))]))
+
+;; Which parameters this body may write THROUGH, and which escape. The write
+;; question is IAG-2's owner propagation restricted to the parameter roots: a
+;; pointer that addresses a word of the object a parameter designates can only
+;; be formed from that parameter by `Gep`, `Mov`, `Cast`, `Bitcast` and `Phi` --
+;; never by a `Load`, whose result addresses a DIFFERENT allocation, which is
+;; exactly why a helper that writes ELEMENTS through the `slots` pointer it
+;; loads out of the descriptor is not writing the global's own storage. One bit
+;; per parameter position, so one propagation answers for all of them at once.
+(defstruct OptLgaParamFacts
+  ;; position -> true when a use of that parameter sits outside the positions
+  ;; opt-lga-allowed-use licenses.
+  (escaped (__tl_dyn-array bool))
+  ;; bit k set when a `StorePtr`/`CopyBytes` in this body writes through a
+  ;; pointer derived from parameter k.
+  (writes i64))
+
+;; A var either carries a root set or does not, so a handful of rounds settles
+;; every shape; the cap only bounds a pathological phi chain, and a body that
+;; has not settled when it runs out keeps whatever it reached -- which can only
+;; make the write mask smaller, so the refusal below stays the safe side.
+(define (opt-lga-root-round-cap) : i64
+  8)
+
+;; The parameter roots a value carries. An out-of-range var is one the max-var
+;; walk did not account for: answer "every root", which can only add writes.
+(define (opt-lga-root-of-value
+  [roots : (__tl_dyn-array i64)]
+  [value : ir.CompilerIrValue]) : i64
+  (match value
+    [(ir.CompilerIrValue.Var id)
+      (if (and (>= id 0) (< id (array-length roots)))
+        (array-ref roots id)
+        (- 0 1))]
+    [_ 0]))
+
+(define (opt-lga-root-add!
+  [roots : (__tl_dyn-array i64)]
+  [dst : i64]
+  [mask : i64]
+  [changed : (__tl_dyn-array bool)]) : unit
+  (if (or (= mask 0) (< dst 0) (>= dst (array-length roots)))
+    unit
+    (let
+      [before : i64 (array-ref roots dst)]
+      [after : i64 (bit-or before mask)]
+      (if (= before after)
+        unit
+        (begin
+          (set! (array-ref roots dst) after)
+          (set! (array-ref changed 0) true))))))
+
+(define (opt-lga-root-of-phi
+  [roots : (__tl_dyn-array i64)]
+  [inputs : ir.CompilerIrPhiInputSeq]
+  [index : i64]
+  [mask : i64]) : i64
+  (if (>= index inputs.len)
+    mask
+    (let
+      [input : ir.CompilerIrPhiInput
+        (ir.compiler-ir-phi-input-seq-ref
+          (compiler-opt-global-shared-view inputs)
+          index)]
+      (opt-lga-root-of-phi
+        (compiler-opt-global-shared-view roots)
+        (compiler-opt-global-shared-view inputs)
+        (+ index 1)
+        (bit-or
+          mask
+          (opt-lga-root-of-value
+            (compiler-opt-global-shared-view roots)
+            input.value))))))
+
+(define (opt-lga-roots-instr!
+  [roots : (__tl_dyn-array i64)]
+  [changed : (__tl_dyn-array bool)]
+  [instr : ir.CompilerIrInstr]) : unit
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Gep dst base _ _)
+      (opt-lga-root-add!
+        (compiler-opt-global-shared-view roots)
+        dst
+        (opt-lga-root-of-value (compiler-opt-global-shared-view roots) base)
+        changed)]
+    [(ir.CompilerIrInstr.Mov dst src _)
+      (opt-lga-root-add!
+        (compiler-opt-global-shared-view roots)
+        dst
+        (opt-lga-root-of-value (compiler-opt-global-shared-view roots) src)
+        changed)]
+    [(ir.CompilerIrInstr.Cast dst src _ _)
+      (opt-lga-root-add!
+        (compiler-opt-global-shared-view roots)
+        dst
+        (opt-lga-root-of-value (compiler-opt-global-shared-view roots) src)
+        changed)]
+    [(ir.CompilerIrInstr.Bitcast dst src _ _)
+      (opt-lga-root-add!
+        (compiler-opt-global-shared-view roots)
+        dst
+        (opt-lga-root-of-value (compiler-opt-global-shared-view roots) src)
+        changed)]
+    [(ir.CompilerIrInstr.Phi dst inputs _)
+      (opt-lga-root-add!
+        (compiler-opt-global-shared-view roots)
+        dst
+        (opt-lga-root-of-phi (compiler-opt-global-shared-view roots) inputs 0 0)
+        changed)]
+    [_ unit]))
+
+(define (opt-lga-write-mask-instr
+  [roots : (__tl_dyn-array i64)]
+  [instr : ir.CompilerIrInstr]) : i64
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.StorePtr ptr _ _) (opt-lga-root-of-value roots ptr)]
+    [(ir.CompilerIrInstr.CopyBytes dst _ _) (opt-lga-root-of-value roots dst)]
+    [_ 0]))
+
+(define (opt-lga-roots-seq!
+  [instrs : ir.CompilerIrInstrSeq]
+  [position : i64]
+  [count : i64]
+  [roots : (__tl_dyn-array i64)]
+  [changed : (__tl_dyn-array bool)]
+  [writes : (__tl_dyn-array i64)]) : unit
+  (if (>= position count)
+    unit
+    (let
+      [instr : ir.CompilerIrInstr
+        (ir.compiler-ir-instr-seq-ref
+          (compiler-opt-global-shared-view instrs)
+          position)]
+      (begin
+        (opt-lga-roots-instr!
+          (compiler-opt-global-shared-view roots)
+          (compiler-opt-global-shared-view changed)
+          (compiler-opt-global-shared-view instr))
+        (set!
+          (array-ref writes 0)
+          (bit-or
+            (array-ref writes 0)
+            (opt-lga-write-mask-instr
+              (compiler-opt-global-shared-view roots)
+              instr)))
+        (opt-lga-roots-seq! instrs (+ position 1) count roots changed writes)))))
+
+(define (opt-lga-roots-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [roots : (__tl_dyn-array i64)]
+  [changed : (__tl_dyn-array bool)]
+  [writes : (__tl_dyn-array i64)]) : unit
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match (compiler-opt-global-shared-view block)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-lga-roots-seq!
+              (compiler-opt-global-shared-view instrs)
+              0
+              (ir.compiler-ir-instr-seq-count instrs)
+              (compiler-opt-global-shared-view roots)
+              (compiler-opt-global-shared-view changed)
+              (compiler-opt-global-shared-view writes))])
+        (opt-lga-roots-blocks!
+          (compiler-opt-box-shared-view rest)
+          roots
+          changed
+          writes))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-lga-roots-blocks!
+        (ir.compiler-ir-block-seq-to-list seq)
+        roots
+        changed
+        writes)]))
+
+(define (opt-lga-roots-fixed!
+  [blocks : ir.CompilerIrBlockList]
+  [roots : (__tl_dyn-array i64)]
+  [writes : (__tl_dyn-array i64)]
+  [remaining : i64]) : unit
+  (if (<= remaining 0)
+    unit
+    (let
+      [changed : (__tl_dyn-array bool) (__tl_make-array bool 1)]
+      (begin
+        (opt-lga-roots-blocks!
+          (compiler-opt-global-shared-view blocks)
+          (compiler-opt-global-shared-view roots)
+          (compiler-opt-global-shared-view changed)
+          (compiler-opt-global-shared-view writes))
+        (if (array-ref changed 0)
+          (opt-lga-roots-fixed! blocks roots writes (- remaining 1))
+          unit)))))
+
+(define (opt-lga-function-facts
+  [params : ir.CompilerIrParamSeq]
+  [blocks : ir.CompilerIrBlockList]
+  [np : i64]
+  [frame : i64]) : OptLgaParamFacts
+  (let
+    [vars : i64
+      (+
+        1
+        (opt-sccp-max-var-blocks
+          (compiler-opt-global-shared-view blocks)
+          (opt-sccp-max-var-params
+            (compiler-opt-global-shared-view params)
+            (if (> frame np)
+              frame
+              np))))]
+    [roots : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    [writes : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [escaped : (__tl_dyn-array bool) (__tl_make-array bool np)]
+    [uses : (__tl_dyn-array i64) (__tl_make-array i64 np)]
+    [position : i64 0]
+    (begin
+      (while (< position np)
+        (begin
+          (set! (array-ref roots position) (shl 1 position))
+          (set! position (+ position 1))))
+      (opt-lga-mark-escapes-blocks!
+        (compiler-opt-global-shared-view blocks)
+        np
+        uses
+        (compiler-opt-global-shared-view escaped))
+      (opt-lga-roots-fixed!
+        (compiler-opt-global-shared-view blocks)
+        (compiler-opt-global-shared-view roots)
+        (compiler-opt-global-shared-view writes)
+        (opt-lga-root-round-cap))
+      (OptLgaParamFacts escaped (array-ref writes 0)))))
+
+;; Every parameter's var id is its position. The inline stage identifies a
+;; parameter that way, so a function that does not hold it is refused.
+(define (opt-lga-params-positional?
+  [params : ir.CompilerIrParamSeq]
+  [position : i64]) : bool
+  (if (>= position params.len)
+    true
+    (match (ir.compiler-ir-param-seq-ref
+      (compiler-opt-global-shared-view params)
+      position)
+      [(ir.CompilerIrParam.Param _ _ var)
+        (and
+          (= var position)
+          (opt-lga-params-positional? params (+ position 1)))])))
+
+;; A function's own row out of a packed whole-program table, or the refusal
+;; value: a name the fixpoint did not fill is one the walks disagree about, and
+;; the safe answer to that is "writes everything".
+(define (opt-lga-row [writes : opt_i64_i64_map.Map] [name : i64] [absent : i64]) : i64
+  (match (opt_i64_i64_map.get (& writes) name)
+    [(opt_i64_i64_map.LookupFound mask) mask]
+    [(opt_i64_i64_map.LookupMissing) absent]))
+
+;; `--trace-passes` observability: one line per reference parameter the census
+;; considered, naming the global its sites agreed on and the clause that decided
+;; it. The string is built inside the guard, so a compile without the flag pays
+;; one boolean test per parameter.
+(define (opt-lga-trace-param!
+  [name : i64]
+  [position : i64]
+  [global-id : i64]
+  [verdict : String]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (io.print-error
+      (str_cat.str-cat
+        "arg-specialize|"
+        (ir.compiler-ir-symbol-text name)
+        "|position="
+        (string.int->string position)
+        "|global="
+        (if (< global-id 0)
+          "-"
+          (ir.compiler-ir-symbol-text global-id))
+        "|"
+        (compiler-opt-global-shared-view verdict)
+        "\n"))
+    unit))
+
+(define (opt-lga-trace-gate! [verdict : String] [count : i64]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (io.print-error
+      (str_cat.str-cat
+        "arg-specialize|program|functions="
+        (string.int->string count)
+        "|"
+        (compiler-opt-global-shared-view verdict)
+        "\n"))
+    unit))
+
+;; The clause that refuses one parameter, or the empty string when every clause
+;; passes. The order is the header's: the census fact first, then the shape,
+;; then the three cell-identity proofs, then IAG-2's storage consistency row.
+(define (opt-lga-refusal
+  [mod-ref : OptGlobalModRef]
+  [obj : OptGlobalObjModRef]
+  [addr-taken : opt_i64_i64_map.Map]
+  [facts : OptLgaParamFacts]
+  [cell-row : i64]
+  [obj-row : i64]
+  [position : i64]
+  [seen : i64]) : String
+  (let
+    [global-id : i64 (- seen 1)]
+    (cond
+      [(<= seen 0) "refused-mixed-or-unread-sites"]
+      [(array-ref facts.escaped position) "refused-parameter-escapes"]
+      [(opt_i64_i64_map.contains? (& addr-taken) global-id)
+        "refused-global-address-taken"]
+      [(opt-global-mod-ref-mask-may-write?
+          (compiler-opt-global-shared-view mod-ref.index)
+          cell-row
+          global-id)
+        "refused-reachable-rebind"]
+      ;; The write-through consistency clause. A body that writes THROUGH the
+      ;; parameter writes the global's own storage, and IAG-2's row for this
+      ;; function must already say so -- it is the same write the caller
+      ;; licensed, reached through the same address. A row that does not carry
+      ;; it means the storage analysis and the code disagree, and this pass
+      ;; refuses rather than re-rooting the operand under a table that does not
+      ;; model it. A helper that only writes ELEMENTS (through the `slots`
+      ;; pointer it LOADS out of the descriptor) writes no storage word, so the
+      ;; clause does not apply to it.
+      [(and
+          (not (= (bit-and facts.writes (shl 1 position)) 0))
+          (not
+            (and
+              obj.built?
+              (opt-global-obj-mask-may-write?
+                (compiler-opt-global-shared-view obj.index)
+                obj-row
+                global-id))))
+        "refused-unmodelled-storage-write"]
+      [else ""])))
+
+(define (opt-lga-collect-params
+  [type-segment-bases : i64]
+  [scan : OptArgGlobalScan]
+  [mod-ref : OptGlobalModRef]
+  [obj : OptGlobalObjModRef]
+  [addr-taken : opt_i64_i64_map.Map]
+  [facts : OptLgaParamFacts]
+  [cell-row : i64]
+  [obj-row : i64]
+  [name : i64]
+  [params : ir.CompilerIrParamSeq]
+  [position : i64]
+  [plan : OptLgaPlan]) : OptLgaPlan
+  (if (>= position params.len)
+    plan
+    (opt-lga-collect-params
+      type-segment-bases
+      (compiler-opt-global-shared-view scan)
+      (compiler-opt-global-shared-view mod-ref)
+      (compiler-opt-global-shared-view obj)
+      (compiler-opt-global-shared-view addr-taken)
+      (compiler-opt-global-shared-view facts)
+      cell-row
+      obj-row
+      name
+      (compiler-opt-global-shared-view params)
+      (+ position 1)
+      (match (ir.compiler-ir-param-seq-ref
+        (compiler-opt-global-shared-view params)
+        position)
+        [(ir.CompilerIrParam.Param _ ty _)
+          (if (not
+            (opt-arg-global-ref-param?
+              type-segment-bases
+              (compiler-opt-global-shared-view ty)))
+            plan
+            (let
+              [seen : i64
+                (opt-arg-global-fact
+                  (compiler-opt-global-shared-view scan.sites)
+                  name
+                  position)]
+              [refusal : String
+                (opt-lga-refusal
+                  (compiler-opt-global-shared-view mod-ref)
+                  (compiler-opt-global-shared-view obj)
+                  (compiler-opt-global-shared-view addr-taken)
+                  (compiler-opt-global-shared-view facts)
+                  cell-row
+                  obj-row
+                  position
+                  seen)]
+              [admitted? : bool (= (string.string-length (& refusal)) 0)]
+              (begin
+                (opt-lga-trace-param!
+                  name
+                  position
+                  (- seen 1)
+                  (if admitted?
+                    "specialized"
+                    (compiler-opt-global-shared-view refusal)))
+                (if admitted?
+                  (match (compiler-opt-global-shared-view plan)
+                    [(OptLgaPlan removals specialized)
+                      (begin
+                        (opt_i64_i64_map.insert-ref!
+                          (&mut removals)
+                          (opt-arg-global-key name position)
+                          seen)
+                        (opt_i64_i64_map.insert-ref! (&mut specialized) name 1)
+                        (OptLgaPlan removals specialized))])
+                  plan))))]))))
+
+(define (opt-lga-collect-function
+  [type-segment-bases : i64]
+  [scan : OptArgGlobalScan]
+  [mod-ref : OptGlobalModRef]
+  [obj : OptGlobalObjModRef]
+  [addr-taken : opt_i64_i64_map.Map]
+  [func : ir.CompilerIrFunction]
+  [plan : OptLgaPlan]) : OptLgaPlan
+  (match func
+    [(ir.CompilerIrFunction.Function name params _ frame blocks)
+      (let
+        [id : i64 (ir.compiler-ir-symbol-id name)]
+        [np : i64 params.len]
+        [candidate? : bool
+          (and
+            (>= id 0)
+            (> np 0)
+            (opt-arg-global-any-fact?
+              (compiler-opt-global-shared-view scan.sites)
+              id
+              (compiler-opt-global-shared-view params)
+              0))]
+        [refusal : String
+          (cond
+            [(not candidate?) "-"]
+            [(opt_i64_i64_map.contains? (& scan.opaque) id)
+              "refused-callee-not-enumerable"]
+            [(not
+                (=
+                  (opt-arg-global-arity-of
+                    (compiler-opt-global-shared-view scan)
+                    id)
+                  np))
+              "refused-arity-unreadable"]
+            [(not
+                (opt-lga-params-positional?
+                  (compiler-opt-global-shared-view params)
+                  0))
+              "refused-parameter-vars-not-positional"]
+            [else ""])]
+        (if (or (not candidate?) (not (= (string.string-length (& refusal)) 0)))
+          (begin
+            (if candidate?
+              (opt-lga-trace-param!
+                id
+                (- 0 1)
+                (- 0 1)
+                (compiler-opt-global-shared-view refusal))
+              unit)
+            plan)
+          (opt-lga-collect-params
+            type-segment-bases
+            (compiler-opt-global-shared-view scan)
+            (compiler-opt-global-shared-view mod-ref)
+            (compiler-opt-global-shared-view obj)
+            (compiler-opt-global-shared-view addr-taken)
+            (opt-lga-function-facts
+              (compiler-opt-global-shared-view params)
+              (compiler-opt-global-shared-view blocks)
+              np
+              frame)
+            (opt-lga-row
+              (compiler-opt-global-shared-view mod-ref.writes)
+              id
+              (opt-global-mod-ref-any))
+            (opt-lga-row (compiler-opt-global-shared-view obj.writes) id 0)
+            id
+            params
+            0
+            plan)))]))
+
+(define (opt-lga-collect
+  [type-segment-bases : i64]
+  [scan : OptArgGlobalScan]
+  [mod-ref : OptGlobalModRef]
+  [obj : OptGlobalObjModRef]
+  [addr-taken : opt_i64_i64_map.Map]
+  [functions : ir.CompilerIrFunctionSeq]
+  [index : i64]
+  [plan : OptLgaPlan]) : OptLgaPlan
+  (if (>= index functions.len)
+    plan
+    (opt-lga-collect
+      type-segment-bases
+      (compiler-opt-global-shared-view scan)
+      (compiler-opt-global-shared-view mod-ref)
+      (compiler-opt-global-shared-view obj)
+      (compiler-opt-global-shared-view addr-taken)
+      (compiler-opt-global-shared-view functions)
+      (+ index 1)
+      (opt-lga-collect-function
+        type-segment-bases
+        (compiler-opt-global-shared-view scan)
+        (compiler-opt-global-shared-view mod-ref)
+        (compiler-opt-global-shared-view obj)
+        (compiler-opt-global-shared-view addr-taken)
+        (compiler-opt-global-array-element-shared-view functions.slots index)
+        plan))))
+
+;; --- the rewrite -------------------------------------------------------------
+;; `1 + the global symbol id` at every removed parameter's var (which is its
+;; position), 0 elsewhere. Empty for a function with no removal.
+(define (opt-lga-removed-slots
+  [removals : opt_i64_i64_map.Map]
+  [name : i64]
+  [np : i64]) : (__tl_dyn-array i64)
+  (let
+    [slots : (__tl_dyn-array i64) (__tl_make-array i64 np)]
+    [position : i64 0]
+    (begin
+      (while (< position np)
+        (begin
+          (set!
+            (array-ref slots position)
+            (opt-arg-global-fact
+              (compiler-opt-global-shared-view removals)
+              name
+              position))
+          (set! position (+ position 1))))
+      slots)))
+
+(define (opt-lga-subst-value
+  [removed : (__tl_dyn-array i64)]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (match (compiler-opt-global-shared-view value)
+    [(ir.CompilerIrValue.Var id)
+      (if (and (>= id 0) (< id (array-length removed)))
+        (let
+          [seen : i64 (array-ref removed id)]
+          (if (> seen 0)
+            (ir.CompilerIrValue.Global (ir.compiler-ir-symbol-clone (- seen 1)))
+            value))
+        value)]
+    [_ value]))
+
+(define (opt-lga-rewrite-phi-inputs
+  [removed : (__tl_dyn-array i64)]
+  [inputs : ir.CompilerIrPhiInputSeq]) : ir.CompilerIrPhiInputSeq
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrPhiInput)
+      (__tl_make-array ir.CompilerIrPhiInput inputs.len)]
+    [index : i64 0]
+    (begin
+      (while (< index inputs.len)
+        (begin
+          (let
+            [input : ir.CompilerIrPhiInput
+              (ir.compiler-ir-phi-input-seq-ref
+                (compiler-opt-global-shared-view inputs)
+                index)]
+            (set!
+              (array-ref slots index)
+              (ir.CompilerIrPhiInput
+                (opt-lga-subst-value
+                  (compiler-opt-global-shared-view removed)
+                  input.value)
+                input.label)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrPhiInputSeq slots 0 inputs.len))))
+
+;; Substitute the parameter in every argument, keeping the list's SHAPE: a call
+;; whose callee lost no parameter must come out of this pass in exactly the
+;; representation it went in, or an unrelated site's codegen moves.
+(define (opt-lga-subst-args
+  [removed : (__tl_dyn-array i64)]
+  [args : ir.CompilerIrCallArgs]) : ir.CompilerIrCallArgs
+  (match (compiler-opt-global-shared-view args)
+    [(ir.CompilerIrCallArgs.Nil) (ir.CompilerIrCallArgs.Nil)]
+    [(ir.CompilerIrCallArgs.One a)
+      (ir.CompilerIrCallArgs.One (opt-lga-subst-value removed a))]
+    [(ir.CompilerIrCallArgs.Two a b)
+      (ir.CompilerIrCallArgs.Two
+        (opt-lga-subst-value (compiler-opt-global-shared-view removed) a)
+        (opt-lga-subst-value removed b))]
+    [(ir.CompilerIrCallArgs.Array values)
+      (let
+        [count : i64 (array-length (compiler-opt-global-shared-view values))]
+        [slots : (__tl_dyn-array ir.CompilerIrValue)
+          (__tl_make-array ir.CompilerIrValue count)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (set!
+                (array-ref slots index)
+                (opt-lga-subst-value
+                  (compiler-opt-global-shared-view removed)
+                  (compiler-opt-global-array-element-shared-view values index)))
+              (set! index (+ index 1))))
+          (ir.CompilerIrCallArgs.Array slots)))]))
+
+;; How many of this callee's arguments this pass drops at a site.
+(define (opt-lga-drop-count
+  [removals : opt_i64_i64_map.Map]
+  [callee : i64]
+  [count : i64]
+  [position : i64]
+  [dropped : i64]) : i64
+  (if (>= position count)
+    dropped
+    (opt-lga-drop-count
+      (compiler-opt-global-shared-view removals)
+      callee
+      count
+      (+ position 1)
+      (if (>
+        (opt-arg-global-fact
+          (compiler-opt-global-shared-view removals)
+          callee
+          position)
+        0)
+        (+ dropped 1)
+        dropped))))
+
+;; Substitute every argument, then drop the positions the callee no longer
+;; takes. The surviving list takes the same canonical representation the inline
+;; stage's own argument staging builds (opt-inline-staged-args).
+(define (opt-lga-rewrite-args
+  [removed : (__tl_dyn-array i64)]
+  [removals : opt_i64_i64_map.Map]
+  [callee : i64]
+  [args : ir.CompilerIrCallArgs]) : ir.CompilerIrCallArgs
+  (let
+    [count : i64
+      (opt-arg-global-args-count (compiler-opt-global-shared-view args))]
+    [dropped : i64
+      (opt-lga-drop-count
+        (compiler-opt-global-shared-view removals)
+        callee
+        count
+        0
+        0)]
+    (if (= dropped 0)
+      (opt-lga-subst-args removed args)
+      (let
+        [kept : i64 (- count dropped)]
+        [slots : (__tl_dyn-array ir.CompilerIrValue)
+          (__tl_make-array ir.CompilerIrValue kept)]
+        [filled : i64 0]
+        [position : i64 0]
+        (begin
+          (while (< position count)
+            (begin
+              (if (>
+                (opt-arg-global-fact
+                  (compiler-opt-global-shared-view removals)
+                  callee
+                  position)
+                0)
+                unit
+                (begin
+                  (set!
+                    (array-ref slots filled)
+                    (opt-lga-subst-value
+                      (compiler-opt-global-shared-view removed)
+                      (opt-inline-clone-arg-at
+                        (compiler-opt-global-shared-view args)
+                        position)))
+                  (set! filled (+ filled 1))))
+              (set! position (+ position 1))))
+          (cond
+            [(= kept 0) (ir.CompilerIrCallArgs.Nil)]
+            [(= kept 1)
+              (ir.CompilerIrCallArgs.One
+                (compiler-opt-global-array-element-shared-view slots 0))]
+            [(= kept 2)
+              (ir.CompilerIrCallArgs.Two
+                (compiler-opt-global-array-element-shared-view slots 0)
+                (compiler-opt-global-array-element-shared-view slots 1))]
+            [else (ir.CompilerIrCallArgs.Array slots)]))))))
+
+;; The ten forms opt-lga-allowed-use licenses a parameter to appear in, plus the
+;; two direct-call forms whose argument list may lose a position. Every other
+;; instruction is returned untouched: a candidate parameter that appeared in one
+;; was refused by the escape check, and no other instruction names a callee this
+;; pass specialized.
+(define (opt-lga-rewrite-instr
+  [removed : (__tl_dyn-array i64)]
+  [removals : opt_i64_i64_map.Map]
+  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Load dst src ty)
+      (ir.CompilerIrInstr.Load dst (opt-lga-subst-value removed src) ty)]
+    [(ir.CompilerIrInstr.Mov dst src ty)
+      (ir.CompilerIrInstr.Mov dst (opt-lga-subst-value removed src) ty)]
+    [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
+      (ir.CompilerIrInstr.Cast
+        dst
+        (opt-lga-subst-value removed src)
+        from-ty
+        to-ty)]
+    [(ir.CompilerIrInstr.Bitcast dst src from-ty to-ty)
+      (ir.CompilerIrInstr.Bitcast
+        dst
+        (opt-lga-subst-value removed src)
+        from-ty
+        to-ty)]
+    [(ir.CompilerIrInstr.Gep dst base offset ty)
+      (ir.CompilerIrInstr.Gep
+        dst
+        (opt-lga-subst-value (compiler-opt-global-shared-view removed) base)
+        (opt-lga-subst-value removed offset)
+        ty)]
+    [(ir.CompilerIrInstr.StorePtr ptr value ty)
+      (ir.CompilerIrInstr.StorePtr
+        (opt-lga-subst-value (compiler-opt-global-shared-view removed) ptr)
+        (opt-lga-subst-value removed value)
+        ty)]
+    [(ir.CompilerIrInstr.CopyBytes dst src ty)
+      (ir.CompilerIrInstr.CopyBytes
+        (opt-lga-subst-value (compiler-opt-global-shared-view removed) dst)
+        (opt-lga-subst-value removed src)
+        ty)]
+    [(ir.CompilerIrInstr.Phi dst inputs ty)
+      (ir.CompilerIrInstr.Phi
+        dst
+        (opt-lga-rewrite-phi-inputs removed inputs)
+        ty)]
+    [(ir.CompilerIrInstr.Call dst name args ty)
+      (ir.CompilerIrInstr.Call
+        dst
+        name
+        (opt-lga-rewrite-args
+          removed
+          removals
+          (ir.compiler-ir-symbol-id name)
+          args)
+        ty)]
+    [(ir.CompilerIrInstr.TailCall name args ty)
+      (ir.CompilerIrInstr.TailCall
+        name
+        (opt-lga-rewrite-args
+          removed
+          removals
+          (ir.compiler-ir-symbol-id name)
+          args)
+        ty)]
+    [_ instr]))
+
+(define (opt-lga-rewrite-seq
+  [removed : (__tl_dyn-array i64)]
+  [removals : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (__tl_make-array ir.CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            (array-ref slots index)
+            (opt-lga-rewrite-instr
+              (compiler-opt-global-shared-view removed)
+              (compiler-opt-global-shared-view removals)
+              (ir.compiler-ir-instr-seq-ref
+                (compiler-opt-global-shared-view instrs)
+                index)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrInstrSeq slots count))))
+
+(define (opt-lga-rewrite-blocks
+  [removed : (__tl_dyn-array i64)]
+  [removals : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) ir.CompilerIrBlockList.Nil]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (ir.compiler-ir-block-cons
+        (match (compiler-opt-global-shared-view block)
+          [(ir.CompilerIrBlock.Block label instrs)
+            (ir.CompilerIrBlock.Block
+              label
+              (opt-lga-rewrite-seq
+                (compiler-opt-global-shared-view removed)
+                (compiler-opt-global-shared-view removals)
+                instrs))])
+        (opt-lga-rewrite-blocks
+          removed
+          removals
+          (compiler-opt-box-shared-view rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-lga-rewrite-blocks
+        removed
+        removals
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; The parameters that survive, in position order, each keeping its var id.
+(define (opt-lga-filter-params
+  [removed : (__tl_dyn-array i64)]
+  [params : ir.CompilerIrParamSeq]) : ir.CompilerIrParamSeq
+  (let
+    [builder : ir.CompilerIrParamBuilder
+      (ir.compiler-ir-param-builder-with-capacity params.len)]
+    [position : i64 0]
+    (begin
+      (while (< position params.len)
+        (begin
+          (if (> (array-ref removed position) 0)
+            unit
+            (ir.compiler-ir-param-builder-push!
+              (&mut builder)
+              (ir.compiler-ir-param-seq-ref
+                (compiler-opt-global-shared-view params)
+                position)))
+          (set! position (+ position 1))))
+      (ir.compiler-ir-param-builder-to-seq builder))))
+
+;; Does this instruction name a callee whose argument list this pass shortened?
+(define (opt-lga-instr-calls-specialized?
+  [specialized : opt_i64_i64_map.Map]
+  [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Call _ name _ _)
+      (opt_i64_i64_map.contains?
+        (& specialized)
+        (ir.compiler-ir-symbol-id name))]
+    [(ir.CompilerIrInstr.TailCall name _ _)
+      (opt_i64_i64_map.contains?
+        (& specialized)
+        (ir.compiler-ir-symbol-id name))]
+    [_ false]))
+
+(define (opt-lga-seq-calls-specialized?
+  [specialized : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]
+  [position : i64]
+  [count : i64]) : bool
+  (if (>= position count)
+    false
+    (if (opt-lga-instr-calls-specialized?
+      (compiler-opt-global-shared-view specialized)
+      (ir.compiler-ir-instr-seq-ref
+        (compiler-opt-global-shared-view instrs)
+        position))
+      true
+      (opt-lga-seq-calls-specialized? specialized instrs (+ position 1) count))))
+
+(define (opt-lga-blocks-call-specialized?
+  [specialized : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (if (match (compiler-opt-global-shared-view block)
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-lga-seq-calls-specialized?
+            (compiler-opt-global-shared-view specialized)
+            (compiler-opt-global-shared-view instrs)
+            0
+            (ir.compiler-ir-instr-seq-count instrs))])
+        true
+        (opt-lga-blocks-call-specialized?
+          specialized
+          (compiler-opt-box-shared-view rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-lga-blocks-call-specialized?
+        specialized
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-lga-rewrite-function
+  [plan : OptLgaPlan]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+      (let
+        [id : i64 (ir.compiler-ir-symbol-id name)]
+        [own? : bool (opt_i64_i64_map.contains? (& plan.specialized) id)]
+        (if (and
+          (not own?)
+          (not
+            (opt-lga-blocks-call-specialized?
+              (compiler-opt-global-shared-view plan.specialized)
+              (compiler-opt-global-shared-view blocks))))
+          func
+          (let
+            [removed : (__tl_dyn-array i64)
+              (if own?
+                (opt-lga-removed-slots
+                  (compiler-opt-global-shared-view plan.removals)
+                  id
+                  params.len)
+                (__tl_make-array i64 0))]
+            (ir.CompilerIrFunction.Function
+              name
+              (if own?
+                (opt-lga-filter-params
+                  (compiler-opt-global-shared-view removed)
+                  (compiler-opt-global-shared-view params))
+                params)
+              ret-ty
+              frame
+              (opt-lga-rewrite-blocks
+                (compiler-opt-global-shared-view removed)
+                (compiler-opt-global-shared-view plan.removals)
+                blocks)))))]))
+
+(define (opt-lga-rewrite-functions
+  [plan : OptLgaPlan]
+  [functions : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
+  (let
+    [builder : ir.CompilerIrFunctionBuilder
+      (ir.compiler-ir-function-builder-with-capacity functions.len)]
+    [index : i64 0]
+    (begin
+      (while (< index functions.len)
+        (begin
+          (ir.compiler-ir-function-builder-push!
+            (&mut builder)
+            (opt-lga-rewrite-function
+              (compiler-opt-global-shared-view plan)
+              (compiler-opt-global-array-element-shared-view
+                functions.slots
+                index)))
+          (set! index (+ index 1))))
+      (ir.compiler-ir-function-builder-to-seq builder))))
+
+;; The pass. Declines to the identity everywhere its two tables decline, so a
+;; program outside their preconditions is compiled exactly as before.
+(define (opt-lga-specialize-program
+  [type-segment-bases : i64]
+  [globals : ir.CompilerIrGlobalSeq]
+  [externs : ir.CompilerIrExternSeq]
+  [functions : ir.CompilerIrFunctionSeq]
+  [level : i64]) : ir.CompilerIrFunctionSeq
+  (let
+    [count : i64
+      (opt-function-seq-count (compiler-opt-global-shared-view functions))]
+    (if (or
+      (< level 2)
+      (<= count 0)
+      (> count (opt-loop-bce-summary-function-limit))
+      (=
+        (ir.compiler-ir-global-seq-count
+          (compiler-opt-global-shared-view globals))
+        0))
+      (begin
+        (if (>= level 2)
+          (opt-lga-trace-gate! "declined-program-gate" count)
+          unit)
+        functions)
+      (let
+        [capacity : i64 (opt-function-index-capacity count)]
+        ;; The cell summary's own derivation, at the same program point:
+        ;; `disq` records a global on a `Store` target OR a `GlobalAddr`
+        ;; operand, so subtracting the direct-store targets leaves precisely the
+        ;; globals whose ADDRESS the program takes.
+        [disq : opt_i64_i64_map.Map
+          (opt-const-globals-disqualified
+            (opt_i64_i64_map.with-capacity capacity)
+            (compiler-opt-global-shared-view functions))]
+        [cell-scan : OptGlobalCellScan
+          (opt-global-cell-scan-functions
+            (opt-global-cell-scan-new)
+            (compiler-opt-global-shared-view functions))]
+        [addr-taken : opt_i64_i64_map.Map
+          (opt-global-cell-addr-taken-fill
+            (compiler-opt-global-shared-view globals)
+            (compiler-opt-global-shared-view disq)
+            (compiler-opt-global-shared-view cell-scan.stores)
+            (opt_i64_i64_map.with-capacity capacity)
+            0)]
+        [mod-ref : OptGlobalModRef
+          (opt-global-mod-ref-build
+            (compiler-opt-global-shared-view globals)
+            (compiler-opt-global-shared-view functions)
+            (compiler-opt-global-shared-view cell-scan.stores)
+            (compiler-opt-global-shared-view addr-taken)
+            capacity)]
+        (if (not mod-ref.built?)
+          (begin
+            (opt-lga-trace-gate! "declined-no-cell-mod-ref-table" count)
+            functions)
+          (let
+            [scan : OptArgGlobalScan
+              (opt-arg-global-scan-functions
+                (opt-arg-global-seed-globals
+                  (opt-arg-global-seed-externs
+                    (opt-arg-global-seed-functions
+                      (OptArgGlobalScan
+                        (opt_i64_i64_map.with-capacity capacity)
+                        (opt_i64_i64_map.with-capacity capacity)
+                        (opt_i64_i64_map.with-capacity capacity))
+                      (compiler-opt-global-shared-view functions)
+                      0)
+                    (compiler-opt-global-shared-view externs)
+                    0)
+                  (compiler-opt-global-shared-view globals)
+                  0)
+                (compiler-opt-global-shared-view functions))]
+            [obj : OptGlobalObjModRef
+              (opt-global-obj-build
+                type-segment-bases
+                (compiler-opt-global-shared-view globals)
+                (compiler-opt-global-shared-view externs)
+                (compiler-opt-global-shared-view functions)
+                (compiler-opt-global-shared-view addr-taken)
+                capacity)]
+            [plan : OptLgaPlan
+              (opt-lga-collect
+                type-segment-bases
+                (compiler-opt-global-shared-view scan)
+                (compiler-opt-global-shared-view mod-ref)
+                (compiler-opt-global-shared-view obj)
+                (compiler-opt-global-shared-view addr-taken)
+                (compiler-opt-global-shared-view functions)
+                0
+                (opt-lga-plan-empty capacity))]
+            (begin
+              (opt-lga-trace-gate!
+                (if obj.built?
+                  "storage-table-built"
+                  "storage-table-absent")
+                (opt_i64_i64_map.len (& plan.removals)))
+              (if (= (opt_i64_i64_map.len (& plan.removals)) 0)
+                functions
+                (opt-lga-rewrite-functions
+                  (compiler-opt-global-shared-view plan)
+                  functions)))))))))
+
 ;; --- whole-program non-negative scalar globals -------------------------------
 ;;
 ;; IPSCCP-style range seeding, restricted to the one fact the range merge needs:
@@ -146314,11 +147592,18 @@
                         (compiler-opt-global-shared-view final-pruned))]
                     [final-functions : ir.CompilerIrFunctionSeq
                       (opt-pruned-program-functions final-pruned)]
+                    [specialized-functions : ir.CompilerIrFunctionSeq
+                      (opt-lga-specialize-program
+                        type-segment-bases
+                        (compiler-opt-global-shared-view final-globals)
+                        (compiler-opt-global-shared-view externs)
+                        final-functions
+                        level)]
                     [late-functions : ir.CompilerIrFunctionSeq
                       (opt-late-function-seq-with-level
                         pools
                         type-segment-bases
-                        final-functions
+                        specialized-functions
                         level)]
                     (begin
                       (cfg
@@ -146868,11 +148153,18 @@
                             (compiler-opt-global-shared-view final-pruned))]
                         [final-functions : ir.CompilerIrFunctionSeq
                           (opt-pruned-program-functions final-pruned)]
+                        [specialized-functions : ir.CompilerIrFunctionSeq
+                          (opt-lga-specialize-program
+                            type-segment-bases
+                            (compiler-opt-global-shared-view final-globals)
+                            (compiler-opt-global-shared-view externs)
+                            final-functions
+                            level)]
                         [late-functions : ir.CompilerIrFunctionSeq
                           (opt-late-function-seq-with-level
                             pools
                             type-segment-bases
-                            final-functions
+                            specialized-functions
                             level)]
                         [optimized : ir.CompilerIrProgram
                           (ir.CompilerIrProgram.Program

@@ -124219,8 +124219,67 @@
 ;; The frequency floor above is subsumed by this clause on the caller's own
 ;; loops (a depth-1 site already weighs 8), and remains the clause that
 ;; disqualifies an in-loop site inside a caller nothing ever reaches.
+;;
+;; WHY THE FLOOR NOW STANDS DOWN, AND EXACTLY WHERE. The autopsy above is an
+;; argument about EVIDENCE, not about depth: a depth-0 site was refused because
+;; nothing told the check how often the site ran or what the merged body would
+;; do to the caller. Both of those are now askable, and where all three answers
+;; are available the verdict -- a real re-plan -- is a better judge than a shape
+;; clause. `cfg-build-csr` into `cfg-function` is the proof: re-measured on this
+;; tree it is offered to the verdict and REFUSED BY COST, at a modelled saving
+;; of -47 against a boundary of 13, which the tier's `--trace-passes` line
+;; shows. The clause it used to die on is not what was protecting cfg_domloops.
+;;
+;; The three answers, and why each is required:
+;;
+;;   * COMPOSITE FREQUENCY >= one census weight. The site is reached through at
+;;     least one loop level, counting a loop in the caller and a loop above the
+;;     caller alike. Below that a straight-line site in a caller nothing runs
+;;     cannot repay a boundary at all.
+;;   * THE SITE IS THE CALLER'S ENTRY BLOCK. Every cost this tier compares is
+;;     priced PER INVOCATION of the caller, and a depth-0 boundary is credited
+;;     exactly once against that. The entry block is where "runs exactly once
+;;     per invocation" is known without an analysis; a depth-0 site in a
+;;     conditional arm runs some unknown fraction of the time, and crediting it
+;;     a whole boundary is the same mistake the frequency floor exists to stop.
+;;     Measured: `grow!` into `insert-ref!` at a cold `if_then` arm of
+;;     hashmap_insert prices as a free inline (saving 8 against a boundary of 7)
+;;     and costs that row +13.6%.
+;;   * THE CALLEE IS CALL-FREE. This tier deliberately carries no call-free
+;;     clause (see opt-inline-checked-ok?) because at depth 1 and below the
+;;     boundary is 8 to 64 times larger and the re-plan can resolve what an
+;;     imported call does to the caller's prologue, callee-saved set and spill
+;;     traffic. At depth 0 the boundary is 6+np -- the smallest number this
+;;     check ever compares -- and the one thing a depth-0 inline can win beyond
+;;     it is the caller's LEAF FRAME, which an imported call makes impossible.
+;;     So the clause the tier can afford to omit where the measurement has
+;;     resolution is required where it does not. Measured: `gvn-table-lookup`,
+;;     which carries a call to `gvn-key-matches?`, prices into `gvn-table-bind`
+;;     as an exactly free inline (after == banked + callee, saving 6 against a
+;;     boundary of 6 -- the model found nothing at all) and costs gvn_table
+;;     +0.294%.
+;;
+;; Below any of the three the floor stands, and the site never reaches a
+;; verdict.
 (define (opt-inline-checked-min-site-depth) : i64
   1)
+
+;; The composite frequency at which the depth floor relaxes to zero. One census
+;; weight, the same rung opt-inline-checked-min-frequency reads: the site runs
+;; through one loop level or better.
+(define (opt-inline-checked-depth-relaxed-frequency) : i64
+  8)
+
+(define (opt-inline-checked-effective-min-site-depth
+  [frequency : i64]
+  [entry-site? : bool]
+  [call-free? : bool]) : i64
+  (if (and
+    entry-site?
+    call-free?
+    (>= frequency (opt-inline-checked-depth-relaxed-frequency)))
+    0
+    (opt-inline-checked-min-site-depth)))
 
 ;; VERDICTS per program, not accepts. This is the tier's compile-time bound and
 ;; it has to count the work, which a cap on accepts does not: a rejected
@@ -124288,6 +124347,104 @@
       1
       callee-instrs)))
 
+;; --- the clause that decided, and the trace that reports it -----------------
+;;
+;; The admission test is a conjunction, and a conjunction answers "no" without
+;; saying which term said so. Every later admission question this tier is asked
+;; -- why is this callee not priced, which clause is the one to move -- needs
+;; exactly that name, so the test returns the CLAUSE rather than a bool and the
+;; bool is derived from it. The order below is the order the test evaluates in,
+;; cheapest first, so a clause code is also a statement of how far the candidate
+;; got.
+;;
+;; The tier's own state (disarmed, budget, target key) is not a property of the
+;; candidate, so those codes exist to be returned and are not traced: on a
+;; target walk every site but one answers `not-target`, and a trace of that is a
+;; trace of the walk, not of the tier. Tracing starts at the one-callee lock,
+;; which is the first clause that judges the candidate itself.
+(define (opt-inline-checked-clause-admitted) : i64
+  0)
+
+(define (opt-inline-checked-clause-scanned) : i64
+  1)
+
+(define (opt-inline-checked-clause-readmitted) : i64
+  2)
+
+(define (opt-inline-checked-clause-disarmed) : i64
+  3)
+
+(define (opt-inline-checked-clause-caller-taken) : i64
+  4)
+
+(define (opt-inline-checked-clause-program-budget) : i64
+  5)
+
+(define (opt-inline-checked-clause-caller-verdicts) : i64
+  6)
+
+(define (opt-inline-checked-clause-not-target) : i64
+  7)
+
+(define (opt-inline-checked-clause-callee-lock) : i64
+  8)
+
+(define (opt-inline-checked-clause-unreferenced) : i64
+  9)
+
+(define (opt-inline-checked-clause-callee-size) : i64
+  10)
+
+(define (opt-inline-checked-clause-callee-blocks) : i64
+  11)
+
+(define (opt-inline-checked-clause-address-taken) : i64
+  12)
+
+(define (opt-inline-checked-clause-heavy-gate) : i64
+  13)
+
+(define (opt-inline-checked-clause-block-ceiling) : i64
+  14)
+
+(define (opt-inline-checked-clause-frequency) : i64
+  15)
+
+(define (opt-inline-checked-clause-site-depth) : i64
+  16)
+
+(define (opt-inline-checked-clause-admits? [clause : i64]) : bool
+  (or
+    (= clause (opt-inline-checked-clause-admitted))
+    (= clause (opt-inline-checked-clause-readmitted))))
+
+(define (opt-inline-checked-clause-traced? [clause : i64]) : bool
+  (or
+    (= clause (opt-inline-checked-clause-admitted))
+    (= clause (opt-inline-checked-clause-scanned))
+    (>= clause (opt-inline-checked-clause-callee-lock))))
+
+(define (opt-inline-checked-clause-text [clause : i64]) : String
+  (cond
+    [(= clause (opt-inline-checked-clause-admitted)) "admitted"]
+    [(= clause (opt-inline-checked-clause-scanned)) "scanned"]
+    [(= clause (opt-inline-checked-clause-readmitted)) "readmitted"]
+    [(= clause (opt-inline-checked-clause-disarmed)) "disarmed"]
+    [(= clause (opt-inline-checked-clause-caller-taken)) "caller-taken"]
+    [(= clause (opt-inline-checked-clause-program-budget)) "program-budget"]
+    [(= clause (opt-inline-checked-clause-caller-verdicts)) "caller-verdicts"]
+    [(= clause (opt-inline-checked-clause-not-target)) "not-target"]
+    [(= clause (opt-inline-checked-clause-callee-lock)) "callee-lock"]
+    [(= clause (opt-inline-checked-clause-unreferenced)) "unreferenced"]
+    [(= clause (opt-inline-checked-clause-callee-size)) "callee-size"]
+    [(= clause (opt-inline-checked-clause-callee-blocks)) "callee-blocks"]
+    [(= clause (opt-inline-checked-clause-address-taken)) "address-taken"]
+    [(= clause (opt-inline-checked-clause-heavy-gate)) "heavy-gate"]
+    [(= clause (opt-inline-checked-clause-block-ceiling)) "block-ceiling"]
+    [(= clause (opt-inline-checked-clause-frequency)) "frequency"]
+    [(= clause (opt-inline-checked-clause-site-depth)) "site-depth"]
+    [else "unknown"]))
+
 (define opt-inline-checked-active? : bool
   false)
 (define opt-inline-checked-budget : i64
@@ -124345,6 +124502,22 @@
 ;; means "not known", which is what the first round starts from.
 (define opt-inline-checked-next-state-cost : i64
   (- 0 1))
+
+;; Did the verdict just published deliver the WHOLE modelled saving, or only the
+;; half the accept window's floor demands? The window keeps a site anywhere in
+;; [boundary/2, 2*boundary]; an accept at the top of that range is one the model
+;; and the measurement agree on outright, and an accept near its floor is one
+;; that only just repaid. The one-callee lock reads the first accept's answer.
+(define opt-inline-checked-last-margin-clear? : bool
+  false)
+
+(define (opt-inline-checked-publish-margin! [clear? : bool]) : unit
+  (set! opt-inline-checked-last-margin-clear? clear?))
+
+;; ...banked at the moment the caller's FIRST site was accepted, which is the
+;; only accept the lock's rule is about.
+(define opt-inline-checked-first-margin-clear? : bool
+  false)
 (define opt-inline-caller-checked-blocks : i64
   0)
 (define opt-inline-caller-checked-taken? : bool
@@ -124361,10 +124534,118 @@
 ;; be accepted on the arithmetic alone.
 (define opt-inline-checked-site-depth : i64
   0)
+
+;; The POSITION of the site's block in the caller's block list, set by the same
+;; walk that reads the site's depth. Position zero is the caller's entry block,
+;; which is the one block a caller runs exactly once per invocation -- see
+;; opt-inline-checked-effective-min-site-depth for why that is the question a
+;; depth-0 site has to answer.
+(define opt-inline-checked-site-position : i64
+  (- 0 1))
 (define opt-inline-checked-callee-slot : i64
   (- 0 1))
 (define opt-inline-checked-callee-params : i64
   0)
+
+;; The site depth and composite frequency the admission test last computed, or
+;; -1 when the candidate was refused before reaching them. They exist so the
+;; trace can report the two numbers the relaxed depth clause turns on without
+;; the test computing them twice.
+(define opt-inline-checked-trace-depth : i64
+  (- 0 1))
+(define opt-inline-checked-trace-frequency : i64
+  (- 0 1))
+
+;; `--trace-passes` observability: one line per checked-tier candidate, naming
+;; the callee, the caller and the site, the two numbers the site clauses read,
+;; and the clause that decided. The string is built inside the guard, so a
+;; compile without the flag pays one boolean test per candidate; the tier's own
+;; throwaway measurement runs are suppressed exactly as the pass tracer is.
+(define (opt-inline-checked-trace-clause!
+  [callee-name : i64]
+  [callee-instrs : i64]
+  [np : i64]
+  [clause : i64]) : unit
+  (if (and
+    compiler-opt-debug-trace-passes
+    (not compiler-opt-debug-suppressed?)
+    (opt-inline-checked-clause-traced? clause))
+    (io.print-error
+      (str_cat.str-cat
+        "inline-checked|"
+        (ir.compiler-ir-symbol-text callee-name)
+        "|caller="
+        (ir.compiler-ir-symbol-text opt-inline-caller-name)
+        "|block="
+        (ir.compiler-ir-label-text opt-inline-current-block-label)
+        "|depth="
+        (string.int->string opt-inline-checked-trace-depth)
+        "|frequency="
+        (string.int->string opt-inline-checked-trace-frequency)
+        "|instrs="
+        (string.int->string callee-instrs)
+        "|np="
+        (string.int->string np)
+        "|mode="
+        (if opt-inline-checked-scanning?
+          "scan"
+          "target")
+        "|"
+        (opt-inline-checked-clause-text clause)
+        "\n"))
+    unit))
+
+;; ...and one line per VERDICT: the priced numbers on both sides, the boundary a
+;; free inline would retire, the modelled saving, and which way the two-sided
+;; window fell. `margin` reports whether the whole modelled saving survived
+;; re-optimization or only the half the window's floor demands -- the reading
+;; the one-callee lock consults before it lets a caller take a second body.
+(define (opt-inline-checked-trace-verdict!
+  [callee-name : i64]
+  [site-depth : i64]
+  [site-weight : i64]
+  [np : i64]
+  [banked-cost : i64]
+  [callee-cost : i64]
+  [after : i64]
+  [boundary : i64]
+  [keep? : bool]
+  [margin-clear? : bool]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (io.print-error
+      (str_cat.str-cat
+        "inline-checked-verdict|"
+        (ir.compiler-ir-symbol-text callee-name)
+        "|caller="
+        (ir.compiler-ir-symbol-text opt-inline-caller-name)
+        "|block="
+        (ir.compiler-ir-label-text opt-inline-checked-target-block)
+        "|depth="
+        (string.int->string site-depth)
+        "|weight="
+        (string.int->string site-weight)
+        "|np="
+        (string.int->string np)
+        "|banked="
+        (string.int->string banked-cost)
+        "|callee="
+        (string.int->string callee-cost)
+        "|after="
+        (string.int->string after)
+        "|boundary="
+        (string.int->string boundary)
+        "|saving="
+        (string.int->string (- (+ banked-cost (+ boundary callee-cost)) after))
+        "|"
+        (if keep?
+          "keep"
+          "revert")
+        "|margin="
+        (if margin-clear?
+          "clear"
+          "slim")
+        "\n"))
+    unit))
 
 ;; Per-program state reset, run by the level-2 inline driver before the SCC
 ;; walk. It resets the budget and the per-caller flags but does NOT arm the
@@ -124387,6 +124668,8 @@
     (set! opt-inline-checked-accepted-count 0)
     (set! opt-inline-checked-scan-count 0)
     (set! opt-inline-checked-caller-verdicts 0)
+    (set! opt-inline-checked-last-margin-clear? false)
+    (set! opt-inline-checked-first-margin-clear? false)
     (set! opt-inline-checked-scanning? true)))
 
 (define (opt-inline-checked-program-begin!) : unit
@@ -124507,10 +124790,103 @@
 ;; what pushes the caller's own loops into spilling.
 ;;
 ;; A refused candidate does not claim the caller: only an accept does.
-(define (opt-inline-checked-callee-allowed? [callee-name : i64]) : bool
+;;
+;; WHY THE LOCK NOW OPENS ONCE, AND ONLY BEHIND TWO CLEAR MARGINS. Both losses
+;; the rule was written for were measured before IT-1, IT-2, LP-1, R3S-1 and R4;
+;; re-measured on this tree the interner's own case has changed sign --
+;; `it-map-insert-from` as a SECOND body in `it-intern-slice` is worth
+;; intern_table -0.20%, where the recorded reading was +1.60%. What has not
+;; changed is the argument: a second, different body is a second independent
+;; demand on the caller's frame, and the plan prices that demand through an
+;; estimate.
+;;
+;; So the relaxation is spent on the case where the estimate is not what
+;; decided, and the tier already has a reading of that. The accept window keeps
+;; a site anywhere between half its modelled saving and twice it; an accept at
+;; the window's floor repaid only the half the floor demands and is exactly the
+;; verdict the estimate's error decided. A caller may therefore price a second
+;; body only when its FIRST accept delivered the whole modelled saving, and the
+;; second body is kept only when it delivers its own whole modelled saving too
+;; (see opt-inline-checked-verdict). Two clear margins, and no third body: two
+;; distinct bodies is what the corpus measured.
+;;
+;; Measured on this tree, that pair of conditions is what separates the
+;; interner's two second-body candidates: `it-map-insert-from` clears both and
+;; is kept; `it-hash-words` into `it-grow!` models 62 against a boundary of 72,
+;; clears the window's floor and not the clear margin, and reverts.
+(define (opt-inline-checked-accepted-callee-from?
+  [callee-name : i64]
+  [row : i64]) : bool
+  (if (>= row opt-inline-checked-accepted-count)
+    false
+    (or
+      (= (array-ref opt-inline-checked-accepted (* row 3)) callee-name)
+      (opt-inline-checked-accepted-callee-from? callee-name (+ row 1)))))
+
+;; Has this callee already appeared in a row BEFORE `row`?
+(define (opt-inline-checked-accepted-callee-earlier?
+  [callee-name : i64]
+  [row : i64]
+  [scan : i64]) : bool
+  (if (>= scan row)
+    false
+    (or
+      (= (array-ref opt-inline-checked-accepted (* scan 3)) callee-name)
+      (opt-inline-checked-accepted-callee-earlier? callee-name row (+ scan 1)))))
+
+;; Distinct callees the caller has already kept: the rows whose callee is not a
+;; repeat of an earlier row's. Bounded by the accepted table, which holds
+;; opt-inline-checked-max-caller-verdicts rows.
+(define (opt-inline-checked-accepted-callees-from [row : i64] [acc : i64]) : i64
+  (if (>= row opt-inline-checked-accepted-count)
+    acc
+    (opt-inline-checked-accepted-callees-from
+      (+ row 1)
+      (+
+        acc
+        (if (opt-inline-checked-accepted-callee-earlier?
+          (array-ref opt-inline-checked-accepted (* row 3))
+          row
+          0)
+          0
+          1)))))
+
+(define (opt-inline-checked-accepted-callee-count) : i64
+  (opt-inline-checked-accepted-callees-from 0 0))
+
+;; How many DISTINCT callees one caller may keep. One outright; a second only
+;; behind a first accept whose whole modelled saving survived.
+(define (opt-inline-checked-max-callees) : i64
+  2)
+
+;; The rule with the margin passed rather than read, so the relaxation can be
+;; pinned on its own against a caller's accepted table.
+(define (opt-inline-checked-callee-allowed-with?
+  [callee-name : i64]
+  [margin-clear? : bool]) : bool
   (or
     (= opt-inline-checked-accepted-count 0)
-    (= (array-ref opt-inline-checked-accepted 0) callee-name)))
+    (opt-inline-checked-accepted-callee-from? callee-name 0)
+    (and
+      margin-clear?
+      (<
+        (opt-inline-checked-accepted-callee-count)
+        (opt-inline-checked-max-callees)))))
+
+;; Is the armed target a body this caller has not kept before? Only such a
+;; site can be reaching the verdict through the relaxed lock.
+(define (opt-inline-checked-second-body?) : bool
+  (and
+    (> opt-inline-checked-accepted-count 0)
+    (not
+      (opt-inline-checked-accepted-callee-from?
+        opt-inline-checked-target-callee
+        0))))
+
+(define (opt-inline-checked-callee-allowed? [callee-name : i64]) : bool
+  (opt-inline-checked-callee-allowed-with?
+    callee-name
+    opt-inline-checked-first-margin-clear?))
 
 ;; The richest allowed row still unarmed, or -1. Ties go to the earlier row, so
 ;; the ordering is the scan's walk order refined by richness and never depends
@@ -124531,6 +124907,45 @@
         (opt-inline-checked-scan-best-from (+ row 1) row richness)
         (opt-inline-checked-scan-best-from (+ row 1) best best-richness)))))
 
+;; The lock decides in the RANKING, not in the admission test: a locked-out
+;; candidate is never armed, so its site never reaches the test that would name
+;; the clause. These report it where it happens -- one line per scan row still
+;; unarmed when the caller has run out of targets, which is exactly the set the
+;; lock excluded.
+(define (opt-inline-checked-trace-locked-from! [row : i64]) : unit
+  (if (>= row opt-inline-checked-scan-count)
+    unit
+    (let
+      [base : i64 (* row 4)]
+      [richness : i64 (array-ref opt-inline-checked-scan (+ base 3))]
+      [callee-name : i64 (array-ref opt-inline-checked-scan base)]
+      (begin
+        (if (and
+          (>= richness 0)
+          (not (opt-inline-checked-callee-allowed? callee-name)))
+          (io.print-error
+            (str_cat.str-cat
+              "inline-checked|"
+              (ir.compiler-ir-symbol-text callee-name)
+              "|caller="
+              (ir.compiler-ir-symbol-text opt-inline-caller-name)
+              "|block="
+              (ir.compiler-ir-label-text
+                (array-ref opt-inline-checked-scan (+ base 1)))
+              "|richness="
+              (string.int->string richness)
+              "|mode=rank|"
+              (opt-inline-checked-clause-text
+                (opt-inline-checked-clause-callee-lock))
+              "\n"))
+          unit)
+        (opt-inline-checked-trace-locked-from! (+ row 1))))))
+
+(define (opt-inline-checked-trace-locked!) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (opt-inline-checked-trace-locked-from! 0)
+    unit))
+
 ;; Arm the next round's target: the richest candidate the caller has left, if
 ;; the caller and the program can still afford a verdict. The row is spent here
 ;; rather than at the verdict, so a target the current state can no longer place
@@ -124545,7 +124960,9 @@
     (let
       [row : i64 (opt-inline-checked-scan-best-from 0 (- 0 1) 0)]
       (if (< row 0)
-        false
+        (begin
+          (opt-inline-checked-trace-locked!)
+          false)
         (let
           [base : i64 (* row 4)]
           (begin
@@ -124572,6 +124989,13 @@
     (let
       [base : i64 (* opt-inline-checked-accepted-count 3)]
       (begin
+        ;; The lock's rule is about the caller's FIRST accept, so its margin is
+        ;; banked here and never overwritten by a later round's.
+        (if (= opt-inline-checked-accepted-count 0)
+          (set!
+            opt-inline-checked-first-margin-clear?
+            opt-inline-checked-last-margin-clear?)
+          unit)
         (set!
           (array-ref opt-inline-checked-accepted base)
           opt-inline-checked-target-callee)
@@ -124606,7 +125030,9 @@
       (match block
         [(ir.CompilerIrBlock.Block block-label _)
           (if (= block-label label)
-            (opt-inline-census-depth-at position)
+            (begin
+              (set! opt-inline-checked-site-position position)
+              (opt-inline-census-depth-at position))
             (opt-inline-checked-block-weight-from
               (compiler-opt-box-shared-view rest)
               label
@@ -124622,6 +125048,7 @@
     [blocks : ir.CompilerIrBlockList
       (opt-inline-caller-facts-blocks-shared-view)]
     (begin
+      (set! opt-inline-checked-site-position (- 0 1))
       (opt-inline-census-depths-build! (compiler-opt-global-shared-view blocks))
       (opt-inline-checked-block-weight-from
         blocks
@@ -124669,6 +125096,136 @@
 ;; refuse. Measured on this tree, dropping it leaves all twenty-two
 ;; instruction-count rows byte identical and hands the check thirteen new
 ;; candidates across the corpus, of which it accepts five and reverts the rest.
+;;
+;; The test answers with the CLAUSE, not with a bool: a conjunction that says
+;; only "no" is exactly what left this tier unobservable, and the clause name is
+;; what `--trace-passes` reports and what every later admission question asks
+;; for. The evaluation order is unchanged -- the tier's own state and the target
+;; key, then the integer size clauses, then the growth budgets, and last the
+;; site weight -- so the cost of a refused site is what it was.
+;;
+;; The two site clauses swap places against the reading they had: the composite
+;; FREQUENCY is now tested first because the depth floor is stated in terms of
+;; it (opt-inline-checked-effective-min-site-depth). The conjunction is the
+;; same; only the name the trace reports for a site that fails both changes.
+(define (opt-inline-checked-clause
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [callee-name : i64]
+  [refs : i64]
+  [callee-instrs : i64]
+  [np : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [added-blocks : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]
+  [site-pos : i64]) : i64
+  (begin
+    (set! opt-inline-checked-trace-depth (- 0 1))
+    (set! opt-inline-checked-trace-frequency (- 0 1))
+    (cond
+      [(not opt-inline-checked-active?) (opt-inline-checked-clause-disarmed)]
+      [(opt-inline-checked-accepted?
+          callee-name
+          opt-inline-current-block-label
+          site-pos)
+        (begin
+          (set! opt-inline-checked-new-site? false)
+          (opt-inline-checked-clause-readmitted))]
+      [opt-inline-caller-checked-taken?
+        (opt-inline-checked-clause-caller-taken)]
+      [(<= opt-inline-checked-budget 0)
+        (opt-inline-checked-clause-program-budget)]
+      [(>=
+          opt-inline-checked-caller-verdicts
+          (opt-inline-checked-max-caller-verdicts))
+        (opt-inline-checked-clause-caller-verdicts)]
+      [(not
+          (or
+            opt-inline-checked-scanning?
+            (opt-inline-checked-target-match?
+              callee-name
+              opt-inline-current-block-label
+              site-pos)))
+        (opt-inline-checked-clause-not-target)]
+      [(not (opt-inline-checked-callee-allowed? callee-name))
+        (opt-inline-checked-clause-callee-lock)]
+      [(< refs 1) (opt-inline-checked-clause-unreferenced)]
+      [(> callee-instrs (opt-inline-checked-max-body))
+        (opt-inline-checked-clause-callee-size)]
+      [(>
+          (ir.compiler-ir-block-list-count
+            (compiler-opt-global-shared-view blocks))
+          (opt-inline-checked-max-blocks))
+        (opt-inline-checked-clause-callee-blocks)]
+      [(opt-inline-census-address-taken?
+          (compiler-opt-global-shared-view index)
+          (compiler-opt-global-shared-view census)
+          callee-name)
+        (opt-inline-checked-clause-address-taken)]
+      ;; The heavy gate is asked about TOTAL caller growth, this tier's blocks
+      ;; included; the block ceiling below is also this tier's own fuel, so a
+      ;; checked import never spends the fuel the caller's banked absorptions
+      ;; draw on.
+      [(opt-inline-cost-crosses-heavy-gate?
+          caller-blocks
+          (+ added-so-far opt-inline-caller-checked-blocks)
+          added-blocks)
+        (opt-inline-checked-clause-heavy-gate)]
+      [(>
+          (+ opt-inline-caller-checked-blocks added-blocks)
+          (opt-inline-checked-max-blocks))
+        (opt-inline-checked-clause-block-ceiling)]
+      [else
+        (let
+          [site-depth : i64 (opt-inline-checked-site-depth-now)]
+          [site-weight : i64 (opt-inline-census-depth-weight site-depth)]
+          [frequency : i64
+            (opt-inline-checked-site-frequency
+              (compiler-opt-global-shared-view index)
+              census
+              site-weight)]
+          [_publish : unit
+            (begin
+              (set! opt-inline-checked-trace-depth site-depth)
+              (set! opt-inline-checked-trace-frequency frequency))]
+          (cond
+            [(< frequency (opt-inline-checked-min-frequency))
+              (opt-inline-checked-clause-frequency)]
+            [(<
+                site-depth
+                (opt-inline-checked-effective-min-site-depth
+                  frequency
+                  (= opt-inline-checked-site-position 0)
+                  (opt-inline-blocks-call-free?
+                    (compiler-opt-global-shared-view blocks))))
+              (opt-inline-checked-clause-site-depth)]
+            ;; RICHNESS: what a free inline of this site would be worth -- how
+            ;; often the site runs times what its boundary costs. It is the
+            ;; `boundary` term of the verdict itself, scaled by the caller's own
+            ;; hot reference count, which is the only ranking that puts the
+            ;; biggest claim in front of the smallest state.
+            [opt-inline-checked-scanning?
+              (begin
+                (opt-inline-checked-scan-record!
+                  callee-name
+                  opt-inline-current-block-label
+                  site-pos
+                  (opt-inline-checked-richness frequency np callee-instrs))
+                (opt-inline-checked-clause-scanned))]
+            [else
+              (begin
+                (set! opt-inline-checked-site-depth site-depth)
+                (set! opt-inline-checked-site-weight site-weight)
+                (set! opt-inline-checked-callee-params np)
+                (set!
+                  opt-inline-checked-callee-slot
+                  (match (opt-function-index-slot index callee-name)
+                    [(option_i64.Some slot) slot]
+                    [(option_i64.None) (- 0 1)]))
+                (set! opt-inline-checked-new-site? true)
+                (opt-inline-checked-clause-admitted))]))])))
+
 (define (opt-inline-checked-ok?
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -124681,87 +125238,23 @@
   [caller-blocks : i64]
   [added-so-far : i64]
   [site-pos : i64]) : bool
-  (if (not opt-inline-checked-active?)
-    false
-    (if (opt-inline-checked-accepted?
-      callee-name
-      opt-inline-current-block-label
-      site-pos)
-      (begin
-        (set! opt-inline-checked-new-site? false)
-        true)
-      (and
-        (not opt-inline-caller-checked-taken?)
-        (> opt-inline-checked-budget 0)
-        (<
-          opt-inline-checked-caller-verdicts
-          (opt-inline-checked-max-caller-verdicts))
-        (or
-          opt-inline-checked-scanning?
-          (opt-inline-checked-target-match?
-            callee-name
-            opt-inline-current-block-label
-            site-pos))
-        (opt-inline-checked-callee-allowed? callee-name)
-        (>= refs 1)
-        (<= callee-instrs (opt-inline-checked-max-body))
-        (<=
-          (ir.compiler-ir-block-list-count
-            (compiler-opt-global-shared-view blocks))
-          (opt-inline-checked-max-blocks))
-        (not
-          (opt-inline-census-address-taken?
-            (compiler-opt-global-shared-view index)
-            (compiler-opt-global-shared-view census)
-            callee-name))
-        ;; The heavy gate is asked about TOTAL caller growth, this tier's blocks
-        ;; included; the block ceiling above is also this tier's own fuel, so a
-        ;; checked import never spends the fuel the caller's banked absorptions
-        ;; draw on.
-        (not
-          (opt-inline-cost-crosses-heavy-gate?
-            caller-blocks
-            (+ added-so-far opt-inline-caller-checked-blocks)
-            added-blocks))
-        (<=
-          (+ opt-inline-caller-checked-blocks added-blocks)
-          (opt-inline-checked-max-blocks))
-        (let
-          [site-depth : i64 (opt-inline-checked-site-depth-now)]
-          [site-weight : i64 (opt-inline-census-depth-weight site-depth)]
-          [frequency : i64
-            (opt-inline-checked-site-frequency
-              (compiler-opt-global-shared-view index)
-              census
-              site-weight)]
-          (if (and
-            (>= site-depth (opt-inline-checked-min-site-depth))
-            (>= frequency (opt-inline-checked-min-frequency)))
-            (if opt-inline-checked-scanning?
-              ;; RICHNESS: what a free inline of this site would be worth --
-              ;; how often the site runs times what its boundary costs. It is
-              ;; the `boundary` term of the verdict itself, scaled by the
-              ;; caller's own hot reference count, which is the only ranking
-              ;; that puts the biggest claim in front of the smallest state.
-              (begin
-                (opt-inline-checked-scan-record!
-                  callee-name
-                  opt-inline-current-block-label
-                  site-pos
-                  (opt-inline-checked-richness frequency np callee-instrs))
-                false)
-              (begin
-                (set! opt-inline-checked-site-depth site-depth)
-                (set! opt-inline-checked-site-weight site-weight)
-                (set! opt-inline-checked-callee-params np)
-                (set!
-                  opt-inline-checked-callee-slot
-                  (match (opt-function-index-slot index callee-name)
-                    [(option_i64.Some slot) slot]
-                    [(option_i64.None) (- 0 1)]))
-                (set! opt-inline-checked-new-site? true)
-                true))
-            false))))))
+  (let
+    [clause : i64
+      (opt-inline-checked-clause
+        (compiler-opt-global-shared-view index)
+        (compiler-opt-global-shared-view census)
+        callee-name
+        refs
+        callee-instrs
+        np
+        (compiler-opt-global-shared-view blocks)
+        added-blocks
+        caller-blocks
+        added-so-far
+        site-pos)]
+    [_trace : unit
+      (opt-inline-checked-trace-clause! callee-name callee-instrs np clause)]
+    (opt-inline-checked-clause-admits? clause)))
 
 ;; --- pricing one function's plan --------------------------------------------
 (define (opt-inline-checked-weighted-instrs-from
@@ -125011,13 +125504,38 @@
     ;; not, the model is not trusted in either direction and the site reverts.
     ;; This is the clear-margin discipline read as a confidence interval, which
     ;; is the only honest reading of a two-sided estimate.
-    [keep? : bool (opt-inline-checked-window-ok? (- before after) boundary)]
+    [saving : i64 (- before after)]
+    ;; The whole modelled saving survived, not merely the half the window's
+    ;; floor demands. The one-callee lock reads this off the caller's first
+    ;; accept before it will price a second body, and a second body is held to
+    ;; it in its own right: the relaxation is for the case both sides of the
+    ;; model agree on, not for the case the window's floor barely admits.
+    [clear? : bool (>= saving boundary)]
+    [keep? : bool
+      (and
+        (opt-inline-checked-window-ok? saving boundary)
+        (or (not (opt-inline-checked-second-body?)) clear?))]
+    [margin-clear? : bool (and keep? clear?)]
     [_publish : unit
-      (set!
-        opt-inline-checked-next-state-cost
-        (if keep?
-          after
-          banked-cost))]
+      (begin
+        (opt-inline-checked-publish-margin! margin-clear?)
+        (set!
+          opt-inline-checked-next-state-cost
+          (if keep?
+            after
+            banked-cost)))]
+    [_trace : unit
+      (opt-inline-checked-trace-verdict!
+        opt-inline-checked-target-callee
+        site-depth
+        site-weight
+        np
+        banked-cost
+        callee-cost
+        after
+        boundary
+        keep?
+        margin-clear?)]
     keep?))
 
 ;; The check allocates three optimizer generations and three allocation plans
@@ -127613,6 +128131,7 @@
     ;; and the state the next round is priced against is unchanged.
     [(OptMaybeFunction.No)
       (begin
+        (opt-inline-checked-publish-margin! false)
         (set! opt-inline-checked-next-state-cost banked-cost)
         false)]))
 

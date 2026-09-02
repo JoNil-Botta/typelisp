@@ -973,6 +973,64 @@ check_const_global_mask_unroll() {
     assert_contains "$_literal" '__bce_fast__unroll_body' const-global-mask-unroll
 }
 
+check_checked_depth0_site() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "checked_depth0_site_$_suffix" \
+            tests/integration/checked_depth0_site.tl "$_target")
+        _probe=$(function_body "$_asm" _tl_checked_depth0_site_probe)
+
+        # CB-2(c): the hash leaf's site is `probe`'s ENTRY block -- loop depth
+        # zero -- and every static band refuses it there. Before CB-2 so did the
+        # measured tier, on a site-depth clause that stood in for a plan model
+        # which priced an allocation once per invocation. The plan now weights
+        # each spill and carrier slot by the census depth weight of the blocks
+        # it is touched in, the floor stands down where the composite frequency
+        # already carries the evidence (`main` reaches `probe` through a loop),
+        # and the verdict keeps this site: the call is gone and the leaf's own
+        # body -- its FNV seed and its word loop -- is inside the caller.
+        assert_not_matches "$_probe" \
+            '^[[:space:]]+call _tl_checked_depth0_site_hash_words$' \
+            "checked-depth0-site-$_target"
+        assert_matches "$_probe" '^[[:space:]]+movq \$2166136261, %r' \
+            "checked-depth0-site-$_target"
+        assert_matches "$_probe" '^\.L[A-Za-z0-9_]+_inl\.' \
+            "checked-depth0-site-$_target"
+
+        # The tier COPIES a body into one site and leaves the callee reachable
+        # from that site's siblings; the cold second reference still calls it.
+        assert_matches "$_asm" '^_tl_checked_depth0_site_hash_words:$' \
+            "checked-depth0-site-$_target"
+        assert_regex_count_eq "$_asm" \
+            '^[[:space:]]+call _tl_checked_depth0_site_hash_words$' 1 \
+            "checked-depth0-site-$_target"
+    done
+}
+
+check_checked_setup_helper() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "checked_setup_helper_$_suffix" \
+            tests/integration/checked_setup_helper.tl "$_target")
+        _run=$(function_body "$_asm" _tl_checked_setup_helper_run)
+
+        # The recorded loser's shape: a seven-parameter setup builder at the
+        # ENTRY block of a caller that holds a hot loop, reached through a loop
+        # of its own caller. The site-depth clause used to refuse it without
+        # pricing it; it is now offered to the verdict and the verdict refuses
+        # it BY COST, and the difference is visible only here -- absorbing the
+        # builder is correct, just slower, so an exit code cannot tell the two
+        # apart. `--trace-passes` reports the numbers.
+        assert_regex_count_eq "$_run" \
+            '^[[:space:]]+call _tl_checked_setup_helper_build_csr$' 1 \
+            "checked-setup-helper-$_target"
+        # ...and nothing else was absorbed into the loop-holding caller either:
+        # an imported body carries the inline label prefix.
+        assert_not_matches "$_run" '^\.L[A-Za-z0-9_]+_inl\.' \
+            "checked-setup-helper-$_target"
+    done
+}
+
 check_const_index_bounds() {
     _asm=$(compile_gate const_index_bounds tests/integration/const_index_bounds.tl)
     _body=$(function_body "$_asm" _tl_const_index_bounds_get2)
@@ -1866,6 +1924,8 @@ check_global_cmp_mem_fold
 check_rmw_mem_operand_fold
 check_alu_mem_operand_tie
 check_alu_mem_operand_sink
+check_checked_depth0_site
+check_checked_setup_helper
 check_const_index_bounds
 check_const_global_mask_unroll
 check_rbp_sixth_csr

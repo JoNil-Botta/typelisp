@@ -20143,6 +20143,557 @@
       ;; poorer site of the one this caller kept
       (= third-callee a))))
 
+;; --- the relaxed depth floor, the entry-site rule and the lock -------------
+;;
+;; The relaxed depth floor. The clause exists to disqualify a straight-line site
+;; in a caller nothing reaches; the composite frequency says exactly that in the
+;; currency that also counts the loops ABOVE the caller, so where the frequency
+;; carries the evidence the depth floor stands down and the verdict decides.
+(define (compiler-optimize-inline-checked-depth-floor-ok?) : bool
+  (and
+    (> (compiler_optimize.opt-inline-checked-min-site-depth) 0)
+    ;; a call-free callee at an ENTRY site of a caller reached through a loop:
+    ;; all three answers are available and the floor stands down
+    (=
+      (compiler_optimize.opt-inline-checked-effective-min-site-depth
+        (compiler_optimize.opt-inline-checked-depth-relaxed-frequency)
+        true
+        true)
+      0)
+    ;; the same site under a caller nothing reaches through a loop
+    (=
+      (compiler_optimize.opt-inline-checked-effective-min-site-depth
+        (- (compiler_optimize.opt-inline-checked-depth-relaxed-frequency) 1)
+        true
+        true)
+      (compiler_optimize.opt-inline-checked-min-site-depth))
+    ;; ...a hot caller whose site is NOT the block it runs once per invocation:
+    ;; the plan's currency has nothing to credit a whole boundary against
+    (=
+      (compiler_optimize.opt-inline-checked-effective-min-site-depth
+        (compiler_optimize.opt-inline-checked-depth-relaxed-frequency)
+        false
+        true)
+      (compiler_optimize.opt-inline-checked-min-site-depth))
+    ;; ...and a call-carrying callee, whose imported call takes away the one
+    ;; thing a depth-0 inline can win beyond its 6+np boundary
+    (=
+      (compiler_optimize.opt-inline-checked-effective-min-site-depth
+        (compiler_optimize.opt-inline-checked-depth-relaxed-frequency)
+        true
+        false)
+      (compiler_optimize.opt-inline-checked-min-site-depth))
+    ;; the two floors read the same rung, so the depth clause is reached exactly
+    ;; when the frequency clause has already passed
+    (=
+      (compiler_optimize.opt-inline-checked-depth-relaxed-frequency)
+      (compiler_optimize.opt-inline-checked-min-frequency))))
+
+;; The recorded loser's own shape: a SEVEN-parameter builder with a loop of its
+;; own, call-free and bounds-free, at a straight-line site. Seven parameters is
+;; what makes the boundary 13 -- the number the `cfg-build-csr` autopsy records
+;; against a modelled saving of 23 -- and a builder large enough to have its own
+;; loop is what makes the merge something the plan has to price rather than
+;; something it can wave through.
+(define (opt-inline-checked-builder-arity) : i64
+  7)
+
+(define (opt-inline-checked-builder-pad) : i64
+  20)
+
+(define (opt-inline-checked-builder-params-from [index : i64] [count : i64]) : compiler_ir_types.CompilerIrParamSeq
+  (if (>= index count)
+    (compiler_ir_types.compiler-ir-param-seq-empty)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "builder"
+        (compiler_ast_types.AstType.I64)
+        index)
+      (opt-inline-checked-builder-params-from (+ index 1) count))))
+
+;; The parameter each padding add reads: every one of the seven, then the second
+;; again, so all of them stay live to the end of the body.
+(define (opt-inline-checked-builder-param [index : i64]) : i64
+  (if (< index (opt-inline-checked-builder-arity))
+    index
+    1))
+
+(define (opt-inline-checked-builder-chain
+  [index : i64]
+  [count : i64]
+  [acc-var : i64]
+  [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (if (>= index count)
+    tail
+    (opt-test-instrs-with-tail
+      (opt-inline-checked-builder-chain (+ index 1) count (+ acc-var 1) tail)
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        (+ acc-var 1)
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var acc-var)
+        (compiler_ir_types.CompilerIrValue.Var
+          (opt-inline-checked-builder-param index))
+        (compiler_ast_types.AstType.I64)))))
+
+(define (opt-inline-checked-builder-latch-var) : i64
+  (+ (opt-inline-checked-builder-arity) (+ 2 (opt-inline-checked-builder-pad))))
+
+(define (opt-inline-checked-builder-function [name : i64]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [arity : i64 (opt-inline-checked-builder-arity)]
+    (compiler_ir_types.CompilerIrFunction.Function
+      name
+      (opt-inline-checked-builder-params-from 0 arity)
+      (compiler_ast_types.AstType.I64)
+      (+ (opt-inline-checked-builder-latch-var) 1)
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Mov
+              arity
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "header"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "header")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Phi
+                (+ arity 1)
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var arity)
+                  (compiler_ir_types.compiler-ir-label "entry")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                    (compiler_ir_types.CompilerIrValue.Var
+                      (opt-inline-checked-builder-latch-var))
+                    (compiler_ir_types.compiler-ir-label "body")
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-label "done"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "body")
+              (opt-inline-checked-builder-chain
+                0
+                (opt-inline-checked-builder-pad)
+                (+ arity 1)
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "header")))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "done")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var (+ arity 1))))))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-inline-checked-builder-args!
+  [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (set!
+        (array-ref args index)
+        (compiler_ir_types.CompilerIrValue.Var
+          (if (< index 3)
+            index
+            2)))
+      (opt-inline-checked-builder-args!
+        (compiler_optimize.compiler-opt-global-shared-view args)
+        (+ index 1)
+        count))))
+
+(define (opt-inline-checked-builder-call [callee-name : i64] [dst : i64]) : compiler_ir_types.CompilerIrInstr
+  (let
+    [count : i64 (opt-inline-checked-builder-arity)]
+    [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (__tl_make-array compiler_ir_types.CompilerIrValue count)]
+    (begin
+      (opt-inline-checked-builder-args!
+        (compiler_optimize.compiler-opt-global-shared-view args)
+        0
+        count)
+      (compiler_ir_types.CompilerIrInstr.Call
+        dst
+        callee-name
+        (compiler_ir_types.CompilerIrCallArgs.Array args)
+        (compiler_ast_types.AstType.I64)))))
+
+;; A DEPTH-0 site in a caller that holds its own hot loop: the shape both
+;; recorded losses have (`cfg-build-csr` into `cfg-function`, a builder at a
+;; straight-line site of a loop-holding caller) and the shape the interner's
+;; hash leaf has at its depth-0 site. `inline_nonleaf` calls the leaf from its
+;; ENTRY block and then runs a loop that carries `live` values across itself --
+;; the register pressure the site-depth clause was standing in for, and the only
+;; thing that makes the site worth measuring rather than refusing by shape.
+;;
+;; The carried values are derived from a parameter rather than from literals, so
+;; the tier's own re-optimization cannot fold them away before it prices them.
+(define (opt-inline-checked-live-defs
+  [index : i64]
+  [count : i64]
+  [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (if (>= index count)
+    tail
+    (opt-test-instrs-with-tail
+      (opt-inline-checked-live-defs (+ index 1) count tail)
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        (+ 6 index)
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.CompilerIrValue.I64 (+ index 1))
+        (compiler_ast_types.AstType.I64)))))
+
+(define (opt-inline-checked-live-uses
+  [index : i64]
+  [count : i64]
+  [acc-var : i64]
+  [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (if (>= index count)
+    tail
+    (opt-test-instrs-with-tail
+      (opt-inline-checked-live-uses (+ index 1) count (+ acc-var 1) tail)
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        (+ acc-var 1)
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var acc-var)
+        (compiler_ir_types.CompilerIrValue.Var (+ 6 index))
+        (compiler_ast_types.AstType.I64)))))
+
+;; Values the caller keeps live across its own loop.
+(define (opt-inline-checked-depth0-live) : i64
+  20)
+
+(define (opt-inline-checked-depth0-latch-var) : i64
+  (+ 6 (* 2 (opt-inline-checked-depth0-live))))
+
+(define (opt-inline-checked-depth0-site-block [entry-site? : bool]) : i64
+  (if entry-site?
+    (compiler_ir_types.compiler-ir-label "entry")
+    (compiler_ir_types.compiler-ir-label "setup")))
+
+;; The loop half of the caller, shared by both spellings: the header whose phi
+;; names the block the call sits in, the body that carries the live values
+;; across the loop, the latch and the exit.
+(define (opt-inline-checked-depth0-loop-blocks [entry-site? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [live : i64 (opt-inline-checked-depth0-live)]
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "header")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Phi
+            4
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (opt-inline-checked-depth0-site-block entry-site?)
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var
+                  (opt-inline-checked-depth0-latch-var))
+                (compiler_ir_types.compiler-ir-label "latch")
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-label "exit"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "body")
+          (opt-test-instrs-with-tail
+            (opt-inline-checked-live-uses
+              0
+              live
+              (+ 6 live)
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "latch"))))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              (+ 6 live)
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ast_types.AstType.I64))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "latch")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "header"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "exit")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 4)))))
+            compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; `entry-site?` puts the builder call in the caller's ENTRY block, the one
+;; block a caller runs exactly once per invocation; the other spelling moves it
+;; one unconditional jump further, into a block the relaxed floor refuses even
+;; though the caller and the frequency are identical.
+(define (opt-inline-checked-depth0-caller-blocks
+  [callee-name : i64]
+  [entry-site? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [live : i64 (opt-inline-checked-depth0-live)]
+    (if entry-site?
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (opt-inline-checked-live-defs
+            0
+            live
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Mov
+                3
+                (compiler_ir_types.CompilerIrValue.I64 0)
+                (compiler_ast_types.AstType.I64))
+              (opt-inline-checked-builder-call callee-name 5)
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "header")))))
+        (opt-inline-checked-depth0-loop-blocks entry-site?))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (opt-inline-checked-live-defs
+            0
+            live
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Mov
+                3
+                (compiler_ir_types.CompilerIrValue.I64 0)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "setup")))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "setup")
+            (opt-test-instrs
+              (opt-inline-checked-builder-call callee-name 5)
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "header"))))
+          (opt-inline-checked-depth0-loop-blocks entry-site?))))))
+
+(define (opt-inline-checked-depth0-caller-function
+  [func-name : i64]
+  [callee-name : i64]
+  [entry-site? : bool]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    (+ (opt-inline-checked-depth0-latch-var) 1)
+    (opt-inline-checked-depth0-caller-blocks callee-name entry-site?)))
+
+;; One straight-line block calling the holder and the leaf once each. It is what
+;; keeps both of them at two references, so no single-reference band can take
+;; either one and the measured tier is the only door they have.
+(define (opt-inline-checked-cold-pair-function
+  [func-name : i64]
+  [holder-name : i64]
+  [leaf-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    5
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (opt-inline-loop-site-call holder-name 3)
+          (opt-inline-checked-builder-call leaf-name 4)
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 4)))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; The same driver reaching the holder from inside a loop, which is the only
+;; thing that differs between the two programs below: it multiplies the holder's
+;; census reference count by one loop level, and that is what carries the
+;; holder's straight-line leaf site over the composite-frequency floor.
+(define (opt-inline-checked-hot-driver-function
+  [func-name : i64]
+  [holder-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-inline-loop-site-function
+    func-name
+    holder-name
+    (opt-inline-loop-site-entry-instrs)))
+
+(define (opt-inline-checked-cold-driver-function
+  [func-name : i64]
+  [holder-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    4
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (opt-inline-loop-site-call holder-name 3)
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 3)))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-inline-checked-depth0-program
+  [symbols : OptInlineMultiTestSymbols]
+  [mode : i64]) : compiler_ir_types.CompilerIrFunctionSeq
+  (let
+    [holder-name : i64 symbols.inline-nonleaf]
+    [leaf-name : i64 symbols.inline-switch]
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (if (= mode 0)
+        (opt-inline-checked-cold-driver-function symbols.main holder-name)
+        (opt-inline-checked-hot-driver-function symbols.main holder-name))
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-inline-checked-cold-pair-function
+          symbols.inline-loop
+          holder-name
+          leaf-name)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-inline-checked-depth0-caller-function
+            holder-name
+            leaf-name
+            (not (= mode 2)))
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-inline-checked-builder-function leaf-name)
+            (compiler_ir_types.compiler-ir-function-seq-empty)))))))
+
+;; The encoding is `spent` then the builder calls left in the holder, so a change
+;; in either reads directly off the number: 100 * verdicts + surviving calls.
+;;
+;; The hot program spends TWO verdicts -- the holder's depth-0 builder site,
+;; which the relaxed floor now lets through, and the holder's own site inside
+;; `main`'s loop -- and keeps its builder call: the site reaches the verdict and
+;; the verdict, not a static clause, refuses it. The cold twin spends NONE: with
+;; the driver's call out of its loop the composite frequency is one, and the
+;; frequency clause refuses before any pricing. That pair is the whole of change
+;; (c) -- what the depth floor used to refuse outright is now refused, or kept,
+;; on the priced numbers.
+(define (opt-inline-checked-depth0-self-test [mode : i64]) : i64
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [_arm : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-set-active! true)
+        (compiler_optimize.opt-inline-checked-program-begin!))]
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-checked-depth0-program symbols mode)
+        2)]
+    [spent : i64
+      (-
+        (compiler_optimize.opt-inline-checked-program-budget)
+        (compiler_optimize.opt-inline-checked-budget-current))]
+    [_disarm : unit (compiler_optimize.opt-inline-checked-set-active! false)]
+    [holder-calls : i64
+      (opt-count-direct-call-name-function-seq
+        (compiler_optimize.compiler-opt-global-shared-view optimized)
+        "inline_nonleaf"
+        "inline_switch")]
+    [verified? : bool
+      (opt-inline-mb2-main-verified?
+        (compiler_optimize.compiler-opt-global-shared-view optimized)
+        "inline_nonleaf")]
+    (if verified?
+      (+ (* 100 spent) holder-calls)
+      (- 0 1))))
+
+(define (opt-inline-checked-seq-callee-c) : i64
+  (opt-test-symbol "seq_callee_c"))
+
+;; THE LOCK, AND THE ONE ACCEPT THAT MAY OPEN IT. The rule the lock was written
+;; for -- "two different bodies make two independent demands, and the second is
+;; what pushes the caller's own loops into spilling" -- is the sentence the
+;; re-measurement now contradicts. What survives is the case the MODEL gets
+;; wrong, and the accept window already reads that: a site kept at the window's
+;; floor repaid only half its modelled saving and is exactly the accept the
+;; estimate's error decided. So a caller whose first accept was slim stays
+;; locked, a caller whose first accept delivered the whole modelled saving may
+;; price a second body, and no caller may price a third.
+(define (compiler-optimize-inline-checked-lock-margin-ok?) : bool
+  (let
+    [a : i64 (opt-inline-checked-seq-callee-a)]
+    [b : i64 (opt-inline-checked-seq-callee-b)]
+    [c : i64 (opt-inline-checked-seq-callee-c)]
+    ;; a first accept whose margin was SLIM keeps the caller locked
+    [_begin : unit (compiler_optimize.opt-inline-checked-program-begin!)]
+    [_slim : unit (compiler_optimize.opt-inline-checked-publish-margin! false)]
+    [_scan-slim : unit
+      (compiler_optimize.opt-inline-checked-scan-record! a 50 0 900)]
+    [armed-slim? : bool (compiler_optimize.opt-inline-checked-arm-next-target!)]
+    [_keep-slim : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-spend-verdict!)
+        (compiler_optimize.opt-inline-checked-accept-target!))]
+    [slim-same? : bool (compiler_optimize.opt-inline-checked-callee-allowed? a)]
+    [slim-other? : bool
+      (compiler_optimize.opt-inline-checked-callee-allowed? b)]
+    ;; the same sequence with the whole modelled saving surviving
+    [_begin-clear : unit (compiler_optimize.opt-inline-checked-program-begin!)]
+    [_clear : unit (compiler_optimize.opt-inline-checked-publish-margin! true)]
+    [_scan-clear : unit
+      (compiler_optimize.opt-inline-checked-scan-record! a 60 0 900)]
+    [armed-clear? : bool
+      (compiler_optimize.opt-inline-checked-arm-next-target!)]
+    [_keep-clear : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-spend-verdict!)
+        (compiler_optimize.opt-inline-checked-accept-target!))]
+    [clear-other? : bool
+      (compiler_optimize.opt-inline-checked-callee-allowed? b)]
+    ;; ...and the second body is ranked, armed and kept
+    [_scan-second : unit
+      (compiler_optimize.opt-inline-checked-scan-record! b 61 1 800)]
+    [armed-second? : bool
+      (compiler_optimize.opt-inline-checked-arm-next-target!)]
+    [second-callee : i64
+      (compiler_optimize.opt-inline-checked-target-callee-current)]
+    ;; the armed target is a body this caller has not kept before, which is the
+    ;; question the verdict reads before it holds a site to the clear margin
+    [second-body? : bool (compiler_optimize.opt-inline-checked-second-body?)]
+    [_keep-second : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-spend-verdict!)
+        (compiler_optimize.opt-inline-checked-accept-target!))]
+    ;; the caller is then closed: the relaxation opens the lock once, not
+    ;; indefinitely
+    [third? : bool (compiler_optimize.opt-inline-checked-callee-allowed? c)]
+    [both? : bool
+      (and
+        (compiler_optimize.opt-inline-checked-callee-allowed? a)
+        (compiler_optimize.opt-inline-checked-callee-allowed? b))]
+    [distinct : i64
+      (compiler_optimize.opt-inline-checked-accepted-callee-count)]
+    [_reset : unit (compiler_optimize.opt-inline-checked-program-begin!)]
+    (and
+      armed-slim?
+      armed-clear?
+      armed-second?
+      slim-same?
+      (not slim-other?)
+      clear-other?
+      (= second-callee b)
+      both?
+      (not third?)
+      second-body?
+      (= distinct (compiler_optimize.opt-inline-checked-max-callees)))))
+
 (define (compiler-optimize-inline-dup-call-bearing-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]

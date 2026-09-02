@@ -121153,16 +121153,145 @@
             (opt-inline-repair-successor-phis blocks old-label new-label)
             (opt-inline-pred-renames-tail renames))])]))
 
-(define (opt-inline-multiblock-instr-ok?
-  [instr : ir.CompilerIrInstr]
-  [_np : i64]) : bool
+;; Shape-refusal codes for the multiblock admission gate, reported by
+;; `inline-shape|<callee>|<reason>` under --trace-passes. Zero is "admitted";
+;; every other code names the clause that refused, and a refusal on an
+;; instruction the whitelist does not carry is reported as
+;; `other-instr:<kind>` by adding the instruction's kind code to
+;; opt-inline-shape-other-base. The codes exist because this refusal used to be
+;; invisible: a body the gate turned down produced no trace line at all, in
+;; either mode, so a whole accessor chain could sit un-inlinable for the life of
+;; the tier with nothing in any trace saying so.
+(define (opt-inline-shape-ok) : i64
+  0)
+
+(define (opt-inline-shape-alloc) : i64
+  1)
+
+(define (opt-inline-shape-addr-of) : i64
+  2)
+
+(define (opt-inline-shape-private-memory-param) : i64
+  3)
+
+(define (opt-inline-shape-return-type) : i64
+  4)
+
+(define (opt-inline-shape-params-not-sequential) : i64
+  5)
+
+(define (opt-inline-shape-structure) : i64
+  6)
+
+(define (opt-inline-shape-other-base) : i64
+  8)
+
+;; The kinds an `other-instr:` refusal can name. Only instructions the
+;; multiblock whitelist does not admit can reach this, so the arms are the
+;; refusable kinds plus a catch-all; the SPMD/vector family is one name because
+;; the gate refuses it as a family and no clause distinguishes its members.
+(define (opt-inline-instr-kind-code [instr : ir.CompilerIrInstr]) : i64
   (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.Jump _) true]
-    [(ir.CompilerIrInstr.Branch _ _ _) true]
-    [(ir.CompilerIrInstr.TotalEnumBranch _ _ _) true]
-    [(ir.CompilerIrInstr.Switch _ _ _ _) true]
-    [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) true]
-    [(ir.CompilerIrInstr.Return _) true]
+    [(ir.CompilerIrInstr.Store _ _ _) 1]
+    [(ir.CompilerIrInstr.Syscall _ _) 2]
+    [(ir.CompilerIrInstr.SpmdCall _) 3]
+    [(ir.CompilerIrInstr.TailCallIndirect _ _ _) 4]
+    [(ir.CompilerIrInstr.CallCAbiStoreResult _) 5]
+    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult _) 6]
+    [(ir.CompilerIrInstr.LaneId _ _ _) 7]
+    [(ir.CompilerIrInstr.Splat _ _ _ _) 7]
+    [(ir.CompilerIrInstr.VectorBinOp _) 7]
+    [(ir.CompilerIrInstr.VectorPrefix _) 7]
+    [(ir.CompilerIrInstr.VectorReduce _ _ _ _ _) 7]
+    [(ir.CompilerIrInstr.VectorCompare _) 7]
+    [(ir.CompilerIrInstr.VectorLoad _ _ _ _ _) 7]
+    [(ir.CompilerIrInstr.VectorStore _) 7]
+    [(ir.CompilerIrInstr.VectorShuffle _) 7]
+    [(ir.CompilerIrInstr.PredicatedStore _) 7]
+    [(ir.CompilerIrInstr.PredicatedLoad _) 7]
+    [(ir.CompilerIrInstr.GatherLoad _) 7]
+    [(ir.CompilerIrInstr.MaskBinOp _ _ _ _ _) 7]
+    [(ir.CompilerIrInstr.MaskNot _ _ _) 7]
+    [(ir.CompilerIrInstr.MaskReduce _ _ _ _) 7]
+    [(ir.CompilerIrInstr.Select _) 7]
+    [(ir.CompilerIrInstr.TailMask _ _ _ _) 7]
+    [(ir.CompilerIrInstr.EntryArgc _) 8]
+    [(ir.CompilerIrInstr.EntryArgv _) 8]
+    [(ir.CompilerIrInstr.EntryEnvp _) 8]
+    [(ir.CompilerIrInstr.CpuId _ _ _ _) 9]
+    [(ir.CompilerIrInstr.Xgetbv _ _) 9]
+    [_ 0]))
+
+(define (opt-inline-instr-kind-code-text [code : i64]) : String
+  (cond
+    [(= code 1) "store"]
+    [(= code 2) "syscall"]
+    [(= code 3) "spmd-call"]
+    [(= code 4) "tail-call-indirect"]
+    [(= code 5) "call-cabi-store-result"]
+    [(= code 6) "call-indirect-cabi-store-result"]
+    [(= code 7) "vector"]
+    [(= code 8) "entry-arg"]
+    [(= code 9) "cpu-feature"]
+    [else "other"]))
+
+(define (opt-inline-shape-reason-text [reason : i64]) : String
+  (cond
+    [(= reason (opt-inline-shape-ok)) "ok"]
+    [(= reason (opt-inline-shape-alloc)) "alloc"]
+    [(= reason (opt-inline-shape-addr-of)) "addr_of"]
+    [(= reason (opt-inline-shape-private-memory-param)) "private-memory-param"]
+    [(= reason (opt-inline-shape-return-type)) "return-type"]
+    [(= reason (opt-inline-shape-params-not-sequential))
+      "params-not-sequential"]
+    [(= reason (opt-inline-shape-structure)) "structure"]
+    [else
+      (str_cat.str-cat
+        "other-instr:"
+        (opt-inline-instr-kind-code-text
+          (- reason (opt-inline-shape-other-base))))]))
+
+(define (opt-inline-multiblock-instr-reason
+  [instr : ir.CompilerIrInstr]
+  [np : i64]) : i64
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Jump _) (opt-inline-shape-ok)]
+    [(ir.CompilerIrInstr.Branch _ _ _) (opt-inline-shape-ok)]
+    [(ir.CompilerIrInstr.TotalEnumBranch _ _ _) (opt-inline-shape-ok)]
+    [(ir.CompilerIrInstr.Switch _ _ _ _) (opt-inline-shape-ok)]
+    [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) (opt-inline-shape-ok)]
+    [(ir.CompilerIrInstr.Return _) (opt-inline-shape-ok)]
+    ;; A callee that builds an aggregate value locally. `alloc T` reserves a
+    ;; frame word for the var it defines and `addr_of` turns a run of them into
+    ;; the address of one aggregate; every function whose body constructs a
+    ;; struct has both, so refusing them refused the whole struct-building
+    ;; class -- and refused it silently, before any band or the measured tier
+    ;; priced a single one of its sites.
+    ;;
+    ;; The clone rebases both like any other def (opt-inline-clone-instr, where
+    ;; the lifetime argument and the storage-run invariant are recorded), so
+    ;; the only thing the gate has to decide is whether the instruction can
+    ;; touch a PARAMETER, which the clone substitutes rather than rebases:
+    ;;
+    ;;   - `alloc` into a param slot would reserve frame storage for a var the
+    ;;     site binds to a caller value, so the reservation would either be
+    ;;     dropped (no staging) or silently retype the staged copy. Lowering
+    ;;     never emits it -- params are defined by the signature -- so refusing
+    ;;     it costs nothing and keeps the clone's rebasing total.
+    ;;   - `addr_of` of a param would hand the body the address of the CALLER's
+    ;;     value. The callee only ever had the address of its own copy, and
+    ;;     whether a copy exists at all is a per-SITE property (`stage-args?`)
+    ;;     while this verdict is cached per CALLEE, so the sound reading is the
+    ;;     caller-independent one: a body may take the address of its own
+    ;;     locals and of nothing else.
+    [(ir.CompilerIrInstr.Alloc dst _)
+      (if (>= dst np)
+        (opt-inline-shape-ok)
+        (opt-inline-shape-alloc))]
+    [(ir.CompilerIrInstr.AddrOf dst src)
+      (if (and (>= dst np) (>= src np))
+        (opt-inline-shape-ok)
+        (opt-inline-shape-addr-of))]
     ;; A DIRECT tail call is an EXIT of the callee body, not a terminator the
     ;; merged caller inherits. Leaving it as a tail call would return past the
     ;; caller's own continuation, so the clone does not leave it as one: it
@@ -121183,8 +121312,11 @@
     ;; any measurement on this tree asks for, and the census cannot see through
     ;; a computed target to price the site. The admission stops at the direct
     ;; form the measurement covers.
-    [(ir.CompilerIrInstr.TailCall _ _ _) true]
-    [(ir.CompilerIrInstr.Phi dst _ _) (>= dst 0)]
+    [(ir.CompilerIrInstr.TailCall _ _ _) (opt-inline-shape-ok)]
+    [(ir.CompilerIrInstr.Phi dst _ _)
+      (if (>= dst 0)
+        (opt-inline-shape-ok)
+        (opt-inline-shape-structure))]
     ;; Bounds checks are inlinable: the instruction remapper freshens the
     ;; ok-label with the site prefix (the same machinery the single-block
     ;; bounds path uses), and the multiblock rewrite gates bounds-carrying
@@ -121192,8 +121324,16 @@
     ;; single-block path. This is what lets small loop-bearing helpers such
     ;; as a string-scan or hashmap probe inline into their hot single call
     ;; site instead of paying a call per iteration.
-    [(ir.CompilerIrInstr.BoundsCheck _ _ _) true]
-    [_ (opt-inline-body-instr-op-ok? instr)]))
+    [(ir.CompilerIrInstr.BoundsCheck _ _ _) (opt-inline-shape-ok)]
+    [_
+      (if (opt-inline-body-instr-op-ok? (compiler-opt-global-shared-view instr))
+        (opt-inline-shape-ok)
+        (+ (opt-inline-shape-other-base) (opt-inline-instr-kind-code instr)))]))
+
+(define (opt-inline-multiblock-instr-ok?
+  [instr : ir.CompilerIrInstr]
+  [np : i64]) : bool
+  (= (opt-inline-multiblock-instr-reason instr np) (opt-inline-shape-ok)))
 
 (define (opt-inline-instr-seq-has-bounds-check-from?
   [instrs : ir.CompilerIrInstrSeq]
@@ -121337,42 +121477,61 @@
     [(ir.CompilerIrBlockList.Array seq)
       (opt-inline-blocks-have-tail-call? (ir.compiler-ir-block-seq-to-list seq))]))
 
-(define (opt-inline-multiblock-instrs-ok-from?
+;; The instruction scan, as the code of the FIRST refusing instruction in
+;; block-then-position order. Zero means the whole body is admitted; the
+;; ordering is what makes the traced reason the first refusal rather than an
+;; arbitrary one.
+(define (opt-inline-multiblock-instrs-reason-from
   [instrs : ir.CompilerIrInstrSeq]
   [np : i64]
-  [index : i64]) : bool
+  [index : i64]) : i64
   (if (>=
     index
     (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
-    true
-    (if (opt-inline-multiblock-instr-ok?
-      (ir.compiler-ir-instr-seq-ref instrs index)
-      np)
-      (opt-inline-multiblock-instrs-ok-from? instrs np (+ index 1))
-      false)))
+    (opt-inline-shape-ok)
+    (let
+      [reason : i64
+        (opt-inline-multiblock-instr-reason
+          (ir.compiler-ir-instr-seq-ref instrs index)
+          np)]
+      (if (= reason (opt-inline-shape-ok))
+        (opt-inline-multiblock-instrs-reason-from instrs np (+ index 1))
+        reason))))
+
+(define (opt-inline-multiblock-instrs-reason
+  [instrs : ir.CompilerIrInstrSeq]
+  [np : i64]) : i64
+  (opt-inline-multiblock-instrs-reason-from instrs np 0))
 
 (define (opt-inline-multiblock-instrs-ok?
   [instrs : ir.CompilerIrInstrSeq]
   [np : i64]) : bool
-  (opt-inline-multiblock-instrs-ok-from? instrs np 0))
+  (= (opt-inline-multiblock-instrs-reason instrs np) (opt-inline-shape-ok)))
+
+(define (opt-inline-multiblock-blocks-reason
+  [blocks : ir.CompilerIrBlockList]
+  [np : i64]) : i64
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (opt-inline-shape-ok)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (let
+            [reason : i64 (opt-inline-multiblock-instrs-reason instrs np)]
+            (if (= reason (opt-inline-shape-ok))
+              (opt-inline-multiblock-blocks-reason
+                (compiler-opt-box-shared-view rest)
+                np)
+              reason))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-inline-multiblock-blocks-reason
+        (ir.compiler-ir-block-seq-to-list seq)
+        np)]))
 
 (define (opt-inline-multiblock-blocks-ok?
   [blocks : ir.CompilerIrBlockList]
   [np : i64]) : bool
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) true]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(ir.CompilerIrBlock.Block _ instrs)
-          (and
-            (opt-inline-multiblock-instrs-ok? instrs np)
-            (opt-inline-multiblock-blocks-ok?
-              (compiler-opt-box-shared-view rest)
-              np))])]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-inline-multiblock-blocks-ok?
-        (ir.compiler-ir-block-seq-to-list seq)
-        np)]))
+  (= (opt-inline-multiblock-blocks-reason blocks np) (opt-inline-shape-ok)))
 
 (define (opt-inline-param-mutating-instr?
   [instr : ir.CompilerIrInstr]
@@ -121585,34 +121744,55 @@
       [(ast.AstType.Unit) true]
       [_ false])))
 
+;; The multiblock admission verdict, as a shape-refusal code. This is the one
+;; place the clauses are ordered, and the order is the one the predicate has
+;; always had -- cheap param questions, then the structural verifier, then the
+;; instruction scan -- so the code a refusal reports is the clause that would
+;; have refused it before this function returned a reason at all.
+(define (opt-inline-multiblock-callee-shape-reason
+  [cparams : ir.CompilerIrParamSeq]
+  [ret : ast.AstType]
+  [cvars : i64]
+  [cblocks : ir.CompilerIrBlockList]) : i64
+  (let
+    [np : i64
+      (opt-inline-param-count (compiler-opt-global-shared-view cparams))]
+    (cond
+      [(opt-inline-params-have-private-memory?
+          (compiler-opt-global-shared-view cparams))
+        (opt-inline-shape-private-memory-param)]
+      [(not
+          (opt-inline-multiblock-return-type-ok?
+            (compiler-opt-global-shared-view cparams)
+            ret))
+        (opt-inline-shape-return-type)]
+      [(not (opt-inline-params-sequential? cparams 0))
+        (opt-inline-shape-params-not-sequential)]
+      [(< cvars np) (opt-inline-shape-structure)]
+      [(<=
+          (ir.compiler-ir-block-list-count
+            (compiler-opt-global-shared-view cblocks))
+          1)
+        (opt-inline-shape-structure)]
+      [(<=
+          (opt-inline-return-count-blocks
+            (compiler-opt-global-shared-view cblocks))
+          0)
+        (opt-inline-shape-structure)]
+      [(not
+          (opt-inline-structure-ok-reclaiming?
+            (compiler-opt-global-shared-view cblocks)))
+        (opt-inline-shape-structure)]
+      [else (opt-inline-multiblock-blocks-reason cblocks np)])))
+
 (define (opt-inline-multiblock-callee-body-ok?
   [cparams : ir.CompilerIrParamSeq]
   [ret : ast.AstType]
   [cvars : i64]
   [cblocks : ir.CompilerIrBlockList]) : bool
-  (let
-    [np : i64
-      (opt-inline-param-count (compiler-opt-global-shared-view cparams))]
-    (and
-      (not
-        (opt-inline-params-have-private-memory?
-          (compiler-opt-global-shared-view cparams)))
-      (opt-inline-multiblock-return-type-ok?
-        (compiler-opt-global-shared-view cparams)
-        ret)
-      (opt-inline-params-sequential? cparams 0)
-      (>= cvars np)
-      (>
-        (ir.compiler-ir-block-list-count
-          (compiler-opt-global-shared-view cblocks))
-        1)
-      (>
-        (opt-inline-return-count-blocks
-          (compiler-opt-global-shared-view cblocks))
-        0)
-      (opt-inline-structure-ok-reclaiming?
-        (compiler-opt-global-shared-view cblocks))
-      (opt-inline-multiblock-blocks-ok? cblocks np))))
+  (=
+    (opt-inline-multiblock-callee-shape-reason cparams ret cvars cblocks)
+    (opt-inline-shape-ok)))
 
 ;; Per-callee memo for the multiblock admission verdict, keyed by dense index
 ;; slot. SCC processing is bottom-up (Tarjan pops a callee's component before
@@ -121653,6 +121833,24 @@
         (unsafe
           (arena.destroy scratch))))))
 
+;; `--trace-passes` observability for a body the shape gate turns down: one
+;; line per CALLEE, naming the clause that refused it. It is emitted from the
+;; memo's fill below, which is the one place a callee's verdict is computed, so
+;; a callee with fifteen refused sites produces one line and not fifteen. The
+;; string is built inside the guard, so a compile without the flag pays one
+;; boolean test per newly memoised callee, and the checked tier's throwaway
+;; measurement runs are suppressed exactly as the pass tracer is.
+(define (opt-inline-trace-shape! [callee-name : i64] [reason : i64]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (io.print-error
+      (str_cat.str-cat
+        "inline-shape|"
+        (ir.compiler-ir-symbol-text callee-name)
+        "|"
+        (opt-inline-shape-reason-text reason)
+        "\n"))
+    unit))
+
 (define (opt-inline-multiblock-callee-ok-cached?
   [callee-slot : i64]
   [callee : ir.CompilerIrFunction]
@@ -121673,13 +121871,17 @@
               (if (>= cached 0)
                 (= cached 1)
                 (let
-                  [ok : bool
-                    (opt-inline-multiblock-callee-body-ok?
+                  [reason : i64
+                    (opt-inline-multiblock-callee-shape-reason
                       cparams
                       ret
                       cvars
                       cblocks)]
+                  [ok : bool (= reason (opt-inline-shape-ok))]
                   (begin
+                    (if ok
+                      unit
+                      (opt-inline-trace-shape! cname reason))
                     (set!
                       (array-ref memo callee-slot)
                       (if ok
@@ -122305,6 +122507,42 @@
         (opt-inline-rebase-var dst np base)
         (opt-inline-remap-value src sa np base)
         (clone ty))]
+    ;; A callee-frame temp becomes a caller-frame temp.
+    ;;
+    ;; `alloc T` reserves one word of the enclosing function's frame for the
+    ;; var it defines, and a run of them closed by `addr_of <last>` is how
+    ;; lowering spells "N contiguous words addressed as one aggregate"
+    ;; (compiler_lower.tl lower-reserve-inline-storage). The register allocator
+    ;; recovers that aggregate by scanning exactly that shape
+    ;; (compiler_regalloc.tl compiler-reg-color-detect-storage-seq: a maximal
+    ;; run of `Alloc` with consecutive dst ids, closed by an `AddrOf` of the
+    ;; run's last id, inside one block). Rebasing is affine -- `base + id - np`
+    ;; -- so consecutive callee ids stay consecutive caller ids and the run, its
+    ;; order and its closing `addr_of` survive the clone unchanged. It is also
+    ;; why the clone leaves these instructions where the callee had them:
+    ;; hoisting the allocs away from their `addr_of` would break the run and
+    ;; silently give a 32-byte aggregate an 8-byte slot.
+    ;;
+    ;; LIFETIME. A callee-frame temp cannot outlive the call -- the callee's
+    ;; frame is gone at the return -- so every use of it is inside the body.
+    ;; After the splice that body IS the caller's text, so every use of the
+    ;; rebased temp is still inside it, and the allocator gives the var a
+    ;; caller-frame slot whose last use is the body's last use. A site inside a
+    ;; loop therefore reuses ONE slot per iteration: the var is cloned once, at
+    ;; the site, not once per execution, which is exactly the reuse the callee's
+    ;; own frame gave the repeated calls this splice replaces.
+    ;;
+    ;; `addr_of` remaps like any other def, and its OPERAND is rebased rather
+    ;; than substituted: the multiblock gate admits it only when it addresses a
+    ;; body-local (`src >= np`, opt-inline-multiblock-instr-reason), so the
+    ;; operand is never a call-site argument and can never become a literal or
+    ;; a caller value whose address the callee never had.
+    [(ir.CompilerIrInstr.Alloc dst ty)
+      (ir.CompilerIrInstr.Alloc (opt-inline-rebase-var dst np base) (clone ty))]
+    [(ir.CompilerIrInstr.AddrOf dst src)
+      (ir.CompilerIrInstr.AddrOf
+        (opt-inline-rebase-var dst np base)
+        (opt-inline-rebase-var src np base))]
     [(ir.CompilerIrInstr.OwnRoot dst src ty)
       (ir.CompilerIrInstr.OwnRoot
         (opt-inline-rebase-var dst np base)

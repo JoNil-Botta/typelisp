@@ -4718,6 +4718,18 @@
     "the tier keeps a call-carrying site one loop deeper too, and both callers verify"))
 
 (test
+  inline-multiblock-alloc-shape
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-multiblock-alloc-shape-ok?)
+    "the multiblock gate admits an aggregate-building body and names the clause that refuses each neighbour"))
+
+(test
+  inline-multiblock-alloc-splice
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-multiblock-alloc-splice-ok?)
+    "an aggregate-building sret body splices into a loop site once, and both storage runs keep the shape the allocator scans for"))
+
+(test
   inline-multiblock-tail-site-indirect-refusal
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-multiblock-tail-site-indirect-refusal-ok?)

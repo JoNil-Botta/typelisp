@@ -198,6 +198,8 @@ synth_wrapped_probe|tests/integration/synth_wrapped_probe.tl|42|-|-|-
 synth_wrapped_probe_abort|tests/integration/synth_wrapped_probe_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/synth_wrapped_probe_abort/synth_wrapped_probe_abort.tl:37:36: array index out of bounds: index=64 length=64\n
 synth_tail_wrapper|tests/integration/synth_tail_wrapper.tl|42|-|-|-
 synth_tail_wrapper_abort|tests/integration/synth_tail_wrapper_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/synth_tail_wrapper_abort/synth_tail_wrapper_abort.tl:37:36: array index out of bounds: index=64 length=64\n
+synth_struct_accessor|tests/integration/synth_struct_accessor.tl|42|-|-|-
+synth_struct_accessor_abort|tests/integration/synth_struct_accessor_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/synth_struct_accessor_abort/synth_struct_accessor_abort.tl:38:32: array index out of bounds: index=71 length=64\n
 rmw_mem_operand_fold|tests/integration/rmw_mem_operand_fold.tl|42|8 -24\n7 1024 0\n24 108\n36 24\n6 3\n|8 3|stdlib/io.tl stdlib/string.tl
 mem_dest_rmw_fold|tests/integration/mem_dest_rmw_fold.tl|42|-|-|-
 copy_call_word|tests/integration/copy_call_word.tl|42|-|-|-

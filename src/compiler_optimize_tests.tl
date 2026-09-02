@@ -16,7 +16,6 @@
 (import stdlib.option)
 (import (option.option i64) as option_i64)
 (import stdlib.test)
-(cfg test (import stdlib.text_buf))
 (import stdlib.vector)
 (import (vector.vector compiler_optimize.OptAggregatePointer core) as opt_aggregate_pointer_vec)
 (import (vector.vector compiler_optimize.OptAggregateAccess core) as opt_aggregate_access_vec)
@@ -77961,10 +77960,8 @@
               [mid-bytes : i64
                 (allocation_profile.compiler-allocation-profile-arena-bump-bytes
                   dump-owner)]
-              [mid-owned : compiler_optimize.CompilerOptOwnedState
-                (compiler_optimize.compiler-opt-owned-state-shared-view)]
               [mid-length : i64
-                (text_buf.length (& mid-owned.debug-state.dump-buf))]
+                (compiler_optimize.compiler-opt-debug-dump-length)]
               (begin
                 (while (< i 32)
                   (begin
@@ -77977,10 +77974,8 @@
                   [end-bytes : i64
                     (allocation_profile.compiler-allocation-profile-arena-bump-bytes
                       dump-owner)]
-                  [end-owned : compiler_optimize.CompilerOptOwnedState
-                    (compiler_optimize.compiler-opt-owned-state-shared-view)]
                   [end-length : i64
-                    (text_buf.length (& end-owned.debug-state.dump-buf))]
+                    (compiler_optimize.compiler-opt-debug-dump-length)]
                   [first-half-bytes : i64 (- mid-bytes start-bytes)]
                   [second-half-bytes : i64 (- end-bytes mid-bytes)]
                   [result : i64
@@ -78006,10 +78001,21 @@
 
 (test
   compiler-optimize-debug-dump-linear-retention
-  (test.assert-i64-eq
-    (compiler-optimize-debug-dump-linear-self-test)
-    42
-    "per-pass dumps retain linear arena bytes across equal function batches"))
+  (begin
+    (test.assert-i64-eq
+      (compiler-optimize-debug-dump-linear-self-test)
+      42
+      "per-pass dumps retain linear arena bytes across equal function batches")
+    ;; Exercise two later optimizer clients in one test executable: a borrowed
+    ;; TextBuf snapshot used to corrupt the cell store and crash the second one.
+    (test.assert-i64-eq
+      (compiler-optimize-bounds-group-self-test)
+      42
+      "per-pass dump state leaves the bounds-group optimizer usable")
+    (test.assert-i64-eq
+      (compiler-optimize-uniform-phi-self-test)
+      42
+      "per-pass dump state leaves the uniform-phi optimizer usable")))
 
 ;; Source-level runtime witness for the whole classifier path: lowering must
 ;; form the compare chain, bit_test must rewrite it, and the backend must fuse

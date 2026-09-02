@@ -1727,10 +1727,16 @@ if [ "$NL_HOST_OS" = windows ]; then
     # #7164's fifteen optimizer/regalloc/backend packets (~12,000
     # compiler-source lines) carried it to 28,641 KiB on the Windows CI probe;
     # raised one more step.
+    # #6692's explicit owning-handle provenance and fail-closed optimizer,
+    # verifier, backend, and regalloc coverage adds ~5,500 compiler-source
+    # lines on top of that; allow the combined source-size step with the usual
+    # headroom. Its combined macro-expand Expr graph crosses one pool boundary
+    # below; the other three pool families stay within their existing segment
+    # counts.
     assert_profile_counter_at_most_in \
         "$SELFHOST_STDERR" \
         "typecheck.macro.walk_sp_reresolve_alloc_kb" \
-        29000 \
+        30400 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     # One constant per boundary: the segment count. capacity and segment_bytes
@@ -1857,10 +1863,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     # lines), rebased over #7376, cross the composed graph from 76 to 77
     # segments: the authoritative Windows CI probe measured 5,028,561 used
     # nodes, 5,046,272 capacity, and 161,480,704 physical payload bytes.
+    # Composing #6692's explicit owning-handle provenance crosses the graph from
+    # 77 to 78 segments: the Windows-target selfhost probe measured 5,058,440
+    # used nodes, 5,111,808 capacity, and 163,577,856 physical payload bytes.
     # #7433's declaration-level test metadata and replayable selection support
-    # cross the composed graph from 77 to 78 segments: the authoritative Windows
-    # CI probe measured 5,047,053 used nodes, 5,111,808 capacity, and 163,577,856
-    # physical payload bytes.
+    # independently crosses the same boundary on the pre-#6692 tree: its
+    # authoritative Windows CI probe measured 5,047,053 used nodes, 5,111,808
+    # capacity, and 163,577,856 physical payload bytes.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 78 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

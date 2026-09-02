@@ -2038,7 +2038,7 @@ EOF
         # folded constant appears as the movq $45,%rax encoding.
         SELFHOST_OPT2_REGALLOC_A='0x48,0xc7,0xc0,0x2d,0x00,0x00,0x00'
         SELFHOST_OPT2_REGALLOC_B='    leaq (%rcx,%rdx), %rax'
-        SELFHOST_OPT0_STACK_MUL='    imulq 0(%rsp), %r8'
+        SELFHOST_OPT0_STACK_MUL='    imulq 24(%rsp), %r8'
     else
         SELFHOST_OPT2_REGALLOC_A='    movl $45, %eax'
         SELFHOST_OPT2_REGALLOC_B='    leaq (%rdi,%rsi), %rax'

@@ -78815,71 +78815,67 @@
         (opt-test-function (compiler_ir_types.compiler-ir-instr-seq-empty))]
       [structural-session : compiler_intern_state.InternStructuralSessionHandle
         (compiler_intern_state.InternStructuralSessionHandle 0)]
-      [home : arena.Arena (arena.current)]
-      (with-arena
-        dump-arena
-        (let
-          [dump-owner : i64 (arena.tl_arena_current)]
-          [_configure : unit
-            (compiler_optimize.compiler-opt-debug-configure!
-              structural-session
-              false
-              "linear-dump"
-              false)]
-          [start-bytes : i64
-            (allocation_profile.compiler-allocation-profile-arena-bump-bytes
-              dump-owner)]
-          [i : i64 0]
-          (begin
-            (while (< i 16)
-              (begin
-                (compiler_optimize.compiler-opt-debug-observe-function
-                  0
-                  "linear-dump"
-                  (compiler_ir_types.compiler-ir-global-shared-view func))
-                (set! i (+ i 1))))
-            (let
-              [mid-bytes : i64
-                (allocation_profile.compiler-allocation-profile-arena-bump-bytes
-                  dump-owner)]
-              [mid-length : i64
-                (compiler_optimize.compiler-opt-debug-dump-length)]
-              (begin
-                (while (< i 32)
-                  (begin
-                    (compiler_optimize.compiler-opt-debug-observe-function
-                      0
-                      "linear-dump"
-                      (compiler_ir_types.compiler-ir-global-shared-view func))
-                    (set! i (+ i 1))))
-                (let
-                  [end-bytes : i64
-                    (allocation_profile.compiler-allocation-profile-arena-bump-bytes
-                      dump-owner)]
-                  [end-length : i64
-                    (compiler_optimize.compiler-opt-debug-dump-length)]
-                  [first-half-bytes : i64 (- mid-bytes start-bytes)]
-                  [second-half-bytes : i64 (- end-bytes mid-bytes)]
-                  [result : i64
+      [result : i64
+        (with-arena
+          dump-arena
+          (let
+            [dump-owner : i64 (arena.tl_arena_current)]
+            [_configure : unit
+              (compiler_optimize.compiler-opt-debug-configure!
+                structural-session
+                false
+                "linear-dump"
+                false)]
+            [start-bytes : i64
+              (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+                dump-owner)]
+            [i : i64 0]
+            (begin
+              (while (< i 16)
+                (begin
+                  (compiler_optimize.compiler-opt-debug-observe-function
+                    0
+                    "linear-dump"
+                    (compiler_ir_types.compiler-ir-global-shared-view func))
+                  (set! i (+ i 1))))
+              (let
+                [mid-bytes : i64
+                  (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+                    dump-owner)]
+                [mid-length : i64
+                  (compiler_optimize.compiler-opt-debug-dump-length)]
+                (begin
+                  (while (< i 32)
+                    (begin
+                      (compiler_optimize.compiler-opt-debug-observe-function
+                        0
+                        "linear-dump"
+                        (compiler_ir_types.compiler-ir-global-shared-view func))
+                      (set! i (+ i 1))))
+                  (let
+                    [end-bytes : i64
+                      (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+                        dump-owner)]
+                    [end-length : i64
+                      (compiler_optimize.compiler-opt-debug-dump-length)]
+                    [first-half-bytes : i64 (- mid-bytes start-bytes)]
+                    [second-half-bytes : i64 (- end-bytes mid-bytes)]
                     (cond
                       [(<= first-half-bytes 0) 1]
                       [(<= mid-length 0) 2]
                       [(not (= end-length (+ (* mid-length 2) 1))) 3]
                       [(> second-half-bytes (* first-half-bytes 2)) 4]
-                      [else 42])]
-                  (in-arena
-                    home
-                    (begin
-                      ;; The batch runner continues with later tests in this
-                      ;; process. Move the global debug state back to the live
-                      ;; enclosing arena before retiring the measurement arena
-                      ;; and its retained chunks.
-                      (compiler_optimize.compiler-opt-debug-configure!
-                        structural-session
-                        false
-                        ""
-                        false)
-                      result)))))))))))
+                      [else 42])))))))]
+      (begin
+        ;; `with-arena` rewinds its current-arena mark. Reset only after that
+        ;; rewind so the process-global aggregate itself remains live for later
+        ;; tests and compiler work, not merely its selected allocation arena.
+        (compiler_optimize.compiler-opt-debug-configure!
+          structural-session
+          false
+          ""
+          false)
+        result))))
 
 (test
   compiler-optimize-debug-dump-linear-retention

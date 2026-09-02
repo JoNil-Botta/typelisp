@@ -1,19 +1,35 @@
-;; The negative twin of synth_wrapped_probe: the SAME chain, with the walk
-;; asking for a capacity one past the family's length.
+;; FORCING TEST for INL-2: a wrapper whose call site is a direct TAIL call has
+;; the accessor folded into it.
 ;;
-;; INL-1 changes nothing about that run. It retires no bounds check: the
-;; accessor's `keys[slot]` load is checked exactly as it is when the accessor
-;; stays out of line, and the check that fires is the one inside the body the
-;; measured tier copied into `sp-get-or`. So the abort SITE -- the line and
-;; column of the load in `sp-probe`, not of the call in the wrapper -- the
-;; message, and the exit status must be byte-identical to the base compiler's at
-;; every optimization level, which is what an inlined body keeping its own
-;; diagnostics means.
+;; The chain is synth_wrapped_probe's with one more level, and the level is the
+;; point:
 ;;
-;; `cap` comes in as an argument so nothing can fold the run away.
-(import stdlib.io)
-(import stdlib.string)
-
+;;   sp-walk (a doubly nested loop) -> sp-bump -> sp-slot-id -> sp-get-or
+;;                                                           -> sp-probe
+;;
+;; `sp-slot-id` does nothing but forward, so its body is `return sp-get-or(...)`
+;; and the lowering fuses that into a direct `TailCall`. Before INL-2 the
+;; checked tier's multiblock path matched only `CompilerIrInstr.Call`, so that
+;; site was not a candidate at all -- no trace line, no verdict -- and the
+;; wrapper paid the accessor's whole boundary at a site where the splice is
+;; strictly simpler than a call site's: the spliced body's exits become the
+;; caller's own exits, with no continuation block and no result phi.
+;;
+;; Everything else is calibrated exactly as the INL-1 fixture is. The site is
+;; the wrapper's ENTRY block, reached two straight-line levels below a nested
+;; loop, so its composite frequency is the loop's weight once the call graph's
+;; counts are propagated; and by the time the tier reaches `sp-slot-id` the
+;; bottom-up walk has already folded `sp-probe` into `sp-get-or`, so the body
+;; the tail site copies is call-free and the depth floor's entry relaxation
+;; applies to it unchanged.
+;;
+;; Both accessors keep a second, cold reference so no single-site or duplicating
+;; band can claim either before the measured tier is asked.
+;;
+;; The exit code proves the values; the shape is pinned in
+;; scripts/verify-asm-shape-gates.sh, and the abort twin
+;; (synth_tail_wrapper_abort.tl) proves the body spliced at a tail-call site
+;; keeps its own abort site.
 (define sp-empty : i64
   -1)
 
@@ -73,7 +89,17 @@
       (array-ref vals slot)
       fallback)))
 
-;; Wrapper two: the first wrapper at ITS entry block.
+;; Wrapper two, and the site this fixture exists for: the whole body is
+;; `return sp-get-or(...)`, which the lowering fuses into a direct tail call.
+(define (sp-slot-id
+  [keys : (& k (__tl_dyn-array i64))]
+  [marks : (& m (__tl_dyn-array i64))]
+  [vals : (& v (__tl_dyn-array i64))]
+  [cap : i64]
+  [key : i64]) : i64
+  (sp-get-or keys marks vals cap key 0))
+
+;; Wrapper three: the tail wrapper at ITS entry block.
 (define (sp-bump
   [keys : (& k (__tl_dyn-array i64))]
   [marks : (& m (__tl_dyn-array i64))]
@@ -81,7 +107,7 @@
   [cap : i64]
   [key : i64]) : i64
   (let
-    [seen : i64 (sp-get-or keys marks vals cap key 0)]
+    [seen : i64 (sp-slot-id keys marks vals cap key)]
     (+ seen 1)))
 
 ;; The cold second reference to the probe, so it is not a single-site callee.
@@ -120,8 +146,7 @@
 
 (define (main) : i64
   (let
-    [cap : i64 (string.>int (io.arg 1))]
-    [rows : i64 (string.>int (io.arg 2))]
+    [cap : i64 64]
     [keys : (__tl_dyn-array i64) (__tl_make-array i64 64)]
     [marks : (__tl_dyn-array i64) (__tl_make-array i64 64)]
     [vals : (__tl_dyn-array i64) (__tl_make-array i64 64)]
@@ -129,24 +154,24 @@
     [total : i64 0]
     [cold : i64 0]
     (begin
-      (while (< i 64)
+      (while (< i cap)
         (begin
           (set! (array-ref keys i) i)
           (set! (array-ref marks i) 1)
           (set! (array-ref vals i) (* i 3))
           (set! i (+ i 1))))
-      ;; `cap` is 128 and the arrays hold 64, so the probe's wrap-around mask
-      ;; walks one past the end on its first pass through the loop -- inside the
-      ;; body the measured tier copied into `sp-get-or`.
-      (set! total (sp-walk (& keys) (& marks) (& vals) cap rows 4))
-      ;; Never reached, and there for the same reason as in the positive twin:
-      ;; the cold references keep both accessors off every single-site band, so
-      ;; the chain the measured tier prices is the same one.
+      (set! total (sp-walk (& keys) (& marks) (& vals) cap 16 16))
+      ;; The cold second references: one apiece for the accessor, the wrapper
+      ;; the tail site copies, and the tail wrapper itself, so no single-site
+      ;; band can claim any of the three and every one of them keeps an
+      ;; out-of-line body for the asm-shape gate to read.
       (set!
         cold
         (+
-          (sp-contains? (& keys) (& marks) 64 5)
-          (sp-get-or (& keys) (& marks) (& vals) 64 9 777)))
-      (unless (= total 0) (return 1))
-      (unless (= cold 0) (return 2))
+          (sp-contains? (& keys) (& marks) cap 5)
+          (+
+            (sp-get-or (& keys) (& marks) (& vals) cap 9 777)
+            (sp-slot-id (& keys) (& marks) (& vals) cap 11))))
+      (unless (= total 13969) (return 1))
+      (unless (= cold 61) (return 2))
       42)))

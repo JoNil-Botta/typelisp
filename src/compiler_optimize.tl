@@ -123186,6 +123186,16 @@
 ;; block the next slot, and the caller reserves the range above the clone's
 ;; rebased frame (opt-inline-multiblock-build-rewrite-seq). It is read only on
 ;; the TailCall arm, so a tail-call-free body never touches it.
+;;
+;; `tail-site?` says the SITE this body is being spliced into is itself a direct
+;; tail call, and it changes exactly one thing: where the body's exits go. At a
+;; call site the exits converge on the continuation block, which is what the
+;; `cont-label` jump and the phi input below build. At a tail-call site there is
+;; no continuation -- the site IS the caller's exit -- so each exit becomes the
+;; caller's own terminator through opt-inline-exit->terminator-instr, the same
+;; single-block twin rewrite opt-inline-expand-tail-instrs already uses, and no
+;; phi input is produced. `site-ret` is the SITE's result type, which is the type
+;; that rewrite preserves; it is read only on that path.
 (define (opt-inline-clone-multiblock-instr-seq-into!
   [instrs : ir.CompilerIrInstrSeq]
   [pos : i64]
@@ -123194,6 +123204,8 @@
   [prefix : String]
   [cont-label : i64]
   [tail-dst : i64]
+  [tail-site? : bool]
+  [site-ret : ast.AstType]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]
@@ -123202,69 +123214,84 @@
     (ir.compiler-ir-phi-input-seq-empty)
     (let
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs pos)]
-      (match (compiler-opt-global-shared-view instr)
-        [(ir.CompilerIrInstr.Return maybe)
-          (begin
-            (ir.compiler-ir-instr-builder-push!
-              (&mut builder)
-              (ir.CompilerIrInstr.Jump cont-label))
-            (ir.compiler-ir-phi-input-seq-prepend
-              (opt-inline-return-value
-                maybe
-                (compiler-opt-global-shared-view sa)
-                np
-                base)
-              cloned-label
-              (ir.compiler-ir-phi-input-seq-empty)))]
-        ;; `return f(args)` in the callee becomes `t = f(args); goto cont` with
-        ;; `t` as this edge's phi input -- the same exit wiring the Return arm
-        ;; above builds, with the call it was fused into spelled back out. The
-        ;; converted call carries the tail call's own result type, which is the
-        ;; type a non-tail direct call to the same callee would carry, and its
-        ;; arguments go through the ordinary argument remapper, so a forwarded
-        ;; `__sret` pointer stays the buffer the caller supplied.
-        [(ir.CompilerIrInstr.TailCall cname cargs cty)
-          (begin
-            (ir.compiler-ir-instr-builder-push!
-              (&mut builder)
-              (ir.CompilerIrInstr.Call
-                tail-dst
-                (ir.compiler-ir-symbol-clone cname)
-                (opt-inline-remap-args
-                  cargs
+      (if (and
+        tail-site?
+        (opt-inline-body-terminator-ok? (compiler-opt-global-shared-view instr)))
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (opt-inline-exit->terminator-instr
+              (compiler-opt-global-shared-view instr)
+              (compiler-opt-global-shared-view site-ret)
+              (compiler-opt-global-shared-view sa)
+              np
+              base))
+          (ir.compiler-ir-phi-input-seq-empty))
+        (match (compiler-opt-global-shared-view instr)
+          [(ir.CompilerIrInstr.Return maybe)
+            (begin
+              (ir.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (ir.CompilerIrInstr.Jump cont-label))
+              (ir.compiler-ir-phi-input-seq-prepend
+                (opt-inline-return-value
+                  maybe
                   (compiler-opt-global-shared-view sa)
                   np
                   base)
-                (clone cty)))
-            (ir.compiler-ir-instr-builder-push!
-              (&mut builder)
-              (ir.CompilerIrInstr.Jump cont-label))
-            (ir.compiler-ir-phi-input-seq-prepend
-              (ir.CompilerIrValue.Var tail-dst)
-              cloned-label
-              (ir.compiler-ir-phi-input-seq-empty)))]
-        [_
-          (begin
-            (ir.compiler-ir-instr-builder-push!
-              (&mut builder)
-              (opt-inline-clone-multiblock-instr
-                instr
-                (compiler-opt-global-shared-view prefix)
-                (compiler-opt-global-shared-view sa)
+                cloned-label
+                (ir.compiler-ir-phi-input-seq-empty)))]
+          ;; `return f(args)` in the callee becomes `t = f(args); goto cont` with
+          ;; `t` as this edge's phi input -- the same exit wiring the Return arm
+          ;; above builds, with the call it was fused into spelled back out. The
+          ;; converted call carries the tail call's own result type, which is the
+          ;; type a non-tail direct call to the same callee would carry, and its
+          ;; arguments go through the ordinary argument remapper, so a forwarded
+          ;; `__sret` pointer stays the buffer the caller supplied.
+          [(ir.CompilerIrInstr.TailCall cname cargs cty)
+            (begin
+              (ir.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (ir.CompilerIrInstr.Call
+                  tail-dst
+                  (ir.compiler-ir-symbol-clone cname)
+                  (opt-inline-remap-args
+                    cargs
+                    (compiler-opt-global-shared-view sa)
+                    np
+                    base)
+                  (clone cty)))
+              (ir.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (ir.CompilerIrInstr.Jump cont-label))
+              (ir.compiler-ir-phi-input-seq-prepend
+                (ir.CompilerIrValue.Var tail-dst)
+                cloned-label
+                (ir.compiler-ir-phi-input-seq-empty)))]
+          [_
+            (begin
+              (ir.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (opt-inline-clone-multiblock-instr
+                  instr
+                  (compiler-opt-global-shared-view prefix)
+                  (compiler-opt-global-shared-view sa)
+                  np
+                  base))
+              (opt-inline-clone-multiblock-instr-seq-into!
+                instrs
+                (+ pos 1)
+                count
+                cloned-label
+                prefix
+                cont-label
+                tail-dst
+                tail-site?
+                site-ret
+                sa
                 np
-                base))
-            (opt-inline-clone-multiblock-instr-seq-into!
-              instrs
-              (+ pos 1)
-              count
-              cloned-label
-              prefix
-              cont-label
-              tail-dst
-              sa
-              np
-              base
-              (&mut builder)))]))))
+                base
+                (&mut builder)))])))))
 
 (define (opt-inline-clone-multiblock-instr-seq-from
   [instrs : ir.CompilerIrInstrSeq]
@@ -123274,6 +123301,8 @@
   [prefix : String]
   [cont-label : i64]
   [tail-dst : i64]
+  [tail-site? : bool]
+  [site-ret : ast.AstType]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]) : OptInlineMultiInstrClone
@@ -123289,6 +123318,8 @@
         prefix
         cont-label
         tail-dst
+        tail-site?
+        site-ret
         sa
         np
         base
@@ -123303,6 +123334,8 @@
   [prefix : String]
   [cont-label : i64]
   [tail-dst : i64]
+  [tail-site? : bool]
+  [site-ret : ast.AstType]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]) : OptInlineMultiInstrClone
@@ -123314,6 +123347,8 @@
     prefix
     cont-label
     tail-dst
+    tail-site?
+    site-ret
     sa
     np
     base))
@@ -123323,6 +123358,8 @@
   [prefix : String]
   [cont-label : i64]
   [tail-dst : i64]
+  [tail-site? : bool]
+  [site-ret : ast.AstType]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]) : OptInlineMultiClone
@@ -123339,6 +123376,8 @@
           prefix
           cont-label
           tail-dst
+          tail-site?
+          site-ret
           sa
           np
           base)
@@ -123354,6 +123393,8 @@
   [prefix : String]
   [cont-label : i64]
   [tail-dst : i64]
+  [tail-site? : bool]
+  [site-ret : ast.AstType]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]) : OptInlineMultiClone
@@ -123368,6 +123409,8 @@
         (compiler-opt-global-shared-view prefix)
         cont-label
         tail-dst
+        tail-site?
+        (compiler-opt-global-shared-view site-ret)
         (compiler-opt-global-shared-view sa)
         np
         base)
@@ -123377,6 +123420,8 @@
             prefix
             cont-label
             (+ tail-dst 1)
+            tail-site?
+            site-ret
             sa
             np
             base)
@@ -123392,6 +123437,8 @@
         prefix
         cont-label
         tail-dst
+        tail-site?
+        site-ret
         sa
         np
         base)]))
@@ -125425,6 +125472,43 @@
 (define (opt-inline-checked-scan-cap) : i64
   8)
 
+;; --- GENERATIONS: the sites a keep exposes ----------------------------------
+;;
+;; A caller's scan walk ranks the sites the caller's OWN text offers. An
+;; accepted site puts a copy of the callee's body into the caller, and that copy
+;; brings its own call sites with it -- sites the walk that ranked them never
+;; saw, because the clone is built during the rewrite and the block walk does
+;; not re-enter it. One generation therefore prices exactly one level of a
+;; chain: a wrapper absorbed into its caller leaves the wrapper's own callee at
+;; a site nothing has offered a verdict on.
+;;
+;; That is measured, not theoretical. On callgraph_scc `cg-census-add-ref` is
+;; kept in `cg-census-blocks` at depth 2, and the copy exposes
+;; `cg-function-index-slot-id` and two `cg-census-bump-map` sites inside that
+;; caller -- 689,400 and 551,120 calls by callgrind's count -- with no candidate
+;; line for any of them in `--trace-passes`. clang's inliner iterates a caller
+;; bottom-up until it has no more profitable sites; this tier priced one
+;; generation.
+;;
+;; So after a caller's rounds end with at least one keep, the RESULTING function
+;; is scanned once more and its candidates get rounds of their own. Everything
+;; else is unchanged and deliberately so: the program budget, the per-caller
+;; verdict caps and the relaxations' reserve are not refunded between
+;; generations, the callee lock counts distinct bodies across all of them, and
+;; the block ceiling reads the growth every generation has already banked
+;; (opt-inline-checked-prior-blocks). A rescan can therefore only ever spend
+;; what the first generation left, which is what keeps this a bounded amount of
+;; extra compile time rather than a fixpoint.
+;;
+;; TWO GENERATIONS -- one rescan. The ablation is recorded in the packet: at 1
+;; (no rescan) callgraph_scc keeps its second-level sites out of line; at 3 the
+;; corpus rows are identical to 2 and the only difference is compile time, since
+;; a third generation needs a caller that kept a site in a body that was itself
+;; kept in a body it kept -- and the per-caller verdict caps are spent long
+;; before that. The bound is stated here so the cost is one number.
+(define (opt-inline-checked-max-generations) : i64
+  2)
+
 ;; The retired boundary, per call: the call and the return, the callee's frame
 ;; setup, and one argument move per parameter.
 (define (opt-inline-checked-boundary-cost [np : i64]) : i64
@@ -125603,29 +125687,75 @@
 (define opt-inline-checked-target-pos : i64
   (- 0 1))
 
+;; ...and whether the armed target is a tail-call site, which the trace reports
+;; and nothing else reads: the site's class decides how the walk splices it, not
+;; what the verdict prices.
+(define opt-inline-checked-target-tail? : bool
+  false)
+
 ;; The ACCEPTED table: the caller's sites that have already been priced and
-;; kept, three columns per row (callee name, block label, site position), room
-;; for opt-inline-checked-max-caller-accepts rows. That is the per-caller
-;; verdict cap plus the relaxations' per-caller allowance, so it grows with the
-;; lock's bound N: four plus N - 1 rows, and the table is sized for the largest
-;; N the ablation measured (eight, so eleven rows of three).
+;; kept, four columns per row (callee name, block label, site position, and the
+;; GENERATION that kept it), room for opt-inline-checked-max-caller-accepts
+;; rows. That is the per-caller verdict cap plus the relaxations' per-caller
+;; allowance, so it grows with the lock's bound N: four plus N - 1 rows, and the
+;; table is sized for the largest N the ablation measured (eight, so eleven
+;; rows).
+;;
+;; The generation column is what lets the rows mean two things at once. A row of
+;; the CURRENT generation names a site of the function this generation's rounds
+;; re-walk, and every walk rebuilds it (opt-inline-checked-accepted?). A row of
+;; an EARLIER generation names a site of a function that no longer exists as
+;; such: its inline is already inside the body this generation started from, so
+;; the row must never match a site again -- but it still counts, for the callee
+;; lock's distinct bodies and for the per-caller accept cap, because a caller
+;; does not get a fresh allowance by being walked twice.
+(define (opt-inline-checked-accepted-stride) : i64
+  4)
+
 (define opt-inline-checked-accepted : (__tl_dyn-array i64)
-  (__tl_make-array i64 33))
+  (__tl_make-array i64 44))
 (define opt-inline-checked-accepted-count : i64
   0)
 
-;; The SCAN table: one row per candidate the scan walk found, five columns --
+;; The SCAN table: one row per candidate the scan walk found, six columns --
 ;; callee name, block label, site position, the site's RICHNESS, which is what a
 ;; free inline of it would be worth (how often the site runs times what its
-;; boundary costs), and whether the site cleared the depth floor only because
-;; the floor was RELAXED for it. Room for opt-inline-checked-scan-cap rows. A
-;; row whose richness has been set negative has already been armed as a target.
+;; boundary costs), whether the site cleared the depth floor only because the
+;; floor was RELAXED for it, and whether the site is a direct tail call. Room
+;; for opt-inline-checked-scan-cap rows. A row whose richness has been set
+;; negative has already been armed as a target.
 (define (opt-inline-checked-scan-stride) : i64
-  5)
+  6)
 
 (define opt-inline-checked-scan : (__tl_dyn-array i64)
-  (__tl_make-array i64 40))
+  (__tl_make-array i64 48))
 (define opt-inline-checked-scan-count : i64
+  0)
+
+;; Which GENERATION of this caller is being walked: 1 is the caller's own text,
+;; 2 the rescan of what generation 1 left. See
+;; opt-inline-checked-max-generations.
+(define opt-inline-checked-generation : i64
+  1)
+
+;; This tier's blocks banked by EARLIER generations of this caller. The current
+;; generation's own are counted by opt-inline-caller-checked-blocks, which every
+;; walk rebuilds from its accepted rows; a previous generation's are already
+;; inside the function this one started from, so they are carried here and the
+;; block ceiling adds the two. The heavy gate needs no such carry: it reads the
+;; caller's block COUNT, and this generation's caller already contains them.
+(define opt-inline-checked-prior-blocks : i64
+  0)
+
+;; The blocks the caller's accepted sites added, summed as they were accepted.
+;; At a generation boundary this is exactly what the finished generations
+;; banked, which is what `prior-blocks` becomes.
+(define opt-inline-checked-accepted-blocks : i64
+  0)
+
+;; The armed target's own added-block count, recorded by the admission test so
+;; the accept can bank it without recomputing the callee's block list.
+(define opt-inline-checked-target-blocks : i64
   0)
 
 ;; Verdicts spent on the caller being walked, against the per-caller cap, and
@@ -125716,10 +125846,15 @@
 ;; and the clause that decided. The string is built inside the guard, so a
 ;; compile without the flag pays one boolean test per candidate; the tier's own
 ;; throwaway measurement runs are suppressed exactly as the pass tracer is.
+;; `site` is the class of the site (`call` or `tail`) and `gen` the generation
+;; of the caller's walk the candidate was seen in, so a line says which of the
+;; two site classes it is about and whether the site was one the caller's own
+;; text offered or one a keep exposed.
 (define (opt-inline-checked-trace-clause!
   [callee-name : i64]
   [callee-instrs : i64]
   [np : i64]
+  [tail-site? : bool]
   [clause : i64]) : unit
   (if (and
     compiler-opt-debug-trace-passes
@@ -125747,6 +125882,12 @@
         (if opt-inline-checked-scanning?
           "scan"
           "target")
+        "|site="
+        (if tail-site?
+          "tail"
+          "call")
+        "|gen="
+        (string.int->string opt-inline-checked-generation)
         "|"
         (opt-inline-checked-clause-text clause)
         "\n"))
@@ -125805,6 +125946,12 @@
         (if opt-inline-checked-target-relaxed?
           "relaxed"
           "core")
+        "|site="
+        (if opt-inline-checked-target-tail?
+          "tail"
+          "call")
+        "|gen="
+        (string.int->string opt-inline-checked-generation)
         "\n"))
     unit))
 
@@ -125831,8 +125978,35 @@
     (set! opt-inline-checked-caller-verdicts 0)
     (set! opt-inline-checked-caller-relaxed-verdicts 0)
     (set! opt-inline-checked-target-relaxed? false)
+    (set! opt-inline-checked-target-tail? false)
     (set! opt-inline-checked-last-margin-clear? false)
+    (set! opt-inline-checked-generation 1)
+    (set! opt-inline-checked-prior-blocks 0)
+    (set! opt-inline-checked-accepted-blocks 0)
+    (set! opt-inline-checked-target-blocks 0)
     (set! opt-inline-checked-scanning? true)))
+
+;; ...and the per-GENERATION reset, run when a caller's rounds ended with a keep
+;; and the body they left is scanned again. It empties the scan table and
+;; returns the tier to scan mode, exactly as a caller's own start does, and it
+;; carries everything a caller is allowed to spend: the accepted table (whose
+;; rows now belong to a finished generation), the verdict counters, and the
+;; blocks the finished generations banked, which the block ceiling adds to this
+;; generation's own. Nothing is refunded, which is what bounds the rescan.
+(define (opt-inline-checked-generation-begin!) : unit
+  (begin
+    (set! opt-inline-checked-generation (+ opt-inline-checked-generation 1))
+    (set! opt-inline-checked-prior-blocks opt-inline-checked-accepted-blocks)
+    (set! opt-inline-checked-scan-count 0)
+    (set! opt-inline-checked-target-relaxed? false)
+    (set! opt-inline-checked-target-tail? false)
+    (set! opt-inline-checked-target-pos (- 0 1))
+    (set! opt-inline-checked-scanning? true)))
+
+;; The generation the caller is being walked in, for a fixture that drives the
+;; sequence by hand.
+(define (opt-inline-checked-generation-current) : i64
+  opt-inline-checked-generation)
 
 (define (opt-inline-checked-program-begin!) : unit
   (begin
@@ -125879,6 +126053,9 @@
   opt-inline-checked-accepted-count)
 
 ;; --- the per-site key tables ------------------------------------------------
+;; A row matches a SITE only when it belongs to the generation being walked:
+;; an earlier generation's inline is already inside the body this generation
+;; started from, so re-admitting its key would splice the same body twice.
 (define (opt-inline-checked-accepted-row-eq?
   [base : i64]
   [callee-name : i64]
@@ -125887,7 +126064,10 @@
   (and
     (= (array-ref opt-inline-checked-accepted base) callee-name)
     (= (array-ref opt-inline-checked-accepted (+ base 1)) block-label)
-    (= (array-ref opt-inline-checked-accepted (+ base 2)) site-pos)))
+    (= (array-ref opt-inline-checked-accepted (+ base 2)) site-pos)
+    (=
+      (array-ref opt-inline-checked-accepted (+ base 3))
+      opt-inline-checked-generation)))
 
 (define (opt-inline-checked-accepted-from?
   [callee-name : i64]
@@ -125897,7 +126077,7 @@
   (if (>= row opt-inline-checked-accepted-count)
     false
     (if (opt-inline-checked-accepted-row-eq?
-      (* row 3)
+      (* row (opt-inline-checked-accepted-stride))
       callee-name
       block-label
       site-pos)
@@ -125939,7 +126119,8 @@
   [block-label : i64]
   [site-pos : i64]
   [richness : i64]
-  [depth-relaxed? : bool]) : unit
+  [depth-relaxed? : bool]
+  [tail-site? : bool]) : unit
   (if (>= opt-inline-checked-scan-count (opt-inline-checked-scan-cap))
     unit
     (let
@@ -125953,6 +126134,11 @@
         (set!
           (array-ref opt-inline-checked-scan (+ base 4))
           (if depth-relaxed?
+            1
+            0))
+        (set!
+          (array-ref opt-inline-checked-scan (+ base 5))
+          (if tail-site?
             1
             0))
         (set! opt-inline-checked-scan-count (+ opt-inline-checked-scan-count 1))))))
@@ -126024,7 +126210,11 @@
   (if (>= row opt-inline-checked-accepted-count)
     false
     (or
-      (= (array-ref opt-inline-checked-accepted (* row 3)) callee-name)
+      (=
+        (array-ref
+          opt-inline-checked-accepted
+          (* row (opt-inline-checked-accepted-stride)))
+        callee-name)
       (opt-inline-checked-accepted-callee-from? callee-name (+ row 1)))))
 
 ;; Has this callee already appeared in a row BEFORE `row`?
@@ -126035,7 +126225,11 @@
   (if (>= scan row)
     false
     (or
-      (= (array-ref opt-inline-checked-accepted (* scan 3)) callee-name)
+      (=
+        (array-ref
+          opt-inline-checked-accepted
+          (* scan (opt-inline-checked-accepted-stride)))
+        callee-name)
       (opt-inline-checked-accepted-callee-earlier? callee-name row (+ scan 1)))))
 
 ;; Distinct callees the caller has already kept: the rows whose callee is not a
@@ -126049,7 +126243,9 @@
       (+
         acc
         (if (opt-inline-checked-accepted-callee-earlier?
-          (array-ref opt-inline-checked-accepted (* row 3))
+          (array-ref
+            opt-inline-checked-accepted
+            (* row (opt-inline-checked-accepted-stride)))
           row
           0)
           0
@@ -126253,6 +126449,9 @@
         opt-inline-checked-target-pos
         (array-ref opt-inline-checked-scan (+ base 2)))
       (set! (array-ref opt-inline-checked-scan (+ base 3)) (- 0 1))
+      (set!
+        opt-inline-checked-target-tail?
+        (= (array-ref opt-inline-checked-scan (+ base 5)) 1))
       (set! opt-inline-checked-target-relaxed? relaxed?)
       (set! opt-inline-checked-scanning? false)
       true)))
@@ -126292,7 +126491,10 @@
     (opt-inline-checked-max-caller-accepts))
     unit
     (let
-      [base : i64 (* opt-inline-checked-accepted-count 3)]
+      [base : i64
+        (*
+          opt-inline-checked-accepted-count
+          (opt-inline-checked-accepted-stride))]
       (begin
         (set!
           (array-ref opt-inline-checked-accepted base)
@@ -126303,6 +126505,16 @@
         (set!
           (array-ref opt-inline-checked-accepted (+ base 2))
           opt-inline-checked-target-pos)
+        (set!
+          (array-ref opt-inline-checked-accepted (+ base 3))
+          opt-inline-checked-generation)
+        ;; ...and the growth it banked, which is what a later generation's
+        ;; block ceiling reads once this row stops naming a live site.
+        (set!
+          opt-inline-checked-accepted-blocks
+          (+
+            opt-inline-checked-accepted-blocks
+            opt-inline-checked-target-blocks))
         (set!
           opt-inline-checked-accepted-count
           (+ opt-inline-checked-accepted-count 1))))))
@@ -126447,7 +126659,8 @@
   [added-blocks : i64]
   [caller-blocks : i64]
   [added-so-far : i64]
-  [site-pos : i64]) : i64
+  [site-pos : i64]
+  [tail-site? : bool]) : i64
   (begin
     (set! opt-inline-checked-trace-depth (- 0 1))
     (set! opt-inline-checked-trace-frequency (- 0 1))
@@ -126499,8 +126712,13 @@
           (+ added-so-far opt-inline-caller-checked-blocks)
           added-blocks)
         (opt-inline-checked-clause-heavy-gate)]
+      ;; The ceiling is this tier's total growth in ONE caller, so it counts
+      ;; every generation's blocks: the current walk's rebuilt ones and the
+      ;; ones earlier generations banked into the body this walk started from.
       [(>
-          (+ opt-inline-caller-checked-blocks added-blocks)
+          (+
+            opt-inline-checked-prior-blocks
+            (+ opt-inline-caller-checked-blocks added-blocks))
           (opt-inline-checked-max-blocks))
         (opt-inline-checked-clause-block-ceiling)]
       [else
@@ -126553,13 +126771,15 @@
                   opt-inline-current-block-label
                   site-pos
                   (opt-inline-checked-richness frequency np callee-instrs)
-                  (< site-depth (opt-inline-checked-min-site-depth)))
+                  (< site-depth (opt-inline-checked-min-site-depth))
+                  tail-site?)
                 (opt-inline-checked-clause-scanned))]
             [else
               (begin
                 (set! opt-inline-checked-site-depth site-depth)
                 (set! opt-inline-checked-site-weight site-weight)
                 (set! opt-inline-checked-callee-params np)
+                (set! opt-inline-checked-target-blocks added-blocks)
                 (set!
                   opt-inline-checked-callee-slot
                   (match (opt-function-index-slot index callee-name)
@@ -126579,7 +126799,8 @@
   [added-blocks : i64]
   [caller-blocks : i64]
   [added-so-far : i64]
-  [site-pos : i64]) : bool
+  [site-pos : i64]
+  [tail-site? : bool]) : bool
   (let
     [clause : i64
       (opt-inline-checked-clause
@@ -126593,9 +126814,15 @@
         added-blocks
         caller-blocks
         added-so-far
-        site-pos)]
+        site-pos
+        tail-site?)]
     [_trace : unit
-      (opt-inline-checked-trace-clause! callee-name callee-instrs np clause)]
+      (opt-inline-checked-trace-clause!
+        callee-name
+        callee-instrs
+        np
+        tail-site?
+        clause)]
     (opt-inline-checked-clause-admits? clause)))
 
 ;; --- pricing one function's plan --------------------------------------------
@@ -127508,6 +127735,554 @@
         vars2
         added2)]))
 
+;; Build the rewrite for ONE multiblock site, at either of the two site classes
+;; the walk can stand at. `dst` and `tail-site?` are what tell them apart, and
+;; what they decide is only where the spliced body's exits go:
+;;
+;;   `dst = f(args)`    -- the exits converge on a continuation block, which
+;;                         binds `dst` from their phi and carries the rest of
+;;                         the caller's stream (the suffix recursion below);
+;;   `return f(args)`   -- the site IS the caller's exit, so each exit becomes
+;;                         the caller's own terminator: `Return v` stays a
+;;                         `Return v'` and a direct `TailCall h` stays a
+;;                         `TailCall h`, never a call in tail position, so a
+;;                         chain that ran in constant stack still does. There is
+;;                         no continuation block, no result phi and no suffix,
+;;                         and `dst` is not read at all.
+;;
+;; Everything else -- the callee lock, every band, the measured tier's budgets,
+;; ceilings and richness ranking -- is one shared body, because which of the two
+;; spellings a site wears is not an admission argument.
+(define (opt-inline-multiblock-build-site-rewrite-seq
+  [block-label : i64]
+  [head-label : i64]
+  [seq-start : i64]
+  [lead : ir.CompilerIrInstrSeq]
+  [instrs : ir.CompilerIrInstrSeq]
+  [call-pos : i64]
+  [count : i64]
+  [site-pos : i64]
+  [dst : i64]
+  [cargs : ir.CompilerIrCallArgs]
+  [cret : ast.AstType]
+  [tail-site? : bool]
+  [callee : ir.CompilerIrFunction]
+  [census : OptInlineCensus]
+  [func-name : i64]
+  [vars : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]
+  [index : OptFunctionIndex]) : OptInlineMaybeBlockRewrite
+  (match (compiler-opt-global-shared-view callee)
+    [(ir.CompilerIrFunction.Function callee-name cparams _ cvars cblocks)
+      (let
+        [np : i64
+          (opt-inline-param-count (compiler-opt-global-shared-view cparams))]
+        (if (opt-inline-arity-ok? (compiler-opt-global-shared-view cargs) np)
+          (let
+            ;; The blocks the site adds to the caller: the callee's own,
+            ;; plus the continuation block the split opens. A tail-call site
+            ;; opens none -- the spliced body ends in the caller's exits --
+            ;; so it adds exactly the callee's blocks, and every band, the
+            ;; ceilings and the heavy gate are handed that count.
+            [added-blocks : i64
+              (+
+                (ir.compiler-ir-block-list-count
+                  (compiler-opt-global-shared-view cblocks))
+                (if tail-site?
+                  0
+                  1))]
+            ;; Result slots for converted tail calls: one per cloned block,
+            ;; reserved above the clone's rebased frame only when needed.
+            ;; At a tail-call SITE nothing is converted -- a `TailCall h`
+            ;; exit is forwarded as one -- so no slot is reserved and the
+            ;; clone's frame growth is what it was before this class
+            ;; existed.
+            [tail-slots : i64
+              (if (and
+                (not tail-site?)
+                (opt-inline-blocks-have-tail-call?
+                  (compiler-opt-global-shared-view cblocks)))
+                (- added-blocks 1)
+                0)]
+            [stage-all-args? : bool
+              (opt-inline-param-mutating-blocks?
+                (compiler-opt-global-shared-view cblocks)
+                np)]
+            [stage-args? : bool
+              (or
+                stage-all-args?
+                (opt-inline-params-have-sret?
+                  (compiler-opt-global-shared-view cparams)))]
+            [callee-instrs : i64
+              (+
+                (opt-inline-multiblock-cost-instrs
+                  (compiler-opt-global-shared-view cblocks))
+                (if stage-args?
+                  np
+                  0))]
+            [const-args : i64
+              (opt-inline-args-const-count
+                (compiler-opt-global-shared-view cargs))]
+            [absorb-class : i64
+              (opt-inline-census-absorb-class
+                (compiler-opt-global-shared-view index)
+                (compiler-opt-global-shared-view census)
+                func-name
+                callee-name)]
+            ;; The site-level verdict: this site claims the callee's body,
+            ;; either because it is the only one (class 1, absorption) or
+            ;; because the duplicating clauses admit a copy (class 2).
+            [absorbable-here? : bool
+              (or
+                (= absorb-class 1)
+                (opt-inline-dup-absorb-ok?
+                  absorb-class
+                  callee-instrs
+                  (compiler-opt-global-shared-view cblocks)))]
+            ;; Splitting a loop phi predecessor can lengthen live ranges.
+            ;; Keep ordinary cost-model admission available here, but do
+            ;; not let the unconditional single-reference absorb bonus
+            ;; bypass its budget. #5193 owns the next bounded wrapper class.
+            [tiny-predicate? : bool
+              (and
+                (not stage-args?)
+                (opt-inline-tiny-predicate-callee?
+                  (compiler-opt-global-shared-view index)
+                  (compiler-opt-global-shared-view callee)
+                  (compiler-opt-global-shared-view census)))]
+            ;; Bounds-carrying loops stay acyclic-only except for the exact
+            ;; measured vm-run leaf selected by the shared gate (#5325).
+            [has-bounds? : bool
+              (opt-inline-blocks-have-bounds-check?
+                (compiler-opt-global-shared-view cblocks))]
+            [refs : i64
+              (opt-inline-census-refcount
+                (compiler-opt-global-shared-view index)
+                (compiler-opt-global-shared-view census)
+                callee-name)]
+            [hot-refs : i64
+              (opt-inline-census-hot-refcount
+                (compiler-opt-global-shared-view index)
+                (compiler-opt-global-shared-view census)
+                callee-name)]
+            ;; A shared acyclic accessor is admitted on its own terms.
+            [shared-accessor? : bool
+              (opt-inline-shared-accessor-ok?
+                refs
+                hot-refs
+                callee-instrs
+                (compiler-opt-global-shared-view cblocks)
+                added-blocks
+                caller-blocks
+                added-so-far)]
+            ;; A call-free cyclic leaf is admitted on its own terms too: it
+            ;; keeps its own body wherever this gate does not take it, so no
+            ;; absorb credit is claimed -- which is what lets the gate span
+            ;; every reference class, single-reference sites included,
+            ;; without owing the census an absorption it did not perform.
+            [hot-loop-leaf? : bool
+              (opt-inline-hot-loop-leaf-ok?
+                (compiler-opt-global-shared-view index)
+                (compiler-opt-global-shared-view census)
+                callee-name
+                refs
+                callee-instrs
+                (compiler-opt-global-shared-view cblocks)
+                added-blocks
+                caller-blocks
+                added-so-far)]
+            ;; A callee with exactly one static reference absorbs at any
+            ;; size: the body moves rather than being copied, so no growth
+            ;; budget applies to it.
+            [single-site-absorb? : bool
+              (opt-inline-single-site-absorb-ok?
+                absorb-class
+                stage-args?
+                has-bounds?
+                np
+                callee-instrs
+                (compiler-opt-global-shared-view cblocks)
+                added-blocks
+                caller-blocks
+                added-so-far)]
+            [bounds-ok? : bool
+              (or
+                (opt-inline-bounds-inline-ok?
+                  has-bounds?
+                  absorbable-here?
+                  const-args
+                  np)
+                shared-accessor?
+                hot-loop-leaf?)]
+            [bounds-loop-ok? : bool
+              (or
+                (opt-inline-multiblock-bounds-loop-ok?
+                  has-bounds?
+                  absorbable-here?
+                  absorb-class
+                  callee-instrs
+                  callee-name
+                  (compiler-opt-global-shared-view cblocks))
+                hot-loop-leaf?
+                single-site-absorb?)]
+            [budget-cost-ok? : bool
+              (or
+                (opt-inline-cost-inline?
+                  callee-instrs
+                  added-blocks
+                  const-args
+                  (and
+                    absorbable-here?
+                    (not opt-inline-current-phi-predecessor?))
+                  caller-blocks
+                  added-so-far)
+                (and
+                  tiny-predicate?
+                  (opt-inline-tiny-predicate-cost-inline?
+                    callee-instrs
+                    added-blocks
+                    const-args
+                    caller-blocks
+                    added-so-far)))]
+            [legacy-cost-ok? : bool (or budget-cost-ok? shared-accessor?)]
+            ;; True only when the dominant-reference accessor tier is what
+            ;; admits this site: its blocks spend that tier's own fuel.
+            [accessor-import? : bool
+              (and
+                (not tail-site?)
+                shared-accessor?
+                (opt-inline-shared-accessor-dominant? refs hot-refs)
+                (not budget-cost-ok?))]
+            ;; A bounds-free acyclic branch chain is admitted on its own
+            ;; terms: the census still claims it, but the cost model's
+            ;; block weight is not what should price it.
+            [branch-chain? : bool
+              (opt-inline-branch-chain-ok?
+                absorb-class
+                has-bounds?
+                callee-instrs
+                (compiler-opt-global-shared-view cblocks)
+                added-blocks
+                caller-blocks
+                added-so-far)]
+            ;; The predictive verdict: every band above, unchanged -- and asked
+            ;; only about a CALL site. The tail-call site class is the measured
+            ;; tier's alone: the bands never saw it, their models were
+            ;; calibrated without it, and the one thing that changes when they
+            ;; are handed it is measured. gvn_table's `gvn-dispatch` is a cond
+            ;; whose arms are all `(gvn-step-* ...)` in tail position; letting
+            ;; the single-reference absorb band claim two of them costs that row
+            ;; +19,337,616 (+2.59%). So a tail site reaches the verdict or it
+            ;; reaches nothing, and no band's fuel is charged for it either
+            ;; (the import flags below).
+            [band-admits? : bool
+              (and
+                (not tail-site?)
+                bounds-ok?
+                bounds-loop-ok?
+                (or
+                  legacy-cost-ok?
+                  hot-loop-leaf?
+                  branch-chain?
+                  single-site-absorb?))]
+            ;; The measured tier is asked only about sites no band takes: a
+            ;; site both admit belongs to the band, which is cheaper (no
+            ;; re-optimize, no re-plan) and already carries its own
+            ;; measured argument.
+            [checked? : bool
+              (and
+                (not band-admits?)
+                (opt-inline-checked-ok?
+                  (compiler-opt-global-shared-view index)
+                  (compiler-opt-global-shared-view census)
+                  callee-name
+                  refs
+                  callee-instrs
+                  np
+                  (compiler-opt-global-shared-view cblocks)
+                  added-blocks
+                  caller-blocks
+                  added-so-far
+                  site-pos
+                  tail-site?))]
+            [inline? : bool (or band-admits? checked?)]
+            ;; True only when the hot-loop-leaf gate is what admits this
+            ;; site: its blocks spend the gate's own fuel, not the shared
+            ;; accumulator the caller's banked absorptions draw on.
+            [hot-import? : bool
+              (and (not tail-site?) hot-loop-leaf? (not legacy-cost-ok?))]
+            ;; Same accounting for a chain import, against its own fuel.
+            [chain-import? : bool
+              (and
+                (not tail-site?)
+                branch-chain?
+                (not legacy-cost-ok?)
+                (not hot-loop-leaf?))]
+            ;; True only when the single-reference absorb band is what
+            ;; admits this site: its blocks are moved, not copied, so they
+            ;; spend that band's own accumulator rather than the shared
+            ;; growth budget the cost model draws on.
+            [absorb-import? : bool
+              (and
+                (not tail-site?)
+                single-site-absorb?
+                (not legacy-cost-ok?)
+                (not hot-loop-leaf?)
+                (not branch-chain?))]
+            (if inline?
+              (match (opt-inline-walk-instr-seq-from
+                (compiler-opt-global-shared-view instrs)
+                seq-start
+                call-pos
+                (compiler-opt-global-shared-view index)
+                (compiler-opt-global-shared-view census)
+                func-name
+                block-label
+                seq-start
+                vars
+                caller-blocks
+                added-so-far
+                (compiler-opt-global-shared-view scc-result)
+                caller-scc)
+                [(OptInlineState.State prefix-instrs prefix-vars prefix-added)
+                  (let
+                    [_site-bump : unit
+                      (set!
+                        opt-inline-caller-site-count
+                        (+ opt-inline-caller-site-count 1))]
+                    [prefix : String
+                      (opt-inline-site-prefix
+                        func-name
+                        block-label
+                        site-pos
+                        callee-name)]
+                    [entry-label : i64
+                      (opt-inline-prefix-label
+                        (compiler-opt-global-shared-view prefix)
+                        (opt-cfg-entry-label
+                          (compiler-opt-global-shared-view cblocks)))]
+                    [cont-label : i64
+                      (opt-inline-cont-label
+                        (compiler-opt-global-shared-view prefix))]
+                    [vars2 : i64
+                      (+
+                        prefix-vars
+                        (+
+                          (if stage-args?
+                            cvars
+                            (opt-inline-frame-growth cvars np))
+                          tail-slots))]
+                    [_hot-loop-bump : unit
+                      (if hot-import?
+                        (set!
+                          opt-inline-caller-hot-loop-blocks
+                          (+ opt-inline-caller-hot-loop-blocks added-blocks))
+                        unit)]
+                    [_chain-bump : unit
+                      (if chain-import?
+                        (set!
+                          opt-inline-caller-chain-blocks
+                          (+ opt-inline-caller-chain-blocks added-blocks))
+                        unit)]
+                    [_absorb-bump : unit
+                      (if absorb-import?
+                        (set!
+                          opt-inline-caller-absorb-blocks
+                          (+ opt-inline-caller-absorb-blocks added-blocks))
+                        unit)]
+                    [_accessor-bump : unit
+                      (if accessor-import?
+                        (set!
+                          opt-inline-caller-accessor-blocks
+                          (+ opt-inline-caller-accessor-blocks added-blocks))
+                        unit)]
+                    ;; The measured tier's own accounting: its blocks, and
+                    ;; the flag that says THIS walk placed its one new site.
+                    ;; A re-admitted accepted site adds its blocks -- a
+                    ;; later candidate is budgeted against the caller's
+                    ;; whole checked growth -- but does not consume the
+                    ;; walk's new-site slot. The program budget is spent by
+                    ;; the VERDICT, not here, because a rejected candidate
+                    ;; costs the same work an accepted one does.
+                    [_checked-bump : unit
+                      (if checked?
+                        (begin
+                          (set!
+                            opt-inline-caller-checked-blocks
+                            (+ opt-inline-caller-checked-blocks added-blocks))
+                          (if opt-inline-checked-new-site?
+                            (set! opt-inline-caller-checked-taken? true)
+                            unit))
+                        unit)]
+                    ;; A hot-loop, chain, accessor, absorb or checked
+                    ;; import's blocks stay out of the shared accumulator;
+                    ;; each gate charged its own above.
+                    [added2 : i64
+                      (+
+                        prefix-added
+                        (if (or
+                          hot-import?
+                          chain-import?
+                          absorb-import?
+                          accessor-import?
+                          checked?)
+                          0
+                          added-blocks))]
+                    [stage-instrs : ir.CompilerIrInstrSeq
+                      (if stage-args?
+                        (opt-inline-stage-param-instrs
+                          (compiler-opt-global-shared-view cparams)
+                          (compiler-opt-global-shared-view cargs)
+                          prefix-vars
+                          stage-all-args?
+                          0)
+                        (opt-inline-empty-instr-seq))]
+                    [staged-args : ir.CompilerIrCallArgs
+                      (if stage-args?
+                        (opt-inline-staged-args
+                          (compiler-opt-global-shared-view cparams)
+                          (compiler-opt-global-shared-view cargs)
+                          np
+                          prefix-vars
+                          stage-all-args?)
+                        cargs)]
+                    [clone-base : i64
+                      (if stage-args?
+                        (+ prefix-vars np)
+                        prefix-vars)]
+                    ;; The first slot past the clone's rebased frame: the
+                    ;; callee's highest var rebases to `tail-base - 1`, and
+                    ;; `vars2` above reserved `tail-slots` ids from here.
+                    [tail-base : i64
+                      (opt-inline-rebase-var cvars np clone-base)]
+                    [prefix-instrs2 : ir.CompilerIrInstrSeq
+                      (opt-inline-append
+                        lead
+                        (opt-inline-append
+                          prefix-instrs
+                          (opt-inline-append
+                            stage-instrs
+                            (ir.compiler-ir-instr-seq1
+                              (ir.CompilerIrInstr.Jump entry-label)))))]
+                    (match (opt-inline-clone-multiblock-blocks
+                      cblocks
+                      prefix
+                      cont-label
+                      tail-base
+                      tail-site?
+                      (compiler-opt-global-shared-view cret)
+                      staged-args
+                      np
+                      clone-base)
+                      [(OptInlineMultiClone.Clone cloned-blocks return-inputs)
+                        (if tail-site?
+                          ;; The tail-call site's whole rewrite: the head
+                          ;; block jumps into the clone and the clone ends
+                          ;; in the caller's own exits. No continuation
+                          ;; block, so `return-inputs` is empty and there is
+                          ;; no result to bind; no suffix, because a direct
+                          ;; tail call is the block's terminator and the
+                          ;; dispatcher offers this class no other position;
+                          ;; and no predecessor rename, because a block that
+                          ;; ended in a tail call reaches no successor phi.
+                          (OptInlineMaybeBlockRewrite.SomeBlockRewrite
+                            (ir.compiler-ir-block-cons
+                              (ir.CompilerIrBlock.Block
+                                head-label
+                                prefix-instrs2)
+                              cloned-blocks)
+                            vars2
+                            added2)
+                          (let
+                            [result-instr : ir.CompilerIrInstr
+                              (opt-inline-cont-result-instr
+                                dst
+                                return-inputs
+                                cret)]
+                            ;; The suffix opens the continuation block, so it
+                            ;; is rewritten by this same scan rather than by
+                            ;; the single-block walk: a second admitted
+                            ;; multiblock candidate in the same block gets its
+                            ;; own split instead of being evicted by whichever
+                            ;; candidate came first. The scan bottoms out in
+                            ;; opt-inline-rewrite-single-block-seq, which is
+                            ;; exactly the walk this call site used to make,
+                            ;; so a block with one admitted candidate rebuilds
+                            ;; byte-for-byte as before. Every gate still runs
+                            ;; per candidate, and `added2` hands the suffix the
+                            ;; fuel this site already spent.
+                            (match (opt-inline-try-multiblock-rewrite-seq-from
+                              instrs
+                              (+ call-pos 1)
+                              count
+                              block-label
+                              cont-label
+                              (+ call-pos 1)
+                              (ir.compiler-ir-instr-seq1 result-instr)
+                              (+ site-pos 1)
+                              index
+                              census
+                              func-name
+                              vars2
+                              caller-blocks
+                              added2
+                              scc-result
+                              caller-scc)
+                              [(OptInlineMaybeBlockRewrite.SomeBlockRewrite
+                                  cont-blocks
+                                  vars3
+                                  added3)
+                                (let
+                                  ;; Recorded after the suffix so a nested
+                                  ;; split's rename lands behind this one:
+                                  ;; opt-inline-repair-phi-predecessors
+                                  ;; applies the newest rename first, and the
+                                  ;; chain has to run outer-to-inner
+                                  ;; (block -> cont -> cont') to leave a
+                                  ;; successor phi naming the block that
+                                  ;; actually reaches it.
+                                  [_record-pred-rename : unit
+                                    (if opt-inline-current-phi-predecessor?
+                                      (set!
+                                        (array-ref opt-inline-pred-renames 0)
+                                        (opt-inline-pred-renames-cons
+                                          head-label
+                                          cont-label
+                                          (opt-inline-pred-renames-shared-view)))
+                                      unit)]
+                                  (OptInlineMaybeBlockRewrite.SomeBlockRewrite
+                                    (ir.compiler-ir-block-cons
+                                      (ir.CompilerIrBlock.Block
+                                        head-label
+                                        prefix-instrs2)
+                                      (opt-inline-block-append
+                                        cloned-blocks
+                                        cont-blocks))
+                                    vars3
+                                    added3))]
+                              ;; Unreachable: the scan always ends in a
+                              ;; single-block rewrite. Refusing the site is the
+                              ;; safe reading if that ever changes.
+                              [(OptInlineMaybeBlockRewrite.NoBlockRewrite)
+                                (OptInlineMaybeBlockRewrite.NoBlockRewrite)])))]))])
+              (OptInlineMaybeBlockRewrite.NoBlockRewrite)))
+          (OptInlineMaybeBlockRewrite.NoBlockRewrite)))]))
+
+;; The two site classes, as instructions. A direct `TailCall` is a site here for
+;; the reason it is one in opt-inline-try: the callee's boundary is paid at a
+;; `return f(args)` exactly as it is at `dst = f(args)`, and the rewrite is the
+;; simpler of the two. It is admitted only in the position the IR actually gives
+;; it -- last in its block, where it is the terminator -- so the spliced body's
+;; exits can be the caller's without anything of the caller's being left behind
+;; them; a tail call anywhere else refuses here and the single-block walk sees
+;; it exactly as it did before.
+;;
+;; `TailCallIndirect` is not a site: its target is a computed value the census
+;; cannot see through to price, which is the reading recorded at
+;; opt-inline-multiblock-instr-ok? and at opt-inline-body-terminator-ok?.
 (define (opt-inline-multiblock-build-rewrite-seq
   [block-label : i64]
   [head-label : i64]
@@ -127528,461 +128303,144 @@
   [caller-scc : i64]
   [index : OptFunctionIndex]) : OptInlineMaybeBlockRewrite
   (match call-instr
-    [(ir.CompilerIrInstr.Call dst cname cargs cret)
-      (match (compiler-opt-global-shared-view callee)
-        [(ir.CompilerIrFunction.Function callee-name cparams _ cvars cblocks)
-          (let
-            [np : i64
-              (opt-inline-param-count (compiler-opt-global-shared-view cparams))]
-            (if (opt-inline-arity-ok?
-              (compiler-opt-global-shared-view cargs)
-              np)
-              (let
-                [added-blocks : i64
-                  (+
-                    (ir.compiler-ir-block-list-count
-                      (compiler-opt-global-shared-view cblocks))
-                    1)]
-                ;; Result slots for converted tail calls: one per cloned block,
-                ;; reserved above the clone's rebased frame only when needed.
-                [tail-slots : i64
-                  (if (opt-inline-blocks-have-tail-call?
-                    (compiler-opt-global-shared-view cblocks))
-                    (- added-blocks 1)
-                    0)]
-                [stage-all-args? : bool
-                  (opt-inline-param-mutating-blocks?
-                    (compiler-opt-global-shared-view cblocks)
-                    np)]
-                [stage-args? : bool
-                  (or
-                    stage-all-args?
-                    (opt-inline-params-have-sret?
-                      (compiler-opt-global-shared-view cparams)))]
-                [callee-instrs : i64
-                  (+
-                    (opt-inline-multiblock-cost-instrs
-                      (compiler-opt-global-shared-view cblocks))
-                    (if stage-args?
-                      np
-                      0))]
-                [const-args : i64
-                  (opt-inline-args-const-count
-                    (compiler-opt-global-shared-view cargs))]
-                [absorb-class : i64
-                  (opt-inline-census-absorb-class
-                    (compiler-opt-global-shared-view index)
-                    (compiler-opt-global-shared-view census)
-                    func-name
-                    callee-name)]
-                ;; The site-level verdict: this site claims the callee's body,
-                ;; either because it is the only one (class 1, absorption) or
-                ;; because the duplicating clauses admit a copy (class 2).
-                [absorbable-here? : bool
-                  (or
-                    (= absorb-class 1)
-                    (opt-inline-dup-absorb-ok?
-                      absorb-class
-                      callee-instrs
-                      (compiler-opt-global-shared-view cblocks)))]
-                ;; Splitting a loop phi predecessor can lengthen live ranges.
-                ;; Keep ordinary cost-model admission available here, but do
-                ;; not let the unconditional single-reference absorb bonus
-                ;; bypass its budget. #5193 owns the next bounded wrapper class.
-                [tiny-predicate? : bool
-                  (and
-                    (not stage-args?)
-                    (opt-inline-tiny-predicate-callee?
-                      (compiler-opt-global-shared-view index)
-                      (compiler-opt-global-shared-view callee)
-                      (compiler-opt-global-shared-view census)))]
-                ;; Bounds-carrying loops stay acyclic-only except for the exact
-                ;; measured vm-run leaf selected by the shared gate (#5325).
-                [has-bounds? : bool
-                  (opt-inline-blocks-have-bounds-check?
-                    (compiler-opt-global-shared-view cblocks))]
-                [refs : i64
-                  (opt-inline-census-refcount
-                    (compiler-opt-global-shared-view index)
-                    (compiler-opt-global-shared-view census)
-                    callee-name)]
-                [hot-refs : i64
-                  (opt-inline-census-hot-refcount
-                    (compiler-opt-global-shared-view index)
-                    (compiler-opt-global-shared-view census)
-                    callee-name)]
-                ;; A shared acyclic accessor is admitted on its own terms.
-                [shared-accessor? : bool
-                  (opt-inline-shared-accessor-ok?
-                    refs
-                    hot-refs
-                    callee-instrs
-                    (compiler-opt-global-shared-view cblocks)
-                    added-blocks
-                    caller-blocks
-                    added-so-far)]
-                ;; A call-free cyclic leaf is admitted on its own terms too: it
-                ;; keeps its own body wherever this gate does not take it, so no
-                ;; absorb credit is claimed -- which is what lets the gate span
-                ;; every reference class, single-reference sites included,
-                ;; without owing the census an absorption it did not perform.
-                [hot-loop-leaf? : bool
-                  (opt-inline-hot-loop-leaf-ok?
-                    (compiler-opt-global-shared-view index)
-                    (compiler-opt-global-shared-view census)
-                    callee-name
-                    refs
-                    callee-instrs
-                    (compiler-opt-global-shared-view cblocks)
-                    added-blocks
-                    caller-blocks
-                    added-so-far)]
-                ;; A callee with exactly one static reference absorbs at any
-                ;; size: the body moves rather than being copied, so no growth
-                ;; budget applies to it.
-                [single-site-absorb? : bool
-                  (opt-inline-single-site-absorb-ok?
-                    absorb-class
-                    stage-args?
-                    has-bounds?
-                    np
-                    callee-instrs
-                    (compiler-opt-global-shared-view cblocks)
-                    added-blocks
-                    caller-blocks
-                    added-so-far)]
-                [bounds-ok? : bool
-                  (or
-                    (opt-inline-bounds-inline-ok?
-                      has-bounds?
-                      absorbable-here?
-                      const-args
-                      np)
-                    shared-accessor?
-                    hot-loop-leaf?)]
-                [bounds-loop-ok? : bool
-                  (or
-                    (opt-inline-multiblock-bounds-loop-ok?
-                      has-bounds?
-                      absorbable-here?
-                      absorb-class
-                      callee-instrs
-                      callee-name
-                      (compiler-opt-global-shared-view cblocks))
-                    hot-loop-leaf?
-                    single-site-absorb?)]
-                [budget-cost-ok? : bool
-                  (or
-                    (opt-inline-cost-inline?
-                      callee-instrs
-                      added-blocks
-                      const-args
-                      (and
-                        absorbable-here?
-                        (not opt-inline-current-phi-predecessor?))
-                      caller-blocks
-                      added-so-far)
-                    (and
-                      tiny-predicate?
-                      (opt-inline-tiny-predicate-cost-inline?
-                        callee-instrs
-                        added-blocks
-                        const-args
-                        caller-blocks
-                        added-so-far)))]
-                [legacy-cost-ok? : bool (or budget-cost-ok? shared-accessor?)]
-                ;; True only when the dominant-reference accessor tier is what
-                ;; admits this site: its blocks spend that tier's own fuel.
-                [accessor-import? : bool
-                  (and
-                    shared-accessor?
-                    (opt-inline-shared-accessor-dominant? refs hot-refs)
-                    (not budget-cost-ok?))]
-                ;; A bounds-free acyclic branch chain is admitted on its own
-                ;; terms: the census still claims it, but the cost model's
-                ;; block weight is not what should price it.
-                [branch-chain? : bool
-                  (opt-inline-branch-chain-ok?
-                    absorb-class
-                    has-bounds?
-                    callee-instrs
-                    (compiler-opt-global-shared-view cblocks)
-                    added-blocks
-                    caller-blocks
-                    added-so-far)]
-                ;; The predictive verdict: every band above, unchanged.
-                [band-admits? : bool
-                  (and
-                    bounds-ok?
-                    bounds-loop-ok?
-                    (or
-                      legacy-cost-ok?
-                      hot-loop-leaf?
-                      branch-chain?
-                      single-site-absorb?))]
-                ;; The measured tier is asked only about sites no band takes: a
-                ;; site both admit belongs to the band, which is cheaper (no
-                ;; re-optimize, no re-plan) and already carries its own
-                ;; measured argument.
-                [checked? : bool
-                  (and
-                    (not band-admits?)
-                    (opt-inline-checked-ok?
-                      (compiler-opt-global-shared-view index)
-                      (compiler-opt-global-shared-view census)
-                      callee-name
-                      refs
-                      callee-instrs
-                      np
-                      (compiler-opt-global-shared-view cblocks)
-                      added-blocks
-                      caller-blocks
-                      added-so-far
-                      site-pos))]
-                [inline? : bool (or band-admits? checked?)]
-                ;; True only when the hot-loop-leaf gate is what admits this
-                ;; site: its blocks spend the gate's own fuel, not the shared
-                ;; accumulator the caller's banked absorptions draw on.
-                [hot-import? : bool (and hot-loop-leaf? (not legacy-cost-ok?))]
-                ;; Same accounting for a chain import, against its own fuel.
-                [chain-import? : bool
-                  (and branch-chain? (not legacy-cost-ok?) (not hot-loop-leaf?))]
-                ;; True only when the single-reference absorb band is what
-                ;; admits this site: its blocks are moved, not copied, so they
-                ;; spend that band's own accumulator rather than the shared
-                ;; growth budget the cost model draws on.
-                [absorb-import? : bool
-                  (and
-                    single-site-absorb?
-                    (not legacy-cost-ok?)
-                    (not hot-loop-leaf?)
-                    (not branch-chain?))]
-                (if inline?
-                  (match (opt-inline-walk-instr-seq-from
-                    (compiler-opt-global-shared-view instrs)
-                    seq-start
-                    call-pos
-                    (compiler-opt-global-shared-view index)
-                    (compiler-opt-global-shared-view census)
-                    func-name
-                    block-label
-                    seq-start
-                    vars
-                    caller-blocks
-                    added-so-far
-                    (compiler-opt-global-shared-view scc-result)
-                    caller-scc)
-                    [(OptInlineState.State
-                        prefix-instrs
-                        prefix-vars
-                        prefix-added)
-                      (let
-                        [_site-bump : unit
-                          (set!
-                            opt-inline-caller-site-count
-                            (+ opt-inline-caller-site-count 1))]
-                        [prefix : String
-                          (opt-inline-site-prefix
-                            func-name
-                            block-label
-                            site-pos
-                            callee-name)]
-                        [entry-label : i64
-                          (opt-inline-prefix-label
-                            (compiler-opt-global-shared-view prefix)
-                            (opt-cfg-entry-label
-                              (compiler-opt-global-shared-view cblocks)))]
-                        [cont-label : i64
-                          (opt-inline-cont-label
-                            (compiler-opt-global-shared-view prefix))]
-                        [vars2 : i64
-                          (+
-                            prefix-vars
-                            (+
-                              (if stage-args?
-                                cvars
-                                (opt-inline-frame-growth cvars np))
-                              tail-slots))]
-                        [_hot-loop-bump : unit
-                          (if hot-import?
-                            (set!
-                              opt-inline-caller-hot-loop-blocks
-                              (+ opt-inline-caller-hot-loop-blocks added-blocks))
-                            unit)]
-                        [_chain-bump : unit
-                          (if chain-import?
-                            (set!
-                              opt-inline-caller-chain-blocks
-                              (+ opt-inline-caller-chain-blocks added-blocks))
-                            unit)]
-                        [_absorb-bump : unit
-                          (if absorb-import?
-                            (set!
-                              opt-inline-caller-absorb-blocks
-                              (+ opt-inline-caller-absorb-blocks added-blocks))
-                            unit)]
-                        [_accessor-bump : unit
-                          (if accessor-import?
-                            (set!
-                              opt-inline-caller-accessor-blocks
-                              (+ opt-inline-caller-accessor-blocks added-blocks))
-                            unit)]
-                        ;; The measured tier's own accounting: its blocks, and
-                        ;; the flag that says THIS walk placed its one new site.
-                        ;; A re-admitted accepted site adds its blocks -- a
-                        ;; later candidate is budgeted against the caller's
-                        ;; whole checked growth -- but does not consume the
-                        ;; walk's new-site slot. The program budget is spent by
-                        ;; the VERDICT, not here, because a rejected candidate
-                        ;; costs the same work an accepted one does.
-                        [_checked-bump : unit
-                          (if checked?
-                            (begin
-                              (set!
-                                opt-inline-caller-checked-blocks
-                                (+
-                                  opt-inline-caller-checked-blocks
-                                  added-blocks))
-                              (if opt-inline-checked-new-site?
-                                (set! opt-inline-caller-checked-taken? true)
-                                unit))
-                            unit)]
-                        ;; A hot-loop, chain, accessor, absorb or checked
-                        ;; import's blocks stay out of the shared accumulator;
-                        ;; each gate charged its own above.
-                        [added2 : i64
-                          (+
-                            prefix-added
-                            (if (or
-                              hot-import?
-                              chain-import?
-                              absorb-import?
-                              accessor-import?
-                              checked?)
-                              0
-                              added-blocks))]
-                        [stage-instrs : ir.CompilerIrInstrSeq
-                          (if stage-args?
-                            (opt-inline-stage-param-instrs
-                              (compiler-opt-global-shared-view cparams)
-                              (compiler-opt-global-shared-view cargs)
-                              prefix-vars
-                              stage-all-args?
-                              0)
-                            (opt-inline-empty-instr-seq))]
-                        [staged-args : ir.CompilerIrCallArgs
-                          (if stage-args?
-                            (opt-inline-staged-args
-                              (compiler-opt-global-shared-view cparams)
-                              (compiler-opt-global-shared-view cargs)
-                              np
-                              prefix-vars
-                              stage-all-args?)
-                            cargs)]
-                        [clone-base : i64
-                          (if stage-args?
-                            (+ prefix-vars np)
-                            prefix-vars)]
-                        ;; The first slot past the clone's rebased frame: the
-                        ;; callee's highest var rebases to `tail-base - 1`, and
-                        ;; `vars2` above reserved `tail-slots` ids from here.
-                        [tail-base : i64
-                          (opt-inline-rebase-var cvars np clone-base)]
-                        [prefix-instrs2 : ir.CompilerIrInstrSeq
-                          (opt-inline-append
-                            lead
-                            (opt-inline-append
-                              prefix-instrs
-                              (opt-inline-append
-                                stage-instrs
-                                (ir.compiler-ir-instr-seq1
-                                  (ir.CompilerIrInstr.Jump entry-label)))))]
-                        (match (opt-inline-clone-multiblock-blocks
-                          cblocks
-                          prefix
-                          cont-label
-                          tail-base
-                          staged-args
-                          np
-                          clone-base)
-                          [(OptInlineMultiClone.Clone
-                              cloned-blocks
-                              return-inputs)
-                            (let
-                              [result-instr : ir.CompilerIrInstr
-                                (opt-inline-cont-result-instr
-                                  dst
-                                  return-inputs
-                                  cret)]
-                              ;; The suffix opens the continuation block, so it
-                              ;; is rewritten by this same scan rather than by
-                              ;; the single-block walk: a second admitted
-                              ;; multiblock candidate in the same block gets its
-                              ;; own split instead of being evicted by whichever
-                              ;; candidate came first. The scan bottoms out in
-                              ;; opt-inline-rewrite-single-block-seq, which is
-                              ;; exactly the walk this call site used to make,
-                              ;; so a block with one admitted candidate rebuilds
-                              ;; byte-for-byte as before. Every gate still runs
-                              ;; per candidate, and `added2` hands the suffix the
-                              ;; fuel this site already spent.
-                              (match (opt-inline-try-multiblock-rewrite-seq-from
-                                instrs
-                                (+ call-pos 1)
-                                count
-                                block-label
-                                cont-label
-                                (+ call-pos 1)
-                                (ir.compiler-ir-instr-seq1 result-instr)
-                                (+ site-pos 1)
-                                index
-                                census
-                                func-name
-                                vars2
-                                caller-blocks
-                                added2
-                                scc-result
-                                caller-scc)
-                                [(OptInlineMaybeBlockRewrite.SomeBlockRewrite
-                                    cont-blocks
-                                    vars3
-                                    added3)
-                                  (let
-                                    ;; Recorded after the suffix so a nested
-                                    ;; split's rename lands behind this one:
-                                    ;; opt-inline-repair-phi-predecessors
-                                    ;; applies the newest rename first, and the
-                                    ;; chain has to run outer-to-inner
-                                    ;; (block -> cont -> cont') to leave a
-                                    ;; successor phi naming the block that
-                                    ;; actually reaches it.
-                                    [_record-pred-rename : unit
-                                      (if opt-inline-current-phi-predecessor?
-                                        (set!
-                                          (array-ref opt-inline-pred-renames 0)
-                                          (opt-inline-pred-renames-cons
-                                            head-label
-                                            cont-label
-                                            (opt-inline-pred-renames-shared-view)))
-                                        unit)]
-                                    (OptInlineMaybeBlockRewrite.SomeBlockRewrite
-                                      (ir.compiler-ir-block-cons
-                                        (ir.CompilerIrBlock.Block
-                                          head-label
-                                          prefix-instrs2)
-                                        (opt-inline-block-append
-                                          cloned-blocks
-                                          cont-blocks))
-                                      vars3
-                                      added3))]
-                                ;; Unreachable: the scan always ends in a
-                                ;; single-block rewrite. Refusing the site is the
-                                ;; safe reading if that ever changes.
-                                [(OptInlineMaybeBlockRewrite.NoBlockRewrite)
-                                  (OptInlineMaybeBlockRewrite.NoBlockRewrite)]))]))])
-                  (OptInlineMaybeBlockRewrite.NoBlockRewrite)))
-              (OptInlineMaybeBlockRewrite.NoBlockRewrite)))])]
+    [(ir.CompilerIrInstr.Call dst _ cargs cret)
+      (opt-inline-multiblock-build-site-rewrite-seq
+        block-label
+        head-label
+        seq-start
+        lead
+        instrs
+        call-pos
+        count
+        site-pos
+        dst
+        cargs
+        cret
+        false
+        callee
+        census
+        func-name
+        vars
+        caller-blocks
+        added-so-far
+        scc-result
+        caller-scc
+        index)]
+    [(ir.CompilerIrInstr.TailCall _ cargs cret)
+      (if (= call-pos (- count 1))
+        (opt-inline-multiblock-build-site-rewrite-seq
+          block-label
+          head-label
+          seq-start
+          lead
+          instrs
+          call-pos
+          count
+          site-pos
+          (- 0 1)
+          cargs
+          cret
+          true
+          callee
+          census
+          func-name
+          vars
+          caller-blocks
+          added-so-far
+          scc-result
+          caller-scc
+          index)
+        (OptInlineMaybeBlockRewrite.NoBlockRewrite))]
     [_ (OptInlineMaybeBlockRewrite.NoBlockRewrite)]))
+
+;; One candidate position, whichever of the two site instructions stands there:
+;; look the callee up, offer the site to the builder, and move the scan on when
+;; either refuses. Shared by both arms because nothing below the site's spelling
+;; depends on it -- the callee lookup, the SCC test and every admission clause
+;; read the callee and the site's position, not the instruction's shape.
+(define (opt-inline-try-multiblock-site-at
+  [instrs : ir.CompilerIrInstrSeq]
+  [pos : i64]
+  [count : i64]
+  [block-label : i64]
+  [head-label : i64]
+  [seq-start : i64]
+  [lead : ir.CompilerIrInstrSeq]
+  [site-pos : i64]
+  [instr : ir.CompilerIrInstr]
+  [cname : i64]
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [func-name : i64]
+  [vars : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]) : OptInlineMaybeBlockRewrite
+  (match (opt-inline-lookup-multiblock-inlinable
+    (compiler-opt-global-shared-view index)
+    cname
+    func-name
+    (compiler-opt-global-shared-view scc-result)
+    caller-scc)
+    [(OptMaybeFunction.Some callee)
+      (match (opt-inline-multiblock-build-rewrite-seq
+        block-label
+        head-label
+        seq-start
+        (compiler-opt-global-shared-view lead)
+        (compiler-opt-global-shared-view instrs)
+        pos
+        count
+        site-pos
+        instr
+        (compiler-opt-global-shared-view callee)
+        (compiler-opt-global-shared-view census)
+        func-name
+        vars
+        caller-blocks
+        added-so-far
+        (compiler-opt-global-shared-view scc-result)
+        caller-scc
+        (compiler-opt-global-shared-view index))
+        [(OptInlineMaybeBlockRewrite.SomeBlockRewrite blocks2 vars2 added2)
+          (OptInlineMaybeBlockRewrite.SomeBlockRewrite blocks2 vars2 added2)]
+        [(OptInlineMaybeBlockRewrite.NoBlockRewrite)
+          (opt-inline-try-multiblock-rewrite-seq-from
+            instrs
+            (+ pos 1)
+            count
+            block-label
+            head-label
+            seq-start
+            lead
+            (+ site-pos 1)
+            index
+            census
+            func-name
+            vars
+            caller-blocks
+            added-so-far
+            scc-result
+            caller-scc)])]
+    [(OptMaybeFunction.No)
+      (opt-inline-try-multiblock-rewrite-seq-from
+        instrs
+        (+ pos 1)
+        count
+        block-label
+        head-label
+        seq-start
+        lead
+        (+ site-pos 1)
+        index
+        census
+        func-name
+        vars
+        caller-blocks
+        added-so-far
+        scc-result
+        caller-scc)]))
 
 ;; Scan [pos, count) for a multiblock-admitted call and rewrite the range
 ;; [seq-start, count) around the first one found, emitting the range's opening
@@ -128029,76 +128487,50 @@
           pos)]
       (match (compiler-opt-global-shared-view instr)
         [(ir.CompilerIrInstr.Call _ cname _ _)
-          (match (opt-inline-lookup-multiblock-inlinable
-            (compiler-opt-global-shared-view index)
+          (opt-inline-try-multiblock-site-at
+            instrs
+            pos
+            count
+            block-label
+            head-label
+            seq-start
+            lead
+            site-pos
+            (compiler-opt-global-shared-view instr)
             cname
+            index
+            census
             func-name
-            (compiler-opt-global-shared-view scc-result)
-            caller-scc)
-            [(OptMaybeFunction.Some callee)
-              (match (opt-inline-multiblock-build-rewrite-seq
-                block-label
-                head-label
-                seq-start
-                (compiler-opt-global-shared-view lead)
-                (compiler-opt-global-shared-view instrs)
-                pos
-                count
-                site-pos
-                (compiler-opt-global-shared-view instr)
-                (compiler-opt-global-shared-view callee)
-                (compiler-opt-global-shared-view census)
-                func-name
-                vars
-                caller-blocks
-                added-so-far
-                (compiler-opt-global-shared-view scc-result)
-                caller-scc
-                (compiler-opt-global-shared-view index))
-                [(OptInlineMaybeBlockRewrite.SomeBlockRewrite
-                    blocks2
-                    vars2
-                    added2)
-                  (OptInlineMaybeBlockRewrite.SomeBlockRewrite
-                    blocks2
-                    vars2
-                    added2)]
-                [(OptInlineMaybeBlockRewrite.NoBlockRewrite)
-                  (opt-inline-try-multiblock-rewrite-seq-from
-                    instrs
-                    (+ pos 1)
-                    count
-                    block-label
-                    head-label
-                    seq-start
-                    lead
-                    (+ site-pos 1)
-                    index
-                    census
-                    func-name
-                    vars
-                    caller-blocks
-                    added-so-far
-                    scc-result
-                    caller-scc)])]
-            [(OptMaybeFunction.No)
-              (opt-inline-try-multiblock-rewrite-seq-from
-                instrs
-                (+ pos 1)
-                count
-                block-label
-                head-label
-                seq-start
-                lead
-                (+ site-pos 1)
-                index
-                census
-                func-name
-                vars
-                caller-blocks
-                added-so-far
-                scc-result
-                caller-scc)])]
+            vars
+            caller-blocks
+            added-so-far
+            scc-result
+            caller-scc)]
+        ;; ...and a direct tail call, which is a site of exactly the same
+        ;; standing: `return f(args)` pays the callee's whole boundary at a
+        ;; position where the splice is simpler than a call site's. The
+        ;; builder decides whether the position admits it; everything from the
+        ;; lookup down is shared with the call arm.
+        [(ir.CompilerIrInstr.TailCall cname _ _)
+          (opt-inline-try-multiblock-site-at
+            instrs
+            pos
+            count
+            block-label
+            head-label
+            seq-start
+            lead
+            site-pos
+            (compiler-opt-global-shared-view instr)
+            cname
+            index
+            census
+            func-name
+            vars
+            caller-blocks
+            added-so-far
+            scc-result
+            caller-scc)]
         [_
           (opt-inline-try-multiblock-rewrite-seq-from
             instrs
@@ -128191,6 +128623,8 @@
   [prefix : String]
   [cont-label : i64]
   [tail-dst : i64]
+  [tail-site? : bool]
+  [site-ret : ast.AstType]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]
@@ -128212,84 +128646,115 @@
           (let
             [instr : ir.CompilerIrInstr
               (ir.compiler-ir-instr-seq-ref instrs cursor)]
-            (match (compiler-opt-global-shared-view instr)
-              [(ir.CompilerIrInstr.Return maybe)
+            ;; Same tail-SITE reading as the span-free twin: the body's exit
+            ;; becomes the caller's terminator, and it takes the callee
+            ;; instruction's own span exactly as the single-block tail
+            ;; expansion records it (opt-inline-expand-tail-instrs-with-spans).
+            (if (and
+              tail-site?
+              (opt-inline-body-terminator-ok?
+                (compiler-opt-global-shared-view instr)))
+              (let
+                [forwarded : ir.CompilerIrInstr
+                  (opt-inline-exit->terminator-instr
+                    (compiler-opt-global-shared-view instr)
+                    (compiler-opt-global-shared-view site-ret)
+                    (compiler-opt-global-shared-view sa)
+                    np
+                    base)]
                 (begin
                   (ir.compiler-ir-instr-builder-push!
                     (&mut builder)
-                    (ir.CompilerIrInstr.Jump cont-label))
+                    (compiler-opt-global-shared-view forwarded))
                   (set!
-                    inputs
-                    (ir.compiler-ir-phi-input-seq-prepend
-                      (opt-inline-return-value
-                        maybe
-                        (compiler-opt-global-shared-view sa)
-                        np
-                        base)
-                      cloned-label
-                      (ir.compiler-ir-phi-input-seq-empty)))
-                  (set! done? true))]
-              ;; Same conversion as the span-free twin. The converted call takes
-              ;; the tail call's span; the synthetic Jump remains spanless.
-              [(ir.CompilerIrInstr.TailCall cname cargs cty)
-                (let
-                  [converted : ir.CompilerIrInstr
-                    (ir.CompilerIrInstr.Call
-                      tail-dst
-                      (ir.compiler-ir-symbol-clone cname)
-                      (opt-inline-remap-args
-                        cargs
-                        (compiler-opt-global-shared-view sa)
-                        np
-                        base)
-                      (clone cty))]
+                    next-spans
+                    (opt-inline-record-clone-span
+                      (compiler-opt-global-shared-view source-spans)
+                      (compiler-opt-global-shared-view next-spans)
+                      (ir.compiler-ir-symbol-typed-id caller)
+                      (compiler-opt-global-shared-view call-instr)
+                      (ir.compiler-ir-symbol-typed-id callee)
+                      instr
+                      forwarded))
+                  (set! done? true)))
+              (match (compiler-opt-global-shared-view instr)
+                [(ir.CompilerIrInstr.Return maybe)
                   (begin
-                    (ir.compiler-ir-instr-builder-push!
-                      (&mut builder)
-                      (compiler-opt-global-shared-view converted))
                     (ir.compiler-ir-instr-builder-push!
                       (&mut builder)
                       (ir.CompilerIrInstr.Jump cont-label))
                     (set!
                       inputs
                       (ir.compiler-ir-phi-input-seq-prepend
-                        (ir.CompilerIrValue.Var tail-dst)
+                        (opt-inline-return-value
+                          maybe
+                          (compiler-opt-global-shared-view sa)
+                          np
+                          base)
                         cloned-label
                         (ir.compiler-ir-phi-input-seq-empty)))
-                    (set!
-                      next-spans
-                      (opt-inline-record-clone-span
-                        (compiler-opt-global-shared-view source-spans)
-                        (compiler-opt-global-shared-view next-spans)
-                        (ir.compiler-ir-symbol-typed-id caller)
-                        (compiler-opt-global-shared-view call-instr)
-                        (ir.compiler-ir-symbol-typed-id callee)
-                        instr
-                        converted))
-                    (set! done? true)))]
-              [_
-                (let
-                  [cloned : ir.CompilerIrInstr
-                    (opt-inline-clone-multiblock-instr
-                      (compiler-opt-global-shared-view instr)
-                      (compiler-opt-global-shared-view prefix)
-                      (compiler-opt-global-shared-view sa)
-                      np
-                      base)]
-                  (begin
-                    (ir.compiler-ir-instr-builder-push!
-                      (&mut builder)
-                      (compiler-opt-global-shared-view cloned))
-                    (set!
-                      next-spans
-                      (opt-inline-record-clone-span
-                        (compiler-opt-global-shared-view source-spans)
-                        (compiler-opt-global-shared-view next-spans)
-                        (ir.compiler-ir-symbol-typed-id caller)
-                        (compiler-opt-global-shared-view call-instr)
-                        (ir.compiler-ir-symbol-typed-id callee)
-                        instr
-                        cloned))))]))
+                    (set! done? true))]
+                ;; Same conversion as the span-free twin. The converted call takes
+                ;; the tail call's span; the synthetic Jump remains spanless.
+                [(ir.CompilerIrInstr.TailCall cname cargs cty)
+                  (let
+                    [converted : ir.CompilerIrInstr
+                      (ir.CompilerIrInstr.Call
+                        tail-dst
+                        (ir.compiler-ir-symbol-clone cname)
+                        (opt-inline-remap-args
+                          cargs
+                          (compiler-opt-global-shared-view sa)
+                          np
+                          base)
+                        (clone cty))]
+                    (begin
+                      (ir.compiler-ir-instr-builder-push!
+                        (&mut builder)
+                        (compiler-opt-global-shared-view converted))
+                      (ir.compiler-ir-instr-builder-push!
+                        (&mut builder)
+                        (ir.CompilerIrInstr.Jump cont-label))
+                      (set!
+                        inputs
+                        (ir.compiler-ir-phi-input-seq-prepend
+                          (ir.CompilerIrValue.Var tail-dst)
+                          cloned-label
+                          (ir.compiler-ir-phi-input-seq-empty)))
+                      (set!
+                        next-spans
+                        (opt-inline-record-clone-span
+                          (compiler-opt-global-shared-view source-spans)
+                          (compiler-opt-global-shared-view next-spans)
+                          (ir.compiler-ir-symbol-typed-id caller)
+                          (compiler-opt-global-shared-view call-instr)
+                          (ir.compiler-ir-symbol-typed-id callee)
+                          instr
+                          converted))
+                      (set! done? true)))]
+                [_
+                  (let
+                    [cloned : ir.CompilerIrInstr
+                      (opt-inline-clone-multiblock-instr
+                        (compiler-opt-global-shared-view instr)
+                        (compiler-opt-global-shared-view prefix)
+                        (compiler-opt-global-shared-view sa)
+                        np
+                        base)]
+                    (begin
+                      (ir.compiler-ir-instr-builder-push!
+                        (&mut builder)
+                        (compiler-opt-global-shared-view cloned))
+                      (set!
+                        next-spans
+                        (opt-inline-record-clone-span
+                          (compiler-opt-global-shared-view source-spans)
+                          (compiler-opt-global-shared-view next-spans)
+                          (ir.compiler-ir-symbol-typed-id caller)
+                          (compiler-opt-global-shared-view call-instr)
+                          (ir.compiler-ir-symbol-typed-id callee)
+                          instr
+                          cloned))))])))
           (set! cursor (+ cursor 1))))
       (OptInlineMultiSpanInstrClone.Clone
         (ir.compiler-ir-instr-builder-to-seq builder)
@@ -128302,6 +128767,8 @@
   [prefix : String]
   [cont-label : i64]
   [tail-dst : i64]
+  [tail-site? : bool]
+  [site-ret : ast.AstType]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]
@@ -128318,6 +128785,8 @@
     prefix
     cont-label
     tail-dst
+    tail-site?
+    site-ret
     sa
     np
     base
@@ -128332,6 +128801,8 @@
   [prefix : String]
   [cont-label : i64]
   [tail-dst : i64]
+  [tail-site? : bool]
+  [site-ret : ast.AstType]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]
@@ -128353,6 +128824,8 @@
           prefix
           cont-label
           tail-dst
+          tail-site?
+          site-ret
           sa
           np
           base
@@ -128374,6 +128847,8 @@
   [prefix : String]
   [cont-label : i64]
   [tail-dst : i64]
+  [tail-site? : bool]
+  [site-ret : ast.AstType]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]
@@ -128394,6 +128869,8 @@
         (compiler-opt-global-shared-view prefix)
         cont-label
         tail-dst
+        tail-site?
+        (compiler-opt-global-shared-view site-ret)
         (compiler-opt-global-shared-view sa)
         np
         base
@@ -128408,6 +128885,8 @@
             prefix
             cont-label
             (+ tail-dst 1)
+            tail-site?
+            site-ret
             sa
             np
             base
@@ -128429,6 +128908,8 @@
         prefix
         cont-label
         tail-dst
+        tail-site?
+        site-ret
         sa
         np
         base
@@ -128483,6 +128964,502 @@
         added2
         spans2)]))
 
+;; Span-carrying twin of opt-inline-multiblock-build-site-rewrite-seq, site
+;; class for site class; `dst`, `cargs`, `cret` and `tail-site?` mean exactly
+;; what they mean there.
+(define (opt-inline-multiblock-build-span-site-rewrite-seq
+  [block-label : i64]
+  [head-label : i64]
+  [seq-start : i64]
+  [lead : ir.CompilerIrInstrSeq]
+  [instrs : ir.CompilerIrInstrSeq]
+  [call-pos : i64]
+  [count : i64]
+  [site-pos : i64]
+  [call-instr : ir.CompilerIrInstr]
+  [dst : i64]
+  [cargs : ir.CompilerIrCallArgs]
+  [cret : ast.AstType]
+  [tail-site? : bool]
+  [callee : ir.CompilerIrFunction]
+  [census : OptInlineCensus]
+  [func-name : i64]
+  [vars : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]
+  [index : OptFunctionIndex]
+  [source-spans : ir.CompilerSourceSpans]
+  [out-spans : ir.CompilerSourceSpans]) : OptInlineMaybeSpanBlockRewrite
+  (match (compiler-opt-global-shared-view callee)
+    [(ir.CompilerIrFunction.Function callee-name cparams _ cvars cblocks)
+      (let
+        [np : i64
+          (opt-inline-param-count (compiler-opt-global-shared-view cparams))]
+        (if (opt-inline-arity-ok? (compiler-opt-global-shared-view cargs) np)
+          (let
+            ;; Same block accounting as the non-span path: a tail-call site
+            ;; opens no continuation block.
+            [added-blocks : i64
+              (+
+                (ir.compiler-ir-block-list-count
+                  (compiler-opt-global-shared-view cblocks))
+                (if tail-site?
+                  0
+                  1))]
+            [tail-slots : i64
+              (if (and
+                (not tail-site?)
+                (opt-inline-blocks-have-tail-call?
+                  (compiler-opt-global-shared-view cblocks)))
+                (- added-blocks 1)
+                0)]
+            [stage-all-args? : bool
+              (opt-inline-param-mutating-blocks?
+                (compiler-opt-global-shared-view cblocks)
+                np)]
+            [stage-args? : bool
+              (or
+                stage-all-args?
+                (opt-inline-params-have-sret?
+                  (compiler-opt-global-shared-view cparams)))]
+            [callee-instrs : i64
+              (+
+                (opt-inline-multiblock-cost-instrs
+                  (compiler-opt-global-shared-view cblocks))
+                (if stage-args?
+                  np
+                  0))]
+            [const-args : i64
+              (opt-inline-args-const-count
+                (compiler-opt-global-shared-view cargs))]
+            [absorb-class : i64
+              (opt-inline-census-absorb-class
+                (compiler-opt-global-shared-view index)
+                (compiler-opt-global-shared-view census)
+                func-name
+                callee-name)]
+            ;; Same site-level verdict as the non-span path.
+            [absorbable-here? : bool
+              (or
+                (= absorb-class 1)
+                (opt-inline-dup-absorb-ok?
+                  absorb-class
+                  callee-instrs
+                  (compiler-opt-global-shared-view cblocks)))]
+            [tiny-predicate? : bool
+              (and
+                (not stage-args?)
+                (opt-inline-tiny-predicate-callee?
+                  (compiler-opt-global-shared-view index)
+                  (compiler-opt-global-shared-view callee)
+                  (compiler-opt-global-shared-view census)))]
+            ;; Keep the span-aware path on the same exact vm-run decision.
+            [has-bounds? : bool
+              (opt-inline-blocks-have-bounds-check?
+                (compiler-opt-global-shared-view cblocks))]
+            [refs : i64
+              (opt-inline-census-refcount
+                (compiler-opt-global-shared-view index)
+                (compiler-opt-global-shared-view census)
+                callee-name)]
+            [hot-refs : i64
+              (opt-inline-census-hot-refcount
+                (compiler-opt-global-shared-view index)
+                (compiler-opt-global-shared-view census)
+                callee-name)]
+            ;; A shared acyclic accessor is admitted on its own terms.
+            [shared-accessor? : bool
+              (opt-inline-shared-accessor-ok?
+                refs
+                hot-refs
+                callee-instrs
+                (compiler-opt-global-shared-view cblocks)
+                added-blocks
+                caller-blocks
+                added-so-far)]
+            ;; Same hot-loop-leaf decision as the non-span path.
+            [hot-loop-leaf? : bool
+              (opt-inline-hot-loop-leaf-ok?
+                (compiler-opt-global-shared-view index)
+                (compiler-opt-global-shared-view census)
+                callee-name
+                refs
+                callee-instrs
+                (compiler-opt-global-shared-view cblocks)
+                added-blocks
+                caller-blocks
+                added-so-far)]
+            ;; Same single-site absorption verdict as the non-span path.
+            [single-site-absorb? : bool
+              (opt-inline-single-site-absorb-ok?
+                absorb-class
+                stage-args?
+                has-bounds?
+                np
+                callee-instrs
+                (compiler-opt-global-shared-view cblocks)
+                added-blocks
+                caller-blocks
+                added-so-far)]
+            [bounds-ok? : bool
+              (or
+                (opt-inline-bounds-inline-ok?
+                  has-bounds?
+                  absorbable-here?
+                  const-args
+                  np)
+                shared-accessor?
+                hot-loop-leaf?)]
+            [bounds-loop-ok? : bool
+              (or
+                (opt-inline-multiblock-bounds-loop-ok?
+                  has-bounds?
+                  absorbable-here?
+                  absorb-class
+                  callee-instrs
+                  callee-name
+                  (compiler-opt-global-shared-view cblocks))
+                hot-loop-leaf?
+                single-site-absorb?)]
+            [budget-cost-ok? : bool
+              (or
+                (opt-inline-cost-inline?
+                  callee-instrs
+                  added-blocks
+                  const-args
+                  (and
+                    absorbable-here?
+                    (not opt-inline-current-phi-predecessor?))
+                  caller-blocks
+                  added-so-far)
+                (and
+                  tiny-predicate?
+                  (opt-inline-tiny-predicate-cost-inline?
+                    callee-instrs
+                    added-blocks
+                    const-args
+                    caller-blocks
+                    added-so-far)))]
+            [legacy-cost-ok? : bool (or budget-cost-ok? shared-accessor?)]
+            ;; True only when the dominant-reference accessor tier is what
+            ;; admits this site: its blocks spend that tier's own fuel.
+            [accessor-import? : bool
+              (and
+                (not tail-site?)
+                shared-accessor?
+                (opt-inline-shared-accessor-dominant? refs hot-refs)
+                (not budget-cost-ok?))]
+            ;; Same branch-chain decision as the non-span path.
+            [branch-chain? : bool
+              (opt-inline-branch-chain-ok?
+                absorb-class
+                has-bounds?
+                callee-instrs
+                (compiler-opt-global-shared-view cblocks)
+                added-blocks
+                caller-blocks
+                added-so-far)]
+            ;; Same predictive verdict as the non-span path, and the same
+            ;; refusal of the tail-call site class: it belongs to the measured
+            ;; tier alone.
+            [band-admits? : bool
+              (and
+                (not tail-site?)
+                bounds-ok?
+                bounds-loop-ok?
+                (or
+                  legacy-cost-ok?
+                  hot-loop-leaf?
+                  branch-chain?
+                  single-site-absorb?))]
+            ;; Same measured tier as the non-span path.
+            [checked? : bool
+              (and
+                (not band-admits?)
+                (opt-inline-checked-ok?
+                  (compiler-opt-global-shared-view index)
+                  (compiler-opt-global-shared-view census)
+                  callee-name
+                  refs
+                  callee-instrs
+                  np
+                  (compiler-opt-global-shared-view cblocks)
+                  added-blocks
+                  caller-blocks
+                  added-so-far
+                  site-pos
+                  tail-site?))]
+            [inline? : bool (or band-admits? checked?)]
+            ;; Same hot-import accounting as the non-span path.
+            [hot-import? : bool
+              (and (not tail-site?) hot-loop-leaf? (not legacy-cost-ok?))]
+            ;; Same chain-import accounting as the non-span path.
+            [chain-import? : bool
+              (and
+                (not tail-site?)
+                branch-chain?
+                (not legacy-cost-ok?)
+                (not hot-loop-leaf?))]
+            ;; True only when the single-reference absorb band is what
+            ;; admits this site: its blocks are moved, not copied, so they
+            ;; spend that band's own accumulator rather than the shared
+            ;; growth budget the cost model draws on.
+            [absorb-import? : bool
+              (and
+                (not tail-site?)
+                single-site-absorb?
+                (not legacy-cost-ok?)
+                (not hot-loop-leaf?)
+                (not branch-chain?))]
+            (if inline?
+              (match (opt-inline-walk-instr-seq-with-spans-from
+                (compiler-opt-global-shared-view instrs)
+                seq-start
+                call-pos
+                (compiler-opt-global-shared-view index)
+                (compiler-opt-global-shared-view census)
+                func-name
+                block-label
+                seq-start
+                vars
+                caller-blocks
+                added-so-far
+                (compiler-opt-global-shared-view scc-result)
+                caller-scc
+                (compiler-opt-global-shared-view source-spans)
+                (compiler-opt-global-shared-view out-spans))
+                [(OptInlineSpanState.State
+                    prefix-instrs
+                    prefix-vars
+                    prefix-added
+                    spans2)
+                  (let
+                    [_site-bump : unit
+                      (set!
+                        opt-inline-caller-site-count
+                        (+ opt-inline-caller-site-count 1))]
+                    [prefix : String
+                      (opt-inline-site-prefix
+                        func-name
+                        block-label
+                        site-pos
+                        callee-name)]
+                    [entry-label : i64
+                      (opt-inline-prefix-label
+                        (compiler-opt-global-shared-view prefix)
+                        (opt-cfg-entry-label
+                          (compiler-opt-global-shared-view cblocks)))]
+                    [cont-label : i64
+                      (opt-inline-cont-label
+                        (compiler-opt-global-shared-view prefix))]
+                    [vars2 : i64
+                      (+
+                        prefix-vars
+                        (+
+                          (if stage-args?
+                            cvars
+                            (opt-inline-frame-growth cvars np))
+                          tail-slots))]
+                    [_hot-loop-bump : unit
+                      (if hot-import?
+                        (set!
+                          opt-inline-caller-hot-loop-blocks
+                          (+ opt-inline-caller-hot-loop-blocks added-blocks))
+                        unit)]
+                    [_chain-bump : unit
+                      (if chain-import?
+                        (set!
+                          opt-inline-caller-chain-blocks
+                          (+ opt-inline-caller-chain-blocks added-blocks))
+                        unit)]
+                    [_absorb-bump : unit
+                      (if absorb-import?
+                        (set!
+                          opt-inline-caller-absorb-blocks
+                          (+ opt-inline-caller-absorb-blocks added-blocks))
+                        unit)]
+                    [_accessor-bump : unit
+                      (if accessor-import?
+                        (set!
+                          opt-inline-caller-accessor-blocks
+                          (+ opt-inline-caller-accessor-blocks added-blocks))
+                        unit)]
+                    ;; The measured tier's own accounting: its blocks, and
+                    ;; the flag that says THIS walk placed its one new site.
+                    ;; A re-admitted accepted site adds its blocks -- a
+                    ;; later candidate is budgeted against the caller's
+                    ;; whole checked growth -- but does not consume the
+                    ;; walk's new-site slot. The program budget is spent by
+                    ;; the VERDICT, not here, because a rejected candidate
+                    ;; costs the same work an accepted one does.
+                    [_checked-bump : unit
+                      (if checked?
+                        (begin
+                          (set!
+                            opt-inline-caller-checked-blocks
+                            (+ opt-inline-caller-checked-blocks added-blocks))
+                          (if opt-inline-checked-new-site?
+                            (set! opt-inline-caller-checked-taken? true)
+                            unit))
+                        unit)]
+                    ;; Same import accounting as the non-span path.
+                    [added2 : i64
+                      (+
+                        prefix-added
+                        (if (or
+                          hot-import?
+                          chain-import?
+                          absorb-import?
+                          accessor-import?
+                          checked?)
+                          0
+                          added-blocks))]
+                    [stage-instrs : ir.CompilerIrInstrSeq
+                      (if stage-args?
+                        (opt-inline-stage-param-instrs
+                          (compiler-opt-global-shared-view cparams)
+                          (compiler-opt-global-shared-view cargs)
+                          prefix-vars
+                          stage-all-args?
+                          0)
+                        (opt-inline-empty-instr-seq))]
+                    [staged-args : ir.CompilerIrCallArgs
+                      (if stage-args?
+                        (opt-inline-staged-args
+                          (compiler-opt-global-shared-view cparams)
+                          (compiler-opt-global-shared-view cargs)
+                          np
+                          prefix-vars
+                          stage-all-args?)
+                        cargs)]
+                    [clone-base : i64
+                      (if stage-args?
+                        (+ prefix-vars np)
+                        prefix-vars)]
+                    ;; The first slot past the clone's rebased frame: the
+                    ;; callee's highest var rebases to `tail-base - 1`, and
+                    ;; `vars2` above reserved `tail-slots` ids from here.
+                    [tail-base : i64
+                      (opt-inline-rebase-var cvars np clone-base)]
+                    [prefix-instrs2 : ir.CompilerIrInstrSeq
+                      (opt-inline-append
+                        lead
+                        (opt-inline-append
+                          prefix-instrs
+                          (opt-inline-append
+                            stage-instrs
+                            (ir.compiler-ir-instr-seq1
+                              (ir.CompilerIrInstr.Jump entry-label)))))]
+                    (match (opt-inline-clone-multiblock-blocks-with-spans
+                      (compiler-opt-global-shared-view cblocks)
+                      (compiler-opt-global-shared-view prefix)
+                      cont-label
+                      tail-base
+                      tail-site?
+                      (compiler-opt-global-shared-view cret)
+                      (compiler-opt-global-shared-view staged-args)
+                      np
+                      clone-base
+                      (compiler-opt-global-shared-view source-spans)
+                      (compiler-opt-global-shared-view spans2)
+                      func-name
+                      (compiler-opt-global-shared-view call-instr)
+                      callee-name)
+                      [(OptInlineMultiSpanClone.Clone
+                          cloned-blocks
+                          return-inputs
+                          spans3)
+                        (if tail-site?
+                          ;; Same tail-site rewrite as the non-span path;
+                          ;; the clone recorded its own exits' spans, so
+                          ;; nothing is added here.
+                          (OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
+                            (ir.compiler-ir-block-cons
+                              (ir.CompilerIrBlock.Block
+                                head-label
+                                prefix-instrs2)
+                              cloned-blocks)
+                            vars2
+                            added2
+                            spans3)
+                          (let
+                            [result-instr : ir.CompilerIrInstr
+                              (opt-inline-cont-result-instr
+                                dst
+                                return-inputs
+                                cret)]
+                            ;; Same suffix recursion as the non-span path.
+                            ;; `result-instr` rides down as the continuation
+                            ;; block's lead instruction, and its span is
+                            ;; recorded on the way back out so the span stream
+                            ;; keeps the order it had when the suffix was a
+                            ;; plain single-block walk.
+                            (match (opt-inline-try-multiblock-span-rewrite-seq-from
+                              (compiler-opt-global-shared-view instrs)
+                              (+ call-pos 1)
+                              count
+                              block-label
+                              cont-label
+                              (+ call-pos 1)
+                              (ir.compiler-ir-instr-seq1
+                                (compiler-opt-global-shared-view result-instr))
+                              (+ site-pos 1)
+                              (compiler-opt-global-shared-view index)
+                              (compiler-opt-global-shared-view census)
+                              func-name
+                              vars2
+                              caller-blocks
+                              added2
+                              (compiler-opt-global-shared-view scc-result)
+                              caller-scc
+                              (compiler-opt-global-shared-view source-spans)
+                              (compiler-opt-global-shared-view spans3))
+                              [(OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
+                                  cont-blocks
+                                  vars3
+                                  added3
+                                  spans4)
+                                (let
+                                  [spans5 : ir.CompilerSourceSpans
+                                    (opt-inline-call-span-to-instr
+                                      (compiler-opt-global-shared-view
+                                        source-spans)
+                                      spans4
+                                      (ir.compiler-ir-symbol-typed-id func-name)
+                                      call-instr
+                                      result-instr)]
+                                  [_record-pred-rename : unit
+                                    (if opt-inline-current-phi-predecessor?
+                                      (set!
+                                        (array-ref opt-inline-pred-renames 0)
+                                        (opt-inline-pred-renames-cons
+                                          head-label
+                                          cont-label
+                                          (opt-inline-pred-renames-shared-view)))
+                                      unit)]
+                                  (OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
+                                    (ir.compiler-ir-block-cons
+                                      (ir.CompilerIrBlock.Block
+                                        head-label
+                                        prefix-instrs2)
+                                      (opt-inline-block-append
+                                        cloned-blocks
+                                        cont-blocks))
+                                    vars3
+                                    added3
+                                    spans5))]
+                              ;; Unreachable for the same reason as the
+                              ;; non-span path; refusing the site is the safe
+                              ;; reading.
+                              [(OptInlineMaybeSpanBlockRewrite.NoSpanBlockRewrite)
+                                (OptInlineMaybeSpanBlockRewrite.NoSpanBlockRewrite)])))]))])
+              (OptInlineMaybeSpanBlockRewrite.NoSpanBlockRewrite)))
+          (OptInlineMaybeSpanBlockRewrite.NoSpanBlockRewrite)))]))
+
+;; Span-carrying twin of the site dispatcher: the same two classes, and the same
+;; refusal of a tail call that is not its block's terminator.
 (define (opt-inline-multiblock-build-span-rewrite-seq
   [block-label : i64]
   [head-label : i64]
@@ -128505,446 +129482,162 @@
   [source-spans : ir.CompilerSourceSpans]
   [out-spans : ir.CompilerSourceSpans]) : OptInlineMaybeSpanBlockRewrite
   (match (compiler-opt-global-shared-view call-instr)
-    [(ir.CompilerIrInstr.Call dst cname cargs cret)
-      (match (compiler-opt-global-shared-view callee)
-        [(ir.CompilerIrFunction.Function callee-name cparams _ cvars cblocks)
-          (let
-            [np : i64
-              (opt-inline-param-count (compiler-opt-global-shared-view cparams))]
-            (if (opt-inline-arity-ok?
-              (compiler-opt-global-shared-view cargs)
-              np)
-              (let
-                [added-blocks : i64
-                  (+
-                    (ir.compiler-ir-block-list-count
-                      (compiler-opt-global-shared-view cblocks))
-                    1)]
-                [tail-slots : i64
-                  (if (opt-inline-blocks-have-tail-call?
-                    (compiler-opt-global-shared-view cblocks))
-                    (- added-blocks 1)
-                    0)]
-                [stage-all-args? : bool
-                  (opt-inline-param-mutating-blocks?
-                    (compiler-opt-global-shared-view cblocks)
-                    np)]
-                [stage-args? : bool
-                  (or
-                    stage-all-args?
-                    (opt-inline-params-have-sret?
-                      (compiler-opt-global-shared-view cparams)))]
-                [callee-instrs : i64
-                  (+
-                    (opt-inline-multiblock-cost-instrs
-                      (compiler-opt-global-shared-view cblocks))
-                    (if stage-args?
-                      np
-                      0))]
-                [const-args : i64
-                  (opt-inline-args-const-count
-                    (compiler-opt-global-shared-view cargs))]
-                [absorb-class : i64
-                  (opt-inline-census-absorb-class
-                    (compiler-opt-global-shared-view index)
-                    (compiler-opt-global-shared-view census)
-                    func-name
-                    callee-name)]
-                ;; Same site-level verdict as the non-span path.
-                [absorbable-here? : bool
-                  (or
-                    (= absorb-class 1)
-                    (opt-inline-dup-absorb-ok?
-                      absorb-class
-                      callee-instrs
-                      (compiler-opt-global-shared-view cblocks)))]
-                [tiny-predicate? : bool
-                  (and
-                    (not stage-args?)
-                    (opt-inline-tiny-predicate-callee?
-                      (compiler-opt-global-shared-view index)
-                      (compiler-opt-global-shared-view callee)
-                      (compiler-opt-global-shared-view census)))]
-                ;; Keep the span-aware path on the same exact vm-run decision.
-                [has-bounds? : bool
-                  (opt-inline-blocks-have-bounds-check?
-                    (compiler-opt-global-shared-view cblocks))]
-                [refs : i64
-                  (opt-inline-census-refcount
-                    (compiler-opt-global-shared-view index)
-                    (compiler-opt-global-shared-view census)
-                    callee-name)]
-                [hot-refs : i64
-                  (opt-inline-census-hot-refcount
-                    (compiler-opt-global-shared-view index)
-                    (compiler-opt-global-shared-view census)
-                    callee-name)]
-                ;; A shared acyclic accessor is admitted on its own terms.
-                [shared-accessor? : bool
-                  (opt-inline-shared-accessor-ok?
-                    refs
-                    hot-refs
-                    callee-instrs
-                    (compiler-opt-global-shared-view cblocks)
-                    added-blocks
-                    caller-blocks
-                    added-so-far)]
-                ;; Same hot-loop-leaf decision as the non-span path.
-                [hot-loop-leaf? : bool
-                  (opt-inline-hot-loop-leaf-ok?
-                    (compiler-opt-global-shared-view index)
-                    (compiler-opt-global-shared-view census)
-                    callee-name
-                    refs
-                    callee-instrs
-                    (compiler-opt-global-shared-view cblocks)
-                    added-blocks
-                    caller-blocks
-                    added-so-far)]
-                ;; Same single-site absorption verdict as the non-span path.
-                [single-site-absorb? : bool
-                  (opt-inline-single-site-absorb-ok?
-                    absorb-class
-                    stage-args?
-                    has-bounds?
-                    np
-                    callee-instrs
-                    (compiler-opt-global-shared-view cblocks)
-                    added-blocks
-                    caller-blocks
-                    added-so-far)]
-                [bounds-ok? : bool
-                  (or
-                    (opt-inline-bounds-inline-ok?
-                      has-bounds?
-                      absorbable-here?
-                      const-args
-                      np)
-                    shared-accessor?
-                    hot-loop-leaf?)]
-                [bounds-loop-ok? : bool
-                  (or
-                    (opt-inline-multiblock-bounds-loop-ok?
-                      has-bounds?
-                      absorbable-here?
-                      absorb-class
-                      callee-instrs
-                      callee-name
-                      (compiler-opt-global-shared-view cblocks))
-                    hot-loop-leaf?
-                    single-site-absorb?)]
-                [budget-cost-ok? : bool
-                  (or
-                    (opt-inline-cost-inline?
-                      callee-instrs
-                      added-blocks
-                      const-args
-                      (and
-                        absorbable-here?
-                        (not opt-inline-current-phi-predecessor?))
-                      caller-blocks
-                      added-so-far)
-                    (and
-                      tiny-predicate?
-                      (opt-inline-tiny-predicate-cost-inline?
-                        callee-instrs
-                        added-blocks
-                        const-args
-                        caller-blocks
-                        added-so-far)))]
-                [legacy-cost-ok? : bool (or budget-cost-ok? shared-accessor?)]
-                ;; True only when the dominant-reference accessor tier is what
-                ;; admits this site: its blocks spend that tier's own fuel.
-                [accessor-import? : bool
-                  (and
-                    shared-accessor?
-                    (opt-inline-shared-accessor-dominant? refs hot-refs)
-                    (not budget-cost-ok?))]
-                ;; Same branch-chain decision as the non-span path.
-                [branch-chain? : bool
-                  (opt-inline-branch-chain-ok?
-                    absorb-class
-                    has-bounds?
-                    callee-instrs
-                    (compiler-opt-global-shared-view cblocks)
-                    added-blocks
-                    caller-blocks
-                    added-so-far)]
-                ;; Same predictive verdict as the non-span path.
-                [band-admits? : bool
-                  (and
-                    bounds-ok?
-                    bounds-loop-ok?
-                    (or
-                      legacy-cost-ok?
-                      hot-loop-leaf?
-                      branch-chain?
-                      single-site-absorb?))]
-                ;; Same measured tier as the non-span path.
-                [checked? : bool
-                  (and
-                    (not band-admits?)
-                    (opt-inline-checked-ok?
-                      (compiler-opt-global-shared-view index)
-                      (compiler-opt-global-shared-view census)
-                      callee-name
-                      refs
-                      callee-instrs
-                      np
-                      (compiler-opt-global-shared-view cblocks)
-                      added-blocks
-                      caller-blocks
-                      added-so-far
-                      site-pos))]
-                [inline? : bool (or band-admits? checked?)]
-                ;; Same hot-import accounting as the non-span path.
-                [hot-import? : bool (and hot-loop-leaf? (not legacy-cost-ok?))]
-                ;; Same chain-import accounting as the non-span path.
-                [chain-import? : bool
-                  (and branch-chain? (not legacy-cost-ok?) (not hot-loop-leaf?))]
-                ;; True only when the single-reference absorb band is what
-                ;; admits this site: its blocks are moved, not copied, so they
-                ;; spend that band's own accumulator rather than the shared
-                ;; growth budget the cost model draws on.
-                [absorb-import? : bool
-                  (and
-                    single-site-absorb?
-                    (not legacy-cost-ok?)
-                    (not hot-loop-leaf?)
-                    (not branch-chain?))]
-                (if inline?
-                  (match (opt-inline-walk-instr-seq-with-spans-from
-                    (compiler-opt-global-shared-view instrs)
-                    seq-start
-                    call-pos
-                    (compiler-opt-global-shared-view index)
-                    (compiler-opt-global-shared-view census)
-                    func-name
-                    block-label
-                    seq-start
-                    vars
-                    caller-blocks
-                    added-so-far
-                    (compiler-opt-global-shared-view scc-result)
-                    caller-scc
-                    (compiler-opt-global-shared-view source-spans)
-                    (compiler-opt-global-shared-view out-spans))
-                    [(OptInlineSpanState.State
-                        prefix-instrs
-                        prefix-vars
-                        prefix-added
-                        spans2)
-                      (let
-                        [_site-bump : unit
-                          (set!
-                            opt-inline-caller-site-count
-                            (+ opt-inline-caller-site-count 1))]
-                        [prefix : String
-                          (opt-inline-site-prefix
-                            func-name
-                            block-label
-                            site-pos
-                            callee-name)]
-                        [entry-label : i64
-                          (opt-inline-prefix-label
-                            (compiler-opt-global-shared-view prefix)
-                            (opt-cfg-entry-label
-                              (compiler-opt-global-shared-view cblocks)))]
-                        [cont-label : i64
-                          (opt-inline-cont-label
-                            (compiler-opt-global-shared-view prefix))]
-                        [vars2 : i64
-                          (+
-                            prefix-vars
-                            (+
-                              (if stage-args?
-                                cvars
-                                (opt-inline-frame-growth cvars np))
-                              tail-slots))]
-                        [_hot-loop-bump : unit
-                          (if hot-import?
-                            (set!
-                              opt-inline-caller-hot-loop-blocks
-                              (+ opt-inline-caller-hot-loop-blocks added-blocks))
-                            unit)]
-                        [_chain-bump : unit
-                          (if chain-import?
-                            (set!
-                              opt-inline-caller-chain-blocks
-                              (+ opt-inline-caller-chain-blocks added-blocks))
-                            unit)]
-                        [_absorb-bump : unit
-                          (if absorb-import?
-                            (set!
-                              opt-inline-caller-absorb-blocks
-                              (+ opt-inline-caller-absorb-blocks added-blocks))
-                            unit)]
-                        [_accessor-bump : unit
-                          (if accessor-import?
-                            (set!
-                              opt-inline-caller-accessor-blocks
-                              (+ opt-inline-caller-accessor-blocks added-blocks))
-                            unit)]
-                        ;; The measured tier's own accounting: its blocks, and
-                        ;; the flag that says THIS walk placed its one new site.
-                        ;; A re-admitted accepted site adds its blocks -- a
-                        ;; later candidate is budgeted against the caller's
-                        ;; whole checked growth -- but does not consume the
-                        ;; walk's new-site slot. The program budget is spent by
-                        ;; the VERDICT, not here, because a rejected candidate
-                        ;; costs the same work an accepted one does.
-                        [_checked-bump : unit
-                          (if checked?
-                            (begin
-                              (set!
-                                opt-inline-caller-checked-blocks
-                                (+
-                                  opt-inline-caller-checked-blocks
-                                  added-blocks))
-                              (if opt-inline-checked-new-site?
-                                (set! opt-inline-caller-checked-taken? true)
-                                unit))
-                            unit)]
-                        ;; Same import accounting as the non-span path.
-                        [added2 : i64
-                          (+
-                            prefix-added
-                            (if (or
-                              hot-import?
-                              chain-import?
-                              absorb-import?
-                              accessor-import?
-                              checked?)
-                              0
-                              added-blocks))]
-                        [stage-instrs : ir.CompilerIrInstrSeq
-                          (if stage-args?
-                            (opt-inline-stage-param-instrs
-                              (compiler-opt-global-shared-view cparams)
-                              (compiler-opt-global-shared-view cargs)
-                              prefix-vars
-                              stage-all-args?
-                              0)
-                            (opt-inline-empty-instr-seq))]
-                        [staged-args : ir.CompilerIrCallArgs
-                          (if stage-args?
-                            (opt-inline-staged-args
-                              (compiler-opt-global-shared-view cparams)
-                              (compiler-opt-global-shared-view cargs)
-                              np
-                              prefix-vars
-                              stage-all-args?)
-                            cargs)]
-                        [clone-base : i64
-                          (if stage-args?
-                            (+ prefix-vars np)
-                            prefix-vars)]
-                        ;; The first slot past the clone's rebased frame: the
-                        ;; callee's highest var rebases to `tail-base - 1`, and
-                        ;; `vars2` above reserved `tail-slots` ids from here.
-                        [tail-base : i64
-                          (opt-inline-rebase-var cvars np clone-base)]
-                        [prefix-instrs2 : ir.CompilerIrInstrSeq
-                          (opt-inline-append
-                            lead
-                            (opt-inline-append
-                              prefix-instrs
-                              (opt-inline-append
-                                stage-instrs
-                                (ir.compiler-ir-instr-seq1
-                                  (ir.CompilerIrInstr.Jump entry-label)))))]
-                        (match (opt-inline-clone-multiblock-blocks-with-spans
-                          (compiler-opt-global-shared-view cblocks)
-                          (compiler-opt-global-shared-view prefix)
-                          cont-label
-                          tail-base
-                          (compiler-opt-global-shared-view staged-args)
-                          np
-                          clone-base
-                          (compiler-opt-global-shared-view source-spans)
-                          (compiler-opt-global-shared-view spans2)
-                          func-name
-                          (compiler-opt-global-shared-view call-instr)
-                          callee-name)
-                          [(OptInlineMultiSpanClone.Clone
-                              cloned-blocks
-                              return-inputs
-                              spans3)
-                            (let
-                              [result-instr : ir.CompilerIrInstr
-                                (opt-inline-cont-result-instr
-                                  dst
-                                  return-inputs
-                                  cret)]
-                              ;; Same suffix recursion as the non-span path.
-                              ;; `result-instr` rides down as the continuation
-                              ;; block's lead instruction, and its span is
-                              ;; recorded on the way back out so the span stream
-                              ;; keeps the order it had when the suffix was a
-                              ;; plain single-block walk.
-                              (match (opt-inline-try-multiblock-span-rewrite-seq-from
-                                (compiler-opt-global-shared-view instrs)
-                                (+ call-pos 1)
-                                count
-                                block-label
-                                cont-label
-                                (+ call-pos 1)
-                                (ir.compiler-ir-instr-seq1
-                                  (compiler-opt-global-shared-view result-instr))
-                                (+ site-pos 1)
-                                (compiler-opt-global-shared-view index)
-                                (compiler-opt-global-shared-view census)
-                                func-name
-                                vars2
-                                caller-blocks
-                                added2
-                                (compiler-opt-global-shared-view scc-result)
-                                caller-scc
-                                (compiler-opt-global-shared-view source-spans)
-                                (compiler-opt-global-shared-view spans3))
-                                [(OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
-                                    cont-blocks
-                                    vars3
-                                    added3
-                                    spans4)
-                                  (let
-                                    [spans5 : ir.CompilerSourceSpans
-                                      (opt-inline-call-span-to-instr
-                                        (compiler-opt-global-shared-view
-                                          source-spans)
-                                        spans4
-                                        (ir.compiler-ir-symbol-typed-id
-                                          func-name)
-                                        call-instr
-                                        result-instr)]
-                                    [_record-pred-rename : unit
-                                      (if opt-inline-current-phi-predecessor?
-                                        (set!
-                                          (array-ref opt-inline-pred-renames 0)
-                                          (opt-inline-pred-renames-cons
-                                            head-label
-                                            cont-label
-                                            (opt-inline-pred-renames-shared-view)))
-                                        unit)]
-                                    (OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
-                                      (ir.compiler-ir-block-cons
-                                        (ir.CompilerIrBlock.Block
-                                          head-label
-                                          prefix-instrs2)
-                                        (opt-inline-block-append
-                                          cloned-blocks
-                                          cont-blocks))
-                                      vars3
-                                      added3
-                                      spans5))]
-                                ;; Unreachable for the same reason as the
-                                ;; non-span path; refusing the site is the safe
-                                ;; reading.
-                                [(OptInlineMaybeSpanBlockRewrite.NoSpanBlockRewrite)
-                                  (OptInlineMaybeSpanBlockRewrite.NoSpanBlockRewrite)]))]))])
-                  (OptInlineMaybeSpanBlockRewrite.NoSpanBlockRewrite)))
-              (OptInlineMaybeSpanBlockRewrite.NoSpanBlockRewrite)))])]
+    [(ir.CompilerIrInstr.Call dst _ cargs cret)
+      (opt-inline-multiblock-build-span-site-rewrite-seq
+        block-label
+        head-label
+        seq-start
+        lead
+        instrs
+        call-pos
+        count
+        site-pos
+        call-instr
+        dst
+        cargs
+        cret
+        false
+        callee
+        census
+        func-name
+        vars
+        caller-blocks
+        added-so-far
+        scc-result
+        caller-scc
+        index
+        source-spans
+        out-spans)]
+    [(ir.CompilerIrInstr.TailCall _ cargs cret)
+      (if (= call-pos (- count 1))
+        (opt-inline-multiblock-build-span-site-rewrite-seq
+          block-label
+          head-label
+          seq-start
+          lead
+          instrs
+          call-pos
+          count
+          site-pos
+          call-instr
+          (- 0 1)
+          cargs
+          cret
+          true
+          callee
+          census
+          func-name
+          vars
+          caller-blocks
+          added-so-far
+          scc-result
+          caller-scc
+          index
+          source-spans
+          out-spans)
+        (OptInlineMaybeSpanBlockRewrite.NoSpanBlockRewrite))]
     [_ (OptInlineMaybeSpanBlockRewrite.NoSpanBlockRewrite)]))
+
+;; Span-carrying twin of opt-inline-try-multiblock-site-at.
+(define (opt-inline-try-multiblock-span-site-at
+  [instrs : ir.CompilerIrInstrSeq]
+  [pos : i64]
+  [count : i64]
+  [block-label : i64]
+  [head-label : i64]
+  [seq-start : i64]
+  [lead : ir.CompilerIrInstrSeq]
+  [site-pos : i64]
+  [instr : ir.CompilerIrInstr]
+  [cname : i64]
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [func-name : i64]
+  [vars : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]
+  [source-spans : ir.CompilerSourceSpans]
+  [out-spans : ir.CompilerSourceSpans]) : OptInlineMaybeSpanBlockRewrite
+  (match (opt-inline-lookup-multiblock-inlinable
+    (compiler-opt-global-shared-view index)
+    cname
+    func-name
+    (compiler-opt-global-shared-view scc-result)
+    caller-scc)
+    [(OptMaybeFunction.Some callee)
+      (match (opt-inline-multiblock-build-span-rewrite-seq
+        block-label
+        head-label
+        seq-start
+        (compiler-opt-global-shared-view lead)
+        (compiler-opt-global-shared-view instrs)
+        pos
+        count
+        site-pos
+        instr
+        callee
+        (compiler-opt-global-shared-view census)
+        func-name
+        vars
+        caller-blocks
+        added-so-far
+        (compiler-opt-global-shared-view scc-result)
+        caller-scc
+        (compiler-opt-global-shared-view index)
+        (compiler-opt-global-shared-view source-spans)
+        (compiler-opt-global-shared-view out-spans))
+        [(OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
+            blocks2
+            vars2
+            added2
+            spans2)
+          (OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
+            blocks2
+            vars2
+            added2
+            spans2)]
+        [(OptInlineMaybeSpanBlockRewrite.NoSpanBlockRewrite)
+          (opt-inline-try-multiblock-span-rewrite-seq-from
+            instrs
+            (+ pos 1)
+            count
+            block-label
+            head-label
+            seq-start
+            lead
+            (+ site-pos 1)
+            index
+            census
+            func-name
+            vars
+            caller-blocks
+            added-so-far
+            scc-result
+            caller-scc
+            source-spans
+            out-spans)])]
+    [(OptMaybeFunction.No)
+      (opt-inline-try-multiblock-span-rewrite-seq-from
+        instrs
+        (+ pos 1)
+        count
+        block-label
+        head-label
+        seq-start
+        lead
+        (+ site-pos 1)
+        index
+        census
+        func-name
+        vars
+        caller-blocks
+        added-so-far
+        scc-result
+        caller-scc
+        source-spans
+        out-spans)]))
 
 ;; Span-carrying twin of opt-inline-try-multiblock-rewrite-seq-from, including
 ;; its suffix recursion: this is the variant the driver compiles through.
@@ -128991,84 +129684,50 @@
           pos)]
       (match (compiler-opt-global-shared-view instr)
         [(ir.CompilerIrInstr.Call _ cname _ _)
-          (match (opt-inline-lookup-multiblock-inlinable
-            (compiler-opt-global-shared-view index)
+          (opt-inline-try-multiblock-span-site-at
+            instrs
+            pos
+            count
+            block-label
+            head-label
+            seq-start
+            lead
+            site-pos
+            instr
             cname
+            index
+            census
             func-name
-            (compiler-opt-global-shared-view scc-result)
-            caller-scc)
-            [(OptMaybeFunction.Some callee)
-              (match (opt-inline-multiblock-build-span-rewrite-seq
-                block-label
-                head-label
-                seq-start
-                (compiler-opt-global-shared-view lead)
-                (compiler-opt-global-shared-view instrs)
-                pos
-                count
-                site-pos
-                instr
-                callee
-                (compiler-opt-global-shared-view census)
-                func-name
-                vars
-                caller-blocks
-                added-so-far
-                (compiler-opt-global-shared-view scc-result)
-                caller-scc
-                (compiler-opt-global-shared-view index)
-                (compiler-opt-global-shared-view source-spans)
-                (compiler-opt-global-shared-view out-spans))
-                [(OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
-                    blocks2
-                    vars2
-                    added2
-                    spans2)
-                  (OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
-                    blocks2
-                    vars2
-                    added2
-                    spans2)]
-                [(OptInlineMaybeSpanBlockRewrite.NoSpanBlockRewrite)
-                  (opt-inline-try-multiblock-span-rewrite-seq-from
-                    instrs
-                    (+ pos 1)
-                    count
-                    block-label
-                    head-label
-                    seq-start
-                    lead
-                    (+ site-pos 1)
-                    index
-                    census
-                    func-name
-                    vars
-                    caller-blocks
-                    added-so-far
-                    scc-result
-                    caller-scc
-                    source-spans
-                    out-spans)])]
-            [(OptMaybeFunction.No)
-              (opt-inline-try-multiblock-span-rewrite-seq-from
-                instrs
-                (+ pos 1)
-                count
-                block-label
-                head-label
-                seq-start
-                lead
-                (+ site-pos 1)
-                index
-                census
-                func-name
-                vars
-                caller-blocks
-                added-so-far
-                scc-result
-                caller-scc
-                source-spans
-                out-spans)])]
+            vars
+            caller-blocks
+            added-so-far
+            scc-result
+            caller-scc
+            source-spans
+            out-spans)]
+        ;; Same second site class as the span-free scan.
+        [(ir.CompilerIrInstr.TailCall cname _ _)
+          (opt-inline-try-multiblock-span-site-at
+            instrs
+            pos
+            count
+            block-label
+            head-label
+            seq-start
+            lead
+            site-pos
+            instr
+            cname
+            index
+            census
+            func-name
+            vars
+            caller-blocks
+            added-so-far
+            scc-result
+            caller-scc
+            source-spans
+            out-spans)]
         [_
           (opt-inline-try-multiblock-span-rewrite-seq-from
             instrs
@@ -129079,7 +129738,7 @@
             seq-start
             lead
             (+ site-pos 1)
-            (compiler-opt-global-shared-view index)
+            index
             census
             func-name
             vars
@@ -129611,6 +130270,68 @@
               state)
             next-cost))))))
 
+;; The RESCAN: one more generation over what the last one left, for a caller
+;; whose rounds kept something. See opt-inline-checked-max-generations for what
+;; the extra generation is for and what bounds it.
+;;
+;; `state` is the previous generation's survivor, and it is this generation's
+;; base: the sites the copies exposed are sites of THAT function, and every
+;; round re-walks it exactly as generation one's rounds re-walked the caller's
+;; own text. The generation's baseline is its own scan walk, so the first
+;; verdict here is priced against a state that already carries whatever the
+;; bands take on the new body -- the same one-site difference every verdict in
+;; this tier prices.
+;;
+;; A generation that keeps NOTHING leaves the caller exactly as the previous one
+;; left it: `state`, not the rescan's own walk. The rescan is a search for more
+;; sites, and finding none must not be a rewrite.
+(define (opt-inline-checked-generations
+  [type-segment-bases : i64]
+  [state : ir.CompilerIrFunction]
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]
+  [kept-before : i64]) : ir.CompilerIrFunction
+  (if (or
+    (>= opt-inline-checked-generation (opt-inline-checked-max-generations))
+    (<= (opt-inline-checked-accepted-current) kept-before))
+    state
+    (let
+      [kept-now : i64 (opt-inline-checked-accepted-current)]
+      [_next : unit (opt-inline-checked-generation-begin!)]
+      [banked : ir.CompilerIrFunction
+        (opt-inline-function-walk
+          type-segment-bases
+          (compiler-opt-global-shared-view state)
+          (compiler-opt-global-shared-view index)
+          (compiler-opt-global-shared-view census)
+          (compiler-opt-global-shared-view scc-result)
+          caller-scc)]
+      (if (= opt-inline-checked-scan-count 0)
+        state
+        (let
+          [next : ir.CompilerIrFunction
+            (opt-inline-checked-rounds
+              type-segment-bases
+              (compiler-opt-global-shared-view state)
+              (compiler-opt-global-shared-view index)
+              (compiler-opt-global-shared-view census)
+              (compiler-opt-global-shared-view scc-result)
+              caller-scc
+              banked
+              (- 0 1))]
+          (if (> (opt-inline-checked-accepted-current) kept-now)
+            (opt-inline-checked-generations
+              type-segment-bases
+              next
+              index
+              census
+              scc-result
+              caller-scc
+              kept-now)
+            state))))))
+
 (define (opt-inline-function
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
@@ -129630,15 +130351,22 @@
         caller-scc)]
     (if (= opt-inline-checked-scan-count 0)
       banked
-      (opt-inline-checked-rounds
+      (opt-inline-checked-generations
         type-segment-bases
-        func
+        (opt-inline-checked-rounds
+          type-segment-bases
+          (compiler-opt-global-shared-view func)
+          (compiler-opt-global-shared-view index)
+          (compiler-opt-global-shared-view census)
+          (compiler-opt-global-shared-view scc-result)
+          caller-scc
+          banked
+          (- 0 1))
         index
         census
         scc-result
         caller-scc
-        banked
-        (- 0 1)))))
+        0))))
 
 (define (opt-inline-function-with-spans-walk
   [type-segment-bases : i64]
@@ -129738,6 +130466,12 @@
         (compiler-opt-global-array-element-shared-view one.slots 0)
         fallback)]))
 
+;; ...and the spans the same walk produced, which a rescan generation needs as
+;; the base its own rounds start from.
+(define (opt-inline-span-program-spans [program : OptInlineSpanProgram]) : ir.CompilerSourceSpans
+  (match program
+    [(OptInlineSpanProgram.Program _ spans) spans]))
+
 ;; Same sequence as the span-free entry. Re-walking is safe on the spans side,
 ;; but not for the reason the shape first suggests, so the argument is written
 ;; out here.
@@ -129826,6 +130560,72 @@
               state)
             next-cost))))))
 
+;; Span-carrying twin of opt-inline-checked-generations. The generation's base
+;; is the previous survivor's FUNCTION and the previous survivor's SPANS: the
+;; spans a round starts from have to be the ones that describe the body it
+;; re-walks, and the superset argument at opt-inline-checked-span-rounds holds
+;; generation by generation for the same reason it holds round by round.
+(define (opt-inline-checked-span-generations
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]
+  [state : OptInlineSpanProgram]
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [scc-result : OptSccResult]
+  [caller-scc : i64]
+  [source-spans : ir.CompilerSourceSpans]
+  [kept-before : i64]) : OptInlineSpanProgram
+  (if (or
+    (>= opt-inline-checked-generation (opt-inline-checked-max-generations))
+    (<= (opt-inline-checked-accepted-current) kept-before))
+    state
+    (let
+      [kept-now : i64 (opt-inline-checked-accepted-current)]
+      [_next : unit (opt-inline-checked-generation-begin!)]
+      [base-func : ir.CompilerIrFunction
+        (opt-inline-span-program-function
+          (compiler-opt-global-shared-view state)
+          (compiler-opt-global-shared-view func))]
+      [base-spans : ir.CompilerSourceSpans
+        (opt-inline-span-program-spans (compiler-opt-global-shared-view state))]
+      [banked : OptInlineSpanProgram
+        (opt-inline-function-with-spans-walk
+          type-segment-bases
+          (compiler-opt-global-shared-view base-func)
+          (compiler-opt-global-shared-view index)
+          (compiler-opt-global-shared-view census)
+          (compiler-opt-global-shared-view scc-result)
+          caller-scc
+          (compiler-opt-global-shared-view source-spans)
+          (compiler-opt-global-shared-view base-spans))]
+      (if (= opt-inline-checked-scan-count 0)
+        state
+        (let
+          [next : OptInlineSpanProgram
+            (opt-inline-checked-span-rounds
+              type-segment-bases
+              (compiler-opt-global-shared-view base-func)
+              (compiler-opt-global-shared-view index)
+              (compiler-opt-global-shared-view census)
+              (compiler-opt-global-shared-view scc-result)
+              caller-scc
+              (compiler-opt-global-shared-view source-spans)
+              (compiler-opt-global-shared-view base-spans)
+              banked
+              (- 0 1))]
+          (if (> (opt-inline-checked-accepted-current) kept-now)
+            (opt-inline-checked-span-generations
+              type-segment-bases
+              func
+              next
+              index
+              census
+              scc-result
+              caller-scc
+              source-spans
+              kept-now)
+            state))))))
+
 (define (opt-inline-function-with-spans
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
@@ -129849,17 +130649,26 @@
         (compiler-opt-global-shared-view out-spans))]
     (if (= opt-inline-checked-scan-count 0)
       banked
-      (opt-inline-checked-span-rounds
+      (opt-inline-checked-span-generations
         type-segment-bases
-        func
+        (compiler-opt-global-shared-view func)
+        (opt-inline-checked-span-rounds
+          type-segment-bases
+          (compiler-opt-global-shared-view func)
+          (compiler-opt-global-shared-view index)
+          (compiler-opt-global-shared-view census)
+          (compiler-opt-global-shared-view scc-result)
+          caller-scc
+          (compiler-opt-global-shared-view source-spans)
+          (compiler-opt-global-shared-view out-spans)
+          banked
+          (- 0 1))
         index
         census
         scc-result
         caller-scc
         source-spans
-        out-spans
-        banked
-        (- 0 1)))))
+        0))))
 
 (define (opt-function-index-to-seq [index : OptFunctionIndex]) : ir.CompilerIrFunctionSeq
   (let

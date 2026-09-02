@@ -141,12 +141,21 @@
   [cell : OptDebugTextBufCell]
   [snapshot : String]) : unit
   (let
-    [taken : (Tuple bool text_buf.TextBuf)
-      (__tl_array-take! cell.slots cell.live 0)]
-    (if (not (tuple-ref taken 0))
+    [available? : bool (array-ref cell.live 0)]
+    (if (not available?)
       (io.panic "optimizer debug dump buffer is already borrowed")
       (let
-        [buf : text_buf.TextBuf (tuple-ref taken 1)]
+        [buf : text_buf.TextBuf
+          (begin
+            ;; This process-serial cell is the source of truth for liveness.
+            ;; Mark the slot unavailable before taking its shallow owned
+            ;; representation so no nested observation can retain an alias.
+            ;; Avoid routing the large TextBuf through the private
+            ;; `(Tuple bool T)` extraction ABI: the cell already performed the
+            ;; checked availability decision above.
+            (set! (array-ref cell.live 0) false)
+            (unsafe
+              (ptr-read (__tl_array-data cell.slots))))]
         [next : text_buf.TextBuf
           (text_buf.append
             (if (text_buf.empty? (& buf))

@@ -1,4 +1,4 @@
-;# stdlib/fs_rooted_linux.tl - Private rooted exclusive-create Linux leaf.
+;# stdlib/fs_rooted_linux.tl - Private rooted staging/publication Linux leaf.
 ;#
 ;# This module is the Linux implementation boundary consumed by the future
 ;# cross-platform rooted filesystem adapter in `stdlib.fs`. The caller chooses
@@ -11,11 +11,11 @@
 ;# RESOLVE_NO_XDEV`. There is deliberately no path-string, `chdir`,
 ;# `/proc/self/fd`, plain-`open`, or weaker `openat` fallback.
 ;#
-;# Directory and file capabilities are cleanup-owning and move-only. Their only
-;# source-visible field is an opaque state pointer; safe callers cannot copy or
-;# close the raw descriptor. Explicit finish functions report close failures,
-;# while lexical cleanup closes still-live descriptors on recoverable early
-;# exits.
+;# Directory, exclusive-create file, and verified read capabilities are
+;# cleanup-owning and move-only. Their only source-visible field is an opaque
+;# state pointer; safe callers cannot copy or close the raw descriptor. Explicit
+;# finish/close functions report close failures, while lexical cleanup closes
+;# still-live descriptors on recoverable early exits.
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
@@ -37,7 +37,12 @@
   (LinuxRootedModeFailure)
   (LinuxRootedFlushFailure)
   (LinuxRootedCloseFailure)
-  (LinuxRootedClosed))
+  (LinuxRootedClosed)
+  (LinuxRootedCrossDevice)
+  (LinuxRootedDirectoryNotEmpty)
+  (LinuxRootedInvalidLength)
+  (LinuxRootedLengthMismatch)
+  (LinuxRootedReadFailure))
 
 ;: Portable file-mode intent owned by the Linux leaf.
 (defenum FsLinuxRootedFileMode
@@ -49,6 +54,19 @@
 (defstruct FsLinuxRootedFinishResult
   (operation FsLinuxRootedResult)
   (close FsLinuxRootedResult))
+
+;: Exact descriptor metadata returned without exposing the descriptor.
+(defstruct FsLinuxRootedFileMetadata
+  (result FsLinuxRootedResult)
+  (length i64))
+
+;: One bounded read from a retained regular-file descriptor. A short read is
+;: successful and distinct from EOF; EOF is true only after a zero-byte read.
+(defstruct FsLinuxRootedReadResult
+  (operation FsLinuxRootedResult)
+  (bytes byte_buf.ByteBuf)
+  (eof bool)
+  (short bool))
 
 ;: Audited Linux UAPI layout for `struct open_how`.
 (defstruct FsLinuxOpenHow
@@ -92,8 +110,37 @@
 (define (linux-rooted-finish-close [result : FsLinuxRootedFinishResult]) : FsLinuxRootedResult
   result.close)
 
+;: Operation status returned by a descriptor metadata query.
+(define (linux-rooted-metadata-result [metadata : FsLinuxRootedFileMetadata]) : FsLinuxRootedResult
+  metadata.result)
+
+;: Exact `st_size` captured from the retained regular-file descriptor.
+(define (linux-rooted-metadata-length [metadata : FsLinuxRootedFileMetadata]) : i64
+  metadata.length)
+
+;: Operation status returned by one bounded read.
+(define (linux-rooted-read-operation [read : (& read FsLinuxRootedReadResult)]) : FsLinuxRootedResult
+  (clone read.operation))
+
+;: Owned bytes returned by one bounded read.
+(define (linux-rooted-read-bytes [read : FsLinuxRootedReadResult]) : byte_buf.ByteBuf
+  read.bytes)
+
+;: True only when the underlying read returned zero bytes for a positive
+;: request. A zero-length request never claims EOF.
+(define (linux-rooted-read-eof? [read : (& read FsLinuxRootedReadResult)]) : bool
+  read.eof)
+
+;: True when a successful positive read returned fewer bytes than requested.
+(define (linux-rooted-read-short? [read : (& read FsLinuxRootedReadResult)]) : bool
+  read.short)
+
 ;: Linux x86-64 syscall and ABI constants. Keep the value tests next to the
 ;: representation tests below so changing a target constant is deliberate.
+(define fs-linux-rooted-syscall-read : i64
+  0)
+
+;: Linux x86-64 `write` syscall number.
 (define fs-linux-rooted-syscall-write : i64
   1)
 
@@ -121,6 +168,18 @@
 (define fs-linux-rooted-syscall-mkdirat : i64
   258)
 
+;: Linux x86-64 `unlinkat` syscall number.
+(define fs-linux-rooted-syscall-unlinkat : i64
+  263)
+
+;: Linux x86-64 `renameat` syscall number.
+(define fs-linux-rooted-syscall-renameat : i64
+  264)
+
+;: Linux x86-64 `renameat2` syscall number.
+(define fs-linux-rooted-syscall-renameat2 : i64
+  316)
+
 ;: Linux x86-64 `openat2` syscall number.
 (define fs-linux-rooted-syscall-openat2 : i64
   437)
@@ -137,9 +196,26 @@
 (define fs-linux-rooted-component-max-bytes : i64
   255)
 
+;: Largest allocation accepted by one streaming read call.
+(define fs-linux-rooted-read-max-bytes : i64
+  1048576)
+
+;: Linux `AT_REMOVEDIR` flag for exact empty-directory cleanup.
+(define fs-linux-rooted-at-removedir : i64
+  512)
+
+;: Linux `RENAME_NOREPLACE` flag.
+(define fs-linux-rooted-rename-noreplace : i64
+  1)
+
 ;: Linux open flags used by this boundary.
 (define fs-linux-rooted-o-wronly : u64
   (cast 1 : u64))
+
+;: Linux `O_NONBLOCK` flag. This prevents a hostile FIFO substituted before
+;: reopen from blocking the verifier before its descriptor kind is checked.
+(define fs-linux-rooted-o-nonblock : u64
+  (cast 2048 : u64))
 
 ;: Linux `O_CREAT` flag.
 (define fs-linux-rooted-o-creat : u64
@@ -203,6 +279,12 @@
         fs-linux-rooted-o-excl
         (bit-or fs-linux-rooted-o-nofollow fs-linux-rooted-o-cloexec)))))
 
+;: Existing-file read flags. `O_RDONLY` is zero on Linux.
+(define fs-linux-rooted-file-read-flags : u64
+  (bit-or
+    fs-linux-rooted-o-nonblock
+    (bit-or fs-linux-rooted-o-nofollow fs-linux-rooted-o-cloexec)))
+
 ;: Creation and final mode values.
 (define fs-linux-rooted-private-directory-mode : u64
   (cast 448 : u64))
@@ -230,6 +312,10 @@
 ;: x86-64 Linux `stat.st_mode` byte offset.
 (define fs-linux-rooted-stat-mode-offset : i64
   24)
+
+;: x86-64 Linux `stat.st_size` byte offset.
+(define fs-linux-rooted-stat-size-offset : i64
+  48)
 
 ;: Linux `S_IFMT` mask.
 (define fs-linux-rooted-stat-kind-mask : i64
@@ -274,6 +360,34 @@
 ;: Fault-injection ID for `close`.
 (define fs-linux-rooted-syscall-kind-close : i64
   8)
+
+;: Fault-injection ID for reopening an existing child with `openat2`.
+(define fs-linux-rooted-syscall-kind-reopen : i64
+  9)
+
+;: Fault-injection ID for `read`.
+(define fs-linux-rooted-syscall-kind-read : i64
+  10)
+
+;: Fault-injection ID for replace-existing `renameat`.
+(define fs-linux-rooted-syscall-kind-renameat : i64
+  11)
+
+;: Fault-injection ID for no-replace `renameat2`.
+(define fs-linux-rooted-syscall-kind-renameat2 : i64
+  12)
+
+;: Fault-injection ID for exact file/symlink `unlinkat`.
+(define fs-linux-rooted-syscall-kind-unlinkat : i64
+  13)
+
+;: Fault-injection ID for empty-directory `unlinkat(AT_REMOVEDIR)`.
+(define fs-linux-rooted-syscall-kind-rmdirat : i64
+  14)
+
+;: Fault-injection ID for parent-directory `fsync`.
+(define fs-linux-rooted-syscall-kind-directory-fsync : i64
+  15)
 
 ;: Sentinel distinct from every valid raw syscall result.
 (define fs-linux-rooted-no-injection : i64
@@ -331,6 +445,38 @@
     0))
 (cfg
   fs-rooted-linux-test-hooks
+  (define fs-linux-rooted-test-reopen-calls : i64
+    0))
+(cfg
+  fs-rooted-linux-test-hooks
+  (define fs-linux-rooted-test-read-calls : i64
+    0))
+(cfg
+  fs-rooted-linux-test-hooks
+  (define fs-linux-rooted-test-renameat-calls : i64
+    0))
+(cfg
+  fs-rooted-linux-test-hooks
+  (define fs-linux-rooted-test-renameat2-calls : i64
+    0))
+(cfg
+  fs-rooted-linux-test-hooks
+  (define fs-linux-rooted-test-unlinkat-calls : i64
+    0))
+(cfg
+  fs-rooted-linux-test-hooks
+  (define fs-linux-rooted-test-rmdirat-calls : i64
+    0))
+(cfg
+  fs-rooted-linux-test-hooks
+  (define fs-linux-rooted-test-directory-fsync-calls : i64
+    0))
+(cfg
+  fs-rooted-linux-test-hooks
+  (define fs-linux-rooted-test-read-max : i64
+    0))
+(cfg
+  fs-rooted-linux-test-hooks
   (define fs-linux-rooted-test-mkdir-race-enabled : bool
     false))
 (cfg
@@ -359,6 +505,14 @@
       (set! fs-linux-rooted-test-write-calls 0)
       (set! fs-linux-rooted-test-fsync-calls 0)
       (set! fs-linux-rooted-test-close-calls 0)
+      (set! fs-linux-rooted-test-reopen-calls 0)
+      (set! fs-linux-rooted-test-read-calls 0)
+      (set! fs-linux-rooted-test-renameat-calls 0)
+      (set! fs-linux-rooted-test-renameat2-calls 0)
+      (set! fs-linux-rooted-test-unlinkat-calls 0)
+      (set! fs-linux-rooted-test-rmdirat-calls 0)
+      (set! fs-linux-rooted-test-directory-fsync-calls 0)
+      (set! fs-linux-rooted-test-read-max 0)
       (set! fs-linux-rooted-test-mkdir-race-enabled false)
       (set! fs-linux-rooted-test-mkdir-race-ok false)
       (set! fs-linux-rooted-test-after-mkdir-pause-ms 0))))
@@ -381,6 +535,12 @@
   fs-rooted-linux-test-hooks
   (define (linux-rooted-test-set-write-max! [count : i64]) : unit
     (set! fs-linux-rooted-test-write-max count)))
+
+;: Bound each real read call to force deterministic short-read coverage.
+(cfg
+  fs-rooted-linux-test-hooks
+  (define (linux-rooted-test-set-read-max! [count : i64]) : unit
+    (set! fs-linux-rooted-test-read-max count)))
 
 ;: Enable a deterministic symlink substitution in the mkdir/openat2 race window.
 (cfg
@@ -422,6 +582,20 @@
         fs-linux-rooted-test-fsync-calls]
       [(= kind fs-linux-rooted-syscall-kind-close)
         fs-linux-rooted-test-close-calls]
+      [(= kind fs-linux-rooted-syscall-kind-reopen)
+        fs-linux-rooted-test-reopen-calls]
+      [(= kind fs-linux-rooted-syscall-kind-read)
+        fs-linux-rooted-test-read-calls]
+      [(= kind fs-linux-rooted-syscall-kind-renameat)
+        fs-linux-rooted-test-renameat-calls]
+      [(= kind fs-linux-rooted-syscall-kind-renameat2)
+        fs-linux-rooted-test-renameat2-calls]
+      [(= kind fs-linux-rooted-syscall-kind-unlinkat)
+        fs-linux-rooted-test-unlinkat-calls]
+      [(= kind fs-linux-rooted-syscall-kind-rmdirat)
+        fs-linux-rooted-test-rmdirat-calls]
+      [(= kind fs-linux-rooted-syscall-kind-directory-fsync)
+        fs-linux-rooted-test-directory-fsync-calls]
       [else 0])))
 
 ;: Record one syscall attempt and return an injected raw result or the sentinel.
@@ -479,6 +653,48 @@
                 fs-linux-rooted-test-close-calls
                 (+ fs-linux-rooted-test-close-calls 1))
               fs-linux-rooted-test-close-calls)]
+          [(= kind fs-linux-rooted-syscall-kind-reopen)
+            (begin
+              (set!
+                fs-linux-rooted-test-reopen-calls
+                (+ fs-linux-rooted-test-reopen-calls 1))
+              fs-linux-rooted-test-reopen-calls)]
+          [(= kind fs-linux-rooted-syscall-kind-read)
+            (begin
+              (set!
+                fs-linux-rooted-test-read-calls
+                (+ fs-linux-rooted-test-read-calls 1))
+              fs-linux-rooted-test-read-calls)]
+          [(= kind fs-linux-rooted-syscall-kind-renameat)
+            (begin
+              (set!
+                fs-linux-rooted-test-renameat-calls
+                (+ fs-linux-rooted-test-renameat-calls 1))
+              fs-linux-rooted-test-renameat-calls)]
+          [(= kind fs-linux-rooted-syscall-kind-renameat2)
+            (begin
+              (set!
+                fs-linux-rooted-test-renameat2-calls
+                (+ fs-linux-rooted-test-renameat2-calls 1))
+              fs-linux-rooted-test-renameat2-calls)]
+          [(= kind fs-linux-rooted-syscall-kind-unlinkat)
+            (begin
+              (set!
+                fs-linux-rooted-test-unlinkat-calls
+                (+ fs-linux-rooted-test-unlinkat-calls 1))
+              fs-linux-rooted-test-unlinkat-calls)]
+          [(= kind fs-linux-rooted-syscall-kind-rmdirat)
+            (begin
+              (set!
+                fs-linux-rooted-test-rmdirat-calls
+                (+ fs-linux-rooted-test-rmdirat-calls 1))
+              fs-linux-rooted-test-rmdirat-calls)]
+          [(= kind fs-linux-rooted-syscall-kind-directory-fsync)
+            (begin
+              (set!
+                fs-linux-rooted-test-directory-fsync-calls
+                (+ fs-linux-rooted-test-directory-fsync-calls 1))
+              fs-linux-rooted-test-directory-fsync-calls)]
           [else 0])]
       (if (and
         (= kind fs-linux-rooted-test-fail-kind)
@@ -501,6 +717,17 @@
       (> fs-linux-rooted-test-write-max 0)
       (> count fs-linux-rooted-test-write-max))
       fs-linux-rooted-test-write-max
+      count)
+    count))
+
+;: Erased production bridge to the short-read limit.
+(define (linux-rooted-read-request-count [count : i64]) : i64
+  (cfg
+    fs-rooted-linux-test-hooks
+    (if (and
+      (> fs-linux-rooted-test-read-max 0)
+      (> count fs-linux-rooted-test-read-max))
+      fs-linux-rooted-test-read-max
       count)
     count))
 
@@ -656,6 +883,28 @@
               (cast (ptr->int (ptr-cast (ptr-addr-of how) : (Ptr u8))) : i64)
               fs-linux-rooted-open-how-size)))))))
 
+;: Raw Linux `openat2` dedicated to existing-file reopen fault coverage.
+(unsafe
+  (define (linux-rooted-raw-reopenat2
+    [dirfd : i64]
+    [path : (Ptr u8)]
+    [how : FsLinuxOpenHow]) : i64
+    (let
+      [injected : i64
+        (linux-rooted-injected-result fs-linux-rooted-syscall-kind-reopen)]
+      (if (not (= injected fs-linux-rooted-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall
+              fs-linux-rooted-syscall-openat2
+              dirfd
+              (linux-rooted-ptr-arg path)
+              (cast (ptr->int (ptr-cast (ptr-addr-of how) : (Ptr u8))) : i64)
+              fs-linux-rooted-open-how-size)))))))
+
 ;: Raw Linux `fstat` for kind verification on an acquired descriptor.
 (unsafe
   (define (linux-rooted-raw-fstat [fd : i64] [statbuf : (MutPtr u8)]) : i64
@@ -686,6 +935,24 @@
           -38
           (unsafe
             (syscall fs-linux-rooted-syscall-fchmod fd (cast mode : i64))))))))
+
+;: Raw Linux `read`, optionally bounded by the focused short-read hook.
+(unsafe
+  (define (linux-rooted-raw-read [fd : i64] [data : (MutPtr u8)] [count : i64]) : i64
+    (let
+      [injected : i64
+        (linux-rooted-injected-result fs-linux-rooted-syscall-kind-read)]
+      (if (not (= injected fs-linux-rooted-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall
+              fs-linux-rooted-syscall-read
+              fd
+              (cast (ptr->int (ptr-cast data : (Ptr u8))) : i64)
+              (linux-rooted-read-request-count count))))))))
 
 ;: Raw Linux `write`, optionally bounded by the focused short-write hook.
 (unsafe
@@ -718,6 +985,104 @@
           -38
           (unsafe
             (syscall fs-linux-rooted-syscall-fsync fd)))))))
+
+;: Raw Linux `fsync` dedicated to parent-directory durability fault coverage.
+(unsafe
+  (define (linux-rooted-raw-directory-fsync [fd : i64]) : i64
+    (let
+      [injected : i64
+        (linux-rooted-injected-result
+          fs-linux-rooted-syscall-kind-directory-fsync)]
+      (if (not (= injected fs-linux-rooted-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall fs-linux-rooted-syscall-fsync fd)))))))
+
+;: Raw direct `renameat` for atomic replace-existing publication.
+(unsafe
+  (define (linux-rooted-raw-renameat
+    [source-dirfd : i64]
+    [source : (Ptr u8)]
+    [destination-dirfd : i64]
+    [destination : (Ptr u8)]) : i64
+    (let
+      [injected : i64
+        (linux-rooted-injected-result fs-linux-rooted-syscall-kind-renameat)]
+      (if (not (= injected fs-linux-rooted-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall
+              fs-linux-rooted-syscall-renameat
+              source-dirfd
+              (linux-rooted-ptr-arg source)
+              destination-dirfd
+              (linux-rooted-ptr-arg destination))))))))
+
+;: Raw direct `renameat2(RENAME_NOREPLACE)` with no compatibility fallback.
+(unsafe
+  (define (linux-rooted-raw-renameat2-noreplace
+    [source-dirfd : i64]
+    [source : (Ptr u8)]
+    [destination-dirfd : i64]
+    [destination : (Ptr u8)]) : i64
+    (let
+      [injected : i64
+        (linux-rooted-injected-result fs-linux-rooted-syscall-kind-renameat2)]
+      (if (not (= injected fs-linux-rooted-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall
+              fs-linux-rooted-syscall-renameat2
+              source-dirfd
+              (linux-rooted-ptr-arg source)
+              destination-dirfd
+              (linux-rooted-ptr-arg destination)
+              fs-linux-rooted-rename-noreplace)))))))
+
+;: Raw direct `unlinkat` for one file or symlink directory entry.
+(unsafe
+  (define (linux-rooted-raw-unlinkat [dirfd : i64] [path : (Ptr u8)]) : i64
+    (let
+      [injected : i64
+        (linux-rooted-injected-result fs-linux-rooted-syscall-kind-unlinkat)]
+      (if (not (= injected fs-linux-rooted-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall
+              fs-linux-rooted-syscall-unlinkat
+              dirfd
+              (linux-rooted-ptr-arg path)
+              0)))))))
+
+;: Raw direct `unlinkat(AT_REMOVEDIR)` for one exact empty directory.
+(unsafe
+  (define (linux-rooted-raw-rmdirat [dirfd : i64] [path : (Ptr u8)]) : i64
+    (let
+      [injected : i64
+        (linux-rooted-injected-result fs-linux-rooted-syscall-kind-rmdirat)]
+      (if (not (= injected fs-linux-rooted-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall
+              fs-linux-rooted-syscall-unlinkat
+              dirfd
+              (linux-rooted-ptr-arg path)
+              fs-linux-rooted-at-removedir)))))))
 
 ;: Raw Linux `close`. An injected failure still performs the real close first,
 ;: so the fault-injection gate cannot leak descriptors. Production and logical
@@ -761,6 +1126,21 @@
     (linux-rooted-result-from-errno (- 0 raw))
     LinuxRootedOk))
 
+;: Rename-specific normalization keeps a mount-crossing publication distinct
+;: from openat2's resolution-policy EXDEV.
+(define (linux-rooted-rename-result-from-raw [raw : i64]) : FsLinuxRootedResult
+  (cond
+    [(= raw -18) LinuxRootedCrossDevice]
+    [(= raw -39) LinuxRootedDirectoryNotEmpty]
+    [else (linux-rooted-result-from-raw raw)]))
+
+;: Cleanup-specific normalization treats both permitted nonempty-directory
+;: errno values as one stable result while preserving ordinary EEXIST elsewhere.
+(define (linux-rooted-cleanup-result-from-raw [raw : i64]) : FsLinuxRootedResult
+  (if (or (= raw -17) (= raw -39))
+    LinuxRootedDirectoryNotEmpty
+    (linux-rooted-result-from-raw raw)))
+
 ;: True when a caller-selected root path can be copied to a C string without
 ;: truncation or signed-length overflow. Separators and dot components are
 ;: allowed here because the prefix is explicitly outside the descendant trust
@@ -797,6 +1177,12 @@
   (define (linux-rooted-stat-u32 [statbuf : (MutPtr u8)] [offset : i64]) : u32
     (unsafe
       (ptr-read (ptr-cast (ptr-offset statbuf offset) : (Ptr u32))))))
+
+;: Read an i64 field from an x86-64 `struct stat` buffer.
+(unsafe
+  (define (linux-rooted-stat-i64 [statbuf : (MutPtr u8)] [offset : i64]) : i64
+    (unsafe
+      (ptr-read (ptr-cast (ptr-offset statbuf offset) : (Ptr i64))))))
 
 ;: Verify the exact kind of an acquired fd without reopening a name.
 (unsafe
@@ -860,6 +1246,25 @@
             raw
             (unsafe
               (linux-rooted-raw-fsync fd))))
+        (cond
+          [(= raw 0) LinuxRootedOk]
+          [(or (= raw -4) (= raw -125)) LinuxRootedCancelled]
+          [else LinuxRootedFlushFailure])))))
+
+;: Flush one retained parent directory, retrying EINTR while cancellation is
+;: clear. A separate raw wrapper keeps directory-fsync injection independent.
+(unsafe
+  (define (linux-rooted-flush-directory-fd
+    [fd : i64]
+    [cancel-check : (-> bool)]) : FsLinuxRootedResult
+    (let
+      [raw : i64 -4]
+      (begin
+        (while (and (= raw -4) (not (cancel-check)))
+          (set!
+            raw
+            (unsafe
+              (linux-rooted-raw-directory-fsync fd))))
         (cond
           [(= raw 0) LinuxRootedOk]
           [(or (= raw -4) (= raw -125)) LinuxRootedCancelled]
@@ -980,6 +1385,13 @@
     (MutPtr FsLinuxRootedHandleState)
     (:cleanup linux-rooted-state-cleanup)))
 
+;: Cleanup-owning, move-only rooted regular-file read capability.
+(defstruct FsLinuxRootedReadFile
+  (:cleanup cleanup-linux-rooted-read-file)
+  (state
+    (MutPtr FsLinuxRootedHandleState)
+    (:cleanup linux-rooted-state-cleanup)))
+
 ;: Return the stable construction/current result without exposing the fd.
 (define (linux-rooted-directory-result
   [directory : (& directory FsLinuxRootedDirectory)]) : FsLinuxRootedResult
@@ -991,6 +1403,14 @@
 
 ;: Return the stable construction/current result without exposing the fd.
 (define (linux-rooted-file-result [file : (& file FsLinuxRootedFile)]) : FsLinuxRootedResult
+  (let
+    [state : FsLinuxRootedHandleState
+      (unsafe
+        (linux-rooted-state-read file.state))]
+    state.result))
+
+;: Return the stable construction result for a rooted read capability.
+(define (linux-rooted-read-file-result [file : (& file FsLinuxRootedReadFile)]) : FsLinuxRootedResult
   (let
     [state : FsLinuxRootedHandleState
       (unsafe
@@ -1016,6 +1436,15 @@
         (linux-rooted-state-read file.state))]
     state.close))
 
+;: Return the recorded close outcome for a rooted read capability.
+(define (linux-rooted-read-file-close-result
+  [file : (& file FsLinuxRootedReadFile)]) : FsLinuxRootedResult
+  (let
+    [state : FsLinuxRootedHandleState
+      (unsafe
+        (linux-rooted-state-read file.state))]
+    state.close))
+
 ;: True when a directory capability owns a live descriptor.
 (define (linux-rooted-directory-open?
   [directory : (& directory FsLinuxRootedDirectory)]) : bool
@@ -1027,6 +1456,14 @@
 
 ;: True when a file capability owns a live descriptor.
 (define (linux-rooted-file-open? [file : (& file FsLinuxRootedFile)]) : bool
+  (let
+    [state : FsLinuxRootedHandleState
+      (unsafe
+        (linux-rooted-state-read file.state))]
+    (and (>= state.fd 0) (linux-rooted-result-ok? state.result))))
+
+;: True when a rooted read capability owns a live descriptor.
+(define (linux-rooted-read-file-open? [file : (& file FsLinuxRootedReadFile)]) : bool
   (let
     [state : FsLinuxRootedHandleState
       (unsafe
@@ -1047,6 +1484,12 @@
 ;: Build a failed file capability.
 (define (linux-rooted-failed-file [result : FsLinuxRootedResult]) : FsLinuxRootedFile
   (FsLinuxRootedFile
+    (unsafe
+      (linux-rooted-state-new -1 result))))
+
+;: Build a failed read capability with the same ownership shape as success.
+(define (linux-rooted-failed-read-file [result : FsLinuxRootedResult]) : FsLinuxRootedReadFile
+  (FsLinuxRootedReadFile
     (unsafe
       (linux-rooted-state-new -1 result))))
 
@@ -1075,6 +1518,18 @@
     [result : FsLinuxRootedResult]
     [fd : i64]) : FsLinuxRootedFile
     (FsLinuxRootedFile
+      (unsafe
+        (linux-rooted-state-new-after-close
+          result
+          (unsafe
+            (linux-rooted-discard-fd fd)))))))
+
+;: Preserve failed read construction and its independent close result.
+(unsafe
+  (define (linux-rooted-failed-read-file-after-close
+    [result : FsLinuxRootedResult]
+    [fd : i64]) : FsLinuxRootedReadFile
+    (FsLinuxRootedReadFile
       (unsafe
         (linux-rooted-state-new-after-close
           result
@@ -1231,6 +1686,308 @@
                   (FsLinuxRootedFile (linux-rooted-state-new fd LinuxRootedOk))
                   (linux-rooted-failed-file-after-close kind-result fd)))))]))))
 
+;: Reopen one existing child for bounded reads. Acquisition is relative to the
+;: retained parent and uses the complete openat2 resolution policy. O_NONBLOCK
+;: ensures that a substituted FIFO cannot stall before fstat rejects its kind.
+(define (linux-rooted-reopen-file
+  [parent : (& parent FsLinuxRootedDirectory)]
+  [component : (& component str)]
+  [cancel-check : (-> bool)]) : FsLinuxRootedReadFile
+  (unsafe
+    (let
+      [parent-state : FsLinuxRootedHandleState
+        (linux-rooted-state-read parent.state)]
+      (cond
+        [(not (linux-rooted-component-valid? component))
+          (linux-rooted-failed-read-file LinuxRootedInvalidComponent)]
+        [(or
+            (< parent-state.fd 0)
+            (not (linux-rooted-result-ok? parent-state.result)))
+          (linux-rooted-failed-read-file LinuxRootedClosed)]
+        [(cancel-check) (linux-rooted-failed-read-file LinuxRootedCancelled)]
+        [else
+          (let
+            [component-bytes : (__tl_dyn-array u8)
+              (linux-rooted-c-string component)]
+            [how : FsLinuxOpenHow
+              (FsLinuxOpenHow
+                fs-linux-rooted-file-read-flags
+                (cast 0 : u64)
+                fs-linux-rooted-resolve-policy)]
+            [fd : i64
+              (linux-rooted-raw-reopenat2
+                parent-state.fd
+                (io.array-const-ptr component-bytes)
+                how)]
+            (if (< fd 0)
+              (linux-rooted-failed-read-file (linux-rooted-result-from-raw fd))
+              (let
+                [kind-result : FsLinuxRootedResult
+                  (linux-rooted-verify-kind
+                    fd
+                    fs-linux-rooted-stat-regular-mode
+                    cancel-check)]
+                (if (linux-rooted-result-ok? kind-result)
+                  (FsLinuxRootedReadFile
+                    (linux-rooted-state-new fd LinuxRootedOk))
+                  (linux-rooted-failed-read-file-after-close kind-result fd)))))]))))
+
+;: Capture exact length metadata from the retained descriptor and recheck that
+;: it still names a regular file.
+(define (linux-rooted-read-file-metadata
+  [file : (& file FsLinuxRootedReadFile)]
+  [cancel-check : (-> bool)]) : FsLinuxRootedFileMetadata
+  (unsafe
+    (let
+      [state : FsLinuxRootedHandleState (linux-rooted-state-read file.state)]
+      (cond
+        [(or (< state.fd 0) (not (linux-rooted-result-ok? state.result)))
+          (FsLinuxRootedFileMetadata LinuxRootedClosed -1)]
+        [(cancel-check) (FsLinuxRootedFileMetadata LinuxRootedCancelled -1)]
+        [else
+          (let
+            [stat-bytes : (__tl_dyn-array u8)
+              (__tl_make-array u8 fs-linux-rooted-stat-buffer-size)]
+            [statbuf : (MutPtr u8) (__tl_array-data stat-bytes)]
+            [raw : i64 (linux-rooted-raw-fstat state.fd statbuf)]
+            (if (< raw 0)
+              (FsLinuxRootedFileMetadata (linux-rooted-result-from-raw raw) -1)
+              (let
+                [mode : i64
+                  (bit-and
+                    (cast
+                      (linux-rooted-stat-u32
+                        statbuf
+                        fs-linux-rooted-stat-mode-offset)
+                      : i64)
+                    fs-linux-rooted-stat-kind-mask)]
+                [length : i64
+                  (linux-rooted-stat-i64
+                    statbuf
+                    fs-linux-rooted-stat-size-offset)]
+                (cond
+                  [(not (= mode fs-linux-rooted-stat-regular-mode))
+                    (FsLinuxRootedFileMetadata LinuxRootedWrongKind -1)]
+                  [(< length 0)
+                    (FsLinuxRootedFileMetadata LinuxRootedIoFailure -1)]
+                  [else (FsLinuxRootedFileMetadata LinuxRootedOk length)]))))]))))
+
+;: Check one caller-promised exact length against descriptor metadata.
+(define (linux-rooted-read-file-check-length
+  [file : (& file FsLinuxRootedReadFile)]
+  [expected-length : i64]
+  [cancel-check : (-> bool)]) : FsLinuxRootedResult
+  (if (< expected-length 0)
+    LinuxRootedInvalidLength
+    (let
+      [metadata : FsLinuxRootedFileMetadata
+        (linux-rooted-read-file-metadata file cancel-check)]
+      (if (not (linux-rooted-result-ok? metadata.result))
+        metadata.result
+        (if (= metadata.length expected-length)
+          LinuxRootedOk
+          LinuxRootedLengthMismatch)))))
+
+;: Construct a no-data read outcome.
+(define (linux-rooted-empty-read-result
+  [operation : FsLinuxRootedResult]
+  [eof : bool]) : FsLinuxRootedReadResult
+  (FsLinuxRootedReadResult
+    operation
+    (byte_buf.from-array (__tl_make-array u8 0))
+    eof
+    false))
+
+;: Read at most one MiB from a retained regular-file descriptor. EINTR retries
+;: only while cancellation remains clear. Short success and EOF are explicit.
+(define (linux-rooted-read-file-chunk!
+  [file : (&mut file FsLinuxRootedReadFile)]
+  [count : i64]
+  [cancel-check : (-> bool)]) : FsLinuxRootedReadResult
+  (unsafe
+    (let
+      [state : FsLinuxRootedHandleState (linux-rooted-state-read file.state)]
+      (cond
+        [(or (< count 0) (> count fs-linux-rooted-read-max-bytes))
+          (linux-rooted-empty-read-result LinuxRootedInvalidLength false)]
+        [(or (< state.fd 0) (not (linux-rooted-result-ok? state.result)))
+          (linux-rooted-empty-read-result LinuxRootedClosed false)]
+        [(cancel-check)
+          (linux-rooted-empty-read-result LinuxRootedCancelled false)]
+        [(= count 0) (linux-rooted-empty-read-result LinuxRootedOk false)]
+        [else
+          (let
+            [slots : (__tl_dyn-array u8) (__tl_make-array u8 count)]
+            [raw : i64 -4]
+            (begin
+              (while (and (= raw -4) (not (cancel-check)))
+                (set!
+                  raw
+                  (linux-rooted-raw-read state.fd (__tl_array-data slots) count)))
+              (cond
+                [(>= raw 0)
+                  (FsLinuxRootedReadResult
+                    LinuxRootedOk
+                    (byte_buf.from-array-prefix slots raw)
+                    (= raw 0)
+                    (and (> raw 0) (< raw count)))]
+                [(or (= raw -4) (= raw -125))
+                  (FsLinuxRootedReadResult
+                    LinuxRootedCancelled
+                    (byte_buf.from-array-prefix slots 0)
+                    false
+                    false)]
+                [else
+                  (FsLinuxRootedReadResult
+                    LinuxRootedReadFailure
+                    (byte_buf.from-array-prefix slots 0)
+                    false
+                    false)])))]))))
+
+;: Atomically move one exact entry, replacing the destination entry current at
+;: syscall time. A destination symlink is replaced as an entry and not followed.
+(define (linux-rooted-rename-replace
+  [source-parent : (& source-parent FsLinuxRootedDirectory)]
+  [source-component : (& source-component str)]
+  [destination-parent : (& destination-parent FsLinuxRootedDirectory)]
+  [destination-component : (& destination-component str)]
+  [cancel-check : (-> bool)]) : FsLinuxRootedResult
+  (unsafe
+    (let
+      [source-state : FsLinuxRootedHandleState
+        (linux-rooted-state-read source-parent.state)]
+      [destination-state : FsLinuxRootedHandleState
+        (linux-rooted-state-read destination-parent.state)]
+      (cond
+        [(or
+            (not (linux-rooted-component-valid? source-component))
+            (not (linux-rooted-component-valid? destination-component)))
+          LinuxRootedInvalidComponent]
+        [(or
+            (< source-state.fd 0)
+            (< destination-state.fd 0)
+            (not (linux-rooted-result-ok? source-state.result))
+            (not (linux-rooted-result-ok? destination-state.result)))
+          LinuxRootedClosed]
+        [(cancel-check) LinuxRootedCancelled]
+        [else
+          (let
+            [source-bytes : (__tl_dyn-array u8)
+              (linux-rooted-c-string source-component)]
+            [destination-bytes : (__tl_dyn-array u8)
+              (linux-rooted-c-string destination-component)]
+            [raw : i64
+              (linux-rooted-raw-renameat
+                source-state.fd
+                (io.array-const-ptr source-bytes)
+                destination-state.fd
+                (io.array-const-ptr destination-bytes))]
+            (linux-rooted-rename-result-from-raw raw))]))))
+
+;: Remove one exact non-directory entry relative to a retained parent. If the
+;: component currently names a symlink, the symlink itself is removed.
+(define (linux-rooted-unlink-entry
+  [parent : (& parent FsLinuxRootedDirectory)]
+  [component : (& component str)]
+  [cancel-check : (-> bool)]) : FsLinuxRootedResult
+  (unsafe
+    (let
+      [state : FsLinuxRootedHandleState (linux-rooted-state-read parent.state)]
+      (cond
+        [(not (linux-rooted-component-valid? component))
+          LinuxRootedInvalidComponent]
+        [(or (< state.fd 0) (not (linux-rooted-result-ok? state.result)))
+          LinuxRootedClosed]
+        [(cancel-check) LinuxRootedCancelled]
+        [else
+          (let
+            [component-bytes : (__tl_dyn-array u8)
+              (linux-rooted-c-string component)]
+            [raw : i64
+              (linux-rooted-raw-unlinkat
+                state.fd
+                (io.array-const-ptr component-bytes))]
+            (linux-rooted-cleanup-result-from-raw raw))]))))
+
+;: Atomically move one exact entry only when the destination is absent.
+;: Unsupported syscall or filesystem flag support is returned as typed failure;
+;: this operation never degrades to a check-then-rename sequence.
+(define (linux-rooted-rename-no-replace
+  [source-parent : (& source-parent FsLinuxRootedDirectory)]
+  [source-component : (& source-component str)]
+  [destination-parent : (& destination-parent FsLinuxRootedDirectory)]
+  [destination-component : (& destination-component str)]
+  [cancel-check : (-> bool)]) : FsLinuxRootedResult
+  (unsafe
+    (let
+      [source-state : FsLinuxRootedHandleState
+        (linux-rooted-state-read source-parent.state)]
+      [destination-state : FsLinuxRootedHandleState
+        (linux-rooted-state-read destination-parent.state)]
+      (cond
+        [(or
+            (not (linux-rooted-component-valid? source-component))
+            (not (linux-rooted-component-valid? destination-component)))
+          LinuxRootedInvalidComponent]
+        [(or
+            (< source-state.fd 0)
+            (< destination-state.fd 0)
+            (not (linux-rooted-result-ok? source-state.result))
+            (not (linux-rooted-result-ok? destination-state.result)))
+          LinuxRootedClosed]
+        [(cancel-check) LinuxRootedCancelled]
+        [else
+          (let
+            [source-bytes : (__tl_dyn-array u8)
+              (linux-rooted-c-string source-component)]
+            [destination-bytes : (__tl_dyn-array u8)
+              (linux-rooted-c-string destination-component)]
+            [raw : i64
+              (linux-rooted-raw-renameat2-noreplace
+                source-state.fd
+                (io.array-const-ptr source-bytes)
+                destination-state.fd
+                (io.array-const-ptr destination-bytes))]
+            (linux-rooted-rename-result-from-raw raw))]))))
+
+;: Remove one exact empty directory relative to a retained parent. This never
+;: enumerates or traverses descendants.
+(define (linux-rooted-remove-empty-directory
+  [parent : (& parent FsLinuxRootedDirectory)]
+  [component : (& component str)]
+  [cancel-check : (-> bool)]) : FsLinuxRootedResult
+  (unsafe
+    (let
+      [state : FsLinuxRootedHandleState (linux-rooted-state-read parent.state)]
+      (cond
+        [(not (linux-rooted-component-valid? component))
+          LinuxRootedInvalidComponent]
+        [(or (< state.fd 0) (not (linux-rooted-result-ok? state.result)))
+          LinuxRootedClosed]
+        [(cancel-check) LinuxRootedCancelled]
+        [else
+          (let
+            [component-bytes : (__tl_dyn-array u8)
+              (linux-rooted-c-string component)]
+            [raw : i64
+              (linux-rooted-raw-rmdirat
+                state.fd
+                (io.array-const-ptr component-bytes))]
+            (linux-rooted-cleanup-result-from-raw raw))]))))
+
+;: Flush the retained parent directory as an explicit namespace-durability
+;: boundary. This is separate from file-data fsync and from rename visibility.
+(define (linux-rooted-directory-flush
+  [directory : (& directory FsLinuxRootedDirectory)]
+  [cancel-check : (-> bool)]) : FsLinuxRootedResult
+  (unsafe
+    (let
+      [state : FsLinuxRootedHandleState
+        (linux-rooted-state-read directory.state)]
+      (if (or (< state.fd 0) (not (linux-rooted-result-ok? state.result)))
+        LinuxRootedClosed
+        (linux-rooted-flush-directory-fd state.fd cancel-check)))))
+
 ;: Write exactly `promised-length` bytes, retrying partial writes and EINTR.
 ;: A zero-progress write is a stable write failure. The caller's cancellation
 ;: callback is checked before every attempt.
@@ -1336,6 +2093,12 @@
   (unsafe
     (linux-rooted-state-close-result file.state)))
 
+;: Explicitly close a rooted read capability exactly once.
+(define (linux-rooted-read-file-close!
+  [file : (&mut file FsLinuxRootedReadFile)]) : FsLinuxRootedResult
+  (unsafe
+    (linux-rooted-state-close-result file.state)))
+
 ;; Inline tests cover target-independent validation, errno normalization, and
 ;; the audited `open_how` ABI. Linux syscall behavior has a separate native
 ;; integration gate so these tests remain runnable on Windows CI.
@@ -1359,7 +2122,12 @@
       [(LinuxRootedModeFailure) 11]
       [(LinuxRootedFlushFailure) 12]
       [(LinuxRootedCloseFailure) 13]
-      [(LinuxRootedClosed) 14])))
+      [(LinuxRootedClosed) 14]
+      [(LinuxRootedCrossDevice) 15]
+      [(LinuxRootedDirectoryNotEmpty) 16]
+      [(LinuxRootedInvalidLength) 17]
+      [(LinuxRootedLengthMismatch) 18]
+      [(LinuxRootedReadFailure) 19])))
 
 (cfg
   test
@@ -1461,6 +2229,16 @@
         4
         "EXDEV is unsafe resolution")
       (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-rename-result-from-raw -18))
+        15
+        "rename EXDEV is cross-device")
+      (test.assert-i64-eq
+        (linux-rooted-test-result-code
+          (linux-rooted-cleanup-result-from-raw -39))
+        16
+        "cleanup ENOTEMPTY is directory-not-empty")
+      (test.assert-i64-eq
         (linux-rooted-test-result-code (linux-rooted-result-from-errno 20))
         5
         "ENOTDIR is wrong kind")
@@ -1531,10 +2309,43 @@
         437
         "x86-64 openat2 syscall number")
       (test.assert-i64-eq
+        fs-linux-rooted-syscall-read
+        0
+        "x86-64 read syscall number")
+      (test.assert-i64-eq
+        fs-linux-rooted-syscall-unlinkat
+        263
+        "x86-64 unlinkat syscall number")
+      (test.assert-i64-eq
+        fs-linux-rooted-syscall-renameat
+        264
+        "x86-64 renameat syscall number")
+      (test.assert-i64-eq
+        fs-linux-rooted-syscall-renameat2
+        316
+        "x86-64 renameat2 syscall number")
+      (test.assert-i64-eq fs-linux-rooted-at-removedir 512 "AT_REMOVEDIR value")
+      (test.assert-i64-eq
+        fs-linux-rooted-rename-noreplace
+        1
+        "RENAME_NOREPLACE value")
+      (test.assert-i64-eq
+        fs-linux-rooted-stat-size-offset
+        48
+        "x86-64 stat.st_size offset")
+      (test.assert-i64-eq
+        fs-linux-rooted-read-max-bytes
+        1048576
+        "bounded read allocation ceiling")
+      (test.assert-i64-eq
         (cast fs-linux-rooted-directory-open-flags : i64)
         720896
         "directory open flags")
       (test.assert-i64-eq
         (cast fs-linux-rooted-file-create-flags : i64)
         655553
-        "exclusive file create flags"))))
+        "exclusive file create flags")
+      (test.assert-i64-eq
+        (cast fs-linux-rooted-file-read-flags : i64)
+        657408
+        "verified reopen read flags"))))

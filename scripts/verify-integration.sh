@@ -726,6 +726,7 @@ fs_rooted_linux_gate_cases() {
     cat <<'EOF'
 fs_rooted_linux_direct
 fs_rooted_linux_native
+fs_rooted_linux_publication
 EOF
 }
 

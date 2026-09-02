@@ -13,14 +13,11 @@
 # `native_link_detect_host` (sets NL_HOST_OS / NL_OBJ_EXT / NL_BIN_EXT /
 # NL_BOOTSTRAP_TARGET) and `configure_toolchain` once, then `assemble_and_link`.
 #
-# Stack reserve: the self-hosted backend recurses over the AST/IR (parse,
-# typecheck, and lower all descend per-expression), so a self-hosted-built
-# compiler needs a generous stack to self-compile on Windows. #2357: making
-# local struct/enum aggregates inline-by-value enlarged the per-frame footprint
-# of those recursive descents. #2599 moved the largest declaration walks out of
-# native recursion, but full selfhost source graphs still need more than 64MB on
-# Windows as the generated compiler grows. Match the integration Windows link
-# helpers' 256MB reserve. Override with TYPELISP_WINDOWS_STACK_RESERVE (bytes).
+# Stack reserve: keep the historical 256 MiB PE entry-stack setting for
+# compatibility with existing link paths. The freestanding Windows entry uses
+# it only for bounded argv/fiber bootstrap; `main` runs on a runtime-owned 1 GiB
+# fiber stack, so compiler-sized recursion no longer depends on this linker
+# value. Override with TYPELISP_WINDOWS_STACK_RESERVE (bytes).
 
 HEARTBEAT_SECONDS=${TYPELISP_BOOTSTRAP_HEARTBEAT_SECONDS:-30}
 NL_WINDOWS_STACK_RESERVE=${TYPELISP_WINDOWS_STACK_RESERVE:-268435456}

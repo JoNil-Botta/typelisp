@@ -47,10 +47,25 @@
 
 (define (compiler-backend-runtime-data
   [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]) : String
-  (runtime_common.compiler-backend-runtime-common-data
-    features
-    (compiler-backend-runtime-arena-data
-      (runtime_common.compiler-backend-runtime-features-arena-debug? features))))
+  (str_cat.str-cat
+    (runtime_common.compiler-backend-runtime-common-data
+      features
+      (compiler-backend-runtime-arena-data
+        (runtime_common.compiler-backend-runtime-features-arena-debug? features)))
+    "    .section .rodata
+.L_tl_main_stack_reservation_msg:
+    .ascii \"typelisp runtime: 1 GiB main-stack reservation failed\\n\"
+    .set .L_tl_main_stack_reservation_msg_len, . - .L_tl_main_stack_reservation_msg
+.L_tl_stack_overflow_msg:
+    .ascii \"typelisp runtime: stack overflow\\n\"
+    .set .L_tl_stack_overflow_msg_len, . - .L_tl_stack_overflow_msg
+
+    .section .bss
+    .balign 8
+.L_tl_main_stack_written:
+    .zero 8
+
+"))
 
 (define (compiler-backend-runtime-windows-libc-shim-functions-base) : String
   "    .globl __chkstk
@@ -175,15 +190,82 @@ tl_setup_argv:
     ret
 
     .globl _tl_start
+    .seh_proc _tl_start
 _tl_start:
     subq $40, %rsp
+    .seh_stackalloc 40
+    .seh_endprologue
     call tl_setup_argv
     movq $0, %gs:0x28
+    leaq .L_tl_stack_overflow_filter(%rip), %rcx
+    call SetUnhandledExceptionFilter
+    xorl %ecx, %ecx
+    call ConvertThreadToFiber
+    testq %rax, %rax
+    jz .L_tl_main_stack_reservation_failed
+    movl $0x10000, %ecx
+    movl $0x40000000, %edx
+    movl $1, %r8d
+    leaq .L_tl_main_fiber(%rip), %r9
+    movq $0, 32(%rsp)
+    call CreateFiberEx
+    testq %rax, %rax
+    jz .L_tl_main_stack_reservation_failed
+    movq %rax, %rcx
+    call SwitchToFiber
+    jmp .L_tl_main_stack_reservation_failed
+
+.L_tl_main_stack_reservation_failed:
+    movl $-12, %ecx
+    call GetStdHandle
+    movq %rax, %rcx
+    leaq .L_tl_main_stack_reservation_msg(%rip), %rdx
+    movl $.L_tl_main_stack_reservation_msg_len, %r8d
+    leaq .L_tl_main_stack_written(%rip), %r9
+    movq $0, 32(%rsp)
+    call WriteFile
+    movl $134, %ecx
+    call ExitProcess
+    .seh_endproc
+
+    .seh_proc .L_tl_main_fiber
+.L_tl_main_fiber:
+    subq $40, %rsp
+    .seh_stackalloc 40
+    .seh_endprologue
+    movl $0x10000, 32(%rsp)
+    leaq 32(%rsp), %rcx
+    call SetThreadStackGuarantee
     movq .L_tl_argc(%rip), %rcx
     movq .L_tl_argv(%rip), %rdx
     call main
     movq %rax, %rcx
     call ExitProcess
+    .seh_endproc
+
+    .seh_proc .L_tl_stack_overflow_filter
+.L_tl_stack_overflow_filter:
+    subq $40, %rsp
+    .seh_stackalloc 40
+    .seh_endprologue
+    movq (%rcx), %rax
+    cmpl $0xc00000fd, (%rax)
+    jne .L_tl_stack_overflow_continue_search
+    movl $-12, %ecx
+    call GetStdHandle
+    movq %rax, %rcx
+    leaq .L_tl_stack_overflow_msg(%rip), %rdx
+    movl $.L_tl_stack_overflow_msg_len, %r8d
+    leaq .L_tl_main_stack_written(%rip), %r9
+    movq $0, 32(%rsp)
+    call WriteFile
+    movl $134, %ecx
+    call ExitProcess
+.L_tl_stack_overflow_continue_search:
+    xorl %eax, %eax
+    addq $40, %rsp
+    ret
+    .seh_endproc
 
     .bss
     .balign 8
@@ -1643,9 +1725,13 @@ tl_tlci_call_macro_entry:
     (string.replace
       (compiler-backend-runtime-windows-libc-shim-functions-base)
       "    subq $40, %rsp
+    .seh_stackalloc 40
+    .seh_endprologue
     call tl_setup_argv
 "
       "    subq $40, %rsp
+    .seh_stackalloc 40
+    .seh_endprologue
     leaq .L_tl_startup_profile_process_entry_tick(%rip), %rcx
     call QueryPerformanceCounter
     call tl_setup_argv
@@ -1733,18 +1819,17 @@ tl_tlci_call_macro_entry:
     .extern VirtualFree
     .extern GetLastError
     .extern ExitProcess
+    .extern ConvertThreadToFiber
+    .extern CreateFiberEx
+    .extern SwitchToFiber
+    .extern SetThreadStackGuarantee
+    .extern SetUnhandledExceptionFilter
+    .extern GetStdHandle
+    .extern WriteFile
 "
     (if (runtime_common.compiler-backend-runtime-features-startup-profile?
       features)
       "    .extern QueryPerformanceCounter
-"
-      "")
-    (if (runtime_common.compiler-backend-runtime-features-write-exit? features)
-      "    .extern WriteFile
-"
-      "")
-    (if (runtime_common.compiler-backend-runtime-features-write-exit? features)
-      "    .extern GetStdHandle
 "
       "")
     ""))

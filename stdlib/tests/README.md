@@ -51,6 +51,13 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   by hot compiler/runtime modules, including reserve, push, array and string
   append, binary NUL/high-byte preservation, and explicit array/string finish
   boundaries.
+- `http_head_codec.tl` covers strict byte-oriented HTTP/1.1 request-head
+  serialization and incremental response-head parsing: every split boundary,
+  exact consumption with one-byte and 32 KiB coalesced body suffixes, bounded
+  field/resource limits, Host and sensitivity policy, canonical identical
+  Content-Length lists, TE/CL smuggling rejection, transfer-coding order,
+  normalized Trailer declarations, HEAD/informational/204/304 semantics, and
+  capability-gated CONNECT tunnels.
 - `format_primitive_display.tl` covers zero, one, signed minima, and maxima for
   every fixed-width integer type, including the full `u64` range. Its pinned
   Rust Display tables cover binary32/binary64 signed zero, source-width

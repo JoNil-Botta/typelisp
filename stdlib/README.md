@@ -97,6 +97,14 @@ Vec bang place macros as available yet.
   and runtime hot paths that need construction, push, append, reserve, length,
   and explicit finish/copy boundaries without importing the full borrowed
   `bytes` view surface. Import it with `(import stdlib.byte_buf_core)`.
+- `net/http_types.tl` and `net/http_head_codec.tl`: byte-oriented checked
+  HTTP/1.1 method, target, status, reason, ordered field, sensitivity, and body
+  framing types plus a strict bounded request-head serializer and incremental
+  response-head parser. The parser consumes exactly through the terminating
+  empty line, rejects ambiguous framing and obsolete syntax, and returns one
+  method/status-aware plan for the body codec. Import them with
+  `(import stdlib.net.http_types)` and
+  `(import stdlib.net.http_head_codec)`.
 - `clone.tl`: explicit deep-clone generation for nominal owners. Import it and
   invoke `(gen-clone Point)` beside `Point` to emit the ordinary public
   `clone-point : (& Point) -> Point` function. Generated functions reconstruct
@@ -276,16 +284,26 @@ Vec bang place macros as available yet.
   `O_NOFOLLOW` directory check; descendants accept one validated component and
   use only descriptor-relative `mkdirat` plus `openat2` with
   `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS |
-  RESOLVE_NO_XDEV`. Directory and exclusive-create file capabilities are
-  cleanup-owning and expose stable operation and independent close outcomes,
-  never raw errno or descriptors. File finish writes an exact promised byte
-  count with partial-write/EINTR handling, applies `0644` or `0755`, optionally
-  flushes, and closes exactly once. Opaque state uses the active arena;
-  TypeLisp's region checker keeps a capability inside a caller-selected
-  lexical arena until cleanup, while default-arena state lasts for the program.
-  There is deliberately no weaker `openat` fallback for descendant acquisition.
-  This is an internal backend for the future portable rooted adapter, not a
-  general path API.
+  RESOLVE_NO_XDEV`. Directory, exclusive-create file, and verified regular-file
+  read capabilities are cleanup-owning and expose stable operation plus
+  independent close outcomes, never raw errno or descriptors. Bounded reads
+  allocate at most one MiB per call, report positive short reads separately
+  from zero-byte EOF, and support descriptor metadata/exact-length checks. File
+  finish writes an exact promised byte count with partial-write/EINTR handling,
+  applies `0644` or `0755`, optionally flushes, and closes exactly once.
+  Descriptor-relative `renameat` provides atomic replace-existing publication;
+  direct `renameat2(RENAME_NOREPLACE)` provides typed collision detection and
+  fails as unsupported rather than degrading to check-then-rename. Replace acts
+  on the destination entry current at syscall time (including replacing a
+  symlink as an entry); a prior identity check is not a hostile-writer
+  compare-and-swap guarantee. Exact `unlinkat` file/symlink and empty-directory
+  cleanup never traverses descendants. Explicit parent-directory `fsync`
+  distinguishes namespace durability from atomic visibility and file-data
+  durability. Opaque state uses the active arena; TypeLisp's region checker
+  keeps capabilities inside their cleanup scopes. There is deliberately no
+  weaker descendant fallback, `/proc/self/fd` synthesis, recursive deletion,
+  or delete-then-rename. This is an internal backend for the future portable
+  rooted adapter, not a general path API.
 - `ffi.tl`: FFI buffer helpers, including explicit NUL-terminated borrowed
   `bytes` copies into caller-owned `(MutPtr u8)` storage and active-arena
   `(Ptr u8)` C string allocation. Compatibility `String` wrappers borrow their
@@ -762,6 +780,7 @@ borrowed process runtime wrappers likewise copy at their owned boundary.
 | `(mutex i64)` generated module in `sync.tl` | Mutex creation allocates one runtime-owned scalar slot, one small close-state/live-user control cell, and one OS semaphore handle. `mutex_i64.lock` blocks on the semaphore and returns a cleanup-owned `mutex_i64.Guard`; guarded `get`/`set!`/`add!` do not allocate and `mutex_i64.unlock` releases the semaphore automatically when the `with` scope exits. `mutex_i64.close` returns `false` while guards or lock attempts are live and releases the protected scalar storage and semaphore only when it can permanently mark the mutex closed. The control cell is retained after successful close so copied handles fail closed instead of touching freed storage. |
 | `byte-buf-*` and `bytes-*` helpers in `byte_buf.tl` | `ByteBuf` construction, copy-in, reserve, growth, and copy-out allocate in the active arena. `byte-buf-ref`, `byte-buf-get`, length/capacity inspection, clear, and in-place set are non-allocating. `byte-buf-as-bytes`, `byte-buf-as-mut-bytes`, `str-as-bytes`, `bytes-slice-view`, and `bytes-mut-slice-view` return fixed-length borrowed views; mutable views are exclusive and can update existing bytes without growing the owner. `bytes-to-string` and the `byte-buf-from/append-bytes*` helpers are explicit copy boundaries; public binary APIs do not expose private dynamic buffers. |
 | `byte-buf-builder-*` helpers in `byte_buf_core.tl` | `ByteBufBuilder` construction, reserve, growth, append from private dynamic-buffer storage or strings, and finish/copy boundaries allocate in the active arena. Length/capacity inspection is non-allocating, and `byte-buf-builder-push` mutates the existing builder through `&mut` unless growth replaces its backing storage. The module is an internal compiler/runtime core and spells that storage `__tl_dyn-array`; it intentionally omits borrowed `bytes` views and in-place indexed mutation. |
+| `net/http_types.tl` and `net/http_head_codec.tl` | Checked protocol tokens, retained field bytes, ordered header/trailer-name storage, incremental parser buffering, response-head results, and serialized request heads allocate in the active arena. Parsing copies only the bounded head prefix and stops before a coalesced body suffix; completed lines are not rescanned. Header lookup, syntax/framing inspection, typed sensitivity checks, and body-plan selection are otherwise non-allocating over retained bytes. Request serialization validates all fields and the complete bounded output length before allocating its final `ByteBuf`; framing fields are emitted once in canonical form. |
 | `crypto_random.fill-random!` | Fills an exact caller-owned mutable `bytes` view from the operating-system cryptographic source without allocating output storage. Zero-length views succeed without a host call. Linux uses direct x86-64 `getrandom` with flags zero in at most 256-byte requests and checks partial/interrupted results. Windows loads `bcrypt.dll` through kernel32, validates and calls `BCryptGenRandom(NULL, ..., BCRYPT_USE_SYSTEM_PREFERRED_RNG)` through a raw C function pointer while its DLL reference remains live, then unloads it. Every failure is structured and wipes the complete valid view; there is no PRNG, clock, identifier, file, or third-party fallback. `fill-random-with!` is the low-level checked adapter seam for deterministic tests and explicitly injected protocol providers. |
 | `arena.*` helpers in `arena.tl` | First-class arena control returns typed `Arena` / `ArenaMark` / `ArenaPhase` wrappers around raw runtime handles. `arena.make` creates an independent ordinary arena, `arena.make-atomic` creates an independent atomic arena, `arena.current` observes the active arena, and `arena.mark` observes the current bump mark. `arena.phase` / `arena.rewind-safe!` use checker-proven direct owners; `arena.destroy-safe!` also accepts branded local aggregate owner places and invalidates their same-function brand users. `arena.set!`, `arena.destroy`, and `arena.rewind` can invalidate live heap handles and require `(unsafe ...)`; raw `i64` values do not satisfy those public helper signatures. |
 | `args-*` helpers in `args.tl` | Option specs, parse results, occurrence lists, positional `StringVec` storage, diagnostic payloads, and helper substrings allocate in the active arena. Token classification, option lookup, count/presence checks, and value accessors are non-allocating aside from caller-provided owned strings and existing result storage. |

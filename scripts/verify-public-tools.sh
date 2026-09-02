@@ -2042,7 +2042,7 @@ EOF
     else
         SELFHOST_OPT2_REGALLOC_A='    movl $45, %eax'
         SELFHOST_OPT2_REGALLOC_B='    leaq (%rdi,%rsi), %rax'
-        SELFHOST_OPT0_STACK_MUL='    imulq -32(%rsp), %r8'
+        SELFHOST_OPT0_STACK_MUL='    imulq -24(%rsp), %r8'
     fi
 
     SELFHOST_OPTWORKER="$SELFHOST_PLANNER_DIR/optworker"

@@ -1319,6 +1319,64 @@ check_synth_struct_accessor() {
     done
 }
 
+check_checked_arm_wrapper() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "checked_arm_wrapper_$_suffix" \
+            tests/integration/checked_arm_wrapper.tl "$_target")
+        _slot_id=$(function_body "$_asm" _tl_checked_arm_wrapper_aw_slot_id)
+
+        # INL-4: `aw-slot-id` is `(if (< id 0) -1 (aw-get-or ...))`, so the
+        # accessor call sits in an ARM of the entry branch whose sibling arm
+        # returns a literal. The depth floor used to refuse that site for not
+        # being the entry block; it now reads as entry-equivalent in this
+        # wrapper-shaped caller, and the verdict keeps it -- so the arm neither
+        # calls nor jumps to the wrapper it used to forward to.
+        assert_not_matches "$_slot_id" \
+            '^[[:space:]]+call _tl_checked_arm_wrapper_aw_get_or$' \
+            "checked-arm-wrapper-$_target"
+        assert_not_matches "$_slot_id" \
+            '^[[:space:]]+jmp _tl_checked_arm_wrapper_aw_get_or$' \
+            "checked-arm-wrapper-$_target"
+        # ...and what landed there is the accessor's own body, through the
+        # wrapper the arm site copied: the probe's Knuth multiplier.
+        assert_matches "$_slot_id" '2654435761' "checked-arm-wrapper-$_target"
+        # The probe is not reached out of line from the merged body either.
+        assert_not_matches "$_slot_id" \
+            '^[[:space:]]+call _tl_checked_arm_wrapper_aw_probe$' \
+            "checked-arm-wrapper-$_target"
+
+        # The copied wrapper is COPIED, not absorbed: the cold second reference
+        # in `main` still calls the out-of-line body, so the keep is a real one
+        # and no single-site band could have taken it first.
+        assert_matches "$_asm" '^_tl_checked_arm_wrapper_aw_get_or:$' \
+            "checked-arm-wrapper-$_target"
+        assert_regex_count_eq "$_asm" \
+            '^[[:space:]]+call _tl_checked_arm_wrapper_aw_get_or$' 1 \
+            "checked-arm-wrapper-$_target"
+
+        # The splice retires no bounds check: every load the accessor makes is
+        # still checked inside the merged body, which is what the abort twin
+        # (tests/integration/checked_arm_wrapper_abort.tl) then runs into.
+        assert_regex_count_at_least "$_slot_id" \
+            '^[[:space:]]+call tl_oob_abort' 1 "checked-arm-wrapper-$_target"
+
+        _abort_asm=$(compile_gate "checked_arm_wrapper_abort_$_suffix" \
+            tests/integration/checked_arm_wrapper_abort.tl "$_target")
+        _abort_slot_id=$(function_body "$_abort_asm" \
+            _tl_checked_arm_wrapper_abort_aw_slot_id)
+        assert_not_matches "$_abort_slot_id" \
+            '^[[:space:]]+call _tl_checked_arm_wrapper_abort_aw_get_or$' \
+            "checked-arm-wrapper-abort-$_target"
+        assert_not_matches "$_abort_slot_id" \
+            '^[[:space:]]+jmp _tl_checked_arm_wrapper_abort_aw_get_or$' \
+            "checked-arm-wrapper-abort-$_target"
+        assert_regex_count_at_least "$_abort_slot_id" \
+            '^[[:space:]]+call tl_oob_abort' 1 \
+            "checked-arm-wrapper-abort-$_target"
+    done
+}
+
 check_const_index_bounds() {
     _asm=$(compile_gate const_index_bounds tests/integration/const_index_bounds.tl)
     _body=$(function_body "$_asm" _tl_const_index_bounds_get2)
@@ -2250,6 +2308,7 @@ check_checked_cheap_tier_claim
 check_synth_wrapped_probe
 check_synth_tail_wrapper
 check_synth_struct_accessor
+check_checked_arm_wrapper
 check_const_index_bounds
 check_const_global_mask_unroll
 check_rbp_sixth_csr

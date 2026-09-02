@@ -9150,7 +9150,7 @@
         (ast.AstImportSpec.Spec (ast.AstImportKind.MacroDecls _ _) _ _ _ _))
       (compiler-load-lazy-alias-demand-unknown)]
     [(ast.AstDecl.Import decl-meta _) (compiler-load-lazy-alias-demand-none)]
-    [(ast.AstDecl.Test _ body _)
+    [(ast.AstDecl.Test _ body _ _)
       (compiler-load-session-state-lazy-expr-demand
         state
         (ast.ast-node-get body)
@@ -9978,7 +9978,7 @@
         false
         generated
         false)]
-    [(ast.AstDecl.Test name _ span)
+    [(ast.AstDecl.Test name _ _ span)
       (compiler-load-surface-build-add-decl
         build
         (CompilerLoadSurfaceDecl

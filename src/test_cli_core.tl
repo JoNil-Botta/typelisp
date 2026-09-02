@@ -11,6 +11,7 @@
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.process)
+(import stdlib.random)
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as tltest_name_map)
 (import stdlib.vector)
@@ -61,8 +62,27 @@
   (Ok cli_svec.Vec)
   (Err String))
 
+(defenum ResultTestSeed
+  (Ok u64)
+  (Err String))
+
+(defenum InlineTestSelection
+  (Run)
+  (Ignored String)
+  (SlowSkipped))
+
 (defenum InlineTest
-  (Case String String i64 i64 i64 String i64 i64))
+  (Case
+    String
+    String
+    i64
+    i64
+    i64
+    String
+    i64
+    i64
+    ast.AstTestMetadata
+    InlineTestSelection))
 
 (defenum InlineCollect
   (Collect ast.AstDeclList ast.AstDeclPathList (__tl_dyn-array InlineTest)))
@@ -93,6 +113,108 @@
   false)
 (define tltest-name-filter : String
   "")
+(define tltest-name-exact-set : bool
+  false)
+(define tltest-name-exact : String
+  "")
+(define tltest-include-ignored : bool
+  false)
+(define tltest-include-slow : bool
+  false)
+(define tltest-shuffle : bool
+  false)
+(define tltest-seed-set : bool
+  false)
+(define tltest-seed : u64
+  (cast 0 : u64))
+(define tltest-user-cfg-slots : (__tl_dyn-array String)
+  (__tl_make-array String 4))
+(define tltest-user-cfg-len : i64
+  0)
+
+(define (tltest-user-cfg-reset!) : unit
+  (begin
+    (set! tltest-user-cfg-slots (__tl_make-array String 4))
+    (set! tltest-user-cfg-len 0)))
+
+(define (tltest-user-cfg-grow!) : unit
+  (let
+    [old : (__tl_dyn-array String) tltest-user-cfg-slots]
+    [old-cap : i64 (array-length old)]
+    [next-cap : i64
+      (if (< old-cap 1)
+        4
+        (* old-cap 2))]
+    [next : (__tl_dyn-array String) (__tl_make-array String next-cap)]
+    [index : i64 0]
+    (begin
+      (while (< index tltest-user-cfg-len)
+        (begin
+          (set! (array-ref next index) (array-ref old index))
+          (set! index (+ index 1))))
+      (set! tltest-user-cfg-slots next))))
+
+(define (tltest-user-cfg-push! [name : String]) : unit
+  (begin
+    (if (< tltest-user-cfg-len (array-length tltest-user-cfg-slots))
+      unit
+      (tltest-user-cfg-grow!))
+    (set! (array-ref tltest-user-cfg-slots tltest-user-cfg-len) name)
+    (set! tltest-user-cfg-len (+ tltest-user-cfg-len 1))))
+
+(define (tltest-selection-set?) : bool
+  (or tltest-name-filter-set tltest-name-exact-set))
+
+(define (tltest-seed-digit? [c : char]) : bool
+  (and (>= c '0') (<= c '9')))
+
+(define (tltest-parse-seed [text : String]) : ResultTestSeed
+  (let
+    [count : i64 (string.string-length text)]
+    [index : i64 0]
+    [value : u64 (cast 0 : u64)]
+    [max-value : u64 (bit-not (cast 0 : u64))]
+    [ok : bool (> count 0)]
+    (begin
+      (while (and ok (< index count))
+        (let
+          [c : char (string.string-ref text index)]
+          (if (tltest-seed-digit? c)
+            (let
+              [digit : u64 (cast (- (cast c : i64) (cast '0' : i64)) : u64)]
+              (if (> value (/ (- max-value digit) (cast 10 : u64)))
+                (set! ok false)
+                (set! value (+ (* value (cast 10 : u64)) digit))))
+            (set! ok false)))
+        (set! index (+ index 1)))
+      (if ok
+        (ResultTestSeed.Ok value)
+        (ResultTestSeed.Err
+          "test: --seed expects an unsigned 64-bit decimal integer")))))
+
+(define (tltest-u64-decimal [value : u64]) : String
+  (let
+    [digits : (__tl_dyn-array u8) (__tl_make-array u8 20)]
+    [cursor : u64 value]
+    [start : i64 20]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (let
+          [digit : u64 (% cursor (cast 10 : u64))]
+          (begin
+            (set! start (- start 1))
+            (set!
+              (array-ref digits start)
+              (cast (+ digit (cast 48 : u64)) : u8))
+            (set! cursor (/ cursor (cast 10 : u64)))
+            (if (= cursor (cast 0 : u64))
+              (set! done true)
+              unit))))
+      (unsafe
+        (string-from-bytes
+          (ptr-offset (ptr-cast (__tl_array-data digits) : (Ptr u8)) start)
+          (- 20 start))))))
 
 ;; The generated harness is built after parsing, so its private helper/local
 ;; identities must not enter the source-symbol hash table. Cache one opaque id
@@ -236,7 +358,7 @@
   (ci.intern "runtime-test-case-finish!"))
 
 (define (tltest-runtime-suite-finish-id) : i64
-  (ci.intern "runtime-test-suite-finish"))
+  (ci.intern "runtime-test-suite-finish-with-skips"))
 
 (define (tltest-runtime-import-alias-id) : i64
   (begin
@@ -372,43 +494,53 @@
   [opt-level : i64]
   [test-mode : TestMode]
   [batch-list : TestMaybeString]) : ResultTestConfig
-  (match batch-list
-    [(TestMaybeString.Some list-path)
-      (cond
-        [(and tltest-list-only tltest-prefix-cache-stats)
-          (ResultTestConfig.Err
-            "test: --prefix-cache-stats cannot be combined with --list")]
-        [has-manifest
-          (ResultTestConfig.Err
-            "test: cannot combine --batch with --manifest-path")]
-        [has-source
-          (ResultTestConfig.Err "test: cannot combine input paths with --batch")]
-        [else
-          (match (tltest-batch-paths list-path)
-            [(ResultTestBatchPaths.Ok paths)
-              (if (cli_svec.is-empty? (& paths))
-                (ResultTestConfig.Err "test: --batch list is empty")
-                (ResultTestConfig.Ok
-                  (TestConfig.Batch paths target mode roots opt-level test-mode)))]
-            [(ResultTestBatchPaths.Err message) (ResultTestConfig.Err message)])])]
-    [(TestMaybeString.No)
-      (if tltest-prefix-cache-stats
-        (ResultTestConfig.Err "test: --prefix-cache-stats requires --batch")
-        (if has-source
-          (if has-manifest
+  (if (and tltest-seed-set (not tltest-shuffle))
+    (ResultTestConfig.Err "test: --seed requires --shuffle")
+    (match batch-list
+      [(TestMaybeString.Some list-path)
+        (cond
+          [(and tltest-list-only tltest-prefix-cache-stats)
             (ResultTestConfig.Err
-              "test: cannot combine source path with --manifest-path")
+              "test: --prefix-cache-stats cannot be combined with --list")]
+          [has-manifest
+            (ResultTestConfig.Err
+              "test: cannot combine --batch with --manifest-path")]
+          [has-source
+            (ResultTestConfig.Err
+              "test: cannot combine input paths with --batch")]
+          [else
+            (match (tltest-batch-paths list-path)
+              [(ResultTestBatchPaths.Ok paths)
+                (if (cli_svec.is-empty? (& paths))
+                  (ResultTestConfig.Err "test: --batch list is empty")
+                  (ResultTestConfig.Ok
+                    (TestConfig.Batch
+                      paths
+                      target
+                      mode
+                      roots
+                      opt-level
+                      test-mode)))]
+              [(ResultTestBatchPaths.Err message)
+                (ResultTestConfig.Err message)])])]
+      [(TestMaybeString.No)
+        (if tltest-prefix-cache-stats
+          (ResultTestConfig.Err "test: --prefix-cache-stats requires --batch")
+          (if has-source
+            (if has-manifest
+              (ResultTestConfig.Err
+                "test: cannot combine source path with --manifest-path")
+              (ResultTestConfig.Ok
+                (TestConfig.File source target mode roots opt-level test-mode)))
             (ResultTestConfig.Ok
-              (TestConfig.File source target mode roots opt-level test-mode)))
-          (ResultTestConfig.Ok
-            (TestConfig.Package
-              manifest-path
-              has-manifest
-              target
-              mode
-              roots
-              opt-level
-              test-mode))))]))
+              (TestConfig.Package
+                manifest-path
+                has-manifest
+                target
+                mode
+                roots
+                opt-level
+                test-mode))))])))
 
 (define (tltest-target-valid? [value : String]) : bool
   (match (build_run_core.source-tool-target value)
@@ -503,7 +635,24 @@
           [(compiler_optimize.ResultCompilerOptimizeLevel.Err)
             (ResultTestConfig.Err (tltest-invalid-opt-level value))]))]
     [(cli_option.CliCommonOptionKind.Cfg)
-      (ResultTestConfig.Err "test: internal unsupported common option")]))
+      (if (= (string.string-length value) 0)
+        (ResultTestConfig.Err "test: --cfg requires a non-empty value")
+        (begin
+          (tltest-user-cfg-push! value)
+          (tltest-parse-options
+            next-idx
+            count
+            source
+            has-source
+            manifest-path
+            has-manifest
+            target
+            mode
+            roots
+            has-opt-level
+            opt-level
+            test-mode
+            batch-list)))]))
 
 (define (tltest-parse-options
   [idx : i64]
@@ -537,7 +686,7 @@
         (owned_view.compiler-owned-shared-view current)
         idx
         count
-        cli_option.cli-common-option-build)
+        cli_option.cli-common-option-all)
         [(cli_option.CliCommonOption.Missing kind)
           (ResultTestConfig.Err
             (cli_option.cli-common-option-missing-message "test" kind))]
@@ -603,8 +752,9 @@
             [(string.eq current "--filter")
               (if (>= (+ idx 1) count)
                 (ResultTestConfig.Err "test: --filter requires a value")
-                (if tltest-name-filter-set
-                  (ResultTestConfig.Err "test: duplicate --filter")
+                (if (tltest-selection-set?)
+                  (ResultTestConfig.Err
+                    "test: --filter and --exact are mutually exclusive and may appear only once")
                   (let
                     [value : String (io.arg (+ idx 1))]
                     (if (= (string.string-length value) 0)
@@ -627,6 +777,117 @@
                           opt-level
                           test-mode
                           batch-list))))))]
+            [(string.eq current "--exact")
+              (if (>= (+ idx 1) count)
+                (ResultTestConfig.Err "test: --exact requires a value")
+                (if (tltest-selection-set?)
+                  (ResultTestConfig.Err
+                    "test: --filter and --exact are mutually exclusive and may appear only once")
+                  (let
+                    [value : String (io.arg (+ idx 1))]
+                    (if (= (string.string-length value) 0)
+                      (ResultTestConfig.Err
+                        "test: --exact requires a non-empty value")
+                      (begin
+                        (set! tltest-name-exact-set true)
+                        (set! tltest-name-exact value)
+                        (tltest-parse-options
+                          (+ idx 2)
+                          count
+                          source
+                          has-source
+                          manifest-path
+                          has-manifest
+                          target
+                          mode
+                          roots
+                          has-opt-level
+                          opt-level
+                          test-mode
+                          batch-list))))))]
+            [(string.eq current "--include-ignored")
+              (if tltest-include-ignored
+                (ResultTestConfig.Err "test: duplicate --include-ignored")
+                (begin
+                  (set! tltest-include-ignored true)
+                  (tltest-parse-options
+                    (+ idx 1)
+                    count
+                    source
+                    has-source
+                    manifest-path
+                    has-manifest
+                    target
+                    mode
+                    roots
+                    has-opt-level
+                    opt-level
+                    test-mode
+                    batch-list)))]
+            [(string.eq current "--include-slow")
+              (if tltest-include-slow
+                (ResultTestConfig.Err "test: duplicate --include-slow")
+                (begin
+                  (set! tltest-include-slow true)
+                  (tltest-parse-options
+                    (+ idx 1)
+                    count
+                    source
+                    has-source
+                    manifest-path
+                    has-manifest
+                    target
+                    mode
+                    roots
+                    has-opt-level
+                    opt-level
+                    test-mode
+                    batch-list)))]
+            [(string.eq current "--shuffle")
+              (if tltest-shuffle
+                (ResultTestConfig.Err "test: duplicate --shuffle")
+                (begin
+                  (set! tltest-shuffle true)
+                  (tltest-parse-options
+                    (+ idx 1)
+                    count
+                    source
+                    has-source
+                    manifest-path
+                    has-manifest
+                    target
+                    mode
+                    roots
+                    has-opt-level
+                    opt-level
+                    test-mode
+                    batch-list)))]
+            [(string.eq current "--seed")
+              (if (>= (+ idx 1) count)
+                (ResultTestConfig.Err "test: --seed requires a value")
+                (if tltest-seed-set
+                  (ResultTestConfig.Err "test: duplicate --seed")
+                  (match (tltest-parse-seed (io.arg (+ idx 1)))
+                    [(ResultTestSeed.Err message)
+                      (ResultTestConfig.Err message)]
+                    [(ResultTestSeed.Ok seed)
+                      (begin
+                        (set! tltest-seed-set true)
+                        (set! tltest-seed seed)
+                        (tltest-parse-options
+                          (+ idx 2)
+                          count
+                          source
+                          has-source
+                          manifest-path
+                          has-manifest
+                          target
+                          mode
+                          roots
+                          has-opt-level
+                          opt-level
+                          test-mode
+                          batch-list))])))]
             [(string.eq current "--backend-mode")
               (if (>= (+ idx 1) count)
                 (ResultTestConfig.Err "test: --backend-mode requires a value")
@@ -738,6 +999,14 @@
     (set! tltest-list-only false)
     (set! tltest-name-filter-set false)
     (set! tltest-name-filter "")
+    (set! tltest-name-exact-set false)
+    (set! tltest-name-exact "")
+    (set! tltest-include-ignored false)
+    (set! tltest-include-slow false)
+    (set! tltest-shuffle false)
+    (set! tltest-seed-set false)
+    (set! tltest-seed (cast 0 : u64))
+    (tltest-user-cfg-reset!)
     (tltest-parse-options
       start
       count
@@ -801,9 +1070,172 @@
   (string.eq target-path (compiler_load.compiler-load-normalize-path decl-path)))
 
 (define (tltest-test-name-selected? [name : String]) : bool
-  (if tltest-name-filter-set
-    (string.contains (& name) (& tltest-name-filter))
-    true))
+  (if tltest-name-exact-set
+    (string.eq name tltest-name-exact)
+    (if tltest-name-filter-set
+      (string.contains (& name) (& tltest-name-filter))
+      true)))
+
+(define (tltest-test-selection-with
+  [metadata : ast.AstTestMetadata]
+  [include-ignored : bool]
+  [include-slow : bool]) : InlineTestSelection
+  (match (ast.ast-test-metadata-ignore-reason
+    (owned_view.compiler-owned-shared-view metadata))
+    [(ast.AstTestIgnoreReason.Some reason)
+      (if include-ignored
+        (if (and
+          (ast.ast-test-metadata-slow?
+            (owned_view.compiler-owned-shared-view metadata))
+          (not include-slow))
+          InlineTestSelection.SlowSkipped
+          InlineTestSelection.Run)
+        (InlineTestSelection.Ignored reason))]
+    [(ast.AstTestIgnoreReason.No)
+      (if (and (ast.ast-test-metadata-slow? metadata) (not include-slow))
+        InlineTestSelection.SlowSkipped
+        InlineTestSelection.Run)]))
+
+(define (tltest-test-selection [metadata : ast.AstTestMetadata]) : InlineTestSelection
+  (tltest-test-selection-with
+    metadata
+    tltest-include-ignored
+    tltest-include-slow))
+
+(define (tltest-xorshift64-next [value : u64]) : u64
+  ;; xorshift64 (Marsaglia): the all-zero state is replaced by one documented
+  ;; constant, then three fixed xor/shift steps produce a portable next state.
+  (let
+    [seeded : u64
+      (if (= value (cast 0 : u64))
+        (cast 88172645463325252 : u64)
+        value)]
+    [x1 : u64 (bit-xor seeded (shl seeded 13))]
+    [x2 : u64 (bit-xor x1 (shr x1 7))]
+    (bit-xor x2 (shl x2 17))))
+
+(define (tltest-shuffle-initial-state [seed : u64]) : u64
+  ;; Keep replay independent of absolute paths and host path separators.
+  (bit-xor seed (cast 1469598103934665603 : u64)))
+
+(define (tltest-shuffle-golden-permutation-ok?) : bool
+  (let
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 5)]
+    [state : u64 (tltest-shuffle-initial-state (cast 42 : u64))]
+    [index : i64 4]
+    (begin
+      (set! (array-ref items 0) 0)
+      (set! (array-ref items 1) 1)
+      (set! (array-ref items 2) 2)
+      (set! (array-ref items 3) 3)
+      (set! (array-ref items 4) 4)
+      (while (> index 0)
+        (let
+          [next-state : u64 (tltest-xorshift64-next state)]
+          [other : i64 (cast (% next-state (cast (+ index 1) : u64)) : i64)]
+          [saved : i64 (array-ref items index)]
+          (begin
+            (set! state next-state)
+            (set! (array-ref items index) (array-ref items other))
+            (set! (array-ref items other) saved)
+            (set! index (- index 1)))))
+      (and
+        (= (array-ref items 0) 3)
+        (= (array-ref items 1) 0)
+        (= (array-ref items 2) 2)
+        (= (array-ref items 3) 4)
+        (= (array-ref items 4) 1)))))
+
+(define (tltest-seed-and-selection-self-test?) : bool
+  (and
+    (match (tltest-parse-seed "0")
+      [(ResultTestSeed.Ok value) (= value (cast 0 : u64))]
+      [_ false])
+    (match (tltest-parse-seed "18446744073709551615")
+      [(ResultTestSeed.Ok value)
+        (and
+          (= value (bit-not (cast 0 : u64)))
+          (string.eq (tltest-u64-decimal value) "18446744073709551615"))]
+      [_ false])
+    (match (tltest-parse-seed "18446744073709551616")
+      [(ResultTestSeed.Err _) true]
+      [_ false])
+    (match (tltest-parse-seed "-1")
+      [(ResultTestSeed.Err _) true]
+      [_ false])
+    (tltest-shuffle-golden-permutation-ok?)
+    (match (tltest-test-selection-with
+      (ast.ast-test-metadata-new (ast.AstTestIgnoreReason.Some "reason") false)
+      false
+      false)
+      [(InlineTestSelection.Ignored reason) (string.eq reason "reason")]
+      [_ false])
+    (match (tltest-test-selection-with
+      (ast.ast-test-metadata-new ast.AstTestIgnoreReason.No true)
+      false
+      false)
+      [(InlineTestSelection.SlowSkipped) true]
+      [_ false])
+    (match (tltest-test-selection-with
+      (ast.ast-test-metadata-new (ast.AstTestIgnoreReason.Some "reason") true)
+      true
+      false)
+      [(InlineTestSelection.SlowSkipped) true]
+      [_ false])
+    (match (tltest-test-selection-with
+      (ast.ast-test-metadata-new (ast.AstTestIgnoreReason.Some "reason") true)
+      true
+      true)
+      [(InlineTestSelection.Run) true]
+      [_ false])))
+
+(test
+  test-cli-replayable-shuffle-and-selection
+  (if (tltest-seed-and-selection-self-test?)
+    unit
+    (io.panic "test CLI replayable shuffle/selection self-test mismatch")))
+
+(define (tltest-shuffle-tests!
+  [tests : (&mut tests (__tl_dyn-array InlineTest))]) : unit
+  (if tltest-shuffle
+    (let
+      [state : u64 (tltest-shuffle-initial-state tltest-seed)]
+      [index : i64 (- (array-length tests) 1)]
+      (while (> index 0)
+        (let
+          [next-state : u64 (tltest-xorshift64-next state)]
+          [other : i64 (cast (% next-state (cast (+ index 1) : u64)) : i64)]
+          (begin
+            (set! state next-state)
+            (if (= index other)
+              unit
+              (let
+                [saved : InlineTest (clone (array-ref tests index))]
+                (begin
+                  (set! (array-ref tests index) (clone (array-ref tests other)))
+                  (set! (array-ref tests other) saved))))
+            (set! index (- index 1))))))
+    unit))
+
+(define (tltest-shuffle-string-vec! [items : (&mut items cli_svec.Vec)]) : unit
+  (if tltest-shuffle
+    (let
+      [state : u64 (tltest-shuffle-initial-state tltest-seed)]
+      [index : i64 (- (cli_svec.len items) 1)]
+      (while (> index 0)
+        (let
+          [next-state : u64 (tltest-xorshift64-next state)]
+          [other : i64 (cast (% next-state (cast (+ index 1) : u64)) : i64)]
+          [saved : String (clone (cli_svec.get items index ""))]
+          (begin
+            (set! state next-state)
+            (cli_svec.set-ref!
+              items
+              index
+              (clone (cli_svec.get items other "")))
+            (cli_svec.set-ref! items other saved)
+            (set! index (- index 1))))))
+    unit))
 
 (define (tltest-collect-in
   [target-path : String]
@@ -847,7 +1279,7 @@
                   [(ast.AstDeclPathListStep.Nil) (ast.ast-decl-path-list-new)])]
               (begin
                 (match (owned_view.compiler-owned-shared-view decl)
-                  [(ast.AstDecl.Test name body-box span)
+                  [(ast.AstDecl.Test name body-box metadata span)
                     (if (and
                       (tltest-owned-test-path?
                         (owned_view.compiler-owned-shared-view target-path)
@@ -870,7 +1302,9 @@
                             body
                             private-name
                             private-id
-                            (tltest-private-call-id current-module private-id))))
+                            (tltest-private-call-id current-module private-id)
+                            (owned_view.compiler-owned-shared-view metadata)
+                            (tltest-test-selection metadata))))
                       unit)]
                   [(ast.AstDecl.Module name)
                     (begin
@@ -911,18 +1345,33 @@
   [source : String]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : InlineCollect
-  (tltest-collect-in
-    (compiler_load.compiler-load-normalize-path source)
-    decls
-    paths
-    (ast.ast-decl-list-new)
-    (ast.ast-decl-path-list-new)
-    (__tl_make-array InlineTest 0)))
+  (let
+    [normalized : String (compiler_load.compiler-load-normalize-path source)]
+    (match (tltest-collect-in
+      (owned_view.compiler-owned-shared-view normalized)
+      decls
+      paths
+      (ast.ast-decl-list-new)
+      (ast.ast-decl-path-list-new)
+      (__tl_make-array InlineTest 0))
+      [(InlineCollect.Collect runtime-decls runtime-paths tests)
+        (begin
+          (tltest-shuffle-tests! (&mut tests))
+          (InlineCollect.Collect runtime-decls runtime-paths tests))])))
 
 (define (tltest-list-line [test : InlineTest]) : String
   (match test
-    [(InlineTest.Case name path _ line _ _ _ _)
-      (str_cat.str-cat name " " (tltest-location path line) "\n")]))
+    [(InlineTest.Case name path _ line _ _ _ _ _ selection)
+      (str_cat.str-cat
+        name
+        " "
+        (tltest-location path line)
+        " "
+        (match selection
+          [(InlineTestSelection.Run) "[run]\n"]
+          [(InlineTestSelection.SlowSkipped) "[slow-skipped]\n"]
+          [(InlineTestSelection.Ignored reason)
+            (str_cat.str-cat "[ignored: " reason "]\n")]))]))
 
 (define (tltest-list-tests-from
   [tests : (__tl_dyn-array InlineTest)]
@@ -975,14 +1424,22 @@
 (define (tltest-runtime-call-expr-id [leaf-id : i64]) : i64
   (tltest-call-expr-id (tltest-runtime-call-id leaf-id)))
 
-(define (tltest-runtime-suite-finish-expr [count : i64]) : i64
+(define (tltest-runtime-suite-finish-expr
+  [count : i64]
+  [ignored : i64]
+  [slow-skipped : i64]) : i64
   (ast.ast-expr-call
     (ast.ast-node-push
       (ast.AstExpr.Var
         (tltest-runtime-call-id (tltest-runtime-suite-finish-id))))
     (ast.ast-expr-cons
       (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int count)))
-      (ast.ast-expr-list-new))))
+      (ast.ast-expr-cons
+        (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int ignored)))
+        (ast.ast-expr-cons
+          (ast.ast-node-push
+            (ast.AstExpr.Literal (ast.ast-lit-int slow-skipped)))
+          (ast.ast-expr-list-new))))))
 
 (define (tltest-location [path : String] [line : i64]) : String
   (if (string.eq path "")
@@ -991,16 +1448,16 @@
 
 (define (tltest-running-line [test : InlineTest]) : String
   (match test
-    [(InlineTest.Case name path _ line _ _ _ _)
+    [(InlineTest.Case name path _ line _ _ _ _ _ _)
       (str_cat.str-cat "test " name " " (tltest-location path line) "\n")]))
 
 (define (tltest-ok-line [test : InlineTest]) : String
   (match test
-    [(InlineTest.Case name _ _ _ _ _ _ _) (str_cat.str-cat "ok " name "\n")]))
+    [(InlineTest.Case name _ _ _ _ _ _ _ _ _) (str_cat.str-cat "ok " name "\n")]))
 
 (define (tltest-failed-line [test : InlineTest]) : String
   (match test
-    [(InlineTest.Case name path _ line _ _ _ _)
+    [(InlineTest.Case name path _ line _ _ _ _ _ _)
       (str_cat.str-cat "FAILED " name " " (tltest-location path line) "\n")]))
 
 (define (tltest-print-runtime-write-params) : ast.AstParamList
@@ -1245,38 +1702,75 @@
       [test : InlineTest
         (owned_view.compiler-owned-array-element-shared-view tests index)]
       (match (owned_view.compiler-owned-shared-view test)
-        [(InlineTest.Case _ _ _ _ _ _ _ call-id)
-          (tltest-main-exprs-from
-            tests
-            (- index 1)
-            (ast.ast-expr-cons
-              (tltest-runtime-call-expr-id (tltest-runtime-case-begin-id))
-              (ast.ast-expr-cons
-                (tltest-print-expr
-                  (tltest-running-line
-                    (owned_view.compiler-owned-shared-view test)))
+        [(InlineTest.Case _ _ _ _ _ _ _ call-id _ selection)
+          (match selection
+            [(InlineTestSelection.Run)
+              (tltest-main-exprs-from
+                tests
+                (- index 1)
                 (ast.ast-expr-cons
-                  (tltest-call-expr-id call-id)
+                  (tltest-runtime-call-expr-id (tltest-runtime-case-begin-id))
                   (ast.ast-expr-cons
-                    (ast.ast-expr-if
-                      (tltest-runtime-call-expr-id
-                        (tltest-runtime-case-finish-id))
-                      (tltest-print-expr
-                        (tltest-failed-line
-                          (owned_view.compiler-owned-shared-view test)))
-                      (tltest-print-expr (tltest-ok-line test)))
-                    out)))))]))))
+                    (tltest-print-expr
+                      (tltest-running-line
+                        (owned_view.compiler-owned-shared-view test)))
+                    (ast.ast-expr-cons
+                      (tltest-call-expr-id call-id)
+                      (ast.ast-expr-cons
+                        (ast.ast-expr-if
+                          (tltest-runtime-call-expr-id
+                            (tltest-runtime-case-finish-id))
+                          (tltest-print-expr
+                            (tltest-failed-line
+                              (owned_view.compiler-owned-shared-view test)))
+                          (tltest-print-expr (tltest-ok-line test)))
+                        out)))))]
+            [_ (tltest-main-exprs-from tests (- index 1) out)])]))))
+
+(define (tltest-selection-counts
+  [tests : (& tests (__tl_dyn-array InlineTest))]
+  [wanted : i64]) : i64
+  (let
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index (array-length tests))
+        (begin
+          (match (owned_view.compiler-owned-array-element-shared-view
+            tests
+            index)
+            [(InlineTest.Case _ _ _ _ _ _ _ _ _ selection)
+              (let
+                [kind : i64
+                  (match selection
+                    [(InlineTestSelection.Run) 0]
+                    [(InlineTestSelection.Ignored _) 1]
+                    [(InlineTestSelection.SlowSkipped) 2])]
+                (if (= kind wanted)
+                  (set! count (+ count 1))
+                  unit))])
+          (set! index (+ index 1))))
+      count)))
+
+(define (tltest-ignored-count [tests : (& tests (__tl_dyn-array InlineTest))]) : i64
+  (tltest-selection-counts tests 1))
+
+(define (tltest-slow-skipped-count
+  [tests : (& tests (__tl_dyn-array InlineTest))]) : i64
+  (tltest-selection-counts tests 2))
 
 (define (tltest-main-exprs [tests : (__tl_dyn-array InlineTest)]) : ast.AstExprList
   (let
     [count : i64 (array-length tests)]
+    [ignored : i64 (tltest-ignored-count (& tests))]
+    [slow-skipped : i64 (tltest-slow-skipped-count (& tests))]
     (ast.ast-expr-cons
       (tltest-runtime-call-expr-id (tltest-runtime-suite-begin-id))
       (tltest-main-exprs-from
         tests
         (- count 1)
         (ast.ast-expr-cons
-          (tltest-runtime-suite-finish-expr count)
+          (tltest-runtime-suite-finish-expr count ignored slow-skipped)
           (ast.ast-expr-list-new))))))
 
 (define (tltest-test-decls-onto
@@ -1289,7 +1783,7 @@
       [test : InlineTest
         (owned_view.compiler-owned-array-element-shared-view tests index)]
       (match test
-        [(InlineTest.Case _ _ module-id _ body _ private-id _)
+        [(InlineTest.Case _ _ module-id _ body _ private-id _ _ _)
           (tltest-test-decls-onto
             tests
             (- index 1)
@@ -1365,7 +1859,7 @@
       [test : InlineTest
         (owned_view.compiler-owned-array-element-shared-view tests index)]
       (match test
-        [(InlineTest.Case _ path module-id _ _ _ _ _)
+        [(InlineTest.Case _ path module-id _ _ _ _ _ _ _)
           (tltest-test-paths-onto
             tests
             (- index 1)
@@ -2150,7 +2644,7 @@
       [test : InlineTest
         (owned_view.compiler-owned-array-element-shared-view tests index)]
       (match test
-        [(InlineTest.Case _ _ _ _ body _ _ _)
+        [(InlineTest.Case _ _ _ _ body _ _ _ _ _)
           (tltest-reach-mark-tests-from
             session
             tests
@@ -4255,12 +4749,25 @@
   test-cli-enables-test-cfg
   (cfg test unit (io.panic "test CLI did not enable test cfg")))
 
+(define (tltest-user-cfgs-from [index : i64] [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (if (>= index tltest-user-cfg-len)
+    cfgs
+    (tltest-user-cfgs-from
+      (+ index 1)
+      (cfg_core.compiler-cfg-enable
+        cfgs
+        (owned_view.compiler-owned-array-element-shared-view
+          tltest-user-cfg-slots
+          index)))))
+
 (define (tltest-cfgs [backend-target : compiler_backend.CompilerBackendTarget]) : sym_i64_env.SymI64Env
-  (cfg_core.compiler-cfg-enable
-    (driver.compiler-driver-target-cfgs
-      backend-target
-      (cfg_core.compiler-cfg-empty))
-    "test"))
+  (tltest-user-cfgs-from
+    0
+    (cfg_core.compiler-cfg-enable
+      (driver.compiler-driver-target-cfgs
+        backend-target
+        (cfg_core.compiler-cfg-empty))
+      "test")))
 
 (define (tltest-roots-for-self-test) : cli_svec.Vec
   (let
@@ -5093,14 +5600,14 @@
             listed))
         (if (= count 0)
           (begin
-            (if tltest-name-filter-set
+            (if (tltest-selection-set?)
               unit
               (io.print-error
                 (str_cat.str-cat
                   "test: discovered inline test marker but no inline tests in "
                   source
                   "\n")))
-            (if tltest-name-filter-set
+            (if (tltest-selection-set?)
               (ResultTestPackageTotals.Ok 0 0)
               (ResultTestPackageTotals.Err 1)))
           (begin
@@ -5137,9 +5644,34 @@
   (str_cat.str-cat "TypeLisp integration test file: " source "\n"))
 
 (define (tltest-package-integration-selected? [source : String]) : bool
-  (if tltest-name-filter-set
-    (string.contains (& source) (& tltest-name-filter))
-    true))
+  (if tltest-name-exact-set
+    (string.eq source tltest-name-exact)
+    (if tltest-name-filter-set
+      (string.contains (& source) (& tltest-name-filter))
+      true)))
+
+(define (tltest-package-selected-integration-sources
+  [sources : cli_svec.Vec]
+  [tests-prefix : String]) : cli_svec.Vec
+  (let
+    [selected : cli_svec.Vec (cli_svec.new)]
+    [index : i64 0]
+    (begin
+      (while (< index (cli_svec.len (& sources)))
+        (let
+          [source : String (cli_svec.get (& sources) index "")]
+          (begin
+            (if (and
+              (tltest-package-integration-source?
+                (owned_view.compiler-owned-shared-view source)
+                (owned_view.compiler-owned-shared-view tests-prefix))
+              (tltest-package-integration-selected?
+                (owned_view.compiler-owned-shared-view source)))
+              (cli_svec.push-ref! (&mut selected) source)
+              unit)
+            (set! index (+ index 1)))))
+      (tltest-shuffle-string-vec! (&mut selected))
+      selected)))
 
 (define (tltest-package-integration-missing-main [source : String]) : String
   (str_cat.str-cat "test: integration test file has no main: " source "\n"))
@@ -5612,21 +6144,24 @@
   [deps : compiler_load.CompilerPkgDeps]
   [file-count : i64]
   [test-count : i64]) : ResultTestPackageTotals
-  (tltest-package-run-integration-sources-from
-    sources
-    0
-    tests-prefix
-    target
-    roots
-    opt-level
-    test-mode
-    backend-target
-    manifest-dir
-    package-owner
-    deps
-    file-count
-    test-count
-    0))
+  (let
+    [selected-sources : cli_svec.Vec
+      (tltest-package-selected-integration-sources sources tests-prefix)]
+    (tltest-package-run-integration-sources-from
+      selected-sources
+      0
+      tests-prefix
+      target
+      roots
+      opt-level
+      test-mode
+      backend-target
+      manifest-dir
+      package-owner
+      deps
+      file-count
+      test-count
+      0)))
 
 (define (tltest-package-failed-summary-line
   [file-count : i64]
@@ -6172,7 +6707,33 @@
                 unit)
               status)))])))
 
-(define (tltest-run-config [config : TestConfig]) : i64
+(define (tltest-prepare-shuffle!) : bool
+  (if tltest-shuffle
+    (begin
+      (if tltest-seed-set
+        unit
+        (match (random.system-seed)
+          [(random.OkSystemSeed seed)
+            (begin
+              (set! tltest-seed (cast seed : u64))
+              (set! tltest-seed-set true))]
+          [(random.ErrSystemSeed error)
+            (begin
+              (io.print-error
+                (match error
+                  [(random.RandomSystemSeedUnavailable message)
+                    (str_cat.str-cat "test: " message "\n")]))
+              (return false))]))
+      (io.print-format
+        "{}"
+        (str_cat.str-cat
+          "TypeLisp test shuffle seed: "
+          (tltest-u64-decimal tltest-seed)
+          "\n"))
+      true)
+    true))
+
+(define (tltest-run-config-ready [config : TestConfig]) : i64
   (match config
     [(TestConfig.File source target mode roots opt-level test-mode)
       (match (build_run_core.source-tool-target
@@ -6261,6 +6822,11 @@
         roots
         opt-level
         test-mode)]))
+
+(define (tltest-run-config [config : TestConfig]) : i64
+  (if (tltest-prepare-shuffle!)
+    (tltest-run-config-ready config)
+    1))
 
 ;; Run the `test` command over arguments starting at `start`.
 (define (tltest-run-from [start : i64] [count : i64]) : i64

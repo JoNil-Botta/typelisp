@@ -1066,10 +1066,17 @@
       unit)
     runtime-test-case-failed))
 
-;: Print the suite summary and return zero on success or one on test failures.
-(define (runtime-test-suite-finish [total : i64]) : i64
+;; Shared finish path. `include-skips` keeps the shipped one-argument runtime
+;; entry point source-compatible with bootstrap compilers while the current
+;; test CLI calls the structured skip-count entry point below.
+(define (runtime-test-suite-finish-counts
+  [total : i64]
+  [ignored : i64]
+  [slow-skipped : i64]
+  [include-skips : bool]) : i64
   (let
-    [passed : i64 (- total runtime-test-failed-count)]
+    [passed : i64
+      (- (- (- total ignored) slow-skipped) runtime-test-failed-count)]
     (begin
       (set! runtime-test-suite-active false)
       (abort-write "TypeLisp tests: ")
@@ -1077,11 +1084,29 @@
       (abort-write " passed; ")
       (abort-write-signed-decimal runtime-test-failed-count)
       (abort-write " failed; ")
+      (if include-skips
+        (begin
+          (abort-write-signed-decimal ignored)
+          (abort-write " ignored; ")
+          (abort-write-signed-decimal slow-skipped)
+          (abort-write " slow-skipped; "))
+        unit)
       (abort-write-signed-decimal total)
       (abort-write " total\n")
       (if (= runtime-test-failed-count 0)
         0
         1))))
+
+;: Finish a legacy generated suite that has no declaration skip metadata.
+(define (runtime-test-suite-finish [total : i64]) : i64
+  (runtime-test-suite-finish-counts total 0 0 false))
+
+;: Print the suite summary with skip counts and return its failure status.
+(define (runtime-test-suite-finish-with-skips
+  [total : i64]
+  [ignored : i64]
+  [slow-skipped : i64]) : i64
+  (runtime-test-suite-finish-counts total ignored slow-skipped true))
 
 ;: Render an integer into a fresh active-arena decimal string.
 (define (int-to-string [value : i64])

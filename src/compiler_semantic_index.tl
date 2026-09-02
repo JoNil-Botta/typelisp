@@ -2157,7 +2157,7 @@
       [(ast.AstDecl.DefMacro _ _ _ _ _) false]
       ;; Test bodies stay in the parsed program for tooling but ordinary source
       ;; checking deliberately does not execute/typecheck them.
-      [(ast.AstDecl.Test _ _ _) false]
+      [(ast.AstDecl.Test _ _ _ _) false]
       [(ast.AstDecl.Unsafe inner)
         (compiler-semantic-decl-retains-checked-let-facts?
           (owned_view.compiler-owned-shared-view path)
@@ -7456,7 +7456,7 @@
             bound.scope
             bound.env
             body)))]
-    [(ast.AstDecl.Test _ body _)
+    [(ast.AstDecl.Test _ body _ _)
       (compiler-semantic-walk-node!
         (owned_view.compiler-owned-shared-view state)
         (compiler-semantic-binding-snapshot-empty)

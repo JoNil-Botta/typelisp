@@ -2930,7 +2930,7 @@ assert_contains "$err" "test inc-basic"
 assert_contains "$err" "ok inc-basic"
 assert_contains "$err" "test inc-zero"
 assert_contains "$err" "ok inc-zero"
-assert_contains "$err" "TypeLisp tests: 2 passed; 0 failed; 2 total"
+assert_contains "$err" "TypeLisp tests: 2 passed; 0 failed; 0 ignored; 0 slow-skipped; 2 total"
 [ ! -f "$WORKDIR/inline_test_pass.tl.test.s" ] || fail "typelisp test left scratch assembly behind"
 
 # cli-gate-case inline-test-normal-compile wrapper run_cmd
@@ -2969,7 +2969,7 @@ assert_contains "$err" "FAILED failing-case"
 assert_contains "$err" "inline_test_fail.tl:"
 assert_contains "$err" "test passes-after"
 assert_contains "$err" "ok passes-after"
-assert_contains "$err" "TypeLisp tests: 2 passed; 1 failed; 3 total"
+assert_contains "$err" "TypeLisp tests: 2 passed; 1 failed; 0 ignored; 0 slow-skipped; 3 total"
 assert_not_contains "$err" "typelisp test: test executable exited"
 [ ! -f "$WORKDIR/inline_test_fail.tl.test.s" ] || fail "failing typelisp test left scratch assembly behind"
 
@@ -2979,7 +2979,7 @@ assert_success
 assert_stdout_empty
 assert_contains "$err" "test passes-after"
 assert_contains "$err" "ok passes-after"
-assert_contains "$err" "TypeLisp tests: 1 passed; 0 failed; 1 total"
+assert_contains "$err" "TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total"
 assert_not_contains "$err" "passes-before"
 assert_not_contains "$err" "failing-case"
 
@@ -2992,6 +2992,78 @@ assert_contains "$out" "inline_test_fail.tl:"
 assert_contains "$out" "TypeLisp tests listed: 1 test(s)"
 assert_not_contains "$out" "passes-before"
 assert_not_contains "$out" "passes-after"
+
+cat > "$WORKDIR/inline_test_metadata.tl" <<'EOF'
+(test ordinary unit)
+(test needle unit)
+(test needle-extra unit)
+(test ignored (:ignore "tracked issue") unit)
+(test slow (:slow) unit)
+(test ignored-slow (:ignore "waiting for dependency") (:slow) unit)
+(cfg replayable-test-cfg (test cfg-enabled unit))
+EOF
+
+# cli-gate-case inline-test-metadata-list wrapper run_cmd
+run_cmd inline-test-metadata-list "$COMPILER" test --list "$WORKDIR/inline_test_metadata.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "ordinary "
+assert_contains "$out" "[run]"
+assert_contains "$out" "ignored "
+assert_contains "$out" "[ignored: tracked issue]"
+assert_contains "$out" "slow "
+assert_contains "$out" "[slow-skipped]"
+assert_contains "$out" "TypeLisp tests listed: 6 test(s)"
+
+# cli-gate-case inline-test-metadata-default-skip wrapper run_cmd
+run_cmd inline-test-metadata-default-skip "$COMPILER" test "$WORKDIR/inline_test_metadata.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stdout_empty
+assert_contains "$err" "test ordinary"
+assert_not_contains "$err" "test ignored"
+assert_not_contains "$err" "test slow"
+assert_contains "$err" "TypeLisp tests: 3 passed; 0 failed; 2 ignored; 1 slow-skipped; 6 total"
+
+# cli-gate-case inline-test-exact wrapper run_cmd
+run_cmd inline-test-exact "$COMPILER" test --list "$WORKDIR/inline_test_metadata.tl" --exact needle --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "needle "
+assert_not_contains "$out" "needle-extra"
+assert_contains "$out" "TypeLisp tests listed: 1 test(s)"
+
+# cli-gate-case inline-test-include-metadata wrapper run_cmd
+run_cmd inline-test-include-metadata "$COMPILER" test "$WORKDIR/inline_test_metadata.tl" --exact ignored-slow --include-ignored --include-slow --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stdout_empty
+assert_contains "$err" "test ignored-slow"
+assert_contains "$err" "TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total"
+
+# cli-gate-case inline-test-user-cfg wrapper run_cmd
+run_cmd inline-test-user-cfg "$COMPILER" test "$WORKDIR/inline_test_metadata.tl" --exact cfg-enabled --cfg replayable-test-cfg --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stdout_empty
+assert_contains "$err" "test cfg-enabled"
+assert_contains "$err" "TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total"
+
+# cli-gate-case inline-test-shuffle-seed wrapper run_cmd
+run_cmd inline-test-shuffle-seed "$COMPILER" test --list "$WORKDIR/inline_test_metadata.tl" --shuffle --seed 42 --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "TypeLisp test shuffle seed: 42"
+assert_contains "$out" "TypeLisp tests listed: 6 test(s)"
+
+# cli-gate-case inline-test-conflicting-selection wrapper run_cmd
+run_cmd inline-test-conflicting-selection "$COMPILER" test "$WORKDIR/must-not-be-loaded.tl" --filter needle --exact needle
+assert_code 1
+assert_contains "$err" "test: --filter and --exact are mutually exclusive and may appear only once"
+assert_not_contains "$err" "failed to read"
+
+# cli-gate-case inline-test-seed-requires-shuffle wrapper run_cmd
+run_cmd inline-test-seed-requires-shuffle "$COMPILER" test "$WORKDIR/must-not-be-loaded.tl" --seed 42
+assert_code 1
+assert_contains "$err" "test: --seed requires --shuffle"
+assert_not_contains "$err" "failed to read"
 
 cat > "$WORKDIR/inline_test_crash.tl" <<'EOF'
 (import stdlib.io)
@@ -3025,7 +3097,7 @@ assert_contains "$out" "TypeLisp test typecheck passed: 0 test(s)"
 run_cmd inline-test-no-tests-run "$COMPILER" test "$WORKDIR/inline_test_no_tests.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
 assert_success
 assert_stdout_empty
-assert_contains "$err" "TypeLisp tests: 0 passed; 0 failed; 0 total"
+assert_contains "$err" "TypeLisp tests: 0 passed; 0 failed; 0 ignored; 0 slow-skipped; 0 total"
 [ ! -f "$WORKDIR/inline_test_no_tests.tl.test.s" ] || fail "no-test typelisp test left scratch assembly behind"
 
 if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
@@ -3132,7 +3204,7 @@ assert_contains "$out" "TypeLisp integration test file:"
 assert_contains "$out" "TypeLisp package tests failed: 1 of 2 file(s) failed; 3 test(s)"
 assert_contains "$err" "FAILED package-fails"
 assert_contains "$err" "ok package-passes-after"
-assert_contains "$err" "TypeLisp tests: 1 passed; 1 failed; 2 total"
+assert_contains "$err" "TypeLisp tests: 1 passed; 1 failed; 0 ignored; 0 slow-skipped; 2 total"
 assert_not_contains "$err" "typelisp test: test executable exited"
 
 TEST_EMPTY_PKG="$WORKDIR/package-test-empty-pkg"
@@ -3251,10 +3323,10 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     fi
     assert_package_surface_inspect() {
         assert_contains "$out" "surface-package-identity: present schema-version=2 bytes="
-        assert_contains "$out" "surface-frontend-ast: present schema-version=7 bytes="
+        assert_contains "$out" "surface-frontend-ast: present schema-version=8 bytes="
         assert_contains "$out" "surface-frontend-facts: present schema-version=1 bytes="
         assert_not_contains "$out" "surface-package-identity: present schema-version=2 bytes=0"
-        assert_not_contains "$out" "surface-frontend-ast: present schema-version=7 bytes=0"
+        assert_not_contains "$out" "surface-frontend-ast: present schema-version=8 bytes=0"
         assert_not_contains "$out" "surface-frontend-facts: present schema-version=1 bytes=0"
         assert_contains "$out" "surface-trust-producer-identity: $PRODUCER_IDENTITY"
         assert_contains "$out" "surface-trust-policy: exact-producer-and-source-binding-required"

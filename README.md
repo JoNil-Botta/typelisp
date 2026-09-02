@@ -89,6 +89,11 @@ typelisp explain --search TERM  Search diagnostic explanations
 ```
 
 Run `typelisp <command> --help` for the current command-specific options.
+Inline tests may start with `(:ignore "reason")` and/or `(:slow)` metadata.
+`typelisp test` skips those tests by default; use `--include-ignored` or
+`--include-slow`, `--exact <name>` for a complete-name selection, and
+`--shuffle --seed <u64>` to replay a shuffled order. Repeatable `--cfg <name>`
+values compose with the automatic `test` and target cfg predicates.
 
 Pass `--backtrace` (or `--debug`/`-g`) to `compile`, `build`, or `run` to
 embed fatal-error symbol metadata. Such binaries default to a full trace;

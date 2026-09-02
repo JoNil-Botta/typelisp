@@ -8519,7 +8519,7 @@
                   [(ast.AstDecl.IncludeStrComptime _ _) unit]
                   [(ast.AstDecl.IncludeStrLzss _ _) unit]
                   [(ast.AstDecl.IncludeBin _ _) unit]
-                  [(ast.AstDecl.Test _ _ _) unit]
+                  [(ast.AstDecl.Test _ _ _ _) unit]
                   [_
                     (set!
                       cur-names
@@ -8805,7 +8805,7 @@
                   [(ast.AstDecl.IncludeStrComptime _ _) unit]
                   [(ast.AstDecl.IncludeStrLzss _ _) unit]
                   [(ast.AstDecl.IncludeBin _ _) unit]
-                  [(ast.AstDecl.Test _ _ _) unit]
+                  [(ast.AstDecl.Test _ _ _ _) unit]
                   [_
                     (set!
                       cur-names
@@ -16614,7 +16614,7 @@
     [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ _ _) used]
     [(ast.AstDecl.DefStruct decl-meta _ _ _ _) used]
     [(ast.AstDecl.DefStructLifetimes decl-meta _ _ _ _ _) used]
-    [(ast.AstDecl.Test _ body-box _)
+    [(ast.AstDecl.Test _ body-box _ _)
       (lower-used-types-add-expr-id session pools used module body-box)]
     [(ast.AstDecl.Unsafe inner-box)
       (lower-used-types-add-kept-runtime-decl
@@ -78467,7 +78467,7 @@
                             (ResultLowerDecls.Err
                               (box (lower-diagnostic message))))
                           (set! done true))]))]
-                [(ast.AstDecl.Test _ _ _) (set! cur-decls rest)]
+                [(ast.AstDecl.Test _ _ _ _) (set! cur-decls rest)]
                 [(ast.AstDecl.DefEnum decl-meta name cleanup variants)
                   (let
                     [decl-ctx : tc_core.TcContext

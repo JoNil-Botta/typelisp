@@ -3365,7 +3365,7 @@
               (lint_svec.new))
             visible-root
             allow-report)]
-        [(ast.AstDecl.Test _ body _)
+        [(ast.AstDecl.Test _ body _ _)
           (selfhost-lint-dead-refs-to-roots
             scan
             (selfhost-lint-dead-expr-refs

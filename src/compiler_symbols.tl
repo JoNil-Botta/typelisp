@@ -218,7 +218,7 @@
       (compiler-symbols-expr-maybe-span (ast.ast-node-get body))]
     [(ast.AstDecl.DefMacro decl-meta _ _ _ body)
       (compiler-symbols-expr-maybe-span (ast.ast-node-get body))]
-    [(ast.AstDecl.Test _ _ span) (CompilerSymbolsMaybeSpan.Some span)]
+    [(ast.AstDecl.Test _ _ _ span) (CompilerSymbolsMaybeSpan.Some span)]
     [(ast.AstDecl.Unsafe inner-box)
       (compiler-symbols-decl-maybe-span
         (ast.ast-decl-box-shared-view inner-box))]
@@ -582,7 +582,7 @@
                     count
                     (compiler-decl-list-index-count
                       (ast.ast-decl-list-box-shared-view body-box))))]
-              [(ast.AstDecl.Test _ _ _) unit]
+              [(ast.AstDecl.Test _ _ _ _) unit]
               [_ (set! count (+ count 1))])
             (set! index (+ index 1)))))
       count)))
@@ -1668,7 +1668,7 @@
           symbols
           index
           name))]
-    [(ast.AstDecl.Test _ _ _) (ResultCompilerSymbols.Ok symbols)]
+    [(ast.AstDecl.Test _ _ _ _) (ResultCompilerSymbols.Ok symbols)]
     [(ast.AstDecl.Unsafe inner-box)
       (let
         [inner : ast.AstDecl (ast.ast-decl-box-shared-view inner-box)]
@@ -1914,7 +1914,7 @@
               [(ast.AstDecl.IncludeStrComptime _ _) unit]
               [(ast.AstDecl.IncludeStrLzss _ _) unit]
               [(ast.AstDecl.IncludeBin _ _) unit]
-              [(ast.AstDecl.Test _ _ _) unit]
+              [(ast.AstDecl.Test _ _ _ _) unit]
               [_
                 (set!
                   cur-modules
@@ -2040,7 +2040,7 @@
               [(ast.AstDecl.IncludeStrComptime _ _) unit]
               [(ast.AstDecl.IncludeStrLzss _ _) unit]
               [(ast.AstDecl.IncludeBin _ _) unit]
-              [(ast.AstDecl.Test _ _ _) unit]
+              [(ast.AstDecl.Test _ _ _ _) unit]
               [_
                 (set!
                   macro-modules
@@ -2154,7 +2154,7 @@
               (begin
                 (set! cur-module next-module)
                 (set! cur-slot -1))]
-            [(ast.AstDecl.Test _ _ _) unit]
+            [(ast.AstDecl.Test _ _ _ _) unit]
             [_
               (let
                 [slot : i64
@@ -2509,7 +2509,7 @@
     [(ast.AstDecl.IncludeBin _ _) false]
     [(ast.AstDecl.Module _) false]
     [(ast.AstDecl.ModuleBody _ _) false]
-    [(ast.AstDecl.Test _ _ _) false]
+    [(ast.AstDecl.Test _ _ _ _) false]
     [_ true]))
 
 (define (compiler-symbol-path-list-repeat
@@ -2934,7 +2934,7 @@
                     module-id)]
                 [(ResultCompilerSymbols.Err message)
                   (ResultCompilerSymbols.Err message)]))]
-          [(ast.AstDecl.Test _ _ _)
+          [(ast.AstDecl.Test _ _ _ _)
             (build-compiler-symbol-list-in-module
               all-decls
               rest
@@ -3085,7 +3085,7 @@
                         (begin
                           (set! result (ResultCompilerSymbols.Err message))
                           (set! done true))]))]
-                [(ast.AstDecl.Test _ _ _)
+                [(ast.AstDecl.Test _ _ _ _)
                   (begin
                     (set! cur-decls rest)
                     (set! cur-paths rest-paths)
@@ -3991,7 +3991,7 @@
                       (begin
                         (set! result (ResultCompilerRegistries.Err message))
                         (set! done true))]))]
-              [(ast.AstDecl.Test _ _ _) (set! position (+ position 1))]
+              [(ast.AstDecl.Test _ _ _ _) (set! position (+ position 1))]
               [(ast.AstDecl.DefEnum decl-meta name _ variants)
                 (match (build-compiler-variant-registry-list-in-module
                   variants
@@ -4273,7 +4273,7 @@
               [(ast.AstDecl.IncludeStrLzss _ _) unit]
               [(ast.AstDecl.IncludeBin _ _) unit]
               [(ast.AstDecl.Module _) unit]
-              [(ast.AstDecl.Test _ _ _) unit]
+              [(ast.AstDecl.Test _ _ _ _) unit]
               [_
                 (if (= target logical-index)
                   (return

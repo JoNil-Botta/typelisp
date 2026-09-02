@@ -825,7 +825,7 @@
       (spec-expr-maybe-span-with-owner owner (spec-owner-expr-get owner body))]
     [(ast.AstDecl.DefMacro decl-meta _ _ _ body)
       (spec-expr-maybe-span-with-owner owner (spec-owner-expr-get owner body))]
-    [(ast.AstDecl.Test _ _ span) (SpecMaybeSourceSpan.Some span)]
+    [(ast.AstDecl.Test _ _ _ span) (SpecMaybeSourceSpan.Some span)]
     [(ast.AstDecl.Unsafe inner-box)
       (spec-decl-maybe-span-with-owner
         owner
@@ -3004,6 +3004,25 @@
           (and (gen-decl-eq? a-head b-head) (gen-decl-list-eq? a-rest b-rest))]
         [_ false])]))
 
+(define (gen-test-metadata-eq?
+  [a : ast.AstTestMetadata]
+  [b : ast.AstTestMetadata]) : bool
+  (and
+    (=
+      (ast.ast-test-metadata-slow? (owned_view.compiler-owned-shared-view a))
+      (ast.ast-test-metadata-slow? (owned_view.compiler-owned-shared-view b)))
+    (match (ast.ast-test-metadata-ignore-reason
+      (owned_view.compiler-owned-shared-view a))
+      [(ast.AstTestIgnoreReason.No)
+        (match (ast.ast-test-metadata-ignore-reason b)
+          [(ast.AstTestIgnoreReason.No) true]
+          [_ false])]
+      [(ast.AstTestIgnoreReason.Some a-reason)
+        (match (ast.ast-test-metadata-ignore-reason b)
+          [(ast.AstTestIgnoreReason.Some b-reason)
+            (string.eq a-reason b-reason)]
+          [_ false])])))
+
 (define (gen-decl-eq? [a : ast.AstDecl] [b : ast.AstDecl]) : bool
   (match a
     [(ast.AstDecl.Def decl-meta a-name a-ty a-value-box)
@@ -3134,14 +3153,17 @@
         [(ast.AstDecl.IncludeBin b-name b-path)
           (and (= a-name b-name) (string.eq a-path b-path))]
         [_ false])]
-    [(ast.AstDecl.Test a-name a-body-box _)
+    [(ast.AstDecl.Test a-name a-body-box a-metadata _)
       (let
         [a-body : ast.AstExpr (ast.ast-node-get a-body-box)]
         (match b
-          [(ast.AstDecl.Test b-name b-body-box _)
+          [(ast.AstDecl.Test b-name b-body-box b-metadata _)
             (let
               [b-body : ast.AstExpr (ast.ast-node-get b-body-box)]
-              (and (= a-name b-name) (gen-expr-eq? a-body b-body)))]
+              (and
+                (= a-name b-name)
+                (gen-test-metadata-eq? a-metadata b-metadata)
+                (gen-expr-eq? a-body b-body)))]
           [_ false]))]
     [(ast.AstDecl.Module a-name)
       (match b
@@ -3524,11 +3546,12 @@
         [(ast.AstDecl.IncludeBin b-name b-path)
           (and (= a-name b-name) (string.eq a-path b-path))]
         [_ false])]
-    [(ast.AstDecl.Test a-name a-body-box _)
+    [(ast.AstDecl.Test a-name a-body-box a-metadata _)
       (match b
-        [(ast.AstDecl.Test b-name b-body-box _)
+        [(ast.AstDecl.Test b-name b-body-box b-metadata _)
           (and
             (= a-name b-name)
+            (gen-test-metadata-eq? a-metadata b-metadata)
             (gen-expr-eq-with-owner
               owner
               env
@@ -11324,6 +11347,36 @@
               ast.AstFnExport.No
               (ast.AstSpmdCallable.Callable b-items))))))))
 
+(define (compiler-generated-test-metadata-distinct-ok?) : bool
+  (let
+    [name : i64 (spec_ci.intern-generated-canonical-name "generated-test")]
+    [body : i64 (ast.ast-node-push (ast.AstExpr.Literal ast.AstLiteral.Unit))]
+    [span : ast.AstSourceSpan (ast.ast-source-span 1 1 1 2)]
+    (and
+      (not
+        (gen-decl-eq?
+          (ast.ast-decl-test-id name body span)
+          (ast.ast-decl-test-metadata-id
+            name
+            body
+            (ast.ast-test-metadata-new ast.AstTestIgnoreReason.No true)
+            span)))
+      (gen-decl-eq?
+        (ast.ast-decl-test-metadata-id
+          name
+          body
+          (ast.ast-test-metadata-new
+            (ast.AstTestIgnoreReason.Some "same reason")
+            false)
+          span)
+        (ast.ast-decl-test-metadata-id
+          name
+          body
+          (ast.ast-test-metadata-new
+            (ast.AstTestIgnoreReason.Some "same reason")
+            false)
+          span)))))
+
 (define (compiler-specialize-generated-symbol-records-growth-ok?) : bool
   (let
     [count : i64 32]
@@ -11407,6 +11460,7 @@
     (unless (compiler-generated-decl-origin-preserved-ok?) (return 0))
     (unless (compiler-generated-registry-map-ok?) (return 0))
     (unless (compiler-generated-decl-spmd-metadata-distinct-ok?) (return 0))
+    (unless (compiler-generated-test-metadata-distinct-ok?) (return 0))
     (unless
       (compiler-specialize-generated-symbol-records-growth-ok?)
       (return 0))

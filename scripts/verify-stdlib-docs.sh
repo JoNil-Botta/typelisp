@@ -41,7 +41,7 @@ rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
 MODULES="$WORKDIR/modules.txt"
-find stdlib -maxdepth 1 -type f -name '*.tl' | sort > "$MODULES"
+find stdlib -type f -name '*.tl' ! -path 'stdlib/tests/*' | sort > "$MODULES"
 
 if [ ! -s "$MODULES" ]; then
     echo "no stdlib modules found" >&2
@@ -118,10 +118,12 @@ module_count=0
 while IFS= read -r module; do
     [ -n "$module" ] || continue
     module_count=$((module_count + 1))
-    name=$(basename "$module" .tl)
-    markdown="$WORKDIR/$name.md"
-    doc_stdout="$WORKDIR/$name.doc.stdout"
-    doc_stderr="$WORKDIR/$name.doc.stderr"
+    relative=${module#stdlib/}
+    output_stem=${relative%.tl}
+    markdown="$WORKDIR/$output_stem.md"
+    doc_stdout="$WORKDIR/$output_stem.doc.stdout"
+    doc_stderr="$WORKDIR/$output_stem.doc.stderr"
+    mkdir -p "$(dirname -- "$markdown")"
 
     check_source_docs "$module"
 
@@ -159,7 +161,7 @@ INDEX_MD="$WORKDIR/stdlib_index.md"
     printf ';# Stdlib module index.\n\n'
     while IFS= read -r module; do
         [ -n "$module" ] || continue
-        module_name=$(basename "$module" .tl)
+        module_name=$(printf '%s' "${module#stdlib/}" | sed 's/\.tl$//;s#/#.#g')
         printf '(import stdlib.%s)\n' "$module_name"
     done < "$MODULES"
 } > "$INDEX_SRC"
@@ -176,7 +178,7 @@ fi
 
 while IFS= read -r module; do
     [ -n "$module" ] || continue
-    module_ref="stdlib/$(basename "$module")"
+    module_ref="$module"
     module_ref_escaped=$(printf '%s' "$module_ref" | sed 's/_/\\_/g')
     if ! grep -Fq "$module_ref" "$INDEX_MD" &&
         ! grep -Fq "$module_ref_escaped" "$INDEX_MD"; then

@@ -314,6 +314,28 @@ assert_regex_count_eq() {
     fi
 }
 
+# ABT-1: the located abort tail's SECOND staging push is taken after %rsp has
+# already moved, so its operand must not be a memory read -- that is the exact
+# condition under which compiler-backend-text-max-rsp-dip may ignore the tail's
+# dip, and it is what keeps a red-zone slot the FIRST push clobbers harmless.
+# The bounds tail's index is a register or an imm32, the shift tail's width is
+# an immediate, and the div tail's saves are registers (normalized through
+# %r11), so no tail may spell that push against memory. The first push may:
+# it happens while %rsp is still the body's own.
+assert_abort_tail_staging_push_not_memory() {
+    _file=$1
+    _label=$2
+    _bad=$(awk '
+        /^[[:space:]]+leaq \.L_tl_abort_site_/ {
+            if (prev ~ /^[[:space:]]+pushq [-0-9]*\(%/) print prev
+        }
+        { prev = $0 }
+    ' "$_file")
+    if [ -n "$_bad" ]; then
+        fail "$_label staging push before the descriptor reads memory: $_bad"
+    fi
+}
+
 assert_regex_count_at_least() {
     _file=$1
     _regex=$2
@@ -1216,6 +1238,32 @@ check_synth_wrapped_probe() {
         assert_regex_count_at_least "$_abort_get_or" \
             '^[[:space:]]+call tl_oob_abort' 1 \
             "synth-wrapped-probe-abort-$_target"
+
+        # ABT-1: every check in the merged body -- the caller's own and the two
+        # the copied accessor brought with it -- reaches the LOCATED handler
+        # with a site descriptor, and none of them the bare one. A clone that
+        # lost its callee's span answers `call tl_oob_abort` here, which is what
+        # `tl: array index out of bounds` at --opt-level 2 was.
+        assert_regex_count_eq "$_abort_get_or" \
+            '^[[:space:]]+call tl_oob_abort_at$' 3 \
+            "synth-wrapped-probe-abort-$_target"
+        assert_regex_count_eq "$_abort_get_or" \
+            '^[[:space:]]+call tl_oob_abort$' 0 \
+            "synth-wrapped-probe-abort-$_target"
+        assert_regex_count_at_least "$_abort_asm" \
+            '^\.L_tl_abort_site_[0-9]+_bounds:$' 3 \
+            "synth-wrapped-probe-abort-$_target"
+        # ...and the descriptor is cold data reached only past the check's own
+        # fast branch: the merged body's compare/branch shape is what it was
+        # before the site was armed, to the instruction.
+        assert_regex_count_eq "$_abort_get_or" \
+            '^[[:space:]]+cmpq ' 9 "synth-wrapped-probe-abort-$_target"
+        assert_regex_count_eq "$_abort_get_or" \
+            '^[[:space:]]+jb ' 3 "synth-wrapped-probe-abort-$_target"
+        # ...and the folded checks' tails re-read the LENGTH through the first
+        # staging push, never the index through the second one.
+        assert_abort_tail_staging_push_not_memory "$_abort_get_or" \
+            "synth-wrapped-probe-abort-$_target"
     done
 }
 
@@ -1272,6 +1320,23 @@ check_synth_tail_wrapper() {
             "synth-tail-wrapper-abort-$_target"
         assert_regex_count_at_least "$_abort_slot_id" \
             '^[[:space:]]+call tl_oob_abort' 1 \
+            "synth-tail-wrapper-abort-$_target"
+
+        # ABT-1, through the tail site's copy: same claim, same reason.
+        assert_regex_count_eq "$_abort_slot_id" \
+            '^[[:space:]]+call tl_oob_abort_at$' 3 \
+            "synth-tail-wrapper-abort-$_target"
+        assert_regex_count_eq "$_abort_slot_id" \
+            '^[[:space:]]+call tl_oob_abort$' 0 \
+            "synth-tail-wrapper-abort-$_target"
+        assert_regex_count_at_least "$_abort_asm" \
+            '^\.L_tl_abort_site_[0-9]+_bounds:$' 3 \
+            "synth-tail-wrapper-abort-$_target"
+        assert_regex_count_eq "$_abort_slot_id" \
+            '^[[:space:]]+cmpq ' 9 "synth-tail-wrapper-abort-$_target"
+        assert_regex_count_eq "$_abort_slot_id" \
+            '^[[:space:]]+jb ' 3 "synth-tail-wrapper-abort-$_target"
+        assert_abort_tail_staging_push_not_memory "$_abort_slot_id" \
             "synth-tail-wrapper-abort-$_target"
     done
 }
@@ -2116,11 +2181,15 @@ check_jump_only_forward() {
 # keep its adjust, the call-bearing function that must keep its adjust, and the
 # abort-site leaf, whose located `tl_oob_abort_at` splitter stages its two
 # reported values with `pushq`/`popq` BELOW %rsp. That last one is the whole
-# soundness question: the slot region is anchored below the deepest transient
-# dip, so the two staging pushes (16 bytes) land strictly above every live
-# slot -- which is why `rzl-abort` has no slot at -8 or -16 while the
-# push-free `rzl-slots` starts at -8. The runtime halves are the
-# red_zone_leaf / red_zone_abort_ok / red_zone_abort_trap manifest cases.
+# soundness question, and ABT-1 answers it differently than the anchor did: the
+# staging pushes are on an edge that ends in a call which never returns to this
+# function, so the slots they overwrite are dead and the slot region is no
+# longer pushed below them -- `rzl-abort` starts at -8 exactly like the
+# push-free `rzl-slots`. What the overlap needs instead is that nothing is READ
+# from that window afterwards: the pops read only the tail's own two words, and
+# the one operand read after %rsp has moved -- the second push's -- is never
+# memory. The runtime halves are the red_zone_leaf / red_zone_abort_ok /
+# red_zone_abort_trap manifest cases; the trap case runs the abort edge itself.
 # SS-P5 (T2-4): the flags-driven select and the staged gep's direct index.
 # tests/integration/select_flags_lea.tl carries both shapes; its runtime half
 # is the select_flags_lea manifest case, which checks every answer.
@@ -2245,7 +2314,7 @@ check_red_zone_leaf() {
     assert_regex_count_eq "$_call" '^[[:space:]]+subq \$[0-9]+, %rsp$' 1 red-zone-call
     assert_not_matches "$_call" '[-][0-9]+\(%rsp\)' red-zone-call
 
-    # (d) abort-site leaf: red zone used, and the staging pushes are guarded.
+    # (d) abort-site leaf: red zone used, and the staging pushes cost it nothing.
     _abort=$(function_body "$_asm" tl_rzl_abort)
     assert_contains "$_abort" 'call tl_oob_abort_at' red-zone-abort
     assert_regex_count_eq "$_abort" '^[[:space:]]+call ' 1 red-zone-abort
@@ -2255,9 +2324,14 @@ check_red_zone_leaf() {
     if [ "$_abort_neg" -lt 1 ]; then
         fail "red-zone-abort expected live negative %rsp slots, got $_abort_neg"
     fi
-    # The 16 bytes the two staging pushes occupy hold no slot.
-    assert_not_matches "$_abort" '[-]8\(%rsp\)' red-zone-abort-guard
-    assert_not_matches "$_abort" '[-]16\(%rsp\)' red-zone-abort-guard
+    # ABT-1: the two staging pushes are on the never-returning edge, so the
+    # slot region is NOT anchored below them any more -- this leaf starts its
+    # slots at -8 exactly like the push-free rzl-slots, instead of spending 16
+    # bytes of its 128 to arm a diagnostic that cannot return. What makes the
+    # overlap sound is that the only operand read after the first push is the
+    # second one, and that one is never memory.
+    assert_matches "$_abort" '[-]8\(%rsp\)' red-zone-abort-guard
+    assert_abort_tail_staging_push_not_memory "$_abort" red-zone-abort-guard
     assert_not_matches "$_abort" '[-](1[3-9][0-9]|[2-9][0-9][0-9])\(%rsp\)' red-zone-abort
 }
 

@@ -3559,6 +3559,25 @@ INTEGRATION_BATCH_FAILED_CHUNKS=0
 INTEGRATION_BATCHED_CASES=0
 INTEGRATION_STANDALONE_COMPILES=0
 
+# A manifest row may pin its own optimization level with an `opt-level:N+`
+# prefix on the extra field. The batched pre-pass compiles a whole chunk under
+# one argv, so a row that asks for a level of its own is left out of the batch
+# and compiled standalone by the case loop with `--opt-level N` -- exactly the
+# route a chunk failure already falls back to. Sets MANIFEST_ROW_OPT_LEVEL to
+# the level or the empty string, and MANIFEST_ROW_EXTRA to what is left of the
+# extra field.
+manifest_row_split_opt_level() {
+    MANIFEST_ROW_EXTRA=${1:-}
+    MANIFEST_ROW_OPT_LEVEL=
+    case "$MANIFEST_ROW_EXTRA" in
+        opt-level:*)
+            MANIFEST_ROW_OPT_LEVEL=${MANIFEST_ROW_EXTRA#opt-level:}
+            MANIFEST_ROW_OPT_LEVEL=${MANIFEST_ROW_OPT_LEVEL%%+*}
+            MANIFEST_ROW_EXTRA=${MANIFEST_ROW_EXTRA#opt-level:*+}
+            ;;
+    esac
+}
+
 # Stage sources and emit one chunk list per group. Staging repeats what the case
 # loop does; both are plain file copies, so running them twice is idempotent.
 integration_batch_precompile() {
@@ -3571,8 +3590,10 @@ integration_batch_precompile() {
         case "$_b_name" in
             "" | \#*) continue ;;
         esac
+        manifest_row_split_opt_level "${_b_extra:-}"
+        _b_opt_level=$MANIFEST_ROW_OPT_LEVEL
         _b_stage=0
-        case "${_b_extra:-}" in
+        case "$MANIFEST_ROW_EXTRA" in
             stage-stdlib | stage-stdlib+expected-stderr:*) _b_stage=1 ;;
         esac
         _b_case_dir="$WORKDIR/$_b_name"
@@ -3581,6 +3602,8 @@ integration_batch_precompile() {
         for _b_dep in $(deps_or_empty "$_b_deps"); do
             copy_dep "$_b_dep" "$(dirname -- "$ROOT/$_b_source")" "$_b_case_dir" "$_b_stage"
         done
+        # Staged like every other case, but not batched: its level is its own.
+        [ -z "$_b_opt_level" ] || continue
         # Relative to ROOT, which is the working directory: the compiler reads
         # these out of a file, so no shell path translation happens on Windows.
         _b_rel="target/integration-verify/$HOST_OS/$_b_name/$_b_name"
@@ -3697,15 +3720,27 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
 
     expected_stderr_spec=-
     stage_stdlib=0
-    case "${extra:-}" in
+    manifest_row_split_opt_level "${extra:-}"
+    opt_level=$MANIFEST_ROW_OPT_LEVEL
+    case "$MANIFEST_ROW_EXTRA" in
         "") ;;
         stage-stdlib) stage_stdlib=1 ;;
         stage-stdlib+expected-stderr:*)
             stage_stdlib=1
-            expected_stderr_spec=${extra#stage-stdlib+expected-stderr:}
+            expected_stderr_spec=${MANIFEST_ROW_EXTRA#stage-stdlib+expected-stderr:}
             ;;
-        expected-stderr:*) expected_stderr_spec=${extra#expected-stderr:} ;;
+        expected-stderr:*) expected_stderr_spec=${MANIFEST_ROW_EXTRA#expected-stderr:} ;;
     esac
+    if [ -n "$opt_level" ]; then
+        opt_level_args="--opt-level $opt_level"
+    else
+        opt_level_args=
+    fi
+    # The batched pre-pass names its sources ROOT-relative and the compiler puts
+    # that spelling in the abort-site descriptors an expected-stderr pins, so a
+    # standalone compile has to name the case the same way. The runner's working
+    # directory is ROOT.
+    work_src_rel="target/integration-verify/$HOST_OS/$name/$name.tl"
 
     source_path="$ROOT/$source"
     source_dir=$(dirname -- "$source_path")
@@ -3805,13 +3840,17 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
             esac
         elif [ "$stage_stdlib" -eq 1 ]; then
             INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
-            windows_timed_compile "$COMPILER" compile "$work_src" --target windows-x86_64 --cfg windows \
+            # shellcheck disable=SC2086
+            windows_timed_compile "$COMPILER" compile "$work_src_rel" --target windows-x86_64 --cfg windows \
                 --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
+                $opt_level_args \
                 > "$build_stdout" 2> "$build_stderr"
         else
             INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
-            windows_timed_compile "$COMPILER" compile "$work_src" --target windows-x86_64 --cfg windows \
+            # shellcheck disable=SC2086
+            windows_timed_compile "$COMPILER" compile "$work_src_rel" --target windows-x86_64 --cfg windows \
                 --stdlib-root "$ROOT/src" -o "$asm" \
+                $opt_level_args \
                 > "$build_stdout" 2> "$build_stderr"
         fi
         if [ "$build_rc" -ne 0 ]; then
@@ -3825,7 +3864,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
                 "$build_stdout" \
                 "$build_stderr" \
                 "$asm" \
-                "compile $work_src --target windows-x86_64 --cfg windows --stdlib-root $ROOT/src -o $asm (stage-stdlib=$stage_stdlib)"
+                "compile $work_src_rel --target windows-x86_64 --cfg windows --stdlib-root $ROOT/src -o $asm $opt_level_args (stage-stdlib=$stage_stdlib)"
             failed=$((failed + 1))
             ran=$((ran + 1))
             continue
@@ -3873,13 +3912,17 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
             true
         elif [ "$stage_stdlib" -eq 1 ]; then
             INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
-            ci_timing_run "$name" compile "$COMPILER" compile "$work_src" \
+            # shellcheck disable=SC2086
+            ci_timing_run "$name" compile "$COMPILER" compile "$work_src_rel" \
                 --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
+                $opt_level_args \
                 > "$build_stdout" 2> "$build_stderr"
         else
             INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
-            ci_timing_run "$name" compile "$COMPILER" compile "$work_src" \
+            # shellcheck disable=SC2086
+            ci_timing_run "$name" compile "$COMPILER" compile "$work_src_rel" \
                 --stdlib-root "$ROOT/src" -o "$asm" \
+                $opt_level_args \
                 > "$build_stdout" 2> "$build_stderr"
         fi
         build_rc=$?
@@ -3895,7 +3938,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
                 "$build_stdout" \
                 "$build_stderr" \
                 "$asm" \
-                "compile $work_src --stdlib-root $ROOT/src -o $asm (stage-stdlib=$stage_stdlib)"
+                "compile $work_src_rel --stdlib-root $ROOT/src -o $asm $opt_level_args (stage-stdlib=$stage_stdlib)"
             failed=$((failed + 1))
             ran=$((ran + 1))
             continue

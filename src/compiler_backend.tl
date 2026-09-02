@@ -59493,29 +59493,6 @@
         saved-reserved)]
     (compiler-backend-address-base-filter reg)))
 
-;; True when the instruction would emit the LOCATED runtime-abort tail
-;; (`tl_oob_abort_at`), which re-reads both compare operands through `pushq`
-;; after %rsp has already moved. M6-A keeps that tail on the register form it
-;; was validated with and declines instead. Pure: it mirrors the predicate
-;; compiler-backend-runtime-abort-site-install! uses without mutating the
-;; function state the dispatch seam installs for the instruction it is really
-;; emitting.
-(define (compiler-backend-abort-site-would-activate?
-  [ctx : CompilerBackendEmissionContext]
-  [instr : compiler_ir_types.CompilerIrInstr]) : bool
-  (and
-    (compiler-backend-runtime-abort-site-instr?
-      (compiler-backend-global-shared-view ctx.backend-state)
-      (compiler-backend-global-shared-view instr))
-    (match (compiler_ir_types.compiler-source-spans-lookup-instr-location
-      (compiler-backend-global-shared-view ctx.spans)
-      (compiler_ir_types.compiler-ir-symbol-typed-id
-        (compiler-backend-global-shared-view ctx.source-function))
-      instr)
-      [(compiler_ir_types.CompilerMaybeSourceLocation.No) false]
-      [(compiler_ir_types.CompilerMaybeSourceLocation.Some location)
-        (> location.path-id 0)])))
-
 ;; Follow the fused load's value forward to the instruction that consumes it,
 ;; stepping over the width-preserving casts TL's typed surface leaves between a
 ;; `.len` load and the bounds check that uses it (`%17 = cast %15 : i64 to u64`
@@ -59658,18 +59635,23 @@
                 ;; occupies the compare's memory operand and `cmp mem, mem` is
                 ;; illegal, so a spilled or constant index declines to the
                 ;; ordinary path (which owns its own index staging and its
-                ;; GAP6d const form).
+                ;; GAP6d const form). That same requirement is what lets the
+                ;; LOCATED tail keep the fold (ABT-1): the tail re-reads the
+                ;; length through `pushq <memory operand>` FIRST, while %rsp is
+                ;; still the compare's own, and the only operand it reads after
+                ;; that push is the index -- a register here by construction.
+                ;; The address itself can never be %rsp- or %rbp-relative:
+                ;; compiler-backend-gep-load-cmp-address excludes %rbp from the
+                ;; base slot on both arms for exactly this re-read (and for the
+                ;; FPO rsp-rebase pass), and a non-register base home stages
+                ;; instead of folding.
                 (if (and
                   (compiler-backend-branch-uses-var? bc-length length-var)
                   (not
                     (compiler-backend-branch-uses-var?
                       (compiler-backend-global-shared-view bc-index)
                       length-var))
-                  (not (string.eq index-reg ""))
-                  (not
-                    (compiler-backend-abort-site-would-activate?
-                      (compiler-backend-global-shared-view ctx)
-                      (compiler-backend-global-shared-view next))))
+                  (not (string.eq index-reg "")))
                   (CompilerBackendGepLoadBoundsFold.Some
                     addr
                     index-reg
@@ -59714,28 +59696,41 @@
     [(CompilerBackendGepLoadBoundsFold.Some _ _ _ _) true]
     [(CompilerBackendGepLoadBoundsFold.No) false]))
 
+;; ABT-1: the fused compare is emitted while the dispatch seam is on the
+;; GEP/LOAD, so compiler-backend-emit-instr installed the abort site for THAT
+;; instruction -- which carries none, and which therefore left the site
+;; inactive. The check's own site has to be installed here, or the fold would
+;; answer a located check with the bare `tl_oob_abort` the unfused form does
+;; not: the same descriptor, on the same trap, for a compare that happens to
+;; have folded.
 (define (compiler-backend-emit-gep-load-bounds-fold
   [ctx : CompilerBackendEmissionContext]
   [length-operand : String]
   [index-operand : String]
-  [ok-label : i64]) : ResultCompilerBackend
-  (ResultCompilerBackend.Ok
-    (compiler-backend-bounds-check-asm
-      ""
-      ""
-      length-operand
-      index-operand
-      (compiler-backend-call-arg-space
-        (compiler-backend-global-shared-view ctx.target-policy.target)
-        (compiler_ir_types.CompilerIrCallArgs.Nil)
-        (compiler_ast_types.ast-type-list-new)
-        false
-        (compiler-backend-global-shared-view ctx.program-index))
-      (compiler-backend-asm-label
-        (compiler-backend-global-shared-view ctx.function)
-        ok-label)
-      (compiler-backend-global-shared-view ctx.plan)
-      (compiler-backend-global-shared-view ctx.program-index))))
+  [ok-label : i64]
+  [bounds-instr : compiler_ir_types.CompilerIrInstr]) : ResultCompilerBackend
+  (let
+    [_abort-site : unit
+      (compiler-backend-runtime-abort-site-install!
+        (compiler-backend-global-shared-view ctx)
+        (compiler-backend-global-shared-view bounds-instr))]
+    (ResultCompilerBackend.Ok
+      (compiler-backend-bounds-check-asm
+        ""
+        ""
+        length-operand
+        index-operand
+        (compiler-backend-call-arg-space
+          (compiler-backend-global-shared-view ctx.target-policy.target)
+          (compiler_ir_types.CompilerIrCallArgs.Nil)
+          (compiler_ast_types.ast-type-list-new)
+          false
+          (compiler-backend-global-shared-view ctx.program-index))
+        (compiler-backend-asm-label
+          (compiler-backend-global-shared-view ctx.function)
+          ok-label)
+        (compiler-backend-global-shared-view ctx.plan)
+        (compiler-backend-global-shared-view ctx.program-index)))))
 
 ;; `cmp`/`test` with one memory operand, at an explicit width. `src` is the
 ;; AT&T source operand and `dst` the destination one: exactly one of them is
@@ -60504,7 +60499,10 @@
               (compiler-backend-global-shared-view ctx)
               length-operand
               index-operand
-              ok-label)
+              ok-label
+              (compiler_ir_types.compiler-ir-instr-seq-ref
+                (compiler-backend-global-shared-view instrs)
+                (- after-bounds 1)))
             (compiler-backend-global-shared-view instrs)
             after-bounds
             out))]
@@ -72790,6 +72788,33 @@
 ;; no slot is live any more and a write below %rsp can hurt nothing. A `pushq`
 ;; taken while untracked is not boundable and refuses the red zone outright, as
 ;; does a delta that would go negative outside an epilogue.
+;;
+;; ABT-1: a dip taken ONLY on a never-returning path is not a dip this guard has
+;; to pay for. The located runtime-abort tails (`tl_oob_abort_at`,
+;; `tl_div_abort_at`, `tl_shift_abort_at`) save their two operands with `pushq`
+;; before loading the descriptor pointer, and those pushes land exactly where a
+;; red-zone body's local slots live -- but the path they are on ends in a call
+;; that never returns to this function's own code, so no later read of a local
+;; slot can observe the clobber. The pushed words themselves are read back only
+;; by the tail's own two `popq`s, and the operands the pushes READ are safe by
+;; construction: the first push happens while %rsp is still the body's own, and
+;; the second one's operand is never memory (the bounds tail's index is a
+;; register or an imm32, the shift tail's width is an immediate, and the div
+;; tail's saves are registers, normalized through %r11 when narrow). Charging
+;; the guard for them costs a body whose frame sits near the 128-byte limit its
+;; red zone -- a real prologue and epilogue on every call -- to arm a
+;; diagnostic on a path that cannot come back.
+;;
+;; So a push (or an `%rsp`-lowering `subq`) does not commit its depth at once:
+;; it enters a two-slot pending window, and the third one displaces the oldest
+;; into `deepest`. The `leaq .L_tl_abort_site_...` that only a located abort
+;; tail emits HOLDS the window's entries -- its own two pushes, and never more,
+;; since nothing else is enqueued between them and it -- and the noreturn abort
+;; call that follows DISCARDS them, which is the continuation that proves the
+;; path never returns. Anything else -- a label, another push, the end of the
+;; text -- commits the held entries instead, so a shape that is not an abort
+;; tail is still counted in full. Every other dip (a c-ABI window, a phi
+;; cycle-break push, a real `subq`) reaches `deepest` exactly as before.
 (define (compiler-backend-text-max-rsp-dip [text : String]) : i64
   (let
     [n : i64 (string.string-length text)]
@@ -72801,6 +72826,13 @@
     [valid : bool true]
     [deepest : i64 0]
     [ok : bool true]
+    ;; The pending window and the entries an abort-site marker is holding.
+    [pend-count : i64 0]
+    [pend0 : i64 0]
+    [pend1 : i64 0]
+    [held-count : i64 0]
+    [held0 : i64 0]
+    [held1 : i64 0]
     (begin
       (while (and ok (< i n))
         (let
@@ -72815,6 +72847,31 @@
               unit
               (if (= (compiler-backend-peephole-byte-at data (- end 1)) 58)
                 (begin
+                  ;; A label ends the straight-line window: nothing after it can
+                  ;; be the continuation an abort tail's pushes were held for.
+                  (begin
+                    (if (>= held-count 1)
+                      (if (> held0 deepest)
+                        (set! deepest held0)
+                        unit)
+                      unit)
+                    (if (>= held-count 2)
+                      (if (> held1 deepest)
+                        (set! deepest held1)
+                        unit)
+                      unit)
+                    (set! held-count 0))
+                  (if (>= pend-count 1)
+                    (if (> pend0 deepest)
+                      (set! deepest pend0)
+                      unit)
+                    unit)
+                  (if (>= pend-count 2)
+                    (if (> pend1 deepest)
+                      (set! deepest pend1)
+                      unit)
+                    unit)
+                  (set! pend-count 0)
                   (set! delta 0)
                   (set! valid true))
                 (let
@@ -72835,13 +72892,75 @@
                       (= (compiler-backend-peephole-byte-at data (- end 3)) 114)
                       (= (compiler-backend-peephole-byte-at data (- end 2)) 115))]
                   (cond
+                    ;; The located abort tail's descriptor load: hold the two
+                    ;; pushes in front of it until the continuation says whether
+                    ;; the path returns. Only reachable while something is
+                    ;; pending, so an ordinary line pays one integer compare.
+                    [(and
+                        (> pend-count 0)
+                        (<= (+ m 22) end)
+                        (compiler-backend-peephole-range-eq?
+                          data
+                          m
+                          (+ m 22)
+                          "leaq .L_tl_abort_site_"))
+                      (begin
+                        (begin
+                          (if (>= held-count 1)
+                            (if (> held0 deepest)
+                              (set! deepest held0)
+                              unit)
+                            unit)
+                          (if (>= held-count 2)
+                            (if (> held1 deepest)
+                              (set! deepest held1)
+                              unit)
+                            unit)
+                          (set! held-count 0))
+                        (set! held0 pend0)
+                        (set! held1 pend1)
+                        (set! held-count pend-count)
+                        (set! pend-count 0))]
+                    ;; ...and the noreturn abort call is that continuation: the
+                    ;; held dip is on a path that never comes back, so no local
+                    ;; slot it reached can be read again.
+                    [(and
+                        (> held-count 0)
+                        (compiler-backend-peephole-line-noreturn-abort?
+                          data
+                          m
+                          end))
+                      (set! held-count 0)]
                     [(= kind compiler-backend-control-mnemonic-push)
                       (if valid
                         (begin
                           (set! delta (+ delta 8))
-                          (if (> delta deepest)
-                            (set! deepest delta)
-                            unit))
+                          (begin
+                            (if (>= held-count 1)
+                              (if (> held0 deepest)
+                                (set! deepest held0)
+                                unit)
+                              unit)
+                            (if (>= held-count 2)
+                              (if (> held1 deepest)
+                                (set! deepest held1)
+                                unit)
+                              unit)
+                            (set! held-count 0))
+                          (if (>= pend-count 2)
+                            (begin
+                              (if (> pend0 deepest)
+                                (set! deepest pend0)
+                                unit)
+                              (set! pend0 pend1)
+                              (set! pend1 delta))
+                            (if (= pend-count 1)
+                              (begin
+                                (set! pend1 delta)
+                                (set! pend-count 2))
+                              (begin
+                                (set! pend0 delta)
+                                (set! pend-count 1)))))
                         (set! ok false))]
                     [(= kind compiler-backend-control-mnemonic-pop)
                       (if valid
@@ -72868,9 +72987,32 @@
                                 data
                                 (+ te 2)
                                 (- end 6))))
-                          (if (> delta deepest)
-                            (set! deepest delta)
-                            unit))
+                          (begin
+                            (if (>= held-count 1)
+                              (if (> held0 deepest)
+                                (set! deepest held0)
+                                unit)
+                              unit)
+                            (if (>= held-count 2)
+                              (if (> held1 deepest)
+                                (set! deepest held1)
+                                unit)
+                              unit)
+                            (set! held-count 0))
+                          (if (>= pend-count 2)
+                            (begin
+                              (if (> pend0 deepest)
+                                (set! deepest pend0)
+                                unit)
+                              (set! pend0 pend1)
+                              (set! pend1 delta))
+                            (if (= pend-count 1)
+                              (begin
+                                (set! pend1 delta)
+                                (set! pend-count 2))
+                              (begin
+                                (set! pend0 delta)
+                                (set! pend-count 1)))))
                         (if (and
                           valid
                           (= kind compiler-backend-control-mnemonic-addq)
@@ -72897,6 +73039,30 @@
               (if (< end n)
                 (+ end 1)
                 end)))))
+      ;; The text ran out before any continuation: count everything still owed.
+      (begin
+        (if (>= held-count 1)
+          (if (> held0 deepest)
+            (set! deepest held0)
+            unit)
+          unit)
+        (if (>= held-count 2)
+          (if (> held1 deepest)
+            (set! deepest held1)
+            unit)
+          unit)
+        (set! held-count 0))
+      (if (>= pend-count 1)
+        (if (> pend0 deepest)
+          (set! deepest pend0)
+          unit)
+        unit)
+      (if (>= pend-count 2)
+        (if (> pend1 deepest)
+          (set! deepest pend1)
+          unit)
+        unit)
+      (set! pend-count 0)
       (if ok
         deepest
         -1))))

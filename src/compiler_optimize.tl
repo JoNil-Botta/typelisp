@@ -122922,23 +122922,51 @@
     base
     label-prefix))
 
-;; Span policy for inlined clones: prefer the callee instruction's original
-;; source span under the clone's new caller/value key. If the callee instruction
-;; has no recorded span (notably the synthetic return->mov), use the call-site
-;; span so the cloned instruction still points at useful user code.
-(define (opt-source-spans-lookup-instr-span
+;; The ordinary (no `-g`) probe for a clone's span. `opt-remap-spans-instr-key`
+;; is the gate the whole pass shares: outside a debug build only an
+;; abort-site-carrying instruction builds a key at all, so a clone walk pays a
+;; couple of integer moves per instruction and records nothing for the ordinary
+;; arithmetic it copies. What it returns is the LOCATED entry -- path id and
+;; span -- because a span whose path was dropped is not a diagnostic: the
+;; backend's abort-site install (compiler-backend-runtime-abort-site-install!)
+;; only arms `tl_oob_abort_at` when the resolved path id is positive, so an
+;; entry recorded with the unlocated path id 0 degrades the trap to the bare
+;; `tl_oob_abort` exactly as a missing entry does. The probe is the backend's
+;; own (ir.compiler-source-spans-lookup-instr-location), so a bounds check
+;; whose ok-label a clone family already suffixed resolves here the way it
+;; resolves there.
+(define (opt-source-spans-lookup-instr-location
   [source-spans : ir.CompilerSourceSpans]
   [function : ir.CompilerIrSymbolId]
-  [instr : ir.CompilerIrInstr]) : ir.CompilerMaybeSourceSpan
-  (match source-spans
-    [(ir.CompilerSourceSpans.Spans _ instr-entries _)
-      (match (opt-remap-spans-instr-key function instr)
-        [(OptRemapSpanKey.NoKey) (ir.CompilerMaybeSourceSpan.No)]
-        [(OptRemapSpanKey.SomeKey key)
-          (ir.compiler-source-spans-instr-entry-list-lookup-span
-            instr-entries
-            key)])]))
+  [instr : ir.CompilerIrInstr]) : ir.CompilerMaybeSourceLocation
+  (match (opt-remap-spans-instr-key
+    function
+    (compiler-opt-global-shared-view instr))
+    [(OptRemapSpanKey.NoKey) (ir.CompilerMaybeSourceLocation.No)]
+    [(OptRemapSpanKey.SomeKey _)
+      (ir.compiler-source-spans-lookup-instr-location
+        source-spans
+        function
+        instr)]))
 
+;; One clone-span probe for both build modes: a `-g` build wants every cloned
+;; instruction located, an ordinary build wants exactly the abort-site carriers
+;; the key gate admits, and both want the path id.
+(define (opt-inline-clone-span-location
+  [source-spans : ir.CompilerSourceSpans]
+  [function : ir.CompilerIrSymbolId]
+  [instr : ir.CompilerIrInstr]) : ir.CompilerMaybeSourceLocation
+  (if (ir.compiler-debug-info-enabled?)
+    (ir.compiler-source-spans-lookup-instr-location source-spans function instr)
+    (opt-source-spans-lookup-instr-location source-spans function instr)))
+
+;; Span policy for inlined clones: prefer the callee instruction's original
+;; source location under the clone's new caller/value key -- a bounds check the
+;; inliner copied traps at the load in the CALLEE's source, which is what the
+;; same body reports when it stays out of line, so that is the line and column
+;; its abort must name. If the callee instruction has no recorded location
+;; (notably the synthetic return->mov), use the call-site location so the cloned
+;; instruction still points at useful user code.
 (define (opt-inline-record-clone-span
   [source-spans : ir.CompilerSourceSpans]
   [out : ir.CompilerSourceSpans]
@@ -122947,49 +122975,31 @@
   [callee : ir.CompilerIrSymbolId]
   [callee-instr : ir.CompilerIrInstr]
   [cloned : ir.CompilerIrInstr]) : ir.CompilerSourceSpans
-  (if (ir.compiler-debug-info-enabled?)
-    (match (ir.compiler-source-spans-lookup-instr-location
-      (compiler-opt-global-shared-view source-spans)
-      callee
-      callee-instr)
-      [(ir.CompilerMaybeSourceLocation.Some
-          (ir.CompilerSourceLocation path-id span))
-        (ir.compiler-source-spans-insert-instr-located
-          out
-          caller
-          cloned
-          path-id
-          span)]
-      [(ir.CompilerMaybeSourceLocation.No)
-        (match (ir.compiler-source-spans-lookup-instr-location
-          source-spans
-          caller
-          call-instr)
-          [(ir.CompilerMaybeSourceLocation.Some
-              (ir.CompilerSourceLocation path-id span))
-            (ir.compiler-source-spans-insert-instr-located
-              out
-              caller
-              cloned
-              path-id
-              span)]
-          [(ir.CompilerMaybeSourceLocation.No) out]
-          [_ out])]
-      [_ out])
-    (match (opt-source-spans-lookup-instr-span
-      (compiler-opt-global-shared-view source-spans)
-      callee
-      callee-instr)
-      [(ir.CompilerMaybeSourceSpan.Some span)
-        (ir.compiler-source-spans-insert-instr out caller cloned span)]
-      [(ir.CompilerMaybeSourceSpan.No)
-        (match (opt-source-spans-lookup-instr-span
-          source-spans
-          caller
-          call-instr)
-          [(ir.CompilerMaybeSourceSpan.Some span)
-            (ir.compiler-source-spans-insert-instr out caller cloned span)]
-          [(ir.CompilerMaybeSourceSpan.No) out])])))
+  (match (opt-inline-clone-span-location
+    (compiler-opt-global-shared-view source-spans)
+    callee
+    callee-instr)
+    [(ir.CompilerMaybeSourceLocation.Some
+        (ir.CompilerSourceLocation path-id span))
+      (ir.compiler-source-spans-insert-instr-located
+        out
+        caller
+        cloned
+        path-id
+        span)]
+    [(ir.CompilerMaybeSourceLocation.No)
+      (match (opt-inline-clone-span-location source-spans caller call-instr)
+        [(ir.CompilerMaybeSourceLocation.Some
+            (ir.CompilerSourceLocation path-id span))
+          (ir.compiler-source-spans-insert-instr-located
+            out
+            caller
+            cloned
+            path-id
+            span)]
+        [(ir.CompilerMaybeSourceLocation.No) out]
+        [_ out])]
+    [_ out]))
 
 (define (opt-inline-expand-instrs-with-spans-into!
   [instrs : ir.CompilerIrInstrSeq]
@@ -123711,38 +123721,27 @@
             (clone ret))
           (ir.CompilerIrInstr.Phi dst inputs (clone ret)))))))
 
+;; The site's own location moved onto an instruction the rewrite mints in the
+;; caller. Located in both build modes for the same reason the clone walk is:
+;; a `stdlib.io/panic` call is an abort site, and an entry carrying path id 0
+;; leaves the backend with nothing to point at.
 (define (opt-inline-call-span-to-instr
   [source-spans : ir.CompilerSourceSpans]
   [out-spans : ir.CompilerSourceSpans]
   [func-name : ir.CompilerIrSymbolId]
   [call-instr : ir.CompilerIrInstr]
   [new-instr : ir.CompilerIrInstr]) : ir.CompilerSourceSpans
-  (if (ir.compiler-debug-info-enabled?)
-    (match (ir.compiler-source-spans-lookup-instr-location
-      source-spans
-      func-name
-      call-instr)
-      [(ir.CompilerMaybeSourceLocation.Some
-          (ir.CompilerSourceLocation path-id span))
-        (ir.compiler-source-spans-insert-instr-located
-          out-spans
-          func-name
-          new-instr
-          path-id
-          span)]
-      [(ir.CompilerMaybeSourceLocation.No) out-spans]
-      [_ out-spans])
-    (match (opt-source-spans-lookup-instr-span
-      source-spans
-      func-name
-      call-instr)
-      [(ir.CompilerMaybeSourceSpan.Some span)
-        (ir.compiler-source-spans-insert-instr
-          out-spans
-          func-name
-          new-instr
-          span)]
-      [(ir.CompilerMaybeSourceSpan.No) out-spans])))
+  (match (opt-inline-clone-span-location source-spans func-name call-instr)
+    [(ir.CompilerMaybeSourceLocation.Some
+        (ir.CompilerSourceLocation path-id span))
+      (ir.compiler-source-spans-insert-instr-located
+        out-spans
+        func-name
+        new-instr
+        path-id
+        span)]
+    [(ir.CompilerMaybeSourceLocation.No) out-spans]
+    [_ out-spans]))
 
 (define (opt-inline-lookup-inlinable
   [index : OptFunctionIndex]

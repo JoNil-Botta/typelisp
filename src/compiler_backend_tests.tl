@@ -54476,6 +54476,154 @@ b_keep:
 
 ;; A reusable backend owner may be retargeted between emissions, while two
 ;; independently prepared owners retain isolated ABI and mode decisions.
+;; ABT-1: the located runtime-abort tail's two `pushq`es are a dip on a path
+;; that ends in a call which never returns to this function, so the local slots
+;; they reach are dead there and compiler-backend-red-zone-decide! must not
+;; charge the guard for them. Every OTHER dip -- a c-ABI window, a phi
+;; cycle-break push, a real `subq` -- still counts in full, and so does a
+;; descriptor load whose continuation turns out to return.
+(define (compiler-backend-abort-tail-dip-body [tail : String]) : String
+  (str_cat.str-cat
+    "    cmpq %rsi, %rax\n"
+    "    jb .Lprobe_ok.0\n"
+    tail
+    ".Lprobe_ok.0:\n"
+    "    movq -8(%rsp), %rax\n"
+    "    ret\n"))
+
+(define (compiler-backend-abort-tail-dip-located-tail [call-line : String]) : String
+  (str_cat.str-cat
+    "    pushq %rsi\n"
+    "    pushq %rax\n"
+    "    leaq .L_tl_abort_site_1_bounds(%rip), %rdi\n"
+    "    popq %rsi\n"
+    "    popq %rdx\n"
+    call-line
+    "    jmp .L_tl_abort_site_1_bounds_end\n"
+    "    .balign 8\n"
+    ".L_tl_abort_site_1_bounds:\n"
+    "    .quad .L_tl_str_data_probe\n"
+    "    .quad 22\n"
+    "    .quad 34\n"
+    "    .quad 56\n"
+    ".L_tl_abort_site_1_bounds_end:\n"))
+
+(define (compiler-backend-abort-tail-dip-red-zone?
+  [text : String]
+  [frame : i64]) : bool
+  (let
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new intern-state)]
+    [linux : compiler_backend.CompilerBackendTargetPolicy
+      (compiler_backend.compiler-backend-target-policy-new
+        compiler_backend.CompilerBackendTarget.Linux)]
+    [_install : unit
+      (begin
+        (compiler_backend.compiler-backend-state-set-emission-target-policy!
+          state
+          linux)
+        (compiler_backend.compiler-backend-set-current-fn-abi! state linux.abi)
+        (compiler_backend.compiler-backend-red-zone-decide!
+          state
+          text
+          true
+          frame
+          0
+          false))]
+    (compiler_backend.compiler-backend-red-zone? state)))
+
+(define (compiler-backend-red-zone-abort-tail-dip-ok?) : bool
+  (let
+    ;; The whole body's only stack motion is one located bounds abort tail.
+    [abort-only : String
+      (compiler-backend-abort-tail-dip-body
+        (compiler-backend-abort-tail-dip-located-tail
+          "    call tl_oob_abort_at\n"))]
+    ;; The same shape whose continuation RETURNS: not a never-returning path,
+    ;; so its dip is owed in full.
+    [returning : String
+      (compiler-backend-abort-tail-dip-body
+        (compiler-backend-abort-tail-dip-located-tail
+          "    call _tl_probe_helper\n"))]
+    ;; An ordinary c-ABI dip window: two pushes around a call that returns.
+    [window : String
+      (compiler-backend-abort-tail-dip-body
+        (str_cat.str-cat
+          "    pushq %rsi\n"
+          "    pushq %rax\n"
+          "    call _tl_probe_helper\n"
+          "    popq %rax\n"
+          "    popq %rsi\n"))]
+    ;; A real 8-byte window that CLOSES before the abort tail opens: the tail's
+    ;; own 16 bytes drop out, the window's 8 do not.
+    [window-then-abort : String
+      (compiler-backend-abort-tail-dip-body
+        (str_cat.str-cat
+          "    pushq %rcx\n"
+          "    call _tl_probe_helper\n"
+          "    popq %rcx\n"
+          (compiler-backend-abort-tail-dip-located-tail
+            "    call tl_oob_abort_at\n")))]
+    ;; ...and one that is still OPEN when the tail opens: the third push
+    ;; displaces it out of the pending window before the marker can hold it.
+    [open-window-then-abort : String
+      (compiler-backend-abort-tail-dip-body
+        (str_cat.str-cat
+          "    pushq %rcx\n"
+          (compiler-backend-abort-tail-dip-located-tail
+            "    call tl_oob_abort_at\n")))]
+    ;; A bare (unlocated) abort pushes nothing, so an unrelated open window in
+    ;; front of it must still be counted: no descriptor load, nothing held.
+    [bare-abort : String
+      (compiler-backend-abort-tail-dip-body
+        (str_cat.str-cat
+          "    pushq %rcx\n"
+          "    pushq %rdx\n"
+          "    call tl_oob_abort\n"))]
+    (and
+      ;; The dips themselves.
+      (=
+        (compiler_backend.compiler-backend-text-max-rsp-dip
+          (owned_view.compiler-owned-shared-view abort-only))
+        0)
+      (=
+        (compiler_backend.compiler-backend-text-max-rsp-dip
+          (owned_view.compiler-owned-shared-view returning))
+        16)
+      (=
+        (compiler_backend.compiler-backend-text-max-rsp-dip
+          (owned_view.compiler-owned-shared-view window))
+        16)
+      (=
+        (compiler_backend.compiler-backend-text-max-rsp-dip
+          (owned_view.compiler-owned-shared-view window-then-abort))
+        8)
+      (=
+        (compiler_backend.compiler-backend-text-max-rsp-dip
+          open-window-then-abort)
+        8)
+      (=
+        (compiler_backend.compiler-backend-text-max-rsp-dip
+          (owned_view.compiler-owned-shared-view bare-abort))
+        16)
+      ;; ...and the decision they feed, at a frame that fits the 128-byte red
+      ;; zone on its own and cannot afford a 16-byte guard on top.
+      (compiler-backend-abort-tail-dip-red-zone?
+        (owned_view.compiler-owned-shared-view abort-only)
+        120)
+      (compiler-backend-abort-tail-dip-red-zone? abort-only 128)
+      (not (compiler-backend-abort-tail-dip-red-zone? returning 120))
+      (not
+        (compiler-backend-abort-tail-dip-red-zone?
+          (owned_view.compiler-owned-shared-view window)
+          120))
+      (not (compiler-backend-abort-tail-dip-red-zone? window-then-abort 120))
+      (not (compiler-backend-abort-tail-dip-red-zone? bare-abort 120))
+      ;; A body with no stack motion at all is unaffected either way.
+      (compiler-backend-abort-tail-dip-red-zone? window 96))))
+
 (define (compiler-backend-target-policy-isolation-ok?) : bool
   (let
     [intern-state : ci.InternCompatState
@@ -56162,6 +56310,7 @@ b_keep:
         (compiler-backend-explicit-state-routes-serial-parity-ok?)
         (compiler-backend-explicit-state-target-pic-policy-ok?)
         (compiler-backend-target-policy-isolation-ok?)
+        (compiler-backend-red-zone-abort-tail-dip-ok?)
         (compiler-backend-function-state-isolation-ok?)
         (compiler-backend-abort-counter-failure-reset-ok?))
       (compiler-backend-string-ok?)

@@ -5569,3 +5569,9 @@
     (compiler_optimize_tests.compiler-optimize-ubound-tangled-self-test)
     42
     "mutually dependent header phis and a three-edge phi terminate the search and are refused"))
+
+(test
+  inline-multiblock-bounds-clone-keeps-callee-location
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-spans-inline-multiblock-bounds-located-ok?)
+    "a BoundsCheck the multiblock with-spans path copies out of a callee keeps the CALLEE's located span -- path id included -- under the clone's freshened ok-label, in an ordinary build as well as under -g, so an abort raised inside an inlined body still names the load in the callee"))

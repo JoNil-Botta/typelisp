@@ -4799,16 +4799,40 @@
     "moving the same site one unconditional jump off the entry block keeps the floor: one verdict fewer, the call still there"))
 
 (test
-  inline-checked-lock-margin
+  inline-checked-lock-bodies
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-lock-margin-ok?)
-    "the one-callee lock admits a second callee only behind a first accept whose whole modelled saving survived"))
+    (compiler_optimize_tests.compiler-optimize-inline-checked-lock-bodies-ok?)
+    "the callee lock admits the ranked bodies up to its bound and refuses the one past it; a slim accept no longer refuses the next body by proxy"))
 
 (test
   inline-checked-relaxed-rank
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-checked-relaxed-rank-ok?)
     "a relaxed candidate is ranked behind every core one and charged to the relaxations' own reserve"))
+
+(test
+  inline-synth-chain
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-synth-chain-ok?)
+    "a leaf two straight-line wrappers below a loop reads one census weight on the propagated count and one on the census's own"))
+
+(test
+  inline-synth-recursive
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-synth-recursive-ok?)
+    "a recursive component carries its own repetition, reproducibly and inside the saturating cap"))
+
+(test
+  inline-synth-address-taken
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-synth-address-taken-ok?)
+    "an address-taken callee starts at the unknown-caller base of one; the ordinary callee beside it starts at zero"))
+
+(test
+  inline-synth-order
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-synth-order-ok?)
+    "the hotter candidate is armed first whatever order the caller's walk found the sites in"))
 
 (test
   inline-checked-relaxed-reserve

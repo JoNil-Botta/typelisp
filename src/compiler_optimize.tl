@@ -119602,6 +119602,439 @@
           (set! root (+ root 1))))
       (OptSccResult scc-of (opt-scc-copy-order order-scratch scc-count)))))
 
+;; --- synthetic entry counts: how often the CALL GRAPH says a function runs --
+;;
+;; The census's hot reference count (opt-inline-census-hot-refcount) answers
+;; "how hot are the places that NAME this function", and the checked tier reads
+;; it as the caller's own frequency. It is one call level deep, and that is
+;; exactly as far as it can see: a helper reached through two straight-line
+;; wrappers from a doubly nested loop weighs what its two wrapper call sites
+;; weigh, which is the same as if `main` called it twice.
+;;
+;; Measured on callgraph_scc, whose three hashmap accessors are 458M of its 790M
+;; instructions and which clang inlines outright: `cg-map-probe` is reached as
+;; `cg-census-blocks` (a depth-2 site, weight 64) -> `cg-census-add-ref` ->
+;; `cg-census-bump-map` -> `cg-map-get-value-or` -> `cg-map-probe`, and the
+;; composite frequency the tier read at that last site was FOUR -- below its
+;; floor of one census weight -- so a callee running a third of the program was
+;; refused as cold. Nothing about the site is wrong; the count simply stops one
+;; level above it.
+;;
+;; So the count is propagated over the call graph, which is the construction
+;; every production inliner uses for this reading (LLVM's
+;; SyntheticCountsPropagation over its block frequencies, GCC's static profile):
+;; a function's synthetic count is what its callers' counts deliver to it,
+;;
+;;   synth(F) = base(F) + sum, over every direct call site s of F in a caller G,
+;;              of weight(s) * synth(G)
+;;
+;; where weight(s) is the census's own depth ladder (8^min(depth,2)) read at s's
+;; block, and base(F) is 1 exactly where this compilation cannot see F's callers
+;; -- the entry, an address-taken function, a function nothing else calls -- and
+;; 0 everywhere else, so an ordinary function's whole count is what reaches it.
+;;
+;; The recurrence is the census's own count with the caller's count folded in,
+;; so it is never smaller than the census's: with every count at least one,
+;; `sum w(s) * synth(G) >= sum w(s)`, and that sum IS hotcount(F). No site that
+;; cleared a frequency floor on the old reading stops clearing it on this one.
+;;
+;; THE ORDER IS THE CALL GRAPH'S OWN. opt-scc-compute condenses the graph into
+;; SCCs bottom-up (Tarjan pops a callee's component first), so walking that
+;; order in REVERSE visits every caller before its callees and one pass finishes
+;; the acyclic part exactly. Inside a recursive SCC no such order exists, so a
+;; component's members push to EACH OTHER for a bounded number of rounds -- which
+;; is where a recursive descent's own repetition is counted -- and only then push
+;; outside, once per member, so a callee below the component is credited its
+;; caller's finished count and no more. Both walks take an SCC's members in slot
+;; order, so the result is a function of the program text alone.
+;;
+;; Every arithmetic step saturates at opt-inline-synth-cap. A depth-2 weight
+;; multiplied down a five-level chain already overflows nothing the tier can
+;; read, and the counts are consumed only as an ORDER and against a floor, so a
+;; saturated count has already said everything that is asked of it.
+(define (opt-inline-synth-cap) : i64
+  1073741824)
+
+;; Rounds a recursive component's members push to each other before the
+;; component pushes outside. Two is what separates a recursive descent from a
+;; straight-line one; past that the rounds only multiply a number the cap
+;; bounds, and each one costs a walk of every member's blocks.
+(define (opt-inline-synth-rounds) : i64
+  2)
+
+(define (opt-inline-synth-add [left : i64] [right : i64]) : i64
+  (let
+    [sum : i64 (+ left right)]
+    (if (or (< sum 0) (> sum (opt-inline-synth-cap)))
+      (opt-inline-synth-cap)
+      sum)))
+
+(define (opt-inline-synth-mul [left : i64] [right : i64]) : i64
+  (if (or (< left 1) (< right 1))
+    0
+    (if (> left (/ (opt-inline-synth-cap) right))
+      (opt-inline-synth-cap)
+      (* left right))))
+
+;; The counts, keyed by OptFunctionIndex dense slot. The scratch outlives
+;; optimizer arena rewinds for the same reason the census depth table does, so
+;; it grows in the IR label arena.
+(define opt-inline-synth-slots : (__tl_dyn-array i64)
+  (__tl_make-array i64 64))
+(define opt-inline-synth-count : i64
+  0)
+(define opt-inline-synth-active? : bool
+  false)
+
+(define (opt-inline-synth-reserve! [count : i64]) : unit
+  (if (<= count (array-length opt-inline-synth-slots))
+    unit
+    (let
+      [size : i64 (array-length opt-inline-synth-slots)]
+      (begin
+        (while (< size count)
+          (set! size (* size 2)))
+        (in-arena
+          (arena.Arena (ir.compiler-ir-label-arena))
+          (set! opt-inline-synth-slots (__tl_make-array i64 size)))))))
+
+(define (opt-inline-synth-at [slot : i64]) : i64
+  (if (and opt-inline-synth-active? (>= slot 0) (< slot opt-inline-synth-count))
+    (array-ref opt-inline-synth-slots slot)
+    0))
+
+(define (opt-inline-synth-for-name [index : OptFunctionIndex] [name : i64]) : i64
+  (if (not opt-inline-synth-active?)
+    0
+    (match (opt-function-index-slot index name)
+      [(option_i64.Some slot) (opt-inline-synth-at slot)]
+      [(option_i64.None) 0])))
+
+;; Are the counts built? A walk entry that never built them -- a unit fixture
+;; driving one caller by hand -- reads the census's one-level count instead, so
+;; every such fixture keeps asserting what it asserted.
+(define (opt-inline-synth-ready?) : bool
+  opt-inline-synth-active?)
+
+(define (opt-inline-synth-reset!) : unit
+  (begin
+    (set! opt-inline-synth-active? false)
+    (set! opt-inline-synth-count 0)))
+
+;; The callee of a direct call, or -1. Deliberately the same four instruction
+;; forms opt-callgraph-instr reads, so a weighted edge exists exactly where the
+;; call graph has an edge; an address-taken function value is a base, not an
+;; edge, for the reason that comment gives.
+(define (opt-inline-synth-call-callee [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.Call _ name _ _) name]
+    [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
+      (compiler-opt-box-field-shared-view payload-box name)]
+    [(ir.CompilerIrInstr.SpmdCall payload-box)
+      (compiler-opt-box-field-shared-view payload-box callee)]
+    [(ir.CompilerIrInstr.TailCall name _ _) name]
+    [_ (- 0 1)]))
+
+;; Credit one call site. `inside?` selects which half of the caller's edges this
+;; pass is for: the ones that stay inside its own SCC, or the ones that leave
+;; it.
+(define (opt-inline-synth-push-site!
+  [index : OptFunctionIndex]
+  [scc-of : (__tl_dyn-array i64)]
+  [caller-scc : i64]
+  [inside? : bool]
+  [amount : i64]
+  [name : i64]) : unit
+  (if (< name 0)
+    unit
+    (match (opt-function-index-slot index name)
+      [(option_i64.None) unit]
+      [(option_i64.Some slot)
+        (if (if inside?
+          (= (array-ref scc-of slot) caller-scc)
+          (not (= (array-ref scc-of slot) caller-scc)))
+          (set!
+            (array-ref opt-inline-synth-slots slot)
+            (opt-inline-synth-add
+              (array-ref opt-inline-synth-slots slot)
+              amount))
+          unit)])))
+
+(define (opt-inline-synth-push-instrs!
+  [index : OptFunctionIndex]
+  [scc-of : (__tl_dyn-array i64)]
+  [caller-scc : i64]
+  [inside? : bool]
+  [amount : i64]
+  [instrs : ir.CompilerIrInstrSeq]) : unit
+  (let
+    [count : i64 instrs.len]
+    [i : i64 0]
+    (while (< i count)
+      (begin
+        (opt-inline-synth-push-site!
+          (compiler-opt-global-shared-view index)
+          (compiler-opt-global-shared-view scc-of)
+          caller-scc
+          inside?
+          amount
+          (opt-inline-synth-call-callee
+            (compiler-opt-global-array-element-shared-view instrs.slots i)))
+        (set! i (+ i 1))))))
+
+;; `position` is the block's index in the caller's block order, the same order
+;; opt-inline-census-depths-build! numbered, so each block credits its sites
+;; with the caller's count times its own depth weight.
+(define (opt-inline-synth-push-blocks!
+  [index : OptFunctionIndex]
+  [scc-of : (__tl_dyn-array i64)]
+  [caller-scc : i64]
+  [inside? : bool]
+  [synth : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [position : i64]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (begin
+            (opt-inline-synth-push-instrs!
+              (compiler-opt-global-shared-view index)
+              (compiler-opt-global-shared-view scc-of)
+              caller-scc
+              inside?
+              (opt-inline-synth-mul
+                synth
+                (opt-inline-census-depth-weight
+                  (opt-inline-census-depth-at position)))
+              instrs)
+            (opt-inline-synth-push-blocks!
+              (compiler-opt-global-shared-view index)
+              (compiler-opt-global-shared-view scc-of)
+              caller-scc
+              inside?
+              synth
+              (compiler-opt-box-shared-view rest)
+              (+ position 1)))])]
+    ;; Read-only: scan the sequence instead of materialising a block cons chain
+    ;; to walk once (refs #5729).
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64
+          (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+        [i : i64 0]
+        (while (< i count)
+          (begin
+            (match (ir.compiler-ir-block-seq-ref
+              (compiler-opt-global-shared-view seq)
+              i)
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (opt-inline-synth-push-instrs!
+                  (compiler-opt-global-shared-view index)
+                  (compiler-opt-global-shared-view scc-of)
+                  caller-scc
+                  inside?
+                  (opt-inline-synth-mul
+                    synth
+                    (opt-inline-census-depth-weight
+                      (opt-inline-census-depth-at (+ position i))))
+                  instrs)])
+            (set! i (+ i 1)))))]))
+
+(define (opt-inline-synth-push-function!
+  [index : OptFunctionIndex]
+  [scc-of : (__tl_dyn-array i64)]
+  [slot : i64]
+  [inside? : bool]) : unit
+  (let
+    [synth : i64 (array-ref opt-inline-synth-slots slot)]
+    [caller-scc : i64 (array-ref scc-of slot)]
+    (if (< synth 1)
+      unit
+      (match (opt-function-index-at-slot
+        (compiler-opt-global-shared-view index)
+        slot)
+        [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+          (begin
+            (opt-inline-census-depths-build!
+              (compiler-opt-global-shared-view blocks))
+            (opt-inline-synth-push-blocks!
+              index
+              scc-of
+              caller-scc
+              inside?
+              synth
+              blocks
+              0))]))))
+
+(define (opt-inline-synth-mark-called-from!
+  [callees : OptSlotList]
+  [from-slot : i64]
+  [called : (__tl_dyn-array bool)]) : unit
+  (match callees
+    [(OptSlotList.Nil) unit]
+    [(OptSlotList.Cons slot rest)
+      (begin
+        (if (= slot from-slot)
+          unit
+          (set! (array-ref called slot) true))
+        (opt-inline-synth-mark-called-from!
+          (compiler-opt-box-shared-view rest)
+          from-slot
+          (compiler-opt-global-shared-view called)))]))
+
+;; Which functions some OTHER function calls. A self-edge does not count: a
+;; recursive function whose only caller is itself has no entry the program can
+;; see, and a count of zero would leave its whole component at zero.
+(define (opt-inline-synth-mark-called!
+  [graph : OptCallGraph]
+  [called : (__tl_dyn-array bool)]) : unit
+  (let
+    [slot : i64 0]
+    [count : i64 graph.count]
+    (while (< slot count)
+      (begin
+        (opt-inline-synth-mark-called-from!
+          (compiler-opt-global-array-element-shared-view graph.edges slot)
+          slot
+          (compiler-opt-global-shared-view called))
+        (set! slot (+ slot 1))))))
+
+(define (opt-inline-synth-base
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [called? : bool]
+  [slot : i64]) : i64
+  (match (opt-function-index-at-slot
+    (compiler-opt-global-shared-view index)
+    slot)
+    [(ir.CompilerIrFunction.Function name _ _ _ _)
+      (if (or
+        (not called?)
+        (string.eq (ir.compiler-ir-symbol-text name) "main")
+        (opt-inline-census-address-taken?
+          (compiler-opt-global-shared-view index)
+          census
+          name))
+        1
+        0)]))
+
+(define (opt-inline-synth-seed!
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [graph : OptCallGraph]
+  [count : i64]) : unit
+  (let
+    [called : (__tl_dyn-array bool) (__tl_make-array bool count)]
+    [slot : i64 0]
+    (begin
+      (opt-inline-synth-mark-called!
+        (compiler-opt-global-shared-view graph)
+        (compiler-opt-global-shared-view called))
+      (while (< slot count)
+        (begin
+          (set!
+            (array-ref opt-inline-synth-slots slot)
+            (opt-inline-synth-base
+              (compiler-opt-global-shared-view index)
+              (compiler-opt-global-shared-view census)
+              (array-ref called slot)
+              slot))
+          (set! slot (+ slot 1)))))))
+
+;; One SCC, top-down.
+(define (opt-inline-synth-group!
+  [index : OptFunctionIndex]
+  [scc-of : (__tl_dyn-array i64)]
+  [slot-order : (__tl_dyn-array i64)]
+  [start : i64]
+  [end : i64]
+  [recursive? : bool]) : unit
+  (let
+    [rounds : i64
+      (if recursive?
+        (opt-inline-synth-rounds)
+        0)]
+    [round : i64 0]
+    [position : i64 0]
+    (begin
+      (while (< round rounds)
+        (begin
+          (set! position start)
+          (while (< position end)
+            (begin
+              (opt-inline-synth-push-function!
+                (compiler-opt-global-shared-view index)
+                (compiler-opt-global-shared-view scc-of)
+                (array-ref slot-order position)
+                true)
+              (set! position (+ position 1))))
+          (set! round (+ round 1))))
+      (set! position start)
+      (while (< position end)
+        (begin
+          (opt-inline-synth-push-function!
+            (compiler-opt-global-shared-view index)
+            (compiler-opt-global-shared-view scc-of)
+            (array-ref slot-order position)
+            false)
+          (set! position (+ position 1)))))))
+
+;; Build the counts for one program. `slot-order` is opt-inline-slot-order's
+;; array -- every slot grouped by SCC, the groups in the bottom-up order -- so
+;; the groups are contiguous and walking them from the last one back is the
+;; top-down order the propagation needs.
+(define (opt-inline-synth-build!
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [graph : OptCallGraph]
+  [scc-result : OptSccResult]
+  [slot-order : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64
+      (opt-function-index-count (compiler-opt-global-shared-view index))]
+    [scc-of : (__tl_dyn-array i64) scc-result.scc-of]
+    [end : i64 count]
+    [start : i64 0]
+    [group-scc : i64 0]
+    (begin
+      (opt-inline-synth-reset!)
+      (if (< count 1)
+        unit
+        (begin
+          (opt-inline-synth-reserve! count)
+          (opt-inline-synth-seed!
+            (compiler-opt-global-shared-view index)
+            census
+            (compiler-opt-global-shared-view graph)
+            count)
+          (set! opt-inline-synth-count count)
+          (set! opt-inline-synth-active? true)
+          (while (> end 0)
+            (begin
+              (set! start (- end 1))
+              (set! group-scc (array-ref scc-of (array-ref slot-order start)))
+              (while (and
+                (> start 0)
+                (=
+                  (array-ref scc-of (array-ref slot-order (- start 1)))
+                  group-scc))
+                (set! start (- start 1)))
+              (opt-inline-synth-group!
+                (compiler-opt-global-shared-view index)
+                (compiler-opt-global-shared-view scc-of)
+                (compiler-opt-global-shared-view slot-order)
+                start
+                end
+                (or
+                  (> (- end start) 1)
+                  (opt-callgraph-has-edge?
+                    (compiler-opt-global-shared-view graph)
+                    (array-ref slot-order start)
+                    (array-ref slot-order start))))
+              (set! end start))))))))
+
 ;; Devirtualize syntactically known function values before program-level
 ;; inlining, so the existing direct-call inliner can see them. A typed local
 ;; function binding lowers as `Mov dst, Function` followed by an indirect call
@@ -124692,35 +125125,46 @@
 ;; accessor or absorb import spends its gate's fuel and never the fuel the
 ;; caller's banked absorptions draw on. A candidate that reaches the verdict
 ;; only because a clause was relaxed for it -- a site below the depth floor, or
-;; a body the one-callee lock would have refused -- spends from HERE, and is
+;; a body the callee lock would have refused -- spends from HERE, and is
 ;; ranked behind every candidate that needed no relaxation
 ;; (opt-inline-checked-arm-next-target!). It can therefore neither take a core
 ;; candidate's verdict nor be priced ahead of one, which is the whole claim:
 ;; adding a relaxation may only ADD verdicts, never move them.
 ;;
-;; ONE PER CALLER. A relaxed candidate is a caller's marginal chance, not a
-;; second chain of them, and every relaxed accept the corpus measures is one
-;; caller's one site: `it-map-insert-from` into `it-intern-slice`
-;; (intern_table -719,598), `pl-owners-empty` into `pl-run-chunk`
-;; (peephole_lines -9,528), `ls-digit?` into `ls-hex-digit?` and
-;; `ls-colon-symbol-head?` into `ls-colon-token-end` (lex_source -641,520). The
-;; callers that wanted more than one wanted them for reverts: `ssa-def-blocks`
-;; and `ls-tokenize` each offered three and kept none.
+;; ONE PER BODY THE LOCK ALLOWS BEYOND THE FIRST. A relaxed candidate is a
+;; caller's marginal chance rather than a chain of them, and every relaxed
+;; accept the corpus measured when the lock allowed exactly two bodies was one
+;; caller's one site: `it-map-insert-from` into `it-intern-slice` (intern_table
+;; -719,598), `pl-owners-empty` into `pl-run-chunk` (peephole_lines -9,528),
+;; `ls-digit?` into `ls-hex-digit?` and `ls-colon-symbol-head?` into
+;; `ls-colon-token-end` (lex_source -641,520). The callers that wanted more than
+;; one wanted them for reverts: `ssa-def-blocks` and `ls-tokenize` each offered
+;; three and kept none.
+;;
+;; The allowance is the lock's own bound less the one body that needs no
+;; relaxation, so it is not a second thing to tune: at the two-body lock it is
+;; the one chance those measurements were taken under, and it widens only
+;; because the lock does (opt-inline-checked-max-callees).
 (define (opt-inline-checked-max-caller-relaxed-verdicts) : i64
-  1)
+  (- (opt-inline-checked-max-callees) 1))
 
-;; ...and program-wide, one such chance for each caller the tier's own budget
+;; ...and program-wide, that allowance for each caller the tier's own budget
 ;; could serve: twenty-four verdicts at four per caller is six callers. The
-;; reserve is stated as that quotient rather than as a number of its own,
-;; because it is not a second thing to tune -- it is the same bound read at the
-;; granularity the relaxations spend it in.
-(define (opt-inline-checked-relaxed-program-budget) : i64
+;; reserve is stated as that product rather than as a number of its own,
+;; because it is not a second thing to tune either -- it is the same bound read
+;; at the granularity the relaxations spend it in.
+(define (opt-inline-checked-relaxed-callers) : i64
   (/
     (opt-inline-checked-program-budget)
     (opt-inline-checked-max-caller-verdicts)))
 
+(define (opt-inline-checked-relaxed-program-budget) : i64
+  (*
+    (opt-inline-checked-relaxed-callers)
+    (opt-inline-checked-max-caller-relaxed-verdicts)))
+
 ;; How many sites one caller may end up with in the accepted table: its core
-;; verdicts and its relaxed one can all keep.
+;; verdicts and its relaxed ones can all keep.
 (define (opt-inline-checked-max-caller-accepts) : i64
   (+
     (opt-inline-checked-max-caller-verdicts)
@@ -124785,7 +125229,7 @@
 ;; The tier's own state (disarmed, budget, target key) is not a property of the
 ;; candidate, so those codes exist to be returned and are not traced: on a
 ;; target walk every site but one answers `not-target`, and a trace of that is a
-;; trace of the walk, not of the tier. Tracing starts at the one-callee lock,
+;; trace of the walk, not of the tier. Tracing starts at the callee lock,
 ;; which is the first clause that judges the candidate itself.
 (define (opt-inline-checked-clause-admitted) : i64
   0)
@@ -124913,9 +125357,12 @@
 
 ;; The ACCEPTED table: the caller's sites that have already been priced and
 ;; kept, three columns per row (callee name, block label, site position), room
-;; for opt-inline-checked-max-caller-accepts rows.
+;; for opt-inline-checked-max-caller-accepts rows. That is the per-caller
+;; verdict cap plus the relaxations' per-caller allowance, so it grows with the
+;; lock's bound N: four plus N - 1 rows, and the table is sized for the largest
+;; N the ablation measured (eight, so eleven rows of three).
 (define opt-inline-checked-accepted : (__tl_dyn-array i64)
-  (__tl_make-array i64 15))
+  (__tl_make-array i64 33))
 (define opt-inline-checked-accepted-count : i64
   0)
 
@@ -124957,17 +125404,20 @@
 ;; half the accept window's floor demands? The window keeps a site anywhere in
 ;; [boundary/2, 2*boundary]; an accept at the top of that range is one the model
 ;; and the measurement agree on outright, and an accept near its floor is one
-;; that only just repaid. The one-callee lock reads the first accept's answer.
+;; that only just repaid. The verdict holds every body past the caller's first
+;; to it, and a fixture reads it back through
+;; opt-inline-checked-last-margin-clear-current?.
 (define opt-inline-checked-last-margin-clear? : bool
   false)
 
 (define (opt-inline-checked-publish-margin! [clear? : bool]) : unit
   (set! opt-inline-checked-last-margin-clear? clear?))
 
-;; ...banked at the moment the caller's FIRST site was accepted, which is the
-;; only accept the lock's rule is about.
-(define opt-inline-checked-first-margin-clear? : bool
-  false)
+;; ...for a fixture that drives the sequence by hand and asserts which reading
+;; the last verdict published.
+(define (opt-inline-checked-last-margin-clear-current?) : bool
+  opt-inline-checked-last-margin-clear?)
+
 (define opt-inline-caller-checked-blocks : i64
   0)
 (define opt-inline-caller-checked-taken? : bool
@@ -125006,6 +125456,13 @@
 (define opt-inline-checked-trace-frequency : i64
   (- 0 1))
 
+;; ...and the census's one-level hot reference count for the same caller, which
+;; is what the composite frequency was before the call graph's synthetic counts
+;; replaced it. It is traced beside the new number so a verdict table reads as
+;; the comparison it is.
+(define opt-inline-checked-trace-hot : i64
+  (- 0 1))
+
 ;; `--trace-passes` observability: one line per checked-tier candidate, naming
 ;; the callee, the caller and the site, the two numbers the site clauses read,
 ;; and the clause that decided. The string is built inside the guard, so a
@@ -125032,6 +125489,8 @@
         (string.int->string opt-inline-checked-trace-depth)
         "|frequency="
         (string.int->string opt-inline-checked-trace-frequency)
+        "|hot="
+        (string.int->string opt-inline-checked-trace-hot)
         "|instrs="
         (string.int->string callee-instrs)
         "|np="
@@ -125049,7 +125508,7 @@
 ;; free inline would retire, the modelled saving, and which way the two-sided
 ;; window fell. `margin` reports whether the whole modelled saving survived
 ;; re-optimization or only the half the window's floor demands -- the reading
-;; the one-callee lock consults before it lets a caller take a second body.
+;; every body past the caller's first must deliver in its own right.
 (define (opt-inline-checked-trace-verdict!
   [callee-name : i64]
   [site-depth : i64]
@@ -125125,7 +125584,6 @@
     (set! opt-inline-checked-caller-relaxed-verdicts 0)
     (set! opt-inline-checked-target-relaxed? false)
     (set! opt-inline-checked-last-margin-clear? false)
-    (set! opt-inline-checked-first-margin-clear? false)
     (set! opt-inline-checked-scanning? true)))
 
 (define (opt-inline-checked-program-begin!) : unit
@@ -125251,9 +125709,11 @@
             0))
         (set! opt-inline-checked-scan-count (+ opt-inline-checked-scan-count 1))))))
 
-;; ONE CALLEE PER CALLER, and it is a measured rule rather than a budget.
+;; A BOUNDED NUMBER OF CALLEES PER CALLER, and it is a measured rule rather
+;; than a budget.
 ;;
-;; A caller's later sites are restricted to the callee its first ACCEPT named.
+;; A caller's later sites were once restricted to the callee its first ACCEPT
+;; named, and are now restricted to a bounded number of distinct bodies.
 ;; The sequence's wins across the corpus are all one body landing at the several
 ;; sites that share it -- a map lookup at two probe sites of one caller
 ;; (hashmap_get -11.40%), a line copy at two sites of a chunk runner -- and its
@@ -125268,29 +125728,44 @@
 ;;
 ;; A refused candidate does not claim the caller: only an accept does.
 ;;
-;; WHY THE LOCK NOW OPENS ONCE, AND ONLY BEHIND TWO CLEAR MARGINS. Both losses
-;; the rule was written for were measured before IT-1, IT-2, LP-1, R3S-1 and R4;
-;; re-measured on this tree the interner's own case has changed sign --
+;; WHY THE LOCK IS NOW A BOUND AND NOT A MARGIN GATE. Both losses the rule was
+;; written for were measured before IT-1, IT-2, LP-1, R3S-1 and R4; re-measured
+;; on this tree the interner's own case has changed sign --
 ;; `it-map-insert-from` as a SECOND body in `it-intern-slice` is worth
 ;; intern_table -0.20%, where the recorded reading was +1.60%. What has not
-;; changed is the argument: a second, different body is a second independent
+;; changed is the argument: another, different body is another independent
 ;; demand on the caller's frame, and the plan prices that demand through an
 ;; estimate.
 ;;
-;; So the relaxation is spent on the case where the estimate is not what
-;; decided, and the tier already has a reading of that. The accept window keeps
-;; a site anywhere between half its modelled saving and twice it; an accept at
-;; the window's floor repaid only the half the floor demands and is exactly the
-;; verdict the estimate's error decided. A caller may therefore price a second
-;; body only when its FIRST accept delivered the whole modelled saving, and the
-;; second body is kept only when it delivers its own whole modelled saving too
-;; (see opt-inline-checked-verdict). Two clear margins, and no third body: two
-;; distinct bodies is what the corpus measured.
+;; The answer to an estimate that can be wrong is the reading the tier already
+;; has of exactly that. The accept window keeps a site anywhere between half its
+;; modelled saving and twice it; an accept at the window's floor repaid only the
+;; half the floor demands and is exactly the verdict the estimate's error
+;; decided. So EVERY BODY PAST THE FIRST IS HELD TO THE WHOLE MODELLED SAVING IN
+;; ITS OWN RIGHT (see opt-inline-checked-verdict), which is where that discipline
+;; decides something: it decides whether the body is KEPT. Measured on this tree
+;; it is what separates the interner's two second-body candidates:
+;; `it-map-insert-from` clears it and is kept; `it-hash-words` into `it-grow!`
+;; models 62 against a boundary of 72, clears the window's floor and not the
+;; clear margin, and reverts.
 ;;
-;; Measured on this tree, that pair of conditions is what separates the
-;; interner's two second-body candidates: `it-map-insert-from` clears both and
-;; is kept; `it-hash-words` into `it-grow!` models 62 against a boundary of 72,
-;; clears the window's floor and not the clear margin, and reverts.
+;; What the lock itself used to add on top -- that a caller could not even PRICE
+;; another body unless its first accept came out clean -- prices nothing and
+;; refuses by proxy. Two of the corpus's hottest candidates die on it and on
+;; nothing else: `cg-census-add-ref` into `cg-census-blocks` (a depth-2 site at
+;; composite frequency 4,096, richness 166,818) is refused because
+;; `cg-census-add-address` -- the SAME caller's other accessor, ranked one place
+;; ahead of it and worth less -- was kept at saving 384 against a boundary of
+;; 448, and `cg-census-absorb-class` into `cg-program-fold` is refused because
+;; `cg-census-refcount` was kept at 40 against 56. A slim accept is a statement
+;; about the body that was priced, not about the next one.
+;;
+;; So the lock states what it is for: a BOUND of opt-inline-checked-max-callees
+;; distinct bodies per caller, which is a compile-time bound and nothing else --
+;; every body still gets its own full re-plan verdict, and each is still charged
+;; to the relaxations' reserve and ranked behind every core row. The ranking
+;; decides WHICH bodies, and with the composite frequency propagated over the
+;; call graph the ranking is now the program's own hotness.
 ;;
 ;; A body admitted by this relaxation is a RELAXED candidate on the same terms
 ;; as a below-the-floor site: ranked last, and charged to the relaxations' own
@@ -125335,45 +125810,66 @@
 (define (opt-inline-checked-accepted-callee-count) : i64
   (opt-inline-checked-accepted-callees-from 0 0))
 
-;; How many DISTINCT callees one caller may keep. One outright; a second only
-;; behind a first accept whose whole modelled saving survived.
+;; How many DISTINCT callee bodies one caller may keep: N, and the lock is a
+;; BOUND on bodies rather than a rule about which body. What decides which of
+;; them a caller gets is the ranking, and the ranking is the composite
+;; frequency (opt-inline-checked-richness reads it as the numerator of worth per
+;; instruction copied), which is now the call graph's synthetic count rather
+;; than a count of the caller's own reference sites -- so the bodies a caller
+;; spends its allowance on are the ones the program actually runs.
+;;
+;; Every body past the first is still held to the WHOLE modelled saving by its
+;; own verdict (opt-inline-checked-verdict), which is the reading CB-2 measured:
+;; `it-hash-words` into `it-grow!` models 62 against a boundary of 72, clears
+;; the window's floor and not the clear margin, and reverts. N only says how
+;; many bodies a caller may put to that question.
+;;
+;; N is therefore a compile-time bound, not a correctness one: every body gets
+;; its own full re-plan verdict, and a caller's bodies are charged to the same
+;; two budgets as before (a body past the first is a RELAXED candidate, ranked
+;; behind every core row and drawing on the relaxations' reserve, which is
+;; stated as N - 1 per caller for exactly this reason).
+;;
+;; MEASURED at N = 2, 4 and 8 (INL-1). The twenty-three instruction-count rows
+;; are identical at 4 and 8 and worse at 2 -- ssa_construct pays +6,643,836
+;; there, because one relaxed verdict per caller is not enough for
+;; `ssa-materialize`, which holds two core sites and then the `ssa-instr-next`
+;; site worth 832 against a boundary of 832. What separates 4 from 8 is the
+;; program the corpus cannot show: a self-compile keeps 23 bodies at 4 and 41 at
+;; 8, and the compiler those verdicts build runs 88,888,952,576 instructions
+;; against 88,714,663,067 -- 0.196% apart, and only 8 is faster than the
+;; unpropagated compiler. The verdict count rises 30 -> 42 -> 66 and the opt2
+;; self-compile costs 22.80s -> 22.79s -> 23.02s, which is what "the budget is
+;; the compile-time bound" is worth in seconds.
 (define (opt-inline-checked-max-callees) : i64
-  2)
+  8)
 
-;; The rule with the margin passed rather than read, so the relaxation can be
-;; pinned on its own against a caller's accepted table.
-(define (opt-inline-checked-callee-allowed-with?
-  [callee-name : i64]
-  [margin-clear? : bool]) : bool
+;; Is this callee the caller's FIRST body -- nothing accepted yet, or a body
+;; this caller already keeps? That is the lock read with nothing relaxed for it,
+;; and it is what a CORE row has to satisfy.
+(define (opt-inline-checked-callee-first? [callee-name : i64]) : bool
   (or
     (= opt-inline-checked-accepted-count 0)
-    (opt-inline-checked-accepted-callee-from? callee-name 0)
-    (and
-      margin-clear?
-      (<
-        (opt-inline-checked-accepted-callee-count)
-        (opt-inline-checked-max-callees)))))
+    (opt-inline-checked-accepted-callee-from? callee-name 0)))
 
 ;; Is the armed target a body this caller has not kept before? Only such a
-;; site can be reaching the verdict through the relaxed lock.
+;; site can be reaching the verdict through the relaxed lock, and it is the
+;; question the verdict asks before it holds a site to the clear margin.
 (define (opt-inline-checked-second-body?) : bool
-  (and
-    (> opt-inline-checked-accepted-count 0)
-    (not
-      (opt-inline-checked-accepted-callee-from?
-        opt-inline-checked-target-callee
-        0))))
+  (not (opt-inline-checked-callee-first? opt-inline-checked-target-callee)))
 
 (define (opt-inline-checked-callee-allowed? [callee-name : i64]) : bool
-  (opt-inline-checked-callee-allowed-with?
-    callee-name
-    opt-inline-checked-first-margin-clear?))
+  (or
+    (opt-inline-checked-callee-first? callee-name)
+    (<
+      (opt-inline-checked-accepted-callee-count)
+      (opt-inline-checked-max-callees))))
 
 ;; A row's CLASS. A core row is one this tier would have offered a verdict with
 ;; no clause relaxed for it: its site cleared the unrelaxed depth floor, and its
-;; callee clears the one-callee lock read without the second-body relaxation
-;; (which is exactly opt-inline-checked-callee-allowed-with? asked with no
-;; margin). Every other row the full lock still admits is a relaxed row.
+;; callee is the caller's first body (which is exactly
+;; opt-inline-checked-callee-first?). Every other row the lock still admits is a
+;; relaxed row.
 ;;
 ;; The class is asked at ARMING time rather than recorded with the row, because
 ;; only half of it is a property of the row: the depth relaxation is fixed when
@@ -125382,9 +125878,7 @@
 (define (opt-inline-checked-row-core? [base : i64]) : bool
   (and
     (= (array-ref opt-inline-checked-scan (+ base 4)) 0)
-    (opt-inline-checked-callee-allowed-with?
-      (array-ref opt-inline-checked-scan base)
-      false)))
+    (opt-inline-checked-callee-first? (array-ref opt-inline-checked-scan base))))
 
 (define (opt-inline-checked-row-relaxed? [base : i64]) : bool
   (and
@@ -125552,13 +126046,6 @@
     (let
       [base : i64 (* opt-inline-checked-accepted-count 3)]
       (begin
-        ;; The lock's rule is about the caller's FIRST accept, so its margin is
-        ;; banked here and never overwritten by a later round's.
-        (if (= opt-inline-checked-accepted-count 0)
-          (set!
-            opt-inline-checked-first-margin-clear?
-            opt-inline-checked-last-margin-clear?)
-          unit)
         (set!
           (array-ref opt-inline-checked-accepted base)
           opt-inline-checked-target-callee)
@@ -125628,18 +126115,38 @@
         opt-inline-current-block-label
         0))))
 
+;; The caller's own count, in the currency the site frequency is priced in: the
+;; call graph's synthetic count where the propagation ran, and the census's
+;; one-level hot reference count where it did not -- a unit fixture that drives
+;; one caller's walk by hand never builds the counts, and should keep asserting
+;; what it asserted.
+(define (opt-inline-checked-caller-count
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]) : i64
+  (if (opt-inline-synth-ready?)
+    (opt-inline-synth-for-name index opt-inline-caller-name)
+    (opt-inline-census-hot-refcount index census opt-inline-caller-name)))
+
+;; The COMPOSITE frequency of a site: how often the caller runs, times the depth
+;; weight of the site's own block. The first factor is the call graph's
+;; synthetic count (opt-inline-synth-build!) rather than the caller's own
+;; reference count, which is what lets a site inside a wrapper two levels below
+;; a loop read as the hot site it is; the second is unchanged.
+;;
+;; The product saturates for the same reason the counts themselves do -- it is
+;; read as an order and against a floor -- and the census count the propagation
+;; replaced stays available for the trace (opt-inline-checked-trace-hot).
 (define (opt-inline-checked-site-frequency
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [site-weight : i64]) : i64
   (let
-    [caller-hot : i64
-      (opt-inline-census-hot-refcount index census opt-inline-caller-name)]
-    (*
+    [caller-count : i64 (opt-inline-checked-caller-count index census)]
+    (opt-inline-synth-mul
       site-weight
-      (if (< caller-hot 1)
+      (if (< caller-count 1)
         1
-        caller-hot))))
+        caller-count))))
 
 ;; An ALREADY-ACCEPTED site skips every clause below. Its growth was priced in
 ;; the round that kept it, and the two clauses that could refuse it now -- the
@@ -125696,6 +126203,7 @@
   (begin
     (set! opt-inline-checked-trace-depth (- 0 1))
     (set! opt-inline-checked-trace-frequency (- 0 1))
+    (set! opt-inline-checked-trace-hot (- 0 1))
     (cond
       [(not opt-inline-checked-active?) (opt-inline-checked-clause-disarmed)]
       [(opt-inline-checked-accepted?
@@ -125754,12 +126262,23 @@
           [frequency : i64
             (opt-inline-checked-site-frequency
               (compiler-opt-global-shared-view index)
-              census
+              (compiler-opt-global-shared-view census)
               site-weight)]
           [_publish : unit
             (begin
               (set! opt-inline-checked-trace-depth site-depth)
-              (set! opt-inline-checked-trace-frequency frequency))]
+              (set! opt-inline-checked-trace-frequency frequency)
+              ;; The count the propagation replaced is read for the trace and
+              ;; for nothing else, so a compile without the flag does not pay
+              ;; its map probe.
+              (if compiler-opt-debug-trace-passes
+                (set!
+                  opt-inline-checked-trace-hot
+                  (opt-inline-census-hot-refcount
+                    (compiler-opt-global-shared-view index)
+                    (compiler-opt-global-shared-view census)
+                    opt-inline-caller-name))
+                unit))]
           (cond
             [(< frequency (opt-inline-checked-min-frequency))
               (opt-inline-checked-clause-frequency)]
@@ -126086,10 +126605,9 @@
     ;; is the only honest reading of a two-sided estimate.
     [saving : i64 (- before after)]
     ;; The whole modelled saving survived, not merely the half the window's
-    ;; floor demands. The one-callee lock reads this off the caller's first
-    ;; accept before it will price a second body, and a second body is held to
-    ;; it in its own right: the relaxation is for the case both sides of the
-    ;; model agree on, not for the case the window's floor barely admits.
+    ;; floor demands. Every body past the caller's first is held to it: the
+    ;; relaxation is for the case both sides of the model agree on, not for the
+    ;; case the window's floor barely admits.
     [clear? : bool (>= saving boundary)]
     [keep? : bool
       (and
@@ -129956,12 +130474,19 @@
         (opt-function-index-build (compiler-opt-global-shared-view devirt))]
       [graph : OptCallGraph
         (opt-callgraph-build (compiler-opt-global-shared-view index))]
-      [scc-result : OptSccResult (opt-scc-compute graph)]
+      [scc-result : OptSccResult
+        (opt-scc-compute (compiler-opt-global-shared-view graph))]
       [census : OptInlineCensus
         (opt-inline-census-build (compiler-opt-global-shared-view index) devirt)]
       (begin
         (opt-inline-owned-state-install!
           (compiler-opt-global-shared-view index))
+        (opt-inline-synth-build!
+          (compiler-opt-global-shared-view index)
+          (compiler-opt-global-shared-view census)
+          (compiler-opt-global-shared-view graph)
+          (compiler-opt-global-shared-view scc-result)
+          (opt-inline-slot-order (compiler-opt-global-shared-view scc-result)))
         (opt-inline-checked-program-begin!)
         (opt-inline-process-scc-order!
           type-segment-bases
@@ -129971,6 +130496,7 @@
         (let
           [out : ir.CompilerIrFunctionSeq (opt-function-index-to-seq index)]
           (begin
+            (opt-inline-synth-reset!)
             (opt-inline-owned-state-reset! true)
             out))))))
 
@@ -129990,12 +130516,20 @@
         (opt-function-index-build (compiler-opt-global-shared-view devirt))]
       [graph : OptCallGraph
         (opt-callgraph-build (compiler-opt-global-shared-view index))]
-      [scc-result : OptSccResult (opt-scc-compute graph)]
+      [scc-result : OptSccResult
+        (opt-scc-compute (compiler-opt-global-shared-view graph))]
       [census : OptInlineCensus
         (opt-inline-census-build (compiler-opt-global-shared-view index) devirt)]
       [_install-owned-state : unit
         (opt-inline-owned-state-install!
           (compiler-opt-global-shared-view index))]
+      [_synth : unit
+        (opt-inline-synth-build!
+          (compiler-opt-global-shared-view index)
+          (compiler-opt-global-shared-view census)
+          (compiler-opt-global-shared-view graph)
+          (compiler-opt-global-shared-view scc-result)
+          (opt-inline-slot-order (compiler-opt-global-shared-view scc-result)))]
       [_begin-checked : unit (opt-inline-checked-program-begin!)]
       [next-spans : ir.CompilerSourceSpans
         (opt-inline-process-scc-order-with-spans
@@ -130009,6 +130543,7 @@
           (opt-function-index-to-seq index)
           next-spans)]
       (begin
+        (opt-inline-synth-reset!)
         (opt-inline-owned-state-reset! true)
         out))))
 

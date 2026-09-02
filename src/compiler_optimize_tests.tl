@@ -21168,21 +21168,66 @@
 (define (opt-inline-checked-seq-callee-c) : i64
   (opt-test-symbol "seq_callee_c"))
 
-;; THE LOCK, AND THE ONE ACCEPT THAT MAY OPEN IT. The rule the lock was written
-;; for -- "two different bodies make two independent demands, and the second is
-;; what pushes the caller's own loops into spilling" -- is the sentence the
-;; re-measurement now contradicts. What survives is the case the MODEL gets
-;; wrong, and the accept window already reads that: a site kept at the window's
-;; floor repaid only half its modelled saving and is exactly the accept the
-;; estimate's error decided. So a caller whose first accept was slim stays
-;; locked, a caller whose first accept delivered the whole modelled saving may
-;; price a second body, and no caller may price a third.
-(define (compiler-optimize-inline-checked-lock-margin-ok?) : bool
+;; THE LOCK AS A BOUND. The rule the lock was written for -- "two different
+;; bodies make two independent demands, and the second is what pushes the
+;; caller's own loops into spilling" -- is the sentence the re-measurement now
+;; contradicts, and what protects the caller is the VERDICT: every body past
+;; the first has to deliver its whole modelled saving in its own right. What is
+;; left of the lock is a compile-time bound: a caller may keep at most
+;; opt-inline-checked-max-callees distinct bodies, and the ranking -- worth per
+;; instruction copied, whose worth is the composite frequency the call graph's
+;; synthetic counts now supply -- decides which.
+;;
+;; So: N distinct bodies are admitted in the order they are ranked, the (N+1)th
+;; is refused, and a SLIM accept no longer refuses the next body by proxy (the
+;; reading is still published, and the verdict is still the one that reads it).
+(define (opt-inline-checked-lock-bodies-fill [row : i64] [count : i64]) : unit
+  (if (>= row count)
+    unit
+    (begin
+      (compiler_optimize.opt-inline-checked-scan-record!
+        (opt-inline-checked-seq-body-callee row)
+        (+ 400 row)
+        row
+        (- 900 row)
+        false)
+      (opt-inline-checked-lock-bodies-fill (+ row 1) count))))
+
+;; Arm, spend and ACCEPT one body at a time, reporting how many distinct bodies
+;; the caller was allowed to take before the lock refused one.
+(define (opt-inline-checked-lock-bodies-take
+  [row : i64]
+  [count : i64]
+  [taken : i64]) : i64
+  (if (>= row count)
+    taken
+    (if (not (compiler_optimize.opt-inline-checked-arm-next-target!))
+      taken
+      (let
+        [_spend : unit (compiler_optimize.opt-inline-checked-spend-verdict!)]
+        [_accept : unit (compiler_optimize.opt-inline-checked-accept-target!)]
+        (opt-inline-checked-lock-bodies-take (+ row 1) count (+ taken 1))))))
+
+;; A distinct callee per row, so the lock counts bodies rather than sites.
+(define (opt-inline-checked-seq-body-callee [row : i64]) : i64
+  (cond
+    [(= row 0) (opt-inline-checked-seq-callee-a)]
+    [(= row 1) (opt-inline-checked-seq-callee-b)]
+    [(= row 2) (opt-inline-checked-seq-callee-c)]
+    [(= row 3) (opt-test-symbol "seq_callee_d")]
+    [(= row 4) (opt-test-symbol "seq_callee_e")]
+    [(= row 5) (opt-test-symbol "seq_callee_f")]
+    [(= row 6) (opt-test-symbol "seq_callee_g")]
+    [(= row 7) (opt-test-symbol "seq_callee_h")]
+    [else (opt-test-symbol "seq_callee_i")]))
+
+(define (compiler-optimize-inline-checked-lock-bodies-ok?) : bool
   (let
+    [bound : i64 (compiler_optimize.opt-inline-checked-max-callees)]
     [a : i64 (opt-inline-checked-seq-callee-a)]
     [b : i64 (opt-inline-checked-seq-callee-b)]
-    [c : i64 (opt-inline-checked-seq-callee-c)]
-    ;; a first accept whose margin was SLIM keeps the caller locked
+    ;; A SLIM accept of the first body no longer speaks for the second: the
+    ;; reading is published, and the lock does not read it.
     [_begin : unit (compiler_optimize.opt-inline-checked-program-begin!)]
     [_slim : unit (compiler_optimize.opt-inline-checked-publish-margin! false)]
     [_scan-slim : unit
@@ -21192,58 +21237,52 @@
       (begin
         (compiler_optimize.opt-inline-checked-spend-verdict!)
         (compiler_optimize.opt-inline-checked-accept-target!))]
+    [slim-published? : bool
+      (compiler_optimize.opt-inline-checked-last-margin-clear-current?)]
     [slim-same? : bool (compiler_optimize.opt-inline-checked-callee-allowed? a)]
     [slim-other? : bool
       (compiler_optimize.opt-inline-checked-callee-allowed? b)]
-    ;; the same sequence with the whole modelled saving surviving
-    [_begin-clear : unit (compiler_optimize.opt-inline-checked-program-begin!)]
-    [_clear : unit (compiler_optimize.opt-inline-checked-publish-margin! true)]
-    [_scan-clear : unit
-      (compiler_optimize.opt-inline-checked-scan-record! a 60 0 900 false)]
-    [armed-clear? : bool
-      (compiler_optimize.opt-inline-checked-arm-next-target!)]
-    [_keep-clear : unit
-      (begin
-        (compiler_optimize.opt-inline-checked-spend-verdict!)
-        (compiler_optimize.opt-inline-checked-accept-target!))]
-    [clear-other? : bool
-      (compiler_optimize.opt-inline-checked-callee-allowed? b)]
-    ;; ...and the second body is ranked, armed and kept
+    ;; ...and the armed second body is the one the verdict holds to the clear
+    ;; margin, which is where that discipline decides something
     [_scan-second : unit
-      (compiler_optimize.opt-inline-checked-scan-record! b 61 1 800 false)]
+      (compiler_optimize.opt-inline-checked-scan-record! b 51 1 800 false)]
     [armed-second? : bool
       (compiler_optimize.opt-inline-checked-arm-next-target!)]
     [second-callee : i64
       (compiler_optimize.opt-inline-checked-target-callee-current)]
-    ;; the armed target is a body this caller has not kept before, which is the
-    ;; question the verdict reads before it holds a site to the clear margin
     [second-body? : bool (compiler_optimize.opt-inline-checked-second-body?)]
-    [_keep-second : unit
-      (begin
-        (compiler_optimize.opt-inline-checked-spend-verdict!)
-        (compiler_optimize.opt-inline-checked-accept-target!))]
-    ;; the caller is then closed: the relaxation opens the lock once, not
-    ;; indefinitely
-    [third? : bool (compiler_optimize.opt-inline-checked-callee-allowed? c)]
-    [both? : bool
-      (and
-        (compiler_optimize.opt-inline-checked-callee-allowed? a)
-        (compiler_optimize.opt-inline-checked-callee-allowed? b))]
+    [second-relaxed? : bool
+      (compiler_optimize.opt-inline-checked-target-relaxed-current?)]
+    ;; THE BOUND. A fresh caller offering one more distinct body than the lock
+    ;; allows takes exactly the bound, richest first, and the next is refused.
+    [_bound-caller : unit (compiler_optimize.opt-inline-checked-caller-begin!)]
+    [_fill : unit (opt-inline-checked-lock-bodies-fill 0 (+ bound 1))]
+    [taken : i64 (opt-inline-checked-lock-bodies-take 0 (+ bound 1) 0)]
     [distinct : i64
       (compiler_optimize.opt-inline-checked-accepted-callee-count)]
+    [over? : bool
+      (compiler_optimize.opt-inline-checked-callee-allowed?
+        (opt-inline-checked-seq-body-callee bound))]
+    [kept-first? : bool
+      (compiler_optimize.opt-inline-checked-callee-allowed?
+        (opt-inline-checked-seq-body-callee 0))]
     [_reset : unit (compiler_optimize.opt-inline-checked-program-begin!)]
     (and
       armed-slim?
-      armed-clear?
       armed-second?
+      (not slim-published?)
       slim-same?
-      (not slim-other?)
-      clear-other?
+      slim-other?
       (= second-callee b)
-      both?
-      (not third?)
       second-body?
-      (= distinct (compiler_optimize.opt-inline-checked-max-callees)))))
+      ;; a body past the first is a RELAXED candidate, on the same terms as a
+      ;; below-the-floor site
+      second-relaxed?
+      ;; exactly N bodies, and the (N+1)th refused
+      (= taken bound)
+      (= distinct bound)
+      (not over?)
+      kept-first?)))
 
 ;; --- CB-2b: a relaxed candidate may only ADD a verdict, never take one -------
 ;;
@@ -21288,8 +21327,9 @@
     [core-after : i64 (compiler_optimize.opt-inline-checked-budget-current)]
     [reserve-after : i64
       (compiler_optimize.opt-inline-checked-relaxed-budget-current)]
-    ;; the caller's relaxed allowance is one, so the second relaxed row stays
-    ;; on the table even though the core budget is nearly untouched
+    ;; the caller's relaxed allowance is the lock's bound less its one
+    ;; unrelaxed body, so a third row is on the table only while that allowance
+    ;; has room for it
     [armed-third? : bool
       (compiler_optimize.opt-inline-checked-arm-next-target!)]
     [core-verdicts : i64
@@ -21300,7 +21340,11 @@
     (and
       armed-first?
       armed-second?
-      (not armed-third?)
+      (if (>
+        (compiler_optimize.opt-inline-checked-max-caller-relaxed-verdicts)
+        1)
+        armed-third?
+        (not armed-third?))
       ;; CORE FIRST, richness second: the poorest core row is priced before the
       ;; richest relaxed one
       (= first-pos 1)
@@ -21317,6 +21361,7 @@
         reserve-after
         (- (compiler_optimize.opt-inline-checked-relaxed-program-budget) 1))
       (= core-verdicts 1)
+      ;; one verdict of each class was SPENT; the third row was only armed
       (= relaxed-verdicts 1))))
 
 ;; One relaxed verdict in each of `count` successive callers, which is the most
@@ -21388,6 +21433,325 @@
       core-armed?
       (not core-relaxed?)
       (= core-pos 1))))
+
+;; --- INL-1: the call graph's synthetic entry counts --------------------------
+;;
+;; The census's hot reference count sees ONE call level: a leaf reached through
+;; two straight-line wrappers from a loop reads as cold, because the wrappers'
+;; own sites are straight-line. The counts propagated over the call graph
+;; (compiler_optimize.opt-inline-synth-build!) are what the composite site
+;; frequency reads instead, and these pin the four properties the tier depends
+;; on: the chain, the recursive component, the unknown-caller base, and the
+;; saturation.
+(define (opt-inline-synth-leaf-function [func-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    3
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 0)))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; One straight-line block that calls `callee-name` once: a WRAPPER, whose own
+;; call site carries the depth weight of nothing at all.
+(define (opt-inline-synth-wrapper-function
+  [func-name : i64]
+  [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    5
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (opt-inline-loop-site-call callee-name 3)
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 3)))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; ...and one that calls two callees and takes the ADDRESS of the second, which
+;; is a reachability root and not a call-graph edge.
+(define (opt-inline-synth-address-function
+  [func-name : i64]
+  [callee-name : i64]
+  [taken-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    6
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (opt-inline-loop-site-call callee-name 3)
+          (compiler_ir_types.CompilerIrInstr.Mov
+            4
+            (compiler_ir_types.CompilerIrValue.Function taken-name)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 3)))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; entry -> loop -> wrapper -> wrapper -> leaf. The loop holder calls `mid` from
+;; its loop body (depth 1, one census weight); `mid` and `wrap` are
+;; straight-line, so the census's own count for `wrap` is ONE and the leaf's
+;; site under it reads as cold on that count alone.
+(define (opt-inline-synth-chain-program) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-inline-synth-wrapper-function
+      (opt-test-symbol "main")
+      (opt-test-symbol "synth_outer"))
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-inline-loop-site-function
+        (opt-test-symbol "synth_outer")
+        (opt-test-symbol "synth_mid")
+        (opt-inline-loop-site-entry-instrs))
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-inline-synth-wrapper-function
+          (opt-test-symbol "synth_mid")
+          (opt-test-symbol "synth_wrap"))
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-inline-synth-wrapper-function
+            (opt-test-symbol "synth_wrap")
+            (opt-test-symbol "synth_leaf"))
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-inline-synth-leaf-function (opt-test-symbol "synth_leaf"))
+            (compiler_ir_types.compiler-ir-function-seq-empty)))))))
+
+;; A self-recursive loop holder, reached once from the entry: its component is
+;; its own, and its count has to carry its own repetition.
+(define (opt-inline-synth-recursive-program) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-inline-synth-wrapper-function
+      (opt-test-symbol "main")
+      (opt-test-symbol "synth_rec"))
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-inline-loop-site-function
+        (opt-test-symbol "synth_rec")
+        (opt-test-symbol "synth_rec")
+        (opt-inline-loop-site-entry-instrs))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
+
+;; The same loop body calls one ordinary leaf and one whose address the entry
+;; also takes, so the two differ by exactly the unknown-caller base.
+(define (opt-inline-synth-address-program) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-inline-synth-address-function
+      (opt-test-symbol "main")
+      (opt-test-symbol "synth_outer")
+      (opt-test-symbol "synth_taken"))
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-inline-loop-site-function
+        (opt-test-symbol "synth_outer")
+        (opt-test-symbol "synth_plain")
+        (opt-inline-loop-site-entry-instrs))
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-inline-loop-site-function
+          (opt-test-symbol "synth_plain")
+          (opt-test-symbol "synth_taken")
+          (opt-inline-loop-site-entry-instrs))
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-inline-synth-leaf-function (opt-test-symbol "synth_taken"))
+          (compiler_ir_types.compiler-ir-function-seq-empty))))))
+
+;; Build the counts for one program and report the count of one function by
+;; name. `mode` selects which reading is wanted: the synthetic count, or the
+;; census's one-level hot reference count over the same program.
+(define (opt-inline-synth-count-of
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : i64]
+  [hot? : bool]) : i64
+  (let
+    [index : compiler_optimize.OptFunctionIndex
+      (compiler_optimize.opt-function-index-build
+        (compiler_optimize.compiler-opt-global-shared-view functions))]
+    [graph : compiler_optimize.OptCallGraph
+      (compiler_optimize.opt-callgraph-build
+        (compiler_optimize.compiler-opt-global-shared-view index))]
+    [scc-result : compiler_optimize.OptSccResult
+      (compiler_optimize.opt-scc-compute
+        (compiler_optimize.compiler-opt-global-shared-view graph))]
+    [census : compiler_optimize.OptInlineCensus
+      (compiler_optimize.opt-inline-census-build
+        (compiler_optimize.compiler-opt-global-shared-view index)
+        (compiler_optimize.compiler-opt-global-shared-view functions))]
+    [_build : unit
+      (compiler_optimize.opt-inline-synth-build!
+        (compiler_optimize.compiler-opt-global-shared-view index)
+        (compiler_optimize.compiler-opt-global-shared-view census)
+        (compiler_optimize.compiler-opt-global-shared-view graph)
+        (compiler_optimize.compiler-opt-global-shared-view scc-result)
+        (compiler_optimize.opt-inline-slot-order
+          (compiler_optimize.compiler-opt-global-shared-view scc-result)))]
+    [out : i64
+      (if hot?
+        (compiler_optimize.opt-inline-census-hot-refcount
+          (compiler_optimize.compiler-opt-global-shared-view index)
+          (compiler_optimize.compiler-opt-global-shared-view census)
+          name)
+        (compiler_optimize.opt-inline-synth-for-name
+          (compiler_optimize.compiler-opt-global-shared-view index)
+          name))]
+    [_reset : unit (compiler_optimize.opt-inline-synth-reset!)]
+    out))
+
+;; THE CHAIN. One census weight is what the tier's frequency floor asks for, and
+;; the wrapper two levels below the loop delivers it on the propagated count
+;; while the census's own count for the same function is one.
+(define (compiler-optimize-inline-synth-chain-ok?) : bool
+  (let
+    [weight : i64 (compiler_optimize.opt-inline-census-depth-weight 1)]
+    [wrap-synth : i64
+      (opt-inline-synth-count-of
+        (opt-inline-synth-chain-program)
+        (opt-test-symbol "synth_wrap")
+        false)]
+    [wrap-hot : i64
+      (opt-inline-synth-count-of
+        (opt-inline-synth-chain-program)
+        (opt-test-symbol "synth_wrap")
+        true)]
+    [mid-synth : i64
+      (opt-inline-synth-count-of
+        (opt-inline-synth-chain-program)
+        (opt-test-symbol "synth_mid")
+        false)]
+    [leaf-synth : i64
+      (opt-inline-synth-count-of
+        (opt-inline-synth-chain-program)
+        (opt-test-symbol "synth_leaf")
+        false)]
+    [outer-synth : i64
+      (opt-inline-synth-count-of
+        (opt-inline-synth-chain-program)
+        (opt-test-symbol "synth_outer")
+        false)]
+    ;; and the counts are gone once the pass that built them is over
+    [after-reset : i64 (compiler_optimize.opt-inline-synth-at 0)]
+    (and
+      (> weight 1)
+      ;; the entry is reached once; the loop holder is reached once from it
+      (= outer-synth 1)
+      ;; ...and its loop body's site carries one census weight down the chain
+      (= mid-synth weight)
+      (= wrap-synth weight)
+      (= leaf-synth weight)
+      ;; which is the frequency floor the tier reads, on a site the census's own
+      ;; count calls cold
+      (>= wrap-synth (compiler_optimize.opt-inline-checked-min-frequency))
+      (= wrap-hot 1)
+      (< wrap-hot (compiler_optimize.opt-inline-checked-min-frequency))
+      (= after-reset 0)
+      (not (compiler_optimize.opt-inline-synth-ready?)))))
+
+;; THE RECURSIVE COMPONENT. Its members push to each other for a bounded number
+;; of rounds, so a self-recursive loop holder reads hotter than the one call
+;; that reaches it, and the result is bounded, reproducible, and inside the cap.
+(define (compiler-optimize-inline-synth-recursive-ok?) : bool
+  (let
+    [weight : i64 (compiler_optimize.opt-inline-census-depth-weight 1)]
+    [rec-first : i64
+      (opt-inline-synth-count-of
+        (opt-inline-synth-recursive-program)
+        (opt-test-symbol "synth_rec")
+        false)]
+    [rec-again : i64
+      (opt-inline-synth-count-of
+        (opt-inline-synth-recursive-program)
+        (opt-test-symbol "synth_rec")
+        false)]
+    [cap : i64 (compiler_optimize.opt-inline-synth-cap)]
+    (and
+      ;; one entry call, plus its own loop's repetition
+      (> rec-first weight)
+      (<= rec-first cap)
+      ;; deterministic: the same program gives the same counts
+      (= rec-first rec-again)
+      ;; ...and the saturating arithmetic is what bounds it
+      (= (compiler_optimize.opt-inline-synth-mul cap 2) cap)
+      (= (compiler_optimize.opt-inline-synth-mul (/ cap 2) 4) cap)
+      (= (compiler_optimize.opt-inline-synth-mul cap 1) cap)
+      (= (compiler_optimize.opt-inline-synth-mul 0 64) 0)
+      (= (compiler_optimize.opt-inline-synth-mul 8 8) 64)
+      (= (compiler_optimize.opt-inline-synth-add (- cap 1) 100) cap)
+      (= (compiler_optimize.opt-inline-synth-add 8 8) 16)
+      (> (compiler_optimize.opt-inline-synth-rounds) 0))))
+
+;; THE UNKNOWN-CALLER BASE. An address-taken callee may be reached by an
+;; indirect call this compilation cannot see, so its count starts at one; the
+;; ordinary callee beside it, called from the same block, starts at zero and
+;; carries only what its callers deliver.
+(define (compiler-optimize-inline-synth-address-taken-ok?) : bool
+  (let
+    [weight : i64 (compiler_optimize.opt-inline-census-depth-weight 1)]
+    [plain : i64
+      (opt-inline-synth-count-of
+        (opt-inline-synth-address-program)
+        (opt-test-symbol "synth_plain")
+        false)]
+    [taken : i64
+      (opt-inline-synth-count-of
+        (opt-inline-synth-address-program)
+        (opt-test-symbol "synth_taken")
+        false)]
+    (and
+      (= plain weight)
+      ;; the same site weight, one call level further down, plus the base
+      (= taken (+ (* weight weight) 1)))))
+
+;; THE ORDER. The ranking is worth per instruction copied, and the worth is the
+;; composite frequency: of two candidate sites alike in everything else, the
+;; hotter one is armed first, whatever order the caller's walk found them in.
+(define (compiler-optimize-inline-synth-order-ok?) : bool
+  (let
+    [callee : i64 (opt-inline-checked-seq-callee-a)]
+    [cold : i64 (compiler_optimize.opt-inline-checked-richness 8 2 40)]
+    [hot : i64 (compiler_optimize.opt-inline-checked-richness 4096 2 40)]
+    [_begin : unit (compiler_optimize.opt-inline-checked-program-begin!)]
+    ;; the COLD site is found first, so only the ranking can order them
+    [_scan : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-scan-record!
+          callee
+          80
+          0
+          cold
+          false)
+        (compiler_optimize.opt-inline-checked-scan-record!
+          callee
+          81
+          1
+          hot
+          false))]
+    [armed-first? : bool
+      (compiler_optimize.opt-inline-checked-arm-next-target!)]
+    [first-pos : i64 (compiler_optimize.opt-inline-checked-target-pos-current)]
+    [_spend : unit (compiler_optimize.opt-inline-checked-spend-verdict!)]
+    [armed-second? : bool
+      (compiler_optimize.opt-inline-checked-arm-next-target!)]
+    [second-pos : i64 (compiler_optimize.opt-inline-checked-target-pos-current)]
+    [_reset : unit (compiler_optimize.opt-inline-checked-program-begin!)]
+    (and
+      ;; richness is monotone in the frequency it is asked about
+      (> hot cold)
+      (>
+        (compiler_optimize.opt-inline-checked-richness 4096 2 40)
+        (compiler_optimize.opt-inline-checked-richness 4096 2 80))
+      armed-first?
+      armed-second?
+      (= first-pos 1)
+      (= second-pos 0))))
 
 ;; --- and the same claim end to end: a claim adds, it does not withdraw -------
 ;;

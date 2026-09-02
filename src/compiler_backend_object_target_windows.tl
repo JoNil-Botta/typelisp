@@ -53,6 +53,59 @@
   (object_target.compiler-backend-object-bytes-from-hex
     "6548c704252800000000000000"))
 
+(define (compiler-backend-object-entry-convert-fiber-args-bytes) : String
+  (object_target.compiler-backend-object-bytes-from-hex "31c9"))
+
+(define (compiler-backend-object-entry-create-fiber-args-bytes) : String
+  (object_target.compiler-backend-object-bytes-from-hex
+    "b900000100ba0000004041b801000000"))
+
+(define (compiler-backend-object-entry-create-fiber-tail-bytes) : String
+  (object_target.compiler-backend-object-bytes-from-hex
+    "4d89d948c744242000000000"))
+
+(define (compiler-backend-object-entry-stack-guarantee-args-bytes) : String
+  (object_target.compiler-backend-object-bytes-from-hex
+    "c744242000000100488d4c2420"))
+
+(define (compiler-backend-object-entry-stderr-handle-args-bytes) : String
+  (object_target.compiler-backend-object-bytes-from-hex "b9f4ffffff"))
+
+(define (compiler-backend-object-entry-write-failure-tail-bytes) : String
+  (object_target.compiler-backend-object-bytes-from-hex
+    "41b8360000004d89d948c744242000000000"))
+
+(define (compiler-backend-object-entry-write-overflow-tail-bytes) : String
+  (object_target.compiler-backend-object-bytes-from-hex
+    "41b8210000004d89d948c744242000000000"))
+
+(define (compiler-backend-object-entry-exit-134-args-bytes) : String
+  (object_target.compiler-backend-object-bytes-from-hex "b986000000"))
+
+(define (compiler-backend-object-overflow-filter-test-bytes) : String
+  (object_target.compiler-backend-object-bytes-from-hex
+    "488b018b0831c081f9fd0000c00f94c0"))
+
+(define (compiler-backend-object-overflow-filter-return-bytes) : String
+  (object_target.compiler-backend-object-bytes-from-hex "31c04883c428c3"))
+
+(define (compiler-backend-object-add-rax-branch
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [site : String]
+  [true-target : String]
+  [false-target : String]) : object_target.CompilerBackendObjectTargetParts
+  (object_target.compiler-backend-object-add-text
+    (object_target.compiler-backend-object-add-text-relocation
+      (object_target.compiler-backend-object-add-text-relocation
+        parts
+        (owned_view.compiler-owned-shared-view site)
+        (cobj.CompilerObjectRelocationKind.Branch)
+        (owned_view.compiler-owned-shared-view true-target))
+      site
+      (cobj.CompilerObjectRelocationKind.Branch)
+      (owned_view.compiler-owned-shared-view false-target))
+    (cobj.CompilerObjectX64Instr.Branch true-target false-target)))
+
 (define (compiler-backend-object-entry-xdata-bytes) : String
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
@@ -182,11 +235,51 @@
         "tl_boot_pool"
         (cobj.CompilerObjectSectionKind.Bss)
         (cobj.CompilerObjectSymbolKind.Data))]
-    (object_target.compiler-backend-object-add-bss
+    [with-boot-pool : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-bss
-        with-boot-pool-symbol
-        (cobj.CompilerObjectDataRecord.Label "tl_boot_pool"))
-      (cobj.CompilerObjectDataRecord.Zero 524288))))
+        (object_target.compiler-backend-object-add-bss
+          with-boot-pool-symbol
+          (cobj.CompilerObjectDataRecord.Label "tl_boot_pool"))
+        (cobj.CompilerObjectDataRecord.Zero 524288))]
+    [with-stack-written-symbol : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-symbol-local-section
+        with-boot-pool
+        ".L_tl_main_stack_written"
+        (cobj.CompilerObjectSectionKind.Bss)
+        (cobj.CompilerObjectSymbolKind.Data))]
+    [with-stack-written : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-bss
+        (object_target.compiler-backend-object-add-bss
+          (object_target.compiler-backend-object-add-bss
+            with-stack-written-symbol
+            (cobj.CompilerObjectDataRecord.Align 8))
+          (cobj.CompilerObjectDataRecord.Label ".L_tl_main_stack_written"))
+        (cobj.CompilerObjectDataRecord.Zero 8))]
+    [with-stack-message-symbol : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-symbol-local-section
+        with-stack-written
+        ".L_tl_main_stack_reservation_msg"
+        (cobj.CompilerObjectSectionKind.Rodata)
+        (cobj.CompilerObjectSymbolKind.Data))]
+    [with-stack-message : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-rodata
+        (object_target.compiler-backend-object-add-rodata
+          with-stack-message-symbol
+          (cobj.CompilerObjectDataRecord.Label
+            ".L_tl_main_stack_reservation_msg"))
+        (cobj.CompilerObjectDataRecord.Bytes
+          "typelisp runtime: 1 GiB main-stack reservation failed\n"))]
+    [with-overflow-message-symbol : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-symbol-local-section
+        with-stack-message
+        ".L_tl_stack_overflow_msg"
+        (cobj.CompilerObjectSectionKind.Rodata)
+        (cobj.CompilerObjectSymbolKind.Data))]
+    (object_target.compiler-backend-object-add-rodata
+      (object_target.compiler-backend-object-add-rodata
+        with-overflow-message-symbol
+        (cobj.CompilerObjectDataRecord.Label ".L_tl_stack_overflow_msg"))
+      (cobj.CompilerObjectDataRecord.Bytes "typelisp runtime: stack overflow\n"))))
 
 (define (compiler-backend-object-add-runtime-text
   [parts : object_target.CompilerBackendObjectTargetParts]) : object_target.CompilerBackendObjectTargetParts
@@ -311,22 +404,100 @@
   (let
     [entry : String "_tl_start"]
     [entry-end : String ".L_tl_start_end"]
+    [fiber : String ".L_tl_main_fiber"]
+    [fiber-end : String ".L_tl_main_fiber_end"]
+    [converted : String ".L_tl_start_converted_to_fiber"]
+    [created : String ".L_tl_start_main_fiber_created"]
+    [failed : String ".L_tl_main_stack_reservation_failed"]
+    [overflow-filter : String ".L_tl_stack_overflow_filter"]
+    [overflow-filter-end : String ".L_tl_stack_overflow_filter_end"]
+    [overflow-write : String ".L_tl_stack_overflow_write"]
+    [overflow-continue : String ".L_tl_stack_overflow_continue_search"]
     [with-symbols : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-symbol-extern-once
-        (object_target.compiler-backend-object-symbol-local-section
-          (object_target.compiler-backend-object-symbol-export-section
-            parts
-            (owned_view.compiler-owned-shared-view entry)
-            (cobj.CompilerObjectSectionKind.Text)
+        (object_target.compiler-backend-object-symbol-extern-once
+          (object_target.compiler-backend-object-symbol-extern-once
+            (object_target.compiler-backend-object-symbol-extern-once
+              (object_target.compiler-backend-object-symbol-extern-once
+                (object_target.compiler-backend-object-symbol-extern-once
+                  (object_target.compiler-backend-object-symbol-local-section
+                    (object_target.compiler-backend-object-symbol-local-section
+                      (object_target.compiler-backend-object-symbol-local-section
+                        (object_target.compiler-backend-object-symbol-local-section
+                          (object_target.compiler-backend-object-symbol-local-section
+                            (object_target.compiler-backend-object-symbol-local-section
+                              (object_target.compiler-backend-object-symbol-export-section
+                                parts
+                                (owned_view.compiler-owned-shared-view entry)
+                                (cobj.CompilerObjectSectionKind.Text)
+                                (cobj.CompilerObjectSymbolKind.Function))
+                              (owned_view.compiler-owned-shared-view entry-end)
+                              (cobj.CompilerObjectSectionKind.Text)
+                              (cobj.CompilerObjectSymbolKind.Function))
+                            (owned_view.compiler-owned-shared-view fiber)
+                            (cobj.CompilerObjectSectionKind.Text)
+                            (cobj.CompilerObjectSymbolKind.Function))
+                          (owned_view.compiler-owned-shared-view fiber-end)
+                          (cobj.CompilerObjectSectionKind.Text)
+                          (cobj.CompilerObjectSymbolKind.Function))
+                        (owned_view.compiler-owned-shared-view converted)
+                        (cobj.CompilerObjectSectionKind.Text)
+                        (cobj.CompilerObjectSymbolKind.Function))
+                      (owned_view.compiler-owned-shared-view created)
+                      (cobj.CompilerObjectSectionKind.Text)
+                      (cobj.CompilerObjectSymbolKind.Function))
+                    (owned_view.compiler-owned-shared-view failed)
+                    (cobj.CompilerObjectSectionKind.Text)
+                    (cobj.CompilerObjectSymbolKind.Function))
+                  "ExitProcess"
+                  (cobj.CompilerObjectSymbolKind.Function))
+                "ConvertThreadToFiber"
+                (cobj.CompilerObjectSymbolKind.Function))
+              "CreateFiberEx"
+              (cobj.CompilerObjectSymbolKind.Function))
+            "SwitchToFiber"
             (cobj.CompilerObjectSymbolKind.Function))
-          (owned_view.compiler-owned-shared-view entry-end)
-          (cobj.CompilerObjectSectionKind.Text)
+          "GetStdHandle"
           (cobj.CompilerObjectSymbolKind.Function))
-        "ExitProcess"
+        "WriteFile"
+        (cobj.CompilerObjectSymbolKind.Function))]
+    [with-overflow-filter-symbol : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-symbol-local-section
+        with-symbols
+        (owned_view.compiler-owned-shared-view overflow-filter)
+        (cobj.CompilerObjectSectionKind.Text)
+        (cobj.CompilerObjectSymbolKind.Function))]
+    [with-overflow-filter-end-symbol : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-symbol-local-section
+        with-overflow-filter-symbol
+        (owned_view.compiler-owned-shared-view overflow-filter-end)
+        (cobj.CompilerObjectSectionKind.Text)
+        (cobj.CompilerObjectSymbolKind.Function))]
+    [with-overflow-write-symbol : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-symbol-local-section
+        with-overflow-filter-end-symbol
+        (owned_view.compiler-owned-shared-view overflow-write)
+        (cobj.CompilerObjectSectionKind.Text)
+        (cobj.CompilerObjectSymbolKind.Function))]
+    [with-overflow-continue-symbol : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-symbol-local-section
+        with-overflow-write-symbol
+        (owned_view.compiler-owned-shared-view overflow-continue)
+        (cobj.CompilerObjectSectionKind.Text)
+        (cobj.CompilerObjectSymbolKind.Function))]
+    [with-stack-guarantee-extern : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-symbol-extern-once
+        with-overflow-continue-symbol
+        "SetThreadStackGuarantee"
+        (cobj.CompilerObjectSymbolKind.Function))]
+    [with-exception-filter-extern : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-symbol-extern-once
+        with-stack-guarantee-extern
+        "SetUnhandledExceptionFilter"
         (cobj.CompilerObjectSymbolKind.Function))]
     [with-label : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text
-        with-symbols
+        with-exception-filter-extern
         (cobj.CompilerObjectX64Instr.Label
           (owned_view.compiler-owned-shared-view entry)))]
     [with-sub : object_target.CompilerBackendObjectTargetParts
@@ -342,24 +513,186 @@
       (object_target.compiler-backend-object-add-text-bytes
         with-setup-call
         (compiler-backend-object-entry-gs-clear-bytes))]
-    [with-argc : object_target.CompilerBackendObjectTargetParts
+    [with-filter-address : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-rip-instr
         with-gs-clear
         (owned_view.compiler-owned-shared-view entry)
+        (cobj.CompilerObjectRelocationKind.RipAddress)
+        (owned_view.compiler-owned-shared-view overflow-filter)
+        (cobj.CompilerObjectX64Instr.LoadRipAddress
+          (owned_view.compiler-owned-shared-view overflow-filter)))]
+    [with-filter-argument : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text
+        with-filter-address
+        (cobj.CompilerObjectX64Instr.MovRcxRax))]
+    [with-filter-call : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-call-instr
+        with-filter-argument
+        (owned_view.compiler-owned-shared-view entry)
+        "SetUnhandledExceptionFilter")]
+    [with-convert-args : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text-bytes
+        with-filter-call
+        (compiler-backend-object-entry-convert-fiber-args-bytes))]
+    [with-convert-call : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-call-instr
+        with-convert-args
+        (owned_view.compiler-owned-shared-view entry)
+        "ConvertThreadToFiber")]
+    [with-convert-branch : object_target.CompilerBackendObjectTargetParts
+      (compiler-backend-object-add-rax-branch
+        with-convert-call
+        (owned_view.compiler-owned-shared-view entry)
+        (owned_view.compiler-owned-shared-view converted)
+        (owned_view.compiler-owned-shared-view failed))]
+    [with-converted-label : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text
+        with-convert-branch
+        (cobj.CompilerObjectX64Instr.Label
+          (owned_view.compiler-owned-shared-view converted)))]
+    [with-create-args : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text-bytes
+        with-converted-label
+        (compiler-backend-object-entry-create-fiber-args-bytes))]
+    [with-fiber-address : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-rip-instr
+        with-create-args
+        (owned_view.compiler-owned-shared-view entry)
+        (cobj.CompilerObjectRelocationKind.RipAddress)
+        (owned_view.compiler-owned-shared-view fiber)
+        (cobj.CompilerObjectX64Instr.LoadRipAddressR11
+          (owned_view.compiler-owned-shared-view fiber)))]
+    [with-create-tail : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text-bytes
+        with-fiber-address
+        (compiler-backend-object-entry-create-fiber-tail-bytes))]
+    [with-create-call : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-call-instr
+        with-create-tail
+        (owned_view.compiler-owned-shared-view entry)
+        "CreateFiberEx")]
+    [with-create-branch : object_target.CompilerBackendObjectTargetParts
+      (compiler-backend-object-add-rax-branch
+        with-create-call
+        (owned_view.compiler-owned-shared-view entry)
+        (owned_view.compiler-owned-shared-view created)
+        (owned_view.compiler-owned-shared-view failed))]
+    [with-created-label : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text
+        with-create-branch
+        (cobj.CompilerObjectX64Instr.Label
+          (owned_view.compiler-owned-shared-view created)))]
+    [with-fiber-argument : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text
+        with-created-label
+        (cobj.CompilerObjectX64Instr.MovRcxRax))]
+    [with-switch-call : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-call-instr
+        with-fiber-argument
+        (owned_view.compiler-owned-shared-view entry)
+        "SwitchToFiber")]
+    [with-switch-failed : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text
+        (object_target.compiler-backend-object-add-text-relocation
+          with-switch-call
+          (owned_view.compiler-owned-shared-view entry)
+          (cobj.CompilerObjectRelocationKind.Branch)
+          (owned_view.compiler-owned-shared-view failed))
+        (cobj.CompilerObjectX64Instr.Jump
+          (owned_view.compiler-owned-shared-view failed)))]
+    [with-failed-label : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text
+        with-switch-failed
+        (cobj.CompilerObjectX64Instr.Label
+          (owned_view.compiler-owned-shared-view failed)))]
+    [with-stderr-args : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text-bytes
+        with-failed-label
+        (compiler-backend-object-entry-stderr-handle-args-bytes))]
+    [with-stderr-call : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-call-instr
+        with-stderr-args
+        (owned_view.compiler-owned-shared-view entry)
+        "GetStdHandle")]
+    [with-stderr-handle : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text
+        with-stderr-call
+        (cobj.CompilerObjectX64Instr.MovRcxRax))]
+    [with-message : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-rip-instr
+        with-stderr-handle
+        (owned_view.compiler-owned-shared-view entry)
+        (cobj.CompilerObjectRelocationKind.RipAddress)
+        ".L_tl_main_stack_reservation_msg"
+        (cobj.CompilerObjectX64Instr.LoadRipAddressRdx
+          ".L_tl_main_stack_reservation_msg"))]
+    [with-written : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-rip-instr
+        with-message
+        (owned_view.compiler-owned-shared-view entry)
+        (cobj.CompilerObjectRelocationKind.RipAddress)
+        ".L_tl_main_stack_written"
+        (cobj.CompilerObjectX64Instr.LoadRipAddressR11
+          ".L_tl_main_stack_written"))]
+    [with-write-tail : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text-bytes
+        with-written
+        (compiler-backend-object-entry-write-failure-tail-bytes))]
+    [with-write-call : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-call-instr
+        with-write-tail
+        (owned_view.compiler-owned-shared-view entry)
+        "WriteFile")]
+    [with-exit-args : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text-bytes
+        with-write-call
+        (compiler-backend-object-entry-exit-134-args-bytes))]
+    [with-failure-exit : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-call-instr
+        with-exit-args
+        (owned_view.compiler-owned-shared-view entry)
+        "ExitProcess")]
+    [with-entry-end : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text
+        with-failure-exit
+        (cobj.CompilerObjectX64Instr.Label
+          (owned_view.compiler-owned-shared-view entry-end)))]
+    [with-fiber-label : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text
+        with-entry-end
+        (cobj.CompilerObjectX64Instr.Label
+          (owned_view.compiler-owned-shared-view fiber)))]
+    [with-fiber-sub : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text
+        with-fiber-label
+        (cobj.CompilerObjectX64Instr.SubRspImm8 40))]
+    [with-stack-guarantee-args : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text-bytes
+        with-fiber-sub
+        (compiler-backend-object-entry-stack-guarantee-args-bytes))]
+    [with-stack-guarantee-call : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-call-instr
+        with-stack-guarantee-args
+        (owned_view.compiler-owned-shared-view fiber)
+        "SetThreadStackGuarantee")]
+    [with-argc : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-rip-instr
+        with-stack-guarantee-call
+        (owned_view.compiler-owned-shared-view fiber)
         (cobj.CompilerObjectRelocationKind.RipValue)
         ".L_tl_argc"
         (cobj.CompilerObjectX64Instr.MovRcxRip ".L_tl_argc"))]
     [with-argv : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-rip-instr
         with-argc
-        (owned_view.compiler-owned-shared-view entry)
+        (owned_view.compiler-owned-shared-view fiber)
         (cobj.CompilerObjectRelocationKind.RipValue)
         ".L_tl_argv"
         (cobj.CompilerObjectX64Instr.MovRdxRip ".L_tl_argv"))]
     [with-main-call : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-call-instr
         with-argv
-        (owned_view.compiler-owned-shared-view entry)
+        (owned_view.compiler-owned-shared-view fiber)
         "main")]
     [with-move-exit-code : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text
@@ -368,11 +701,97 @@
     [with-exit-call : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-call-instr
         with-move-exit-code
-        entry
+        (owned_view.compiler-owned-shared-view fiber)
         "ExitProcess")]
+    [with-fiber-end : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text
+        with-exit-call
+        (cobj.CompilerObjectX64Instr.Label
+          (owned_view.compiler-owned-shared-view fiber-end)))]
+    [with-overflow-filter-label : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text
+        with-fiber-end
+        (cobj.CompilerObjectX64Instr.Label
+          (owned_view.compiler-owned-shared-view overflow-filter)))]
+    [with-overflow-filter-sub : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text
+        with-overflow-filter-label
+        (cobj.CompilerObjectX64Instr.SubRspImm8 40))]
+    [with-overflow-filter-test : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text-bytes
+        with-overflow-filter-sub
+        (compiler-backend-object-overflow-filter-test-bytes))]
+    [with-overflow-filter-branch : object_target.CompilerBackendObjectTargetParts
+      (compiler-backend-object-add-rax-branch
+        with-overflow-filter-test
+        (owned_view.compiler-owned-shared-view overflow-filter)
+        (owned_view.compiler-owned-shared-view overflow-write)
+        (owned_view.compiler-owned-shared-view overflow-continue))]
+    [with-overflow-write-label : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text
+        with-overflow-filter-branch
+        (cobj.CompilerObjectX64Instr.Label
+          (owned_view.compiler-owned-shared-view overflow-write)))]
+    [with-overflow-stderr-args : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text-bytes
+        with-overflow-write-label
+        (compiler-backend-object-entry-stderr-handle-args-bytes))]
+    [with-overflow-stderr-call : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-call-instr
+        with-overflow-stderr-args
+        (owned_view.compiler-owned-shared-view overflow-filter)
+        "GetStdHandle")]
+    [with-overflow-stderr-handle : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text
+        with-overflow-stderr-call
+        (cobj.CompilerObjectX64Instr.MovRcxRax))]
+    [with-overflow-message : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-rip-instr
+        with-overflow-stderr-handle
+        (owned_view.compiler-owned-shared-view overflow-filter)
+        (cobj.CompilerObjectRelocationKind.RipAddress)
+        ".L_tl_stack_overflow_msg"
+        (cobj.CompilerObjectX64Instr.LoadRipAddressRdx
+          ".L_tl_stack_overflow_msg"))]
+    [with-overflow-written : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-rip-instr
+        with-overflow-message
+        (owned_view.compiler-owned-shared-view overflow-filter)
+        (cobj.CompilerObjectRelocationKind.RipAddress)
+        ".L_tl_main_stack_written"
+        (cobj.CompilerObjectX64Instr.LoadRipAddressR11
+          ".L_tl_main_stack_written"))]
+    [with-overflow-write-tail : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text-bytes
+        with-overflow-written
+        (compiler-backend-object-entry-write-overflow-tail-bytes))]
+    [with-overflow-write-call : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-call-instr
+        with-overflow-write-tail
+        (owned_view.compiler-owned-shared-view overflow-filter)
+        "WriteFile")]
+    [with-overflow-exit-args : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text-bytes
+        with-overflow-write-call
+        (compiler-backend-object-entry-exit-134-args-bytes))]
+    [with-overflow-exit : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-call-instr
+        with-overflow-exit-args
+        (owned_view.compiler-owned-shared-view overflow-filter)
+        "ExitProcess")]
+    [with-overflow-continue-label : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text
+        with-overflow-exit
+        (cobj.CompilerObjectX64Instr.Label
+          (owned_view.compiler-owned-shared-view overflow-continue)))]
+    [with-overflow-return : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-text-bytes
+        with-overflow-continue-label
+        (compiler-backend-object-overflow-filter-return-bytes))]
     (object_target.compiler-backend-object-add-text
-      with-exit-call
-      (cobj.CompilerObjectX64Instr.Label entry-end))))
+      with-overflow-return
+      (cobj.CompilerObjectX64Instr.Label
+        (owned_view.compiler-owned-shared-view overflow-filter-end)))))
 
 (define (compiler-backend-object-add-entry-unwind
   [parts : object_target.CompilerBackendObjectTargetParts]) : object_target.CompilerBackendObjectTargetParts
@@ -381,6 +800,12 @@
     [pdata-begin : String ".L_tl_start_pdata_begin"]
     [pdata-end : String ".L_tl_start_pdata_end"]
     [pdata-unwind : String ".L_tl_start_pdata_unwind"]
+    [fiber-pdata-begin : String ".L_tl_main_fiber_pdata_begin"]
+    [fiber-pdata-end : String ".L_tl_main_fiber_pdata_end"]
+    [fiber-pdata-unwind : String ".L_tl_main_fiber_pdata_unwind"]
+    [filter-pdata-begin : String ".L_tl_stack_overflow_filter_pdata_begin"]
+    [filter-pdata-end : String ".L_tl_stack_overflow_filter_pdata_end"]
+    [filter-pdata-unwind : String ".L_tl_stack_overflow_filter_pdata_unwind"]
     [with-xdata-symbol : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-symbol-local-section
         parts
@@ -417,13 +842,83 @@
           (cobj.CompilerObjectRelocationKind.Addr32Nb)
           ".L_tl_start_end")
         (cobj.CompilerObjectDataRecord.SymbolRva32 ".L_tl_start_end"))]
+    [with-pdata-unwind : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-pdata
+        (object_target.compiler-backend-object-add-pdata-relocation
+          (object_target.compiler-backend-object-add-pdata
+            with-pdata-end
+            (cobj.CompilerObjectDataRecord.Label
+              (owned_view.compiler-owned-shared-view pdata-unwind)))
+          pdata-unwind
+          (cobj.CompilerObjectRelocationKind.Addr32Nb)
+          (owned_view.compiler-owned-shared-view xdata-label))
+        (cobj.CompilerObjectDataRecord.SymbolRva32
+          (owned_view.compiler-owned-shared-view xdata-label)))]
+    [with-fiber-pdata-begin : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-pdata
+        (object_target.compiler-backend-object-add-pdata-relocation
+          (object_target.compiler-backend-object-add-pdata
+            with-pdata-unwind
+            (cobj.CompilerObjectDataRecord.Label
+              (owned_view.compiler-owned-shared-view fiber-pdata-begin)))
+          fiber-pdata-begin
+          (cobj.CompilerObjectRelocationKind.Addr32Nb)
+          ".L_tl_main_fiber")
+        (cobj.CompilerObjectDataRecord.SymbolRva32 ".L_tl_main_fiber"))]
+    [with-fiber-pdata-end : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-pdata
+        (object_target.compiler-backend-object-add-pdata-relocation
+          (object_target.compiler-backend-object-add-pdata
+            with-fiber-pdata-begin
+            (cobj.CompilerObjectDataRecord.Label
+              (owned_view.compiler-owned-shared-view fiber-pdata-end)))
+          fiber-pdata-end
+          (cobj.CompilerObjectRelocationKind.Addr32Nb)
+          ".L_tl_main_fiber_end")
+        (cobj.CompilerObjectDataRecord.SymbolRva32 ".L_tl_main_fiber_end"))]
+    [with-fiber-pdata-unwind : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-pdata
+        (object_target.compiler-backend-object-add-pdata-relocation
+          (object_target.compiler-backend-object-add-pdata
+            with-fiber-pdata-end
+            (cobj.CompilerObjectDataRecord.Label
+              (owned_view.compiler-owned-shared-view fiber-pdata-unwind)))
+          fiber-pdata-unwind
+          (cobj.CompilerObjectRelocationKind.Addr32Nb)
+          (owned_view.compiler-owned-shared-view xdata-label))
+        (cobj.CompilerObjectDataRecord.SymbolRva32
+          (owned_view.compiler-owned-shared-view xdata-label)))]
+    [with-filter-pdata-begin : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-pdata
+        (object_target.compiler-backend-object-add-pdata-relocation
+          (object_target.compiler-backend-object-add-pdata
+            with-fiber-pdata-unwind
+            (cobj.CompilerObjectDataRecord.Label
+              (owned_view.compiler-owned-shared-view filter-pdata-begin)))
+          filter-pdata-begin
+          (cobj.CompilerObjectRelocationKind.Addr32Nb)
+          ".L_tl_stack_overflow_filter")
+        (cobj.CompilerObjectDataRecord.SymbolRva32
+          ".L_tl_stack_overflow_filter"))]
+    [with-filter-pdata-end : object_target.CompilerBackendObjectTargetParts
+      (object_target.compiler-backend-object-add-pdata
+        (object_target.compiler-backend-object-add-pdata-relocation
+          (object_target.compiler-backend-object-add-pdata
+            with-filter-pdata-begin
+            (cobj.CompilerObjectDataRecord.Label
+              (owned_view.compiler-owned-shared-view filter-pdata-end)))
+          filter-pdata-end
+          (cobj.CompilerObjectRelocationKind.Addr32Nb)
+          ".L_tl_stack_overflow_filter_end")
+        (cobj.CompilerObjectDataRecord.SymbolRva32
+          ".L_tl_stack_overflow_filter_end"))]
     (object_target.compiler-backend-object-add-pdata
       (object_target.compiler-backend-object-add-pdata-relocation
         (object_target.compiler-backend-object-add-pdata
-          with-pdata-end
+          with-filter-pdata-end
           (cobj.CompilerObjectDataRecord.Label
-            (owned_view.compiler-owned-shared-view pdata-unwind)))
-        pdata-unwind
+            (owned_view.compiler-owned-shared-view filter-pdata-unwind)))
+        filter-pdata-unwind
         (cobj.CompilerObjectRelocationKind.Addr32Nb)
         (owned_view.compiler-owned-shared-view xdata-label))
       (cobj.CompilerObjectDataRecord.SymbolRva32 xdata-label))))

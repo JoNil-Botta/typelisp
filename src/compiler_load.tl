@@ -805,9 +805,14 @@
   ;; of its process-global state before compiling. Driver-owned sessions must
   ;; instead keep every id-keyed cache valid until the driver retires them.
   (standalone-reset-safe (__tl_dyn-array bool))
+  ;; Surface summaries must outlive macro scratch, but no summary payload may
+  ;; accumulate in the process-lived session owner across batch entries. The
+  ;; mutable handle names a dedicated, resettable payload arena.
+  (surface-summary-owner-arena (__tl_dyn-array i64))
   ;; Stable arena address of the canonical shallow state record. Every field
   ;; is itself an arena-backed handle, so reading this record preserves the
   ;; session identity without a reference-typed temporary during bootstrap.
+  (owner-arena i64)
   (shared-address u64))
 
 ;; Per-source traversal data stays explicit without widening the hot recursive
@@ -942,6 +947,8 @@
         (__tl_make-array ci.InternCompatState 1)
         (compiler-load-session-state-bool-cell false)
         (compiler-load-session-state-bool-cell standalone-reset-safe)
+        (compiler-load-session-state-i64-cell 0)
+        (arena.tl_arena_current)
         0)]
     [cell : (__tl_dyn-array CompilerLoadSessionState) (__tl_make-array initial)]
     [address : u64
@@ -6241,13 +6248,49 @@
             (set! index (+ index 1)))))
       (ResultCompilerLoadAliasCheck.Ok))))
 
+(define (compiler-load-session-state-surface-summary-owner-arena
+  [state : (& state CompilerLoadSessionState)]) : i64
+  (array-ref state.surface-summary-owner-arena 0))
+
+(define (compiler-load-session-state-surface-summary-owner-arena-ensure!
+  [state : (& state CompilerLoadSessionState)]) : i64
+  (let
+    [owner : i64
+      (compiler-load-session-state-surface-summary-owner-arena (& state))]
+    (if (> owner 0)
+      owner
+      (let
+        [fresh : i64 (arena.tl_arena_make_small)]
+        (begin
+          (set! (array-ref state.surface-summary-owner-arena 0) fresh)
+          fresh)))))
+
 (define (compiler-load-session-state-surface-summaries-reset!
   [state : CompilerLoadSessionState]) : unit
-  (begin
-    (set!
-      (array-ref state.surface-summaries 0)
-      (compiler-load-surface-summary-list-empty))
-    (set! (array-ref state.lazy-import-skip-record-count 0) 0)))
+  (let
+    [payload-owner : i64
+      (compiler-load-session-state-surface-summary-owner-arena (& state))]
+    (begin
+      ;; Unpublish every summary before retiring the payload arena. Rebuild the
+      ;; empty descriptor in the stable session owner so the state never keeps
+      ;; a handle into the destroyed generation between batch entries.
+      (in-arena
+        (arena.Arena state.owner-arena)
+        (begin
+          (set!
+            (array-ref state.surface-summaries 0)
+            (compiler-load-surface-summary-list-empty))
+          (set! (array-ref state.lazy-import-skip-record-count 0) 0)))
+      (set! (array-ref state.surface-summary-owner-arena 0) 0)
+      (if (> payload-owner 0)
+        (begin
+          (if (= (arena.tl_arena_current) payload-owner)
+            (unsafe
+              (arena.tl_arena_set state.owner-arena))
+            unit)
+          (unsafe
+            (arena.tl_arena_destroy payload-owner)))
+        unit))))
 
 (define (compiler-load-surface-summaries-reset!) : unit
   (compiler-load-session-state-surface-summaries-reset!
@@ -6363,11 +6406,26 @@
     (compiler-load-session-state-surface-summaries state)
     summary.source-path-id)
     unit
-    (set!
-      (array-ref state.surface-summaries 0)
-      (compiler-load-surface-summary-list-record
-        (compiler-load-session-state-surface-summaries state)
-        summary))))
+    ;; Generated imports can build summaries while macro scratch is current.
+    ;; The lazy-import handoff reads them once after scratch release to distill
+    ;; definition-site aliases, so own both the summary payload and the dense
+    ;; list growth in the load session's resettable surface-summary arena.
+    (let
+      [payload-owner : i64
+        (compiler-load-session-state-surface-summary-owner-arena-ensure! state)]
+      [copy-into-owner? : bool (not (= (arena.tl_arena_current) payload-owner))]
+      (in-arena
+        (arena.Arena payload-owner)
+        (let
+          [owned : CompilerLoadSurfaceSummary
+            (if copy-into-owner?
+              (clone summary)
+              summary)]
+          (set!
+            (array-ref state.surface-summaries 0)
+            (compiler-load-surface-summary-list-record
+              (compiler-load-session-state-surface-summaries state)
+              owned)))))))
 
 (define (compiler-load-record-surface-summary!
   [summary : CompilerLoadSurfaceSummary]) : unit
@@ -6589,11 +6647,17 @@
 (define (compiler-load-session-state-surface-summary-remove-source!
   [state : CompilerLoadSessionState]
   [source-path-id : i64]) : unit
-  (set!
-    (array-ref state.surface-summaries 0)
-    (compiler-load-surface-summary-remove-source-in
-      (compiler-load-session-state-surface-summaries state)
-      source-path-id)))
+  (let
+    [payload-owner : i64
+      (compiler-load-session-state-surface-summary-owner-arena-ensure!
+        (& state))]
+    (in-arena
+      (arena.Arena payload-owner)
+      (set!
+        (array-ref state.surface-summaries 0)
+        (compiler-load-surface-summary-remove-source-in
+          (compiler-load-session-state-surface-summaries state)
+          source-path-id)))))
 
 (define (compiler-load-surface-summary-remove-source! [source-path-id : i64]) : unit
   (compiler-load-session-state-surface-summary-remove-source!
@@ -10426,7 +10490,57 @@
         after-alias)
       after-alias)))
 
-(define (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+;; A declaration is "ordinary" exactly when it reaches the `[_ ...]` arm of
+;; `compiler-load-decls-with-module-and-roots-cfg-root-with-pools-at-special-head`
+;; below: it is not a module body, an import, or one of the four include forms.
+;; Ordinary declarations are ~99% of a module's top level and contribute one row
+;; to each of the three output lists without touching `seen`, so
+;; `compiler-load-decls-with-module-and-roots-cfg-root-with-pools` folds a whole
+;; run of them in a loop. Keep the six constructors here and that match's arms in
+;; sync; the arm order below mirrors the arm order there so they cannot drift.
+(define (compiler-load-decl-ordinary? [decl : ast.AstDecl]) : bool
+  (match decl
+    [(ast.AstDecl.ModuleBody _ _) false]
+    [(ast.AstDecl.Import _ _) false]
+    [(ast.AstDecl.IncludeStr _ _) false]
+    [(ast.AstDecl.IncludeStrComptime _ _) false]
+    [(ast.AstDecl.IncludeStrLzss _ _) false]
+    [(ast.AstDecl.IncludeBin _ _) false]
+    [_ true]))
+
+;; Length of the maximal run of ordinary declarations starting at the head of
+;; `decls`, i.e. the number of leading declarations the walk can fold without
+;; recursing. Zero means the head is special (or the list is empty) and the
+;; declaration walk takes its per-kind match.
+(define (compiler-load-decl-ordinary-run-length [decls : ast.AstDeclList]) : i64
+  (let
+    [len : i64 decls.len]
+    [offset : i64 decls.offset]
+    [slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+    [count : i64 0]
+    [scanning : bool true]
+    (begin
+      (while scanning
+        (if (>= count len)
+          (set! scanning false)
+          (if (compiler-load-decl-ordinary?
+            (owned_view.compiler-owned-array-element-shared-view
+              slots
+              (+ offset count)))
+            (set! count (+ count 1))
+            (set! scanning false))))
+      count)))
+
+;; The declaration walk for a list whose head is NOT an ordinary declaration.
+;; Every arm recurses through
+;; `compiler-load-decls-with-module-and-roots-cfg-root-with-pools`, which folds
+;; the ordinary run that follows before handing the next special declaration
+;; back here, so this function is entered once per module body / import / include
+;; rather than once per declaration. Its `[_ ...]` arm is therefore unreachable
+;; from that entry point; it is kept as the exhaustive fallback for `AstDecl` and
+;; as the fail-safe if `compiler-load-decl-ordinary?` ever drifts from the arms
+;; above it.
+(define (compiler-load-decls-with-module-and-roots-cfg-root-with-pools-at-special-head
   [traversal : CompilerLoadTraversalContext]
   [decls : ast.AstDeclList]
   [importer-path : String]
@@ -11044,6 +11158,131 @@
                   rest-seen)]
               [(ResultCompilerLoadWithPaths.Err diag)
                 (ResultCompilerLoadWithPaths.Err diag)])]))]))
+
+;; Entry point of the loader's declaration walk.
+;;
+;; Recursing once per declaration made the walk's depth equal to the module's
+;; top-level declaration count. The walked frame carries the per-arm clones and
+;; the return temporaries of nine recursive call sites, so a module with a few
+;; thousand top-level forms was within reach of the Windows 256 MB stack reserve
+;; and crossed it. The list length is a module property, not a bound the loader
+;; controls, so the recursion is replaced here by iteration over the maximal run
+;; of ordinary declarations; only module bodies, imports and includes still cost
+;; a frame.
+;;
+;; A declaration list is a flat slice, so the run needs no side table: the walk's
+;; `decls` at run position `i` is exactly `ast-decl-list-step`'s `rest` applied
+;; `i` times, i.e. the same storage at `offset + i`, and its head is the element
+;; there. The run is folded back to front onto the result of the single recursive
+;; call for the remainder, rebuilding each position's declaration and its list
+;; view -- the `source` the origin sidecar attributes the flattened row to --
+;; from that base. The prepends therefore run in exactly the order the unwinding
+;; per-declaration recursion ran them, with the same arguments, so
+;; `compiler-load-decl-list-prepend-from-source`'s alias records are registered
+;; in the same order and the three lists come out identical.
+;;
+;; Do not carry the run in a `set!` cursor whose value is copied out through
+;; `ast-place-shared-view` and stored for later: that copy is a raw read of the
+;; local's address, which the backend reorders across the `set!`, so every stored
+;; view observes the NEXT position and every flattened declaration is silently
+;; attributed to the wrong source slot.
+(define (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+  [traversal : CompilerLoadTraversalContext]
+  [decls : ast.AstDeclList]
+  [importer-path : String]
+  [importer-module : String]
+  [importer-module-id : i64]
+  [importer-source-module : String]
+  [importer-source-module-id : i64]
+  [seen : sym_i64_env.SymI64Env]
+  [stdlib-roots : svec.Vec]
+  [import-root : String]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (let
+    [run-length : i64
+      (compiler-load-decl-ordinary-run-length (ast.ast-place-shared-view decls))]
+    (if (<= run-length 0)
+      (compiler-load-decls-with-module-and-roots-cfg-root-with-pools-at-special-head
+        traversal
+        decls
+        importer-path
+        importer-module
+        importer-module-id
+        importer-source-module
+        importer-source-module-id
+        seen
+        stdlib-roots
+        import-root
+        cfgs
+        pools)
+      (let
+        [base-offset : i64 decls.offset]
+        [base-len : i64 decls.len]
+        [base-prependable : bool decls.prependable]
+        [base-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
+        (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+          (ast.ast-place-shared-view traversal)
+          (ast.AstDeclList
+            (ast.ast-place-shared-view base-slots)
+            (+ base-offset run-length)
+            (- base-len run-length)
+            false)
+          (clone importer-path)
+          importer-module
+          importer-module-id
+          (clone importer-source-module)
+          importer-source-module-id
+          (sym_i64_env.sym-i64-shared-view (& seen))
+          (ast.ast-place-shared-view stdlib-roots)
+          (clone import-root)
+          (sym_i64_env.sym-i64-shared-view (& cfgs))
+          (ast.ast-place-shared-view pools))
+          [(ResultCompilerLoadWithPaths.Ok
+              rest-decls
+              rest-paths
+              rest-modules
+              rest-seen)
+            (let
+              [out-decls : ast.AstDeclList rest-decls]
+              [out-paths : ast.AstDeclPathList rest-paths]
+              [out-modules : ast.AstDeclModuleList rest-modules]
+              [fold : i64 (- run-length 1)]
+              (begin
+                (while (>= fold 0)
+                  (begin
+                    (set!
+                      out-decls
+                      (compiler-load-decl-list-prepend-from-source
+                        (owned_view.compiler-owned-array-element-shared-view
+                          base-slots
+                          (+ base-offset fold))
+                        (ast.AstDeclList
+                          (ast.ast-place-shared-view base-slots)
+                          (+ base-offset fold)
+                          (- base-len fold)
+                          (and (= fold 0) base-prependable))
+                        out-decls))
+                    (set!
+                      out-paths
+                      (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
+                        (clone importer-path)
+                        traversal.importer-decl-owner-id
+                        traversal.importer-path-id
+                        out-paths))
+                    (set!
+                      out-modules
+                      (ast.ast-decl-module-list-prepend-builder-id
+                        importer-source-module-id
+                        out-modules))
+                    (set! fold (- fold 1))))
+                (ResultCompilerLoadWithPaths.Ok
+                  out-decls
+                  out-paths
+                  out-modules
+                  rest-seen)))]
+          [(ResultCompilerLoadWithPaths.Err diag)
+            (ResultCompilerLoadWithPaths.Err diag)])))))
 
 (define (compiler-load-decls-with-module-and-roots-cfg-root
   [decls : ast.AstDeclList]
@@ -20925,6 +21164,111 @@
               [_ false]))]
         (and before-ok after-remove-ok reload-ok isolation-ok)))))
 
+;; A generated import records its surface summary while the macro walk's
+;; reclaimable arena is current, then the lazy-import handoff reads that summary
+;; after the macro arena has been destroyed. Pin that exact lifetime boundary:
+;; the session record must own the copied string and nested list descriptors.
+(define (compiler-load-surface-summary-scratch-handoff-ok?) : bool
+  (let
+    [home : i64 (arena.tl_arena_current)]
+    [state : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [module-id : i64 (ci.intern "surface-scratch.module")]
+    [source-id : i64 (ci.intern "target/surface-scratch.tl")]
+    [decl-id : i64 (ci.intern "surface-scratch-value")]
+    [scratch : i64 (arena.tl_arena_make)]
+    [_enter : unit
+      (unsafe
+        (arena.tl_arena_set scratch))]
+    [imports : (__tl_dyn-array CompilerLoadSurfaceImport)
+      (__tl_make-array CompilerLoadSurfaceImport 1)]
+    [decls : (__tl_dyn-array CompilerLoadSurfaceDecl)
+      (__tl_make-array CompilerLoadSurfaceDecl 1)]
+    [_fill-nested : unit
+      (begin
+        (set!
+          (array-ref imports 0)
+          (CompilerLoadSurfaceImport
+            (CompilerLoadSurfaceImportModule)
+            module-id
+            (string.copy "target/surface-scratch.tl")
+            (string.copy "surface.scratch.dep")
+            (CompilerLoadSurfaceSomeString (string.copy "surface.scratch.dep"))
+            (CompilerLoadSurfaceSomeString (string.copy "scratch-dep"))
+            (CompilerLoadSurfaceSomeString (string.copy "scratch-default"))
+            (compiler-load-surface-zero-span)))
+        (set!
+          (array-ref decls 0)
+          (CompilerLoadSurfaceDecl
+            (CompilerLoadSurfaceValue)
+            decl-id
+            module-id
+            (CompilerLoadSurfaceNoSignature)
+            (CompilerLoadSurfaceMacroOther)
+            false
+            false
+            false
+            false
+            (compiler-load-surface-zero-span))))]
+    [_record : unit
+      (compiler-load-session-state-record-surface-summary!
+        (& state)
+        (CompilerLoadSurfaceSummary
+          module-id
+          module-id
+          true
+          true
+          source-id
+          (string.copy "target/surface-scratch.tl")
+          (string.copy "surface-scratch-root")
+          (CompilerLoadSurfaceImportList imports 1)
+          (CompilerLoadSurfaceDeclList decls 1)
+          false
+          false
+          false
+          false
+          (CompilerLoadLazyImportDirect)))]
+    [_restore : unit
+      (unsafe
+        (arena.tl_arena_set home))]
+    [_release : unit
+      (unsafe
+        (arena.tl_arena_destroy scratch))]
+    [handoff-ok : bool
+      (match (compiler-load-session-state-surface-summary-find-source
+        state
+        source-id)
+        [(CompilerLoadSomeSurfaceSummary summary)
+          (let
+            [import-edge : CompilerLoadSurfaceImport
+              (compiler-load-surface-import-list-at (& summary.imports) 0)]
+            [decl : CompilerLoadSurfaceDecl
+              (compiler-load-surface-decl-list-at (& summary.decls) 0)]
+            (and
+              (= summary.module-id module-id)
+              (string.eq summary.source-path "target/surface-scratch.tl")
+              (string.eq summary.root-id "surface-scratch-root")
+              (=
+                (compiler-load-surface-import-list-count (& summary.imports))
+                1)
+              (string.eq import-edge.source-path "target/surface-scratch.tl")
+              (string.eq import-edge.import-path "surface.scratch.dep")
+              (= (compiler-load-surface-decl-list-count (& summary.decls)) 1)
+              (= decl.name decl-id)
+              (= decl.module module-id)))]
+        [_ false])]
+    (begin
+      (compiler-load-session-state-surface-summaries-reset!
+        (compiler-load-session-state-shared-view (& state)))
+      (and
+        handoff-ok
+        (=
+          (compiler-load-session-state-surface-summary-owner-arena (& state))
+          0)
+        (=
+          (compiler-load-surface-summary-list-count
+            (compiler-load-session-state-surface-summaries state))
+          0)))))
+
 (define (compiler-load-dependency-catalog-registry-ok?) : bool
   (let
     [state : CompilerLoadSessionState (compiler-load-session-state-new)]
@@ -21230,6 +21574,10 @@
       (compiler-load-surface-summary-dense-session-ok?)
       (return
         (io.panic "compiler-load: dense surface summary session mismatch")))
+    (unless
+      (compiler-load-surface-summary-scratch-handoff-ok?)
+      (return
+        (io.panic "compiler-load: surface summary scratch handoff mismatch")))
     (unless
       (compiler-load-lazy-qualified-observer-dense-stack-ok?)
       (return

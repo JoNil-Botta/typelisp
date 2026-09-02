@@ -188,17 +188,18 @@ recorded in its row name (`self_compile/compile_cli_opt1`).
 The checker builds a fresh full CLI stage1 and stage2 under
 `target/instruction-count-check` and measures that fixed stage2 compiler. The
 default per-PR subset is `self_compile` plus TypeLisp and scalar-clang rows for
-the six kernels derived from compiler self-compilation: `cfg_domloops`,
-`gvn_table`, `intern_table`, `lex_source`, `liveness_scan`, and
-`peephole_lines`, each with one cachegrind run. Explicit benchmark subsets are
+the twelve kernels derived from compiler self-compilation: `cfg_domloops`,
+`gvn_table`, `intern_table`, `lex_source`, `liveness_scan`, `peephole_lines`,
+`read_sexpr`, `callgraph_scc`, `ssa_construct`, `sccp_lattice`,
+`regalloc_greedy`, and `asm_render`, each with one cachegrind run. Explicit benchmark subsets are
 scoped against those selected cases even when the baseline carries additional
 rows. Alternate baseline files such as the scheduled heavy corpus retain their
 own checked row policy.
 
 `perf/benchmark-ci-cases.tsv` assigns positive membership to the Linux generic
-benchmark, opt2 optimizer-corpus, and instruction-count suites. The eleven
+benchmark, opt2 optimizer-corpus, and instruction-count suites. The seventeen
 instruction-count workloads are absent from the generic benchmark suite, and
-the six main workloads are absent from the separate opt2 suite. Their measured
+the twelve main workloads are absent from the separate opt2 suite. Their measured
 execution supplies both output parity and instruction-count coverage; local
 case and filter selections remain independent of CI membership.
 

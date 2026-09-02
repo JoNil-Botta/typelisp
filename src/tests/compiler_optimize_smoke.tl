@@ -4826,10 +4826,65 @@
     "a single-site callee at the pathological backstop still absorbs: no growth to bound"))
 
 (test
-  inline-single-site-size-cap-refusal
+  inline-sole-call-past-backstop-absorb
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-single-site-size-cap-refusal-ok?)
-    "one block past the backstop the same body stays out of line"))
+    (compiler_optimize_tests.compiler-optimize-inline-sole-call-past-backstop-absorb-ok?)
+    "one block past the backstop the acyclic body absorbs anyway: the sole-call tier has no block cap"))
+
+(test
+  inline-sole-call-narrow-absorb
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-sole-call-narrow-absorb-ok?)
+    "a three-parameter forty-block acyclic sole-call callee absorbs at its one straight-line site"))
+
+(test
+  inline-sole-call-cyclic-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-sole-call-cyclic-refusal-ok?)
+    "the identical body with one back edge stays out: a loop-carrying body compounds the caller's pressure"))
+
+(test
+  inline-sole-call-loop-site-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-sole-call-loop-site-refusal-ok?)
+    "the same acyclic body stays out at an in-loop site: the import lands inside a region already priced"))
+
+(test
+  inline-sole-call-staged-args-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-sole-call-staged-args-refusal-ok?)
+    "an sret callee stays out: the clone's staged path is fail-closed at this tier"))
+
+(test
+  inline-sole-call-two-reference-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-sole-call-two-reference-refusal-ok?)
+    "two straight-line sites keep the body at both: the sole-call tier moves, it never copies"))
+
+(test
+  inline-sole-call-address-taken-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-sole-call-address-taken-refusal-ok?)
+    "an address-taken callee is refused at one call site: the address is a second way in"))
+
+(test
+  inline-sole-call-self-recursive-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-sole-call-self-recursive-refusal-ok?)
+    "a self-calling callee counts two references and never reaches the sole-call tier"))
+
+(test
+  inline-sole-call-extern-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-sole-call-extern-refusal-ok?)
+    "a callee with no body in the function sequence -- an extern -- keeps its call"))
+
+(test
+  inline-sole-call-cascade-depth
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-inline-sole-call-cascade-depth-code)
+    0
+    "A's only caller B absorbed into C in one pass, with the merged body's pred renames well formed"))
 
 (test
   inline-single-site-absorb-keeps-block-fuel

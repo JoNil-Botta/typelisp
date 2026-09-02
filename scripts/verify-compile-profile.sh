@@ -1724,10 +1724,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     # on the Windows CI probe; raised one more step.
     # #6996's inline aggregate globals (~2,400 backend-source lines) carried
     # it to 27,064 KiB on the Windows CI probe; raised one more step.
+    # #7164's fifteen optimizer/regalloc/backend packets (~12,000
+    # compiler-source lines) carried it to 28,641 KiB on the Windows CI probe;
+    # raised one more step.
     assert_profile_counter_at_most_in \
         "$SELFHOST_STDERR" \
         "typecheck.macro.walk_sp_reresolve_alloc_kb" \
-        28000 \
+        29000 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     # One constant per boundary: the segment count. capacity and segment_bytes
@@ -1850,8 +1853,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # composed graph from 75 to 76 segments: the authoritative Windows CI probe
     # measured 4,915,346 used nodes, 4,980,736 capacity, and 159,383,552 physical
     # payload bytes.
+    # #7164's fifteen optimizer/regalloc/backend packets (~12,000 compiler-source
+    # lines), rebased over #7376, cross the composed graph from 76 to 77
+    # segments: the authoritative Windows CI probe measured 5,028,561 used
+    # nodes, 5,046,272 capacity, and 161,480,704 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 76 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 77 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking
@@ -1922,8 +1929,11 @@ if [ "$NL_HOST_OS" = windows ]; then
     # composed graph from 58 to 59 segments: the authoritative Windows CI probe
     # measured 3,806,383 used nodes, 3,866,624 capacity, and 123,731,968 physical
     # payload bytes.
+    # #7164's packets, rebased over #7376, cross the composed graph from 59 to
+    # 60 segments: the authoritative Windows CI probe measured 3,892,000 used
+    # nodes, 3,932,160 capacity, and 125,829,120 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 59 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 60 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain

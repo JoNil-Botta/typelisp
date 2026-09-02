@@ -75,7 +75,8 @@
     [(= case-id 1) 3]
     [(= case-id 2) 8]
     [(= case-id 3) 16]
-    [else 19]))
+    [(= case-id 4) 19]
+    [else 275]))
 
 (define (point-transform-input-x [case-id : i64] [index : i64]) : f32
   (cond
@@ -346,7 +347,7 @@
 
 (define (main) : i64
   (let
-    [capacity : i64 20]
+    [capacity : i64 276]
     [points-x : f32v.Vec (point-transform-buffer capacity)]
     [points-y : f32v.Vec (point-transform-buffer capacity)]
     [result-x : f32v.Vec (point-transform-buffer capacity)]
@@ -356,7 +357,7 @@
     [case-id : i64 0]
     [ok : bool true]
     (begin
-      (while (and ok (< case-id 5))
+      (while (and ok (< case-id 6))
         (begin
           (if (point-transform-case-ok?
             case-id

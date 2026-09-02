@@ -25,6 +25,14 @@ set -eu
 # A step change remains a matter for review of the gate's case list, which is
 # why the note at scripts/check-stage1-wrapper.sh asks for the cap to move in
 # the same commit that adds a case of that weight.
+#
+# Two consecutive #7433 Linux runs on the current hosted-runner class measured
+# the opt2 workloads at 52510/54080ms for the opt2-built compiler and
+# 92290/94620ms for the opt1-built compiler. The deterministic self-compile
+# instruction delta was only 0.451%, and a same-host source comparison measured
+# the branch at 22572ms against main at 22781/22991ms, so the wall increase was
+# runner throughput rather than added compiler work. The revised opt2 caps keep
+# about 17% headroom above the larger hosted measurements.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -114,8 +122,8 @@ check_budget() {
         -v host_action_gate="$HOST_ACTION_GATE" \
         -v opt2_opt1_cap=25000 \
         -v opt1_opt1_cap=45000 \
-        -v opt2_opt2_cap=55000 \
-        -v opt1_opt2_cap=90000 \
+        -v opt2_opt2_cap=65000 \
+        -v opt1_opt2_cap=115000 \
         -v lint_cap=85000 \
         -v host_action_cap=36000 \
         -v ratio_limit=2.5 '
@@ -425,6 +433,19 @@ self-test denylisted gate without cap"
     grep -F 'opt1-built:selfhost_main_opt1 exceeds its 45000ms cap' \
         "$workdir/opt1-absolute.out" >/dev/null
 
+    write_fixture "$workdir/opt2-workload-absolute.tsv" 12800 18700 65001 50500
+    expect_fixture opt2-workload-absolute-breach fail \
+        "$workdir/opt2-workload-absolute.tsv" \
+        "$workdir/opt2-workload-absolute.out"
+    grep -F 'opt2-built:selfhost_main_opt2 exceeds its 65000ms cap' \
+        "$workdir/opt2-workload-absolute.out" >/dev/null
+
+    write_fixture "$workdir/opt1-opt2-absolute.tsv" 12800 18700 30300 115001
+    expect_fixture opt1-opt2-absolute-breach fail \
+        "$workdir/opt1-opt2-absolute.tsv" "$workdir/opt1-opt2-absolute.out"
+    grep -F 'opt1-built:selfhost_main_opt2 exceeds its 115000ms cap' \
+        "$workdir/opt1-opt2-absolute.out" >/dev/null
+
     write_fixture "$workdir/lint-absolute.tsv" 12800 18700 30300 50500 85001
     expect_fixture lint-absolute-breach fail \
         "$workdir/lint-absolute.tsv" "$workdir/lint-absolute.out"
@@ -524,7 +545,7 @@ self-test denylisted gate without cap"
     write_fixture "$workdir/missing.tsv" 12800 18700 30300
     expect_fixture missing-row fail \
         "$workdir/missing.tsv" "$workdir/missing.out"
-    grep -F 'opt1-built:selfhost_main_opt2=<missing> cap=90000ms' \
+    grep -F 'opt1-built:selfhost_main_opt2=<missing> cap=115000ms' \
         "$workdir/missing.out" >/dev/null
     grep -F 'scripts/benchmark-compile-cli.sh' "$workdir/missing.out" >/dev/null
 

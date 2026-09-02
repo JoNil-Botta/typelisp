@@ -100,13 +100,16 @@
 (defenum CompilerOptimizedProgram
   (Program ir.CompilerIrProgram ir.CompilerSourceSpans))
 
+(defstruct OptDebugTextBufCell
+  (slot (Box text_buf.TextBuf)))
+
 (defstruct OptDebugState
   ;; Borrowed from the ambient compile job by compiler-opt-debug-configure!.
   ;; That job must outlive every observation and result read for this session.
   (dump-arena arena.Arena)
   (structural-session cis.InternStructuralSessionHandle)
   (dump-pass String)
-  (dump-buf text_buf.TextBuf)
+  (dump-buf OptDebugTextBufCell)
   (verify-error String))
 
 (defstruct OptInlineOwnedState
@@ -122,6 +125,22 @@
   (inline-state OptInlineOwnedState)
   (debug-state OptDebugState))
 
+(define (compiler-opt-debug-text-buf-cell-empty) : OptDebugTextBufCell
+  (OptDebugTextBufCell (box (text_buf.empty))))
+
+(define (compiler-opt-debug-text-buf-cell-append!
+  [cell : OptDebugTextBufCell]
+  [snapshot : String]) : unit
+  (let
+    [buf : text_buf.TextBuf (replace! (deref cell.slot) (text_buf.empty))]
+    [next : text_buf.TextBuf
+      (text_buf.append
+        (if (text_buf.empty? (& buf))
+          buf
+          (text_buf.append buf "\n"))
+        snapshot)]
+    (set! (deref cell.slot) next)))
+
 (define compiler-opt-owned-state : CompilerOptOwnedState
   (CompilerOptOwnedState
     (OptInlineOwnedState (arena.Arena 0) (__tl_make-array i64 0))
@@ -129,7 +148,7 @@
       (arena.Arena 0)
       (cis.InternStructuralSessionHandle 0)
       ""
-      (text_buf.empty)
+      (compiler-opt-debug-text-buf-cell-empty)
       "")))
 
 ;; Serial compatibility reads intentionally take shallow shared views of this
@@ -183,14 +202,28 @@
           (arena.current)
           structural-session
           dump-pass
-          (text_buf.empty)
+          (compiler-opt-debug-text-buf-cell-empty)
           "")))))
 
 (define (compiler-opt-debug-dump-result) : String
   (let
     [state : OptDebugState
       (compiler-opt-global-shared-view compiler-opt-owned-state.debug-state)]
-    (text_buf.render (clone (compiler-opt-global-shared-view state.dump-buf)))))
+    [cell : OptDebugTextBufCell
+      (compiler-opt-global-shared-view state.dump-buf)]
+    [buf : text_buf.TextBuf (compiler-opt-box-shared-view cell.slot)]
+    (text_buf.render (clone buf))))
+
+(cfg
+  test
+  (define (compiler-opt-debug-dump-length) : i64
+    (let
+      [state : OptDebugState
+        (compiler-opt-global-shared-view compiler-opt-owned-state.debug-state)]
+      [cell : OptDebugTextBufCell
+        (compiler-opt-global-shared-view state.dump-buf)]
+      [buf : text_buf.TextBuf (compiler-opt-box-shared-view cell.slot)]
+      (text_buf.length (& buf)))))
 
 (define (compiler-opt-debug-verification-error) : String
   (let
@@ -243,33 +276,21 @@
               (compiler-opt-global-shared-view pass)))
             (in-arena
               (compiler-opt-global-shared-view state.dump-arena)
-              (let
-                [dump-buf : text_buf.TextBuf
-                  (clone (compiler-opt-global-shared-view state.dump-buf))]
-                [next-buf : text_buf.TextBuf
-                  (text_buf.append
-                    (if (text_buf.empty? (& dump-buf))
-                      dump-buf
-                      (text_buf.append dump-buf "\n"))
-                    (str_cat.str-cat
-                      "after "
-                      (compiler-opt-global-shared-view pass)
-                      " @"
-                      (ir.compiler-ir-symbol-text name)
-                      "\n"
-                      (ir.compiler-ir-function-render
-                        state.structural-session
-                        type-segment-bases
-                        (compiler-opt-global-shared-view func))))]
-                (__tl-project-set-field
-                  compiler-opt-owned-state
-                  debug-state
-                  (OptDebugState
-                    state.dump-arena
+              ;; The liveness-tracked cell moves the buffer out exactly once,
+              ;; appends while no stale snapshot aliases its mutable store, and
+              ;; restores it without cloning the accumulated prefix.
+              (compiler-opt-debug-text-buf-cell-append!
+                (compiler-opt-global-shared-view state.dump-buf)
+                (str_cat.str-cat
+                  "after "
+                  (compiler-opt-global-shared-view pass)
+                  " @"
+                  (ir.compiler-ir-symbol-text name)
+                  "\n"
+                  (ir.compiler-ir-function-render
                     state.structural-session
-                    state.dump-pass
-                    next-buf
-                    (compiler-opt-global-shared-view state.verify-error)))))
+                    type-segment-bases
+                    (compiler-opt-global-shared-view func)))))
             unit))
         func)]))
 
@@ -14681,7 +14702,7 @@
             state.dump-arena
             state.structural-session
             state.dump-pass
-            state.dump-buf
+            (compiler-opt-global-shared-view state.dump-buf)
             message)))
       unit)
     program))

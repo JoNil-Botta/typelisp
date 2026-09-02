@@ -697,6 +697,80 @@
             (= (ast.ast-source-span-end-col found) 9))]
         [(compiler_ir_types.CompilerMaybeSourceSpan.No) false]))))
 
+(define (compiler-ir-smoke-owned-capability-ok?) : bool
+  (let
+    [root : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.OwnRoot
+        3
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (ast.AstType.String))]
+    [store : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.StoreOwned
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (ast.AstType.String))]
+    [load : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.LoadOwned
+        5
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        3
+        (ast.AstType.String))]
+    [session : cis.InternStructuralSessionHandle
+      (cis.InternStructuralSessionHandle 0)]
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    (and
+      (string.eq
+        (compiler_ir_types.compiler-ir-instr-render
+          session
+          bases
+          (compiler_ir_types.compiler-ir-global-shared-view root))
+        "  %3 = own_root %2 : String")
+      (string.eq
+        (compiler_ir_types.compiler-ir-instr-render
+          session
+          bases
+          (compiler_ir_types.compiler-ir-global-shared-view store))
+        "  store_owned %3 -> %4 : String")
+      (string.eq
+        (compiler_ir_types.compiler-ir-instr-render
+          session
+          bases
+          (compiler_ir_types.compiler-ir-global-shared-view load))
+        "  %5 = load_owned %4, owner %3 : String")
+      (compiler_ir_types.compiler-ir-effect-is?
+        (compiler_ir_types.compiler-ir-global-shared-view root)
+        compiler_ir_types.CompilerIrEffect.Pure)
+      (compiler_ir_types.compiler-ir-effect-is?
+        (compiler_ir_types.compiler-ir-global-shared-view store)
+        compiler_ir_types.CompilerIrEffect.MemoryWrite)
+      (compiler_ir_types.compiler-ir-effect-is?
+        (compiler_ir_types.compiler-ir-global-shared-view load)
+        compiler_ir_types.CompilerIrEffect.MemoryRead)
+      (string.eq
+        (compiler_ir_types.compiler-ir-instr-render
+          session
+          bases
+          (compiler_ir_types.compiler-ir-clone-instr
+            (ast.ast-node-pool-reader-context-current)
+            (compiler_ir_types.compiler-ir-global-shared-view root)))
+        "  %3 = own_root %2 : String")
+      (string.eq
+        (compiler_ir_types.compiler-ir-instr-render
+          session
+          bases
+          (compiler_ir_types.compiler-ir-clone-instr
+            (ast.ast-node-pool-reader-context-current)
+            (compiler_ir_types.compiler-ir-global-shared-view store)))
+        "  store_owned %3 -> %4 : String")
+      (string.eq
+        (compiler_ir_types.compiler-ir-instr-render
+          session
+          bases
+          (compiler_ir_types.compiler-ir-clone-instr
+            (ast.ast-node-pool-reader-context-current)
+            (compiler_ir_types.compiler-ir-global-shared-view load)))
+        "  %5 = load_owned %4, owner %3 : String"))))
+
 (define (compiler-ir-smoke-access-helpers-ok?) : bool
   (let
     [call-indirect : compiler_ir_types.CompilerIrInstr
@@ -1474,4 +1548,5 @@
       (unless
         (= representation-failure 0)
         (return (+ 11 representation-failure))))
+    (unless (compiler-ir-smoke-owned-capability-ok?) (return 21))
     (compiler_ir_types.compiler-ir-effect-self-test)))

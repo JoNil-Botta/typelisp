@@ -3232,11 +3232,20 @@ expression-list cfg is omitted. In required expression position, `(cfg
 predicate then-expr)` evaluates to `unit` when the predicate is false; `(cfg
 predicate then-expr else-expr)` parses only the selected expression.
 
-### 4.5 `(test name body...)` - inline test item
+### 4.5 `(test name [metadata...] body...)` - inline test item
 
 Declares a source-owned inline test. The name is an identifier. The body must
 contain one or more expressions; multiple expressions are sequenced like
-`begin`.
+`begin`. Metadata forms, when present, must immediately follow the name:
+
+- `(:ignore "reason")` marks a test ignored. The reason must be a non-empty
+  string.
+- `(:slow)` marks a slow test.
+
+Each key may appear at most once. Unknown keys, malformed values, and metadata
+after the first body expression are errors. Ignored and slow may be combined;
+an ignored test remains ignored until `--include-ignored`, after which its slow
+state still requires `--include-slow`.
 
 Production commands (`check`, `compile`, `build`, and `run`) type-check inline
 tests owned by the explicitly named source — or by the package's own discovered
@@ -3255,18 +3264,39 @@ executable. `typelisp test --check <file.tl>` type-checks the generated harness
 without assembling or linking. Before invoking each selected test, the runner
 prints its name and declaration location. It runs all selected tests after
 ordinary assertion failures, prints `ok` or `FAILED` per test, lists every
-recorded assertion message, and prints final passed, failed, and total counts
-in declaration order. Assertion helpers in `stdlib.test` record failures while
-a generated test harness is active; outside that harness they retain aborting
-behavior. A run exits `1` when assertions failed. A hard panic, trap, or other
-unexpected harness termination stops the process and is reported by the test
-command with exit `2`.
+recorded assertion message, and prints final passed, failed, ignored,
+slow-skipped, and total counts in declaration order. Ignored and slow tests are
+parsed and type-checked but do not execute by default; `--include-ignored` and
+`--include-slow` opt into their execution. Assertion helpers in `stdlib.test`
+record failures while a generated test harness is active; outside that harness
+they retain aborting behavior. A run exits `1` when assertions failed. A hard
+panic, trap, or other unexpected harness termination stops the process and is
+reported by the test command with exit `2`.
 
 `typelisp test --filter <substring>` selects inline-test names containing the
 case-sensitive substring. In package mode the same filter selects integration
-test paths. `typelisp test --list` prints the selected names and declaration
-locations without compiling or running a harness; it may be combined with
-`--filter` but not `--check`.
+test paths. `--exact <name>` instead requires equality with the complete test
+name, or with the complete normalized integration path in package mode;
+`--filter` and `--exact` are mutually exclusive. `typelisp test --list` prints
+the selected names, declaration locations, run/ignored/slow-skipped state, and
+ignore reasons without compiling or running a harness; it may be combined with
+either selector but not `--check`.
+
+Repeatable `--cfg <name>` values compose with the automatic `test` and target
+cfg predicates used while loading and type-checking. `--shuffle` applies a
+portable xorshift64/Fisher-Yates permutation after inline name filtering and
+skip classification. The command prints the unsigned 64-bit decimal seed
+before listing or execution. `--seed <u64>` requires `--shuffle` and exactly
+replays the order; without `--seed`, system entropy supplies and prints a seed.
+Without `--shuffle`, declaration/discovery order remains unchanged. The
+portable permutation initializes its 64-bit state as `seed xor
+1469598103934665603`, replaces an all-zero xorshift state with
+`88172645463325252`, then applies `x ^= x << 13`, `x ^= x >> 7`, and `x ^= x <<
+17` with modulo-2^64 arithmetic for each descending Fisher-Yates draw. The draw
+index is `x % (i + 1)`. As a golden fixture, seed `42` permutes five declaration
+positions `[0, 1, 2, 3, 4]` to `[3, 0, 2, 4, 1]`. Absolute source paths never
+enter the state, so replay is independent of host path syntax. Package
+integration paths are selected before their vector is shuffled.
 
 Example:
 ```lisp test=check name=inline-test-declaration
@@ -8326,9 +8356,13 @@ tests, and labels are outside this staged rule.
 generated inline test harnesses without assembling or running them, and
 `test --check --batch <inputs.txt>` checks newline-separated input paths in
 one process. `test --filter <substring>` selects inline-test names and package
-integration paths containing the substring. `test --list` lists the selected
-tests without running them. `test` defaults to the host target unless
-`--target <target>` is supplied.
+integration paths containing the substring; `test --exact <name>` selects a
+complete name or normalized integration path instead. `test --list` lists
+selected tests with run/ignored/slow state. `--include-ignored` and
+`--include-slow` enable annotated tests, repeatable `--cfg <name>` values add to
+the automatic test/target cfg set, and `--shuffle [--seed <u64>]` prints a
+replayable selection seed. `test` defaults to the host target unless `--target
+<target>` is supplied.
 
 `doc` generates an offline HTML site at `target/doc/index.html` for the nearest
 package; `-o <out.md>` selects the compatible single-file Markdown form,

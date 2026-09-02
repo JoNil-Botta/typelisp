@@ -3682,7 +3682,7 @@
         variants
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))]
-    [(ast.AstDecl.Test _ body _)
+    [(ast.AstDecl.Test _ body _ _)
       (lint-expr-uses-import?
         (ast.ast-node-get body)
         (owned_view.compiler-owned-shared-view alias)
@@ -4898,7 +4898,8 @@
       (lint-name-set-add names (ci.intern-str name))]
     [(ast.AstDecl.DefDispatch _ name _)
       (lint-name-set-add names (ci.intern-str name))]
-    [(ast.AstDecl.Test name _ _) (lint-name-set-add names (ci.intern-str name))]
+    [(ast.AstDecl.Test name _ _ _)
+      (lint-name-set-add names (ci.intern-str name))]
     [(ast.AstDecl.Unsafe inner)
       (lint-unsafe-decl-add-global
         (owned_view.compiler-owned-box-shared-view inner)
@@ -4977,7 +4978,7 @@
       [(ast.AstDecl.IncludeStrLzss _ _) (lint-unsafe-scan-empty)]
       [(ast.AstDecl.IncludeBin _ _) (lint-unsafe-scan-empty)]
       [(ast.AstDecl.DefDispatch _ _ _) (lint-unsafe-scan-empty)]
-      [(ast.AstDecl.Test _ body _) (lint-unsafe-scan-node body body-scope)]
+      [(ast.AstDecl.Test _ body _ _) (lint-unsafe-scan-node body body-scope)]
       [(ast.AstDecl.Unsafe inner)
         (lint-unsafe-scan-decl
           (owned_view.compiler-owned-box-shared-view inner)
@@ -5983,7 +5984,7 @@
             acc)
           (lint-no-span))
         findings)]
-    [(ast.AstDecl.Test _ body _)
+    [(ast.AstDecl.Test _ body _ _)
       (__tl-project-field
         (lint-copy-on-update-expr
           (ast.ast-node-get body)
@@ -7229,7 +7230,7 @@
           (lint-single-element-array-expr
             (ast.ast-node-get body)
             (LintSingleElementArrayState param-candidates acc))))]
-    [(ast.AstDecl.Test _ body _)
+    [(ast.AstDecl.Test _ body _ _)
       (lint-single-element-array-finalize-state
         (lint-single-element-array-expr
           (ast.ast-node-get body)
@@ -7969,7 +7970,7 @@
             acc)
           (lint-no-span))
         findings)]
-    [(ast.AstDecl.Test _ body _)
+    [(ast.AstDecl.Test _ body _ _)
       (__tl-project-field
         (lint-unused-assignment-expr
           (ast.ast-node-get body)
@@ -11350,7 +11351,7 @@
         acc
         name-case
         report-unused)]
-    [(ast.AstDecl.Test _ body _)
+    [(ast.AstDecl.Test _ body _ _)
       (__tl-project-field
         (lint-unused-variable-expr
           (ast.ast-node-get body)
@@ -12806,7 +12807,7 @@
       (let
         [body : ast.AstExpr (ast.ast-node-get body-box)]
         (lint-walk-tail-expr body threshold acc))]
-    [(ast.AstDecl.Test _ body-box _)
+    [(ast.AstDecl.Test _ body-box _ _)
       (let
         [body : ast.AstExpr (ast.ast-node-get body-box)]
         (lint-walk-tail-expr body threshold acc))]

@@ -1590,6 +1590,10 @@
   (Ok ast.AstDecl)
   (Err String))
 
+(defenum ResultAstTestMetadataForms
+  (Ok ast.AstTestMetadata reader.SpannedSexpr)
+  (Err String))
+
 (defenum ResultAstMaybeDecl
   (NoDecl)
   (SomeDecl ast.AstDecl)
@@ -12095,6 +12099,125 @@
     (ast.ast-expr-list-get (& exprs) 0 0)
     (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Begin exprs))))
 
+(define (parse-ast-test-metadata-form?
+  [dispatch : sym_i64_env.SymI64Env]
+  [item : reader.SpannedSexpr]) : bool
+  (match (reader.sexpr-view (reader.spanned-sexpr-form item))
+    [(reader.SexprView.Cons key-node _)
+      (match (reader.sexpr-view key-node)
+        [(reader.SexprView.Sym key) (compiler-parse-metadata-key? dispatch key)]
+        [_ false])]
+    [_ false]))
+
+(define (parse-ast-test-body-metadata-free?
+  [dispatch : sym_i64_env.SymI64Env]
+  [forms : reader.SpannedSexpr]) : bool
+  (match (reader.spanned-sexpr-view (compiler-parse-place-shared-view forms))
+    [(reader.SpannedSexprView.Nil _) true]
+    [(reader.SpannedSexprView.Cons item tail _)
+      (and
+        (not
+          (parse-ast-test-metadata-form?
+            (compiler-parse-place-shared-view dispatch)
+            (compiler-parse-place-shared-view item)))
+        (parse-ast-test-body-metadata-free? dispatch tail))]
+    [_ false]))
+
+(define (parse-ast-test-metadata-forms
+  [dispatch : sym_i64_env.SymI64Env]
+  [forms : reader.SpannedSexpr]
+  [ignore-reason : ast.AstTestIgnoreReason]
+  [seen-ignore : bool]
+  [slow : bool]
+  [seen-slow : bool]) : ResultAstTestMetadataForms
+  (match (reader.spanned-sexpr-view (compiler-parse-place-shared-view forms))
+    [(reader.SpannedSexprView.Nil _)
+      (ResultAstTestMetadataForms.Ok
+        (ast.ast-test-metadata-new ignore-reason slow)
+        forms)]
+    [(reader.SpannedSexprView.Cons item tail _)
+      (if (parse-ast-test-metadata-form?
+        (compiler-parse-place-shared-view dispatch)
+        (compiler-parse-place-shared-view item))
+        (match (reader.sexpr-view (reader.spanned-sexpr-form item))
+          [(reader.SexprView.Cons key-node after-key)
+            (match (reader.sexpr-view key-node)
+              [(reader.SexprView.Sym key)
+                (cond
+                  [(=
+                      (ci.intern-syntax-id-value key)
+                      (cbi.compiler-builtin-ctfe-ref 291))
+                    (if seen-ignore
+                      (ResultAstTestMetadataForms.Err
+                        "parse: duplicate test :ignore metadata")
+                      (match (reader.sexpr-view after-key)
+                        [(reader.SexprView.Cons reason-node end)
+                          (match (reader.sexpr-view end)
+                            [(reader.SexprView.Nil)
+                              (match (reader.sexpr-view reason-node)
+                                [(reader.SexprView.Str reason-id)
+                                  (let
+                                    [reason : String
+                                      (compiler-parse-dispatch-id-str
+                                        dispatch
+                                        reason-id)]
+                                    (if (= (string.string-length reason) 0)
+                                      (ResultAstTestMetadataForms.Err
+                                        "parse: test :ignore reason must not be empty")
+                                      (parse-ast-test-metadata-forms
+                                        dispatch
+                                        tail
+                                        (ast.AstTestIgnoreReason.Some reason)
+                                        true
+                                        slow
+                                        seen-slow)))]
+                                [_
+                                  (ResultAstTestMetadataForms.Err
+                                    "parse: test :ignore metadata expects one string reason")])]
+                            [_
+                              (ResultAstTestMetadataForms.Err
+                                "parse: test :ignore metadata expects one string reason")])]
+                        [_
+                          (ResultAstTestMetadataForms.Err
+                            "parse: test :ignore metadata expects one string reason")]))]
+                  [(=
+                      (ci.intern-syntax-id-value key)
+                      (cbi.compiler-builtin-ctfe-ref 292))
+                    (if seen-slow
+                      (ResultAstTestMetadataForms.Err
+                        "parse: duplicate test :slow metadata")
+                      (match (reader.sexpr-view after-key)
+                        [(reader.SexprView.Nil)
+                          (parse-ast-test-metadata-forms
+                            dispatch
+                            tail
+                            ignore-reason
+                            seen-ignore
+                            true
+                            true)]
+                        [_
+                          (ResultAstTestMetadataForms.Err
+                            "parse: test :slow metadata takes no values")]))]
+                  [else
+                    (ResultAstTestMetadataForms.Err
+                      (str_cat.str-cat
+                        "parse: unknown test metadata "
+                        (compiler-parse-dispatch-syntax-id-text dispatch key)))])]
+              [_
+                (ResultAstTestMetadataForms.Err
+                  "parse: malformed test metadata")])]
+          [_ (ResultAstTestMetadataForms.Err "parse: malformed test metadata")])
+        (if (parse-ast-test-body-metadata-free?
+          dispatch
+          (compiler-parse-place-shared-view forms))
+          (ResultAstTestMetadataForms.Ok
+            (ast.ast-test-metadata-new ignore-reason slow)
+            forms)
+          (ResultAstTestMetadataForms.Err
+            "parse: test metadata must appear before body expressions")))]
+    [_
+      (ResultAstTestMetadataForms.Err "parse: malformed test metadata or body")]))
+
 (define (parse-ast-test
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
@@ -12104,22 +12227,35 @@
     [(reader.SpannedSexprView.Cons name-node body-forms _)
       (match (reader.spanned-sexpr-view name-node)
         [(reader.SpannedSexprView.Sym name _)
-          (match (reader.spanned-sexpr-view
-            (compiler-parse-place-shared-view body-forms))
-            [(reader.SpannedSexprView.Nil _)
-              (ResultAstDecl.Err "parse: test needs at least one expression")]
-            [_
-              (match (parse-ast-expr-list
-                dispatch
-                (compiler-parse-place-shared-view pools)
-                body-forms)
-                [(ResultAstExprList.Ok exprs)
-                  (ResultAstDecl.Ok
-                    (ast.ast-decl-test-id
-                      (ci.intern-syntax-id-value name)
-                      (parse-ast-test-body pools exprs)
-                      form-span))]
-                [(ResultAstExprList.Err message) (ResultAstDecl.Err message)])])]
+          (match (parse-ast-test-metadata-forms
+            dispatch
+            body-forms
+            ast.AstTestIgnoreReason.No
+            false
+            false
+            false)
+            [(ResultAstTestMetadataForms.Err message)
+              (ResultAstDecl.Err message)]
+            [(ResultAstTestMetadataForms.Ok metadata parsed-body-forms)
+              (match (reader.spanned-sexpr-view
+                (compiler-parse-place-shared-view parsed-body-forms))
+                [(reader.SpannedSexprView.Nil _)
+                  (ResultAstDecl.Err
+                    "parse: test needs at least one expression")]
+                [_
+                  (match (parse-ast-expr-list
+                    dispatch
+                    (compiler-parse-place-shared-view pools)
+                    parsed-body-forms)
+                    [(ResultAstExprList.Ok exprs)
+                      (ResultAstDecl.Ok
+                        (ast.ast-decl-test-metadata-id
+                          (ci.intern-syntax-id-value name)
+                          (parse-ast-test-body pools exprs)
+                          metadata
+                          form-span))]
+                    [(ResultAstExprList.Err message)
+                      (ResultAstDecl.Err message)])])])]
         [_ (ResultAstDecl.Err "parse: malformed test")])]
     [_ (ResultAstDecl.Err "parse: malformed test")]))
 
@@ -12506,7 +12642,7 @@
     [(ast.AstDecl.Def decl-meta _ _ _) false]
     [(ast.AstDecl.DefFn decl-meta _ _ _ _ _) false]
     [(ast.AstDecl.DefMacro decl-meta _ _ _ _) false]
-    [(ast.AstDecl.Test _ _ _) false]
+    [(ast.AstDecl.Test _ _ _ _) false]
     [(ast.AstDecl.Unsafe inner-box)
       (compiler-parse-decl-origin-needs-record?
         (ast.ast-decl-box-shared-view inner-box))]
@@ -15366,7 +15502,9 @@
       (let
         [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons (ast.AstDecl.Test name body-box span) tail)
+          [(ast.AstDeclListStep.Cons
+              (ast.AstDecl.Test name body-box metadata span)
+              tail)
             (let
               [body : ast.AstExpr (ast.ast-node-get body-box)]
               [tail : ast.AstDeclList tail]
@@ -15375,6 +15513,13 @@
                   (and
                     (= name (reader.stable-symbol-id "parser-basic"))
                     (= (ast.ast-source-span-start-line span) 1)
+                    (match (ast.ast-test-metadata-ignore-reason
+                      (compiler-parse-place-shared-view metadata))
+                      [(ast.AstTestIgnoreReason.No) true]
+                      [_ false])
+                    (not
+                      (ast.ast-test-metadata-slow?
+                        (compiler-parse-place-shared-view metadata)))
                     (match (ast.ast-expr-unspan body)
                       [(ast.AstExpr.Begin exprs)
                         (= (compiler-parse-expr-list-count exprs) 2)]
@@ -15382,6 +15527,59 @@
                 [_ false]))]
           [_ false]))]
     [(ResultAstProgram.Err _) false]))
+
+(define (compiler-parse-inline-test-metadata-ok?) : bool
+  (and
+    (match (parse-ast-source
+      "(test parser-metadata (:ignore \"not on CI\") (:slow) unit)")
+      [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+        (let
+          [decls : ast.AstDeclList
+            (ast.ast-decl-list-box-shared-view decls-box)]
+          (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
+            [(ast.AstDecl.Test name _ metadata span)
+              (and
+                (= name (reader.stable-symbol-id "parser-metadata"))
+                (= (ast.ast-source-span-start-line span) 1)
+                (ast.ast-test-metadata-slow?
+                  (compiler-parse-place-shared-view metadata))
+                (match (ast.ast-test-metadata-ignore-reason
+                  (compiler-parse-place-shared-view metadata))
+                  [(ast.AstTestIgnoreReason.Some reason)
+                    (string.eq reason "not on CI")]
+                  [_ false]))]
+            [_ false]))]
+      [_ false])
+    (compiler-parse-error-ok?
+      "(test x (:ignore \"a\") (:ignore \"b\") unit)"
+      "parse: duplicate test :ignore metadata")
+    (compiler-parse-error-ok?
+      "(test x (:slow) (:slow) unit)"
+      "parse: duplicate test :slow metadata")
+    (compiler-parse-error-ok?
+      "(test x (:ignore \"\") unit)"
+      "parse: test :ignore reason must not be empty")
+    (compiler-parse-error-ok?
+      "(test x (:ignore 1) unit)"
+      "parse: test :ignore metadata expects one string reason")
+    (compiler-parse-error-ok?
+      "(test x (:slow 1) unit)"
+      "parse: test :slow metadata takes no values")
+    (compiler-parse-error-ok?
+      "(test x (:unknown) unit)"
+      "parse: unknown test metadata :unknown")
+    (compiler-parse-error-ok?
+      "(test x unit (:slow))"
+      "parse: test metadata must appear before body expressions")
+    (compiler-parse-diagnostic-location-ok?
+      "test-metadata.tl"
+      "(test x unit (:slow))"
+      "parse: test metadata must appear before body expressions"
+      1
+      1)
+    (compiler-parse-error-ok?
+      "(test x (:slow))"
+      "parse: test needs at least one expression")))
 
 (define (compiler-parse-malformed-module-source) : String
   "(module)")
@@ -16740,6 +16938,12 @@
         ":spmd-callable"
         (cbi.compiler-builtin-ctfe-ref 253))
       (compiler-parse-fixed-source-id-only-ok?
+        ":ignore"
+        (cbi.compiler-builtin-ctfe-ref 291))
+      (compiler-parse-fixed-source-id-only-ok?
+        ":slow"
+        (cbi.compiler-builtin-ctfe-ref 292))
+      (compiler-parse-fixed-source-id-only-ok?
         ":abi"
         (cbi.compiler-builtin-ctfe-ref 255))
       (compiler-parse-fixed-source-id-only-ok?
@@ -16956,6 +17160,7 @@
         (compiler-parse-flat-let-call-body-ok?)
         (compiler-parse-implicit-body-tail-ok?)
         (compiler-parse-inline-test-ok?)
+        (compiler-parse-inline-test-metadata-ok?)
         (compiler-parse-try-ok?)
         (compiler-parse-return-ok?)
         (compiler-parse-guard-forms-ok?)

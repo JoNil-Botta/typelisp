@@ -957,7 +957,7 @@
                   [_ false]))]
             [_ false])
           (match (ast.ast-decl-list-get (& decls) 3 (ast.ast-decl-fallback))
-            [(ast.AstDecl.Test name _ _)
+            [(ast.AstDecl.Test name _ _ _)
               (compiler-parse-test-name-id? name "parsed-test")]
             [_ false])))]
     [(compiler_parse_core.ResultAstProgram.Err _) false]))

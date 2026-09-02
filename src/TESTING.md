@@ -218,14 +218,23 @@ status of `0` passes, while any non-zero status fails the package test command
 with exit `1`. `typelisp test --check` type-checks generated inline harnesses
 and integration test files without assembling or linking.
 
-Inline harnesses announce each test before it runs and report `ok` or `FAILED`
-afterward. Assertions from `stdlib.test` record every failure in the current
-test instead of aborting the process, so later assertions and later tests still
-run. A final line reports passed, failed, and total counts; assertion failures
-exit `1`, while a hard panic, trap, or other unexpected harness termination
-exits `2`. Use `--filter <substring>` to select inline-test names and package
-integration paths. Use `--list` (optionally with `--filter`) to print selected
-names without compiling or running their harnesses.
+Inline harnesses announce each runnable test before it runs and report `ok` or
+`FAILED` afterward. Assertions from `stdlib.test` record every failure in the
+current test instead of aborting the process, so later assertions and later
+tests still run. A final line reports passed, failed, ignored, slow-skipped,
+and total counts; assertion failures exit `1`, while a hard panic, trap, or
+other unexpected harness termination exits `2`.
+
+Test declarations may put `(:ignore "reason")` and/or `(:slow)` immediately
+after the name. They remain parsed and type-checked but are skipped by default;
+`--include-ignored` and `--include-slow` enable their execution. Use `--filter
+<substring>` for case-sensitive inline-name and integration-path containment,
+or mutually exclusive `--exact <name>` for a complete inline name / normalized
+integration path. `--list` prints selected names, locations, skip states, and
+ignore reasons. Repeatable `--cfg <name>` values compose with the automatic
+`test` and target cfgs. `--shuffle` prints a replay seed and
+`--shuffle --seed <u64>` reproduces its portable order; absent shuffle,
+declaration/discovery order is unchanged.
 
 Package integration discovery skips the reserved
 `tests/diagnostics/**`, `tests/format_golden/**`, `tests/golden/**`,

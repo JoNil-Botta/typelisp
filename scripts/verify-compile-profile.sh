@@ -1866,6 +1866,10 @@ if [ "$NL_HOST_OS" = windows ]; then
     # Composing #6692's explicit owning-handle provenance crosses the graph from
     # 77 to 78 segments: the Windows-target selfhost probe measured 5,058,440
     # used nodes, 5,111,808 capacity, and 163,577,856 physical payload bytes.
+    # #7433's declaration-level test metadata and replayable selection support
+    # independently crosses the same boundary on the pre-#6692 tree: its
+    # authoritative Windows CI probe measured 5,047,053 used nodes, 5,111,808
+    # capacity, and 163,577,856 physical payload bytes.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 78 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

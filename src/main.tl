@@ -230,9 +230,9 @@ Options:
 
 (define (cli-test-help-text) : String
   "Usage:
-    typelisp test [--check] [--filter <substring>] [<file.tl>] [--manifest-path <typelisp.pkg>] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
-    typelisp test [--check] [--filter <substring>] --batch <inputs.txt> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--prefix-cache-stats]
-    typelisp test --list [--filter <substring>] [<file.tl>] [--manifest-path <typelisp.pkg>] [--batch <inputs.txt>] [--stdlib-root <dir>...]
+    typelisp test [--check] [--filter <substring>|--exact <name>] [--include-ignored] [--include-slow] [--shuffle [--seed <u64>]] [<file.tl>] [--manifest-path <typelisp.pkg>] [--target <target>] [--cfg <name>...] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
+    typelisp test [--check] [--filter <substring>|--exact <name>] [--include-ignored] [--include-slow] [--shuffle [--seed <u64>]] --batch <inputs.txt> [--target <target>] [--cfg <name>...] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--prefix-cache-stats]
+    typelisp test --list [--filter <substring>|--exact <name>] [--include-ignored] [--include-slow] [--shuffle [--seed <u64>]] [<file.tl>] [--manifest-path <typelisp.pkg>] [--batch <inputs.txt>] [--cfg <name>...] [--stdlib-root <dir>...]
 
 Summary:
     Run or typecheck inline `(test ...)` declarations.
@@ -240,11 +240,17 @@ Summary:
 Options:
     --check                        Typecheck inline tests without running them
     --filter <substring>           Select inline-test names and package integration paths containing text
-    --list                         List selected test names without running them
+    --exact <name>                 Select one complete inline-test name or package integration path
+    --include-ignored              Run tests annotated with `(:ignore \"reason\")`
+    --include-slow                 Run tests annotated with `(:slow)`
+    --shuffle                      Shuffle selected tests and print the replay seed
+    --seed <u64>                   Replay `--shuffle` with an unsigned 64-bit decimal seed
+    --list                         List selected test names, locations, and states without running them
     --batch <file>                 Read newline-separated inline-test input paths; runs them unless --check
     --prefix-cache-stats           Print typecheck prefix-cache stats for a batch
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward when no file is provided
     --target <target>              linux-x86_64 or windows-x86_64
+    --cfg <name>                   Enable a repeatable compile-time cfg predicate name
     --backend-mode <mode>          scalar, avx2, or avx512
     --opt-level <0|1|2>            Select selfhost test harness optimization
     --stdlib-root <dir>            Search root for stdlib/... imports

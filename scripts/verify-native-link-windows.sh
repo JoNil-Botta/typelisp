@@ -492,7 +492,7 @@ if ! TYPELISP_WINDOWS_DIRECT_OBJECT=1 \
     fail "selfhost test assembly fallback failed"
 fi
 assert_empty "$WORKDIR/test-fallback.stdout"
-assert_contains "$WORKDIR/test-fallback.stderr" "TypeLisp tests: 1 passed; 0 failed; 1 total"
+assert_contains "$WORKDIR/test-fallback.stderr" "TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total"
 
 LINK_LIB_DIR="$WORKDIR/native-lib"
 mkdir -p "$LINK_LIB_DIR"

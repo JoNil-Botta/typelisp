@@ -12,12 +12,18 @@ production codegen. `typelisp test <file.tl>` turns a file's inline tests
 into a generated harness and runs it; with no file, it runs the nearest
 package's inline tests plus `tests/**/*.tl` integration programs (exit 0
 passes). `typelisp test --check` type-checks harnesses without linking.
-The runner announces every selected test, continues after assertion failures,
-prints `ok` or `FAILED` for each test, and finishes with passed, failed, and
-total counts. `--filter <substring>` selects inline-test names (and package
-integration paths), while `--list` prints the selected names without running
-them. Ordinary assertion failures exit `1`; an unexpected harness abort exits
-`2`.
+The runner announces every selected runnable test, continues after assertion
+failures, prints `ok` or `FAILED` for each executed test, and finishes with
+passed, failed, ignored, slow-skipped, and total counts. Tests may begin with
+`(:ignore "reason")` and/or `(:slow)` metadata and are skipped unless their
+corresponding `--include-ignored` / `--include-slow` option is present.
+`--filter <substring>` selects inline-test names (and package integration
+paths); `--exact <name>` selects a complete name or normalized integration path
+instead. `--list` prints names, locations, and skip states. Repeatable `--cfg
+<name>` values compose with automatic `test` and target cfgs. `--shuffle`
+prints its seed before listing/execution, and `--shuffle --seed <u64>` replays
+the same portable order. Ordinary assertion failures exit `1`; an unexpected
+harness abort exits `2`.
 Tests commonly import `stdlib/test.tl` for assertions. CI auto-discovers
 inline-test-bearing files, so adding tests requires no manifest edits.
 

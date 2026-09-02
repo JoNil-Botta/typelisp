@@ -1,5 +1,6 @@
 ;; compiler_optimize_tests.tl - Selfhost optimizer fixtures split from production.
 (import compiler_optimize)
+(cfg test (import compiler_allocation_profile as allocation_profile))
 (import compiler_ir_types)
 (import compiler_owned_view as owned_view)
 (import compiler_ast_types)
@@ -15,6 +16,7 @@
 (import stdlib.option)
 (import (option.option i64) as option_i64)
 (import stdlib.test)
+(cfg test (import stdlib.text_buf))
 (import stdlib.vector)
 (import (vector.vector compiler_optimize.OptAggregatePointer core) as opt_aggregate_pointer_vec)
 (import (vector.vector compiler_optimize.OptAggregateAccess core) as opt_aggregate_access_vec)
@@ -77919,6 +77921,80 @@
     (compiler-optimize-owned-state-self-test)
     42
     "optimizer arena globals install and retire through complete owned states"))
+
+;; Each half observes the same number of equally rendered functions. A
+;; segmented buffer may grow its chunk table in the second half, but its arena
+;; cost stays within a constant factor of the first half. Deep-cloning every
+;; visible prefix makes the second half roughly three times the first instead.
+(cfg
+  test
+  (define (compiler-optimize-debug-dump-linear-self-test) : i64
+    (let
+      [func : compiler_ir_types.CompilerIrFunction
+        (opt-test-function (compiler_ir_types.compiler-ir-instr-seq-empty))]
+      [structural-session : compiler_intern_state.InternStructuralSessionHandle
+        (compiler_intern_state.InternStructuralSessionHandle 0)]
+      (with-arena
+        dump-arena
+        (let
+          [dump-owner : i64 (arena.tl_arena_current)]
+          [_configure : unit
+            (compiler_optimize.compiler-opt-debug-configure!
+              structural-session
+              false
+              "linear-dump"
+              false)]
+          [start-bytes : i64
+            (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+              dump-owner)]
+          [i : i64 0]
+          (begin
+            (while (< i 16)
+              (begin
+                (compiler_optimize.compiler-opt-debug-observe-function
+                  0
+                  "linear-dump"
+                  (compiler_ir_types.compiler-ir-global-shared-view func))
+                (set! i (+ i 1))))
+            (let
+              [mid-bytes : i64
+                (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+                  dump-owner)]
+              [mid-owned : compiler_optimize.CompilerOptOwnedState
+                (compiler_optimize.compiler-opt-owned-state-shared-view)]
+              [mid-length : i64
+                (text_buf.length (& mid-owned.debug-state.dump-buf))]
+              (begin
+                (while (< i 32)
+                  (begin
+                    (compiler_optimize.compiler-opt-debug-observe-function
+                      0
+                      "linear-dump"
+                      (compiler_ir_types.compiler-ir-global-shared-view func))
+                    (set! i (+ i 1))))
+                (let
+                  [end-bytes : i64
+                    (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+                      dump-owner)]
+                  [end-owned : compiler_optimize.CompilerOptOwnedState
+                    (compiler_optimize.compiler-opt-owned-state-shared-view)]
+                  [end-length : i64
+                    (text_buf.length (& end-owned.debug-state.dump-buf))]
+                  [first-half-bytes : i64 (- mid-bytes start-bytes)]
+                  [second-half-bytes : i64 (- end-bytes mid-bytes)]
+                  (cond
+                    [(<= first-half-bytes 0) 1]
+                    [(<= mid-length 0) 2]
+                    [(not (= end-length (+ (* mid-length 2) 1))) 3]
+                    [(> second-half-bytes (* first-half-bytes 2)) 4]
+                    [else 42]))))))))))
+
+(test
+  compiler-optimize-debug-dump-linear-retention
+  (test.assert-i64-eq
+    (compiler-optimize-debug-dump-linear-self-test)
+    42
+    "per-pass dumps retain linear arena bytes across equal function batches"))
 
 ;; Source-level runtime witness for the whole classifier path: lowering must
 ;; form the compare chain, bit_test must rewrite it, and the backend must fuse

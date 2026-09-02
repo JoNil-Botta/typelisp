@@ -244,8 +244,12 @@
             (in-arena
               (compiler-opt-global-shared-view state.dump-arena)
               (let
+                ;; The debug state is process-serial. Take only the same shallow
+                ;; snapshot used by its other global reads: TextBuf appends can
+                ;; then extend the visible prefix in the dump arena instead of
+                ;; recursively cloning every previously rendered chunk.
                 [dump-buf : text_buf.TextBuf
-                  (clone (compiler-opt-global-shared-view state.dump-buf))]
+                  (compiler-opt-global-shared-view state.dump-buf)]
                 [next-buf : text_buf.TextBuf
                   (text_buf.append
                     (if (text_buf.empty? (& dump-buf))

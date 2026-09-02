@@ -95,9 +95,15 @@ to catch disproportionate opt2 work:
 | build-invariance row | cap |
 | --- | ---: |
 | `opt2-built:selfhost_main_opt1` | 25,000 ms |
-| `opt1-built:selfhost_main_opt1` | 35,000 ms |
-| `opt2-built:selfhost_main_opt2` | 55,000 ms |
-| `opt1-built:selfhost_main_opt2` | 90,000 ms |
+| `opt1-built:selfhost_main_opt1` | 45,000 ms |
+| `opt2-built:selfhost_main_opt2` | 65,000 ms |
+| `opt1-built:selfhost_main_opt2` | 115,000 ms |
+
+The opt2 workload caps retain about 17% headroom above two consecutive
+measurements on the current GitHub-hosted runner class (54,080 ms and 94,620
+ms for the two rows). A same-host main/branch comparison and the deterministic
+instruction-count ratchet distinguish that accepted runner throughput from
+compiler work before these caps move.
 
 The `opt2-built:selfhost_main_opt2` /
 `opt1-built:selfhost_main_opt1` ratio must be at most 2.5. The checker fails

@@ -204,11 +204,33 @@
 ;; sweep out of the priced prefix leaves every recorded verdict exactly where
 ;; the corpus measured it and makes the sweep a pure codegen change, which is
 ;; what it is.
-(define compiler-opt-late-sweep-suppressed? : bool
-  false)
+;;
+;; Scoped as a DEPTH, not as a bool. The tier prices site after site, and a
+;; body it is pricing is itself run through the whole level-2 pipeline, so
+;; "suppressed" is a property of a nesting rather than of the process: a bool
+;; that an inner scope restored would un-suppress the REST of the outer priced
+;; prefix and put the sweep back inside the window this keeps it out of. The
+;; depth answers correctly for any nesting and still costs one compare at the
+;; slot. Enter and leave are balanced by their single caller
+;; (`opt-inline-checked-plan-cost-at`), and leave clamps at zero so a stray
+;; leave cannot suppress the pipeline's own sweep.
+(define compiler-opt-late-sweep-suppress-depth : i64
+  0)
 
-(define (compiler-opt-late-sweep-set-suppressed! [on : bool]) : unit
-  (set! compiler-opt-late-sweep-suppressed? on))
+(define (compiler-opt-late-sweep-suppressed?) : bool
+  (> compiler-opt-late-sweep-suppress-depth 0))
+
+(define (compiler-opt-late-sweep-suppress-enter!) : unit
+  (set!
+    compiler-opt-late-sweep-suppress-depth
+    (+ compiler-opt-late-sweep-suppress-depth 1)))
+
+(define (compiler-opt-late-sweep-suppress-leave!) : unit
+  (set!
+    compiler-opt-late-sweep-suppress-depth
+    (if (> compiler-opt-late-sweep-suppress-depth 0)
+      (- compiler-opt-late-sweep-suppress-depth 1)
+      0)))
 
 (define (compiler-opt-debug-configure!
   [structural-session : cis.InternStructuralSessionHandle]
@@ -117298,16 +117320,242 @@
         (opt-dce-late-sweep frame next (- fuel 1) true)
         (OptBlockListPassResult.Result next (or changed? pass-changed?)))]))
 
+;; --- the pre-copy a decided join carries ------------------------------------
+;;
+;; `cfg_straighten`'s phi cleanup collapses a phi whose surviving inputs all
+;; name ONE value into `Mov dst <that value>` and leaves that Mov in the block
+;; it cleaned (`opt-cfg-clean-instr`). At a loop-exit join the Mov is a
+;; PRE-COPY: the value it names already reaches the join on every edge, and it
+;; is read only from one of the join's two successors -- while the join's other
+;; phis are read only from the OTHER one.
+;;
+;; `thread_branch_late` runs directly below the straightener and is what should
+;; retire such a join: its branch reads a phi whose inputs are per-edge
+;; literals, so every predecessor decides it. It refuses instead. Its live-out
+;; rule (`opt-thread-def-blocked`) re-expresses a definition the merge makes at
+;; the redirected predecessor only when a SINGLE successor owns every reader of
+;; every such definition, and a join holding both the pre-copy (read from one
+;; side) and a value phi (read from the other) names two -- so the merge is
+;; refused whole and all of its decided edges survive to the backend.
+;;
+;; That is the `movl $1,%esi ; testq %rsi,%rsi ; je` on each of the three exit
+;; edges of callgraph_scc's `cg-map-probe`: `while_exit.2` branches on
+;; `phi [true, if_then.10], [false, while_header.0], [true, if_merge.22]`,
+;; every edge decides it, and the only thing keeping it is the sibling
+;; `%151 = mov %120` the straightener left beside it.
+;;
+;; A pre-copy is pure and its source dominates the join -- the fold that made
+;; it only fires when every surviving input names that value, so it reaches the
+;; end of every predecessor -- hence it dominates every reader of the copy too,
+;; and forwarding it AT THE USES removes the definition from the join without
+;; moving an instruction or touching a block. The threader then reads a join
+;; whose only definitions are its phis and threads the decided edges; the phi
+;; the branch reads collapses to a literal, the fold below turns the branch
+;; into a jump, and the sweep retires what is left.
+;;
+;; PLACEMENT. This runs inside the DCE-LATE slot, and only here. The slot is
+;; the one place below `cmp_dup` that the checked inlining tier's priced prefix
+;; does not reach (`compiler-opt-late-sweep-suppressed?`), so no verdict moves.
+;; Only Movs that sit in a decided join are forwarded, so `cmp_dup`'s compare
+;; copies and `load_sink`'s pairs -- which sit in no such block -- are never
+;; candidates, and a function with no such join pays one terminator test per
+;; block and nothing else.
+;;
+;; The join shape, read the way `opt-thread-merge-shape` reads it: the last
+;; instruction branches on a var one of this block's own leading phis defines.
+;; Returns where the body ends (the terminator slot), or -1 for "not a join".
+(define (opt-dce-late-precopy-body-end [instrs : ir.CompilerIrInstrSeq]) : i64
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    (if (< count 2)
+      (- 0 1)
+      (match (ir.compiler-ir-instr-seq-ref
+        (compiler-opt-global-shared-view instrs)
+        (- count 1))
+        [(ir.CompilerIrInstr.Branch (ir.CompilerIrValue.Var cond-var) _ _)
+          (if (<
+            (opt-thread-phi-slot-for-var
+              (compiler-opt-global-shared-view instrs)
+              0
+              (opt-thread-phi-prefix-count
+                (compiler-opt-global-shared-view instrs)
+                0)
+              cond-var)
+            0)
+            (- 0 1)
+            (- count 1))]
+        [_ (- 0 1)]))))
+
+;; One copy fact per body Mov of a decided join, collected back-to-front so the
+;; fact list keeps the forward order `opt-global-copy-facts-from-instr-seq-from`
+;; produces. Same source admissibility as that collector: a value the copy
+;; machinery may substitute, and never a self-copy.
+(define (opt-dce-late-precopy-facts-from
+  [block-id : i64]
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [index : i64]
+  [phi-count : i64]
+  [tail : OptGlobalCopyFacts]) : OptGlobalCopyFacts
+  (if (< index phi-count)
+    tail
+    (let
+      [instr : ir.CompilerIrInstr
+        (compiler-opt-global-array-element-shared-view slots index)]
+      [rest-facts : OptGlobalCopyFacts tail]
+      [next-tail : OptGlobalCopyFacts
+        (match (compiler-opt-global-shared-view instr)
+          [(ir.CompilerIrInstr.Mov dst src _)
+            (if (and
+              (opt-copy-safe-source? (compiler-opt-global-shared-view src))
+              (not
+                (opt-value-is-var? (compiler-opt-global-shared-view src) dst)))
+              (opt-global-copy-facts-prepend
+                rest-facts
+                (OptGlobalCopyFact.Fact dst src block-id (+ index 1)))
+              rest-facts)]
+          [_ rest-facts])]
+      (opt-dce-late-precopy-facts-from
+        block-id
+        slots
+        (- index 1)
+        phi-count
+        next-tail))))
+
+(define (opt-dce-late-precopy-facts-from-block
+  [block-id : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [tail : OptGlobalCopyFacts]) : OptGlobalCopyFacts
+  (let
+    [body-end : i64
+      (opt-dce-late-precopy-body-end (compiler-opt-global-shared-view instrs))]
+    (if (< body-end 0)
+      tail
+      (opt-dce-late-precopy-facts-from
+        block-id
+        instrs.slots
+        (- body-end 1)
+        (opt-thread-phi-prefix-count (compiler-opt-global-shared-view instrs) 0)
+        tail))))
+
+(define (opt-dce-late-precopy-facts-from-blocks
+  [blocks : ir.CompilerIrBlockList]
+  [block-id : i64]
+  [tail : OptGlobalCopyFacts]) : OptGlobalCopyFacts
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) tail]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (let
+        [rest-facts : OptGlobalCopyFacts
+          (opt-dce-late-precopy-facts-from-blocks
+            (compiler-opt-box-shared-view rest)
+            (+ block-id 1)
+            tail)]
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-dce-late-precopy-facts-from-block block-id instrs rest-facts)]))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-dce-late-precopy-facts-from-blocks
+        (ir.compiler-ir-block-seq-to-list seq)
+        block-id
+        tail)]))
+
+;; Forward the collected pre-copies at their uses. The dominance and position
+;; test is the global copy sweep's own (`opt-global-copy-lookup`), given a fact
+;; table that holds nothing but these copies; the emptied Movs are left for the
+;; sweep below to retire.
+(define (opt-dce-late-forward-precopies
+  [frame : i64]
+  [fact-list : OptGlobalCopyFacts]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (let
+    [facts : OptGlobalCopyFactTable
+      (opt-global-copy-table-from-facts fact-list)]
+    [pack-word-facts : OptGlobalPackWordFactTable
+      (opt-global-pack-word-table-from-facts (opt-global-pack-word-facts-new))]
+    [index : OptCfgIndex
+      (opt-cfg-index-build (compiler-opt-global-shared-view blocks))]
+    [doms : OptDomInfo
+      (opt-cfg-dominators-with
+        (compiler-opt-global-shared-view index)
+        (opt-cfg-entry-label (compiler-opt-global-shared-view blocks)))]
+    [uses : (__tl_dyn-array i64)
+      (opt-collect-blocks-uses-array
+        frame
+        (compiler-opt-global-shared-view blocks))]
+    (opt-global-copy-blocks facts pack-word-facts doms uses blocks 0)))
+
+;; The whole step: forward the pre-copies, then give the threader the join it
+;; can now read. Both halves are gated on a join actually carrying a pre-copy,
+;; and the forwarded body is verified before the threader is told it is (the
+;; threader's own post-verify still guards the edge rewrite), so a function
+;; this cannot help is handed back byte-for-byte.
+(define (opt-dce-late-unblock-decided-joins
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+      (let
+        [fact-list : OptGlobalCopyFacts
+          (opt-dce-late-precopy-facts-from-blocks
+            (compiler-opt-global-shared-view blocks)
+            0
+            (opt-global-copy-facts-new))]
+        (if (=
+          (opt-global-copy-facts-count
+            (compiler-opt-global-shared-view fact-list))
+          0)
+          (OptFunctionPassResult.Result func false)
+          (let
+            [forwarded : ir.CompilerIrFunction
+              (ir.CompilerIrFunction.Function
+                name
+                (compiler-opt-global-shared-view params)
+                (compiler-opt-global-shared-view ret-ty)
+                frame
+                (opt-dce-late-forward-precopies
+                  frame
+                  fact-list
+                  (compiler-opt-global-shared-view blocks)))]
+            (if (opt-function-eq
+              type-segment-bases
+              (compiler-opt-global-shared-view func)
+              (compiler-opt-global-shared-view forwarded))
+              (OptFunctionPassResult.Result func false)
+              (match (opt-verify-function
+                (compiler-opt-global-shared-view forwarded))
+                [(ResultCompilerOptimizeVerify.Err _)
+                  (OptFunctionPassResult.Result func false)]
+                [(ResultCompilerOptimizeVerify.Ok)
+                  (match (opt-thread-const-branch-function-with-context-result
+                    type-segment-bases
+                    (opt-cfg-context-empty)
+                    true
+                    (compiler-opt-global-shared-view forwarded))
+                    [(OptFunctionPassResult.Result threaded _)
+                      (OptFunctionPassResult.Result threaded true)])])))))]))
+
 (define (opt-dce-late-final-pass
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : OptFunctionPassResult
-  (if compiler-opt-late-sweep-suppressed?
+  (if (compiler-opt-late-sweep-suppressed?)
     (OptFunctionPassResult.Result func false)
     (opt-dce-late-final-pass-run type-segment-bases func)))
 
 (define (opt-dce-late-final-pass-run
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+  (match (opt-dce-late-unblock-decided-joins type-segment-bases func)
+    [(OptFunctionPassResult.Result unblocked unblocked-changed?)
+      (opt-dce-late-final-pass-fold-and-sweep
+        type-segment-bases
+        unblocked
+        unblocked-changed?)]))
+
+(define (opt-dce-late-final-pass-fold-and-sweep
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]
+  [changed-in? : bool]) : OptFunctionPassResult
   (match (compiler-opt-global-shared-view func)
     [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
       (let
@@ -117336,7 +117584,7 @@
                   (compiler-opt-global-shared-view ret-ty)
                   frame
                   swept))
-              (or fold? swept-changed?))]))]))
+              (or changed-in? fold? swept-changed?))]))]))
 
 (define (optimize-function
   [pools : ast.AstNodePoolContext]
@@ -126510,14 +126758,14 @@
         ;; See compiler-opt-late-sweep-suppressed?: the priced prefix stops
         ;; above the final late sweep so this tier's calibrated window keeps
         ;; reading the bodies it was measured against.
-        (compiler-opt-late-sweep-set-suppressed! true)
+        (compiler-opt-late-sweep-suppress-enter!)
         (set! compiler-opt-debug-verify-ir false))]
     [optimized : ir.CompilerIrFunction
       (optimize-function-with-level pools type-segment-bases func 2)]
     [_restore : unit
       (begin
         (compiler-opt-debug-set-suppressed! false)
-        (compiler-opt-late-sweep-set-suppressed! false)
+        (compiler-opt-late-sweep-suppress-leave!)
         (set! compiler-opt-debug-verify-ir saved-verify))]
     (+
       (opt-inline-checked-weighted-instrs-at

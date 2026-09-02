@@ -325,6 +325,107 @@ assert_regex_count_at_least() {
     fi
 }
 
+# DCE-2 shapes. Two things the level-2 pipeline's final slot exists to keep out
+# of the emitted body, both read off a normalized register name so a 32-bit
+# materialization (`movl $1, %esi`) and its 64-bit test (`testq %rsi, %rsi`)
+# are seen as the same register.
+#
+#   count_literal_then_test  -- a register loaded with a literal and TESTED on
+#                               the next line: a branch on a constant that
+#                               reached the backend.
+#   count_literal_then_redef -- a register loaded with a literal and REDEFINED
+#                               on the next line: the literal Mov was dead when
+#                               it was emitted.
+asm_shape_reg_norm_awk() {
+    cat <<'AWK'
+function norm(r,   n) {
+    n = r
+    sub(/^%/, "", n)
+    if (n ~ /^e[a-z][a-z]$/) { sub(/^e/, "r", n); return n }
+    if (n ~ /^r[0-9]+[bwd]$/) { sub(/[bwd]$/, "", n); return n }
+    if (n ~ /^[a-z][a-z]l$/ && n != "rsl") { sub(/l$/, "x", n); sub(/^/, "r", n); return n }
+    return n
+}
+function literal_dst(line,   parts) {
+    if (line ~ /^mov[lq][ \t]+\$-?[0-9]+,[ \t]*%[a-z0-9]+$/) {
+        split(line, parts, /,[ \t]*/)
+        return norm(parts[2])
+    }
+    if (line ~ /^xor[lq][ \t]+%[a-z0-9]+,[ \t]*%[a-z0-9]+$/) {
+        split(line, parts, /[ \t,]+/)
+        if (norm(parts[2]) == norm(parts[3])) return norm(parts[2])
+    }
+    return ""
+}
+function redef_dst(line,   parts) {
+    if (line ~ /^mov[lq][ \t]+\$-?[0-9]+,[ \t]*%[a-z0-9]+$/) {
+        split(line, parts, /,[ \t]*/)
+        return norm(parts[2])
+    }
+    if (line ~ /^xor[lq][ \t]+%[a-z0-9]+,[ \t]*%[a-z0-9]+$/) {
+        split(line, parts, /[ \t,]+/)
+        if (norm(parts[2]) == norm(parts[3])) return norm(parts[2])
+    }
+    return ""
+}
+function test_reg(line,   parts) {
+    if (line ~ /^test[bwlq][ \t]+%[a-z0-9]+,[ \t]*%[a-z0-9]+$/) {
+        split(line, parts, /[ \t,]+/)
+        if (norm(parts[2]) == norm(parts[3])) return norm(parts[2])
+    }
+    return ""
+}
+AWK
+}
+
+count_literal_then_test() {
+    {
+        asm_shape_reg_norm_awk
+        cat <<'AWK'
+{
+    line = $0
+    sub(/^[ \t]+/, "", line)
+    sub(/[ \t]+$/, "", line)
+    if (pending != "" && test_reg(line) == pending) count++
+    pending = literal_dst(line)
+}
+END { print count + 0 }
+AWK
+    } > "$WORKDIR/asm-shape-literal-then-test.awk"
+    awk -f "$WORKDIR/asm-shape-literal-then-test.awk" "$1"
+}
+
+count_literal_then_redef() {
+    {
+        asm_shape_reg_norm_awk
+        cat <<'AWK'
+{
+    line = $0
+    sub(/^[ \t]+/, "", line)
+    sub(/[ \t]+$/, "", line)
+    if (pending != "" && redef_dst(line) == pending) count++
+    pending = literal_dst(line)
+}
+END { print count + 0 }
+AWK
+    } > "$WORKDIR/asm-shape-literal-then-redef.awk"
+    awk -f "$WORKDIR/asm-shape-literal-then-redef.awk" "$1"
+}
+
+assert_no_literal_then_test() {
+    _got=$(count_literal_then_test "$1")
+    if [ "$_got" -ne 0 ]; then
+        fail "$2 tests a register that was just loaded with a literal ($_got time(s))"
+    fi
+}
+
+assert_no_literal_then_redef() {
+    _got=$(count_literal_then_redef "$1")
+    if [ "$_got" -ne 0 ]; then
+        fail "$2 redefines a register that was just loaded with a literal ($_got time(s))"
+    fi
+}
+
 compile_gate() {
     _name=$1
     _source=$2
@@ -1715,6 +1816,38 @@ check_copy_call_word() {
 #
 # Pre-change both functions carry `testq %rX, %rX` + a signed `jl` in front of a
 # signed length compare; the sign test is what goes.
+# DCE-2: the call-free flag loop. Its exit join is a phi of bool literals over
+# a phi of i64 literals, decided on every edge; the final slot below `cmp_dup`
+# is what retires it. If either the sweep or the threading above it stops
+# running, `main` grows back the dead `movq $-1` it never reads and the
+# `movl $1 ; testq ; je` that branches on a constant.
+# On windows-x86_64 the last emitted function carries no `.size` directive and
+# the hand-written runtime prelude that follows it opens with an INDENTED
+# `.globl`, so `extract_function` runs on past the body. Cut it at the SEH
+# epilogue marker, which is where the function proper ends.
+truncate_at_seh_endproc() {
+    _seh_body=$1
+    _seh_out="$_seh_body.seh"
+    awk '{ print } /^[[:space:]]*\.seh_endproc$/ { exit }' "$_seh_body" \
+        > "$_seh_out"
+    printf '%s\n' "$_seh_out"
+}
+
+check_dce_late_flag_loop() {
+    _asm=$(compile_gate dce_late_flag_loop tests/integration/dce_late_flag_loop.tl)
+    _body=$(function_body "$_asm" main)
+    assert_no_literal_then_test "$_body" dce-late-flag-loop
+    assert_no_literal_then_redef "$_body" dce-late-flag-loop
+    assert_not_matches "$_body" '^[[:space:]]+movq \$-1, %[a-z0-9]+$' dce-late-flag-loop
+    _win_asm=$(compile_gate dce_late_flag_loop_win64 \
+        tests/integration/dce_late_flag_loop.tl windows-x86_64)
+    _win_body=$(truncate_at_seh_endproc "$(function_body "$_win_asm" main)")
+    assert_no_literal_then_test "$_win_body" dce-late-flag-loop-win64
+    assert_no_literal_then_redef "$_win_body" dce-late-flag-loop-win64
+    assert_not_matches "$_win_body" '^[[:space:]]+movq \$-1, %[a-z0-9]+$' \
+        dce-late-flag-loop-win64
+}
+
 check_range_merge_unsigned() {
     _asm=$(compile_gate range_merge_unsigned tests/integration/range_merge_unsigned.tl)
     _lit=$(function_body "$_asm" _tl_range_merge_unsigned_literal_window)
@@ -2038,5 +2171,6 @@ check_stdlib_math_sqrt
 check_inline_alloc_unique_labels_link
 check_gep_load_cmp_spilled_stage
 check_range_merge_unsigned
+check_dce_late_flag_loop
 
 echo "Assembly shape gates passed."

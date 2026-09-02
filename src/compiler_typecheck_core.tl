@@ -10890,7 +10890,7 @@
       (let
         [body : ast.AstExpr (ast.ast-node-get body-box)]
         (tc-expr-diag body message))]
-    [(ast.AstDecl.Test _ _ span)
+    [(ast.AstDecl.Test _ _ _ span)
       (tc-canonical-diagnostic
         (cdiag.compiler-diagnostic-from-ast-span "" span message))]
     [(ast.AstDecl.Unsafe inner-box)
@@ -27989,7 +27989,7 @@
                   target
                   (+ index body-count)
                   module)))]
-          [(ast.AstDecl.Test _ _ _)
+          [(ast.AstDecl.Test _ _ _ _)
             (tc-nominal-owner-name-list rest target index module)]
           [(ast.AstDecl.DefEnum decl-meta name _ _)
             (if (= target index)
@@ -31423,7 +31423,7 @@
       ;; Module bodies are traversed by the declaration-list diagnostic adapter,
       ;; which retains their nested list origin and owning path.
       [(ast.AstDecl.ModuleBody _ _) ResultTcUnit.Ok]
-      [(ast.AstDecl.Test _ body-box _)
+      [(ast.AstDecl.Test _ body-box _ _)
         (let
           [body : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases body-box)]
@@ -37708,7 +37708,7 @@
     [(ast.AstDecl.IncludeStrComptime _ _) (ResultTcEnv.Ok env)]
     [(ast.AstDecl.IncludeStrLzss _ _) (ResultTcEnv.Ok env)]
     [(ast.AstDecl.IncludeBin _ _) (ResultTcEnv.Ok env)]
-    [(ast.AstDecl.Test _ _ _) (ResultTcEnv.Ok env)]))
+    [(ast.AstDecl.Test _ _ _ _) (ResultTcEnv.Ok env)]))
 
 (define (tc-build-top-env-list-in-module
   [ctx : TcContext]
@@ -38036,7 +38036,7 @@
           21)
         generated-meta-ok
         (match (ast.ast-decl-list-ref (tc-global-shared-view a-decls) 1)
-          [(ast.AstDecl.Test name body span)
+          [(ast.AstDecl.Test name body _ span)
             (and
               (= name test-name)
               (= body 22)
@@ -38385,7 +38385,7 @@
             [(ast.AstDecl.IncludeStrComptime _ _) unit]
             [(ast.AstDecl.IncludeStrLzss _ _) unit]
             [(ast.AstDecl.IncludeBin _ _) unit]
-            [(ast.AstDecl.Test _ _ _) unit]
+            [(ast.AstDecl.Test _ _ _ _) unit]
             [_
               (if (= cur-module-id target-module-id)
                 (match (tc-bind-import-alias-decl-in-module
@@ -64618,7 +64618,7 @@
               target
               index
               (tc-env-key-name-text next-module))]
-          [(ast.AstDecl.Test _ _ _)
+          [(ast.AstDecl.Test _ _ _ _)
             (tc-variant-owner-name-list rest target index module)]
           [_
             (if (= target index)
@@ -104649,7 +104649,7 @@
             [(ast.AstDecl.IncludeStrComptime _ _) unit]
             [(ast.AstDecl.IncludeStrLzss _ _) unit]
             [(ast.AstDecl.IncludeBin _ _) unit]
-            [(ast.AstDecl.Test _ _ _) unit]
+            [(ast.AstDecl.Test _ _ _ _) unit]
             [_
               (if (= cur-module-id target-module)
                 (match (tc-bind-import-alias-decl-in-module
@@ -105880,7 +105880,7 @@
           origin-path-id
           macro-name-id
           span))]
-    [(ast.AstDecl.Test name expr-id test-span)
+    [(ast.AstDecl.Test name expr-id metadata test-span)
       (ast.AstDecl.Test
         name
         (macro-expansion-wrap-expr-id
@@ -105889,6 +105889,7 @@
           origin-path-id
           macro-name-id
           span)
+        metadata
         test-span)]
     [(ast.AstDecl.Unsafe inner)
       (ast.AstDecl.Unsafe
@@ -124801,7 +124802,7 @@
                   nbody
                   (tc-global-shared-view metadata)))]
             [(ResultMacroExpr.Err diag) (ResultMacroDecl.Err diag)]))]
-      [(ast.AstDecl.Test _ _ _)
+      [(ast.AstDecl.Test _ _ _ _)
         (ResultMacroDecl.Ok (tc-global-shared-view decl))]
       [(ast.AstDecl.Import decl-meta (ast.AstImportSpec.Spec kind _ _ _ _))
         (match kind
@@ -127763,7 +127764,7 @@
         expr-bases
         (tc-global-shared-view decls)
         body-box)]
-    [(ast.AstDecl.Test _ _ _) true]
+    [(ast.AstDecl.Test _ _ _ _) true]
     [(ast.AstDecl.Import decl-meta (ast.AstImportSpec.Spec kind _ _ _ _))
       (match kind
         [(ast.AstImportKind.Macro _ _) true]
@@ -128615,7 +128616,7 @@
             state
             expr-bases
             (ast.ast-expr-segment-bases-get expr-bases body-box)))]
-      [(ast.AstDecl.Test _ _ _) false]
+      [(ast.AstDecl.Test _ _ _ _) false]
       [_ false])))
 
 ;; Profile-instrumented wrapper for the per-decl share gate; non-profile
@@ -128917,7 +128918,7 @@
       (ctfe-node-has-type-literal? state expr-box)]
     [(ast.AstDecl.DefFn decl-meta _ _ _ body-box _)
       (ctfe-node-has-type-literal? state body-box)]
-    [(ast.AstDecl.Test _ expr-box _)
+    [(ast.AstDecl.Test _ expr-box _ _)
       (ctfe-node-has-type-literal? state expr-box)]
     [(ast.AstDecl.DefMacro decl-meta _ _ _ body-box)
       (ctfe-node-has-type-literal? state body-box)]
@@ -130154,7 +130155,7 @@
           when-id
           unless-id))]
     [(ast.AstDecl.DefMacro decl-meta _ _ _ _) true]
-    [(ast.AstDecl.Test _ _ _) false]
+    [(ast.AstDecl.Test _ _ _ _) false]
     [(ast.AstDecl.Import decl-meta (ast.AstImportSpec.Spec kind _ _ _ _))
       (match kind
         [(ast.AstImportKind.Macro _ _) true]
@@ -133176,7 +133177,7 @@
       (str_cat.str-cat "include-bin:" (tc-env-key-name-text name))]
     [(ast.AstDecl.DefDispatch decl-meta name _)
       (str_cat.str-cat "dispatch:" (tc-env-key-name-text name))]
-    [(ast.AstDecl.Test name _ _)
+    [(ast.AstDecl.Test name _ _ _)
       (str_cat.str-cat "test:" (tc-env-key-name-text name))]
     [(ast.AstDecl.Unsafe inner)
       (str_cat.str-cat

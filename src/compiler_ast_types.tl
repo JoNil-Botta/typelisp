@@ -5144,6 +5144,51 @@
 (define (ast-decl-meta-runtime-shared-view) : AstDeclMeta
   (ast-global-shared-view ast-decl-meta-runtime))
 
+(defenum AstTestIgnoreReason
+  (No)
+  (Some String))
+
+(defenum AstTestMetadataValue
+  (None)
+  (Metadata AstTestIgnoreReason bool))
+
+;; Keep test metadata pointer-sized in `AstDecl`: ordinary declarations share
+;; the allocation-free `None` value, while annotated tests own one boxed row.
+;; Future execution metadata can extend `AstTestMetadataValue` without growing
+;; every declaration slot again.
+(defstruct AstTestMetadata
+  (value (Box AstTestMetadataValue)))
+
+(define ast-test-metadata-none : AstTestMetadata
+  (AstTestMetadata (box AstTestMetadataValue.None)))
+
+(define (ast-test-metadata-none-shared-view) : AstTestMetadata
+  (ast-global-shared-view ast-test-metadata-none))
+
+(define (ast-test-metadata-new
+  [ignore-reason : AstTestIgnoreReason]
+  [slow : bool]) : AstTestMetadata
+  (match (ast-place-shared-view ignore-reason)
+    [(AstTestIgnoreReason.No)
+      (if slow
+        (AstTestMetadata
+          (box (AstTestMetadataValue.Metadata AstTestIgnoreReason.No true)))
+        (ast-test-metadata-none-shared-view))]
+    [(AstTestIgnoreReason.Some reason)
+      (AstTestMetadata
+        (box
+          (AstTestMetadataValue.Metadata (AstTestIgnoreReason.Some reason) slow)))]))
+
+(define (ast-test-metadata-ignore-reason [metadata : AstTestMetadata]) : AstTestIgnoreReason
+  (match (__tl-box-place metadata.value)
+    [(AstTestMetadataValue.None) AstTestIgnoreReason.No]
+    [(AstTestMetadataValue.Metadata reason _) reason]))
+
+(define (ast-test-metadata-slow? [metadata : AstTestMetadata]) : bool
+  (match (__tl-box-place metadata.value)
+    [(AstTestMetadataValue.None) false]
+    [(AstTestMetadataValue.Metadata _ slow) slow]))
+
 ;; `AstExternMetadata` is larger than the other `AstDecl.Extern` fields
 ;; combined. Keeping it inline made Extern the layout ceiling for every
 ;; declaration slot, including the whole-program vectors rebuilt around macro
@@ -5177,7 +5222,7 @@
   (IncludeStrLzss i64 String)
   (IncludeBin i64 String)
   (DefDispatch AstDeclMeta i64 AstDispatchVariantList)
-  (Test i64 i64 AstSourceSpan)
+  (Test i64 i64 AstTestMetadata AstSourceSpan)
   (Unsafe (Box AstDecl)))
 
 (defstruct AstDeclList
@@ -8515,7 +8560,14 @@
     variants))
 
 (define (ast-decl-test-id [name : i64] [body : i64] [span : AstSourceSpan]) : AstDecl
-  (AstDecl.Test name body span))
+  (AstDecl.Test name body (ast-test-metadata-none-shared-view) span))
+
+(define (ast-decl-test-metadata-id
+  [name : i64]
+  [body : i64]
+  [metadata : AstTestMetadata]
+  [span : AstSourceSpan]) : AstDecl
+  (AstDecl.Test name body metadata span))
 
 (define (ast-decl-unsafe [inner : AstDecl]) : AstDecl
   (AstDecl.Unsafe (box inner)))
@@ -10594,6 +10646,19 @@
           (AstDeclMetaValue.Comptime
             (ast-compaction-remap-generated-meta remap generated))))]))
 
+(define (ast-compaction-remap-test-metadata [metadata : AstTestMetadata]) : AstTestMetadata
+  (match (__tl-box-place metadata.value)
+    [(AstTestMetadataValue.None) (ast-test-metadata-none-shared-view)]
+    [(AstTestMetadataValue.Metadata ignore-reason slow)
+      (AstTestMetadata
+        (box
+          (AstTestMetadataValue.Metadata
+            (match ignore-reason
+              [(AstTestIgnoreReason.No) AstTestIgnoreReason.No]
+              [(AstTestIgnoreReason.Some reason)
+                (AstTestIgnoreReason.Some (ast-compaction-copy-string reason))])
+            slow)))]))
+
 (define (ast-compaction-remap-decl
   [remap : (& remap AstProgramCompactionRemap)]
   [decl : AstDecl]) : AstDecl
@@ -10682,8 +10747,12 @@
         (ast-compaction-remap-decl-meta remap decl-meta)
         name
         (ast-compaction-remap-dispatch-variant-list variants))]
-    [(AstDecl.Test name body span)
-      (AstDecl.Test name (ast-compaction-remap-expr-id remap body) span)]
+    [(AstDecl.Test name body metadata span)
+      (AstDecl.Test
+        name
+        (ast-compaction-remap-expr-id remap body)
+        (ast-compaction-remap-test-metadata metadata)
+        span)]
     [(AstDecl.Unsafe inner)
       (AstDecl.Unsafe
         (box (ast-compaction-remap-decl remap (ast-decl-box-shared-view inner))))]))
@@ -11048,7 +11117,7 @@
     [(AstDecl.DefEnum decl-meta _ _ _) 4]
     [(AstDecl.DefStruct decl-meta _ _ _ _) 5]
     [(AstDecl.Import decl-meta _) 6]
-    [(AstDecl.Test _ _ _) 7]
+    [(AstDecl.Test _ _ _ _) 7]
     [(AstDecl.Module _) 9]
     [(AstDecl.ModuleBody _ _) 18]
     [(AstDecl.IncludeStr _ _) 12]

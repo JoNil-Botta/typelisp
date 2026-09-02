@@ -637,10 +637,16 @@
               (match (ast.ast-decl-list-step rest-box)
                 [(ast.AstDeclListStep.Cons second tail-box)
                   (match second
-                    [(ast.AstDecl.Test _ second-body _)
+                    [(ast.AstDecl.Test _ second-body metadata _)
                       (and
                         (= first-body second-body)
                         (not (= first-body source-body))
+                        (ast.ast-test-metadata-slow?
+                          (owned_view.compiler-owned-shared-view metadata))
+                        (match (ast.ast-test-metadata-ignore-reason metadata)
+                          [(ast.AstTestIgnoreReason.Some reason)
+                            (string.eq reason "compaction reason")]
+                          [_ false])
                         (= (ast.ast-node-pool-context-expr-len pools) 4)
                         (= (ast.ast-node-pool-context-type-len pools) 2)
                         (compiler-ast-context-shared-binary?
@@ -752,9 +758,12 @@
             (ast.AstMaybeType.Some array-ty)
             source-body)
           (ast.ast-decl-cons
-            (ast.ast-decl-test-id
+            (ast.ast-decl-test-metadata-id
               same-name-id
               source-body
+              (ast.ast-test-metadata-new
+                (ast.AstTestIgnoreReason.Some "compaction reason")
+                true)
               (ast.ast-source-span 5 6 7 8))
             (ast.ast-decl-cons
               (ast.ast-decl-def-id

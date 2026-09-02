@@ -82,6 +82,8 @@
 (define surface-ast-magic : i64
   3544386045472754772)
 (define surface-ast-schema-version : i64
+  ;; 8: AstDecl.Test carries boxed ignore/slow declaration metadata.
+  ;;
   ;; 7: AstExpr tag 86 adds the boxed SpmdCompact payload.
   ;;
   ;; 6: identity references use surface-identity schema 2, whose template-source
@@ -112,7 +114,7 @@
   ;; requires TlciProducerIdentityAdmission.ExactMatch and degrades to re-parse),
   ;; so this is a deployment invariant rather than a format-compatibility one --
   ;; but the version still moves whenever the encoding shape does.
-  7)
+  8)
 
 (cfg
   (any
@@ -1218,6 +1220,79 @@
     compiler-surface-selftest
     compiler-build-identity
     embedded-stdlib-tlci)
+  (define (surface-ast-write-test-metadata!
+    [out : (&mut out byte_buf_core.ByteBufBuilder)]
+    [metadata : ast.AstTestMetadata]) : unit
+    (match (owned_view.compiler-owned-box-shared-view metadata.value)
+      [(ast.AstTestMetadataValue.None) (codec.surface-ast-write-i64! out 0)]
+      [(ast.AstTestMetadataValue.Metadata ignore-reason slow)
+        (begin
+          (codec.surface-ast-write-i64! out 1)
+          (match ignore-reason
+            [(ast.AstTestIgnoreReason.No) (codec.surface-ast-write-i64! out 0)]
+            [(ast.AstTestIgnoreReason.Some reason)
+              (begin
+                (codec.surface-ast-write-i64! out 1)
+                (codec.surface-ast-write-string! out reason))])
+          (codec.surface-ast-write-i64!
+            out
+            (if slow
+              1
+              0)))])))
+
+(define (surface-ast-read-test-metadata!
+  [reader : (& reader codec.SurfaceAstReader)]) : ast.AstTestMetadata
+  (let
+    [tag : i64 (codec.surface-ast-read-i64! reader)]
+    (cond
+      [(= tag 0) (ast.ast-test-metadata-none-shared-view)]
+      [(= tag 1)
+        (let
+          [ignore-tag : i64 (codec.surface-ast-read-i64! reader)]
+          [ignore-reason : ast.AstTestIgnoreReason
+            (cond
+              [(= ignore-tag 0) ast.AstTestIgnoreReason.No]
+              [(= ignore-tag 1)
+                (let
+                  [reason : String (codec.surface-ast-read-string! reader)]
+                  (begin
+                    (if (surface_identity.surface-identity-string-eq? reason "")
+                      (codec.surface-ast-reader-fail!
+                        reader
+                        "surface ast: empty test ignore reason")
+                      unit)
+                    (ast.AstTestIgnoreReason.Some reason)))]
+              [else
+                (begin
+                  (codec.surface-ast-reader-fail!
+                    reader
+                    "surface ast: invalid test ignore metadata")
+                  ast.AstTestIgnoreReason.No)])]
+          [slow-tag : i64 (codec.surface-ast-read-i64! reader)]
+          [slow : bool
+            (cond
+              [(= slow-tag 0) false]
+              [(= slow-tag 1) true]
+              [else
+                (begin
+                  (codec.surface-ast-reader-fail!
+                    reader
+                    "surface ast: invalid test slow metadata")
+                  false)])]
+          (ast.ast-test-metadata-new ignore-reason slow))]
+      [else
+        (begin
+          (codec.surface-ast-reader-fail!
+            reader
+            "surface ast: invalid test metadata")
+          (ast.ast-test-metadata-none-shared-view))])))
+
+(cfg
+  (any
+    compiler-surface-producer
+    compiler-surface-selftest
+    compiler-build-identity
+    embedded-stdlib-tlci)
   (define (surface-ast-write-decl!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -1333,11 +1408,12 @@
           (surface-ast-write-decl-meta! out context meta)
           (codec.surface-ast-write-name! out context name)
           (surface-ast-write-dispatch-variant-list! out context variants))]
-      [(ast.AstDecl.Test name body span)
+      [(ast.AstDecl.Test name body metadata span)
         (begin
           (codec.surface-ast-write-i64! out 16)
           (codec.surface-ast-write-name! out context name)
           (codec.surface-ast-write-i64! out body)
+          (surface-ast-write-test-metadata! out metadata)
           (codec.surface-ast-write-span! out span))]
       [(ast.AstDecl.Unsafe inner)
         (begin
@@ -1464,6 +1540,7 @@
         (ast.AstDecl.Test
           (codec.surface-ast-read-name! reader)
           (codec.surface-ast-read-i64! reader)
+          (surface-ast-read-test-metadata! reader)
           (codec.surface-ast-read-span! reader))]
       [(= tag 17) (ast.AstDecl.Unsafe (box (surface-ast-read-decl! reader)))]
       [else
@@ -1981,6 +2058,7 @@
       [path-id : i64 (ci.intern "test.tl")]
       [fn-id : i64 (ci.intern "main")]
       [macro-id : i64 (ci.intern "catalog")]
+      [test-id : i64 (ci.intern "metadata-test")]
       [macro-param-id : i64 (ci.intern "T")]
       [macro-type-id : i64 (ci.intern "type")]
       [compact-index-id : i64 (ci.intern "compact-index")]
@@ -2073,10 +2151,10 @@
       [view-param-slots : (__tl_dyn-array ast.AstParam)
         (__tl_make-array ast.AstParam 1)]
       [decl-slots : (__tl_dyn-array ast.AstDecl)
-        (__tl_make-array ast.AstDecl 2)]
-      [path-slots : (__tl_dyn-array String) (__tl_make-array String 2)]
-      [owner-slots : (__tl_dyn-array i64) (__tl_make-array i64 4)]
-      [module-slots : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+        (__tl_make-array ast.AstDecl 3)]
+      [path-slots : (__tl_dyn-array String) (__tl_make-array String 3)]
+      [owner-slots : (__tl_dyn-array i64) (__tl_make-array i64 6)]
+      [module-slots : (__tl_dyn-array i64) (__tl_make-array i64 3)]
       [key-modules : (__tl_dyn-array String) (__tl_make-array String 1)]
       (begin
         (set! (array-ref body-items 0) body)
@@ -2124,21 +2202,34 @@
             (ast.AstMacroParamList macro-param-slots 1)
             ast.AstType.Unit
             sum-outer))
+        (set!
+          (array-ref decl-slots 2)
+          (ast.ast-decl-test-metadata-id
+            test-id
+            compact-body
+            (ast.ast-test-metadata-new
+              (ast.AstTestIgnoreReason.Some "surface reason")
+              true)
+            (ast.ast-source-span 50 2 50 32)))
         (set! (array-ref path-slots 0) "test.tl")
         (set! (array-ref path-slots 1) "test.tl")
+        (set! (array-ref path-slots 2) "test.tl")
         (set! (array-ref owner-slots 0) module-id)
         (set! (array-ref owner-slots 1) module-id)
-        (set! (array-ref owner-slots 2) path-id)
+        (set! (array-ref owner-slots 2) module-id)
         (set! (array-ref owner-slots 3) path-id)
+        (set! (array-ref owner-slots 4) path-id)
+        (set! (array-ref owner-slots 5) path-id)
         (set! (array-ref module-slots 0) module-id)
         (set! (array-ref module-slots 1) module-id)
+        (set! (array-ref module-slots 2) module-id)
         (set! (array-ref key-modules 0) "test.tl")
         (let
-          [decls : ast.AstDeclList (ast.AstDeclList decl-slots 0 2 true)]
+          [decls : ast.AstDeclList (ast.AstDeclList decl-slots 0 3 true)]
           [paths : ast.AstDeclPathList
-            (ast.AstDeclPathList path-slots owner-slots 0 2 true)]
+            (ast.AstDeclPathList path-slots owner-slots 0 3 true)]
           [modules : ast.AstDeclModuleList
-            (ast.AstDeclModuleList module-slots 0 2 true)]
+            (ast.AstDeclModuleList module-slots 0 3 true)]
           [seen : sym_i64_env.SymI64Env
             (sym_i64_env.sym-i64-bind-id (sym_i64_env.sym-i64-empty) path-id 1)]
           [key : surface_identity.SurfaceIdentityKey
@@ -2215,7 +2306,7 @@
                                     hydration.pools)
                                   (=
                                     (ast.ast-decl-list-len (& hydration.decls))
-                                    2)
+                                    3)
                                   (surface_identity.surface-identity-string-eq?
                                     (ci.intern-str
                                       (ast.ast-decl-path-list-owner-id
@@ -2403,6 +2494,33 @@
                                                     2
                                                     0))
                                                 "type-var"))]
+                                          [_ false]))]
+                                    [_ false])
+                                  (match (owned_view.compiler-owned-array-element-shared-view
+                                    hydration.decls.slots
+                                    2)
+                                    [(ast.AstDecl.Test
+                                        hydrated-test-name
+                                        _
+                                        hydrated-metadata
+                                        hydrated-test-span)
+                                      (and
+                                        (surface_identity.surface-identity-string-eq?
+                                          (ci.intern-str hydrated-test-name)
+                                          "metadata-test")
+                                        (=
+                                          (ast.ast-source-span-start-line
+                                            hydrated-test-span)
+                                          50)
+                                        (ast.ast-test-metadata-slow?
+                                          (owned_view.compiler-owned-shared-view
+                                            hydrated-metadata))
+                                        (match (ast.ast-test-metadata-ignore-reason
+                                          hydrated-metadata)
+                                          [(ast.AstTestIgnoreReason.Some reason)
+                                            (surface_identity.surface-identity-string-eq?
+                                              reason
+                                              "surface reason")]
                                           [_ false]))]
                                     [_ false])
                                   (surface-ast-hydrated-tuple-set-ok?

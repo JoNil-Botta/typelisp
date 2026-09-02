@@ -869,7 +869,7 @@ EOF
     assert_contains "$WORKDIR/test-run-batch.stderr" "ok inc-basic"
     assert_contains "$WORKDIR/test-run-batch.stderr" "test batch-one"
     assert_contains "$WORKDIR/test-run-batch.stderr" "ok batch-two"
-    if [ "$(grep -c '^TypeLisp tests: .* passed; 0 failed; .* total$' "$WORKDIR/test-run-batch.stderr")" -ne 2 ]; then
+    if [ "$(grep -c '^TypeLisp tests: .* passed; 0 failed; .* ignored; .* slow-skipped; .* total$' "$WORKDIR/test-run-batch.stderr")" -ne 2 ]; then
         fail "test execution batch did not report one success summary per source"
     fi
 
@@ -934,7 +934,7 @@ EOF
     assert_empty "$WORKDIR/test-run.stdout"
     assert_contains "$WORKDIR/test-run.stderr" "test inc-basic"
     assert_contains "$WORKDIR/test-run.stderr" "ok inc-basic"
-    assert_contains "$WORKDIR/test-run.stderr" "TypeLisp tests: 1 passed; 0 failed; 1 total"
+    assert_contains "$WORKDIR/test-run.stderr" "TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total"
     [ ! -f "$TEST_SRC.test.s" ] || {
         echo "test left scratch assembly behind: $TEST_SRC.test.s" >&2
         exit 1
@@ -952,14 +952,14 @@ EOF
     # cli-gate-case stage1-wrapper-test-no-tests-run wrapper run_capture
     run_capture test-no-tests-run "$COMPILER" test "$NO_TEST_SRC"
     assert_empty "$WORKDIR/test-no-tests-run.stdout"
-    assert_contains "$WORKDIR/test-no-tests-run.stderr" "TypeLisp tests: 0 passed; 0 failed; 0 total"
+    assert_contains "$WORKDIR/test-no-tests-run.stderr" "TypeLisp tests: 0 passed; 0 failed; 0 ignored; 0 slow-skipped; 0 total"
     TEST_BATCH_ZERO_LIST="$WORKDIR/inline-test-batch-zero.txt"
     printf '%s\n' "$NO_TEST_SRC" "$TEST_SRC" > "$TEST_BATCH_ZERO_LIST"
     # cli-gate-case stage1-wrapper-test-run-batch-zero wrapper run_capture
     run_capture test-run-batch-zero "$COMPILER" test --batch "$TEST_BATCH_ZERO_LIST" --target linux-x86_64 --stdlib-root "$ROOT/stdlib"
     assert_contains "$WORKDIR/test-run-batch-zero.stdout" "TypeLisp test file: $NO_TEST_SRC (0 test(s))"
     assert_contains "$WORKDIR/test-run-batch-zero.stdout" "TypeLisp test batch passed: 1 test(s) in 2 file(s)"
-    assert_contains "$WORKDIR/test-run-batch-zero.stderr" "TypeLisp tests: 0 passed; 0 failed; 0 total"
+    assert_contains "$WORKDIR/test-run-batch-zero.stderr" "TypeLisp tests: 0 passed; 0 failed; 0 ignored; 0 slow-skipped; 0 total"
     [ ! -f "$NO_TEST_SRC.test.s" ] || {
         echo "test no-tests left scratch assembly behind: $NO_TEST_SRC.test.s" >&2
         exit 1
@@ -1101,7 +1101,7 @@ EOF
     assert_contains "$WORKDIR/test-fail.stderr" "test failing-case"
     assert_contains "$WORKDIR/test-fail.stderr" "inline failure message"
     assert_contains "$WORKDIR/test-fail.stderr" "FAILED failing-case"
-    assert_contains "$WORKDIR/test-fail.stderr" "TypeLisp tests: 0 passed; 1 failed; 1 total"
+    assert_contains "$WORKDIR/test-fail.stderr" "TypeLisp tests: 0 passed; 1 failed; 0 ignored; 0 slow-skipped; 1 total"
     assert_not_contains "$WORKDIR/test-fail.stderr" "typelisp test: test executable exited"
     [ ! -f "$FAIL_SRC.test.s" ] || {
         echo "failing test left scratch assembly behind: $FAIL_SRC.test.s" >&2

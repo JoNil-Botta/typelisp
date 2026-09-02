@@ -54632,6 +54632,26 @@
                 (compiler-backend-apply-instr-diagnostic
                   (compiler_ir_types.compiler-ir-box-shared-view message)
                   instr-diag)))])]
+      [(compiler_ir_types.CompilerIrInstr.OwnRoot dst src ty)
+        (match (compiler-backend-emit-class-correct-mov-with-plan
+          ctx.type-segment-bases
+          ctx.assignments
+          ctx.blocks
+          dst
+          src
+          ty
+          ctx.program-index
+          ctx.vars
+          planned-scratch0
+          planned-scratch1
+          ctx.backend-state)
+          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (compiler_ir_types.compiler-ir-box-shared-view message)
+                  instr-diag)))])]
       [(compiler_ir_types.CompilerIrInstr.Alloc _ _)
         (ResultCompilerBackend.Ok "")]
       [(compiler_ir_types.CompilerIrInstr.AddrOf dst src)
@@ -54688,7 +54708,42 @@
                 (compiler-backend-apply-instr-diagnostic
                   (compiler_ir_types.compiler-ir-box-shared-view message)
                   instr-diag)))])]
+      [(compiler_ir_types.CompilerIrInstr.LoadOwned dst src _ ty)
+        (match (compiler-backend-emit-load-instr
+          ctx.type-segment-bases
+          ctx.assignments
+          dst
+          src
+          ty
+          planned-scratch0
+          planned-scratch1
+          ctx.backend-state)
+          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (compiler_ir_types.compiler-ir-box-shared-view message)
+                  instr-diag)))])]
       [(compiler_ir_types.CompilerIrInstr.StorePtr dst src ty)
+        (match (compiler-backend-emit-store-ptr
+          ctx.type-segment-bases
+          ctx.assignments
+          dst
+          src
+          ty
+          ctx.program-index
+          planned-scratch0
+          planned-scratch1
+          ctx.backend-state)
+          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
+              (box
+                (compiler-backend-apply-instr-diagnostic
+                  (compiler_ir_types.compiler-ir-box-shared-view message)
+                  instr-diag)))])]
+      [(compiler_ir_types.CompilerIrInstr.StoreOwned dst src ty)
         (match (compiler-backend-emit-store-ptr
           ctx.type-segment-bases
           ctx.assignments
@@ -55866,6 +55921,8 @@
   (match (compiler-backend-global-shared-view instr)
     [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
       (compiler-backend-count-value-use counts src)]
+    [(compiler_ir_types.CompilerIrInstr.OwnRoot _ src _)
+      (compiler-backend-count-value-use counts src)]
     [(compiler_ir_types.CompilerIrInstr.AddrOf _ src)
       (compiler-backend-use-count-inc counts src)]
     [(compiler_ir_types.CompilerIrInstr.Gep _ base offset _)
@@ -55876,7 +55933,18 @@
         (compiler-backend-count-value-use counts offset))]
     [(compiler_ir_types.CompilerIrInstr.Load _ src _)
       (compiler-backend-count-value-use counts src)]
+    ;; Ownership is optimizer-only evidence, not a machine operand. Counting
+    ;; it after register allocation can confuse a reused physical-home id with
+    ;; a real backend use (and therefore with that home's unrelated width).
+    [(compiler_ir_types.CompilerIrInstr.LoadOwned _ src _ _)
+      (compiler-backend-count-value-use counts src)]
     [(compiler_ir_types.CompilerIrInstr.StorePtr dst src _)
+      (begin
+        (compiler-backend-count-value-use
+          (compiler-backend-global-shared-view counts)
+          dst)
+        (compiler-backend-count-value-use counts src))]
+    [(compiler_ir_types.CompilerIrInstr.StoreOwned dst src _)
       (begin
         (compiler-backend-count-value-use
           (compiler-backend-global-shared-view counts)
@@ -76932,6 +77000,7 @@
     [(compiler_ir_types.CompilerIrInstr.AddrOf dst _) dst]
     [(compiler_ir_types.CompilerIrInstr.Gep dst _ _ _) dst]
     [(compiler_ir_types.CompilerIrInstr.Load dst _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.LoadOwned dst _ _ _) dst]
     [(compiler_ir_types.CompilerIrInstr.Cast dst _ _ _) dst]
     [(compiler_ir_types.CompilerIrInstr.Bitcast dst _ _ _) dst]
     [(compiler_ir_types.CompilerIrInstr.BinOp dst _ _ _ _) dst]
@@ -83327,6 +83396,8 @@
   (match (compiler-backend-global-shared-view instr)
     [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
       (compiler-backend-collect-value-collections collections src)]
+    [(compiler_ir_types.CompilerIrInstr.OwnRoot _ src _)
+      (compiler-backend-collect-value-collections collections src)]
     [(compiler_ir_types.CompilerIrInstr.BinOp _ _ lhs rhs _)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections lhs)
@@ -83436,7 +83507,13 @@
         offset)]
     [(compiler_ir_types.CompilerIrInstr.Load _ src _)
       (compiler-backend-collect-value-collections collections src)]
+    [(compiler_ir_types.CompilerIrInstr.LoadOwned _ src _ _)
+      (compiler-backend-collect-value-collections collections src)]
     [(compiler_ir_types.CompilerIrInstr.StorePtr dst src _)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections dst)
+        src)]
+    [(compiler_ir_types.CompilerIrInstr.StoreOwned dst src _)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections dst)
         src)]
@@ -89186,6 +89263,23 @@
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
   (match (compiler-backend-global-shared-view instr)
+    [(compiler_ir_types.CompilerIrInstr.LoadOwned dst src _ ty)
+      (compiler-backend-object-load-ptr-to-var
+        type-segment-bases
+        parts
+        (compiler-backend-global-shared-view function)
+        dst
+        (compiler-backend-global-shared-view src)
+        (compiler-backend-global-shared-view ty)
+        (compiler-backend-global-shared-view program-index))]
+    [(compiler_ir_types.CompilerIrInstr.OwnRoot dst src ty)
+      (compiler-backend-object-move-value-to-var
+        parts
+        function
+        dst
+        src
+        ty
+        program-index)]
     [(compiler_ir_types.CompilerIrInstr.Mov dst src ty)
       (if (compiler-backend-copy-group?
         type-segment-bases
@@ -89624,6 +89718,17 @@
         (compiler-backend-global-shared-view ty)
         (compiler-backend-global-shared-view program-index))]
     [(compiler_ir_types.CompilerIrInstr.StorePtr dst src ty)
+      (compiler-backend-object-value-ref-with-type
+        (compiler-backend-object-value-ref
+          parts
+          (compiler-backend-global-shared-view function)
+          dst
+          (compiler-backend-global-shared-view program-index))
+        (compiler-backend-global-shared-view function)
+        (compiler-backend-global-shared-view src)
+        (compiler-backend-global-shared-view ty)
+        (compiler-backend-global-shared-view program-index))]
+    [(compiler_ir_types.CompilerIrInstr.StoreOwned dst src ty)
       (compiler-backend-object-value-ref-with-type
         (compiler-backend-object-value-ref
           parts
@@ -91108,6 +91213,10 @@
   [backend-state : CompilerBackendState]
   [instr : compiler_ir_types.CompilerIrInstr]) : bool
   (match instr
+    [(compiler_ir_types.CompilerIrInstr.LoadOwned _ src _ _)
+      (compiler-backend-object-semantic-value-supported? src)]
+    [(compiler_ir_types.CompilerIrInstr.OwnRoot _ src _)
+      (compiler-backend-object-semantic-value-supported? src)]
     [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
       (compiler-backend-object-semantic-value-supported? src)]
     [(compiler_ir_types.CompilerIrInstr.BinOp _ op lhs rhs ty)
@@ -91159,6 +91268,7 @@
     [(compiler_ir_types.CompilerIrInstr.Load _ src _)
       (compiler-backend-object-semantic-value-supported? src)]
     [(compiler_ir_types.CompilerIrInstr.StorePtr _ _ _) false]
+    [(compiler_ir_types.CompilerIrInstr.StoreOwned _ _ _) false]
     [(compiler_ir_types.CompilerIrInstr.CopyBytes _ _ _) false]
     [(compiler_ir_types.CompilerIrInstr.BoundsCheck _ _ _) false]
     [(compiler_ir_types.CompilerIrInstr.Cast _ _ _ _) false]

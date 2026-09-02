@@ -1189,12 +1189,19 @@
 (define (compiler-live-instr-uses [instr : ir.CompilerIrInstr]) : CompilerLiveI64Set
   (match instr
     [(ir.CompilerIrInstr.Mov _ src _) (compiler-live-value-vars src)]
+    [(ir.CompilerIrInstr.OwnRoot _ src _) (compiler-live-value-vars src)]
     [(ir.CompilerIrInstr.Alloc _ _) (compiler-live-set-empty)]
     [(ir.CompilerIrInstr.AddrOf _ src) (compiler-live-set1 src)]
     [(ir.CompilerIrInstr.Gep _ base offset _)
       (compiler-live-values2-vars base offset)]
     [(ir.CompilerIrInstr.Load _ src _) (compiler-live-value-vars src)]
+    ;; `owner` is optimizer evidence, not a runtime operand. Optimizer DCE
+    ;; preserves its definition explicitly; machine liveness must model only
+    ;; the address that the emitted load actually reads.
+    [(ir.CompilerIrInstr.LoadOwned _ src _ _) (compiler-live-value-vars src)]
     [(ir.CompilerIrInstr.StorePtr dst src _)
+      (compiler-live-values2-vars dst src)]
+    [(ir.CompilerIrInstr.StoreOwned dst src _)
       (compiler-live-values2-vars dst src)]
     [(ir.CompilerIrInstr.CopyBytes dst src _)
       (compiler-live-values2-vars dst src)]
@@ -1353,10 +1360,12 @@
 (define (compiler-live-instr-def-var [instr : ir.CompilerIrInstr]) : i64
   (match instr
     [(ir.CompilerIrInstr.Mov dst _ _) dst]
+    [(ir.CompilerIrInstr.OwnRoot dst _ _) dst]
     [(ir.CompilerIrInstr.Alloc dst _) dst]
     [(ir.CompilerIrInstr.AddrOf dst _) dst]
     [(ir.CompilerIrInstr.Gep dst _ _ _) dst]
     [(ir.CompilerIrInstr.Load dst _ _) dst]
+    [(ir.CompilerIrInstr.LoadOwned dst _ _ _) dst]
     [(ir.CompilerIrInstr.Cast dst _ _ _) dst]
     [(ir.CompilerIrInstr.Bitcast dst _ _ _) dst]
     [(ir.CompilerIrInstr.BinOp dst _ _ _ _) dst]
@@ -1554,6 +1563,8 @@
   (match instr
     [(ir.CompilerIrInstr.Mov _ src _)
       (compiler-live-use-ids-add-value! out 0 src)]
+    [(ir.CompilerIrInstr.OwnRoot _ src _)
+      (compiler-live-use-ids-add-value! out 0 src)]
     [(ir.CompilerIrInstr.Alloc _ _) 0]
     [(ir.CompilerIrInstr.AddrOf _ src) (compiler-live-use-ids-push! out 0 src)]
     [(ir.CompilerIrInstr.Gep _ base offset _)
@@ -1563,7 +1574,14 @@
         offset)]
     [(ir.CompilerIrInstr.Load _ src _)
       (compiler-live-use-ids-add-value! out 0 src)]
+    [(ir.CompilerIrInstr.LoadOwned _ src _ _)
+      (compiler-live-use-ids-add-value! out 0 src)]
     [(ir.CompilerIrInstr.StorePtr dst src _)
+      (compiler-live-use-ids-add-value!
+        (compiler-live-shared-view out)
+        (compiler-live-use-ids-add-value! out 0 dst)
+        src)]
+    [(ir.CompilerIrInstr.StoreOwned dst src _)
       (compiler-live-use-ids-add-value!
         (compiler-live-shared-view out)
         (compiler-live-use-ids-add-value! out 0 dst)

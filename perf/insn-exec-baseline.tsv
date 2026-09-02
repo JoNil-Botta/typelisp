@@ -45,4 +45,4 @@ benchmark/typelisp/regalloc_greedy	818506290
 benchmark/c-scalar/regalloc_greedy	404020977
 benchmark/typelisp/asm_render	876400221
 benchmark/c-scalar/asm_render	644231943
-self_compile/compile_cli_opt1	89379089953
+self_compile/compile_cli_opt1	94229644621

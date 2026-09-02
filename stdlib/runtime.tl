@@ -1066,9 +1066,9 @@
       unit)
     runtime-test-case-failed))
 
-;; Shared finish path. `include-skips` keeps the shipped one-argument runtime
-;; entry point source-compatible with bootstrap compilers while the current
-;; test CLI calls the structured skip-count entry point below.
+;: Shared finish path. `include-skips` keeps the shipped one-argument runtime
+;: entry point source-compatible with bootstrap compilers while the current
+;: test CLI calls the structured skip-count entry point below.
 (define (runtime-test-suite-finish-counts
   [total : i64]
   [ignored : i64]

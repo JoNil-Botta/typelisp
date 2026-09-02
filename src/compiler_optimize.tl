@@ -146445,12 +146445,17 @@
   (escaped (__tl_dyn-array bool))
   ;; bit k set when a `StorePtr`/`CopyBytes` in this body writes through a
   ;; pointer derived from parameter k.
-  (writes i64))
+  (writes i64)
+  ;; False when the bounded root propagation still changed on its last round.
+  ;; In that case `writes` is only a prefix of the answer and no parameter may
+  ;; use it to clear the storage-consistency admission clause.
+  (settled? bool))
 
 ;; A var either carries a root set or does not, so a handful of rounds settles
-;; every shape; the cap only bounds a pathological phi chain, and a body that
-;; has not settled when it runs out keeps whatever it reached -- which can only
-;; make the write mask smaller, so the refusal below stays the safe side.
+;; every ordinary shape. The cap bounds a pathological reverse-ordered move or
+;; phi chain. An exhausted walk is UNKNOWN rather than the smaller write mask:
+;; missing a write would skip the storage-consistency refusal below, which is
+;; the permissive side of that test rather than the safe one.
 (define (opt-lga-root-round-cap) : i64
   8)
 
@@ -146611,9 +146616,9 @@
   [blocks : ir.CompilerIrBlockList]
   [roots : (__tl_dyn-array i64)]
   [writes : (__tl_dyn-array i64)]
-  [remaining : i64]) : unit
+  [remaining : i64]) : bool
   (if (<= remaining 0)
-    unit
+    false
     (let
       [changed : (__tl_dyn-array bool) (__tl_make-array bool 1)]
       (begin
@@ -146624,7 +146629,7 @@
           (compiler-opt-global-shared-view writes))
         (if (array-ref changed 0)
           (opt-lga-roots-fixed! blocks roots writes (- remaining 1))
-          unit)))))
+          true)))))
 
 (define (opt-lga-function-facts
   [params : ir.CompilerIrParamSeq]
@@ -146647,6 +146652,7 @@
     [escaped : (__tl_dyn-array bool) (__tl_make-array bool np)]
     [uses : (__tl_dyn-array i64) (__tl_make-array i64 np)]
     [position : i64 0]
+    [settled? : bool false]
     (begin
       (while (< position np)
         (begin
@@ -146657,12 +146663,14 @@
         np
         uses
         (compiler-opt-global-shared-view escaped))
-      (opt-lga-roots-fixed!
-        (compiler-opt-global-shared-view blocks)
-        (compiler-opt-global-shared-view roots)
-        (compiler-opt-global-shared-view writes)
-        (opt-lga-root-round-cap))
-      (OptLgaParamFacts escaped (array-ref writes 0)))))
+      (set!
+        settled?
+        (opt-lga-roots-fixed!
+          (compiler-opt-global-shared-view blocks)
+          (compiler-opt-global-shared-view roots)
+          (compiler-opt-global-shared-view writes)
+          (opt-lga-root-round-cap)))
+      (OptLgaParamFacts escaped (array-ref writes 0) settled?))))
 
 ;; Every parameter's var id is its position. The inline stage identifies a
 ;; parameter that way, so a function that does not hold it is refused.
@@ -146739,6 +146747,7 @@
     [global-id : i64 (- seen 1)]
     (cond
       [(<= seen 0) "refused-mixed-or-unread-sites"]
+      [(not facts.settled?) "refused-root-analysis-budget"]
       [(array-ref facts.escaped position) "refused-parameter-escapes"]
       [(opt_i64_i64_map.contains? (& addr-taken) global-id)
         "refused-global-address-taken"]

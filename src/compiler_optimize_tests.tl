@@ -78460,6 +78460,54 @@
 ;; `(&mut g)` helper that writes through the parameter (specialized, because
 ;; IAG-2's row already models the write), and one that stores the parameter into
 ;; memory. The level gate is checked with the same program.
+;; Put a root-carrying move chain in reverse dependency order. Each propagation
+;; round can discover only one more destination, so the ninth destination is
+;; still unknown when LGA's eight-round budget expires. The write mask is then
+;; incomplete and the analysis must report UNKNOWN rather than letting that
+;; smaller mask clear an admission clause.
+(define (compiler-optimize-lga-root-budget-self-test) : i64
+  (let
+    [roots : (__tl_dyn-array i64) (__tl_make-array i64 16)]
+    [writes : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [builder : compiler_ir_types.CompilerIrInstrBuilder
+      (compiler_ir_types.compiler-ir-instr-builder-with-capacity 10)]
+    [dst : i64 9]
+    (begin
+      (set! (array-ref roots 0) 1)
+      (while (> dst 0)
+        (begin
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (compiler_ir_types.CompilerIrInstr.Mov
+              dst
+              (compiler_ir_types.CompilerIrValue.Var (- dst 1))
+              (compiler_ast_types.AstType.U64)))
+          (set! dst (- dst 1))))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.StorePtr
+          (compiler_ir_types.CompilerIrValue.Var 9)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64)))
+      (let
+        [blocks : compiler_ir_types.CompilerIrBlockList
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-instr-builder-to-seq builder))
+            compiler_ir_types.CompilerIrBlockList.Nil)]
+        [settled? : bool
+          (compiler_optimize.opt-lga-roots-fixed!
+            blocks
+            (compiler_optimize.compiler-opt-global-shared-view roots)
+            (compiler_optimize.compiler-opt-global-shared-view writes)
+            (compiler_optimize.opt-lga-root-round-cap))]
+        (cond
+          [settled? 1]
+          [(not (= (array-ref roots 9) 0)) 2]
+          [(not (= (array-ref writes 0) 0)) 3]
+          [else 42])))))
+
 (defstruct OptLgaTestSymbols
   (a i64)
   (b i64)
@@ -80940,6 +80988,13 @@
     (compiler-optimize-lga-specialization-self-test)
     42
     "an internal helper whose every direct call site passes the same global at a reference parameter position loses that parameter, its uses are rewritten to the global itself, and every site drops the argument -- including a `(&mut g)` helper that writes through the parameter, whose write IAG-2's storage row already attributes to that global; two sites disagreeing about the position, a callee whose address the program takes, a callee that reaches a rebind of the cell through a direct callee, and a parameter stored into memory are each refused, and below opt level 2 the program comes out untouched"))
+
+(test
+  lga-root-propagation-budget-fails-closed
+  (test.assert-i64-eq
+    (compiler-optimize-lga-root-budget-self-test)
+    42
+    "a reverse-ordered pointer-root chain that still changes on LGA's last propagation round reports an unsettled analysis, with its incomplete root and write masks never mistaken for a complete answer"))
 
 (test
   lp-loop-postcondition-check-memo

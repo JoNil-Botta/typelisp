@@ -195,10 +195,11 @@
 ;; and the un-inlined caller and the standalone callee have no such chain -- so
 ;; running it inside the priced prefix widens one side of that interval and
 ;; pushes calibrated accepts out through its upper bound. Measured on
-;; intern_table: `it-slice-eq?` into `it-intern-slice` moves from
-;; saving=171/boundary=96 (keep) to saving=243/boundary=96 (outside the
-;; window, revert) and the row pays +31,754,258 Ir for the call boundary it
-;; kept.
+;; intern_table: with the sweep outside the prefix, where this keeps it,
+;; `it-slice-eq?` into `it-intern-slice` prices at saving=171 against
+;; boundary=96 and keeps with a clear margin; running it inside moves the same
+;; site to saving=243/boundary=96, outside the window, and the row pays
+;; +31,754,258 Ir for the call boundary it then keeps.
 ;;
 ;; Re-calibrating that window is CB-2's business, not this sweep's. Keeping the
 ;; sweep out of the priced prefix leaves every recorded verdict exactly where
@@ -126272,11 +126273,24 @@
 ;; candidate costs exactly what an accepted one costs -- one extra walk of the
 ;; caller, three per-function optimizer runs and three allocation plans -- and a
 ;; cap that refunded rejections would leave the work unbounded on a program with
-;; many candidates. Twenty-four verdicts is the whole tier's budget for one
-;; compilation. No benchmark in the corpus reaches it; a self-compile does, and
-;; that is the point.
+;; many candidates. Forty-eight verdicts is the whole tier's budget for one
+;; compilation. No benchmark in the corpus spends them all; a self-compile does,
+;; and that is the point.
+;;
+;; MEASURED at 24, 48 and 96, and the corpus does not choose between them: all
+;; 28 gated rows are byte-identical at all three, because the only program the
+;; budget binds on is ssa_construct and the two extra verdicts it buys there
+;; both revert. The compiler itself chooses. A self-compile spends every core
+;; verdict it is given -- 24 of 24 at the old bound, 48 of 48 at this one, 66
+;; and 132 verdicts in all once the relaxations' reserve scales with it -- and
+;; the compiler that 48 produces runs a self-compile in 156,148,771 fewer
+;; instructions, -0.174%, for +1.53% opt2 self-compile Ir and +1.35% opt2
+;; self-compile wall. The tier's own cost is linear in the verdict, about 64M
+;; Ir apiece at every budget measured, which is what makes 96 refusable: it
+;; spends 96 of 96 (264 verdicts) for only half as much again (-0.270%) and
+;; pays +4.64% opt2 Ir and +6.6% wall for it.
 (define (opt-inline-checked-program-budget) : i64
-  24)
+  48)
 
 ;; ...and per CALLER, because the sites are priced in sequence and one caller
 ;; would otherwise be able to drain the program's whole budget: a caller holding
@@ -126300,12 +126314,12 @@
 ;; KEPT was going to get.
 ;;
 ;; That is not a theoretical cost; it is a measured one. ssa_construct offers
-;; this tier exactly twenty-four candidates without the relaxations and the
-;; program budget is exactly twenty-four, so the entry-site and second-body
-;; admissions -- five extra candidates in the first half of the program, every
-;; one of them a revert -- pushed five candidates off the end of the budget, and
-;; two of those were keeps: `ssa-instr-dst` into `ssa-verify-defs` (a modelled
-;; saving of 960 against a boundary of 512) and `ssa-instr-next` into
+;; this tier exactly twenty-four candidates without the relaxations, which was
+;; exactly the program budget this was measured at, so the entry-site and
+;; second-body admissions -- five extra candidates in the first half of the
+;; program, every one of them a revert -- pushed five candidates off the end of
+;; it, and two of those were keeps: `ssa-instr-dst` into `ssa-verify-defs` (a
+;; modelled saving of 960 against a boundary of 512) and `ssa-instr-next` into
 ;; `ssa-verify` (1008 against 512). Both callees then stayed out of line at
 ;; every site the bands also refuse, and the row paid +6,495,048.
 ;;
@@ -126338,7 +126352,7 @@
   (- (opt-inline-checked-max-callees) 1))
 
 ;; ...and program-wide, that allowance for each caller the tier's own budget
-;; could serve: twenty-four verdicts at four per caller is six callers. The
+;; could serve: forty-eight verdicts at four per caller is twelve callers. The
 ;; reserve is stated as that product rather than as a number of its own,
 ;; because it is not a second thing to tune either -- it is the same bound read
 ;; at the granularity the relaxations spend it in.
@@ -127988,12 +128002,18 @@
     ;; that reorders a caller's blocks, so the two sides stop being measured in
     ;; the same currency exactly when the merged body's shape changes most. A
     ;; modelled saving many times what a free inline can produce is evidence of
-    ;; that, not evidence of a brilliant merge -- and every one of the campaign's
-    ;; documented losers presents that way here: `pl-line-end` into
-    ;; `pl-drop-fallthrough` models a saving of 1,193 against a boundary of 64
-    ;; and measures +6.3% on peephole_lines; `recompute!` into `fixpoint!` models
-    ;; 972 against 160 and measures +2.5% on liveness_scan; `cfg-loop-body` into
-    ;; `cfg-natural-loops` models 2,698 against 832 and measures +0.7%.
+    ;; that, not evidence of a brilliant merge -- and every site the upper bound
+    ;; still refuses on the corpus presents that way. `pl-line-end` into
+    ;; `pl-drop-fallthrough`, `pl-run-chunk` and `pl-bench` models 1,065, 1,096
+    ;; and 1,088 against a boundary of 64 -- about 16.6x what a free inline can
+    ;; produce -- and admitting them costs peephole_lines +16.5%; `qs-sort` into
+    ;; `qs-bench` models 6,173 against 72 (86x) and costs opt_quicksort +5.9%;
+    ;; `cfg-loop-body` into `cfg-natural-loops` models 2,955 against 832 (3.6x)
+    ;; and costs cfg_domloops +6.8%. The bound is measured at its own edge, not
+    ;; merely far from what it refuses: the cheapest refusal the ablation priced
+    ;; is `cfg-loop-preheader` into `cfg-natural-loops` at 2,041 against 832 --
+    ;; 2.45x, a hair over the bound -- and admitting that one alone costs
+    ;; cfg_domloops +2.96%.
     ;;
     ;; So the tier keeps a site only when the model AGREES with the free-inline
     ;; prediction to within a factor of two in both directions. Where it does

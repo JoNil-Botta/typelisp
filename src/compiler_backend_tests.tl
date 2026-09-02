@@ -5379,7 +5379,7 @@
         ;; FPO (M-G3 stage 2) makes frame refs rsp-relative; T1-6 (a) puts
         ;; this call-free leaf's frame in the red zone. Parameter identities
         ;; stay pinned at -8/-16 while lifetime coloring compacts the sum into
-        ;; -24 and lets the later constant/product share -32.
+        ;; -32 and lets the later constant/product share -24.
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           "    movq %rdi, -8(%rsp)\n")
@@ -5396,8 +5396,8 @@
           (owned_view.compiler-owned-shared-view asm)
           (cfg
             scratch-vreg
-            "    imulq -32(%rsp), %rsi\n"
-            "    imulq -32(%rsp), %r8\n"))
+            "    imulq -24(%rsp), %rsi\n"
+            "    imulq -24(%rsp), %r8\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
@@ -5411,8 +5411,9 @@
     (compiler-backend-regalloc-f64-source))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
-        ;; T1-6 (a) red-zone frame slots. Lifetime coloring compacts a/b into
-        ;; -8/-16 and reuses a's dead -8 slot for the sum.
+        ;; T1-6 (a) red-zone frame slots. Without scalar-register web
+        ;; coalescing, the stack-only path keeps the two copied operands at
+        ;; -16/-24 while reusing the staging -8 slot for the sum.
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           "main:\n")
@@ -5426,8 +5427,8 @@
           (owned_view.compiler-owned-shared-view asm)
           (cfg
             scratch-vreg
-            "    addsd -16(%rsp), %xmm0\n"
-            "    addsd -16(%rsp), %xmm2\n"))
+            "    addsd -24(%rsp), %xmm0\n"
+            "    addsd -24(%rsp), %xmm2\n"))
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           (cfg
@@ -5444,10 +5445,7 @@
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            (cfg
-              scratch-vreg
-              "    movsd -8(%rsp), %xmm2\n"
-              "    movsd -16(%rsp), %xmm0\n")))
+            "    movsd -16(%rsp), %xmm0\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
@@ -34358,19 +34356,21 @@ g:
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
             "    .float "))
-        ;; FPO red-zone frame slot: lifetime coloring compacts b:f32 to -8.
+        ;; FPO red-zone frame slot: lifetime coloring compacts b:f32 from its
+        ;; old positive 176(%rsp) identity slot to -64; literal temporaries
+        ;; independently reuse -8.
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           (cfg
             scratch-vreg
-            "    ucomiss -8(%rsp), %xmm0\n"
-            "    ucomiss -8(%rsp), %xmm2\n"))
+            "    ucomiss -64(%rsp), %xmm0\n"
+            "    ucomiss -64(%rsp), %xmm2\n"))
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           (cfg
             scratch-vreg
-            "    addss -8(%rsp), %xmm0\n"
-            "    addss -8(%rsp), %xmm2\n"))
+            "    addss -64(%rsp), %xmm0\n"
+            "    addss -64(%rsp), %xmm2\n"))
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           (cfg scratch-vreg "    setb %al\n" "    setb %r8b\n"))

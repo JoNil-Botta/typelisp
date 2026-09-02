@@ -80760,7 +80760,7 @@
               (compiler-backend-mode-scalar? mode)
               (not scalar-registers-enabled)))
             compiler_regalloc.CompilerRegColoring.None
-            (compiler_regalloc.compiler-reg-color-stack-slots
+            (compiler_regalloc.compiler-reg-color-stack-slots-with-stack-only
               type-segment-bases
               (compiler-backend-global-shared-view remat-reg-plan)
               (compiler-backend-global-shared-view fn-group-vars)
@@ -80768,7 +80768,10 @@
               (compiler-backend-global-shared-view remat-blocks)
               scratch-vars
               remat-vars
-              coloring-pinned-vars))]
+              coloring-pinned-vars
+              (and
+                (compiler-backend-mode-scalar? mode)
+                (not scalar-registers-enabled))))]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (match (compiler-backend-global-shared-view coloring)
             [(compiler_regalloc.CompilerRegColoring.None)

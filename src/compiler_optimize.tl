@@ -101,8 +101,7 @@
   (Program ir.CompilerIrProgram ir.CompilerSourceSpans))
 
 (defstruct OptDebugTextBufCell
-  (slots (__tl_dyn-array text_buf.TextBuf))
-  (live (__tl_dyn-array bool)))
+  (slot (Box text_buf.TextBuf)))
 
 (defstruct OptDebugState
   ;; Borrowed from the ambient compile job by compiler-opt-debug-configure!.
@@ -127,46 +126,20 @@
   (debug-state OptDebugState))
 
 (define (compiler-opt-debug-text-buf-cell-empty) : OptDebugTextBufCell
-  (let
-    [slots : (__tl_dyn-array text_buf.TextBuf)
-      (__tl_make-array text_buf.TextBuf 1)]
-    [live : (__tl_dyn-array bool) (__tl_make-array bool 1)]
-    (begin
-      (unsafe
-        (ptr-write! (__tl_array-data slots) (text_buf.empty)))
-      (set! (array-ref live 0) true)
-      (OptDebugTextBufCell slots live))))
+  (OptDebugTextBufCell (box (text_buf.empty))))
 
 (define (compiler-opt-debug-text-buf-cell-append!
   [cell : OptDebugTextBufCell]
   [snapshot : String]) : unit
   (let
-    [available? : bool (array-ref cell.live 0)]
-    (if (not available?)
-      (io.panic "optimizer debug dump buffer is already borrowed")
-      (let
-        [buf : text_buf.TextBuf
-          (begin
-            ;; This process-serial cell is the source of truth for liveness.
-            ;; Mark the slot unavailable before taking its shallow owned
-            ;; representation so no nested observation can retain an alias.
-            ;; Avoid routing the large TextBuf through the private
-            ;; `(Tuple bool T)` extraction ABI: the cell already performed the
-            ;; checked availability decision above.
-            (set! (array-ref cell.live 0) false)
-            (unsafe
-              (ptr-read (__tl_array-data cell.slots))))]
-        [next : text_buf.TextBuf
-          (text_buf.append
-            (if (text_buf.empty? (& buf))
-              buf
-              (text_buf.append buf "\n"))
-            snapshot)]
-        (begin
-          (unsafe
-            (ptr-write! (__tl_array-data cell.slots) next))
-          (set! (array-ref cell.live 0) true)
-          unit)))))
+    [buf : text_buf.TextBuf (replace! (deref cell.slot) (text_buf.empty))]
+    [next : text_buf.TextBuf
+      (text_buf.append
+        (if (text_buf.empty? (& buf))
+          buf
+          (text_buf.append buf "\n"))
+        snapshot)]
+    (set! (deref cell.slot) next)))
 
 (define compiler-opt-owned-state : CompilerOptOwnedState
   (CompilerOptOwnedState
@@ -238,8 +211,7 @@
       (compiler-opt-global-shared-view compiler-opt-owned-state.debug-state)]
     [cell : OptDebugTextBufCell
       (compiler-opt-global-shared-view state.dump-buf)]
-    [buf : text_buf.TextBuf
-      (compiler-opt-global-array-element-shared-view cell.slots 0)]
+    [buf : text_buf.TextBuf (compiler-opt-box-shared-view cell.slot)]
     (text_buf.render (clone buf))))
 
 (cfg
@@ -250,8 +222,7 @@
         (compiler-opt-global-shared-view compiler-opt-owned-state.debug-state)]
       [cell : OptDebugTextBufCell
         (compiler-opt-global-shared-view state.dump-buf)]
-      [buf : text_buf.TextBuf
-        (compiler-opt-global-array-element-shared-view cell.slots 0)]
+      [buf : text_buf.TextBuf (compiler-opt-box-shared-view cell.slot)]
       (text_buf.length (& buf)))))
 
 (define (compiler-opt-debug-verification-error) : String

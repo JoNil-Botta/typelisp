@@ -620,41 +620,43 @@
             destination-path
             rooted.linux-rooted-never-cancelled)
           rooted.cleanup-linux-rooted-directory])
-      (if (or
-        (not (rooted.linux-rooted-directory-open? (& source)))
-        (not (rooted.linux-rooted-directory-open? (& destination))))
-        10
-        (if (not
-          (io.result-unit-ok? (fs.try-rename source-path moved-source-path)))
-          11
-          (if (not
+      (cond
+        [(or
+            (not (rooted.linux-rooted-directory-open? (& source)))
+            (not (rooted.linux-rooted-directory-open? (& destination))))
+          10]
+        [(not
+            (io.result-unit-ok? (fs.try-rename source-path moved-source-path)))
+          11]
+        [(not
             (io.result-unit-ok?
               (fs.try-rename destination-path moved-destination-path)))
-            12
-            (let
-              [create-result : rooted.FsLinuxRootedResult
-                (create-text (& source) "renamed.tmp" "renamed parents\n")]
-              (if (not (= (result-code create-result) 0))
-                13
-                (let
-                  [rename-result : rooted.FsLinuxRootedResult
-                    (rooted.linux-rooted-rename-no-replace
-                      (& source)
-                      "renamed.tmp"
-                      (& destination)
-                      "renamed.txt"
-                      rooted.linux-rooted-never-cancelled)]
-                  (if (not (= (result-code rename-result) 0))
-                    14
-                    (if (not
-                      (=
-                        (result-code
-                          (rooted.linux-rooted-directory-flush
-                            (& destination)
-                            rooted.linux-rooted-never-cancelled))
-                        0))
-                      15
-                      42)))))))))))
+          12]
+        [else
+          (let
+            [create-result : rooted.FsLinuxRootedResult
+              (create-text (& source) "renamed.tmp" "renamed parents\n")]
+            (if (not (= (result-code create-result) 0))
+              13
+              (let
+                [rename-result : rooted.FsLinuxRootedResult
+                  (rooted.linux-rooted-rename-no-replace
+                    (& source)
+                    "renamed.tmp"
+                    (& destination)
+                    "renamed.txt"
+                    rooted.linux-rooted-never-cancelled)]
+                (if (not (= (result-code rename-result) 0))
+                  14
+                  (if (not
+                    (=
+                      (result-code
+                        (rooted.linux-rooted-directory-flush
+                          (& destination)
+                          rooted.linux-rooted-never-cancelled))
+                      0))
+                    15
+                    42)))))]))))
 
 (define (scenario-faults [root-path : (& root-path str)]) : i64
   (with

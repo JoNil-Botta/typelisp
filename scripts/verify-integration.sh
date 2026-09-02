@@ -2030,6 +2030,33 @@ run_linux_fatal_backtrace_fixture() {
 }
 
 run_linux_backend_fixtures() {
+    # RMW-2: the load/op/store triple over one memory location folds to a single
+    # memory-operand ALU instruction. The rewrite is a backend text peephole
+    # that runs at every optimization level, so the opt0 and opt1 rows are the
+    # parity reference for the opt2 answer: all three must print the same
+    # numbers, and a fold that got the address, operand order or operand width
+    # wrong would move them (each counter is read back out of its cell).
+    run_linux_program_fixture \
+        rmw-mem-operand-fold-opt0 \
+        tests/integration/rmw_mem_operand_fold.tl \
+        42 \
+        0 \
+        '8 -24\n7 1024 0\n24 108\n36 24\n6 3\n' \
+        '8 3'
+    run_linux_program_fixture \
+        rmw-mem-operand-fold-opt1 \
+        tests/integration/rmw_mem_operand_fold.tl \
+        42 \
+        1 \
+        '8 -24\n7 1024 0\n24 108\n36 24\n6 3\n' \
+        '8 3'
+    run_linux_program_fixture \
+        rmw-mem-operand-fold-opt2 \
+        tests/integration/rmw_mem_operand_fold.tl \
+        42 \
+        2 \
+        '8 -24\n7 1024 0\n24 108\n36 24\n6 3\n' \
+        '8 3'
     run_linux_fatal_backtrace_fixture
     # The opt0 row guards the lowerer's two-phase evaluate-before-write
     # contract. The opt2 row runs the same destination/argument aliases through

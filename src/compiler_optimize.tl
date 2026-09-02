@@ -17913,10 +17913,73 @@
       (ir.CompilerIrInstr.Syscall
         dst
         (opt-global-copy-subst-call-args facts doms block-id pos args))]
-    [(ir.CompilerIrInstr.VectorBinOp _) instr]
-    [(ir.CompilerIrInstr.VectorPrefix _) instr]
-    [(ir.CompilerIrInstr.VectorReduce _ _ _ _ _) instr]
-    [(ir.CompilerIrInstr.VectorCompare _) instr]
+    ;; SIMD payloads may only receive var-to-var identities. The global
+    ;; resolver's mask form rejects scalar literals while retaining the same
+    ;; instruction-position and dominance checks as scalar copy propagation.
+    ;; This lets the second sweep forward the Movs produced by vector CSE
+    ;; without confusing scalar values with private vector/mask aggregates.
+    [(ir.CompilerIrInstr.VectorBinOp payload-box)
+      (let
+        [dst (compiler-opt-box-field-shared-view payload-box dst)]
+        [op (compiler-opt-box-field-shared-view payload-box op)]
+        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
+        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
+        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
+        [ty (compiler-opt-box-field-shared-view payload-box ty)]
+        (ir.ir-instr-vector-bin-op
+          dst
+          op
+          (opt-global-copy-resolve-mask
+            (compiler-opt-global-shared-view facts)
+            (compiler-opt-global-shared-view doms)
+            block-id
+            pos
+            lhs)
+          (opt-global-copy-resolve-mask facts doms block-id pos rhs)
+          lanes
+          ty))]
+    [(ir.CompilerIrInstr.VectorPrefix payload-box)
+      (let
+        [dst (compiler-opt-box-field-shared-view payload-box dst)]
+        [op (compiler-opt-box-field-shared-view payload-box op)]
+        [src (compiler-opt-box-field-shared-view payload-box src)]
+        [carry (compiler-opt-box-field-shared-view payload-box carry)]
+        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
+        [ty (compiler-opt-box-field-shared-view payload-box ty)]
+        (ir.ir-instr-vector-prefix
+          dst
+          op
+          (opt-global-copy-resolve-mask facts doms block-id pos src)
+          carry
+          lanes
+          ty))]
+    [(ir.CompilerIrInstr.VectorReduce dst op src lanes ty)
+      (ir.CompilerIrInstr.VectorReduce
+        dst
+        op
+        (opt-global-copy-resolve-mask facts doms block-id pos src)
+        lanes
+        ty)]
+    [(ir.CompilerIrInstr.VectorCompare payload-box)
+      (let
+        [dst (compiler-opt-box-field-shared-view payload-box dst)]
+        [op (compiler-opt-box-field-shared-view payload-box op)]
+        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
+        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
+        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
+        [ty (compiler-opt-box-field-shared-view payload-box ty)]
+        (ir.ir-instr-vector-compare
+          dst
+          op
+          (opt-global-copy-resolve-mask
+            (compiler-opt-global-shared-view facts)
+            (compiler-opt-global-shared-view doms)
+            block-id
+            pos
+            lhs)
+          (opt-global-copy-resolve-mask facts doms block-id pos rhs)
+          lanes
+          ty))]
     [(ir.CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
       (ir.CompilerIrInstr.MaskBinOp
         dst
@@ -17940,11 +18003,80 @@
         op
         (opt-global-copy-resolve-mask facts doms block-id pos src)
         lanes)]
-    [(ir.CompilerIrInstr.Select _) instr]
+    [(ir.CompilerIrInstr.Select payload-box)
+      (let
+        [dst (compiler-opt-box-field-shared-view payload-box dst)]
+        [mask (compiler-opt-box-field-shared-view payload-box mask)]
+        [on-true (compiler-opt-box-field-shared-view payload-box on-true)]
+        [on-false (compiler-opt-box-field-shared-view payload-box on-false)]
+        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
+        [ty (compiler-opt-box-field-shared-view payload-box ty)]
+        (ir.ir-instr-select
+          dst
+          (opt-global-copy-resolve-mask
+            (compiler-opt-global-shared-view facts)
+            (compiler-opt-global-shared-view doms)
+            block-id
+            pos
+            mask)
+          (opt-global-copy-resolve-mask
+            (compiler-opt-global-shared-view facts)
+            (compiler-opt-global-shared-view doms)
+            block-id
+            pos
+            on-true)
+          (opt-global-copy-resolve-mask facts doms block-id pos on-false)
+          lanes
+          ty))]
     [(ir.CompilerIrInstr.VectorLoad _ _ _ _ _) instr]
-    [(ir.CompilerIrInstr.VectorStore _) instr]
-    [(ir.CompilerIrInstr.PredicatedStore _) instr]
-    [(ir.CompilerIrInstr.PredicatedLoad _) instr]
+    [(ir.CompilerIrInstr.VectorStore payload-box)
+      (let
+        [base (compiler-opt-box-field-shared-view payload-box base)]
+        [index (compiler-opt-box-field-shared-view payload-box index)]
+        [value (compiler-opt-box-field-shared-view payload-box value)]
+        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
+        [ty (compiler-opt-box-field-shared-view payload-box ty)]
+        (ir.ir-instr-vector-store
+          base
+          index
+          (opt-global-copy-resolve-mask facts doms block-id pos value)
+          lanes
+          ty))]
+    [(ir.CompilerIrInstr.PredicatedStore payload-box)
+      (let
+        [base (compiler-opt-box-field-shared-view payload-box base)]
+        [index (compiler-opt-box-field-shared-view payload-box index)]
+        [value (compiler-opt-box-field-shared-view payload-box value)]
+        [mask (compiler-opt-box-field-shared-view payload-box mask)]
+        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
+        [ty (compiler-opt-box-field-shared-view payload-box ty)]
+        (ir.ir-instr-predicated-store
+          base
+          index
+          (opt-global-copy-resolve-mask
+            (compiler-opt-global-shared-view facts)
+            (compiler-opt-global-shared-view doms)
+            block-id
+            pos
+            value)
+          (opt-global-copy-resolve-mask facts doms block-id pos mask)
+          lanes
+          ty))]
+    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
+      (let
+        [dst (compiler-opt-box-field-shared-view payload-box dst)]
+        [base (compiler-opt-box-field-shared-view payload-box base)]
+        [index (compiler-opt-box-field-shared-view payload-box index)]
+        [mask (compiler-opt-box-field-shared-view payload-box mask)]
+        [lanes (compiler-opt-box-field-shared-view payload-box lanes)]
+        [ty (compiler-opt-box-field-shared-view payload-box ty)]
+        (ir.ir-instr-predicated-load
+          dst
+          base
+          index
+          (opt-global-copy-resolve-mask facts doms block-id pos mask)
+          lanes
+          ty))]
     [(ir.CompilerIrInstr.GatherLoad _) instr]
     [(ir.CompilerIrInstr.VectorShuffle _) instr]
     [(ir.CompilerIrInstr.TailMask _ _ _ _) instr]

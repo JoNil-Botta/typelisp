@@ -1672,7 +1672,10 @@
 (define (opt-sum-mov-i64-from
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]) : i64
-  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+  (if (>=
+    index
+    (compiler_ir_types.compiler-ir-instr-seq-count
+      (compiler_ir_types.compiler-ir-global-shared-view instrs)))
     0
     (+
       (opt-mov-i64-value
@@ -11326,6 +11329,7 @@
       clean
       (opt_i64_i64_map.with-capacity 8)
       argc
+      (opt_i64_i64_map.with-capacity 8)
       (opt_i64_i64_map.with-capacity 8)
       (opt_i64_i64_map.with-capacity 8)
       (compiler_optimize.opt-global-cell-summary-empty)
@@ -37152,7 +37156,7 @@
       [mixed-join : compiler_ir_types.CompilerIrBlockList
         (compiler_optimize.opt-function-blocks mixed-join-func)]
       ;; Separate checked-reference parameters are not a no-alias proof while
-      ;; compatibility copies can retain ownership edges between them. Only a
+      ;; explicit shallow views can retain ownership edges between them. Only a
       ;; fresh allocation or an independent pointer-class proof may separate a
       ;; loop load from a store.
       (cond
@@ -56655,59 +56659,59 @@
         4
         "each element store landed exactly once"))))
 
-;; The compatibility ownership model still permits a by-value dynamic-array
-;; handle to be representation-copied. The original and returned handles can
-;; therefore supply overlapping `&` and `&mut` parameters even though their SSA
-;; parameter vars differ. LICM must not use those different vars as noalias
-;; evidence. These are executable witnesses for both a direct object-slot load
-;; and a nested owning-descriptor load chain.
-(defstruct OptLicmCompatDirectHolder
+;; Compiler-internal global-shared-view deliberately creates a shallow handle
+;; alias. The original and returned handles can therefore supply overlapping
+;; `&` and `&mut` parameters even though their SSA parameter vars differ. LICM
+;; must not use those different vars as noalias evidence. These are executable
+;; witnesses for both a direct object-slot load and a nested owning-descriptor
+;; load chain.
+(defstruct OptLicmShallowDirectHolder
   (value i64))
 
-(define (opt-licm-compat-alias-direct
-  [items : (__tl_dyn-array OptLicmCompatDirectHolder)]) : (__tl_dyn-array
-    OptLicmCompatDirectHolder)
+(define (opt-licm-shallow-alias-direct
+  [items : (__tl_dyn-array OptLicmShallowDirectHolder)]) : (__tl_dyn-array
+    OptLicmShallowDirectHolder)
   items)
 
-(define (opt-licm-compat-overwrite-and-read
-  [view : (& OptLicmCompatDirectHolder)]
-  [items : (&mut (__tl_dyn-array OptLicmCompatDirectHolder))]) : i64
+(define (opt-licm-shallow-overwrite-and-read
+  [view : (& OptLicmShallowDirectHolder)]
+  [items : (&mut (__tl_dyn-array OptLicmShallowDirectHolder))]) : i64
   (let
     [i : i64 0]
     [sum : i64 0]
     (begin
       (while (< i 2)
         (begin
-          (set! (array-ref items 0) (OptLicmCompatDirectHolder (+ i 10)))
+          (set! (array-ref items 0) (OptLicmShallowDirectHolder (+ i 10)))
           (set! sum (+ sum view.value))
           (set! i (+ i 1))))
       sum)))
 
-(define (opt-licm-compat-direct-result) : i64
+(define (opt-licm-shallow-direct-result) : i64
   (let
-    [items : (__tl_dyn-array OptLicmCompatDirectHolder)
-      (__tl_make-array OptLicmCompatDirectHolder 1)]
+    [items : (__tl_dyn-array OptLicmShallowDirectHolder)
+      (__tl_make-array OptLicmShallowDirectHolder 1)]
     (begin
-      (set! (array-ref items 0) (OptLicmCompatDirectHolder 1))
+      (set! (array-ref items 0) (OptLicmShallowDirectHolder 1))
       (let
-        [alias : (__tl_dyn-array OptLicmCompatDirectHolder)
-          (opt-licm-compat-alias-direct
+        [alias : (__tl_dyn-array OptLicmShallowDirectHolder)
+          (opt-licm-shallow-alias-direct
             (compiler_ir_types.compiler-ir-global-shared-view items))]
-        (opt-licm-compat-overwrite-and-read
+        (opt-licm-shallow-overwrite-and-read
           (& (array-ref items 0))
           (&mut alias))))))
 
-(defstruct OptLicmCompatNestedHolder
+(defstruct OptLicmShallowNestedHolder
   (items (__tl_dyn-array i64)))
 
-(define (opt-licm-compat-alias-nested
-  [items : (__tl_dyn-array OptLicmCompatNestedHolder)]) : (__tl_dyn-array
-    OptLicmCompatNestedHolder)
+(define (opt-licm-shallow-alias-nested
+  [items : (__tl_dyn-array OptLicmShallowNestedHolder)]) : (__tl_dyn-array
+    OptLicmShallowNestedHolder)
   items)
 
-(define (opt-licm-compat-replace-and-read-inner
-  [view : (& OptLicmCompatNestedHolder)]
-  [holders : (&mut (__tl_dyn-array OptLicmCompatNestedHolder))]
+(define (opt-licm-shallow-replace-and-read-inner
+  [view : (& OptLicmShallowNestedHolder)]
+  [holders : (&mut (__tl_dyn-array OptLicmShallowNestedHolder))]
   [replacement : (__tl_dyn-array i64)]) : i64
   (let
     [i : i64 0]
@@ -56717,42 +56721,42 @@
         (begin
           (set!
             (array-ref holders 0)
-            (OptLicmCompatNestedHolder
+            (OptLicmShallowNestedHolder
               (compiler_ir_types.compiler-ir-global-shared-view replacement)))
           (set! result (array-ref view.items 0))
           (set! i (+ i 1))))
       result)))
 
-(define (opt-licm-compat-nested-result) : i64
+(define (opt-licm-shallow-nested-result) : i64
   (let
     [old-items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [new-items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    [holders : (__tl_dyn-array OptLicmCompatNestedHolder)
-      (__tl_make-array OptLicmCompatNestedHolder 1)]
+    [holders : (__tl_dyn-array OptLicmShallowNestedHolder)
+      (__tl_make-array OptLicmShallowNestedHolder 1)]
     (begin
       (set! (array-ref old-items 0) 10)
       (set! (array-ref new-items 0) 20)
-      (set! (array-ref holders 0) (OptLicmCompatNestedHolder old-items))
+      (set! (array-ref holders 0) (OptLicmShallowNestedHolder old-items))
       (let
-        [alias : (__tl_dyn-array OptLicmCompatNestedHolder)
-          (opt-licm-compat-alias-nested
+        [alias : (__tl_dyn-array OptLicmShallowNestedHolder)
+          (opt-licm-shallow-alias-nested
             (compiler_ir_types.compiler-ir-global-shared-view holders))]
-        (opt-licm-compat-replace-and-read-inner
+        (opt-licm-shallow-replace-and-read-inner
           (& (array-ref holders 0))
           (&mut alias)
           new-items)))))
 
 (test
-  licm-compatibility-root-alias
+  licm-explicit-shallow-view-alias
   (begin
     (test.assert-i64-eq
-      (opt-licm-compat-direct-result)
+      (opt-licm-shallow-direct-result)
       21
-      "direct shared/exclusive compatibility aliases observe each store")
+      "direct explicit shallow aliases observe each store")
     (test.assert-i64-eq
-      (opt-licm-compat-nested-result)
+      (opt-licm-shallow-nested-result)
       20
-      "nested owning-handle compatibility aliases observe replacement")))
+      "nested explicit shallow aliases observe replacement")))
 
 (test
   licm-root-disjointness
@@ -56771,12 +56775,1129 @@
       (compiler_optimize.opt-licm-root-disjoint-store?
         (compiler_optimize.OptLicmRoot.Exclusive 1)
         (compiler_optimize.OptLicmRoot.Exclusive 2))
-      "different mutable reference parameters may compatibility-alias")
+      "different mutable reference parameters are not disjoint evidence")
     (test.assert-false
       (compiler_optimize.opt-licm-root-disjoint-store?
         (compiler_optimize.OptLicmRoot.Exclusive 1)
         (compiler_optimize.OptLicmRoot.Shared 2))
-      "shared and mutable reference parameters may compatibility-alias")))
+      "shared and mutable reference parameters are not disjoint evidence")))
+
+;; --- explicit owning-handle capability --------------------------------------
+(define (opt-owned-test-count-load-owned-instrs-from
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    count
+    (opt-owned-test-count-load-owned-instrs-from
+      (compiler_ir_types.compiler-ir-global-shared-view instrs)
+      (+ index 1)
+      (+
+        count
+        (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+          [(compiler_ir_types.CompilerIrInstr.LoadOwned _ _ _ _) 1]
+          [_ 0])))))
+
+(define (opt-owned-test-count-load-owned-label
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block current instrs)
+          (if (= current label)
+            (opt-owned-test-count-load-owned-instrs-from instrs 0 0)
+            (opt-owned-test-count-load-owned-label
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
+              label))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-owned-test-count-load-owned-label
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        label)]))
+
+(define (opt-owned-test-params [unrooted? : bool]) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "cond"
+      (compiler_ast_types.AstType.Bool)
+      0)
+    (if unrooted?
+      (compiler_ir_types.compiler-ir-param-seq-prepend
+        (compiler_ir_types.CompilerIrParam.Param
+          "owner"
+          (compiler_ast_types.AstType.DynArray 0)
+          1)
+        (compiler_ir_types.compiler-ir-param-seq-empty))
+      (compiler_ir_types.compiler-ir-param-seq-empty))))
+
+;; mode 0: checked fresh transfer; 1: raw store; 2: call on the backedge;
+;; 3: an unrooted by-value parameter; 4: a mismatched LoadOwned witness;
+;; 7/8: summarized fresh/argument-return calls.
+(define (opt-owned-test-entry [mode : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (cond
+    [(= mode 3)
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Alloc
+          2
+          (compiler_ast_types.AstType.DynArray 0))
+        (compiler_ir_types.CompilerIrInstr.AddrOf 3 2)
+        (compiler_ir_types.CompilerIrInstr.Gep
+          4
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.U8))
+        (compiler_ir_types.CompilerIrInstr.StoreOwned
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.DynArray 0))
+        (compiler_ir_types.CompilerIrInstr.Mov
+          9
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "loop")))]
+    [(or (= mode 7) (= mode 8))
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Call
+          13
+          cbi.compiler-builtin-id-tl-alloc
+          (compiler_ir_types.CompilerIrCallArgs.Nil)
+          (compiler_ast_types.AstType.DynArray 0))
+        (compiler_ir_types.CompilerIrInstr.Call
+          1
+          (opt-test-symbol
+            (if (= mode 7)
+              "owned_fresh_return"
+              "owned_arg_return"))
+          (if (= mode 7)
+            (compiler_ir_types.CompilerIrCallArgs.Nil)
+            (compiler_ir_types.CompilerIrCallArgs.One
+              (compiler_ir_types.CompilerIrValue.Var 13)))
+          (compiler_ast_types.AstType.DynArray 0))
+        (compiler_ir_types.CompilerIrInstr.Alloc
+          2
+          (compiler_ast_types.AstType.DynArray 0))
+        (compiler_ir_types.CompilerIrInstr.AddrOf 3 2)
+        (compiler_ir_types.CompilerIrInstr.Gep
+          4
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.U8))
+        (compiler_ir_types.CompilerIrInstr.StoreOwned
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.DynArray 0))
+        (compiler_ir_types.CompilerIrInstr.Mov
+          9
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "loop")))]
+    [else
+      (opt-test-instrs-with-tail
+        (if (= mode 1)
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.StorePtr
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ast_types.AstType.DynArray 0))
+            (compiler_ir_types.CompilerIrInstr.Mov
+              9
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "loop")))
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.StoreOwned
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ast_types.AstType.DynArray 0))
+            (compiler_ir_types.CompilerIrInstr.Mov
+              9
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "loop"))))
+        (compiler_ir_types.CompilerIrInstr.Call
+          1
+          cbi.compiler-builtin-id-tl-alloc
+          (compiler_ir_types.CompilerIrCallArgs.Nil)
+          (compiler_ast_types.AstType.DynArray 0))
+        (compiler_ir_types.CompilerIrInstr.Call
+          13
+          cbi.compiler-builtin-id-tl-alloc
+          (compiler_ir_types.CompilerIrCallArgs.Nil)
+          (compiler_ast_types.AstType.DynArray 0))
+        (compiler_ir_types.CompilerIrInstr.Alloc
+          2
+          (compiler_ast_types.AstType.DynArray 0))
+        (compiler_ir_types.CompilerIrInstr.AddrOf 3 2)
+        (compiler_ir_types.CompilerIrInstr.Gep
+          4
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.U8)))]))
+
+(define (opt-owned-test-body [mode : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (if (= mode 2)
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.Call
+        12
+        (opt-test-symbol "opaque_owned_call")
+        (compiler_ir_types.CompilerIrCallArgs.Nil)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        11
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 10)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "loop")))
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        11
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 10)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "loop")))))
+
+(define (opt-owned-test-blocks [mode : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-owned-test-entry mode))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Phi
+            10
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+              (compiler_ir_types.CompilerIrValue.Var 9)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 11)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Gep
+            5
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.U8))
+          (if (= mode 4)
+            (compiler_ir_types.CompilerIrInstr.LoadOwned
+              6
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              13
+              (compiler_ast_types.AstType.DynArray 0))
+            (compiler_ir_types.CompilerIrInstr.Load
+              6
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ast_types.AstType.DynArray 0)))
+          (compiler_ir_types.CompilerIrInstr.Gep
+            7
+            (compiler_ir_types.CompilerIrValue.Var 6)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Load
+            8
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-label "exit"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "body")
+          (opt-owned-test-body mode))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 8)))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-owned-test-function [mode : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "owned_capability")
+    (opt-owned-test-params (= mode 3))
+    (compiler_ast_types.AstType.I64)
+    16
+    (opt-owned-test-blocks mode)))
+
+(define (opt-owned-test-promote
+  [mode : i64]
+  [return-alias : opt_i64_i64_map.Map]) : compiler_ir_types.CompilerIrFunction
+  (compiler_optimize.opt-owned-load-promote-function
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    return-alias
+    (opt_i64_i64_map.with-capacity 1)
+    (opt-owned-test-function mode)))
+
+(define (opt-owned-test-return-functions) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (compiler_ir_types.CompilerIrFunction.Function
+      (opt-test-symbol "owned_fresh_return")
+      (compiler_ir_types.compiler-ir-param-seq-empty)
+      (compiler_ast_types.AstType.DynArray 0)
+      2
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "fresh.entry")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Call
+              1
+              cbi.compiler-builtin-id-tl-alloc
+              (compiler_ir_types.CompilerIrCallArgs.Nil)
+              (compiler_ast_types.AstType.DynArray 0))
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 1)))))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (compiler_ir_types.CompilerIrFunction.Function
+        (opt-test-symbol "owned_arg_return")
+        (compiler_ir_types.compiler-ir-param-seq-prepend
+          (compiler_ir_types.CompilerIrParam.Param
+            "owner"
+            (compiler_ast_types.AstType.DynArray 0)
+            0)
+          (compiler_ir_types.compiler-ir-param-seq-empty))
+        (compiler_ast_types.AstType.DynArray 0)
+        1
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "alias.entry")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 0)))))
+          (compiler_ir_types.CompilerIrBlockList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
+
+(define (opt-owned-test-summary-is?
+  [map : opt_i64_i64_map.Map]
+  [name : String]
+  [expected : i64]) : bool
+  (match (opt_i64_i64_map.get
+    (& map)
+    (compiler_ir_types.compiler-ir-symbol-id (opt-test-symbol name)))
+    [(opt_i64_i64_map.LookupFound actual) (= actual expected)]
+    [(opt_i64_i64_map.LookupMissing) false]))
+
+(define (opt-owned-test-phi-function [mixed? : bool]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [owner-13 : compiler_ir_types.CompilerIrInstr
+      (if mixed?
+        (compiler_ir_types.CompilerIrInstr.Call
+          13
+          cbi.compiler-builtin-id-tl-alloc
+          (compiler_ir_types.CompilerIrCallArgs.Nil)
+          (compiler_ast_types.AstType.DynArray 0))
+        (compiler_ir_types.CompilerIrInstr.Mov
+          13
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.DynArray 0)))]
+    (compiler_ir_types.CompilerIrFunction.Function
+      (opt-test-symbol "owned_phi")
+      (opt-owned-test-params false)
+      (compiler_ast_types.AstType.I64)
+      18
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Call
+              1
+              cbi.compiler-builtin-id-tl-alloc
+              (compiler_ir_types.CompilerIrCallArgs.Nil)
+              (compiler_ast_types.AstType.DynArray 0))
+            owner-13
+            (compiler_ir_types.CompilerIrInstr.Alloc
+              2
+              (compiler_ast_types.AstType.DynArray 0))
+            (compiler_ir_types.CompilerIrInstr.AddrOf 3 2)
+            (compiler_ir_types.CompilerIrInstr.Gep
+              4
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ast_types.AstType.U8))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.compiler-ir-label "left")
+              (compiler_ir_types.compiler-ir-label "right"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "left")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Mov
+                14
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ast_types.AstType.DynArray 0))
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "join"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "right")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Mov
+                  15
+                  (compiler_ir_types.CompilerIrValue.Var 13)
+                  (compiler_ast_types.AstType.DynArray 0))
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "join"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "join")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    16
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                      (compiler_ir_types.CompilerIrValue.Var 14)
+                      (compiler_ir_types.compiler-ir-label "left")
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                        (compiler_ir_types.CompilerIrValue.Var 15)
+                        (compiler_ir_types.compiler-ir-label "right")
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+                    (compiler_ast_types.AstType.DynArray 0))
+                  (compiler_ir_types.CompilerIrInstr.StoreOwned
+                    (compiler_ir_types.CompilerIrValue.Var 4)
+                    (compiler_ir_types.CompilerIrValue.Var 16)
+                    (compiler_ast_types.AstType.DynArray 0))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    9
+                    (compiler_ir_types.CompilerIrValue.I64 0)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "loop"))))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "loop")
+                  (opt-test-instrs
+                    (compiler_ir_types.CompilerIrInstr.Phi
+                      10
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                        (compiler_ir_types.CompilerIrValue.Var 9)
+                        (compiler_ir_types.compiler-ir-label "join")
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                          (compiler_ir_types.CompilerIrValue.Var 11)
+                          (compiler_ir_types.compiler-ir-label "body")
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.CompilerIrInstr.Gep
+                      5
+                      (compiler_ir_types.CompilerIrValue.Var 3)
+                      (compiler_ir_types.CompilerIrValue.I64 0)
+                      (compiler_ast_types.AstType.U8))
+                    (compiler_ir_types.CompilerIrInstr.Load
+                      6
+                      (compiler_ir_types.CompilerIrValue.Var 5)
+                      (compiler_ast_types.AstType.DynArray 0))
+                    (compiler_ir_types.CompilerIrInstr.Gep
+                      7
+                      (compiler_ir_types.CompilerIrValue.Var 6)
+                      (compiler_ir_types.CompilerIrValue.I64 1)
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.CompilerIrInstr.Load
+                      8
+                      (compiler_ir_types.CompilerIrValue.Var 7)
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.CompilerIrInstr.Branch
+                      (compiler_ir_types.CompilerIrValue.Var 0)
+                      (compiler_ir_types.compiler-ir-label "body")
+                      (compiler_ir_types.compiler-ir-label "exit"))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.CompilerIrBlock.Block
+                    (compiler_ir_types.compiler-ir-label "body")
+                    (opt-owned-test-body 0))
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (compiler_ir_types.CompilerIrBlock.Block
+                      (compiler_ir_types.compiler-ir-label "exit")
+                      (opt-test-instrs
+                        (compiler_ir_types.CompilerIrInstr.Return
+                          (compiler_ir_types.CompilerIrMaybeValue.Some
+                            (compiler_ir_types.CompilerIrValue.Var 8)))))
+                    (compiler_ir_types.CompilerIrBlockList.Nil)))))))))))
+
+(define (opt-owned-test-transfer-code
+  [defs : (__tl_dyn-array compiler_optimize.OptMaybeVarDef)]
+  [context : compiler_optimize.OptCfgContext]
+  [return-alias : opt_i64_i64_map.Map]
+  [path-root : i64]
+  [offset : i64]
+  [block : compiler_ir_types.CompilerIrBlock]) : i64
+  (match block
+    [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+      (if (compiler_optimize.opt-verify-owned-transfer-instr?
+        defs
+        context.doms
+        (& return-alias)
+        path-root
+        offset
+        16
+        (compiler_ast_types.AstType.DynArray 0)
+        3
+        2
+        4
+        3
+        (compiler_ir_types.compiler-ir-instr-seq-ref instrs 1))
+        42
+        6)]))
+
+(define (opt-owned-test-phi-proof-defs
+  [defs : (__tl_dyn-array compiler_optimize.OptMaybeVarDef)]
+  [context : compiler_optimize.OptCfgContext]
+  [return-alias : opt_i64_i64_map.Map]) : i64
+  (let
+    [root-1 : i64
+      (compiler_optimize.opt-verify-owned-fresh-root
+        (compiler_optimize.compiler-opt-global-shared-view defs)
+        (compiler_optimize.compiler-opt-global-shared-view context.doms)
+        (& return-alias)
+        1
+        64)]
+    [root-13 : i64
+      (compiler_optimize.opt-verify-owned-fresh-root
+        (compiler_optimize.compiler-opt-global-shared-view defs)
+        (compiler_optimize.compiler-opt-global-shared-view context.doms)
+        (& return-alias)
+        13
+        64)]
+    [root-14 : i64
+      (compiler_optimize.opt-verify-owned-fresh-root
+        (compiler_optimize.compiler-opt-global-shared-view defs)
+        (compiler_optimize.compiler-opt-global-shared-view context.doms)
+        (& return-alias)
+        14
+        64)]
+    [root-15 : i64
+      (compiler_optimize.opt-verify-owned-fresh-root
+        (compiler_optimize.compiler-opt-global-shared-view defs)
+        (compiler_optimize.compiler-opt-global-shared-view context.doms)
+        (& return-alias)
+        15
+        64)]
+    [root : i64
+      (compiler_optimize.opt-verify-owned-fresh-root
+        (compiler_optimize.compiler-opt-global-shared-view defs)
+        (compiler_optimize.compiler-opt-global-shared-view context.doms)
+        (& return-alias)
+        16
+        64)]
+    (cond
+      [(= root-1 0) 7]
+      [(= root-13 0) 8]
+      [(= root-14 0) 9]
+      [(= root-15 0) 10]
+      [(not (= root-1 root-13)) 11]
+      [(not (= root-1 root-14)) 12]
+      [(not (= root-1 root-15)) 13]
+      [(= root 0) 2]
+      [else
+        (match (compiler_optimize.opt-verify-owned-path
+          (compiler_optimize.compiler-opt-global-shared-view defs)
+          (compiler_optimize.compiler-opt-global-shared-view context.doms)
+          (& return-alias)
+          5
+          64)
+          [(compiler_optimize.OptVerifyOwnedPath.No) 3]
+          [(compiler_optimize.OptVerifyOwnedPath.Some path-root offset)
+            (if (or (not (= path-root 3)) (not (= offset 0)))
+              4
+              (match (compiler_optimize.opt-cfg-index-block
+                (compiler_optimize.compiler-opt-global-shared-view
+                  context.index)
+                3)
+                [(compiler_optimize.OptMaybeBlock.No) 5]
+                [(compiler_optimize.OptMaybeBlock.Some block)
+                  (opt-owned-test-transfer-code
+                    defs
+                    context
+                    return-alias
+                    path-root
+                    offset
+                    block)]))])])))
+
+(define (opt-owned-test-phi-proof-code
+  [func : compiler_ir_types.CompilerIrFunction]
+  [return-alias : opt_i64_i64_map.Map]) : i64
+  (match func
+    [(compiler_ir_types.CompilerIrFunction.Function _ params _ frame blocks)
+      (let
+        [context : compiler_optimize.OptCfgContext
+          (compiler_optimize.opt-cfg-context-build
+            (compiler_optimize.compiler-opt-global-shared-view blocks))]
+        (match (compiler_optimize.opt-var-defs-index-checked
+          params
+          frame
+          (compiler_optimize.compiler-opt-global-shared-view blocks))
+          [(compiler_optimize.OptVarDefsIndex.Duplicate) 1]
+          [(compiler_optimize.OptVarDefsIndex.Index defs)
+            (opt-owned-test-phi-proof-defs defs context return-alias)]))]))
+
+(define (opt-owned-test-boundary-caller [mode : i64]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [callee : i64 (opt-test-symbol "owned_capability")]
+    [foreign : i64 (opt-test-symbol "foreign_owned_value")]
+    [entry : i64 (compiler_ir_types.compiler-ir-label "boundary.entry")]
+    [instrs : compiler_ir_types.CompilerIrInstrSeq
+      (cond
+        [(= mode 0)
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Call
+              0
+              cbi.compiler-builtin-id-tl-alloc
+              (compiler_ir_types.CompilerIrCallArgs.Nil)
+              (compiler_ast_types.AstType.DynArray 0))
+            (compiler_ir_types.CompilerIrInstr.Call
+              1
+              callee
+              (compiler_ir_types.CompilerIrCallArgs.Two
+                (compiler_ir_types.CompilerIrValue.Bool true)
+                (compiler_ir_types.CompilerIrValue.Var 0))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 1))))]
+        [(= mode 1)
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Call
+              0
+              callee
+              (compiler_ir_types.CompilerIrCallArgs.Two
+                (compiler_ir_types.CompilerIrValue.Bool true)
+                (compiler_ir_types.CompilerIrValue.Global
+                  (opt-test-symbol "owned_global")))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 0))))]
+        [(= mode 2)
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Call
+              0
+              foreign
+              (compiler_ir_types.CompilerIrCallArgs.Nil)
+              (compiler_ast_types.AstType.DynArray 0))
+            (compiler_ir_types.CompilerIrInstr.Call
+              1
+              callee
+              (compiler_ir_types.CompilerIrCallArgs.Two
+                (compiler_ir_types.CompilerIrValue.Bool true)
+                (compiler_ir_types.CompilerIrValue.Var 0))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 1))))]
+        [(= mode 3)
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Load
+              0
+              (compiler_ir_types.CompilerIrValue.GlobalAddr
+                (opt-test-symbol "raw_owned_cell"))
+              (compiler_ast_types.AstType.DynArray 0))
+            (compiler_ir_types.CompilerIrInstr.Call
+              1
+              callee
+              (compiler_ir_types.CompilerIrCallArgs.Two
+                (compiler_ir_types.CompilerIrValue.Bool true)
+                (compiler_ir_types.CompilerIrValue.Var 0))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 1))))]
+        [(= mode 4)
+          ;; Exact spelling used by compiler-owned-shared-view: even though
+          ;; the local being addressed was freshly allocated, loading its
+          ;; representation is an explicit shallow alias, not a move edge.
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Call
+              0
+              cbi.compiler-builtin-id-tl-alloc
+              (compiler_ir_types.CompilerIrCallArgs.Nil)
+              (compiler_ast_types.AstType.DynArray 0))
+            (compiler_ir_types.CompilerIrInstr.AddrOf 1 0)
+            (compiler_ir_types.CompilerIrInstr.Load
+              2
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ast_types.AstType.DynArray 0))
+            (compiler_ir_types.CompilerIrInstr.Call
+              3
+              callee
+              (compiler_ir_types.CompilerIrCallArgs.Two
+                (compiler_ir_types.CompilerIrValue.Bool true)
+                (compiler_ir_types.CompilerIrValue.Var 2))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 3))))]
+        [else
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Mov
+              0
+              (compiler_ir_types.CompilerIrValue.Function callee)
+              (compiler_ast_types.AstType.U64))
+            (compiler_ir_types.CompilerIrInstr.Call
+              1
+              cbi.compiler-builtin-id-tl-alloc
+              (compiler_ir_types.CompilerIrCallArgs.Nil)
+              (compiler_ast_types.AstType.DynArray 0))
+            (compiler_ir_types.CompilerIrInstr.Call
+              2
+              callee
+              (compiler_ir_types.CompilerIrCallArgs.Two
+                (compiler_ir_types.CompilerIrValue.Bool true)
+                (compiler_ir_types.CompilerIrValue.Var 1))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 2))))])]
+    (compiler_ir_types.CompilerIrFunction.Function
+      (opt-test-symbol
+        (cond
+          [(= mode 0) "owned_boundary_fresh_caller"]
+          [(= mode 1) "owned_boundary_global_caller"]
+          [(= mode 2) "owned_boundary_foreign_caller"]
+          [(= mode 3) "owned_boundary_raw_caller"]
+          [(= mode 4) "owned_boundary_shallow_caller"]
+          [else "owned_boundary_indirect_caller"]))
+      (compiler_ir_types.compiler-ir-param-seq-empty)
+      (compiler_ast_types.AstType.I64)
+      4
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block entry instrs)
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-owned-test-boundary-functions [mode : i64]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-owned-test-function 3)
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-owned-test-boundary-caller mode)
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
+
+(define (opt-owned-test-boundary-map [mode : i64]) : opt_i64_i64_map.Map
+  (let
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
+      (opt-owned-test-boundary-functions mode)]
+    (compiler_optimize.opt-owned-param-map
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler_ir_types.compiler-ir-global-seq-empty)
+      (compiler_ir_types.compiler-ir-extern-seq-empty)
+      (compiler_optimize.compiler-opt-global-shared-view functions)
+      (opt_i64_i64_map.with-capacity 1)
+      8)))
+
+(define (opt-owned-test-count-own-root-instrs
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    count
+    (opt-owned-test-count-own-root-instrs
+      (compiler_ir_types.compiler-ir-global-shared-view instrs)
+      (+ index 1)
+      (+
+        count
+        (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+          [(compiler_ir_types.CompilerIrInstr.OwnRoot _ _ _) 1]
+          [_ 0])))))
+
+(define (opt-owned-test-count-own-root-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (+
+            (opt-owned-test-count-own-root-instrs instrs 0 0)
+            (opt-owned-test-count-own-root-blocks
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-owned-test-count-own-root-blocks
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-owned-test-borrowed-param-mask) : i64
+  (compiler_optimize.opt-owned-param-candidate-mask
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "text"
+        (compiler_ast_types.AstType.Str)
+        0)
+      (compiler_ir_types.compiler-ir-param-seq-prepend
+        (compiler_ir_types.CompilerIrParam.Param
+          "bytes"
+          (compiler_ast_types.AstType.Bytes)
+          1)
+        (compiler_ir_types.compiler-ir-param-seq-prepend
+          (compiler_ir_types.CompilerIrParam.Param
+            "reference"
+            (compiler_ast_types.AstType.Ref 0 0)
+            2)
+          (compiler_ir_types.compiler-ir-param-seq-empty))))))
+
+(define (compiler-optimize-owned-capability-self-test) : i64
+  (let
+    [empty : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
+    [summaries : opt_i64_i64_map.Map
+      (compiler_optimize.opt-licm-return-alias-map
+        (opt-owned-test-return-functions)
+        8)]
+    [boundary-fresh : opt_i64_i64_map.Map (opt-owned-test-boundary-map 0)]
+    [boundary-global : opt_i64_i64_map.Map (opt-owned-test-boundary-map 1)]
+    [boundary-foreign : opt_i64_i64_map.Map (opt-owned-test-boundary-map 2)]
+    [boundary-raw : opt_i64_i64_map.Map (opt-owned-test-boundary-map 3)]
+    [boundary-shallow : opt_i64_i64_map.Map (opt-owned-test-boundary-map 4)]
+    [boundary-indirect : opt_i64_i64_map.Map (opt-owned-test-boundary-map 5)]
+    [boundary-promoted : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-owned-load-promote-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.compiler-opt-global-shared-view empty)
+        (compiler_optimize.compiler-opt-global-shared-view boundary-fresh)
+        (opt-owned-test-function 3))]
+    [boundary-promoted-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view boundary-promoted))]
+    [boundary-promoted-context : compiler_optimize.OptCfgContext
+      (compiler_optimize.opt-cfg-context-build
+        (compiler_optimize.compiler-opt-global-shared-view
+          boundary-promoted-blocks))]
+    [boundary-erased : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-owned-load-erase-function
+        (compiler_optimize.compiler-opt-global-shared-view boundary-promoted))]
+    [boundary-erased-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view boundary-erased))]
+    [positive : compiler_ir_types.CompilerIrFunction
+      (opt-owned-test-promote
+        0
+        (compiler_optimize.compiler-opt-global-shared-view empty))]
+    [raw : compiler_ir_types.CompilerIrFunction
+      (opt-owned-test-promote
+        1
+        (compiler_optimize.compiler-opt-global-shared-view empty))]
+    [stale : compiler_ir_types.CompilerIrFunction
+      (opt-owned-test-promote
+        2
+        (compiler_optimize.compiler-opt-global-shared-view empty))]
+    [unrooted : compiler_ir_types.CompilerIrFunction
+      (opt-owned-test-promote
+        3
+        (compiler_optimize.compiler-opt-global-shared-view empty))]
+    [fresh-return : compiler_ir_types.CompilerIrFunction
+      (opt-owned-test-promote
+        7
+        (compiler_optimize.compiler-opt-global-shared-view summaries))]
+    [arg-return : compiler_ir_types.CompilerIrFunction
+      (opt-owned-test-promote
+        8
+        (compiler_optimize.compiler-opt-global-shared-view summaries))]
+    [same-phi : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-owned-load-promote-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.compiler-opt-global-shared-view empty)
+        (opt_i64_i64_map.with-capacity 1)
+        (opt-owned-test-phi-function false))]
+    [same-phi-unsanitized : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-owned-load-promote-function-unsanitized
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.compiler-opt-global-shared-view empty)
+        (opt-owned-test-phi-function false))]
+    [mixed-phi : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-owned-load-promote-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.compiler-opt-global-shared-view empty)
+        (opt_i64_i64_map.with-capacity 1)
+        (opt-owned-test-phi-function true))]
+    [mismatch : compiler_ir_types.CompilerIrFunction
+      (opt-owned-test-function 4)]
+    [positive-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view positive))]
+    [hoisted-result : compiler_optimize.OptFunctionCtxResult
+      (compiler_optimize.opt-licm-function-with-context-result-and-direct-call-clean
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.opt-cfg-context-build
+          (compiler_optimize.compiler-opt-global-shared-view positive-blocks))
+        true
+        (compiler_optimize.compiler-opt-global-shared-view empty)
+        (compiler_optimize.compiler-opt-global-shared-view empty)
+        (compiler_optimize.opt-global-cell-summary-empty)
+        false
+        (compiler_optimize.compiler-opt-global-shared-view positive))]
+    [hoisted : compiler_ir_types.CompilerIrFunction
+      (match hoisted-result
+        [(compiler_optimize.OptFunctionCtxResult.Result func _) func])]
+    [hoisted-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view hoisted))]
+    [raw-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view raw))]
+    [stale-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view stale))]
+    [unrooted-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view unrooted))]
+    [fresh-return-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view fresh-return))]
+    [arg-return-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view arg-return))]
+    [same-phi-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view same-phi))]
+    [same-phi-unsanitized-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view same-phi-unsanitized))]
+    [same-phi-context : compiler_optimize.OptCfgContext
+      (compiler_optimize.opt-cfg-context-build
+        (compiler_optimize.compiler-opt-global-shared-view
+          same-phi-unsanitized-blocks))]
+    [same-phi-proof-code : i64
+      (opt-owned-test-phi-proof-code
+        (compiler_optimize.compiler-opt-global-shared-view same-phi-unsanitized)
+        (compiler_optimize.compiler-opt-global-shared-view empty))]
+    [mixed-phi-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view mixed-phi))]
+    [mismatch-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view mismatch))]
+    [mismatch-context : compiler_optimize.OptCfgContext
+      (compiler_optimize.opt-cfg-context-build
+        (compiler_optimize.compiler-opt-global-shared-view mismatch-blocks))]
+    (cond
+      [(not
+          (opt-owned-test-summary-is?
+            (compiler_optimize.compiler-opt-global-shared-view boundary-fresh)
+            "owned_capability"
+            2))
+        60]
+      [(opt_i64_i64_map.contains?
+          (& boundary-global)
+          (compiler_ir_types.compiler-ir-symbol-id
+            (opt-test-symbol "owned_capability")))
+        61]
+      [(opt_i64_i64_map.contains?
+          (& boundary-foreign)
+          (compiler_ir_types.compiler-ir-symbol-id
+            (opt-test-symbol "owned_capability")))
+        62]
+      [(opt_i64_i64_map.contains?
+          (& boundary-raw)
+          (compiler_ir_types.compiler-ir-symbol-id
+            (opt-test-symbol "owned_capability")))
+        63]
+      [(opt_i64_i64_map.contains?
+          (& boundary-indirect)
+          (compiler_ir_types.compiler-ir-symbol-id
+            (opt-test-symbol "owned_capability")))
+        64]
+      [(opt_i64_i64_map.contains?
+          (& boundary-shallow)
+          (compiler_ir_types.compiler-ir-symbol-id
+            (opt-test-symbol "owned_capability")))
+        71]
+      [(not (= (opt-owned-test-borrowed-param-mask) 0)) 65]
+      [(not
+          (=
+            (opt-owned-test-count-own-root-blocks
+              (compiler_optimize.compiler-opt-global-shared-view
+                boundary-promoted-blocks))
+            1))
+        66]
+      [(not
+          (=
+            (opt-owned-test-count-load-owned-label
+              (compiler_optimize.compiler-opt-global-shared-view
+                boundary-promoted-blocks)
+              (compiler_ir_types.compiler-ir-label "loop"))
+            1))
+        67]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function-with-context-and-return-alias
+              (compiler_optimize.compiler-opt-global-shared-view
+                boundary-promoted)
+              (compiler_optimize.compiler-opt-global-shared-view
+                boundary-promoted-context)
+              (compiler_optimize.compiler-opt-global-shared-view empty))))
+        68]
+      [(not
+          (=
+            (opt-owned-test-count-own-root-blocks
+              (compiler_optimize.compiler-opt-global-shared-view
+                boundary-erased-blocks))
+            0))
+        69]
+      [(not
+          (match boundary-erased
+            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ frame _)
+              (= frame 16)]))
+        70]
+      [(not
+          (=
+            (opt-owned-test-count-load-owned-label
+              (compiler_optimize.compiler-opt-global-shared-view
+                positive-blocks)
+              (compiler_ir_types.compiler-ir-label "loop"))
+            1))
+        1]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function-with-context-and-return-alias
+              (compiler_optimize.compiler-opt-global-shared-view positive)
+              (compiler_optimize.opt-cfg-context-build positive-blocks)
+              (compiler_optimize.compiler-opt-global-shared-view empty))))
+        2]
+      [(not
+          (=
+            (opt-owned-test-count-load-owned-label
+              (compiler_optimize.compiler-opt-global-shared-view hoisted-blocks)
+              (compiler_ir_types.compiler-ir-label "entry"))
+            1))
+        17]
+      [(not
+          (=
+            (opt-owned-test-count-load-owned-label
+              (compiler_optimize.compiler-opt-global-shared-view hoisted-blocks)
+              (compiler_ir_types.compiler-ir-label "loop"))
+            0))
+        18]
+      [(not
+          (=
+            (opt-owned-test-count-load-owned-label
+              raw-blocks
+              (compiler_ir_types.compiler-ir-label "loop"))
+            0))
+        3]
+      [(not
+          (=
+            (opt-owned-test-count-load-owned-label
+              stale-blocks
+              (compiler_ir_types.compiler-ir-label "loop"))
+            0))
+        4]
+      [(not
+          (=
+            (opt-owned-test-count-load-owned-label
+              unrooted-blocks
+              (compiler_ir_types.compiler-ir-label "loop"))
+            0))
+        5]
+      [(compiler_optimize.opt-verify-ok?
+          (compiler_optimize.opt-verify-function-with-context-and-return-alias
+            mismatch
+            mismatch-context
+            (compiler_optimize.compiler-opt-global-shared-view empty)))
+        6]
+      [(not
+          (opt-owned-test-summary-is?
+            (compiler_optimize.compiler-opt-global-shared-view summaries)
+            "owned_fresh_return"
+            0))
+        7]
+      [(not
+          (opt-owned-test-summary-is?
+            (compiler_optimize.compiler-opt-global-shared-view summaries)
+            "owned_arg_return"
+            1))
+        8]
+      [(not
+          (=
+            (opt-owned-test-count-load-owned-label
+              fresh-return-blocks
+              (compiler_ir_types.compiler-ir-label "loop"))
+            1))
+        9]
+      [(not
+          (=
+            (opt-owned-test-count-load-owned-label
+              arg-return-blocks
+              (compiler_ir_types.compiler-ir-label "loop"))
+            1))
+        10]
+      [(not
+          (=
+            (opt-owned-test-count-load-owned-label
+              same-phi-unsanitized-blocks
+              (compiler_ir_types.compiler-ir-label "loop"))
+            1))
+        13]
+      [(compiler_optimize.opt-verify-cfg-reaches-id?
+          (compiler_optimize.compiler-opt-global-shared-view
+            same-phi-context.index)
+          3
+          0)
+        15]
+      [(compiler_optimize.opt-verify-cfg-id-cyclic?
+          (compiler_optimize.compiler-opt-global-shared-view
+            same-phi-context.index)
+          3)
+        16]
+      [(not (= same-phi-proof-code 42)) (+ 20 same-phi-proof-code)]
+      [(not
+          (match (compiler_optimize.opt-verify-function-with-context-and-return-alias
+            (compiler_optimize.compiler-opt-global-shared-view
+              same-phi-unsanitized)
+            (compiler_optimize.compiler-opt-global-shared-view same-phi-context)
+            (compiler_optimize.compiler-opt-global-shared-view empty))
+            [(compiler_optimize.ResultCompilerOptimizeVerify.Ok) true]
+            [(compiler_optimize.ResultCompilerOptimizeVerify.Err _) false]))
+        14]
+      [(not
+          (=
+            (opt-owned-test-count-load-owned-label
+              same-phi-blocks
+              (compiler_ir_types.compiler-ir-label "loop"))
+            1))
+        11]
+      [(not
+          (=
+            (opt-owned-test-count-load-owned-label
+              mixed-phi-blocks
+              (compiler_ir_types.compiler-ir-label "loop"))
+            0))
+        12]
+      [else 42])))
+
+(test
+  licm-explicit-owned-handle-capability
+  (test.assert-i64-eq
+    (compiler-optimize-owned-capability-self-test)
+    42
+    "checked fresh fields, same-root phis, and summarized fresh/argument returns promote owning handles; raw, unrooted, stale-backedge, mixed-phi, and mismatched claims fail closed"))
+
+(test
+  licm-owned-handle-window-needs-loop
+  (let
+    [acyclic : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks (opt-owned-test-boundary-caller 0))]
+    [cyclic : compiler_ir_types.CompilerIrBlockList (opt-owned-test-blocks 0)]
+    (begin
+      (test.assert-false
+        (compiler_optimize.opt-owned-load-loop-window-needed?
+          (compiler_optimize.compiler-opt-global-shared-view acyclic)
+          (compiler_optimize.opt-cfg-context-build
+            (compiler_optimize.compiler-opt-global-shared-view acyclic)))
+        "an acyclic body skips the LICM-only ownership materialization window")
+      (test.assert-true
+        (compiler_optimize.opt-owned-load-loop-window-needed?
+          (compiler_optimize.compiler-opt-global-shared-view cyclic)
+          (compiler_optimize.opt-cfg-context-build
+            (compiler_optimize.compiler-opt-global-shared-view cyclic)))
+        "a natural loop retains the checked ownership materialization window"))))
 
 ;; --- affine chain folding self-test -------------------------------------------
 ;; Emulates the x4 unroller's output: an LCG chain `((x*5+3)*5+3)*5+3` must
@@ -89334,6 +90455,7 @@
         (opt_i64_i64_map.with-capacity 8)
         (opt_i64_i64_map.with-capacity 8)
         call-memory
+        (opt_i64_i64_map.with-capacity 8)
         (opt_i64_i64_map.with-capacity 8)
         (opt_i64_i64_map.with-capacity 8)
         (opt_i64_i64_map.with-capacity 8)

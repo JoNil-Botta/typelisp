@@ -1276,6 +1276,49 @@ check_synth_tail_wrapper() {
     done
 }
 
+check_synth_struct_accessor() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "synth_struct_accessor_$_suffix" \
+            tests/integration/synth_struct_accessor.tl "$_target")
+        _value=$(function_body "$_asm" _tl_synth_struct_accessor_sa_value)
+
+        # INL-3: `sa-lookup-in` BUILDS a four-word value -- an `alloc` run, its
+        # closing `addr_of`, the arms' stores and a `copy_bytes` into the
+        # caller's sret buffer. The multiblock gate's whitelist refused `Alloc`
+        # and `AddrOf`, so no site of it was ever priced. It is priced now, and
+        # the verdict keeps it: the wrapper no longer calls the accessor.
+        assert_not_matches "$_value" \
+            '^[[:space:]]+call _tl_synth_struct_accessor_sa_lookup_in$' \
+            "synth-struct-accessor-$_target"
+        # ...and what landed there is the accessor's own body: `sa-value` makes
+        # no table read of its own, so the only bounds check that can be inside
+        # it is the one the spliced body brought with it.
+        assert_regex_count_at_least "$_value" \
+            '^[[:space:]]+call tl_oob_abort' 1 "synth-struct-accessor-$_target"
+
+        # The accessor is COPIED, not absorbed: the cold second reference in
+        # `sa-peek` still calls the out-of-line body, so the keep is a real one
+        # and no single-site band could have taken it first.
+        assert_matches "$_asm" '^_tl_synth_struct_accessor_sa_lookup_in:$' \
+            "synth-struct-accessor-$_target"
+        assert_regex_count_eq "$_asm" \
+            '^[[:space:]]+call _tl_synth_struct_accessor_sa_lookup_in$' 1 \
+            "synth-struct-accessor-$_target"
+
+        _abort_asm=$(compile_gate "synth_struct_accessor_abort_$_suffix" \
+            tests/integration/synth_struct_accessor_abort.tl "$_target")
+        _abort_value=$(function_body "$_abort_asm" \
+            _tl_synth_struct_accessor_abort_sa_value)
+        assert_not_matches "$_abort_value" \
+            '^[[:space:]]+call _tl_synth_struct_accessor_abort_sa_lookup_in$' \
+            "synth-struct-accessor-abort-$_target"
+        assert_regex_count_at_least "$_abort_value" \
+            '^[[:space:]]+call tl_oob_abort' 1 \
+            "synth-struct-accessor-abort-$_target"
+    done
+}
+
 check_const_index_bounds() {
     _asm=$(compile_gate const_index_bounds tests/integration/const_index_bounds.tl)
     _body=$(function_body "$_asm" _tl_const_index_bounds_get2)
@@ -2206,6 +2249,7 @@ check_checked_setup_helper
 check_checked_cheap_tier_claim
 check_synth_wrapped_probe
 check_synth_tail_wrapper
+check_synth_struct_accessor
 check_const_index_bounds
 check_const_global_mask_unroll
 check_rbp_sixth_csr

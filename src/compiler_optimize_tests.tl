@@ -28451,6 +28451,547 @@
           [(compiler_optimize.OptMaybeFunction.No) false])]
       [(compiler_optimize.OptMaybeFunction.No) false])))
 
+;; --- INL-3: aggregate-building callee bodies --------------------------------
+;;
+;; A function that builds a struct value locally reserves its storage as a RUN
+;; of `alloc` words closed by an `addr_of` of the run's last word (lowering's
+;; `lower-reserve-inline-storage`), fills it through geps, and copies the
+;; finished aggregate into its `__sret` buffer. The multiblock gate refused
+;; `Alloc` and `AddrOf` outright, so that whole class of callee was refused by
+;; SHAPE -- silently, before any band or the measured tier priced a site.
+;;
+;; These fixtures pin the admission and the two clauses that still refuse:
+;; an `alloc` writing a parameter slot and an `addr_of` naming a parameter,
+;; both of which would make the clone's affine rebasing touch a value the site
+;; substitutes rather than a body-local the site owns.
+(define (opt-inline-alloc-sret-params) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "cond"
+      (compiler_ast_types.AstType.Bool)
+      0)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "__sret"
+        (compiler_ast_types.AstType.U64)
+        1)
+      (compiler_ir_types.compiler-ir-param-seq-empty))))
+
+;; entry reserves four storage words and closes the run, the two arms fill the
+;; aggregate through the closing pointer, and the join copies it into the
+;; caller's buffer -- the exact shape of `sccp-env-lookup-in`.
+;;
+;; `addr-src` and `first-alloc-dst` select the two refusable variants: 5 and 2
+;; are the admitted body (a body-local run, closed by an `addr_of` of its last
+;; word); 1 makes the `addr_of` name the `__sret` PARAMETER, and 0 makes the
+;; first `alloc` write the `cond` parameter's slot.
+(define (opt-inline-alloc-sret-body [addr-src : i64] [first-alloc-dst : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "alloc_sret.entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Alloc
+          first-alloc-dst
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Alloc
+          3
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Alloc
+          4
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Alloc
+          5
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.AddrOf 6 addr-src)
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "alloc_sret.then")
+          (compiler_ir_types.compiler-ir-label "alloc_sret.else"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "alloc_sret.then")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Gep
+            7
+            (compiler_ir_types.CompilerIrValue.Var 6)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.U8))
+          (compiler_ir_types.CompilerIrInstr.StorePtr
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ir_types.CompilerIrValue.I64 11)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "alloc_sret.cont"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "alloc_sret.else")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Gep
+              8
+              (compiler_ir_types.CompilerIrValue.Var 6)
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ast_types.AstType.U8))
+            (compiler_ir_types.CompilerIrInstr.StorePtr
+              (compiler_ir_types.CompilerIrValue.Var 8)
+              (compiler_ir_types.CompilerIrValue.I64 22)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "alloc_sret.cont"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "alloc_sret.cont")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.CopyBytes
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.Var 6)
+                32)
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 1)))))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+;; The same aggregate build as one straight-line block: refused as `structure`
+;; because the multiblock gate only ever priced bodies of more than one block,
+;; and the single-block path keeps its own whitelist.
+(define (opt-inline-alloc-sret-single-block-body) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "alloc_sret.only")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Alloc
+          2
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.AddrOf 6 2)
+        (compiler_ir_types.CompilerIrInstr.CopyBytes
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.Var 6)
+          8)
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 1)))))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+;; The aggregate body with a `Store` -- an instruction no admission clause
+;; carries -- in the join, so the scan reports the FIRST refusing instruction
+;; by kind rather than by clause.
+(define (opt-inline-alloc-sret-store-body) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "alloc_store.entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Alloc
+          2
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.AddrOf 6 2)
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "alloc_store.cont"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "alloc_store.cont")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Store
+            7
+            (compiler_ir_types.CompilerIrValue.I64 3)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 1)))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; A parameter list the clone's affine rebasing cannot read: the params do not
+;; start at var 0, so `id < np` no longer names them.
+(define (opt-inline-alloc-sret-shifted-params) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "cond"
+      (compiler_ast_types.AstType.Bool)
+      1)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "__sret"
+        (compiler_ast_types.AstType.U64)
+        2)
+      (compiler_ir_types.compiler-ir-param-seq-empty))))
+
+;; No `__sret` and a struct return the register classifier refuses: the body's
+;; exits carry a value the site cannot bind.
+(define (opt-inline-alloc-sret-value-params) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "cond"
+      (compiler_ast_types.AstType.Bool)
+      0)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "slot"
+        (compiler_ast_types.AstType.U64)
+        1)
+      (compiler_ir_types.compiler-ir-param-seq-empty))))
+
+(define (opt-inline-alloc-sret-shape-reason
+  [params : compiler_ir_types.CompilerIrParamSeq]
+  [ret : compiler_ast_types.AstType]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (compiler_optimize.opt-inline-multiblock-callee-shape-reason
+    params
+    ret
+    9
+    blocks))
+
+;; The shape gate's verdict on each body above, and the reason text a
+;; `--trace-passes` `inline-shape|` line carries for it.
+(define (compiler-optimize-inline-multiblock-alloc-shape-ok?) : bool
+  (let
+    [private-text : String "__tl_internal_abi_mem_s32__alloc_sret"]
+    [private-id : i64
+      (opt-test-symbol
+        (compiler_optimize.compiler-opt-global-shared-view private-text))]
+    [private-params : compiler_ir_types.CompilerIrParamSeq
+      (compiler_ir_types.compiler-ir-param-seq-prepend
+        (compiler_ir_types.CompilerIrParam.Param
+          "cond"
+          (compiler_ast_types.AstType.Struct private-id)
+          0)
+        (compiler_ir_types.compiler-ir-param-seq-prepend
+          (compiler_ir_types.CompilerIrParam.Param
+            "__sret"
+            (compiler_ast_types.AstType.U64)
+            1)
+          (compiler_ir_types.compiler-ir-param-seq-empty)))]
+    [agg-id : i64 (opt-test-symbol "alloc_sret_agg")]
+    [admitted : i64
+      (opt-inline-alloc-sret-shape-reason
+        (opt-inline-alloc-sret-params)
+        (compiler_ast_types.AstType.U64)
+        (opt-inline-alloc-sret-body 5 2))]
+    [addr-param : i64
+      (opt-inline-alloc-sret-shape-reason
+        (opt-inline-alloc-sret-params)
+        (compiler_ast_types.AstType.U64)
+        (opt-inline-alloc-sret-body 1 2))]
+    [alloc-param : i64
+      (opt-inline-alloc-sret-shape-reason
+        (opt-inline-alloc-sret-params)
+        (compiler_ast_types.AstType.U64)
+        (opt-inline-alloc-sret-body 5 0))]
+    [private-memory : i64
+      (opt-inline-alloc-sret-shape-reason
+        private-params
+        (compiler_ast_types.AstType.U64)
+        (opt-inline-alloc-sret-body 5 2))]
+    [return-type : i64
+      (opt-inline-alloc-sret-shape-reason
+        (opt-inline-alloc-sret-value-params)
+        (compiler_ast_types.AstType.Struct agg-id)
+        (opt-inline-alloc-sret-body 5 2))]
+    [shifted : i64
+      (opt-inline-alloc-sret-shape-reason
+        (opt-inline-alloc-sret-shifted-params)
+        (compiler_ast_types.AstType.U64)
+        (opt-inline-alloc-sret-body 5 2))]
+    [single : i64
+      (opt-inline-alloc-sret-shape-reason
+        (opt-inline-alloc-sret-params)
+        (compiler_ast_types.AstType.U64)
+        (opt-inline-alloc-sret-single-block-body))]
+    [store : i64
+      (opt-inline-alloc-sret-shape-reason
+        (opt-inline-alloc-sret-params)
+        (compiler_ast_types.AstType.U64)
+        (opt-inline-alloc-sret-store-body))]
+    (and
+      (= admitted (compiler_optimize.opt-inline-shape-ok))
+      (compiler_optimize.opt-inline-multiblock-callee-body-ok?
+        (opt-inline-alloc-sret-params)
+        (compiler_ast_types.AstType.U64)
+        9
+        (opt-inline-alloc-sret-body 5 2))
+      (= addr-param (compiler_optimize.opt-inline-shape-addr-of))
+      (= alloc-param (compiler_optimize.opt-inline-shape-alloc))
+      (=
+        private-memory
+        (compiler_optimize.opt-inline-shape-private-memory-param))
+      (= return-type (compiler_optimize.opt-inline-shape-return-type))
+      (= shifted (compiler_optimize.opt-inline-shape-params-not-sequential))
+      (= single (compiler_optimize.opt-inline-shape-structure))
+      (= store (+ (compiler_optimize.opt-inline-shape-other-base) 1))
+      (string.eq (compiler_optimize.opt-inline-shape-reason-text admitted) "ok")
+      (string.eq
+        (compiler_optimize.opt-inline-shape-reason-text addr-param)
+        "addr_of")
+      (string.eq
+        (compiler_optimize.opt-inline-shape-reason-text alloc-param)
+        "alloc")
+      (string.eq
+        (compiler_optimize.opt-inline-shape-reason-text private-memory)
+        "private-memory-param")
+      (string.eq
+        (compiler_optimize.opt-inline-shape-reason-text return-type)
+        "return-type")
+      (string.eq
+        (compiler_optimize.opt-inline-shape-reason-text shifted)
+        "params-not-sequential")
+      (string.eq
+        (compiler_optimize.opt-inline-shape-reason-text single)
+        "structure")
+      (string.eq
+        (compiler_optimize.opt-inline-shape-reason-text store)
+        "other-instr:store"))))
+
+;; The register allocator recovers an aggregate's storage by scanning for a
+;; maximal run of `Alloc` with CONSECUTIVE dst ids closed by an `AddrOf` of the
+;; run's last id, inside one block (compiler_regalloc.tl
+;; compiler-reg-color-detect-storage-seq). The clone's rebasing is affine and
+;; moves nothing, so a spliced body's run has to survive that scan unchanged --
+;; a run that lost a word would give a 32-byte aggregate an 8-byte slot. These
+;; two counters are the same scan, so the fixture below pins the invariant the
+;; allocator actually reads.
+(define (opt-count-alloc-instr-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
+  (let
+    [count : i64
+      (compiler_ir_types.compiler-ir-instr-seq-count
+        (compiler_optimize.compiler-opt-global-shared-view instrs))]
+    [index : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler_ir_types.compiler-ir-instr-seq-ref
+            (compiler_optimize.compiler-opt-global-shared-view instrs)
+            index)
+            [(compiler_ir_types.CompilerIrInstr.Alloc _ _)
+              (set! total (+ total 1))]
+            [_ unit])
+          (set! index (+ index 1))))
+      total)))
+
+(define (opt-count-closed-alloc-runs-instr-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
+  (let
+    [count : i64
+      (compiler_ir_types.compiler-ir-instr-seq-count
+        (compiler_optimize.compiler-opt-global-shared-view instrs))]
+    [index : i64 0]
+    [run-first : i64 (- 0 1)]
+    [run-last : i64 (- 0 1)]
+    [run-count : i64 0]
+    [runs : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler_ir_types.compiler-ir-instr-seq-ref
+            (compiler_optimize.compiler-opt-global-shared-view instrs)
+            index)
+            [(compiler_ir_types.CompilerIrInstr.Alloc dst _)
+              (if (or (= run-count 0) (= dst (+ run-last 1)))
+                (begin
+                  (if (= run-count 0)
+                    (set! run-first dst)
+                    unit)
+                  (set! run-last dst)
+                  (set! run-count (+ run-count 1)))
+                (begin
+                  (set! run-first dst)
+                  (set! run-last dst)
+                  (set! run-count 1)))]
+            [(compiler_ir_types.CompilerIrInstr.AddrOf _ src)
+              (begin
+                (if (and
+                  (> run-count 0)
+                  (= src run-last)
+                  (= run-first (+ (- src run-count) 1)))
+                  (set! runs (+ runs 1))
+                  unit)
+                (set! run-first (- 0 1))
+                (set! run-last (- 0 1))
+                (set! run-count 0))]
+            [_
+              (begin
+                (set! run-first (- 0 1))
+                (set! run-last (- 0 1))
+                (set! run-count 0))])
+          (set! index (+ index 1))))
+      runs)))
+
+(define (opt-count-alloc-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (+
+            (opt-count-alloc-instr-seq instrs)
+            (opt-count-alloc-blocks
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-count-alloc-blocks
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-count-closed-alloc-runs-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (+
+            (opt-count-closed-alloc-runs-instr-seq instrs)
+            (opt-count-closed-alloc-runs-blocks
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-count-closed-alloc-runs-blocks
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-inline-alloc-sret-callee [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    callee-name
+    (opt-inline-alloc-sret-params)
+    (compiler_ast_types.AstType.U64)
+    9
+    (opt-inline-alloc-sret-body 5 2)))
+
+;; The site is inside a loop, and it is spliced ONCE: the clone's storage run
+;; is created at the site, not per iteration, so the merged caller holds the
+;; caller's own run plus exactly one copy of the callee's.
+(define (opt-inline-alloc-sret-caller [caller-name : i64] [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    caller-name
+    (compiler_ir_types.compiler-ir-param-seq-empty)
+    (compiler_ast_types.AstType.I64)
+    11
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Alloc
+            0
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Alloc
+            1
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Alloc
+            2
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Alloc
+            3
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.AddrOf 4 3)
+          (compiler_ir_types.CompilerIrInstr.Mov
+            5
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "header"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "header")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Phi
+              6
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.compiler-ir-label "entry")
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var 9)
+                  (compiler_ir_types.compiler-ir-label "latch")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              7
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 6)
+              (compiler_ir_types.CompilerIrValue.I64 4)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 7)
+              (compiler_ir_types.compiler-ir-label "body")
+              (compiler_ir_types.compiler-ir-label "exit"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "body")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Call
+                8
+                callee-name
+                (compiler_ir_types.CompilerIrCallArgs.Two
+                  (compiler_ir_types.CompilerIrValue.Bool true)
+                  (compiler_ir_types.CompilerIrValue.Var 4))
+                (compiler_ast_types.AstType.U64))
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "latch"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "latch")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.BinOp
+                  9
+                  (compiler_ir_types.CompilerIrBinOp.Add)
+                  (compiler_ir_types.CompilerIrValue.Var 6)
+                  (compiler_ir_types.CompilerIrValue.I64 1)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "header"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "exit")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Load
+                    10
+                    (compiler_ir_types.CompilerIrValue.Var 4)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 10)))))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-inline-alloc-sret-functions
+  [caller-name : i64]
+  [callee-name : i64]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-inline-alloc-sret-caller caller-name callee-name)
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-inline-alloc-sret-callee callee-name)
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
+
+;; The splice itself: the call is gone, the merged caller verifies, and both
+;; storage runs -- the caller's own and the one copy the site imported -- are
+;; still the shape the allocator scans for.
+(define (compiler-optimize-inline-multiblock-alloc-splice-ok?) : bool
+  (let
+    [callee-name : i64 (opt-test-symbol "inline_alloc_sret")]
+    [caller-name : i64 (opt-test-symbol "alloc_sret_main")]
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-alloc-sret-functions caller-name callee-name)
+        2)]
+    (match (compiler_optimize.opt-function-seq-find
+      (compiler_optimize.compiler-opt-global-shared-view optimized)
+      "alloc_sret_main")
+      [(compiler_optimize.OptMaybeFunction.Some main)
+        (let
+          [blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-function-blocks main)]
+          (and
+            (=
+              (opt-count-direct-call-name-blocks
+                (compiler_optimize.compiler-opt-global-shared-view blocks)
+                "inline_alloc_sret")
+              0)
+            (=
+              (opt-count-alloc-blocks
+                (compiler_optimize.compiler-opt-global-shared-view blocks))
+              8)
+            (=
+              (opt-count-closed-alloc-runs-blocks
+                (compiler_optimize.compiler-opt-global-shared-view blocks))
+              2)
+            (compiler_optimize.opt-inline-structure-ok?
+              (compiler_optimize.compiler-opt-global-shared-view blocks))))]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
 (define (compiler-optimize-inline-self-test) : i64
   (let
     [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]

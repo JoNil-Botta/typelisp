@@ -81448,6 +81448,339 @@
 ;; non-canonical counters, multi-block loops, a loop with NO derivable check,
 ;; and pre-existing version labels (idempotence). Verifier-gated
 ;; with fallback like unroll.
+;; --- versioner refusal tracing -------------------------------------------------
+;;
+;; VT-1. Every clause in this pass is a verdict about ONE loop, and until now
+;; the only way to learn WHICH clause turned a loop down was to instrument the
+;; pass by hand: `--trace-passes` printed the pass's block and instruction
+;; counts and nothing at all about the loops inside them. A loop that looks
+;; versionable and is refused by one specific clause is the pass's most common
+;; shape, and it was invisible.
+;;
+;; The tracer prints one line per loop either scan EXAMINES:
+;;
+;;   bce-version|<function>|<header>|<verdict>|<reason>|checks=<n>|derived=<n>|blocks=<n>
+;;
+;; plus `|kept=<n>` whenever the derivation left checks in the fast clone
+;; (partial versioning). `verdict` is `version` or `refuse`, and `reason` names
+;; the clause that decided -- `ok` for an applied versioning.
+;;
+;; WHAT COUNTS AS EXAMINED. The single-block scan examines a block that
+;; self-branches on a Var condition; the multi-block scan examines a natural
+;; loop it is offered in the phase that owns it. A block that is not a loop, a
+;; loop the current phase does not own (the flat/region/nest and
+;; counted/counter-free phases each see a different subset --
+;; opt-bce-mb-loops-scan-phased) and a self-loop the multi-block scan leaves to
+;; the single-block pass all produce NO line, so a line is a decision and not a
+;; traversal step. A counter-free phase reports its reason under a `free:`
+;; prefix, because it is a second, deliberately weaker examination of a loop
+;; the counted phases already reported on.
+;;
+;; COST. The reason is recorded by the clause that decides, as a single store
+;; to a module cell -- no branch -- exactly as the checked inlining tier records
+;; its traced numbers (opt-inline-checked-trace-depth). The cell doubles as the
+;; "was this a loop we examine" flag: `opt-bce-reason-none` is what a scan step
+;; leaves behind when it examined nothing, and the emission site tests THAT
+;; before it tests the flag. So a compile without `--trace-passes` pays one
+;; integer test per scan step and one boolean test per loop examined, and every
+;; string is built inside the guard, exactly as INL-3's `inline-shape|` tracer
+;; builds its own.
+(define (opt-bce-reason-none) : i64
+  0)
+
+(define (opt-bce-reason-ok) : i64
+  1)
+
+;; Examined, refused, and no clause recorded a code. No clause below leaves
+;; this behind today; it exists so that a future refusal path that forgets to
+;; record one is reported as an unexplained refusal instead of disappearing.
+(define (opt-bce-reason-other) : i64
+  2)
+
+;; SHAPE: the loop is not the shape either cloner rewrites.
+(define (opt-bce-reason-body-size) : i64
+  10)
+
+(define (opt-bce-reason-entry-block) : i64
+  11)
+
+(define (opt-bce-reason-phi-prefix) : i64
+  12)
+
+(define (opt-bce-reason-body-instr) : i64
+  13)
+
+(define (opt-bce-reason-no-check) : i64
+  14)
+
+(define (opt-bce-reason-already-versioned) : i64
+  15)
+
+(define (opt-bce-reason-latch-form) : i64
+  16)
+
+(define (opt-bce-reason-step) : i64
+  17)
+
+(define (opt-bce-reason-step-not-unit) : i64
+  18)
+
+(define (opt-bce-reason-counter-phi) : i64
+  19)
+
+(define (opt-bce-reason-no-preheader) : i64
+  20)
+
+(define (opt-bce-reason-body-too-big) : i64
+  21)
+
+(define (opt-bce-reason-enum-switch) : i64
+  22)
+
+(define (opt-bce-reason-fast-labels) : i64
+  23)
+
+(define (opt-bce-reason-fallthrough) : i64
+  24)
+
+(define (opt-bce-reason-not-a-counter) : i64
+  25)
+
+(define (opt-bce-reason-header-phis) : i64
+  26)
+
+(define (opt-bce-reason-free-not-outermost) : i64
+  27)
+
+;; BOUND: the counter's own range argument.
+(define (opt-bce-reason-bound-not-invariant) : i64
+  30)
+
+(define (opt-bce-reason-bound-range) : i64
+  31)
+
+;; ESCAPE: a loop def is read where the clone cannot supply it.
+(define (opt-bce-reason-defs-escape) : i64
+  40)
+
+(define (opt-bce-reason-exit-wiring) : i64
+  41)
+
+(define (opt-bce-reason-far-use) : i64
+  42)
+
+;; GUARD: the derivation ran and the economics or the conjunction refused.
+(define (opt-bce-reason-derived-zero) : i64
+  50)
+
+(define (opt-bce-reason-floor) : i64
+  51)
+
+(define (opt-bce-reason-region-inner) : i64
+  52)
+
+(define (opt-bce-reason-free-cost) : i64
+  53)
+
+(define (opt-bce-reason-unsatisfiable) : i64
+  54)
+
+;; VERIFY: the rewrite was built and the post-application verifier refused it,
+;; which retires the loop for the rest of the invocation.
+(define (opt-bce-reason-verify) : i64
+  70)
+
+(define (opt-bce-reason-text [reason : i64]) : String
+  (cond
+    [(= reason (opt-bce-reason-ok)) "ok"]
+    [(= reason (opt-bce-reason-body-size)) "shape:body-size"]
+    [(= reason (opt-bce-reason-entry-block)) "shape:entry-block"]
+    [(= reason (opt-bce-reason-phi-prefix)) "shape:phi-prefix"]
+    [(= reason (opt-bce-reason-body-instr)) "shape:body-instr"]
+    [(= reason (opt-bce-reason-no-check)) "shape:no-check"]
+    [(= reason (opt-bce-reason-already-versioned)) "shape:already-versioned"]
+    [(= reason (opt-bce-reason-latch-form)) "shape:latch-form"]
+    [(= reason (opt-bce-reason-step)) "shape:step"]
+    [(= reason (opt-bce-reason-step-not-unit)) "shape:step-not-unit"]
+    [(= reason (opt-bce-reason-counter-phi)) "shape:counter-phi"]
+    [(= reason (opt-bce-reason-no-preheader)) "shape:no-preheader"]
+    [(= reason (opt-bce-reason-body-too-big)) "shape:body-too-big"]
+    [(= reason (opt-bce-reason-enum-switch)) "shape:enum-switch"]
+    [(= reason (opt-bce-reason-fast-labels)) "shape:fast-labels"]
+    [(= reason (opt-bce-reason-fallthrough)) "shape:fallthrough"]
+    [(= reason (opt-bce-reason-not-a-counter)) "shape:not-a-counter"]
+    [(= reason (opt-bce-reason-header-phis)) "shape:header-phis"]
+    [(= reason (opt-bce-reason-free-not-outermost)) "shape:free-not-outermost"]
+    [(= reason (opt-bce-reason-bound-not-invariant)) "bound:not-invariant"]
+    [(= reason (opt-bce-reason-bound-range)) "bound:range"]
+    [(= reason (opt-bce-reason-defs-escape)) "escape:defs-escape"]
+    [(= reason (opt-bce-reason-exit-wiring)) "escape:exit-wiring"]
+    [(= reason (opt-bce-reason-far-use)) "escape:far-use"]
+    [(= reason (opt-bce-reason-derived-zero)) "guard:derived-zero"]
+    [(= reason (opt-bce-reason-floor)) "guard:floor"]
+    [(= reason (opt-bce-reason-region-inner)) "guard:region-gate"]
+    [(= reason (opt-bce-reason-free-cost)) "guard:free-cost"]
+    [(= reason (opt-bce-reason-unsatisfiable)) "guard:unsatisfiable"]
+    [(= reason (opt-bce-reason-verify)) "verify:rejected"]
+    [else "other"]))
+
+;; The clause that last decided a loop, and the three numbers the line reports
+;; beside it. `derived` and `kept` stay -1 for a loop refused before the
+;; derivation ran, which is what distinguishes "the guard proved nothing" from
+;; "the guard was never asked".
+(define opt-bce-trace-reason : i64
+  0)
+(define opt-bce-trace-derived : i64
+  (- 0 1))
+(define opt-bce-trace-kept : i64
+  (- 0 1))
+(define opt-bce-trace-free? : bool
+  false)
+(define opt-bce-trace-function : i64
+  0)
+
+;; Start examining a loop: the clause codes below overwrite this, and a scan
+;; step that examines nothing leaves `none` behind for the emission site to
+;; read.
+(define (opt-bce-trace-begin! [free? : bool]) : unit
+  (begin
+    (set! opt-bce-trace-reason (opt-bce-reason-none))
+    (set! opt-bce-trace-derived (- 0 1))
+    (set! opt-bce-trace-kept (- 0 1))
+    (set! opt-bce-trace-free? free?)))
+
+(define (opt-bce-trace-examined!) : unit
+  (set! opt-bce-trace-reason (opt-bce-reason-other)))
+
+(define (opt-bce-trace-note! [reason : i64]) : unit
+  (set! opt-bce-trace-reason reason))
+
+(define (opt-bce-trace-derivation! [derived : i64] [kept : i64]) : unit
+  (begin
+    (set! opt-bce-trace-derived derived)
+    (set! opt-bce-trace-kept kept)))
+
+;; The single-block scan's refusal helper: record the clause and hand back the
+;; `No` the clause was going to return anyway.
+(define (opt-bce-trace-refuse-shape [reason : i64]) : OptUnrollMaybeShape
+  (begin
+    (opt-bce-trace-note! reason)
+    (OptUnrollMaybeShape.No)))
+
+(define (opt-bce-trace-refuse-result
+  [reason : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [frame : i64]) : OptUnrollResult
+  (begin
+    (opt-bce-trace-note! reason)
+    (OptUnrollResult.Result blocks frame false)))
+
+(define (opt-bce-trace-refuse-guard [reason : i64]) : OptBceVersionGuardOut
+  (begin
+    (opt-bce-trace-note! reason)
+    (OptBceVersionGuardOut.No)))
+
+(define (opt-bce-trace-refuse-mb-shape [reason : i64]) : OptBceMbMaybeShape
+  (begin
+    (opt-bce-trace-note! reason)
+    (OptBceMbMaybeShape.No)))
+
+(define (opt-bce-trace-refuse-mb-guard [reason : i64]) : OptBceMbGuardOut
+  (begin
+    (opt-bce-trace-note! reason)
+    (OptBceMbGuardOut.No)))
+
+(define (opt-bce-trace-line
+  [header : i64]
+  [versioned? : bool]
+  [checks : i64]
+  [blocks : i64]) : String
+  (str_cat.str-cat
+    "bce-version|"
+    (ir.compiler-ir-symbol-text opt-bce-trace-function)
+    "|"
+    (ir.compiler-ir-label-text header)
+    (if versioned?
+      "|version|"
+      "|refuse|")
+    (if opt-bce-trace-free?
+      "free:"
+      "")
+    (opt-bce-reason-text opt-bce-trace-reason)
+    "|checks="
+    (string.int->string checks)
+    "|derived="
+    (string.int->string opt-bce-trace-derived)
+    "|blocks="
+    (string.int->string blocks)
+    (if (> opt-bce-trace-kept 0)
+      (str_cat.str-cat "|kept=" (string.int->string opt-bce-trace-kept))
+      "")
+    "\n"))
+
+;; One line per examined loop, on the flag `--trace-passes` sets and suppressed
+;; in the inliner's throwaway measurement runs exactly as the pass tracer is.
+;; The integer test comes FIRST: a scan step that examined no loop leaves
+;; `none` behind and never reaches the boolean test at all.
+(define (opt-bce-trace-function! [name : i64]) : unit
+  (set! opt-bce-trace-function name))
+
+;; The rewrite was built, the scan reported `version`, and the driver's
+;; post-application verify then refused it and retired the loop. One more line
+;; says so, so a census never credits a versioning that was rolled back. The
+;; loop's own counts are gone by now (the scan that had them has returned), so
+;; both report -1.
+(define (opt-bce-trace-verify-rejected! [header : i64]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (begin
+      (opt-bce-trace-note! (opt-bce-reason-verify))
+      (io.print-error (opt-bce-trace-line header false (- 0 1) (- 0 1))))
+    unit))
+
+(define (opt-bce-trace-self-loop!
+  [block : ir.CompilerIrBlock]
+  [versioned? : bool]) : unit
+  (if (and
+    (not (= opt-bce-trace-reason (opt-bce-reason-none)))
+    compiler-opt-debug-trace-passes
+    (not compiler-opt-debug-suppressed?))
+    (match (compiler-opt-global-shared-view block)
+      [(ir.CompilerIrBlock.Block label instrs)
+        (io.print-error
+          (opt-bce-trace-line
+            label
+            versioned?
+            (opt-bce-version-check-count
+              (compiler-opt-global-shared-view instrs)
+              0
+              (-
+                (ir.compiler-ir-instr-seq-count
+                  (compiler-opt-global-shared-view instrs))
+                1)
+              0)
+            1))])
+    unit))
+
+;; The multi-block scan's emission site. The loop's own check and block counts
+;; are walked INSIDE the guard, so they cost a compile without the flag
+;; nothing at all.
+(define (opt-bce-trace-mb-loop! [loop : OptNaturalLoop] [versioned? : bool]) : unit
+  (if (and
+    (not (= opt-bce-trace-reason (opt-bce-reason-none)))
+    compiler-opt-debug-trace-passes
+    (not compiler-opt-debug-suppressed?))
+    (match (compiler-opt-global-shared-view loop)
+      [(OptNaturalLoop.Loop header _ body _)
+        (io.print-error
+          (opt-bce-trace-line
+            header
+            versioned?
+            (opt-bce-mb-body-checks
+              (compiler-opt-global-shared-view body.blocks)
+              0)
+            (opt-label-count (compiler-opt-global-shared-view body.labels))))])
+    unit))
+
 (defenum OptBceVersionGuardAcc
   (No)
   (Some ir.CompilerIrInstrBuilder ir.CompilerIrValueSeq bool))
@@ -85843,8 +86176,12 @@
     ;; two-check floor both are refused, the word loop keeps its clone, and
     ;; the row is unchanged. The shift loop this packet is about derives BOTH
     ;; of its checks and clears the floor unaided.
+    [_trace : unit (opt-bce-trace-derivation! state.derived state.keep.count)]
     (if (or (= state.derived 0) (and down? (< state.derived 2)))
-      (OptBceVersionGuardOut.No)
+      (opt-bce-trace-refuse-guard
+        (if (= state.derived 0)
+          (opt-bce-reason-derived-zero)
+          (opt-bce-reason-floor)))
       (match (opt-bce-version-guard-finish
         (compiler-opt-global-shared-view seed)
         (compiler-opt-global-shared-view bound)
@@ -85870,7 +86207,8 @@
           bound
           cell
           state.guard))
-        [(OptBceVersionGuardResult.No) (OptBceVersionGuardOut.No)]
+        [(OptBceVersionGuardResult.No)
+          (opt-bce-trace-refuse-guard (opt-bce-reason-unsatisfiable))]
         [(OptBceVersionGuardResult.Some guard-instrs guard-value)
           (OptBceVersionGuardOut.Some guard-instrs guard-value state.keep)]))))
 
@@ -85948,60 +86286,69 @@
       (compiler-opt-global-shared-view instrs.slots)]
     [iphi-index : i64 (opt-unroll-def-index slots 0 phi-count iphi)]
     (if (< iphi-index 0)
-      (OptUnrollMaybeShape.No)
+      (opt-bce-trace-refuse-shape (opt-bce-reason-counter-phi))
       (match (ir.compiler-ir-instr-seq-ref instrs iphi-index)
         [(ir.CompilerIrInstr.Phi _ inputs iphi-ty)
           (match (opt-unroll-split-phi-inputs inputs label)
             [(OptUnrollPhiSplit.Split seed back pred-label)
-              (if (and
-                (not (= pred-label label))
-                (opt-unroll-back-resolves-to?
-                  (compiler-opt-global-shared-view instrs)
-                  phi-count
-                  last
-                  back
-                  inext)
-                (not
-                  (opt-cfg-block-exists?
-                    (compiler-opt-global-shared-view blocks)
-                    (ir.compiler-ir-label
-                      (str_cat.str-cat
-                        (ir.compiler-ir-label-text label)
-                        "__bce_guard"))))
-                (not
-                  (opt-cfg-block-exists?
-                    (compiler-opt-global-shared-view blocks)
-                    (ir.compiler-ir-label
-                      (str_cat.str-cat
-                        (ir.compiler-ir-label-text label)
-                        "__bce_fast"))))
-                (opt-unroll-pred-retargetable? blocks pred-label))
-                (match (opt-unroll-collect-other-phis
-                  instrs
-                  0
-                  phi-count
-                  label
-                  pred-label
-                  iphi)
-                  [(OptUnrollMaybePhis.Some others)
-                    (OptUnrollMaybeShape.Some
-                      (OptUnrollShape
-                        label
-                        pred-label
-                        phi-count
-                        cond-index
-                        cond-var
-                        iphi
-                        iphi-ty
-                        seed
-                        inext
-                        ity
-                        bound
-                        others))]
-                  [(OptUnrollMaybePhis.No) (OptUnrollMaybeShape.No)])
-                (OptUnrollMaybeShape.No))]
-            [(OptUnrollPhiSplit.No) (OptUnrollMaybeShape.No)])]
-        [_ (OptUnrollMaybeShape.No)]))))
+              (let
+                [reason : i64
+                  (cond
+                    [(= pred-label label) (opt-bce-reason-counter-phi)]
+                    [(not
+                        (opt-unroll-back-resolves-to?
+                          (compiler-opt-global-shared-view instrs)
+                          phi-count
+                          last
+                          back
+                          inext))
+                      (opt-bce-reason-counter-phi)]
+                    [(opt-cfg-block-exists?
+                        (compiler-opt-global-shared-view blocks)
+                        (ir.compiler-ir-label
+                          (str_cat.str-cat
+                            (ir.compiler-ir-label-text label)
+                            "__bce_guard")))
+                      (opt-bce-reason-already-versioned)]
+                    [(opt-cfg-block-exists?
+                        (compiler-opt-global-shared-view blocks)
+                        (ir.compiler-ir-label
+                          (str_cat.str-cat
+                            (ir.compiler-ir-label-text label)
+                            "__bce_fast")))
+                      (opt-bce-reason-already-versioned)]
+                    [(not (opt-unroll-pred-retargetable? blocks pred-label))
+                      (opt-bce-reason-counter-phi)]
+                    [else (opt-bce-reason-ok)])]
+                (if (= reason (opt-bce-reason-ok))
+                  (match (opt-unroll-collect-other-phis
+                    instrs
+                    0
+                    phi-count
+                    label
+                    pred-label
+                    iphi)
+                    [(OptUnrollMaybePhis.Some others)
+                      (OptUnrollMaybeShape.Some
+                        (OptUnrollShape
+                          label
+                          pred-label
+                          phi-count
+                          cond-index
+                          cond-var
+                          iphi
+                          iphi-ty
+                          seed
+                          inext
+                          ity
+                          bound
+                          others))]
+                    [(OptUnrollMaybePhis.No)
+                      (opt-bce-trace-refuse-shape (opt-bce-reason-counter-phi))])
+                  (opt-bce-trace-refuse-shape reason)))]
+            [(OptUnrollPhiSplit.No)
+              (opt-bce-trace-refuse-shape (opt-bce-reason-counter-phi))])]
+        [_ (opt-bce-trace-refuse-shape (opt-bce-reason-counter-phi))]))))
 
 (define (opt-bce-version-shape-step
   [blocks : ir.CompilerIrBlockList]
@@ -86018,7 +86365,7 @@
       (compiler-opt-global-shared-view instrs.slots)]
     [inext-index : i64 (opt-unroll-def-index slots phi-count last inext)]
     (if (< inext-index 0)
-      (OptUnrollMaybeShape.No)
+      (opt-bce-trace-refuse-shape (opt-bce-reason-step))
       (match (ir.compiler-ir-instr-seq-ref instrs inext-index)
         [(ir.CompilerIrInstr.BinOp _ add-op add-lhs add-rhs ity)
           (match add-op
@@ -86057,9 +86404,9 @@
                             last
                             add-src
                             16))
-                        (OptUnrollMaybeShape.No))]
-                    [_ (OptUnrollMaybeShape.No)])]
-                [_ (OptUnrollMaybeShape.No)])]
+                        (opt-bce-trace-refuse-shape (opt-bce-reason-step)))]
+                    [_ (opt-bce-trace-refuse-shape (opt-bce-reason-step))])]
+                [_ (opt-bce-trace-refuse-shape (opt-bce-reason-step))])]
             ;; ALIAS-1. The DESCENDING counter: `i = i - 1`, latched by the
             ;; `Ge`/`Gt` arm of opt-bce-version-shape-counter. A shift loop
             ;; copying `a[i+k] = a[i]` downward has this shape and no other, so
@@ -86081,33 +86428,34 @@
                 [(ir.CompilerIrValue.Var add-src)
                   (match add-rhs
                     [(ir.CompilerIrValue.I64 step)
-                      (if (and
-                        (= step 1)
-                        (match (compiler-opt-global-shared-view ity)
+                      (if (not (= step 1))
+                        (opt-bce-trace-refuse-shape
+                          (opt-bce-reason-step-not-unit))
+                        (if (match (compiler-opt-global-shared-view ity)
                           [(ast.AstType.I64) true]
-                          [_ false]))
-                        (opt-bce-version-shape-phi
-                          blocks
-                          label
-                          (compiler-opt-global-shared-view instrs)
-                          phi-count
-                          last
-                          cond-index
-                          cond-var
-                          inext
-                          ity
-                          bound
-                          (opt-unroll-resolve-copy
-                            instrs
+                          [_ false])
+                          (opt-bce-version-shape-phi
+                            blocks
+                            label
+                            (compiler-opt-global-shared-view instrs)
                             phi-count
                             last
-                            add-src
-                            16))
-                        (OptUnrollMaybeShape.No))]
-                    [_ (OptUnrollMaybeShape.No)])]
-                [_ (OptUnrollMaybeShape.No)])]
-            [_ (OptUnrollMaybeShape.No)])]
-        [_ (OptUnrollMaybeShape.No)]))))
+                            cond-index
+                            cond-var
+                            inext
+                            ity
+                            bound
+                            (opt-unroll-resolve-copy
+                              instrs
+                              phi-count
+                              last
+                              add-src
+                              16))
+                          (opt-bce-trace-refuse-shape (opt-bce-reason-step))))]
+                    [_ (opt-bce-trace-refuse-shape (opt-bce-reason-step))])]
+                [_ (opt-bce-trace-refuse-shape (opt-bce-reason-step))])]
+            [_ (opt-bce-trace-refuse-shape (opt-bce-reason-step))])]
+        [_ (opt-bce-trace-refuse-shape (opt-bce-reason-step))]))))
 
 (define (opt-bce-version-shape-counter
   [blocks : ir.CompilerIrBlockList]
@@ -86122,7 +86470,7 @@
       (compiler-opt-global-shared-view instrs.slots)]
     [cond-index : i64 (opt-unroll-def-index slots phi-count last cond-var)]
     (if (< cond-index 0)
-      (OptUnrollMaybeShape.No)
+      (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))
       (match (ir.compiler-ir-instr-seq-ref instrs cond-index)
         [(ir.CompilerIrInstr.BinOp _ cmp-op cmp-lhs cmp-rhs _)
           (match cmp-op
@@ -86147,8 +86495,9 @@
                         cmp-src
                         16)
                       (compiler-opt-global-shared-view cmp-rhs))
-                    (OptUnrollMaybeShape.No))]
-                [_ (OptUnrollMaybeShape.No)])]
+                    (opt-bce-trace-refuse-shape
+                      (opt-bce-reason-bound-not-invariant)))]
+                [_ (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))])]
             ;; ALIAS-1. The two latch forms of a DESCENDING counter,
             ;; `next >= floor` and `next > floor`, in the same operand order the
             ;; ascending `Lt` arm demands. `bound` still names the invariant the
@@ -86181,8 +86530,9 @@
                         cmp-src
                         16)
                       (compiler-opt-global-shared-view cmp-rhs))
-                    (OptUnrollMaybeShape.No))]
-                [_ (OptUnrollMaybeShape.No)])]
+                    (opt-bce-trace-refuse-shape
+                      (opt-bce-reason-bound-not-invariant)))]
+                [_ (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))])]
             [(ir.CompilerIrBinOp.Gt)
               (match cmp-lhs
                 [(ir.CompilerIrValue.Var cmp-src)
@@ -86199,10 +86549,46 @@
                       cond-index
                       (opt-unroll-resolve-copy instrs phi-count last cmp-src 16)
                       cmp-rhs)
-                    (OptUnrollMaybeShape.No))]
-                [_ (OptUnrollMaybeShape.No)])]
-            [_ (OptUnrollMaybeShape.No)])]
-        [_ (OptUnrollMaybeShape.No)]))))
+                    (opt-bce-trace-refuse-shape
+                      (opt-bce-reason-bound-not-invariant)))]
+                [_ (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))])]
+            [_ (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))])]
+        [_ (opt-bce-trace-refuse-shape (opt-bce-reason-latch-form))]))))
+
+;; The body clauses of the single-block shape, as the code of the FIRST one
+;; that refuses (`ok` when the body is admitted). The gate below is `(= reason
+;; (opt-bce-reason-ok))`, so the clause list lives here once and the tracer
+;; names exactly the clause the pass decided on -- there is no second copy to
+;; drift from.
+(define (opt-bce-version-shape-body-reason
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]) : i64
+  (cond
+    [(< phi-count 1) (opt-bce-reason-phi-prefix)]
+    [(< (- last phi-count) 2) (opt-bce-reason-body-size)]
+    [(> (- last phi-count) (opt-bce-version-body-max))
+      (opt-bce-reason-body-too-big)]
+    [(not
+        (opt-unroll-no-phi-from?
+          (compiler-opt-global-shared-view instrs)
+          phi-count))
+      (opt-bce-reason-phi-prefix)]
+    [(not
+        (opt-bce-version-body-ok?
+          (compiler-opt-global-shared-view instrs)
+          phi-count
+          last))
+      (opt-bce-reason-body-instr)]
+    [(<
+        (opt-bce-version-check-count
+          (compiler-opt-global-shared-view instrs)
+          phi-count
+          last
+          0)
+        1)
+      (opt-bce-reason-no-check)]
+    [else (opt-bce-reason-ok)]))
 
 (define (opt-bce-version-block-shape
   [blocks : ir.CompilerIrBlockList]
@@ -86211,46 +86597,40 @@
   (match block
     [(ir.CompilerIrBlock.Block label instrs)
       (let
+        ;; One store per block walked, and the value the emission site reads to
+        ;; decide whether this step examined a loop at all.
+        [_trace : unit (opt-bce-trace-begin! false)]
         [count : i64
           (ir.compiler-ir-instr-seq-count
             (compiler-opt-global-shared-view instrs))]
-        (if (< count 4)
+        (if (< count 1)
           (OptUnrollMaybeShape.No)
           (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
             [(ir.CompilerIrInstr.Branch cond then-label else-label)
               (match cond
                 [(ir.CompilerIrValue.Var cond-var)
-                  (if (and
-                    (= then-label label)
-                    (not (= else-label label))
-                    (not (= label entry-label)))
+                  (if (and (= then-label label) (not (= else-label label)))
+                    ;; A self-branching block on a Var condition IS the loop
+                    ;; this scan examines; every verdict from here on is a
+                    ;; decision about it and earns a trace line. The size test
+                    ;; the old first clause made is now the body reason's, so a
+                    ;; three-instruction self-loop is reported rather than
+                    ;; silently skipped.
                     (let
+                      [_examined : unit (opt-bce-trace-examined!)]
                       [last : i64 (- count 1)]
                       [phi-count : i64
                         (opt-unroll-phi-prefix-count
                           (compiler-opt-global-shared-view instrs)
                           0)]
-                      (if (or
-                        (< phi-count 1)
-                        (< (- last phi-count) 2)
-                        (> (- last phi-count) (opt-bce-version-body-max))
-                        (not
-                          (opt-unroll-no-phi-from?
-                            (compiler-opt-global-shared-view instrs)
-                            phi-count))
-                        (not
-                          (opt-bce-version-body-ok?
+                      [reason : i64
+                        (if (= label entry-label)
+                          (opt-bce-reason-entry-block)
+                          (opt-bce-version-shape-body-reason
                             (compiler-opt-global-shared-view instrs)
                             phi-count
-                            last))
-                        (<
-                          (opt-bce-version-check-count
-                            (compiler-opt-global-shared-view instrs)
-                            phi-count
-                            last
-                            0)
-                          1))
-                        (OptUnrollMaybeShape.No)
+                            last))]
+                      (if (= reason (opt-bce-reason-ok))
                         (opt-bce-version-shape-counter
                           blocks
                           label
@@ -86262,7 +86642,8 @@
                             instrs.slots
                             0
                             (+ last 1)
-                            (opt_i64_i64_map.with-capacity 32)))))
+                            (opt_i64_i64_map.with-capacity 32)))
+                        (opt-bce-trace-refuse-shape reason)))
                     (OptUnrollMaybeShape.No))]
                 [_ (OptUnrollMaybeShape.No)])]
             [_ (OptUnrollMaybeShape.No)])))]))
@@ -86767,18 +87148,23 @@
                 (ir.compiler-ir-instr-builder-new)
                 (ir.compiler-ir-value-seq-empty)
                 false)])]
-        (if (or
-          (= exit-label label)
-          (= exit-label pred-label)
-          (<= step 0)
-          (not range-ok?)
-          (opt-bce-version-defs-escape?
-            (compiler-opt-global-shared-view (__tl-project-field instrs slots))
-            0
-            (ir.compiler-ir-instr-seq-count
-              (compiler-opt-global-shared-view instrs))
-            outside))
-          (OptUnrollResult.Result original-blocks frame false)
+        [reason : i64
+          (cond
+            [(= exit-label label) (opt-bce-reason-latch-form)]
+            [(= exit-label pred-label) (opt-bce-reason-latch-form)]
+            [(<= step 0) (opt-bce-reason-step)]
+            [(not range-ok?) (opt-bce-reason-bound-range)]
+            [(opt-bce-version-defs-escape?
+                (compiler-opt-global-shared-view
+                  (__tl-project-field instrs slots))
+                0
+                (ir.compiler-ir-instr-seq-count
+                  (compiler-opt-global-shared-view instrs))
+                outside)
+              (opt-bce-reason-defs-escape)]
+            [else (opt-bce-reason-ok)])]
+        (if (not (= reason (opt-bce-reason-ok)))
+          (opt-bce-trace-refuse-result reason original-blocks frame)
           (match (opt-bce-version-guard-conds
             type-segment-bases
             (compiler-opt-global-shared-view blocks)
@@ -86942,7 +87328,11 @@
           (compiler-opt-global-shared-view body-blocks)
           (compiler-opt-global-shared-view cell)
           (OptLabelSet.Nil))
-          [(OptBceMbWiring.No) (OptUnrollResult.Result blocks frame false)]
+          [(OptBceMbWiring.No)
+            (opt-bce-trace-refuse-result
+              (opt-bce-reason-exit-wiring)
+              blocks
+              frame)]
           [(OptBceMbWiring.Some wired stubs)
             (match stubs
               [(OptLabelSet.Nil)
@@ -86955,7 +87345,10 @@
                   frame
                   cell)]
               [(OptLabelSet.Dense _ _)
-                (OptUnrollResult.Result blocks frame false)])]))]))
+                (opt-bce-trace-refuse-result
+                  (opt-bce-reason-exit-wiring)
+                  blocks
+                  frame)])]))]))
 
 (define (opt-bce-version-alloc-other-phis
   [remap : (__tl_dyn-array ir.CompilerIrValue)]
@@ -87009,13 +87402,18 @@
           (if (opt-label-contains
             (compiler-opt-global-shared-view rejected)
             shape.loop-label)
-            (opt-bce-version-blocks-scan
-              type-segment-bases
-              (compiler-opt-global-shared-view blocks)
-              (compiler-opt-box-shared-view rest)
-              entry-label
-              (compiler-opt-global-shared-view rejected)
-              frame)
+            ;; Already retired by this invocation's verifier: its line was
+            ;; emitted when the rewrite was refused, and re-reporting it once
+            ;; per rescan would count the same loop many times.
+            (begin
+              (opt-bce-trace-begin! false)
+              (opt-bce-version-blocks-scan
+                type-segment-bases
+                (compiler-opt-global-shared-view blocks)
+                (compiler-opt-box-shared-view rest)
+                entry-label
+                (compiler-opt-global-shared-view rejected)
+                frame))
             (match (opt-bce-version-apply
               type-segment-bases
               (compiler-opt-global-shared-view blocks)
@@ -87024,26 +87422,39 @@
               frame)
               [(OptUnrollResult.Result next-blocks next-frame changed)
                 (if changed
-                  (OptBceVersionScan.Scan
-                    next-blocks
-                    next-frame
-                    true
-                    shape.loop-label)
-                  (opt-bce-version-blocks-scan
-                    type-segment-bases
-                    (compiler-opt-global-shared-view blocks)
-                    (compiler-opt-box-shared-view rest)
-                    entry-label
-                    (compiler-opt-global-shared-view rejected)
-                    frame))]))]
+                  (begin
+                    (opt-bce-trace-note! (opt-bce-reason-ok))
+                    (opt-bce-trace-self-loop!
+                      (compiler-opt-global-shared-view block)
+                      true)
+                    (OptBceVersionScan.Scan
+                      next-blocks
+                      next-frame
+                      true
+                      shape.loop-label))
+                  (begin
+                    (opt-bce-trace-self-loop!
+                      (compiler-opt-global-shared-view block)
+                      false)
+                    (opt-bce-version-blocks-scan
+                      type-segment-bases
+                      (compiler-opt-global-shared-view blocks)
+                      (compiler-opt-box-shared-view rest)
+                      entry-label
+                      (compiler-opt-global-shared-view rejected)
+                      frame)))]))]
         [(OptUnrollMaybeShape.No)
-          (opt-bce-version-blocks-scan
-            type-segment-bases
-            (compiler-opt-global-shared-view blocks)
-            (compiler-opt-box-shared-view rest)
-            entry-label
-            (compiler-opt-global-shared-view rejected)
-            frame)])]
+          (begin
+            (opt-bce-trace-self-loop!
+              (compiler-opt-global-shared-view block)
+              false)
+            (opt-bce-version-blocks-scan
+              type-segment-bases
+              (compiler-opt-global-shared-view blocks)
+              (compiler-opt-box-shared-view rest)
+              entry-label
+              (compiler-opt-global-shared-view rejected)
+              frame))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-bce-version-blocks-scan
         type-segment-bases
@@ -87241,7 +87652,26 @@
 ;; the guard finisher. Both are derived, per compare form, at the recovery.
 (defenum OptBceMbMaybeCounter
   (No)
-  (Some i64 ir.CompilerIrValue i64 ir.CompilerIrValue i64 i64 i64))
+  ;; iphi, seed, inext, bound, step, delta, wrap-step, and VT-1's invariant
+  ;; OFFSET: the compare reads `offset + iphi` rather than the counter itself,
+  ;; and the counter's exclusive limit is `bound - offset`, which
+  ;; opt-bce-mb-guard-conds materializes. Literal 0 is "the compare reads the
+  ;; counter", which is every shape before VT-1 and still the common one.
+  (Some
+    i64
+    ir.CompilerIrValue
+    i64
+    ir.CompilerIrValue
+    i64
+    i64
+    i64
+    ir.CompilerIrValue))
+
+;; Is this the "no invariant offset" marker -- a literal zero?
+(define (opt-bce-mb-counter-offset-none? [offset : ir.CompilerIrValue]) : bool
+  (match (compiler-opt-global-shared-view offset)
+    [(ir.CompilerIrValue.I64 k) (= k 0)]
+    [_ false]))
 
 (defstruct OptBceMbShape
   (header i64)
@@ -87261,6 +87691,12 @@
   ;; OptBceMbMaybeCounter). `0` / `step` is the unshifted counter.
   (delta i64)
   (wrap-step i64)
+  ;; VT-1's invariant offset: the loop test reads `bound-offset + iphi`, so the
+  ;; counter's exclusive limit is `bound - bound-offset` and
+  ;; opt-bce-mb-guard-conds materializes it. Literal 0 -- every shape before
+  ;; VT-1 and still the common one -- means the test reads the counter itself,
+  ;; and `bound` IS the limit's base.
+  (bound-offset ir.CompilerIrValue)
   ;; Loop blocks the counter compare does NOT dominate, so no trip-range
   ;; derivation covers their checks (see the entry guard chain below). Empty
   ;; for the do-while form, whose latch compare covers the whole body.
@@ -87832,7 +88268,15 @@
               latch
               preheader
               cond-var)
-              [(OptBceMbMaybeCounter.Some iphi seed inext bound step delta wrap)
+              [(OptBceMbMaybeCounter.Some
+                  iphi
+                  seed
+                  inext
+                  bound
+                  step
+                  delta
+                  wrap
+                  offset)
                 ;; the compare's continuing successor must lead OUT of the
                 ;; chain, or it does not start the covered region
                 (if (opt-label-contains
@@ -87847,7 +88291,8 @@
                       bound
                       step
                       delta
-                      wrap)
+                      wrap
+                      offset)
                     chain))]
               [(OptBceMbMaybeCounter.No)
                 (opt-bce-mb-chain-walk
@@ -88049,7 +88494,8 @@
   [step : i64]
   [shift : i64]
   [k : i64]
-  [bottom? : bool]) : OptBceMbMaybeCounter
+  [bottom? : bool]
+  [offset : ir.CompilerIrValue]) : OptBceMbMaybeCounter
   (if (or
     (> k (opt-bce-mb-counter-k-max))
     (< k (- 0 (opt-bce-mb-counter-k-max))))
@@ -88073,14 +88519,31 @@
               (match (opt-bce-mb-counter-wrap-step w delta)
                 [(OptBceMbMaybeWrapStep.No) (OptBceMbMaybeCounter.No)]
                 [(OptBceMbMaybeWrapStep.Some wrap-step)
-                  (OptBceMbMaybeCounter.Some
-                    iphi
-                    seed
-                    inext
-                    bound
-                    step
-                    delta
-                    wrap-step)])]))])))
+                  ;; VT-1. An invariant OFFSET is admitted for the two
+                  ;; UNSHIFTED ascending spellings at unit step, and for
+                  ;; nothing else. The argument at
+                  ;; opt-bce-mb-counter-offset-limit is stated over
+                  ;; `offset + i` increasing by one until it first reaches
+                  ;; `bound`; a larger step would need the compare's own sum to
+                  ;; be shown representable one step past the limit (the `w`
+                  ;; conjunct the finisher states over the LIMIT, not over
+                  ;; `bound`), and a shifted or descending spelling would move
+                  ;; an end of the range the subtraction has not accounted for.
+                  (if (and
+                    (not
+                      (opt-bce-mb-counter-offset-none?
+                        (compiler-opt-global-shared-view offset)))
+                    (not (and (= step 1) (= delta 0) (= wrap-step 1))))
+                    (OptBceMbMaybeCounter.No)
+                    (OptBceMbMaybeCounter.Some
+                      iphi
+                      seed
+                      inext
+                      bound
+                      step
+                      delta
+                      wrap-step
+                      offset))])]))])))
 
 ;; The counter increment behind a header phi's latch input: `iphi + step` with a
 ;; literal step whose sign the compare's direction demands. `inext` is the
@@ -88094,7 +88557,8 @@
   [descending? : bool]
   [shift : i64]
   [k : i64]
-  [bottom? : bool]) : OptBceMbMaybeCounter
+  [bottom? : bool]
+  [offset : ir.CompilerIrValue]) : OptBceMbMaybeCounter
   (let
     [inext : i64
       (opt-bce-mb-resolve
@@ -88129,7 +88593,8 @@
                   step
                   shift
                   k
-                  bottom?)
+                  bottom?
+                  offset)
                 (OptBceMbMaybeCounter.No)))]
           [_ (OptBceMbMaybeCounter.No)])])))
 
@@ -88145,7 +88610,8 @@
   [descending? : bool]
   [shift : i64]
   [k : i64]
-  [bottom? : bool]) : OptBceMbMaybeCounter
+  [bottom? : bool]
+  [offset : ir.CompilerIrValue]) : OptBceMbMaybeCounter
   (match (opt-bce-mb-find-def
     (compiler-opt-global-shared-view body-blocks)
     core)
@@ -88170,7 +88636,8 @@
                           descending?
                           shift
                           k
-                          bottom?)]
+                          bottom?
+                          offset)]
                       [_ (OptBceMbMaybeCounter.No)]))]
                 [(OptUnrollPhiSplit.No) (OptBceMbMaybeCounter.No)])]
             [_ (OptBceMbMaybeCounter.No)])]
@@ -88203,16 +88670,211 @@
       8)
       [(OptBceVersionStridedCore.No) (OptBceMbMaybeCounter.No)]
       [(OptBceVersionStridedCore.Some core k)
-        (opt-bce-mb-counter-from-phi
-          body-blocks
+        (match (opt-bce-mb-counter-from-phi
+          (compiler-opt-global-shared-view body-blocks)
           latch
           preheader
           core
-          cmp-rhs
+          (compiler-opt-global-shared-view cmp-rhs)
           descending?
           shift
           k
-          bottom?)])))
+          bottom?
+          (ir.CompilerIrValue.I64 0))
+          [(OptBceMbMaybeCounter.Some
+              iphi
+              seed
+              inext
+              bound
+              step
+              delta
+              wrap
+              offset)
+            (OptBceMbMaybeCounter.Some
+              iphi
+              seed
+              inext
+              bound
+              step
+              delta
+              wrap
+              offset)]
+          ;; VT-1: the same test written over `offset + i`.
+          [(OptBceMbMaybeCounter.No)
+            (opt-bce-mb-counter-offset-compare
+              body-blocks
+              defs
+              latch
+              preheader
+              core
+              cmp-rhs
+              descending?
+              shift
+              k
+              bottom?)])])))
+
+;; --- the loop test written over an offset counter -------------------------------
+;;
+;; VT-1. The recovery above lands on the counter phi only when the compare's
+;; left operand IS the counter (up to literal addends). A copy loop written
+;; `while (< (+ src i) end)` -- ssa_construct's `ssa-materialize` inner copy,
+;; `out[fill + i] = in[src + i]`, is the measured one -- tests `src + i`
+;; instead, with `src` loop-invariant, and no counter is recovered at all: the
+;; loop keeps both checks over its whole trip count, and the counter-free phase
+;; cannot help because neither index is invariant or masked.
+;;
+;; The recovery here is the same one, run on the counter side of an Add whose
+;; other side is loop-invariant; what it adds is the OFFSET, which
+;; opt-bce-mb-guard-conds turns into the counter's limit.
+;;
+;; THE RANGE ARGUMENT, in full, because it is the packet's second new fact.
+;; Write `b` for the invariant offset, `N` for the compare's invariant right
+;; operand, `s0` for the counter's seed, and take the unit-step ascending
+;; spelling (the only one opt-bce-mb-counter-shifted admits with an offset).
+;; The guard states, on top of everything it already stated:
+;;
+;;   (O1) b >= 0
+;;   (O2) N >= b
+;;
+;; and computes `M = N - b` (one Sub). The counter's exclusive limit is M:
+;;
+;;   * M IS the mathematical difference. (O1) and (O2) put b in [0, N] with N
+;;     in [0, i64-MAX], so `N - b` lies in [0, N] and the subtraction cannot
+;;     wrap.
+;;   * `b + s0` is the mathematical sum. The finisher's own once-only pair
+;;     gives `s0 >= 0` and `s0 < M` (it emits both whenever a counter-cased
+;;     derivation fired, which is the only way this limit is ever read), so
+;;     `b + s0 < b + M = N <= i64-MAX`; with both addends non-negative the sum
+;;     is representable and `wrap(b + s0) = b + s0`.
+;;   * By induction over the trips, every `b + i` the compare evaluates is the
+;;     mathematical sum: the loop only continues while `b + i < N`, one more
+;;     step reaches at most `N`, and `N <= i64-MAX`. So no evaluation of the
+;;     test ever wraps, and `b + i < N` is exactly `i < M`.
+;;   * Hence the executed counter values are exactly the ones in [s0, M) --
+;;     the same closed statement about the SET of counter values every
+;;     derivation in this pass is written over, with `M` as the bound.
+;;
+;; The bottom-tested spelling reads the same: its compare is over `b + inext`,
+;; the peel folds the increment into `k = step`, and `delta` comes out 0 again,
+;; so the limit is M and the first trip is the one `s0 < M` licenses.
+;;
+;; WHAT STAYS OUT. A descending compare (its mirror would have to subtract at
+;; the other end of the range) and a shifted or non-unit step (see
+;; opt-bce-mb-counter-shifted). The hoisted-upper scan is also withheld from an
+;; offset shape -- it reads `shape.bound` as the counter's own limit, which an
+;; offset shape's is not -- so such a loop derives exactly what the blocks the
+;; compare covers give it (opt-bce-mb-uppers-for-shape).
+(define (opt-bce-mb-counter-offset-side
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [latch : i64]
+  [preheader : i64]
+  [counter-side : ir.CompilerIrValue]
+  [offset-side : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]
+  [shift : i64]
+  [k0 : i64]
+  [bottom? : bool]) : OptBceMbMaybeCounter
+  (match (opt-bce-mb-invariant-operand
+    (compiler-opt-global-shared-view body-blocks)
+    (compiler-opt-global-shared-view defs)
+    (compiler-opt-global-shared-view offset-side))
+    [(ir.CompilerIrMaybeValue.No) (OptBceMbMaybeCounter.No)]
+    [(ir.CompilerIrMaybeValue.Some offset)
+      (if (opt-bce-mb-counter-offset-none?
+        (compiler-opt-global-shared-view offset))
+        ;; A literal-zero offset is the plain form, which the caller already
+        ;; tried; admitting it here would only re-run it.
+        (OptBceMbMaybeCounter.No)
+        (match (opt-bce-mb-strided-peel
+          (compiler-opt-global-shared-view body-blocks)
+          (compiler-opt-global-shared-view counter-side)
+          0
+          8)
+          [(OptBceVersionStridedCore.No) (OptBceMbMaybeCounter.No)]
+          [(OptBceVersionStridedCore.Some core k1)
+            (match (opt-bce-version-k-add k0 k1)
+              [(OptBceVersionKSum.No) (OptBceMbMaybeCounter.No)]
+              [(OptBceVersionKSum.Some k)
+                (opt-bce-mb-counter-from-phi
+                  body-blocks
+                  latch
+                  preheader
+                  core
+                  bound
+                  false
+                  shift
+                  k
+                  bottom?
+                  offset)])]))]))
+
+(define (opt-bce-mb-counter-offset-compare
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [latch : i64]
+  [preheader : i64]
+  [core : i64]
+  [bound : ir.CompilerIrValue]
+  [descending? : bool]
+  [shift : i64]
+  [k0 : i64]
+  [bottom? : bool]) : OptBceMbMaybeCounter
+  (if descending?
+    (OptBceMbMaybeCounter.No)
+    (match (opt-bce-mb-find-def
+      (compiler-opt-global-shared-view body-blocks)
+      core)
+      [(OptBceMbMaybeInstr.No) (OptBceMbMaybeCounter.No)]
+      [(OptBceMbMaybeInstr.Some instr)
+        (match instr
+          [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+            (if (not
+              (and
+                (opt-binop-eq op (ir.CompilerIrBinOp.Add))
+                (opt-affine-64bit-type? ty)))
+              (OptBceMbMaybeCounter.No)
+              (match (opt-bce-mb-counter-offset-side
+                (compiler-opt-global-shared-view body-blocks)
+                (compiler-opt-global-shared-view defs)
+                latch
+                preheader
+                (compiler-opt-global-shared-view rhs)
+                (compiler-opt-global-shared-view lhs)
+                (compiler-opt-global-shared-view bound)
+                shift
+                k0
+                bottom?)
+                [(OptBceMbMaybeCounter.Some
+                    iphi
+                    seed
+                    inext
+                    cbound
+                    step
+                    delta
+                    wrap
+                    offset)
+                  (OptBceMbMaybeCounter.Some
+                    iphi
+                    seed
+                    inext
+                    cbound
+                    step
+                    delta
+                    wrap
+                    offset)]
+                [(OptBceMbMaybeCounter.No)
+                  (opt-bce-mb-counter-offset-side
+                    body-blocks
+                    defs
+                    latch
+                    preheader
+                    lhs
+                    rhs
+                    bound
+                    shift
+                    k0
+                    bottom?)]))]
+          [_ (OptBceMbMaybeCounter.No)])])))
 
 ;; Which way does this compare let the counter walk, and by how much does its
 ;; own order move the limit?
@@ -88310,10 +88972,10 @@
     cond-var
     false)
     [(OptBceMbMaybeCounter.No) (OptBceMbMaybeCounter.No)]
-    [(OptBceMbMaybeCounter.Some iphi seed inext bound step delta wrap)
+    [(OptBceMbMaybeCounter.Some iphi seed inext bound step delta wrap offset)
       (if (< step 0)
         (OptBceMbMaybeCounter.No)
-        (OptBceMbMaybeCounter.Some iphi seed inext bound step delta wrap))]))
+        (OptBceMbMaybeCounter.Some iphi seed inext bound step delta wrap offset))]))
 
 ;; Every header phi must split as (preheader, latch): the header then has
 ;; exactly the two expected predecessors.
@@ -88597,43 +89259,60 @@
   [uncovered : OptLabelSet]
   [counter : OptBceMbMaybeCounter]) : OptBceMbMaybeShape
   (match counter
-    [(OptBceMbMaybeCounter.No) (OptBceMbMaybeShape.No)]
-    [(OptBceMbMaybeCounter.Some iphi seed _ bound step delta wrap-step)
+    [(OptBceMbMaybeCounter.No)
+      (opt-bce-trace-refuse-mb-shape (opt-bce-reason-not-a-counter))]
+    [(OptBceMbMaybeCounter.Some
+        iphi
+        seed
+        _
+        bound
+        step
+        delta
+        wrap-step
+        bound-offset)
       (match (opt-cfg-find-block blocks header)
-        [(OptMaybeBlock.No) (OptBceMbMaybeShape.No)]
+        [(OptMaybeBlock.No)
+          (opt-bce-trace-refuse-mb-shape (opt-bce-reason-latch-form))]
         [(OptMaybeBlock.Some header-block)
           (match header-block
             [(ir.CompilerIrBlock.Block _ header-instrs)
-              (if (and
-                (opt-bce-mb-header-phis-ok?
-                  (compiler-opt-global-shared-view header-instrs)
-                  0
-                  (opt-unroll-phi-prefix-count header-instrs 0)
-                  latch
-                  pred)
-                (>=
-                  (opt-bce-mb-body-checks
-                    (compiler-opt-global-shared-view body-blocks)
-                    0)
-                  1))
-                (OptBceMbMaybeShape.Some
-                  (OptBceMbShape
-                    header
+              (let
+                [phis-ok? : bool
+                  (opt-bce-mb-header-phis-ok?
+                    (compiler-opt-global-shared-view header-instrs)
+                    0
+                    (opt-unroll-phi-prefix-count header-instrs 0)
                     latch
-                    pred
-                    body-labels
-                    body-blocks
-                    iphi
-                    seed
-                    bound
-                    step
-                    delta
-                    wrap-step
-                    uncovered
-                    inner
-                    region?
-                    true))
-                (OptBceMbMaybeShape.No))])])]))
+                    pred)]
+                (if (and
+                  phis-ok?
+                  (>=
+                    (opt-bce-mb-body-checks
+                      (compiler-opt-global-shared-view body-blocks)
+                      0)
+                    1))
+                  (OptBceMbMaybeShape.Some
+                    (OptBceMbShape
+                      header
+                      latch
+                      pred
+                      body-labels
+                      body-blocks
+                      iphi
+                      seed
+                      bound
+                      step
+                      delta
+                      wrap-step
+                      bound-offset
+                      uncovered
+                      inner
+                      region?
+                      true))
+                  (opt-bce-trace-refuse-mb-shape
+                    (if phis-ok?
+                      (opt-bce-reason-no-check)
+                      (opt-bce-reason-header-phis)))))])])]))
 
 ;; --- the counter-free shape ---------------------------------------------------
 ;;
@@ -88672,42 +89351,50 @@
   [inner : OptLabelSet]
   [region? : bool]) : OptBceMbMaybeShape
   (match (opt-cfg-find-block blocks header)
-    [(OptMaybeBlock.No) (OptBceMbMaybeShape.No)]
+    [(OptMaybeBlock.No)
+      (opt-bce-trace-refuse-mb-shape (opt-bce-reason-latch-form))]
     [(OptMaybeBlock.Some header-block)
       (match header-block
         [(ir.CompilerIrBlock.Block _ header-instrs)
-          (if (and
-            (opt-bce-mb-header-phis-ok?
-              (compiler-opt-global-shared-view header-instrs)
-              0
-              (opt-unroll-phi-prefix-count
+          (let
+            [phis-ok? : bool
+              (opt-bce-mb-header-phis-ok?
                 (compiler-opt-global-shared-view header-instrs)
-                0)
-              latch
-              pred)
-            (>=
-              (opt-bce-mb-body-checks
-                (compiler-opt-global-shared-view body-blocks)
-                0)
-              1))
-            (OptBceMbMaybeShape.Some
-              (OptBceMbShape
-                header
-                latch
-                pred
-                body-labels
-                body-blocks
-                -1
-                (ir.CompilerIrValue.I64 0)
-                (ir.CompilerIrValue.I64 0)
-                1
                 0
-                1
-                (OptLabelSet.Nil)
-                inner
-                region?
-                false))
-            (OptBceMbMaybeShape.No))])]))
+                (opt-unroll-phi-prefix-count
+                  (compiler-opt-global-shared-view header-instrs)
+                  0)
+                latch
+                pred)]
+            (if (and
+              phis-ok?
+              (>=
+                (opt-bce-mb-body-checks
+                  (compiler-opt-global-shared-view body-blocks)
+                  0)
+                1))
+              (OptBceMbMaybeShape.Some
+                (OptBceMbShape
+                  header
+                  latch
+                  pred
+                  body-labels
+                  body-blocks
+                  -1
+                  (ir.CompilerIrValue.I64 0)
+                  (ir.CompilerIrValue.I64 0)
+                  1
+                  0
+                  1
+                  (ir.CompilerIrValue.I64 0)
+                  (OptLabelSet.Nil)
+                  inner
+                  region?
+                  false))
+              (opt-bce-trace-refuse-mb-shape
+                (if phis-ok?
+                  (opt-bce-reason-no-check)
+                  (opt-bce-reason-header-phis)))))])]))
 
 ;; Does another natural loop's header sit inside this candidate's body? A
 ;; nest is admitted (the clone is just more blocks -- see the nest note on
@@ -88812,39 +89499,55 @@
         (if nested?
           (opt-bce-mb-nest-instr-max)
           (opt-bce-mb-instr-max)))]
-    (if (or
-      (and
-        (< (opt-label-count (compiler-opt-global-shared-view body-labels)) 2)
-        ;; The one-block admission `opt-bce-mb-loop-shape` states: a self-loop
-        ;; reaches this scan only when it holds the direct call the
-        ;; single-block versioner refuses to clone.
-        (<
-          (opt-bce-mb-body-calls
-            (compiler-opt-global-shared-view body-blocks)
-            0)
-          1))
-      (>
-        (opt-label-count (compiler-opt-global-shared-view body-labels))
-        block-max)
-      (>
-        (opt-bce-mb-body-instrs (compiler-opt-global-shared-view body-blocks) 0)
-        instr-max)
-      (opt-bce-mb-label-in-clone? header)
-      (opt-cfg-block-exists?
-        (compiler-opt-global-shared-view blocks)
-        (ir.compiler-ir-label
-          (str_cat.str-cat (ir.compiler-ir-label-text header) "__bce_guard")))
-      (opt-bce-mb-body-has-total-enum-switch?
-        (compiler-opt-global-shared-view body-blocks))
-      (not
-        (opt-bce-mb-fast-labels-fresh?
-          (compiler-opt-global-shared-view blocks)
-          (compiler-opt-global-shared-view body-labels)))
-      (not
-        (opt-bce-mb-fallthroughs-ok?
-          (compiler-opt-global-shared-view blocks)
-          (compiler-opt-global-shared-view body-labels))))
-      (OptBceMbMaybeShape.No)
+    [reason : i64
+      (cond
+        [(and
+            (<
+              (opt-label-count (compiler-opt-global-shared-view body-labels))
+              2)
+            ;; The one-block admission `opt-bce-mb-loop-shape` states: a self-loop
+            ;; reaches this scan only when it holds the direct call the
+            ;; single-block versioner refuses to clone. Unreachable from that
+            ;; admission, and `none` for the same reason it is there: such a loop
+            ;; is the single-block scan's to report.
+            (<
+              (opt-bce-mb-body-calls
+                (compiler-opt-global-shared-view body-blocks)
+                0)
+              1))
+          (opt-bce-reason-none)]
+        [(>
+            (opt-label-count (compiler-opt-global-shared-view body-labels))
+            block-max)
+          (opt-bce-reason-body-too-big)]
+        [(>
+            (opt-bce-mb-body-instrs
+              (compiler-opt-global-shared-view body-blocks)
+              0)
+            instr-max)
+          (opt-bce-reason-body-too-big)]
+        [(opt-bce-mb-label-in-clone? header) (opt-bce-reason-already-versioned)]
+        [(opt-cfg-block-exists?
+            (compiler-opt-global-shared-view blocks)
+            (ir.compiler-ir-label
+              (str_cat.str-cat (ir.compiler-ir-label-text header) "__bce_guard")))
+          (opt-bce-reason-already-versioned)]
+        [(opt-bce-mb-body-has-total-enum-switch?
+            (compiler-opt-global-shared-view body-blocks))
+          (opt-bce-reason-enum-switch)]
+        [(not
+            (opt-bce-mb-fast-labels-fresh?
+              (compiler-opt-global-shared-view blocks)
+              (compiler-opt-global-shared-view body-labels)))
+          (opt-bce-reason-fast-labels)]
+        [(not
+            (opt-bce-mb-fallthroughs-ok?
+              (compiler-opt-global-shared-view blocks)
+              (compiler-opt-global-shared-view body-labels)))
+          (opt-bce-reason-fallthrough)]
+        [else (opt-bce-reason-ok)])]
+    (if (not (= reason (opt-bce-reason-ok)))
+      (opt-bce-trace-refuse-mb-shape reason)
       (if free?
         ;; The COUNTER-FREE phase (see opt-bce-mb-loops-scan-phased): every
         ;; candidate is offered the counter-free shape, whatever its counter
@@ -88872,11 +89575,12 @@
             body-blocks
             inner
             region?)
-          (OptBceMbMaybeShape.No))
+          (opt-bce-trace-refuse-mb-shape (opt-bce-reason-free-not-outermost)))
         (match (opt-cfg-find-block
           (compiler-opt-global-shared-view blocks)
           latch)
-          [(OptMaybeBlock.No) (OptBceMbMaybeShape.No)]
+          [(OptMaybeBlock.No)
+            (opt-bce-trace-refuse-mb-shape (opt-bce-reason-latch-form))]
           [(OptMaybeBlock.Some latch-block)
             (let
               [defs : opt_i64_i64_map.Map
@@ -88959,7 +89663,8 @@
     ;; No canonical counter anywhere. The counter-FREE shape is what admits such
     ;; a loop, and it is offered from its own scan phase rather than here, so a
     ;; counted candidate always gets the slot first.
-    [(OptBceMbMaybeChain.No) (OptBceMbMaybeShape.No)]
+    [(OptBceMbMaybeChain.No)
+      (opt-bce-trace-refuse-mb-shape (opt-bce-reason-not-a-counter))]
     [(OptBceMbMaybeChain.Some counter chain)
       (opt-bce-mb-loop-shape-finish
         blocks
@@ -88986,52 +89691,68 @@
   [loop : OptNaturalLoop]) : OptBceMbMaybeShape
   (match loop
     [(OptNaturalLoop.Loop header latch body preheader)
-      (match preheader
-        [(OptLoopPreheader.No) (OptBceMbMaybeShape.No)]
-        [(OptLoopPreheader.Some pred)
-          (let
-            [nest? : bool
-              (opt-bce-mb-has-nested-loop?
-                (compiler-opt-global-shared-view loops)
-                header
-                (compiler-opt-global-shared-view body.labels))]
-            (if (or
-              ;; SINGLE-BLOCK self-loops belong to the dedicated pass above,
-              ;; EXCEPT for the one thing that pass will not clone: a direct
-              ;; call. `opt-bce-version-body-instr-ok?` has no call in it, and
-              ;; the note at `opt-bce-mb-body-instr-ok?` assumed this scan
-              ;; already reached such loops -- it did not, because of this very
-              ;; clause, so a one-block loop holding a call was versioned by
-              ;; neither pass. gvn_table's `gvn-run-block` is the measured
-              ;; shape: a self-loop whose step-6 derived phi reads
-              ;; `tokens[pos]` .. `tokens[pos+5]` around one `gvn-dispatch`
-              ;; call, whose extremal pair derives as one derived family.
-              ;; Everything downstream already prices and classifies the call
-              ;; (opt-bce-mb-call-clone-min-derived, opt-bce-mb-stable-instr?);
-              ;; only admission was missing. The single-block pass still runs
-              ;; FIRST every round, so every call-free self-loop it can take is
-              ;; still its.
-              (and
-                (= header latch)
-                (<
-                  (opt-bce-mb-body-calls
-                    (compiler-opt-global-shared-view body.blocks)
-                    0)
-                  1))
-              (= header entry-label)
-              (if nested?
-                (not nest?)
-                nest?))
-              (OptBceMbMaybeShape.No)
-              (opt-bce-mb-loop-shape-with-preheader
-                blocks
-                loops
-                nested?
-                free?
-                header
-                latch
-                body
-                pred)))])]))
+      (let
+        [_trace : unit (opt-bce-trace-begin! free?)]
+        (match preheader
+          [(OptLoopPreheader.No)
+            (opt-bce-trace-refuse-mb-shape (opt-bce-reason-no-preheader))]
+          [(OptLoopPreheader.Some pred)
+            (let
+              [nest? : bool
+                (opt-bce-mb-has-nested-loop?
+                  (compiler-opt-global-shared-view loops)
+                  header
+                  (compiler-opt-global-shared-view body.labels))]
+              [reason : i64
+                (cond
+                  ;; SINGLE-BLOCK self-loops belong to the dedicated pass above,
+                  ;; EXCEPT for the one thing that pass will not clone: a direct
+                  ;; call. `opt-bce-version-body-instr-ok?` has no call in it, and
+                  ;; the note at `opt-bce-mb-body-instr-ok?` assumed this scan
+                  ;; already reached such loops -- it did not, because of this very
+                  ;; clause, so a one-block loop holding a call was versioned by
+                  ;; neither pass. gvn_table's `gvn-run-block` is the measured
+                  ;; shape: a self-loop whose step-6 derived phi reads
+                  ;; `tokens[pos]` .. `tokens[pos+5]` around one `gvn-dispatch`
+                  ;; call, whose extremal pair derives as one derived family.
+                  ;; Everything downstream already prices and classifies the call
+                  ;; (opt-bce-mb-call-clone-min-derived, opt-bce-mb-stable-instr?);
+                  ;; only admission was missing. The single-block pass still runs
+                  ;; FIRST every round, so every call-free self-loop it can take is
+                  ;; still its.
+                  ;;
+                  ;; TRACING: this and the phase clause below are the two silences
+                  ;; that are NOT verdicts about the loop. The loop gets its line
+                  ;; from the scan (or the phase) that does own it, and reporting
+                  ;; it here as well would count the same loop twice, so both
+                  ;; record `none` -- the code the emission site reads as "this
+                  ;; step examined nothing". An entry header is a real refusal and
+                  ;; keeps its own code.
+                  [(and
+                      (= header latch)
+                      (<
+                        (opt-bce-mb-body-calls
+                          (compiler-opt-global-shared-view body.blocks)
+                          0)
+                        1))
+                    (opt-bce-reason-none)]
+                  [(if nested?
+                      (not nest?)
+                      nest?)
+                    (opt-bce-reason-none)]
+                  [(= header entry-label) (opt-bce-reason-entry-block)]
+                  [else (opt-bce-reason-ok)])]
+              (if (= reason (opt-bce-reason-ok))
+                (opt-bce-mb-loop-shape-with-preheader
+                  blocks
+                  loops
+                  nested?
+                  free?
+                  header
+                  latch
+                  body
+                  pred)
+                (opt-bce-trace-refuse-mb-shape reason)))]))]))
 
 ;; --- outside uses --------------------------------------------------------------
 ;; Uses of loop defs anywhere outside the loop, except as the loop-edge
@@ -90754,6 +91475,11 @@
     [(OptBceMbKeep.Nil) (OptBceMbKeepEntry.Entry -1 -1)]
     [(OptBceMbKeep.Dense items len) (array-ref items (- (- len 1) index))]))
 
+(define (opt-bce-mb-keep-count [keep : OptBceMbKeep]) : i64
+  (match (compiler-opt-global-shared-view keep)
+    [(OptBceMbKeep.Nil) 0]
+    [(OptBceMbKeep.Dense _ len) len]))
+
 (define (opt-bce-mb-keep-tail [keep : OptBceMbKeep]) : OptBceMbKeep
   (match (compiler-opt-global-shared-view keep)
     [(OptBceMbKeep.Nil) (OptBceMbKeep.Nil)]
@@ -92008,6 +92734,200 @@
             (OptBceCounterAffineBase.Some scale offset base)]))]))
 
 ;; Try either operand order: `counter... + base` and `base + counter...`.
+;; --- the strength-reduced strided side ----------------------------------------
+;;
+;; VT-1. `opt-bce-mb-var-base-side` above recovers the strided side only when it
+;; is SYNTACTICALLY affine in the counter (`scale*i + k`, through Add/Sub/Mul
+;; links). The induction pass routinely rewrites exactly that expression into a
+;; second header phi -- `cursor = phi(3*index0, cursor + 3)` for
+;; `union[base + 3*index + 1]` -- and after that rewrite the affine recovery
+;; sees a Phi and gives up, taking the whole variable-base family with it. The
+;; single-block pass has had the missing arm since the strided families landed
+;; (`opt-bce-version-strided-side` falls through to
+;; `opt-bce-version-strided-derived`); the multi-block pass never grew it, so a
+;; strength-reduced index versioned in a self-loop and not in a two-block one.
+;; regalloc_greedy's `rg-union-refresh-max!` is the measured shape: a four-block
+;; loop whose two checks are `base + cursor + 1` and `base + cursor + 2` over a
+;; step-3 cursor, deriving NOTHING today.
+;;
+;; The recovery is `opt-bce-mb-derived-induction`, which is the multi-block
+;; twin of the one the single-block arm uses and was already written for the
+;; pair path: a header phi split (preheader, latch) whose initializer is
+;; loop-invariant and whose back-edge value is `phi + <positive literal>`. Its
+;; guard is `opt-bce-version-derived-family`, the SAME family builder both
+;; passes' scaled and derived members flush through, so nothing about the
+;; conditions or their soundness argument is new here -- only the shape that
+;; reaches them.
+;;
+;; Three restrictions, each carried over from the single-block arm rather than
+;; invented:
+;;
+;;   COUNTED SHAPES ONLY (`iphi >= 0`). The derived family states
+;;   `index(trip) = derived-seed + step*trip` over the counter's own range, so a
+;;   counter-FREE shape -- whose `iphi` is -1 and whose seed/bound are inert
+;;   placeholders (opt-bce-mb-loop-shape-free) -- has no range for the relation
+;;   to be about. The affine recovery excludes itself from those shapes
+;;   automatically (no var id equals -1); this one must say so, because
+;;   `opt-bce-mb-derived-induction` never looks at the counter at all.
+;;
+;;   MAGNITUDE ABOVE ONE. A unit-step phi is the plain `base + counter + k` fan
+;;   member under another name, and that member is the pico-trip economics class
+;;   the loop-level verdicts price (opt-bce-version-guard-conds' scale-1
+;;   census); routing it here would spend a synthesized seed on it and bypass
+;;   that pricing. `opt-bce-mb-derived-induction` only reports positive steps,
+;;   so this admits steps of two and up.
+;;
+;;   ADD ORDER ONLY. `base - derived + k` would need `base - d0` as its origin,
+;;   a subtraction of two invariant values the seed synthesis has no form for --
+;;   the same restriction, for the same reason, that
+;;   `opt-bce-version-var-base-side-descending` records.
+;;
+;; The counter's own step needs no restriction, and that is worth stating. The
+;; derived phi advances by `step` per LATCH CROSSING while the family's `trip`
+;; is measured in counter values (`counter - seed`), so a counter of step s > 1
+;; makes the family's trip count s times the real crossing count. With a
+;; positive `step` the guard's `last-trip <= (length - 1 - derived-seed) /u step`
+;; is then demanded of a LARGER trip than the loop can reach: strictly stronger
+;; than necessary, never weaker. A descending counter arrives already normalised
+;; into the ascending range `[floor, seed + 1)` (opt-bce-mb-counter-range), where
+;; the same reading holds.
+(define (opt-bce-mb-strided-derived
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [latch : i64]
+  [preheader : i64]
+  [value : ir.CompilerIrValue]
+  [fuel : i64]) : OptBceVarBaseStrided
+  (match (opt-bce-mb-strided-peel
+    (compiler-opt-global-shared-view body-blocks)
+    (compiler-opt-global-shared-view value)
+    0
+    fuel)
+    [(OptBceVersionStridedCore.No) (OptBceVarBaseStrided.No)]
+    [(OptBceVersionStridedCore.Some core total)
+      (match (opt-bce-mb-find-def
+        (compiler-opt-global-shared-view body-blocks)
+        core)
+        [(OptBceMbMaybeInstr.No) (OptBceVarBaseStrided.No)]
+        [(OptBceMbMaybeInstr.Some instr)
+          (match instr
+            [(ir.CompilerIrInstr.Phi _ inputs pty)
+              (match pty
+                [(ast.AstType.I64)
+                  (match (opt-bce-mb-derived-induction
+                    (compiler-opt-global-shared-view body-blocks)
+                    (compiler-opt-global-shared-view defs)
+                    latch
+                    preheader
+                    core
+                    inputs)
+                    [(OptBceDerivedInduction.No) (OptBceVarBaseStrided.No)]
+                    [(OptBceDerivedInduction.Some d0 step)
+                      (if (> (opt-bce-counter-affine-magnitude step) 1)
+                        (OptBceVarBaseStrided.Derived d0 step total)
+                        (OptBceVarBaseStrided.No))])]
+                [_ (OptBceVarBaseStrided.No)])]
+            [_ (OptBceVarBaseStrided.No)])])]))
+
+;; One Add side as a derived induction phi, the other as the invariant base.
+(define (opt-bce-mb-var-base-derived-side
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [latch : i64]
+  [preheader : i64]
+  [iphi : i64]
+  [seed : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]
+  [k0 : i64]
+  [affine-side : ir.CompilerIrValue]
+  [base-side : ir.CompilerIrValue]
+  [length-value : ir.CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]
+  [fan : OptBceVersionFan]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (if (< iphi 0)
+    (OptBceVersionGuardAcc.No)
+    (match (opt-bce-mb-strided-derived
+      (compiler-opt-global-shared-view body-blocks)
+      (compiler-opt-global-shared-view defs)
+      latch
+      preheader
+      (compiler-opt-global-shared-view affine-side)
+      16)
+      [(OptBceVarBaseStrided.No) (OptBceVersionGuardAcc.No)]
+      [(OptBceVarBaseStrided.Scaled _ _) (OptBceVersionGuardAcc.No)]
+      [(OptBceVarBaseStrided.Derived d0 step k2)
+        (match (opt-bce-version-k-add k0 k2)
+          [(OptBceVersionKSum.No) (OptBceVersionGuardAcc.No)]
+          [(OptBceVersionKSum.Some offset)
+            (match (opt-bce-mb-invariant-operand
+              (compiler-opt-global-shared-view body-blocks)
+              (compiler-opt-global-shared-view defs)
+              (compiler-opt-global-shared-view base-side))
+              [(ir.CompilerIrMaybeValue.No) (OptBceVersionGuardAcc.No)]
+              [(ir.CompilerIrMaybeValue.Some base)
+                (opt-bce-version-derived-family
+                  fan
+                  seed
+                  bound
+                  base
+                  d0
+                  offset
+                  step
+                  length-value
+                  cell
+                  acc)])])])))
+
+;; Try either operand order: `derived... + base` and `base + derived...`.
+(define (opt-bce-mb-var-base-derived-add
+  [body-blocks : ir.CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [latch : i64]
+  [preheader : i64]
+  [iphi : i64]
+  [seed : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]
+  [k0 : i64]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [length-value : ir.CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]
+  [fan : OptBceVersionFan]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (match (opt-bce-mb-var-base-derived-side
+    (compiler-opt-global-shared-view body-blocks)
+    (compiler-opt-global-shared-view defs)
+    latch
+    preheader
+    iphi
+    (compiler-opt-global-shared-view seed)
+    (compiler-opt-global-shared-view bound)
+    k0
+    (compiler-opt-global-shared-view lhs)
+    (compiler-opt-global-shared-view rhs)
+    (compiler-opt-global-shared-view length-value)
+    (compiler-opt-global-shared-view cell)
+    (compiler-opt-global-shared-view fan)
+    (compiler-opt-global-shared-view acc))
+    [(OptBceVersionGuardAcc.Some next-instrs next-values next-seen)
+      (OptBceVersionGuardAcc.Some next-instrs next-values next-seen)]
+    [(OptBceVersionGuardAcc.No)
+      (opt-bce-mb-var-base-derived-side
+        body-blocks
+        defs
+        latch
+        preheader
+        iphi
+        seed
+        bound
+        k0
+        rhs
+        lhs
+        length-value
+        cell
+        fan
+        acc)]))
+
 (define (opt-bce-mb-var-base-add
   [body-blocks : ir.CompilerIrBlockList]
   [defs : opt_i64_i64_map.Map]
@@ -93315,13 +94235,37 @@
                                           (match core-op
                                             [(ir.CompilerIrBinOp.Add)
                                               (match (opt-bce-mb-var-base-add
-                                                body-blocks
-                                                defs
+                                                (compiler-opt-global-shared-view
+                                                  body-blocks)
+                                                (compiler-opt-global-shared-view
+                                                  defs)
                                                 iphi
-                                                core-lhs
-                                                core-rhs)
+                                                (compiler-opt-global-shared-view
+                                                  core-lhs)
+                                                (compiler-opt-global-shared-view
+                                                  core-rhs))
                                                 [(OptBceCounterAffineBase.No)
-                                                  (OptBceVersionGuardAcc.No)]
+                                                  ;; VT-1: the same index after
+                                                  ;; strength reduction, with
+                                                  ;; the strided side a derived
+                                                  ;; induction phi rather than a
+                                                  ;; syntactic multiple of the
+                                                  ;; counter.
+                                                  (opt-bce-mb-var-base-derived-add
+                                                    body-blocks
+                                                    defs
+                                                    latch
+                                                    preheader
+                                                    iphi
+                                                    seed
+                                                    bound
+                                                    k0
+                                                    core-lhs
+                                                    core-rhs
+                                                    length-value
+                                                    cell
+                                                    fan
+                                                    acc)]
                                                 [(OptBceCounterAffineBase.Some
                                                     scale
                                                     k2
@@ -94709,17 +95653,28 @@
         uppers)]))
 
 ;; Nothing is hoisted for a loop whose counter compare dominates no body block.
+;;
+;; VT-1: nor for an OFFSET shape. The scan matches a body compare against
+;; `shape.bound` and the flush states the match against the range's LIMIT; for
+;; an offset counter those are two different values (`bound` and
+;; `bound - offset`), so the pair would relate facts about one to conditions
+;; about the other. An offset shape simply hoists no upper and derives only
+;; what the covered blocks give it.
 (define (opt-bce-mb-uppers-for-shape [shape : OptBceMbShape]) : OptBceMbUppers
-  (match shape.uncovered
-    [(OptLabelSet.Nil) (opt-bce-mb-uppers-new)]
-    [(OptLabelSet.Dense _ _)
-      (opt-bce-mb-upper-scan
-        (compiler-opt-global-shared-view shape.body-blocks)
-        shape.body-blocks
-        shape.iphi
-        shape.bound
-        shape.uncovered
-        (opt-bce-mb-uppers-new))]))
+  (if (not
+    (opt-bce-mb-counter-offset-none?
+      (compiler-opt-global-shared-view shape.bound-offset)))
+    (opt-bce-mb-uppers-new)
+    (match shape.uncovered
+      [(OptLabelSet.Nil) (opt-bce-mb-uppers-new)]
+      [(OptLabelSet.Dense _ _)
+        (opt-bce-mb-upper-scan
+          (compiler-opt-global-shared-view shape.body-blocks)
+          shape.body-blocks
+          shape.iphi
+          shape.bound
+          shape.uncovered
+          (opt-bce-mb-uppers-new))])))
 
 (define (opt-bce-mb-upper-conds
   [cell : (__tl_dyn-array i64)]
@@ -95112,6 +96067,54 @@
 ;; latch scan recovers a negative step (opt-bce-mb-counter-step), and that path
 ;; passes the empty set because its compare covers the whole body. So the
 ;; entry-guard-chain uppers below never see a mirrored range.
+;; VT-1. The counter's exclusive limit for an OFFSET shape, and the guard
+;; prelude that computes it: `M = bound - offset`, behind the two conjuncts
+;; (O1) `offset >= 0` and (O2) `bound >= offset` the argument at
+;; `opt-bce-mb-counter-offset-side` is stated over. A shape without an offset
+;; passes its own bound through and starts from the empty accumulator, which is
+;; exactly what the pass built before.
+(defenum OptBceMbBoundPrelude
+  ;; the counter's exclusive limit, and the guard stream that computes it
+  (Some ir.CompilerIrValue OptBceVersionGuardAcc))
+
+(define (opt-bce-mb-bound-prelude
+  [bound : ir.CompilerIrValue]
+  [offset : ir.CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]) : OptBceMbBoundPrelude
+  (if (opt-bce-mb-counter-offset-none? (compiler-opt-global-shared-view offset))
+    (OptBceMbBoundPrelude.Some
+      (compiler-opt-global-shared-view bound)
+      (OptBceVersionGuardAcc.Some
+        (ir.compiler-ir-instr-builder-new)
+        (ir.compiler-ir-value-seq-empty)
+        false))
+    (let
+      [dst : i64
+        (opt-bce-version-alloc-var (compiler-opt-global-shared-view cell))]
+      (OptBceMbBoundPrelude.Some
+        (ir.CompilerIrValue.Var dst)
+        (opt-bce-version-cond
+          (compiler-opt-global-shared-view cell)
+          (ir.CompilerIrBinOp.Ge)
+          (compiler-opt-global-shared-view bound)
+          (compiler-opt-global-shared-view offset)
+          (opt-bce-version-cond
+            (compiler-opt-global-shared-view cell)
+            (ir.CompilerIrBinOp.Ge)
+            (compiler-opt-global-shared-view offset)
+            (ir.CompilerIrValue.I64 0)
+            (OptBceVersionGuardAcc.Some
+              (opt-bce-version-builder-push
+                (ir.compiler-ir-instr-builder-new)
+                (ir.CompilerIrInstr.BinOp
+                  dst
+                  (ir.CompilerIrBinOp.Sub)
+                  bound
+                  offset
+                  (ast.AstType.I64)))
+              (ir.compiler-ir-value-seq-empty)
+              false)))))))
+
 (define (opt-bce-mb-guard-conds
   [doms : OptDomInfo]
   [descriptor : OptBceMbDescriptor]
@@ -95120,31 +96123,34 @@
   [shape : OptBceMbShape]
   [defs : opt_i64_i64_map.Map]
   [cell : (__tl_dyn-array i64)]) : OptBceMbGuardOut
-  (match (opt-bce-mb-counter-range
-    (compiler-opt-global-shared-view shape.seed)
+  (match (opt-bce-mb-bound-prelude
     (compiler-opt-global-shared-view shape.bound)
-    shape.step
-    shape.delta
-    shape.wrap-step
-    (compiler-opt-global-shared-view cell)
-    (OptBceVersionGuardAcc.Some
-      (ir.compiler-ir-instr-builder-new)
-      (ir.compiler-ir-value-seq-empty)
-      false))
-    [(OptBceMbRange.No) (OptBceMbGuardOut.No)]
-    [(OptBceMbRange.Some first limit step seeded)
-      (opt-bce-mb-guard-conds-ranged
-        doms
-        descriptor
-        stable?
-        all-blocks
-        (compiler-opt-global-shared-view shape)
-        defs
+    (compiler-opt-global-shared-view shape.bound-offset)
+    (compiler-opt-global-shared-view cell))
+    [(OptBceMbBoundPrelude.Some limit prelude)
+      (match (opt-bce-mb-counter-range
+        (compiler-opt-global-shared-view shape.seed)
+        (compiler-opt-global-shared-view limit)
+        shape.step
+        shape.delta
+        shape.wrap-step
         (compiler-opt-global-shared-view cell)
-        first
-        limit
-        step
-        seeded)]))
+        prelude)
+        [(OptBceMbRange.No)
+          (opt-bce-trace-refuse-mb-guard (opt-bce-reason-bound-range))]
+        [(OptBceMbRange.Some first range-limit range-step seeded)
+          (opt-bce-mb-guard-conds-ranged
+            doms
+            descriptor
+            stable?
+            all-blocks
+            (compiler-opt-global-shared-view shape)
+            defs
+            (compiler-opt-global-shared-view cell)
+            first
+            range-limit
+            range-step
+            seeded)])]))
 
 (define (opt-bce-mb-guard-conds-ranged
   [doms : OptDomInfo]
@@ -95161,8 +96167,16 @@
   (let
     ;; A counter-free shape has no seed/bound pair a dominating branch could
     ;; have decided, so the once-only lookups below are not even asked.
+    ;; VT-1: an OFFSET shape's `shape.bound` is the compare's operand, not the
+    ;; counter's limit, so the once-only lookups below -- which match a
+    ;; dominating branch against `first`/`limit` -- must not be asked about it.
     [ascending-exact? : bool
-      (and shape.counted? (> shape.step 0) (= shape.delta 0))]
+      (and
+        shape.counted?
+        (> shape.step 0)
+        (= shape.delta 0)
+        (opt-bce-mb-counter-offset-none?
+          (compiler-opt-global-shared-view shape.bound-offset)))]
     [fan : OptBceVersionFan (opt-bce-version-fan-new)]
     [dr : OptBceMbDerive
       (opt-bce-mb-derive-blocks
@@ -95188,6 +96202,10 @@
           (OptBceMbHoists.Nil)
           (opt-bce-mb-fused-new)))]
     [counter-seen : bool (opt-bce-version-guard-counter-seen? (& dr.guard))]
+    [_trace : unit
+      (opt-bce-trace-derivation!
+        dr.derived
+        (opt-bce-mb-keep-count (compiler-opt-global-shared-view dr.keep)))]
     (if (or
       ;; No removable check: cloning the loop would only duplicate it. A body
       ;; that duplicates CALL SITES owes more than one -- see
@@ -95217,7 +96235,22 @@
               (__tl-project-field shape body-blocks))
             shape.inner
             (compiler-opt-global-shared-view dr.keep)))))
-      (OptBceMbGuardOut.No)
+      ;; Which of the two the clause above was: a body that derived NOTHING is
+      ;; the pass's oldest rejection and reads differently in a census from a
+      ;; body that derived checks and still owed more of them.
+      (opt-bce-trace-refuse-mb-guard
+        (cond
+          [(= dr.derived 0) (opt-bce-reason-derived-zero)]
+          [(<
+              dr.derived
+              (opt-bce-mb-call-clone-min-derived
+                (opt-bce-mb-body-calls
+                  (compiler-opt-global-shared-view shape.body-blocks)
+                  0)
+                (opt-label-count
+                  (compiler-opt-global-shared-view shape.body-labels))))
+            (opt-bce-reason-floor)]
+          [else (opt-bce-reason-region-inner)]))
       (match (opt-bce-version-guard-finish
         (compiler-opt-global-shared-view first)
         (compiler-opt-global-shared-view limit)
@@ -95284,7 +96317,8 @@
             (opt-bce-mb-uppers-for-shape
               (compiler-opt-global-shared-view shape))
             (compiler-opt-global-shared-view dr.guard))))
-        [(OptBceVersionGuardResult.No) (OptBceMbGuardOut.No)]
+        [(OptBceVersionGuardResult.No)
+          (opt-bce-trace-refuse-mb-guard (opt-bce-reason-unsatisfiable))]
         [(OptBceVersionGuardResult.Some guard-instrs guard-value)
           ;; COUNTER-FREE ECONOMICS: one conjunct per removed check, at most.
           ;;
@@ -95314,7 +96348,7 @@
                 0
                 0)
               dr.derived))
-            (OptBceMbGuardOut.No)
+            (opt-bce-trace-refuse-mb-guard (opt-bce-reason-free-cost))
             (OptBceMbGuardOut.Some
               (compiler-opt-global-shared-view guard-instrs)
               (compiler-opt-global-shared-view guard-value)
@@ -97302,7 +98336,11 @@
                       ;; limit is `bound + delta`, so the sink would be reading
                       ;; a fact about a value its clone never names; skip it
                       ;; there, exactly as the descending shape skips it above.
+                      ;; VT-1's offset shape names `bound - offset` instead, and
+                      ;; skips for the same reason.
                       (= shape.delta 0)
+                      (opt-bce-mb-counter-offset-none?
+                        (compiler-opt-global-shared-view shape.bound-offset))
                       (opt-bce-mb-strict-check-chain?
                         (compiler-opt-global-shared-view all-blocks)
                         shape.preheader
@@ -97877,7 +98915,15 @@
               ;; no counter for a phi to track and no real seed to match, so it
               ;; skips the sink for the same reason.
               [bounded : i64
-                (if (or (not shape.counted?) (< shape.step 0))
+                (if (or
+                  (not shape.counted?)
+                  (< shape.step 0)
+                  ;; VT-1: an offset shape's seed is not the value a tracking
+                  ;; phi would share, for the same reason the descending one's
+                  ;; is not.
+                  (not
+                    (opt-bce-mb-counter-offset-none?
+                      (compiler-opt-global-shared-view shape.bound-offset))))
                   -1
                   (opt-bce-mb-find-bounded-phi
                     (compiler-opt-global-shared-view shape.body-blocks)
@@ -97934,6 +98980,7 @@
       shape.step
       shape.delta
       shape.wrap-step
+      shape.bound-offset
       shape.uncovered
       shape.inner
       shape.region?
@@ -97991,7 +99038,11 @@
         (compiler-opt-global-shared-view body-blocks)
         (compiler-opt-global-shared-view cell)
         (OptLabelSet.Nil))
-        [(OptBceMbWiring.No) (OptUnrollResult.Result original frame false)]
+        [(OptBceMbWiring.No)
+          (opt-bce-trace-refuse-result
+            (opt-bce-reason-exit-wiring)
+            original
+            frame)]
         [(OptBceMbWiring.Some wired-blocks stub-labels)
           (let
             [stub-blocks : ir.CompilerIrBlockList
@@ -98043,13 +99094,19 @@
                 (compiler-opt-global-shared-view clone-defs)
                 (OptLabelSet.Nil))
                 [(OptBceMbMaybeLabels.No)
-                  (OptUnrollResult.Result original frame false)]
+                  (opt-bce-trace-refuse-result
+                    (opt-bce-reason-defs-escape)
+                    original
+                    frame)]
                 [(OptBceMbMaybeLabels.Some phi-stubs)
                   (if (=
                     (opt-label-count
                       (compiler-opt-global-shared-view phi-stubs))
                     0)
-                    (OptUnrollResult.Result original frame false)
+                    (opt-bce-trace-refuse-result
+                      (opt-bce-reason-defs-escape)
+                      original
+                      frame)
                     (let
                       [wide-labels : OptLabelSet
                         (opt-bce-mb-labels-union
@@ -98069,7 +99126,10 @@
                       (if (opt-bce-mb-defs-escape?
                         (compiler-opt-global-shared-view wide-blocks)
                         (compiler-opt-global-shared-view wide-outside))
-                        (OptUnrollResult.Result original frame false)
+                        (opt-bce-trace-refuse-result
+                          (opt-bce-reason-defs-escape)
+                          original
+                          frame)
                         (opt-bce-mb-apply-group
                           (compiler-opt-global-shared-view doms)
                           (compiler-opt-global-shared-view descriptor)
@@ -98100,7 +99160,8 @@
       (compiler-opt-global-shared-view (__tl-project-field shape body-labels))
       (compiler-opt-global-shared-view (__tl-project-field shape body-blocks))
       (compiler-opt-global-shared-view cell))
-      [(OptBceMbFarResult.No) (OptUnrollResult.Result blocks frame false)]
+      [(OptBceMbFarResult.No)
+        (opt-bce-trace-refuse-result (opt-bce-reason-far-use) blocks frame)]
       [(OptBceMbFarResult.Same)
         (opt-bce-mb-apply-repaired
           (compiler-opt-global-shared-view doms)
@@ -98171,10 +99232,13 @@
           (compiler-opt-global-shared-view loop))
           [(OptBceMbMaybeShape.Some shape)
             (match (if (and regions-only? (not shape.region?))
-              (OptUnrollResult.Result
+              ;; A REGIONS-ONLY phase offered a non-region candidate: the flat
+              ;; or the ordinary-nest phase owns this loop and reports it, so
+              ;; this step examined nothing.
+              (opt-bce-trace-refuse-result
+                (opt-bce-reason-none)
                 (compiler-opt-global-shared-view blocks)
-                frame
-                false)
+                frame)
               (opt-bce-mb-apply
                 (compiler-opt-global-shared-view descriptor)
                 (compiler-opt-global-shared-view pred-map)
@@ -98184,38 +99248,51 @@
                 frame))
               [(OptUnrollResult.Result next-blocks next-frame changed)
                 (if changed
-                  (OptBceVersionScan.Scan
-                    next-blocks
-                    next-frame
-                    true
-                    shape.header)
-                  (opt-bce-mb-loops-scan
-                    descriptor
-                    pred-map
-                    doms
-                    blocks
-                    all-loops
-                    (compiler-opt-box-shared-view rest)
-                    entry-label
-                    nested?
-                    regions-only?
-                    free?
-                    rejected
-                    frame))])]
+                  (begin
+                    (opt-bce-trace-note! (opt-bce-reason-ok))
+                    (opt-bce-trace-mb-loop!
+                      (compiler-opt-global-shared-view loop)
+                      true)
+                    (OptBceVersionScan.Scan
+                      next-blocks
+                      next-frame
+                      true
+                      shape.header))
+                  (begin
+                    (opt-bce-trace-mb-loop!
+                      (compiler-opt-global-shared-view loop)
+                      false)
+                    (opt-bce-mb-loops-scan
+                      descriptor
+                      pred-map
+                      doms
+                      blocks
+                      all-loops
+                      (compiler-opt-box-shared-view rest)
+                      entry-label
+                      nested?
+                      regions-only?
+                      free?
+                      rejected
+                      frame)))])]
           [(OptBceMbMaybeShape.No)
-            (opt-bce-mb-loops-scan
-              descriptor
-              pred-map
-              doms
-              (compiler-opt-global-shared-view blocks)
-              all-loops
-              (compiler-opt-box-shared-view rest)
-              entry-label
-              nested?
-              regions-only?
-              free?
-              rejected
-              frame)]))]))
+            (begin
+              (opt-bce-trace-mb-loop!
+                (compiler-opt-global-shared-view loop)
+                false)
+              (opt-bce-mb-loops-scan
+                descriptor
+                pred-map
+                doms
+                (compiler-opt-global-shared-view blocks)
+                all-loops
+                (compiler-opt-box-shared-view rest)
+                entry-label
+                nested?
+                regions-only?
+                free?
+                rejected
+                frame))]))]))
 
 ;; Flat loops first, then REGIONS, then ordinary loop NESTS. Every phase
 ;; versions the same way (the clone group is the natural loop's whole block set,
@@ -100006,79 +101083,83 @@
   ;; `context` must be valid for `func`'s current blocks.
   (match (compiler-opt-global-shared-view func)
     [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
-      (if (> single-budget 0)
-        (match (opt-bce-version-blocks-scan
-          type-segment-bases
-          (compiler-opt-global-shared-view blocks)
-          (compiler-opt-global-shared-view blocks)
-          (opt-cfg-entry-label (compiler-opt-global-shared-view blocks))
-          (compiler-opt-global-shared-view rejected)
-          frame)
-          [(OptBceVersionScan.Scan next-blocks next-frame changed applied)
-            (if changed
-              (let
-                [next : ir.CompilerIrFunction
-                  (ir.CompilerIrFunction.Function
-                    name
-                    params
-                    ret-ty
-                    next-frame
-                    (compiler-opt-global-shared-view next-blocks))]
-                [next-context : OptCfgContext
-                  (opt-cfg-context-build
-                    (compiler-opt-global-shared-view next-blocks))]
-                (match (opt-bce-version-apply-verdict
-                  reject-probe
-                  applied
-                  (compiler-opt-global-shared-view next)
-                  (compiler-opt-global-shared-view next-context))
-                  [(ResultCompilerOptimizeVerify.Ok)
-                    (opt-bce-version-function-budget-result
-                      type-segment-bases
-                      direct-call-clean
-                      len-eq
-                      next-context
-                      next
-                      (- single-budget 1)
-                      mb-budget
-                      rejected
-                      reject-probe)]
-                  [(ResultCompilerOptimizeVerify.Err _)
-                    ;; Last verified state, minus this one loop: the scan
-                    ;; skips `applied` from here on and offers the next
-                    ;; candidate against the same budget.
-                    (opt-bce-version-function-budget-result
-                      type-segment-bases
-                      direct-call-clean
-                      len-eq
-                      context
-                      func
-                      single-budget
-                      mb-budget
-                      (opt-label-add rejected applied)
-                      reject-probe)]))
-              ;; no single-block self-loop matched: try multi-block counted
-              ;; loops over the natural-loop back edges.
-              (opt-bce-mb-function-budget-result
-                type-segment-bases
-                direct-call-clean
-                len-eq
-                context
-                func
-                single-budget
-                mb-budget
-                rejected
-                reject-probe))])
-        (opt-bce-mb-function-budget-result
-          type-segment-bases
-          direct-call-clean
-          len-eq
-          context
-          func
-          single-budget
-          mb-budget
-          rejected
-          reject-probe))]))
+      (let
+        [_trace : unit (opt-bce-trace-function! name)]
+        (if (> single-budget 0)
+          (match (opt-bce-version-blocks-scan
+            type-segment-bases
+            (compiler-opt-global-shared-view blocks)
+            (compiler-opt-global-shared-view blocks)
+            (opt-cfg-entry-label (compiler-opt-global-shared-view blocks))
+            (compiler-opt-global-shared-view rejected)
+            frame)
+            [(OptBceVersionScan.Scan next-blocks next-frame changed applied)
+              (if changed
+                (let
+                  [next : ir.CompilerIrFunction
+                    (ir.CompilerIrFunction.Function
+                      name
+                      params
+                      ret-ty
+                      next-frame
+                      (compiler-opt-global-shared-view next-blocks))]
+                  [next-context : OptCfgContext
+                    (opt-cfg-context-build
+                      (compiler-opt-global-shared-view next-blocks))]
+                  (match (opt-bce-version-apply-verdict
+                    reject-probe
+                    applied
+                    (compiler-opt-global-shared-view next)
+                    (compiler-opt-global-shared-view next-context))
+                    [(ResultCompilerOptimizeVerify.Ok)
+                      (opt-bce-version-function-budget-result
+                        type-segment-bases
+                        direct-call-clean
+                        len-eq
+                        next-context
+                        next
+                        (- single-budget 1)
+                        mb-budget
+                        rejected
+                        reject-probe)]
+                    [(ResultCompilerOptimizeVerify.Err _)
+                      ;; Last verified state, minus this one loop: the scan
+                      ;; skips `applied` from here on and offers the next
+                      ;; candidate against the same budget.
+                      (begin
+                        (opt-bce-trace-verify-rejected! applied)
+                        (opt-bce-version-function-budget-result
+                          type-segment-bases
+                          direct-call-clean
+                          len-eq
+                          context
+                          func
+                          single-budget
+                          mb-budget
+                          (opt-label-add rejected applied)
+                          reject-probe))]))
+                ;; no single-block self-loop matched: try multi-block counted
+                ;; loops over the natural-loop back edges.
+                (opt-bce-mb-function-budget-result
+                  type-segment-bases
+                  direct-call-clean
+                  len-eq
+                  context
+                  func
+                  single-budget
+                  mb-budget
+                  rejected
+                  reject-probe))])
+          (opt-bce-mb-function-budget-result
+            type-segment-bases
+            direct-call-clean
+            len-eq
+            context
+            func
+            single-budget
+            mb-budget
+            rejected
+            reject-probe)))]))
 
 (define (opt-bce-mb-function-budget-result
   [type-segment-bases : i64]
@@ -100095,6 +101176,7 @@
     (match (compiler-opt-global-shared-view func)
       [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
         (let
+          [_trace : unit (opt-bce-trace-function! name)]
           [loops : OptNaturalLoopList
             (opt-cfg-natural-loops-with-context
               (compiler-opt-global-shared-view blocks)
@@ -100165,16 +101247,18 @@
                       ;; scan already came up empty for this `rejected` set and
                       ;; a retired multi-block header cannot unlock it, so the
                       ;; retry stays in the multi-block phase.
-                      (opt-bce-mb-function-budget-result
-                        type-segment-bases
-                        direct-call-clean
-                        len-eq
-                        context
-                        func
-                        single-budget
-                        mb-budget
-                        (opt-label-add rejected mb-applied)
-                        reject-probe)]))
+                      (begin
+                        (opt-bce-trace-verify-rejected! mb-applied)
+                        (opt-bce-mb-function-budget-result
+                          type-segment-bases
+                          direct-call-clean
+                          len-eq
+                          context
+                          func
+                          single-budget
+                          mb-budget
+                          (opt-label-add rejected mb-applied)
+                          reject-probe))]))
                 (OptFunctionCtxResult.Result func context))]))])))
 
 (define (opt-bce-version-function-verified-with-context-result
@@ -100279,6 +101363,151 @@
               probe)
               [(OptFunctionCtxResult.Result next _) next])]
           [(ResultCompilerOptimizeVerify.Err _) func]))]))
+
+;; Test-only: the clause the versioner recorded for this function's loops, as
+;; one of the `opt-bce-reason-*` codes. It runs the two scans exactly as the
+;; driver's first round does -- the single-block scan over the blocks, then, if
+;; that examined nothing, the COUNTED FLAT multi-block phase -- and reports what
+;; the last examined loop left in the tracer's cell. `--trace-passes` prints the
+;; same code for the same loop; the probe exists so the reason vocabulary can be
+;; asserted a class at a time from a unit test instead of by parsing a trace,
+;; and it reads the very cell the tracer prints rather than a second copy of the
+;; clause list.
+;;
+;; The counted flat phase is the one asked for on purpose: `--trace-passes`
+;; reports every phase, and the counter-free phases would otherwise overwrite a
+;; counted verdict with their own (weaker) one for the same loop.
+(define (opt-bce-version-reason-probe-blocks
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [remaining : ir.CompilerIrBlockList]
+  [frame : i64]) : i64
+  (match (compiler-opt-global-shared-view remaining)
+    [(ir.CompilerIrBlockList.Nil) (opt-bce-reason-none)]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bce-version-reason-probe-blocks
+        type-segment-bases
+        blocks
+        (ir.compiler-ir-block-seq-to-list seq)
+        frame)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (let
+        ;; one block at a time, so the reason the scan records for a loop is
+        ;; not overwritten by the next block it walks past
+        [_scan : OptBceVersionScan
+          (opt-bce-version-blocks-scan
+            type-segment-bases
+            (compiler-opt-global-shared-view blocks)
+            (ir.compiler-ir-block-cons
+              (compiler-opt-global-shared-view block)
+              (ir.CompilerIrBlockList.Nil))
+            (opt-cfg-entry-label (compiler-opt-global-shared-view blocks))
+            (OptLabelSet.Nil)
+            frame)]
+        (if (not (= opt-bce-trace-reason (opt-bce-reason-none)))
+          opt-bce-trace-reason
+          (opt-bce-version-reason-probe-blocks
+            type-segment-bases
+            blocks
+            (compiler-opt-box-shared-view rest)
+            frame)))]))
+
+(define (opt-bce-version-reason-probe-loops
+  [descriptor : OptBceMbDescriptor]
+  [context : OptCfgContext]
+  [blocks : ir.CompilerIrBlockList]
+  [all-loops : OptNaturalLoopList]
+  [remaining : OptNaturalLoopList]
+  [frame : i64]) : i64
+  (match (compiler-opt-global-shared-view remaining)
+    [(OptNaturalLoopList.Nil) (opt-bce-reason-none)]
+    [(OptNaturalLoopList.Cons loop rest)
+      (let
+        [_scan : OptBceVersionScan
+          (opt-bce-mb-loops-scan
+            (compiler-opt-global-shared-view descriptor)
+            (compiler-opt-global-shared-view
+              (__tl-project-field context pred-map))
+            (compiler-opt-global-shared-view (__tl-project-field context doms))
+            (compiler-opt-global-shared-view blocks)
+            (compiler-opt-global-shared-view all-loops)
+            (OptNaturalLoopList.Cons
+              (compiler-opt-global-shared-view loop)
+              (box (OptNaturalLoopList.Nil)))
+            (opt-cfg-entry-label (compiler-opt-global-shared-view blocks))
+            false
+            false
+            false
+            (OptLabelSet.Nil)
+            frame)]
+        (if (not (= opt-bce-trace-reason (opt-bce-reason-none)))
+          opt-bce-trace-reason
+          (opt-bce-version-reason-probe-loops
+            descriptor
+            context
+            blocks
+            all-loops
+            (compiler-opt-box-shared-view rest)
+            frame)))]))
+
+;; Test-only: the clause the versioner recorded for this function's loops, as
+;; one of the `opt-bce-reason-*` codes. It runs the two scans exactly as the
+;; driver's first round does -- the single-block scan over the blocks, then the
+;; COUNTED FLAT multi-block phase over the natural loops -- one candidate at a
+;; time, and reports the first clause a candidate left in the tracer's cell.
+;; `--trace-passes` prints the same code for the same loop; the probe exists so
+;; the reason vocabulary can be asserted a class at a time from a unit test
+;; instead of by parsing a trace, and it reads the very cell the tracer prints
+;; rather than a second copy of the clause list.
+;;
+;; The counted flat phase is the one asked for on purpose: `--trace-passes`
+;; reports every phase, and the counter-free phases would otherwise overwrite a
+;; counted verdict with their own (weaker) one for the same loop.
+(define (opt-bce-version-reason-probe
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : i64
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function _ params _ frame blocks)
+      (let
+        [context : OptCfgContext
+          (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
+        [single : i64
+          (opt-bce-version-reason-probe-blocks
+            type-segment-bases
+            (compiler-opt-global-shared-view blocks)
+            (compiler-opt-global-shared-view blocks)
+            frame)]
+        (if (not (= single (opt-bce-reason-none)))
+          single
+          (let
+            [loops : OptNaturalLoopList
+              (opt-cfg-natural-loops-with-context
+                (compiler-opt-global-shared-view blocks)
+                (compiler-opt-global-shared-view context))]
+            [descriptor : OptBceMbDescriptor
+              (if (< type-segment-bases 0)
+                (OptBceMbDescriptor.No)
+                (OptBceMbDescriptor.Some
+                  type-segment-bases
+                  (opt-load-header-set-from-function
+                    type-segment-bases
+                    (compiler-opt-global-shared-view params)
+                    (compiler-opt-global-shared-view blocks))
+                  (opt_i64_i64_map.with-capacity 1)
+                  (opt_i64_i64_map.with-capacity 1)
+                  (opt-lp-memo-build
+                    type-segment-bases
+                    (compiler-opt-global-shared-view context)
+                    (compiler-opt-global-shared-view params)
+                    frame
+                    (compiler-opt-global-shared-view blocks))))]
+            (opt-bce-version-reason-probe-loops
+              (compiler-opt-global-shared-view descriptor)
+              (compiler-opt-global-shared-view context)
+              (compiler-opt-global-shared-view blocks)
+              (compiler-opt-global-shared-view loops)
+              (compiler-opt-global-shared-view loops)
+              frame))))]))
 
 ;; Test entry with type-pool access: descriptor-length recognition is live.
 ;; No callee is proven clean, so a call in the loop body refuses every
@@ -100695,7 +101924,15 @@
   [exit-label : i64]) : OptUnrollMbMaybeShape
   (match counter
     [(OptBceMbMaybeCounter.No) (OptUnrollMbMaybeShape.No)]
-    [(OptBceMbMaybeCounter.Some iphi seed inext bound step delta _wrap)
+    [(OptBceMbMaybeCounter.Some
+        iphi
+        seed
+        inext
+        bound
+        step
+        delta
+        _wrap
+        bound-offset)
       (match (opt-cfg-find-block
         (compiler-opt-global-shared-view blocks)
         header)
@@ -100719,6 +101956,10 @@
                   ;; shape whose real limit is `bound + delta` keeps the same
                   ;; refusal rather than being handed the wrong one.
                   (= delta 0)
+                  ;; And VT-1's OFFSET shape, whose real limit is
+                  ;; `bound - offset`: the same refusal for the same reason.
+                  (opt-bce-mb-counter-offset-none?
+                    (compiler-opt-global-shared-view bound-offset))
                   (>= phi-count 1)
                   (<= phi-count 2)
                   (opt-bce-mb-header-phis-ok?

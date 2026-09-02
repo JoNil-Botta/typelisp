@@ -80508,6 +80508,356 @@
         6]
       [else 42])))
 
+;; --- VT-1: the two multi-block recoveries the refusal census turned up -------
+;;
+;; One fixture family, seven variants, over the smallest counted multi-block
+;; loop there is: `entry` preheads `header` (the counter phi and the loop test),
+;; `header` branches to `body` (the checks and the increments, closing the back
+;; edge with a plain `Jump`) or to `exit` (a one-input phi carrying the counter
+;; out). The natural loop is two blocks, so the single-block pass leaves it to
+;; the multi-block one, and its preheader is outside every loop, so no phase or
+;; region clause is in the way -- what each variant exercises is exactly the
+;; clause it is built for.
+;;
+;;   0  DERIVED, positive. `cursor = phi(0, cursor + 3)` and the two checks
+;;      `base + cursor` and `base + cursor + 1`, which is the strength-reduced
+;;      form of `base + 3*i + k` that regalloc_greedy's `rg-union-refresh-max!`
+;;      carries. Both derive, and the fast clone keeps neither check.
+;;   1  DERIVED, unit step. The step-1 phi is the plain `base + counter + k`
+;;      fan member under another name and stays with the pricing that member
+;;      has, so nothing derives.
+;;   2  DERIVED, in-loop base. `base` is computed from the counter inside the
+;;      loop, so it is not a value the guard block can name.
+;;   3  OFFSET, positive. The loop test reads `base + i < n`, the copy-loop
+;;      spelling ssa_construct's `ssa-materialize` uses; the guard subtracts
+;;      once and both checks go.
+;;   4  OFFSET, step two. The offset range argument is stated over a counter
+;;      that reaches the limit one at a time.
+;;   5  OFFSET, descending. The mirror would have to subtract at the other end
+;;      of the range.
+;;   6  OFFSET, in-loop offset. Same objection as variant 2.
+;;   7  OFFSET, positive shape with NO check to remove: the clone would
+;;      duplicate the loop and buy nothing.
+(define (opt-vt-derived-variant? [variant : i64]) : bool
+  (<= variant 2))
+
+(define (opt-vt-descending-variant? [variant : i64]) : bool
+  (= variant 5))
+
+(define (opt-vt-in-loop-variant? [variant : i64]) : bool
+  (or (= variant 2) (= variant 6)))
+
+(define (opt-vt-checkless-variant? [variant : i64]) : bool
+  (= variant 7))
+
+;; The counter's own step: -1 for the descending variant, +2 for the
+;; step-two one, +1 everywhere else.
+(define (opt-vt-counter-step [variant : i64]) : i64
+  (cond [(= variant 4) 2] [else 1]))
+
+(define (opt-vt-cursor-step [variant : i64]) : i64
+  (cond [(= variant 1) 1] [else 3]))
+
+(define (opt-vt-index-base [variant : i64]) : i64
+  (if (opt-vt-in-loop-variant? variant)
+    10
+    2))
+
+(define (opt-vt-header-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instr-seq-prepend
+    (compiler_ir_types.CompilerIrInstr.Phi
+      3
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+        (if (opt-vt-descending-variant? variant)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 0))
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+          (compiler_ir_types.CompilerIrValue.Var 8)
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+      (compiler_ast_types.AstType.I64))
+    (if (opt-vt-derived-variant? variant)
+      ;; the strength-reduced cursor, seeded from a loop-invariant literal
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Phi
+          4
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ir_types.compiler-ir-label "entry")
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+              (compiler_ir_types.CompilerIrValue.Var 9)
+              (compiler_ir_types.compiler-ir-label "body")
+              (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          5
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 5)
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-label "exit")))
+      (if (= variant 6)
+        ;; the offset is computed from the counter, inside the loop
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            10
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            4
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 10)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            5
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-label "exit")))
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            4
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            5
+            (if (opt-vt-descending-variant? variant)
+              (compiler_ir_types.CompilerIrBinOp.Ge)
+              (compiler_ir_types.CompilerIrBinOp.Lt))
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (if (opt-vt-descending-variant? variant)
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ir_types.CompilerIrValue.Var 0))
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-label "exit")))))))
+
+(define (opt-vt-body-tail [variant : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (if (opt-vt-derived-variant? variant)
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        8
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        9
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (compiler_ir_types.CompilerIrValue.I64 (opt-vt-cursor-step variant))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "header")))
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        8
+        (if (opt-vt-descending-variant? variant)
+          (compiler_ir_types.CompilerIrBinOp.Sub)
+          (compiler_ir_types.CompilerIrBinOp.Add))
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.I64 (opt-vt-counter-step variant))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "header")))))
+
+(define (opt-vt-body-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.CompilerIrBlock.Block
+    (compiler_ir_types.compiler-ir-label "body")
+    (if (opt-vt-checkless-variant? variant)
+      (opt-vt-body-tail variant)
+      (opt-test-instr-seq-prepend
+        (if (= variant 2)
+          ;; a "base" the loop itself computes
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            10
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Mov
+            11
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64)))
+        (opt-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            6
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var (opt-vt-index-base variant))
+            (compiler_ir_types.CompilerIrValue.Var
+              (if (opt-vt-derived-variant? variant)
+                4
+                3))
+            (compiler_ast_types.AstType.I64))
+          (opt-test-instr-seq-prepend
+            (compiler_ir_types.CompilerIrInstr.BoundsCheck
+              (compiler_ir_types.CompilerIrValue.Var 6)
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "vt_ok0"))
+            (opt-test-instr-seq-prepend
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                7
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 6)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_ast_types.AstType.I64))
+              (opt-test-instr-seq-prepend
+                (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                  (compiler_ir_types.CompilerIrValue.Var 7)
+                  (compiler_ir_types.CompilerIrValue.Var 1)
+                  (compiler_ir_types.compiler-ir-label "vt_ok1"))
+                (opt-vt-body-tail variant)))))))))
+
+(define (opt-vt-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "header"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "header")
+        (opt-vt-header-instrs variant))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-vt-body-block variant)
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Phi
+                12
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var 3)
+                  (compiler_ir_types.compiler-ir-label "header")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 12)))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-vt-versioned [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-function-blocks
+    (compiler_optimize.opt-bce-version-function
+      (opt-bce-mb-test-function (opt-vt-blocks variant)))))
+
+(define (opt-vt-verified? [variant : i64]) : bool
+  (compiler_optimize.opt-verify-ok?
+    (compiler_optimize.opt-verify-function
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-mb-test-function (opt-vt-blocks variant))))))
+
+(define (opt-vt-reason [variant : i64]) : i64
+  (compiler_optimize.opt-bce-version-reason-probe
+    (- 0 1)
+    (opt-bce-mb-test-function (opt-vt-blocks variant))))
+
+(define (opt-vt-fast-checks [variant : i64]) : i64
+  (opt-bce-version-test-block-checks
+    (opt-vt-versioned variant)
+    (compiler_ir_types.compiler-ir-label "body__bce_fast")))
+
+(define (opt-vt-slow-checks [variant : i64]) : i64
+  (opt-bce-version-test-block-checks
+    (opt-vt-versioned variant)
+    (compiler_ir_types.compiler-ir-label "body")))
+
+(define (compiler-optimize-vt-derived-var-base-self-test) : i64
+  (cond
+    ;; positive: the strength-reduced cursor derives both checks
+    [(not (= (opt-vt-fast-checks 0) 0)) 1]
+    [(not (= (opt-vt-slow-checks 0) 2)) 2]
+    [(not (opt-vt-verified? 0)) 3]
+    ;; negative: a unit-step cursor is the scale-1 member, not this family
+    [(not (= (opt-vt-fast-checks 1) (- 0 1))) 4]
+    [(not (= (opt-vt-slow-checks 1) 2)) 5]
+    ;; negative: a base the loop computes is not a value the guard can name
+    [(not (= (opt-vt-fast-checks 2) (- 0 1))) 6]
+    [(not (= (opt-vt-slow-checks 2) 2)) 7]
+    [else 42]))
+
+(define (compiler-optimize-vt-offset-counter-self-test) : i64
+  (cond
+    ;; positive: `base + i < n` recovers the counter and both checks go
+    [(not (= (opt-vt-fast-checks 3) 0)) 1]
+    [(not (= (opt-vt-slow-checks 3) 2)) 2]
+    [(not (opt-vt-verified? 3)) 3]
+    ;; ...and the guard computes the limit with exactly one subtraction
+    [(<
+        (opt-bce-mb-guard-op-count
+          (opt-vt-versioned 3)
+          "header__bce_guard"
+          (compiler_ir_types.CompilerIrBinOp.Sub))
+        1)
+      4]
+    ;; negative: a step of two does not reach the limit one at a time
+    [(not (= (opt-vt-fast-checks 4) (- 0 1))) 5]
+    [(not (= (opt-vt-slow-checks 4) 2)) 6]
+    ;; negative: the descending mirror is not this argument
+    [(not (= (opt-vt-fast-checks 5) (- 0 1))) 7]
+    [(not (= (opt-vt-slow-checks 5) 2)) 8]
+    ;; negative: an offset the loop computes
+    [(not (= (opt-vt-fast-checks 6) (- 0 1))) 9]
+    [(not (= (opt-vt-slow-checks 6) 2)) 10]
+    [else 42]))
+
+;; The tracer's reason vocabulary, one fixture per class it names here: the
+;; probe reads the very cell `--trace-passes` prints, so a class asserted here
+;; is a class the trace line reports.
+(define (compiler-optimize-vt-trace-reason-self-test) : i64
+  (cond
+    [(not (= (opt-vt-reason 0) (compiler_optimize.opt-bce-reason-ok))) 1]
+    [(not (= (opt-vt-reason 1) (compiler_optimize.opt-bce-reason-derived-zero)))
+      2]
+    [(not
+        (= (opt-vt-reason 4) (compiler_optimize.opt-bce-reason-not-a-counter)))
+      3]
+    [(not (= (opt-vt-reason 7) (compiler_optimize.opt-bce-reason-no-check))) 4]
+    ;; a single-block descending counter of magnitude two
+    [(not
+        (=
+          (compiler_optimize.opt-bce-version-reason-probe
+            (- 0 1)
+            (opt-bce-version-test-function
+              (opt-al-down-blocks 2 (compiler_ir_types.CompilerIrBinOp.Ge))))
+          (compiler_optimize.opt-bce-reason-step-not-unit)))
+      5]
+    ;; the call-carrying quicksort variant, which owes more removals than it has
+    [(not
+        (=
+          (compiler_optimize.opt-bce-version-reason-probe
+            (- 0 1)
+            (opt-bce-mb-test-function (opt-bce-mb-test-blocks 2)))
+          (compiler_optimize.opt-bce-reason-floor)))
+      6]
+    ;; and the fast clone the versioning left behind is offered again: its
+    ;; header's only outside predecessor is the guard block, which branches two
+    ;; ways, so it has no dedicated preheader and is refused on that
+    [(not
+        (=
+          (compiler_optimize.opt-bce-version-reason-probe
+            (- 0 1)
+            (opt-bce-mb-test-function (opt-vt-versioned 3)))
+          (compiler_optimize.opt-bce-reason-no-preheader)))
+      7]
+    [else 42]))
+
 ;; --- CK-1: local allocation-shape length-equality families -------------------
 ;;
 ;; Two spellings are keyed: a bare descriptor a `__tl_make-array` allocated
@@ -84150,6 +84500,27 @@
     (compiler-optimize-bce-version-descending-self-test)
     42
     "a descending unit-step counter latched by `i - 1 >= floor` executes over the same closed interval an ascending counter's [seed, bound) states, so a shift loop reading `base + i` and writing `base + i + 3` against an invariant length versions through the ordinary variable-base fan and its fast clone carries neither check; `> floor` states the same interval, and a magnitude of two -- whose executed values the ascending reading of that interval does not enumerate -- is refused"))
+
+(test
+  bce-version-mb-derived-var-base
+  (test.assert-i64-eq
+    (compiler-optimize-vt-derived-var-base-self-test)
+    42
+    "a two-block counted loop whose checks read `base + cursor` and `base + cursor + 1` off a strength-reduced cursor phi (invariant seed, literal step three) derives both through the same derived family the single-block pass has always used, and its fast clone carries neither check; a unit-step cursor -- the plain scale-1 fan member under another name -- and a base the loop itself computes each keep the loop unversioned"))
+
+(test
+  bce-version-mb-offset-counter
+  (test.assert-i64-eq
+    (compiler-optimize-vt-offset-counter-self-test)
+    42
+    "a loop tested `base + i < n` with a loop-invariant base recovers its counter over the limit `n - base`, which the guard computes with one subtraction behind `base >= 0` and `n >= base`, and both checks leave the fast clone; a step of two, the descending mirror, and an offset the loop itself computes each keep the loop unversioned"))
+
+(test
+  bce-version-refusal-reason-vocabulary
+  (test.assert-i64-eq
+    (compiler-optimize-vt-trace-reason-self-test)
+    42
+    "the clause the versioner records for `--trace-passes` names the decision: `ok` for a versioned loop, `guard:derived-zero` for a body whose derivation proves nothing, `shape:not-a-counter` for a loop test the recovery cannot read, `shape:no-check` for a body with nothing to remove, `shape:step-not-unit` for a descending counter of magnitude two, `guard:floor` for a call-carrying clone that owes more removals than it has, and `shape:no-preheader` for the fast clone a versioning leaves behind"))
 
 (test
   ck-local-allocation-shape-length-equality

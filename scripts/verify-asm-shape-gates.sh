@@ -2128,6 +2128,90 @@ check_alias_global_shift() {
         alias-global-shift
 }
 
+# VT-1: the two multi-block recoveries the refusal census turned up, pinned on
+# the shapes they exist for.
+#
+# `extract_fast_region_with` takes the RUN of consecutive `__bce_fast` blocks
+# the multi-block versioner mints -- its clone is a region, not a self-loop, so
+# ALIAS-1's single-block extractor above does not see it -- and stops at the
+# first block that is not part of the clone.
+extract_fast_region_with() {
+    _body=$1
+    _needle=$2
+    _out="$_body.fastregion"
+    awk -v needle="$_needle" '
+        /__bce_fast[^:]*:$/ {
+            if (!inblk) { inblk = 1; buf = ""; hit = 0 }
+            next
+        }
+        inblk && /^\.L/ {
+            if (index($0, "__bce_fast") > 0) { next }
+            if (hit) { printf "%s", buf; inblk = 0; exit }
+            inblk = 0
+            next
+        }
+        inblk {
+            buf = buf $0 "\n"
+            if (index($0, needle) > 0) { hit = 1 }
+        }
+        END { if (inblk && hit) printf "%s", buf }
+    ' "$_body" > "$_out"
+    printf '%s\n' "$_out"
+}
+
+# The copy loop whose TEST reads `src + i`. Without the offset recovery no
+# counter is found at all (`--trace-passes` says `shape:not-a-counter`) and both
+# checks run every trip; with it the counter's limit is `stop - src`, computed
+# once in the guard, and the clone is a load, an add and a store off one base.
+check_vt_offset_copy() {
+    _asm=$(compile_gate vt_offset_copy tests/integration/vt_offset_copy.tl)
+    _body=$(function_body "$_asm" main)
+    _fast=$(extract_fast_region_with "$_body" ',8), %r')
+    if [ ! -s "$_fast" ]; then
+        fail "vt-offset-copy found no versioned copy loop"
+    fi
+    # Neither check survives in the clone.
+    assert_not_contains "$_fast" 'call tl_oob_abort' vt-offset-copy
+    assert_regex_count_eq "$_fast" '^[[:space:]]+j(ae|b) ' 0 vt-offset-copy
+    # One indexed load and one indexed store, off the same data pointer.
+    assert_regex_count_eq "$_fast" \
+        '^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' 1 \
+        vt-offset-copy
+    assert_regex_count_eq "$_fast" \
+        '^[[:space:]]+movq %r[a-z0-9]+, \(%r[a-z0-9]+,%r[a-z0-9]+,8\)$' 1 \
+        vt-offset-copy
+    # ...and the guard names the subtracted limit.
+    assert_matches "$_body" '^[[:space:]]+subq %r[a-z0-9]+, %r[a-z0-9]+$' \
+        vt-offset-copy
+}
+
+# The strided scan whose index is strength-reduced into a step-3 cursor phi.
+# Without the derived-induction arm the variable-base recovery sees a Phi and
+# derives nothing (`--trace-passes` says `guard:derived-zero`); with it the two
+# accesses are one derived family and reach their slots as +8 and +16
+# displacements off one base and one index.
+check_vt_derived_stride() {
+    _asm=$(compile_gate vt_derived_stride tests/integration/vt_derived_stride.tl)
+    _body=$(function_body "$_asm" main)
+    _fast=$(extract_fast_region_with "$_body" 'movq 8(%r')
+    if [ ! -s "$_fast" ]; then
+        fail "vt-derived-stride found no versioned strided scan"
+    fi
+    assert_not_contains "$_fast" 'call tl_oob_abort' vt-derived-stride
+    assert_regex_count_eq "$_fast" '^[[:space:]]+j(ae|b) ' 0 vt-derived-stride
+    assert_regex_count_eq "$_fast" \
+        '^[[:space:]]+movq 8\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' 1 \
+        vt-derived-stride
+    assert_regex_count_eq "$_fast" \
+        '^[[:space:]]+movq %r[a-z0-9]+, 16\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$' 1 \
+        vt-derived-stride
+    # The cursor keeps its own literal step; the counter keeps its unit one.
+    assert_matches "$_fast" '^[[:space:]]+addq \$3, %r[a-z0-9]+$' \
+        vt-derived-stride
+    assert_matches "$_fast" '^[[:space:]]+addq \$1, %r[a-z0-9]+$' \
+        vt-derived-stride
+}
+
 check_dce_late_flag_loop() {
     _asm=$(compile_gate dce_late_flag_loop tests/integration/dce_late_flag_loop.tl)
     _body=$(function_body "$_asm" main)
@@ -2480,5 +2564,7 @@ check_gep_load_cmp_spilled_stage
 check_range_merge_unsigned
 check_dce_late_flag_loop
 check_alias_global_shift
+check_vt_offset_copy
+check_vt_derived_stride
 
 echo "Assembly shape gates passed."

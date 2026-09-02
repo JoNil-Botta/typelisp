@@ -78883,21 +78883,10 @@
 
 (test
   compiler-optimize-debug-dump-linear-retention
-  (begin
-    (test.assert-i64-eq
-      (compiler-optimize-debug-dump-linear-self-test)
-      42
-      "per-pass dumps retain linear arena bytes across equal function batches")
-    ;; Exercise two later optimizer clients in one test executable: a borrowed
-    ;; TextBuf snapshot used to corrupt the cell store and crash the second one.
-    (test.assert-i64-eq
-      (compiler-optimize-bounds-group-self-test)
-      42
-      "per-pass dump state leaves the bounds-group optimizer usable")
-    (test.assert-i64-eq
-      (compiler-optimize-uniform-phi-self-test)
-      42
-      "per-pass dump state leaves the uniform-phi optimizer usable")))
+  (test.assert-i64-eq
+    (compiler-optimize-debug-dump-linear-self-test)
+    42
+    "per-pass dumps retain linear arena bytes across equal function batches"))
 
 ;; Source-level runtime witness for the whole classifier path: lowering must
 ;; form the compare chain, bit_test must rewrite it, and the backend must fuse

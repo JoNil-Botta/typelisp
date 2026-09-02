@@ -26,6 +26,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 . "$ROOT/scripts/lib-linux-entry.sh"
+. "$ROOT/scripts/lib-doc-site-search-manifests.sh"
 
 fail() {
     echo "FAIL: $*" >&2
@@ -100,6 +101,12 @@ case "${1:-}" in
     --self-test-rss-guard)
         doc_site_rss_guard_self_test
         echo "docs-site RSS guard self-tests passed"
+        exit 0
+        ;;
+    --self-test-search-manifests)
+        doc_site_search_manifest_self_test "$ROOT/scripts/verify-doc-site.sh" \
+            || fail "docs-site search manifest self-tests failed"
+        echo "docs-site search manifest self-tests passed"
         exit 0
         ;;
     *)
@@ -333,17 +340,22 @@ fi
 expected_stdlib_modules=$(wc -l < "$EXPECTED_STDLIB_PAGES" | tr -d ' ')
 echo "[doc-site] published all $expected_stdlib_modules top-level stdlib module(s)"
 
-# Validate every local link and anchor across all generated pages.
-pages=$(find "$SITE" -maxdepth 1 -type f -name '*.html')
+# Validate every local link and anchor across all generated pages. The search
+# manifests read the index and the search-relevant parts of every page exactly
+# once; the page loop below retains the independent full link/anchor contract.
+HTML_PAGES="$WORK/.html-pages"
+find "$SITE" -maxdepth 1 -type f -name '*.html' | LC_ALL=C sort > "$HTML_PAGES"
+[ -s "$HTML_PAGES" ] || fail "no HTML pages were generated"
+pages=$(cat "$HTML_PAGES")
 link_count=0
 SEARCH_INDEX="$SITE/typelisp-docs-search-index.js"
-search_record_count=$(grep -o '"identity":"[^"]*"' "$SEARCH_INDEX" | wc -l | tr -d ' ')
-[ "$search_record_count" -gt 0 ] || fail "documentation search index is empty"
-duplicate_search_identity=$(grep -o '"identity":"[^"]*"' "$SEARCH_INDEX" \
-    | LC_ALL=C sort | uniq -d | head -n 1)
-[ -z "$duplicate_search_identity" ] \
-    || fail "duplicate search identity: $duplicate_search_identity"
+doc_site_search_structure_guard "$ROOT/scripts/verify-doc-site.sh" \
+    || fail "docs-site page loop must not rescan the complete search index"
+doc_site_search_validate_manifests "$SITE" "$WORK" "$SEARCH_INDEX" "$HTML_PAGES" \
+    || fail "documentation search manifests disagree"
+search_record_count=$DOC_SITE_SEARCH_RECORD_COUNT
 
+# doc-site-search-index-scan-guard: page-loop-begin
 for page in $pages; do
     page_base=$(basename "$page")
     # Each HTML page should reference the stylesheet.
@@ -355,31 +367,6 @@ for page in $pages; do
         || fail "$(basename "$page") does not reference the search client"
     grep -q 'data-doc-search-input' "$page" \
         || fail "$(basename "$page") does not expose the search control"
-
-    compiler_identity=$(sed -n 's/.*name="typelisp-compiler-identity" content="\([^"]*\)".*/\1/p' "$page" | head -n 1)
-    source_identity=$(sed -n 's/.*name="typelisp-source-identity" content="\([^"]*\)".*/\1/p' "$page" | head -n 1)
-    package_identity=$(sed -n 's/.*name="typelisp-package-identity" content="\([^"]*\)".*/\1/p' "$page" | head -n 1)
-    [ -n "$compiler_identity" ] || fail "$(basename "$page") is missing compiler identity"
-    [ -n "$source_identity" ] || fail "$(basename "$page") is missing source identity"
-    [ -n "$package_identity" ] || fail "$(basename "$page") is missing package identity"
-    grep -Fq "\"compilerIdentity\":\"$compiler_identity\"" "$SEARCH_INDEX" \
-        || fail "$(basename "$page") compiler identity disagrees with search index"
-    grep -Fq "\"sourceIdentity\":\"$source_identity\"" "$SEARCH_INDEX" \
-        || fail "$(basename "$page") source identity disagrees with search index"
-    grep -Fq "\"packageIdentity\":\"$package_identity\"" "$SEARCH_INDEX" \
-        || fail "$(basename "$page") package identity disagrees with search index"
-
-    duplicate_anchor=$(grep -o 'id="[^"]*"' "$page" | LC_ALL=C sort | uniq -d | head -n 1)
-    [ -z "$duplicate_anchor" ] \
-        || fail "$(basename "$page") contains duplicate anchor $duplicate_anchor"
-
-    searchable_ids=$(grep -o 'id="tl-[^"]*"' "$page" \
-        | sed 's/^id="//; s/"$//' \
-        | grep -v '^tl-doc-search-' || true)
-    for searchable_id in $searchable_ids; do
-        grep -Fq "\"href\":\"$page_base#$searchable_id\"" "$SEARCH_INDEX" \
-            || fail "$(basename "$page"): anchor '$searchable_id' is missing from search index"
-    done
 
     # Each page should expose the persistent composed documentation sidebar.
     grep -q '<nav class="tl-doc-stdlib-sidebar" aria-label="Documentation tree">' "$page" \
@@ -438,8 +425,9 @@ for page in $pages; do
         esac
     done
 done
+# doc-site-search-index-scan-guard: page-loop-end
 
-search_index_bytes=$(wc -c < "$SEARCH_INDEX" | tr -d ' ')
+search_index_bytes=$DOC_SITE_SEARCH_INDEX_BYTES
 DOC_SITE_MAX_SEARCH_INDEX_BYTES=${DOC_SITE_MAX_SEARCH_INDEX_BYTES:-4000000}
 case "$DOC_SITE_MAX_SEARCH_INDEX_BYTES" in
     "" | *[!0-9]* | 0) fail "DOC_SITE_MAX_SEARCH_INDEX_BYTES must be a positive integer" ;;

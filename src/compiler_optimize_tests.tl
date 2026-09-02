@@ -10140,6 +10140,300 @@
     42
     "the late slot retires a zero-use Mov and the chain it fed, keeps a Mov read by a return or by a phi input, folds a branch whose condition is a Mov of a bool literal into a jump and drops the arm it retired, and leaves a branch on a real comparison alone"))
 
+;; --- DCE-LATE: the decided join and its pre-copy -----------------------------
+;;
+;; The `found`/`done` shape, spelled the way `cfg_straighten` hands it to the
+;; slot. `join` is decided on every edge -- its condition is a phi of bool
+;; literals -- but it also carries `%7`, read only from the true side, and the
+;; PRE-COPY `%8 = mov %0` the phi cleanup left behind, read only from the false
+;; side. Two region-local definitions owned by two different successors is what
+;; makes `thread_branch_late` refuse the merge whole, so the slot has to
+;; forward the pre-copy before the threader can decide anything.
+(define (opt-dce-late-precopy-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          5
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 5)
+          (compiler_ir_types.compiler-ir-label "one")
+          (compiler_ir_types.compiler-ir-label "two"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "one")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "join"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "two")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "join"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "join")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Phi
+                6
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Bool true)
+                  (compiler_ir_types.compiler-ir-label "one")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                    (compiler_ir_types.CompilerIrValue.Bool false)
+                    (compiler_ir_types.compiler-ir-label "two")
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+                (compiler_ast_types.AstType.Bool))
+              (compiler_ir_types.CompilerIrInstr.Phi
+                7
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (compiler_ir_types.compiler-ir-label "one")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                    (compiler_ir_types.CompilerIrValue.I64 1)
+                    (compiler_ir_types.compiler-ir-label "two")
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Mov
+                8
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 6)
+                (compiler_ir_types.compiler-ir-label "then")
+                (compiler_ir_types.compiler-ir-label "else"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-dce-late-return-block
+              "then"
+              (compiler_ir_types.CompilerIrValue.Var 7))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "else")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.BinOp
+                    9
+                    (compiler_ir_types.CompilerIrBinOp.Add)
+                    (compiler_ir_types.CompilerIrValue.Var 8)
+                    (compiler_ir_types.CompilerIrValue.I64 1)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 9)))))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+(define (opt-dce-late-instrs-count-mov-dst
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [pos : i64]
+  [dst : i64]) : i64
+  (if (>=
+    pos
+    (compiler_ir_types.compiler-ir-instr-seq-count
+      (compiler_ir_types.compiler-ir-global-shared-view instrs)))
+    0
+    (+
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref
+        (compiler_ir_types.compiler-ir-global-shared-view instrs)
+        pos)
+        [(compiler_ir_types.CompilerIrInstr.Mov mov-dst _ _)
+          (if (= mov-dst dst)
+            1
+            0)]
+        [_ 0])
+      (opt-dce-late-instrs-count-mov-dst instrs (+ pos 1) dst))))
+
+(define (opt-dce-late-blocks-count-mov-dst
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [dst : i64]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (+
+        (match block
+          [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+            (opt-dce-late-instrs-count-mov-dst instrs 0 dst)])
+        (opt-dce-late-blocks-count-mov-dst
+          (compiler_ir_types.compiler-ir-box-shared-view rest)
+          dst))]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-dce-late-blocks-count-mov-dst
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        dst)]))
+
+(define (opt-dce-late-instrs-count-branches
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [pos : i64]) : i64
+  (if (>=
+    pos
+    (compiler_ir_types.compiler-ir-instr-seq-count
+      (compiler_ir_types.compiler-ir-global-shared-view instrs)))
+    0
+    (+
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref
+        (compiler_ir_types.compiler-ir-global-shared-view instrs)
+        pos)
+        [(compiler_ir_types.CompilerIrInstr.Branch _ _ _) 1]
+        [_ 0])
+      (opt-dce-late-instrs-count-branches instrs (+ pos 1)))))
+
+(define (opt-dce-late-blocks-count-branches
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (+
+        (match block
+          [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+            (opt-dce-late-instrs-count-branches instrs 0)])
+        (opt-dce-late-blocks-count-branches
+          (compiler_ir_types.compiler-ir-box-shared-view rest)))]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-dce-late-blocks-count-branches
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
+
+;; Does any block read `var` as an ordinary (non-phi) operand of an Add?
+(define (opt-dce-late-blocks-add-reads?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [var : i64]) : bool
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) false]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (or
+        (match block
+          [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+            (opt-dce-late-instrs-add-reads?
+              (compiler_ir_types.compiler-ir-global-shared-view instrs)
+              0
+              var)])
+        (opt-dce-late-blocks-add-reads?
+          (compiler_ir_types.compiler-ir-box-shared-view rest)
+          var))]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-dce-late-blocks-add-reads?
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        var)]))
+
+(define (opt-dce-late-instrs-add-reads?
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [pos : i64]
+  [var : i64]) : bool
+  (if (>=
+    pos
+    (compiler_ir_types.compiler-ir-instr-seq-count
+      (compiler_ir_types.compiler-ir-global-shared-view instrs)))
+    false
+    (or
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref
+        (compiler_ir_types.compiler-ir-global-shared-view instrs)
+        pos)
+        [(compiler_ir_types.CompilerIrInstr.BinOp _ _ left _ _)
+          (compiler_optimize.opt-value-is-var?
+            (compiler_optimize.compiler-opt-global-shared-view left)
+            var)]
+        [_ false])
+      (opt-dce-late-instrs-add-reads? instrs (+ pos 1) var))))
+
+;; Returns 42 only when the slot retires the decided join outright.
+(define (compiler-optimize-dce-late-precopy-self-test) : i64
+  (let
+    [threaded : compiler_ir_types.CompilerIrFunction
+      (opt-dce-late-run "dce_late_precopy" (opt-dce-late-precopy-blocks))]
+    [changed? : bool
+      (opt-dce-late-run-changed?
+        "dce_late_precopy"
+        (opt-dce-late-precopy-blocks))]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view threaded))]
+    (begin
+      (unless changed? (return 1))
+      ;; The pre-copy is gone -- forwarded at its use, then swept.
+      (unless
+        (=
+          (opt-dce-late-blocks-count-mov-dst
+            (compiler_ir_types.compiler-ir-global-shared-view blocks)
+            8)
+          0)
+        (return 2))
+      ;; Its reader now names the copy's source directly.
+      (unless
+        (opt-dce-late-blocks-add-reads?
+          (compiler_ir_types.compiler-ir-global-shared-view blocks)
+          0)
+        (return 3))
+      ;; Only the entry's undecided compare-branch is left: the join's decided
+      ;; branch is retired, so no edge materializes a literal to re-test it.
+      (unless
+        (=
+          (opt-dce-late-blocks-count-branches
+            (compiler_ir_types.compiler-ir-global-shared-view blocks))
+          1)
+        (return 4))
+      42)))
+
+(test
+  dce-late-decided-join-precopy
+  (test.assert-i64-eq
+    (compiler-optimize-dce-late-precopy-self-test)
+    42
+    "the late slot forwards the pre-copy a uniform-phi fold left in a decided join, threads the join's decided edges, and leaves neither the copy nor a branch on a per-edge literal behind"))
+
+;; The tier's suppression is a DEPTH, so an inner priced scope cannot
+;; un-suppress the rest of an outer one, and pricing a candidate always leaves
+;; the slot enabled for the pipeline that follows.
+(define (compiler-optimize-late-sweep-suppression-self-test) : i64
+  (let
+    ;; Priced exactly the way `opt-inline-checked-verdict` prices a site; the
+    ;; cost itself is not what is under test, the state it leaves behind is.
+    [priced : i64
+      (compiler_optimize.opt-inline-checked-plan-cost
+        (compiler_ast_types.ast-node-pool-reader-context-current)
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-dce-late-test-function
+          "dce_late_priced"
+          (opt-dce-late-dead-blocks)))]
+    (begin
+      (when (compiler_optimize.compiler-opt-late-sweep-suppressed?) (return 1))
+      (compiler_optimize.compiler-opt-late-sweep-suppress-enter!)
+      (compiler_optimize.compiler-opt-late-sweep-suppress-enter!)
+      (compiler_optimize.compiler-opt-late-sweep-suppress-leave!)
+      ;; The inner scope left; the outer one is still in force.
+      (unless
+        (compiler_optimize.compiler-opt-late-sweep-suppressed?)
+        (return 2))
+      (when
+        (opt-dce-late-run-changed?
+          "dce_late_suppressed"
+          (opt-dce-late-dead-blocks))
+        (return 3))
+      (compiler_optimize.compiler-opt-late-sweep-suppress-leave!)
+      (when (compiler_optimize.compiler-opt-late-sweep-suppressed?) (return 4))
+      ;; A stray leave cannot suppress the pipeline's own sweep.
+      (compiler_optimize.compiler-opt-late-sweep-suppress-leave!)
+      (when (compiler_optimize.compiler-opt-late-sweep-suppressed?) (return 5))
+      ;; Pricing a candidate the way the checked tier does leaves the slot on
+      ;; (`priced` above ran before this body did).
+      (when (< priced 0) (return 6))
+      (when (compiler_optimize.compiler-opt-late-sweep-suppressed?) (return 7))
+      (unless
+        (opt-dce-late-run-changed?
+          "dce_late_after_pricing"
+          (opt-dce-late-dead-blocks))
+        (return 8))
+      42)))
+
+(test
+  dce-late-suppression-is-scoped
+  (test.assert-i64-eq
+    (compiler-optimize-late-sweep-suppression-self-test)
+    42
+    "the checked tier's late-sweep suppression nests, clamps at zero, and is off again after a candidate is priced, so the pipeline's own sweep runs and reports its change"))
+
 (define (opt-successor-sink-test-function
   [name : String]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction

@@ -185,6 +185,45 @@ grep -F "function @main()" "$WORKDIR/optimizer_fold.final.ir" >/dev/null
 grep -F "optimizer-pass|main|licm|blocks=" "$TRACE" >/dev/null
 grep -F "after licm @main" "$WORKDIR/optimizer_fold.after-licm.ir" >/dev/null
 
+# DCE-2: `dce_late` closes the level-2 pass list, so an omission there is
+# invisible unless the trace is asked for the slot by name -- the pipeline
+# still reports every pass above it. A level-2 compile must observe the slot
+# for every function it optimizes, and `--dump-ir after-dce_late` must answer:
+# `licm_unswitch` runs unconditionally on the same level-2 path, so a function
+# traced with that and without `dce_late` is a pipeline that stopped early.
+LATE_TRACE="$WORKDIR/late.stderr"
+LATE_IR="$WORKDIR/optimizer_fold.after-dce_late.ir"
+
+"$COMPILER" compile "$SOURCE" \
+    --dump-ir after-dce_late \
+    --trace-passes \
+    --verify-ir \
+    --opt-level 2 \
+    -o "$LATE_IR" \
+    --stdlib-root "$ROOT/stdlib" \
+    --stdlib-root "$ROOT/src" \
+    >"$WORKDIR/late.stdout" 2>"$LATE_TRACE"
+
+grep -F "optimizer-pass|main|dce_late|blocks=" "$LATE_TRACE" >/dev/null
+grep -F "after dce_late @main" "$LATE_IR" >/dev/null
+
+LATE_MISSING=$(awk -F'|' '
+    $1 == "optimizer-pass" { seen[$3 "\t" $2] = 1 }
+    END {
+        for (key in seen) {
+            split(key, field, "\t")
+            if (field[1] == "licm_unswitch" && !(("dce_late\t" field[2]) in seen)) {
+                print field[2]
+            }
+        }
+    }
+' "$LATE_TRACE")
+if [ -n "$LATE_MISSING" ]; then
+    echo "level-2 functions optimized without the final dce_late slot:" >&2
+    printf '%s\n' "$LATE_MISSING" | sed 's/^/  /' >&2
+    exit 1
+fi
+
 "$COMPILER" compile "$SOURCE" \
     --verify-ir \
     --opt-level 2 \

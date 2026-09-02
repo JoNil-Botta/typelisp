@@ -540,3 +540,4 @@ tlci_native_wildcard_arms|tests/integration/tlci_native_wildcard_arms.tl|42|-|-|
 tlci_native_format_scanner|tests/integration/tlci_native_format_scanner.tl|42|sca: 0x1 {} 10\ndo\n|-|stdlib/format.tl stdlib/io.tl stdlib/string.tl
 inline_multiblock_call_carrying_clone|tests/integration/inline_multiblock_call_carrying_clone.tl|42|-|-|-
 inline_tail_call_boundary|tests/integration/inline_tail_call_boundary.tl|42|-|-|-
+dce_late_flag_loop|tests/integration/dce_late_flag_loop.tl|42|-|-|-

@@ -1566,6 +1566,71 @@
       (compiler-backend-asm-ok? asm)]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-object-scalar-unop-eligibility-ok?
+  [backend-state : compiler_backend.CompilerBackendState]) : bool
+  (compiler_backend.backend-and8
+    (not
+      (compiler_backend.compiler-backend-object-instr-semantically-supported?
+        backend-state
+        (compiler_ir_types.CompilerIrInstr.UnOp
+          0
+          (compiler_ir_types.CompilerIrUnOp.Neg)
+          (compiler_ir_types.CompilerIrValue.F64 (cast 0 : u64))
+          (compiler_ast_types.AstType.F64))))
+    (not
+      (compiler_backend.compiler-backend-object-instr-semantically-supported?
+        backend-state
+        (compiler_ir_types.CompilerIrInstr.UnOp
+          0
+          (compiler_ir_types.CompilerIrUnOp.Neg)
+          (compiler_ir_types.CompilerIrValue.F64 (cast 0 : u64))
+          (compiler_ast_types.AstType.F32))))
+    (not
+      (compiler_backend.compiler-backend-object-instr-semantically-supported?
+        backend-state
+        (compiler_ir_types.CompilerIrInstr.UnOp
+          0
+          (compiler_ir_types.CompilerIrUnOp.Sqrt)
+          (compiler_ir_types.CompilerIrValue.F64 (cast 0 : u64))
+          (compiler_ast_types.AstType.F64))))
+    (not
+      (compiler_backend.compiler-backend-object-instr-semantically-supported?
+        backend-state
+        (compiler_ir_types.CompilerIrInstr.UnOp
+          0
+          (compiler_ir_types.CompilerIrUnOp.Not)
+          (compiler_ir_types.CompilerIrValue.F64 (cast 0 : u64))
+          (compiler_ast_types.AstType.F32))))
+    (compiler_backend.compiler-backend-object-instr-semantically-supported?
+      backend-state
+      (compiler_ir_types.CompilerIrInstr.UnOp
+        0
+        (compiler_ir_types.CompilerIrUnOp.Neg)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64)))
+    (compiler_backend.compiler-backend-object-instr-semantically-supported?
+      backend-state
+      (compiler_ir_types.CompilerIrInstr.UnOp
+        0
+        (compiler_ir_types.CompilerIrUnOp.Not)
+        (compiler_ir_types.CompilerIrValue.Bool true)
+        (compiler_ast_types.AstType.Bool)))
+    (compiler_backend.compiler-backend-object-instr-semantically-supported?
+      backend-state
+      (compiler_ir_types.CompilerIrInstr.UnOp
+        0
+        (compiler_ir_types.CompilerIrUnOp.BitNot)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.U64)))
+    (not
+      (compiler_backend.compiler-backend-object-instr-semantically-supported?
+        backend-state
+        (compiler_ir_types.CompilerIrInstr.UnOp
+          0
+          (compiler_ir_types.CompilerIrUnOp.Sqrt)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))))))
+
 (define (compiler-backend-object-semantic-eligibility-ok?) : bool
   (let
     [backend-state : compiler_backend.CompilerBackendState
@@ -1651,7 +1716,8 @@
             (compiler_ir_types.CompilerIrInstr.BoundsCheck
               (compiler_ir_types.CompilerIrValue.I64 0)
               (compiler_ir_types.CompilerIrValue.I64 1)
-              0)))))))
+              0))))
+      (compiler-backend-object-scalar-unop-eligibility-ok? backend-state))))
 
 (define (compiler-backend-object-image-source) : String
   "(extern (foreign-call [arg0 : i64]) : i64 (:abi c) (:symbol \"foreign_exact\"))

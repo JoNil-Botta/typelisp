@@ -1360,6 +1360,7 @@
 (define (compiler-live-instr-def-var [instr : ir.CompilerIrInstr]) : i64
   (match instr
     [(ir.CompilerIrInstr.Mov dst _ _) dst]
+    [(ir.CompilerIrInstr.OwnRoot dst _ _) dst]
     [(ir.CompilerIrInstr.Alloc dst _) dst]
     [(ir.CompilerIrInstr.AddrOf dst _) dst]
     [(ir.CompilerIrInstr.Gep dst _ _ _) dst]

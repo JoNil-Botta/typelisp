@@ -142,9 +142,15 @@
   ;; div clobbers (idiv writes %rdx:%rax), so b cannot keep its arg-register
   ;; home across the div. Pre-campaign the allocator forced it to the stack
   ;; (ineligible + unassigned). The M-A campaign made params greedy candidates,
-  ;; so b is now register-homed in a CALLEE-SAVED register that survives the
-  ;; clobber instead of being stack-homed -- the same soundness property (b is
-  ;; not left in a div-clobbered register) with a better home.
+  ;; so b is register-homed instead of stack-homed.
+  ;; b is register-homed in a CALLEE-SAVED register that survives the clobber
+  ;; instead of being stack-homed -- the same soundness property (b is not left
+  ;; in a div-clobbered register) with a better home.
+  ;; WIN1: R3S-1's entry-copy schedule constraint is Linux-only
+  ;; (compiler-reg-param-entry-forbidden answers the legacy empty array for
+  ;; every non-Linux ABI), so a Windows parameter class is still
+  ;; callee-saved-only here. The two negative clauses below stay as the
+  ;; ABI-independent statement of the property the constraint encodes.
   (match (regalloc.compiler-reg-plan-function-scalar-for-abi
     abi.CompilerRegTargetAbi.Windows
     (win-param-preassign-safe-div-function))
@@ -155,9 +161,12 @@
           [(regalloc.CompilerRegMaybeLocation.Some location)
             (match location
               [(regalloc.CompilerRegLocation.Register r)
-                (regalloc.compiler-reg-id-seq-contains?
-                  (regalloc.compiler-reg-win64-callee-saved-integer-registers)
-                  r)]
+                (and
+                  (not (= r abi.compiler-reg-id-rax))
+                  (not (= r abi.compiler-reg-id-rdx))
+                  (regalloc.compiler-reg-id-seq-contains?
+                    (regalloc.compiler-reg-win64-callee-saved-integer-registers)
+                    r))]
               [_ false])]
           [(regalloc.CompilerRegMaybeLocation.No) false]))]))
 
@@ -206,8 +215,11 @@
             "    movq %r9, _tl_win_pd(%rip)\n")
           ;; Param c arrives in %r8, which doubles as the backend's fixed
           ;; emit scratch register, so it cannot stay there: it is
-          ;; relocated to a callee-saved register (%r12) and stored from
-          ;; there -- NOT stacked, and never stored directly out of %r8.
+          ;; relocated and stored from the new home -- NOT stacked, and
+          ;; never stored directly out of %r8.
+          ;; WIN1: on Windows the home is a callee-saved register (%r12) --
+          ;; R3S-1's caller-saved widening is Linux-only, so this is the
+          ;; pre-constraint expectation.
           (compiler_backend.compiler-backend-string-contains?
             (compiler_backend.compiler-backend-global-shared-view asm)
             "    movq %r8, %r12\n")
@@ -217,7 +229,14 @@
           (not
             (compiler_backend.compiler-backend-string-contains?
               (compiler_backend.compiler-backend-global-shared-view asm)
-              "    movq %r8, _tl_win_pc(%rip)\n")))]
+              "    movq %r8, _tl_win_pc(%rip)\n"))
+          ;; The entry-copy schedule constraint, directly: c's home may never
+          ;; be the incoming argument register of a LATER parameter, because
+          ;; d's entry copy has not run yet when c's is emitted.
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (compiler_backend.compiler-backend-global-shared-view asm)
+              "    movq %r8, %r9\n")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
 (test

@@ -5396,9 +5396,15 @@
   ;; GAP3c div spanning: v3 = v0 + v0; v4 = v3 / v1; v5 = v4 + v2; return v5.
   ;; A div bans EVERY pin it is spanned by (%rax:%rdx hardwiring + the canned
   ;; divmod expansion's scratch hunger), so the %rdx param v2 -- live across
-  ;; it (last use point 4) -- must NOT keep its pin (greedy CSR home instead),
-  ;; while v0 (%rdi, ends point 0) and v1 (%rsi, the divisor, last-used AT
-  ;; the div = read before the clobber) keep theirs.
+  ;; it (last use point 4) -- must NOT keep its pin, while v0 (%rdi, ends
+  ;; point 0) and v1 (%rsi, the divisor, last-used AT the div = read before
+  ;; the clobber) keep theirs.
+  ;; R3S-1: the demoted v2 no longer falls to a callee-saved home. It is the
+  ;; LAST parameter, so its entry copy is the last one emitted and no schedule
+  ;; constraint applies; it spans no CALL, so it is not csr-only; and it spans
+  ;; the div, so `forbidden` still excludes exactly {%rax,%rdx}. First free in
+  ;; pool order past those, with %rsi/%rdi held by the two kept pins, is %r9 --
+  ;; a caller-saved home in a function with no call, so no CSR push/pop.
   (define (compiler-reg-param-rdx-div-span-function) : ir.CompilerIrFunction
     (ir.CompilerIrFunction.Function
       (ir.compiler-ir-test-symbol "param_rdx_div_span")
@@ -5467,7 +5473,7 @@
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
               2)
-            cabi.compiler-reg-id-r12))])))
+            cabi.compiler-reg-id-r9))])))
 
 (cfg
   test
@@ -5477,6 +5483,10 @@
   ;; point 6) -- must NOT keep its pin, while v2 (%rdx) ALSO spans the shift
   ;; and keeps its pin (%rdx is not shift-clobbered), and v0/v1 end at/before
   ;; the shift and keep theirs.
+  ;; R3S-1: the demoted v3 lands in the caller-saved %r9 rather than a
+  ;; callee-saved home. It is the last of four parameters, so no later entry
+  ;; copy can read the register it is given; it spans no call; and the shift
+  ;; narrowing still forbids exactly %rcx.
   (define (compiler-reg-param-rcx-shift-span-function) : ir.CompilerIrFunction
     (ir.CompilerIrFunction.Function
       (ir.compiler-ir-test-symbol "param_rcx_shift_span")
@@ -5559,7 +5569,7 @@
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
               3)
-            cabi.compiler-reg-id-r12))])))
+            cabi.compiler-reg-id-r9))])))
 
 (cfg
   test
@@ -5796,6 +5806,10 @@
   ;; register (%r8) is excluded from the legacy pin set, but M-A (RC1) makes it
   ;; a greedy candidate: it takes the first callee-saved home instead of being
   ;; stack-homed.
+  ;; WIN1: R3S-1's entry-copy schedule constraint is answered EMPTY for every
+  ;; non-Linux ABI (compiler-reg-param-entry-forbidden), so a Windows parameter
+  ;; class stays callee-saved-only and this expectation is the pre-R3S-1 one.
+  ;; The companion test below pins that refusal directly.
   (define (compiler-reg-scalar-windows-param-registers-ok?) : bool
     (match (reg.compiler-reg-plan-function-scalar-for-abi
       cabi.CompilerRegTargetAbi.Windows
@@ -5829,6 +5843,216 @@
               (reg.compiler-reg-global-shared-view assignments)
               2)
             cabi.compiler-reg-id-r12))])))
+
+(cfg
+  test
+  (define (compiler-reg-entry-forbidden-i64-params-7) : ir.CompilerIrParamSeq
+    (ir.compiler-ir-param-seq-prepend
+      (ir.CompilerIrParam.Param "p0" (compiler-reg-i64-ty) 0)
+      (ir.compiler-ir-param-seq-prepend
+        (ir.CompilerIrParam.Param "p1" (compiler-reg-i64-ty) 1)
+        (ir.compiler-ir-param-seq-prepend
+          (ir.CompilerIrParam.Param "p2" (compiler-reg-i64-ty) 2)
+          (ir.compiler-ir-param-seq-prepend
+            (ir.CompilerIrParam.Param "p3" (compiler-reg-i64-ty) 3)
+            (ir.compiler-ir-param-seq-prepend
+              (ir.CompilerIrParam.Param "p4" (compiler-reg-i64-ty) 4)
+              (ir.compiler-ir-param-seq-prepend
+                (ir.CompilerIrParam.Param "p5" (compiler-reg-i64-ty) 5)
+                (ir.compiler-ir-param-seq-prepend
+                  (ir.CompilerIrParam.Param "p6" (compiler-reg-i64-ty) 6)
+                  (ir.compiler-ir-param-seq-empty))))))))))
+
+(cfg
+  test
+  (define (compiler-reg-entry-forbidden-float-params-3) : ir.CompilerIrParamSeq
+    (ir.compiler-ir-param-seq-prepend
+      (ir.CompilerIrParam.Param "p0" (ast.AstType.F64) 0)
+      (ir.compiler-ir-param-seq-prepend
+        (ir.CompilerIrParam.Param "p1" (compiler-reg-i64-ty) 1)
+        (ir.compiler-ir-param-seq-prepend
+          (ir.CompilerIrParam.Param "p2" (compiler-reg-i64-ty) 2)
+          (ir.compiler-ir-param-seq-empty))))))
+
+(cfg
+  test
+  (define (compiler-reg-entry-forbidden-rows
+    [n : i64]
+    [params : ir.CompilerIrParamSeq]) : (__tl_dyn-array reg.CompilerRegIdSeq)
+    (let
+      [coalesce : reg.CompilerRegCoalesceMap
+        (compiler-reg-test-identity-coalesce n)]
+      (reg.compiler-reg-param-entry-forbidden
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-representation-index-empty)
+        cabi.CompilerRegTargetAbi.Linux
+        params
+        coalesce.parents
+        n))))
+
+(cfg
+  test
+  (define (compiler-reg-entry-forbidden-row-has?
+    [rows : (__tl_dyn-array reg.CompilerRegIdSeq)]
+    [row : i64]
+    [want : i64]) : bool
+    (reg.compiler-reg-id-seq-contains?
+      (reg.compiler-reg-global-array-element-shared-view rows row)
+      want)))
+
+(cfg
+  test
+  ;; R3S-1: the entry-copy schedule constraint itself. Seven i64 parameters on
+  ;; SysV: positions 0-5 arrive in %rdi/%rsi/%rdx/%rcx/%r8/%r9 and position 6 on
+  ;; the stack. The backend emits the entry copies in position order, so the row
+  ;; for position p must be exactly the incoming registers of the positions
+  ;; AFTER p -- never its own (a self-move is what an ABI pin is), never an
+  ;; earlier one (already copied out of), and nothing at all once no
+  ;; register-passed parameter follows.
+  (define (compiler-reg-param-entry-forbidden-ok?) : bool
+    (let
+      [rows : (__tl_dyn-array reg.CompilerRegIdSeq)
+        (compiler-reg-entry-forbidden-rows
+          7
+          (compiler-reg-entry-forbidden-i64-params-7))]
+      (and
+        (= (array-length rows) 7)
+        (not
+          (compiler-reg-entry-forbidden-row-has?
+            (reg.compiler-reg-global-shared-view rows)
+            0
+            cabi.compiler-reg-id-rdi))
+        (compiler-reg-entry-forbidden-row-has?
+          (reg.compiler-reg-global-shared-view rows)
+          0
+          cabi.compiler-reg-id-rsi)
+        (compiler-reg-entry-forbidden-row-has?
+          (reg.compiler-reg-global-shared-view rows)
+          0
+          cabi.compiler-reg-id-r8)
+        (compiler-reg-entry-forbidden-row-has?
+          (reg.compiler-reg-global-shared-view rows)
+          0
+          cabi.compiler-reg-id-r9)
+        ;; position 4 (%r8 -- the one register position the pin walk never
+        ;; pins, so the one the greedy always sees): only the single later
+        ;; incoming register %r9 is out of reach.
+        (compiler-reg-entry-forbidden-row-has?
+          (reg.compiler-reg-global-shared-view rows)
+          4
+          cabi.compiler-reg-id-r9)
+        (not
+          (compiler-reg-entry-forbidden-row-has?
+            (reg.compiler-reg-global-shared-view rows)
+            4
+            cabi.compiler-reg-id-r8))
+        (not
+          (compiler-reg-entry-forbidden-row-has?
+            (reg.compiler-reg-global-shared-view rows)
+            4
+            cabi.compiler-reg-id-rdi))
+        (not
+          (compiler-reg-entry-forbidden-row-has?
+            (reg.compiler-reg-global-shared-view rows)
+            4
+            cabi.compiler-reg-id-rcx))
+        ;; position 5 is the last register-passed parameter; position 6 is
+        ;; stack-passed. No entry copy reads a register after either.
+        (not
+          (compiler-reg-entry-forbidden-row-has?
+            (reg.compiler-reg-global-shared-view rows)
+            5
+            cabi.compiler-reg-id-r9))
+        (not
+          (compiler-reg-entry-forbidden-row-has?
+            (reg.compiler-reg-global-shared-view rows)
+            5
+            cabi.compiler-reg-id-rdi))
+        (not
+          (compiler-reg-entry-forbidden-row-has?
+            (reg.compiler-reg-global-shared-view rows)
+            6
+            cabi.compiler-reg-id-r9))))))
+
+(cfg
+  test
+  ;; WIN1: the entry-copy schedule constraint is Linux-only. The SAME seven i64
+  ;; parameters that produce a full constraint on SysV must answer the legacy
+  ;; EMPTY array on Win64, so alloc-one! keeps every Windows parameter class
+  ;; callee-saved-only and Windows codegen is byte-identical to the compiler
+  ;; before the constraint existed.
+  (define (compiler-reg-param-entry-forbidden-refuses-windows-ok?) : bool
+    (let
+      [coalesce : reg.CompilerRegCoalesceMap
+        (compiler-reg-test-identity-coalesce 7)]
+      (and
+        (=
+          (array-length
+            (reg.compiler-reg-param-entry-forbidden
+              (ast.ast-node-pool-reader-type-segment-bases)
+              (ir.compiler-ir-representation-index-empty)
+              cabi.CompilerRegTargetAbi.Windows
+              (compiler-reg-entry-forbidden-i64-params-7)
+              coalesce.parents
+              7))
+          0)
+        (>
+          (array-length
+            (compiler-reg-entry-forbidden-rows
+              7
+              (compiler-reg-entry-forbidden-i64-params-7)))
+          0)))))
+
+(cfg
+  test
+  ;; R3S-1 fail-closed shape gate: a float parameter makes the position -> ABI
+  ;; index map depend on two-bank bookkeeping this constraint does not carry, so
+  ;; the builder answers an EMPTY array and alloc-one! keeps the legacy
+  ;; callee-saved-only parameter rule for the whole function.
+  (define (compiler-reg-param-entry-forbidden-refuses-float-ok?) : bool
+    (=
+      (array-length
+        (compiler-reg-entry-forbidden-rows
+          3
+          (compiler-reg-entry-forbidden-float-params-3)))
+      0)))
+
+(cfg
+  test
+  ;; FLT-1: an internal by-memory ABI transport parameter -- what
+  ;; lower-internal-transport-type emits for a >16-byte by-value Tuple/Array.
+  ;; It arrives in the incoming STACK area and advances NEITHER argument bank,
+  ;; yet it is a nominal Struct: register-eligible, not a register group, so it
+  ;; satisfied every test compiler-reg-integer-param-type? makes.
+  (define (compiler-reg-entry-forbidden-memory-params-3) : ir.CompilerIrParamSeq
+    (ir.compiler-ir-param-seq-prepend
+      (ir.CompilerIrParam.Param
+        "pm"
+        (ast.AstType.Struct
+          (ir.compiler-ir-symbol "__tl_internal_abi_mem_s24__flt_probe"))
+        0)
+      (ir.compiler-ir-param-seq-prepend
+        (ir.CompilerIrParam.Param "p1" (compiler-reg-i64-ty) 1)
+        (ir.compiler-ir-param-seq-prepend
+          (ir.CompilerIrParam.Param "p2" (compiler-reg-i64-ty) 2)
+          (ir.compiler-ir-param-seq-empty))))))
+
+(cfg
+  test
+  ;; FLT-1 fail-closed shape gate, the by-memory half: the transport used to
+  ;; pass the gate, and both this constraint and the pin walk then shifted every
+  ;; LATER position's ABI index by one -- a wrong-code bug, not a missed
+  ;; optimisation (see compiler-reg-param-assign-walk's note and
+  ;; tests/integration/param_memory_transport_abi.tl). The builder must answer
+  ;; an EMPTY array so the whole function keeps the legacy rule. The seven-i64
+  ;; positive case above is what pins that the refusal is not over-broad.
+  (define (compiler-reg-param-entry-forbidden-refuses-memory-ok?) : bool
+    (=
+      (array-length
+        (compiler-reg-entry-forbidden-rows
+          3
+          (compiler-reg-entry-forbidden-memory-params-3)))
+      0)))
 
 (cfg
   test
@@ -13929,6 +14153,38 @@
       (= plain-slots owned-slots)
       (= owned-slots (cfg scratch-vreg 2 0)))))
 
+(define (compiler-reg-owned-root-var-type-ok?) : bool
+  (let
+    [func : ir.CompilerIrFunction
+      (ir.CompilerIrFunction.Function
+        (ir.compiler-ir-test-symbol "owned_root_var_type")
+        (ir.compiler-ir-param-seq-prepend
+          (ir.CompilerIrParam.Param "source" (ast.AstType.String) 0)
+          (ir.compiler-ir-param-seq-empty))
+        (ast.AstType.Unit)
+        2
+        (ir.compiler-ir-block-cons
+          (ir.CompilerIrBlock.Block
+            (ir.compiler-ir-label "entry")
+            (compiler-reg-test-instr-seq-prepend
+              (ir.CompilerIrInstr.OwnRoot
+                1
+                (ir.CompilerIrValue.Var 0)
+                (ast.AstType.String))
+              (compiler-reg-test-instr-seq-prepend
+                (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
+                (ir.compiler-ir-instr-seq-empty))))
+          ir.CompilerIrBlockList.Nil))]
+    [types : reg.CompilerRegVarTypes
+      (reg.compiler-reg-function-var-types
+        (ir.compiler-ir-global-shared-view func))]
+    (match (reg.compiler-reg-var-types-lookup types 1)
+      [(reg.CompilerRegMaybeType.Some ty)
+        (match ty
+          [(ast.AstType.String) true]
+          [_ false])]
+      [(reg.CompilerRegMaybeType.No) false])))
+
 (define (compiler-reg-scalar-mov-scratch-test-plan) : reg.CompilerRegPlan
   (reg.CompilerRegPlan.Plan
     (reg.compiler-reg-assignments-prepend
@@ -14985,6 +15241,7 @@
         index
         (live.compiler-live-set-empty)
         (live.compiler-live-set-empty)
+        (__tl_make-array reg.CompilerRegIdSeq 0)
         (reg.compiler-reg-global-shared-view weights)
         (reg.compiler-reg-global-shared-view hints)
         (reg.compiler-reg-global-shared-view hints)
@@ -15066,6 +15323,7 @@
         index
         (live.compiler-live-set-empty)
         (live.compiler-live-set-insert (live.compiler-live-set-empty) 0)
+        (__tl_make-array reg.CompilerRegIdSeq 0)
         weights
         (reg.compiler-reg-global-shared-view hints)
         (reg.compiler-reg-global-shared-view hints)
@@ -19723,6 +19981,7 @@
         (reg.compiler-reg-interval-index-build intervals 1)
         (live.compiler-live-set-empty)
         (live.compiler-live-set-empty)
+        (__tl_make-array reg.CompilerRegIdSeq 0)
         (__tl_make-array i64 0)
         (__tl_make-array i64 0)
         (__tl_make-array i64 0)
@@ -19814,6 +20073,7 @@
         (clone interval-index)
         (live.compiler-live-set-empty)
         (live.compiler-live-set-empty)
+        (__tl_make-array reg.CompilerRegIdSeq 0)
         (__tl_make-array i64 0)
         (__tl_make-array i64 0)
         (__tl_make-array i64 0)
@@ -19833,6 +20093,7 @@
           interval-index
           (live.compiler-live-set-empty)
           (live.compiler-live-set-empty)
+          (__tl_make-array reg.CompilerRegIdSeq 0)
           (__tl_make-array i64 0)
           (__tl_make-array i64 0)
           (__tl_make-array i64 0)
@@ -19878,6 +20139,7 @@
       index
       (live.compiler-live-set-empty)
       (live.compiler-live-set-empty)
+      (__tl_make-array reg.CompilerRegIdSeq 0)
       (__tl_make-array i64 0)
       (__tl_make-array i64 0)
       (__tl_make-array i64 0)
@@ -22021,6 +22283,18 @@
       "compiler-reg-scalar-windows-param-registers-ok?"
       (cfg test (compiler-reg-scalar-windows-param-registers-ok?) true))
     (compiler-regalloc-self-test-require!
+      "compiler-reg-param-entry-forbidden-ok?"
+      (cfg test (compiler-reg-param-entry-forbidden-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-param-entry-forbidden-refuses-windows-ok?"
+      (cfg test (compiler-reg-param-entry-forbidden-refuses-windows-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-param-entry-forbidden-refuses-float-ok?"
+      (cfg test (compiler-reg-param-entry-forbidden-refuses-float-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-param-entry-forbidden-refuses-memory-ok?"
+      (cfg test (compiler-reg-param-entry-forbidden-refuses-memory-ok?) true))
+    (compiler-regalloc-self-test-require!
       "compiler-reg-scalar-float-param-registers-ok?"
       (cfg test (compiler-reg-scalar-float-param-registers-ok?) true))
     (compiler-regalloc-self-test-require!
@@ -22291,6 +22565,9 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-owned-store-scratch-parity-ok?"
       (compiler-reg-owned-store-scratch-parity-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-owned-root-var-type-ok?"
+      (compiler-reg-owned-root-var-type-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-scalar-mov-scratch-vregs-ok?"
       (compiler-reg-scalar-mov-scratch-vregs-ok?))

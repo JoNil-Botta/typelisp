@@ -4895,6 +4895,18 @@
   (let [copied : (-> i64 i64) raw-fn]
     (apply1 copied 41)))")
 
+(define (compiler-typecheck-extern-returned-raw-fnptr-source) : String
+  "(extern (resolve [name : (Ptr u8)]) : (-> i64 i64) (:symbol \"resolve\"))
+(define (main) : i64
+  (let [resolved : (-> i64 i64) (resolve (ptr-null : (Ptr u8)))]
+    (resolved 41)))")
+
+(define (compiler-typecheck-extern-returned-raw-fnptr-to-tl-param-source) : String
+  "(extern (resolve [name : (Ptr u8)]) : (-> i64 i64) (:symbol \"resolve\"))
+(define (apply1 [f : (-> i64 i64)] [x : i64]) : i64 (f x))
+(define (main) : i64
+  (apply1 (resolve (ptr-null : (Ptr u8))) 41))")
+
 (define (compiler-typecheck-extern-head-fixed-source) : String
   "(extern (local-add [a : i64] [b : i64]) : i64 (:symbol \"foreign_add_exact\"))
 (define (main) : i64
@@ -4920,8 +4932,13 @@
       "typecheck: call `sumf` argument 2 type mismatch: expected f64, found bool")
     (compiler-typecheck-ok?
       (compiler-typecheck-extern-head-varargs-tail-enum-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-extern-returned-raw-fnptr-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-extern-raw-fnptr-to-tl-param-source)
+      "typecheck: raw C function pointer cannot be used as a TypeLisp function value")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-extern-returned-raw-fnptr-to-tl-param-source)
       "typecheck: raw C function pointer cannot be used as a TypeLisp function value")))
 
 (define (compiler-typecheck-extern-abi-tests-ok?) : bool

@@ -143,6 +143,22 @@ run_fixture() {
 # crash notice goes to a diagnostic-only stream, while the program's stderr
 # stays isolated for the manifest comparison. Ending with an explicit exit
 # prevents shells from replacing themselves with the manifest binary.
+ensure_linux_signal_exit_diagnostic() {
+    _rc=$1
+    _run_shell_stderr=$2
+
+    # POSIX leaves signal-notice text to the shell, and some shells emit
+    # nothing for this nested-exec shape. Preserve a real notice when one was
+    # captured; otherwise retain the portable 128+signal evidence in the same
+    # diagnostic-only stream used by failed manifest cases.
+    if [ "$_rc" -gt 128 ] && [ "$_rc" -le 255 ] &&
+        [ ! -s "$_run_shell_stderr" ]; then
+        _signal=$((_rc - 128))
+        printf 'program terminated by signal %s (exit %s); shell emitted no notice\n' \
+            "$_signal" "$_rc" > "$_run_shell_stderr"
+    fi
+}
+
 run_linux_manifest_program() {
     _bin=$1
     _stdout=$2
@@ -163,6 +179,9 @@ run_linux_manifest_program() {
         exit "$_rc"
     ' typelisp-integration-run \
         "$_bin" "$_stdout" "$_stderr" "$@" 2> "$_run_shell_stderr"
+    _rc=$?
+    ensure_linux_signal_exit_diagnostic "$_rc" "$_run_shell_stderr"
+    return "$_rc"
 }
 
 if [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
@@ -1476,6 +1495,9 @@ run_signal_notice_capture_self_test() {
     _stdout="$_dir/program.stdout"
     _stderr="$_dir/program.stderr"
     _run_shell_stderr="$_dir/run-shell.stderr"
+    _synthesized_stderr="$_dir/synthesized.stderr"
+    _captured_stderr="$_dir/captured.stderr"
+    _ordinary_stderr="$_dir/ordinary.stderr"
     _global_stderr="$_dir/global.stderr"
     _rc_file="$_dir/exit-code.txt"
 
@@ -1505,6 +1527,24 @@ EOF
         echo "FAIL: signal-notice-capture expected captured shell diagnostics" >&2
         exit 1
     fi
+
+    : > "$_synthesized_stderr"
+    ensure_linux_signal_exit_diagnostic 139 "$_synthesized_stderr"
+    assert_file_text \
+        "$_synthesized_stderr" \
+        'program terminated by signal 11 (exit 139); shell emitted no notice' \
+        signal-notice-capture-synthesized
+
+    printf '%s\n' 'captured shell notice' > "$_captured_stderr"
+    ensure_linux_signal_exit_diagnostic 139 "$_captured_stderr"
+    assert_file_text \
+        "$_captured_stderr" \
+        'captured shell notice' \
+        signal-notice-capture-preserved
+
+    : > "$_ordinary_stderr"
+    ensure_linux_signal_exit_diagnostic 42 "$_ordinary_stderr"
+    assert_empty_file "$_ordinary_stderr" signal-notice-capture-ordinary-exit
 
     printf '%s\n' "verify-integration signal notice capture self-test passed"
 }
@@ -1702,6 +1742,10 @@ run_linux_program_fixture() {
     _want=$3
     _opt_level=$4
     _stdout_spec=${5:--}
+    # Space-separated runtime arguments, so a fixture whose shape has to stay
+    # opaque to constant folding can take its sizes from argv and still be run
+    # at more than one optimization level.
+    _run_args=${6:-}
     _dir="$WORKDIR/$_label"
     mkdir -p "$_dir"
     _asm="$_dir/$_label.s"
@@ -1733,7 +1777,9 @@ run_linux_program_fixture() {
         exit 1
     fi
     set +e
-    "$_bin" > "$_stdout" 2> "$_stderr"
+    # Deliberately unquoted: the runner's own space-separated argument list.
+    # shellcheck disable=SC2086
+    "$_bin" $_run_args > "$_stdout" 2> "$_stderr"
     _got=$?
     set -e
     assert_program_fixture_result \
@@ -2029,6 +2075,103 @@ run_linux_backend_fixtures() {
         tests/integration/gep_fold_ordinal_store_pair_clone.tl \
         42 \
         2
+    # I3-1: sole-call absorption. `sc-classify` (acyclic, five parameters, one
+    # straight-line site) is absorbed into `sc-driver` at opt2 and at no other
+    # level, because the multiblock inliner runs only at opt2; `sc-scan-run`
+    # (loop-carrying) and `sc-fold-step` (acyclic but called from inside the
+    # driver's loop) are the tier's two structural refusals and keep their calls
+    # at every level. The opt0 and opt1 rows are the parity reference for the
+    # opt2 answer.
+    run_linux_program_fixture \
+        inline-sole-call-absorb-opt0 \
+        tests/integration/inline_sole_call_absorb.tl \
+        42 \
+        0 \
+        '339292\n' \
+        '64 3'
+    run_linux_program_fixture \
+        inline-sole-call-absorb-opt1 \
+        tests/integration/inline_sole_call_absorb.tl \
+        42 \
+        1 \
+        '339292\n' \
+        '64 3'
+    run_linux_program_fixture \
+        inline-sole-call-absorb-opt2 \
+        tests/integration/inline_sole_call_absorb.tl \
+        42 \
+        2 \
+        '339292\n' \
+        '64 3'
+    # The abort-carrying callee on its PASSING path: `sca-probe` owns a bounds
+    # check and is absorbed at opt2, so the opt2 row is the one where the check
+    # that fires belongs to the merged `main`. Its failing path is the manifest
+    # row `inline_sole_call_abort`, because this runner requires empty stderr.
+    run_linux_program_fixture \
+        inline-sole-call-abort-pass-opt0 \
+        tests/integration/inline_sole_call_abort.tl \
+        42 \
+        0 \
+        '53\n' \
+        '8 3'
+    run_linux_program_fixture \
+        inline-sole-call-abort-pass-opt2 \
+        tests/integration/inline_sole_call_abort.tl \
+        42 \
+        2 \
+        '53\n' \
+        '8 3'
+    # IT-2: the two-loop hash whose tail guard re-derives the slice descriptor
+    # on the bypass edge around the first loop, at every level -- the PRE and
+    # the CSE that completes it run only at opt2, so the opt0 and opt1 rows are
+    # the parity reference the opt2 row is checked against. The rows below are
+    # the same corpus with the container REBOUND between the two loops: the
+    # write refuses the CSE and both guards survive. Its OOB span is a manifest
+    # row (`guard_dedup_mutated_slice_abort`) rather than a row here, because
+    # this runner's assertion requires an EMPTY stderr and an abort writes its
+    # location to it.
+    run_linux_program_fixture \
+        guard-dedup-bypass-descriptor-opt0 \
+        tests/integration/guard_dedup_bypass_descriptor.tl \
+        42 \
+        0 \
+        '-5915004525821994045\n' \
+        24
+    run_linux_program_fixture \
+        guard-dedup-bypass-descriptor-opt1 \
+        tests/integration/guard_dedup_bypass_descriptor.tl \
+        42 \
+        1 \
+        '-5915004525821994045\n' \
+        24
+    run_linux_program_fixture \
+        guard-dedup-bypass-descriptor-opt2 \
+        tests/integration/guard_dedup_bypass_descriptor.tl \
+        42 \
+        2 \
+        '-5915004525821994045\n' \
+        24
+    run_linux_program_fixture \
+        guard-dedup-mutated-slice-opt0 \
+        tests/integration/guard_dedup_mutated_slice.tl \
+        42 \
+        0 \
+        '172085089044\n' \
+        '20 0'
+    run_linux_program_fixture \
+        guard-dedup-mutated-slice-opt1 \
+        tests/integration/guard_dedup_mutated_slice.tl \
+        42 \
+        1 \
+        '172085089044\n' \
+        '20 0'
+    run_linux_program_fixture \
+        guard-dedup-mutated-slice-opt2 \
+        tests/integration/guard_dedup_mutated_slice.tl \
+        42 \
+        2 \
+        '172085089044\n' \
+        '20 0'
     # IAG-1: the inline shape at every level, so a fold or copy that is only
     # reachable at one optimization level cannot regress unnoticed.
     run_linux_program_fixture \

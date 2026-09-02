@@ -182,6 +182,12 @@ Inline stdlib coverage:
   MINSTD sequences, bounded draws, invalid bounds, list/array/vector
   weighted-index edge cases, zero-weight skipping, storage parity, stable picks
   for fixed seeds, and system-seed result payloads.
+- `crypto_random.tl` owns inline tests for zero-length no-call behavior,
+  bounded chunk completion, partial writes, interruption retry/exhaustion,
+  impossible partial results, injected missing-library/missing-symbol/exact
+  NTSTATUS failures, and complete failure wiping. The native integration
+  fixture performs two successful OS fills on Linux and Windows without a
+  statistical bytes-differ assertion.
 - `math.tl` owns inline tests for the pure scalar helpers for `i64`, `f64`,
   and `f32`: negative/zero/positive absolute values, the generic float `abs`
   macro, sign predicates, min/max order, clamp low/high/inside cases, reversed

@@ -17436,6 +17436,127 @@ g:
             (= (compiler_ast_types.ast-source-span-start-col span) 5))]
         [(compiler_ir_types.CompilerMaybeSourceSpan.No) false]))))
 
+;; Stack coloring asks for instruction provenance once per emitted function.
+;; Keep interleaved source entries grouped by function so that query and remap
+;; costs are proportional to that function's entries, not the whole program.
+(define (compiler-backend-source-span-instr-index-ok?) : bool
+  (let
+    [previous-debug : bool (compiler_ir_types.compiler-debug-info-enabled?)]
+    [_disable : unit (compiler_ir_types.compiler-debug-info-set-enabled! false)]
+    [function-a : compiler_ir_types.CompilerIrSymbolId
+      (compiler_ir_types.compiler-ir-symbol-typed-id (ci.intern "span-index-a"))]
+    [function-b : compiler_ir_types.CompilerIrSymbolId
+      (compiler_ir_types.compiler-ir-symbol-typed-id (ci.intern "span-index-b"))]
+    [instr-a-first : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.Mov
+        3
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))]
+    [instr-b : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.Mov
+        4
+        (compiler_ir_types.CompilerIrValue.I64 2)
+        (compiler_ast_types.AstType.I64))]
+    [instr-a-last : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.Mov
+        5
+        (compiler_ir_types.CompilerIrValue.I64 3)
+        (compiler_ast_types.AstType.I64))]
+    [spans : compiler_ir_types.CompilerSourceSpans
+      (compiler_ir_types.compiler-source-spans-insert-instr
+        (compiler_ir_types.compiler-source-spans-insert-instr
+          (compiler_ir_types.compiler-source-spans-insert-instr
+            (compiler_ir_types.compiler-source-spans-empty)
+            function-a
+            (owned_view.compiler-owned-shared-view instr-a-first)
+            (compiler-backend-test-span 11 3))
+          function-b
+          (owned_view.compiler-owned-shared-view instr-b)
+          (compiler-backend-test-span 22 4))
+        function-a
+        (owned_view.compiler-owned-shared-view instr-a-last)
+        (compiler-backend-test-span 33 5))]
+    [index : compiler_backend.CompilerBackendSourceSpanIndex
+      (compiler_backend.compiler-backend-source-span-index-build
+        (owned_view.compiler-owned-shared-view spans))]
+    [pins-a : compiler_liveness.CompilerLiveI64Set
+      (compiler_backend.compiler-backend-source-span-pinned-vars
+        (owned_view.compiler-owned-shared-view index)
+        (compiler_ir_types.compiler-ir-symbol-id-value function-a)
+        8)]
+    [pins-b : compiler_liveness.CompilerLiveI64Set
+      (compiler_backend.compiler-backend-source-span-pinned-vars
+        (owned_view.compiler-owned-shared-view index)
+        (compiler_ir_types.compiler-ir-symbol-id-value function-b)
+        8)]
+    [remap : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+    [_remap : unit
+      (begin
+        (set! (array-ref remap 3) 1)
+        (set! (array-ref remap 5) 2))]
+    [remapped : compiler_ir_types.CompilerSourceSpans
+      (compiler_backend.compiler-backend-remap-source-spans
+        (owned_view.compiler-owned-shared-view spans)
+        (owned_view.compiler-owned-shared-view index)
+        (compiler_ir_types.compiler-ir-symbol-id-value function-a)
+        (owned_view.compiler-owned-shared-view remap))]
+    [ok : bool
+      (and
+        (match (compiler_backend.compiler-backend-source-span-index-instr-entries
+          (owned_view.compiler-owned-shared-view index)
+          (compiler_ir_types.compiler-ir-symbol-id-value function-a))
+          [(compiler_backend.CompilerBackendMaybeInstrSpanEntries.Some entries)
+            (= entries.len 2)]
+          [_ false])
+        (match (compiler_backend.compiler-backend-source-span-index-instr-entries
+          (owned_view.compiler-owned-shared-view index)
+          (compiler_ir_types.compiler-ir-symbol-id-value function-b))
+          [(compiler_backend.CompilerBackendMaybeInstrSpanEntries.Some entries)
+            (= entries.len 1)]
+          [_ false])
+        (compiler_liveness.compiler-live-set-contains?
+          (owned_view.compiler-owned-shared-view pins-a)
+          3)
+        (compiler_liveness.compiler-live-set-contains?
+          (owned_view.compiler-owned-shared-view pins-a)
+          5)
+        (not
+          (compiler_liveness.compiler-live-set-contains?
+            (owned_view.compiler-owned-shared-view pins-a)
+            4))
+        (compiler_liveness.compiler-live-set-contains?
+          (owned_view.compiler-owned-shared-view pins-b)
+          4)
+        (match (compiler_ir_types.compiler-source-spans-lookup-instr
+          (owned_view.compiler-owned-shared-view remapped)
+          function-a
+          (compiler_ir_types.CompilerIrInstr.Mov
+            1
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64)))
+          [(compiler_ir_types.CompilerMaybeSourceSpan.Some span)
+            (= (compiler_ast_types.ast-source-span-start-line span) 11)]
+          [_ false])
+        (match (compiler_ir_types.compiler-source-spans-lookup-instr
+          (owned_view.compiler-owned-shared-view remapped)
+          function-a
+          (compiler_ir_types.CompilerIrInstr.Mov
+            2
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64)))
+          [(compiler_ir_types.CompilerMaybeSourceSpan.Some span)
+            (= (compiler_ast_types.ast-source-span-start-line span) 33)]
+          [_ false])
+        (match (compiler_ir_types.compiler-source-spans-lookup-instr
+          remapped
+          function-b
+          instr-b)
+          [(compiler_ir_types.CompilerMaybeSourceSpan.No) true]
+          [_ false]))]
+    (begin
+      (compiler_ir_types.compiler-debug-info-set-enabled! previous-debug)
+      ok)))
+
 ;; Debug file numbering is a sparse, state-owned path map.  Disabled debug
 ;; info must stay allocation-free (`No`), while enabled info preserves exact
 ;; source-span lookups and assigns deterministic one-based numbers even for a
@@ -55994,6 +56115,7 @@ b_keep:
       (and
         (compiler-backend-instr-diagnostics-ok?)
         (compiler-backend-source-span-symbol-provenance-ok?)
+        (compiler-backend-source-span-instr-index-ok?)
         (compiler-backend-debug-disabled-sparse-paths-ok?)
         (compiler-backend-debug-path-remap-ok?)
         (compiler-backend-backtrace-metadata-shape-ok?)

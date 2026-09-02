@@ -1781,11 +1781,25 @@
   ;; program has only a handful of source files.
   (Files backend_i64_i64_map.Map (__tl_dyn-array i64) i64))
 
+(defstruct CompilerBackendInstrSpanIndex
+  (functions backend_i64_i64_map.Map)
+  (groups (__tl_dyn-array compiler_ir_types.CompilerSourceSpansInstrEntryList))
+  (count i64))
+
 (defstruct CompilerBackendSourceSpanIndex
   (entries backend_i64_i64_map.Map)
   (values (__tl_dyn-array compiler_ir_types.CompilerMaybeSourceSpan))
+  ;; Instruction provenance is consumed one function at a time. Group it once
+  ;; here instead of rescanning and recopying the whole program-wide list for
+  ;; every function whose stack slots are colored. Box the cold index so the
+  ;; ubiquitous source-span capability grows by only one word.
+  (instrs (Box CompilerBackendInstrSpanIndex))
   (debug-files CompilerBackendDebugFileIndex)
   (backend-state CompilerBackendState))
+
+(defenum CompilerBackendMaybeInstrSpanEntries
+  (No)
+  (Some compiler_ir_types.CompilerSourceSpansInstrEntryList))
 
 (defstruct CompilerBackendDebugFileBuildState
   (numbers backend_i64_i64_map.Map)
@@ -4497,17 +4511,103 @@
                 out
                 values)))]))))
 
+(define (compiler-backend-instr-span-key-function
+  [key : compiler_ir_types.CompilerSourceSpansInstrKey]) : i64
+  (match key
+    [(compiler_ir_types.CompilerSourceSpansInstrKey.Value function _)
+      (compiler_ir_types.compiler-ir-symbol-id-value function)]
+    [(compiler_ir_types.CompilerSourceSpansInstrKey.Store function _)
+      (compiler_ir_types.compiler-ir-symbol-id-value function)]
+    [(compiler_ir_types.CompilerSourceSpansInstrKey.Bounds function _)
+      (compiler_ir_types.compiler-ir-symbol-id-value function)]))
+
+(define (compiler-backend-instr-span-index-build
+  [entries : compiler_ir_types.CompilerSourceSpansInstrEntryList]) : CompilerBackendInstrSpanIndex
+  (if (or (compiler_ir_types.compiler-debug-info-enabled?) (= entries.len 0))
+    (CompilerBackendInstrSpanIndex
+      (backend_i64_i64_map.with-capacity 8)
+      (__tl_make-array compiler_ir_types.CompilerSourceSpansInstrEntryList 0)
+      0)
+    (let
+      [out : CompilerBackendInstrSpanIndex
+        (CompilerBackendInstrSpanIndex
+          (backend_i64_i64_map.with-capacity (+ (* entries.len 2) 1))
+          (__tl_make-array
+            compiler_ir_types.CompilerSourceSpansInstrEntryList
+            entries.len)
+          0)]
+      [index : i64 0]
+      (begin
+        (while (< index entries.len)
+          (begin
+            (match (array-ref entries.slots index)
+              [(compiler_ir_types.CompilerSourceSpansInstrEntry.Entry
+                  key
+                  path-id
+                  span)
+                (let
+                  [function : i64
+                    (compiler-backend-instr-span-key-function key)]
+                  [entry : compiler_ir_types.CompilerSourceSpansInstrEntry
+                    (compiler_ir_types.CompilerSourceSpansInstrEntry.Entry
+                      key
+                      path-id
+                      span)]
+                  [slot : i64
+                    (backend_i64_i64_map.get-value-or
+                      (& out.functions)
+                      function
+                      -1)]
+                  (if (>= slot 0)
+                    (set!
+                      (array-ref out.groups slot)
+                      (compiler_ir_types.compiler-source-spans-instr-entry-list-append
+                        (compiler-backend-global-array-element-shared-view
+                          out.groups
+                          slot)
+                        entry))
+                    (let
+                      [next-slot : i64 out.count]
+                      (begin
+                        (backend_i64_i64_map.insert-ref!
+                          (&mut out.functions)
+                          function
+                          next-slot)
+                        (set!
+                          (array-ref out.groups next-slot)
+                          (compiler_ir_types.compiler-source-spans-instr-entry-list-append
+                            (compiler_ir_types.compiler-source-spans-instr-entry-list-empty)
+                            entry))
+                        (set! out.count (+ next-slot 1))))))])
+            (set! index (+ index 1))))
+        out))))
+
+(define (compiler-backend-source-span-index-instr-entries
+  [index : CompilerBackendSourceSpanIndex]
+  [function : i64]) : CompilerBackendMaybeInstrSpanEntries
+  (let
+    [instrs : CompilerBackendInstrSpanIndex
+      (compiler_ir_types.compiler-ir-box-shared-view index.instrs)]
+    [slot : i64
+      (backend_i64_i64_map.get-value-or (& instrs.functions) function -1)]
+    (if (and (>= slot 0) (< slot instrs.count))
+      (CompilerBackendMaybeInstrSpanEntries.Some
+        (compiler-backend-global-array-element-shared-view instrs.groups slot))
+      (CompilerBackendMaybeInstrSpanEntries.No))))
+
 (define (compiler-backend-source-span-index-build-with-backend-state
   [backend-state : CompilerBackendState]
   [spans : compiler_ir_types.CompilerSourceSpans]) : CompilerBackendSourceSpanIndex
   (match (compiler-backend-global-shared-view spans)
-    [(compiler_ir_types.CompilerSourceSpans.Spans entries _ _)
+    [(compiler_ir_types.CompilerSourceSpans.Spans entries instr-entries _)
       (let
         [count : i64
           (compiler_ir_types.compiler-source-spans-count
             (compiler-backend-global-shared-view spans))]
         [values : (__tl_dyn-array compiler_ir_types.CompilerMaybeSourceSpan)
           (__tl_make-array compiler_ir_types.CompilerMaybeSourceSpan count)]
+        [instr-index : CompilerBackendInstrSpanIndex
+          (compiler-backend-instr-span-index-build instr-entries)]
         (begin
           (compiler-backend-source-span-index-fill
             (owned_view.compiler-owned-shared-view values)
@@ -4518,6 +4618,7 @@
               (backend_i64_i64_map.with-capacity (+ (* count 2) 16))
               (owned_view.compiler-owned-shared-view values))
             values
+            (box instr-index)
             (compiler-backend-debug-file-index-build-with-backend-state
               backend-state
               spans)
@@ -4574,52 +4675,48 @@
 ;; bypass coloring entirely below so every original variable identity remains
 ;; available to the debug metadata path.
 (define (compiler-backend-source-span-pinned-vars
-  [spans : compiler_ir_types.CompilerSourceSpans]
+  [span-index : CompilerBackendSourceSpanIndex]
   [function : i64]
   [vars : i64]) : compiler_liveness.CompilerLiveI64Set
   (if (<= vars 0)
     (compiler_liveness.compiler-live-set-empty)
-    (match spans
-      [(compiler_ir_types.CompilerSourceSpans.Spans _ instr-entries _)
-        (if (= instr-entries.len 0)
-          (compiler_liveness.compiler-live-set-empty)
-          (let
-            [words : (__tl_dyn-array i64)
-              (compiler_liveness.compiler-live-set-builder (- vars 1))]
-            [index : i64 0]
-            [pinned : bool false]
-            (begin
-              (while (< index instr-entries.len)
-                (begin
-                  (match (array-ref instr-entries.slots index)
-                    [(compiler_ir_types.CompilerSourceSpansInstrEntry.Entry
-                        key
-                        _
-                        _)
-                      (match key
-                        [(compiler_ir_types.CompilerSourceSpansInstrKey.Value
-                            key-function
-                            var)
-                          (if (and
-                            (=
-                              (compiler_ir_types.compiler-ir-symbol-id-value
-                                key-function)
-                              function)
-                            (>= var 0)
-                            (< var vars))
-                            (begin
-                              (compiler_liveness.compiler-live-set-builder-insert!
-                                (compiler-backend-global-shared-view words)
-                                var)
-                              (set! pinned true))
-                            unit)]
-                        [_ unit])])
-                  (set! index (+ index 1))))
-              (if pinned
-                (compiler_liveness.compiler-live-set-from-words-trimmed
-                  (compiler-backend-global-shared-view words)
-                  (array-length (compiler-backend-global-shared-view words)))
-                (compiler_liveness.compiler-live-set-empty)))))])))
+    (match (compiler-backend-source-span-index-instr-entries
+      span-index
+      function)
+      [(CompilerBackendMaybeInstrSpanEntries.No)
+        (compiler_liveness.compiler-live-set-empty)]
+      [(CompilerBackendMaybeInstrSpanEntries.Some instr-entries)
+        (let
+          [words : (__tl_dyn-array i64)
+            (compiler_liveness.compiler-live-set-builder (- vars 1))]
+          [index : i64 0]
+          [pinned : bool false]
+          (begin
+            (while (< index instr-entries.len)
+              (begin
+                (match (array-ref instr-entries.slots index)
+                  [(compiler_ir_types.CompilerSourceSpansInstrEntry.Entry
+                      key
+                      _
+                      _)
+                    (match key
+                      [(compiler_ir_types.CompilerSourceSpansInstrKey.Value
+                          _
+                          var)
+                        (if (and (>= var 0) (< var vars))
+                          (begin
+                            (compiler_liveness.compiler-live-set-builder-insert!
+                              (compiler-backend-global-shared-view words)
+                              var)
+                            (set! pinned true))
+                          unit)]
+                      [_ unit])])
+                (set! index (+ index 1))))
+            (if pinned
+              (compiler_liveness.compiler-live-set-from-words-trimmed
+                (compiler-backend-global-shared-view words)
+                (array-length (compiler-backend-global-shared-view words)))
+              (compiler_liveness.compiler-live-set-empty))))])))
 
 (define (compiler-backend-remap-source-span-key
   [key : compiler_ir_types.CompilerSourceSpansInstrKey]
@@ -4643,41 +4740,48 @@
 
 (define (compiler-backend-remap-source-spans
   [spans : compiler_ir_types.CompilerSourceSpans]
+  [span-index : CompilerBackendSourceSpanIndex]
   [function : i64]
   [remap : (__tl_dyn-array i64)]) : compiler_ir_types.CompilerSourceSpans
-  (match spans
-    [(compiler_ir_types.CompilerSourceSpans.Spans entries instr-entries count)
-      (let
-        [slots : (__tl_dyn-array
-          compiler_ir_types.CompilerSourceSpansInstrEntry)
-          (__tl_make-array
-            compiler_ir_types.CompilerSourceSpansInstrEntry
-            instr-entries.len)]
-        [index : i64 0]
-        (begin
-          (while (< index instr-entries.len)
+  (match (compiler-backend-global-shared-view spans)
+    [(compiler_ir_types.CompilerSourceSpans.Spans entries _ _)
+      (match (compiler-backend-source-span-index-instr-entries
+        span-index
+        function)
+        [(CompilerBackendMaybeInstrSpanEntries.No)
+          (compiler-backend-global-shared-view spans)]
+        [(CompilerBackendMaybeInstrSpanEntries.Some instr-entries)
+          (let
+            [slots : (__tl_dyn-array
+              compiler_ir_types.CompilerSourceSpansInstrEntry)
+              (__tl_make-array
+                compiler_ir_types.CompilerSourceSpansInstrEntry
+                instr-entries.len)]
+            [index : i64 0]
             (begin
-              (match (array-ref instr-entries.slots index)
-                [(compiler_ir_types.CompilerSourceSpansInstrEntry.Entry
-                    key
-                    path-id
-                    span)
-                  (set!
-                    (array-ref slots index)
-                    (compiler_ir_types.CompilerSourceSpansInstrEntry.Entry
-                      (compiler-backend-remap-source-span-key
+              (while (< index instr-entries.len)
+                (begin
+                  (match (array-ref instr-entries.slots index)
+                    [(compiler_ir_types.CompilerSourceSpansInstrEntry.Entry
                         key
-                        function
-                        (compiler-backend-global-shared-view remap))
-                      path-id
-                      span))])
-              (set! index (+ index 1))))
-          (compiler_ir_types.CompilerSourceSpans.Spans
-            entries
-            (compiler_ir_types.CompilerSourceSpansInstrEntryList
-              slots
-              instr-entries.len)
-            count)))]))
+                        path-id
+                        span)
+                      (set!
+                        (array-ref slots index)
+                        (compiler_ir_types.CompilerSourceSpansInstrEntry.Entry
+                          (compiler-backend-remap-source-span-key
+                            key
+                            function
+                            (compiler-backend-global-shared-view remap))
+                          path-id
+                          span))])
+                  (set! index (+ index 1))))
+              (compiler_ir_types.CompilerSourceSpans.Spans
+                entries
+                (compiler_ir_types.CompilerSourceSpansInstrEntryList
+                  slots
+                  instr-entries.len)
+                instr-entries.len)))])]))
 
 (define (compiler-backend-apply-instr-diagnostic
   [diag : compiler_diagnostic.CompilerDiagnostic]
@@ -80724,7 +80828,7 @@
           (if (compiler_ir_types.compiler-debug-info-enabled?)
             (compiler_liveness.compiler-live-set-empty)
             (compiler-backend-source-span-pinned-vars
-              (compiler-backend-global-shared-view spans)
+              (compiler-backend-global-shared-view span-index)
               name
               scratch-vars))]
         [coloring-pinned-vars : compiler_liveness.CompilerLiveI64Set
@@ -80780,6 +80884,7 @@
                 0)
                 (compiler-backend-remap-source-spans
                   (compiler-backend-global-shared-view spans)
+                  (compiler-backend-global-shared-view span-index)
                   name
                   remap)
                 (compiler-backend-global-shared-view spans))])]

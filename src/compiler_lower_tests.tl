@@ -10873,6 +10873,134 @@
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (array-ref a (+ i 1)) 1))))")
 
+(define (compiler-lower-spmd-numeric-i64-division-source) : String
+  "(define (fill [a : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (set! (array-ref out i) (/ (array-ref a i) 2))))")
+
+(define (compiler-lower-spmd-numeric-f32-division-source) : String
+  "(define (fill [a : (__tl_dyn-array f32)] [out : (__tl_dyn-array f32)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (set! (array-ref out i) (/ (array-ref a i) (cast 2 : f32)))))")
+
+(define (compiler-lower-spmd-numeric-conversion-source) : String
+  "(define (fill [a : (__tl_dyn-array i32)] [out : (__tl_dyn-array f32)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (set! (array-ref out i) (cast (array-ref a i) : f32))))")
+
+(define (compiler-lower-spmd-numeric-masked-division-source) : String
+  "(define (fill [a : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (if (> (array-ref a i) 0)
+      (set! (array-ref out i) (/ (array-ref a i) 2))
+      unit)))")
+
+(define (compiler-lower-spmd-numeric-inline-helper-source) : String
+  "(define (half [x : i64]) : i64 (/ x 2))
+(define (fill [a : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (set! (array-ref out i) (half (array-ref a i)))))")
+
+(define (compiler-lower-spmd-numeric-private-helper-source) : String
+  "(define (heavy-half [x : i64]) : i64
+  (/ (+ (+ (+ (+ (+ (+ (+ x 1) 2) 3) 4) 5) 6) 7) 2))
+(define (fill [a : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (set! (array-ref out i) (heavy-half (array-ref a i)))))")
+
+(define (compiler-lower-spmd-numeric-fused-reduction-source) : String
+  "(define (f [a : (__tl_dyn-array i64)] [n : i64]) : i64
+  (spmd-reduce sum ([i : i64 0 n]) 0 (/ (array-ref a i) 2)))")
+
+(define (compiler-lower-spmd-numeric-error-at-source?
+  [src : String]
+  [mode : compiler_lower.CompilerLowerMode]
+  [want : String]) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode src mode)
+    [(compiler_lower.ResultCompilerLower.Err diag-box)
+      (let
+        [diag : compiler_diagnostic.CompilerDiagnostic
+          (compiler_diagnostic.compiler-diagnostic-box-shared-view diag-box)]
+        (begin
+          (unless
+            (string.eq
+              (compiler_diagnostic.compiler-diagnostic-message diag)
+              want)
+            (io.panic
+              (str_cat.str-cat
+                "SPMD numeric diagnostic mismatch: got `"
+                (compiler_diagnostic.compiler-diagnostic-message diag)
+                "`, expected `"
+                want
+                "`")))
+          (unless
+            (> (compiler_diagnostic.compiler-diagnostic-line diag) 0)
+            (io.panic "SPMD numeric diagnostic has no source line"))
+          (unless
+            (> (compiler_diagnostic.compiler-diagnostic-col diag) 0)
+            (io.panic "SPMD numeric diagnostic has no source column"))
+          true))]
+    [(compiler_lower.ResultCompilerLower.Ok _ _)
+      (io.panic "SPMD numeric source unexpectedly lowered")]))
+
+(define (compiler-lower-spmd-numeric-diagnostics-ok?) : bool
+  (and
+    (compiler-lower-ok? (compiler-lower-spmd-numeric-i64-division-source))
+    (compiler-lower-ok? (compiler-lower-spmd-numeric-f32-division-source))
+    (compiler-lower-ok? (compiler-lower-spmd-numeric-conversion-source))
+    (compiler-lower-ok? (compiler-lower-spmd-numeric-masked-division-source))
+    (compiler-lower-ok? (compiler-lower-spmd-numeric-inline-helper-source))
+    (compiler-lower-ok? (compiler-lower-spmd-numeric-private-helper-source))
+    (compiler-lower-ok? (compiler-lower-spmd-numeric-fused-reduction-source))
+    (compiler-lower-spmd-numeric-error-at-source?
+      (compiler-lower-spmd-numeric-i64-division-source)
+      (compiler_lower.CompilerLowerMode.Avx2)
+      "lower: SPMD numeric operation '/' from i64 to i64 is unsupported in direct map context for AVX2 backend; SIMD division has no implemented strategy; use scalar backend")
+    (compiler-lower-spmd-numeric-error-at-source?
+      (compiler-lower-spmd-numeric-i64-division-source)
+      (compiler_lower.CompilerLowerMode.Avx512)
+      "lower: SPMD numeric operation '/' from i64 to i64 is unsupported in direct map context for AVX-512 backend; SIMD division has no implemented strategy; use scalar backend")
+    (compiler-lower-spmd-numeric-error-at-source?
+      (compiler-lower-spmd-numeric-f32-division-source)
+      (compiler_lower.CompilerLowerMode.Avx2)
+      "lower: SPMD numeric operation '/' from f32 to f32 is unsupported in direct map context for AVX2 backend; SIMD division has no implemented strategy; use scalar backend")
+    (compiler-lower-spmd-numeric-error-at-source?
+      (compiler-lower-spmd-numeric-conversion-source)
+      (compiler_lower.CompilerLowerMode.Avx2)
+      "lower: SPMD numeric conversion from i32 to f32 is unsupported in direct map context for AVX2 backend; SIMD cross-lane conversion has no implemented strategy; use scalar backend")
+    (compiler-lower-spmd-numeric-error-at-source?
+      (compiler-lower-spmd-numeric-masked-division-source)
+      (compiler_lower.CompilerLowerMode.Avx2)
+      "lower: SPMD numeric operation '/' from i64 to i64 is unsupported in masked control context for AVX2 backend; SIMD division has no implemented strategy; use scalar backend")
+    (compiler-lower-spmd-numeric-error-at-source?
+      (compiler-lower-spmd-numeric-masked-division-source)
+      (compiler_lower.CompilerLowerMode.Avx512)
+      "lower: SPMD numeric operation '/' from i64 to i64 is unsupported in masked control context for AVX-512 backend; SIMD division has no implemented strategy; use scalar backend")
+    (compiler-lower-spmd-numeric-error-at-source?
+      (compiler-lower-spmd-numeric-inline-helper-source)
+      (compiler_lower.CompilerLowerMode.Avx2)
+      "lower: SPMD numeric operation '/' from i64 to i64 is unsupported in inline helper context for AVX2 backend; SIMD division has no implemented strategy; use scalar backend")
+    (compiler-lower-spmd-numeric-error-at-source?
+      (compiler-lower-spmd-numeric-private-helper-source)
+      (compiler_lower.CompilerLowerMode.Avx512)
+      "lower: SPMD numeric operation '/' from i64 to i64 is unsupported in private helper context for AVX-512 backend; SIMD division has no implemented strategy; use scalar backend")
+    (compiler-lower-spmd-numeric-error-at-source?
+      (compiler-lower-spmd-numeric-fused-reduction-source)
+      (compiler_lower.CompilerLowerMode.Avx2)
+      "lower: SPMD numeric operation '/' from i64 to i64 is unsupported in map-fused reduction context for AVX2 backend; SIMD division has no implemented strategy; use scalar backend")))
+
+(test
+  compiler-lower-spmd-numeric-diagnostics
+  (test.assert-true
+    (compiler-lower-spmd-numeric-diagnostics-ok?)
+    "SPMD numeric failures report their matrix row at the operator or cast"))
+
 (define (compiler-lower-avx2-foreach-map-source-shape-ok?
   [src : String]
   [elem-ty : compiler_ast_types.AstType]

@@ -19945,8 +19945,18 @@
     ;; the poorer site first in walk order, so only the ranking can order them
     [_scan : unit
       (begin
-        (compiler_optimize.opt-inline-checked-scan-record! callee 10 1 100)
-        (compiler_optimize.opt-inline-checked-scan-record! callee 11 2 900))]
+        (compiler_optimize.opt-inline-checked-scan-record!
+          callee
+          10
+          1
+          100
+          false)
+        (compiler_optimize.opt-inline-checked-scan-record!
+          callee
+          11
+          2
+          900
+          false))]
     [armed-first? : bool
       (compiler_optimize.opt-inline-checked-arm-next-target!)]
     [first-pos : i64 (compiler_optimize.opt-inline-checked-target-pos-current)]
@@ -19999,8 +20009,18 @@
     [_begin : unit (compiler_optimize.opt-inline-checked-program-begin!)]
     [_scan : unit
       (begin
-        (compiler_optimize.opt-inline-checked-scan-record! callee 20 0 900)
-        (compiler_optimize.opt-inline-checked-scan-record! callee 21 3 100))]
+        (compiler_optimize.opt-inline-checked-scan-record!
+          callee
+          20
+          0
+          900
+          false)
+        (compiler_optimize.opt-inline-checked-scan-record!
+          callee
+          21
+          3
+          100
+          false))]
     [_first : unit
       (begin
         (compiler_optimize.opt-inline-checked-arm-next-target!)
@@ -20059,7 +20079,8 @@
         callee
         (+ 100 row)
         row
-        (- 1000 row))
+        (- 1000 row)
+        false)
       (opt-inline-checked-seq-fill-scan callee (+ row 1)))))
 
 ;; Arm and spend verdicts until the caller is refused one, and report how many.
@@ -20105,8 +20126,8 @@
     ;; the OTHER callee's site is the richer of the two
     [_scan : unit
       (begin
-        (compiler_optimize.opt-inline-checked-scan-record! a 30 0 100)
-        (compiler_optimize.opt-inline-checked-scan-record! b 31 1 900))]
+        (compiler_optimize.opt-inline-checked-scan-record! a 30 0 100 false)
+        (compiler_optimize.opt-inline-checked-scan-record! b 31 1 900 false))]
     ;; before any accept, the richest wins outright
     [armed-first? : bool
       (compiler_optimize.opt-inline-checked-arm-next-target!)]
@@ -20126,8 +20147,8 @@
     ;; a fresh caller-scan holding both callees now offers only `a`
     [_next : unit
       (begin
-        (compiler_optimize.opt-inline-checked-scan-record! b 32 2 900)
-        (compiler_optimize.opt-inline-checked-scan-record! a 33 3 100))]
+        (compiler_optimize.opt-inline-checked-scan-record! b 32 2 900 false)
+        (compiler_optimize.opt-inline-checked-scan-record! a 33 3 100 false))]
     [armed-third? : bool
       (compiler_optimize.opt-inline-checked-arm-next-target!)]
     [third-callee : i64
@@ -20596,10 +20617,18 @@
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-checked-depth0-program symbols mode)
         2)]
+    ;; BOTH budgets: the depth-0 site is admitted by a relaxed clause and is
+    ;; charged to the relaxations' reserve (CB-2b), the holder's own in-loop
+    ;; site to the core budget, and this fixture is about how many verdicts the
+    ;; tier reached in all.
     [spent : i64
-      (-
-        (compiler_optimize.opt-inline-checked-program-budget)
-        (compiler_optimize.opt-inline-checked-budget-current))]
+      (+
+        (-
+          (compiler_optimize.opt-inline-checked-program-budget)
+          (compiler_optimize.opt-inline-checked-budget-current))
+        (-
+          (compiler_optimize.opt-inline-checked-relaxed-program-budget)
+          (compiler_optimize.opt-inline-checked-relaxed-budget-current)))]
     [_disarm : unit (compiler_optimize.opt-inline-checked-set-active! false)]
     [holder-calls : i64
       (opt-count-direct-call-name-function-seq
@@ -20635,7 +20664,7 @@
     [_begin : unit (compiler_optimize.opt-inline-checked-program-begin!)]
     [_slim : unit (compiler_optimize.opt-inline-checked-publish-margin! false)]
     [_scan-slim : unit
-      (compiler_optimize.opt-inline-checked-scan-record! a 50 0 900)]
+      (compiler_optimize.opt-inline-checked-scan-record! a 50 0 900 false)]
     [armed-slim? : bool (compiler_optimize.opt-inline-checked-arm-next-target!)]
     [_keep-slim : unit
       (begin
@@ -20648,7 +20677,7 @@
     [_begin-clear : unit (compiler_optimize.opt-inline-checked-program-begin!)]
     [_clear : unit (compiler_optimize.opt-inline-checked-publish-margin! true)]
     [_scan-clear : unit
-      (compiler_optimize.opt-inline-checked-scan-record! a 60 0 900)]
+      (compiler_optimize.opt-inline-checked-scan-record! a 60 0 900 false)]
     [armed-clear? : bool
       (compiler_optimize.opt-inline-checked-arm-next-target!)]
     [_keep-clear : unit
@@ -20659,7 +20688,7 @@
       (compiler_optimize.opt-inline-checked-callee-allowed? b)]
     ;; ...and the second body is ranked, armed and kept
     [_scan-second : unit
-      (compiler_optimize.opt-inline-checked-scan-record! b 61 1 800)]
+      (compiler_optimize.opt-inline-checked-scan-record! b 61 1 800 false)]
     [armed-second? : bool
       (compiler_optimize.opt-inline-checked-arm-next-target!)]
     [second-callee : i64
@@ -20693,6 +20722,391 @@
       (not third?)
       second-body?
       (= distinct (compiler_optimize.opt-inline-checked-max-callees)))))
+
+;; --- CB-2b: a relaxed candidate may only ADD a verdict, never take one -------
+;;
+;; The program budget is spent by refusals exactly as it is by accepts and it is
+;; spent in walk order, so admitting a MARGINAL candidate anywhere takes a
+;; verdict away from a candidate somewhere later. Measured: CB-2's two
+;; relaxations offered ssa_construct five extra candidates, every one of them a
+;; revert, and pushed two keeps off the end of the budget for +6,495,048.
+;;
+;; So the relaxations rank behind, and spend apart from, everything the
+;; unrelaxed tier would have priced. These pin both halves.
+(define (compiler-optimize-inline-checked-relaxed-rank-ok?) : bool
+  (let
+    [callee : i64 (opt-inline-checked-seq-callee-a)]
+    [_begin : unit (compiler_optimize.opt-inline-checked-program-begin!)]
+    ;; two RELAXED rows, either of them nine times richer than the core one
+    [_scan : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-scan-record! callee 70 0 900 true)
+        (compiler_optimize.opt-inline-checked-scan-record!
+          callee
+          71
+          1
+          100
+          false)
+        (compiler_optimize.opt-inline-checked-scan-record! callee 72 2 800 true))]
+    [armed-first? : bool
+      (compiler_optimize.opt-inline-checked-arm-next-target!)]
+    [first-pos : i64 (compiler_optimize.opt-inline-checked-target-pos-current)]
+    [first-relaxed? : bool
+      (compiler_optimize.opt-inline-checked-target-relaxed-current?)]
+    [_spend-first : unit (compiler_optimize.opt-inline-checked-spend-verdict!)]
+    [core-left : i64 (compiler_optimize.opt-inline-checked-budget-current)]
+    [reserve-left : i64
+      (compiler_optimize.opt-inline-checked-relaxed-budget-current)]
+    [armed-second? : bool
+      (compiler_optimize.opt-inline-checked-arm-next-target!)]
+    [second-pos : i64 (compiler_optimize.opt-inline-checked-target-pos-current)]
+    [second-relaxed? : bool
+      (compiler_optimize.opt-inline-checked-target-relaxed-current?)]
+    [_spend-second : unit (compiler_optimize.opt-inline-checked-spend-verdict!)]
+    [core-after : i64 (compiler_optimize.opt-inline-checked-budget-current)]
+    [reserve-after : i64
+      (compiler_optimize.opt-inline-checked-relaxed-budget-current)]
+    ;; the caller's relaxed allowance is one, so the second relaxed row stays
+    ;; on the table even though the core budget is nearly untouched
+    [armed-third? : bool
+      (compiler_optimize.opt-inline-checked-arm-next-target!)]
+    [core-verdicts : i64
+      (compiler_optimize.opt-inline-checked-caller-verdicts-current)]
+    [relaxed-verdicts : i64
+      (compiler_optimize.opt-inline-checked-caller-relaxed-verdicts-current)]
+    [_reset : unit (compiler_optimize.opt-inline-checked-program-begin!)]
+    (and
+      armed-first?
+      armed-second?
+      (not armed-third?)
+      ;; CORE FIRST, richness second: the poorest core row is priced before the
+      ;; richest relaxed one
+      (= first-pos 1)
+      (not first-relaxed?)
+      (= second-pos 0)
+      second-relaxed?
+      ;; and each verdict is charged to its own budget
+      (= core-left (- (compiler_optimize.opt-inline-checked-program-budget) 1))
+      (=
+        reserve-left
+        (compiler_optimize.opt-inline-checked-relaxed-program-budget))
+      (= core-after (- (compiler_optimize.opt-inline-checked-program-budget) 1))
+      (=
+        reserve-after
+        (- (compiler_optimize.opt-inline-checked-relaxed-program-budget) 1))
+      (= core-verdicts 1)
+      (= relaxed-verdicts 1))))
+
+;; One relaxed verdict in each of `count` successive callers, which is the most
+;; the per-caller allowance lets any of them have.
+(define (opt-inline-checked-relaxed-drain
+  [callee : i64]
+  [row : i64]
+  [count : i64]
+  [armed : i64]) : i64
+  (if (>= row count)
+    armed
+    (let
+      [_caller : unit (compiler_optimize.opt-inline-checked-caller-begin!)]
+      [_scan : unit
+        (compiler_optimize.opt-inline-checked-scan-record!
+          callee
+          (+ 200 row)
+          row
+          900
+          true)]
+      [ok? : bool (compiler_optimize.opt-inline-checked-arm-next-target!)]
+      [_spend : unit
+        (if ok?
+          (compiler_optimize.opt-inline-checked-spend-verdict!)
+          unit)]
+      (opt-inline-checked-relaxed-drain
+        callee
+        (+ row 1)
+        count
+        (+
+          armed
+          (if ok?
+            1
+            0))))))
+
+;; THE RESERVE. Every relaxed verdict the program can afford is spent, and the
+;; core budget comes out of it untouched: the caller that arrives next is armed
+;; exactly as it would have been had no clause ever been relaxed.
+(define (compiler-optimize-inline-checked-relaxed-reserve-ok?) : bool
+  (let
+    [callee : i64 (opt-inline-checked-seq-callee-a)]
+    [reserve : i64
+      (compiler_optimize.opt-inline-checked-relaxed-program-budget)]
+    [_begin : unit (compiler_optimize.opt-inline-checked-program-begin!)]
+    [spent : i64 (opt-inline-checked-relaxed-drain callee 0 reserve 0)]
+    [core-untouched : i64 (compiler_optimize.opt-inline-checked-budget-current)]
+    [reserve-left : i64
+      (compiler_optimize.opt-inline-checked-relaxed-budget-current)]
+    ;; the next caller's relaxed row is refused for want of reserve...
+    [_next : unit (compiler_optimize.opt-inline-checked-caller-begin!)]
+    [_scan-relaxed : unit
+      (compiler_optimize.opt-inline-checked-scan-record! callee 300 0 900 true)]
+    [relaxed-again? : bool
+      (compiler_optimize.opt-inline-checked-arm-next-target!)]
+    ;; ...and its CORE row is armed anyway, which is the whole claim
+    [_scan-core : unit
+      (compiler_optimize.opt-inline-checked-scan-record! callee 301 1 100 false)]
+    [core-armed? : bool (compiler_optimize.opt-inline-checked-arm-next-target!)]
+    [core-relaxed? : bool
+      (compiler_optimize.opt-inline-checked-target-relaxed-current?)]
+    [core-pos : i64 (compiler_optimize.opt-inline-checked-target-pos-current)]
+    [_reset : unit (compiler_optimize.opt-inline-checked-program-begin!)]
+    (and
+      (> reserve 0)
+      (= spent reserve)
+      (= core-untouched (compiler_optimize.opt-inline-checked-program-budget))
+      (= reserve-left 0)
+      (not relaxed-again?)
+      core-armed?
+      (not core-relaxed?)
+      (= core-pos 1))))
+
+;; --- and the same claim end to end: a claim adds, it does not withdraw -------
+;;
+;; The tiny leaf every cheap band takes for free: one straight-line block, three
+;; parameters, two arithmetic instructions. Nothing about it is the measured
+;; tier's business, and the measured tier is never asked about it -- a site a
+;; band admits is never offered to the check.
+(define (opt-inline-checked-cheap-leaf-function [name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    5
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            3
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            4
+            (compiler_ir_types.CompilerIrBinOp.BitXor)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 4)))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; The hot caller: the builder at its ENTRY block, which every band refuses --
+;; the loop bands want the site inside the caller's loop, the sole-call band
+;; wants an acyclic callee, and a second reference keeps the single-site band
+;; out -- and a loop of its own holding two of the leaf's four sites, which
+;; every band takes.
+(define (opt-inline-checked-cheap-hot-caller
+  [func-name : i64]
+  [leaf-name : i64]
+  [builder-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    10
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Mov
+            3
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64))
+          (opt-inline-checked-builder-call builder-name 5)
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "header"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "header")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Phi
+              4
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.compiler-ir-label "entry")
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var 9)
+                  (compiler_ir_types.compiler-ir-label "latch")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.compiler-ir-label "body")
+              (compiler_ir_types.compiler-ir-label "exit"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "body")
+            (opt-test-instrs
+              (opt-inline-loop-site-call leaf-name 6)
+              (opt-inline-loop-site-call leaf-name 7)
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                8
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 6)
+                (compiler_ir_types.CompilerIrValue.Var 7)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                9
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 8)
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "latch"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "latch")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "header"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "exit")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 4)))))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+;; The cold caller: the leaf's other two sites, plus the second reference to the
+;; builder and to the hot caller, so no single-reference band can claim either
+;; of them before the measured tier is asked.
+(define (opt-inline-checked-cheap-cold-caller
+  [func-name : i64]
+  [leaf-name : i64]
+  [builder-name : i64]
+  [hot-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    10
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (opt-inline-checked-builder-call builder-name 3)
+          (opt-inline-loop-site-call leaf-name 4)
+          (opt-inline-loop-site-call leaf-name 5)
+          (opt-inline-loop-site-call hot-name 6)
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            7
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            8
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.Var 6)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ir_types.CompilerIrValue.Var 8)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 9)))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-inline-checked-cheap-program [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (let
+    [leaf-name : i64 symbols.inline-tiny-predicate]
+    [builder-name : i64 symbols.inline-switch]
+    [hot-name : i64 symbols.inline-nonleaf]
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-inline-checked-hot-driver-function symbols.main hot-name)
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-inline-checked-cheap-cold-caller
+          symbols.inline-loop
+          leaf-name
+          builder-name
+          hot-name)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-inline-checked-cheap-hot-caller hot-name leaf-name builder-name)
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-inline-checked-builder-function builder-name)
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (opt-inline-checked-cheap-leaf-function leaf-name)
+              (compiler_ir_types.compiler-ir-function-seq-empty))))))))
+
+(define (opt-count-direct-call-name-functions
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : String]) : i64
+  (let
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index functions.len)
+        (begin
+          (match (compiler_ir_types.compiler-ir-function-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view functions)
+            index)
+            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+              (set!
+                count
+                (+
+                  count
+                  (opt-count-direct-call-name-blocks
+                    blocks
+                    (compiler_optimize.compiler-opt-global-shared-view name))))])
+          (set! index (+ index 1))))
+      count)))
+
+;; The encoding is the tier's verdicts, then the builder's surviving calls, then
+;; the leaf's: 10000 * verdicts + 100 * builder calls + calls to the four-site
+;; leaf left anywhere in the program.
+;;
+;; ONE verdict: the builder's entry-block site in the hot caller is the one site
+;; in this program no band will take, so it is the measured tier's, and it
+;; reaches the tier while the tier is claiming nothing else. NO leaf calls: the
+;; cheap bands take all four of the leaf's sites -- two of them inside the very
+;; caller the claim lands in -- and the claim leaves every one of them where it
+;; was. (The builder's own cold second reference is band-absorbed into a
+;; loop-free caller, which is why nothing calls it either.)
+(define (opt-inline-checked-cheap-tier-self-test) : i64
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [_arm : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-set-active! true)
+        (compiler_optimize.opt-inline-checked-program-begin!))]
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-checked-cheap-program symbols)
+        2)]
+    [spent : i64
+      (+
+        (-
+          (compiler_optimize.opt-inline-checked-program-budget)
+          (compiler_optimize.opt-inline-checked-budget-current))
+        (-
+          (compiler_optimize.opt-inline-checked-relaxed-program-budget)
+          (compiler_optimize.opt-inline-checked-relaxed-budget-current)))]
+    [_disarm : unit (compiler_optimize.opt-inline-checked-set-active! false)]
+    [leaf-calls : i64
+      (opt-count-direct-call-name-functions
+        (compiler_optimize.compiler-opt-global-shared-view optimized)
+        "inline_tiny_predicate")]
+    [builder-calls : i64
+      (opt-count-direct-call-name-functions
+        (compiler_optimize.compiler-opt-global-shared-view optimized)
+        "inline_switch")]
+    (+ (* 10000 spent) (+ (* 100 builder-calls) leaf-calls))))
 
 (define (compiler-optimize-inline-dup-call-bearing-refusal-ok?) : bool
   (let

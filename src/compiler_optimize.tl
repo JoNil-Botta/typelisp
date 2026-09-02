@@ -124261,6 +124261,11 @@
 ;;
 ;; Below any of the three the floor stands, and the site never reaches a
 ;; verdict.
+;;
+;; A site admitted by this relaxation is a RELAXED candidate: it is ranked
+;; behind every candidate that cleared the unrelaxed floor and it spends the
+;; relaxations' own reserve, never the budget those candidates read. See
+;; opt-inline-checked-relaxed-program-budget for the regression that rule is.
 (define (opt-inline-checked-min-site-depth) : i64
   1)
 
@@ -124300,6 +124305,67 @@
 ;; helper -- with a round to spare.
 (define (opt-inline-checked-max-caller-verdicts) : i64
   4)
+
+;; --- the relaxations' own reserve, and why the budget above needs one -------
+;;
+;; The budget above is spent by REFUSALS exactly as it is by accepts, and it is
+;; spent in walk order, so it is a race: the callers the walk reaches first
+;; price their candidates and the callers it reaches last get whatever is left.
+;; That is the right shape while every candidate in the race is one this tier
+;; would have priced anyway -- the race is then between equals. It stops being
+;; right the moment a clause is RELAXED for a candidate, because a relaxation
+;; admits the MARGINAL case by construction, and a marginal candidate that
+;; reverts still spends a verdict that a candidate the unrelaxed tier would have
+;; KEPT was going to get.
+;;
+;; That is not a theoretical cost; it is a measured one. ssa_construct offers
+;; this tier exactly twenty-four candidates without the relaxations and the
+;; program budget is exactly twenty-four, so the entry-site and second-body
+;; admissions -- five extra candidates in the first half of the program, every
+;; one of them a revert -- pushed five candidates off the end of the budget, and
+;; two of those were keeps: `ssa-instr-dst` into `ssa-verify-defs` (a modelled
+;; saving of 960 against a boundary of 512) and `ssa-instr-next` into
+;; `ssa-verify` (1008 against 512). Both callees then stayed out of line at
+;; every site the bands also refuse, and the row paid +6,495,048.
+;;
+;; So the relaxations get their OWN reserve, which is the construction every
+;; band in this file already uses for its own imports: a hot-loop, chain,
+;; accessor or absorb import spends its gate's fuel and never the fuel the
+;; caller's banked absorptions draw on. A candidate that reaches the verdict
+;; only because a clause was relaxed for it -- a site below the depth floor, or
+;; a body the one-callee lock would have refused -- spends from HERE, and is
+;; ranked behind every candidate that needed no relaxation
+;; (opt-inline-checked-arm-next-target!). It can therefore neither take a core
+;; candidate's verdict nor be priced ahead of one, which is the whole claim:
+;; adding a relaxation may only ADD verdicts, never move them.
+;;
+;; ONE PER CALLER. A relaxed candidate is a caller's marginal chance, not a
+;; second chain of them, and every relaxed accept the corpus measures is one
+;; caller's one site: `it-map-insert-from` into `it-intern-slice`
+;; (intern_table -719,598), `pl-owners-empty` into `pl-run-chunk`
+;; (peephole_lines -9,528), `ls-digit?` into `ls-hex-digit?` and
+;; `ls-colon-symbol-head?` into `ls-colon-token-end` (lex_source -641,520). The
+;; callers that wanted more than one wanted them for reverts: `ssa-def-blocks`
+;; and `ls-tokenize` each offered three and kept none.
+(define (opt-inline-checked-max-caller-relaxed-verdicts) : i64
+  1)
+
+;; ...and program-wide, one such chance for each caller the tier's own budget
+;; could serve: twenty-four verdicts at four per caller is six callers. The
+;; reserve is stated as that quotient rather than as a number of its own,
+;; because it is not a second thing to tune -- it is the same bound read at the
+;; granularity the relaxations spend it in.
+(define (opt-inline-checked-relaxed-program-budget) : i64
+  (/
+    (opt-inline-checked-program-budget)
+    (opt-inline-checked-max-caller-verdicts)))
+
+;; How many sites one caller may end up with in the accepted table: its core
+;; verdicts and its relaxed one can all keep.
+(define (opt-inline-checked-max-caller-accepts) : i64
+  (+
+    (opt-inline-checked-max-caller-verdicts)
+    (opt-inline-checked-max-caller-relaxed-verdicts)))
 
 ;; How many candidate sites one caller's SCAN walk ranks. Only the richest
 ;; opt-inline-checked-max-caller-verdicts of them can ever be priced, so the
@@ -124413,6 +124479,12 @@
 (define (opt-inline-checked-clause-site-depth) : i64
   16)
 
+;; Ranked as a RELAXED candidate -- one only a relaxed clause admits -- with the
+;; relaxations' reserve already spent. Reported by the ranking, like the lock,
+;; because a row refused there never reaches the admission test.
+(define (opt-inline-checked-clause-relaxed-budget) : i64
+  17)
+
 (define (opt-inline-checked-clause-admits? [clause : i64]) : bool
   (or
     (= clause (opt-inline-checked-clause-admitted))
@@ -124442,6 +124514,7 @@
     [(= clause (opt-inline-checked-clause-heavy-gate)) "heavy-gate"]
     [(= clause (opt-inline-checked-clause-block-ceiling)) "block-ceiling"]
     [(= clause (opt-inline-checked-clause-frequency)) "frequency"]
+    [(= clause (opt-inline-checked-clause-relaxed-budget)) "relaxed-budget"]
     [(= clause (opt-inline-checked-clause-site-depth)) "site-depth"]
     [else "unknown"]))
 
@@ -124449,6 +124522,17 @@
   false)
 (define opt-inline-checked-budget : i64
   0)
+
+;; The relaxations' reserve, spent only by candidates a relaxed clause admitted.
+(define opt-inline-checked-relaxed-budget : i64
+  0)
+
+;; Which of the two budgets the armed target draws on. Set by the arming step,
+;; which is the only place that knows: the depth relaxation is a property of the
+;; ROW, the lock relaxation a property of the caller's accepted table at the
+;; moment the row is armed.
+(define opt-inline-checked-target-relaxed? : bool
+  false)
 
 ;; SCAN or TARGET, the two modes a caller walk runs in. A scan walk admits no
 ;; new site -- so its result is exactly the caller's banked-band-only rewrite,
@@ -124470,24 +124554,31 @@
 
 ;; The ACCEPTED table: the caller's sites that have already been priced and
 ;; kept, three columns per row (callee name, block label, site position), room
-;; for opt-inline-checked-max-caller-verdicts rows.
+;; for opt-inline-checked-max-caller-accepts rows.
 (define opt-inline-checked-accepted : (__tl_dyn-array i64)
-  (__tl_make-array i64 12))
+  (__tl_make-array i64 15))
 (define opt-inline-checked-accepted-count : i64
   0)
 
-;; The SCAN table: one row per candidate the scan walk found, four columns --
-;; callee name, block label, site position, and the site's RICHNESS, which is
-;; what a free inline of it would be worth (how often the site runs times what
-;; its boundary costs). Room for opt-inline-checked-scan-cap rows. A row whose
-;; richness has been set negative has already been armed as a target.
+;; The SCAN table: one row per candidate the scan walk found, five columns --
+;; callee name, block label, site position, the site's RICHNESS, which is what a
+;; free inline of it would be worth (how often the site runs times what its
+;; boundary costs), and whether the site cleared the depth floor only because
+;; the floor was RELAXED for it. Room for opt-inline-checked-scan-cap rows. A
+;; row whose richness has been set negative has already been armed as a target.
+(define (opt-inline-checked-scan-stride) : i64
+  5)
+
 (define opt-inline-checked-scan : (__tl_dyn-array i64)
-  (__tl_make-array i64 32))
+  (__tl_make-array i64 40))
 (define opt-inline-checked-scan-count : i64
   0)
 
-;; Verdicts spent on the caller being walked, against the per-caller cap.
+;; Verdicts spent on the caller being walked, against the per-caller cap, and
+;; the relaxed one spent against its own.
 (define opt-inline-checked-caller-verdicts : i64
+  0)
+(define opt-inline-checked-caller-relaxed-verdicts : i64
   0)
 
 ;; Set by the admission test to say which kind of site it just admitted: a NEW
@@ -124644,6 +124735,10 @@
         (if margin-clear?
           "clear"
           "slim")
+        "|class="
+        (if opt-inline-checked-target-relaxed?
+          "relaxed"
+          "core")
         "\n"))
     unit))
 
@@ -124668,6 +124763,8 @@
     (set! opt-inline-checked-accepted-count 0)
     (set! opt-inline-checked-scan-count 0)
     (set! opt-inline-checked-caller-verdicts 0)
+    (set! opt-inline-checked-caller-relaxed-verdicts 0)
+    (set! opt-inline-checked-target-relaxed? false)
     (set! opt-inline-checked-last-margin-clear? false)
     (set! opt-inline-checked-first-margin-clear? false)
     (set! opt-inline-checked-scanning? true)))
@@ -124675,6 +124772,9 @@
 (define (opt-inline-checked-program-begin!) : unit
   (begin
     (set! opt-inline-checked-budget (opt-inline-checked-program-budget))
+    (set!
+      opt-inline-checked-relaxed-budget
+      (opt-inline-checked-relaxed-program-budget))
     (set! opt-inline-caller-checked-taken? false)
     (opt-inline-checked-caller-begin!)))
 
@@ -124693,11 +124793,22 @@
 (define (opt-inline-checked-budget-current) : i64
   opt-inline-checked-budget)
 
+(define (opt-inline-checked-relaxed-budget-current) : i64
+  opt-inline-checked-relaxed-budget)
+
 ;; Verdicts spent on, and sites kept in, the caller most recently walked. Both
 ;; are what a fixture reads to assert the SEQUENCE: how many sites one caller
 ;; was allowed to price, and how many of them survived their own verdict.
 (define (opt-inline-checked-caller-verdicts-current) : i64
   opt-inline-checked-caller-verdicts)
+
+(define (opt-inline-checked-caller-relaxed-verdicts-current) : i64
+  opt-inline-checked-caller-relaxed-verdicts)
+
+;; Which budget the armed target draws on, for a fixture that drives the
+;; sequence by hand.
+(define (opt-inline-checked-target-relaxed-current?) : bool
+  opt-inline-checked-target-relaxed?)
 
 (define (opt-inline-checked-accepted-current) : i64
   opt-inline-checked-accepted-count)
@@ -124762,16 +124873,23 @@
   [callee-name : i64]
   [block-label : i64]
   [site-pos : i64]
-  [richness : i64]) : unit
+  [richness : i64]
+  [depth-relaxed? : bool]) : unit
   (if (>= opt-inline-checked-scan-count (opt-inline-checked-scan-cap))
     unit
     (let
-      [base : i64 (* opt-inline-checked-scan-count 4)]
+      [base : i64
+        (* opt-inline-checked-scan-count (opt-inline-checked-scan-stride))]
       (begin
         (set! (array-ref opt-inline-checked-scan base) callee-name)
         (set! (array-ref opt-inline-checked-scan (+ base 1)) block-label)
         (set! (array-ref opt-inline-checked-scan (+ base 2)) site-pos)
         (set! (array-ref opt-inline-checked-scan (+ base 3)) richness)
+        (set!
+          (array-ref opt-inline-checked-scan (+ base 4))
+          (if depth-relaxed?
+            1
+            0))
         (set! opt-inline-checked-scan-count (+ opt-inline-checked-scan-count 1))))))
 
 ;; ONE CALLEE PER CALLER, and it is a measured rule rather than a budget.
@@ -124814,6 +124932,10 @@
 ;; interner's two second-body candidates: `it-map-insert-from` clears both and
 ;; is kept; `it-hash-words` into `it-grow!` models 62 against a boundary of 72,
 ;; clears the window's floor and not the clear margin, and reverts.
+;;
+;; A body admitted by this relaxation is a RELAXED candidate on the same terms
+;; as a below-the-floor site: ranked last, and charged to the relaxations' own
+;; reserve (opt-inline-checked-relaxed-program-budget).
 (define (opt-inline-checked-accepted-callee-from?
   [callee-name : i64]
   [row : i64]) : bool
@@ -124888,24 +125010,53 @@
     callee-name
     opt-inline-checked-first-margin-clear?))
 
-;; The richest allowed row still unarmed, or -1. Ties go to the earlier row, so
-;; the ordering is the scan's walk order refined by richness and never depends
-;; on anything but the caller's own text.
+;; A row's CLASS. A core row is one this tier would have offered a verdict with
+;; no clause relaxed for it: its site cleared the unrelaxed depth floor, and its
+;; callee clears the one-callee lock read without the second-body relaxation
+;; (which is exactly opt-inline-checked-callee-allowed-with? asked with no
+;; margin). Every other row the full lock still admits is a relaxed row.
+;;
+;; The class is asked at ARMING time rather than recorded with the row, because
+;; only half of it is a property of the row: the depth relaxation is fixed when
+;; the site is scanned, while the lock relaxation depends on what this caller
+;; has accepted since.
+(define (opt-inline-checked-row-core? [base : i64]) : bool
+  (and
+    (= (array-ref opt-inline-checked-scan (+ base 4)) 0)
+    (opt-inline-checked-callee-allowed-with?
+      (array-ref opt-inline-checked-scan base)
+      false)))
+
+(define (opt-inline-checked-row-relaxed? [base : i64]) : bool
+  (and
+    (not (opt-inline-checked-row-core? base))
+    (opt-inline-checked-callee-allowed?
+      (array-ref opt-inline-checked-scan base))))
+
+;; The richest row of one class still unarmed, or -1. Ties go to the earlier
+;; row, so the ordering is the scan's walk order refined by richness and never
+;; depends on anything but the caller's own text.
 (define (opt-inline-checked-scan-best-from
+  [relaxed? : bool]
   [row : i64]
   [best : i64]
   [best-richness : i64]) : i64
   (if (>= row opt-inline-checked-scan-count)
     best
     (let
-      [base : i64 (* row 4)]
+      [base : i64 (* row (opt-inline-checked-scan-stride))]
       [richness : i64 (array-ref opt-inline-checked-scan (+ base 3))]
       (if (and
         (> richness best-richness)
-        (opt-inline-checked-callee-allowed?
-          (array-ref opt-inline-checked-scan base)))
-        (opt-inline-checked-scan-best-from (+ row 1) row richness)
-        (opt-inline-checked-scan-best-from (+ row 1) best best-richness)))))
+        (if relaxed?
+          (opt-inline-checked-row-relaxed? base)
+          (opt-inline-checked-row-core? base)))
+        (opt-inline-checked-scan-best-from relaxed? (+ row 1) row richness)
+        (opt-inline-checked-scan-best-from
+          relaxed?
+          (+ row 1)
+          best
+          best-richness)))))
 
 ;; The lock decides in the RANKING, not in the admission test: a locked-out
 ;; candidate is never armed, so its site never reaches the test that would name
@@ -124916,13 +125067,22 @@
   (if (>= row opt-inline-checked-scan-count)
     unit
     (let
-      [base : i64 (* row 4)]
+      [base : i64 (* row (opt-inline-checked-scan-stride))]
       [richness : i64 (array-ref opt-inline-checked-scan (+ base 3))]
       [callee-name : i64 (array-ref opt-inline-checked-scan base)]
+      ;; Two things can leave a row on the table once the caller has run out of
+      ;; targets: the lock refused the callee outright, or the row is a RELAXED
+      ;; one and the relaxations' reserve is spent. The second is the refusal
+      ;; that keeps a relaxation from taking a core candidate's verdict, so it
+      ;; is named rather than left silent.
+      [clause : i64
+        (if (not (opt-inline-checked-callee-allowed? callee-name))
+          (opt-inline-checked-clause-callee-lock)
+          (if (opt-inline-checked-row-relaxed? base)
+            (opt-inline-checked-clause-relaxed-budget)
+            (- 0 1)))]
       (begin
-        (if (and
-          (>= richness 0)
-          (not (opt-inline-checked-callee-allowed? callee-name)))
+        (if (and (>= richness 0) (>= clause 0))
           (io.print-error
             (str_cat.str-cat
               "inline-checked|"
@@ -124935,8 +125095,7 @@
               "|richness="
               (string.int->string richness)
               "|mode=rank|"
-              (opt-inline-checked-clause-text
-                (opt-inline-checked-clause-callee-lock))
+              (opt-inline-checked-clause-text clause)
               "\n"))
           unit)
         (opt-inline-checked-trace-locked-from! (+ row 1))))))
@@ -124946,45 +125105,90 @@
     (opt-inline-checked-trace-locked-from! 0)
     unit))
 
-;; Arm the next round's target: the richest candidate the caller has left, if
-;; the caller and the program can still afford a verdict. The row is spent here
-;; rather than at the verdict, so a target the current state can no longer place
-;; is never retried.
-(define (opt-inline-checked-arm-next-target!) : bool
-  (if (or
+;; Can this caller still afford a verdict of each class?
+(define (opt-inline-checked-core-affordable?) : bool
+  (and
+    (<
+      opt-inline-checked-caller-verdicts
+      (opt-inline-checked-max-caller-verdicts))
+    (> opt-inline-checked-budget 0)))
+
+(define (opt-inline-checked-relaxed-affordable?) : bool
+  (and
+    (<
+      opt-inline-checked-caller-relaxed-verdicts
+      (opt-inline-checked-max-caller-relaxed-verdicts))
+    (> opt-inline-checked-relaxed-budget 0)))
+
+;; What the ADMISSION test asks, which is the weaker question: a walk still
+;; holding either budget has to record what it passes over, because a row's
+;; class is not settled until the ranking. The arming step above spends the
+;; right one.
+(define (opt-inline-checked-program-budget-spent?) : bool
+  (and
+    (<= opt-inline-checked-budget 0)
+    (<= opt-inline-checked-relaxed-budget 0)))
+
+(define (opt-inline-checked-caller-verdicts-spent?) : bool
+  (and
     (>=
       opt-inline-checked-caller-verdicts
       (opt-inline-checked-max-caller-verdicts))
-    (<= opt-inline-checked-budget 0))
-    false
-    (let
-      [row : i64 (opt-inline-checked-scan-best-from 0 (- 0 1) 0)]
-      (if (< row 0)
-        (begin
-          (opt-inline-checked-trace-locked!)
-          false)
-        (let
-          [base : i64 (* row 4)]
+    (>=
+      opt-inline-checked-caller-relaxed-verdicts
+      (opt-inline-checked-max-caller-relaxed-verdicts))))
+
+(define (opt-inline-checked-arm-row! [row : i64] [relaxed? : bool]) : bool
+  (let
+    [base : i64 (* row (opt-inline-checked-scan-stride))]
+    (begin
+      (set!
+        opt-inline-checked-target-callee
+        (array-ref opt-inline-checked-scan base))
+      (set!
+        opt-inline-checked-target-block
+        (array-ref opt-inline-checked-scan (+ base 1)))
+      (set!
+        opt-inline-checked-target-pos
+        (array-ref opt-inline-checked-scan (+ base 2)))
+      (set! (array-ref opt-inline-checked-scan (+ base 3)) (- 0 1))
+      (set! opt-inline-checked-target-relaxed? relaxed?)
+      (set! opt-inline-checked-scanning? false)
+      true)))
+
+;; Arm the next round's target: the richest CORE candidate the caller has left,
+;; and only when it has none the richest RELAXED one. The two classes are ranked
+;; apart and budgeted apart (opt-inline-checked-relaxed-program-budget), so a
+;; relaxation can only ever ADD a verdict to what the unrelaxed tier would have
+;; priced -- never take one, and never be priced ahead of one and change the
+;; state a core candidate is priced against. The row is spent here rather than
+;; at the verdict, so a target the current state can no longer place is never
+;; retried.
+(define (opt-inline-checked-arm-next-target!) : bool
+  (let
+    [core-row : i64
+      (if (opt-inline-checked-core-affordable?)
+        (opt-inline-checked-scan-best-from false 0 (- 0 1) 0)
+        (- 0 1))]
+    (if (>= core-row 0)
+      (opt-inline-checked-arm-row! core-row false)
+      (let
+        [relaxed-row : i64
+          (if (opt-inline-checked-relaxed-affordable?)
+            (opt-inline-checked-scan-best-from true 0 (- 0 1) 0)
+            (- 0 1))]
+        (if (>= relaxed-row 0)
+          (opt-inline-checked-arm-row! relaxed-row true)
           (begin
-            (set!
-              opt-inline-checked-target-callee
-              (array-ref opt-inline-checked-scan base))
-            (set!
-              opt-inline-checked-target-block
-              (array-ref opt-inline-checked-scan (+ base 1)))
-            (set!
-              opt-inline-checked-target-pos
-              (array-ref opt-inline-checked-scan (+ base 2)))
-            (set! (array-ref opt-inline-checked-scan (+ base 3)) (- 0 1))
-            (set! opt-inline-checked-scanning? false)
-            true))))))
+            (opt-inline-checked-trace-locked!)
+            false))))))
 
 ;; Move the armed target into the accepted table: from here on every walk of
 ;; this caller rebuilds the site.
 (define (opt-inline-checked-accept-target!) : unit
   (if (>=
     opt-inline-checked-accepted-count
-    (opt-inline-checked-max-caller-verdicts))
+    (opt-inline-checked-max-caller-accepts))
     unit
     (let
       [base : i64 (* opt-inline-checked-accepted-count 3)]
@@ -125009,12 +125213,22 @@
           opt-inline-checked-accepted-count
           (+ opt-inline-checked-accepted-count 1))))))
 
+;; The verdict is charged to the budget its target's class draws on, which is
+;; what makes the reserve a reserve.
 (define (opt-inline-checked-spend-verdict!) : unit
-  (begin
-    (set! opt-inline-checked-budget (- opt-inline-checked-budget 1))
-    (set!
-      opt-inline-checked-caller-verdicts
-      (+ opt-inline-checked-caller-verdicts 1))))
+  (if opt-inline-checked-target-relaxed?
+    (begin
+      (set!
+        opt-inline-checked-relaxed-budget
+        (- opt-inline-checked-relaxed-budget 1))
+      (set!
+        opt-inline-checked-caller-relaxed-verdicts
+        (+ opt-inline-checked-caller-relaxed-verdicts 1)))
+    (begin
+      (set! opt-inline-checked-budget (- opt-inline-checked-budget 1))
+      (set!
+        opt-inline-checked-caller-verdicts
+        (+ opt-inline-checked-caller-verdicts 1)))))
 
 ;; The loop depth of the caller block the walk is standing in, as a census
 ;; weight. Built from the caller's current blocks with the census's own
@@ -125134,11 +125348,9 @@
           (opt-inline-checked-clause-readmitted))]
       [opt-inline-caller-checked-taken?
         (opt-inline-checked-clause-caller-taken)]
-      [(<= opt-inline-checked-budget 0)
+      [(opt-inline-checked-program-budget-spent?)
         (opt-inline-checked-clause-program-budget)]
-      [(>=
-          opt-inline-checked-caller-verdicts
-          (opt-inline-checked-max-caller-verdicts))
+      [(opt-inline-checked-caller-verdicts-spent?)
         (opt-inline-checked-clause-caller-verdicts)]
       [(not
           (or
@@ -125207,11 +125419,15 @@
             ;; biggest claim in front of the smallest state.
             [opt-inline-checked-scanning?
               (begin
+                ;; A site that only cleared the floor because the floor stood
+                ;; down for it is recorded as RELAXED, so the ranking can put it
+                ;; behind the candidates that needed no relaxation.
                 (opt-inline-checked-scan-record!
                   callee-name
                   opt-inline-current-block-label
                   site-pos
-                  (opt-inline-checked-richness frequency np callee-instrs))
+                  (opt-inline-checked-richness frequency np callee-instrs)
+                  (< site-depth (opt-inline-checked-min-site-depth)))
                 (opt-inline-checked-clause-scanned))]
             [else
               (begin

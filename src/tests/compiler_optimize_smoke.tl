@@ -4805,6 +4805,25 @@
     "the one-callee lock admits a second callee only behind a first accept whose whole modelled saving survived"))
 
 (test
+  inline-checked-relaxed-rank
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-relaxed-rank-ok?)
+    "a relaxed candidate is ranked behind every core one and charged to the relaxations' own reserve"))
+
+(test
+  inline-checked-relaxed-reserve
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-relaxed-reserve-ok?)
+    "the relaxations' reserve runs out without touching the budget the core candidates read"))
+
+(test
+  inline-checked-cheap-tier-claim
+  (test.assert-i64-eq
+    (compiler_optimize_tests.opt-inline-checked-cheap-tier-self-test)
+    10000
+    "one checked-tier verdict, and the cheap tiers' four inlines of a tiny leaf all still in place"))
+
+(test
   inline-bounds-loop-cascade-refusal
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-bounds-loop-cascade-refusal-ok?)

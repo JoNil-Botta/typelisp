@@ -1031,6 +1031,46 @@ check_checked_setup_helper() {
     done
 }
 
+check_checked_cheap_tier_claim() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "checked_cheap_tier_claim_$_suffix" \
+            tests/integration/checked_cheap_tier_claim.tl "$_target")
+        _probe=$(function_body "$_asm" _tl_checked_cheap_tier_claim_probe)
+
+        # CB-2b: the measured tier CLAIMS `hash-words` at `probe`'s entry site
+        # -- the relaxed depth floor is the only clause that admits it -- so the
+        # FNV seed and the word loop are inside the caller.
+        assert_not_matches "$_probe" \
+            '^[[:space:]]+call _tl_checked_cheap_tier_claim_hash_words$' \
+            "checked-cheap-tier-claim-$_target"
+        assert_matches "$_probe" '^[[:space:]]+movq \$2166136261, %r' \
+            "checked-cheap-tier-claim-$_target"
+
+        # ...and the claim takes NOTHING away. `mix` is the four-site tiny leaf
+        # the unmeasured bands inline for free, two of its sites inside this
+        # very caller's loop: no call to it survives here...
+        assert_not_matches "$_probe" \
+            '^[[:space:]]+call _tl_checked_cheap_tier_claim_mix$' \
+            "checked-cheap-tier-claim-$_target"
+        # ...nor anywhere else in the program, and with all four sites inlined
+        # the leaf keeps no out-of-line body at all.
+        assert_regex_count_eq "$_asm" \
+            '^[[:space:]]+call _tl_checked_cheap_tier_claim_mix$' 0 \
+            "checked-cheap-tier-claim-$_target"
+        assert_not_matches "$_asm" '^_tl_checked_cheap_tier_claim_mix:$' \
+            "checked-cheap-tier-claim-$_target"
+
+        # The claimed callee is COPIED, not absorbed: the cold second reference
+        # in `checksum` still calls it, so the claim is a real one.
+        assert_matches "$_asm" '^_tl_checked_cheap_tier_claim_hash_words:$' \
+            "checked-cheap-tier-claim-$_target"
+        assert_regex_count_eq "$_asm" \
+            '^[[:space:]]+call _tl_checked_cheap_tier_claim_hash_words$' 1 \
+            "checked-cheap-tier-claim-$_target"
+    done
+}
+
 check_const_index_bounds() {
     _asm=$(compile_gate const_index_bounds tests/integration/const_index_bounds.tl)
     _body=$(function_body "$_asm" _tl_const_index_bounds_get2)
@@ -1926,6 +1966,7 @@ check_alu_mem_operand_tie
 check_alu_mem_operand_sink
 check_checked_depth0_site
 check_checked_setup_helper
+check_checked_cheap_tier_claim
 check_const_index_bounds
 check_const_global_mask_unroll
 check_rbp_sixth_csr

@@ -190,6 +190,7 @@ gep_load_cmp_spilled_stage|tests/integration/gep_load_cmp_spilled_stage.tl|42|-|
 alu_mem_operand_tie|tests/integration/alu_mem_operand_tie.tl|42|-|-|-
 checked_depth0_site|tests/integration/checked_depth0_site.tl|42|-|-|-
 checked_setup_helper|tests/integration/checked_setup_helper.tl|42|-|-|-
+checked_cheap_tier_claim|tests/integration/checked_cheap_tier_claim.tl|42|-|-|-
 rmw_mem_operand_fold|tests/integration/rmw_mem_operand_fold.tl|42|8 -24\n7 1024 0\n24 108\n36 24\n6 3\n|8 3|stdlib/io.tl stdlib/string.tl
 mem_dest_rmw_fold|tests/integration/mem_dest_rmw_fold.tl|42|-|-|-
 copy_call_word|tests/integration/copy_call_word.tl|42|-|-|-

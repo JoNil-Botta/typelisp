@@ -23,7 +23,7 @@ benchmark/typelisp/spmd_reduce	1473975345
 benchmark/c-scalar/spmd_reduce	3381322973
 benchmark/typelisp/cfg_domloops	538586701
 benchmark/c-scalar/cfg_domloops	423071026
-benchmark/typelisp/gvn_table	747435410
+benchmark/typelisp/gvn_table	747409202
 benchmark/c-scalar/gvn_table	620750567
 benchmark/typelisp/intern_table	360467380
 benchmark/c-scalar/intern_table	296291632
@@ -35,7 +35,7 @@ benchmark/typelisp/peephole_lines	429845711
 benchmark/c-scalar/peephole_lines	442194744
 benchmark/typelisp/read_sexpr	790352604
 benchmark/c-scalar/read_sexpr	598159391
-benchmark/typelisp/callgraph_scc	699220844
+benchmark/typelisp/callgraph_scc	696198824
 benchmark/c-scalar/callgraph_scc	341685484
 benchmark/typelisp/ssa_construct	809576643
 benchmark/c-scalar/ssa_construct	448154599

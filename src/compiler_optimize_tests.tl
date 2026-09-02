@@ -21704,6 +21704,336 @@
       (compiler_optimize.opt-inline-checked-depth-relaxed-frequency)
       (compiler_optimize.opt-inline-checked-min-frequency))))
 
+;; --- the three readings of "runs exactly once per invocation" ----------------
+;;
+;; INL-4 widened the depth floor's ENTRY clause to ENTRY-EQUIVALENT
+;; (opt-inline-checked-position-class): a block that POST-DOMINATES the caller's
+;; entry, or an ARM of the entry branch whose sibling leaves the function, is
+;; run once per invocation just as the entry block is. Both new readings are
+;; admitted only in a WRAPPER-SHAPED caller -- one carrying no call the site
+;; does not account for -- and the true entry site keeps the admission it had.
+;;
+;; Each shape below is asked in BOTH block-list spellings the walk has to
+;; handle, and `opt-inline-pos-site` answers -1 if the two ever disagree.
+(define (opt-inline-pos-callee) : i64
+  (opt-test-symbol "pos_leaf"))
+
+(define (opt-inline-pos-other) : i64
+  (opt-test-symbol "pos_other"))
+
+(define (opt-inline-pos-call [name : i64] [dst : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Call
+    dst
+    name
+    (compiler_ir_types.CompilerIrCallArgs.Nil)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-inline-pos-return [var : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Return
+    (compiler_ir_types.CompilerIrMaybeValue.Some
+      (compiler_ir_types.CompilerIrValue.Var var))))
+
+(define (opt-inline-pos-return-literal) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Return
+    (compiler_ir_types.CompilerIrMaybeValue.Some
+      (compiler_ir_types.CompilerIrValue.I64 0))))
+
+(define (opt-inline-pos-branch-at [yes : i64] [no : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Branch
+    (compiler_ir_types.CompilerIrValue.Var 0)
+    yes
+    no))
+
+(define (opt-inline-pos-branch [yes : String] [no : String]) : compiler_ir_types.CompilerIrInstr
+  (opt-inline-pos-branch-at
+    (compiler_ir_types.compiler-ir-label yes)
+    (compiler_ir_types.compiler-ir-label no)))
+
+;; The two arms and the merge below them. The merge post-dominates the entry:
+;; every path out of the branch runs it, and neither arm leaves the function.
+(define (opt-inline-pos-post-blocks
+  [entry-instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      entry-instrs)
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "pos_hit")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Mov
+            1
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "pos_merge"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "pos_miss")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Mov
+              2
+              (compiler_ir_types.CompilerIrValue.I64 2)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "pos_merge"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "pos_merge")
+            (opt-test-instrs
+              (opt-inline-pos-call (opt-inline-pos-callee) 3)
+              (opt-inline-pos-return 3)))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+;; An entry branch, the arm the site sits in, and one sibling block per shape
+;; the arm reading has to tell apart.
+(define (opt-inline-pos-arm-blocks
+  [work-instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [sibling : i64]
+  [sibling-instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [tail-blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (opt-inline-pos-branch-at
+          (compiler_ir_types.compiler-ir-label "arm_work")
+          sibling)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "arm_work")
+        work-instrs)
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block sibling sibling-instrs)
+        tail-blocks))))
+
+(define (opt-inline-pos-arm-work-instrs) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (opt-inline-pos-call (opt-inline-pos-callee) 1)
+    (opt-inline-pos-return 1)))
+
+;; The same arm carrying a second call of its own, which is the call the caller
+;; clause counts against the site.
+(define (opt-inline-pos-arm-work-two-calls) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (opt-inline-pos-call (opt-inline-pos-callee) 1)
+    (opt-inline-pos-call (opt-inline-pos-other) 2)
+    (opt-inline-pos-return 2)))
+
+(define (opt-inline-pos-blocks [mode : i64]) : compiler_ir_types.CompilerIrBlockList
+  (cond
+    ;; 0: the merge block post-dominates the entry, and the site's own call is
+    ;; the only call the caller carries
+    [(= mode 0)
+      (opt-inline-pos-post-blocks
+        (opt-test-instrs (opt-inline-pos-branch "pos_hit" "pos_miss")))]
+    ;; 1: the same merge block in a caller with two more calls of its own
+    [(= mode 1)
+      (opt-inline-pos-post-blocks
+        (opt-test-instrs
+          (opt-inline-pos-call (opt-inline-pos-other) 4)
+          (opt-inline-pos-call (opt-inline-pos-other) 5)
+          (opt-inline-pos-branch "pos_hit" "pos_miss")))]
+    ;; 2: the sibling arm returns a literal
+    [(= mode 2)
+      (opt-inline-pos-arm-blocks
+        (opt-inline-pos-arm-work-instrs)
+        (compiler_ir_types.compiler-ir-label "arm_bail")
+        (opt-test-instrs (opt-inline-pos-return-literal))
+        compiler_ir_types.CompilerIrBlockList.Nil)]
+    ;; 3: the sibling arm is itself a direct tail call, so the caller is allowed
+    ;; the two calls the two arms between them make
+    [(= mode 3)
+      (opt-inline-pos-arm-blocks
+        (opt-inline-pos-arm-work-instrs)
+        (compiler_ir_types.compiler-ir-label "arm_tail")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.TailCall
+            (opt-inline-pos-other)
+            (compiler_ir_types.CompilerIrCallArgs.Nil)
+            (compiler_ast_types.AstType.I64)))
+        compiler_ir_types.CompilerIrBlockList.Nil)]
+    ;; 4: ...and one call past that pair is one too many
+    [(= mode 4)
+      (opt-inline-pos-arm-blocks
+        (opt-inline-pos-arm-work-two-calls)
+        (compiler_ir_types.compiler-ir-label "arm_tail")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.TailCall
+            (opt-inline-pos-other)
+            (compiler_ir_types.CompilerIrCallArgs.Nil)
+            (compiler_ast_types.AstType.I64)))
+        compiler_ir_types.CompilerIrBlockList.Nil)]
+    ;; 5: the sibling arm carries a loop, so the two arms do not run the caller
+    ;; out between them and the site is not credited a whole boundary
+    [(= mode 5)
+      (opt-inline-pos-arm-blocks
+        (opt-inline-pos-arm-work-instrs)
+        (compiler_ir_types.compiler-ir-label "arm_loop")
+        (opt-test-instrs (opt-inline-pos-branch "arm_loop" "arm_done"))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "arm_done")
+            (opt-test-instrs (opt-inline-pos-return-literal)))
+          compiler_ir_types.CompilerIrBlockList.Nil))]
+    ;; 6: the sibling arm jumps to a block that returns a literal, which is the
+    ;; one indirection the arm reading follows
+    [(= mode 6)
+      (opt-inline-pos-arm-blocks
+        (opt-inline-pos-arm-work-instrs)
+        (compiler_ir_types.compiler-ir-label "arm_jump")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "arm_lit")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "arm_lit")
+            (opt-test-instrs (opt-inline-pos-return-literal)))
+          compiler_ir_types.CompilerIrBlockList.Nil))]
+    ;; 7: the same two arms, with the site's arm carrying a second call and the
+    ;; sibling returning rather than tail-calling: the extra allowance is the
+    ;; tail call's alone
+    [(= mode 7)
+      (opt-inline-pos-arm-blocks
+        (opt-inline-pos-arm-work-two-calls)
+        (compiler_ir_types.compiler-ir-label "arm_bail")
+        (opt-test-instrs (opt-inline-pos-return-literal))
+        compiler_ir_types.CompilerIrBlockList.Nil)]
+    ;; 8: NEITHER. One arm returns, so the merge below the other does not
+    ;; post-dominate the entry, and the merge is no arm of the entry branch.
+    [else
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (opt-test-instrs (opt-inline-pos-branch "nb_hit" "nb_miss")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "nb_hit")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "nb_join"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "nb_miss")
+              (opt-test-instrs (opt-inline-pos-return-literal)))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "nb_join")
+                (opt-test-instrs
+                  (opt-inline-pos-call (opt-inline-pos-callee) 1)
+                  (opt-inline-pos-return 1)))
+              compiler_ir_types.CompilerIrBlockList.Nil))))]))
+
+(define (opt-inline-pos-at
+  [mode : i64]
+  [position : i64]
+  [label : i64]
+  [array? : bool]) : i64
+  (let
+    [built : compiler_ir_types.CompilerIrBlockList (opt-inline-pos-blocks mode)]
+    (if array?
+      (compiler_optimize.opt-inline-checked-position-class
+        (compiler_ir_types.CompilerIrBlockList.Array
+          (compiler_ir_types.compiler-ir-block-seq-from-list built))
+        position
+        label)
+      (compiler_optimize.opt-inline-checked-position-class built position label))))
+
+;; The answer both spellings give, or -1 where they disagree.
+(define (opt-inline-pos-site [mode : i64] [position : i64] [name : String]) : i64
+  (let
+    [label : i64 (compiler_ir_types.compiler-ir-label name)]
+    [as-cons : i64 (opt-inline-pos-at mode position label false)]
+    [as-array : i64 (opt-inline-pos-at mode position label true)]
+    (if (= as-cons as-array)
+      as-cons
+      (- 0 1))))
+
+;; The floor as the depth clause reads it: entry-equivalent and call-free at one
+;; census weight stands it down to zero, and anything else leaves it standing.
+(define (opt-inline-pos-floor [pos : i64]) : i64
+  (compiler_optimize.opt-inline-checked-effective-min-site-depth
+    (compiler_optimize.opt-inline-checked-depth-relaxed-frequency)
+    (compiler_optimize.opt-inline-checked-entry-equivalent? pos)
+    true))
+
+(define (compiler-optimize-inline-checked-entry-equivalent-ok?) : bool
+  (and
+    ;; POST: a merge block every path out of the entry runs, in a caller whose
+    ;; only call is the site's own -- and the floor stands down for it
+    (=
+      (opt-inline-pos-site 0 3 "pos_merge")
+      (compiler_optimize.opt-inline-checked-pos-post))
+    (= (opt-inline-pos-floor (compiler_optimize.opt-inline-checked-pos-post)) 0)
+    ;; ...the SAME block in a caller carrying two more calls of its own: the
+    ;; boundary would be credited against work this site does not account for
+    (=
+      (opt-inline-pos-site 1 3 "pos_merge")
+      (compiler_optimize.opt-inline-checked-pos-none))
+    (=
+      (opt-inline-pos-floor (compiler_optimize.opt-inline-checked-pos-none))
+      (compiler_optimize.opt-inline-checked-min-site-depth))
+    ;; ARM: the sibling arm returns a literal, so the two arms run the caller
+    ;; out between them
+    (=
+      (opt-inline-pos-site 2 1 "arm_work")
+      (compiler_optimize.opt-inline-checked-pos-arm))
+    ;; ...the sibling arm is itself a direct tail call: the caller is allowed
+    ;; the two calls the two arms make between them
+    (=
+      (opt-inline-pos-site 3 1 "arm_work")
+      (compiler_optimize.opt-inline-checked-pos-arm))
+    ;; ...and one call past that pair is one too many
+    (=
+      (opt-inline-pos-site 4 1 "arm_work")
+      (compiler_optimize.opt-inline-checked-pos-none))
+    ;; ...the second call is the TAIL CALL's allowance alone: the same two calls
+    ;; under a sibling that returns are refused
+    (=
+      (opt-inline-pos-site 7 1 "arm_work")
+      (compiler_optimize.opt-inline-checked-pos-none))
+    ;; ...a sibling arm carrying a loop is not an exit, so the site is refused
+    (=
+      (opt-inline-pos-site 5 1 "arm_work")
+      (compiler_optimize.opt-inline-checked-pos-none))
+    ;; ...and the one indirection the arm reading follows: a sibling that jumps
+    ;; to a block returning a literal
+    (=
+      (opt-inline-pos-site 6 1 "arm_work")
+      (compiler_optimize.opt-inline-checked-pos-arm))
+    ;; NEITHER: a merge below an arm that returns post-dominates nothing and is
+    ;; no arm of the entry branch, so the floor stands exactly as it did before
+    ;; the widening -- and the caller here is wrapper-shaped, so the refusal is
+    ;; the site's position and nothing else
+    (=
+      (opt-inline-pos-site 8 3 "nb_join")
+      (compiler_optimize.opt-inline-checked-pos-none))
+    ;; THE TRUE ENTRY SITE is untouched by the caller clause: the caller of
+    ;; shape 1 carries three calls and its entry block is still entry-equivalent
+    (=
+      (opt-inline-pos-site 1 0 "entry")
+      (compiler_optimize.opt-inline-checked-pos-entry))
+    (=
+      (opt-inline-pos-floor (compiler_optimize.opt-inline-checked-pos-entry))
+      0)
+    ;; the trace names each reading, and `none` is what a refused site reports
+    (string.eq
+      (compiler_optimize.opt-inline-checked-pos-text
+        (compiler_optimize.opt-inline-checked-pos-entry))
+      "entry")
+    (string.eq
+      (compiler_optimize.opt-inline-checked-pos-text
+        (compiler_optimize.opt-inline-checked-pos-post))
+      "post")
+    (string.eq
+      (compiler_optimize.opt-inline-checked-pos-text
+        (compiler_optimize.opt-inline-checked-pos-arm))
+      "arm")
+    (string.eq
+      (compiler_optimize.opt-inline-checked-pos-text
+        (compiler_optimize.opt-inline-checked-pos-none))
+      "none")))
+
 ;; The recorded loser's own shape: a SEVEN-parameter builder with a loop of its
 ;; own, call-free and bounds-free, at a straight-line site. Seven parameters is
 ;; what makes the boundary 13 -- the number the `cfg-build-csr` autopsy records
@@ -21891,15 +22221,34 @@
 (define (opt-inline-checked-depth0-latch-var) : i64
   (+ 6 (* 2 (opt-inline-checked-depth0-live))))
 
-(define (opt-inline-checked-depth0-site-block [entry-site? : bool]) : i64
-  (if entry-site?
+;; The three spellings of the SAME site, which differ only in which block of the
+;; caller the builder call sits in:
+;;
+;;   0 entry     the caller's entry block
+;;   1 threaded  one unconditional jump further on, in a block every path out of
+;;               the entry runs -- it POST-DOMINATES the entry, so INL-4 reads it
+;;               as entry-equivalent in this wrapper-shaped caller
+;;   2 guarded   a merge below a guard whose other arm RETURNS, which
+;;               post-dominates nothing and is no arm of the entry branch: the
+;;               floor stands exactly as it did before the widening
+(define (opt-inline-checked-depth0-shape-entry) : i64
+  0)
+
+(define (opt-inline-checked-depth0-shape-threaded) : i64
+  1)
+
+(define (opt-inline-checked-depth0-shape-guarded) : i64
+  2)
+
+(define (opt-inline-checked-depth0-site-block [shape : i64]) : i64
+  (if (= shape (opt-inline-checked-depth0-shape-entry))
     (compiler_ir_types.compiler-ir-label "entry")
     (compiler_ir_types.compiler-ir-label "setup")))
 
 ;; The loop half of the caller, shared by both spellings: the header whose phi
 ;; names the block the call sits in, the body that carries the live values
 ;; across the loop, the latch and the exit.
-(define (opt-inline-checked-depth0-loop-blocks [entry-site? : bool]) : compiler_ir_types.CompilerIrBlockList
+(define (opt-inline-checked-depth0-loop-blocks [shape : i64]) : compiler_ir_types.CompilerIrBlockList
   (let
     [live : i64 (opt-inline-checked-depth0-live)]
     (compiler_ir_types.compiler-ir-block-cons
@@ -21910,7 +22259,7 @@
             4
             (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 3)
-              (opt-inline-checked-depth0-site-block entry-site?)
+              (opt-inline-checked-depth0-site-block shape)
               (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var
                   (opt-inline-checked-depth0-latch-var))
@@ -21953,63 +22302,108 @@
                     (compiler_ir_types.CompilerIrValue.Var 4)))))
             compiler_ir_types.CompilerIrBlockList.Nil))))))
 
-;; `entry-site?` puts the builder call in the caller's ENTRY block, the one
-;; block a caller runs exactly once per invocation; the other spelling moves it
-;; one unconditional jump further, into a block the relaxed floor refuses even
-;; though the caller and the frequency are identical.
-(define (opt-inline-checked-depth0-caller-blocks
+;; The block the builder call sits in, and nothing else, is what the three
+;; shapes vary; the caller, its loop, its live set and the frequency are
+;; identical across all three.
+(define (opt-inline-checked-depth0-setup-instrs [callee-name : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (opt-inline-checked-builder-call callee-name 5)
+    (compiler_ir_types.CompilerIrInstr.Jump
+      (compiler_ir_types.compiler-ir-label "header"))))
+
+(define (opt-inline-checked-depth0-entry-instrs
   [callee-name : i64]
-  [entry-site? : bool]) : compiler_ir_types.CompilerIrBlockList
+  [shape : i64]) : compiler_ir_types.CompilerIrInstrSeq
   (let
     [live : i64 (opt-inline-checked-depth0-live)]
-    (if entry-site?
-      (compiler_ir_types.compiler-ir-block-cons
-        (compiler_ir_types.CompilerIrBlock.Block
-          (compiler_ir_types.compiler-ir-label "entry")
-          (opt-inline-checked-live-defs
-            0
-            live
-            (opt-test-instrs
-              (compiler_ir_types.CompilerIrInstr.Mov
-                3
-                (compiler_ir_types.CompilerIrValue.I64 0)
-                (compiler_ast_types.AstType.I64))
-              (opt-inline-checked-builder-call callee-name 5)
-              (compiler_ir_types.CompilerIrInstr.Jump
-                (compiler_ir_types.compiler-ir-label "header")))))
-        (opt-inline-checked-depth0-loop-blocks entry-site?))
-      (compiler_ir_types.compiler-ir-block-cons
-        (compiler_ir_types.CompilerIrBlock.Block
-          (compiler_ir_types.compiler-ir-label "entry")
-          (opt-inline-checked-live-defs
-            0
-            live
-            (opt-test-instrs
-              (compiler_ir_types.CompilerIrInstr.Mov
-                3
-                (compiler_ir_types.CompilerIrValue.I64 0)
-                (compiler_ast_types.AstType.I64))
-              (compiler_ir_types.CompilerIrInstr.Jump
-                (compiler_ir_types.compiler-ir-label "setup")))))
+    (cond
+      ;; the call itself, in the one block a caller runs exactly once
+      [(= shape (opt-inline-checked-depth0-shape-entry))
+        (opt-inline-checked-live-defs
+          0
+          live
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Mov
+              3
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ast_types.AstType.I64))
+            (opt-inline-checked-builder-call callee-name 5)
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "header"))))]
+      ;; one unconditional jump on to the block that holds it
+      [(= shape (opt-inline-checked-depth0-shape-threaded))
+        (opt-inline-checked-live-defs
+          0
+          live
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Mov
+              3
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "setup"))))]
+      ;; ...or a guard whose other arm leaves the function, which is what makes
+      ;; the block below it neither the entry's post-dominator nor its arm
+      [else
+        (opt-inline-checked-live-defs
+          0
+          live
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Mov
+              3
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.compiler-ir-label "guard_in")
+              (compiler_ir_types.compiler-ir-label "guard_out"))))])))
+
+(define (opt-inline-checked-depth0-caller-blocks
+  [callee-name : i64]
+  [shape : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-inline-checked-depth0-entry-instrs callee-name shape))
+    (cond
+      [(= shape (opt-inline-checked-depth0-shape-entry))
+        (opt-inline-checked-depth0-loop-blocks shape)]
+      [(= shape (opt-inline-checked-depth0-shape-threaded))
         (compiler_ir_types.compiler-ir-block-cons
           (compiler_ir_types.CompilerIrBlock.Block
             (compiler_ir_types.compiler-ir-label "setup")
+            (opt-inline-checked-depth0-setup-instrs callee-name))
+          (opt-inline-checked-depth0-loop-blocks shape))]
+      [else
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "guard_in")
             (opt-test-instrs
-              (opt-inline-checked-builder-call callee-name 5)
               (compiler_ir_types.CompilerIrInstr.Jump
-                (compiler_ir_types.compiler-ir-label "header"))))
-          (opt-inline-checked-depth0-loop-blocks entry-site?))))))
+                (compiler_ir_types.compiler-ir-label "setup"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "guard_out")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.I64 0)))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "setup")
+                (opt-inline-checked-depth0-setup-instrs callee-name))
+              (opt-inline-checked-depth0-loop-blocks shape))))])))
 
 (define (opt-inline-checked-depth0-caller-function
   [func-name : i64]
   [callee-name : i64]
-  [entry-site? : bool]) : compiler_ir_types.CompilerIrFunction
+  [shape : i64]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
     func-name
     (opt-inline-switch-params)
     (compiler_ast_types.AstType.I64)
     (+ (opt-inline-checked-depth0-latch-var) 1)
-    (opt-inline-checked-depth0-caller-blocks callee-name entry-site?)))
+    (opt-inline-checked-depth0-caller-blocks callee-name shape)))
 
 ;; One straight-line block calling the holder and the leaf once each. It is what
 ;; keeps both of them at two references, so no single-reference band can take
@@ -22064,6 +22458,14 @@
               (compiler_ir_types.CompilerIrValue.Var 3)))))
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
+;; Modes 0 and 1 put the call in the entry block (cold driver, then hot); mode 2
+;; threads it one jump on; mode 3 puts it below a returning guard.
+(define (opt-inline-checked-depth0-shape-of [mode : i64]) : i64
+  (cond
+    [(= mode 2) (opt-inline-checked-depth0-shape-threaded)]
+    [(= mode 3) (opt-inline-checked-depth0-shape-guarded)]
+    [else (opt-inline-checked-depth0-shape-entry)]))
+
 (define (opt-inline-checked-depth0-program
   [symbols : OptInlineMultiTestSymbols]
   [mode : i64]) : compiler_ir_types.CompilerIrFunctionSeq
@@ -22083,7 +22485,7 @@
           (opt-inline-checked-depth0-caller-function
             holder-name
             leaf-name
-            (not (= mode 2)))
+            (opt-inline-checked-depth0-shape-of mode))
           (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-inline-checked-builder-function leaf-name)
             (compiler_ir_types.compiler-ir-function-seq-empty)))))))

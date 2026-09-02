@@ -125561,15 +125561,21 @@
 ;;     least one loop level, counting a loop in the caller and a loop above the
 ;;     caller alike. Below that a straight-line site in a caller nothing runs
 ;;     cannot repay a boundary at all.
-;;   * THE SITE IS THE CALLER'S ENTRY BLOCK. Every cost this tier compares is
+;;   * THE SITE'S BLOCK IS ENTRY-EQUIVALENT. Every cost this tier compares is
 ;;     priced PER INVOCATION of the caller, and a depth-0 boundary is credited
-;;     exactly once against that. The entry block is where "runs exactly once
-;;     per invocation" is known without an analysis; a depth-0 site in a
-;;     conditional arm runs some unknown fraction of the time, and crediting it
-;;     a whole boundary is the same mistake the frequency floor exists to stop.
-;;     Measured: `grow!` into `insert-ref!` at a cold `if_then` arm of
-;;     hashmap_insert prices as a free inline (saving 8 against a boundary of 7)
-;;     and costs that row +13.6%.
+;;     exactly once against that. So the block has to be one the caller runs
+;;     exactly once per invocation; a depth-0 site in a conditional arm runs
+;;     some unknown fraction of the time, and crediting it a whole boundary is
+;;     the same mistake the frequency floor exists to stop. Measured: `grow!`
+;;     into `insert-ref!` at a cold `if_then` arm of hashmap_insert prices as a
+;;     free inline (saving 8 against a boundary of 7) and costs that row +13.6%.
+;;     The ENTRY block is the reading of that guarantee which costs nothing to
+;;     check, and two more block shapes carry it just as well -- a block that
+;;     post-dominates the entry, and an arm of the entry branch whose sibling
+;;     leaves the function. Those two are admitted only in a WRAPPER-SHAPED
+;;     caller; see opt-inline-checked-position-class for all three readings, and
+;;     opt-inline-checked-wrapper-shaped? for the two rows that clause costs
+;;     when it is left out.
 ;;   * THE CALLEE IS CALL-FREE. This tier deliberately carries no call-free
 ;;     clause (see opt-inline-checked-ok?) because at depth 1 and below the
 ;;     boundary is 8 to 64 times larger and the re-plan can resolve what an
@@ -125602,14 +125608,664 @@
 
 (define (opt-inline-checked-effective-min-site-depth
   [frequency : i64]
-  [entry-site? : bool]
+  [entry-equivalent? : bool]
   [call-free? : bool]) : i64
   (if (and
-    entry-site?
+    entry-equivalent?
     call-free?
     (>= frequency (opt-inline-checked-depth-relaxed-frequency)))
     0
     (opt-inline-checked-min-site-depth)))
+
+;; --- which depth-0 sites are entry-equivalent --------------------------------
+;;
+;; The entry block is the reading of "runs exactly once per invocation" that
+;; costs nothing to check, and it is not the only one. Two more block shapes
+;; carry the same guarantee, and this family answers which of the three -- if
+;; any -- a site's block is, so the floor above can be asked ENTRY-EQUIVALENT
+;; where it used to be asked ENTRY.
+;;
+;;   entry  the caller's entry block (opt-inline-checked-site-position = 0),
+;;          which is the reading the clause has always had. Its admission is
+;;          untouched by everything below, including the caller clause.
+;;   post   the site's block POST-DOMINATES the entry. Delete it from the
+;;          caller's CFG and run reachability from the entry to a fixpoint: it
+;;          qualifies when no reachable block other than the deleted one leaves
+;;          the function, and when it is itself reachable. The merge block below
+;;          a guard reads this way, and every invocation that returns at all
+;;          runs it.
+;;   arm    the site's block is one of the two successors of the entry block's
+;;          branch, and the SIBLING successor leaves the function within one
+;;          block: it returns anything, tail-calls away, or jumps to a block
+;;          that returns a literal. The two arms together run on every path and
+;;          the sibling does no work, so the boundary this site retires is one
+;;          the caller pays once per invocation.
+;;
+;; Both new readings walk the caller, so they are asked only of a depth-0 site
+;; whose composite frequency has already cleared the floor's own rung: a cold
+;; candidate, or one at any depth above zero, pays one integer test. Both refuse
+;; conservatively -- a caller wider than opt-inline-checked-pos-max-blocks, or a
+;; reachability fixpoint that has not settled inside
+;; opt-inline-checked-pos-max-rounds, keeps the floor it has today.
+(define (opt-inline-checked-pos-none) : i64
+  0)
+
+(define (opt-inline-checked-pos-entry) : i64
+  1)
+
+(define (opt-inline-checked-pos-post) : i64
+  2)
+
+(define (opt-inline-checked-pos-arm) : i64
+  3)
+
+;; What `--trace-passes` reports for the site's class on the clause line, so a
+;; verdict table shows which reading each admitted site cleared on.
+(define (opt-inline-checked-pos-text [pos : i64]) : String
+  (cond
+    [(= pos (opt-inline-checked-pos-entry)) "entry"]
+    [(= pos (opt-inline-checked-pos-post)) "post"]
+    [(= pos (opt-inline-checked-pos-arm)) "arm"]
+    [else "none"]))
+
+(define (opt-inline-checked-entry-equivalent? [pos : i64]) : bool
+  (not (= pos (opt-inline-checked-pos-none))))
+
+;; The widest caller the post-dominance walk will answer about, and the most
+;; relaxation rounds its reachability fixpoint may take. Both are refusals, not
+;; approximations: over either bound the site is simply not entry-equivalent.
+(define (opt-inline-checked-pos-max-blocks) : i64
+  512)
+
+(define (opt-inline-checked-pos-max-rounds) : i64
+  256)
+
+;; A label-indexed reachability mark, stamped by generation exactly as
+;; opt-cfg-label-table is, so a walk costs one counter bump rather than a pass
+;; over the table.
+;;
+;; DELIBERATE-RAW (#6620): like that table, this global does not own an arena
+;; handle. It is process-lifetime storage grown in the dedicated, never-reset IR
+;; label arena, so an optimizer scratch rewind cannot free it under us.
+(define opt-inline-checked-reach-stamp : (__tl_dyn-array i64)
+  (__tl_make-array i64 1))
+(define opt-inline-checked-reach-generation : i64
+  0)
+
+(define (opt-inline-checked-reach-reserve! [count : i64]) : unit
+  (if (<= count (array-length opt-inline-checked-reach-stamp))
+    unit
+    (let
+      [size : i64 (array-length opt-inline-checked-reach-stamp)]
+      (begin
+        (while (< size count)
+          (set! size (* size 2)))
+        (in-arena
+          (arena.Arena (ir.compiler-ir-label-arena))
+          (set! opt-inline-checked-reach-stamp (__tl_make-array i64 size)))
+        ;; A fresh stamp array reads as generation 0, so restart the counter
+        ;; above it rather than leaving stale entries live.
+        (set! opt-inline-checked-reach-generation 0)))))
+
+(define (opt-inline-checked-reach-begin!) : i64
+  (begin
+    (opt-inline-checked-reach-reserve! (ir.compiler-ir-label-count-value))
+    (set!
+      opt-inline-checked-reach-generation
+      (+ opt-inline-checked-reach-generation 1))
+    opt-inline-checked-reach-generation))
+
+(define (opt-inline-checked-reach-marked? [label : i64] [generation : i64]) : bool
+  (if (or (< label 0) (>= label (array-length opt-inline-checked-reach-stamp)))
+    false
+    (= (array-ref opt-inline-checked-reach-stamp label) generation)))
+
+;; Answers whether the mark is NEW, which is what drives the fixpoint.
+(define (opt-inline-checked-reach-mark! [label : i64] [generation : i64]) : bool
+  (if (or (< label 0) (>= label (array-length opt-inline-checked-reach-stamp)))
+    false
+    (if (= (array-ref opt-inline-checked-reach-stamp label) generation)
+      false
+      (begin
+        (set! (array-ref opt-inline-checked-reach-stamp label) generation)
+        true))))
+
+(define (opt-inline-checked-reach-switch-cases!
+  [cases : ir.CompilerIrSwitchCaseSeq]
+  [generation : i64]) : bool
+  (let
+    [index : i64 0]
+    [out : bool false]
+    (begin
+      (while (< index cases.len)
+        (begin
+          (match (ir.compiler-ir-switch-case-seq-ref cases index)
+            [(ir.CompilerIrSwitchCase.Case _ label)
+              (set!
+                out
+                (or (opt-inline-checked-reach-mark! label generation) out))])
+          (set! index (+ index 1))))
+      out)))
+
+;; Mark every successor of one block. Every terminator that names a label is
+;; here, so a shape this does not know about contributes no edges and can only
+;; make the answer more conservative.
+(define (opt-inline-checked-reach-succs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [generation : i64]) : bool
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [i : i64 0]
+    [found : bool false]
+    (begin
+      (while (< i count)
+        (begin
+          (match (array-ref slots i)
+            [(ir.CompilerIrInstr.Jump label)
+              (set!
+                found
+                (or (opt-inline-checked-reach-mark! label generation) found))]
+            [(ir.CompilerIrInstr.Branch _ true-label false-label)
+              (begin
+                (set!
+                  found
+                  (or
+                    (opt-inline-checked-reach-mark! true-label generation)
+                    found))
+                (set!
+                  found
+                  (or
+                    (opt-inline-checked-reach-mark! false-label generation)
+                    found)))]
+            [(ir.CompilerIrInstr.TotalEnumBranch _ true-label false-label)
+              (begin
+                (set!
+                  found
+                  (or
+                    (opt-inline-checked-reach-mark! true-label generation)
+                    found))
+                (set!
+                  found
+                  (or
+                    (opt-inline-checked-reach-mark! false-label generation)
+                    found)))]
+            [(ir.CompilerIrInstr.Switch _ _ cases default-label)
+              (begin
+                (set!
+                  found
+                  (or
+                    (opt-inline-checked-reach-mark! default-label generation)
+                    found))
+                (set!
+                  found
+                  (or
+                    (opt-inline-checked-reach-switch-cases! cases generation)
+                    found)))]
+            [(ir.CompilerIrInstr.TotalEnumSwitch _ _ cases default-label _)
+              (begin
+                (set!
+                  found
+                  (or
+                    (opt-inline-checked-reach-mark! default-label generation)
+                    found))
+                (set!
+                  found
+                  (or
+                    (opt-inline-checked-reach-switch-cases! cases generation)
+                    found)))]
+            [_ unit])
+          (set! i (+ i 1))))
+      found)))
+
+;; Does this block leave the function -- return, or tail-call away?
+(define (opt-inline-checked-instrs-leave-function?
+  [instrs : ir.CompilerIrInstrSeq]) : bool
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [i : i64 0]
+    [out : bool false]
+    (begin
+      (while (< i count)
+        (begin
+          (match (array-ref slots i)
+            [(ir.CompilerIrInstr.Return _) (set! out true)]
+            [(ir.CompilerIrInstr.TailCall _ _ _) (set! out true)]
+            [(ir.CompilerIrInstr.TailCallIndirect _ _ _) (set! out true)]
+            [_ unit])
+          (set! i (+ i 1))))
+      out)))
+
+;; Set while a walk is running when a marked block other than the deleted one
+;; leaves the function: the one fact the post-dominance question turns on.
+(define opt-inline-checked-reach-exit-seen? : bool
+  false)
+
+;; One relaxation round of "reachable from the entry without passing through
+;; `skip-label`". Answers whether anything new was marked.
+(define (opt-inline-checked-reach-round!
+  [blocks : ir.CompilerIrBlockList]
+  [generation : i64]
+  [skip-label : i64]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (let
+            [here : bool
+              (if (and
+                (opt-inline-checked-reach-marked? label generation)
+                (not (= label skip-label)))
+                (begin
+                  (if (opt-inline-checked-instrs-leave-function?
+                    (compiler-opt-global-shared-view instrs))
+                    (set! opt-inline-checked-reach-exit-seen? true)
+                    unit)
+                  (opt-inline-checked-reach-succs!
+                    (compiler-opt-global-shared-view instrs)
+                    generation))
+                false)]
+            [rest? : bool
+              (opt-inline-checked-reach-round!
+                (compiler-opt-box-shared-view rest)
+                generation
+                skip-label)]
+            (or here rest?))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64
+          (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+        [i : i64 0]
+        [any? : bool false]
+        (begin
+          (while (< i count)
+            (begin
+              (match (ir.compiler-ir-block-seq-ref
+                (compiler-opt-global-shared-view seq)
+                i)
+                [(ir.CompilerIrBlock.Block label instrs)
+                  (if (and
+                    (opt-inline-checked-reach-marked? label generation)
+                    (not (= label skip-label)))
+                    (begin
+                      (if (opt-inline-checked-instrs-leave-function?
+                        (compiler-opt-global-shared-view instrs))
+                        (set! opt-inline-checked-reach-exit-seen? true)
+                        unit)
+                      (set!
+                        any?
+                        (or
+                          (opt-inline-checked-reach-succs!
+                            (compiler-opt-global-shared-view instrs)
+                            generation)
+                          any?)))
+                    unit)])
+              (set! i (+ i 1))))
+          any?))]))
+
+;; POST. `label` post-dominates the caller's entry when no path from the entry
+;; reaches a return or a tail call without passing through it: the block is
+;; deleted from the CFG and the entry's reachable set is asked whether it still
+;; leaves the function. A walk that has not settled inside the round bound, or
+;; a block the deleted CFG cannot reach at all, answers no.
+(define (opt-inline-checked-post-dominates-entry?
+  [blocks : ir.CompilerIrBlockList]
+  [entry-label : i64]
+  [label : i64]) : bool
+  (let
+    [generation : i64 (opt-inline-checked-reach-begin!)]
+    [_seed : bool (opt-inline-checked-reach-mark! entry-label generation)]
+    [rounds : i64 0]
+    [changed? : bool true]
+    (begin
+      (set! opt-inline-checked-reach-exit-seen? false)
+      (while (and changed? (< rounds (opt-inline-checked-pos-max-rounds)))
+        (begin
+          (set!
+            changed?
+            (opt-inline-checked-reach-round!
+              (compiler-opt-global-shared-view blocks)
+              generation
+              label))
+          (set! rounds (+ rounds 1))))
+      (and
+        (not changed?)
+        (not opt-inline-checked-reach-exit-seen?)
+        (opt-inline-checked-reach-marked? label generation)))))
+
+;; The terminator classes the arm reading is stated in.
+(define (opt-inline-checked-term-none) : i64
+  0)
+
+(define (opt-inline-checked-term-literal-return) : i64
+  1)
+
+(define (opt-inline-checked-term-return) : i64
+  2)
+
+(define (opt-inline-checked-term-tail-call) : i64
+  3)
+
+(define (opt-inline-checked-term-jump) : i64
+  4)
+
+(define (opt-inline-checked-term-branch) : i64
+  5)
+
+;; The labels a classified terminator names, published beside its class because
+;; that is the only thing an i64 answer cannot carry.
+(define opt-inline-checked-term-jump-target : i64
+  (- 0 1))
+(define opt-inline-checked-term-branch-yes : i64
+  (- 0 1))
+(define opt-inline-checked-term-branch-no : i64
+  (- 0 1))
+
+;; ...and the class of the SIBLING arm's terminator, published by the arm
+;; reading for the caller clause below, which allows one more call when the
+;; sibling's own terminator is the call.
+(define opt-inline-checked-arm-sibling-term : i64
+  0)
+
+(define (opt-inline-checked-value-literal? [value : ir.CompilerIrValue]) : bool
+  (match (compiler-opt-global-shared-view value)
+    [(ir.CompilerIrValue.I64 _) true]
+    [(ir.CompilerIrValue.F64 _) true]
+    [(ir.CompilerIrValue.Bool _) true]
+    [(ir.CompilerIrValue.Char _) true]
+    [(ir.CompilerIrValue.Unit) true]
+    [_ false]))
+
+(define (opt-inline-checked-term-class-of-instr [instr : ir.CompilerIrInstr]) : i64
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Return maybe)
+      (match (compiler-opt-global-shared-view maybe)
+        [(ir.CompilerIrMaybeValue.No) (opt-inline-checked-term-literal-return)]
+        [(ir.CompilerIrMaybeValue.Some value)
+          (if (opt-inline-checked-value-literal? value)
+            (opt-inline-checked-term-literal-return)
+            (opt-inline-checked-term-return))])]
+    [(ir.CompilerIrInstr.TailCall _ _ _) (opt-inline-checked-term-tail-call)]
+    [(ir.CompilerIrInstr.Jump target)
+      (begin
+        (set! opt-inline-checked-term-jump-target target)
+        (opt-inline-checked-term-jump))]
+    [(ir.CompilerIrInstr.Branch _ true-label false-label)
+      (begin
+        (set! opt-inline-checked-term-branch-yes true-label)
+        (set! opt-inline-checked-term-branch-no false-label)
+        (opt-inline-checked-term-branch))]
+    [(ir.CompilerIrInstr.TotalEnumBranch _ true-label false-label)
+      (begin
+        (set! opt-inline-checked-term-branch-yes true-label)
+        (set! opt-inline-checked-term-branch-no false-label)
+        (opt-inline-checked-term-branch))]
+    [_ (opt-inline-checked-term-none)]))
+
+(define (opt-inline-checked-term-class-of [instrs : ir.CompilerIrInstrSeq]) : i64
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    (if (< count 1)
+      (opt-inline-checked-term-none)
+      (opt-inline-checked-term-class-of-instr
+        (ir.compiler-ir-instr-seq-ref
+          (compiler-opt-global-shared-view instrs)
+          (- count 1))))))
+
+(define (opt-inline-checked-term-class-at
+  [blocks : ir.CompilerIrBlockList]
+  [label : i64]) : i64
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (opt-inline-checked-term-none)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block block-label instrs)
+          (if (= block-label label)
+            (opt-inline-checked-term-class-of
+              (compiler-opt-global-shared-view instrs))
+            (opt-inline-checked-term-class-at
+              (compiler-opt-box-shared-view rest)
+              label))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64
+          (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+        [i : i64 0]
+        [out : i64 (opt-inline-checked-term-none)]
+        [found? : bool false]
+        (begin
+          (while (and (not found?) (< i count))
+            (begin
+              (match (ir.compiler-ir-block-seq-ref
+                (compiler-opt-global-shared-view seq)
+                i)
+                [(ir.CompilerIrBlock.Block block-label instrs)
+                  (if (= block-label label)
+                    (begin
+                      (set!
+                        out
+                        (opt-inline-checked-term-class-of
+                          (compiler-opt-global-shared-view instrs)))
+                      (set! found? true))
+                    unit)])
+              (set! i (+ i 1))))
+          out))]))
+
+(define (opt-inline-checked-entry-label [blocks : ir.CompilerIrBlockList]) : i64
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (- 0 1)]
+    [(ir.CompilerIrBlockList.Cons block _)
+      (match block
+        [(ir.CompilerIrBlock.Block label _) label])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (if (<
+        (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))
+        1)
+        (- 0 1)
+        (match (ir.compiler-ir-block-seq-ref
+          (compiler-opt-global-shared-view seq)
+          0)
+          [(ir.CompilerIrBlock.Block label _) label]))]))
+
+;; ARM. The site's block is one of the two successors of the entry block's
+;; branch, and the SIBLING successor leaves the function within one block: it
+;; returns anything, tail-calls away, or jumps to a block that returns a
+;; literal. The sibling's own terminator class is published for the caller
+;; clause below.
+(define (opt-inline-checked-arm-site?
+  [blocks : ir.CompilerIrBlockList]
+  [entry-label : i64]
+  [label : i64]) : bool
+  (let
+    [entry-term : i64
+      (opt-inline-checked-term-class-at
+        (compiler-opt-global-shared-view blocks)
+        entry-label)]
+    (if (not (= entry-term (opt-inline-checked-term-branch)))
+      false
+      (let
+        [yes : i64 opt-inline-checked-term-branch-yes]
+        [no : i64 opt-inline-checked-term-branch-no]
+        [sibling : i64
+          (if (= label yes)
+            no
+            (if (= label no)
+              yes
+              (- 0 1)))]
+        (if (< sibling 0)
+          false
+          (let
+            [sibling-term : i64
+              (opt-inline-checked-term-class-at
+                (compiler-opt-global-shared-view blocks)
+                sibling)]
+            (begin
+              (set! opt-inline-checked-arm-sibling-term sibling-term)
+              (cond
+                [(= sibling-term (opt-inline-checked-term-literal-return)) true]
+                [(= sibling-term (opt-inline-checked-term-return)) true]
+                [(= sibling-term (opt-inline-checked-term-tail-call)) true]
+                [(= sibling-term (opt-inline-checked-term-jump))
+                  (=
+                    (opt-inline-checked-term-class-at
+                      (compiler-opt-global-shared-view blocks)
+                      opt-inline-checked-term-jump-target)
+                    (opt-inline-checked-term-literal-return))]
+                [else false]))))))))
+
+;; How many calls the CALLER carries, in the sense opt-inline-instr-call? reads.
+(define (opt-inline-checked-instrs-call-count [instrs : ir.CompilerIrInstrSeq]) : i64
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [i : i64 0]
+    [out : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (if (opt-inline-instr-call?
+            (ir.compiler-ir-instr-seq-ref
+              (compiler-opt-global-shared-view instrs)
+              i))
+            (set! out (+ out 1))
+            unit)
+          (set! i (+ i 1))))
+      out)))
+
+(define (opt-inline-checked-caller-call-count
+  [blocks : ir.CompilerIrBlockList]
+  [acc : i64]) : i64
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) acc]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-inline-checked-caller-call-count
+            (compiler-opt-box-shared-view rest)
+            (+
+              acc
+              (opt-inline-checked-instrs-call-count
+                (compiler-opt-global-shared-view instrs))))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64
+          (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+        [i : i64 0]
+        [out : i64 acc]
+        (begin
+          (while (< i count)
+            (begin
+              (match (ir.compiler-ir-block-seq-ref
+                (compiler-opt-global-shared-view seq)
+                i)
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (set!
+                    out
+                    (+
+                      out
+                      (opt-inline-checked-instrs-call-count
+                        (compiler-opt-global-shared-view instrs))))])
+              (set! i (+ i 1))))
+          out))]))
+
+;; THE CALLER CLAUSE, asked ONLY of the two new readings. A true entry site
+;; keeps the admission it has today, caller shape and all.
+;;
+;; Both new readings say "this block runs once per invocation". Neither says
+;; the caller is a WRAPPER -- a function whose whole job is the call at this
+;; site -- and that is the difference the plan's currency turns on: a depth-0
+;; boundary is credited once against a per-invocation cost, so where the caller
+;; carries other calls of its own the credit is spread over work the site does
+;; not account for. So the caller may hold no call this site does not account
+;; for: its own, plus the sibling arm's tail call when the two arms are what
+;; made the site entry-equivalent.
+;;
+;; Both losers are measured on this tree, and each is why one half of the
+;; clause exists:
+;;
+;;   * WITHOUT IT, POST admits `cfg-stamp-euler` into `cfg-function` at
+;;     `@if_merge.11` -- a merge block that does post-dominate the entry, inside
+;;     a caller that is a whole pass -- and the verdict keeps it at a modelled
+;;     saving of 12 against a boundary of 14. cfg_domloops pays +12,904,068
+;;     (+2.40%), which is exactly the blanket depth-0 relaxation INL-1 recorded
+;;     and refused.
+;;   * WITHOUT IT, ARM admits `ls-number-float?` into `ls-tokenize` at
+;;     `@if_then.60`, whose own copy then displaces the depth-1 keep
+;;     `ls-float-tail?` into `ls-tokenize` (saving 88 against a boundary of 72):
+;;     lex_source +568,664, and the self-compile loses six keeps (44 -> 38) to
+;;     the same budget race.
+;;
+;; With the clause both go away and every wrapper-shaped case stays.
+(define (opt-inline-checked-wrapper-shaped?
+  [blocks : ir.CompilerIrBlockList]
+  [pos : i64]) : bool
+  (let
+    [calls : i64
+      (opt-inline-checked-caller-call-count
+        (compiler-opt-global-shared-view blocks)
+        0)]
+    [allowed : i64
+      (if (and
+        (= pos (opt-inline-checked-pos-arm))
+        (=
+          opt-inline-checked-arm-sibling-term
+          (opt-inline-checked-term-tail-call)))
+        2
+        1)]
+    (<= calls allowed)))
+
+;; The two new readings, tried post first. Answers `none` for a caller too wide
+;; to walk, for a caller whose entry block cannot be found, and for the entry
+;; block itself -- which never reaches here, because position zero is answered
+;; without a walk.
+(define (opt-inline-checked-widened-class
+  [blocks : ir.CompilerIrBlockList]
+  [label : i64]) : i64
+  (let
+    [caller-blocks : i64
+      (ir.compiler-ir-block-list-count (compiler-opt-global-shared-view blocks))]
+    [entry-label : i64
+      (opt-inline-checked-entry-label (compiler-opt-global-shared-view blocks))]
+    (cond
+      [(> caller-blocks (opt-inline-checked-pos-max-blocks))
+        (opt-inline-checked-pos-none)]
+      [(< entry-label 0) (opt-inline-checked-pos-none)]
+      [(= entry-label label) (opt-inline-checked-pos-none)]
+      [(opt-inline-checked-post-dominates-entry?
+          (compiler-opt-global-shared-view blocks)
+          entry-label
+          label)
+        (opt-inline-checked-pos-post)]
+      [(opt-inline-checked-arm-site?
+          (compiler-opt-global-shared-view blocks)
+          entry-label
+          label)
+        (opt-inline-checked-pos-arm)]
+      [else (opt-inline-checked-pos-none)])))
+
+;; The class of one site's block: `entry` for the caller's entry block, then the
+;; two widened readings gated by the caller clause, then `none`.
+(define (opt-inline-checked-position-class
+  [blocks : ir.CompilerIrBlockList]
+  [position : i64]
+  [label : i64]) : i64
+  (if (= position 0)
+    (opt-inline-checked-pos-entry)
+    (let
+      [pos : i64
+        (opt-inline-checked-widened-class
+          (compiler-opt-global-shared-view blocks)
+          label)]
+      (if (= pos (opt-inline-checked-pos-none))
+        (opt-inline-checked-pos-none)
+        (if (opt-inline-checked-wrapper-shaped?
+          (compiler-opt-global-shared-view blocks)
+          pos)
+          pos
+          (opt-inline-checked-pos-none))))))
 
 ;; VERDICTS per program, not accepts. This is the tier's compile-time bound and
 ;; it has to count the work, which a cap on accepts does not: a rejected
@@ -126072,6 +126728,13 @@
 (define opt-inline-checked-trace-frequency : i64
   (- 0 1))
 
+;; ...and which reading of "runs once per invocation" the site's block cleared
+;; on (opt-inline-checked-position-class), or `none` for a site the depth clause
+;; refused, so a verdict table can be read a class at a time. Initialised to
+;; opt-inline-checked-pos-none, which is zero.
+(define opt-inline-checked-trace-pos : i64
+  0)
+
 ;; ...and the census's one-level hot reference count for the same caller, which
 ;; is what the composite frequency was before the call graph's synthetic counts
 ;; replaced it. It is traced beside the new number so a verdict table reads as
@@ -126110,6 +126773,8 @@
         (string.int->string opt-inline-checked-trace-depth)
         "|frequency="
         (string.int->string opt-inline-checked-trace-frequency)
+        "|pos="
+        (opt-inline-checked-pos-text opt-inline-checked-trace-pos)
         "|hot="
         (string.int->string opt-inline-checked-trace-hot)
         "|instrs="
@@ -126902,6 +127567,7 @@
   (begin
     (set! opt-inline-checked-trace-depth (- 0 1))
     (set! opt-inline-checked-trace-frequency (- 0 1))
+    (set! opt-inline-checked-trace-pos (opt-inline-checked-pos-none))
     (set! opt-inline-checked-trace-hot (- 0 1))
     (cond
       [(not opt-inline-checked-active?) (opt-inline-checked-clause-disarmed)]
@@ -126968,10 +127634,28 @@
               (compiler-opt-global-shared-view index)
               (compiler-opt-global-shared-view census)
               site-weight)]
+          ;; Which reading of "runs once per invocation" this site's block
+          ;; clears, computed only where the depth relaxation could turn on it:
+          ;; a site above depth zero, or one whose composite frequency has not
+          ;; reached the relaxed floor's rung, is refused by the clause below on
+          ;; the numbers it already has, so it pays one integer test and no walk
+          ;; of the caller.
+          [position-class : i64
+            (if (and
+              (= site-depth 0)
+              (>= frequency (opt-inline-checked-depth-relaxed-frequency)))
+              (opt-inline-checked-position-class
+                (opt-inline-caller-facts-blocks-shared-view)
+                opt-inline-checked-site-position
+                opt-inline-current-block-label)
+              (if (= opt-inline-checked-site-position 0)
+                (opt-inline-checked-pos-entry)
+                (opt-inline-checked-pos-none)))]
           [_publish : unit
             (begin
               (set! opt-inline-checked-trace-depth site-depth)
               (set! opt-inline-checked-trace-frequency frequency)
+              (set! opt-inline-checked-trace-pos position-class)
               ;; The count the propagation replaced is read for the trace and
               ;; for nothing else, so a compile without the flag does not pay
               ;; its map probe.
@@ -126990,7 +127674,7 @@
                 site-depth
                 (opt-inline-checked-effective-min-site-depth
                   frequency
-                  (= opt-inline-checked-site-position 0)
+                  (opt-inline-checked-entry-equivalent? position-class)
                   (opt-inline-blocks-call-free?
                     (compiler-opt-global-shared-view blocks))))
               (opt-inline-checked-clause-site-depth)]

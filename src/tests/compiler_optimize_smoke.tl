@@ -4822,6 +4822,12 @@
     "the site-depth floor relaxes to zero exactly where the composite frequency already carries the evidence"))
 
 (test
+  inline-checked-entry-equivalent
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-entry-equivalent-ok?)
+    "a depth-0 site reads as entry-equivalent at the entry block, at a block that post-dominates it and at an arm of the entry branch whose sibling leaves the function -- the last two only in a wrapper-shaped caller"))
+
+(test
   inline-checked-depth0-hot-site
   (test.assert-i64-eq
     (compiler_optimize_tests.opt-inline-checked-depth0-self-test 1)
@@ -4836,11 +4842,18 @@
     "the same depth-0 site under a caller nothing reaches through a loop never reaches a verdict"))
 
 (test
-  inline-checked-depth0-conditional-site
+  inline-checked-depth0-threaded-site
   (test.assert-i64-eq
     (compiler_optimize_tests.opt-inline-checked-depth0-self-test 2)
+    201
+    "moving the same site one unconditional jump off the entry block leaves it POST-DOMINATING the entry, so INL-4 reads it as entry-equivalent in this wrapper-shaped caller: the same two verdicts as the entry spelling, and the verdict still refuses it by cost"))
+
+(test
+  inline-checked-depth0-guarded-site
+  (test.assert-i64-eq
+    (compiler_optimize_tests.opt-inline-checked-depth0-self-test 3)
     101
-    "moving the same site one unconditional jump off the entry block keeps the floor: one verdict fewer, the call still there"))
+    "putting the same site below a guard whose other arm returns makes its block neither the entry's post-dominator nor an arm of the entry branch, and the floor stands exactly as it did before the widening: one verdict fewer, the call still there"))
 
 (test
   inline-checked-lock-bodies

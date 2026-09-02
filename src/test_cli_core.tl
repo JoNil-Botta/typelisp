@@ -72,17 +72,7 @@
   (SlowSkipped))
 
 (defenum InlineTest
-  (Case
-    String
-    String
-    i64
-    i64
-    i64
-    String
-    i64
-    i64
-    ast.AstTestMetadata
-    InlineTestSelection))
+  (Case String String i64 i64 i64 String i64 i64 InlineTestSelection))
 
 (defenum InlineCollect
   (Collect ast.AstDeclList ast.AstDeclPathList (__tl_dyn-array InlineTest)))
@@ -127,39 +117,19 @@
   false)
 (define tltest-seed : u64
   (cast 0 : u64))
-(define tltest-user-cfg-slots : (__tl_dyn-array String)
-  (__tl_make-array String 4))
+(define tltest-user-cfg-slots : cli_svec.Vec
+  (cli_svec.new))
 (define tltest-user-cfg-len : i64
   0)
 
 (define (tltest-user-cfg-reset!) : unit
   (begin
-    (set! tltest-user-cfg-slots (__tl_make-array String 4))
+    (set! tltest-user-cfg-slots (cli_svec.new))
     (set! tltest-user-cfg-len 0)))
-
-(define (tltest-user-cfg-grow!) : unit
-  (let
-    [old : (__tl_dyn-array String) tltest-user-cfg-slots]
-    [old-cap : i64 (array-length old)]
-    [next-cap : i64
-      (if (< old-cap 1)
-        4
-        (* old-cap 2))]
-    [next : (__tl_dyn-array String) (__tl_make-array String next-cap)]
-    [index : i64 0]
-    (begin
-      (while (< index tltest-user-cfg-len)
-        (begin
-          (set! (array-ref next index) (array-ref old index))
-          (set! index (+ index 1))))
-      (set! tltest-user-cfg-slots next))))
 
 (define (tltest-user-cfg-push! [name : String]) : unit
   (begin
-    (if (< tltest-user-cfg-len (array-length tltest-user-cfg-slots))
-      unit
-      (tltest-user-cfg-grow!))
-    (set! (array-ref tltest-user-cfg-slots tltest-user-cfg-len) name)
+    (cli_svec.push-ref! (&mut tltest-user-cfg-slots) name)
     (set! tltest-user-cfg-len (+ tltest-user-cfg-len 1))))
 
 (define (tltest-selection-set?) : bool
@@ -1303,7 +1273,6 @@
                             private-name
                             private-id
                             (tltest-private-call-id current-module private-id)
-                            (owned_view.compiler-owned-shared-view metadata)
                             (tltest-test-selection metadata))))
                       unit)]
                   [(ast.AstDecl.Module name)
@@ -1361,7 +1330,7 @@
 
 (define (tltest-list-line [test : InlineTest]) : String
   (match test
-    [(InlineTest.Case name path _ line _ _ _ _ _ selection)
+    [(InlineTest.Case name path _ line _ _ _ _ selection)
       (str_cat.str-cat
         name
         " "
@@ -1448,16 +1417,16 @@
 
 (define (tltest-running-line [test : InlineTest]) : String
   (match test
-    [(InlineTest.Case name path _ line _ _ _ _ _ _)
+    [(InlineTest.Case name path _ line _ _ _ _ _)
       (str_cat.str-cat "test " name " " (tltest-location path line) "\n")]))
 
 (define (tltest-ok-line [test : InlineTest]) : String
   (match test
-    [(InlineTest.Case name _ _ _ _ _ _ _ _ _) (str_cat.str-cat "ok " name "\n")]))
+    [(InlineTest.Case name _ _ _ _ _ _ _ _) (str_cat.str-cat "ok " name "\n")]))
 
 (define (tltest-failed-line [test : InlineTest]) : String
   (match test
-    [(InlineTest.Case name path _ line _ _ _ _ _ _)
+    [(InlineTest.Case name path _ line _ _ _ _ _)
       (str_cat.str-cat "FAILED " name " " (tltest-location path line) "\n")]))
 
 (define (tltest-print-runtime-write-params) : ast.AstParamList
@@ -1702,7 +1671,7 @@
       [test : InlineTest
         (owned_view.compiler-owned-array-element-shared-view tests index)]
       (match (owned_view.compiler-owned-shared-view test)
-        [(InlineTest.Case _ _ _ _ _ _ _ call-id _ selection)
+        [(InlineTest.Case _ _ _ _ _ _ _ call-id selection)
           (match selection
             [(InlineTestSelection.Run)
               (tltest-main-exprs-from
@@ -1736,10 +1705,8 @@
     (begin
       (while (< index (array-length tests))
         (begin
-          (match (owned_view.compiler-owned-array-element-shared-view
-            tests
-            index)
-            [(InlineTest.Case _ _ _ _ _ _ _ _ _ selection)
+          (match (array-ref tests index)
+            [(InlineTest.Case _ _ _ _ _ _ _ _ selection)
               (let
                 [kind : i64
                   (match selection
@@ -1783,7 +1750,7 @@
       [test : InlineTest
         (owned_view.compiler-owned-array-element-shared-view tests index)]
       (match test
-        [(InlineTest.Case _ _ module-id _ body _ private-id _ _ _)
+        [(InlineTest.Case _ _ module-id _ body _ private-id _ _)
           (tltest-test-decls-onto
             tests
             (- index 1)
@@ -1859,7 +1826,7 @@
       [test : InlineTest
         (owned_view.compiler-owned-array-element-shared-view tests index)]
       (match test
-        [(InlineTest.Case _ path module-id _ _ _ _ _ _ _)
+        [(InlineTest.Case _ path module-id _ _ _ _ _ _)
           (tltest-test-paths-onto
             tests
             (- index 1)
@@ -2644,7 +2611,7 @@
       [test : InlineTest
         (owned_view.compiler-owned-array-element-shared-view tests index)]
       (match test
-        [(InlineTest.Case _ _ _ _ body _ _ _ _ _)
+        [(InlineTest.Case _ _ _ _ body _ _ _ _)
           (tltest-reach-mark-tests-from
             session
             tests
@@ -4756,9 +4723,7 @@
       (+ index 1)
       (cfg_core.compiler-cfg-enable
         cfgs
-        (owned_view.compiler-owned-array-element-shared-view
-          tltest-user-cfg-slots
-          index)))))
+        (cli_svec.get (& tltest-user-cfg-slots) index "")))))
 
 (define (tltest-cfgs [backend-target : compiler_backend.CompilerBackendTarget]) : sym_i64_env.SymI64Env
   (tltest-user-cfgs-from
@@ -6146,7 +6111,9 @@
   [test-count : i64]) : ResultTestPackageTotals
   (let
     [selected-sources : cli_svec.Vec
-      (tltest-package-selected-integration-sources sources tests-prefix)]
+      (tltest-package-selected-integration-sources
+        sources
+        (owned_view.compiler-owned-shared-view tests-prefix))]
     (tltest-package-run-integration-sources-from
       selected-sources
       0
@@ -6719,10 +6686,11 @@
               (set! tltest-seed-set true))]
           [(random.ErrSystemSeed error)
             (begin
-              (io.print-error
-                (match error
-                  [(random.RandomSystemSeedUnavailable message)
-                    (str_cat.str-cat "test: " message "\n")]))
+              (match error
+                [(random.RandomSystemSeedUnavailable message)
+                  (let
+                    [rendered : String (str_cat.str-cat "test: " message "\n")]
+                    (io.print-error (& rendered)))])
               (return false))]))
       (io.print-format
         "{}"

@@ -4239,6 +4239,584 @@
     [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ optimized)
       optimized]))
 
+;; --- SROA-2: aggregate word split -------------------------------------------
+;;
+;; Fixtures for compiler_optimize's `aggregate_split`. Each one is a whole
+;; function so the pass sees the joins it exists for; the negatives assert the
+;; pass leaves the memory object exactly where it was.
+(define (opt-agsplit-kind-load) : i64
+  1)
+
+(define (opt-agsplit-kind-tl-alloc) : i64
+  2)
+
+(define (opt-agsplit-kind-store-ptr) : i64
+  3)
+
+(define (opt-agsplit-kind-copy-bytes) : i64
+  4)
+
+(define (opt-agsplit-kind-return-literal) : i64
+  5)
+
+(define (opt-agsplit-kind-gep) : i64
+  6)
+
+;; One instruction's contribution to the requested census. `arg` is the literal
+;; a `return-literal` row must carry; it is ignored by every other kind.
+(define (opt-agsplit-count-instr
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [kind : i64]
+  [arg : i64]) : i64
+  (cond
+    [(= kind (opt-agsplit-kind-load))
+      (match instr
+        [(compiler_ir_types.CompilerIrInstr.Load _ _ _) 1]
+        [_ 0])]
+    [(= kind (opt-agsplit-kind-tl-alloc))
+      (match instr
+        [(compiler_ir_types.CompilerIrInstr.Call _ name _ _)
+          (if (= name cbi.compiler-builtin-id-tl-alloc)
+            1
+            0)]
+        [_ 0])]
+    [(= kind (opt-agsplit-kind-store-ptr))
+      (match instr
+        [(compiler_ir_types.CompilerIrInstr.StorePtr _ _ _) 1]
+        [_ 0])]
+    [(= kind (opt-agsplit-kind-copy-bytes))
+      (match instr
+        [(compiler_ir_types.CompilerIrInstr.CopyBytes _ _ _) 1]
+        [_ 0])]
+    [(= kind (opt-agsplit-kind-gep))
+      (match instr
+        [(compiler_ir_types.CompilerIrInstr.Gep _ _ _ _) 1]
+        [_ 0])]
+    [(= kind (opt-agsplit-kind-return-literal))
+      (match instr
+        [(compiler_ir_types.CompilerIrInstr.Return maybe)
+          (match maybe
+            [(compiler_ir_types.CompilerIrMaybeValue.Some value)
+              (match value
+                [(compiler_ir_types.CompilerIrValue.I64 literal)
+                  (if (= literal arg)
+                    1
+                    0)]
+                [_ 0])]
+            [(compiler_ir_types.CompilerIrMaybeValue.No) 0])]
+        [_ 0])]
+    [else 0]))
+
+(define (opt-agsplit-count-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [kind : i64]
+  [arg : i64]
+  [index : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    0
+    (+
+      (opt-agsplit-count-instr
+        (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+        kind
+        arg)
+      (opt-agsplit-count-seq instrs kind arg (+ index 1)))))
+
+(define (opt-agsplit-count-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [kind : i64]
+  [arg : i64]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (+
+        (match block
+          [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+            (opt-agsplit-count-seq instrs kind arg 0)])
+        (opt-agsplit-count-blocks
+          (compiler_optimize.compiler-opt-box-shared-view rest)
+          kind
+          arg))]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-agsplit-count-blocks
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        kind
+        arg)]))
+
+(define (opt-agsplit-count-function
+  [func : compiler_ir_types.CompilerIrFunction]
+  [kind : i64]
+  [arg : i64]) : i64
+  (match func
+    [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+      (opt-agsplit-count-blocks blocks kind arg)]))
+
+(define (opt-agsplit-function
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [frame : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "main")
+    (compiler_ir_types.compiler-ir-param-seq-empty)
+    (compiler_ast_types.AstType.I64)
+    frame
+    blocks))
+
+(define (opt-agsplit-split
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [frame : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_optimize.opt-aggregate-split-function
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-agsplit-function blocks frame)))
+
+;; The whole level-2 pipeline over the same fixture, which is where the packet's
+;; claim actually lands: the split feeds `ssa`, `ssa` builds the phi, and `sccp`
+;; and `thread_branch` decide the match the phi now carries.
+(define (opt-agsplit-optimized
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [frame : i64]) : compiler_ir_types.CompilerIrFunction
+  (match (compiler_optimize.optimize-program-with-level
+    (compiler_ir_types.CompilerIrProgram.Program
+      (compiler_ir_types.compiler-ir-global-seq-empty)
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-agsplit-function blocks frame)
+        (compiler_ir_types.compiler-ir-function-seq-empty))
+      (compiler_ir_types.compiler-ir-extern-seq-empty))
+    2)
+    [(compiler_ir_types.CompilerIrProgram.Program _ funcs _)
+      (compiler_ir_types.compiler-ir-function-seq-ref funcs 0)]))
+
+(define (opt-agsplit-alloc [dst : i64] [size : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Call
+    dst
+    cbi.compiler-builtin-id-tl-alloc
+    (compiler_ir_types.CompilerIrCallArgs.One
+      (compiler_ir_types.CompilerIrValue.I64 size))
+    (compiler_ast_types.AstType.Struct (ci.intern "Pair"))))
+
+(define (opt-agsplit-gep [dst : i64] [base : i64] [offset : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Gep
+    dst
+    (compiler_ir_types.CompilerIrValue.Var base)
+    (compiler_ir_types.CompilerIrValue.I64 offset)
+    (compiler_ast_types.AstType.U8)))
+
+(define (opt-agsplit-store-literal [ptr : i64] [literal : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.StorePtr
+    (compiler_ir_types.CompilerIrValue.Var ptr)
+    (compiler_ir_types.CompilerIrValue.I64 literal)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-agsplit-load [dst : i64] [ptr : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Load
+    dst
+    (compiler_ir_types.CompilerIrValue.Var ptr)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-agsplit-block
+  [label : String]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.CompilerIrBlock.Block
+    (compiler_ir_types.compiler-ir-label label)
+    instrs))
+
+;; POSITIVE. Three match arms store the same tag into word 0 of a two-word
+;; aggregate; the join reloads it and compares. After the split the tag is a phi
+;; of three identical literals, so `sccp` folds the compare and the else arm is
+;; unreachable -- which the pre-split pipeline cannot do, because the load has
+;; no single dominating store.
+(define (opt-agsplit-join-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-agsplit-block
+      "entry"
+      (opt-test-instrs
+        (opt-agsplit-alloc 1 16)
+        (compiler_ir_types.CompilerIrInstr.EntryArgc 2)
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          3
+          compiler_ir_types.CompilerIrBinOp.Eq
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.compiler-ir-label "arm0")
+          (compiler_ir_types.compiler-ir-label "next1"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-agsplit-block
+        "arm0"
+        (opt-test-instrs
+          (opt-agsplit-gep 4 1 0)
+          (opt-agsplit-store-literal 4 7)
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "cont"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-agsplit-block
+          "next1"
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              5
+              compiler_ir_types.CompilerIrBinOp.Eq
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ir_types.compiler-ir-label "arm1")
+              (compiler_ir_types.compiler-ir-label "arm2"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-agsplit-block
+            "arm1"
+            (opt-test-instrs
+              (opt-agsplit-gep 6 1 0)
+              (opt-agsplit-store-literal 6 7)
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "cont"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-agsplit-block
+              "arm2"
+              (opt-test-instrs
+                (opt-agsplit-gep 7 1 0)
+                (opt-agsplit-store-literal 7 7)
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "cont"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-agsplit-block
+                "cont"
+                (opt-test-instrs
+                  (opt-agsplit-gep 8 1 0)
+                  (opt-agsplit-load 9 8)
+                  (compiler_ir_types.CompilerIrInstr.BinOp
+                    10
+                    compiler_ir_types.CompilerIrBinOp.Eq
+                    (compiler_ir_types.CompilerIrValue.Var 9)
+                    (compiler_ir_types.CompilerIrValue.I64 7)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Branch
+                    (compiler_ir_types.CompilerIrValue.Var 10)
+                    (compiler_ir_types.compiler-ir-label "hit")
+                    (compiler_ir_types.compiler-ir-label "miss"))))
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-agsplit-block
+                  "hit"
+                  (opt-test-instrs
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.I64 100)))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (opt-agsplit-block
+                    "miss"
+                    (opt-test-instrs
+                      (compiler_ir_types.CompilerIrInstr.Return
+                        (compiler_ir_types.CompilerIrMaybeValue.Some
+                          (compiler_ir_types.CompilerIrValue.I64 200)))))
+                  compiler_ir_types.CompilerIrBlockList.Nil)))))))))
+
+;; POSITIVE. A whole-size `copy_bytes` with BOTH sides split becomes register
+;; moves, and the load out of the destination becomes a register read.
+(define (opt-agsplit-copy-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-agsplit-block
+      "entry"
+      (opt-test-instrs
+        (opt-agsplit-alloc 1 16)
+        (opt-agsplit-alloc 2 16)
+        (opt-agsplit-gep 3 2 0)
+        (opt-agsplit-store-literal 3 9)
+        (opt-agsplit-gep 4 2 8)
+        (opt-agsplit-store-literal 4 11)
+        (compiler_ir_types.CompilerIrInstr.CopyBytes
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          16)
+        (opt-agsplit-gep 5 1 8)
+        (opt-agsplit-load 6 5)
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 6)))))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+;; NEGATIVE: escape:call. The aggregate is an argument of a direct call, in the
+;; friendliest position there is -- last statement of a returning block, nothing
+;; reads it afterwards. It is still refused: the callee reads the buffer, so the
+;; storage must exist at the call and every word would have to be written back
+;; there, which measures as a loss (see opt-aggregate-split-refuse-args!).
+(define (opt-agsplit-call-arg-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-agsplit-block
+      "entry"
+      (opt-test-instrs
+        (opt-agsplit-alloc 1 16)
+        (opt-agsplit-gep 2 1 0)
+        (opt-agsplit-store-literal 2 5)
+        (opt-agsplit-gep 3 1 8)
+        (opt-agsplit-store-literal 3 6)
+        (opt-agsplit-gep 4 1 0)
+        (opt-agsplit-load 5 4)
+        (compiler_ir_types.CompilerIrInstr.Call
+          6
+          (opt-test-symbol "touch")
+          (compiler_ir_types.CompilerIrCallArgs.One
+            (compiler_ir_types.CompilerIrValue.Var 1))
+          (compiler_ast_types.AstType.Unit))
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 5)))))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+;; NEGATIVE: escape:call. The same call, but the aggregate is read again after
+;; it, so the callee's view of the buffer is observable and the split refuses.
+(define (opt-agsplit-escape-call-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-agsplit-block
+      "entry"
+      (opt-test-instrs
+        (opt-agsplit-alloc 1 16)
+        (opt-agsplit-gep 2 1 0)
+        (opt-agsplit-store-literal 2 5)
+        (compiler_ir_types.CompilerIrInstr.Call
+          3
+          (opt-test-symbol "touch")
+          (compiler_ir_types.CompilerIrCallArgs.One
+            (compiler_ir_types.CompilerIrValue.Var 1))
+          (compiler_ast_types.AstType.Unit))
+        (opt-agsplit-gep 4 1 0)
+        (opt-agsplit-load 5 4)
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 5)))))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+;; NEGATIVE: access:word-type. A sub-word access is not a whole-word move.
+(define (opt-agsplit-subword-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-agsplit-block
+      "entry"
+      (opt-test-instrs
+        (opt-agsplit-alloc 1 16)
+        (compiler_ir_types.CompilerIrInstr.Gep
+          2
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.U8))
+        (compiler_ir_types.CompilerIrInstr.StorePtr
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ir_types.CompilerIrValue.I64 5)
+          (compiler_ast_types.AstType.I32))
+        (opt-agsplit-gep 3 1 0)
+        (compiler_ir_types.CompilerIrInstr.Load
+          4
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ast_types.AstType.I32))
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 4)))))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+;; NEGATIVE: ptr:gep-scale. A gep whose offset is not a literal.
+(define (opt-agsplit-dynamic-gep-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-agsplit-block
+      "entry"
+      (opt-test-instrs
+        (opt-agsplit-alloc 1 16)
+        (compiler_ir_types.CompilerIrInstr.EntryArgc 2)
+        (compiler_ir_types.CompilerIrInstr.Gep
+          3
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ast_types.AstType.U8))
+        (opt-agsplit-load 4 3)
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 4)))))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+;; NEGATIVE: access:copy-size. A partial copy overlaps a word.
+(define (opt-agsplit-partial-copy-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-agsplit-block
+      "entry"
+      (opt-test-instrs
+        (opt-agsplit-alloc 1 16)
+        (compiler_ir_types.CompilerIrInstr.EntryArgv 2)
+        (compiler_ir_types.CompilerIrInstr.CopyBytes
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          12)
+        (opt-agsplit-gep 3 1 0)
+        (opt-agsplit-load 4 3)
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 4)))))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+;; NEGATIVE: escape:use. The pointer itself is stored to memory.
+(define (opt-agsplit-stored-pointer-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-agsplit-block
+      "entry"
+      (opt-test-instrs
+        (opt-agsplit-alloc 1 16)
+        (compiler_ir_types.CompilerIrInstr.Store
+          (opt-test-symbol "escaped")
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.U64))
+        (opt-agsplit-gep 2 1 0)
+        (opt-agsplit-load 3 2)
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 3)))))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+(define (compiler-optimize-aggregate-split-self-test) : i64
+  (let
+    [join-split : compiler_ir_types.CompilerIrFunction
+      (opt-agsplit-split (opt-agsplit-join-blocks) 12)]
+    [join-opt : compiler_ir_types.CompilerIrFunction
+      (opt-agsplit-optimized (opt-agsplit-join-blocks) 12)]
+    [copy-split : compiler_ir_types.CompilerIrFunction
+      (opt-agsplit-split (opt-agsplit-copy-blocks) 8)]
+    [copy-opt : compiler_ir_types.CompilerIrFunction
+      (opt-agsplit-optimized (opt-agsplit-copy-blocks) 8)]
+    [call-arg : compiler_ir_types.CompilerIrFunction
+      (opt-agsplit-split (opt-agsplit-call-arg-blocks) 8)]
+    [escape-call : compiler_ir_types.CompilerIrFunction
+      (opt-agsplit-split (opt-agsplit-escape-call-blocks) 8)]
+    [subword : compiler_ir_types.CompilerIrFunction
+      (opt-agsplit-split (opt-agsplit-subword-blocks) 6)]
+    [dynamic-gep : compiler_ir_types.CompilerIrFunction
+      (opt-agsplit-split (opt-agsplit-dynamic-gep-blocks) 6)]
+    [partial-copy : compiler_ir_types.CompilerIrFunction
+      (opt-agsplit-split (opt-agsplit-partial-copy-blocks) 6)]
+    [stored-pointer : compiler_ir_types.CompilerIrFunction
+      (opt-agsplit-split (opt-agsplit-stored-pointer-blocks) 5)]
+    (cond
+      ;; POSITIVE join: the memory object and every access to it are gone.
+      [(!=
+          (opt-agsplit-count-function
+            (compiler_optimize.compiler-opt-global-shared-view join-split)
+            (opt-agsplit-kind-tl-alloc)
+            0)
+          0)
+        1]
+      [(!=
+          (opt-agsplit-count-function
+            (compiler_optimize.compiler-opt-global-shared-view join-split)
+            (opt-agsplit-kind-load)
+            0)
+          0)
+        2]
+      [(!=
+          (opt-agsplit-count-function
+            (compiler_optimize.compiler-opt-global-shared-view join-split)
+            (opt-agsplit-kind-store-ptr)
+            0)
+          0)
+        3]
+      ;; ...and the phi the split exposes lets sccp/thread_branch decide the
+      ;; match: the miss arm is unreachable afterwards.
+      [(!=
+          (opt-agsplit-count-function
+            (compiler_optimize.compiler-opt-global-shared-view join-opt)
+            (opt-agsplit-kind-return-literal)
+            200)
+          0)
+        4]
+      [(<
+          (opt-agsplit-count-function
+            (compiler_optimize.compiler-opt-global-shared-view join-opt)
+            (opt-agsplit-kind-return-literal)
+            100)
+          1)
+        5]
+      ;; POSITIVE copy: both sides split, so the copy is register moves.
+      [(!=
+          (opt-agsplit-count-function
+            (compiler_optimize.compiler-opt-global-shared-view copy-split)
+            (opt-agsplit-kind-copy-bytes)
+            0)
+          0)
+        6]
+      [(!=
+          (opt-agsplit-count-function
+            (compiler_optimize.compiler-opt-global-shared-view copy-split)
+            (opt-agsplit-kind-tl-alloc)
+            0)
+          0)
+        7]
+      [(!=
+          (opt-agsplit-count-function
+            (compiler_optimize.compiler-opt-global-shared-view copy-split)
+            (opt-agsplit-kind-load)
+            0)
+          0)
+        8]
+      [(!=
+          (opt-agsplit-count-function
+            (compiler_optimize.compiler-opt-global-shared-view copy-opt)
+            (opt-agsplit-kind-return-literal)
+            11)
+          1)
+        9]
+      ;; NEGATIVE call argument: the storage, the stores and the load all stay.
+      [(!=
+          (opt-agsplit-count-function
+            (compiler_optimize.compiler-opt-global-shared-view call-arg)
+            (opt-agsplit-kind-tl-alloc)
+            0)
+          1)
+        10]
+      [(!=
+          (opt-agsplit-count-function
+            (compiler_optimize.compiler-opt-global-shared-view call-arg)
+            (opt-agsplit-kind-load)
+            0)
+          1)
+        11]
+      [(!=
+          (opt-agsplit-count-function
+            (compiler_optimize.compiler-opt-global-shared-view call-arg)
+            (opt-agsplit-kind-store-ptr)
+            0)
+          2)
+        12]
+      ;; NEGATIVES: every refusal class leaves the memory object alone.
+      [(!=
+          (opt-agsplit-count-function
+            (compiler_optimize.compiler-opt-global-shared-view escape-call)
+            (opt-agsplit-kind-load)
+            0)
+          1)
+        13]
+      [(!=
+          (opt-agsplit-count-function
+            (compiler_optimize.compiler-opt-global-shared-view subword)
+            (opt-agsplit-kind-load)
+            0)
+          1)
+        14]
+      [(!=
+          (opt-agsplit-count-function
+            (compiler_optimize.compiler-opt-global-shared-view dynamic-gep)
+            (opt-agsplit-kind-load)
+            0)
+          1)
+        15]
+      [(!=
+          (opt-agsplit-count-function
+            (compiler_optimize.compiler-opt-global-shared-view partial-copy)
+            (opt-agsplit-kind-copy-bytes)
+            0)
+          1)
+        16]
+      [(!=
+          (opt-agsplit-count-function
+            (compiler_optimize.compiler-opt-global-shared-view stored-pointer)
+            (opt-agsplit-kind-load)
+            0)
+          1)
+        17]
+      [else 42])))
+
 (define (compiler-optimize-aggregate-sroa-self-test) : i64
   (let
     [positive-result : compiler_optimize.OptFunctionPassResult

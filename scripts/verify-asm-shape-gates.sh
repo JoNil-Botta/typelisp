@@ -1071,6 +1071,53 @@ check_checked_cheap_tier_claim() {
     done
 }
 
+check_synth_wrapped_probe() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "synth_wrapped_probe_$_suffix" \
+            tests/integration/synth_wrapped_probe.tl "$_target")
+        _get_or=$(function_body "$_asm" _tl_synth_wrapped_probe_sp_get_or)
+
+        # INL-1: the accessor's site is at the ENTRY block of a wrapper two
+        # straight-line call levels below a nested loop. On the census's own
+        # one-level reference count that site reads as composite frequency one
+        # and the measured tier refuses it; on the counts propagated over the
+        # call graph it reads as the loop's own weight and the verdict keeps it.
+        assert_not_matches "$_get_or" \
+            '^[[:space:]]+call _tl_synth_wrapped_probe_sp_probe$' \
+            "synth-wrapped-probe-$_target"
+        # ...and the probe's own loop is what landed there: the wrap-around mask
+        # and the Knuth multiplier of its first block.
+        assert_matches "$_get_or" '2654435761' "synth-wrapped-probe-$_target"
+
+        # The accessor is COPIED, not absorbed: the cold second reference in
+        # `sp-contains?` still calls the out-of-line body, so the keep is a real
+        # one and no single-site band could have taken it first.
+        assert_matches "$_asm" '^_tl_synth_wrapped_probe_sp_probe:$' \
+            "synth-wrapped-probe-$_target"
+        assert_regex_count_eq "$_asm" \
+            '^[[:space:]]+call _tl_synth_wrapped_probe_sp_probe$' 1 \
+            "synth-wrapped-probe-$_target"
+
+        # The inline retires no bounds check. Every load the accessor makes is
+        # still checked inside the merged body, which is what the abort twin
+        # (tests/integration/synth_wrapped_probe_abort.tl) then runs into.
+        assert_regex_count_at_least "$_get_or" \
+            '^[[:space:]]+call tl_oob_abort' 1 "synth-wrapped-probe-$_target"
+
+        _abort_asm=$(compile_gate "synth_wrapped_probe_abort_$_suffix" \
+            tests/integration/synth_wrapped_probe_abort.tl "$_target")
+        _abort_get_or=$(function_body "$_abort_asm" \
+            _tl_synth_wrapped_probe_abort_sp_get_or)
+        assert_not_matches "$_abort_get_or" \
+            '^[[:space:]]+call _tl_synth_wrapped_probe_abort_sp_probe$' \
+            "synth-wrapped-probe-abort-$_target"
+        assert_regex_count_at_least "$_abort_get_or" \
+            '^[[:space:]]+call tl_oob_abort' 1 \
+            "synth-wrapped-probe-abort-$_target"
+    done
+}
+
 check_const_index_bounds() {
     _asm=$(compile_gate const_index_bounds tests/integration/const_index_bounds.tl)
     _body=$(function_body "$_asm" _tl_const_index_bounds_get2)
@@ -1967,6 +2014,7 @@ check_alu_mem_operand_sink
 check_checked_depth0_site
 check_checked_setup_helper
 check_checked_cheap_tier_claim
+check_synth_wrapped_probe
 check_const_index_bounds
 check_const_global_mask_unroll
 check_rbp_sixth_csr

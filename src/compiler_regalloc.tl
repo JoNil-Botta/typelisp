@@ -4649,6 +4649,99 @@
           point)
         (set! index (+ index 1))))))
 
+;; ---------------------------------------------------------------------------
+;; LP-1: the allocation-side EP mode.
+;;
+;;   0 = off. The allocation interval index is exactly what it was: the
+;;       CONSERVATIVE segment builder run over EDGE-PRECISE liveness (the #6377
+;;       switch), so a phi still contributes a use touch AT the phi point.
+;;   1 = substitute EP SEGMENT rows for safe-mode phi-touched vars.
+;;   2 = 1, plus tighten those vars' coarse hull to the substituted rows.
+;;
+;; This is a compile-time constant, not an escape hatch: there is no per-function
+;; bail-out. Every relaxation is decided PER VALUE by the safe-mode phi-touched
+;; mask, and a value the mask does not select keeps today's row and today's hull.
+;; ---------------------------------------------------------------------------
+(define (compiler-reg-ep-alloc-mode) : i64
+  2)
+
+;; Masked block live-in seeding for the EP walk.
+;;
+;; The conservative builder opens a live-in value's segment one point BELOW the
+;; block's first instruction (`compiler-reg-live-in-block-point`), and that
+;; anchor is load-bearing: a segment/hull start is read as the value's own
+;; definition, so a clobber AT it is not spanned. Under a block layout that puts
+;; a block where a value merely flows IN ahead of the block that defines it, a
+;; row that opened at the first instruction instead would declare a value live
+;; ACROSS an opening call not call-spanning and hand it a caller-saved home.
+;;
+;; The EP walk was written for the coalescer, which reads its rows only to RELAX
+;; interference among phi-touched vars and never lets them reach a clobber-span
+;; test, so it never needed the bridge. The allocation index does, so the walk
+;; takes the seeding as a parameter: the coalescer keeps passing false and its
+;; rows stay byte-identical, and only the allocation build pays for -- and gets
+;; -- the bridge. With it, an EP row differs from the conservative row of the
+;; same var in exactly one way: the phi-point use touches are gone.
+(define (compiler-reg-ep-segment-live-in-word!
+  [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
+  [segment-starts : (__tl_dyn-array i64)]
+  [segment-ends : (__tl_dyn-array i64)]
+  [bits : i64]
+  [var-base : i64]
+  [point : i64]) : unit
+  (if (= bits 0)
+    unit
+    (begin
+      (compiler-reg-segment-note-point!
+        (compiler-reg-global-shared-view segments)
+        (compiler-reg-global-shared-view segment-starts)
+        (compiler-reg-global-shared-view segment-ends)
+        (+ var-base (compiler-reg-low-bit-index32-nonzero bits))
+        point)
+      (compiler-reg-ep-segment-live-in-word!
+        segments
+        segment-starts
+        segment-ends
+        (bit-and bits (- bits 1))
+        var-base
+        point))))
+
+(define (compiler-reg-ep-segment-live-in!
+  [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
+  [segment-starts : (__tl_dyn-array i64)]
+  [segment-ends : (__tl_dyn-array i64)]
+  [set : live.CompilerLiveI64Set]
+  [mask-words : (__tl_dyn-array i64)]
+  [mask-limit : i64]
+  [point : i64]) : unit
+  (let
+    [set-words : i64
+      (live.compiler-live-set-word-count (compiler-reg-global-shared-view set))]
+    [mask-len : i64 (array-length mask-words)]
+    [word-limit : i64
+      (if (< set-words mask-limit)
+        set-words
+        mask-limit)]
+    [limit : i64
+      (if (< word-limit mask-len)
+        word-limit
+        mask-len)]
+    [index : i64 0]
+    (while (< index limit)
+      (begin
+        (compiler-reg-ep-segment-live-in-word!
+          (compiler-reg-global-shared-view segments)
+          (compiler-reg-global-shared-view segment-starts)
+          (compiler-reg-global-shared-view segment-ends)
+          (bit-and
+            (live.compiler-live-set-word-at-bounded
+              (compiler-reg-global-shared-view set)
+              index)
+            (array-ref mask-words index))
+          (* index (live.compiler-live-set-word-bits))
+          point)
+        (set! index (+ index 1))))))
+
 ;; The segment-bridge body is spelled out here rather than called, exactly as
 ;; the conservative walk (`compiler-reg-extend-segment-after-words!`) spells out
 ;; its own copy: a shared helper would be a call per live bit in BOTH walks, and
@@ -4952,17 +5045,32 @@
   [segment-ends : (__tl_dyn-array i64)]
   [mask : (__tl_dyn-array i64)]
   [mask-words : (__tl_dyn-array i64)]
-  [mask-limit : i64]) : i64
+  [mask-limit : i64]
+  [seed-live-in? : bool]) : i64
   (match blocks
     [(ir.CompilerIrBlockList.Nil) point]
     [(ir.CompilerIrBlockList.Cons block rest)
       (match (compiler-reg-global-shared-view block)
         [(ir.CompilerIrBlock.Block label instrs)
           (let
-            [live-afters : live.CompilerLiveInstrSetVec
-              (compiler-reg-live-intervals-find-afters
+            [live-block : live.CompilerLiveMaybeBlock
+              (live.compiler-live-function-find-block
                 (compiler-reg-global-shared-view liveness)
                 label)]
+            [live-afters : live.CompilerLiveInstrSetVec
+              (compiler-reg-live-maybe-block-afters
+                (compiler-reg-global-shared-view live-block))]
+            [_live-in : unit
+              (if seed-live-in?
+                (compiler-reg-ep-segment-live-in!
+                  (compiler-reg-global-shared-view segments)
+                  (compiler-reg-global-shared-view segment-starts)
+                  (compiler-reg-global-shared-view segment-ends)
+                  (compiler-reg-live-maybe-block-live-in live-block)
+                  (compiler-reg-global-shared-view mask-words)
+                  mask-limit
+                  (compiler-reg-live-in-block-point point))
+                unit)]
             (compiler-reg-live-interval-selection-ep-blocks
               (compiler-reg-box-shared-view rest)
               (compiler-reg-global-shared-view liveness)
@@ -4981,7 +5089,8 @@
               (compiler-reg-global-shared-view segment-ends)
               (compiler-reg-global-shared-view mask)
               (compiler-reg-global-shared-view mask-words)
-              mask-limit))])]
+              mask-limit
+              seed-live-in?))])]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -4996,10 +5105,24 @@
                 i)
                 [(ir.CompilerIrBlock.Block label instrs)
                   (let
-                    [live-afters : live.CompilerLiveInstrSetVec
-                      (compiler-reg-live-intervals-find-afters
+                    [live-block : live.CompilerLiveMaybeBlock
+                      (live.compiler-live-function-find-block
                         (compiler-reg-global-shared-view liveness)
                         label)]
+                    [live-afters : live.CompilerLiveInstrSetVec
+                      (compiler-reg-live-maybe-block-afters
+                        (compiler-reg-global-shared-view live-block))]
+                    [_live-in : unit
+                      (if seed-live-in?
+                        (compiler-reg-ep-segment-live-in!
+                          (compiler-reg-global-shared-view segments)
+                          (compiler-reg-global-shared-view segment-starts)
+                          (compiler-reg-global-shared-view segment-ends)
+                          (compiler-reg-live-maybe-block-live-in live-block)
+                          (compiler-reg-global-shared-view mask-words)
+                          mask-limit
+                          (compiler-reg-live-in-block-point out-point))
+                        unit)]
                     (set!
                       out-point
                       (compiler-reg-live-interval-selection-ep-instr-seq
@@ -5020,7 +5143,8 @@
 (define (compiler-reg-live-interval-selection-ep-segments
   [func : ir.CompilerIrFunction]
   [liveness : live.CompilerFunctionLiveness]
-  [mask : (__tl_dyn-array i64)]) : (__tl_dyn-array CompilerRegIntervalSeq)
+  [mask : (__tl_dyn-array i64)]
+  [seed-live-in? : bool]) : (__tl_dyn-array CompilerRegIntervalSeq)
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
       (let
@@ -5054,7 +5178,8 @@
                   (compiler-reg-global-shared-view segment-ends)
                   (compiler-reg-global-shared-view mask)
                   (compiler-reg-global-shared-view mask-words)
-                  mask-limit)]
+                  mask-limit
+                  seed-live-in?)]
               unit)
             unit)
           (let
@@ -5522,6 +5647,150 @@
                 (compiler-reg-interval-seq-empty))))
           (set! v (+ v 1))))
       (CompilerRegIntervalIndex cons-starts cons-ends hybrid-segs))))
+
+;; ---------------------------------------------------------------------------
+;; LP-1: the ALLOCATION interval index -- edge-precise PER VALUE.
+;;
+;; #6377 moved allocation onto edge-precise LIVENESS, which stopped a loop carry
+;; leaking backward to function entry. It left one conservatism behind: the
+;; SEGMENT builder is still the baseline one, and that builder asks an
+;; instruction for its uses, so a phi contributes a use touch for every input AT
+;; THE PHI POINT. A back-edge input therefore still gets a one-point segment at
+;; the header and, because the header is linearly ahead of the latch, a coarse
+;; hull that starts at the header and covers the whole loop body -- the
+;; conservative loop-carry hull. The EP builder (`...-ep-instr-seq`, which asks
+;; for `uses-nophi`) is the row without that touch; until now its only consumer
+;; was the coalescing hybrid.
+;;
+;; SUBSTITUTION RULE, per value, fail-closed at every step:
+;;   * only a var the SAFE-MODE phi-touched mask selects is substituted. That is
+;;     the same population, built by the same `compiler-reg-function-phi-touched-safe-mode`
+;;     call, that the coalescer already trusts -- so the live-out-input phi
+;;     exclusion (the `merged-root-index` self-host mis-coalesce the fixpoint
+;;     caught) is applied here unchanged. Every other var keeps today's row.
+;;   * a selected var whose EP row came back EMPTY keeps today's row. An empty
+;;     row proves nothing, and the coarse hull spans a value's holes.
+;;   * a selected var whose conservative hull starts at or before point 0 keeps
+;;     today's row and hull -- see `use-ep?` below.
+;;   * the hull is only ever TIGHTENED, never widened: the new start is the MAX
+;;     of the conservative start and the EP row's first start, the new end the
+;;     MIN of the conservative end and the EP row's last end. A substitution that
+;;     came out degenerate (start past end) is dropped.
+;;
+;; SOUNDNESS. For a pair (A selected, B not) the greedy compares A's EP row
+;; against B's row, which still over-approximates B's liveness, so every real
+;; interference of A with B is still seen; only A-vs-A' -- two members of the
+;; same carry web -- is relaxed, and that relaxation is the exact SSA
+;; interference. This is the containment argument the coalescing hybrid is built
+;; on, and it is strictly weaker than what the coalescer already does with the
+;; same rows: coalescing MERGES A and A' into one register, whereas this only
+;; declines to force them apart.
+;;
+;; The rows fed here are built with the live-in bridge on (`seed-live-in?`), so
+;; a selected var's row differs from its conservative row in exactly one way --
+;; the phi-point touches are gone -- and the hull-start convention the
+;; clobber-span test reads (`inclusive-hull-start?`) keeps meaning what it meant.
+;; ---------------------------------------------------------------------------
+(define (compiler-reg-ep-alloc-hull-start [old-start : i64] [ep-start : i64]) : i64
+  (if (<= old-start 0)
+    old-start
+    (if (> ep-start old-start)
+      ep-start
+      old-start)))
+
+(define (compiler-reg-ep-alloc-hull-end [old-end : i64] [ep-end : i64]) : i64
+  (if (< old-end 0)
+    old-end
+    (if (< ep-end old-end)
+      ep-end
+      old-end)))
+
+(define (compiler-reg-ep-alloc-index
+  [cons-index : CompilerRegIntervalIndex]
+  [ep-segs : (__tl_dyn-array CompilerRegIntervalSeq)]
+  [mask : (__tl_dyn-array i64)]
+  [tighten-hull? : bool]) : CompilerRegIntervalIndex
+  (let
+    [cons-starts : (__tl_dyn-array i64) cons-index.starts]
+    [cons-ends : (__tl_dyn-array i64) cons-index.ends]
+    [cons-segs : (__tl_dyn-array CompilerRegIntervalSeq) cons-index.segments]
+    [n : i64 (array-length cons-starts)]
+    [out-segs : (__tl_dyn-array CompilerRegIntervalSeq)
+      (__tl_make-array CompilerRegIntervalSeq n)]
+    [out-starts : (__tl_dyn-array i64)
+      (if tighten-hull?
+        (__tl_make-array i64 n)
+        cons-starts)]
+    [out-ends : (__tl_dyn-array i64)
+      (if tighten-hull?
+        (__tl_make-array i64 n)
+        cons-ends)]
+    [v : i64 0]
+    (begin
+      (while (< v n)
+        (begin
+          (let
+            [cons-row : CompilerRegIntervalSeq
+              (if (< v (array-length cons-segs))
+                (array-ref cons-segs v)
+                (compiler-reg-interval-seq-empty))]
+            [ep-row : CompilerRegIntervalSeq
+              (if (if (< v (array-length mask))
+                (= (array-ref mask v) 1)
+                false)
+                (if (< v (array-length ep-segs))
+                  (array-ref ep-segs v)
+                  (compiler-reg-interval-seq-empty))
+                (compiler-reg-interval-seq-empty))]
+            [old-start : i64 (array-ref cons-starts v)]
+            [old-end : i64 (array-ref cons-ends v)]
+            ;; Entry-anchored vars are REFUSED outright, row and hull alike. A
+            ;; conservative hull that starts at or before point 0 is the M-A
+            ;; (RC1) param entry reservation, which
+            ;; `compiler-reg-param-intervals-extend-entry!` writes into the
+            ;; coarse start AND into the earliest SEGMENT of the row. The EP row
+            ;; is built by a walk that never saw that reservation, so
+            ;; substituting it would drop the very anchor the reservation exists
+            ;; to place -- the prologue writes a register-homed param's home
+            ;; before point 0, which no point model can express. 3.7% of the
+            ;; selected vars on an opt2 self-compile are entry-anchored, and
+            ;; their hulls are the short near-entry ones ([0,8], [0,10]), not the
+            ;; loop carries this packet is after.
+            [use-ep? : bool (and (> ep-row.len 0) (> old-start 0))]
+            [new-start : i64
+              (if use-ep?
+                (compiler-reg-ep-alloc-hull-start
+                  old-start
+                  (array-ref ep-row.slots 0).start)
+                old-start)]
+            [new-end : i64
+              (if use-ep?
+                (compiler-reg-ep-alloc-hull-end
+                  old-end
+                  (array-ref ep-row.slots (- ep-row.len 1)).end)
+                old-end)]
+            [keep-hull? : bool (> new-start new-end)]
+            (begin
+              (set!
+                (array-ref out-segs v)
+                (if use-ep?
+                  ep-row
+                  cons-row))
+              (if tighten-hull?
+                (begin
+                  (set!
+                    (array-ref out-starts v)
+                    (if keep-hull?
+                      old-start
+                      new-start))
+                  (set!
+                    (array-ref out-ends v)
+                    (if keep-hull?
+                      old-end
+                      new-end)))
+                unit)))
+          (set! v (+ v 1))))
+      (CompilerRegIntervalIndex out-starts out-ends out-segs))))
 
 ;; ---------------------------------------------------------------------------
 ;; Cheap block-level liveness for register planning (#perf).
@@ -6082,11 +6351,12 @@
 
 ;; M-A (RC1): a non-group register-eligible param that did NOT get
 ;; an ABI pin stays OUT of the ineligible/blocked sets and becomes an ordinary
-;; greedy candidate. Its greedy home is restricted to the CALLEE-SAVED pool
-;; (compiler-reg-greedy-alloc-one! `is-param`): the backend's entry copy writes
-;; the home register in the prologue (after the callee-saved saves), and a
-;; callee-saved home can neither clobber another param's incoming arg register
-;; nor be clobbered by a call. Handle types (Array/String/enum/struct -- 8-byte
+;; greedy candidate. R3S-1 restated: its greedy home is no longer restricted to
+;; the CALLEE-SAVED pool. The backend's entry copy still writes the home in the
+;; prologue, but the property that matters is only that the home is not the
+;; incoming argument register of a LATER param -- `compiler-reg-param-entry-forbidden`
+;; states exactly that per class, and `spans-call` keeps a call-crossing param
+;; callee-saved-only as before. Handle types (Array/String/enum/struct -- 8-byte
 ;; descriptors) qualify exactly like scalars. Floats use the same rule over the
 ;; ABI XMM bank: SysV has no nonvolatile suffix, while Win64 may keep an unpinned
 ;; parameter in XMM6-XMM15. Two-word register groups keep the legacy stack home.
@@ -6098,6 +6368,238 @@
     (compiler-reg-register-eligible-type? (compiler-reg-global-shared-view ty))
     (not
       (compiler-reg-type-register-group? type-segment-bases representations ty))))
+
+;; ---------------------------------------------------------------------------
+;; R3S-1: the parameter entry copies as one scheduled parallel move.
+;;
+;; The backend copies every register-passed parameter out of its incoming ABI
+;; register into its plan home before instruction 0
+;; (compiler-backend-emit-param-spills-from). Those copies are emitted in
+;; strictly increasing parameter POSITION: each arm of that walk concatenates
+;; the current parameter's copy ahead of the tail (`head ++ tail`), and the two
+;; arms that concatenate the other way round -- the by-memory aggregate address
+;; and the stack-passed group words -- read the incoming STACK area, never a
+;; register, so they contribute no source another copy could destroy.
+;;
+;; That fixed schedule IS a parallel move: sequentialising a move graph in a
+;; given order is correct exactly when, for every pair i < j, the destination of
+;; copy i is not a source of copy j. Here the sources are the incoming argument
+;; registers, so the schedule is correct exactly when no parameter's home is the
+;; incoming argument register of a LATER parameter.
+;;
+;; That single condition is the whole content of the old `is-param -> csr-only`
+;; rule: the callee-saved set was copy-safe only because it is disjoint from the
+;; incoming argument registers, and paying for it whole-class cost every leaf
+;; helper with more parameters than free callee-saved registers a spill of
+;; parameters that span no call at all. Constraining the HOME instead of the
+;; register class lets a parameter that spans no clobber point take a
+;; caller-saved register like any other value; a parameter that does span a call
+;; is still callee-saved-only through `spans-call`.
+;;
+;; `compiler-reg-param-entry-forbidden` builds that constraint per coalesce
+;; ROOT (the unit the greedy allocates): the incoming argument registers of the
+;; parameters that follow it. An EMPTY array is the legacy request -- alloc-one!
+;; then keeps every parameter class callee-saved-only, byte-for-byte as before.
+;;
+;; FLT-1 (wrong-code fix): the parameter shapes whose position -> ABI slot map
+;; NEITHER this constraint nor the pin walk below models.
+;;   * a register GROUP occupies TWO parameter positions, with the bank of each
+;;     word chosen from the aggregate's SSE class mask;
+;;   * an internal by-memory ABI transport -- the nominal
+;;     `__tl_internal_abi_mem_s<size>__<key>` struct lower-internal-transport-type
+;;     emits for a >16-byte by-value Tuple/Array parameter -- arrives entirely in
+;;     the incoming STACK area and advances NEITHER argument bank (the
+;;     private-memory arm of compiler-backend-emit-param-spills-from), consuming
+;;     `stack-slots-for-size` stack words instead.
+;; The second was invisible to both walks: the transport is a nominal Struct, so
+;; it is register-eligible and is not a register group, and it therefore passed
+;; `compiler-reg-integer-param-type?` and consumed an integer ABI slot that the
+;; backend never gave it. See the pin walk's own note for the miscompile that
+;; produced.
+;; `compiler-ir-representation-internal-transport?` is the shared recogniser for
+;; the whole `__tl_internal_abi_` family, so a malformed encoding -- which the
+;; backend's own size parser answers 0 for -- is refused here as well rather
+;; than silently mis-walked.
+(define (compiler-reg-param-abi-opaque?
+  [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
+  [ty : ast.AstType]) : bool
+  (or
+    (compiler-reg-type-register-group?
+      type-segment-bases
+      representations
+      (compiler-reg-global-shared-view ty))
+    (ir.compiler-ir-representation-internal-transport? type-segment-bases ty)))
+
+;; Fail-closed shape gate. When every parameter is a non-group, non-float,
+;; register-eligible value the integer ABI index of position p is exactly p on
+;; both ABIs: no parameter consumes two argument slots, none diverts to the
+;; float bank, and none is passed by memory. Any other shape makes the
+;; position -> ABI index map depend on bookkeeping this walk does not carry
+;; (compiler-reg-param-assign-walk's own note: a register-group parameter
+;; occupies two slots and disables every pin past it), so the whole function
+;; falls back to the callee-saved-only rule rather than guess.
+;; FLT-1: `compiler-reg-integer-param-type?` alone did not enforce "none is
+;; passed by memory" -- a by-memory ABI transport satisfies every one of its
+;; three tests. The explicit opaque test below is what closes that.
+(define (compiler-reg-param-entry-simple-shape?
+  [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
+  [params : ir.CompilerIrParamSeq]
+  [position : i64]) : bool
+  (if (>= position params.len)
+    true
+    (match (ir.compiler-ir-param-seq-ref
+      (compiler-reg-global-shared-view params)
+      position)
+      [(ir.CompilerIrParam.Param _ ty _)
+        (and
+          (compiler-reg-integer-param-type?
+            type-segment-bases
+            (compiler-reg-global-shared-view representations)
+            (compiler-reg-global-shared-view ty))
+          (not
+            (compiler-reg-param-abi-opaque?
+              type-segment-bases
+              (compiler-reg-global-shared-view representations)
+              (compiler-reg-global-shared-view ty)))
+          (compiler-reg-param-entry-simple-shape?
+            type-segment-bases
+            representations
+            params
+            (+ position 1)))])))
+
+;; The incoming argument registers of the parameters AFTER `position` -- the
+;; sources of every entry copy the backend emits later than this one. Positions
+;; past the ABI's argument-register count are stack-passed and answer invalid,
+;; contributing nothing: their entry copy reads the incoming stack area.
+(define (compiler-reg-param-entry-later-arg-regs
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [count : i64]
+  [position : i64]
+  [index : i64]
+  [out : CompilerRegIdSeq]) : CompilerRegIdSeq
+  (if (>= index count)
+    out
+    (compiler-reg-param-entry-later-arg-regs
+      target-abi
+      count
+      position
+      (+ index 1)
+      (if (> index position)
+        (let
+          [reg : i64 (cabi.compiler-abi-gp-arg-register-id target-abi index)]
+          (if (= reg cabi.compiler-reg-id-invalid)
+            out
+            (compiler-reg-id-seq-push out reg)))
+        out))))
+
+(define (compiler-reg-param-entry-forbidden-fill!
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [params : ir.CompilerIrParamSeq]
+  [parents : (__tl_dyn-array i64)]
+  [out : (__tl_dyn-array CompilerRegIdSeq)]
+  [position : i64]) : unit
+  (if (>= position params.len)
+    unit
+    (begin
+      (match (ir.compiler-ir-param-seq-ref
+        (compiler-reg-global-shared-view params)
+        position)
+        [(ir.CompilerIrParam.Param _ _ var)
+          (let
+            [root : i64
+              (if (and (>= var 0) (< var (array-length parents)))
+                (array-ref parents var)
+                var)]
+            (if (and (>= root 0) (< root (array-length out)))
+              (set!
+                (array-ref out root)
+                (compiler-reg-id-seq-append
+                  (compiler-reg-global-array-element-shared-view out root)
+                  (compiler-reg-param-entry-later-arg-regs
+                    target-abi
+                    params.len
+                    position
+                    0
+                    (compiler-reg-id-seq-empty))))
+              unit))])
+      (compiler-reg-param-entry-forbidden-fill!
+        target-abi
+        params
+        parents
+        out
+        (+ position 1)))))
+
+;; Per-coalesce-root entry-copy constraint, or an empty array when the function
+;; must keep the legacy callee-saved-only parameter rule. A class containing a
+;; parameter carries that parameter's constraint; two parameters never share a
+;; class (the M-A entry reservation makes every used parameter live at point 0,
+;; so they all interfere), and a class that merges a parameter with ordinary
+;; values inherits the constraint because the class has one home.
+;; WIN1 (fail-closed target gate). The schedule constraint above is ABI-neutral
+;; on paper -- it reads the argument registers out of the target ABI -- but the
+;; INVARIANT it removes is not. Dropping `is-param -> csr-only` also drops
+;; "no parameter is ever homed in a volatile register", and the Win64 volatile
+;; prefix is exactly the four argument registers plus %rax/%r10/%r11, so on
+;; Windows the change is far more aggressive than on SysV:
+;;   * %r8 is Win64 ARGUMENT 2 (SysV argument 4) and sits at pool index 3
+;;     (SysV: index 8, last of the volatile prefix). It is also the backend's
+;;     fixed integer scratch register -- `compiler-reg-param-int-reg` refuses to
+;;     PIN a parameter there for that reason, and the shrink-wrap prefix guard
+;;     (compiler-backend-shrinkwrap-compare-value-ready?) records a Win64
+;;     miscompile of the shape "a large literal staged into %r8 before returning
+;;     the third argument from %r8". Measured on src/main.tl at --cfg
+;;     scratch-vreg: this constraint leaves a parameter in %r8 in 1,256 Windows
+;;     functions against 360 on Linux.
+;;   * %rsi/%rdi are Win64 NONVOLATILE but SysV volatile, while the late scratch
+;;     planner deliberately uses the SysV pool ORDER on both targets
+;;     (compiler-reg-scratch-default-pool), so Win64 scratch demand reaches
+;;     them early -- and whether they must then be preserved is decided by a
+;;     separate plan bit (compiler-backend-scavenge-plan-win64-bit).
+;; CI evidence: the scratch-vreg + TLCI-mutation bootstrap fixpoint segfaults on
+;; Windows only, bisected to this constraint; Linux passes the same gate. This
+;; worktree cannot execute Windows binaries, so no Windows-side narrowing can be
+;; validated here -- and shipping an unvalidated one is what produced the
+;; failure. Answer the legacy empty array for every non-Linux ABI: Windows
+;; codegen is then byte-identical to the pre-constraint compiler by
+;; construction, which restores the gate without guessing. Re-enabling Windows
+;; needs a host that can run the fixpoint, and should start from the two items
+;; above.
+(define (compiler-reg-param-entry-forbidden
+  [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [params : ir.CompilerIrParamSeq]
+  [parents : (__tl_dyn-array i64)]
+  [vars : i64]) : (__tl_dyn-array CompilerRegIdSeq)
+  (if (or
+    (not (compiler-reg-linux-abi? target-abi))
+    (< params.len 1)
+    (< vars 1)
+    (not
+      (compiler-reg-param-entry-simple-shape?
+        type-segment-bases
+        (compiler-reg-global-shared-view representations)
+        (compiler-reg-global-shared-view params)
+        0)))
+    (__tl_make-array CompilerRegIdSeq 0)
+    (let
+      [out : (__tl_dyn-array CompilerRegIdSeq)
+        (__tl_make-array CompilerRegIdSeq vars)]
+      [index : i64 0]
+      (begin
+        (while (< index vars)
+          (begin
+            (set! (array-ref out index) (compiler-reg-id-seq-empty))
+            (set! index (+ index 1))))
+        (compiler-reg-param-entry-forbidden-fill!
+          target-abi
+          params
+          parents
+          (compiler-reg-global-shared-view out)
+          0)
+        out))))
 
 (define (compiler-reg-param-int-reg
   [target-abi : cabi.CompilerRegTargetAbi]
@@ -6346,8 +6848,8 @@
         (let
           [is-float : bool
             (compiler-reg-float-type? (compiler-reg-global-shared-view ty))]
-          [is-group : bool
-            (compiler-reg-type-register-group?
+          [is-opaque : bool
+            (compiler-reg-param-abi-opaque?
               type-segment-bases
               (compiler-reg-global-shared-view representations)
               (compiler-reg-global-shared-view ty))]
@@ -6360,12 +6862,37 @@
               (+ float-idx 1)
               float-idx)]
           [next-position : i64 (+ position 1)]
-          ;; A register-group param occupies TWO ABI slots; this walk's
-          ;; int-idx accounting does not model that, so every pin PAST a
-          ;; group param is disabled (the group itself never pins).
-          [tail-pins-ok? : bool (and pins-ok? (not is-group))]
+          ;; This walk's bank accounting models one ABI slot per position, which
+          ;; is false for BOTH opaque shapes (compiler-reg-param-abi-opaque?): a
+          ;; register group occupies TWO positions, and a Linux by-memory ABI
+          ;; transport occupies NONE.
+          ;;
+          ;; FLT-1 WRONG-CODE FIX. The group half of that was already fenced;
+          ;; the transport half was not, and it MISCOMPILED. The backend's
+          ;; private-memory arm leaves int-idx and float-idx untouched and reads
+          ;; the incoming stack area, while this walk advanced int-idx for it
+          ;; (the transport type is a nominal Struct, so it is register-eligible
+          ;; and not a register group -- it passed
+          ;; compiler-reg-integer-param-type? outright). Every parameter after
+          ;; such a transport was therefore pinned to the incoming register of
+          ;; its SUCCESSOR, and the prologue's position-ordered entry copies then
+          ;; destroyed each source before the next copy read it. At
+          ;; --opt-level 2 (only the scalar-opt2 stage reaches the pin path;
+          ;; opt0/opt1 were correct, which is why no gate caught it)
+          ;;     (define (f [v (Array i64 3)] [a i64] [b i64] [c i64]) ...)
+          ;; emitted
+          ;;     movq %rdi, %rsi ; movq %rsi, %rdx ; movq %rdx, %rcx
+          ;;     leaq 8(%rsp), %rdi
+          ;; giving a == b == c. tests/integration/param_memory_transport_abi.tl
+          ;; is the regression fixture.
+          ;;
+          ;; Fail closed for both shapes: an opaque parameter never pins, and
+          ;; every pin PAST one is disabled, so the stale bank index is inert.
+          ;; compiler-reg-param-entry-simple-shape? refuses the same two shapes
+          ;; for the other consumer of the same map.
+          [tail-pins-ok? : bool (and pins-ok? (not is-opaque))]
           [reg : CompilerRegMaybeId
-            (if (and pins-ok? (not is-group))
+            (if (and pins-ok? (not is-opaque))
               (if is-float
                 (compiler-reg-param-float-reg target-abi float-idx position)
                 (if (compiler-reg-integer-param-type?
@@ -9446,7 +9973,10 @@
 ;; exactly the OUTER endpoint's hull, so the class carries precisely the clobber
 ;; spans that endpoint already carried, and the greedy's csr-only restriction,
 ;; call-region parking and regmask model answer for the class exactly what they
-;; answered for the outer member on its own.
+;; answered for the outer member on its own. (R3S-1: csr-only is now exactly
+;; that clobber-span rule, so the argument is unchanged; a merged class
+;; containing a param additionally inherits the param's entry-copy schedule set,
+;; which is a property of the PARAM's ABI position, not of either hull.)
 ;;
 ;; It is also the shape in which a merge cannot cost pressure. Register pressure
 ;; at a point is the number of values live there needing a home; with nesting,
@@ -11065,10 +11595,14 @@
         ;; -- a parameter used only by arm 3 has an interval hull covering every
         ;; sibling arm, so it "spans" their tail calls in linear point space
         ;; even though no CFG path carries it across one. Under kind 0 the ABI
-        ;; pin is revoked and the greedy's csr-only rule homes it in
-        ;; %r12-%r15/%rbx/%rbp, and the prologue then pays 2n callee-saved
+        ;; pin is revoked and the greedy's csr-only rule homed it in
+        ;; %r12-%r15/%rbx/%rbp, and the prologue then paid 2n callee-saved
         ;; push/mov pairs on every invocation of a function that contains no
-        ;; real call at all.
+        ;; real call at all. R3S-1 restated: a revoked pin no longer implies a
+        ;; callee-saved home -- the class competes for the whole pool minus the
+        ;; entry-copy schedule set -- but kind 6 still matters here, because
+        ;; under kind 0 the class would read `spans-call` and be forced
+        ;; callee-saved-only for a crossing no path takes.
         ;;
         ;; Kind 6 is used by the ABI-pin gate and the scalar greedy only. The
         ;; conservative kind-0 set stays in force for the consumers that model
@@ -21381,9 +21915,11 @@
 ;;     almost never runs. This is what the inliner's merged kernels are made of:
 ;;     a hot straight path with no call plus a cold grow/rehash/OOM arm that
 ;;     calls, in which every value the hot path uses is live across the arm.
-;;     For a PARAMETER it costs more than the pair, because the greedy's
-;;     `is-param -> csr-only` rule means a param that cannot keep its incoming
-;;     ABI register has to be copied out of it in the prologue as well.
+;;     For a PARAMETER it costs more than the pair, because a param that cannot
+;;     keep its incoming ABI register has to be copied out of it in the prologue
+;;     as well. (R3S-1 restated: the copy is still paid, but its destination is
+;;     no longer forced callee-saved, so the push/pop half of the price is now
+;;     charged only to params that genuinely span a call.)
 ;;
 ;; Both classes get the same rewrite and the same replan; they differ only in
 ;; what qualifies (`compiler-reg-call-hole-qualifies?`), in what counts as an
@@ -22237,10 +22773,11 @@
 ;; explicit Spill -- a missing assignment is the representation of a value the
 ;; planner never admitted at all), it is a GP register-eligible scalar, and it
 ;; is not one of the values the planner holds ineligible (address-taken, stack
-;; call argument, non-scalar). Params qualify: `compiler-reg-greedy-alloc-one!`'s
-;; `is-param -> csr-only` rule stays in force, so a split param only gains when
-;; a callee-saved register is free -- which is exactly the case where splitting
-;; it is what frees one.
+;; call argument, non-scalar). Params qualify. R3S-1 restated: the old
+;; `is-param -> csr-only` rule no longer stands, so a split param gains whenever
+;; ANY pool register is free for the pieces -- carrying its crossings away drops
+;; `spans-call`, and the pieces then reach the caller-saved prefix too, not only
+;; a free callee-saved register.
 ;;
 ;; P3c's loop-boundary parking round shares this predicate and wants exactly
 ;; this class, so the second (csr) class below is a separate predicate rather
@@ -22341,10 +22878,11 @@
 ;; instructions in the PROLOGUE and EPILOGUE of every call of the function --
 ;; on the hot path, whether or not the arm that forced the callee-saved home
 ;; ever runs. A value whose only call crossings are on a cold side arm should
-;; instead live in a caller-saved register (an unpinned param cannot: the
-;; greedy's `is-param -> csr-only` rule means its only caller-saved home is its
-;; incoming ABI register, which the pin walk hands back once its crossings are
-;; carried away) and pay carriers around the cold calls.
+;; instead live in a caller-saved register and pay carriers around the cold
+;; calls. R3S-1 restated: an unpinned param can now do this directly -- once the
+;; rewrite carries its crossings away, `spans-call` is false and the class
+;; reaches the whole caller-saved prefix, not just the incoming ABI register the
+;; pin walk hands back.
 ;;
 ;; The type and ineligibility conditions are the memory class's, unchanged: the
 ;; rewrite is the same rewrite and the replan is the same replan.
@@ -24111,9 +24649,12 @@
 ;; How many parameters the plan does NOT leave in their incoming ABI register.
 ;; Each one costs exactly one instruction in the PROLOGUE -- `mov home, arg` for
 ;; a register home, `mov slot(%rsp), arg` for a memory one -- and it is the
-;; other half of what an unpinned parameter costs, next to the push and pop of
-;; the callee-saved home the greedy's `is-param -> csr-only` rule then forces on
-;; it. Without this term the model cannot see the difference between a param the
+;; other half of what an unpinned parameter costs. R3S-1 restated: the push/pop
+;; that used to accompany it is no longer automatic (the home is forced
+;; callee-saved only when the param spans a call), so this term is now the WHOLE
+;; price for a non-spanning param and the CSR term below charges the rest only
+;; when a callee-saved home was actually taken.
+;; Without this term the model cannot see the difference between a param the
 ;; replan pinned and one it merely moved to a different register, which is
 ;; exactly the difference the csr class buys.
 ;;
@@ -33160,6 +33701,7 @@
   [arg-prefs : (__tl_dyn-array i64)]
   [group-vars : live.CompilerLiveI64Set]
   [param-roots : live.CompilerLiveI64Set]
+  [param-entry-forbidden : (__tl_dyn-array CompilerRegIdSeq)]
   [regs : CompilerRegIdSeq]
   [reg-arr : (__tl_dyn-array i64)]
   [rcount : i64]
@@ -33187,29 +33729,67 @@
       ;; the caller-saved regs that op does NOT clobber: it searches the whole pool
       ;; (start-idx 0) with `forbidden` excluding just {rax,rdx} (div) and/or
       ;; {rcx} (shift).
-      [spans-call : bool
-        (compiler-reg-greedy-var-spans-clobber?
-          (compiler-reg-global-shared-view interval-index)
-          call-points
-          var)]
-      [spans-div : bool
-        (compiler-reg-greedy-var-spans-clobber?
-          (compiler-reg-global-shared-view interval-index)
-          div-points
-          var)]
-      [spans-shift : bool
-        (compiler-reg-greedy-var-spans-clobber?
-          (compiler-reg-global-shared-view interval-index)
-          shift-points
-          var)]
-      ;; M-A (RC1) v1: a param (or a coalesce class containing one) is restricted
-      ;; to CALLEE-SAVED homes regardless of call-spanning. The entry copy writes
-      ;; the home in the prologue; a caller-saved home could be clobbered by a
-      ;; later param's entry-copy scratch or an early scavenge, and the incoming
-      ;; SysV arg registers are all caller-saved, so CSR homes are the copy-safe
-      ;; set (the prologue saves CSRs BEFORE the param copies run).
+      ;; M-A (RC1): a param (or a coalesce class containing one) is DEFINED by
+      ;; the prologue, before point 0, and its interval is entry-extended to
+      ;; start there. A clobber point AT the interval start is therefore already
+      ;; inside its live range, which the ordinary strict-interior test would
+      ;; miss (GAP3c, compiler-reg-param-pin-clobber-free?): a function that
+      ;; opens with a call at point 0 and reads the param afterwards would keep a
+      ;; caller-saved home across it. The pin gate's inclusive-start test answers
+      ;; the same question for the same reason, so param classes use it for all
+      ;; three clobber kinds.
       [is-param : bool (live.compiler-live-set-contains? param-roots var)]
-      [csr-only : bool (or spans-call is-param)]
+      [spans-call : bool
+        (if is-param
+          (compiler-reg-param-pin-spans-clobber?
+            (compiler-reg-global-shared-view interval-index)
+            call-points
+            var)
+          (compiler-reg-greedy-var-spans-clobber?
+            (compiler-reg-global-shared-view interval-index)
+            call-points
+            var))]
+      [spans-div : bool
+        (if is-param
+          (compiler-reg-param-pin-spans-clobber?
+            (compiler-reg-global-shared-view interval-index)
+            div-points
+            var)
+          (compiler-reg-greedy-var-spans-clobber?
+            (compiler-reg-global-shared-view interval-index)
+            div-points
+            var))]
+      [spans-shift : bool
+        (if is-param
+          (compiler-reg-param-pin-spans-clobber?
+            (compiler-reg-global-shared-view interval-index)
+            shift-points
+            var)
+          (compiler-reg-greedy-var-spans-clobber?
+            (compiler-reg-global-shared-view interval-index)
+            shift-points
+            var))]
+      ;; R3S-1. The old rule was `csr-only = (or spans-call is-param)`: a param
+      ;; class took a CALLEE-SAVED home whatever its interval did, because the
+      ;; entry copy writes the home in the prologue and a caller-saved home could
+      ;; be the incoming argument register of a LATER param, whose entry copy had
+      ;; not run yet. The callee-saved set is copy-safe only because it is
+      ;; disjoint from the incoming argument registers.
+      ;;
+      ;; `param-entry-forbidden` states that condition directly, per class: the
+      ;; incoming argument registers of the params that follow this one (see
+      ;; compiler-reg-param-entry-forbidden -- the backend emits the entry copies
+      ;; in parameter order, so excluding exactly those makes the emitted
+      ;; sequence a correct sequentialisation of the entry parallel move). With
+      ;; the constraint in force a param that spans no clobber point competes for
+      ;; a caller-saved register like any other value; one that DOES span a call
+      ;; is still callee-saved-only through `spans-call`.
+      ;;
+      ;; An EMPTY array is the legacy request (a function whose parameter shape
+      ;; the constraint builder refuses): the class stays callee-saved-only.
+      [param-entry-scheduled? : bool (> (array-length param-entry-forbidden) 0)]
+      [csr-only : bool
+        (or spans-call (and is-param (not param-entry-scheduled?)))]
       [start-idx : i64
         (if csr-only
           caller-saved-count
@@ -33222,6 +33802,17 @@
         (if (and (>= var 0) (< var (array-length scratch-excluded)))
           (array-ref scratch-excluded var)
           (compiler-reg-id-seq-empty))]
+      ;; The entry-copy schedule constraint. Empty for every non-param class and
+      ;; for every class in a legacy-mode function, so the appended sequence is
+      ;; identical to the old one there.
+      [param-forbidden : CompilerRegIdSeq
+        (if (and
+          is-param
+          param-entry-scheduled?
+          (>= var 0)
+          (< var (array-length param-entry-forbidden)))
+          (array-ref param-entry-forbidden var)
+          (compiler-reg-id-seq-empty))]
       [forbidden : CompilerRegIdSeq
         (let
           [base : CompilerRegIdSeq
@@ -33229,12 +33820,14 @@
               (compiler-reg-id-seq-empty)
               (compiler-reg-greedy-forbidden-regs spans-div spans-shift))]
           (compiler-reg-id-seq-append
-            scratch-forbidden
-            (if (and (>= unspillable-from 0) (>= var unspillable-from))
-              (compiler-reg-id-seq-append
-                (compiler-reg-scratch-div-fixed-registers)
-                base)
-              base)))]
+            param-forbidden
+            (compiler-reg-id-seq-append
+              scratch-forbidden
+              (if (and (>= unspillable-from 0) (>= var unspillable-from))
+                (compiler-reg-id-seq-append
+                  (compiler-reg-scratch-div-fixed-registers)
+                  base)
+                base))))]
       ;; Highest-priority bias: if this var is an outgoing call argument, try its
       ;; ABI arg register first (free-only, never evicting). Falls through to the
       ;; copy-hint / first-free / evict pick when the arg register is unavailable.
@@ -33801,6 +34394,7 @@
   [arg-prefs : (__tl_dyn-array i64)]
   [group-vars : live.CompilerLiveI64Set]
   [param-roots : live.CompilerLiveI64Set]
+  [param-entry-forbidden : (__tl_dyn-array CompilerRegIdSeq)]
   [regs : CompilerRegIdSeq]
   [reg-arr : (__tl_dyn-array i64)]
   [rcount : i64]
@@ -33836,6 +34430,7 @@
               (compiler-reg-global-shared-view arg-prefs)
               (compiler-reg-global-shared-view group-vars)
               (compiler-reg-global-shared-view param-roots)
+              (compiler-reg-global-shared-view param-entry-forbidden)
               (compiler-reg-global-shared-view regs)
               (compiler-reg-global-shared-view reg-arr)
               rcount
@@ -33865,6 +34460,7 @@
           arg-prefs
           (compiler-reg-global-shared-view group-vars)
           param-roots
+          param-entry-forbidden
           regs
           reg-arr
           rcount
@@ -33899,6 +34495,7 @@
   [arg-prefs : (__tl_dyn-array i64)]
   [group-vars : live.CompilerLiveI64Set]
   [param-roots : live.CompilerLiveI64Set]
+  [param-entry-forbidden : (__tl_dyn-array CompilerRegIdSeq)]
   [regs : CompilerRegIdSeq]
   [reg-arr : (__tl_dyn-array i64)]
   [rcount : i64]
@@ -33976,6 +34573,7 @@
         (compiler-reg-global-shared-view arg-prefs)
         (compiler-reg-global-shared-view group-vars)
         (compiler-reg-global-shared-view param-roots)
+        (compiler-reg-global-shared-view param-entry-forbidden)
         (compiler-reg-global-shared-view regs)
         (compiler-reg-global-shared-view reg-arr)
         rcount
@@ -34011,6 +34609,7 @@
             arg-prefs
             group-vars
             param-roots
+            param-entry-forbidden
             regs
             reg-arr
             rcount
@@ -34403,9 +35002,11 @@
 ;; every var defined by a call-like instruction with a GP-scalar result. Same
 ;; substrate and consumption as the outgoing-arg preference: first-wins per
 ;; coalesce root, tried free-only in alloc-one! (never evicts), declined for
-;; csr-only roots (call-spanning or param classes -- %rax is illegal across a
-;; kind-0 clobber anyway), and filtered against the per-root forbidden set (a
-;; div-spanning root already excludes %rax). Float results return in %xmm0 --
+;; csr-only roots (%rax is illegal across a kind-0 clobber anyway), and filtered
+;; against the per-root forbidden set (a div-spanning root already excludes
+;; %rax). R3S-1 restated: csr-only is now exactly the clobber-span rule, so a
+;; PARAM class may reach this bias -- it is still free-only, and the param's
+;; entry-copy schedule set is part of the same per-root forbidden sequence. Float results return in %xmm0 --
 ;; skipped. Group results use the return register PAIR -- their dst is a group
 ;; var alloc-one! skips before reading prefs, so a stray pref would be inert;
 ;; the C-ABI StoreResult forms write memory slots and are omitted entirely.
@@ -35220,6 +35821,7 @@
   [interval-index : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [param-roots : live.CompilerLiveI64Set]
+  [param-entry-forbidden : (__tl_dyn-array CompilerRegIdSeq)]
   [ref-counts : (__tl_dyn-array i64)]
   [copy-hints : (__tl_dyn-array i64)]
   [arg-prefs : (__tl_dyn-array i64)]
@@ -35280,6 +35882,7 @@
             arg-prefs
             group-vars
             param-roots
+            param-entry-forbidden
             regs
             reg-arr
             rcount
@@ -35303,6 +35906,7 @@
   [interval-index : CompilerRegIntervalIndex]
   [group-vars : live.CompilerLiveI64Set]
   [param-roots : live.CompilerLiveI64Set]
+  [param-entry-forbidden : (__tl_dyn-array CompilerRegIdSeq)]
   [ref-counts : (__tl_dyn-array i64)]
   [copy-hints : (__tl_dyn-array i64)]
   [arg-prefs : (__tl_dyn-array i64)]
@@ -35319,6 +35923,7 @@
     interval-index
     group-vars
     param-roots
+    param-entry-forbidden
     ref-counts
     copy-hints
     arg-prefs
@@ -36655,6 +37260,64 @@
             (compiler-reg-global-shared-view interval-index)
             (compiler-reg-global-shared-view clobber-points)
             (compiler-reg-global-shared-view storage-identity-vars))))]
+    ;; LP-1: edge-precise liveness, the SAFE-MODE phi-touched mask, and the EP
+    ;; segment rows, built once here and shared by the coalescing hybrid below
+    ;; and by the allocation index. `compiler-reg-liveness-handle-edge-precise`
+    ;; only reads the handle's already-computed field, so naming it twice costs
+    ;; nothing; the two segment WALKS are separate because they want different
+    ;; rows (see `seed-live-in?`), and the allocation walk is not run at all
+    ;; unless the mode below asks for it.
+    ;;
+    ;; Everything here is dead work for a move-free function and for the
+    ;; SIMD/AVX plan, exactly as before: the coalesce map build returns the
+    ;; empty map without reading an index, so the plan is unchanged.
+    [ep-relax? : bool
+      (and
+        allow-caller-saved-zero-call
+        (not
+          (compiler-reg-move-list-empty?
+            (compiler-reg-global-shared-view moves))))]
+    ;; Exclude unsafe live-out inputs while admitting proven self-loop
+    ;; back-edge-only values. Fixed div/mod or variable-shift functions retain
+    ;; the conservative guard: relaxing an otherwise unrelated carry can reshape
+    ;; fixed-home pressure differently on SysV/Win64. Built BEFORE the EP segment
+    ;; walks (all are pure reads of `func` and the EP liveness into their own
+    ;; fresh arrays, so the order does not change any result) so each walk can
+    ;; restrict itself to the rows its consumer will actually read.
+    [ep-phi-touched : (__tl_dyn-array i64)
+      (if ep-relax?
+        (compiler-reg-function-phi-touched-safe-mode
+          (compiler-reg-global-shared-view func)
+          (compiler-reg-liveness-handle-edge-precise
+            (compiler-reg-global-shared-view liveness-handle))
+          (=
+            (live.compiler-live-set-word-count
+              (compiler-reg-global-shared-view destructive-fixed-points))
+            0))
+        (__tl_make-array i64 0))]
+    ;; The coalescer's rows: NO live-in bridge, byte-identical to what it read
+    ;; before this packet.
+    [ep-coalesce-segs : (__tl_dyn-array CompilerRegIntervalSeq)
+      (if ep-relax?
+        (compiler-reg-live-interval-selection-ep-segments
+          (compiler-reg-global-shared-view func)
+          (compiler-reg-liveness-handle-edge-precise
+            (compiler-reg-global-shared-view liveness-handle))
+          (compiler-reg-global-shared-view ep-phi-touched)
+          false)
+        (__tl_make-array CompilerRegIntervalSeq 0))]
+    ;; The allocation rows: the SAME walk WITH the live-in bridge, so a selected
+    ;; var's row differs from its conservative row only by the phi-point touches
+    ;; (see compiler-reg-ep-alloc-index).
+    [ep-alloc-segs : (__tl_dyn-array CompilerRegIntervalSeq)
+      (if (and ep-relax? (> (compiler-reg-ep-alloc-mode) 0))
+        (compiler-reg-live-interval-selection-ep-segments
+          (compiler-reg-global-shared-view func)
+          (compiler-reg-liveness-handle-edge-precise
+            (compiler-reg-global-shared-view liveness-handle))
+          (compiler-reg-global-shared-view ep-phi-touched)
+          true)
+        (__tl_make-array CompilerRegIntervalSeq 0))]
     ;; Coalescing interference uses a hybrid view. Scalar opt2 allocation already
     ;; receives the edge-precise interval-index at the plan entry; the hybrid adds
     ;; the same precise phi-edge segments while retaining a separately built
@@ -36675,25 +37338,6 @@
           ;; selection + safe-mode exclusion are provably dead work for
           ;; move-free functions.
           (let
-            [ep-liveness : live.CompilerFunctionLiveness
-              (compiler-reg-liveness-handle-edge-precise
-                (compiler-reg-global-shared-view liveness-handle))]
-            ;; Exclude unsafe live-out inputs while admitting proven self-loop
-            ;; back-edge-only values. Fixed div/mod or variable-shift functions
-            ;; retain the conservative guard: relaxing an otherwise unrelated
-            ;; carry can reshape fixed-home pressure differently on SysV/Win64.
-            ;; Built BEFORE the EP segment walk (both are pure reads of `func`
-            ;; and `ep-liveness` into their own fresh arrays, so the order does
-            ;; not change either result) so the walk can restrict itself to the
-            ;; rows the hybrid index will actually read.
-            [phi-touched : (__tl_dyn-array i64)
-              (compiler-reg-function-phi-touched-safe-mode
-                (compiler-reg-global-shared-view func)
-                (compiler-reg-global-shared-view ep-liveness)
-                (=
-                  (live.compiler-live-set-word-count
-                    (compiler-reg-global-shared-view destructive-fixed-points))
-                  0))]
             ;; The hybrid's conservative input: allocation runs on the
             ;; edge-precise index (see the EP comment at the plan entry),
             ;; while the live-out-input phi exclusion's defense in depth is
@@ -36725,12 +37369,19 @@
                       cons-idx)]))]
             (compiler-reg-hybrid-coalesce-index
               (compiler-reg-global-shared-view cons-index)
-              (compiler-reg-live-interval-selection-ep-segments
-                (compiler-reg-global-shared-view func)
-                (compiler-reg-global-shared-view ep-liveness)
-                (compiler-reg-global-shared-view phi-touched))
-              (compiler-reg-global-shared-view phi-touched)))
+              (compiler-reg-global-shared-view ep-coalesce-segs)
+              (compiler-reg-global-shared-view ep-phi-touched)))
           (compiler-reg-global-shared-view interval-index)))]
+    ;; LP-1: the index the GREEDY, its eviction logic, the rescue rounds and the
+    ;; spill machinery see. Mode 0 hands back today's object unchanged.
+    [alloc-index : CompilerRegIntervalIndex
+      (if (and ep-relax? (> (compiler-reg-ep-alloc-mode) 0))
+        (compiler-reg-ep-alloc-index
+          (compiler-reg-global-shared-view interval-index)
+          (compiler-reg-global-shared-view ep-alloc-segs)
+          (compiler-reg-global-shared-view ep-phi-touched)
+          (> (compiler-reg-ep-alloc-mode) 1))
+        (compiler-reg-global-shared-view interval-index))]
     [coalesce : CompilerRegCoalesceMap
       (if allow-caller-saved-zero-call
         (compiler-reg-coalesce-map-build
@@ -36750,7 +37401,7 @@
       (if allow-caller-saved-zero-call
         (compiler-reg-merged-root-index
           (compiler-reg-global-shared-view coalesce)
-          (compiler-reg-global-shared-view interval-index))
+          (compiler-reg-global-shared-view alloc-index))
         (compiler-reg-global-shared-view interval-index))]
     [low-xmm-exclusions : (__tl_dyn-array CompilerRegIdSeq)
       (cfg
@@ -36881,10 +37532,13 @@
           (compiler-reg-global-shared-view blocked))
         (compiler-reg-global-shared-view blocked))]
     ;; M-A (RC1): param var ids mapped to their coalesce ROOTS -- each greedy
-    ;; allocates class roots, and a class containing a param must be restricted
-    ;; to callee-saved homes (alloc-one! `is-param`; the entry copy writes the
-    ;; home in the prologue). Reuses the ineligible-params walk as a plain
-    ;; param-id collector. Scalar-opt2 only: the SIMD path stack-homes every
+    ;; allocates class roots. R3S-1 restated: a class containing a param is no
+    ;; longer restricted to callee-saved homes; this set now marks the classes
+    ;; that (a) take the inclusive-start clobber-span test, because a param is
+    ;; defined by the prologue before point 0, and (b) carry the entry-copy
+    ;; schedule constraint below. It still forces callee-saved-only whenever
+    ;; that constraint is refused (an empty `param-entry-forbidden`). Reuses the
+    ;; ineligible-params walk as a plain param-id collector. Scalar-opt2 only: the SIMD path stack-homes every
     ;; param (ineligible-vars-simd). Integer and float candidates consume the
     ;; same root set over their respective callee-saved banks.
     [param-roots : live.CompilerLiveI64Set
@@ -36897,6 +37551,23 @@
                 (compiler-reg-global-shared-view params)
                 (live.compiler-live-set-empty))]))
         (live.compiler-live-set-empty))]
+    ;; R3S-1: the entry-copy schedule constraint that REPLACES the
+    ;; `is-param -> csr-only` rule for the classes it covers (see
+    ;; compiler-reg-param-entry-forbidden). Empty -> alloc-one! keeps the legacy
+    ;; callee-saved-only rule, which is what a refused parameter shape and every
+    ;; non-scalar-opt2 stage get.
+    [param-entry-forbidden : (__tl_dyn-array CompilerRegIdSeq)
+      (if allow-caller-saved-zero-call
+        (match (compiler-reg-global-shared-view func)
+          [(ir.CompilerIrFunction.Function _ params _ _ _)
+            (compiler-reg-param-entry-forbidden
+              type-segment-bases
+              (compiler-reg-global-shared-view type-info.representations)
+              target-abi
+              (compiler-reg-global-shared-view params)
+              (compiler-reg-global-shared-view coalesce.parents)
+              (array-length interval-index.starts))])
+        (__tl_make-array CompilerRegIdSeq 0))]
     [integer-candidates : CompilerRegIntervalSeq
       (compiler-reg-candidates
         (compiler-reg-global-shared-view eff-intervals)
@@ -36998,6 +37669,7 @@
           (compiler-reg-global-shared-view eff-index)
           (compiler-reg-global-shared-view group-vars)
           (compiler-reg-global-shared-view param-roots)
+          (compiler-reg-global-shared-view param-entry-forbidden)
           (compiler-reg-global-shared-view base-eviction-ref-counts)
           (compiler-reg-global-shared-view copy-hints)
           (compiler-reg-global-shared-view arg-prefs)
@@ -37020,6 +37692,7 @@
           (compiler-reg-global-shared-view eff-index)
           (compiler-reg-global-shared-view group-vars)
           (live.compiler-live-set-empty)
+          (__tl_make-array CompilerRegIdSeq 0)
           (compiler-reg-global-shared-view base-eviction-ref-counts)
           (compiler-reg-global-shared-view copy-hints)
           (__tl_make-array i64 0)
@@ -37071,6 +37744,7 @@
           (compiler-reg-global-shared-view allocation-index)
           (compiler-reg-global-shared-view group-vars)
           (compiler-reg-global-shared-view param-roots)
+          (compiler-reg-global-shared-view param-entry-forbidden)
           (compiler-reg-global-shared-view eviction-ref-counts)
           (compiler-reg-global-shared-view copy-hints)
           (compiler-reg-global-shared-view arg-prefs)
@@ -37148,6 +37822,7 @@
         (compiler-reg-global-shared-view eff-index)
         (compiler-reg-global-shared-view group-vars)
         (compiler-reg-global-shared-view param-roots)
+        (compiler-reg-global-shared-view param-entry-forbidden)
         (compiler-reg-global-shared-view base-eviction-ref-counts)
         (compiler-reg-global-shared-view copy-hints)
         (compiler-reg-global-shared-view float-arg-prefs)
@@ -37235,6 +37910,7 @@
           (compiler-reg-global-shared-view interval-index)
           (live.compiler-live-set-empty)
           (live.compiler-live-set-empty)
+          (__tl_make-array CompilerRegIdSeq 0)
           (__tl_make-array i64 0)
           (compiler-reg-global-shared-view vector-preferences)
           (__tl_make-array i64 0)
@@ -40405,18 +41081,24 @@
 ;; same home) makes the backend's leading-phi-copy builder drop the copy before
 ;; emission, and a Mov between merged ids is a same-home no-op.
 ;;
-;; INTERFERENCE MODEL. The plan's intervals are the CONSERVATIVE hulls, which
-;; treat a phi as USING every input AT THE PHI BLOCK; that leaks a loop carry
-;; backward around its own loop, so the carry's hull overlaps its phi's hull from
-;; function entry onward and the pairs worth merging all look live at once.
-;; Legality is therefore judged on EDGE-PRECISE hulls (LLVM PHIElimination
+;; INTERFERENCE MODEL. The plan's intervals are no longer the fully conservative
+;; hulls this rule was first written against, and the difference is worth stating
+;; because the rule reads them. #6377 moved scalar-opt2 allocation onto
+;; EDGE-PRECISE liveness, and LP-1 (`compiler-reg-ep-alloc-index`) additionally
+;; substitutes the edge-precise SEGMENT rows -- and their tightened hulls -- for
+;; every safe-mode phi-touched var, so a loop carry no longer leaks backward
+;; around its own loop. What survives is the residue: a var the safe-mode mask
+;; does not select, or one anchored at entry, still carries the conservative row,
+;; which treats a phi as USING every input AT THE PHI BLOCK.
+;; Legality here is still judged on EDGE-PRECISE hulls (LLVM PHIElimination
 ;; semantics: an input is a copy at the end of ITS OWN predecessor), the exact
 ;; SSA interference model the register coalescer already trusts, recomputed here
 ;; over the FINAL rewritten blocks so its point coordinates describe the IR the
-;; backend actually emits. The plan's conservative hulls keep their existing job
+;; backend actually emits -- the plan's own hulls are built over the PRE-rewrite
+;; blocks and cannot answer for them. The plan's hulls keep their existing job
 ;; unchanged -- deciding which OTHER variable may reuse a slot -- through the
 ;; ordinary disjoint-interval walk, which now sees the whole web as one variable
-;; and therefore reserves the UNION of the members' conservative hulls.
+;; and therefore reserves the UNION of the members' hulls.
 ;;
 ;; WEB RULE (conservative; when in doubt, no alias). Membership is decided by
 ;; PAIRWISE EP-hull disjointness: a web may absorb another web only when EVERY

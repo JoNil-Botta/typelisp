@@ -101330,12 +101330,16 @@
           (tc-macro-walk-field state macro-expand-ctfe-env-rebuild-pending)]
         [_profile-start : unit
           (cfg compile-profile (compiler-tc-walk-ctfe-build-start!) unit)]
-        [previous-arena : i64 (arena.tl_arena_current)]
         [owner-arena : i64
           (if (=
             (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena)
             0)
-            previous-arena
+            ;; Macro expansion itself runs in a reclaimable arena. The CTFE
+            ;; metadata cache is the one session value reused by downstream
+            ;; comptime checks, so keep both its initial build and any splice
+            ;; extension in the checked AST pool's durable base owner.
+            (ast.ast-node-pool-context-base-arena
+              (tc-context-pools (tc-global-shared-view ctx)))
             (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena))]
         (in-arena
           (arena.Arena owner-arena)
@@ -126360,6 +126364,67 @@
             (set! index (+ index 1)))))
       out)))
 
+;; Copy the only values allowed to cross the macro scratch boundary into the
+;; checked pool's stable base owner. Original declarations still point into the
+;; compact source pool, while every changed declaration was already deep-copied
+;; there by `macro-decl-generation-copy-out`. The whole-program walk only owns
+;; the final top-level spine, program shell, and path strings, so persist those
+;; directly instead of recursively visiting every already-stable declaration.
+;;
+;; When the structural-change proof says the walk rebuilt only temporary list
+;; spines, return the original stable program and paths directly. This is the
+;; same proof used by lower's retain-macro-source fast path, applied early
+;; enough that specialization never observes a scratch-backed result.
+(define (macro-expand-result-stabilize
+  [state : TcMacroState]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
+  [pools : ast.AstNodePoolContext]
+  [raw : ResultMacroExpand]) : ResultMacroExpand
+  (match (tc-global-shared-view raw)
+    [(ResultMacroExpand.Ok expanded expanded-paths)
+      (if (not (macro-expand-program-structurally-changed? state))
+        (ResultMacroExpand.Ok program paths)
+        (let
+          [base-arena : arena.Arena
+            (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
+          (in-arena
+            base-arena
+            (match (tc-global-shared-view expanded)
+              [(ast.AstProgram.Program decls-box)
+                (let
+                  [decls : ast.AstDeclList
+                    (ast.ast-decl-list-box-shared-view decls-box)]
+                  [count : i64 (ast.ast-decl-list-len (& decls))]
+                  [copied-decls : ast.AstDeclList
+                    (ast.ast-decl-list-with-capacity count)]
+                  [index : i64 0]
+                  (begin
+                    (while (< index count)
+                      (begin
+                        (ast.ast-decl-list-push-from
+                          (&mut copied-decls)
+                          (& decls.slots)
+                          (+ decls.offset index))
+                        (set! index (+ index 1))))
+                    (parser.compiler-parse-decl-origin-register-list-aliases!
+                      (& copied-decls)
+                      0
+                      (tc-global-shared-view decls))
+                    (ResultMacroExpand.Ok
+                      (ast.ast-program copied-decls)
+                      (macro-decl-generation-copy-paths expanded-paths))))]))))]
+    [(ResultMacroExpand.Err diag)
+      (let
+        [base-arena : arena.Arena
+          (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
+        (in-arena
+          base-arena
+          (ResultMacroExpand.Err
+            (box
+              (cdiag.compiler-diagnostic-copy
+                (cdiag.compiler-diagnostic-box-shared-view diag))))))]))
+
 ;; Move one expansion result out of its generation and into the committed pool.
 ;; Everything the survivor still owns in the generation is rebuilt in the pool's
 ;; base arena; every node id below the shared bases is left alone. Leaves the
@@ -130447,7 +130512,7 @@
 ;; need no macro or guard-compatibility expansion are returned unchanged without
 ;; rebuilding the AST, so the expansion phase adds no allocation for the common
 ;; case.
-(define (macro-expand-program-pass-with-paths-and-pools
+(define (macro-expand-program-pass-in-scratch-with-paths-and-pools
   [load-state : cload.CompilerLoadSessionState]
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
@@ -130579,8 +130644,6 @@
                 [active-program : ast.AstProgram
                   (ast.ast-program (tc-global-shared-view active-decls))]
                 (begin
-                  (macro-expand-scratch-begin!
-                    (tc-global-shared-view macro-state))
                   (cfg compile-profile (compiler-tc-profile-start))
                   (match (macro-live-symbols-build-or-reuse!
                     (tc-global-shared-view macro-state)
@@ -130705,6 +130768,39 @@
                         (box
                           (csym.compiler-symbols-last-error-diagnostic message)))])))
               (ResultMacroExpand.Ok program paths))))])))
+
+;; Macro setup, prescans, top environments, splice contexts, and rebuilt list
+;; spines have no reader after this pass. Make the existing macro scratch owner
+;; the ambient arena for the complete pass; generated AST rows already copy out
+;; through their generation boundary, and the public result is stabilized by
+;; `macro-expand-result-stabilize` before this owner is destroyed.
+(define (macro-expand-program-pass-with-paths-and-pools
+  [load-state : cload.CompilerLoadSessionState]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
+  [pools : ast.AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]
+  [job-state : TcJobState]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
+  (let
+    [macro-state : TcMacroState
+      (tc-job-state-macro-state (tc-global-shared-view job-state))]
+    [_scratch-begin : unit
+      (macro-expand-scratch-begin! (tc-global-shared-view macro-state))]
+    [scratch : i64
+      (macro-expand-scratch-arena-get (tc-global-shared-view macro-state))]
+    (in-arena
+      (arena.Arena scratch)
+      (macro-expand-program-pass-in-scratch-with-paths-and-pools
+        load-state
+        program
+        paths
+        pools
+        source-names
+        job-state
+        stdlib-roots
+        cfgs))))
 
 (defenum MacroMaybeGeneratedNormalImport
   (No)
@@ -131056,127 +131152,136 @@
             (tc-global-shared-view job-state)
             (tc-global-shared-view stdlib-roots)
             (tc-global-shared-view cfgs))]
-        (begin
-          ;; Publish all legacy macro mutations before inspecting Ok or Err.
+        ;; Publish all legacy macro mutations before the copy-out observes pool
+        ;; lengths or either public result.
+        [_capture-macro-pools : unit
           (ast.ast-node-pool-context-capture-active!
-            (ast.ast-place-shared-view pools))
-          (ci.intern-compat-state-capture-from-globals! (&mut intern-state))
-          (match macro-result
-            [(ResultMacroExpand.Ok expanded expanded-paths)
-              (begin
-                (cfg
-                  embedded-stdlib-tlci
-                  (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
-                (cfg
-                  (all embedded-stdlib-tlci tlci-native-route-stress)
-                  (compiler-tc-tlci-native-stress-pass-finish!
-                    (ast.ast-place-shared-view pools)
-                    0))
-                (let
-                  [_profile-retention-sample : unit
-                    (cfg
-                      compile-profile
-                      (compiler-tc-macro-retention-sample!
-                        (tc-job-state-macro-state job-state))
-                      unit)]
-                  [_profile-lifetime-pre-detach : unit
-                    (cfg
-                      compile-profile
-                      (compiler-tc-macro-lifetime-emit!
-                        (tc-global-shared-view job-state)
-                        (ast.ast-place-shared-view pools)
-                        "macro.pre-detach")
-                      unit)]
-                  [_profile-owners : unit
-                    (macro-expand-allocation-profile-snapshot!
-                      (tc-job-state-macro-state job-state)
-                      0)]
-                  [_release-scratch : unit
-                    (begin
-                      (macro-expand-scratch-release!
-                        (tc-job-state-macro-state job-state))
-                      (tc-job-state-reset-derived-caches! job-state))]
-                  [_profile-lower-handoff : unit
-                    (cfg
-                      compile-profile
-                      (compiler-tc-macro-lifetime-emit!
-                        (tc-global-shared-view job-state)
-                        (ast.ast-place-shared-view pools)
-                        "macro.lower-handoff")
-                      unit)]
-                  (if (spec.compiler-specialize-needed-with-pools
-                    (tc-global-shared-view expanded)
-                    (ast.ast-place-shared-view pools))
-                    (begin
-                      (macro-expand-program-structural-change-note!
-                        (tc-job-state-macro-state job-state)
-                        8)
-                      (let
-                        [owner : spec.SpecOwnerContext
-                          (spec.spec-owner-context-new
-                            (ast.ast-place-shared-view pools)
-                            (tc-global-shared-view intern-state))]
-                        [normalized-result : spec.ResultGenProgramWithPaths
-                          (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
-                            (tc-global-shared-view expanded)
-                            (tc-global-shared-view expanded-paths)
-                            (tc-decl-path-list-last
-                              (tc-global-shared-view expanded-paths)
-                              "")
-                            owner)]
-                        (begin
-                          ;; Explicit normalization mutates owner cells directly;
-                          ;; publish them before matching either result.
-                          (ast.ast-node-pool-context-install!
-                            (ast.ast-place-shared-view pools))
-                          (ci.intern-compat-state-install!
-                            (tc-global-shared-view intern-state))
-                          (match normalized-result
-                            [(spec.ResultGenProgramWithPaths.Ok
-                                normalized
-                                normalized-paths)
-                              (ResultMacroExpand.Ok normalized normalized-paths)]
-                            [(spec.ResultGenProgramWithPaths.Err diag)
-                              (ResultMacroExpand.Err diag)]))))
-                    (ResultMacroExpand.Ok expanded expanded-paths))))]
-            [(ResultMacroExpand.Err diag)
-              (begin
-                (cfg
-                  embedded-stdlib-tlci
-                  (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
-                (cfg
-                  (all embedded-stdlib-tlci tlci-native-route-stress)
-                  (compiler-tc-tlci-native-stress-pass-finish!
-                    (ast.ast-place-shared-view pools)
-                    1))
-                ;; A failed walk has no continuing context consumer. A
-                ;; replacement registry that failed during top-env/CTFE setup
-                ;; may still have its predecessor in the retired slot; reclaim
-                ;; that predecessor before publishing the failure boundary.
-                (macro-live-symbols-reclaim-retired!
-                  (tc-job-state-macro-state job-state))
-                (cfg
-                  compile-profile
-                  (begin
+            (ast.ast-place-shared-view pools))]
+        [_capture-macro-interns : unit
+          (ci.intern-compat-state-capture-from-globals! (&mut intern-state))]
+        [stable-macro-result : ResultMacroExpand
+          (macro-expand-result-stabilize
+            (tc-job-state-macro-state (tc-global-shared-view job-state))
+            (tc-global-shared-view program)
+            (tc-global-shared-view paths)
+            (ast.ast-place-shared-view pools)
+            (tc-global-shared-view macro-result))]
+        (match stable-macro-result
+          [(ResultMacroExpand.Ok expanded expanded-paths)
+            (begin
+              (cfg
+                embedded-stdlib-tlci
+                (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
+              (cfg
+                (all embedded-stdlib-tlci tlci-native-route-stress)
+                (compiler-tc-tlci-native-stress-pass-finish!
+                  (ast.ast-place-shared-view pools)
+                  0))
+              (let
+                [_profile-retention-sample : unit
+                  (cfg
+                    compile-profile
                     (compiler-tc-macro-retention-sample!
                       (tc-job-state-macro-state job-state))
+                    unit)]
+                [_profile-lifetime-pre-detach : unit
+                  (cfg
+                    compile-profile
                     (compiler-tc-macro-lifetime-emit!
                       (tc-global-shared-view job-state)
                       (ast.ast-place-shared-view pools)
-                      "macro.pre-detach")))
-                (macro-expand-allocation-profile-snapshot!
-                  (tc-job-state-macro-state job-state)
-                  0)
-                (macro-expand-scratch-release!
-                  (tc-job-state-macro-state job-state))
-                (tc-job-state-reset-derived-caches! job-state)
-                (cfg
-                  compile-profile
+                      "macro.pre-detach")
+                    unit)]
+                [_profile-owners : unit
+                  (macro-expand-allocation-profile-snapshot!
+                    (tc-job-state-macro-state job-state)
+                    0)]
+                [_release-scratch : unit
+                  (begin
+                    (macro-expand-scratch-release!
+                      (tc-job-state-macro-state job-state))
+                    (tc-job-state-reset-derived-caches! job-state))]
+                [_profile-lower-handoff : unit
+                  (cfg
+                    compile-profile
+                    (compiler-tc-macro-lifetime-emit!
+                      (tc-global-shared-view job-state)
+                      (ast.ast-place-shared-view pools)
+                      "macro.lower-handoff")
+                    unit)]
+                (if (spec.compiler-specialize-needed-with-pools
+                  (tc-global-shared-view expanded)
+                  (ast.ast-place-shared-view pools))
+                  (begin
+                    (macro-expand-program-structural-change-note!
+                      (tc-job-state-macro-state job-state)
+                      8)
+                    (let
+                      [owner : spec.SpecOwnerContext
+                        (spec.spec-owner-context-new
+                          (ast.ast-place-shared-view pools)
+                          (tc-global-shared-view intern-state))]
+                      [normalized-result : spec.ResultGenProgramWithPaths
+                        (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
+                          (tc-global-shared-view expanded)
+                          (tc-global-shared-view expanded-paths)
+                          (tc-decl-path-list-last
+                            (tc-global-shared-view expanded-paths)
+                            "")
+                          owner)]
+                      (begin
+                        ;; Explicit normalization mutates owner cells directly;
+                        ;; publish them before matching either result.
+                        (ast.ast-node-pool-context-install!
+                          (ast.ast-place-shared-view pools))
+                        (ci.intern-compat-state-install!
+                          (tc-global-shared-view intern-state))
+                        (match normalized-result
+                          [(spec.ResultGenProgramWithPaths.Ok
+                              normalized
+                              normalized-paths)
+                            (ResultMacroExpand.Ok normalized normalized-paths)]
+                          [(spec.ResultGenProgramWithPaths.Err diag)
+                            (ResultMacroExpand.Err diag)]))))
+                  (ResultMacroExpand.Ok expanded expanded-paths))))]
+          [(ResultMacroExpand.Err diag)
+            (begin
+              (cfg
+                embedded-stdlib-tlci
+                (embedded_tlci.compiler-embedded-stdlib-tlci-session-close!))
+              (cfg
+                (all embedded-stdlib-tlci tlci-native-route-stress)
+                (compiler-tc-tlci-native-stress-pass-finish!
+                  (ast.ast-place-shared-view pools)
+                  1))
+              ;; A failed walk has no continuing context consumer. A
+              ;; replacement registry that failed during top-env/CTFE setup
+              ;; may still have its predecessor in the retired slot; reclaim
+              ;; that predecessor before publishing the failure boundary.
+              (macro-live-symbols-reclaim-retired!
+                (tc-job-state-macro-state job-state))
+              (cfg
+                compile-profile
+                (begin
+                  (compiler-tc-macro-retention-sample!
+                    (tc-job-state-macro-state job-state))
                   (compiler-tc-macro-lifetime-emit!
                     (tc-global-shared-view job-state)
                     (ast.ast-place-shared-view pools)
-                    "macro.lower-handoff"))
-                (ResultMacroExpand.Err diag))]))))))
+                    "macro.pre-detach")))
+              (macro-expand-allocation-profile-snapshot!
+                (tc-job-state-macro-state job-state)
+                0)
+              (macro-expand-scratch-release!
+                (tc-job-state-macro-state job-state))
+              (tc-job-state-reset-derived-caches! job-state)
+              (cfg
+                compile-profile
+                (compiler-tc-macro-lifetime-emit!
+                  (tc-global-shared-view job-state)
+                  (ast.ast-place-shared-view pools)
+                  "macro.lower-handoff"))
+              (ResultMacroExpand.Err diag))])))))
 
 (define (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state
   [load-state : cload.CompilerLoadSessionState]

@@ -244,6 +244,7 @@ safe_raw_pointer_read_reject|check-fail|tests/safety/safe_raw_pointer_read_rejec
 fs_rooted_linux_state_read_reject|check-fail|tests/safety/fs_rooted_linux_state_read_reject.tl|-|linux-rooted-state-read requires unsafe context
 fs_rooted_linux_raw_close_reject|check-fail|tests/safety/fs_rooted_linux_raw_close_reject.tl|-|linux-rooted-raw-close requires unsafe context
 fs_rooted_linux_capability_copy_reject|check-fail|tests/safety/fs_rooted_linux_capability_copy_reject.tl|-|cleanup-required resource already has a cleanup owner
+fs_rooted_linux_read_capability_copy_reject|check-fail|tests/safety/fs_rooted_linux_read_capability_copy_reject.tl|-|cleanup-required resource already has a cleanup owner
 fs_rooted_linux_arena_escape_reject|check-fail|tests/safety/fs_rooted_linux_arena_escape_reject.tl|-|region-tagged value cannot escape with-arena
 unsafe_callable_value_launder_reject|check-fail|tests/safety/unsafe_callable_value_launder_reject.tl|-|danger is an unsafe callable and cannot be used as a plain function value
 format_pointer_safe_reject|check-fail|tests/safety/format_pointer_safe_reject.tl|-|ptr->int requires unsafe context

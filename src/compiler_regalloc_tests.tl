@@ -20118,6 +20118,136 @@
                             (ir.compiler-ir-instr-seq-empty)))))))))))
         ir.CompilerIrBlockList.Nil))))
 
+;; Stack-only planning still needs enough lifetime information to color the
+;; frame. The two inline-storage ranges below live on mutually exclusive CFG
+;; arms, so their backing words, address temporaries, and scalar additions may
+;; share. Parameter var 0 must nevertheless retain its identity for prologue
+;; spills.
+(define (compiler-reg-stack-only-storage-branch-function) : ir.CompilerIrFunction
+  (let
+    [big : ast.AstType (ast.AstType.Struct (ci.intern "StackOnlyStorage"))]
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "stack_only_storage_branch")
+      (ir.compiler-ir-param-seq-prepend
+        (ir.CompilerIrParam.Param "condition" (ast.AstType.Bool) 0)
+        (ir.compiler-ir-param-seq-empty))
+      (ast.AstType.Unit)
+      9
+      (ir.compiler-ir-block-cons
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "entry")
+          (compiler-reg-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Var 0)
+              (ir.compiler-ir-label "left")
+              (ir.compiler-ir-label "right"))
+            (ir.compiler-ir-instr-seq-empty)))
+        (ir.compiler-ir-block-cons
+          (ir.CompilerIrBlock.Block
+            (ir.compiler-ir-label "left")
+            (compiler-reg-test-instr-seq-prepend
+              (ir.CompilerIrInstr.Alloc 1 (clone big))
+              (compiler-reg-test-instr-seq-prepend
+                (ir.CompilerIrInstr.Alloc 2 (clone big))
+                (compiler-reg-test-instr-seq-prepend
+                  (ir.CompilerIrInstr.AddrOf 3 2)
+                  (compiler-reg-test-instr-seq-prepend
+                    (ir.CompilerIrInstr.BinOp
+                      4
+                      (ir.CompilerIrBinOp.Add)
+                      (ir.CompilerIrValue.I64 10)
+                      (ir.CompilerIrValue.I64 1)
+                      (ast.AstType.I64))
+                    (compiler-reg-test-instr-seq-prepend
+                      (ir.CompilerIrInstr.StorePtr
+                        (ir.CompilerIrValue.Var 3)
+                        (ir.CompilerIrValue.Var 4)
+                        (ast.AstType.I64))
+                      (compiler-reg-test-instr-seq-prepend
+                        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))
+                        (ir.compiler-ir-instr-seq-empty))))))))
+          (ir.compiler-ir-block-cons
+            (ir.CompilerIrBlock.Block
+              (ir.compiler-ir-label "right")
+              (compiler-reg-test-instr-seq-prepend
+                (ir.CompilerIrInstr.Alloc 5 (clone big))
+                (compiler-reg-test-instr-seq-prepend
+                  (ir.CompilerIrInstr.Alloc 6 big)
+                  (compiler-reg-test-instr-seq-prepend
+                    (ir.CompilerIrInstr.AddrOf 7 6)
+                    (compiler-reg-test-instr-seq-prepend
+                      (ir.CompilerIrInstr.BinOp
+                        8
+                        (ir.CompilerIrBinOp.Add)
+                        (ir.CompilerIrValue.I64 20)
+                        (ir.CompilerIrValue.I64 2)
+                        (ast.AstType.I64))
+                      (compiler-reg-test-instr-seq-prepend
+                        (ir.CompilerIrInstr.StorePtr
+                          (ir.CompilerIrValue.Var 7)
+                          (ir.CompilerIrValue.Var 8)
+                          (ast.AstType.I64))
+                        (compiler-reg-test-instr-seq-prepend
+                          (ir.CompilerIrInstr.Jump
+                            (ir.compiler-ir-label "join"))
+                          (ir.compiler-ir-instr-seq-empty))))))))
+            (ir.compiler-ir-block-cons
+              (ir.CompilerIrBlock.Block
+                (ir.compiler-ir-label "join")
+                (compiler-reg-test-instr-seq-prepend
+                  (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
+                  (ir.compiler-ir-instr-seq-empty)))
+              ir.CompilerIrBlockList.Nil)))))))
+
+;; The first address remains live across construction of the second range and
+;; escapes through a call. Its backing range must stay private even though the
+;; planner itself performs no scalar register allocation.
+(define (compiler-reg-stack-only-storage-escape-function) : ir.CompilerIrFunction
+  (let
+    [big : ast.AstType (ast.AstType.Struct (ci.intern "StackOnlyEscape"))]
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "stack_only_storage_escape")
+      (ir.compiler-ir-param-seq-empty)
+      (ast.AstType.Unit)
+      7
+      (ir.compiler-ir-block-cons
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "entry")
+          (compiler-reg-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Alloc 0 (clone big))
+            (compiler-reg-test-instr-seq-prepend
+              (ir.CompilerIrInstr.Alloc 1 (clone big))
+              (compiler-reg-test-instr-seq-prepend
+                (ir.CompilerIrInstr.AddrOf 2 1)
+                (compiler-reg-test-instr-seq-prepend
+                  (ir.CompilerIrInstr.StorePtr
+                    (ir.CompilerIrValue.Var 2)
+                    (ir.CompilerIrValue.I64 11)
+                    (ast.AstType.I64))
+                  (compiler-reg-test-instr-seq-prepend
+                    (ir.CompilerIrInstr.Alloc 3 (clone big))
+                    (compiler-reg-test-instr-seq-prepend
+                      (ir.CompilerIrInstr.Alloc 4 big)
+                      (compiler-reg-test-instr-seq-prepend
+                        (ir.CompilerIrInstr.AddrOf 5 4)
+                        (compiler-reg-test-instr-seq-prepend
+                          (ir.CompilerIrInstr.StorePtr
+                            (ir.CompilerIrValue.Var 5)
+                            (ir.CompilerIrValue.I64 22)
+                            (ast.AstType.I64))
+                          (compiler-reg-test-instr-seq-prepend
+                            (ir.CompilerIrInstr.Call
+                              6
+                              (ir.compiler-ir-test-symbol "escape")
+                              (ir.CompilerIrCallArgs.One
+                                (ir.CompilerIrValue.Var 2))
+                              (ast.AstType.Unit))
+                            (compiler-reg-test-instr-seq-prepend
+                              (ir.CompilerIrInstr.Return
+                                ir.CompilerIrMaybeValue.No)
+                              (ir.compiler-ir-instr-seq-empty))))))))))))
+        ir.CompilerIrBlockList.Nil))))
+
 (define (compiler-reg-color-pointer-assignments) : reg.CompilerRegAssignmentTable
   (reg.compiler-reg-assignment-insert
     (reg.compiler-reg-assignment-insert
@@ -20713,6 +20843,81 @@
             (= (array-ref remap 3) 0)
             (= (array-ref remap 4) 1))]
         [(reg.CompilerRegColoring.None) false])]))
+
+(define (compiler-reg-stack-only-storage-branch-ok?) : bool
+  (let
+    [func : ir.CompilerIrFunction
+      (compiler-reg-stack-only-storage-branch-function)]
+    [plan : reg.CompilerRegPlan
+      (reg.compiler-reg-plan-function-stack-only (clone func))]
+    [assignment-count : i64
+      (reg.compiler-reg-assignment-count
+        (reg.compiler-reg-plan-assignments
+          (reg.compiler-reg-global-shared-view plan)))]
+    [ineligible-count : i64
+      (live.compiler-live-set-count
+        (reg.compiler-reg-plan-ineligible
+          (reg.compiler-reg-global-shared-view plan)))]
+    [interval-count : i64
+      (reg.compiler-reg-interval-seq-count
+        (reg.compiler-reg-plan-intervals
+          (reg.compiler-reg-global-shared-view plan)))]
+    (match func
+      [(ir.CompilerIrFunction.Function _ params _ vars blocks)
+        (match (reg.compiler-reg-color-stack-slots
+          (ast.ast-node-pool-reader-type-segment-bases)
+          plan
+          (live.compiler-live-set-empty)
+          params
+          blocks
+          vars
+          vars
+          (live.compiler-live-set-empty))
+          [(reg.CompilerRegColoring.Remap remap slots)
+            (and
+              (= assignment-count 0)
+              (= ineligible-count 0)
+              (= interval-count vars)
+              (< slots vars)
+              (= (array-ref remap 0) 0)
+              (= (array-ref remap 1) (array-ref remap 5))
+              (= (array-ref remap 2) (array-ref remap 6))
+              (= (array-ref remap 3) (array-ref remap 7))
+              (= (array-ref remap 4) (array-ref remap 8)))]
+          [(reg.CompilerRegColoring.None) false])])))
+
+(define (compiler-reg-stack-only-storage-escape-ok?) : bool
+  (let
+    [func : ir.CompilerIrFunction
+      (compiler-reg-stack-only-storage-escape-function)]
+    [plan : reg.CompilerRegPlan
+      (reg.compiler-reg-plan-function-stack-only (clone func))]
+    [assignment-count : i64
+      (reg.compiler-reg-assignment-count
+        (reg.compiler-reg-plan-assignments
+          (reg.compiler-reg-global-shared-view plan)))]
+    [interval-count : i64
+      (reg.compiler-reg-interval-seq-count
+        (reg.compiler-reg-plan-intervals
+          (reg.compiler-reg-global-shared-view plan)))]
+    (match func
+      [(ir.CompilerIrFunction.Function _ params _ vars blocks)
+        (match (reg.compiler-reg-color-stack-slots
+          (ast.ast-node-pool-reader-type-segment-bases)
+          plan
+          (live.compiler-live-set-empty)
+          params
+          blocks
+          vars
+          vars
+          (live.compiler-live-set-empty))
+          [(reg.CompilerRegColoring.Remap remap _)
+            (and
+              (= assignment-count 0)
+              (= interval-count vars)
+              (not (= (array-ref remap 0) (array-ref remap 3)))
+              (not (= (array-ref remap 1) (array-ref remap 4))))]
+          [(reg.CompilerRegColoring.None) false])])))
 
 (define (compiler-reg-color-stack-group-ok?) : bool
   (let
@@ -22566,6 +22771,12 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-color-storage-ranges-ok?"
       (compiler-reg-color-storage-ranges-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-stack-only-storage-branch-ok?"
+      (compiler-reg-stack-only-storage-branch-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-stack-only-storage-escape-ok?"
+      (compiler-reg-stack-only-storage-escape-ok?))
     true))
 
 (define (compiler-regalloc-self-test) : i64

@@ -4567,6 +4567,118 @@
     [(compiler_ir_types.CompilerMaybeSourceSpan.No)
       (compiler_diagnostic.compiler-diagnostic-with-message fallback message)]))
 
+;; Instruction spans use the destination variable as their provenance key.
+;; Stack-slot coloring may renumber that variable, so keep every keyed value
+;; out of shared slots and rebuild those keys with the resulting bijection.
+;; Non-debug optimization retains only runtime-abort value spans; debug builds
+;; bypass coloring entirely below so every original variable identity remains
+;; available to the debug metadata path.
+(define (compiler-backend-source-span-pinned-vars
+  [spans : compiler_ir_types.CompilerSourceSpans]
+  [function : i64]
+  [vars : i64]) : compiler_liveness.CompilerLiveI64Set
+  (if (<= vars 0)
+    (compiler_liveness.compiler-live-set-empty)
+    (match spans
+      [(compiler_ir_types.CompilerSourceSpans.Spans _ instr-entries _)
+        (if (= instr-entries.len 0)
+          (compiler_liveness.compiler-live-set-empty)
+          (let
+            [words : (__tl_dyn-array i64)
+              (compiler_liveness.compiler-live-set-builder (- vars 1))]
+            [index : i64 0]
+            [pinned : bool false]
+            (begin
+              (while (< index instr-entries.len)
+                (begin
+                  (match (array-ref instr-entries.slots index)
+                    [(compiler_ir_types.CompilerSourceSpansInstrEntry.Entry
+                        key
+                        _
+                        _)
+                      (match key
+                        [(compiler_ir_types.CompilerSourceSpansInstrKey.Value
+                            key-function
+                            var)
+                          (if (and
+                            (=
+                              (compiler_ir_types.compiler-ir-symbol-id-value
+                                key-function)
+                              function)
+                            (>= var 0)
+                            (< var vars))
+                            (begin
+                              (compiler_liveness.compiler-live-set-builder-insert!
+                                (compiler-backend-global-shared-view words)
+                                var)
+                              (set! pinned true))
+                            unit)]
+                        [_ unit])])
+                  (set! index (+ index 1))))
+              (if pinned
+                (compiler_liveness.compiler-live-set-from-words-trimmed
+                  (compiler-backend-global-shared-view words)
+                  (array-length (compiler-backend-global-shared-view words)))
+                (compiler_liveness.compiler-live-set-empty)))))])))
+
+(define (compiler-backend-remap-source-span-key
+  [key : compiler_ir_types.CompilerSourceSpansInstrKey]
+  [function : i64]
+  [remap : (__tl_dyn-array i64)]) : compiler_ir_types.CompilerSourceSpansInstrKey
+  (match key
+    [(compiler_ir_types.CompilerSourceSpansInstrKey.Value key-function var)
+      (if (=
+        (compiler_ir_types.compiler-ir-symbol-id-value key-function)
+        function)
+        (compiler_ir_types.CompilerSourceSpansInstrKey.Value
+          key-function
+          (compiler_regalloc.compiler-reg-remap-id
+            (compiler-backend-global-shared-view remap)
+            var))
+        (compiler_ir_types.CompilerSourceSpansInstrKey.Value key-function var))]
+    [(compiler_ir_types.CompilerSourceSpansInstrKey.Store key-function name)
+      (compiler_ir_types.CompilerSourceSpansInstrKey.Store key-function name)]
+    [(compiler_ir_types.CompilerSourceSpansInstrKey.Bounds key-function label)
+      (compiler_ir_types.CompilerSourceSpansInstrKey.Bounds key-function label)]))
+
+(define (compiler-backend-remap-source-spans
+  [spans : compiler_ir_types.CompilerSourceSpans]
+  [function : i64]
+  [remap : (__tl_dyn-array i64)]) : compiler_ir_types.CompilerSourceSpans
+  (match spans
+    [(compiler_ir_types.CompilerSourceSpans.Spans entries instr-entries count)
+      (let
+        [slots : (__tl_dyn-array
+          compiler_ir_types.CompilerSourceSpansInstrEntry)
+          (__tl_make-array
+            compiler_ir_types.CompilerSourceSpansInstrEntry
+            instr-entries.len)]
+        [index : i64 0]
+        (begin
+          (while (< index instr-entries.len)
+            (begin
+              (match (array-ref instr-entries.slots index)
+                [(compiler_ir_types.CompilerSourceSpansInstrEntry.Entry
+                    key
+                    path-id
+                    span)
+                  (set!
+                    (array-ref slots index)
+                    (compiler_ir_types.CompilerSourceSpansInstrEntry.Entry
+                      (compiler-backend-remap-source-span-key
+                        key
+                        function
+                        (compiler-backend-global-shared-view remap))
+                      path-id
+                      span))])
+              (set! index (+ index 1))))
+          (compiler_ir_types.CompilerSourceSpans.Spans
+            entries
+            (compiler_ir_types.CompilerSourceSpansInstrEntryList
+              slots
+              instr-entries.len)
+            count)))]))
+
 (define (compiler-backend-apply-instr-diagnostic
   [diag : compiler_diagnostic.CompilerDiagnostic]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]) : compiler_diagnostic.CompilerDiagnostic
@@ -56452,14 +56564,17 @@
           (set! index (+ index 1))))
       found)))
 
-;; Spilled single-use gep temps consumed by the immediately following
+;; Stack-homed single-use gep temps consumed by the immediately following
 ;; instruction, keyed by the PRE-coloring var ids the given blocks and plan
 ;; assignments use. Register-homed temps already keep distinct ids through the
-;; renumbering, so only the spilled ones need reporting.
+;; renumbering, so only stack homes need reporting. An explicit `Spill` is a
+;; stack home in scalar allocation plans; a missing assignment is the ordinary
+;; stack home in stack-only opt0/opt1 plans.
 (define (compiler-backend-gep-fusion-pinned-vars
   [vars : i64]
   [blocks : compiler_ir_types.CompilerIrBlockList]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : compiler_liveness.CompilerLiveI64Set
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [missing-stack-home? : bool]) : compiler_liveness.CompilerLiveI64Set
   (if (<= vars 0)
     (compiler_liveness.compiler-live-set-empty)
     (let
@@ -56504,7 +56619,8 @@
                       (match location
                         [(compiler_regalloc.CompilerRegLocation.Spill _) true]
                         [_ false])]
-                    [(compiler_regalloc.CompilerRegMaybeLocation.No) false]))
+                    [(compiler_regalloc.CompilerRegMaybeLocation.No)
+                      missing-stack-home?]))
                   (begin
                     (compiler_liveness.compiler-live-set-builder-insert!
                       (compiler-backend-global-shared-view words)
@@ -80528,11 +80644,29 @@
             scratch-vars
             (compiler-backend-global-shared-view remat-blocks)
             (compiler_regalloc.compiler-reg-plan-assignments
-              (compiler-backend-global-shared-view remat-reg-plan)))]
-        ;; Compact the frame after regalloc by renumbering stack-resident
-        ;; values into a dense slot prefix. Plans without intervals (the
-        ;; stack-only opt0/opt1 path) pass through unchanged. Only real remat
-        ;; vars can demand slots; scratch pseudo-vars are register-only.
+              (compiler-backend-global-shared-view remat-reg-plan))
+            (and
+              (compiler-backend-mode-scalar? mode)
+              (not scalar-registers-enabled)))]
+        ;; Non-debug optimization retains only source spans used by runtime
+        ;; aborts. Their value ids are provenance keys, so keep those values in
+        ;; distinct private slots and remap the keys alongside the IR below.
+        [source-span-pinned-vars : compiler_liveness.CompilerLiveI64Set
+          (if (compiler_ir_types.compiler-debug-info-enabled?)
+            (compiler_liveness.compiler-live-set-empty)
+            (compiler-backend-source-span-pinned-vars
+              (compiler-backend-global-shared-view spans)
+              name
+              scratch-vars))]
+        [coloring-pinned-vars : compiler_liveness.CompilerLiveI64Set
+          (compiler_liveness.compiler-live-set-union
+            (compiler-backend-global-shared-view fusion-pinned-vars)
+            (compiler-backend-global-shared-view source-span-pinned-vars))]
+        ;; Compact the frame after planning by renumbering stack-resident
+        ;; values into a dense slot prefix. Scalar stack-only opt0/opt1 plans
+        ;; carry conservative CFG intervals specifically for this pass; plans
+        ;; from modes without intervals still pass through unchanged. Only real
+        ;; remat vars can demand slots; scratch pseudo-vars are register-only.
         ;; `slot-vars` replaces the raw var count everywhere the frame layout
         ;; is derived, while `scratch-vars` keeps indexing per-variable side
         ;; tables.
@@ -80542,15 +80676,44 @@
           ;; slot; word1 indexes the second var-region by the same remapped id.
           ;; That keeps both words inside the `slot-vars`-sized frame instead of
           ;; preserving the old high raw ids that drove frame growth.
-          (compiler_regalloc.compiler-reg-color-stack-slots
-            type-segment-bases
-            (compiler-backend-global-shared-view remat-reg-plan)
-            (compiler-backend-global-shared-view fn-group-vars)
-            (compiler-backend-global-shared-view params)
-            (compiler-backend-global-shared-view remat-blocks)
-            scratch-vars
-            remat-vars
-            fusion-pinned-vars)]
+          ;; Debug records deliberately keep the original SSA identities.
+          ;; Compacting a debug frame is less important than keeping every
+          ;; instruction and variable provenance key exact.
+          ;; The cfg-only scratch planner also keys fusion inventory to SSA
+          ;; identity. In stack-only mode every value lacks an assignment, so
+          ;; merging ids can change its single-use decisions after the plan has
+          ;; selected an instruction shape. Keep that experimental combination
+          ;; on its prior identity layout until scratch planning is slot-aware.
+          (if (or
+            (compiler_ir_types.compiler-debug-info-enabled?)
+            (and
+              (compiler-backend-scratch-vreg-enabled?)
+              (compiler-backend-mode-scalar? mode)
+              (not scalar-registers-enabled)))
+            compiler_regalloc.CompilerRegColoring.None
+            (compiler_regalloc.compiler-reg-color-stack-slots
+              type-segment-bases
+              (compiler-backend-global-shared-view remat-reg-plan)
+              (compiler-backend-global-shared-view fn-group-vars)
+              (compiler-backend-global-shared-view params)
+              (compiler-backend-global-shared-view remat-blocks)
+              scratch-vars
+              remat-vars
+              coloring-pinned-vars))]
+        [emit-spans : compiler_ir_types.CompilerSourceSpans
+          (match (compiler-backend-global-shared-view coloring)
+            [(compiler_regalloc.CompilerRegColoring.None)
+              (compiler-backend-global-shared-view spans)]
+            [(compiler_regalloc.CompilerRegColoring.Remap remap _)
+              (if (>
+                (compiler_liveness.compiler-live-set-word-count
+                  (compiler-backend-global-shared-view source-span-pinned-vars))
+                0)
+                (compiler-backend-remap-source-spans
+                  (compiler-backend-global-shared-view spans)
+                  name
+                  remap)
+                (compiler-backend-global-shared-view spans))])]
         [assignments : compiler_regalloc.CompilerRegAssignmentTable
           (match (compiler-backend-global-shared-view coloring)
             [(compiler_regalloc.CompilerRegColoring.None)
@@ -81232,7 +81395,7 @@
                     (compiler-backend-global-shared-view functions)
                     (compiler-backend-global-shared-view externs)
                     (compiler-backend-global-shared-view program-index)
-                    (compiler-backend-global-shared-view spans)
+                    (compiler-backend-global-shared-view emit-spans)
                     (compiler-backend-global-shared-view span-index)
                     (compiler-backend-global-shared-view func-diag)
                     (compiler-backend-global-shared-view use-counts))

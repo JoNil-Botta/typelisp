@@ -65459,6 +65459,22 @@
         [(CompilerBackendGepLoadCmpBranchFold.No)
           (CompilerBackendMaybeGepLoadCmpEmission.No)]))))
 
+;; The source kinds the dead-Mov skip is allowed to swallow: a var-to-var copy
+;; and the integer-family immediates. Everything else -- an f64 immediate above
+;; all -- is a value the emitter DIAGNOSES rather than emits, and a skip must
+;; never take a diagnostic with it: `backend: f64 values are not supported yet`
+;; is raised from the immediate load, so a `Mov` carrying one has to reach it
+;; whether or not anything reads the destination.
+(define (compiler-backend-mov-skip-source?
+  [src : compiler_ir_types.CompilerIrValue]) : bool
+  (match (compiler-backend-global-shared-view src)
+    [(compiler_ir_types.CompilerIrValue.Var _) true]
+    [(compiler_ir_types.CompilerIrValue.I64 _) true]
+    [(compiler_ir_types.CompilerIrValue.Bool _) true]
+    [(compiler_ir_types.CompilerIrValue.Char _) true]
+    [(compiler_ir_types.CompilerIrValue.Unit) true]
+    [_ false]))
+
 (define (compiler-backend-emit-mov-step
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -65469,27 +65485,51 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (match (compiler-backend-emit-mov-global-cmp-step
-    (compiler-backend-global-shared-view ctx)
-    (compiler-backend-global-shared-view fallthrough)
-    dst
-    (compiler-backend-global-shared-view src)
-    (compiler-backend-global-shared-view ty)
-    (compiler-backend-global-shared-view instrs)
-    index
-    out)
-    [(CompilerBackendMaybeGepLoadCmpEmission.Some result) result]
-    [(CompilerBackendMaybeGepLoadCmpEmission.No)
-      (compiler-backend-emit-mov-step-tail
-        ctx
-        fallthrough
-        instr
+  ;; DCE-LATE belt-and-braces: a `Mov` whose destination is read by NO
+  ;; instruction of the final IR computes nothing observable. The value is a
+  ;; register or slot write nothing reloads, nothing aliases (an AddrOf of the
+  ;; var counts as a use) and no runtime walk inspects, so the whole
+  ;; instruction may be dropped. The optimizer's own late sweep normally
+  ;; retires these first; this keeps a Mov minted after it, or by a pass the
+  ;; sweep does not run under, from reaching the assembler. Group (aggregate)
+  ;; copies are excluded: their destination spans more vars than the one this
+  ;; use count answers for. None of the fusion lookaheads below can fire on a
+  ;; never-used destination -- every one of them requires a SINGLE use.
+  (if (and
+    (compiler-backend-var-never-used?
+      (compiler-backend-global-shared-view ctx.backend-state)
+      dst)
+    (compiler-backend-mov-skip-source?
+      (compiler-backend-global-shared-view src))
+    (not
+      (compiler-backend-copy-group?
+        (compiler-backend-global-shared-view ctx.type-segment-bases)
+        (compiler-backend-global-shared-view ctx.program-index)
+        (compiler-backend-global-shared-view ty)
         dst
-        src
-        ty
-        instrs
-        index
-        out)]))
+        (compiler-backend-global-shared-view src))))
+    (compiler-backend-emit-instrs ctx fallthrough instrs index out)
+    (match (compiler-backend-emit-mov-global-cmp-step
+      (compiler-backend-global-shared-view ctx)
+      (compiler-backend-global-shared-view fallthrough)
+      dst
+      (compiler-backend-global-shared-view src)
+      (compiler-backend-global-shared-view ty)
+      (compiler-backend-global-shared-view instrs)
+      index
+      out)
+      [(CompilerBackendMaybeGepLoadCmpEmission.Some result) result]
+      [(CompilerBackendMaybeGepLoadCmpEmission.No)
+        (compiler-backend-emit-mov-step-tail
+          ctx
+          fallthrough
+          instr
+          dst
+          src
+          ty
+          instrs
+          index
+          out)])))
 
 (define (compiler-backend-emit-mov-step-tail
   [ctx : CompilerBackendEmissionContext]

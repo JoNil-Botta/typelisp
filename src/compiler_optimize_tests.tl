@@ -9831,6 +9831,315 @@
         (return 28))
       42)))
 
+;; --- DCE-LATE: the last dead-instruction sweep -------------------------------
+;;
+;; Fixtures share one i64 parameter (var 0) and a 16-slot frame, and drive
+;; `opt-dce-late-final-pass` directly: the slot is the LAST thing the level-2
+;; pipeline runs, so nothing below it can hide a shape it fails to retire.
+(define (opt-dce-late-test-function
+  [name : String]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol name)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "a"
+        (compiler_ast_types.AstType.I64)
+        0)
+      (compiler_ir_types.compiler-ir-param-seq-empty))
+    (compiler_ast_types.AstType.I64)
+    16
+    blocks))
+
+(define (opt-dce-late-run
+  [name : String]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (match (compiler_optimize.opt-dce-late-final-pass
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-dce-late-test-function name blocks))
+    [(compiler_optimize.OptFunctionPassResult.Result next _) next]))
+
+(define (opt-dce-late-run-changed?
+  [name : String]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (match (compiler_optimize.opt-dce-late-final-pass
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-dce-late-test-function name blocks))
+    [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed]))
+
+(define (opt-dce-late-return-block
+  [label : String]
+  [value : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.CompilerIrBlock.Block
+    (compiler_ir_types.compiler-ir-label label)
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.Some value)))))
+
+;; `%5` is a literal Mov nothing reads, `%6` an addition only `%5`'s neighbour
+;; could have read, and `%7` the copy the return consumes. The sweep must
+;; retire the first two and keep the third.
+(define (opt-dce-late-dead-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Mov
+          5
+          (compiler_ir_types.CompilerIrValue.I64 -1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          6
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.Var 5)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Mov
+          7
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 7)))))
+    (compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; The same literal Mov, this time READ by the return: nothing may touch it.
+(define (opt-dce-late-live-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Mov
+          5
+          (compiler_ir_types.CompilerIrValue.I64 -1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 5)))))
+    (compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; A Mov read ONLY by a phi input is read all the same, and the phi's own
+;; block keeps it: use counting has no special case for phi operands.
+(define (opt-dce-late-phi-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Mov
+          5
+          (compiler_ir_types.CompilerIrValue.I64 -1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "join"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "join")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Phi
+            6
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-seq-empty))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 6)))))
+      (compiler_ir_types.CompilerIrBlockList.Nil))))
+
+;; The threader's leftover: the branch condition is a Mov of a bool literal, so
+;; one arm is unreachable. `cond?` false spells the same shape with a compare,
+;; which decides nothing and must be left exactly as written.
+(define (opt-dce-late-branch-blocks [literal? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (if literal?
+          (compiler_ir_types.CompilerIrInstr.Mov
+            5
+            (compiler_ir_types.CompilerIrValue.Bool false)
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            5
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.I64 7)
+            (compiler_ast_types.AstType.Bool)))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 5)
+          (compiler_ir_types.compiler-ir-label "taken")
+          (compiler_ir_types.compiler-ir-label "other"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-dce-late-return-block
+        "taken"
+        (compiler_ir_types.CompilerIrValue.I64 1))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-dce-late-return-block
+          "other"
+          (compiler_ir_types.CompilerIrValue.I64 2))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-dce-late-instr-mov? [instr : compiler_ir_types.CompilerIrInstr]) : bool
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Mov _ _ _) true]
+    [_ false]))
+
+(define (opt-dce-late-instr-jump-to?
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [label : i64]) : bool
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Jump target) (= target label)]
+    [_ false]))
+
+;; Returns 42 only when every arm of the late sweep's contract holds.
+(define (compiler-optimize-dce-late-self-test) : i64
+  (let
+    [dead : compiler_ir_types.CompilerIrFunction
+      (opt-dce-late-run "dce_late_dead" (opt-dce-late-dead-blocks))]
+    [live : compiler_ir_types.CompilerIrFunction
+      (opt-dce-late-run "dce_late_live" (opt-dce-late-live-blocks))]
+    [live-changed? : bool
+      (opt-dce-late-run-changed? "dce_late_live" (opt-dce-late-live-blocks))]
+    [phi : compiler_ir_types.CompilerIrFunction
+      (opt-dce-late-run "dce_late_phi" (opt-dce-late-phi-blocks))]
+    [folded : compiler_ir_types.CompilerIrFunction
+      (opt-dce-late-run "dce_late_fold" (opt-dce-late-branch-blocks true))]
+    [folded-changed? : bool
+      (opt-dce-late-run-changed?
+        "dce_late_fold"
+        (opt-dce-late-branch-blocks true))]
+    [kept : compiler_ir_types.CompilerIrFunction
+      (opt-dce-late-run "dce_late_keep" (opt-dce-late-branch-blocks false))]
+    [kept-changed? : bool
+      (opt-dce-late-run-changed?
+        "dce_late_keep"
+        (opt-dce-late-branch-blocks false))]
+    [dead-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view dead))]
+    [live-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view live))]
+    [phi-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view phi))]
+    [folded-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view folded))]
+    [kept-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view kept))]
+    (begin
+      ;; The zero-use literal Mov and the addition that was its only neighbour
+      ;; are both gone; the copy the return reads stays.
+      (unless
+        (=
+          (opt-block-instr-count
+            (opt-cmp-dup-block-at
+              (compiler_ir_types.compiler-ir-global-shared-view dead-blocks)
+              0))
+          2)
+        (return 1))
+      (unless
+        (opt-dce-late-instr-mov?
+          (opt-block-instr-at
+            (opt-cmp-dup-block-at
+              (compiler_ir_types.compiler-ir-global-shared-view dead-blocks)
+              0)
+            0))
+        (return 2))
+      (unless
+        (match (opt-block-instr-at (opt-cmp-dup-block-at dead-blocks 0) 0)
+          [(compiler_ir_types.CompilerIrInstr.Mov dst src _)
+            (and (= dst 7) (compiler_optimize.opt-value-is-var? src 0))]
+          [_ false])
+        (return 3))
+      ;; A read literal Mov survives, and the pass reports no change.
+      (unless
+        (=
+          (opt-block-instr-count
+            (opt-cmp-dup-block-at
+              (compiler_ir_types.compiler-ir-global-shared-view live-blocks)
+              0))
+          2)
+        (return 4))
+      (unless
+        (opt-dce-late-instr-mov?
+          (opt-block-instr-at (opt-cmp-dup-block-at live-blocks 0) 0))
+        (return 5))
+      (when live-changed? (return 6))
+      ;; A phi input is a read.
+      (unless
+        (=
+          (opt-block-instr-count
+            (opt-cmp-dup-block-at
+              (compiler_ir_types.compiler-ir-global-shared-view phi-blocks)
+              0))
+          2)
+        (return 7))
+      (unless
+        (opt-dce-late-instr-mov?
+          (opt-block-instr-at (opt-cmp-dup-block-at phi-blocks 0) 0))
+        (return 8))
+      ;; The literal-fed branch becomes a jump to the arm the literal selects,
+      ;; the other arm is dropped, and the Mov that fed it goes with it.
+      (unless
+        (=
+          (compiler_ir_types.compiler-ir-block-list-count
+            (compiler_ir_types.compiler-ir-global-shared-view folded-blocks))
+          2)
+        (return 9))
+      (unless
+        (opt-block-list-has-label?
+          (compiler_ir_types.compiler-ir-global-shared-view folded-blocks)
+          (compiler_ir_types.compiler-ir-label "other"))
+        (return 10))
+      (when
+        (opt-block-list-has-label?
+          (compiler_ir_types.compiler-ir-global-shared-view folded-blocks)
+          (compiler_ir_types.compiler-ir-label "taken"))
+        (return 11))
+      (unless
+        (=
+          (opt-block-instr-count
+            (opt-cmp-dup-block-at
+              (compiler_ir_types.compiler-ir-global-shared-view folded-blocks)
+              0))
+          1)
+        (return 12))
+      (unless
+        (opt-dce-late-instr-jump-to?
+          (opt-block-instr-at (opt-cmp-dup-block-at folded-blocks 0) 0)
+          (compiler_ir_types.compiler-ir-label "other"))
+        (return 13))
+      (unless folded-changed? (return 14))
+      ;; A branch on a real comparison decides nothing: both arms stay and the
+      ;; block is left exactly as written.
+      (unless
+        (=
+          (compiler_ir_types.compiler-ir-block-list-count
+            (compiler_ir_types.compiler-ir-global-shared-view kept-blocks))
+          3)
+        (return 15))
+      (unless
+        (=
+          (opt-block-instr-count
+            (opt-cmp-dup-block-at
+              (compiler_ir_types.compiler-ir-global-shared-view kept-blocks)
+              0))
+          2)
+        (return 16))
+      (when kept-changed? (return 17))
+      42)))
+
+(test
+  dce-late-final-sweep
+  (test.assert-i64-eq
+    (compiler-optimize-dce-late-self-test)
+    42
+    "the late slot retires a zero-use Mov and the chain it fed, keeps a Mov read by a return or by a phi input, folds a branch whose condition is a Mov of a bool literal into a jump and drops the arm it retired, and leaves a branch on a real comparison alone"))
+
 (define (opt-successor-sink-test-function
   [name : String]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction

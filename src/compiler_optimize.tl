@@ -180,6 +180,36 @@
 (define (compiler-opt-debug-set-suppressed! [on : bool]) : unit
   (set! compiler-opt-debug-suppressed? on))
 
+;; Set while the measured (checked) inlining tier prices a body
+;; (opt-inline-checked-plan-cost-at). The final late sweep is left OUT of the
+;; priced prefix, and the reason is the tier's window rather than the sweep.
+;;
+;; That window is a two-sided confidence interval on a MODEL: it keeps a site
+;; only when the modelled saving lands between half and twice what a free
+;; inline could produce, because a modelled saving far above that bound is
+;; evidence the two sides stopped being measured in the same currency (see
+;; opt-inline-checked-verdict). Its constants were measured against bodies
+;; priced by the pipeline as it stood. The late sweep deflates the MERGED side
+;; specifically -- inlining a small predicate is exactly what mints the
+;; `phi of bool literals -> mov literal -> branch` chain the sweep folds away,
+;; and the un-inlined caller and the standalone callee have no such chain -- so
+;; running it inside the priced prefix widens one side of that interval and
+;; pushes calibrated accepts out through its upper bound. Measured on
+;; intern_table: `it-slice-eq?` into `it-intern-slice` moves from
+;; saving=171/boundary=96 (keep) to saving=243/boundary=96 (outside the
+;; window, revert) and the row pays +31,754,258 Ir for the call boundary it
+;; kept.
+;;
+;; Re-calibrating that window is CB-2's business, not this sweep's. Keeping the
+;; sweep out of the priced prefix leaves every recorded verdict exactly where
+;; the corpus measured it and makes the sweep a pure codegen change, which is
+;; what it is.
+(define compiler-opt-late-sweep-suppressed? : bool
+  false)
+
+(define (compiler-opt-late-sweep-set-suppressed! [on : bool]) : unit
+  (set! compiler-opt-late-sweep-suppressed? on))
+
 (define (compiler-opt-debug-configure!
   [structural-session : cis.InternStructuralSessionHandle]
   [trace-passes : bool]
@@ -117046,6 +117076,268 @@
   (match (opt-if-convert-final-pass type-segment-bases func)
     [(OptFunctionPassResult.Result next _) next]))
 
+;; --- DCE-LATE: the last dead-instruction sweep ------------------------------
+;;
+;; Every pass in the late list can MINT instructions, and the last of them run
+;; BELOW the pipeline's own `dce`, so what they leave behind reaches the
+;; backend. Two shapes measurably do.
+;;
+;; (1) A phi whose inputs all agree collapses to `mov <literal>` in the same
+;; step that retires its only reader, so the Mov survives with a use count of
+;; zero. gvn_table's probe headers carry five of them per function
+;; (`mov -1` x 4 and `mov false`), one emitted instruction each.
+;;
+;; (2) The threader's own output is what MAKES a branch constant: it rewrites
+;; the edges that fed a bool phi, the phi collapses to `mov false`, and the
+;; branch reading that Mov is left for the assembler -- `sccp` ran BEFORE the
+;; threading inside that pass, so nothing folds it. The whole arm behind such a
+;; branch is dead code the backend still emits.
+;;
+;; This slot closes both, in that order: re-run the constant folder (whose
+;; `opt-cfg-simplify-blocks` turns `branch <literal>` into a jump, drops the
+;; blocks the retired edge fed and cleans the phis that named them) on the
+;; functions that actually carry a literal-fed branch, then sweep dead
+;; instructions to a fixpoint.
+;;
+;; PLACEMENT. It is the last thing that runs, below `cmp_dup`, and it is safe
+;; there because it never moves an instruction inside a block and never merges
+;; two blocks: `cmp_dup`'s copies stay adjacent to their branches and
+;; `load_sink`'s pairs stay adjacent to each other, since deleting an
+;; instruction can only shorten the distance between two that stayed. The
+;; mid-pipeline idiom matchers (`fill_call` / `copy_call`) ran many passes
+;; above this slot and see none of it.
+(define (opt-dce-late-fold-fuel) : i64
+  3)
+
+(define (opt-dce-late-sweep-fuel) : i64
+  8)
+
+;; Per-var literal-Mov marks, used ONLY to decide whether the constant folder
+;; is worth another run on this function: 0 = no `mov <bool literal>`
+;; definition, 1 = `mov false`, 2 = `mov true`, 3 = poisoned. A var with a
+;; second definition of any kind is poisoned, since it then names more than one
+;; runtime value. Being a gate, a wrong answer costs an opportunity or one
+;; folder run, never correctness: `opt-sccp-blocks` re-derives everything it
+;; rewrites from its own lattice.
+(define (opt-dce-late-literal-mark!
+  [lits : (__tl_dyn-array i64)]
+  [instr : ir.CompilerIrInstr]) : unit
+  (let
+    [dst : i64 (opt-sccp-instr-dst (compiler-opt-global-shared-view instr))]
+    (if (or (< dst 0) (>= dst (array-length lits)))
+      unit
+      (let
+        [code : i64
+          (match (compiler-opt-global-shared-view instr)
+            [(ir.CompilerIrInstr.Mov _ (ir.CompilerIrValue.Bool known) _)
+              (if known
+                2
+                1)]
+            [_ 3])]
+        (begin
+          (set!
+            (array-ref lits dst)
+            (if (= (array-ref lits dst) 0)
+              code
+              3))
+          unit)))))
+
+(define (opt-dce-late-literal-mark-blocks!
+  [lits : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match (compiler-opt-global-shared-view block)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (let
+              [count : i64
+                (ir.compiler-ir-instr-seq-count
+                  (compiler-opt-global-shared-view instrs))]
+              [pos : i64 0]
+              (while (< pos count)
+                (begin
+                  (opt-dce-late-literal-mark!
+                    (compiler-opt-global-shared-view lits)
+                    (ir.compiler-ir-instr-seq-ref
+                      (compiler-opt-global-shared-view instrs)
+                      pos))
+                  (set! pos (+ pos 1)))))])
+        (opt-dce-late-literal-mark-blocks!
+          lits
+          (compiler-opt-box-shared-view rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-dce-late-literal-mark-blocks!
+        lits
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-dce-late-literal-cond?
+  [lits : (__tl_dyn-array i64)]
+  [cond : ir.CompilerIrValue]) : bool
+  (match (compiler-opt-global-shared-view cond)
+    [(ir.CompilerIrValue.Var var)
+      (if (or (< var 0) (>= var (array-length lits)))
+        false
+        (let
+          [code : i64 (array-ref lits var)]
+          (or (= code 1) (= code 2))))]
+    [_ false]))
+
+(define (opt-dce-late-literal-branch-instrs?
+  [lits : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]) : bool
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [pos : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< pos count))
+        (begin
+          (match (ir.compiler-ir-instr-seq-ref
+            (compiler-opt-global-shared-view instrs)
+            pos)
+            [(ir.CompilerIrInstr.Branch cond _ _)
+              (if (opt-dce-late-literal-cond?
+                (compiler-opt-global-shared-view lits)
+                cond)
+                (set! found true)
+                unit)]
+            [(ir.CompilerIrInstr.TotalEnumBranch cond _ _)
+              (if (opt-dce-late-literal-cond?
+                (compiler-opt-global-shared-view lits)
+                cond)
+                (set! found true)
+                unit)]
+            [_ unit])
+          (set! pos (+ pos 1))))
+      found)))
+
+(define (opt-dce-late-literal-branch-blocks?
+  [lits : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (if (match (compiler-opt-global-shared-view block)
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-dce-late-literal-branch-instrs?
+            (compiler-opt-global-shared-view lits)
+            instrs)])
+        true
+        (opt-dce-late-literal-branch-blocks?
+          lits
+          (compiler-opt-box-shared-view rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-dce-late-literal-branch-blocks?
+        lits
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; Does this function branch on a value a `Mov` of a bool literal defines? One
+;; dense array and two linear scans, with no IR allocated: a function without
+;; the shape pays that and nothing else.
+(define (opt-dce-late-literal-branch?
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (let
+    [lits : (__tl_dyn-array i64)
+      (__tl_make-array
+        i64
+        (if (> frame 0)
+          frame
+          1))]
+    (begin
+      (opt-dce-late-literal-mark-blocks!
+        (compiler-opt-global-shared-view lits)
+        (compiler-opt-global-shared-view blocks))
+      (opt-dce-late-literal-branch-blocks? lits blocks))))
+
+;; `opt-sccp-blocks` folds the branch and `opt-cfg-simplify-blocks` inside it
+;; drops the arm and cleans the phis. Cleaning a phi can leave a fresh
+;; `mov <literal>` feeding a second branch, so the gate is re-asked; the fuel
+;; bounds the walk whatever the folder decides.
+(define (opt-dce-late-fold-literal-branches
+  [type-segment-bases : i64]
+  [params : ir.CompilerIrParamSeq]
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [fuel : i64]) : ir.CompilerIrBlockList
+  (if (<= fuel 0)
+    blocks
+    (if (not
+      (opt-dce-late-literal-branch?
+        frame
+        (compiler-opt-global-shared-view blocks)))
+      blocks
+      (opt-dce-late-fold-literal-branches
+        type-segment-bases
+        (compiler-opt-global-shared-view params)
+        frame
+        (opt-sccp-blocks
+          type-segment-bases
+          (compiler-opt-global-shared-view params)
+          blocks)
+        (- fuel 1)))))
+
+;; The backward DCE walk of `opt-dce-block-list-array-fixpoint`, reporting
+;; whether anything was retired so the slot can answer the pipeline's
+;; "did this pass change the body" question without a structural compare.
+(define (opt-dce-late-sweep
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [fuel : i64]
+  [changed? : bool]) : OptBlockListPassResult
+  (match (opt-dce-block-list-array-pass
+    (opt-collect-blocks-uses-array
+      frame
+      (compiler-opt-global-shared-view blocks))
+    blocks)
+    [(OptBlockListPassResult.Result next pass-changed?)
+      (if (and pass-changed? (> fuel 1))
+        (opt-dce-late-sweep frame next (- fuel 1) true)
+        (OptBlockListPassResult.Result next (or changed? pass-changed?)))]))
+
+(define (opt-dce-late-final-pass
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+  (if compiler-opt-late-sweep-suppressed?
+    (OptFunctionPassResult.Result func false)
+    (opt-dce-late-final-pass-run type-segment-bases func)))
+
+(define (opt-dce-late-final-pass-run
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+      (let
+        [fold? : bool
+          (opt-dce-late-literal-branch?
+            frame
+            (compiler-opt-global-shared-view blocks))]
+        [folded : ir.CompilerIrBlockList
+          (if fold?
+            (opt-dce-late-fold-literal-branches
+              type-segment-bases
+              (compiler-opt-global-shared-view params)
+              frame
+              (compiler-opt-global-shared-view blocks)
+              (opt-dce-late-fold-fuel))
+            (compiler-opt-global-shared-view blocks))]
+        (match (opt-dce-late-sweep frame folded (opt-dce-late-sweep-fuel) false)
+          [(OptBlockListPassResult.Result swept swept-changed?)
+            (OptFunctionPassResult.Result
+              (compiler-opt-debug-observe-function
+                type-segment-bases
+                "dce_late"
+                (ir.CompilerIrFunction.Function
+                  name
+                  (compiler-opt-global-shared-view params)
+                  (compiler-opt-global-shared-view ret-ty)
+                  frame
+                  swept))
+              (or fold? swept-changed?))]))]))
+
 (define (optimize-function
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
@@ -117163,15 +117455,28 @@
                           type-segment-bases
                           threaded)
                           [(OptFunctionPassResult.Result fused cmp-dup-changed)
-                            (OptFunctionPassResult.Result
-                              fused
-                              (or
-                                fixed-changed
-                                if-convert-changed
-                                unswitch-changed
-                                straighten-changed
-                                thread-changed
-                                cmp-dup-changed))])])]))])]))))
+                            ;; DCE-LATE closes the list: the passes above it
+                            ;; are the only ones that run below the pipeline's
+                            ;; own `dce`, and it neither moves an instruction
+                            ;; inside a block nor merges blocks, so the
+                            ;; adjacency `cmp_dup` and `load_sink` established
+                            ;; survives it.
+                            (match (opt-dce-late-final-pass
+                              type-segment-bases
+                              fused)
+                              [(OptFunctionPassResult.Result
+                                  swept
+                                  dce-late-changed)
+                                (OptFunctionPassResult.Result
+                                  swept
+                                  (or
+                                    fixed-changed
+                                    if-convert-changed
+                                    unswitch-changed
+                                    straighten-changed
+                                    thread-changed
+                                    cmp-dup-changed
+                                    dce-late-changed))])])])]))])]))))
 
 (define (optimize-function-with-level-and-summaries
   [pools : ast.AstNodePoolContext]
@@ -125683,12 +125988,17 @@
     [_silence : unit
       (begin
         (compiler-opt-debug-set-suppressed! true)
+        ;; See compiler-opt-late-sweep-suppressed?: the priced prefix stops
+        ;; above the final late sweep so this tier's calibrated window keeps
+        ;; reading the bodies it was measured against.
+        (compiler-opt-late-sweep-set-suppressed! true)
         (set! compiler-opt-debug-verify-ir false))]
     [optimized : ir.CompilerIrFunction
       (optimize-function-with-level pools type-segment-bases func 2)]
     [_restore : unit
       (begin
         (compiler-opt-debug-set-suppressed! false)
+        (compiler-opt-late-sweep-set-suppressed! false)
         (set! compiler-opt-debug-verify-ir saved-verify))]
     (+
       (opt-inline-checked-weighted-instrs-at

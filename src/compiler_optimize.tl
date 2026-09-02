@@ -24054,9 +24054,46 @@
   (FrozenWord i64)
   (FrozenDataSlot i64 i64))
 
-(defenum OptLicmPtrEnv
-  (Nil)
-  (Cons i64 OptLicmPtrKind (Box OptLicmPtrEnv)))
+(import (vector.vector OptLicmPtrKind core) as opt_licm_ptr_kind_vec)
+
+;; --- the pointer-provenance environment -------------------------------------
+;;
+;; var id -> the provenance class of the pointer that var holds, for the vars
+;; whose class is known.
+;;
+;; INVARIANT: at most one class per var. `bind` with `Unknown` REMOVES the var's
+;; class rather than recording one, `lookup` of a var carrying no class answers
+;; `Unknown`, and rebinding a var replaces its class outright. Absence and
+;; `Unknown` are therefore the same fact, and nothing is ever shadowed: there is
+;; no second binding for a var to uncover.
+;;
+;; This was a cons-list association environment, and the list's ORDER was never
+;; observable. `opt-licm-ptr-lookup`, `opt-licm-ptr-env-bound?` and
+;; `opt-licm-ptr-unbind` are its only readers -- no consumer folds over it or
+;; walks it for anything but one var -- and with at most one binding per var,
+;; "first match from the front" and "the var's class" are the same answer. The
+;; only other thing the list bought was PERSISTENCE, which this pass does not
+;; use either: the environment is threaded through one strictly linear fold per
+;; function (opt-licm-provenance-state-blocks over blocks over instruction
+;; sequences, one state in and one state out), and the one place a second walk
+;; starts from a saved environment -- opt-licm-apply-loop, which seeds each
+;; loop's state with the function's provenance env -- runs with
+;; `track-provenance?` false and so never binds or unbinds at all.
+;;
+;; What the list DID cost was quadratic. `bound?` and `lookup` scanned every
+;; live binding, once per instruction, and `unbind` rebuilt the whole chain; on
+;; the opt2 self-compile that put opt-licm-ptr-unbind and
+;; opt-licm-ptr-env-bound? at #1 and #2 of the whole profile -- 6.85% of the
+;; base compile between the three of them, and 8.9% once INL-3 absorbed 1,692
+;; callees into their sole callers and made the functions longer.
+;;
+;; So the environment is a var-indexed table instead, in exactly the shape
+;; opt-ssa-var-types-set already uses for the TYPE environment threaded beside
+;; it: a vector grown on demand to the highest var bound so far, updated in
+;; place and handed back as the value. Every operation is O(1), and `Unknown`
+;; fills the slots no bind has reached.
+(defstruct OptLicmPtrEnv
+  (kinds opt_licm_ptr_kind_vec.Vec))
 
 (defenum OptLicmRoot
   (NoRoot)
@@ -24675,53 +24712,70 @@
           (opt-licm-store-summary-header-or-unknown-store)]
         [_ (opt-licm-store-summary-call-or-unknown)]))))
 
-(define (opt-licm-ptr-unbind [env : OptLicmPtrEnv] [var : i64]) : OptLicmPtrEnv
-  (match (compiler-opt-global-shared-view env)
-    [(OptLicmPtrEnv.Nil) (OptLicmPtrEnv.Nil)]
-    [(OptLicmPtrEnv.Cons id kind rest)
-      (let
-        [tail : OptLicmPtrEnv
-          (opt-licm-ptr-unbind (compiler-opt-box-shared-view rest) var)]
-        (if (= id var)
-          tail
-          (OptLicmPtrEnv.Cons id kind (box tail))))]))
+(define (opt-licm-ptr-env-new) : OptLicmPtrEnv
+  (OptLicmPtrEnv (opt_licm_ptr_kind_vec.new)))
 
-;; Read-only membership probe for the env above. Unbinding an absent variable
-;; rebuilt the whole chain into a structurally identical copy -- one Cons and
-;; one box per live binding on every fresh-SSA rebind -- so callers probe first
-;; and keep the original env when nothing would be removed.
+;; Drop a var's class. A var the table has never reached is already `Unknown`,
+;; so an out-of-range id is a no-op rather than a reason to grow the table --
+;; which is what the old chain did too, by rebuilding a list that did not
+;; contain the var.
+(define (opt-licm-ptr-unbind [env : OptLicmPtrEnv] [var : i64]) : OptLicmPtrEnv
+  (let
+    [kinds : opt_licm_ptr_kind_vec.Vec
+      (compiler-opt-global-shared-view env.kinds)]
+    (begin
+      (if (or (< var 0) (>= var (opt_licm_ptr_kind_vec.len (& kinds))))
+        unit
+        (opt_licm_ptr_kind_vec.set-ref!
+          (&mut kinds)
+          var
+          (OptLicmPtrKind.Unknown)))
+      (OptLicmPtrEnv kinds))))
+
+;; Membership probe: absence and `Unknown` are the same fact, so this is the
+;; lookup with its payload thrown away. It survives the change because it says
+;; what it means at the two places that ask it; it is no longer a scan, and the
+;; probe-before-unbind the old chain needed to avoid rebuilding itself is gone
+;; with the chain.
 (define (opt-licm-ptr-env-bound? [env : OptLicmPtrEnv] [var : i64]) : bool
-  (match (compiler-opt-global-shared-view env)
-    [(OptLicmPtrEnv.Nil) false]
-    [(OptLicmPtrEnv.Cons id _ rest)
-      (if (= id var)
-        true
-        (opt-licm-ptr-env-bound? (compiler-opt-box-shared-view rest) var))]))
+  (match (opt-licm-ptr-lookup env var)
+    [(OptLicmPtrKind.Unknown) false]
+    [_ true]))
 
 (define (opt-licm-ptr-unbind-bound [env : OptLicmPtrEnv] [var : i64]) : OptLicmPtrEnv
-  (if (opt-licm-ptr-env-bound? (compiler-opt-global-shared-view env) var)
-    (opt-licm-ptr-unbind env var)
-    env))
+  (opt-licm-ptr-unbind env var))
 
 (define (opt-licm-ptr-bind
   [env : OptLicmPtrEnv]
   [var : i64]
   [kind : OptLicmPtrKind]) : OptLicmPtrEnv
-  (if (opt-licm-ptr-env-bound? (compiler-opt-global-shared-view env) var)
-    (match kind
-      [(OptLicmPtrKind.Unknown) (opt-licm-ptr-unbind env var)]
-      [_ (OptLicmPtrEnv.Cons var kind (box (opt-licm-ptr-unbind env var)))])
-    (match kind
-      [(OptLicmPtrKind.Unknown) env]
-      [_ (OptLicmPtrEnv.Cons var kind (box env))])))
+  (match kind
+    ;; Binding `Unknown` is how the walk RETIRES a class, at a redefinition of
+    ;; the var or at a copy whose source carries none. It must not record one.
+    [(OptLicmPtrKind.Unknown) (opt-licm-ptr-unbind env var)]
+    [_
+      (let
+        [kinds : opt_licm_ptr_kind_vec.Vec
+          (compiler-opt-global-shared-view env.kinds)]
+        (if (< var 0)
+          (OptLicmPtrEnv kinds)
+          (begin
+            (while (<= (opt_licm_ptr_kind_vec.len (& kinds)) var)
+              (opt_licm_ptr_kind_vec.push-ref!
+                (&mut kinds)
+                (OptLicmPtrKind.Unknown)))
+            (opt_licm_ptr_kind_vec.set-ref! (&mut kinds) var kind)
+            (OptLicmPtrEnv kinds))))]))
 
 (define (opt-licm-ptr-lookup [env : OptLicmPtrEnv] [var : i64]) : OptLicmPtrKind
-  (match env
-    [(OptLicmPtrEnv.Nil) (OptLicmPtrKind.Unknown)]
-    [(OptLicmPtrEnv.Cons id kind rest)
-      (if (= id var)
-        kind
-        (opt-licm-ptr-lookup (compiler-opt-box-shared-view rest) var))]))
+  (let
+    [kinds : opt_licm_ptr_kind_vec.Vec
+      (compiler-opt-global-shared-view env.kinds)]
+    (if (or (< var 0) (>= var (opt_licm_ptr_kind_vec.len (& kinds))))
+      (OptLicmPtrKind.Unknown)
+      (compiler-opt-borrowed-array-element-shared-view
+        (opt_licm_ptr_kind_vec.slots (& kinds))
+        var))))
 
 (define (opt-licm-type-env-bind
   [types : OptSsaVarTypes]
@@ -26578,7 +26632,7 @@
       : OptLicmStoreState
       ;; Provenance only; this state's write sets are never consulted.
       (opt-licm-store-state-with-provenance
-        (OptLicmPtrEnv.Nil)
+        (opt-licm-ptr-env-new)
         roots
         (opt-global-mod-ref-any)
         (opt-global-obj-any))]
@@ -27396,7 +27450,7 @@
         (OptLicmStoreState
           summary
           (opt-licm-store-summary-empty)
-          (OptLicmPtrEnv.Nil)
+          (opt-licm-ptr-env-new)
           (opt-licm-root-env-with-capacity 17 (opt_i64_i64_map.with-capacity 1))
           (opt-licm-store-roots-new)
           false

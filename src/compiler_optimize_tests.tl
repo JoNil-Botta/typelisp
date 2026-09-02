@@ -304,6 +304,177 @@
         70
         "a non-copy destination redefinition drops its stale fact"))))
 
+;; A total, order-free reading of one pointer-provenance class, so the test
+;; below can assert the class a var carries as a single integer.
+(define (opt-licm-ptr-kind-code [kind : compiler_optimize.OptLicmPtrKind]) : i64
+  (match kind
+    [(compiler_optimize.OptLicmPtrKind.Unknown) 0]
+    [(compiler_optimize.OptLicmPtrKind.HeaderSlot object) (+ 1000 object)]
+    [(compiler_optimize.OptLicmPtrKind.DataSlot object) (+ 2000 object)]
+    [(compiler_optimize.OptLicmPtrKind.DataBuffer object) (+ 3000 object)]
+    [(compiler_optimize.OptLicmPtrKind.DataElement object) (+ 4000 object)]
+    [(compiler_optimize.OptLicmPtrKind.LocalObject object) (+ 5000 object)]
+    [_ (- 0 1)]))
+
+;; LICM's pointer-provenance environment, as the recorded bind / lookup / rebind
+;; / unbind sequence its consumers actually perform. Every answer asserted here
+;; is the answer the cons-list environment gave; the table is var-indexed now,
+;; so "first match from the front" is gone and the contract has to be stated
+;; rather than inherited from the list's shape.
+;;
+;; The two clauses worth naming: a rebind REPLACES a var's class instead of
+;; shadowing it, so unbinding once leaves the var unbound rather than uncovering
+;; an older binding (the old `unbind` removed every entry for the var, and the
+;; old `bind` unbound before consing, so there was never a second entry to
+;; uncover); and binding `Unknown` RETIRES a class rather than recording one,
+;; which is how the walk invalidates a redefined var.
+(test
+  licm-ptr-env-indexed-semantics
+  (let
+    [env : compiler_optimize.OptLicmPtrEnv
+      (compiler_optimize.opt-licm-ptr-env-new)]
+    (begin
+      (test.assert-i64-eq
+        (opt-licm-ptr-kind-code
+          (compiler_optimize.opt-licm-ptr-lookup
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            3))
+        0
+        "a never-bound var reads Unknown")
+      (test.assert-true
+        (not
+          (compiler_optimize.opt-licm-ptr-env-bound?
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            3))
+        "a never-bound var is not bound")
+      (test.assert-i64-eq
+        (opt-licm-ptr-kind-code
+          (compiler_optimize.opt-licm-ptr-lookup
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            (- 0 1)))
+        0
+        "a negative sentinel stays out of the dense table")
+      (set!
+        env
+        (compiler_optimize.opt-licm-ptr-bind
+          env
+          3
+          (compiler_optimize.OptLicmPtrKind.DataSlot 7)))
+      (test.assert-i64-eq
+        (opt-licm-ptr-kind-code
+          (compiler_optimize.opt-licm-ptr-lookup
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            3))
+        2007
+        "a bound var reads back its class")
+      (test.assert-true
+        (compiler_optimize.opt-licm-ptr-env-bound?
+          (compiler_optimize.compiler-opt-global-shared-view env)
+          3)
+        "a bound var is bound")
+      (set!
+        env
+        (compiler_optimize.opt-licm-ptr-bind
+          env
+          64
+          (compiler_optimize.OptLicmPtrKind.DataBuffer 9)))
+      (test.assert-i64-eq
+        (opt-licm-ptr-kind-code
+          (compiler_optimize.opt-licm-ptr-lookup
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            64))
+        3009
+        "a high var grows the direct table")
+      (test.assert-i64-eq
+        (opt-licm-ptr-kind-code
+          (compiler_optimize.opt-licm-ptr-lookup
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            3))
+        2007
+        "growing the table preserves every earlier binding")
+      (set!
+        env
+        (compiler_optimize.opt-licm-ptr-bind
+          env
+          3
+          (compiler_optimize.OptLicmPtrKind.DataElement 11)))
+      (test.assert-i64-eq
+        (opt-licm-ptr-kind-code
+          (compiler_optimize.opt-licm-ptr-lookup
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            3))
+        4011
+        "rebinding a var replaces its class")
+      (set! env (compiler_optimize.opt-licm-ptr-unbind env 3))
+      (test.assert-i64-eq
+        (opt-licm-ptr-kind-code
+          (compiler_optimize.opt-licm-ptr-lookup
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            3))
+        0
+        "one unbind leaves a rebound var unbound: the rebind replaced, it did not shadow")
+      (test.assert-i64-eq
+        (opt-licm-ptr-kind-code
+          (compiler_optimize.opt-licm-ptr-lookup
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            64))
+        3009
+        "unbinding one var preserves the others")
+      (set! env (compiler_optimize.opt-licm-ptr-unbind env 3))
+      (test.assert-i64-eq
+        (opt-licm-ptr-kind-code
+          (compiler_optimize.opt-licm-ptr-lookup
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            3))
+        0
+        "unbinding an already-unbound var is a no-op")
+      (set!
+        env
+        (compiler_optimize.opt-licm-ptr-bind
+          env
+          5
+          (compiler_optimize.OptLicmPtrKind.Unknown)))
+      (test.assert-true
+        (not
+          (compiler_optimize.opt-licm-ptr-env-bound?
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            5))
+        "binding Unknown records nothing")
+      (set!
+        env
+        (compiler_optimize.opt-licm-ptr-bind
+          env
+          5
+          (compiler_optimize.OptLicmPtrKind.LocalObject 5)))
+      (set!
+        env
+        (compiler_optimize.opt-licm-ptr-bind
+          env
+          5
+          (compiler_optimize.OptLicmPtrKind.Unknown)))
+      (test.assert-i64-eq
+        (opt-licm-ptr-kind-code
+          (compiler_optimize.opt-licm-ptr-lookup
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            5))
+        0
+        "binding Unknown retires the class a var carried")
+      (set! env (compiler_optimize.opt-licm-ptr-unbind-bound env 4096))
+      (test.assert-i64-eq
+        (opt-licm-ptr-kind-code
+          (compiler_optimize.opt-licm-ptr-lookup
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            4096))
+        0
+        "unbinding a var past the table does not grow it")
+      (test.assert-i64-eq
+        (opt-licm-ptr-kind-code
+          (compiler_optimize.opt-licm-ptr-lookup
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            64))
+        3009
+        "an out-of-range unbind leaves the table alone"))))
+
 (test
   bounds-cast-env-indexed-semantics
   (let

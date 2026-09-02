@@ -16,7 +16,7 @@
   [T
     : type
     (:kind i64 i32 i16 i8 u64 u32 u16 u8 f64 f32 bool char string unit array dyn-array box function tuple struct enum str ptr mut-ptr ref mut-ref)]
-  [List : type]
+  [list-type : type]
   [prefix : Expr]
   [fallback-policy : Expr]
   [capacity-policy : Expr]
@@ -145,7 +145,7 @@
       (comptime.expr-var (comptime.string-append prefix-text "-push"))]
     [append-name : Expr
       (comptime.expr-var (comptime.string-append prefix-text "-append-from"))]
-    [list-constructor : Expr (comptime.expr-var (type-nominal-name List))]
+    [list-constructor : Expr (comptime.expr-var (type-nominal-name list-type))]
     [capacity-expr : Expr
       (if zero-capacity
         `(if (< capacity 0)
@@ -176,7 +176,7 @@
     [len-decls : ExprList
       (if has-len
         (match `(begin
-          (define (,len-name [v : (& v ,List)]) : i64
+          (define (,len-name [v : (& v ,list-type)]) : i64
             v.len))
           [(Expr.Begin decls) decls]
           [_ (expr-list-empty)])
@@ -184,7 +184,7 @@
     [empty-decls : ExprList
       (if has-empty
         (match `(begin
-          (define (,empty-name [v : (& v ,List)]) : bool
+          (define (,empty-name [v : (& v ,list-type)]) : bool
             (= v.len 0)))
           [(Expr.Begin decls) decls]
           [_ (expr-list-empty)])
@@ -193,8 +193,8 @@
       (if has-append
         (match `(begin
           (define (,append-name
-            [out : (&mut out ,List)]
-            [items : (& items ,List)]
+            [out : (&mut out ,list-type)]
+            [items : (& items ,list-type)]
             [index : i64]) : unit
             (if (>= index items.len)
               unit
@@ -228,14 +228,14 @@
         "compiler-dense-list-operations: expected caller-provided fallback and unique `len`, `empty?`, or `append-from` capabilities")
       `(begin
         ,@shared-zero-decls
-        (define (,with-capacity-name [capacity : i64]) : ,List
+        (define (,with-capacity-name [capacity : i64]) : ,list-type
           ,constructor-body)
-        (define (,new-name) : ,List
+        (define (,new-name) : ,list-type
           (,with-capacity-name ,new-capacity))
         ,@len-decls
         ,@empty-decls
         (define (,get-name
-          [v : (& v ,List)]
+          [v : (& v ,list-type)]
           [index : i64]
           [fallback-value : ,T]) : ,T
           (if (and (>= index 0) (< index v.len))
@@ -251,7 +251,7 @@
             (begin
               (set! (array-ref dst index) (array-ref src index))
               (,copy-range-name dst src (+ index 1) count))))
-        (define (,grow-name [v : (&mut v ,List)]) : unit
+        (define (,grow-name [v : (&mut v ,list-type)]) : unit
           (let
             [n : i64 v.len]
             [old-cap : i64 (array-length v.slots)]
@@ -263,7 +263,7 @@
             (begin
               (,copy-range-name (&mut bigger) (& v.slots) 0 n)
               (set! v.slots bigger))))
-        (define (,push-name [v : (&mut v ,List)] [value : ,T]) : unit
+        (define (,push-name [v : (&mut v ,list-type)] [value : ,T]) : unit
           (begin
             (if (< v.len (array-length v.slots))
               unit

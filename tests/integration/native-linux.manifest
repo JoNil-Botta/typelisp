@@ -11,10 +11,29 @@ inline_aggregate_global_three_field|tests/integration/inline_aggregate_global_th
 inline_aggregate_global_nested|tests/integration/inline_aggregate_global_nested.tl|42|555\n897\n|-|stdlib/io.tl stdlib/string.tl
 cli_common_option|tests/integration/cli_common_option.tl|42|-|-|cli_option_core.tl stdlib/io.tl stdlib/string.tl
 arg_global_len_eq_pair|tests/integration/arg_global_len_eq_pair.tl|42|711\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+guard_sink_invalidate_walk|tests/integration/guard_sink_invalidate_walk.tl|42|0\n0\n2\n13\n|-|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+guard_sink_store_across_guard|tests/integration/guard_sink_store_across_guard.tl|42|25\n210\n-1\n|-|stdlib/io.tl stdlib/string.tl
+swb_frontier_line_eq|tests/integration/swb_frontier_line_eq.tl|34|6\n2\n34\n|-|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 arg_global_len_eq_split|tests/integration/arg_global_len_eq_split.tl|134|-|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/arg_global_len_eq_split/arg_global_len_eq_split.tl:32:64: array index out of bounds: index=7 length=7\n
+content_bounds_csr|tests/integration/content_bounds_csr.tl|42|26\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+content_bounds_abort|tests/integration/content_bounds_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/content_bounds_abort/content_bounds_abort.tl:40:57: array index out of bounds: index=8 length=8\n
+content_bounds_induction|tests/integration/content_bounds_induction.tl|42|71\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+content_bounds_induction_abort|tests/integration/content_bounds_induction_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/content_bounds_induction_abort/content_bounds_induction_abort.tl:38:29: array index out of bounds: index=8 length=8\n
+content_bounds_checked|tests/integration/content_bounds_checked.tl|42|32\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+content_bounds_checked_abort|tests/integration/content_bounds_checked_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/content_bounds_checked_abort/content_bounds_checked_abort.tl:55:35: array index out of bounds: index=8 length=8\n
+guard_dedup_bypass_descriptor|tests/integration/guard_dedup_bypass_descriptor.tl|42|-5915004525821994045\n|24|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+guard_dedup_mutated_slice|tests/integration/guard_dedup_mutated_slice.tl|42|172085089044\n|20 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+guard_dedup_mutated_slice_abort|tests/integration/guard_dedup_mutated_slice.tl|134|-|20 17|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/guard_dedup_mutated_slice_abort/guard_dedup_mutated_slice_abort.tl:62:57: array index out of bounds: index=17 length=17\n
+guard_hoist_predication|tests/integration/guard_hoist_predication.tl|42|-7026568991372851604\n|8 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+guard_hoist_predication_abort|tests/integration/guard_hoist_predication.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/guard_hoist_predication_abort/guard_hoist_predication_abort.tl:45:49: array index out of bounds: index=8 length=8\n
+guard_tighten_predication|tests/integration/guard_tighten_predication.tl|42|-4662016400569783832\n|8 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+guard_tighten_predication_abort|tests/integration/guard_tighten_predication.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/guard_tighten_predication_abort/guard_tighten_predication_abort.tl:56:36: array index out of bounds: index=8 length=8\n
+inline_sole_call_absorb|tests/integration/inline_sole_call_absorb.tl|42|339292\n|64 3|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+inline_sole_call_abort|tests/integration/inline_sole_call_abort.tl|134|-|8 8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/inline_sole_call_abort/inline_sole_call_abort.tl:64:37: array index out of bounds: index=8 length=8\n
 bce_range_two_loops|tests/integration/bce_range_two_loops.tl|42|-5915004525821994045\n|24|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 bce_range_negative_span|tests/integration/bce_range_negative_span.tl|134|-|24|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/bce_range_negative_span/bce_range_negative_span.tl:15:36: array index out of bounds: index=-17 length=24\n
 shrink_wrap_general|tests/integration/shrink_wrap_general.tl|42|7100\n7048\n14\n|-|stdlib/io.tl stdlib/string.tl
+tail_duplicate_shared_return|tests/integration/tail_duplicate_shared_return.tl|42|7007\n7010\n1\n4\n6\n|-|stdlib/io.tl stdlib/string.tl
 global_header_hoist_loop|tests/integration/global_header_hoist_loop.tl|42|885\n|12|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 global_header_hoist_grow|tests/integration/global_header_hoist_grow.tl|42|397\n|12|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 generated_hashmap_global_mutation|tests/integration/generated_hashmap_global_mutation.tl|42|-|-|stdlib/hashmap.tl
@@ -144,6 +163,7 @@ group_pair_phi_home|tests/integration/group_pair_phi_home.tl|42|-|-|stdlib/io.tl
 param_shift_pin|tests/integration/param_shift_pin.tl|42|-|-|stdlib/io.tl
 handle_param_pin|tests/integration/handle_param_pin.tl|42|-|-|stdlib/io.tl
 param_pin_interval|tests/integration/param_pin_interval.tl|42|-|-|stdlib/io.tl
+param_memory_transport_abi|tests/integration/param_memory_transport_abi.tl|42|77\n|-|stdlib/io.tl stdlib/string.tl
 dead_frame_store|tests/integration/dead_frame_store.tl|42|-|-|stdlib/io.tl
 save_reload_elide|tests/integration/save_reload_elide.tl|42|-|-|stdlib/io.tl
 global_handle_cse|tests/integration/global_handle_cse.tl|42|-|-|stdlib/io.tl

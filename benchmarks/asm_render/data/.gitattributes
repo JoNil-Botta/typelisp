@@ -1,0 +1,10 @@
+# `asm-names.txt` is one name per line and the kernel splits it on LF, so a CRLF
+# checkout would put a `\r` at the end of every mnemonic head, register name,
+# symbol and label -- every rendered line would differ and the byte-identity
+# self-check would abort. `asm-tape.txt` is scanned as whitespace-separated
+# integers and would survive CRLF, but it is pinned with its companion so the
+# two files can never disagree. Pin LF the way *.tl and *.sh are pinned at the
+# repository root, for the Windows CI runners (whose Git defaults to
+# autocrlf=true).
+asm-names.txt text eol=lf
+asm-tape.txt text eol=lf

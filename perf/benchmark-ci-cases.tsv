@@ -49,6 +49,12 @@ instruction-main	intern_table
 instruction-main	lex_source
 instruction-main	liveness_scan
 instruction-main	peephole_lines
+instruction-main	read_sexpr
+instruction-main	callgraph_scc
+instruction-main	ssa_construct
+instruction-main	sccp_lattice
+instruction-main	regalloc_greedy
+instruction-main	asm_render
 instruction-heavy	spmd_map
 instruction-heavy	spmd_mask
 instruction-heavy	spmd_short_tail

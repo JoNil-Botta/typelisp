@@ -724,6 +724,7 @@ run_with_compiler "$STAGE2_BIN" "stage2 PIC relocation verifier" scripts/verify-
 run_with_compiler "$STAGE2_BIN" "stage2 safety corpus" scripts/verify-safety-corpus.sh
 run_gate "integration manifest validator self-tests" scripts/verify-integration-manifest-validator.sh
 run_gate "Windows COFF plan validator self-tests" scripts/verify-windows-coff-plan-validator.sh
+run_gate "docs-site search manifest validator self-tests" scripts/verify-doc-site.sh --self-test-search-manifests
 run_gate "integration batch observability" scripts/verify-integration.sh --self-test-batch-observability
 run_gate "integration Windows path normalization" scripts/verify-integration.sh --self-test-path-normalization
 run_with_compiler "$STAGE2_BIN" "integration compile-failure diagnostics" scripts/verify-integration.sh --self-test-empty-compile-diagnostic

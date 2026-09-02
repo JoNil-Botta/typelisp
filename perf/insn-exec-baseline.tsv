@@ -25,13 +25,13 @@ benchmark/typelisp/cfg_domloops	538637355
 benchmark/c-scalar/cfg_domloops	423071026
 benchmark/typelisp/gvn_table	754075406
 benchmark/c-scalar/gvn_table	620750567
-benchmark/typelisp/intern_table	361186986
+benchmark/typelisp/intern_table	360467388
 benchmark/c-scalar/intern_table	296291632
-benchmark/typelisp/lex_source	476873038
+benchmark/typelisp/lex_source	476231518
 benchmark/c-scalar/lex_source	549230985
 benchmark/typelisp/liveness_scan	393756096
 benchmark/c-scalar/liveness_scan	433426169
-benchmark/typelisp/peephole_lines	429936719
+benchmark/typelisp/peephole_lines	429927191
 benchmark/c-scalar/peephole_lines	442194744
 benchmark/typelisp/read_sexpr	795813944
 benchmark/c-scalar/read_sexpr	598159391

@@ -28,6 +28,8 @@ ck_local_len_eq_abort|tests/integration/ck_local_len_eq_abort.tl|134|-|8 1|stdli
 guard_dedup_bypass_descriptor|tests/integration/guard_dedup_bypass_descriptor.tl|42|-5915004525821994045\n|24|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 guard_dedup_mutated_slice|tests/integration/guard_dedup_mutated_slice.tl|42|172085089044\n|20 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 guard_dedup_mutated_slice_abort|tests/integration/guard_dedup_mutated_slice.tl|134|-|20 17|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/windows/guard_dedup_mutated_slice_abort/guard_dedup_mutated_slice_abort.tl:62:57: array index out of bounds: index=17 length=17\n
+guard_imply_dominated|tests/integration/guard_imply_dominated.tl|42|-3741803676297662851\n|20 5 3|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+guard_imply_dominated_abort|tests/integration/guard_imply_dominated.tl|134|-|20 5 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/windows/guard_imply_dominated_abort/guard_imply_dominated_abort.tl:75:52: array index out of bounds: index=20 length=20\n
 guard_hoist_predication|tests/integration/guard_hoist_predication.tl|42|-7026568991372851604\n|8 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 guard_hoist_predication_abort|tests/integration/guard_hoist_predication.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/windows/guard_hoist_predication_abort/guard_hoist_predication_abort.tl:45:49: array index out of bounds: index=8 length=8\n
 guard_tighten_predication|tests/integration/guard_tighten_predication.tl|42|-4662016400569783832\n|8 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl

@@ -162231,6 +162231,1203 @@
               [_ (hash.combine 5 (hash.i64 root))])]))]
     [_ (opt-value-hash (compiler-opt-global-shared-view value))]))
 
+;; --- CK-5: dominating-guard implication --------------------------------------
+;;
+;; (2) above retires a guard whose condition is STRUCTURALLY EQUAL to a
+;; dominating one. That test decides only the spelling the versioner happened to
+;; emit twice. The guard chains `bce_version` mints are conjunctions of
+;; comparisons over lengths, offsets and trip bounds, and two chains that state
+;; the SAME fact routinely differ in spelling: the length word is loaded once per
+;; loop, so two guards over one container compare against two different vars, and
+;; a trip bound is written `count - 1` here and `count` there. This section reads
+;; a condition as a canonical triple instead and asks the implication question.
+;;
+;; CANONICAL CONJUNCT. A two-way branch's condition is read as
+;;
+;;     base(L) + cL   OP   base(R) + cR
+;;
+;; with OP one of the signed and unsigned `<` and `<=`; `>` and `>=` are the
+;; mirrored spelling and normalise by swapping the sides. Each side is a TERM: a
+;; base KEY and a literal offset inside `opt-guard-imply-offset-max`, split off
+;; the same literal-affine Add/Sub `opt-bounds-dom-term` splits, through the same
+;; `Mov` resolution and the same same-width integer cast strip.
+;;
+;; The KEY is what makes two spellings of one value compare equal:
+;;   - a plain SSA var is its own key -- one var is one value, which is what the
+;;     verifier gate below buys;
+;;   - `load (gep (load (gep ROOT, 0)), k)`, the container-descriptor word
+;;     spelling `opt-len-eq-loaded-word` recovers for global cells, is keyed on
+;;     (ROOT, k), so the length word a function loads once per loop has ONE key.
+;;     ROOT is a var (a `&Vec` parameter) or a global cell;
+;;   - a scalar global cell read is keyed on the cell.
+;; The last two are the length-family swap: they are the only keys one of which
+;; can cover two DIFFERENT vars, and they are exactly the ones that carry a
+;; memory obligation -- discharged by the same region test mechanism (1) uses,
+;; with the same call-memory and IAG-2 storage rows.
+;;
+;; IMPLICATION. Write a conjunct as `D <= B` with D = base(L) - base(R) and
+;; B = (cR - cL) for `<=`, (cR - cL) - 1 for `<`. A fact `D <= Bf` implies a
+;; query `D <= Bq` exactly when Bf <= Bq. That is the whole table -- LLVM's
+;; isImpliedCondition for the same-operand case, no Fourier-Motzkin system --
+;; and it covers the three shapes the packet names: the exact triple (equal
+;; keys, equal offsets, equal or stronger comparison), the length-family swap
+;; (equal keys over different vars), and the literal-offset weakening (equal
+;; keys, offsets moved in the direction the comparison allows).
+;;
+;; WRAP. D is never computed: the machine compares the two sides. When a fact and
+;; a query carry the SAME offsets on both sides they compare the same two runtime
+;; values, so the table applies with no arithmetic argument at all, signed or
+;; unsigned. When the offsets DIFFER, `base + c` has to BE the integer sum rather
+;; than a wrapped one, and this pass admits that for
+;;   - a constant term, whose value IS the literal, and
+;;   - a SIGNED comparison whose term has `-offset-max <= c <= 0` over a base a
+;;     dominating fact proves `>= 0`: then `base + c` lies in [-2^30, i64 MAX]
+;;     and the subtraction neither overflows nor underflows.
+;; An unsigned comparison whose offsets differ is refused outright -- constant
+;; terms included: below zero is the top of the unsigned range, so neither an
+;; offset move nor a literal ORDERING carries over to it.
+;;
+;; THE EMPTY FACT. A conjunct whose two keys are equal is decided by the same
+;; table with D = 0: `len <= len` (the versioner's spelling when a trip bound and
+;; a length are one value) needs no fact and no wrap argument, and `len - 16 <=
+;; len` needs only the non-negativity the loop's own trip test already states.
+;;
+;; WHAT DOES NOT CHANGE. Facts live on the FAST (taken) edge only, that edge must
+;; be the taken successor's single entry, dominance is the real dominator tree,
+;; the fact must still be live -- no leaf of either side redefined between the
+;; edge and the query, by the region walk (2) documents -- and retirement stays
+;; ALL-OR-NOTHING over the conjunct chain (CG-1's +317,832). Nothing here widens
+;; a guard, moves one, or reuses a value across the fold: the decided branch gets
+;; a `true` literal and both successors, exactly as (2) leaves it.
+(define (opt-guard-imply-offset-max) : i64
+  1073741824)
+
+;; Beyond this many two-way branches a function skips the implication scan and
+;; keeps (2)'s bucketed equality test alone: the scan is linear in the branch
+;; count per chain member, and the cap is what keeps that product bounded on the
+;; compiler's largest bodies.
+(define (opt-guard-imply-branch-cap) : i64
+  512)
+
+(define (opt-guard-imply-kind-var) : i64
+  0)
+
+(define (opt-guard-imply-kind-desc) : i64
+  1)
+
+(define (opt-guard-imply-kind-cell) : i64
+  2)
+
+(define (opt-guard-imply-kind-global) : i64
+  3)
+
+(define (opt-guard-imply-kind-lit) : i64
+  4)
+
+;; One side of a conjunct: the base key (kind, a, b), the literal offset, and the
+;; var the key was read from (-1 for a constant). `ok` false means "not a shape
+;; this table reads", and every rule below refuses on it.
+;; `var` is the var the key was read from, or -1 when the value is not named by
+;; one at all -- a constant, or a `Global` OPERAND, which is a memory read the IR
+;; spells inline. `site` is the block that read it, and is what the memory
+;; obligation uses in place of a definition block for those.
+(defstruct OptGuardImplyTerm
+  (kind i64)
+  (a i64)
+  (b i64)
+  (offset i64)
+  (var i64)
+  (site i64)
+  (ok bool))
+
+(defstruct OptGuardImplyCond
+  (strict bool)
+  (unsigned bool)
+  (lhs OptGuardImplyTerm)
+  (rhs OptGuardImplyTerm)
+  (ok bool))
+
+(define (opt-guard-imply-term-none) : OptGuardImplyTerm
+  (OptGuardImplyTerm 0 (- 0 1) 0 0 (- 0 1) (- 0 1) false))
+
+(define (opt-guard-imply-cond-none) : OptGuardImplyCond
+  (OptGuardImplyCond
+    false
+    false
+    (opt-guard-imply-term-none)
+    (opt-guard-imply-term-none)
+    false))
+
+;; The definition table this section reads. It is a second table beside (2)'s on
+;; purpose: (2)'s leaf and equality walks are specified over BinOp/UnOp/Mov/Cast
+;; only, and adding memory instructions to it would change which vars its
+;; fact-liveness test calls leaves. This one adds exactly `Load` and `Gep`, which
+;; is what the descriptor-word key needs to see.
+(define (opt-guard-imply-recorded? [instr : ir.CompilerIrInstr]) : bool
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.BinOp _ _ _ _ _) true]
+    [(ir.CompilerIrInstr.UnOp _ _ _ _) true]
+    [(ir.CompilerIrInstr.Mov _ _ _) true]
+    [(ir.CompilerIrInstr.Cast _ _ _ _) true]
+    [(ir.CompilerIrInstr.Load _ _ _) true]
+    [(ir.CompilerIrInstr.Gep _ _ _ _) true]
+    [_ false]))
+
+(define (opt-guard-imply-defs-fill-seq!
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]) : unit
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [index : i64 0]
+    (while (< index count)
+      (let
+        [instr : ir.CompilerIrInstr
+          (ir.compiler-ir-instr-seq-ref
+            (compiler-opt-global-shared-view instrs)
+            index)]
+        [dst : i64 (opt-gvn-instr-dst (compiler-opt-global-shared-view instr))]
+        (begin
+          (if (and
+            (opt-guard-imply-recorded? (compiler-opt-global-shared-view instr))
+            (>= dst 0)
+            (< dst (array-length defs)))
+            (set! (array-ref defs dst) (OptBoolBranchDef.Some instr label))
+            unit)
+          (set! index (+ index 1)))))))
+
+(define (opt-guard-imply-defs-fill!
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [index : OptCfgIndex]
+  [block-count : i64]) : unit
+  (let
+    [id : i64 0]
+    (while (< id block-count)
+      (begin
+        (match (opt-cfg-index-block (compiler-opt-global-shared-view index) id)
+          [(OptMaybeBlock.No) unit]
+          [(OptMaybeBlock.Some block)
+            (match (compiler-opt-global-shared-view block)
+              [(ir.CompilerIrBlock.Block label instrs)
+                (opt-guard-imply-defs-fill-seq!
+                  (compiler-opt-global-shared-view defs)
+                  label
+                  (compiler-opt-global-shared-view instrs))])])
+        (set! id (+ id 1))))))
+
+;; `Mov` copies and the same-width integer cast, to the var that holds the value.
+(define (opt-guard-imply-resolve
+  [type-segment-bases : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var : i64]
+  [fuel : i64]) : i64
+  (if (<= fuel 0)
+    var
+    (match (opt-bool-branch-def (compiler-opt-global-shared-view defs) var)
+      [(OptBoolBranchDef.No) var]
+      [(OptBoolBranchDef.Some instr _)
+        (match (compiler-opt-global-shared-view instr)
+          [(ir.CompilerIrInstr.Mov _ src _)
+            (match (compiler-opt-global-shared-view src)
+              [(ir.CompilerIrValue.Var next)
+                (opt-guard-imply-resolve
+                  type-segment-bases
+                  (compiler-opt-global-shared-view defs)
+                  next
+                  (- fuel 1))]
+              [_ var])]
+          [(ir.CompilerIrInstr.Cast _ src from to)
+            (if (opt-bounds-dom-int-cast-transparent?
+              type-segment-bases
+              (compiler-opt-global-shared-view from)
+              (compiler-opt-global-shared-view to))
+              (match (compiler-opt-global-shared-view src)
+                [(ir.CompilerIrValue.Var next)
+                  (opt-guard-imply-resolve
+                    type-segment-bases
+                    (compiler-opt-global-shared-view defs)
+                    next
+                    (- fuel 1))]
+                [_ var])
+              var)]
+          [_ var])])))
+
+;; `gep BASE, k` over a var base with a literal `k` whose word is eight bytes
+;; wide: the outer half of the descriptor spelling.
+(define (opt-guard-imply-gep-word
+  [type-segment-bases : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var : i64]) : OptGuardImplyTerm
+  (match (opt-bool-branch-def (compiler-opt-global-shared-view defs) var)
+    [(OptBoolBranchDef.No) (opt-guard-imply-term-none)]
+    [(OptBoolBranchDef.Some instr _)
+      (match (compiler-opt-global-shared-view instr)
+        [(ir.CompilerIrInstr.Gep _ base offset ty)
+          (match (compiler-opt-global-shared-view offset)
+            [(ir.CompilerIrValue.I64 k)
+              (if (not (= (opt-load-loc-type-size type-segment-bases ty) 8))
+                (opt-guard-imply-term-none)
+                (match (compiler-opt-global-shared-view base)
+                  [(ir.CompilerIrValue.Var bvar)
+                    (OptGuardImplyTerm
+                      (opt-guard-imply-kind-var)
+                      bvar
+                      k
+                      0
+                      bvar
+                      (- 0 1)
+                      true)]
+                  [_ (opt-guard-imply-term-none)]))]
+            [_ (opt-guard-imply-term-none)])]
+        [_ (opt-guard-imply-term-none)])]))
+
+;; The container-descriptor word `load (gep (load (gep ROOT, 0)), k)`, keyed on
+;; its root and word index so two loads of one length compare equal.
+(define (opt-guard-imply-desc-term
+  [type-segment-bases : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var : i64]) : OptGuardImplyTerm
+  (match (opt-bool-branch-def (compiler-opt-global-shared-view defs) var)
+    [(OptBoolBranchDef.No) (opt-guard-imply-term-none)]
+    [(OptBoolBranchDef.Some instr _)
+      (match (compiler-opt-global-shared-view instr)
+        [(ir.CompilerIrInstr.Load _ src ty)
+          (if (not (= (opt-load-loc-type-size type-segment-bases ty) 8))
+            (opt-guard-imply-term-none)
+            (match (compiler-opt-global-shared-view src)
+              [(ir.CompilerIrValue.Var gvar)
+                (let
+                  [word : OptGuardImplyTerm
+                    (opt-guard-imply-gep-word
+                      type-segment-bases
+                      (compiler-opt-global-shared-view defs)
+                      gvar)]
+                  (if (not word.ok)
+                    (opt-guard-imply-term-none)
+                    (opt-guard-imply-desc-root
+                      (compiler-opt-global-shared-view defs)
+                      word.a
+                      word.b
+                      var)))]
+              [_ (opt-guard-imply-term-none)]))]
+        [_ (opt-guard-imply-term-none)])]))
+
+;; The inner half: `descriptor = load (gep ROOT, 0)`.
+(define (opt-guard-imply-desc-root
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [desc-var : i64]
+  [word : i64]
+  [self : i64]) : OptGuardImplyTerm
+  (match (opt-bool-branch-def (compiler-opt-global-shared-view defs) desc-var)
+    [(OptBoolBranchDef.No) (opt-guard-imply-term-none)]
+    [(OptBoolBranchDef.Some instr _)
+      (match (compiler-opt-global-shared-view instr)
+        [(ir.CompilerIrInstr.Load _ src _)
+          (match (compiler-opt-global-shared-view src)
+            [(ir.CompilerIrValue.Var gvar)
+              (match (opt-bool-branch-def
+                (compiler-opt-global-shared-view defs)
+                gvar)
+                [(OptBoolBranchDef.No) (opt-guard-imply-term-none)]
+                [(OptBoolBranchDef.Some gep-instr _)
+                  (match (compiler-opt-global-shared-view gep-instr)
+                    [(ir.CompilerIrInstr.Gep _ base offset _)
+                      (match (compiler-opt-global-shared-view offset)
+                        [(ir.CompilerIrValue.I64 k)
+                          (if (not (= k 0))
+                            (opt-guard-imply-term-none)
+                            (match (compiler-opt-global-shared-view base)
+                              [(ir.CompilerIrValue.Var root)
+                                (OptGuardImplyTerm
+                                  (opt-guard-imply-kind-desc)
+                                  root
+                                  word
+                                  0
+                                  self
+                                  (- 0 1)
+                                  true)]
+                              [(ir.CompilerIrValue.Global sym)
+                                (OptGuardImplyTerm
+                                  (opt-guard-imply-kind-cell)
+                                  sym
+                                  word
+                                  0
+                                  self
+                                  (- 0 1)
+                                  true)]
+                              [_ (opt-guard-imply-term-none)]))]
+                        [_ (opt-guard-imply-term-none)])]
+                    [_ (opt-guard-imply-term-none)])])]
+            [_ (opt-guard-imply-term-none)])]
+        [_ (opt-guard-imply-term-none)])]))
+
+;; The base key of a var, once copies and casts are resolved.
+(define (opt-guard-imply-base-term
+  [type-segment-bases : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var : i64]) : OptGuardImplyTerm
+  (let
+    [desc : OptGuardImplyTerm
+      (opt-guard-imply-desc-term
+        type-segment-bases
+        (compiler-opt-global-shared-view defs)
+        var)]
+    (if desc.ok
+      desc
+      (match (opt-bool-branch-def (compiler-opt-global-shared-view defs) var)
+        [(OptBoolBranchDef.No)
+          (OptGuardImplyTerm
+            (opt-guard-imply-kind-var)
+            var
+            0
+            0
+            var
+            (- 0 1)
+            true)]
+        [(OptBoolBranchDef.Some instr _)
+          (match (compiler-opt-global-shared-view instr)
+            [(ir.CompilerIrInstr.Mov _ src _)
+              (match (compiler-opt-global-shared-view src)
+                [(ir.CompilerIrValue.Global sym)
+                  (OptGuardImplyTerm
+                    (opt-guard-imply-kind-global)
+                    sym
+                    0
+                    0
+                    var
+                    (- 0 1)
+                    true)]
+                [_
+                  (OptGuardImplyTerm
+                    (opt-guard-imply-kind-var)
+                    var
+                    0
+                    0
+                    var
+                    (- 0 1)
+                    true)])]
+            [_
+              (OptGuardImplyTerm
+                (opt-guard-imply-kind-var)
+                var
+                0
+                0
+                var
+                (- 0 1)
+                true)])]))))
+
+;; `value` as (key, literal offset).
+(define (opt-guard-imply-term
+  [type-segment-bases : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [value : ir.CompilerIrValue]
+  [block : i64]
+  [fuel : i64]) : OptGuardImplyTerm
+  (match (compiler-opt-global-shared-view value)
+    [(ir.CompilerIrValue.I64 k)
+      (OptGuardImplyTerm (opt-guard-imply-kind-lit) 0 0 k (- 0 1) (- 0 1) true)]
+    [(ir.CompilerIrValue.Global sym)
+      ;; A `Global` operand is a memory READ the IR spells inline: two of them
+      ;; are two reads, and only the region test can say they are one value.
+      (OptGuardImplyTerm
+        (opt-guard-imply-kind-global)
+        sym
+        0
+        0
+        (- 0 1)
+        block
+        true)]
+    [(ir.CompilerIrValue.Var raw)
+      (let
+        [var : i64
+          (opt-guard-imply-resolve
+            type-segment-bases
+            (compiler-opt-global-shared-view defs)
+            raw
+            (opt-guard-dedup-eq-fuel))]
+        (match (opt-bool-branch-def (compiler-opt-global-shared-view defs) var)
+          [(OptBoolBranchDef.No)
+            (opt-guard-imply-base-term
+              type-segment-bases
+              (compiler-opt-global-shared-view defs)
+              var)]
+          [(OptBoolBranchDef.Some instr _)
+            (match (compiler-opt-global-shared-view instr)
+              [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+                (if (or (<= fuel 0) (not (opt-affine-64bit-type? ty)))
+                  (opt-guard-imply-base-term
+                    type-segment-bases
+                    (compiler-opt-global-shared-view defs)
+                    var)
+                  (match (opt-bounds-dom-affine-parts
+                    (compiler-opt-global-shared-view op)
+                    (compiler-opt-global-shared-view lhs)
+                    (compiler-opt-global-shared-view rhs))
+                    [(OptBoundsDomOffset.No)
+                      (opt-guard-imply-base-term
+                        type-segment-bases
+                        (compiler-opt-global-shared-view defs)
+                        var)]
+                    [(OptBoundsDomOffset.Some base offset)
+                      (let
+                        [inner : OptGuardImplyTerm
+                          (opt-guard-imply-term
+                            type-segment-bases
+                            (compiler-opt-global-shared-view defs)
+                            (compiler-opt-global-shared-view base)
+                            block
+                            (- fuel 1))]
+                        [sum : i64 (+ inner.offset offset)]
+                        (if (and
+                          inner.ok
+                          (not (= inner.kind (opt-guard-imply-kind-lit)))
+                          (<= sum (opt-guard-imply-offset-max))
+                          (>= sum (- 0 (opt-guard-imply-offset-max))))
+                          (OptGuardImplyTerm
+                            inner.kind
+                            inner.a
+                            inner.b
+                            sum
+                            inner.var
+                            inner.site
+                            true)
+                          (opt-guard-imply-base-term
+                            type-segment-bases
+                            (compiler-opt-global-shared-view defs)
+                            var)))]))]
+              [_
+                (opt-guard-imply-base-term
+                  type-segment-bases
+                  (compiler-opt-global-shared-view defs)
+                  var)])]))]
+    [_ (opt-guard-imply-term-none)]))
+
+(define (opt-guard-imply-make
+  [type-segment-bases : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [strict : bool]
+  [unsigned : bool]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [block : i64]) : OptGuardImplyCond
+  (let
+    [left : OptGuardImplyTerm
+      (opt-guard-imply-term
+        type-segment-bases
+        (compiler-opt-global-shared-view defs)
+        (compiler-opt-global-shared-view lhs)
+        block
+        4)]
+    [right : OptGuardImplyTerm
+      (opt-guard-imply-term
+        type-segment-bases
+        (compiler-opt-global-shared-view defs)
+        (compiler-opt-global-shared-view rhs)
+        block
+        4)]
+    (OptGuardImplyCond strict unsigned left right (and left.ok right.ok))))
+
+;; The canonical conjunct of a branch condition var.
+(define (opt-guard-imply-cond
+  [type-segment-bases : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [cond-var : i64]
+  [block : i64]) : OptGuardImplyCond
+  (let
+    [var : i64
+      (opt-guard-imply-resolve
+        type-segment-bases
+        (compiler-opt-global-shared-view defs)
+        cond-var
+        (opt-guard-dedup-eq-fuel))]
+    (match (opt-bool-branch-def (compiler-opt-global-shared-view defs) var)
+      [(OptBoolBranchDef.No) (opt-guard-imply-cond-none)]
+      [(OptBoolBranchDef.Some instr _)
+        (match (compiler-opt-global-shared-view instr)
+          [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+            (if (not
+              (opt-affine-64bit-type? (compiler-opt-global-shared-view ty)))
+              (opt-guard-imply-cond-none)
+              (let
+                [unsigned : bool
+                  (opt-unsigned-integer-type?
+                    (compiler-opt-global-shared-view ty))]
+                (cond
+                  [(opt-binop-eq
+                      (compiler-opt-global-shared-view op)
+                      (ir.CompilerIrBinOp.Lt))
+                    (opt-guard-imply-make
+                      type-segment-bases
+                      (compiler-opt-global-shared-view defs)
+                      true
+                      unsigned
+                      (compiler-opt-global-shared-view lhs)
+                      (compiler-opt-global-shared-view rhs)
+                      block)]
+                  [(opt-binop-eq
+                      (compiler-opt-global-shared-view op)
+                      (ir.CompilerIrBinOp.Le))
+                    (opt-guard-imply-make
+                      type-segment-bases
+                      (compiler-opt-global-shared-view defs)
+                      false
+                      unsigned
+                      (compiler-opt-global-shared-view lhs)
+                      (compiler-opt-global-shared-view rhs)
+                      block)]
+                  [(opt-binop-eq
+                      (compiler-opt-global-shared-view op)
+                      (ir.CompilerIrBinOp.Gt))
+                    (opt-guard-imply-make
+                      type-segment-bases
+                      (compiler-opt-global-shared-view defs)
+                      true
+                      unsigned
+                      (compiler-opt-global-shared-view rhs)
+                      (compiler-opt-global-shared-view lhs)
+                      block)]
+                  [(opt-binop-eq
+                      (compiler-opt-global-shared-view op)
+                      (ir.CompilerIrBinOp.Ge))
+                    (opt-guard-imply-make
+                      type-segment-bases
+                      (compiler-opt-global-shared-view defs)
+                      false
+                      unsigned
+                      (compiler-opt-global-shared-view rhs)
+                      (compiler-opt-global-shared-view lhs)
+                      block)]
+                  [else (opt-guard-imply-cond-none)])))]
+          [_ (opt-guard-imply-cond-none)])])))
+
+;; `D <= B`.
+(define (opt-guard-imply-bound [cond : OptGuardImplyCond]) : i64
+  (if cond.strict
+    (- (- cond.rhs.offset cond.lhs.offset) 1)
+    (- cond.rhs.offset cond.lhs.offset)))
+
+(define (opt-guard-imply-key-eq?
+  [a : OptGuardImplyTerm]
+  [b : OptGuardImplyTerm]) : bool
+  (and a.ok b.ok (= a.kind b.kind) (= a.a b.a) (= a.b b.b)))
+
+;; Does an equal key here name ONE var, or two reads of one memory word? The
+;; second is the length-family swap, and it is the case that owes a memory proof.
+(define (opt-guard-imply-alias? [a : OptGuardImplyTerm] [b : OptGuardImplyTerm]) : bool
+  (and
+    (not (= a.kind (opt-guard-imply-kind-lit)))
+    (not (and (>= a.var 0) (= a.var b.var)))))
+
+;; Where a term's value was READ: the block that defines its var, or the block
+;; whose instruction spelled the `Global` operand. -1 means "a parameter, or an
+;; id no instruction defines" -- nothing to place, and the memory obligation
+;; refuses rather than guessing.
+(define (opt-guard-imply-term-block
+  [term : OptGuardImplyTerm]
+  [def-blocks : (__tl_dyn-array i64)]) : i64
+  (if (< term.var 0)
+    term.site
+    (if (< term.var (array-length def-blocks))
+      (- (array-ref def-blocks term.var) 1)
+      (- 0 1))))
+
+;; May a term's `base + offset` be read as the integer sum? A zero offset and a
+;; constant term always may; a moved offset only on a SIGNED comparison, inside
+;; the offset cap, in the direction that cannot underflow, over a base a
+;; dominating fact proves non-negative.
+(define (opt-guard-imply-term-exact?
+  [term : OptGuardImplyTerm]
+  [unsigned : bool]
+  [nonneg : bool]) : bool
+  (and
+    term.ok
+    (or
+      (= term.offset 0)
+      (= term.kind (opt-guard-imply-kind-lit))
+      (and
+        (not unsigned)
+        nonneg
+        (<= term.offset 0)
+        (>= term.offset (- 0 (opt-guard-imply-offset-max)))))))
+
+;; The scan tables: one canonical conjunct per block, the two-way branch blocks
+;; in index order, and the per-block "may write" row the memory obligation reads.
+(defstruct OptGuardImplyScan
+  (conds (__tl_dyn-array OptGuardImplyCond))
+  (branch-ids (__tl_dyn-array i64))
+  (branch-count i64)
+  (writes (__tl_dyn-array bool))
+  (write-count i64)
+  (on bool))
+
+;; Is the condition at `cond-var` still about the same values at `to`? Same
+;; region rule as (2): no leaf redefined on a path from `from` to `to` that
+;; avoids `blocked`.
+(define (opt-guard-imply-cond-live?
+  [index : OptCfgIndex]
+  [block-count : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [def-blocks : (__tl_dyn-array i64)]
+  [leaves : (__tl_dyn-array i64)]
+  [fwd : (__tl_dyn-array bool)]
+  [bwd : (__tl_dyn-array bool)]
+  [stack : (__tl_dyn-array i64)]
+  [cond-var : i64]
+  [blocked : i64]
+  [from : i64]
+  [to : i64]) : bool
+  (let
+    [leaf-count : i64
+      (opt-guard-dedup-collect-leaves
+        (compiler-opt-global-shared-view defs)
+        (compiler-opt-global-shared-view leaves)
+        0
+        (ir.CompilerIrValue.Var cond-var)
+        (opt-guard-dedup-eq-fuel))]
+    (and
+      (>= leaf-count 0)
+      (opt-guard-dedup-fact-live?
+        (compiler-opt-global-shared-view index)
+        block-count
+        (compiler-opt-global-shared-view fwd)
+        (compiler-opt-global-shared-view bwd)
+        (compiler-opt-global-shared-view stack)
+        (compiler-opt-global-shared-view def-blocks)
+        (compiler-opt-global-shared-view leaves)
+        leaf-count
+        blocked
+        from
+        to))))
+
+;; The same test for ONE var -- the root a descriptor key dereferences, which is
+;; not a leaf of either condition and still has to name one object across the
+;; two reads.
+(define (opt-guard-imply-var-live?
+  [index : OptCfgIndex]
+  [block-count : i64]
+  [def-blocks : (__tl_dyn-array i64)]
+  [leaves : (__tl_dyn-array i64)]
+  [fwd : (__tl_dyn-array bool)]
+  [bwd : (__tl_dyn-array bool)]
+  [stack : (__tl_dyn-array i64)]
+  [var : i64]
+  [blocked : i64]
+  [from : i64]
+  [to : i64]) : bool
+  (begin
+    (set! (array-ref leaves 0) var)
+    (opt-guard-dedup-fact-live?
+      (compiler-opt-global-shared-view index)
+      block-count
+      (compiler-opt-global-shared-view fwd)
+      (compiler-opt-global-shared-view bwd)
+      (compiler-opt-global-shared-view stack)
+      (compiler-opt-global-shared-view def-blocks)
+      (compiler-opt-global-shared-view leaves)
+      1
+      blocked
+      from
+      to)))
+
+;; The memory obligation of a length-family swap: the two reads name one word,
+;; so no block between them may write anything the word could be. The region and
+;; its admission are (1)'s, verbatim -- a store of any kind refuses, and a call
+;; refuses unless both whole-program rows prove it writes nothing.
+(define (opt-guard-imply-region-clean?
+  [index : OptCfgIndex]
+  [block-count : i64]
+  [scan : OptGuardImplyScan]
+  [fwd : (__tl_dyn-array bool)]
+  [bwd : (__tl_dyn-array bool)]
+  [stack : (__tl_dyn-array i64)]
+  [from : i64]
+  [to : i64]) : bool
+  (or
+    (= scan.write-count 0)
+    (opt-guard-dedup-region-clean?
+      (compiler-opt-global-shared-view index)
+      block-count
+      (compiler-opt-global-shared-view scan.writes)
+      (compiler-opt-global-shared-view fwd)
+      (compiler-opt-global-shared-view bwd)
+      (compiler-opt-global-shared-view stack)
+      from
+      to)))
+
+;; Two vars that a shared key claims read one word: the earlier definition must
+;; dominate the later one and the region between them must be write-free, and
+;; the root the key dereferences must not be redefined in it.
+(define (opt-guard-imply-alias-ok?
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [block-count : i64]
+  [scan : OptGuardImplyScan]
+  [def-blocks : (__tl_dyn-array i64)]
+  [leaves : (__tl_dyn-array i64)]
+  [fwd : (__tl_dyn-array bool)]
+  [bwd : (__tl_dyn-array bool)]
+  [stack : (__tl_dyn-array i64)]
+  [fact-term : OptGuardImplyTerm]
+  [query-term : OptGuardImplyTerm]) : bool
+  (if (not (opt-guard-imply-alias? fact-term query-term))
+    true
+    (let
+      [a : i64
+        (opt-guard-imply-term-block
+          fact-term
+          (compiler-opt-global-shared-view def-blocks))]
+      [b : i64
+        (opt-guard-imply-term-block
+          query-term
+          (compiler-opt-global-shared-view def-blocks))]
+      (if (or (< a 0) (< b 0) (>= a block-count) (>= b block-count))
+        false
+        (let
+          ;; `a = b` is admitted through the same region test, not around it:
+          ;; two `Global` operands inside ONE block are two reads, and the
+          ;; block's own write row is what decides them.
+          [first : i64
+            (if (opt-dom-info-dominates-id?
+              (compiler-opt-global-shared-view doms)
+              a
+              b)
+              a
+              (if (opt-dom-info-dominates-id?
+                (compiler-opt-global-shared-view doms)
+                b
+                a)
+                b
+                (- 0 1)))]
+          [second : i64
+            (if (= first a)
+              b
+              a)]
+          (and
+            (>= first 0)
+            (opt-guard-imply-region-clean?
+              (compiler-opt-global-shared-view index)
+              block-count
+              (compiler-opt-global-shared-view scan)
+              (compiler-opt-global-shared-view fwd)
+              (compiler-opt-global-shared-view bwd)
+              (compiler-opt-global-shared-view stack)
+              first
+              second)
+            (or
+              (not (= fact-term.kind (opt-guard-imply-kind-desc)))
+              (opt-guard-imply-var-live?
+                (compiler-opt-global-shared-view index)
+                block-count
+                (compiler-opt-global-shared-view def-blocks)
+                (compiler-opt-global-shared-view leaves)
+                (compiler-opt-global-shared-view fwd)
+                (compiler-opt-global-shared-view bwd)
+                (compiler-opt-global-shared-view stack)
+                fact-term.a
+                (- 0 1)
+                first
+                second))))))))
+
+;; Does a dominating fast edge state `0 <= base` (or `0 < base`) for this term's
+;; key? The wrap argument for a moved offset is the only consumer.
+(define (opt-guard-imply-nonneg?
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [scan : OptGuardImplyScan]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [cond-var : (__tl_dyn-array i64)]
+  [taken : (__tl_dyn-array i64)]
+  [def-blocks : (__tl_dyn-array i64)]
+  [leaves : (__tl_dyn-array i64)]
+  [fwd : (__tl_dyn-array bool)]
+  [bwd : (__tl_dyn-array bool)]
+  [stack : (__tl_dyn-array i64)]
+  [block-count : i64]
+  [term : OptGuardImplyTerm]
+  [id : i64]) : bool
+  (let
+    [found : bool false]
+    [slot : i64 0]
+    (begin
+      (while (and (not found) (< slot scan.branch-count))
+        (let
+          [other : i64 (array-ref scan.branch-ids slot)]
+          [fact : OptGuardImplyCond (array-ref scan.conds other)]
+          (begin
+            (if (and
+              (not (= other id))
+              fact.ok
+              (not fact.unsigned)
+              (= fact.lhs.kind (opt-guard-imply-kind-lit))
+              (= fact.lhs.offset 0)
+              (= fact.rhs.offset 0)
+              (opt-guard-imply-key-eq? fact.rhs term)
+              (not (opt-guard-imply-alias? fact.rhs term))
+              (<= (opt-guard-imply-bound fact) 0)
+              (>= (array-ref taken other) 0)
+              (=
+                (opt-guard-dedup-pred-count
+                  (compiler-opt-global-shared-view index)
+                  (array-ref taken other))
+                1)
+              (opt-dom-info-dominates-id?
+                (compiler-opt-global-shared-view doms)
+                (array-ref taken other)
+                id)
+              (opt-guard-imply-cond-live?
+                (compiler-opt-global-shared-view index)
+                block-count
+                (compiler-opt-global-shared-view defs)
+                (compiler-opt-global-shared-view def-blocks)
+                (compiler-opt-global-shared-view leaves)
+                (compiler-opt-global-shared-view fwd)
+                (compiler-opt-global-shared-view bwd)
+                (compiler-opt-global-shared-view stack)
+                (array-ref cond-var other)
+                other
+                (array-ref taken other)
+                id))
+              (set! found true)
+              unit)
+            (set! slot (+ slot 1)))))
+      found)))
+
+;; Fill the canonical conjunct of every block and list the two-way branch blocks
+;; in index order. Returns how many there are; the scan walks that list, so a
+;; function's cost is quadratic in its BRANCHES, not in its blocks.
+(define (opt-guard-imply-scan-fill!
+  [type-segment-bases : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [cond-var : (__tl_dyn-array i64)]
+  [block-count : i64]
+  [conds : (__tl_dyn-array OptGuardImplyCond)]
+  [branch-ids : (__tl_dyn-array i64)]) : i64
+  (let
+    [id : i64 0]
+    [written : i64 0]
+    (begin
+      (while (< id block-count)
+        (begin
+          (if (>= (array-ref cond-var id) 0)
+            (begin
+              (set!
+                (array-ref conds id)
+                (opt-guard-imply-cond
+                  type-segment-bases
+                  (compiler-opt-global-shared-view defs)
+                  (array-ref cond-var id)
+                  id))
+              (set! (array-ref branch-ids written) id)
+              (set! written (+ written 1)))
+            (set! (array-ref conds id) (opt-guard-imply-cond-none)))
+          (set! id (+ id 1))))
+      written)))
+
+;; Is this conjunct decided at its own block? The verdict is a reason code so
+;; the tracer can name the clause: 0 refused, 1 decided by the table with no
+;; fact at all, 2 by an exact dominating fact, 3 by a weakened one.
+(define (opt-guard-imply-decide
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [scan : OptGuardImplyScan]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [cond-var : (__tl_dyn-array i64)]
+  [taken : (__tl_dyn-array i64)]
+  [def-blocks : (__tl_dyn-array i64)]
+  [leaves : (__tl_dyn-array i64)]
+  [fwd : (__tl_dyn-array bool)]
+  [bwd : (__tl_dyn-array bool)]
+  [stack : (__tl_dyn-array i64)]
+  [block-count : i64]
+  [id : i64]) : i64
+  (if (not scan.on)
+    0
+    (let
+      [query : OptGuardImplyCond (array-ref scan.conds id)]
+      (if (not query.ok)
+        0
+        (let
+          [left-nonneg : bool
+            (opt-guard-imply-nonneg?
+              (compiler-opt-global-shared-view index)
+              (compiler-opt-global-shared-view doms)
+              (compiler-opt-global-shared-view scan)
+              (compiler-opt-global-shared-view defs)
+              (compiler-opt-global-shared-view cond-var)
+              (compiler-opt-global-shared-view taken)
+              (compiler-opt-global-shared-view def-blocks)
+              (compiler-opt-global-shared-view leaves)
+              (compiler-opt-global-shared-view fwd)
+              (compiler-opt-global-shared-view bwd)
+              (compiler-opt-global-shared-view stack)
+              block-count
+              query.lhs
+              id)]
+          [right-nonneg : bool
+            (opt-guard-imply-nonneg?
+              (compiler-opt-global-shared-view index)
+              (compiler-opt-global-shared-view doms)
+              (compiler-opt-global-shared-view scan)
+              (compiler-opt-global-shared-view defs)
+              (compiler-opt-global-shared-view cond-var)
+              (compiler-opt-global-shared-view taken)
+              (compiler-opt-global-shared-view def-blocks)
+              (compiler-opt-global-shared-view leaves)
+              (compiler-opt-global-shared-view fwd)
+              (compiler-opt-global-shared-view bwd)
+              (compiler-opt-global-shared-view stack)
+              block-count
+              query.rhs
+              id)]
+          [left-exact : bool
+            (opt-guard-imply-term-exact? query.lhs query.unsigned left-nonneg)]
+          [right-exact : bool
+            (opt-guard-imply-term-exact? query.rhs query.unsigned right-nonneg)]
+          (if (and
+            (opt-guard-imply-key-eq? query.lhs query.rhs)
+            (>= (opt-guard-imply-bound query) 0)
+            (or
+              (= query.lhs.offset query.rhs.offset)
+              ;; An offset move is a SIGNED argument: below zero is the top of
+              ;; the unsigned range, so no offset ordering survives there, and
+              ;; a negative literal is a huge unsigned operand rather than a
+              ;; small one.
+              (and (not query.unsigned) left-exact right-exact))
+            (opt-guard-imply-alias-ok?
+              (compiler-opt-global-shared-view index)
+              (compiler-opt-global-shared-view doms)
+              block-count
+              (compiler-opt-global-shared-view scan)
+              (compiler-opt-global-shared-view def-blocks)
+              (compiler-opt-global-shared-view leaves)
+              (compiler-opt-global-shared-view fwd)
+              (compiler-opt-global-shared-view bwd)
+              (compiler-opt-global-shared-view stack)
+              query.lhs
+              query.rhs))
+            1
+            (opt-guard-imply-scan-facts
+              (compiler-opt-global-shared-view index)
+              (compiler-opt-global-shared-view doms)
+              (compiler-opt-global-shared-view scan)
+              (compiler-opt-global-shared-view defs)
+              (compiler-opt-global-shared-view cond-var)
+              (compiler-opt-global-shared-view taken)
+              (compiler-opt-global-shared-view def-blocks)
+              (compiler-opt-global-shared-view leaves)
+              (compiler-opt-global-shared-view fwd)
+              (compiler-opt-global-shared-view bwd)
+              (compiler-opt-global-shared-view stack)
+              block-count
+              left-nonneg
+              right-nonneg
+              left-exact
+              right-exact
+              id)))))))
+
+(define (opt-guard-imply-scan-facts
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [scan : OptGuardImplyScan]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [cond-var : (__tl_dyn-array i64)]
+  [taken : (__tl_dyn-array i64)]
+  [def-blocks : (__tl_dyn-array i64)]
+  [leaves : (__tl_dyn-array i64)]
+  [fwd : (__tl_dyn-array bool)]
+  [bwd : (__tl_dyn-array bool)]
+  [stack : (__tl_dyn-array i64)]
+  [block-count : i64]
+  [left-nonneg : bool]
+  [right-nonneg : bool]
+  [left-exact : bool]
+  [right-exact : bool]
+  [id : i64]) : i64
+  (let
+    [query : OptGuardImplyCond (array-ref scan.conds id)]
+    [verdict : i64 0]
+    [slot : i64 0]
+    (begin
+      (while (and (= verdict 0) (< slot scan.branch-count))
+        (let
+          [other : i64 (array-ref scan.branch-ids slot)]
+          [fact : OptGuardImplyCond (array-ref scan.conds other)]
+          [same-offsets : bool
+            (and
+              (= fact.lhs.offset query.lhs.offset)
+              (= fact.rhs.offset query.rhs.offset))]
+          (begin
+            (if (and
+              (not (= other id))
+              fact.ok
+              (or
+                (and fact.unsigned query.unsigned)
+                (and (not fact.unsigned) (not query.unsigned)))
+              (opt-guard-imply-key-eq? fact.lhs query.lhs)
+              (opt-guard-imply-key-eq? fact.rhs query.rhs)
+              (<= (opt-guard-imply-bound fact) (opt-guard-imply-bound query))
+              (or
+                same-offsets
+                (and
+                  (not query.unsigned)
+                  left-exact
+                  right-exact
+                  (opt-guard-imply-term-exact?
+                    fact.lhs
+                    query.unsigned
+                    left-nonneg)
+                  (opt-guard-imply-term-exact?
+                    fact.rhs
+                    query.unsigned
+                    right-nonneg)))
+              (>= (array-ref taken other) 0)
+              ;; The taken successor must be entered by this edge ALONE, or
+              ;; reaching it proves nothing about the condition.
+              (=
+                (opt-guard-dedup-pred-count
+                  (compiler-opt-global-shared-view index)
+                  (array-ref taken other))
+                1)
+              (opt-dom-info-dominates-id?
+                (compiler-opt-global-shared-view doms)
+                (array-ref taken other)
+                id)
+              ;; Only the FACT's leaves are tested for staleness. (2) tests
+              ;; the query's because there the two conditions are one tree and
+              ;; one leaf set; here they are not, and the query's leaves are
+              ;; its own values at its own point -- what the implication needs
+              ;; is that the fact still describes them, which is the fact's
+              ;; leaves for a shared var key and the alias test below for a
+              ;; shared memory key.
+              (opt-guard-imply-cond-live?
+                (compiler-opt-global-shared-view index)
+                block-count
+                (compiler-opt-global-shared-view defs)
+                (compiler-opt-global-shared-view def-blocks)
+                (compiler-opt-global-shared-view leaves)
+                (compiler-opt-global-shared-view fwd)
+                (compiler-opt-global-shared-view bwd)
+                (compiler-opt-global-shared-view stack)
+                (array-ref cond-var other)
+                other
+                (array-ref taken other)
+                id)
+              (opt-guard-imply-alias-ok?
+                (compiler-opt-global-shared-view index)
+                (compiler-opt-global-shared-view doms)
+                block-count
+                (compiler-opt-global-shared-view scan)
+                (compiler-opt-global-shared-view def-blocks)
+                (compiler-opt-global-shared-view leaves)
+                (compiler-opt-global-shared-view fwd)
+                (compiler-opt-global-shared-view bwd)
+                (compiler-opt-global-shared-view stack)
+                fact.lhs
+                query.lhs)
+              (opt-guard-imply-alias-ok?
+                (compiler-opt-global-shared-view index)
+                (compiler-opt-global-shared-view doms)
+                block-count
+                (compiler-opt-global-shared-view scan)
+                (compiler-opt-global-shared-view def-blocks)
+                (compiler-opt-global-shared-view leaves)
+                (compiler-opt-global-shared-view fwd)
+                (compiler-opt-global-shared-view bwd)
+                (compiler-opt-global-shared-view stack)
+                fact.rhs
+                query.rhs))
+              (set!
+                verdict
+                (if same-offsets
+                  2
+                  3))
+              unit)
+            (set! slot (+ slot 1)))))
+      verdict)))
+
+;; `--trace-passes` observability: one line per guard-chain member, naming the
+;; function, the block, the conjunct's canonical shape and the clause that
+;; decided it (or that nothing did). Built inside the guard, so a compile
+;; without the flag pays one boolean test per member.
+(define (opt-guard-imply-reason-text [reason : i64]) : String
+  (cond
+    [(= reason 4) "equal"]
+    [(= reason 1) "self"]
+    [(= reason 2) "exact"]
+    [(= reason 3) "weakened"]
+    [else "none"]))
+
+(define (opt-guard-imply-term-text [term : OptGuardImplyTerm]) : String
+  (if (not term.ok)
+    (string.copy "?")
+    (str_cat.str-cat
+      (str_cat.str-cat
+        (cond
+          [(= term.kind (opt-guard-imply-kind-lit)) "lit"]
+          [(= term.kind (opt-guard-imply-kind-global)) "cell"]
+          [(= term.kind (opt-guard-imply-kind-cell)) "cellword"]
+          [(= term.kind (opt-guard-imply-kind-desc)) "descword"]
+          [else "var"])
+        (str_cat.str-cat ":" (string.int->string term.a)))
+      (str_cat.str-cat
+        (str_cat.str-cat "." (string.int->string term.b))
+        (str_cat.str-cat "+" (string.int->string term.offset))))))
+
+(define (opt-guard-imply-trace-member!
+  [name : i64]
+  [label : i64]
+  [cond : OptGuardImplyCond]
+  [reason : i64]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (io.print-error
+      (str_cat.str-cat
+        (str_cat.str-cat
+          (str_cat.str-cat "guard-imply|" (ir.compiler-ir-symbol-text name))
+          (str_cat.str-cat "|block=" (ir.compiler-ir-label-text label)))
+        (str_cat.str-cat
+          (str_cat.str-cat
+            (str_cat.str-cat
+              "|op="
+              (if cond.strict
+                (if cond.unsigned
+                  "ult"
+                  "slt")
+                (if cond.unsigned
+                  "ule"
+                  "sle")))
+            (str_cat.str-cat "|lhs=" (opt-guard-imply-term-text cond.lhs)))
+          (str_cat.str-cat
+            (str_cat.str-cat "|rhs=" (opt-guard-imply-term-text cond.rhs))
+            (str_cat.str-cat
+              (str_cat.str-cat "|decided=" (opt-guard-imply-reason-text reason))
+              "\n")))))
+    unit))
+
+(define (opt-guard-imply-trace-chain!
+  [name : i64]
+  [label : i64]
+  [links : i64]
+  [folded : bool]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (io.print-error
+      (str_cat.str-cat
+        (str_cat.str-cat
+          (str_cat.str-cat
+            "guard-imply-chain|"
+            (ir.compiler-ir-symbol-text name))
+          (str_cat.str-cat "|head=" (ir.compiler-ir-label-text label)))
+        (str_cat.str-cat
+          (str_cat.str-cat "|links=" (string.int->string links))
+          (str_cat.str-cat
+            (str_cat.str-cat
+              "|verdict="
+              (if folded
+                "fold"
+                "keep"))
+            "\n"))))
+    unit))
+
 ;; --- (2b) branch sites, conjunct chains, retirement --------------------------
 ;;
 ;; Per-block rows: the condition var of a two-way branch (-1 when the block does
@@ -162459,7 +163656,9 @@
   [bhash : (__tl_dyn-array i64)]
   [bchain : (__tl_dyn-array i64)]
   [heads : opt_i64_i64_map.Map]
-  [fold : (__tl_dyn-array bool)]) : i64
+  [fold : (__tl_dyn-array bool)]
+  [name : i64]
+  [scan : OptGuardImplyScan]) : i64
   (let
     [id : i64 0]
     [total : i64 0]
@@ -162480,35 +163679,70 @@
               [all? : bool true]
               (begin
                 (while (>= cursor 0)
-                  (begin
-                    (if (opt-guard-dedup-retirable?
-                      type-segment-bases
-                      (compiler-opt-global-shared-view index)
-                      (compiler-opt-global-shared-view doms)
-                      (compiler-opt-global-shared-view defs)
-                      (compiler-opt-global-shared-view def-blocks)
-                      (compiler-opt-global-shared-view cond-var)
-                      (compiler-opt-global-shared-view taken)
-                      (compiler-opt-global-shared-view bchain)
-                      (compiler-opt-global-shared-view heads)
-                      (compiler-opt-global-shared-view bhash)
-                      (compiler-opt-global-shared-view leaves)
-                      (compiler-opt-global-shared-view fwd)
-                      (compiler-opt-global-shared-view bwd)
-                      (compiler-opt-global-shared-view stack)
-                      block-count
-                      cursor)
-                      unit
-                      (set! all? false))
-                    (set! links (+ links 1))
-                    (set!
-                      cursor
-                      (opt-guard-dedup-chain-next
+                  (let
+                    ;; (2)'s structural test first -- it is the cheap one and it
+                    ;; decides the spelling the versioner repeats verbatim --
+                    ;; then CK-5's implication table for everything else.
+                    [reason : i64
+                      (if (opt-guard-dedup-retirable?
+                        type-segment-bases
                         (compiler-opt-global-shared-view index)
+                        (compiler-opt-global-shared-view doms)
+                        (compiler-opt-global-shared-view defs)
+                        (compiler-opt-global-shared-view def-blocks)
                         (compiler-opt-global-shared-view cond-var)
                         (compiler-opt-global-shared-view taken)
-                        (compiler-opt-global-shared-view other)
-                        cursor))))
+                        (compiler-opt-global-shared-view bchain)
+                        (compiler-opt-global-shared-view heads)
+                        (compiler-opt-global-shared-view bhash)
+                        (compiler-opt-global-shared-view leaves)
+                        (compiler-opt-global-shared-view fwd)
+                        (compiler-opt-global-shared-view bwd)
+                        (compiler-opt-global-shared-view stack)
+                        block-count
+                        cursor)
+                        4
+                        (opt-guard-imply-decide
+                          (compiler-opt-global-shared-view index)
+                          (compiler-opt-global-shared-view doms)
+                          (compiler-opt-global-shared-view scan)
+                          (compiler-opt-global-shared-view defs)
+                          (compiler-opt-global-shared-view cond-var)
+                          (compiler-opt-global-shared-view taken)
+                          (compiler-opt-global-shared-view def-blocks)
+                          (compiler-opt-global-shared-view leaves)
+                          (compiler-opt-global-shared-view fwd)
+                          (compiler-opt-global-shared-view bwd)
+                          (compiler-opt-global-shared-view stack)
+                          block-count
+                          cursor))]
+                    (begin
+                      (opt-guard-imply-trace-member!
+                        name
+                        (opt-cfg-index-label
+                          (compiler-opt-global-shared-view index)
+                          cursor)
+                        (array-ref scan.conds cursor)
+                        reason)
+                      (if (> reason 0)
+                        unit
+                        (set! all? false))
+                      (set! links (+ links 1))
+                      (set!
+                        cursor
+                        (opt-guard-dedup-chain-next
+                          (compiler-opt-global-shared-view index)
+                          (compiler-opt-global-shared-view cond-var)
+                          (compiler-opt-global-shared-view taken)
+                          (compiler-opt-global-shared-view other)
+                          cursor)))))
+                (opt-guard-imply-trace-chain!
+                  name
+                  (opt-cfg-index-label
+                    (compiler-opt-global-shared-view index)
+                    id)
+                  links
+                  all?)
                 (if all?
                   (let
                     [apply-cursor : i64 id]
@@ -163029,6 +164263,51 @@
                             (compiler-opt-global-shared-view bhash)
                             (compiler-opt-global-shared-view bchain)
                             block-count)]
+                        ;; CK-5's tables: one canonical conjunct per block, the
+                        ;; two-way branch blocks in index order (the fact scan
+                        ;; walks THESE, not every block), and the per-block
+                        ;; write row the length-family swap's memory obligation
+                        ;; reads. The definition table is a second one because
+                        ;; the key needs to see `Load`/`Gep` and (2)'s leaf walk
+                        ;; must not.
+                        [imply-defs : (__tl_dyn-array OptBoolBranchDef)
+                          (__tl_make-array OptBoolBranchDef frame)]
+                        [_imply-defs : unit
+                          (opt-guard-imply-defs-fill!
+                            (compiler-opt-global-shared-view imply-defs)
+                            (compiler-opt-global-shared-view index)
+                            block-count)]
+                        [imply-conds : (__tl_dyn-array OptGuardImplyCond)
+                          (__tl_make-array OptGuardImplyCond block-count)]
+                        [branch-ids : (__tl_dyn-array i64)
+                          (__tl_make-array i64 block-count)]
+                        [imply-writes : (__tl_dyn-array bool)
+                          (__tl_make-array bool block-count)]
+                        [imply-write-count : i64
+                          (opt-guard-dedup-writes-fill!
+                            (compiler-opt-global-shared-view
+                              summaries.call-memory)
+                            (compiler-opt-global-shared-view
+                              summaries.global-cell.obj-mod-ref)
+                            (compiler-opt-global-shared-view index)
+                            block-count
+                            (compiler-opt-global-shared-view imply-writes))]
+                        [imply-branches : i64
+                          (opt-guard-imply-scan-fill!
+                            type-segment-bases
+                            (compiler-opt-global-shared-view imply-defs)
+                            (compiler-opt-global-shared-view cond-var)
+                            block-count
+                            (compiler-opt-global-shared-view imply-conds)
+                            (compiler-opt-global-shared-view branch-ids))]
+                        [scan : OptGuardImplyScan
+                          (OptGuardImplyScan
+                            imply-conds
+                            branch-ids
+                            imply-branches
+                            imply-writes
+                            imply-write-count
+                            (<= imply-branches (opt-guard-imply-branch-cap)))]
                         (opt-guard-dedup-mark-chains!
                           type-segment-bases
                           (compiler-opt-global-shared-view index)
@@ -163046,7 +164325,9 @@
                           (compiler-opt-global-shared-view bhash)
                           (compiler-opt-global-shared-view bchain)
                           (compiler-opt-global-shared-view heads)
-                          (compiler-opt-global-shared-view fold))))))]
+                          (compiler-opt-global-shared-view fold)
+                          (ir.compiler-ir-symbol-id name)
+                          (compiler-opt-global-shared-view scan))))))]
               ;; The hoist is kept ONLY when it completed into a CSE. A moved
               ;; pair whose re-derivation the memory test refused is pure cost
               ;; -- the bypass edge now runs a load the arm used to run -- so

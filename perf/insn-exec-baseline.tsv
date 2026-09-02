@@ -21,11 +21,11 @@ benchmark/typelisp/opt_quicksort	394833975
 benchmark/c-scalar/opt_quicksort	398372863
 benchmark/typelisp/spmd_reduce	1473975345
 benchmark/c-scalar/spmd_reduce	3381322973
-benchmark/typelisp/cfg_domloops	551773899
+benchmark/typelisp/cfg_domloops	538637379
 benchmark/c-scalar/cfg_domloops	423071026
-benchmark/typelisp/gvn_table	756186900
+benchmark/typelisp/gvn_table	755827814
 benchmark/c-scalar/gvn_table	620750567
-benchmark/typelisp/intern_table	376520516
+benchmark/typelisp/intern_table	368065686
 benchmark/c-scalar/intern_table	296291632
 benchmark/typelisp/lex_source	477421694
 benchmark/c-scalar/lex_source	549230985

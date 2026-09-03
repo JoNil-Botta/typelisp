@@ -4772,6 +4772,58 @@
     "a caller's later sites are restricted to the callee its first accept named"))
 
 (test
+  inline-checked-depth-floor
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-depth-floor-ok?)
+    "the site-depth floor relaxes to zero exactly where the composite frequency already carries the evidence"))
+
+(test
+  inline-checked-depth0-hot-site
+  (test.assert-i64-eq
+    (compiler_optimize_tests.opt-inline-checked-depth0-self-test 1)
+    201
+    "the recorded seven-parameter builder shape at a depth-0 entry site of a hot loop-holding caller is priced and refused by cost"))
+
+(test
+  inline-checked-depth0-cold-site
+  (test.assert-i64-eq
+    (compiler_optimize_tests.opt-inline-checked-depth0-self-test 0)
+    1
+    "the same depth-0 site under a caller nothing reaches through a loop never reaches a verdict"))
+
+(test
+  inline-checked-depth0-conditional-site
+  (test.assert-i64-eq
+    (compiler_optimize_tests.opt-inline-checked-depth0-self-test 2)
+    101
+    "moving the same site one unconditional jump off the entry block keeps the floor: one verdict fewer, the call still there"))
+
+(test
+  inline-checked-lock-margin
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-lock-margin-ok?)
+    "the one-callee lock admits a second callee only behind a first accept whose whole modelled saving survived"))
+
+(test
+  inline-checked-relaxed-rank
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-relaxed-rank-ok?)
+    "a relaxed candidate is ranked behind every core one and charged to the relaxations' own reserve"))
+
+(test
+  inline-checked-relaxed-reserve
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-relaxed-reserve-ok?)
+    "the relaxations' reserve runs out without touching the budget the core candidates read"))
+
+(test
+  inline-checked-cheap-tier-claim
+  (test.assert-i64-eq
+    (compiler_optimize_tests.opt-inline-checked-cheap-tier-self-test)
+    10000
+    "one checked-tier verdict, and the cheap tiers' four inlines of a tiny leaf all still in place"))
+
+(test
   inline-bounds-loop-cascade-refusal
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-bounds-loop-cascade-refusal-ok?)

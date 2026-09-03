@@ -13935,6 +13935,394 @@ g:
     .size g, . - g
 ")))
 
+;; RMW-2: the adjacent `movq M,%rX / op src,%rX / movq %rX,M` triple folds to
+;; one memory-operand ALU instruction when %rX is dead after the store. Every
+;; allowed op is covered in both operand forms and both memory shapes, and the
+;; four ways a path can END while proving death -- a full overwrite, a `ret`
+;; that cannot carry the register, a call that cannot read it, and a two-way
+;; branch whose arms both overwrite it -- each have a row.
+(define (compiler-backend-peephole-rmw-fold-ok?) : bool
+  (let
+    ;; rip-relative global, immediate source, death by full overwrite.
+    [global-imm-input : String
+      "    movq _tl_g(%rip), %rcx
+    addq $1, %rcx
+    movq %rcx, _tl_g(%rip)
+    movq $0, %rcx
+"]
+    [global-imm-want : String "    addq $1, _tl_g(%rip)
+    movq $0, %rcx
+"]
+    ;; %rsp frame slot, register source, death by full overwrite.
+    [slot-reg-input : String
+      "    movq 24(%rsp), %r8
+    subq %r9, %r8
+    movq %r8, 24(%rsp)
+    movq $0, %r8
+"]
+    [slot-reg-want : String "    subq %r9, 24(%rsp)
+    movq $0, %r8
+"]
+    ;; %rbp frame slot, immediate source, death at a `ret` the register cannot
+    ;; return through (%rbx is neither of the two integer return registers).
+    [rbp-slot-input : String
+      "    movq -16(%rbp), %rbx
+    andq $7, %rbx
+    movq %rbx, -16(%rbp)
+    ret
+"]
+    [rbp-slot-want : String "    andq $7, -16(%rbp)
+    ret
+"]
+    ;; The remaining three ops, back to back. Each triple's death is proven by
+    ;; the NEXT triple's load, which the next fold then deletes -- the cascade
+    ;; the pass's FOLD ORDER note describes, and the reason the rows are written
+    ;; as one chain rather than four independent blocks.
+    [chain-input : String
+      "    movq _tl_a(%rip), %rsi
+    orq $8, %rsi
+    movq %rsi, _tl_a(%rip)
+    movq _tl_b(%rip), %rsi
+    xorq %rdi, %rsi
+    movq %rsi, _tl_b(%rip)
+    movq _tl_c(%rip), %rsi
+    negq %rsi
+    movq %rsi, _tl_c(%rip)
+    movq _tl_d(%rip), %rsi
+    notq %rsi
+    movq %rsi, _tl_d(%rip)
+    ret
+"]
+    [chain-want : String
+      "    orq $8, _tl_a(%rip)
+    xorq %rdi, _tl_b(%rip)
+    negq _tl_c(%rip)
+    notq _tl_d(%rip)
+    ret
+"]
+    ;; The three non-`movq` kills. `leaq` and `movabsq` write the full 64-bit
+    ;; destination, `movl` writes 32 and x86-64 zero-extends the rest, and
+    ;; `xorl %eX, %eX` names the register twice without reading either copy.
+    ;; The first row is the shape the fixture's `bit-or` counter actually
+    ;; produces: its register dies into a `leaq`, not a `movq`.
+    [kill-shapes-input : String
+      "    movq _tl_a(%rip), %r9
+    orq %rax, %r9
+    movq %r9, _tl_a(%rip)
+    leaq 1024(%rax), %r9
+    movq _tl_b(%rip), %r10
+    addq %rax, %r10
+    movq %r10, _tl_b(%rip)
+    movl $7, %r10d
+    movq _tl_c(%rip), %rcx
+    andq %rax, %rcx
+    movq %rcx, _tl_c(%rip)
+    xorl %ecx, %ecx
+    movq _tl_d(%rip), %rsi
+    xorq %rax, %rsi
+    movq %rsi, _tl_d(%rip)
+    movabsq $4294967296, %rsi
+    ret
+"]
+    [kill-shapes-want : String
+      "    orq %rax, _tl_a(%rip)
+    leaq 1024(%rax), %r9
+    addq %rax, _tl_b(%rip)
+    movl $7, %r10d
+    andq %rax, _tl_c(%rip)
+    xorl %ecx, %ecx
+    xorq %rax, _tl_d(%rip)
+    movabsq $4294967296, %rsi
+    ret
+"]
+    ;; A call cannot read a register that is callee-saved under BOTH supported
+    ;; ABIs, so the scan walks through it.
+    [call-input : String
+      "    movq _tl_g(%rip), %r12
+    addq $1, %r12
+    movq %r12, _tl_g(%rip)
+    call _tl_side
+    ret
+"]
+    [call-want : String "    addq $1, _tl_g(%rip)
+    call _tl_side
+    ret
+"]
+    (and
+      (string.eq
+        (compiler_backend.compiler-backend-peephole-asm global-imm-input)
+        global-imm-want)
+      (string.eq
+        (compiler_backend.compiler-backend-peephole-asm slot-reg-input)
+        slot-reg-want)
+      (string.eq
+        (compiler_backend.compiler-backend-peephole-asm rbp-slot-input)
+        rbp-slot-want)
+      (string.eq
+        (compiler_backend.compiler-backend-peephole-asm chain-input)
+        chain-want)
+      (string.eq
+        (compiler_backend.compiler-backend-peephole-asm kill-shapes-input)
+        kill-shapes-want)
+      (string.eq
+        (compiler_backend.compiler-backend-peephole-asm call-input)
+        call-want))))
+
+;; RMW-2 refusals. Each input is returned UNCHANGED, and each pins one clause of
+;; the admission list or one arm of the death scan's default-refuse.
+(define (compiler-backend-peephole-rmw-refuse-ok?) : bool
+  (let
+    ;; The stored value is read after the store.
+    [reused : String
+      "    movq _tl_g(%rip), %rcx
+    addq $1, %rcx
+    movq %rcx, _tl_g(%rip)
+    movq %rcx, %rdx
+    ret
+"]
+    ;; Load and store name different addresses.
+    [other-address : String
+      "    movq _tl_g(%rip), %rcx
+    addq $1, %rcx
+    movq %rcx, _tl_h(%rip)
+    ret
+"]
+    ;; A label definition between the op and the store: the three lines are no
+    ;; longer the adjacent triple, and the store has a second predecessor.
+    [label-between : String
+      "    movq _tl_g(%rip), %rcx
+    addq $1, %rcx
+.Lf1_mid:
+    movq %rcx, _tl_g(%rip)
+    ret
+"]
+    ;; A branch between the op and the store.
+    [branch-between : String
+      "    movq _tl_g(%rip), %rcx
+    addq $1, %rcx
+    jne .Lf1_out
+    movq %rcx, _tl_g(%rip)
+    ret
+.Lf1_out:
+    ret
+"]
+    ;; An op outside the fold set. `imulq $3, m` has no memory-destination
+    ;; encoding at all, which is why the set stops where LLVM's does.
+    [other-op : String
+      "    movq _tl_g(%rip), %rcx
+    imulq $3, %rcx
+    movq %rcx, _tl_g(%rip)
+    ret
+"]
+    ;; Source register == destination register: `addq %rcx, %rcx` doubles the
+    ;; LOADED value, which `addq %rcx, M` would not reproduce.
+    [same-reg : String
+      "    movq _tl_g(%rip), %rcx
+    addq %rcx, %rcx
+    movq %rcx, _tl_g(%rip)
+    ret
+"]
+    ;; %rax may still carry the function's return value at `ret`.
+    [return-reg : String
+      "    movq _tl_g(%rip), %rax
+    addq $1, %rax
+    movq %rax, _tl_g(%rip)
+    ret
+"]
+    ;; A caller-saved register reaching a call may be one of that call's
+    ;; argument registers, and no text between the store and the call says so.
+    [call-live : String
+      "    movq _tl_g(%rip), %rcx
+    addq $1, %rcx
+    movq %rcx, _tl_g(%rip)
+    call _tl_side
+    ret
+"]
+    ;; An indexed memory operand is not one of the two stable-address shapes.
+    [indexed : String
+      "    movq (%rax,%rcx,8), %rsi
+    addq $1, %rsi
+    movq %rsi, (%rax,%rcx,8)
+    ret
+"]
+    ;; `cqto` reads %rdx:%rax without naming either, and is not on the
+    ;; transparent-mnemonic allow list, so the scan refuses rather than walking
+    ;; past an instruction whose reads it cannot see.
+    [opaque-mnemonic : String
+      "    movq _tl_g(%rip), %rsi
+    addq $1, %rsi
+    movq %rsi, _tl_g(%rip)
+    cqto
+    ret
+"]
+    ;; A branch whose target is not defined in this group cannot be followed.
+    [unknown-target : String
+      "    movq _tl_g(%rip), %rcx
+    addq $1, %rcx
+    movq %rcx, _tl_g(%rip)
+    jmp .Lf1_elsewhere
+"]
+    [reused-got : String
+      (compiler_backend.compiler-backend-peephole-asm
+        (owned_view.compiler-owned-shared-view reused))]
+    [other-address-got : String
+      (compiler_backend.compiler-backend-peephole-asm
+        (owned_view.compiler-owned-shared-view other-address))]
+    [label-between-got : String
+      (compiler_backend.compiler-backend-peephole-asm
+        (owned_view.compiler-owned-shared-view label-between))]
+    [branch-between-got : String
+      (compiler_backend.compiler-backend-peephole-asm
+        (owned_view.compiler-owned-shared-view branch-between))]
+    [other-op-got : String
+      (compiler_backend.compiler-backend-peephole-asm
+        (owned_view.compiler-owned-shared-view other-op))]
+    [same-reg-got : String
+      (compiler_backend.compiler-backend-peephole-asm
+        (owned_view.compiler-owned-shared-view same-reg))]
+    [return-reg-got : String
+      (compiler_backend.compiler-backend-peephole-asm
+        (owned_view.compiler-owned-shared-view return-reg))]
+    [call-live-got : String
+      (compiler_backend.compiler-backend-peephole-asm
+        (owned_view.compiler-owned-shared-view call-live))]
+    [indexed-got : String
+      (compiler_backend.compiler-backend-peephole-asm
+        (owned_view.compiler-owned-shared-view indexed))]
+    [opaque-mnemonic-got : String
+      (compiler_backend.compiler-backend-peephole-asm
+        (owned_view.compiler-owned-shared-view opaque-mnemonic))]
+    [unknown-target-got : String
+      (compiler_backend.compiler-backend-peephole-asm
+        (owned_view.compiler-owned-shared-view unknown-target))]
+    (and
+      (string.eq reused-got reused)
+      (string.eq other-address-got other-address)
+      (string.eq label-between-got label-between)
+      (string.eq branch-between-got branch-between)
+      (string.eq other-op-got other-op)
+      (string.eq same-reg-got same-reg)
+      (string.eq return-reg-got return-reg)
+      (string.eq call-live-got call-live)
+      (string.eq indexed-got indexed)
+      (string.eq opaque-mnemonic-got opaque-mnemonic)
+      (string.eq unknown-target-got unknown-target))))
+
+;; RMW-2 FLAGS CONSUMER. A `jcc` immediately after the store reads the flags the
+;; ALU op wrote -- the intervening `movq` writes none -- and the folded
+;; instruction writes exactly those flags from exactly those operand values. The
+;; fold is therefore admitted, not refused, and the branch keeps its meaning. (A
+;; `jcc` reading the LOAD's flags cannot exist: `movq` sets none.) Death is
+;; proven through BOTH arms of that branch.
+(define (compiler-backend-peephole-rmw-flags-consumer-ok?) : bool
+  (let
+    [flags-input : String
+      "    movq _tl_g(%rip), %rcx
+    addq $1, %rcx
+    movq %rcx, _tl_g(%rip)
+    je .Lf1_zero
+    movq $0, %rcx
+    ret
+.Lf1_zero:
+    movq $1, %rcx
+    ret
+"]
+    [flags-want : String
+      "    addq $1, _tl_g(%rip)
+    je .Lf1_zero
+    movq $0, %rcx
+    ret
+.Lf1_zero:
+    movq $1, %rcx
+    ret
+"]
+    ;; The same shape, but the taken arm READS the register: one live path is
+    ;; enough to refuse.
+    [flags-live-input : String
+      "    movq _tl_g(%rip), %rcx
+    addq $1, %rcx
+    movq %rcx, _tl_g(%rip)
+    je .Lf1_zero
+    movq $0, %rcx
+    ret
+.Lf1_zero:
+    movq %rcx, %rdx
+    ret
+"]
+    [flags-live-got : String
+      (compiler_backend.compiler-backend-peephole-asm
+        (owned_view.compiler-owned-shared-view flags-live-input))]
+    (and
+      (string.eq
+        (compiler_backend.compiler-backend-peephole-asm flags-input)
+        flags-want)
+      (string.eq flags-live-got flags-live-input))))
+
+;; RMW-2 RELOAD REUSE -- the refusal that decides where this pass may run. The
+;; walk's owner map rewrites a later reload of the same slot into a copy out of
+;; the register that mirrors it. That copy is a genuine read of the triple's
+;; register and exists ONLY in the emitted text, so a fold placed inside the
+;; walk would delete the register the walk is about to read. Because the fold
+;; runs on the final record stream, the death scan sees the minted read and
+;; refuses: the triple stays, and the reload is still rewritten.
+(define (compiler-backend-peephole-rmw-owner-reload-refuse-ok?) : bool
+  (let
+    [reload-input : String
+      "    movq 24(%rsp), %r8
+    addq $1, %r8
+    movq %r8, 24(%rsp)
+    movq 24(%rsp), %r9
+    ret
+"]
+    [reload-want : String
+      "    movq 24(%rsp), %r8
+    addq $1, %r8
+    movq %r8, 24(%rsp)
+    movq %r8, %r9
+    ret
+"]
+    (string.eq
+      (compiler_backend.compiler-backend-peephole-asm reload-input)
+      reload-want)))
+
+;; RMW-2 COST. Recognition rides the walk, so the question a unit test can ask
+;; of it is whether a stream it must NOT touch comes back byte-identical. Each
+;; row is one way the rolling window fails to close: the ALU names a different
+;; register than the load and the store, a line sits between the op and the
+;; store, and a run of ALU lines has no load or store around it at all.
+(define (compiler-backend-peephole-rmw-no-candidate-ok?) : bool
+  (let
+    [other-reg-input : String
+      "    movq _tl_g(%rip), %rcx
+    addq $1, %rdx
+    movq %rdx, _tl_g(%rip)
+    ret
+"]
+    [split-window-input : String
+      "    movq _tl_g(%rip), %rcx
+    addq $1, %rcx
+    movq $0, %rsi
+    movq %rcx, _tl_g(%rip)
+    ret
+"]
+    [alu-only-input : String "    addq $1, %rcx
+    subq $2, %rcx
+    ret
+"]
+    [other-reg-got : String
+      (compiler_backend.compiler-backend-peephole-asm
+        (owned_view.compiler-owned-shared-view other-reg-input))]
+    [split-window-got : String
+      (compiler_backend.compiler-backend-peephole-asm
+        (owned_view.compiler-owned-shared-view split-window-input))]
+    [alu-only-got : String
+      (compiler_backend.compiler-backend-peephole-asm
+        (owned_view.compiler-owned-shared-view alu-only-input))]
+    (and
+      (string.eq other-reg-got other-reg-input)
+      (string.eq split-window-got split-window-input)
+      (string.eq alu-only-got alu-only-input))))
+
 (define (compiler-backend-layout-ok?) : bool
   (and
     (compiler-backend-layout-tail-duplication-ok?)
@@ -13965,6 +14353,11 @@ g:
     true
     (compiler-backend-peephole-dead-mirror-store-ok?)
     (compiler-backend-peephole-dead-reg-def-ok?)
+    (compiler-backend-peephole-rmw-fold-ok?)
+    (compiler-backend-peephole-rmw-refuse-ok?)
+    (compiler-backend-peephole-rmw-flags-consumer-ok?)
+    (compiler-backend-peephole-rmw-owner-reload-refuse-ok?)
+    (compiler-backend-peephole-rmw-no-candidate-ok?)
     (compiler-backend-peephole-detailed-abort-guard-ok?)
     (compiler-backend-peephole-drop-fallthrough-chain-ok?)
     (compiler-backend-peephole-drop-fallthrough-abort-guard-ok?)

@@ -1870,8 +1870,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # independently crosses the same boundary on the pre-#6692 tree: its
     # authoritative Windows CI probe measured 5,047,053 used nodes, 5,111,808
     # capacity, and 163,577,856 physical payload bytes.
+    # #7426's optimizer/backend packets, rebased over #6692 and #7433, cross the
+    # composed graph from 78 to 79 segments: the authoritative Windows CI probe
+    # measured 5,112,197 used nodes, 5,177,344 capacity, and 165,675,008 physical
+    # payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 78 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 79 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking
@@ -1949,6 +1953,9 @@ if [ "$NL_HOST_OS" = windows ]; then
     # graph from 60 to 61 segments: the authoritative Windows CI probe measured
     # 3,932,251 used nodes, 3,997,696 capacity, and 127,926,272 physical payload
     # bytes.
+    # #7426's optimizer/backend packets independently cross the same boundary:
+    # its authoritative Windows CI probe measured 3,935,779 used nodes with the
+    # same capacity and physical payload size.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 61 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

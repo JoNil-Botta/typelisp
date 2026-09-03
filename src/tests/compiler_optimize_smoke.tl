@@ -4855,7 +4855,7 @@
   inline-checked-entry-equivalent
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-checked-entry-equivalent-ok?)
-    "a depth-0 site reads as entry-equivalent at the entry block, at a block that post-dominates it in a loop-free caller and at an arm of the entry branch whose sibling leaves the function in a wrapper-shaped caller"))
+    "a depth-0 site reads as entry-equivalent at the entry block, at a block that post-dominates it in a loop-free caller, at an arm of the entry branch whose sibling leaves the function in a wrapper-shaped caller, and at an arm of a DISPATCH whose spine only compares and branches"))
 
 (test
   inline-checked-depth0-hot-site
@@ -4898,6 +4898,20 @@
     (compiler_optimize_tests.opt-inline-checked-inl8-self-test 1)
     1010
     "the same pair with a LOOP below the second caller's site, which is the reading the caller clause had before: the site never reaches a verdict -- `site-depth` with `pos` reading `none` -- so one verdict fewer and that caller keeps its call out of line"))
+
+(test
+  inline-checked-inl9-dispatch-arms
+  (test.assert-i64-eq
+    (compiler_optimize_tests.opt-inline-checked-inl9-self-test 0)
+    3000
+    "the three arms of a dispatch, each calling one acyclic call-free leaf: INL-9 reads every arm as entry-equivalent -- only the first is a successor of the entry branch, and the call count is one per arm by construction -- so the tier prices all three, keeps all three, and no arm is left holding the call"))
+
+(test
+  inline-checked-inl9-dispatch-cyclic-callee
+  (test.assert-i64-eq
+    (compiler_optimize_tests.opt-inline-checked-inl9-self-test 1)
+    3
+    "the same dispatch with a LOOP around the same leaf's chain: the dispatch reading's own clause is on the callee, so no arm reaches a verdict at all -- `site-depth` with `pos` reading `none` -- three verdicts fewer and all three calls still there (gvn_table +8,031,268 when they are not)"))
 
 (test
   inline-checked-lock-bodies

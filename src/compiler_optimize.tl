@@ -132597,15 +132597,17 @@
 ;;     into `insert-ref!` at a cold `if_then` arm of hashmap_insert prices as a
 ;;     free inline (saving 8 against a boundary of 7) and costs that row +13.6%.
 ;;     The ENTRY block is the reading of that guarantee which costs nothing to
-;;     check, and two more block shapes carry it just as well -- a block that
-;;     post-dominates the entry, and an arm of the entry branch whose sibling
-;;     leaves the function. Those two are admitted only where the caller's plan
-;;     cost is quoted in the same currency as the boundary -- a loop-free
-;;     caller, or a wrapper-shaped one; see
-;;     opt-inline-checked-position-class for all three readings,
+;;     check, and three more block shapes carry it just as well -- a block that
+;;     post-dominates the entry, an arm of the entry branch whose sibling
+;;     leaves the function, and an arm of a DISPATCH whose spine does no work.
+;;     The first two are admitted only where the caller's plan cost is quoted
+;;     in the same currency as the boundary -- a loop-free caller, or a
+;;     wrapper-shaped one; the third carries a clause on the CALLEE instead.
+;;     See opt-inline-checked-position-class for all four readings,
 ;;     opt-inline-checked-wrapper-shaped? for the two rows that clause costs
-;;     when it is left out, and opt-inline-checked-depth0-caller-ok? for what
-;;     the count was standing in for.
+;;     when it is left out, opt-inline-checked-depth0-caller-ok? for what the
+;;     count was standing in for, and opt-inline-checked-dispatch-callee-ok?
+;;     for the dispatch reading's own.
 ;;   * THE CALLEE IS CALL-FREE. This tier deliberately carries no call-free
 ;;     clause (see opt-inline-checked-ok?) because at depth 1 and below the
 ;;     boundary is 8 to 64 times larger and the re-plan can resolve what an
@@ -132670,13 +132672,21 @@
 ;;          that returns a literal. The two arms together run on every path and
 ;;          the sibling does no work, so the boundary this site retires is one
 ;;          the caller pays once per invocation.
+;;   dispatch  the site's block hangs off a SPINE of call-free branch blocks
+;;          rooted at the entry -- a `cond` or a `match` over a tag. Exactly one
+;;          arm runs per invocation and the spine that chose it is compares and
+;;          branches, which is the two-arm reading's guarantee stated for n arms
+;;          rather than for two (opt-inline-checked-dispatch-arm-site?). Its own
+;;          clause is on the CALLEE rather than on the caller; see
+;;          opt-inline-checked-dispatch-callee-ok?.
 ;;
-;; Both new readings walk the caller, so they are asked only of a depth-0 site
-;; whose composite frequency has already cleared the floor's own rung: a cold
-;; candidate, or one at any depth above zero, pays one integer test. Both refuse
-;; conservatively -- a caller wider than opt-inline-checked-pos-max-blocks, or a
-;; reachability fixpoint that has not settled inside
-;; opt-inline-checked-pos-max-rounds, keeps the floor it has today.
+;; The three widened readings walk the caller, so they are asked only of a
+;; depth-0 site whose composite frequency has already cleared the floor's own
+;; rung: a cold candidate, or one at any depth above zero, pays one integer
+;; test. All three refuse conservatively -- a caller wider than
+;; opt-inline-checked-pos-max-blocks, or a fixpoint that has not settled inside
+;; opt-inline-checked-pos-max-rounds (opt-inline-checked-dispatch-max-rounds for
+;; the spine), keeps the floor it has today.
 (define (opt-inline-checked-pos-none) : i64
   0)
 
@@ -132689,6 +132699,12 @@
 (define (opt-inline-checked-pos-arm) : i64
   3)
 
+;; INL-9. An arm of a DISPATCH: the site's block hangs off a spine of
+;; branch-terminated CALL-FREE blocks rooted at the entry. See
+;; opt-inline-checked-dispatch-arm-site? for the reading and the argument.
+(define (opt-inline-checked-pos-dispatch) : i64
+  4)
+
 ;; What `--trace-passes` reports for the site's class on the clause line, so a
 ;; verdict table shows which reading each admitted site cleared on.
 (define (opt-inline-checked-pos-text [pos : i64]) : String
@@ -132696,6 +132712,7 @@
     [(= pos (opt-inline-checked-pos-entry)) "entry"]
     [(= pos (opt-inline-checked-pos-post)) "post"]
     [(= pos (opt-inline-checked-pos-arm)) "arm"]
+    [(= pos (opt-inline-checked-pos-dispatch)) "dispatch"]
     [else "none"]))
 
 (define (opt-inline-checked-entry-equivalent? [pos : i64]) : bool
@@ -133201,6 +133218,304 @@
               (set! i (+ i 1))))
           out))]))
 
+;; --- INL-9: an arm of a DISPATCH, not merely of the entry branch ------------
+;;
+;; The `arm` reading above states "the two arms together run on every path and
+;; the sibling does no work" for a caller whose entry branch has exactly two
+;; successors, one of which leaves the function. A DISPATCH -- a `cond` or a
+;; `match` over a tag -- is the same statement with more than two cases, and the
+;; reading above cannot see it at all: the arms of `sccp-process-instr` are
+;; `if_then.0`, `if_then.2`, ... `if_else.35`, and only the first is a successor
+;; of the entry block. Every other arm reads `none` because its block is not
+;; entry-adjacent, not because a caller clause turned it down.
+;;
+;; The generalisation is a SPINE. A spine block ends in a branch and holds NO
+;; CALL of its own: reaching it costs the caller nothing and decides only which
+;; arm runs. The spine is the least set containing the caller's entry block and
+;; closed under the successors of its own members that are themselves spine
+;; blocks; the ARMS are the blocks a spine block reaches that are not spine
+;; blocks. A site's block always holds at least the site's own call, so it is
+;; never a spine block, and "the site's block is reachable from the entry
+;; through spine blocks alone" is exactly "the site's block is an arm of the
+;; dispatch". At most one arm runs per invocation, and the whole spine that
+;; chose it is compares and branches -- which is the same guarantee the two-arm
+;; reading carries, stated for n arms instead of two.
+;;
+;; What it does NOT carry is the two-arm reading's other half -- "the sibling
+;; does no work". No caller clause can replace it, because a dispatch's every
+;; arm holds a call by construction; what replaces it is a clause on the
+;; CALLEE, at opt-inline-checked-dispatch-callee-ok?.
+(define (opt-inline-checked-dispatch-max-rounds) : i64
+  128)
+
+;; A SPINE block: its terminator is a branch and it holds no call. Asked of the
+;; instruction sequence directly, so the fixpoint below pays no label lookup.
+(define (opt-inline-checked-spine-instrs? [instrs : ir.CompilerIrInstrSeq]) : bool
+  (and
+    (=
+      (opt-inline-checked-instrs-call-count
+        (compiler-opt-global-shared-view instrs))
+      0)
+    (=
+      (opt-inline-checked-term-class-of
+        (compiler-opt-global-shared-view instrs))
+      (opt-inline-checked-term-branch))))
+
+;; ...and of one label, for the seed.
+(define (opt-inline-checked-spine-block-at?
+  [blocks : ir.CompilerIrBlockList]
+  [label : i64]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block block-label instrs)
+          (if (= block-label label)
+            (opt-inline-checked-spine-instrs?
+              (compiler-opt-global-shared-view instrs))
+            (opt-inline-checked-spine-block-at?
+              (compiler-opt-box-shared-view rest)
+              label))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64
+          (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+        [i : i64 0]
+        [out : bool false]
+        [found? : bool false]
+        (begin
+          (while (and (not found?) (< i count))
+            (begin
+              (match (ir.compiler-ir-block-seq-ref
+                (compiler-opt-global-shared-view seq)
+                i)
+                [(ir.CompilerIrBlock.Block block-label instrs)
+                  (if (= block-label label)
+                    (begin
+                      (set!
+                        out
+                        (opt-inline-checked-spine-instrs?
+                          (compiler-opt-global-shared-view instrs)))
+                      (set! found? true))
+                    unit)])
+              (set! i (+ i 1))))
+          out))]))
+
+;; Mark the two successors of one spine block. Only a branch reaches here, so
+;; the two labels the classifier published are the whole successor set.
+(define (opt-inline-checked-dispatch-succs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [generation : i64]) : bool
+  (let
+    [_class : i64
+      (opt-inline-checked-term-class-of
+        (compiler-opt-global-shared-view instrs))]
+    [yes : i64 opt-inline-checked-term-branch-yes]
+    [no : i64 opt-inline-checked-term-branch-no]
+    [a : bool (opt-inline-checked-reach-mark! yes generation)]
+    [b : bool (opt-inline-checked-reach-mark! no generation)]
+    (or a b)))
+
+;; One relaxation round of "reachable from the entry through spine blocks".
+;; A marked block is expanded only when it is a spine block, so an ARM is
+;; marked and never walked through: the closure stops at the first block that
+;; does work.
+(define (opt-inline-checked-dispatch-round!
+  [blocks : ir.CompilerIrBlockList]
+  [generation : i64]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (let
+            [here : bool
+              (if (and
+                (opt-inline-checked-reach-marked? label generation)
+                (opt-inline-checked-spine-instrs?
+                  (compiler-opt-global-shared-view instrs)))
+                (opt-inline-checked-dispatch-succs!
+                  (compiler-opt-global-shared-view instrs)
+                  generation)
+                false)]
+            [rest? : bool
+              (opt-inline-checked-dispatch-round!
+                (compiler-opt-box-shared-view rest)
+                generation)]
+            (or here rest?))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64
+          (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+        [i : i64 0]
+        [any? : bool false]
+        (begin
+          (while (< i count)
+            (begin
+              (match (ir.compiler-ir-block-seq-ref
+                (compiler-opt-global-shared-view seq)
+                i)
+                [(ir.CompilerIrBlock.Block label instrs)
+                  (if (and
+                    (opt-inline-checked-reach-marked? label generation)
+                    (opt-inline-checked-spine-instrs?
+                      (compiler-opt-global-shared-view instrs)))
+                    (set!
+                      any?
+                      (or
+                        (opt-inline-checked-dispatch-succs!
+                          (compiler-opt-global-shared-view instrs)
+                          generation)
+                        any?))
+                    unit)])
+              (set! i (+ i 1))))
+          any?))]))
+
+;; How many ARMS the dispatch the last question walked has: marked blocks that
+;; are not spine blocks. Published for the census only -- see the arm-count
+;; clause the corpus refused at opt-inline-checked-dispatch-callee-ok?.
+(define opt-inline-checked-dispatch-arms : i64
+  0)
+
+(define (opt-inline-checked-dispatch-count-arms!
+  [blocks : ir.CompilerIrBlockList]
+  [generation : i64]) : i64
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) 0]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (+
+            (if (and
+              (opt-inline-checked-reach-marked? label generation)
+              (not
+                (opt-inline-checked-spine-instrs?
+                  (compiler-opt-global-shared-view instrs))))
+              1
+              0)
+            (opt-inline-checked-dispatch-count-arms!
+              (compiler-opt-box-shared-view rest)
+              generation))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64
+          (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+        [i : i64 0]
+        [out : i64 0]
+        (begin
+          (while (< i count)
+            (begin
+              (match (ir.compiler-ir-block-seq-ref
+                (compiler-opt-global-shared-view seq)
+                i)
+                [(ir.CompilerIrBlock.Block label instrs)
+                  (if (and
+                    (opt-inline-checked-reach-marked? label generation)
+                    (not
+                      (opt-inline-checked-spine-instrs?
+                        (compiler-opt-global-shared-view instrs))))
+                    (set! out (+ out 1))
+                    unit)])
+              (set! i (+ i 1))))
+          out))]))
+
+;; DISPATCH. The entry block opens a spine, and `label` is one of the arms that
+;; spine reaches. A walk that has not settled inside the round bound answers no,
+;; exactly as the post-dominance walk does.
+(define (opt-inline-checked-dispatch-arm-site?
+  [blocks : ir.CompilerIrBlockList]
+  [entry-label : i64]
+  [label : i64]) : bool
+  (begin
+    (set! opt-inline-checked-dispatch-arms 0)
+    (if (not
+      (opt-inline-checked-spine-block-at?
+        (compiler-opt-global-shared-view blocks)
+        entry-label))
+      false
+      (let
+        [generation : i64 (opt-inline-checked-reach-begin!)]
+        [_seed : bool (opt-inline-checked-reach-mark! entry-label generation)]
+        [rounds : i64 0]
+        [changed? : bool true]
+        (begin
+          (while (and
+            changed?
+            (< rounds (opt-inline-checked-dispatch-max-rounds)))
+            (begin
+              (set!
+                changed?
+                (opt-inline-checked-dispatch-round!
+                  (compiler-opt-global-shared-view blocks)
+                  generation))
+              (set! rounds (+ rounds 1))))
+          (if (or
+            changed?
+            (not (opt-inline-checked-reach-marked? label generation)))
+            false
+            (begin
+              ;; Read for the census and for nothing else, so a compile without
+              ;; the flag does not pay the pass.
+              (if compiler-opt-debug-trace-passes
+                (set!
+                  opt-inline-checked-dispatch-arms
+                  (opt-inline-checked-dispatch-count-arms!
+                    (compiler-opt-global-shared-view blocks)
+                    generation))
+                unit)
+              true)))))))
+
+;; THE DISPATCH ARM'S OWN CLAUSE, and it is on the CALLEE. An acyclic,
+;; call-free body imported into an arm adds straight-line code to a path the
+;; caller already had, and the verdict re-plans the whole merged function with
+;; it there, which is a real comparison. A LOOP is the one shape that
+;; comparison cannot make: an imported loop puts its whole working set inside a
+;; function whose callee-saved set, frame size and spill weights are chosen once
+;; for the body, and that is paid at EVERY entry while the arm runs on a
+;; fraction of them. It is the sole-call band's clause 1 -- "the callee's body
+;; is ACYCLIC", measured there at +89.2M on cfg_domloops for nine helpers --
+;; stated at a dispatch arm, where the frequency argument is sharper still
+;; because the arm is not even on every path.
+;;
+;; MEASURED, on this tree, at the dispatch reading with no callee clause at all:
+;;
+;;   * `gvn-table-clear` into `gvn-dispatch`'s `if_then.8`. Its two helpers
+;;     (`gvn-table-len`'s count loop and `gvn-node-release`'s free-list loop)
+;;     are absorbed into it before it is offered, so it reaches this tier
+;;     call-free at 70 instructions and LOOP-BEARING. It prices as a free
+;;     inline -- a modelled saving of 6 against a boundary of 6, `after` 259
+;;     against `banked` 44 -- and costs gvn_table +8,031,268;
+;;   * `gvn-facts-grow` into `gvn-facts-insert`'s grow guard: a rehash loop at
+;;     a two-arm site whose sibling does the insert, priced at a saving of 12
+;;     against a boundary of 11 and kept. With the entry-site keep of the grown
+;;     `gvn-facts-insert` it exposes, and a second `gvn-table-clear` at
+;;     `gvn-step-call`'s two-arm site, that is a further gvn_table +8,091,622.
+;;     It is `grow!` into `insert-ref!` -- the hashmap_insert +13.6% the depth
+;;     floor records -- reached through the dispatch reading instead of the arm
+;;     one;
+;;   * `stdlib.text_buf/copy-chunk-into` into `fill-rev-into`: a byte-copy loop
+;;     at an arm, asm_render +41,790.
+;;
+;; With the clause all of them go away and the row that pays for it is
+;; peephole_lines, which gives up -199,122: six keeps, `pl-owners-empty` at
+;; four arms of `pl-clobber-owners`' seven-arm dispatch plus
+;; `pl-owners-clear-slot` and `pl-ranges-eq?`, every one of them a table scan
+;; with a loop in it. Net on the corpus: gvn_table -1,499,050 instead of
+;; +14,623,840, and asm_render and peephole_lines byte-identical.
+;;
+;; AN ARM-COUNT CLAUSE WAS MEASURED AND DOES NOT SHIP. "A dispatch has at least
+;; three arms, and a two-arm split is a GUARD the reading above already
+;; governs" is a true statement and it refuses `gvn-facts-grow` on its own
+;; (two arms) -- but with the acyclic clause in place all 23 rows and all 5
+;; heavy rows are byte identical with it and without it, because every two-arm
+;; loser the corpus offers is loop-bearing anyway. A clause the corpus does not
+;; choose is not a clause; the arm count is published for the census
+;; (`arms=` on the trace line) and read by nothing.
+(define (opt-inline-checked-dispatch-callee-ok?
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (opt-inline-tiny-predicate-acyclic-reclaiming?
+    (compiler-opt-global-shared-view blocks)))
+
 ;; THE CALLER CLAUSE, asked ONLY of the two new readings. A true entry site
 ;; keeps the admission it has today, caller shape and all.
 ;;
@@ -133315,6 +133630,13 @@
       ;; caller, whose tail call `opt-tailrec-function` turns into a loop one
       ;; pass later.
       (opt-inline-caller-loop-free?))
+    ;; A DISPATCH arm carries no caller clause of its own: what makes the two-arm
+    ;; reading sound -- "the caller holds no call this site does not account
+    ;; for" -- is unavailable by construction, since every arm of a dispatch
+    ;; holds one. Its clause is on the CALLEE instead, and it is asked one level
+    ;; up where the callee's blocks are in scope; see
+    ;; opt-inline-checked-dispatch-callee-ok?.
+    (= pos (opt-inline-checked-pos-dispatch))
     (opt-inline-checked-wrapper-shaped?
       (compiler-opt-global-shared-view blocks)
       pos)))
@@ -133346,6 +133668,11 @@
           entry-label
           label)
         (opt-inline-checked-pos-arm)]
+      [(opt-inline-checked-dispatch-arm-site?
+          (compiler-opt-global-shared-view blocks)
+          entry-label
+          label)
+        (opt-inline-checked-pos-dispatch)]
       [else (opt-inline-checked-pos-none)])))
 
 ;; The class of one site's block: `entry` for the caller's entry block, then the
@@ -133356,12 +133683,22 @@
   [position : i64]
   [label : i64]) : i64
   (if (= position 0)
-    (opt-inline-checked-pos-entry)
+    (begin
+      (set! opt-inline-checked-trace-rawpos (opt-inline-checked-pos-entry))
+      (opt-inline-checked-pos-entry))
     (let
       [pos : i64
         (opt-inline-checked-widened-class
           (compiler-opt-global-shared-view blocks)
           label)]
+      [_publish : unit
+        (begin
+          (set! opt-inline-checked-trace-rawpos pos)
+          (if (= pos (opt-inline-checked-pos-dispatch))
+            (set!
+              opt-inline-checked-trace-arms
+              opt-inline-checked-dispatch-arms)
+            unit))]
       (if (= pos (opt-inline-checked-pos-none))
         (opt-inline-checked-pos-none)
         (if (opt-inline-checked-depth0-caller-ok?
@@ -133872,6 +134209,15 @@
 (define opt-inline-checked-trace-pos : i64
   0)
 
+;; ...and the STRUCTURAL class the same site's block carries before the caller
+;; clause is asked, so a census can tell a block that is not entry-equivalent at
+;; all from one whose caller the clause refused. `arms` is the dispatch's arm
+;; count where the block is a dispatch arm, -1 elsewhere.
+(define opt-inline-checked-trace-rawpos : i64
+  0)
+(define opt-inline-checked-trace-arms : i64
+  (- 0 1))
+
 ;; ...and the census's one-level hot reference count for the same caller, which
 ;; is what the composite frequency was before the call graph's synthetic counts
 ;; replaced it. It is traced beside the new number so a verdict table reads as
@@ -133897,9 +134243,20 @@
 ;;              reference count times the depth weight of the site's block.
 ;;              -1 for the same reason.
 ;;   pos        which reading of "runs exactly once per invocation" the site's
-;;              block cleared -- `entry`, `post`, `arm`, or `none` for a block
-;;              that cleared none of them or was never asked
+;;              block cleared -- `entry`, `post`, `arm`, `dispatch`, or `none`
+;;              for a block that cleared none of them or was never asked
 ;;              (opt-inline-checked-position-class).
+;;   rawpos     the same question asked of the block's SHAPE alone, before the
+;;              caller and callee clauses. `pos=none|rawpos=post` is a site
+;;              whose CALLER the clause turned down; `pos=none|rawpos=none` is a
+;;              block that is not entry-equivalent under any reading. INL-8's
+;;              vocabulary said "read `pos` to see which" and `pos` could not
+;;              say: every refusal read `none`. That is how a census reads
+;;              `sccp-process-instr`'s six arms as call-count refusals when the
+;;              arm reading had never seen them at all -- only the FIRST arm of
+;;              a dispatch is a successor of the entry branch.
+;;   arms       the arm count of the dispatch, where the block is a dispatch
+;;              arm; -1 elsewhere. Read for the census and by no clause.
 ;;   hot        the census's one-level hot reference count for the caller, which
 ;;              is what `frequency` was before the call graph's synthetic counts
 ;;              replaced it. Read for the trace and for nothing else.
@@ -133925,7 +134282,8 @@
 ;;              the callee's own integer clauses; `heavy-gate`/`block-ceiling`
 ;;              the growth budgets; `frequency` and `site-depth` the two site
 ;;              clauses (a depth-0 site refused by `site-depth` was refused by
-;;              the entry-equivalence reading -- read `pos` to see which);
+;;              the entry-equivalence reading -- read `pos` against `rawpos` to
+;;              see which);
 ;;              `relaxed-budget` a relaxed candidate the ranking could not
 ;;              afford; `scanned` recorded by a scan walk; `admitted` the site
 ;;              this round prices.
@@ -133956,6 +134314,10 @@
         (string.int->string opt-inline-checked-trace-frequency)
         "|pos="
         (opt-inline-checked-pos-text opt-inline-checked-trace-pos)
+        "|rawpos="
+        (opt-inline-checked-pos-text opt-inline-checked-trace-rawpos)
+        "|arms="
+        (string.int->string opt-inline-checked-trace-arms)
         "|hot="
         (string.int->string opt-inline-checked-trace-hot)
         "|instrs="
@@ -133979,9 +134341,14 @@
 
 ;; ...and one line per VERDICT: the priced numbers on both sides, the boundary a
 ;; free inline would retire, the modelled saving, and which way the two-sided
-;; window fell. `margin` reports whether the whole modelled saving survived
-;; re-optimization or only the half the window's floor demands -- the reading
-;; every body past the caller's first must deliver in its own right.
+;; window fell. `window` names the SIDE it fell on -- `in`, `floor` or `cap`,
+;; opt-inline-checked-window-text -- because a `revert` with no side named is
+;; two opposite statements about the model written the same way, and the census
+;; is unreadable without it: 46 of ssa_construct's 50 refusals are `cap`.
+;; `margin` reports whether the whole modelled saving survived re-optimization
+;; or only the half the window's floor demands -- the reading every body past
+;; the caller's first must deliver in its own right, and the reason a
+;; `window=in` line can still say `revert`.
 (define (opt-inline-checked-trace-verdict!
   [callee-name : i64]
   [site-depth : i64]
@@ -134018,6 +134385,10 @@
         (string.int->string boundary)
         "|saving="
         (string.int->string (- (+ banked-cost (+ boundary callee-cost)) after))
+        "|window="
+        (opt-inline-checked-window-text
+          (- (+ banked-cost (+ boundary callee-cost)) after)
+          boundary)
         "|"
         (if keep?
           "keep"
@@ -134680,6 +135051,33 @@
 ;; The product saturates for the same reason the counts themselves do -- it is
 ;; read as an order and against a floor -- and the census count the propagation
 ;; replaced stays available for the trace (opt-inline-checked-trace-hot).
+;;
+;; NO SHARE TERM FOR AN ARM, and it is not for want of asking (INL-9 item 3).
+;; The number this computes is the CALLER's count, and where the site sits in a
+;; conditional arm it credits that arm with all of it: `ssa-map-grow!` into
+;; `ssa-map-insert!` reads `frequency=46592` at the grow guard of an insert that
+;; grows on a rehash, and `gvn-facts-grow` into `gvn-facts-insert` reads
+;; `frequency=655360` at the same shape. Both numbers are the caller's.
+;;
+;; Dividing by the arm count does not reach either of them. The floor this
+;; frequency is compared against is EIGHT (opt-inline-checked-min-frequency,
+;; and the depth relaxation's own rung is the same eight): 46592 over two arms
+;; is 23296 and 655360 over two is 327680, both still four orders above it, so
+;; a share term changes no admission on this corpus and prices nothing. The
+;; frequency leg is simply not the leg these sites turn on --
+;; `ssa-map-grow!`'s block is not entry-equivalent under any reading
+;; (`pos=none|rawpos=none`), and `gvn-facts-grow`'s is a dispatch arm the
+;; CALLEE clause refuses (`pos=none|rawpos=dispatch`).
+;;
+;; What a cold arm actually costs is measured, and it is measured on the
+;; position clause rather than on this one: admitting `gvn-facts-grow` at that
+;; arm prices as a free inline (a modelled saving of 12 against a boundary of
+;; 11) and costs gvn_table +8,091,622. So the over-credit is real and the
+;; instrument for it is opt-inline-checked-dispatch-callee-ok?, not a divisor
+;; here. A `cold-arm` mark read off a preceding compare against a length was
+;; the other candidate and is refused for the same reason plus one more: it
+;; would name the ONE guard shape it was drawn from, where the clause that
+;; ships refuses every loop-bearing import at every arm, cold or not.
 (define (opt-inline-checked-site-frequency
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -134749,6 +135147,8 @@
     (set! opt-inline-checked-trace-depth (- 0 1))
     (set! opt-inline-checked-trace-frequency (- 0 1))
     (set! opt-inline-checked-trace-pos (opt-inline-checked-pos-none))
+    (set! opt-inline-checked-trace-rawpos (opt-inline-checked-pos-none))
+    (set! opt-inline-checked-trace-arms (- 0 1))
     (set! opt-inline-checked-trace-hot (- 0 1))
     (cond
       [(not opt-inline-checked-active?) (opt-inline-checked-clause-disarmed)]
@@ -134825,10 +135225,21 @@
             (if (and
               (= site-depth 0)
               (>= frequency (opt-inline-checked-depth-relaxed-frequency)))
-              (opt-inline-checked-position-class
-                (opt-inline-caller-facts-blocks-shared-view)
-                opt-inline-checked-site-position
-                opt-inline-current-block-label)
+              (let
+                [class : i64
+                  (opt-inline-checked-position-class
+                    (opt-inline-caller-facts-blocks-shared-view)
+                    opt-inline-checked-site-position
+                    opt-inline-current-block-label)]
+                ;; A dispatch arm is the one reading whose clause is on the
+                ;; CALLEE, and this is where the callee's blocks are in scope.
+                (if (and
+                  (= class (opt-inline-checked-pos-dispatch))
+                  (not
+                    (opt-inline-checked-dispatch-callee-ok?
+                      (compiler-opt-global-shared-view blocks))))
+                  (opt-inline-checked-pos-none)
+                  class))
               (if (= opt-inline-checked-site-position 0)
                 (opt-inline-checked-pos-entry)
                 (opt-inline-checked-pos-none)))]
@@ -135118,6 +135529,19 @@
 ;; remove. See opt-inline-checked-verdict for why the window is two-sided.
 (define (opt-inline-checked-window-ok? [saving : i64] [boundary : i64]) : bool
   (and (>= (* 2 saving) boundary) (<= saving (* 2 boundary))))
+
+;; ...and WHICH SIDE of it a verdict fell on, for the trace. A `revert` line
+;; used to report only that the window refused, and the window is two-sided:
+;; `floor` and `cap` are opposite statements about the model and a census that
+;; cannot tell them apart cannot be read at all. INL-9's own first question --
+;; why `ssa-dominates?` into `ssa-dominance-frontier` never lands, at the
+;; hottest site of ssa_construct -- is answered by this one word: `cap`, a
+;; modelled saving of 1034 against a boundary of 512, ten over the bound.
+(define (opt-inline-checked-window-text [saving : i64] [boundary : i64]) : String
+  (cond
+    [(< (* 2 saving) boundary) "floor"]
+    [(> saving (* 2 boundary)) "cap"]
+    [else "in"]))
 
 ;; The verdict. Both sides priced per invocation of the caller; see the tier
 ;; comment for the model and the margin.

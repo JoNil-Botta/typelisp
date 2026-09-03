@@ -1600,9 +1600,18 @@ check_global_cursor_guarded() {
 check_sccp_rewrite_phi_import() {
     for _target in linux-x86_64 windows-x86_64; do
         _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
-        _bound=12
+        # INL-9 moved both bounds by twelve. `sccp-rewrite-rows` absorbs
+        # `sccp-rewritten-i64`, and the dispatch reading gives that helper an
+        # `sccp-env-tag-in` of its own at one arm of its tag `cond` -- a keep
+        # worth -1,427,200 in `sccp_env_tag_in` against +948,048 in
+        # `sccp_rewrite_rows`, whose extra frame traffic is exactly these twelve
+        # references. The bound is what it was plus that import, with the same
+        # two of headroom it always carried; what the gate is about --
+        # `sccp-rewrite-phi` staying OUT of line and reached by exactly one call
+        # -- is unchanged, and so is the row, which INL-9 moves -17,525,408.
+        _bound=24
         if [ "$_target" = windows-x86_64 ]; then
-            _bound=23
+            _bound=35
         fi
         _asm=$(compile_gate "sccp_rewrite_phi_import_$_suffix" \
             benchmarks/sccp_lattice/bench.tl "$_target")
@@ -1957,6 +1966,56 @@ check_checked_post_multi_call() {
         assert_regex_count_at_least "$_abort_lookup" \
             '^[[:space:]]+call tl_oob_abort' 1 \
             "checked-post-multi-call-abort-$_target"
+    done
+}
+
+check_checked_dispatch_arm() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "checked_dispatch_arm_$_suffix" \
+            tests/integration/checked_dispatch_arm.tl "$_target")
+        _dispatch=$(function_body "$_asm" _tl_checked_dispatch_arm_da_dispatch)
+
+        # INL-9: `da-dispatch` is a five-case `cond` whose spine -- the entry
+        # block and the else-blocks under it -- only compares and branches, and
+        # four of whose arms call `da-fold`. Only the FIRST arm is a successor
+        # of the entry branch, so the arm reading covered one of the four and
+        # the other three read `pos=none` for want of a reading rather than for
+        # a clause; the caller clause the arm reading carries is hopeless here
+        # anyway, since a dispatch holds one call per arm. The dispatch reading
+        # takes all four, and the verdict keeps all four, so no arm of this
+        # function holds a call to the helper at all.
+        assert_matches "$_asm" '^_tl_checked_dispatch_arm_da_dispatch:$' \
+            "checked-dispatch-arm-$_target"
+        assert_not_matches "$_dispatch" \
+            '^[[:space:]]+call _tl_checked_dispatch_arm_da_fold$' \
+            "checked-dispatch-arm-$_target"
+        assert_not_matches "$_dispatch" \
+            '^[[:space:]]+jmp _tl_checked_dispatch_arm_da_fold$' \
+            "checked-dispatch-arm-$_target"
+
+        # ...and what landed in the arms is the helper's own arithmetic: its
+        # two bounds-checked table reads, once per arm, all four arms.
+        assert_regex_count_at_least "$_dispatch" \
+            '^[[:space:]]+call tl_oob_abort_at' 8 \
+            "checked-dispatch-arm-$_target"
+
+        # The helper is COPIED, not absorbed: the cold second reference still
+        # calls the out-of-line body, so the keep is a real one and no
+        # single-site band could have taken it first.
+        assert_matches "$_asm" '^_tl_checked_dispatch_arm_da_fold:$' \
+            "checked-dispatch-arm-$_target"
+
+        _abort_asm=$(compile_gate "checked_dispatch_arm_abort_$_suffix" \
+            tests/integration/checked_dispatch_arm_abort.tl "$_target")
+        _abort_dispatch=$(function_body "$_abort_asm" \
+            _tl_checked_dispatch_arm_abort_da_dispatch)
+        assert_not_matches "$_abort_dispatch" \
+            '^[[:space:]]+call _tl_checked_dispatch_arm_abort_da_fold$' \
+            "checked-dispatch-arm-abort-$_target"
+        assert_regex_count_at_least "$_abort_dispatch" \
+            '^[[:space:]]+call tl_oob_abort_at' 8 \
+            "checked-dispatch-arm-abort-$_target"
     done
 }
 
@@ -3216,6 +3275,7 @@ check_synth_tail_wrapper
 check_synth_struct_accessor
 check_checked_arm_wrapper
 check_checked_post_multi_call
+check_checked_dispatch_arm
 check_const_index_bounds
 check_const_global_mask_unroll
 check_rbp_sixth_csr

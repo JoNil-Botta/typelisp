@@ -22614,6 +22614,53 @@
     (opt-inline-pos-call (opt-inline-pos-other) 2)
     (opt-inline-pos-return 2)))
 
+;; INL-9's shape: a DISPATCH. `entry` and `d_spine` are the spine -- call-free
+;; blocks that only compare and branch -- and `d_arm1`, `d_arm2`, `d_arm3` are
+;; the three cases hanging off it. Only `d_arm1` is a successor of the entry
+;; branch, which is why the arm reading above sees one arm of a three-arm
+;; dispatch and the census reports `none` for the other two.
+(define (opt-inline-pos-dispatch-blocks
+  [spine-instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs (opt-inline-pos-branch "d_arm1" "d_spine")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "d_arm1")
+        (opt-test-instrs
+          (opt-inline-pos-call (opt-inline-pos-callee) 1)
+          (opt-inline-pos-return 1)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "d_spine")
+          spine-instrs)
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "d_arm2")
+            (opt-test-instrs
+              (opt-inline-pos-call (opt-inline-pos-other) 2)
+              (opt-inline-pos-return 2)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "d_arm3")
+              (opt-test-instrs
+                (opt-inline-pos-call (opt-inline-pos-callee) 3)
+                (opt-inline-pos-return 3)))
+            compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; The spine block as a dispatch has it -- a compare and a branch -- and the
+;; same block given a call of its own, which is what stops it being a spine at
+;; all: reaching the arms below it is then not free, and the arms are no longer
+;; one case each of a selector.
+(define (opt-inline-pos-dispatch-spine-instrs) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs (opt-inline-pos-branch "d_arm2" "d_arm3")))
+
+(define (opt-inline-pos-dispatch-working-spine-instrs) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (opt-inline-pos-call (opt-inline-pos-other) 4)
+    (opt-inline-pos-branch "d_arm2" "d_arm3")))
+
 (define (opt-inline-pos-blocks [mode : i64]) : compiler_ir_types.CompilerIrBlockList
   (cond
     ;; 0: the merge block post-dominates the entry, and the site's own call is
@@ -22734,6 +22781,16 @@
                     (compiler_ir_types.compiler-ir-label "pos_done")
                     (opt-test-instrs (opt-inline-pos-return 3)))
                   compiler_ir_types.CompilerIrBlockList.Nil))))))]
+    ;; 10: a three-arm DISPATCH. The spine is call-free, so every arm is one
+    ;; case of a selector that runs exactly one of them per invocation.
+    [(= mode 10)
+      (opt-inline-pos-dispatch-blocks (opt-inline-pos-dispatch-spine-instrs))]
+    ;; 11: the same dispatch with a CALL in the spine block. Reaching the two
+    ;; arms below it is no longer free, so the spine stops there and neither of
+    ;; them is a dispatch arm.
+    [(= mode 11)
+      (opt-inline-pos-dispatch-blocks
+        (opt-inline-pos-dispatch-working-spine-instrs))]
     ;; 8: NEITHER. One arm returns, so the merge below the other does not
     ;; post-dominate the entry, and the merge is no arm of the entry branch.
     [else
@@ -22887,15 +22944,38 @@
     (=
       (opt-inline-pos-site 4 1 "arm_work")
       (compiler_optimize.opt-inline-checked-pos-none))
+    ;; ...and INL-9's dispatch reading may NOT take it back. This is the
+    ;; lex_source shape -- `ls-number-float?`, a small band-absorbable caller
+    ;; whose two arm sites the count refuses -- and its entry block is a
+    ;; call-free branch, so the spine reading would answer YES for it. What
+    ;; keeps it refused is the ORDER: opt-inline-checked-widened-class asks post,
+    ;; then arm, then dispatch, and a block the ARM reading classifies never
+    ;; reaches the dispatch one. The two facts, stated separately, are the whole
+    ;; separation between `ls-number-float?` and a dispatch caller.
+    (compiler_optimize.opt-inline-checked-arm-site?
+      (opt-inline-pos-blocks 4)
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-label "arm_work"))
+    (compiler_optimize.opt-inline-checked-dispatch-arm-site?
+      (opt-inline-pos-blocks 4)
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-label "arm_work"))
     ;; ...the second call is the TAIL CALL's allowance alone: the same two calls
     ;; under a sibling that returns are refused
     (=
       (opt-inline-pos-site 7 1 "arm_work")
       (compiler_optimize.opt-inline-checked-pos-none))
-    ;; ...a sibling arm carrying a loop is not an exit, so the site is refused
+    ;; ...a sibling arm carrying a loop is not an exit, so the ARM reading
+    ;; refuses the site: the pair does not run the caller out between them.
+    ;; INL-9's dispatch reading answers about the same block on different
+    ;; grounds and takes it -- the entry block is a call-free branch, so it is a
+    ;; one-block spine that selects one of its two successors, and the site runs
+    ;; at most once per invocation whatever the sibling then does. The clause
+    ;; that gates it is the callee's, not the caller's, and the corpus is
+    ;; byte-identical either way (see opt-inline-checked-dispatch-callee-ok?).
     (=
       (opt-inline-pos-site 5 1 "arm_work")
-      (compiler_optimize.opt-inline-checked-pos-none))
+      (compiler_optimize.opt-inline-checked-pos-dispatch))
     ;; ...and the one indirection the arm reading follows: a sibling that jumps
     ;; to a block returning a literal
     (=
@@ -22908,6 +22988,42 @@
     (=
       (opt-inline-pos-site 8 3 "nb_join")
       (compiler_optimize.opt-inline-checked-pos-none))
+    ;; DISPATCH: a three-arm selector whose spine only compares and branches.
+    ;; The FIRST arm is a successor of the entry branch and the arm reading
+    ;; still refuses it -- its sibling is the rest of the chain, which works --
+    ;; and the two below it are not entry-adjacent at all. All three are one
+    ;; case each of a selector that runs exactly one of them per invocation, and
+    ;; the caller carries three calls, which is one per arm and hopeless for the
+    ;; count clause by construction.
+    (=
+      (opt-inline-pos-site 10 1 "d_arm1")
+      (compiler_optimize.opt-inline-checked-pos-dispatch))
+    (=
+      (opt-inline-pos-site 10 4 "d_arm3")
+      (compiler_optimize.opt-inline-checked-pos-dispatch))
+    (=
+      (opt-inline-pos-floor (compiler_optimize.opt-inline-checked-pos-dispatch))
+      0)
+    (not
+      (compiler_optimize.opt-inline-checked-wrapper-shaped?
+        (opt-inline-pos-blocks 10)
+        (compiler_optimize.opt-inline-checked-pos-dispatch)))
+    ;; ...and a spine block that CALLS is no spine: the arms below it stop being
+    ;; free to reach, and the floor stands for both of them.
+    (=
+      (opt-inline-pos-site 11 4 "d_arm3")
+      (compiler_optimize.opt-inline-checked-pos-none))
+    (=
+      (opt-inline-pos-site 11 3 "d_arm2")
+      (compiler_optimize.opt-inline-checked-pos-none))
+    ;; THE DISPATCH ARM'S OWN CLAUSE is on the CALLEE and it is acyclicity: an
+    ;; imported loop is paid at every entry while the arm runs on a fraction of
+    ;; them (gvn_table +8,031,268 for `gvn-table-clear` alone).
+    (compiler_optimize.opt-inline-checked-dispatch-callee-ok?
+      (opt-inline-pos-blocks 10))
+    (not
+      (compiler_optimize.opt-inline-checked-dispatch-callee-ok?
+        (opt-inline-pos-blocks 5)))
     ;; THE TRUE ENTRY SITE is untouched by the caller clause: the caller of
     ;; shape 1 carries three calls and its entry block is still entry-equivalent
     (=
@@ -22929,6 +23045,21 @@
       (compiler_optimize.opt-inline-checked-pos-text
         (compiler_optimize.opt-inline-checked-pos-arm))
       "arm")
+    (string.eq
+      (compiler_optimize.opt-inline-checked-pos-text
+        (compiler_optimize.opt-inline-checked-pos-dispatch))
+      "dispatch")
+    ;; the verdict line names the SIDE of the two-sided window it fell on, which
+    ;; is what INL-9's first question turned on: `ssa-dominates?` into
+    ;; `ssa-dominance-frontier` is `cap`, a modelled saving of 1034 against a
+    ;; boundary of 512.
+    (string.eq
+      (compiler_optimize.opt-inline-checked-window-text 1034 512)
+      "cap")
+    (string.eq (compiler_optimize.opt-inline-checked-window-text 104 64) "in")
+    (string.eq
+      (compiler_optimize.opt-inline-checked-window-text (- 0 69) 64)
+      "floor")
     (string.eq
       (compiler_optimize.opt-inline-checked-pos-text
         (compiler_optimize.opt-inline-checked-pos-none))
@@ -23072,6 +23203,296 @@
         callee-name
         (compiler_ir_types.CompilerIrCallArgs.Array args)
         (compiler_ast_types.AstType.I64)))))
+
+;; --- INL-9: the arms of a DISPATCH, and the clause that is on the callee -----
+;;
+;; The shape the packet is about, and the one `sccp-value`, `sccp-immediate` and
+;; `sccp-fold-compare` have: a caller whose whole body is a selector over a tag,
+;; every arm of which calls one helper. The call COUNT is hopeless here by
+;; construction -- there is one call per arm -- and the ARM reading sees only
+;; the first arm, because only the first arm is a successor of the entry branch.
+;;
+;; The two modes differ in ONE thing: the leaf's own shape. Mode 0's leaf is
+;; ACYCLIC and its arms are measured and kept; mode 1's is the same leaf with a
+;; loop around its chain, and the dispatch reading refuses it before any pricing
+;; -- `site-depth` with `pos` reading `none` -- because a loop imported into an
+;; arm is paid at every entry while the arm runs on a fraction of them. Both
+;; leaves are call-free, both take seven parameters, and both are past the
+;; shared-accessor band's 28 and the hot-loop-leaf band's 120, so no band is
+;; offered either of them and what the numbers report is this tier alone.
+(define (opt-inline-inl9-leaf-pad) : i64
+  130)
+
+(define (opt-inline-inl9-leaf-acc) : i64
+  (+ (opt-inline-checked-builder-arity) (opt-inline-inl9-leaf-pad)))
+
+;; The straight-line leaf: seven parameters folded into an accumulator and
+;; returned. No branch at all, so nothing about it is cyclic.
+(define (opt-inline-inl9-leaf-function [name : i64]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [arity : i64 (opt-inline-checked-builder-arity)]
+    (compiler_ir_types.CompilerIrFunction.Function
+      name
+      (opt-inline-checked-builder-params-from 0 arity)
+      (compiler_ast_types.AstType.I64)
+      (+ (opt-inline-inl9-leaf-acc) 1)
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Mov
+              arity
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "body"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "body")
+            (opt-inline-checked-builder-chain
+              0
+              (opt-inline-inl9-leaf-pad)
+              arity
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var
+                      (opt-inline-inl9-leaf-acc)))))))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+;; ...and the same chain with a loop around it. Same arity, same instructions,
+;; same call-freedom: the ONE difference is the back edge, which is the clause.
+(define (opt-inline-inl9-cyclic-leaf-function [name : i64]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [arity : i64 (opt-inline-checked-builder-arity)]
+    [last : i64 (+ (opt-inline-inl9-leaf-acc) 1)]
+    (compiler_ir_types.CompilerIrFunction.Function
+      name
+      (opt-inline-checked-builder-params-from 0 arity)
+      (compiler_ast_types.AstType.I64)
+      (+ last 1)
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Mov
+              arity
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "header"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "header")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Phi
+                (+ arity 1)
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var arity)
+                  (compiler_ir_types.compiler-ir-label "entry")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                    (compiler_ir_types.CompilerIrValue.Var last)
+                    (compiler_ir_types.compiler-ir-label "body")
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-label "done"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "body")
+              (opt-inline-checked-builder-chain
+                0
+                (opt-inline-inl9-leaf-pad)
+                (+ arity 1)
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "header")))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "done")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var (+ arity 1))))))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+;; The dispatch: `entry` and `d_spine` compare and branch and do nothing else,
+;; and the three arms below them each call the leaf once. Only `d_arm1` is a
+;; successor of the entry branch.
+(define (opt-inline-inl9-dispatch-function [func-name : i64] [leaf-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    8
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "d_arm1")
+            (compiler_ir_types.compiler-ir-label "d_spine"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "d_arm1")
+          (opt-test-instrs
+            (opt-inline-checked-builder-call leaf-name 3)
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 3)))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "d_spine")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.compiler-ir-label "d_arm2")
+                (compiler_ir_types.compiler-ir-label "d_arm3"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "d_arm2")
+              (opt-test-instrs
+                (opt-inline-checked-builder-call leaf-name 4)
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 4)))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "d_arm3")
+                (opt-test-instrs
+                  (opt-inline-checked-builder-call leaf-name 5)
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 5)))))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+;; The driver whose loop reaches the dispatch, which is what carries its
+;; depth-0 arms over the composite-frequency floor.
+(define (opt-inline-inl9-driver-function
+  [func-name : i64]
+  [dispatch-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    7
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Mov
+            3
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "header"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "header")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Phi
+              4
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.compiler-ir-label "entry")
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var 6)
+                  (compiler_ir_types.compiler-ir-label "latch")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.compiler-ir-label "body")
+              (compiler_ir_types.compiler-ir-label "exit"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "body")
+            (opt-test-instrs
+              (opt-inline-loop-site-call dispatch-name 6)
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "latch"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "latch")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "header"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "exit")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 4)))))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-inline-inl9-leaf-name) : i64
+  (opt-test-symbol "inl9_leaf"))
+
+(define (opt-inline-inl9-dispatch-name) : i64
+  (opt-test-symbol "inl9_dispatch"))
+
+(define (opt-inline-inl9-driver-name) : i64
+  (opt-test-symbol "inl9_driver"))
+
+;; 1000 * verdicts spent + calls to the leaf left in the dispatch, so a change
+;; in either reads straight off the number.
+(define (opt-inline-checked-inl9-self-test [mode : i64]) : i64
+  (let
+    [leaf-name : i64 (opt-inline-inl9-leaf-name)]
+    [cyclic? : bool (= mode 1)]
+    [_arm : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-set-active! true)
+        (compiler_optimize.opt-inline-checked-program-begin!))]
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-inline-inl9-driver-function
+            (opt-inline-inl9-driver-name)
+            (opt-inline-inl9-dispatch-name))
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-inline-inl9-dispatch-function
+              (opt-inline-inl9-dispatch-name)
+              leaf-name)
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (if cyclic?
+                (opt-inline-inl9-cyclic-leaf-function leaf-name)
+                (opt-inline-inl9-leaf-function leaf-name))
+              (compiler_ir_types.compiler-ir-function-seq-empty))))
+        2)]
+    [spent : i64
+      (+
+        (-
+          (compiler_optimize.opt-inline-checked-program-budget)
+          (compiler_optimize.opt-inline-checked-budget-current))
+        (-
+          (compiler_optimize.opt-inline-checked-relaxed-program-budget)
+          (compiler_optimize.opt-inline-checked-relaxed-budget-current)))]
+    [dispatch-calls : i64
+      (opt-count-direct-call-name-function-seq
+        (compiler_optimize.compiler-opt-global-shared-view optimized)
+        "inl9_dispatch"
+        "inl9_leaf")]
+    [verified? : bool
+      (and
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view optimized)
+          "inl9_driver")
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view optimized)
+          "inl9_dispatch")
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view optimized)
+          "inl9_leaf"))]
+    [_disarm : unit (compiler_optimize.opt-inline-checked-set-active! false)]
+    (if verified?
+      (+ (* 1000 spent) dispatch-calls)
+      (- 0 1))))
 
 ;; --- INL-8: the same callee at a wrapper and at a caller with calls of its own
 ;;

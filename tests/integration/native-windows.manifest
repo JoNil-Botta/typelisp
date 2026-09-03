@@ -227,6 +227,9 @@ checked_arm_wrapper_abort|tests/integration/checked_arm_wrapper_abort.tl|134|-|1
 checked_post_multi_call|tests/integration/checked_post_multi_call.tl|42|-|-|-
 checked_post_multi_call_abort|tests/integration/checked_post_multi_call_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/checked_post_multi_call_abort/checked_post_multi_call_abort.tl:38:36: array index out of bounds: index=64 length=64\n
 checked_post_multi_call_abort_opt2|tests/integration/checked_post_multi_call_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/checked_post_multi_call_abort_opt2/checked_post_multi_call_abort_opt2.tl:38:36: array index out of bounds: index=64 length=64\n
+checked_dispatch_arm|tests/integration/checked_dispatch_arm.tl|42|-|-|-
+checked_dispatch_arm_abort|tests/integration/checked_dispatch_arm_abort.tl|134|-|8 64|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/checked_dispatch_arm_abort/checked_dispatch_arm_abort.tl:31:29: array index out of bounds: index=15 length=8\n
+checked_dispatch_arm_abort_opt2|tests/integration/checked_dispatch_arm_abort.tl|134|-|8 64|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/checked_dispatch_arm_abort_opt2/checked_dispatch_arm_abort_opt2.tl:31:29: array index out of bounds: index=15 length=8\n
 synth_tail_wrapper_abort_opt2|tests/integration/synth_tail_wrapper_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/synth_tail_wrapper_abort_opt2/synth_tail_wrapper_abort_opt2.tl:37:36: array index out of bounds: index=64 length=64\n
 rmw_mem_operand_fold|tests/integration/rmw_mem_operand_fold.tl|42|8 -24\n7 1024 0\n24 108\n36 24\n6 3\n|8 3|stdlib/io.tl stdlib/string.tl
 mem_dest_rmw_fold|tests/integration/mem_dest_rmw_fold.tl|42|-|-|-

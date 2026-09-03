@@ -58,6 +58,11 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   Content-Length lists, TE/CL smuggling rejection, transfer-coding order,
   normalized Trailer declarations, HEAD/informational/204/304 semantics, and
   capability-gated CONNECT tunnels.
+- `net_ip_api.tl` covers network-order constructors, exact borrowed byte
+  lengths, family-sensitive equality/order/hash behavior, strict IPv4 and IPv6
+  positive and negative text tables with byte offsets, RFC 5952 formatting,
+  all 65,536 IPv4 suffixes, generated IPv6 round trips, and parser/formatter
+  allocation contracts.
 - `format_primitive_display.tl` covers zero, one, signed minima, and maxima for
   every fixed-width integer type, including the full `u64` range. Its pinned
   Rust Display tables cover binary32/binary64 signed zero, source-width

@@ -25916,7 +25916,20 @@
   ;; field rather than reusing `element-only-store?` is what separates those two
   ;; verdicts: an in-function element store is not a call boundary and must not
   ;; start being priced as one.
-  (element-only-call? bool))
+  (element-only-call? bool)
+  ;; ALIAS-3. WHICH typed words this body's ELEMENT writes can land on, as a
+  ;; SET over opt-load-type-alias-class codes 1..6 -- the in-function twin of
+  ;; the per-callee set MF-4 (ii) already keeps for a summarized callee
+  ;; (opt-call-memory-element-class-bit). Everything above answers "does the
+  ;; body write memory of this CLASS"; this answers "which WORDS", which is a
+  ;; question about static types and about nothing else.
+  ;;
+  ;; A write whose stored type has no class -- class 0: a byte or bool store, a
+  ;; CopyBytes, an unmodelled type -- sets ALL six bits, so it keeps killing
+  ;; exactly what it killed before and the unknown case needs no seventh flag.
+  ;; A summary with no element write at all carries 0, which the readers gate
+  ;; behind the two flags above.
+  (element-classes i64))
 
 (defenum OptLicmPtrKind
   (Unknown)
@@ -26206,6 +26219,33 @@
   ;; call-memory parameter attribution, but never use distinct parameter var
   ;; ids as noalias evidence. #6215 may restore the stronger rule once affine
   ;; by-value ownership is enforced and represented explicitly in IR.
+  ;;
+  ;; ALIAS-3 RE-EXAMINED THIS AND CONFIRMED IT. The language's borrow rule is a
+  ;; PLACE-PATH rule, not a physical noalias rule: tc-move-path-conflicts?
+  ;; (compiler_typecheck_core.tl) makes two paths conflict only when they share
+  ;; a syntactic ROOT NAME and one is a prefix of the other, so it rejects
+  ;; `(f (& p) (&mut p))` and `(f (&mut p) (&mut p))` -- both diagnosed E0207
+  ;; "cannot mutably borrow borrowed place" -- while saying nothing whatever
+  ;; about two DIFFERENT roots that happen to designate one object. SPEC.md
+  ;; scopes it the same way ("the checker enforces many immutable borrows or
+  ;; one mutable borrow for tracked local, parameter, and global place paths"),
+  ;; and SPEC.md's optimizer licence table carries no noalias row at all.
+  ;;
+  ;; Two roots CAN designate one object, and this compiler does it constantly:
+  ;; `*-global-shared-view` is `(unsafe (ptr-read (ptr-addr-of place)))`, a
+  ;; representation copy of an owning handle, and the copy and the original are
+  ;; two distinct roots over one allocation. licm-explicit-shallow-view-alias
+  ;; (compiler_optimize_tests.tl) is the executable witness: it passes
+  ;; `(& (array-ref items 0))` and `(&mut alias)` -- physically overlapping --
+  ;; through two reference parameters and checks that every store is observed.
+  ;; #6693 is the commit that removed the very rule ALIAS-3 was asked to add
+  ;; back, for exactly this reason, and nothing has changed since.
+  ;;
+  ;; So ALIAS-3 admits no root rule and this function is unchanged. What it
+  ;; adds instead is the next weakest condition that IS available: the
+  ;; typed-word rule at opt-licm-store-summary-element-class-safe?, which
+  ;; separates a load from a store by their static types and never asks which
+  ;; object either one names.
   (match store-root
     [(OptLicmRoot.Fresh store-id)
       (match load-root
@@ -26474,20 +26514,81 @@
       a)
     (opt-licm-global-value-invariant? facts loop-defs hoisted b)))
 
+;; ALIAS-3. The alias class of the WORD a load reads or a store writes, for
+;; this pass: opt-load-type-alias-class's codes 1..6, plus one code the load
+;; table does not need and this rule does.
+;;
+;; Code 7 is the ONE-BYTE scalars -- `bool`, `char`, `u8`, `i8`. The load table
+;; leaves them at class 0 ("proves nothing") because its `Raw`/element keys are
+;; also the shape a CopyBytes and a raw unsafe write take, and a byte write of
+;; that provenance may land on any word. Neither reaches this set: a CopyBytes
+;; is a header-or-unknown store here (opt-licm-store-state-instr's CopyBytes
+;; arm) and so is every write whose pointer the provenance walk cannot place,
+;; so the only writes that reach the class set at all are stores through a
+;; DataBuffer/DataElement address -- a typed element of a typed array. A
+;; one-byte element of a `bool`/`char`/`u8` array is a one-byte word, and an
+;; i64, a descriptor handle or a float read at the same address would be a
+;; differently typed word of the same storage, which the same argument that
+;; separates i16 from i64 (opt-load-alias-classes-distinct?) already forbids.
+;;
+;; The four share ONE code rather than getting four: they are all one byte
+;; wide, and a byte array viewed at another byte type is exactly the case the
+;; width argument does not settle.
+(define (opt-licm-word-alias-class
+  [type-segment-bases : i64]
+  [ty : ast.AstType]) : i64
+  (let
+    [class : i64
+      (opt-load-type-alias-class
+        type-segment-bases
+        (compiler-opt-global-shared-view ty))]
+    (if (> class 0)
+      class
+      (match ty
+        [(ast.AstType.Bool) 7]
+        [(ast.AstType.Char) 7]
+        [(ast.AstType.U8) 7]
+        [(ast.AstType.I8) 7]
+        [_ 0]))))
+
+;; "Some word of any class": the set a write whose stored type has no class
+;; contributes, and the set every caller that cannot name a type passes.
+;; Bits 1..7, matching opt-licm-word-alias-class's codes.
+(define (opt-licm-element-class-any) : i64
+  (* (- (shl 1 7) 1) 2))
+
+;; The one-bit set a write of static type `ty` contributes, or "any class" when
+;; `ty` has no code. `shl 1 class` and not `shl 1 (- class 1)` so the bit
+;; numbering is the code itself and the empty set stays 0.
+(define (opt-licm-element-class-bits
+  [type-segment-bases : i64]
+  [ty : ast.AstType]) : i64
+  (let
+    [class : i64 (opt-licm-word-alias-class type-segment-bases ty)]
+    (if (and (>= class 1) (<= class 7))
+      (shl 1 class)
+      (opt-licm-element-class-any))))
+
 (define (opt-licm-store-summary-empty) : OptLicmStoreSummary
-  (OptLicmStoreSummary false false false false))
+  (OptLicmStoreSummary false false false false 0))
 
 (define (opt-licm-store-summary-call-or-unknown) : OptLicmStoreSummary
-  (OptLicmStoreSummary true false false false))
+  (OptLicmStoreSummary true false false false 0))
 
 (define (opt-licm-store-summary-header-or-unknown-store) : OptLicmStoreSummary
-  (OptLicmStoreSummary false true false false))
+  (OptLicmStoreSummary false true false false 0))
 
-(define (opt-licm-store-summary-element-only-store) : OptLicmStoreSummary
-  (OptLicmStoreSummary false false true false))
+(define (opt-licm-store-summary-element-only-store [classes : i64]) : OptLicmStoreSummary
+  (OptLicmStoreSummary false false true false classes))
 
+;; An element-only CALLEE writes element storage of a class this summary does
+;; not carry yet, so it contributes "any class" and the typed-word rule below
+;; proves nothing about it. The per-callee set already exists
+;; (opt-call-memory-summary-element-class); wiring it through is a separate
+;; change and is deliberately not made here, so this packet's rule moves no
+;; decision that involves a call.
 (define (opt-licm-store-summary-element-only-call) : OptLicmStoreSummary
-  (OptLicmStoreSummary false false false true))
+  (OptLicmStoreSummary false false false true (opt-licm-element-class-any)))
 
 (define (opt-licm-store-summary-merge
   [left : OptLicmStoreSummary]
@@ -26496,7 +26597,8 @@
     (or left.call-or-unknown? right.call-or-unknown?)
     (or left.header-or-unknown-store? right.header-or-unknown-store?)
     (or left.element-only-store? right.element-only-store?)
-    (or left.element-only-call? right.element-only-call?)))
+    (or left.element-only-call? right.element-only-call?)
+    (bit-or left.element-classes right.element-classes)))
 
 (define (opt-licm-store-summary-clean? [summary : OptLicmStoreSummary]) : bool
   (and
@@ -26508,6 +26610,37 @@
 (define (opt-licm-store-summary-header-load-safe?
   [summary : OptLicmStoreSummary]) : bool
   (and (not summary.call-or-unknown?) (not summary.header-or-unknown-store?)))
+
+;; ALIAS-3. The TYPED-WORD rule, as a load-survives-this-body question.
+;;
+;; A store of alias class C writes only words whose STATIC TYPE is class C, so
+;; a load read at a DIFFERENT known class names a different word -- inside the
+;; same buffer, inside the same object, whatever either address turns out to
+;; be. Nothing here is an aliasing claim: no root, no provenance, no borrow
+;; rule and no allocation-layer argument is involved, which is precisely why
+;; this is the condition ALIAS-3 can admit where the parameter-root rule the
+;; packet proposed cannot (see the note at opt-licm-root-disjoint-store?: this
+;; language does not make two checked-reference parameters disjoint, and
+;; #6693 removed the rule that assumed it).
+;;
+;; It is the same rule opt-load-entry-survives-store-location? already applies
+;; to the load table one layer down (MF-4 ii), read here off the loop's own
+;; element-write set instead of off one store instruction.
+;;
+;; The two disqualifying flags are exactly header-load-safe?'s: a call of
+;; unknown effects and a header-or-unknown store both write words no static
+;; type bounds. `element-only-call?` needs no test of its own -- it contributes
+;; "any class", so its bit is always in the set.
+(define (opt-licm-store-summary-element-class-safe?
+  [type-segment-bases : i64]
+  [summary : OptLicmStoreSummary]
+  [ty : ast.AstType]) : bool
+  (and
+    (not summary.call-or-unknown?)
+    (not summary.header-or-unknown-store?)
+    (let
+      [class : i64 (opt-licm-word-alias-class type-segment-bases ty)]
+      (and (>= class 1) (= (bit-and summary.element-classes (shl 1 class)) 0)))))
 
 ;; The CALL boundary the P6/R7 hoist-vs-allocate interlock prices: a
 ;; loop-spanning live range that has to survive a call costs more in spill
@@ -28099,14 +28232,19 @@
 
 (define (opt-licm-store-summary-for-storeptr
   [ptrs : OptLicmPtrEnv]
+  ;; ALIAS-3: the class set this write contributes when it IS an element write.
+  ;; The caller reads it off the store's own static type; a caller with no type
+  ;; in hand passes (opt-licm-element-class-any) and the summary is exactly the
+  ;; one this function used to return.
+  [classes : i64]
   [ptr : ir.CompilerIrValue]) : OptLicmStoreSummary
   (match ptr
     [(ir.CompilerIrValue.Var ptr-var)
       (match (opt-licm-ptr-lookup ptrs ptr-var)
         [(OptLicmPtrKind.DataBuffer _)
-          (opt-licm-store-summary-element-only-store)]
+          (opt-licm-store-summary-element-only-store classes)]
         [(OptLicmPtrKind.DataElement _)
-          (opt-licm-store-summary-element-only-store)]
+          (opt-licm-store-summary-element-only-store classes)]
         [_ (opt-licm-store-summary-header-or-unknown-store)])]
     [_ (opt-licm-store-summary-header-or-unknown-store)]))
 
@@ -28334,7 +28472,7 @@
           name)]
       [(ir.CompilerIrInstr.TailCallIndirect _ _ _)
         (opt-licm-store-state-indirect-call provenance)]
-      [(ir.CompilerIrInstr.StorePtr ptr _ _)
+      [(ir.CompilerIrInstr.StorePtr ptr _ store-ty)
         (let
           ;; IAG-2: which global's own storage this write may land on.
           [obj-mask : i64
@@ -28351,6 +28489,9 @@
           [legacy-summary : OptLicmStoreSummary
             (opt-licm-store-summary-for-storeptr
               (compiler-opt-global-shared-view provenance.ptrs)
+              (opt-licm-element-class-bits
+                type-segment-bases
+                (compiler-opt-global-shared-view store-ty))
               (compiler-opt-global-shared-view ptr))]
           (match root
             [(OptLicmRoot.Fresh _)
@@ -28381,6 +28522,8 @@
         (let
           [base : ir.CompilerIrValue
             (compiler-opt-box-field-shared-view payload-box base)]
+          [store-ty : ast.AstType
+            (compiler-opt-box-field-shared-view payload-box ty)]
           [obj-mask : i64
             (opt-licm-store-obj-mask
               (compiler-opt-global-shared-view global-cells)
@@ -28395,6 +28538,9 @@
           [legacy-summary : OptLicmStoreSummary
             (opt-licm-store-summary-for-storeptr
               (compiler-opt-global-shared-view provenance.ptrs)
+              (opt-licm-element-class-bits
+                type-segment-bases
+                (compiler-opt-global-shared-view store-ty))
               (compiler-opt-global-shared-view base))]
           (match root
             [(OptLicmRoot.Fresh _)
@@ -28412,6 +28558,8 @@
         (let
           [base : ir.CompilerIrValue
             (compiler-opt-box-field-shared-view payload-box base)]
+          [store-ty : ast.AstType
+            (compiler-opt-box-field-shared-view payload-box ty)]
           [obj-mask : i64
             (opt-licm-store-obj-mask
               (compiler-opt-global-shared-view global-cells)
@@ -28428,6 +28576,9 @@
             (opt-licm-store-summary-for-storeptr
               (compiler-opt-global-shared-view
                 (__tl-project-field provenance ptrs))
+              (opt-licm-element-class-bits
+                type-segment-bases
+                (compiler-opt-global-shared-view store-ty))
               (compiler-opt-global-shared-view base))]
           (match root
             [(OptLicmRoot.Fresh _)
@@ -28486,7 +28637,11 @@
                 (opt-licm-store-state-mark-global-write provenance)
                 cell-mask)
               obj-mask)
-            (opt-licm-store-summary-element-only-store)))]
+            ;; A whole-cell copy writes every word of the cell, so it names no
+            ;; single class: it contributes "any class" and the ALIAS-3 rule
+            ;; proves nothing about it, exactly as before.
+            (opt-licm-store-summary-element-only-store
+              (opt-licm-element-class-any))))]
       [_
         (opt-licm-store-state-add-summary
           ;; Everything the arms above do not name: the effect classification
@@ -29504,10 +29659,26 @@
   [store-roots : OptLicmStoreRootList]
   [any-call? : bool]
   [load-root : OptLicmRoot]
-  [legacy-special-safe? : bool]) : bool
+  [legacy-special-safe? : bool]
+  ;; ALIAS-3. The TYPED-WORD verdict for THIS candidate's own static type
+  ;; (opt-licm-store-summary-element-class-safe?), computed at the call site
+  ;; because only the instruction knows the type it reads. It sits beside
+  ;; `legacy-special-safe?` in both arms and nowhere else: like that one it is
+  ;; a proof that the body's writes cannot reach this word, so it answers the
+  ;; MEMORY question and leaves every pressure gate around it untouched.
+  ;;
+  ;; It carries no root, which is why it is the disjunct this packet adds. The
+  ;; rule the packet proposed -- that two distinct checked-reference parameters
+  ;; name disjoint objects -- is NOT available in this language (the note at
+  ;; opt-licm-root-disjoint-store?, and #6693, which removed exactly it), so
+  ;; the root disjunct below is left as it stands.
+  [class-safe? : bool]) : bool
   (match load-root
     [(OptLicmRoot.NoRoot)
-      (or (opt-licm-store-summary-clean? legacy-summary) legacy-special-safe?)]
+      (or
+        (opt-licm-store-summary-clean? legacy-summary)
+        legacy-special-safe?
+        class-safe?)]
     [_
       (and
         ;; A call in the body used to close this path outright. That is what a
@@ -29532,6 +29703,9 @@
           ;; more precise descriptor-header proof when stores touch only data
           ;; elements of that same object.
           legacy-special-safe?
+          ;; ALIAS-3: and the typed-word proof, which is finer still -- it does
+          ;; not ask which object either address names at all.
+          class-safe?
           (and
             (opt-licm-store-summary-clean? root-summary)
             (opt-licm-store-roots-safe? store-roots load-root))))]))
@@ -30092,7 +30266,13 @@
                 globals
                 base
                 offset
-                ty)))))]
+                ty))
+            ;; ALIAS-3 does not speak here. A Gep computes an ADDRESS and reads
+            ;; no word, so it has no static type for the typed-word rule to
+            ;; separate; `ty` on a Gep is the SCALE, not the width of anything
+            ;; read. The load behind this address asks the question in the Load
+            ;; arm below, where the type is the one actually read.
+            false)))]
     [(ir.CompilerIrInstr.LoadOwned dst src _ ty)
       ;; The capability makes the memory motion sound, but it does not make a
       ;; descriptor handle cheap to keep live across a call. Such a handle
@@ -30119,7 +30299,7 @@
           globals
           hot-uses
           (ir.CompilerIrInstr.Load dst src ty)))]
-    [(ir.CompilerIrInstr.Load dst src _)
+    [(ir.CompilerIrInstr.Load dst src load-ty)
       (and
         (opt-gvn-stable-var? (compiler-opt-global-shared-view sources) dst)
         (opt-gvn-value-stable?
@@ -30177,7 +30357,16 @@
                 (compiler-opt-global-shared-view types)
                 (compiler-opt-global-shared-view ptrs)
                 (opt-licm-mode-late? licm-mode)
-                (compiler-opt-global-shared-view src))))
+                (compiler-opt-global-shared-view src)))
+            ;; ALIAS-3. The word this load reads, against the classes the
+            ;; body's element writes store. `legacy-store-summary` is the
+            ;; merged one -- rooted stores included -- because the rule is
+            ;; about types, not roots, and a rooted store writes a typed word
+            ;; exactly like any other.
+            (opt-licm-store-summary-element-class-safe?
+              type-segment-bases
+              (compiler-opt-global-shared-view legacy-store-summary)
+              (compiler-opt-global-shared-view load-ty)))
           ;; Descriptor-header exception: when the body provably cannot write
           ;; a descriptor header (see the define-site comment), a header-slot
           ;; load of a loop-invariant descriptor handle moves out even though
@@ -31893,6 +32082,7 @@
     [(opt-licm-store-summary-header-load-safe?
         (opt-licm-store-summary-for-storeptr
           (compiler-opt-global-shared-view ptrs)
+          (opt-licm-element-class-any)
           (compiler-opt-global-shared-view ptr)))
       (opt-licm-refuse-blame-none)]
     [else (OptLicmRefuseBlame 4 0)]))

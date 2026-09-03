@@ -42514,7 +42514,8 @@
           (compiler_ir_types.CompilerIrCallArgs.Nil)
           (compiler_ast_types.AstType.I64)))]
     [element-summary : compiler_optimize.OptLicmStoreSummary
-      (compiler_optimize.opt-licm-store-summary-element-only-store)]
+      (compiler_optimize.opt-licm-store-summary-element-only-store
+        (compiler_optimize.opt-licm-element-class-any))]
     [direct-clean-built : opt_i64_i64_map.Map
       (compiler_optimize.opt-loop-bce-direct-call-clean-map
         (opt-licm-direct-call-clean-test-functions symbols)
@@ -42752,7 +42753,8 @@
       ;; Element-only stores write element storage, which the memory model
       ;; keeps disjoint from named global cells.
       [(compiler_optimize.opt-licm-store-summary-global-write?
-          (compiler_optimize.opt-licm-store-summary-element-only-store))
+          (compiler_optimize.opt-licm-store-summary-element-only-store
+            (compiler_optimize.opt-licm-element-class-any)))
         131]
       [(compiler_optimize.opt-licm-store-summary-global-write?
           (compiler_optimize.opt-licm-store-summary-empty))
@@ -61544,6 +61546,432 @@
       (opt-licm-shallow-nested-result)
       20
       "nested explicit shallow aliases observe replacement")))
+
+;; --- ALIAS-3: the typed-word rule --------------------------------------------
+;;
+;; The shape the memory-root census is made of, in the smallest program that
+;; has it. One loop, one write, and a descriptor chain reached through a
+;; checked-reference PARAMETER rather than through an allocation of this
+;; function or through a global cell:
+;;
+;;   %6  = gep %2, 0 : u8                     a fixed word of the object `out`
+;;   %7  = load %6 : (__tl_dyn-array i64)     the descriptor handle it holds
+;;   %8  = gep %7, 0 : i64                    that descriptor's data slot
+;;   %9  = load %8 : u64                      the element buffer
+;;   %10 = gep %9, %4 : i64                   one element of it
+;;   store_ptr %10, 100 : i64                 the loop's only write
+;;
+;; `%6` is NOT a header-slot address: `%2` is a `(&mut ...)` parameter, not a
+;; descriptor handle, not an `Alloc` of this function and not a global, so
+;; every existing disjointness proof declines it and `%7` used to stay in the
+;; loop with the whole chain behind it. What moves it is the ONLY fact that
+;; holds here without an aliasing rule: the store writes an `i64` word and `%7`
+;; reads a descriptor-handle word, and a store of one alias class cannot write
+;; a word of another.
+;;
+;; The negatives are the boundary of exactly that claim. The first is the one
+;; the packet's parameter-root rule would have moved and this one must not: a
+;; SAME-CLASS load off the same parameter (`out.len`, an i64, against an i64
+;; element store) is refused, because separating those two words needs the
+;; objects to be disjoint and this language does not make two borrows disjoint
+;; (see opt-licm-root-disjoint-store?). It is also the control that proves the
+;; positive comes from the class rule and not from some header-slot path: if
+;; `%6` were classified as a descriptor word, this load would move too.
+(define (opt-ec-params) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "cond"
+      (compiler_ast_types.AstType.Bool)
+      0)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "text"
+        (compiler_ast_types.AstType.Ref 0 0)
+        1)
+      (compiler_ir_types.compiler-ir-param-seq-prepend
+        (compiler_ir_types.CompilerIrParam.Param
+          "out"
+          (compiler_ast_types.AstType.MutRef 0 0)
+          2)
+        (compiler_ir_types.compiler-ir-param-seq-prepend
+          (compiler_ir_types.CompilerIrParam.Param
+            "raw"
+            (compiler_ast_types.AstType.U64)
+            20)
+          (compiler_ir_types.compiler-ir-param-seq-empty))))))
+
+(define (opt-ec-test-function [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "licm_element_class")
+    (opt-ec-params)
+    (compiler_ast_types.AstType.I64)
+    64
+    blocks))
+
+;; The PRE-BCE run, with no global table and no clean-callee map: the plain
+;; memory gate, so the only thing that can move the candidate is the clause
+;; under test.
+(define (opt-ec-licm-early [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [func : compiler_ir_types.CompilerIrFunction
+      (opt-ec-test-function
+        (compiler_ir_types.compiler-ir-global-shared-view blocks))]
+    (match (compiler_optimize.opt-licm-function-with-context-result-and-direct-call-clean
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler_optimize.opt-cfg-context-build
+        (compiler_ir_types.compiler-ir-global-shared-view blocks))
+      false
+      (opt_i64_i64_map.with-capacity 1)
+      (opt_i64_i64_map.with-capacity 1)
+      (compiler_optimize.opt-global-cell-summary-empty)
+      false
+      func)
+      [(compiler_optimize.OptFunctionCtxResult.Result next _)
+        (compiler_optimize.opt-function-blocks next)])))
+
+;; The loop this packet's clause is tested on. The two address GEPs sit in the
+;; PREHEADER already, so nothing but the memory verdict on the LOADS is under
+;; test -- an address of an unrooted class has its own gate (the P6/R7
+;; interlock and the pre-BCE operand rule) and would otherwise decide the
+;; outcome before the clause is reached.
+;;
+;;   entry:  %3  = mov 0
+;;           %6  = gep %2, <head-offset> : u8   a fixed word of `*out`
+;;           %11 = gep %2, 0 : u8               its `slots` word
+;;   loop:   %4  = phi [%3, entry] [%5, body]
+;;           %7  = load %6 : <load-ty>          THE CANDIDATE
+;;           %12 = load %11 : (__tl_dyn-array i64)
+;;           %8  = gep %12, 0 : i64             the descriptor's data slot
+;;           %9  = load %8 : u64                the element buffer
+;;           %10 = gep %9, %4 : i64             one element of it
+;;           <write>
+;;           %5  = add %4, 1 ; branch %0, body, exit
+;;
+;; `%6` and `%11` are fixed words of the object a `(&mut ...)` PARAMETER
+;; designates: not a descriptor handle, not an `Alloc` of this function, not a
+;; global cell, so every existing disjointness proof declines them.
+(define (opt-ec-loop-blocks-general
+  [head-offset : i64]
+  [load-ty : compiler_ast_types.AstType]
+  ;; One instruction in front of the write: the indirect call for that
+  ;; negative, and an inert `mov` everywhere else so the two shapes differ by
+  ;; nothing but that instruction.
+  [pre : compiler_ir_types.CompilerIrInstr]
+  [write : compiler_ir_types.CompilerIrInstr]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Gep
+          6
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ir_types.CompilerIrValue.I64 head-offset)
+          (compiler_ast_types.AstType.U8))
+        (compiler_ir_types.CompilerIrInstr.Gep
+          11
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.U8))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "loop"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (opt-test-instrs-with-tail
+          (opt-test-instrs-with-tail
+            (opt-licm-loop-finish-instrs)
+            (compiler_ir_types.CompilerIrInstr.Load
+              7
+              (compiler_ir_types.CompilerIrValue.Var 6)
+              load-ty)
+            (compiler_ir_types.CompilerIrInstr.Load
+              12
+              (compiler_ir_types.CompilerIrValue.Var 11)
+              (compiler_ast_types.AstType.DynArray 0))
+            (compiler_ir_types.CompilerIrInstr.Gep
+              8
+              (compiler_ir_types.CompilerIrValue.Var 12)
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Load
+              9
+              (compiler_ir_types.CompilerIrValue.Var 8)
+              (compiler_ast_types.AstType.U64))
+            (compiler_ir_types.CompilerIrInstr.Gep
+              10
+              (compiler_ir_types.CompilerIrValue.Var 9)
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ast_types.AstType.I64))
+            pre
+            write)
+          (compiler_ir_types.CompilerIrInstr.Phi
+            4
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+            (compiler_ast_types.AstType.I64))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "body")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "loop"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 5)))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-ec-loop-blocks
+  [head-offset : i64]
+  [load-ty : compiler_ast_types.AstType]
+  [write : compiler_ir_types.CompilerIrInstr]) : compiler_ir_types.CompilerIrBlockList
+  (opt-ec-loop-blocks-general
+    head-offset
+    load-ty
+    (compiler_ir_types.CompilerIrInstr.Mov
+      14
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.I64))
+    write))
+
+;; The same loop with an INDIRECT call in front of the write: it may land on
+;; any function of the program, so it writes words no static type bounds.
+(define (opt-ec-loop-blocks-with-call
+  [load-ty : compiler_ast_types.AstType]
+  [write : compiler_ir_types.CompilerIrInstr]) : compiler_ir_types.CompilerIrBlockList
+  (opt-ec-loop-blocks-general
+    0
+    load-ty
+    (compiler_ir_types.CompilerIrInstr.CallIndirect
+      13
+      (compiler_ir_types.CompilerIrValue.Var 20)
+      (compiler_ir_types.CompilerIrCallArgs.Nil)
+      (compiler_ast_types.AstType.I64))
+    write))
+
+;; One scalar element store of class i64: the write the whole rule is about.
+(define (opt-ec-element-store-i64) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.StorePtr
+    (compiler_ir_types.CompilerIrValue.Var 10)
+    (compiler_ir_types.CompilerIrValue.I64 100)
+    (compiler_ast_types.AstType.I64)))
+
+;; The same element store writing a DESCRIPTOR HANDLE -- the candidate's own
+;; class -- which the rule must refuse.
+(define (opt-ec-element-store-handle) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.StorePtr
+    (compiler_ir_types.CompilerIrValue.Var 10)
+    (compiler_ir_types.CompilerIrValue.Var 12)
+    (compiler_ast_types.AstType.DynArray 0)))
+
+;; A store through the `raw` parameter: a pointer whose provenance the walk
+;; cannot place, so it is a header-or-unknown store and no class bounds it.
+(define (opt-ec-raw-store) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.StorePtr
+    (compiler_ir_types.CompilerIrValue.Var 20)
+    (compiler_ir_types.CompilerIrValue.I64 100)
+    (compiler_ast_types.AstType.I64)))
+
+;; A write to a GLOBAL CELL. The cell may hold the very object the parameter
+;; borrows, and `(set! g v)` copies a whole aggregate over it, so it names no
+;; class at all.
+(define (opt-ec-cell-store [global : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Store
+    global
+    (compiler_ir_types.CompilerIrValue.Var 12)
+    (compiler_ast_types.AstType.DynArray 0)))
+
+;; Is the load that defines `var` in the block labelled `label`? The load
+;; COUNTS the older fixtures use cannot separate this packet's verdict from the
+;; descriptor-header one -- the chain carries loads of three different classes
+;; and each moves for its own reason -- so the assertions below name the one
+;; load whose verdict is under test.
+(define (opt-ec-seq-loads-var?
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [var : i64]) : bool
+  (if (>=
+    index
+    (compiler_ir_types.compiler-ir-instr-seq-count
+      (compiler_ir_types.compiler-ir-global-shared-view instrs)))
+    false
+    (or
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref
+        (compiler_ir_types.compiler-ir-global-shared-view instrs)
+        index)
+        [(compiler_ir_types.CompilerIrInstr.Load dst _ _) (= dst var)]
+        [_ false])
+      (opt-ec-seq-loads-var?
+        (compiler_ir_types.compiler-ir-global-shared-view instrs)
+        (+ index 1)
+        var))))
+
+(define (opt-ec-block-loads-var?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]
+  [var : i64]) : bool
+  (match (compiler_ir_types.compiler-ir-global-shared-view blocks)
+    [(compiler_ir_types.CompilerIrBlockList.Nil) false]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block block-label instrs)
+          (or
+            (and (= block-label label) (opt-ec-seq-loads-var? instrs 0 var))
+            (opt-ec-block-loads-var?
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
+              label
+              var))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-ec-block-loads-var?
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        label
+        var)]))
+
+(define (opt-ec-hoisted? [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (opt-ec-block-loads-var?
+    blocks
+    (compiler_ir_types.compiler-ir-label "entry")
+    7))
+
+(define (opt-ec-kept? [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (opt-ec-block-loads-var?
+    blocks
+    (compiler_ir_types.compiler-ir-label "loop")
+    7))
+
+(define (compiler-optimize-licm-element-class-self-test) : i64
+  (let
+    ;; positive: a descriptor-handle word off `out`, against an i64 element
+    ;; store. Different classes, so the load and the two links behind it leave.
+    [moved : compiler_ir_types.CompilerIrBlockList
+      (opt-ec-licm-early
+        (opt-ec-loop-blocks
+          0
+          (compiler_ast_types.AstType.DynArray 0)
+          (opt-ec-element-store-i64)))]
+    ;; negative 1 -- the packet's rule, refused: a SAME-CLASS i64 word off the
+    ;; same parameter (`out.len`) against the same i64 element store.
+    [same-class : compiler_ir_types.CompilerIrBlockList
+      (opt-ec-licm-early
+        (opt-ec-loop-blocks
+          8
+          (compiler_ast_types.AstType.I64)
+          (opt-ec-element-store-i64)))]
+    ;; negative 2: the store writes the candidate's OWN class.
+    [same-word : compiler_ir_types.CompilerIrBlockList
+      (opt-ec-licm-early
+        (opt-ec-loop-blocks
+          0
+          (compiler_ast_types.AstType.DynArray 0)
+          (opt-ec-element-store-handle)))]
+    ;; negative 3: a store through a pointer of unknown provenance.
+    [raw : compiler_ir_types.CompilerIrBlockList
+      (opt-ec-licm-early
+        (opt-ec-loop-blocks
+          0
+          (compiler_ast_types.AstType.DynArray 0)
+          (opt-ec-raw-store)))]
+    ;; negative 4: an indirect call in the loop.
+    [indirect : compiler_ir_types.CompilerIrBlockList
+      (opt-ec-licm-early
+        (opt-ec-loop-blocks-with-call
+          (compiler_ast_types.AstType.DynArray 0)
+          (opt-ec-element-store-i64)))]
+    ;; negative 5: a write to a global cell that may hold this very object.
+    [cell : compiler_ir_types.CompilerIrBlockList
+      (opt-ec-licm-early
+        (opt-ec-loop-blocks
+          0
+          (compiler_ast_types.AstType.DynArray 0)
+          (opt-ec-cell-store (opt-test-symbol "ec_cell"))))]
+    (cond
+      ;; the candidate moved to the preheader...
+      [(not
+          (opt-ec-hoisted?
+            (compiler_ir_types.compiler-ir-global-shared-view moved)))
+        1]
+      ;; ...and is gone from the body
+      [(opt-ec-kept? (compiler_ir_types.compiler-ir-global-shared-view moved))
+        2]
+      ;; and the data slot and the buffer behind it came out with it: three
+      ;; loads in the preheader, none left in the loop
+      [(not
+          (=
+            (opt-fz-preheader-loads
+              (compiler_ir_types.compiler-ir-global-shared-view moved))
+            3))
+        3]
+      [(not
+          (=
+            (opt-fz-body-loads
+              (compiler_ir_types.compiler-ir-global-shared-view moved))
+            0))
+        4]
+      ;; every negative keeps the candidate in the loop
+      [(opt-ec-hoisted?
+          (compiler_ir_types.compiler-ir-global-shared-view same-class))
+        5]
+      [(not
+          (opt-ec-kept?
+            (compiler_ir_types.compiler-ir-global-shared-view same-class)))
+        6]
+      [(opt-ec-hoisted?
+          (compiler_ir_types.compiler-ir-global-shared-view same-word))
+        7]
+      [(not
+          (opt-ec-kept?
+            (compiler_ir_types.compiler-ir-global-shared-view same-word)))
+        8]
+      [(opt-ec-hoisted? (compiler_ir_types.compiler-ir-global-shared-view raw))
+        9]
+      [(not
+          (opt-ec-kept? (compiler_ir_types.compiler-ir-global-shared-view raw)))
+        10]
+      [(opt-ec-hoisted?
+          (compiler_ir_types.compiler-ir-global-shared-view indirect))
+        11]
+      [(opt-ec-hoisted? (compiler_ir_types.compiler-ir-global-shared-view cell))
+        12]
+      ;; and a refused candidate takes the whole chain down with it: nothing
+      ;; behind it reaches the preheader either
+      [(not
+          (=
+            (opt-fz-preheader-loads
+              (compiler_ir_types.compiler-ir-global-shared-view raw))
+            0))
+        13]
+      [(not
+          (=
+            (opt-fz-preheader-loads
+              (compiler_ir_types.compiler-ir-global-shared-view indirect))
+            0))
+        14]
+      [(not
+          (=
+            (opt-fz-preheader-loads
+              (compiler_ir_types.compiler-ir-global-shared-view cell))
+            0))
+        15]
+      [else 42])))
+
+(test
+  licm-element-class-typed-word
+  (test.assert-i64-eq
+    (compiler-optimize-licm-element-class-self-test)
+    42
+    "a load of a descriptor-handle word off a `(&mut ...)` parameter leaves a loop whose only write is an i64 element store, and the descriptor's data slot and buffer leave with it; a same-class i64 word off that same parameter, an element store of the candidate's own class, a store through a pointer of unknown provenance, an indirect call in the loop, and a whole-cell global write each keep the chain inside"))
 
 (test
   licm-root-disjointness

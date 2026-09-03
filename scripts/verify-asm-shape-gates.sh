@@ -2604,6 +2604,45 @@ check_alias_row_overflow() {
     assert_contains "$_loop" "call ${_sym}_aro_marked_question" alias-row-overflow
 }
 
+# ALIAS-3: the `*-scan-ints` tokenizer. Its loop reads three words of the
+# object the `(&mut Vec)` parameter designates on every trip -- the `slots`
+# handle at `*out + 0`, that descriptor's length word and its data pointer --
+# and its only write is an element store through the buffer they name. The
+# element store writes an `i64`; the `slots` read is a descriptor-handle word,
+# a different alias class, so no store in the loop can reach it and the whole
+# chain leaves. Before the rule all three reloaded every trip.
+check_alias_typed_word() {
+    _asm=$(compile_gate alias_typed_word tests/integration/alias_typed_word.tl)
+    _body=$(function_body "$_asm" _tl_alias_typed_word_atw_scan_ints)
+    # The three reads are in the loop's PREHEADER...
+    _pre="$WORKDIR/alias_typed_word.pre"
+    awk '
+        /^\.L[A-Za-z0-9_.]*:$/ { inblk = 0 }
+        /^\.L[A-Za-z0-9_.]*while_header\.0__rotate_land:$/ { inblk = 1; next }
+        inblk { print }
+    ' "$_body" > "$_pre"
+    [ -s "$_pre" ] || fail "alias-typed-word found no loop preheader"
+    assert_regex_count_eq "$_pre" \
+        '^[[:space:]]+movq (8)?\(%r[a-z0-9]+\), %r[a-z0-9]+$' 3 alias-typed-word
+    # ...and nothing from the loop's first block onward reloads a descriptor
+    # word of either parameter.
+    _loop="$WORKDIR/alias_typed_word.loop"
+    awk '
+        inblk { print }
+        /^\.L[A-Za-z0-9_.]*while_body\.1:$/ { inblk = 1 }
+    ' "$_body" > "$_loop"
+    [ -s "$_loop" ] || fail "alias-typed-word found no loop body"
+    assert_regex_count_eq "$_loop" \
+        '^[[:space:]]+movq (8)?\(%r[a-z0-9]+\), %r[a-z0-9]+$' 0 alias-typed-word
+    # The element store itself is still in the loop, with its bounds check: this
+    # is a claim about the loads that survive a store, not about a store-free
+    # loop.
+    assert_regex_count_eq "$_loop" \
+        '^[[:space:]]+movq %r[a-z0-9]+, \(%r[a-z0-9]+,%r[a-z0-9]+,8\)$' 1 \
+        alias-typed-word
+    assert_contains "$_loop" 'call tl_oob_abort_at' alias-typed-word
+}
+
 check_alias_global_shift() {
     _asm=$(compile_gate alias_global_shift tests/integration/alias_global_shift.tl)
     _body=$(function_body "$_asm" main)
@@ -3078,6 +3117,7 @@ check_range_merge_unsigned
 check_dce_late_flag_loop
 check_alias_global_shift
 check_alias_row_overflow
+check_alias_typed_word
 check_vt_offset_copy
 check_vt_derived_stride
 

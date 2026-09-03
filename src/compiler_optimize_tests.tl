@@ -64818,6 +64818,144 @@
       [(not (= plain-clause (compiler_optimize.opt-bce-reason-no-preheader))) 3]
       [else 42])))
 
+;; --- BCE-4: the masked index against a capacity ------------------------------
+;;
+;; `bit-and x m` lands in [0, m], so a check `idx < len` is dead whenever the
+;; facts in scope decide `0 <= m < len`. `m = len - 1` states that syntactically
+;; and was the only form the rule read; a mask built from a CAPACITY -- `cap - 1`
+;; with nothing locally tying `cap` to the array's length word -- states it only
+;; through the dominating comparisons, which is what these fixtures pin. The
+;; negative is the same CFG with the `m < len` branch removed: masking alone
+;; proves nothing about an array the mask is not tied to.
+(define (opt-bce-mask-cap-params) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "mask"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "len"
+        (compiler_ast_types.AstType.I64)
+        1)
+      (compiler_ir_types.compiler-ir-param-seq-prepend
+        (compiler_ir_types.CompilerIrParam.Param
+          "x"
+          (compiler_ast_types.AstType.I64)
+          2)
+        (compiler_ir_types.compiler-ir-param-seq-empty)))))
+
+(define (opt-bce-mask-cap-blocks [below-len? : bool]) : compiler_ir_types.CompilerIrBlockList
+  ;; entry: decide `mask < len` (or, in the negative, a comparison that says
+  ;; nothing about `len`); nonneg: decide `mask >= 0`; body: the masked access.
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          3
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (if below-len?
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.I64 4096))
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.compiler-ir-label "nonneg")
+          (compiler_ir_types.compiler-ir-label "bail"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "nonneg")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            4
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.compiler-ir-label "bail")
+            (compiler_ir_types.compiler-ir-label "body"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "body")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              5
+              (compiler_ir_types.CompilerIrBinOp.BitAnd)
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.BoundsCheck
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "b_ok"))
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 5)))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "bail")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 0)))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-bce-mask-cap-checks [below-len? : bool]) : i64
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mask-cap-blocks below-len?)]
+    [after : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-bounds-dom-blocks-with-context
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.opt-cfg-context-build
+          (compiler_optimize.compiler-opt-global-shared-view blocks))
+        (opt-bce-mask-cap-params)
+        8
+        blocks)]
+    (compiler_optimize.opt-count-bounds-blocks after)))
+
+(define (compiler-optimize-bce-masked-capacity-self-test) : i64
+  (cond
+    ;; the fixture really carries one check
+    [(not
+        (=
+          (compiler_optimize.opt-count-bounds-blocks
+            (opt-bce-mask-cap-blocks true))
+          1))
+      1]
+    ;; `mask < len` and `mask >= 0` both dominate the access: discharged
+    [(not (= (opt-bce-mask-cap-checks true) 0)) 2]
+    ;; only `mask < 4096` and `mask >= 0`: the mask is not tied to THIS length,
+    ;; so the check stays
+    [(not (= (opt-bce-mask-cap-checks false) 1)) 3]
+    [else 42]))
+
+;; --- BCE-4: the guard's price on the versioner's trace ------------------------
+;;
+;; A versioning is priced by the conjuncts its guard states -- each a compare
+;; and a branch paid once per loop ENTRY -- and by whether that entry is inside
+;; another loop, which is what turns "once per call" into "once per enclosing
+;; iteration". Both are reported on the `bce-version|...|version|ok` line, and
+;; this pins that they are recorded rather than left at their "no guard was
+;; built" defaults.
+(define (compiler-optimize-bce-guard-price-self-test) : i64
+  (let
+    [reason : i64 (opt-vt-reason 0)]
+    [conjuncts : i64 (compiler_optimize.opt-bce-trace-guard-count)]
+    [nested? : bool (compiler_optimize.opt-bce-trace-nested-entry-flag)]
+    (cond
+      [(not (= reason (compiler_optimize.opt-bce-reason-ok))) 1]
+      ;; a guard was built and priced
+      [(< conjuncts 1) 2]
+      ;; this fixture's loop is entered from the function entry, not from
+      ;; inside another loop
+      [nested? 3]
+      [else 42])))
+
 (define (compiler-optimize-natural-loop-self-test) : i64
   (let
     [single-index : compiler_optimize.OptCfgIndex

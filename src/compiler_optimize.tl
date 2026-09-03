@@ -61181,7 +61181,73 @@
 ;; `len >= 1` is load-bearing, not a formality: at `len = 0` the mask is -1,
 ;; `X & -1 = X` is unbounded, and the check must stay to trap. Hence the guard
 ;; fact requirement -- masking alone proves nothing about an empty array.
+;; BCE-4. `len - 1` for this very length is not the only mask that discharges
+;; the check. What the argument above actually needs of the mask `m` is
+;; `0 <= m < len`: `bit-and x m` clears bits, so it lands in [0, m], and a
+;; nonnegative m keeps the sign bit clear. The syntactic form proves exactly
+;; that -- with `len >= 1`, `m = len - 1` is in [0, len) -- but it is only one
+;; way to know it.
+;;
+;; The other way is the comparison facts in scope, and that is the form a mask
+;; built from a CAPACITY takes: `cap - 1`, where nothing locally ties `cap` to
+;; the array's length word, so the relation `cap - 1 < len` has to come from a
+;; dominating comparison -- a guard the caller tested, a passed check, a
+;; length-equality fold that already rewrote one length into the other. Asked
+;; here it sees every such fact that dominates the access, which is the same set
+;; every other rule on this walk reads.
+;;
+;; `m >= 0` is asked separately and is load-bearing for the same reason
+;; `len >= 1` is in the syntactic form: at m = -1 the mask is the identity and
+;; bounds nothing.
+(define (opt-bounds-dom-mask-below-len?
+  [type-segment-bases : i64]
+  [cmp-facts : OptDomCmpFacts]
+  [len-positive? : bool]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [len : ir.CompilerIrValue]
+  [m : ir.CompilerIrValue]) : bool
+  (or
+    (and
+      ;; the syntactic form needs it: at len = 0 the mask is -1 and bounds
+      ;; nothing. The fact-based form below does not -- `0 <= m < len` already
+      ;; says `len >= 1`.
+      len-positive?
+      (opt-bounds-dom-len-minus-one?
+        (compiler-opt-global-shared-view defs)
+        (compiler-opt-global-shared-view copies)
+        (compiler-opt-global-shared-view len)
+        (compiler-opt-global-shared-view m)))
+    (and
+      ;; m >= 0
+      (or
+        (match (compiler-opt-global-shared-view m)
+          [(ir.CompilerIrValue.I64 value) (>= value 0)]
+          [_ false])
+        (match (opt-dom-cmp-lookup
+          type-segment-bases
+          (compiler-opt-global-shared-view cmp-facts)
+          (ir.CompilerIrBinOp.Lt)
+          (compiler-opt-global-shared-view m)
+          (ir.CompilerIrValue.I64 0)
+          (ast.AstType.I64))
+          [(OptDomCmpLookup.Some decided) (not decided)]
+          [(OptDomCmpLookup.No) false]))
+      ;; m < len
+      (match (opt-dom-cmp-lookup
+        type-segment-bases
+        (compiler-opt-global-shared-view cmp-facts)
+        (ir.CompilerIrBinOp.Lt)
+        (compiler-opt-global-shared-view m)
+        (compiler-opt-global-shared-view len)
+        (ast.AstType.I64))
+        [(OptDomCmpLookup.Some decided) decided]
+        [(OptDomCmpLookup.No) false]))))
+
 (define (opt-bounds-dom-masked-value?
+  [type-segment-bases : i64]
+  [cmp-facts : OptDomCmpFacts]
+  [len-positive? : bool]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
   [len : ir.CompilerIrValue]
@@ -61197,14 +61263,20 @@
                 (opt-binop-eq op (ir.CompilerIrBinOp.BitAnd))
                 (opt-integer-type? ty)
                 (or
-                  (opt-bounds-dom-len-minus-one?
+                  (opt-bounds-dom-mask-below-len?
+                    type-segment-bases
+                    (compiler-opt-global-shared-view cmp-facts)
+                    len-positive?
                     (compiler-opt-global-shared-view defs)
                     (compiler-opt-global-shared-view copies)
                     (compiler-opt-global-shared-view len)
                     (opt-bounds-dom-resolve
                       (compiler-opt-global-shared-view copies)
                       rhs))
-                  (opt-bounds-dom-len-minus-one?
+                  (opt-bounds-dom-mask-below-len?
+                    type-segment-bases
+                    (compiler-opt-global-shared-view cmp-facts)
+                    len-positive?
                     defs
                     (compiler-opt-global-shared-view copies)
                     len
@@ -61223,6 +61295,9 @@
 ;; reference each other cyclically, so the depth counter is what guarantees
 ;; termination rather than any structural property of the graph.
 (define (opt-bounds-dom-masked-or-phi?
+  [type-segment-bases : i64]
+  [cmp-facts : OptDomCmpFacts]
+  [len-positive? : bool]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
@@ -61231,6 +61306,9 @@
   [depth : i64]) : bool
   (or
     (opt-bounds-dom-masked-value?
+      type-segment-bases
+      (compiler-opt-global-shared-view cmp-facts)
+      len-positive?
       (compiler-opt-global-shared-view defs)
       (compiler-opt-global-shared-view copies)
       (compiler-opt-global-shared-view len)
@@ -61249,6 +61327,9 @@
                   (and
                     (opt-integer-type? ty)
                     (opt-bounds-dom-phi-inputs-masked?
+                      type-segment-bases
+                      (compiler-opt-global-shared-view cmp-facts)
+                      len-positive?
                       (compiler-opt-global-shared-view defs)
                       (compiler-opt-global-shared-view phi-defs)
                       (compiler-opt-global-shared-view copies)
@@ -61259,6 +61340,9 @@
         [_ false]))))
 
 (define (opt-bounds-dom-phi-inputs-masked?
+  [type-segment-bases : i64]
+  [cmp-facts : OptDomCmpFacts]
+  [len-positive? : bool]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
@@ -61282,6 +61366,9 @@
             (- phi-inputs-at-53896-3.len 1))]
         (and
           (opt-bounds-dom-masked-or-phi?
+            type-segment-bases
+            (compiler-opt-global-shared-view cmp-facts)
+            len-positive?
             (compiler-opt-global-shared-view defs)
             (compiler-opt-global-shared-view phi-defs)
             (compiler-opt-global-shared-view copies)
@@ -61296,6 +61383,9 @@
             (if (<= phi-inputs-at-53909-9.len 0)
               true
               (opt-bounds-dom-phi-inputs-masked?
+                type-segment-bases
+                (compiler-opt-global-shared-view cmp-facts)
+                len-positive?
                 (compiler-opt-global-shared-view defs)
                 phi-defs
                 copies
@@ -61324,12 +61414,21 @@
         (compiler-opt-global-shared-view phi-defs)
         (compiler-opt-global-shared-view copies)
         raw-len)]
-    (and
+    [len-positive? : bool
       (opt-bounds-dom-len-positive?
         type-segment-bases
-        cmp-facts
-        (compiler-opt-global-shared-view len))
-      (opt-bounds-dom-masked-or-phi? defs phi-defs copies len idx 4))))
+        (compiler-opt-global-shared-view cmp-facts)
+        (compiler-opt-global-shared-view len))]
+    (opt-bounds-dom-masked-or-phi?
+      type-segment-bases
+      cmp-facts
+      len-positive?
+      defs
+      phi-defs
+      copies
+      len
+      idx
+      4)))
 
 ;; --- constant-offset runs against one length ----------------------------------
 ;;
@@ -86380,6 +86479,15 @@
   (- 0 1))
 (define opt-bce-trace-kept : i64
   (- 0 1))
+
+;; BCE-4: the guard's PRICE -- the conjuncts it states, each a compare and a
+;; branch paid once per loop entry -- and whether that entry is inside another
+;; loop. Both stay -1/false for a loop refused before the guard was built, which
+;; is what distinguishes "the guard cost this" from "no guard was built".
+(define opt-bce-trace-guard : i64
+  (- 0 1))
+(define opt-bce-trace-nested-entry? : bool
+  false)
 (define opt-bce-trace-free? : bool
   false)
 (define opt-bce-trace-function : i64
@@ -86393,6 +86501,8 @@
     (set! opt-bce-trace-reason (opt-bce-reason-none))
     (set! opt-bce-trace-derived (- 0 1))
     (set! opt-bce-trace-kept (- 0 1))
+    (set! opt-bce-trace-guard (- 0 1))
+    (set! opt-bce-trace-nested-entry? false)
     (set! opt-bce-trace-free? free?)))
 
 (define (opt-bce-trace-examined!) : unit
@@ -86406,10 +86516,26 @@
 (define (opt-bce-trace-reason-code) : i64
   opt-bce-trace-reason)
 
+;; BCE-4's guard price for that same loop: the conjuncts its guard states, and
+;; whether the entry that pays them is inside another loop. -1 / false when the
+;; loop was refused before a guard was built.
+(define (opt-bce-trace-guard-count) : i64
+  opt-bce-trace-guard)
+
+(define (opt-bce-trace-nested-entry-flag) : bool
+  opt-bce-trace-nested-entry?)
+
 (define (opt-bce-trace-derivation! [derived : i64] [kept : i64]) : unit
   (begin
     (set! opt-bce-trace-derived derived)
     (set! opt-bce-trace-kept kept)))
+
+;; Recorded where the guard is finished and priced, so the line reports the
+;; number the admission clause read.
+(define (opt-bce-trace-guard! [conjuncts : i64] [nested-entry? : bool]) : unit
+  (begin
+    (set! opt-bce-trace-guard conjuncts)
+    (set! opt-bce-trace-nested-entry? nested-entry?)))
 
 ;; The single-block scan's refusal helper: record the clause and hand back the
 ;; `No` the clause was going to return anyway.
@@ -86466,6 +86592,15 @@
     (string.int->string blocks)
     (if (> opt-bce-trace-kept 0)
       (str_cat.str-cat "|kept=" (string.int->string opt-bce-trace-kept))
+      "")
+    (if (>= opt-bce-trace-guard 0)
+      (str_cat.str-cat
+        "|guard="
+        (string.int->string opt-bce-trace-guard)
+        "|nested="
+        (if opt-bce-trace-nested-entry?
+          "1"
+          "0"))
       "")
     "\n"))
 
@@ -92464,7 +92599,16 @@
   ;; `opt-bce-mb-loop-shape-free`) has none: `iphi` is -1, the seed/bound/step
   ;; fields are inert placeholders, and only the counter-INDEPENDENT
   ;; derivations may fire. Everything that reads the trip range tests this.
-  (counted? bool))
+  (counted? bool)
+  ;; BCE-4. Is this loop's ENTRY inside another loop? The guard is paid once
+  ;; per entry, so for a nested loop it runs once per enclosing iteration while
+  ;; the checks it removes run once per INNER iteration. The counter-free phase
+  ;; already refuses such a candidate outright
+  ;; (`opt-bce-reason-free-not-outermost`); a counted one is priced instead, at
+  ;; `opt-bce-mb-guard-conds-ranged`. Computed where the loop list is in hand
+  ;; (`opt-bce-mb-loop-shape-with-preheader`) with the same
+  ;; `opt-bce-mb-preheader-outside-loops?` test that clause uses.
+  (nested-entry? bool))
 
 (defenum OptBceMbMaybeShape
   (No)
@@ -94007,6 +94151,7 @@
   [body-blocks : ir.CompilerIrBlockList]
   [inner : OptLabelSet]
   [region? : bool]
+  [nested-entry? : bool]
   [uncovered : OptLabelSet]
   [counter : OptBceMbMaybeCounter]) : OptBceMbMaybeShape
   (match counter
@@ -94059,7 +94204,8 @@
                       uncovered
                       inner
                       region?
-                      true))
+                      true
+                      nested-entry?))
                   (opt-bce-trace-refuse-mb-shape
                     (if phis-ok?
                       (opt-bce-reason-no-check)
@@ -94100,7 +94246,8 @@
   [body-labels : OptLabelSet]
   [body-blocks : ir.CompilerIrBlockList]
   [inner : OptLabelSet]
-  [region? : bool]) : OptBceMbMaybeShape
+  [region? : bool]
+  [nested-entry? : bool]) : OptBceMbMaybeShape
   (match (opt-cfg-find-block blocks header)
     [(OptMaybeBlock.No)
       (opt-bce-trace-refuse-mb-shape (opt-bce-reason-latch-form))]
@@ -94141,7 +94288,8 @@
                   (OptLabelSet.Nil)
                   inner
                   region?
-                  false))
+                  false
+                  nested-entry?))
               (opt-bce-trace-refuse-mb-shape
                 (if phis-ok?
                   (opt-bce-reason-no-check)
@@ -94238,6 +94386,14 @@
         (opt-bce-mb-preheader-outside-loops?
           (compiler-opt-global-shared-view loops)
           pred))]
+    ;; BCE-4: the guard is paid once per ENTRY, and an entry inside another
+    ;; loop is an entry per enclosing iteration. The same question `region?`
+    ;; asks, kept whether or not this candidate holds a nested loop of its own.
+    [nested-entry? : bool
+      (not
+        (opt-bce-mb-preheader-outside-loops?
+          (compiler-opt-global-shared-view loops)
+          pred))]
     [block-max : i64
       (if region?
         (opt-bce-mb-region-block-max)
@@ -94331,7 +94487,9 @@
             body-labels
             body-blocks
             inner
-            region?)
+            region?
+            ;; refused above unless the entry is outside every loop
+            false)
           (opt-bce-trace-refuse-mb-shape (opt-bce-reason-free-not-outermost)))
         (match (opt-cfg-find-block
           (compiler-opt-global-shared-view blocks)
@@ -94359,7 +94517,8 @@
                     pred
                     body-labels
                     inner
-                    region?)]
+                    region?
+                    nested-entry?)]
                 [(OptBceMbMaybeLatch.Some cond-var _)
                   (match (opt-bce-mb-loop-shape-finish
                     (compiler-opt-global-shared-view blocks)
@@ -94370,6 +94529,7 @@
                     (compiler-opt-global-shared-view body-blocks)
                     (compiler-opt-global-shared-view inner)
                     region?
+                    nested-entry?
                     ;; the latch compare covers the whole body: it bounds the
                     ;; NEXT iteration's counter and the guard bounds the first
                     (OptLabelSet.Nil)
@@ -94395,7 +94555,8 @@
                         pred
                         body-labels
                         inner
-                        region?)])]))])))))
+                        region?
+                        nested-entry?)])]))])))))
 
 (define (opt-bce-mb-loop-shape-top
   [blocks : ir.CompilerIrBlockList]
@@ -94407,7 +94568,8 @@
   [pred : i64]
   [body-labels : OptLabelSet]
   [inner : OptLabelSet]
-  [region? : bool]) : OptBceMbMaybeShape
+  [region? : bool]
+  [nested-entry? : bool]) : OptBceMbMaybeShape
   (match (opt-bce-mb-top-test-chain
     (compiler-opt-global-shared-view blocks)
     (compiler-opt-global-shared-view body-blocks)
@@ -94432,6 +94594,7 @@
         (compiler-opt-global-shared-view body-blocks)
         inner
         region?
+        nested-entry?
         chain
         counter)]))
 
@@ -101150,34 +101313,65 @@
           ;; relaxation exists for (target/wsl/research/gvn_table/micro/m3.tl)
           ;; sits on the other side at one conjunct for one check, and its
           ;; check-free clone then unrolls x16.
-          (if (and
-            (not shape.counted?)
-            (>
+          ;;
+          ;; ENTRY ECONOMICS (BCE-4). The counted shape's trip-range clauses are
+          ;; evidence that the loop iterates, but they say nothing about how
+          ;; often it is ENTERED. A loop whose entry is inside another loop pays
+          ;; its whole guard once per enclosing iteration, and BCE-3's labelled
+          ;; per-site census measured what that costs where the inner trip count
+          ;; is small: on intern_table the `__bce_guard` blocks of `it-bench`
+          ;; cost 31,088,050 Ir -- 10.0% of the row and 3.6x the 8.5M of checks
+          ;; the versionings removed -- because two of the versioned loops are
+          ;; probe/compare loops re-entered once per interned name. So a nested
+          ;; entry is priced: its conjuncts must be repaid by the removals at
+          ;; this loop's trip estimate. The counter-free clause above is the
+          ;; same statement for a shape with no trip evidence at all.
+          (let
+            [conjuncts : i64
               (opt-bce-mb-guard-compare-count
                 (compiler-opt-global-shared-view guard-instrs)
                 0
-                0)
-              dr.derived))
-            (opt-bce-trace-refuse-mb-guard (opt-bce-reason-free-cost))
-            (OptBceMbGuardOut.Some
-              (compiler-opt-global-shared-view guard-instrs)
-              (compiler-opt-global-shared-view guard-value)
-              dr.keep
-              (OptBceFoldFacts
-                (opt-bce-fold-proven-nonnegative
-                  (compiler-opt-global-shared-view shape.body-blocks)
+                0)]
+            [_trace : unit (opt-bce-trace-guard! conjuncts shape.nested-entry?)]
+            ;; MEASURED AND NOT ADMITTED. Pricing a nested entry at a trip
+            ;; estimate of one -- the statement the counter-free clause makes --
+            ;; refuses versionings the corpus wants: intern_table +37,445,512
+            ;; (+11.08%), liveness_scan +34,065,442 (+8.66%), callgraph_scc
+            ;; +7,160,562 (+1.10%), gvn_table +4,559,842, regalloc_greedy
+            ;; +3,106,871, ssa_construct +1,461,504. The guard Ir BCE-3 measured
+            ;; (31,088,050 on intern_table) is not what the versioning costs
+            ;; against nothing: it is what it costs against the checks it
+            ;; REMOVED, which never appear in a profile of the versioned
+            ;; program. Refusing them puts those checks back and the row moves
+            ;; the other way by more than the whole guard. The gate also reaches
+            ;; the checked inliner's measured plan, so a callee whose inlined
+            ;; loop it refuses stops being inlined at all -- which is where
+            ;; intern_table's +11% comes from.
+            ;;
+            ;; The price is still REPORTED (`|guard=<conjuncts>|nested=<0|1>`
+            ;; above), because that is the number any future entry-economics
+            ;; rule has to be argued against.
+            (if (and (not shape.counted?) (> conjuncts dr.derived))
+              (opt-bce-trace-refuse-mb-guard (opt-bce-reason-free-cost))
+              (OptBceMbGuardOut.Some
+                (compiler-opt-global-shared-view guard-instrs)
+                (compiler-opt-global-shared-view guard-value)
+                dr.keep
+                (OptBceFoldFacts
+                  (opt-bce-fold-proven-nonnegative
+                    (compiler-opt-global-shared-view shape.body-blocks)
+                    (compiler-opt-global-shared-view shape.body-blocks)
+                    shape.iphi
+                    (compiler-opt-global-shared-view dr.keep)
+                    (opt-bce-fold-collect
+                      guard-instrs
+                      guard-value
+                      (opt-bce-fold-conjunct-fuel)
+                      (opt-bce-fold-cond-list-new)))
+                  (compiler-opt-global-shared-view all-blocks)
                   (compiler-opt-global-shared-view shape.body-blocks)
                   shape.iphi
-                  (compiler-opt-global-shared-view dr.keep)
-                  (opt-bce-fold-collect
-                    guard-instrs
-                    guard-value
-                    (opt-bce-fold-conjunct-fuel)
-                    (opt-bce-fold-cond-list-new)))
-                (compiler-opt-global-shared-view all-blocks)
-                (compiler-opt-global-shared-view shape.body-blocks)
-                shape.iphi
-                counter-seen)))]))))
+                  counter-seen))))]))))
 
 ;; --- guard-dominated compare folding --------------------------------------------
 ;;
@@ -103794,7 +103988,8 @@
       shape.uncovered
       shape.inner
       shape.region?
-      shape.counted?)
+      shape.counted?
+      shape.nested-entry?)
     (opt-bce-mb-collect-defs clone-blocks (opt_i64_i64_map.with-capacity 64))
     cell
     frame))

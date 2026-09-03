@@ -3429,6 +3429,14 @@
       (compiler_optimize_tests.compiler-optimize-bce-shape-clause-order-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-masked-capacity-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-masked-capacity-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-guard-price-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-guard-price-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-loop-rotation-self-test"
       (compiler_optimize_tests.compiler-optimize-loop-rotation-self-test)
       42)

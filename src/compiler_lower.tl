@@ -78081,19 +78081,28 @@
     (lower-return-maybe (ir.CompilerIrValue.Var call-var) ret-ty)))
 
 (define (lower-dispatch-cached-block
-  [cache-name : i64]
+  [cached-word-var : i64]
+  [fn-ty : ast.AstType]
   [args : ir.CompilerIrCallArgs]
   [ret-ty : ast.AstType]
-  [call-var : i64]) : ir.CompilerIrBlock
+  [base : i64]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "cached")
-    (ir.compiler-ir-instr-seq2
+    (ir.compiler-ir-instr-seq3
+      ;; The atomic primitive returns a machine word. Retype it to the exact
+      ;; checked dispatch signature before the indirect call so ABI lowering
+      ;; never has to infer the signature from an untyped cache word.
+      (ir.CompilerIrInstr.Cast
+        base
+        (ir.CompilerIrValue.Var cached-word-var)
+        (ast.AstType.I64)
+        (lower-global-shared-view fn-ty))
       (ir.CompilerIrInstr.CallIndirect
-        call-var
-        (ir.CompilerIrValue.Global cache-name)
+        (+ base 1)
+        (ir.CompilerIrValue.Var base)
         args
         (lower-global-shared-view ret-ty))
-      (lower-dispatch-call-return-instr call-var ret-ty))))
+      (lower-dispatch-call-return-instr (+ base 1) ret-ty))))
 
 (define (lower-dispatch-select-block
   [label : i64]
@@ -78102,37 +78111,85 @@
   [fn-ty : ast.AstType]
   [args : ir.CompilerIrCallArgs]
   [ret-ty : ast.AstType]
-  [call-var : i64]) : ir.CompilerIrBlock
-  (ir.CompilerIrBlock.Block
-    label
-    (ir.compiler-ir-instr-seq3
-      (ir.CompilerIrInstr.Store
-        cache-name
-        (ir.CompilerIrValue.Function fn-name)
-        fn-ty)
-      (ir.CompilerIrInstr.CallIndirect
-        call-var
-        (ir.CompilerIrValue.Function fn-name)
-        args
-        (lower-global-shared-view ret-ty))
-      (lower-dispatch-call-return-instr call-var ret-ty))))
+  [base : i64]) : ir.CompilerIrBlock
+  (let
+    [instrs : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 6)]
+    (begin
+      ;; The cache is a private pointer-width word. Sequentially consistent CAS
+      ;; publishes exactly once: zero means this thread won; otherwise the old
+      ;; nonzero word is the winner another resolver already published.
+      (ir.compiler-ir-instr-builder-push!
+        (&mut instrs)
+        (ir.CompilerIrInstr.Call
+          base
+          cbi.compiler-builtin-id-tl-atomic-i64-cas-ptr
+          (ir.compiler-ir-call-args-from-seq
+            (ir.compiler-ir-value-seq3
+              (ir.CompilerIrValue.GlobalAddr cache-name)
+              (ir.CompilerIrValue.I64 0)
+              (ir.CompilerIrValue.Function fn-name)))
+          (ast.AstType.I64)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut instrs)
+        (ir.CompilerIrInstr.BinOp
+          (+ base 1)
+          ir.CompilerIrBinOp.Ne
+          (ir.CompilerIrValue.Var base)
+          (ir.CompilerIrValue.I64 0)
+          (ast.AstType.I64)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut instrs)
+        (ir.ir-instr-select
+          (+ base 2)
+          (ir.CompilerIrValue.Var (+ base 1))
+          (ir.CompilerIrValue.Var base)
+          (ir.CompilerIrValue.Function fn-name)
+          0
+          (ast.AstType.I64)))
+      ;; Retype the winning machine word only after zero has been excluded.
+      (ir.compiler-ir-instr-builder-push!
+        (&mut instrs)
+        (ir.CompilerIrInstr.Cast
+          (+ base 3)
+          (ir.CompilerIrValue.Var (+ base 2))
+          (ast.AstType.I64)
+          (lower-global-shared-view fn-ty)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut instrs)
+        (ir.CompilerIrInstr.CallIndirect
+          (+ base 4)
+          (ir.CompilerIrValue.Var (+ base 3))
+          args
+          (lower-global-shared-view ret-ty)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut instrs)
+        (lower-dispatch-call-return-instr (+ base 4) ret-ty))
+      (ir.CompilerIrBlock.Block
+        label
+        (ir.compiler-ir-instr-builder-to-seq instrs)))))
 
 (define (lower-dispatch-entry-block
   [cache-name : i64]
-  [_fn-ty : ast.AstType]
-  [cached-var : i64]
+  [cached-word-var : i64]
+  [cached-nonzero-var : i64]
   [resolve-label : i64]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
     (ir.compiler-ir-label "entry")
-    (ir.compiler-ir-instr-seq2
+    (ir.compiler-ir-instr-seq3
+      (ir.CompilerIrInstr.Call
+        cached-word-var
+        cbi.compiler-builtin-id-tl-atomic-i64-load-ptr
+        (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.GlobalAddr cache-name))
+        (ast.AstType.I64))
       (ir.CompilerIrInstr.BinOp
-        cached-var
+        cached-nonzero-var
         ir.CompilerIrBinOp.Ne
-        (ir.CompilerIrValue.Global cache-name)
+        (ir.CompilerIrValue.Var cached-word-var)
         (ir.CompilerIrValue.I64 0)
         (ast.AstType.I64))
       (ir.CompilerIrInstr.Branch
-        (ir.CompilerIrValue.Var cached-var)
+        (ir.CompilerIrValue.Var cached-nonzero-var)
         (ir.compiler-ir-label "cached")
         resolve-label))))
 
@@ -78291,7 +78348,7 @@
               (lower-global-shared-view fn-ty)
               (lower-global-shared-view args)
               (lower-global-shared-view ret-ty)
-              (+ base 26)))]
+              (+ base 36)))]
         [(LowerMaybeIrSymbol.No) unit])
       (match maybe-avx2
         [(LowerMaybeIrSymbol.Some avx2-name)
@@ -78304,7 +78361,7 @@
               (lower-global-shared-view fn-ty)
               (lower-global-shared-view args)
               (lower-global-shared-view ret-ty)
-              (+ base 25)))]
+              (+ base 31)))]
         [(LowerMaybeIrSymbol.No) unit])
       (ir.compiler-ir-block-builder-push!
         (&mut blocks)
@@ -78315,7 +78372,7 @@
           fn-ty
           args
           ret-ty
-          (+ base 24)))
+          (+ base 26)))
       (ir.compiler-ir-block-builder-to-list blocks))))
 
 (define (lower-dispatch-resolve-label
@@ -78431,7 +78488,7 @@
                 (lower-dispatch-resolve-blocks
                   maybe-avx2
                   maybe-avx512
-                  param-count
+                  (+ param-count 1)
                   (lower-dispatch-select-blocks
                     cache-name
                     (lower-global-shared-view fn-ty)
@@ -78452,16 +78509,17 @@
                   (&mut blocks)
                   (lower-dispatch-entry-block
                     cache-name
-                    fn-ty
                     param-count
+                    (+ param-count 1)
                     (lower-dispatch-resolve-label maybe-avx2 maybe-avx512)))
                 (ir.compiler-ir-block-builder-push!
                   (&mut blocks)
                   (lower-dispatch-cached-block
-                    cache-name
+                    param-count
+                    fn-ty
                     args
                     (lower-global-shared-view physical-ret-ty)
-                    (+ param-count 23)))
+                    (+ param-count 24)))
                 (ir.compiler-ir-block-builder-append-list!
                   (&mut blocks)
                   tail-blocks)
@@ -78476,7 +78534,7 @@
                         source-start
                         leading-sret?)
                       physical-ret-ty
-                      (+ param-count 27)
+                      (+ param-count 41)
                       (ir.compiler-ir-block-builder-to-list blocks)))
                   spans)))]
           [(LowerMaybeIrSymbol.No)
@@ -78769,8 +78827,12 @@
                           (LowerDispatchDecl.Decl
                             (ir.CompilerIrGlobal.Global
                               cache-symbol
-                              fn-ty
-                              (ir.CompilerIrValue.I64 0))
+                              (ast.AstType.I64)
+                              ;; A non-unit typed Unit initializer is the IR's
+                              ;; zero-filled static-cell form. The backend emits
+                              ;; this pointer-width cache as an 8-byte-aligned
+                              ;; common symbol on Linux and Windows.
+                              (ir.CompilerIrValue.Unit))
                             (ir.compiler-ir-function-builder-to-seq functions)
                             thunk-spans)))))]
                 [(ResultLowerFunction.Err message)

@@ -5,6 +5,9 @@
 ;; 42, avx2 = 106, avx512 = 170. A bad SIMD result returns a small failure code
 ;; instead of the tag. Keep the SPMD loop directly inside each variant while
 ;; sharing ordinary scalar setup/checksum helpers across all variants.
+(import stdlib.thread)
+(import (thread.handle i64) as thread_i64)
+
 ;; lint-allow: function-name-case -- assembly dispatch symbol fixture
 (define (dispatch_seed_a [i : i64]) : i64
   (+ i 1))
@@ -96,10 +99,85 @@
   (avx2 dispatch_avx2)
   (avx512 dispatch_avx512))
 
+(define (dispatch_spawn [ready : i64] [start : i64]) : thread_i64.SpawnResult
+  (thread_i64.spawn
+    (lambda () : i64
+      (if (thread.semaphore-post (thread.ThreadSemaphore ready))
+        (if (thread.semaphore-wait (thread.ThreadSemaphore start))
+          (dispatch_run 13)
+          249)
+        248))))
+
+(define (dispatch_semaphore-wait-count [handle : i64] [remaining : i64]) : bool
+  (if (= remaining 0)
+    true
+    (and
+      (thread.semaphore-wait (thread.ThreadSemaphore handle))
+      (dispatch_semaphore-wait-count handle (- remaining 1)))))
+
+(define (dispatch_semaphore-post-count [handle : i64] [remaining : i64]) : bool
+  (if (= remaining 0)
+    true
+    (let
+      [posted : bool (thread.semaphore-post (thread.ThreadSemaphore handle))]
+      [rest : bool (dispatch_semaphore-post-count handle (- remaining 1))]
+      (and posted rest))))
+
+(define (dispatch_join-value [worker : thread_i64.Handle]) : i64
+  (match (thread_i64.join worker)
+    [(thread_i64.I64JoinOk value) value]
+    [(thread_i64.I64JoinErr _) 247]))
+
+(define (dispatch_finish-contended
+  [ready : i64]
+  [start : i64]
+  [a : thread_i64.Handle]
+  [b : thread_i64.Handle]
+  [c : thread_i64.Handle]
+  [d : thread_i64.Handle]) : i64
+  (let
+    [all-ready : bool (dispatch_semaphore-wait-count ready 4)]
+    [all-released : bool (dispatch_semaphore-post-count start 4)]
+    [av : i64 (dispatch_join-value a)]
+    [bv : i64 (dispatch_join-value b)]
+    [cv : i64 (dispatch_join-value c)]
+    [dv : i64 (dispatch_join-value d)]
+    [ready-closed : bool
+      (thread.semaphore-close (thread.ThreadSemaphore ready))]
+    [start-closed : bool
+      (thread.semaphore-close (thread.ThreadSemaphore start))]
+    [warm : i64 (dispatch_run 13)]
+    (if (and
+      all-ready
+      all-released
+      ready-closed
+      start-closed
+      (= av bv)
+      (= av cv)
+      (= av dv)
+      (= av warm))
+      av
+      246)))
+
+(define (dispatch_run-contended [ready : i64] [start : i64]) : i64
+  (match (dispatch_spawn ready start)
+    [(thread_i64.I64SpawnErr _) 241]
+    [(thread_i64.I64SpawnOk a)
+      (match (dispatch_spawn ready start)
+        [(thread_i64.I64SpawnErr _) 242]
+        [(thread_i64.I64SpawnOk b)
+          (match (dispatch_spawn ready start)
+            [(thread_i64.I64SpawnErr _) 243]
+            [(thread_i64.I64SpawnOk c)
+              (match (dispatch_spawn ready start)
+                [(thread_i64.I64SpawnErr _) 244]
+                [(thread_i64.I64SpawnOk d)
+                  (dispatch_finish-contended ready start a b c d)])])])]))
+
 (define (main) : i64
   (let
-    [first : i64 (dispatch_run 13)]
-    [second : i64 (dispatch_run 13)]
-    (if (= first second)
-      first
-      250)))
+    [ready : i64 (thread.semaphore-create-handle-or 0 -1)]
+    [start : i64 (thread.semaphore-create-handle-or 0 -1)]
+    (if (or (< ready 0) (< start 0))
+      245
+      (dispatch_run-contended ready start))))

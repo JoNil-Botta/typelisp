@@ -37,7 +37,7 @@ benchmark/typelisp/read_sexpr	736402083
 benchmark/c-scalar/read_sexpr	598159391
 benchmark/typelisp/callgraph_scc	653041709
 benchmark/c-scalar/callgraph_scc	341685484
-benchmark/typelisp/ssa_construct	803368958
+benchmark/typelisp/ssa_construct	792182233
 benchmark/c-scalar/ssa_construct	448154599
 benchmark/typelisp/sccp_lattice	709300099
 benchmark/c-scalar/sccp_lattice	400603744

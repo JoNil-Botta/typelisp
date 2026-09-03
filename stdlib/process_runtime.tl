@@ -957,71 +957,123 @@
 (define process-linux-operation-close : i64
   9)
 
-;: Child failure-record stage IDs. The record table uses fixed eight-byte rows
-;: so the vfork child selects one without allocating or modifying parent data.
+;: Child failure stage for closing the parent's exec-status read descriptor.
 (define process-linux-child-stage-close-exec-read : i64
   1)
+
+;: Child failure stage for closing the parent's stdin write descriptor.
 (define process-linux-child-stage-close-stdin-write : i64
   2)
+
+;: Child failure stage for duplicating the configured stdin descriptor.
 (define process-linux-child-stage-dup-stdin : i64
   3)
+
+;: Child failure stage for closing the child's original stdin descriptor.
 (define process-linux-child-stage-close-stdin-read : i64
   4)
+
+;: Child failure stage for duplicating the stdout capture descriptor.
 (define process-linux-child-stage-dup-stdout : i64
   5)
+
+;: Child failure stage for duplicating the stderr capture descriptor.
 (define process-linux-child-stage-dup-stderr : i64
   6)
+
+;: Child failure stage for closing the original stdout capture descriptor.
 (define process-linux-child-stage-close-stdout : i64
   7)
+
+;: Child failure stage for closing the original stderr capture descriptor.
 (define process-linux-child-stage-close-stderr : i64
   8)
+
+;: Child failure stage for changing to the configured working directory.
 (define process-linux-child-stage-chdir : i64
   9)
+
+;: Child failure stage for executing the configured program.
 (define process-linux-child-stage-exec : i64
   10)
 
-;: Parent-side syscall IDs used by the focused Linux fault-injection gate.
+;: Fault-hook ID for creating a parent-side pipe.
 (define process-linux-syscall-pipe : i64
   1)
+
+;: Fault-hook ID for creating a parent-side memory file.
 (define process-linux-syscall-memfd : i64
   2)
+
+;: Fault-hook ID for creating the child with `vfork`.
 (define process-linux-syscall-vfork : i64
   3)
+
+;: Fault-hook ID for closing a parent-owned descriptor.
 (define process-linux-syscall-close : i64
   4)
+
+;: Fault-hook ID for writing configured stdin bytes.
 (define process-linux-syscall-stdin-write : i64
   5)
+
+;: Fault-hook ID for reading the exec-status channel.
 (define process-linux-syscall-exec-read : i64
   6)
+
+;: Fault-hook ID for reaping a child.
 (define process-linux-syscall-wait : i64
   7)
+
+;: Fault-hook ID for seeking a captured output memory file.
 (define process-linux-syscall-capture-seek : i64
   8)
+
+;: Fault-hook ID for reading a captured output memory file.
 (define process-linux-syscall-capture-read : i64
   9)
+
+;: Fault-hook ID for changing the parent signal disposition.
 (define process-linux-syscall-sigaction : i64
   10)
 
-;: Child-side fault IDs are distinct because a vfork child must only read test
-;: configuration; it never increments parent-owned counters.
+;: Fault-hook ID for the child closing the exec-status read descriptor.
 (define process-linux-child-syscall-close-exec-read : i64
   1)
+
+;: Fault-hook ID for the child closing the stdin write descriptor.
 (define process-linux-child-syscall-close-stdin-write : i64
   2)
+
+;: Fault-hook ID for the child duplicating its stdin descriptor.
 (define process-linux-child-syscall-dup-stdin : i64
   3)
+
+;: Fault-hook ID for the child closing its original stdin descriptor.
 (define process-linux-child-syscall-close-stdin-read : i64
   4)
+
+;: Fault-hook ID for the child duplicating its stdout descriptor.
 (define process-linux-child-syscall-dup-stdout : i64
   5)
+
+;: Fault-hook ID for the child duplicating its stderr descriptor.
 (define process-linux-child-syscall-dup-stderr : i64
   6)
+
+;: Fault-hook ID for the child closing its original stdout descriptor.
 (define process-linux-child-syscall-close-stdout : i64
   7)
+
+;: Fault-hook ID for the child closing its original stderr descriptor.
 (define process-linux-child-syscall-close-stderr : i64
   8)
+
+;: Fault-hook ID for the child changing its working directory.
 (define process-linux-child-syscall-chdir : i64
   9)
+
+;: Fault-hook ID for the child's `execve` call.
 (define process-linux-child-syscall-exec : i64
   10)
 

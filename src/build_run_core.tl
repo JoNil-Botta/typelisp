@@ -321,9 +321,9 @@
 (define (source-tool-link-inputs-empty?
   [inputs : (& inputs SourceToolLinkInputs)]) : bool
   (and
-    (= inputs.libs.len 0)
-    (= inputs.search-dirs.len 0)
-    (= inputs.raw-args.len 0)))
+    (= (process.args-count inputs.libs) 0)
+    (= (process.args-count inputs.search-dirs) 0)
+    (= (process.args-count inputs.raw-args) 0)))
 
 (define (source-tool-linux-crt-entry?
   [target : backend.CompilerBackendTarget]

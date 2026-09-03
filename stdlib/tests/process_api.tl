@@ -243,6 +243,12 @@
       (svec.push-ref! (&mut names) "ONLY_NAME")
       (process.ProcessEnvVec names values))))
 
+(define (process-api-forged-live-length-env-vec) : process.ProcessEnvVec
+  (let
+    [names : svec.Vec (svec.Vec (__tl_make-array String 0) 1)]
+    [values : svec.Vec (svec.Vec (__tl_make-array String 0) 1)]
+    (process.ProcessEnvVec names values)))
+
 (define (assert-process-invalid-command
   [result : process.ResultProcessOutput]
   [message : (& message str)]) : unit
@@ -267,6 +273,38 @@
       (string.copy message)
       message)))
 
+(define (process-api-string-with-nul) : String
+  (let
+    [bytes : (__tl_dyn-array u8) (__tl_make-array u8 3)]
+    [dst : (MutPtr u8)
+      (unsafe
+        (__tl_array-data bytes))]
+    (begin
+      (set! (array-ref bytes 0) (cast 'a' : u8))
+      (set! (array-ref bytes 1) (cast 0 : u8))
+      (set! (array-ref bytes 2) (cast 'b' : u8))
+      (unsafe
+        (string-from-bytes (ptr-cast dst : (Ptr u8)) 3)))))
+
+(define (process-api-malformed-env-command) : process.ProcessCommand
+  (let
+    [names : (__tl_dyn-array String) (__tl_make-array String 1)]
+    [values : (__tl_dyn-array String) (__tl_make-array String 0)]
+    (begin
+      (set! (array-ref names 0) "ONLY_NAME")
+      (process.command-full
+        "echo"
+        (process.args-empty)
+        (process.no-cwd)
+        (process.ProcessEnvList names values)
+        (process.no-stdin)))))
+
+(define (process-api-oversized-argv-command) : process.ProcessCommand
+  (let
+    [slots : (__tl_dyn-array String)
+      (__tl_make-array String (+ process.process-storage-max-count 1))]
+    (process.command "echo" (process.ProcessStringList slots))))
+
 (define (main) : i64
   (let
     [args : process.ProcessStringList
@@ -288,7 +326,17 @@
       (process.command "echo" (process.args-empty))]
     [invalid-command : process.ProcessCommand
       (process.command "" (process.args-empty))]
+    [nul-stdin-command : process.ProcessCommand
+      (process.command-with-stdin
+        (process.command "echo" (process.args-empty))
+        (process-api-string-with-nul))]
     (begin
+      (test.assert-i64-eq
+        (process.process-checked-count-add
+          (- process.process-storage-max-count 1)
+          1)
+        process.process-storage-max-count
+        "process checked count accepts exact cap")
       (process.test-env-dense-api)
       (assert-owned-string-eq
         (process.command-executable command)
@@ -411,6 +459,8 @@
         [bad-name : process.ProcessEnvVec
           (process-api-env-vec1 "BAD=NAME" "bad")]
         [bad-shape : process.ProcessEnvVec (process-api-bad-shape-env-vec)]
+        [bad-live-length : process.ProcessEnvVec
+          (process-api-forged-live-length-env-vec)]
         [env-command : process.ProcessCommand
           (process.command-with-env-vec (clone command) (& env-vec))]
         (begin
@@ -461,6 +511,10 @@
             (process.env-vec-validation-error (& bad-shape))
             "process: environment vector name/value counts differ"
             "process env vec shape")
+          (assert-process-env-validation
+            (process.env-vec-validation-error (& bad-live-length))
+            "process: environment vector storage is malformed"
+            "process env vec forged live length")
           (assert-process-invalid-command
             (process.output
               (process.command-with-env-vec (clone command) (& bad-empty)))
@@ -485,6 +539,45 @@
         (process.output
           (process.command-with-env (clone command) "BAD=NAME" "1"))
         "process: environment variable name contains '='")
+      (assert-process-invalid-command
+        (process.output (process-api-malformed-env-command))
+        "process: environment storage is malformed")
+      (assert-process-invalid-command
+        (process.output (process-api-oversized-argv-command))
+        "process: argument storage limit exceeded")
+      (assert-process-invalid-command
+        (process.output
+          (process.command (process-api-string-with-nul) (process.args-empty)))
+        "process: executable path contains NUL")
+      (assert-process-invalid-command
+        (process.output
+          (process.command
+            "echo"
+            (process.args-single (process-api-string-with-nul))))
+        "process: argument contains NUL")
+      (assert-process-invalid-command
+        (process.output
+          (process.command-with-cwd
+            (process.command "echo" (process.args-empty))
+            (process-api-string-with-nul)))
+        "process: cwd path contains NUL")
+      (assert-process-invalid-command
+        (process.output
+          (process.command-with-env
+            (process.command "echo" (process.args-empty))
+            (process-api-string-with-nul)
+            "value"))
+        "process: environment variable name contains NUL")
+      (assert-process-invalid-command
+        (process.output
+          (process.command-with-env
+            (process.command "echo" (process.args-empty))
+            "TL_NUL_VALUE"
+            (process-api-string-with-nul)))
+        "process: environment variable value contains NUL")
+      (test.assert-true
+        (process.command-valid? nul-stdin-command)
+        "process stdin preserves embedded NUL")
       (assert-process-child-invalid-command
         (process.start (process.command "" (process.args-empty)))
         "process: executable path is empty")

@@ -21888,6 +21888,70 @@
       (+ (* 10000 spent) (+ (* 1000 relaxed-spent) code))
       (- 0 1))))
 
+;; --- INL-6: the shape a rescan generation's BAND walk may not absorb -------
+;;
+;; A caller keeps a site; the copy carries the callee's own straight-line call
+;; sites into the caller, and if the caller's site was in a loop those sites are
+;; now IN one. That is a change of admission for every band that asks
+;; `opt-inline-bounds-loop-site-in-loop?`, and what the rescan's walk then does
+;; with them is committed or discarded by whether some verdict in that
+;; generation keeps -- so it is a rewrite nothing priced. asm_render's
+;; `asm-fold-text` is that rewrite and it costs the row +33.5M;
+;; opt-inline-checked-rescan-loop-import? is the clause that refuses it.
+;;
+;; What that clause is, is three questions, and this pins the two that are
+;; decidable without a caller: the SHAPE it separates, and the generation gate
+;; that keeps it inert everywhere else.
+;;
+;; The two bodies are the corpus's two answers, and they differ in exactly the
+;; property the clause reads. `opt-inline-switch-callee-named` carries a LOOP
+;; behind its bounds check -- asm_render's byte-fold class, the one that lands a
+;; loop NEST in a caller the measured tier merged and loses the accumulator's
+;; register. `opt-inline-acyclic-switch-callee` is the same size, the same
+;; arity and the same bounds check with no loop -- lex_source's character-class
+;; shape, whose two absorptions the clause must leave alone, and which is why
+;; the clause asks about the callee's back edges rather than only about the
+;; site.
+;;
+;; The generation gate is asserted on both bodies because it is what bounds the
+;; clause's cost: in generation one it answers before the caller's natural-loop
+;; facts are forced, so every caller in a program that never reaches a rescan
+;; pays one integer compare for it.
+;;
+;; The row-level behaviour is not asserted here. A fixture small enough to
+;; assert by construction is also small enough that the measured tier keeps
+;; what the corpus's tier refuses on the accept window, so an end-to-end
+;; differential over this program shows the same result either way; the
+;; benchmark row and the asm-shape gate over `benchmarks/asm_render/bench.tl`
+;; (check_asm_render_fold_accumulator) are what carry that claim.
+(define (compiler-optimize-inline-rescan-loop-nest-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [_reset : unit (compiler_optimize.opt-inline-checked-program-begin!)]
+    [cyclic : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (opt-inline-switch-callee-named symbols.inline-switch))]
+    [acyclic : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (opt-inline-acyclic-switch-callee symbols))]
+    (and
+      ;; generation one: the tier has reshaped nothing, so the clause is inert
+      ;; for either body and answers without asking the caller anything.
+      (= (compiler_optimize.opt-inline-checked-generation-current) 1)
+      (not
+        (compiler_optimize.opt-inline-checked-rescan-loop-import?
+          (compiler_optimize.compiler-opt-global-shared-view cyclic)))
+      (not
+        (compiler_optimize.opt-inline-checked-rescan-loop-import?
+          (compiler_optimize.compiler-opt-global-shared-view acyclic)))
+      ;; ...and the shape it separates: a loop behind the bounds check, against
+      ;; the same body with none.
+      (not
+        (compiler_optimize.opt-inline-tiny-predicate-acyclic?
+          (compiler_optimize.compiler-opt-global-shared-view cyclic)))
+      (compiler_optimize.opt-inline-tiny-predicate-acyclic?
+        (compiler_optimize.compiler-opt-global-shared-view acyclic)))))
+
 ;; --- what a generation carries, and what it retires -------------------------
 ;;
 ;; The accepted table is the caller's, not the generation's: a rescan does not
@@ -29656,9 +29720,15 @@
             (compiler_ir_types.CompilerIrValue.Var 1)))))
     compiler_ir_types.CompilerIrBlockList.Nil))
 
-;; The aggregate body with a `Store` -- an instruction no admission clause
-;; carries -- in the join, so the scan reports the FIRST refusing instruction
-;; by kind rather than by clause.
+;; The aggregate body with a `Store` in the join. INL-5 admitted the module
+;; global-cell write in the SINGLE-BLOCK whitelist only, so at multiblock size
+;; this body was refused by kind and this fixture was where the
+;; `other-instr:<kind>` reporting was pinned. INL-6 admits it here too -- the
+;; refusal it carried was a measured verdict about the checked tier's rescan
+;; pricing, not about the instruction -- so the body is now the POSITIVE: it
+;; says the multiblock gate admits an aggregate build whose join writes a
+;; global cell. The `other-instr:` vocabulary is pinned below on `syscall`,
+;; which no whitelist carries and none is expected to.
 (define (opt-inline-alloc-sret-store-body) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
     (compiler_ir_types.CompilerIrBlock.Block
@@ -29799,7 +29869,13 @@
       (= return-type (compiler_optimize.opt-inline-shape-return-type))
       (= shifted (compiler_optimize.opt-inline-shape-params-not-sequential))
       (= single (compiler_optimize.opt-inline-shape-structure))
-      (= store (+ (compiler_optimize.opt-inline-shape-other-base) 1))
+      ;; INL-6: admitted, and admitted as a BODY, not merely as a reason code.
+      (= store (compiler_optimize.opt-inline-shape-ok))
+      (compiler_optimize.opt-inline-multiblock-callee-body-ok?
+        (opt-inline-alloc-sret-params)
+        (compiler_ast_types.AstType.U64)
+        9
+        (opt-inline-alloc-sret-store-body))
       (string.eq (compiler_optimize.opt-inline-shape-reason-text admitted) "ok")
       (string.eq
         (compiler_optimize.opt-inline-shape-reason-text addr-param)
@@ -29819,9 +29895,15 @@
       (string.eq
         (compiler_optimize.opt-inline-shape-reason-text single)
         "structure")
+      (string.eq (compiler_optimize.opt-inline-shape-reason-text store) "ok")
+      ;; ...and the `other-instr:<kind>` vocabulary still reports a kind no
+      ;; whitelist carries. `syscall` is that kind: it names a body the inliner
+      ;; must never clone, so unlike `store` it is not a measured verdict that
+      ;; can be revisited.
       (string.eq
-        (compiler_optimize.opt-inline-shape-reason-text store)
-        "other-instr:store"))))
+        (compiler_optimize.opt-inline-shape-reason-text
+          (+ (compiler_optimize.opt-inline-shape-other-base) 2))
+        "other-instr:syscall"))))
 
 ;; The register allocator recovers an aggregate's storage by scanning for a
 ;; maximal run of `Alloc` with CONSECUTIVE dst ids closed by an `AddrOf` of the
@@ -98611,17 +98693,19 @@
         (compiler_optimize.opt-inline-shape-reason-text entry-arg)
         "other-instr:entry-arg")
       (string.eq (compiler_optimize.opt-inline-shape-reason-text alloc) "alloc")
-      ;; The two refusals that stand. The MULTIBLOCK gate keeps a store out
-      ;; for the measured reason recorded at opt-inline-body-instr-op-ok?...
-      (= multiblock (+ (compiler_optimize.opt-inline-shape-other-base) 1))
+      ;; INL-6: the MULTIBLOCK gate admits it too now. INL-5's refusal here was
+      ;; a measured verdict about the checked tier's rescan pricing, not about
+      ;; the instruction, and this line is what changed when that was fixed --
+      ;; the two whitelists agree, and a store body reports `ok` at either size.
+      (= multiblock (compiler_optimize.opt-inline-shape-ok))
       (string.eq
         (compiler_optimize.opt-inline-shape-reason-text multiblock)
-        "other-instr:store")
-      (not
-        (compiler_optimize.opt-inline-body-instr-op-ok?
-          (compiler_optimize.compiler-opt-global-shared-view store-instr)))
-      ;; ...and the tiny-predicate band's whitelist is a side-effect-free-body
-      ;; list, which carries no store of any kind (not StorePtr either).
+        "ok")
+      (compiler_optimize.opt-inline-body-instr-op-ok?
+        (compiler_optimize.compiler-opt-global-shared-view store-instr))
+      ;; The refusal that STANDS: the tiny-predicate band's whitelist is a
+      ;; side-effect-free-body list, which carries no store of any kind (not
+      ;; StorePtr either), and no measurement is going to change that.
       (not
         (compiler_optimize.opt-inline-tiny-predicate-instr-ok?
           (compiler_optimize.compiler-opt-global-shared-view store-instr)))
@@ -98639,4 +98723,4 @@
   inline-global-store-shape-reasons
   (test.assert-true
     (compiler-optimize-inline-global-store-shape-ok?)
-    "the single-block shape tracer names its clause for a store body and each refusing neighbour, and the multiblock gate and the tiny-predicate band keep their store refusals"))
+    "the single-block shape tracer names its clause for a store body and each refusing neighbour, both whitelists admit the store, and the tiny-predicate band keeps its refusal"))

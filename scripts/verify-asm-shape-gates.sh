@@ -1096,36 +1096,76 @@ check_global_cmp_mem_fold() {
     done
 }
 
+# INL-6. The read-modify-write fold, asserted at the folded instruction rather
+# than over a whole function body: the line before it must not load the cell and
+# the line after must not store it, which is what "the triple collapsed to one
+# memory-operand instruction" means locally. Reads of the same cell elsewhere in
+# the file -- `main` printing it -- are not the claim and must not fail it.
+assert_fold_triple_collapsed() {
+    _file=$1
+    _cell=$2
+    _label=$3
+    _bad=$(awk -v cell="_tl_rmw_mem_operand_fold_rmw_$_cell" '
+        $0 ~ ("^[[:space:]]+(addq|subq|orq|andq|xorq) ([$][0-9-]+|%r[a-z0-9]+), " cell "\\(%rip\\)$") {
+            if (prev ~ ("^[[:space:]]+movq " cell "\\(%rip\\), %r")) n++
+            pending = 1
+            prev = $0
+            next
+        }
+        pending == 1 {
+            if ($0 ~ ("^[[:space:]]+movq %r[a-z0-9]+, " cell "\\(%rip\\)$")) n++
+            pending = 0
+        }
+        { prev = $0 }
+        END { print n+0 }
+    ' "$_file")
+    if [ "$_bad" -ne 0 ]; then
+        fail "$_label rmw_$_cell fold kept $_bad staging instruction(s) around it"
+    fi
+}
+
 check_rmw_mem_operand_fold() {
     for _target in linux-x86_64 windows-x86_64; do
         _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
         _asm=$(compile_gate "rmw_mem_operand_fold_$_suffix" \
             tests/integration/rmw_mem_operand_fold.tl "$_target")
-        _bump=$(function_body "$_asm" _tl_rmw_mem_operand_fold_rmw_bump)
-        # INL-5: `rmw-bump-and-read` is two instructions -- a global-cell
-        # update and a read of that cell -- and the inliner's whitelist now
-        # carries `Store`, so its single site takes it and no out-of-line body
-        # survives to extract. The claim below is about the FOLD, not about the
-        # function boundary, and `rmw-hits` is updated in exactly one place in
-        # the program, so asserting it over the whole assembly pins the same
-        # thing wherever the copy lands.
+        # INL-5 for `rmw-bump-and-read`, INL-6 for `rmw-bump`: both are short
+        # bodies whose only unwhitelisted instruction was the global-cell
+        # `Store`, and both whitelists carry it now -- the single-block one
+        # since INL-5 and the multiblock one since INL-6 -- so each is taken at
+        # its single site and no out-of-line body survives to extract. The
+        # claims below are about the FOLD, not about a function boundary: each
+        # of the five cells is updated in exactly one place in the program and
+        # `rmw-hits` in one more, so asserting them over the whole assembly
+        # pins the same thing wherever the copies land.
+        _bump=$_asm
         _read=$_asm
 
         # RMW-2: five `g = g op k` updates, five different ops, both operand
         # forms -- two immediates and three registers. Each was
         # `movq g(%rip),%rX ; op src,%rX ; movq %rX,g(%rip)` before the fold and
         # is ONE memory-operand instruction after it.
-        assert_regex_count_eq "$_bump" \
-            '^[[:space:]]+(addq|subq|orq|andq|xorq) (\$[0-9-]+|%r[a-z0-9]+), _tl_rmw_mem_operand_fold_rmw_[a-z]+\(%rip\)$' 5 \
-            "rmw-mem-operand-fold-$_target"
-        # Nothing stages a cell into a register first: the loads the fold
-        # consumed are gone, and so are the stores that closed each triple.
-        assert_not_matches "$_bump" \
-            '^[[:space:]]+movq _tl_rmw_mem_operand_fold_rmw_[a-z]+\(%rip\), %r' \
-            "rmw-mem-operand-fold-$_target"
-        assert_not_matches "$_bump" \
-            '^[[:space:]]+movq %r[a-z0-9]+, _tl_rmw_mem_operand_fold_rmw_[a-z]+\(%rip\)$' \
-            "rmw-mem-operand-fold-$_target"
+        # INL-6: named cell by cell rather than by prefix. With the bodies
+        # absorbed the scan is over the whole assembly, where the prefix would
+        # also match `rmw-hits` -- the read-after-write neighbour the block
+        # below owns -- so each of the five updates is asserted on its own cell,
+        # which is a stricter claim than the count ever was.
+        for _cell in add sub or and xor; do
+            assert_regex_count_eq "$_bump" \
+                "^[[:space:]]+(addq|subq|orq|andq|xorq) ([$][0-9-]+|%r[a-z0-9]+), _tl_rmw_mem_operand_fold_rmw_$_cell\\(%rip\\)$" 1 \
+                "rmw-mem-operand-fold-$_target"
+        done
+        # Nothing stages a cell into a register first: the load the fold
+        # consumed is gone and so is the store that closed the triple. INL-6:
+        # asserted AROUND the folded instruction rather than over the file,
+        # because the body now lives in `main`, which legitimately reads all
+        # five cells once at the end to print them. Neighbour lines are the
+        # local reading of the same claim -- an unfolded triple is a load, the
+        # op, and a store in three adjacent lines.
+        for _cell in add sub or and xor; do
+            assert_fold_triple_collapsed "$_bump" "$_cell" \
+                "rmw-mem-operand-fold-$_target"
+        done
 
         # The read-after-write neighbour. The update still folds -- the emitter
         # answers the read with a RELOAD rather than by keeping the register, so
@@ -1333,37 +1373,156 @@ check_global_cursor_helper() {
         assert_not_matches "$_asm" '^_tl_global_cursor_helper_gc_next:$' \
             "global-cursor-helper-$_target"
 
-        _run=$(function_body "$_asm" _tl_global_cursor_helper_gc_run)
+        # INL-6: read out of `main`, not out of `gc-run`. With the MULTIBLOCK
+        # whitelist carrying `Store` as well, the two callers that hold the
+        # helper's copies -- `gc-run` and `gc-peek-pair` -- are themselves
+        # inlinable and are absorbed into `main`, so all five copies live here.
+        # The claims are the same claims, counted over the caller that now
+        # holds them.
+        _run=$(function_body "$_asm" main)
 
-        # Three copies landed in the loop, one per site, each with its own
-        # freshened bounds ok-label.
+        # Five copies, one per site, each with its own freshened bounds
+        # ok-label: the three in the loop and the two in the straight-line
+        # pair.
         assert_regex_count_eq "$_run" \
-            '^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok[A-Za-z0-9_.]*:$' 3 \
+            '^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok[A-Za-z0-9_.]*:$' 5 \
             "global-cursor-helper-$_target"
 
         # What the splice buys beyond the boundary: the token array's
-        # descriptor -- the two global-cell words each of the three calls used
-        # to reload -- is now loop-invariant inside this caller and is read
-        # ONCE, in the preheader, with the loop body addressing the elements
-        # out of registers. (Other functions read the same cell; the claim is
-        # about this caller's loop.)
+        # descriptor -- the two global-cell words each site used to reload -- is
+        # loop-invariant and is read ONCE per absorbed caller region, in the
+        # loop's preheader and once more for the straight-line pair, with the
+        # loop body addressing elements out of registers. Two, not five.
         assert_regex_count_eq "$_run" \
-            '^[[:space:]]+movq _tl_global_cursor_helper_gc_tokens\(%rip\), %r' 1 \
+            '^[[:space:]]+movq _tl_global_cursor_helper_gc_tokens\(%rip\), %r' 2 \
             "global-cursor-helper-$_target"
 
-        # The cursor write survived the clone at every site -- three stores to
+        # The cursor write survived the clone at every site -- five stores to
         # the cell, one per copy, each writing a register rather than leaving
-        # the cell to a call. A clone that dropped the store would leave one
-        # or none here and every site would read position zero; a clone that
-        # duplicated it would leave more and the run would skip tokens. The
-        # read side is the matching three, so each copy does its own
-        # read-modify-write exactly as the out-of-line body did.
+        # the cell to a call. A clone that dropped the store would leave fewer
+        # here and every site would read position zero; a clone that duplicated
+        # it would leave more and the run would skip tokens. The read side is
+        # five matching reads plus `main`'s own read of the cursor for the last
+        # printed line.
         assert_regex_count_eq "$_run" \
-            '^[[:space:]]+movq %r[a-z0-9]+, _tl_global_cursor_helper_gc_cursor\(%rip\)$' 3 \
+            '^[[:space:]]+movq %r[a-z0-9]+, _tl_global_cursor_helper_gc_cursor\(%rip\)$' 5 \
             "global-cursor-helper-$_target"
         assert_regex_count_eq "$_run" \
-            '^[[:space:]]+movq _tl_global_cursor_helper_gc_cursor\(%rip\), %r' 3 \
+            '^[[:space:]]+movq _tl_global_cursor_helper_gc_cursor\(%rip\), %r' 6 \
             "global-cursor-helper-$_target"
+    done
+}
+
+# INL-6. The inliner's instruction whitelists both carry `Store` now, and what
+# had blocked the multiblock one was a cascade in the measured tier's RESCAN
+# generation: `asm-bench` keeps `asm-round`, which moves `asm-round`'s
+# straight-line call of `asm-fold-text` into `asm-bench`'s loop, and the bands
+# then absorbed that 29-instruction BYTE LOOP into the merged caller. The
+# accumulator lost its register there: the unrolled fold wrote it back to its
+# home slot after every `xor` and every `imul` -- twenty times in the unrolled
+# body -- `asm-bench` went from 9 frame-slot references to 74, and the row paid
+# +33.5M. opt-inline-checked-rescan-loop-import? refuses that absorption.
+#
+# The claim pinned here is the REGISTER, not the inline decision, and it is
+# spelled as the exact four-instruction signature of an accumulator that has no
+# register at all:
+#
+#     xorq  %rN, %rACC
+#     movq  %rACC, K(%rsp)
+#     imulq %rM, %rACC
+#     movq  %rACC, K(%rsp)
+#
+# A fold whose accumulator lives in a register produces neither store; a fold
+# spilled ACROSS A CALL produces one store and no `xor`/`imul` pair around it,
+# which is an ordinary and correct thing for the outer loop of `asm-bench` to
+# do and is why the signature is four instructions rather than two. On the base
+# compiler and on this one the whole asm_render assembly matches it zero times;
+# with the absorption admitted it matches twenty.
+#
+# The benchmark itself is the fixture: the shape only exists at this size, and
+# a mirror of it in tests/integration would pin a copy of the cascade rather
+# than the cascade. Both targets are checked -- the register allocator's
+# callee-saved set differs between them, so "the accumulator gets a register"
+# is a separate fact on each.
+assert_no_frame_homed_fold() {
+    _asm=$1
+    _label=$2
+    _got=$(awk '
+        /^[[:space:]]+xorq %r[a-z0-9]+, %r[a-z0-9]+$/ { acc=$3; state=1; next }
+        state==1 && $0 ~ ("^[[:space:]]+movq " acc ", [0-9]+\\(%rsp\\)$") { state=2; next }
+        state==2 && $0 ~ ("^[[:space:]]+imulq %r[a-z0-9]+, " acc "$") { state=3; next }
+        state==3 && $0 ~ ("^[[:space:]]+movq " acc ", [0-9]+\\(%rsp\\)$") { n++; state=0; next }
+        { state=0 }
+        END { print n+0 }
+    ' "$_asm")
+    if [ "$_got" -ne 0 ]; then
+        fail "$_label expected no frame-homed fold accumulator, got $_got"
+    fi
+}
+
+check_asm_render_fold_accumulator() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "asm_render_fold_$_suffix" \
+            benchmarks/asm_render/bench.tl "$_target")
+        assert_no_frame_homed_fold "$_asm" "asm-render-fold-$_target"
+    done
+}
+
+# INL-6. The multiblock companion of check_global_cursor_helper. `gcg-step` is
+# `gc-next` with a guard in front of it -- a bounds ARM that returns a sentinel,
+# then the read and the global cursor store -- so it is two blocks and its
+# `Store` was refused by the MULTIBLOCK whitelist until this packet. Five sites
+# across three functions, so the body is COPIED and every copy has to carry its
+# own store.
+#
+# The three IN-LOOP sites take it and the two straight-line ones do not, which
+# is the loop-bearing bounds band's own clause made visible: a bounds-carrying
+# callee is absorbed where the boundary is repaid per iteration and left behind
+# where it is repaid once. So `gcg-step` keeps an out-of-line body for the pair
+# and `gcg-run` holds three copies with no call left in it.
+check_global_cursor_guarded() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "global_cursor_guarded_$_suffix" \
+            tests/integration/global_cursor_guarded.tl "$_target")
+
+        _run=$(function_body "$_asm" _tl_global_cursor_guarded_gcg_run)
+
+        # No boundary left in the loop.
+        assert_regex_count_eq "$_run" \
+            '^[[:space:]]+call _tl_global_cursor_guarded_gcg_step$' 0 \
+            "global-cursor-guarded-$_target"
+
+        # ...and the straight-line pair still calls it, so a body survives.
+        assert_matches "$_asm" '^_tl_global_cursor_guarded_gcg_step:$' \
+            "global-cursor-guarded-$_target"
+
+        # Three copies landed in the loop, one per site, each with its own
+        # freshened bounds ok-label -- the check that lives INSIDE the callee's
+        # non-guard arm, which is what makes the abort twin a claim about a
+        # spliced check rather than about the caller's own.
+        assert_regex_count_eq "$_run" \
+            '^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok[A-Za-z0-9_.]*:$' 3 \
+            "global-cursor-guarded-$_target"
+
+        # The cursor write survived the clone at every site: three stores to the
+        # cell, one per copy, and the three matching reads that are the read
+        # side of the same read-modify-write. A clone that dropped one would
+        # leave every later site reading the same position and the printed fold
+        # would change; a clone that duplicated one would skip a token.
+        assert_regex_count_eq "$_run" \
+            '^[[:space:]]+movq %r[a-z0-9]+, _tl_global_cursor_guarded_gcg_cursor\(%rip\)$' 3 \
+            "global-cursor-guarded-$_target"
+        assert_regex_count_eq "$_run" \
+            '^[[:space:]]+movq _tl_global_cursor_guarded_gcg_cursor\(%rip\), %r' 3 \
+            "global-cursor-guarded-$_target"
+
+        # And the descriptor the three calls used to reload is read once, in
+        # the preheader, exactly as in the single-block fixture.
+        assert_regex_count_eq "$_run" \
+            '^[[:space:]]+movq _tl_global_cursor_guarded_gcg_tokens\(%rip\), %r' 1 \
+            "global-cursor-guarded-$_target"
     done
 }
 
@@ -1684,8 +1843,22 @@ check_licm_memclean_promote() {
     assert_contains "$_pressured" "call ${_sym}_mix" licm-memclean-promote
     # REFUSED on the proof: the callee set!s the cell, so it is not invariant at
     # any pressure. This is also the wrong-answer guard the fixture runs.
-    assert_fixed_count_eq "$_writer" "${_sym}_gcell_c(%rip)" 2 licm-memclean-promote
-    assert_contains "$_writer" "call ${_sym}_mix_writing" licm-memclean-promote
+    #
+    # INL-6: `mix-writing`'s only unwhitelisted instruction was that `set!` --
+    # the global-cell `Store` the MULTIBLOCK whitelist refused until this
+    # packet -- so the callee is now absorbed into this scan and the boundary
+    # is gone. The claim is unchanged and the shape says it more directly than
+    # before: the cell is WRITTEN inside the loop, so nothing about it is
+    # invariant, and every read stays a read. Four occurrences, not two,
+    # because the absorbed body's own read and write are now spelled here
+    # beside the loop's; the promoted form would be one preheader load and no
+    # per-iteration reference at all.
+    assert_fixed_count_eq "$_writer" "${_sym}_gcell_c(%rip)" 4 licm-memclean-promote
+    assert_regex_count_eq "$_writer" \
+        "^[[:space:]]+movq %r[a-z0-9]+, ${_sym}_gcell_c\\(%rip\\)$" 1 \
+        licm-memclean-promote
+    assert_not_matches "$_writer" "^[[:space:]]+call ${_sym}_mix_writing$" \
+        licm-memclean-promote
 }
 
 check_group_copy_direct() {
@@ -2712,6 +2885,8 @@ check_checked_depth0_site
 check_checked_setup_helper
 check_checked_cheap_tier_claim
 check_global_cursor_helper
+check_global_cursor_guarded
+check_asm_render_fold_accumulator
 check_synth_wrapped_probe
 check_synth_tail_wrapper
 check_synth_struct_accessor

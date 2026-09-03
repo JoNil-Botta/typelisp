@@ -3492,6 +3492,10 @@
       (compiler_optimize_tests.compiler-optimize-unroll-load-store-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-unroll-descending-self-test"
+      (compiler_optimize_tests.compiler-optimize-unroll-descending-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-unroll-mb-self-test"
       (compiler_optimize_tests.compiler-optimize-unroll-mb-self-test)
       42)
@@ -5395,6 +5399,13 @@
     (compiler_optimize_tests.compiler-optimize-unroll-self-test)
     42
     "16x unrolling remaps every admitted store-free SIMD instruction"))
+
+(test
+  unroll-descending-shift-two-copies
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-unroll-descending-self-test)
+    42
+    "descending shift unrolls with a mirrored guard and program-order copies"))
 
 (test
   unroll-load-store-body-two-copies

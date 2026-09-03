@@ -2407,6 +2407,75 @@ check_mem_dest_rmw_fold() {
     assert_matches "$_bytes" '^[[:space:]]+orb ' mem-dest-rmw-merge-bytes-still-emitted
 }
 
+# The block that starts at the labelled line whose text contains $2 and runs to
+# the next label definition.
+labeled_block() {
+    _file=$1
+    _suffix=$2
+    _out="$WORKDIR/$(basename "$_file").$(printf '%s' "$_suffix" | tr -c 'A-Za-z0-9' '_')"
+    awk -v suffix="$_suffix" '
+        started && /^[^[:blank:]]*:$/ { exit }
+        started { print }
+        !started && /:$/ && index($0, suffix) { started = 1 }
+    ' "$_file" > "$_out"
+    printf '%s\n' "$_out"
+}
+
+# The block's indexed 8-byte memory traffic as one string, in emission order:
+# `L` for a load out of an indexed slot, `S` for a store into one. It is the
+# ORDER, not the counts, that an overlapping copy depends on.
+memory_order_signature() {
+    awk '
+        /^[[:space:]]+movq -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$/ {
+            printf "L"; next
+        }
+        /^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$/ {
+            printf "S"; next
+        }
+        END { printf "\n" }
+    ' "$1"
+}
+
+# UNR-2: the DESCENDING counted loop the unroller now admits. `ud-shift-words!`
+# is an overlapping shift -- it reads slot `c` and writes slot `c + 3` walking
+# downward -- and every access in its body is a 64-bit word through a
+# 64-bit-element gep, so it takes the word-merge tier's K=4 exactly as the
+# ascending merge does. What is pinned:
+#
+#   * the unrolled group holds FOUR shifted moves per `add`/`cmp`/`jge`, and
+#     its counter steps by -4;
+#   * the group's memory traffic is LSLSLSLS -- copy j's store never precedes a
+#     load of a copy emitted before it, which is what makes an overlapping copy
+#     come out right (the group's fourth copy stores into the slot its first
+#     copy read);
+#   * the guard computes `floor + 4` with a `leaq 4(...)`, the mirror of the
+#     ascending guard's `bound - K`, and not a subtraction;
+#   * the one-at-a-time remainder loop is still there, stepping by -1.
+check_descending_shift_unroll() {
+    _asm=$(compile_gate descending_shift_unroll \
+        tests/integration/unroll_descending_shift.tl)
+    _fn=$(function_body "$_asm" _tl_unroll_descending_shift_ud_shift_words_bang)
+    _group=$(unroll_body_block "$_fn")
+    assert_regex_count_eq "$_group" \
+        '^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$' 4 \
+        descending-shift-unroll-k4-stores
+    assert_regex_count_eq "$_group" \
+        '^[[:space:]]+movq -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' 4 \
+        descending-shift-unroll-k4-loads
+    assert_contains "$_group" 'addq $-4,' descending-shift-unroll-k4-step
+    assert_regex_count_eq "$_group" '^[[:space:]]+jge ' 1 \
+        descending-shift-unroll-one-latch
+    _order=$(memory_order_signature "$_group")
+    if [ "$_order" != LSLSLSLS ]; then
+        fail "descending-shift-unroll group memory order is $_order, want LSLSLSLS"
+    fi
+    _guard=$(labeled_block "$_fn" '__unroll_guard:')
+    assert_matches "$_guard" 'leaq 4\(%r' descending-shift-unroll-guard-adds
+    assert_not_matches "$_guard" 'subq \$4,' descending-shift-unroll-guard-not-sub
+    # The remainder loop stays exactly as it was: one shifted move per step.
+    assert_contains "$_fn" 'subq $1,' descending-shift-unroll-remainder
+}
+
 check_word_merge_unroll() {
     _asm=$(compile_gate word_merge_unroll tests/integration/mem_dest_rmw_fold.tl)
     # The word-merge unroll tier: a load-and-store body whose every access is a
@@ -3052,6 +3121,7 @@ check_short_trip_copy
 check_select_flags_lea
 check_mem_dest_rmw_fold
 check_word_merge_unroll
+check_descending_shift_unroll
 check_copy_call_word
 check_divmagic_hoist
 check_hoist_priority

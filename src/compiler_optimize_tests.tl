@@ -47327,6 +47327,235 @@
         19]
       [else 42])))
 
+;; --- UNR-2: the descending shift ---------------------------------------------
+;;
+;; `dst[i + 3] = dst[i]` walked DOWNWARD, latched by `i - 1 >= floor`: the
+;; shape `benchmarks/regalloc_greedy`'s `rg-union-insert-segment!` runs and the
+;; one every ordered insert in this compiler's own tables runs. Params are the
+;; load-and-store fixture's: 0 = the floor, 1 = the base, 2 = the seed (the top
+;; of the range the counter walks down from).
+;;
+;; The copy OVERLAPS by construction -- it writes a slot three below the one a
+;; later iteration reads -- so what the positive case asserts is the group's
+;; instruction ORDER, not only its instruction counts: a clone that hoisted a
+;; copy's store above a later copy's load would compute a different table.
+;;
+;;   mode 0  the admitted descending shift (`i - 1`, `>= floor`)
+;;   mode 1  the step-TWO twin (`i - 2`). The guard `seed >= floor + K` states
+;;           that the K-th counter value from `seed` is exactly `seed - K`,
+;;           which only a unit step makes true, so this must be refused.
+;;   mode 2  the loop-VARIANT floor: the latch compares against the value the
+;;           body just loaded, which the block itself defines, so `floor + K`
+;;           is not a preheader-computable quantity at all.
+(define (opt-unroll-descending-test-body [mode : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (compiler_ir_types.CompilerIrInstr.Phi
+      3
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+          (compiler_ir_types.CompilerIrValue.Var 9)
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Gep
+      4
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Load
+      5
+      (compiler_ir_types.CompilerIrValue.Var 4)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      6
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      (compiler_ir_types.CompilerIrValue.I64 3)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Gep
+      7
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ir_types.CompilerIrValue.Var 6)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.StorePtr
+      (compiler_ir_types.CompilerIrValue.Var 7)
+      (compiler_ir_types.CompilerIrValue.Var 5)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      9
+      (compiler_ir_types.CompilerIrBinOp.Sub)
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      (compiler_ir_types.CompilerIrValue.I64
+        (if (= mode 1)
+          2
+          1))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      10
+      (compiler_ir_types.CompilerIrBinOp.Ge)
+      (compiler_ir_types.CompilerIrValue.Var 9)
+      (if (= mode 2)
+        (compiler_ir_types.CompilerIrValue.Var 5)
+        (compiler_ir_types.CompilerIrValue.Var 0))
+      (compiler_ast_types.AstType.Bool))
+    (compiler_ir_types.CompilerIrInstr.Branch
+      (compiler_ir_types.CompilerIrValue.Var 10)
+      (compiler_ir_types.compiler-ir-label "body")
+      (compiler_ir_types.compiler-ir-label "exit"))))
+
+(define (opt-unroll-descending-test-blocks [mode : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "body"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "body")
+        (opt-unroll-descending-test-body mode))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "exit")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 0)))))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-unroll-descending-test-function [mode : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "unroll_descending_fixture")
+    (opt-unroll-load-store-test-params)
+    (compiler_ast_types.AstType.I64)
+    11
+    (opt-unroll-descending-test-blocks mode)))
+
+;; The block's memory operations as one number, most significant first: a Load
+;; shifts in a 1 and a StorePtr a 0, everything else is skipped. Two copies of
+;; a load-then-store body read 1,0,1,0 -- decimal 10 -- and any reordering of
+;; the four (a store hoisted above a later copy's load, say) is a different
+;; number. It is the ORDER, not the counts, that the overlapping shift needs.
+(define (opt-unroll-test-memory-order-instr-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>=
+    index
+    (compiler_ir_types.compiler-ir-instr-seq-count
+      (compiler_ir_types.compiler-ir-global-shared-view instrs)))
+    acc
+    (opt-unroll-test-memory-order-instr-seq
+      (compiler_ir_types.compiler-ir-global-shared-view instrs)
+      (+ index 1)
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref
+        (compiler_ir_types.compiler-ir-global-shared-view instrs)
+        index)
+        [(compiler_ir_types.CompilerIrInstr.Load _ _ _) (+ (* acc 2) 1)]
+        [(compiler_ir_types.CompilerIrInstr.StorePtr _ _ _) (* acc 2)]
+        [_ acc]))))
+
+(define (opt-unroll-test-memory-order-in-block
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : i64
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-unroll-test-memory-order-instr-seq instrs 0 0)])]))
+
+(define (compiler-optimize-unroll-descending-self-test) : i64
+  (let
+    [down-func : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-unroll-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-unroll-descending-test-function 0))]
+    [down : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view down-func))]
+    [step-two-func : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-unroll-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-unroll-descending-test-function 1))]
+    [step-two : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view step-two-func))]
+    [variant-floor-func : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-unroll-function
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-unroll-descending-test-function 2))]
+    [variant-floor : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view variant-floor-func))]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view down-func))))
+        1]
+      ;; entry, guard, unrolled body, remainder loop, exit -- the remainder
+      ;; loop is kept exactly as it is for the ascending form.
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count
+              (compiler_ir_types.compiler-ir-global-shared-view down))
+            5))
+        2]
+      ;; The load-and-store class factor, unchanged for the descending
+      ;; direction: two copies, each with its own load and its own store.
+      [(not
+          (=
+            (opt-unroll-test-count-load-in-block
+              (compiler_ir_types.compiler-ir-global-shared-view down)
+              (compiler_ir_types.compiler-ir-label "body__unroll_body"))
+            2))
+        3]
+      [(not
+          (=
+            (opt-unroll-test-count-store-ptr-in-block
+              (compiler_ir_types.compiler-ir-global-shared-view down)
+              (compiler_ir_types.compiler-ir-label "body__unroll_body"))
+            2))
+        4]
+      ;; PROGRAM ORDER inside the group: load, store, load, store. The copies
+      ;; are emitted one after another in the block's own instruction order, so
+      ;; a store can never precede the load of a copy that came before it.
+      [(not
+          (=
+            (opt-unroll-test-memory-order-in-block
+              (compiler_ir_types.compiler-ir-global-shared-view down)
+              (compiler_ir_types.compiler-ir-label "body__unroll_body"))
+            10))
+        5]
+      ;; The mirrored guard: `ngroup = floor + K` is an ADD where the ascending
+      ;; guard subtracts, and it is the only add the guard block holds.
+      [(not
+          (=
+            (opt-unroll-test-count-add-in-block
+              (compiler_ir_types.compiler-ir-global-shared-view down)
+              (compiler_ir_types.compiler-ir-label "body__unroll_guard"))
+            1))
+        6]
+      ;; A step of two is not a counted shape at any direction: blocks stay
+      ;; untouched.
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count
+              (compiler_ir_types.compiler-ir-global-shared-view step-two))
+            3))
+        7]
+      ;; Neither is a floor the loop body itself defines.
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count
+              (compiler_ir_types.compiler-ir-global-shared-view variant-floor))
+            3))
+        8]
+      [else 42])))
+
 (define (compiler-optimize-unroll-self-test) : i64
   (let
     [func : compiler_ir_types.CompilerIrFunction

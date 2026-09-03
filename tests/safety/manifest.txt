@@ -32,6 +32,16 @@ reference_region_defined|check-ok|tests/safety/reference_region_defined.tl|-|-
 signature_lifetime_alias_reborrow_ok|run-exit|tests/safety/signature_lifetime_alias_reborrow_ok.tl|42|-
 raw_pointer_values_defined|check-ok|tests/safety/raw_pointer_values_defined.tl|-|-
 private_array_data_safe_reject|check-fail|tests/safety/private_array_data_safe_reject.tl|-|typecheck: __tl_array-data requires unsafe context
+process_owned_redundant_count_reject|check-fail|tests/safety/process_owned_redundant_count_reject.tl|-|process.ProcessStringList expected 1 argument, got 2 arguments
+process_borrowed_raw_word_reject|check-fail|tests/safety/process_borrowed_raw_word_reject.tl|-|expected (& text str), found (& raw u64)
+process_runtime_safe_entry_reject|check-fail|tests/safety/process_runtime_safe_entry_reject.tl|-|process_runtime/tl_process_output requires unsafe context
+process_runtime_safe_inherit_reject|check-fail|tests/safety/process_runtime_safe_inherit_reject.tl|-|process_runtime/tl_process_inherit requires unsafe context
+process_runtime_safe_start_reject|check-fail|tests/safety/process_runtime_safe_start_reject.tl|-|process_runtime/tl_process_start requires unsafe context
+process_runtime_safe_wait_reject|check-fail|tests/safety/process_runtime_safe_wait_reject.tl|-|process_runtime/tl_process_wait requires unsafe context
+process_runtime_safe_linux_output_reject|check-fail|tests/safety/process_runtime_safe_linux_output_reject.tl|-|process_runtime/linux-output requires unsafe context
+process_runtime_safe_raw_helper_reject|check-fail|tests/safety/process_runtime_safe_raw_helper_reject.tl|-|process_runtime/linux-build-argv requires unsafe context
+process_runtime_redundant_count_reject|check-fail|tests/safety/process_runtime_redundant_count_reject.tl|-|process_runtime.ProcessRuntimeStringList expected 1 argument, got 2 arguments
+process_nul_validation_ok|run-exit|tests/safety/process_nul_validation_ok.tl|42|-
 unsafe_syscall_defined|check-ok|tests/safety/unsafe_syscall_defined.tl|-|-
 mutable_reference_reborrow_subscope_ok|check-ok|tests/safety/mutable_reference_reborrow_subscope_ok.tl|-|-
 mutable_reference_read_disjoint_ok|check-ok|tests/safety/mutable_reference_read_disjoint_ok.tl|-|-

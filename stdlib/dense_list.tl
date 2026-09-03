@@ -30,7 +30,10 @@
             "compiler-dense-list-operations: prefix must be a bare name")])]
     [caller-provided-fallback : bool
       (match fallback-policy
-        [(Expr.Var value) (string=? value "caller-provided-fallback")]
+        [(Expr.Var value)
+          (match value
+            ["caller-provided-fallback" true]
+            [_ false])]
         [_
           (comptime-error
             "compiler-dense-list-operations: fallback policy must be a bare name")])]
@@ -46,13 +49,15 @@
         [(Expr.Call callee items)
           (match callee
             [(Expr.Var value)
-              (if (string=? value "shared-zero-capacity")
-                (if (= (expr-list-length items) 1)
-                  true
+              (match value
+                ["shared-zero-capacity"
+                  (if (= (expr-list-length items) 1)
+                    true
+                    (comptime-error
+                      "compiler-dense-list-operations: shared-zero-capacity expects one storage expression"))]
+                [_
                   (comptime-error
-                    "compiler-dense-list-operations: shared-zero-capacity expects one storage expression"))
-                (comptime-error
-                  "compiler-dense-list-operations: capacity policy call must name `shared-zero-capacity`"))]
+                    "compiler-dense-list-operations: capacity policy call must name `shared-zero-capacity`")])]
             [_
               (comptime-error
                 "compiler-dense-list-operations: capacity policy call must name `shared-zero-capacity`")])]
@@ -98,23 +103,35 @@
               "compiler-dense-list-operations: capabilities must be bare names")])
         "")]
     [has-len : bool
-      (if (string=? capability0 "len")
-        true
-        (if (string=? capability1 "len")
-          true
-          (string=? capability2 "len")))]
+      (match capability0
+        ["len" true]
+        [_
+          (match capability1
+            ["len" true]
+            [_
+              (match capability2
+                ["len" true]
+                [_ false])])])]
     [has-empty : bool
-      (if (string=? capability0 "empty?")
-        true
-        (if (string=? capability1 "empty?")
-          true
-          (string=? capability2 "empty?")))]
+      (match capability0
+        ["empty?" true]
+        [_
+          (match capability1
+            ["empty?" true]
+            [_
+              (match capability2
+                ["empty?" true]
+                [_ false])])])]
     [has-append : bool
-      (if (string=? capability0 "append-from")
-        true
-        (if (string=? capability1 "append-from")
-          true
-          (string=? capability2 "append-from")))]
+      (match capability0
+        ["append-from" true]
+        [_
+          (match capability1
+            ["append-from" true]
+            [_
+              (match capability2
+                ["append-from" true]
+                [_ false])])])]
     [recognized-count : i64
       (+
         (if has-len

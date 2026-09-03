@@ -36,8 +36,9 @@
 # four compatibility-module macros, leaving 122 fully native entries. Issue
 # #6650 adds retained Arguments, the direct format sink family, and their
 # classification/streaming helpers, reaching 154 native entries. Issue #7073
-# adds seven explicit clone-generator entries; all 161 remain native.
-native-entries-min 161
+# adds seven explicit clone-generator entries, reaching 161. Issue #7526 adds
+# the compiler dense-list declaration generator; all 162 remain native.
+native-entries-min 162
 shell-entries-max 0
 partial-entries-max 0
 interpreted-arms-max 0

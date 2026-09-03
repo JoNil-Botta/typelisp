@@ -1,9 +1,11 @@
-;; dense_list.tl - Declaration generator for compiler-private dense lists.
-;;
-;; The generated containers remain ordinary concrete `{slots, len}` structs
-;; declared by their owning compiler module. This macro only centralizes their
-;; repeated append-oriented mechanics; family-specific operations stay beside
-;; each invocation.
+;# Declaration generation for compiler-private dense lists.
+;#
+;# Generated containers remain ordinary concrete `{slots, len}` structs
+;# declared by their owning compiler module. This module centralizes their
+;# repeated append-oriented mechanics while family-specific operations stay
+;# beside each invocation.
+;#
+;# Usage: `(import stdlib.dense_list)`
 (import stdlib.comptime)
 
 ;: Emit the common operations for a concrete compiler-private `{slots, len}`

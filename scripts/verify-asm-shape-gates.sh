@@ -506,6 +506,35 @@ function_body() {
 # the whole value lives in registers: the function reserves no stack at all, the
 # tag test is a register test, and the equality's payload compares are
 # register-to-register.
+# UNR-1. The word-then-tail piece copy, all three claims in one body: the
+# helper is inlined into `copy-fill!`, its length comes from a String
+# descriptor and its two loops are the word loop and the byte remainder.
+check_short_trip_copy() {
+    _asm=$(compile_gate short_trip_copy tests/integration/short_trip_copy.tl)
+    _fill=$(function_body "$_asm" _tl_short_trip_copy_copy_fill_bang)
+    # The piece length is a container length, so the lattice signs it and the
+    # `/ 8` is ONE logical shift. The give-away of the five-instruction signed
+    # form is the `sarq $63` sign broadcast; the fixture's other arithmetic is
+    # MASKED rather than divided, so no other divide may put one here either.
+    assert_matches "$_fill" '^[[:space:]]+shrq \$3, %r' short-trip-copy-divide
+    assert_not_matches "$_fill" '^[[:space:]]+sarq \$63, %r' short-trip-copy-divide
+    # The word loop's bound is that `n / 8`, non-negative for the same reason,
+    # so its unroll guard drops the `bound - K <= bound` wrap compare and its
+    # literal-zero seed reads as `ngroup > 0`: `lea; test; jg`, not
+    # `lea; cmp; jle; test; jg`.
+    # (assert_next_line_matches hands its patterns to awk -v, which eats a
+    # single backslash: bracket the metacharacters instead of escaping.)
+    assert_next_line_matches "$_fill" '^[[:space:]]+leaq -4[(]%r[a-z0-9]+[)], %r' \
+        '^[[:space:]]+testq %r[a-z0-9]+, %r' short-trip-copy-guard
+    assert_not_matches "$_fill" '^[[:space:]]+leaq -2\(%r[a-z0-9]+\), %r' \
+        short-trip-copy-guard
+    # ...and the byte tail runs `n mod 8` times, so it is not versioned at all:
+    # ONE guard in the whole body (the word loop's) and ONE byte copy, the
+    # remainder loop's own.
+    assert_regex_count_eq "$_fill" '__unroll_guard:$' 1 short-trip-copy-tail
+    assert_regex_count_eq "$_fill" '^[[:space:]]+movzbq ' 1 short-trip-copy-tail
+}
+
 check_lattice_join_split() {
     _asm=$(compile_gate lattice_join_split tests/integration/lattice_join_split.tl)
     _bind=$(function_body "$_asm" _tl_lattice_join_split_lat_bind)
@@ -2851,6 +2880,7 @@ check_red_zone_leaf_win64() {
 }
 
 check_lattice_join_split
+check_short_trip_copy
 check_select_flags_lea
 check_mem_dest_rmw_fold
 check_word_merge_unroll

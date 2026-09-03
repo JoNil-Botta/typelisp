@@ -85994,6 +85994,7 @@
       (opt-loop-budget-unroll-function 2 true)]
     [stopped : compiler_ir_types.CompilerIrFunction
       (match (compiler_optimize.opt-unroll-function-budget-result
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.opt-cfg-context-build
           (compiler_optimize.opt-function-blocks
             (compiler_optimize.compiler-opt-global-shared-view broken)))
@@ -90106,6 +90107,541 @@
     (compiler-optimize-bounds-dom-nonneg-self-test)
     42
     "the non-negativity lattice proves a counter reassigned through an inner loop, a difference under a dominating lower bound and a fenced increment, refuses an unfenced increment and a phi with one open input, folds `>= 0` on a proved value, and leaves every comparison's signed spelling alone"))
+
+;; --- UNR-1: length reads, narrowing forms, and the unsigned power-of-two divide
+;;
+;; One straight-line block over two parameters -- `text`, a String descriptor
+;; HANDLE, and `x`, an unconstrained i64 -- reads the descriptor's length word
+;; exactly as `lower-array-length-load-descriptor` emits it and derives from it.
+;; Every `>= 0` in a successor block is a question put to the lattice; every
+;; `/ 8` in `entry` is a question put to the divide rewrite.
+(define (opt-unr-params) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "text"
+      (compiler_ast_types.AstType.String)
+      0)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "x"
+        (compiler_ast_types.AstType.I64)
+        1)
+      (compiler_ir_types.compiler-ir-param-seq-empty))))
+
+(define (opt-unr-bin
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BinOp
+    dst
+    op
+    lhs
+    rhs
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-unr-var [var : i64]) : compiler_ir_types.CompilerIrValue
+  (compiler_ir_types.CompilerIrValue.Var var))
+
+(define (opt-unr-lit [value : i64]) : compiler_ir_types.CompilerIrValue
+  (compiler_ir_types.CompilerIrValue.I64 value))
+
+(define (opt-unr-lattice-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-nn-block
+      "entry"
+      (opt-test-instrs
+        ;; %2/%3: the descriptor length load, the shape the length rule is on.
+        (compiler_ir_types.CompilerIrInstr.Gep
+          2
+          (opt-unr-var 0)
+          (opt-unr-lit 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Load
+          3
+          (opt-unr-var 2)
+          (compiler_ast_types.AstType.I64))
+        (opt-unr-bin
+          5
+          (compiler_ir_types.CompilerIrBinOp.Div)
+          (opt-unr-var 3)
+          (opt-unr-lit 8))
+        (opt-unr-bin
+          7
+          (compiler_ir_types.CompilerIrBinOp.Shr
+            (compiler_ast_types.AstType.I64))
+          (opt-unr-var 3)
+          (opt-unr-lit 3))
+        (opt-unr-bin
+          9
+          (compiler_ir_types.CompilerIrBinOp.BitAnd)
+          (opt-unr-var 1)
+          (opt-unr-var 3))
+        ;; the two negatives: an unconstrained dividend, and one the copy map
+        ;; resolves to a NEGATIVE literal.
+        (opt-unr-bin
+          11
+          (compiler_ir_types.CompilerIrBinOp.Div)
+          (opt-unr-var 1)
+          (opt-unr-lit 8))
+        (compiler_ir_types.CompilerIrInstr.Mov
+          13
+          (opt-unr-lit (- 0 5))
+          (compiler_ast_types.AstType.I64))
+        (opt-unr-bin
+          14
+          (compiler_ir_types.CompilerIrBinOp.Div)
+          (opt-unr-var 13)
+          (opt-unr-lit 8))
+        (opt-nn-cmp-lit 15 (compiler_ir_types.CompilerIrBinOp.Ge) 3 0)
+        (opt-nn-branch 15 "quot" "done")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-nn-block
+        "quot"
+        (opt-test-instrs
+          (opt-nn-cmp-lit 16 (compiler_ir_types.CompilerIrBinOp.Ge) 5 0)
+          (opt-nn-branch 16 "shift" "done")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-nn-block
+          "shift"
+          (opt-test-instrs
+            (opt-nn-cmp-lit 17 (compiler_ir_types.CompilerIrBinOp.Ge) 7 0)
+            (opt-nn-branch 17 "mask" "done")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-nn-block
+            "mask"
+            (opt-test-instrs
+              (opt-nn-cmp-lit 18 (compiler_ir_types.CompilerIrBinOp.Ge) 9 0)
+              (opt-nn-branch 18 "open" "done")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-nn-block
+              "open"
+              (opt-test-instrs
+                (opt-nn-cmp-lit 19 (compiler_ir_types.CompilerIrBinOp.Ge) 1 0)
+                (opt-nn-branch 19 "done" "done2")))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-nn-block "done" (opt-test-instrs (opt-nn-return 1)))
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-nn-block "done2" (opt-test-instrs (opt-nn-return 1)))
+                (compiler_ir_types.CompilerIrBlockList.Nil)))))))))
+
+(define (opt-unr-run [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-bounds-dom-blocks-with-context
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_optimize.opt-cfg-context-build
+      (compiler_optimize.compiler-opt-global-shared-view blocks))
+    (opt-unr-params)
+    32
+    blocks))
+
+;; 0 no such dst, 1 a signed `i64` BinOp, 2 an unsigned `u64` BinOp, 3 other.
+(define (opt-unr-binop-kind-at
+  [block : compiler_ir_types.CompilerIrBlock]
+  [index : i64]
+  [dst : i64]
+  [limit : i64]) : i64
+  (if (>= index limit)
+    0
+    (match (opt-block-instr-at
+      (compiler_optimize.compiler-opt-global-shared-view block)
+      index)
+      [(compiler_ir_types.CompilerIrInstr.BinOp found _ _ _ ty)
+        (if (= found dst)
+          (if (compiler_optimize.opt-type-eq
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+            (compiler_optimize.compiler-opt-global-shared-view ty)
+            (compiler_ast_types.AstType.I64))
+            1
+            (if (compiler_optimize.opt-type-eq
+              (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+              ty
+              (compiler_ast_types.AstType.U64))
+              2
+              3))
+          (opt-unr-binop-kind-at block (+ index 1) dst limit))]
+      [_ (opt-unr-binop-kind-at block (+ index 1) dst limit)])))
+
+(define (opt-unr-binop-kind
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]
+  [dst : i64]) : i64
+  (let
+    [block : compiler_ir_types.CompilerIrBlock (opt-nn-block-of blocks label)]
+    (opt-unr-binop-kind-at
+      (compiler_optimize.compiler-opt-global-shared-view block)
+      0
+      dst
+      (opt-block-instr-count block))))
+
+;; Returns 42 only when every proof, every refusal and every retype holds.
+(define (compiler-optimize-unr-length-divide-self-test) : i64
+  (let
+    [out : compiler_ir_types.CompilerIrBlockList
+      (opt-unr-run (opt-unr-lattice-blocks))]
+    (cond
+      ;; a descriptor length load is non-negative...
+      [(not
+          (opt-nn-folded?
+            (compiler_optimize.compiler-opt-global-shared-view out)
+            "entry"
+            8
+            15
+            true))
+        1]
+      ;; ...and so are `n / 8`, `n >> 3` and `x & n` off it.
+      [(not
+          (opt-nn-folded?
+            (compiler_optimize.compiler-opt-global-shared-view out)
+            "quot"
+            0
+            16
+            true))
+        2]
+      [(not
+          (opt-nn-folded?
+            (compiler_optimize.compiler-opt-global-shared-view out)
+            "shift"
+            0
+            17
+            true))
+        3]
+      [(not
+          (opt-nn-folded?
+            (compiler_optimize.compiler-opt-global-shared-view out)
+            "mask"
+            0
+            18
+            true))
+        4]
+      ;; an unconstrained parameter is decided neither way.
+      [(not
+          (opt-nn-compare-signed?
+            (compiler_optimize.compiler-opt-global-shared-view out)
+            "open"
+            0
+            19))
+        5]
+      ;; the divide of the proved dividend is retyped to the unsigned twin...
+      [(not
+          (=
+            (opt-unr-binop-kind
+              (compiler_optimize.compiler-opt-global-shared-view out)
+              "entry"
+              5)
+            2))
+        6]
+      ;; ...and neither the unconstrained dividend nor the negative literal is.
+      [(not
+          (=
+            (opt-unr-binop-kind
+              (compiler_optimize.compiler-opt-global-shared-view out)
+              "entry"
+              11)
+            1))
+        7]
+      [(not (= (opt-unr-binop-kind out "entry" 14) 1)) 8]
+      [else 42])))
+
+(test
+  unr-length-reads-and-unsigned-divide
+  (test.assert-i64-eq
+    (compiler-optimize-unr-length-divide-self-test)
+    42
+    "a descriptor length load is non-negative and so are its quotient, its arithmetic shift and a mask against it; an unconstrained value and a negative literal are not; and only the proved dividend's power-of-two divide is retyped to the unsigned twin"))
+
+;; --- UNR-1: unroll guards without the wrap compare, and the short remainder ---
+;;
+;; One counted merge loop (`dst[i] = dst[i] | src[i]`, the load-and-store class)
+;; parameterised by where its BOUND and its SEED come from:
+;;   0  bound = a descriptor length load, seed = literal 0
+;;      -> no wrap compare AND `ngroup > 0` for the seed test
+;;   1  bound = an unconstrained parameter, seed = literal 0
+;;      -> the guard keeps the wrap compare exactly as before
+;;   2  bound = a descriptor length load, seed = the literal 3
+;;      -> no wrap compare, and the seed test is still `seed < ngroup`
+;;   3  bound = a descriptor length load, seed = `8 * (bound / 8)`
+;;      -> a remainder of at most seven trips: not unrolled at all
+;;   4  bound = an unconstrained parameter, seed = `8 * (length / 8)`
+;;      -> the seed's quotient is over a DIFFERENT value, so nothing is known
+;;         about the trip count and the loop unrolls as before
+(define (opt-unr-loop-params) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "text"
+      (compiler_ast_types.AstType.String)
+      0)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "dst"
+        (compiler_ast_types.AstType.I64)
+        1)
+      (compiler_ir_types.compiler-ir-param-seq-prepend
+        (compiler_ir_types.CompilerIrParam.Param
+          "src"
+          (compiler_ast_types.AstType.I64)
+          2)
+        (compiler_ir_types.compiler-ir-param-seq-prepend
+          (compiler_ir_types.CompilerIrParam.Param
+            "n"
+            (compiler_ast_types.AstType.I64)
+            3)
+          (compiler_ir_types.compiler-ir-param-seq-empty))))))
+
+(define (opt-unr-loop-bound [mode : i64]) : compiler_ir_types.CompilerIrValue
+  (if (or (= mode 1) (= mode 4))
+    (opt-unr-var 3)
+    (opt-unr-var 5)))
+
+(define (opt-unr-loop-seed [mode : i64]) : compiler_ir_types.CompilerIrValue
+  (cond
+    [(= mode 2) (opt-unr-lit 3)]
+    [(>= mode 3) (opt-unr-var 7)]
+    [else (opt-unr-lit 0)]))
+
+(define (opt-unr-loop-entry) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (compiler_ir_types.CompilerIrInstr.Gep
+      4
+      (opt-unr-var 0)
+      (opt-unr-lit 1)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Load
+      5
+      (opt-unr-var 4)
+      (compiler_ast_types.AstType.I64))
+    (opt-unr-bin
+      6
+      (compiler_ir_types.CompilerIrBinOp.Div)
+      (opt-unr-var 5)
+      (opt-unr-lit 8))
+    (opt-unr-bin
+      7
+      (compiler_ir_types.CompilerIrBinOp.Mul)
+      (opt-unr-var 6)
+      (opt-unr-lit 8))
+    (compiler_ir_types.CompilerIrInstr.Jump
+      (compiler_ir_types.compiler-ir-label "body"))))
+
+(define (opt-unr-loop-body [mode : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (compiler_ir_types.CompilerIrInstr.Phi
+      8
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+        (opt-unr-loop-seed mode)
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+          (opt-unr-var 13)
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Gep
+      9
+      (opt-unr-var 1)
+      (opt-unr-var 8)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Load
+      10
+      (opt-unr-var 9)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Gep
+      11
+      (opt-unr-var 2)
+      (opt-unr-var 8)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Load
+      12
+      (opt-unr-var 11)
+      (compiler_ast_types.AstType.I64))
+    (opt-unr-bin
+      14
+      (compiler_ir_types.CompilerIrBinOp.Or)
+      (opt-unr-var 10)
+      (opt-unr-var 12))
+    (compiler_ir_types.CompilerIrInstr.StorePtr
+      (opt-unr-var 9)
+      (opt-unr-var 14)
+      (compiler_ast_types.AstType.I64))
+    (opt-unr-bin
+      13
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (opt-unr-var 8)
+      (opt-unr-lit 1))
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      15
+      (compiler_ir_types.CompilerIrBinOp.Lt)
+      (opt-unr-var 13)
+      (opt-unr-loop-bound mode)
+      (compiler_ast_types.AstType.Bool))
+    (compiler_ir_types.CompilerIrInstr.Branch
+      (opt-unr-var 15)
+      (compiler_ir_types.compiler-ir-label "body")
+      (compiler_ir_types.compiler-ir-label "exit"))))
+
+(define (opt-unr-loop-function [mode : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "unr_guard_fixture")
+    (opt-unr-loop-params)
+    (compiler_ast_types.AstType.I64)
+    16
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-nn-block "entry" (opt-unr-loop-entry))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-nn-block "body" (opt-unr-loop-body mode))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-nn-block "exit" (opt-test-instrs (opt-nn-return 3)))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-unr-loop-run [mode : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-function-blocks
+    (compiler_optimize.opt-unroll-function
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (opt-unr-loop-function mode))))
+
+(define (opt-unr-has-block?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : bool
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label
+      (owned_view.compiler-owned-shared-view label)))
+    [(compiler_optimize.OptMaybeBlock.Some _) true]
+    [(compiler_optimize.OptMaybeBlock.No) false]))
+
+;; How many `le` comparisons the guard block holds: the wrap conjunct is the
+;; only one the guard ever builds.
+(define (opt-unr-count-le-in
+  [block : compiler_ir_types.CompilerIrBlock]
+  [index : i64]
+  [limit : i64]
+  [acc : i64]) : i64
+  (if (>= index limit)
+    acc
+    (opt-unr-count-le-in
+      (compiler_optimize.compiler-opt-global-shared-view block)
+      (+ index 1)
+      limit
+      (+
+        acc
+        (match (opt-block-instr-at
+          (compiler_optimize.compiler-opt-global-shared-view block)
+          index)
+          [(compiler_ir_types.CompilerIrInstr.BinOp _ op _ _ _)
+            (if (compiler_optimize.opt-binop-eq
+              op
+              (compiler_ir_types.CompilerIrBinOp.Le))
+              1
+              0)]
+          [_ 0])))))
+
+(define (opt-unr-guard-le
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : i64
+  (let
+    [block : compiler_ir_types.CompilerIrBlock (opt-nn-block-of blocks label)]
+    (opt-unr-count-le-in
+      (compiler_optimize.compiler-opt-global-shared-view block)
+      0
+      (opt-block-instr-count
+        (compiler_optimize.compiler-opt-global-shared-view block))
+      0)))
+
+;; Does the guard's seed test read `ngroup > 0` (a literal-zero seed) rather
+;; than `seed < ngroup`?
+(define (opt-unr-block-has-gt?
+  [block : compiler_ir_types.CompilerIrBlock]
+  [index : i64]
+  [limit : i64]) : bool
+  (if (>= index limit)
+    false
+    (match (opt-block-instr-at
+      (compiler_optimize.compiler-opt-global-shared-view block)
+      index)
+      [(compiler_ir_types.CompilerIrInstr.BinOp _ op _ _ _)
+        (if (compiler_optimize.opt-binop-eq
+          op
+          (compiler_ir_types.CompilerIrBinOp.Gt))
+          true
+          (opt-unr-block-has-gt? block (+ index 1) limit))]
+      [_ (opt-unr-block-has-gt? block (+ index 1) limit)])))
+
+(define (opt-unr-guard-gt?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : bool
+  (let
+    [block : compiler_ir_types.CompilerIrBlock (opt-nn-block-of blocks label)]
+    (opt-unr-block-has-gt?
+      (compiler_optimize.compiler-opt-global-shared-view block)
+      0
+      (opt-block-instr-count block))))
+
+(define (compiler-optimize-unr-unroll-guard-self-test) : i64
+  (let
+    [proved : compiler_ir_types.CompilerIrBlockList (opt-unr-loop-run 0)]
+    [open : compiler_ir_types.CompilerIrBlockList (opt-unr-loop-run 1)]
+    [seeded : compiler_ir_types.CompilerIrBlockList (opt-unr-loop-run 2)]
+    [remainder : compiler_ir_types.CompilerIrBlockList (opt-unr-loop-run 3)]
+    [unrelated : compiler_ir_types.CompilerIrBlockList (opt-unr-loop-run 4)]
+    (cond
+      ;; the loop with a length bound is still versioned...
+      [(not
+          (opt-unr-has-block?
+            (compiler_optimize.compiler-opt-global-shared-view proved)
+            "body__unroll_guard"))
+        1]
+      ;; ...with NO wrap compare, and its literal-zero seed read as `> 0`.
+      [(not
+          (=
+            (opt-unr-guard-le
+              (compiler_optimize.compiler-opt-global-shared-view proved)
+              "body__unroll_guard")
+            0))
+        2]
+      [(not
+          (opt-unr-guard-gt?
+            (compiler_optimize.compiler-opt-global-shared-view proved)
+            "body__unroll_guard"))
+        3]
+      ;; an unconstrained bound keeps the wrap compare.
+      [(not
+          (=
+            (opt-unr-guard-le
+              (compiler_optimize.compiler-opt-global-shared-view open)
+              "body__unroll_guard")
+            1))
+        4]
+      ;; a non-zero seed keeps `seed < ngroup` and still drops the wrap.
+      [(not
+          (=
+            (opt-unr-guard-le
+              (compiler_optimize.compiler-opt-global-shared-view seeded)
+              "body__unroll_guard")
+            0))
+        5]
+      [(opt-unr-guard-gt?
+          (compiler_optimize.compiler-opt-global-shared-view seeded)
+          "body__unroll_guard")
+        6]
+      ;; the provably short remainder is not versioned at all...
+      [(opt-unr-has-block?
+          (compiler_optimize.compiler-opt-global-shared-view remainder)
+          "body__unroll_guard")
+        7]
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count
+              (compiler_optimize.compiler-opt-global-shared-view remainder))
+            3))
+        8]
+      ;; ...while the same seed against an UNRELATED bound still unrolls.
+      [(not (opt-unr-has-block? unrelated "body__unroll_guard")) 9]
+      [else 42])))
+
+(test
+  unr-unroll-guard-and-short-remainder
+  (test.assert-i64-eq
+    (compiler-optimize-unr-unroll-guard-self-test)
+    42
+    "a non-negative loop bound drops the unroll guard's wrap compare and a literal-zero seed reads as `ngroup > 0`, an unconstrained bound keeps both, and a loop whose seed is `8 * (bound / 8)` is refused the small tiers while the same seed against an unrelated bound still unrolls"))
 
 ;; --- sentinel exit-flag conversion self-tests ---------------------------------
 ;; The shape `benchmarks/peephole_lines`' `pl-first-rsp-read` and

@@ -58,6 +58,11 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   Content-Length lists, TE/CL smuggling rejection, transfer-coding order,
   normalized Trailer declarations, HEAD/informational/204/304 semantics, and
   capability-gated CONNECT tunnels.
+- `http_trailer_policy.tl` covers fail-closed trailer extension policy,
+  exhaustive mixed-case forbidden-name lookup, checked policy limits,
+  sensitivity and all multiplicity rules, declared-versus-approved behavior,
+  allocation-free typed-field validation, deterministic first errors, and
+  preservation of separate trailer field spelling/value/order.
 - `net_ip_api.tl` covers network-order constructors, exact borrowed byte
   lengths, family-sensitive equality/order/hash behavior, strict IPv4 and IPv6
   positive and negative text tables with byte offsets, RFC 5952 formatting,

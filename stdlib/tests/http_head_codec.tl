@@ -204,7 +204,30 @@
           (match error.kind
             [(http_types.HttpSensitiveHeaderMustBeMarked) unit]
             [_ (fail "sensitivity error kind")])]
-        [_ (fail "public Authorization accepted")]))))
+        [_ (fail "public Authorization accepted")]))
+    (let
+      [headers : http_types.HttpHeaders (http_types.headers-empty)]
+      (begin
+        (set!
+          headers
+          (http_types.headers-append headers (public-field "Host" "x")))
+        (set!
+          headers
+          (http_types.headers-append
+            headers
+            (public-field "Trailer" "cOnTeNt-TyPe")))
+        (match (http_head_codec.serialize-request-head
+          (http_types.HttpMethod (byte_buf.from-string "POST"))
+          (http_types.HttpRequestTarget (byte_buf.from-string "/"))
+          headers
+          (http_types.HttpRequestBodyChunked
+            (http_types.Http11ChunkedAuthorized))
+          (http_types.default-head-limits))
+          [(http_head_codec.HttpRequestSerializeErr error)
+            (match error.kind
+              [(http_types.HttpForbiddenTrailerName) unit]
+              [_ (fail "shared forbidden trailer declaration kind")])]
+          [_ (fail "representation metadata trailer declared")])))))
 
 (define (assert-fixed-response
   [head : http_types.HttpResponseHead]

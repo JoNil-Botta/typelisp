@@ -41,6 +41,8 @@
 
 (include-str-lzss payload-net-http-types "../stdlib/net/http_types.tl")
 
+(include-str-lzss payload-net-ip "../stdlib/net/ip.tl")
+
 (include-str-lzss payload-io-core "../stdlib/io_core.tl")
 
 (include-str-lzss payload-io "../stdlib/io.tl")
@@ -161,6 +163,8 @@
       (compiler-embedded-stdlib-payload-copy payload-net-http-head-codec)]
     [(string.eq suffix "net/http_types.tl")
       (compiler-embedded-stdlib-payload-copy payload-net-http-types)]
+    [(string.eq suffix "net/ip.tl")
+      (compiler-embedded-stdlib-payload-copy payload-net-ip)]
     [(string.eq suffix "io_core.tl")
       (compiler-embedded-stdlib-payload-copy payload-io-core)]
     [(string.eq suffix "io.tl")

@@ -8,6 +8,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+. "$ROOT/scripts/lib-stage0.sh"
+
 if [ "$#" -ne 0 ]; then
     echo "usage: scripts/verify-tlci-boundary-manifest.sh" >&2
     exit 2
@@ -16,7 +18,6 @@ fi
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    . "$ROOT/scripts/lib-stage0.sh"
     COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
 fi
 
@@ -41,6 +42,9 @@ PRODUCER=src/compiler_tlci_native_producer.tl
 STAGES=tools/tlci-boundary-manifest/admission-stages.tsv
 CHECKED=docs/tlci-native-boundary-manifest.tsv
 ACTUAL=$WORKDIR/manifest.tsv
+TOOL_BIN=$WORKDIR/tlci-boundary-manifest$(stage0_host_exe_suffix)
+
+"$COMPILER" build "$TOOL" --stdlib-root stdlib -o "$TOOL_BIN"
 
 generate() {
     core=$1
@@ -48,8 +52,7 @@ generate() {
     producer=$3
     stages=$4
     output=$5
-    "$COMPILER" run "$TOOL" --stdlib-root stdlib -- \
-        "$core" "$host" "$producer" "$stages" "$output"
+    "$TOOL_BIN" "$core" "$host" "$producer" "$stages" "$output"
 }
 
 fail() {

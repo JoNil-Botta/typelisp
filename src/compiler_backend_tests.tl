@@ -2349,7 +2349,11 @@
                 ".L_tl_start_xdata"
                 (cobj.CompilerObjectSymbolBinding.Local)
                 (cobj.CompilerObjectSymbolKind.Data))
-              true)
+              (cobj.compiler-object-symbol-list-contains?
+                (owned_view.compiler-owned-shared-view symbols)
+                ".L_tl_main_fiber"
+                (cobj.CompilerObjectSymbolBinding.Local)
+                (cobj.CompilerObjectSymbolKind.Function)))
             (compiler_backend.backend-and8
               (cobj.compiler-object-section-contains-label?
                 (owned_view.compiler-owned-shared-view sections)
@@ -2363,8 +2367,14 @@
                 (owned_view.compiler-owned-shared-view sections)
                 (cobj.CompilerObjectSectionKind.Bss)
                 "tl_boot_pool")
-              true
-              true
+              (cobj.compiler-object-section-contains-label?
+                (owned_view.compiler-owned-shared-view sections)
+                (cobj.CompilerObjectSectionKind.Bss)
+                ".L_tl_main_stack_written")
+              (cobj.compiler-object-section-contains-label?
+                (owned_view.compiler-owned-shared-view sections)
+                (cobj.CompilerObjectSectionKind.Rodata)
+                ".L_tl_main_stack_reservation_msg")
               true
               true
               true)
@@ -2400,8 +2410,16 @@
                 ".L_tl_boot_alloc"
                 (cobj.CompilerObjectSymbolBinding.Local)
                 (cobj.CompilerObjectSymbolKind.Runtime))
-              true
-              true)
+              (cobj.compiler-object-section-contains-label?
+                (owned_view.compiler-owned-shared-view sections)
+                (cobj.CompilerObjectSectionKind.Pdata)
+                ".L_tl_main_fiber_pdata_begin")
+              (>=
+                (coff.compiler-object-coff-section-label-offset
+                  (owned_view.compiler-owned-shared-view image)
+                  (cobj.CompilerObjectSectionKind.Text)
+                  ".L_tl_main_fiber")
+                0))
             (compiler_backend.backend-and8
               (cobj.compiler-object-relocation-list-contains?
                 (owned_view.compiler-owned-shared-view relocs)
@@ -2464,6 +2482,97 @@
                 (owned_view.compiler-owned-shared-view relocs)
                 (cobj.CompilerObjectRelocationKind.Addr32Nb)
                 ".L_tl_start_xdata")
+              (and
+                (cobj.compiler-object-relocation-list-contains?
+                  (owned_view.compiler-owned-shared-view relocs)
+                  (cobj.CompilerObjectRelocationKind.Addr32Nb)
+                  ".L_tl_main_fiber")
+                (cobj.compiler-object-relocation-list-contains?
+                  (owned_view.compiler-owned-shared-view relocs)
+                  (cobj.CompilerObjectRelocationKind.Addr32Nb)
+                  ".L_tl_main_fiber_end")))
+            (compiler_backend.backend-and8
+              (cobj.compiler-object-relocation-list-contains?
+                (owned_view.compiler-owned-shared-view relocs)
+                (cobj.CompilerObjectRelocationKind.Call)
+                "ConvertThreadToFiber")
+              (cobj.compiler-object-relocation-list-contains?
+                (owned_view.compiler-owned-shared-view relocs)
+                (cobj.CompilerObjectRelocationKind.Call)
+                "CreateFiberEx")
+              (cobj.compiler-object-relocation-list-contains?
+                (owned_view.compiler-owned-shared-view relocs)
+                (cobj.CompilerObjectRelocationKind.Call)
+                "SwitchToFiber")
+              (cobj.compiler-object-relocation-list-contains?
+                (owned_view.compiler-owned-shared-view relocs)
+                (cobj.CompilerObjectRelocationKind.Call)
+                "GetStdHandle")
+              (cobj.compiler-object-relocation-list-contains?
+                (owned_view.compiler-owned-shared-view relocs)
+                (cobj.CompilerObjectRelocationKind.Call)
+                "WriteFile")
+              (cobj.compiler-object-relocation-list-contains?
+                (owned_view.compiler-owned-shared-view relocs)
+                (cobj.CompilerObjectRelocationKind.RipAddress)
+                ".L_tl_main_fiber")
+              (cobj.compiler-object-relocation-list-contains?
+                (owned_view.compiler-owned-shared-view relocs)
+                (cobj.CompilerObjectRelocationKind.RipAddress)
+                ".L_tl_main_stack_reservation_msg")
+              (cobj.compiler-object-relocation-list-contains?
+                (owned_view.compiler-owned-shared-view relocs)
+                (cobj.CompilerObjectRelocationKind.RipAddress)
+                ".L_tl_main_stack_written"))
+            (compiler_backend.backend-and8
+              (cobj.compiler-object-symbol-list-contains?
+                (owned_view.compiler-owned-shared-view symbols)
+                ".L_tl_stack_overflow_filter"
+                (cobj.CompilerObjectSymbolBinding.Local)
+                (cobj.CompilerObjectSymbolKind.Function))
+              (cobj.compiler-object-section-contains-label?
+                (owned_view.compiler-owned-shared-view sections)
+                (cobj.CompilerObjectSectionKind.Rodata)
+                ".L_tl_stack_overflow_msg")
+              (cobj.compiler-object-section-contains-label?
+                (owned_view.compiler-owned-shared-view sections)
+                (cobj.CompilerObjectSectionKind.Pdata)
+                ".L_tl_stack_overflow_filter_pdata_begin")
+              (cobj.compiler-object-relocation-list-contains?
+                (owned_view.compiler-owned-shared-view relocs)
+                (cobj.CompilerObjectRelocationKind.Call)
+                "SetUnhandledExceptionFilter")
+              (cobj.compiler-object-relocation-list-contains?
+                (owned_view.compiler-owned-shared-view relocs)
+                (cobj.CompilerObjectRelocationKind.Call)
+                "SetThreadStackGuarantee")
+              (cobj.compiler-object-relocation-list-contains?
+                (owned_view.compiler-owned-shared-view relocs)
+                (cobj.CompilerObjectRelocationKind.RipAddress)
+                ".L_tl_stack_overflow_filter")
+              (cobj.compiler-object-relocation-list-contains?
+                (owned_view.compiler-owned-shared-view relocs)
+                (cobj.CompilerObjectRelocationKind.RipAddress)
+                ".L_tl_stack_overflow_msg")
+              (cobj.compiler-object-relocation-list-contains?
+                (owned_view.compiler-owned-shared-view relocs)
+                (cobj.CompilerObjectRelocationKind.Addr32Nb)
+                ".L_tl_stack_overflow_filter"))
+            (compiler_backend.backend-and4
+              (cobj.compiler-object-relocation-list-contains?
+                (owned_view.compiler-owned-shared-view relocs)
+                (cobj.CompilerObjectRelocationKind.Addr32Nb)
+                ".L_tl_stack_overflow_filter_end")
+              (cobj.compiler-object-symbol-list-contains?
+                (owned_view.compiler-owned-shared-view symbols)
+                "SetUnhandledExceptionFilter"
+                (cobj.CompilerObjectSymbolBinding.Extern)
+                (cobj.CompilerObjectSymbolKind.Function))
+              (cobj.compiler-object-symbol-list-contains?
+                (owned_view.compiler-owned-shared-view symbols)
+                "SetThreadStackGuarantee"
+                (cobj.CompilerObjectSymbolBinding.Extern)
+                (cobj.CompilerObjectSymbolKind.Function))
               true))]
         (if (and
           shape-ok
@@ -2509,8 +2618,8 @@
                     (owned_view.compiler-owned-shared-view obj)
                     (+ xdata-header 20))]
                 (and
-                  (= pdata-size 12)
-                  (= pdata-relocs 3)
+                  (= pdata-size 36)
+                  (= pdata-relocs 9)
                   (= xdata-size 8)
                   (=
                     (coff.compiler-object-coff-u8-at
@@ -17228,10 +17337,10 @@ g:
             (compiler_backend.compiler-backend-string-contains?
               (owned_view.compiler-owned-shared-view asm)
               "    sub $32, %rsp\n    call tl_region_abort\n"))
-          ;; The out-of-memory abort moved to the `tl_oom_abort` runtime-prelude
-          ;; handler: the allocator's abort path now tail-jumps to it
-          ;; instead of inlining the kernel32 GetStdHandle/WriteFile/ExitProcess
-          ;; write (the former `.L_tl_win_write_abort` helper is gone).
+          ;; The allocator still delegates to the `tl_oom_abort`
+          ;; runtime-prelude handler. The direct GetStdHandle/WriteFile paths
+          ;; left in the backend runtime report main-fiber reservation failure
+          ;; before user code starts and an unhandled stack overflow.
           (compiler_backend.backend-and4
             (compiler_backend.compiler-backend-string-contains?
               (owned_view.compiler-owned-shared-view asm)
@@ -17240,14 +17349,12 @@ g:
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view asm)
                 ".L_tl_win_write_abort"))
-            (not
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "    call WriteFile\n"))
-            (not
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view asm)
-                "    call GetStdHandle\n")))
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              ".L_tl_main_stack_reservation_failed:\n    movl $-12, %ecx\n    call GetStdHandle\n")
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    call WriteFile\n    movl $134, %ecx\n    call ExitProcess\n"))
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
             "    push %r14\n    movq %rcx, %r12\n")
@@ -26669,10 +26776,11 @@ g:
             (owned_view.compiler-owned-shared-view asm)
             "    syscall\n"))
         (and
-          (not
-            (compiler_backend.compiler-backend-string-contains?
+          (=
+            (compiler_backend.compiler-backend-string-count
               (owned_view.compiler-owned-shared-view asm)
-              "    call WriteFile\n"))
+              "    call WriteFile\n")
+            2)
           (not
             (compiler_backend.compiler-backend-string-contains?
               (owned_view.compiler-owned-shared-view asm)

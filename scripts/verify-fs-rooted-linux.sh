@@ -2,7 +2,7 @@
 set -eu
 
 # verify-fs-rooted-linux.sh - adversarial native checks for the private Linux
-# rooted exclusive-create backend. refs #7221
+# rooted staging and publication backend. refs #7221, #7409
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -104,6 +104,21 @@ echo "[fs-rooted-linux] compile assembly fallback with fault hooks"
 as "$NATIVE_ASM" -o "$NATIVE_OBJ"
 ld "$NATIVE_OBJ" -o "$NATIVE_BIN" -e _tl_start
 
+PUBLICATION_SOURCE="$ROOT/tests/integration/fs_rooted_linux_publication.tl"
+PUBLICATION_ASM="$WORKDIR/publication.s"
+PUBLICATION_OBJ="$WORKDIR/publication.o"
+PUBLICATION_BIN="$WORKDIR/publication"
+
+echo "[fs-rooted-linux] compile rooted publication coverage"
+"$COMPILER" compile "$PUBLICATION_SOURCE" -o "$PUBLICATION_ASM" \
+    --target linux-x86_64 --backend-mode scalar \
+    --cfg fs-rooted-linux-test-hooks --stdlib-root "$ROOT/stdlib" \
+    > "$WORKDIR/publication-compile.stdout" \
+    2> "$WORKDIR/publication-compile.stderr" ||
+    fail "publication fixture compile failed"
+as "$PUBLICATION_ASM" -o "$PUBLICATION_OBJ"
+ld "$PUBLICATION_OBJ" -o "$PUBLICATION_BIN" -e _tl_start
+
 mkdir -p "$WORKDIR/happy"
 run_expect happy 42 "$NATIVE_BIN" happy "$WORKDIR/happy"
 printf 'rooted payload\n' > "$WORKDIR/happy.expected"
@@ -191,6 +206,89 @@ run_expect fault-injection 42 "$NATIVE_BIN" faults "$WORKDIR/faults"
     fail "failed directory reacquisition deleted the exclusively created node"
 [ ! -e "$WORKDIR/faults/unsupported-file.txt" ] ||
     fail "injected unsupported openat2 unexpectedly created a file"
+
+mkdir -p \
+    "$WORKDIR/publication-source/directory-entry" \
+    "$WORKDIR/publication-source/empty-dir" \
+    "$WORKDIR/publication-source/nonempty" \
+    "$WORKDIR/publication-destination" \
+    "$WORKDIR/publication-destination/collision-dir" \
+    "$WORKDIR/publication-outside"
+printf 'child\n' > "$WORKDIR/publication-source/nonempty/child"
+printf 'outside sentinel\n' > "$WORKDIR/publication-outside/sentinel"
+printf 'collision existing\n' > "$WORKDIR/publication-destination/collision.txt"
+ln -s ../publication-outside/sentinel \
+    "$WORKDIR/publication-source/symlink-entry"
+ln -s ../publication-outside/sentinel \
+    "$WORKDIR/publication-source/remove-link"
+ln -s ../publication-outside/sentinel \
+    "$WORKDIR/publication-destination/replace-link"
+mkfifo "$WORKDIR/publication-source/fifo-entry"
+run_expect publication 42 \
+    "$PUBLICATION_BIN" publication \
+    "$WORKDIR/publication-source" \
+    "$WORKDIR/publication-destination"
+printf 'published\n' > "$WORKDIR/publication.expected"
+cmp -s \
+    "$WORKDIR/publication.expected" \
+    "$WORKDIR/publication-destination/published.txt" ||
+    fail "no-replace publication payload mismatch"
+printf 'replacement\n' > "$WORKDIR/replacement.expected"
+cmp -s \
+    "$WORKDIR/replacement.expected" \
+    "$WORKDIR/publication-destination/replace-link" ||
+    fail "replace publication did not replace the destination symlink entry"
+printf 'same parent\n' > "$WORKDIR/same-parent.expected"
+cmp -s \
+    "$WORKDIR/same-parent.expected" \
+    "$WORKDIR/publication-source/same-parent.txt" ||
+    fail "same-parent publication payload mismatch"
+printf 'outside sentinel\n' > "$WORKDIR/publication-outside.expected"
+cmp -s \
+    "$WORKDIR/publication-outside.expected" \
+    "$WORKDIR/publication-outside/sentinel" ||
+    fail "publication or cleanup modified the outside sentinel"
+[ ! -e "$WORKDIR/publication-source/remove.txt" ] ||
+    fail "exact unlink left the regular-file entry"
+[ ! -e "$WORKDIR/publication-source/remove-link" ] ||
+    fail "exact unlink left the symlink entry"
+[ ! -e "$WORKDIR/publication-source/empty-dir" ] ||
+    fail "exact rmdir left the empty directory"
+[ -d "$WORKDIR/publication-source/nonempty" ] ||
+    fail "exact rmdir removed the nonempty directory"
+[ -f "$WORKDIR/publication-source/collision.tmp" ] ||
+    fail "no-replace collision consumed its source"
+[ -d "$WORKDIR/publication-destination/collision-dir" ] ||
+    fail "no-replace collision overwrote a directory"
+
+mkdir -p "$WORKDIR/parent-source" "$WORKDIR/parent-destination"
+run_expect renamed-parents 42 \
+    "$PUBLICATION_BIN" renamed-parents \
+    "$WORKDIR/parent-source" \
+    "$WORKDIR/parent-destination" \
+    "$WORKDIR/parent-source-moved" \
+    "$WORKDIR/parent-destination-moved"
+[ ! -e "$WORKDIR/parent-source" ] ||
+    fail "old source parent name survived retained-descriptor rename"
+[ ! -e "$WORKDIR/parent-destination" ] ||
+    fail "old destination parent name survived retained-descriptor rename"
+printf 'renamed parents\n' > "$WORKDIR/renamed-parents.expected"
+cmp -s \
+    "$WORKDIR/renamed-parents.expected" \
+    "$WORKDIR/parent-destination-moved/renamed.txt" ||
+    fail "two-root publication did not survive parent renames"
+
+mkdir -p "$WORKDIR/publication-faults/rmdir-fault"
+run_expect publication-faults 42 \
+    "$PUBLICATION_BIN" faults "$WORKDIR/publication-faults"
+[ -f "$WORKDIR/publication-faults/rename-fault.tmp" ] ||
+    fail "injected EXDEV consumed the rename source"
+[ -f "$WORKDIR/publication-faults/noreplace-fault.tmp" ] ||
+    fail "injected unsupported no-replace consumed the rename source"
+[ -f "$WORKDIR/publication-faults/unlink-fault.txt" ] ||
+    fail "injected unlink failure removed its target"
+[ -d "$WORKDIR/publication-faults/rmdir-fault" ] ||
+    fail "injected rmdir failure removed its target"
 
 # A privileged runner can install a real bind mount during the deterministic
 # post-mkdir pause. Unprivileged CI reports the limitation instead of silently

@@ -21,6 +21,7 @@
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
 (import compiler_profile_state as profile_state)
+(import compiler_spmd_numeric_policy as spmd_numeric)
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (import compiler_package_surface_producer as package_surface))
@@ -50770,7 +50771,7 @@
                 op
                 (lower-global-shared-view index)
                 (lower-global-shared-view acc-ty)
-                value)]
+                (lower-global-shared-view value))]
             (match (lower-global-shared-view plan)
               [(LowerMaybeVectorReduce.Array _ _ _ _)
                 (lower-avx2-spmd-reduce-lowered
@@ -50797,21 +50798,40 @@
                   op
                   plan)]
               [(LowerMaybeVectorReduce.No)
-                (lower-spmd-reduce-scaffold
-                  ctx
-                  (lower-global-shared-view state)
-                  env
-                  type-env
-                  result-ty
-                  index-id
-                  index
-                  index-ty
-                  start
-                  end
-                  init
-                  acc-ty
-                  acc-update
-                  split)]))
+                (match (lower-spmd-numeric-failure
+                  (lower-global-shared-view ctx)
+                  (lower-state-function-state (lower-global-shared-view state))
+                  (lower-state-mode (lower-global-shared-view state))
+                  (lower-global-shared-view env)
+                  (tc_core.tc-bind-id
+                    (lower-global-shared-view type-env)
+                    index-id
+                    (lower-global-shared-view index-ty))
+                  (spmd_numeric.CompilerSpmdNumericContext.FusedReduction)
+                  (lower-global-shared-view value))
+                  [(LowerMaybeSpmdNumericFailure.Some origin decision)
+                    (ResultLowerExpr.Err
+                      (box
+                        (lower-diagnostic-at-expr
+                          ctx
+                          origin
+                          (lower-spmd-numeric-failure-message decision))))]
+                  [(LowerMaybeSpmdNumericFailure.No)
+                    (lower-spmd-reduce-scaffold
+                      ctx
+                      (lower-global-shared-view state)
+                      env
+                      type-env
+                      result-ty
+                      index-id
+                      index
+                      index-ty
+                      start
+                      end
+                      init
+                      acc-ty
+                      acc-update
+                      split)])]))
           (lower-spmd-reduce-scaffold
             ctx
             (lower-global-shared-view state)
@@ -51358,6 +51378,13 @@
     [(CompilerLowerMode.WindowsAvx512) true]
     [_ false]))
 
+(define (lower-spmd-numeric-backend [mode : CompilerLowerMode]) : spmd_numeric.CompilerSpmdNumericBackend
+  (if (lower-mode-avx2? mode)
+    (spmd_numeric.CompilerSpmdNumericBackend.Avx2)
+    (if (lower-mode-avx512? mode)
+      (spmd_numeric.CompilerSpmdNumericBackend.Avx512)
+      (spmd_numeric.CompilerSpmdNumericBackend.Scalar))))
+
 (define (lower-avx2-masked-if-diagnostic) : String
   "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512")
 
@@ -51889,25 +51916,134 @@
     [(= left right) left]
     [else -1]))
 
-(define (lower-masked-vector-binop-supported? [op : ast.AstBinOp]) : bool
+(define (lower-masked-vector-binop-supported?
+  [function-state : CompilerLowerFunctionState]
+  [mode : CompilerLowerMode]
+  [op : ast.AstBinOp]) : bool
   (match op
-    [(ast.AstBinOp.Add) true]
-    [(ast.AstBinOp.Sub) true]
-    [(ast.AstBinOp.Mod) true]
-    [(ast.AstBinOp.BitAnd) true]
-    [(ast.AstBinOp.BitOr) true]
-    [(ast.AstBinOp.BitXor) true]
-    [(ast.AstBinOp.Shl) true]
-    [(ast.AstBinOp.Shr) true]
-    [(ast.AstBinOp.Eq) true]
-    [(ast.AstBinOp.Ne) true]
-    [(ast.AstBinOp.Lt) true]
-    [(ast.AstBinOp.Le) true]
-    [(ast.AstBinOp.Gt) true]
-    [(ast.AstBinOp.Ge) true]
+    ;; These are bool operations rather than numeric rows.
     [(ast.AstBinOp.And) true]
     [(ast.AstBinOp.Or) true]
-    [_ false]))
+    [_
+      ;; Type checking has already excluded float bitwise/remainder rows.
+      ;; Numeric admission is otherwise width-independent at lane census time.
+      (let
+        [destination : ast.AstType
+          (if (spmd_numeric.compiler-spmd-numeric-comparison-op? op)
+            (ast.AstType.Bool)
+            (ast.AstType.I64))]
+        [helper-body : bool
+          (>
+            (compiler-lower-function-state-inline-helper-stack function-state).len
+            0)]
+        (if helper-body
+          (and
+            (spmd_numeric.compiler-spmd-numeric-decision-supported?
+              (spmd_numeric.compiler-spmd-numeric-binary-decision
+                (ast.AstType.I64)
+                (lower-global-shared-view destination)
+                (spmd_numeric.CompilerSpmdNumericContext.InlineHelper)
+                (lower-spmd-numeric-backend mode)
+                op))
+            (spmd_numeric.compiler-spmd-numeric-decision-supported?
+              (spmd_numeric.compiler-spmd-numeric-binary-decision
+                (ast.AstType.I64)
+                destination
+                (spmd_numeric.CompilerSpmdNumericContext.PrivateHelper)
+                (lower-spmd-numeric-backend mode)
+                op)))
+          (spmd_numeric.compiler-spmd-numeric-decision-supported?
+            (spmd_numeric.compiler-spmd-numeric-binary-decision
+              (ast.AstType.I64)
+              destination
+              (spmd_numeric.CompilerSpmdNumericContext.MaskedControl)
+              (lower-spmd-numeric-backend mode)
+              op))))]))
+
+(define (lower-masked-spmd-numeric-expr-type
+  [ctx : tc_core.TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [expr : ast.AstExpr]) : tc_core.ResultTcType
+  (match (tc_core.tc-expr
+    (lower-global-shared-view ctx)
+    (lower-global-shared-view type-env)
+    (lower-global-shared-view expr))
+    [(tc_core.ResultTcType.Ok ty) (tc_core.ResultTcType.Ok ty)]
+    [(tc_core.ResultTcType.Err _)
+      ;; The foreach index is represented by the planner rather than bound in
+      ;; this outer type environment. Recover the checked lane type from common
+      ;; SPMD value forms without mutating or rendering policy state.
+      (match expr
+        [(ast.AstExpr.Spanned inner-box _)
+          (lower-masked-spmd-numeric-expr-type
+            (lower-global-shared-view ctx)
+            env
+            type-env
+            (lower-context-expr-get ctx inner-box))]
+        [(ast.AstExpr.Ann inner-box _)
+          (lower-masked-spmd-numeric-expr-type
+            (lower-global-shared-view ctx)
+            env
+            type-env
+            (lower-context-expr-get ctx inner-box))]
+        [(ast.AstExpr.ArrayRef array-box _)
+          (match (lower-contiguous-sequence-var
+            (lower-global-shared-view ctx)
+            env
+            type-env
+            (lower-context-expr-get ctx array-box))
+            [(LowerMaybeArrayVar.Some _ elem-ty)
+              (tc_core.ResultTcType.Ok elem-ty)]
+            [(LowerMaybeArrayVar.No)
+              (tc_core.ResultTcType.Err
+                "lower: cannot recover SPMD numeric array element type")])]
+        [(ast.AstExpr.Var name) (tc_core.tc-lookup-id type-env name)]
+        [(ast.AstExpr.Binary _ left-box _)
+          (lower-masked-spmd-numeric-expr-type
+            (lower-global-shared-view ctx)
+            env
+            type-env
+            (lower-context-expr-get ctx left-box))]
+        [(ast.AstExpr.Cast _ target-ty-id)
+          (tc_core.ResultTcType.Ok
+            (tc_core.tc-context-type-get ctx target-ty-id))]
+        [(ast.AstExpr.Literal literal)
+          (tc_core.ResultTcType.Ok (tc_core.tc-literal-type literal))]
+        [_
+          (tc_core.ResultTcType.Err
+            "lower: cannot recover SPMD numeric expression type")])]))
+
+(define (lower-masked-spmd-numeric-conversion-supported?
+  [function-state : CompilerLowerFunctionState]
+  [mode : CompilerLowerMode]
+  [source : ast.AstType]
+  [destination : ast.AstType]) : bool
+  (let
+    [helper-body : bool
+      (>
+        (compiler-lower-function-state-inline-helper-stack function-state).len
+        0)]
+    (if helper-body
+      (and
+        (spmd_numeric.compiler-spmd-numeric-decision-supported?
+          (spmd_numeric.compiler-spmd-numeric-conversion-decision
+            (lower-global-shared-view source)
+            (lower-global-shared-view destination)
+            (spmd_numeric.CompilerSpmdNumericContext.InlineHelper)
+            (lower-spmd-numeric-backend mode)))
+        (spmd_numeric.compiler-spmd-numeric-decision-supported?
+          (spmd_numeric.compiler-spmd-numeric-conversion-decision
+            source
+            destination
+            (spmd_numeric.CompilerSpmdNumericContext.PrivateHelper)
+            (lower-spmd-numeric-backend mode))))
+      (spmd_numeric.compiler-spmd-numeric-decision-supported?
+        (spmd_numeric.compiler-spmd-numeric-conversion-decision
+          source
+          destination
+          (spmd_numeric.CompilerSpmdNumericContext.MaskedControl)
+          (lower-spmd-numeric-backend mode))))))
 
 (define (lower-masked-vector-unop-supported? [op : ast.AstUnOp]) : bool
   (match op
@@ -51944,6 +52080,45 @@
         (lower_i64_i64_map.insert-ref! (&mut out) name lanes)
         out))
     lane-locals))
+
+(define (lower-spmd-numeric-let-type-env-at
+  [ctx : tc_core.TcContext]
+  [type-env : tc_core.TcTypeEnv]
+  [bindings : (& bindings ast.AstLetBindingList)]
+  [index : i64]) : tc_core.TcTypeEnv
+  (if (>= index (ast.ast-let-binding-list-len bindings))
+    type-env
+    (match (ast.ast-let-binding-list-get
+      bindings
+      index
+      (ast.ast-let-binding-fallback))
+      [(ast.AstLetBinding.Binding name maybe-ty init-box)
+        (let
+          [init : ast.AstExpr
+            (lower-context-expr-get (lower-global-shared-view ctx) init-box)]
+          (match (tc_core.tc-expr
+            (lower-global-shared-view ctx)
+            (lower-global-shared-view type-env)
+            (lower-global-shared-view init))
+            [(tc_core.ResultTcType.Ok init-ty)
+              (lower-spmd-numeric-let-type-env-at
+                (lower-global-shared-view ctx)
+                (tc_core.tc-bind-id
+                  type-env
+                  name
+                  (lower-let-binding-type
+                    (lower-global-shared-view ctx)
+                    maybe-ty
+                    init-ty))
+                bindings
+                (+ index 1))]
+            [(tc_core.ResultTcType.Err _) type-env]))])))
+
+(define (lower-spmd-numeric-let-type-env
+  [ctx : tc_core.TcContext]
+  [type-env : tc_core.TcTypeEnv]
+  [bindings : ast.AstLetBindingList]) : tc_core.TcTypeEnv
+  (lower-spmd-numeric-let-type-env-at ctx type-env (& bindings) 0))
 
 (define (lower-masked-vector-expr-list-lanes-with-locals
   [ctx : tc_core.TcContext]
@@ -52650,19 +52825,54 @@
           index
           lane-locals
           inner))]
-    [(ast.AstExpr.Cast inner-box _)
+    [(ast.AstExpr.Cast inner-box cast-ty-id)
       (let
         [inner : ast.AstExpr
           (lower-context-expr-get (lower-global-shared-view ctx) inner-box)]
-        (lower-masked-vector-expr-lanes-with-locals
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          index
-          lane-locals
-          inner))]
+        [target-ty : ast.AstType
+          (tc_core.tc-type-without-regions
+            (tc_core.tc-resolve-type
+              (lower-global-shared-view ctx)
+              (tc_core.tc-context-type-get
+                (lower-global-shared-view ctx)
+                cast-ty-id)))]
+        (if (or
+          (tc_core.tc-integer-literal-expr? (lower-global-shared-view inner))
+          (tc_core.tc-float-literal-expr? (lower-global-shared-view inner)))
+          (lower-masked-vector-expr-lanes-with-locals
+            ctx
+            function-state
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            inner)
+          (match (lower-masked-spmd-numeric-expr-type
+            (lower-global-shared-view ctx)
+            (lower-global-shared-view env)
+            type-env
+            (lower-global-shared-view inner))
+            [(tc_core.ResultTcType.Ok source-ty)
+              (if (lower-masked-spmd-numeric-conversion-supported?
+                function-state
+                mode
+                (tc_core.tc-type-without-regions
+                  (tc_core.tc-resolve-type
+                    (lower-global-shared-view ctx)
+                    source-ty))
+                target-ty)
+                (lower-masked-vector-expr-lanes-with-locals
+                  ctx
+                  function-state
+                  mode
+                  env
+                  type-env
+                  index
+                  lane-locals
+                  inner)
+                -1)]
+            [(tc_core.ResultTcType.Err _) -1])))]
     [(ast.AstExpr.Literal _) 0]
     [(ast.AstExpr.Var name)
       (let
@@ -52704,9 +52914,9 @@
               type-env
               (lower-global-shared-view index)
               (lower-global-shared-view lane-locals)
-              left)
+              (lower-global-shared-view left))
             (lower-masked-vector-expr-lanes-with-locals
-              ctx
+              (lower-global-shared-view ctx)
               function-state
               mode
               (lower-global-shared-view env)
@@ -52714,29 +52924,7 @@
               index
               lane-locals
               right))]
-        ;; The masked-lane census records widths, not scalar types. Admit the
-        ;; widths whose integer/float multiply opcodes already exist; a
-        ;; width-neutral expression inherits the enclosing array lane width.
-        [vector-mul-width : bool
-          (and
-            (match op
-              [(ast.AstBinOp.Mul) true]
-              [_ false])
-            (or
-              (= operand-lanes 0)
-              (=
-                operand-lanes
-                (lower-simd-lanes-for-elem mode (ast.AstType.I64)))
-              (=
-                operand-lanes
-                (lower-simd-lanes-for-elem mode (ast.AstType.I32)))
-              (=
-                operand-lanes
-                (lower-simd-lanes-for-elem mode (ast.AstType.I16)))
-              (=
-                operand-lanes
-                (lower-simd-lanes-for-elem mode (ast.AstType.I8)))))]
-        (if (or (lower-masked-vector-binop-supported? op) vector-mul-width)
+        (if (lower-masked-vector-binop-supported? function-state mode op)
           operand-lanes
           -1))]
     [(ast.AstExpr.Call func-box args)
@@ -52766,6 +52954,11 @@
                 (lower-global-shared-view index)
                 (lower-global-shared-view lane-locals)
                 (lower-global-shared-view bindings))]
+            [body-type-env : tc_core.TcTypeEnv
+              (lower-spmd-numeric-let-type-env
+                (lower-global-shared-view ctx)
+                (lower-global-shared-view type-env)
+                (lower-global-shared-view bindings))]
             (lower-masked-vector-lanes-merge
               (lower-masked-vector-let-bindings-lanes-with-locals
                 (lower-global-shared-view ctx)
@@ -52781,7 +52974,7 @@
                 function-state
                 mode
                 env
-                type-env
+                body-type-env
                 (lower-global-shared-view index)
                 body-locals
                 body)))])]
@@ -56394,21 +56587,615 @@
         [(LowerSpmdInlineHelper.No) false])]
     [(ResultLowerSpmdInlineHelper.Err _) false]))
 
+(defenum LowerMaybeSpmdNumericFailure
+  (No)
+  (Some ast.AstExpr spmd_numeric.CompilerSpmdNumericDecision))
+
+(define (lower-spmd-numeric-failure-in-expr-list-at
+  [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [numeric-context : spmd_numeric.CompilerSpmdNumericContext]
+  [exprs : (& exprs ast.AstExprList)]
+  [index : i64]) : LowerMaybeSpmdNumericFailure
+  (if (>= index exprs.len)
+    (LowerMaybeSpmdNumericFailure.No)
+    (match (lower-spmd-numeric-failure
+      (lower-global-shared-view ctx)
+      function-state
+      mode
+      env
+      (lower-global-shared-view type-env)
+      numeric-context
+      (lower-context-expr-get
+        (lower-global-shared-view ctx)
+        (ast.ast-expr-list-get exprs index 0)))
+      [(LowerMaybeSpmdNumericFailure.Some origin decision)
+        (LowerMaybeSpmdNumericFailure.Some origin decision)]
+      [(LowerMaybeSpmdNumericFailure.No)
+        (lower-spmd-numeric-failure-in-expr-list-at
+          ctx
+          function-state
+          mode
+          env
+          type-env
+          numeric-context
+          exprs
+          (+ index 1))])))
+
+(define (lower-spmd-numeric-failure-in-expr-list
+  [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [numeric-context : spmd_numeric.CompilerSpmdNumericContext]
+  [exprs : ast.AstExprList]) : LowerMaybeSpmdNumericFailure
+  (lower-spmd-numeric-failure-in-expr-list-at
+    ctx
+    function-state
+    mode
+    env
+    type-env
+    numeric-context
+    (& exprs)
+    0))
+
+(define (lower-spmd-numeric-failure-in-let-bindings-at
+  [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [numeric-context : spmd_numeric.CompilerSpmdNumericContext]
+  [bindings : (& bindings ast.AstLetBindingList)]
+  [index : i64]) : LowerMaybeSpmdNumericFailure
+  (if (>= index (ast.ast-let-binding-list-len bindings))
+    (LowerMaybeSpmdNumericFailure.No)
+    (match (ast.ast-let-binding-list-get
+      bindings
+      index
+      (ast.ast-let-binding-fallback))
+      [(ast.AstLetBinding.Binding name maybe-ty init-box)
+        (match (lower-spmd-numeric-failure
+          (lower-global-shared-view ctx)
+          function-state
+          mode
+          env
+          (lower-global-shared-view type-env)
+          numeric-context
+          (lower-context-expr-get (lower-global-shared-view ctx) init-box))
+          [(LowerMaybeSpmdNumericFailure.Some origin decision)
+            (LowerMaybeSpmdNumericFailure.Some origin decision)]
+          [(LowerMaybeSpmdNumericFailure.No)
+            (match (tc_core.tc-expr
+              (lower-global-shared-view ctx)
+              (lower-global-shared-view type-env)
+              (lower-context-expr-get (lower-global-shared-view ctx) init-box))
+              [(tc_core.ResultTcType.Ok init-ty)
+                (lower-spmd-numeric-failure-in-let-bindings-at
+                  (lower-global-shared-view ctx)
+                  function-state
+                  mode
+                  env
+                  (tc_core.tc-bind-id
+                    type-env
+                    name
+                    (lower-let-binding-type
+                      (lower-global-shared-view ctx)
+                      maybe-ty
+                      init-ty))
+                  numeric-context
+                  bindings
+                  (+ index 1))]
+              [(tc_core.ResultTcType.Err _)
+                (lower-spmd-numeric-failure-in-let-bindings-at
+                  ctx
+                  function-state
+                  mode
+                  env
+                  type-env
+                  numeric-context
+                  bindings
+                  (+ index 1))])])])))
+
+(define (lower-spmd-numeric-failure-in-let-bindings
+  [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [numeric-context : spmd_numeric.CompilerSpmdNumericContext]
+  [bindings : ast.AstLetBindingList]) : LowerMaybeSpmdNumericFailure
+  (lower-spmd-numeric-failure-in-let-bindings-at
+    ctx
+    function-state
+    mode
+    env
+    type-env
+    numeric-context
+    (& bindings)
+    0))
+
+(define (lower-spmd-numeric-failure-first
+  [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [numeric-context : spmd_numeric.CompilerSpmdNumericContext]
+  [first : ast.AstExpr]
+  [second : ast.AstExpr]) : LowerMaybeSpmdNumericFailure
+  (match (lower-spmd-numeric-failure
+    (lower-global-shared-view ctx)
+    function-state
+    mode
+    env
+    (lower-global-shared-view type-env)
+    numeric-context
+    first)
+    [(LowerMaybeSpmdNumericFailure.Some origin decision)
+      (LowerMaybeSpmdNumericFailure.Some origin decision)]
+    [(LowerMaybeSpmdNumericFailure.No)
+      (lower-spmd-numeric-failure
+        ctx
+        function-state
+        mode
+        env
+        type-env
+        numeric-context
+        second)]))
+
+(define (lower-spmd-numeric-failure-node
+  [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [numeric-context : spmd_numeric.CompilerSpmdNumericContext]
+  [origin : ast.AstExpr]
+  [expr : ast.AstExpr]) : LowerMaybeSpmdNumericFailure
+  (match (lower-global-shared-view expr)
+    [(ast.AstExpr.Binary op left-box right-box)
+      (let
+        [left : ast.AstExpr
+          (lower-context-expr-get (lower-global-shared-view ctx) left-box)]
+        [right : ast.AstExpr
+          (lower-context-expr-get (lower-global-shared-view ctx) right-box)]
+        (match (tc_core.tc-expr
+          (lower-global-shared-view ctx)
+          (lower-global-shared-view type-env)
+          (lower-global-shared-view left))
+          [(tc_core.ResultTcType.Ok source-ty)
+            (let
+              [source : ast.AstType
+                (tc_core.tc-type-without-regions
+                  (tc_core.tc-resolve-type
+                    (lower-global-shared-view ctx)
+                    source-ty))]
+              [source-lane : spmd_numeric.CompilerSpmdNumericLane
+                (spmd_numeric.compiler-spmd-numeric-lane
+                  (lower-global-shared-view source))]
+              [decision : spmd_numeric.CompilerSpmdNumericDecision
+                (spmd_numeric.compiler-spmd-numeric-binary-decision
+                  (lower-global-shared-view source)
+                  (if (spmd_numeric.compiler-spmd-numeric-comparison-op? op)
+                    (ast.AstType.Bool)
+                    source)
+                  numeric-context
+                  (lower-spmd-numeric-backend mode)
+                  op)]
+              (if (and
+                (spmd_numeric.compiler-spmd-numeric-lane? source-lane)
+                (not
+                  (spmd_numeric.compiler-spmd-numeric-decision-supported?
+                    (lower-global-shared-view decision))))
+                (LowerMaybeSpmdNumericFailure.Some origin decision)
+                (lower-spmd-numeric-failure-first
+                  ctx
+                  function-state
+                  mode
+                  env
+                  type-env
+                  numeric-context
+                  left
+                  right)))]
+          [(tc_core.ResultTcType.Err _)
+            (lower-spmd-numeric-failure-first
+              (lower-global-shared-view ctx)
+              function-state
+              mode
+              env
+              type-env
+              numeric-context
+              left
+              right)]))]
+    [(ast.AstExpr.Cast inner-box cast-ty-id)
+      (let
+        [inner : ast.AstExpr
+          (lower-context-expr-get (lower-global-shared-view ctx) inner-box)]
+        [destination : ast.AstType
+          (tc_core.tc-type-without-regions
+            (tc_core.tc-resolve-type
+              (lower-global-shared-view ctx)
+              (tc_core.tc-context-type-get
+                (lower-global-shared-view ctx)
+                cast-ty-id)))]
+        (if (or
+          (tc_core.tc-integer-literal-expr? (lower-global-shared-view inner))
+          (tc_core.tc-float-literal-expr? (lower-global-shared-view inner)))
+          (LowerMaybeSpmdNumericFailure.No)
+          (match (tc_core.tc-expr
+            (lower-global-shared-view ctx)
+            (lower-global-shared-view type-env)
+            (lower-global-shared-view inner))
+            [(tc_core.ResultTcType.Ok source-ty)
+              (let
+                [source : ast.AstType
+                  (tc_core.tc-type-without-regions
+                    (tc_core.tc-resolve-type
+                      (lower-global-shared-view ctx)
+                      source-ty))]
+                [decision : spmd_numeric.CompilerSpmdNumericDecision
+                  (spmd_numeric.compiler-spmd-numeric-conversion-decision
+                    (lower-global-shared-view source)
+                    (lower-global-shared-view destination)
+                    numeric-context
+                    (lower-spmd-numeric-backend mode))]
+                (if (and
+                  (spmd_numeric.compiler-spmd-numeric-lane?
+                    (spmd_numeric.compiler-spmd-numeric-lane source))
+                  (spmd_numeric.compiler-spmd-numeric-lane?
+                    (spmd_numeric.compiler-spmd-numeric-lane destination))
+                  (not
+                    (spmd_numeric.compiler-spmd-numeric-decision-supported?
+                      (lower-global-shared-view decision))))
+                  (LowerMaybeSpmdNumericFailure.Some origin decision)
+                  (lower-spmd-numeric-failure
+                    ctx
+                    function-state
+                    mode
+                    env
+                    type-env
+                    numeric-context
+                    inner)))]
+            [(tc_core.ResultTcType.Err _) (LowerMaybeSpmdNumericFailure.No)])))]
+    [(ast.AstExpr.Ann inner-box _)
+      (lower-spmd-numeric-failure
+        (lower-global-shared-view ctx)
+        function-state
+        mode
+        env
+        type-env
+        numeric-context
+        (lower-context-expr-get ctx inner-box))]
+    [(ast.AstExpr.Unary _ inner-box)
+      (lower-spmd-numeric-failure
+        (lower-global-shared-view ctx)
+        function-state
+        mode
+        env
+        type-env
+        numeric-context
+        (lower-context-expr-get ctx inner-box))]
+    [(ast.AstExpr.ArrayRef array-box index-box)
+      (lower-spmd-numeric-failure-first
+        (lower-global-shared-view ctx)
+        function-state
+        mode
+        env
+        type-env
+        numeric-context
+        (lower-context-expr-get (lower-global-shared-view ctx) array-box)
+        (lower-context-expr-get ctx index-box))]
+    [(ast.AstExpr.ArraySet array-box index-box value-box)
+      (match (lower-spmd-numeric-failure
+        (lower-global-shared-view ctx)
+        function-state
+        mode
+        env
+        (lower-global-shared-view type-env)
+        numeric-context
+        (lower-context-expr-get (lower-global-shared-view ctx) value-box))
+        [(LowerMaybeSpmdNumericFailure.Some found decision)
+          (LowerMaybeSpmdNumericFailure.Some found decision)]
+        [(LowerMaybeSpmdNumericFailure.No)
+          (lower-spmd-numeric-failure-first
+            (lower-global-shared-view ctx)
+            function-state
+            mode
+            env
+            type-env
+            numeric-context
+            (lower-context-expr-get (lower-global-shared-view ctx) array-box)
+            (lower-context-expr-get ctx index-box))])]
+    [(ast.AstExpr.If condition-box then-box else-box)
+      (let
+        [masked : spmd_numeric.CompilerSpmdNumericContext
+          (spmd_numeric.CompilerSpmdNumericContext.MaskedControl)]
+        (match (lower-spmd-numeric-failure
+          (lower-global-shared-view ctx)
+          function-state
+          mode
+          env
+          (lower-global-shared-view type-env)
+          masked
+          (lower-context-expr-get (lower-global-shared-view ctx) condition-box))
+          [(LowerMaybeSpmdNumericFailure.Some found decision)
+            (LowerMaybeSpmdNumericFailure.Some found decision)]
+          [(LowerMaybeSpmdNumericFailure.No)
+            (lower-spmd-numeric-failure-first
+              (lower-global-shared-view ctx)
+              function-state
+              mode
+              env
+              type-env
+              masked
+              (lower-context-expr-get (lower-global-shared-view ctx) then-box)
+              (lower-context-expr-get ctx else-box))]))]
+    [(ast.AstExpr.While condition-box body-box)
+      (lower-spmd-numeric-failure-first
+        (lower-global-shared-view ctx)
+        function-state
+        mode
+        env
+        type-env
+        (spmd_numeric.CompilerSpmdNumericContext.MaskedControl)
+        (lower-context-expr-get (lower-global-shared-view ctx) condition-box)
+        (lower-context-expr-get ctx body-box))]
+    [(ast.AstExpr.Begin exprs)
+      (lower-spmd-numeric-failure-in-expr-list
+        ctx
+        function-state
+        mode
+        env
+        type-env
+        numeric-context
+        exprs)]
+    [(ast.AstExpr.Unsafe exprs)
+      (lower-spmd-numeric-failure-in-expr-list
+        ctx
+        function-state
+        mode
+        env
+        type-env
+        numeric-context
+        exprs)]
+    [(ast.AstExpr.Let let-box)
+      (match (__tl-box-place let-box)
+        [(ast.AstLet.Let bindings body-box)
+          (match (lower-spmd-numeric-failure-in-let-bindings
+            (lower-global-shared-view ctx)
+            function-state
+            mode
+            env
+            (lower-global-shared-view type-env)
+            numeric-context
+            (lower-global-shared-view bindings))
+            [(LowerMaybeSpmdNumericFailure.Some found decision)
+              (LowerMaybeSpmdNumericFailure.Some found decision)]
+            [(LowerMaybeSpmdNumericFailure.No)
+              (lower-spmd-numeric-failure
+                (lower-global-shared-view ctx)
+                function-state
+                mode
+                env
+                (lower-spmd-numeric-let-type-env
+                  (lower-global-shared-view ctx)
+                  type-env
+                  bindings)
+                numeric-context
+                (lower-context-expr-get ctx body-box))])])]
+    [(ast.AstExpr.Call func-box args)
+      (let
+        [func : ast.AstExpr
+          (lower-context-expr-get (lower-global-shared-view ctx) func-box)]
+        (match (lower-spmd-inline-helper-lookup
+          (lower-global-shared-view ctx)
+          function-state
+          (lower-global-shared-view env)
+          (lower-global-shared-view type-env)
+          (lower-id-set-empty)
+          (lower-global-shared-view func))
+          [(ResultLowerSpmdInlineHelper.Ok helper)
+            (match helper
+              [(LowerSpmdInlineHelper.Some name params _ body)
+                (if (lower-id-set-contains?
+                  (compiler-lower-function-state-inline-helper-stack
+                    function-state)
+                  name)
+                  (lower-spmd-numeric-failure-in-expr-list
+                    ctx
+                    function-state
+                    mode
+                    env
+                    type-env
+                    numeric-context
+                    args)
+                  (let
+                    [previous : LowerIdSet
+                      (compiler-lower-function-state-inline-helper-stack
+                        function-state)]
+                    [helper-context : spmd_numeric.CompilerSpmdNumericContext
+                      (if (lower-spmd-helper-out-of-line?
+                        (lower-global-shared-view ctx)
+                        (lower-global-shared-view body))
+                        (spmd_numeric.CompilerSpmdNumericContext.PrivateHelper)
+                        (spmd_numeric.CompilerSpmdNumericContext.InlineHelper))]
+                    [result : LowerMaybeSpmdNumericFailure
+                      (LowerMaybeSpmdNumericFailure.No)]
+                    (begin
+                      (compiler-lower-function-state-inline-helper-stack-set!
+                        function-state
+                        (lower-id-set-insert
+                          (lower-global-shared-view previous)
+                          name))
+                      (set!
+                        result
+                        (lower-spmd-numeric-failure
+                          (lower-global-shared-view ctx)
+                          function-state
+                          mode
+                          (lower-global-shared-view env)
+                          (tc_core.tc-bind-params
+                            (lower-global-shared-view ctx)
+                            (lower-global-shared-view type-env)
+                            params)
+                          helper-context
+                          body))
+                      (compiler-lower-function-state-inline-helper-stack-set!
+                        function-state
+                        previous)
+                      (match result
+                        [(LowerMaybeSpmdNumericFailure.Some found decision)
+                          (LowerMaybeSpmdNumericFailure.Some found decision)]
+                        [(LowerMaybeSpmdNumericFailure.No)
+                          (lower-spmd-numeric-failure-in-expr-list
+                            ctx
+                            function-state
+                            mode
+                            env
+                            type-env
+                            numeric-context
+                            args)]))))]
+              [(LowerSpmdInlineHelper.Imported _ _ _)
+                (lower-spmd-numeric-failure-in-expr-list
+                  ctx
+                  function-state
+                  mode
+                  env
+                  type-env
+                  numeric-context
+                  args)]
+              [(LowerSpmdInlineHelper.No)
+                (lower-spmd-numeric-failure-in-expr-list
+                  ctx
+                  function-state
+                  mode
+                  env
+                  type-env
+                  numeric-context
+                  args)])]
+          [(ResultLowerSpmdInlineHelper.Err _)
+            (lower-spmd-numeric-failure-in-expr-list
+              ctx
+              function-state
+              mode
+              env
+              type-env
+              numeric-context
+              args)]))]
+    [(ast.AstExpr.Set _ value-box)
+      (lower-spmd-numeric-failure
+        (lower-global-shared-view ctx)
+        function-state
+        mode
+        env
+        type-env
+        numeric-context
+        (lower-context-expr-get ctx value-box))]
+    [(ast.AstExpr.StructSet receiver-box _ value-box)
+      (lower-spmd-numeric-failure-first
+        (lower-global-shared-view ctx)
+        function-state
+        mode
+        env
+        type-env
+        numeric-context
+        (lower-context-expr-get (lower-global-shared-view ctx) receiver-box)
+        (lower-context-expr-get ctx value-box))]
+    [(ast.AstExpr.SpmdBroadcast value-box lane-box)
+      (lower-spmd-numeric-failure-first
+        (lower-global-shared-view ctx)
+        function-state
+        mode
+        env
+        type-env
+        numeric-context
+        (lower-context-expr-get (lower-global-shared-view ctx) value-box)
+        (lower-context-expr-get ctx lane-box))]
+    [(ast.AstExpr.SpmdShuffle value-box lane-box)
+      (lower-spmd-numeric-failure-first
+        (lower-global-shared-view ctx)
+        function-state
+        mode
+        env
+        type-env
+        numeric-context
+        (lower-context-expr-get (lower-global-shared-view ctx) value-box)
+        (lower-context-expr-get ctx lane-box))]
+    [_ (LowerMaybeSpmdNumericFailure.No)]))
+
+(define (lower-spmd-numeric-failure
+  [ctx : tc_core.TcContext]
+  [function-state : CompilerLowerFunctionState]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [numeric-context : spmd_numeric.CompilerSpmdNumericContext]
+  [expr : ast.AstExpr]) : LowerMaybeSpmdNumericFailure
+  (match (lower-global-shared-view expr)
+    [(ast.AstExpr.Spanned inner-box _)
+      (lower-spmd-numeric-failure-node
+        (lower-global-shared-view ctx)
+        function-state
+        mode
+        env
+        type-env
+        numeric-context
+        expr
+        (lower-context-expr-get ctx inner-box))]
+    [_
+      (lower-spmd-numeric-failure-node
+        ctx
+        function-state
+        mode
+        env
+        type-env
+        numeric-context
+        (lower-global-shared-view expr)
+        expr)]))
+
+(define (lower-spmd-numeric-failure-message
+  [decision : spmd_numeric.CompilerSpmdNumericDecision]) : String
+  (str_cat.str-cat
+    "lower: SPMD numeric "
+    (match decision.operation
+      [(spmd_numeric.CompilerSpmdNumericOperation.Binary op)
+        (str_cat.str-cat
+          "operation '"
+          (spmd_numeric.compiler-spmd-numeric-operation-name op)
+          "'")]
+      [(spmd_numeric.CompilerSpmdNumericOperation.Conversion) "conversion"])
+    " from "
+    (spmd_numeric.compiler-spmd-numeric-lane-name decision.source)
+    " to "
+    (spmd_numeric.compiler-spmd-numeric-lane-name decision.destination)
+    " is unsupported in "
+    (spmd_numeric.compiler-spmd-numeric-context-name decision.context)
+    " context for "
+    (spmd_numeric.compiler-spmd-numeric-backend-name decision.backend)
+    " backend; "
+    (spmd_numeric.compiler-spmd-numeric-limitation decision)))
+
 (define (lower-simple-vector-map-binop-supported?
   [mode : CompilerLowerMode]
   [elem-ty : ast.AstType]
+  [context : spmd_numeric.CompilerSpmdNumericContext]
   [op : ast.AstBinOp]) : bool
-  (match op
-    [(ast.AstBinOp.Add) true]
-    [(ast.AstBinOp.Sub) true]
-    [(ast.AstBinOp.BitAnd) true]
-    [(ast.AstBinOp.BitOr) true]
-    [(ast.AstBinOp.BitXor) true]
-    [(ast.AstBinOp.Shl) (lower-spmd-shift-lane-supported? elem-ty)]
-    [(ast.AstBinOp.Shr) (lower-spmd-shift-lane-supported? elem-ty)]
-    [(ast.AstBinOp.Mul)
-      (> (lower-simd-lanes-for-elem mode (lower-global-shared-view elem-ty)) 0)]
-    [_ false]))
+  (match (spmd_numeric.compiler-spmd-numeric-binary-decision
+    (lower-global-shared-view elem-ty)
+    elem-ty
+    context
+    (lower-spmd-numeric-backend mode)
+    op).strategy
+    ;; This planner emits ordinary vector binops. Checked active-lane rows are
+    ;; consumed by the masked planner after this direct planner declines them.
+    [(spmd_numeric.CompilerSpmdNumericStrategy.MaskedPlannerExpansion) false]
+    [(spmd_numeric.CompilerSpmdNumericStrategy.Unsupported) false]
+    [_ true]))
 
 (define (lower-spmd-shift-lane-supported? [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-without-regions ty)
@@ -56866,6 +57653,7 @@
 (define (lower-simple-vector-map-value
   [ctx : tc_core.TcContext]
   [mode : CompilerLowerMode]
+  [numeric-context : spmd_numeric.CompilerSpmdNumericContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [index : String]
@@ -56879,6 +57667,7 @@
         (lower-simple-vector-map-value
           ctx
           mode
+          numeric-context
           env
           type-env
           index
@@ -56891,6 +57680,7 @@
         (lower-simple-vector-map-value
           ctx
           mode
+          numeric-context
           env
           type-env
           index
@@ -56908,20 +57698,34 @@
         (match (lower-simple-vector-map-casted-literal
           (lower-global-shared-view ctx)
           mode
-          target-ty
+          (lower-global-shared-view target-ty)
           (lower-global-shared-view dst-elem)
           (lower-global-shared-view inner))
           [(LowerMaybeVectorMapValue.Some plan)
             (LowerMaybeVectorMapValue.Some plan)]
           [(LowerMaybeVectorMapValue.No)
-            (lower-simple-vector-map-value
-              ctx
-              mode
-              env
+            (match (tc_core.tc-expr
+              (lower-global-shared-view ctx)
               type-env
-              index
-              dst-elem
-              inner)]))]
+              (lower-global-shared-view inner))
+              [(tc_core.ResultTcType.Ok source-ty)
+                (if (spmd_numeric.compiler-spmd-numeric-decision-supported?
+                  (spmd_numeric.compiler-spmd-numeric-conversion-decision
+                    (tc_core.tc-type-without-regions source-ty)
+                    (lower-global-shared-view target-ty)
+                    numeric-context
+                    (lower-spmd-numeric-backend mode)))
+                  (lower-simple-vector-map-value
+                    ctx
+                    mode
+                    numeric-context
+                    env
+                    type-env
+                    index
+                    dst-elem
+                    inner)
+                  (LowerMaybeVectorMapValue.No))]
+              [(tc_core.ResultTcType.Err _) (LowerMaybeVectorMapValue.No)])]))]
     [(ast.AstExpr.ArrayRef _ _)
       (match (lower-array-ref-var-for-index
         (lower-global-shared-view ctx)
@@ -56965,6 +57769,7 @@
           (match (lower-simple-vector-map-value
             (lower-global-shared-view ctx)
             mode
+            numeric-context
             (lower-global-shared-view env)
             type-env
             (lower-global-shared-view index)
@@ -56974,6 +57779,7 @@
               (match (lower-simple-vector-map-value
                 ctx
                 mode
+                numeric-context
                 env
                 type-env
                 index
@@ -57020,6 +57826,7 @@
                 (lower-simple-vector-map-value
                   ctx
                   mode
+                  numeric-context
                   env
                   type-env
                   index
@@ -57111,6 +57918,7 @@
       (if (lower-simple-vector-map-binop-supported?
         mode
         (lower-global-shared-view dst-elem)
+        numeric-context
         op)
         (let
           [lhs : ast.AstExpr
@@ -57120,6 +57928,7 @@
           (match (lower-simple-vector-map-value
             (lower-global-shared-view ctx)
             mode
+            numeric-context
             (lower-global-shared-view env)
             type-env
             (lower-global-shared-view index)
@@ -57129,6 +57938,7 @@
               (match (lower-simple-vector-map-value
                 ctx
                 mode
+                numeric-context
                 env
                 type-env
                 index
@@ -57327,6 +58137,7 @@
                   (match (lower-simple-vector-map-value
                     ctx
                     mode
+                    (spmd_numeric.CompilerSpmdNumericContext.DirectMap)
                     env
                     type-env
                     index
@@ -57704,6 +58515,7 @@
                 (match (lower-simple-vector-map-value
                   ctx
                   mode
+                  (spmd_numeric.CompilerSpmdNumericContext.FusedReduction)
                   env
                   type-env
                   index
@@ -63648,6 +64460,56 @@
     [(tc_core.ResultTcType.Err message)
       (ResultLowerExpr.Err (box (lower-diagnostic-at-expr ctx expr message)))]))
 
+(define (lower-avx512-masked-binary-unsupported
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [expr : ast.AstExpr]
+  [op : ast.AstBinOp]
+  [left : ast.AstExpr]) : ResultLowerExpr
+  (match (lower-masked-spmd-numeric-expr-type
+    (lower-global-shared-view ctx)
+    (lower-global-shared-view env)
+    (lower-global-shared-view type-env)
+    (lower-global-shared-view left))
+    [(tc_core.ResultTcType.Ok source-ty)
+      (let
+        [source : ast.AstType
+          (tc_core.tc-type-without-regions
+            (tc_core.tc-resolve-type (lower-global-shared-view ctx) source-ty))]
+        [decision : spmd_numeric.CompilerSpmdNumericDecision
+          (spmd_numeric.compiler-spmd-numeric-binary-decision
+            (lower-global-shared-view source)
+            (if (spmd_numeric.compiler-spmd-numeric-comparison-op? op)
+              (ast.AstType.Bool)
+              source)
+            (if (>
+              (compiler-lower-function-state-inline-helper-stack
+                (lower-state-function-state (lower-global-shared-view state))).len
+              0)
+              (spmd_numeric.CompilerSpmdNumericContext.PrivateHelper)
+              (spmd_numeric.CompilerSpmdNumericContext.MaskedControl))
+            (lower-spmd-numeric-backend
+              (lower-state-mode (lower-global-shared-view state)))
+            op)]
+        (if (and
+          (spmd_numeric.compiler-spmd-numeric-lane?
+            (spmd_numeric.compiler-spmd-numeric-lane
+              (lower-global-shared-view source)))
+          (not
+            (spmd_numeric.compiler-spmd-numeric-decision-supported?
+              (lower-global-shared-view decision))))
+          (ResultLowerExpr.Err
+            (box
+              (lower-diagnostic-at-expr
+                ctx
+                expr
+                (lower-spmd-numeric-failure-message decision))))
+          (lower-avx512-masked-unsupported ctx expr "this binary operator")))]
+    [(tc_core.ResultTcType.Err _)
+      (lower-avx512-masked-unsupported ctx expr "this binary operator")]))
+
 (define (lower-avx512-masked-binary
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -64016,7 +64878,15 @@
         (ir.CompilerIrBinOp.Ge)
         left
         right)]
-    [_ (lower-avx512-masked-unsupported ctx expr "this binary operator")]))
+    [_
+      (lower-avx512-masked-binary-unsupported
+        ctx
+        state
+        env
+        type-env
+        expr
+        op
+        left)]))
 
 (define (lower-avx512-masked-compare
   [ctx : tc_core.TcContext]
@@ -69470,6 +70340,7 @@
   [index-ty : ast.AstType]
   [start-value : ir.CompilerIrValue]
   [end-value : ir.CompilerIrValue]
+  [diagnostic-body : ast.AstExpr]
   [body : ast.AstExpr]) : ResultLowerExpr
   (if (and
     (lower-mode-simd? (lower-state-mode (lower-global-shared-view state)))
@@ -69547,115 +70418,118 @@
                   index
                   body))]
             [(LowerMaybeMaskedVectorMap.No)
-              (cond
-                [(lower-masked-vector-body-has-varying-while?
-                    (lower-global-shared-view ctx)
-                    (lower-state-function-state
-                      (lower-global-shared-view state))
-                    (lower-state-mode (lower-global-shared-view state))
-                    (lower-global-shared-view env)
-                    (lower-global-shared-view type-env)
-                    (lower-global-shared-view index)
-                    (lower-global-shared-view body))
+              (match (lower-spmd-numeric-failure
+                (lower-global-shared-view ctx)
+                (lower-state-function-state (lower-global-shared-view state))
+                (lower-state-mode (lower-global-shared-view state))
+                (lower-global-shared-view env)
+                (tc_core.tc-bind-id
+                  (lower-global-shared-view type-env)
+                  index-id
+                  (lower-global-shared-view index-ty))
+                (spmd_numeric.CompilerSpmdNumericContext.DirectMap)
+                (lower-global-shared-view diagnostic-body))
+                [(LowerMaybeSpmdNumericFailure.Some origin decision)
                   (ResultLowerExpr.Err
                     (box
                       (lower-diagnostic-at-expr
                         ctx
-                        body
-                        (if (lower-mode-avx2?
-                          (lower-state-mode (lower-global-shared-view state)))
-                          (lower-avx2-varying-while-diagnostic)
-                          "lower: SPMD varying while AVX-512 lowering is not available for this backend mode or loop shape"))))]
-                [(lower-masked-vector-body-has-varying-if?
-                    (lower-global-shared-view ctx)
-                    (lower-state-function-state
-                      (lower-global-shared-view state))
-                    (lower-state-mode (lower-global-shared-view state))
-                    (lower-global-shared-view env)
-                    (lower-global-shared-view type-env)
-                    (lower-global-shared-view index)
-                    (lower-global-shared-view body))
-                  (ResultLowerExpr.Err
-                    (box
-                      (lower-diagnostic-at-expr
-                        ctx
-                        body
-                        (if (lower-mode-avx2?
-                          (lower-state-mode (lower-global-shared-view state)))
-                          (lower-avx2-masked-if-diagnostic)
-                          "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape"))))]
-                [(lower-masked-vector-body-has-varying-enum-match?
-                    (lower-global-shared-view ctx)
-                    (lower-global-shared-view env)
-                    (lower-global-shared-view type-env)
-                    (lower-global-shared-view index)
-                    (lower-global-shared-view body))
-                  (ResultLowerExpr.Err
-                    (box
-                      (lower-diagnostic-at-expr
-                        ctx
-                        body
-                        (if (lower-mode-avx2?
-                          (lower-state-mode (lower-global-shared-view state)))
-                          "lower: AVX2 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings"
-                          "lower: AVX-512 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings"))))]
-                [(lower-masked-vector-body-has-varying-match?
-                    (lower-global-shared-view ctx)
-                    (lower-state-function-state
-                      (lower-global-shared-view state))
-                    (lower-state-mode (lower-global-shared-view state))
-                    (lower-global-shared-view env)
-                    (lower-global-shared-view type-env)
-                    (lower-global-shared-view index)
-                    (lower-global-shared-view body))
-                  (ResultLowerExpr.Err
-                    (box
-                      (lower-diagnostic-at-expr
-                        ctx
-                        body
-                        (if (lower-mode-avx2?
-                          (lower-state-mode (lower-global-shared-view state)))
-                          "lower: SPMD varying match AVX2 lowering is not available for this match shape"
-                          "lower: SPMD varying match AVX-512 lowering is not available for this backend mode or match shape"))))]
-                [(lower-vector-body-has-spmd-shuffle?
-                    (lower-global-shared-view ctx)
-                    (lower-global-shared-view body))
-                  (ResultLowerExpr.Err
-                    (box
-                      (lower-diagnostic-at-expr
-                        ctx
-                        body
-                        (lower-spmd-shuffle-diagnostic))))]
-                [(lower-vector-body-has-array-read?
-                    (lower-global-shared-view ctx)
-                    (lower-global-shared-view body))
-                  (match (lower-simple-vector-map-unsupported-shift-lane
-                    (lower-global-shared-view ctx)
-                    (lower-state-mode (lower-global-shared-view state))
-                    (lower-global-shared-view env)
-                    (lower-global-shared-view type-env)
-                    (lower-global-shared-view index)
-                    true
-                    (lower-global-shared-view body))
-                    [(LowerMaybeAstType.Some lane-ty)
+                        origin
+                        (lower-spmd-numeric-failure-message decision))))]
+                [(LowerMaybeSpmdNumericFailure.No)
+                  (cond
+                    [(lower-masked-vector-body-has-varying-while?
+                        (lower-global-shared-view ctx)
+                        (lower-state-function-state
+                          (lower-global-shared-view state))
+                        (lower-state-mode (lower-global-shared-view state))
+                        (lower-global-shared-view env)
+                        (lower-global-shared-view type-env)
+                        (lower-global-shared-view index)
+                        (lower-global-shared-view body))
                       (ResultLowerExpr.Err
                         (box
                           (lower-diagnostic-at-expr
                             ctx
                             body
-                            (lower-spmd-map-shift-diagnostic
-                              "shl"
-                              lane-ty
+                            (if (lower-mode-avx2?
                               (lower-state-mode
-                                (lower-global-shared-view state))))))]
-                    [(LowerMaybeAstType.No)
+                                (lower-global-shared-view state)))
+                              (lower-avx2-varying-while-diagnostic)
+                              "lower: SPMD varying while AVX-512 lowering is not available for this backend mode or loop shape"))))]
+                    [(lower-masked-vector-body-has-varying-if?
+                        (lower-global-shared-view ctx)
+                        (lower-state-function-state
+                          (lower-global-shared-view state))
+                        (lower-state-mode (lower-global-shared-view state))
+                        (lower-global-shared-view env)
+                        (lower-global-shared-view type-env)
+                        (lower-global-shared-view index)
+                        (lower-global-shared-view body))
+                      (ResultLowerExpr.Err
+                        (box
+                          (lower-diagnostic-at-expr
+                            ctx
+                            body
+                            (if (lower-mode-avx2?
+                              (lower-state-mode
+                                (lower-global-shared-view state)))
+                              (lower-avx2-masked-if-diagnostic)
+                              "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape"))))]
+                    [(lower-masked-vector-body-has-varying-enum-match?
+                        (lower-global-shared-view ctx)
+                        (lower-global-shared-view env)
+                        (lower-global-shared-view type-env)
+                        (lower-global-shared-view index)
+                        (lower-global-shared-view body))
+                      (ResultLowerExpr.Err
+                        (box
+                          (lower-diagnostic-at-expr
+                            ctx
+                            body
+                            (if (lower-mode-avx2?
+                              (lower-state-mode
+                                (lower-global-shared-view state)))
+                              "lower: AVX2 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings"
+                              "lower: AVX-512 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings"))))]
+                    [(lower-masked-vector-body-has-varying-match?
+                        (lower-global-shared-view ctx)
+                        (lower-state-function-state
+                          (lower-global-shared-view state))
+                        (lower-state-mode (lower-global-shared-view state))
+                        (lower-global-shared-view env)
+                        (lower-global-shared-view type-env)
+                        (lower-global-shared-view index)
+                        (lower-global-shared-view body))
+                      (ResultLowerExpr.Err
+                        (box
+                          (lower-diagnostic-at-expr
+                            ctx
+                            body
+                            (if (lower-mode-avx2?
+                              (lower-state-mode
+                                (lower-global-shared-view state)))
+                              "lower: SPMD varying match AVX2 lowering is not available for this match shape"
+                              "lower: SPMD varying match AVX-512 lowering is not available for this backend mode or match shape"))))]
+                    [(lower-vector-body-has-spmd-shuffle?
+                        (lower-global-shared-view ctx)
+                        (lower-global-shared-view body))
+                      (ResultLowerExpr.Err
+                        (box
+                          (lower-diagnostic-at-expr
+                            ctx
+                            body
+                            (lower-spmd-shuffle-diagnostic))))]
+                    [(lower-vector-body-has-array-read?
+                        (lower-global-shared-view ctx)
+                        (lower-global-shared-view body))
                       (match (lower-simple-vector-map-unsupported-shift-lane
                         (lower-global-shared-view ctx)
                         (lower-state-mode (lower-global-shared-view state))
                         (lower-global-shared-view env)
                         (lower-global-shared-view type-env)
                         (lower-global-shared-view index)
-                        false
+                        true
                         (lower-global-shared-view body))
                         [(LowerMaybeAstType.Some lane-ty)
                           (ResultLowerExpr.Err
@@ -69664,29 +70538,49 @@
                                 ctx
                                 body
                                 (lower-spmd-map-shift-diagnostic
-                                  "shr"
+                                  "shl"
                                   lane-ty
                                   (lower-state-mode
                                     (lower-global-shared-view state))))))]
                         [(LowerMaybeAstType.No)
-                          (ResultLowerExpr.Err
-                            (box
-                              (lower-diagnostic-at-expr
-                                ctx
-                                body
-                                (lower-simd-foreach-fallback-diagnostic))))])])]
-                [else
-                  (lower-scalar-foreach-lowered
-                    ctx
-                    state
-                    env
-                    type-env
-                    index-id
-                    index
-                    index-ty
-                    start-value
-                    end-value
-                    body)])]))])
+                          (match (lower-simple-vector-map-unsupported-shift-lane
+                            (lower-global-shared-view ctx)
+                            (lower-state-mode (lower-global-shared-view state))
+                            (lower-global-shared-view env)
+                            (lower-global-shared-view type-env)
+                            (lower-global-shared-view index)
+                            false
+                            (lower-global-shared-view body))
+                            [(LowerMaybeAstType.Some lane-ty)
+                              (ResultLowerExpr.Err
+                                (box
+                                  (lower-diagnostic-at-expr
+                                    ctx
+                                    body
+                                    (lower-spmd-map-shift-diagnostic
+                                      "shr"
+                                      lane-ty
+                                      (lower-state-mode
+                                        (lower-global-shared-view state))))))]
+                            [(LowerMaybeAstType.No)
+                              (ResultLowerExpr.Err
+                                (box
+                                  (lower-diagnostic-at-expr
+                                    ctx
+                                    body
+                                    (lower-simd-foreach-fallback-diagnostic))))])])]
+                    [else
+                      (lower-scalar-foreach-lowered
+                        ctx
+                        state
+                        env
+                        type-env
+                        index-id
+                        index
+                        index-ty
+                        start-value
+                        end-value
+                        body)])])]))])
     (lower-scalar-foreach-lowered
       ctx
       state
@@ -69699,7 +70593,7 @@
       end-value
       body)))
 
-(define (lower-foreach-lowered
+(define (lower-foreach-lowered-after-numeric-admission
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
@@ -69729,8 +70623,85 @@
         index-ty
         start-value
         end-value
+        body
         inlined-body)]
     [(ResultLowerAstExpr.Err diag) (ResultLowerExpr.Err diag)]))
+
+(define (lower-foreach-lowered
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [index-id : i64]
+  [index : String]
+  [index-ty : ast.AstType]
+  [start-value : ir.CompilerIrValue]
+  [end-value : ir.CompilerIrValue]
+  [body : ast.AstExpr]) : ResultLowerExpr
+  (if (and
+    (lower-mode-simd? (lower-state-mode (lower-global-shared-view state)))
+    (lower-type-i64? (lower-global-shared-view index-ty))
+    (lower-spmd-expr-has-out-of-line-call?
+      (lower-global-shared-view ctx)
+      (lower-state-function-state (lower-global-shared-view state))
+      (lower-global-shared-view env)
+      (lower-global-shared-view type-env)
+      (lower-global-shared-view body)))
+    (match (lower-spmd-numeric-failure
+      (lower-global-shared-view ctx)
+      (lower-state-function-state (lower-global-shared-view state))
+      (lower-state-mode (lower-global-shared-view state))
+      (lower-global-shared-view env)
+      (tc_core.tc-bind-id
+        (lower-global-shared-view type-env)
+        index-id
+        (lower-global-shared-view index-ty))
+      (spmd_numeric.CompilerSpmdNumericContext.DirectMap)
+      (lower-global-shared-view body))
+      [(LowerMaybeSpmdNumericFailure.Some origin decision)
+        (match decision.context
+          [(spmd_numeric.CompilerSpmdNumericContext.PrivateHelper)
+            (ResultLowerExpr.Err
+              (box
+                (lower-diagnostic-at-expr
+                  ctx
+                  origin
+                  (lower-spmd-numeric-failure-message decision))))]
+          [_
+            (lower-foreach-lowered-after-numeric-admission
+              ctx
+              state
+              env
+              type-env
+              index-id
+              index
+              index-ty
+              start-value
+              end-value
+              body)])]
+      [(LowerMaybeSpmdNumericFailure.No)
+        (lower-foreach-lowered-after-numeric-admission
+          ctx
+          state
+          env
+          type-env
+          index-id
+          index
+          index-ty
+          start-value
+          end-value
+          body)])
+    (lower-foreach-lowered-after-numeric-admission
+      ctx
+      state
+      env
+      type-env
+      index-id
+      index
+      index-ty
+      start-value
+      end-value
+      body)))
 
 (define (lower-foreach
   [ctx : tc_core.TcContext]

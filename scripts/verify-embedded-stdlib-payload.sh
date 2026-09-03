@@ -49,11 +49,11 @@ if [ ! -s "$NORMALIZED_MANIFEST" ]; then
     echo "embedded stdlib payload has no build inputs" >&2
     exit 1
 fi
-if [ "$(wc -l < "$NORMALIZED_MANIFEST" | tr -d ' ')" -ne 47 ]; then
-    echo "embedded stdlib payload must declare exactly 47 build inputs" >&2
+if [ "$(wc -l < "$NORMALIZED_MANIFEST" | tr -d ' ')" -ne 50 ]; then
+    echo "embedded stdlib payload must declare exactly 50 build inputs" >&2
     exit 1
 fi
-if grep -n -v '^[A-Za-z0-9_][A-Za-z0-9_]*\.tl$' "$NORMALIZED_MANIFEST" \
+if grep -n -v '^[A-Za-z0-9_][A-Za-z0-9_/]*\.tl$' "$NORMALIZED_MANIFEST" \
     > "$WORKDIR/invalid-manifest-lines.txt"; then
     echo "embedded stdlib payload manifest has invalid module suffixes" >&2
     sed 's/^/  /' "$WORKDIR/invalid-manifest-lines.txt" >&2
@@ -79,10 +79,11 @@ sort -u "$NORMALIZED_MANIFEST" > "$SORTED_MANIFEST"
 : > "$IMPORTED_MODULES"
 while IFS= read -r suffix; do
     sed '/^[[:space:]]*;/d' "stdlib/$suffix" |
-        grep -oE '\(import[[:space:]]+stdlib\.[A-Za-z0-9_]+' \
+        grep -oE '\(import[[:space:]]+stdlib(\.[A-Za-z0-9_]+)+' \
         >> "$IMPORTED_MODULES" || true
 done < "$NORMALIZED_MANIFEST"
 sed 's/.*stdlib\.//' "$IMPORTED_MODULES" |
+    tr '.' '/' |
     sed 's/$/.tl/' |
     sort -u > "$IMPORTED_MODULES.sorted"
 comm -23 "$IMPORTED_MODULES.sorted" "$SORTED_MANIFEST" > "$MISSING_IMPORTS"

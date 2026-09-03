@@ -120,6 +120,15 @@
           ".L_tl_region_reset_msg")
         "full Windows data emits region-reset diagnostics")
       (test.assert-true
+        (and
+          (compiler-backend-runtime-test-contains?
+            (& windows-min-data)
+            "typelisp runtime: 1 GiB main-stack reservation failed")
+          (compiler-backend-runtime-test-contains?
+            (& windows-min-data)
+            "typelisp runtime: stack overflow"))
+        "minimal Windows data keeps the main-stack diagnostics")
+      (test.assert-true
         (compiler-backend-runtime-test-contains?
           (& linux-min-functions)
           ".globl tl_memcpy")
@@ -344,6 +353,44 @@
           "tl_tlci_call_macro_entry:")
         "full Windows functions emit the macro-entry bridge")
       (test.assert-true
+        (and
+          (compiler-backend-runtime-test-contains?
+            (& windows-min-functions)
+            "movl $0x10000, %ecx\n    movl $0x40000000, %edx")
+          (compiler-backend-runtime-test-contains?
+            (& windows-min-functions)
+            "leaq .L_tl_main_fiber(%rip), %r9")
+          (compiler-backend-runtime-test-contains?
+            (& windows-min-functions)
+            "call CreateFiberEx\n    testq %rax, %rax")
+          (compiler-backend-runtime-test-contains?
+            (& windows-min-functions)
+            "leaq .L_tl_stack_overflow_filter(%rip), %rcx\n    call SetUnhandledExceptionFilter\n    xorl %ecx, %ecx\n    call ConvertThreadToFiber")
+          (compiler-backend-runtime-test-contains?
+            (& windows-min-functions)
+            "movl $0x10000, 32(%rsp)\n    leaq 32(%rsp), %rcx\n    call SetThreadStackGuarantee"))
+        "minimal Windows entry reserves the guarded 1 GiB main fiber")
+      (test.assert-true
+        (compiler-backend-runtime-test-contains?
+          (& windows-min-functions)
+          ".L_tl_main_stack_reservation_failed:\n    movl $-12, %ecx")
+        "Windows main-stack failure stays on the bootstrap stack")
+      (test.assert-true
+        (and
+          (compiler-backend-runtime-test-contains?
+            (& windows-min-functions)
+            ".L_tl_stack_overflow_filter:\n    subq $40, %rsp\n    .seh_stackalloc 40\n    .seh_endprologue\n    movq (%rcx), %rax\n    cmpl $0xc00000fd, (%rax)")
+          (compiler-backend-runtime-test-contains?
+            (& windows-min-functions)
+            ".seh_proc _tl_start")
+          (compiler-backend-runtime-test-contains?
+            (& windows-min-functions)
+            ".seh_proc .L_tl_main_fiber")
+          (compiler-backend-runtime-test-contains?
+            (& windows-min-functions)
+            ".seh_proc .L_tl_stack_overflow_filter"))
+        "Windows entry and callbacks carry SEH unwind metadata")
+      (test.assert-true
         (compiler-backend-runtime-test-contains?
           (& linux-full-functions)
           "%fs:tl_current_arena@tpoff")
@@ -411,16 +458,28 @@
         (string.eq linux-externs "")
         "Linux leaf has no backend runtime extern set")
       (test.assert-true
-        (not
+        (compiler-backend-runtime-test-contains?
+          (& windows-min-externs)
+          ".extern WriteFile")
+        "minimal Windows externs keep startup failure write support")
+      (test.assert-true
+        (and
           (compiler-backend-runtime-test-contains?
             (& windows-min-externs)
-            ".extern WriteFile"))
-        "minimal Windows externs omit write support")
-      (test.assert-true
-        (compiler-backend-runtime-test-contains?
-          (& windows-full-externs)
-          ".extern WriteFile")
-        "full Windows externs include write support")
+            ".extern ConvertThreadToFiber")
+          (compiler-backend-runtime-test-contains?
+            (& windows-min-externs)
+            ".extern CreateFiberEx")
+          (compiler-backend-runtime-test-contains?
+            (& windows-min-externs)
+            ".extern SwitchToFiber")
+          (compiler-backend-runtime-test-contains?
+            (& windows-min-externs)
+            ".extern SetThreadStackGuarantee")
+          (compiler-backend-runtime-test-contains?
+            (& windows-min-externs)
+            ".extern SetUnhandledExceptionFilter"))
+        "minimal Windows externs include the fiber stack API")
       (test.assert-true
         (compiler-backend-runtime-test-contains?
           (& windows-full-externs)

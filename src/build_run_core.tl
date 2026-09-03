@@ -1288,10 +1288,10 @@
       (string.eq (process.args-ref libs 0) "kernel32.lib")
       (string.eq (process.args-ref libs 1) "ntdll.lib"))))
 
-;; Keep this in sync with scripts/lib-native-link.sh's NL_WINDOWS_STACK_RESERVE.
-;; The selfhost backend still needs more than 64MB on Windows for compiler-sized
-;; source graphs as the generated compiler grows; use the same 256MB reserve as
-;; the integration Windows link helpers.
+;; Keep the historical 256 MiB PE reserve used by the native-link scripts. The
+;; freestanding entry now uses this stack only for bounded argv/fiber bootstrap;
+;; `main`, including a self-hosted compiler, runs on the runtime-owned 1 GiB
+;; fiber stack and no longer depends on this linker setting for correctness.
 (define (source-tool-windows-stack-reserve-arg) : String
   "/STACK:268435456")
 

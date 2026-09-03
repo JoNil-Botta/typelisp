@@ -1339,6 +1339,25 @@
   (Ok ast.AstReduceOp)
   (Err String))
 
+(defstruct ParseAstSpmdTypedRangeBinding
+  (name i64)
+  (ty ast.AstType)
+  (start reader.SpannedSexpr)
+  (end reader.SpannedSexpr))
+
+(defenum ResultParseAstSpmdTypedRangeBinding
+  (Ok ParseAstSpmdTypedRangeBinding)
+  (Err String))
+
+(defstruct ParseAstSpmdStateBinding
+  (name i64)
+  (ty ast.AstType)
+  (init reader.SpannedSexpr))
+
+(defenum ResultParseAstSpmdStateBinding
+  (Ok ParseAstSpmdStateBinding)
+  (Err String))
+
 (defenum ResultAstFuncTypeParts
   (Ok ast.AstTypeList ast.AstType)
   (Err String))
@@ -7482,7 +7501,10 @@
         [_ (ResultAstExpr.Err "parse: type expects exactly one type")])]
     [_ (ResultAstExpr.Err "parse: type expects exactly one type")]))
 
-(define (parse-ast-reduce-op [dispatch : sym_i64_env.SymI64Env] [name-id : i64]) : ResultAstReduceOp
+(define (parse-ast-spmd-reduce-op
+  [dispatch : sym_i64_env.SymI64Env]
+  [form-name : String]
+  [name-id : i64]) : ResultAstReduceOp
   (cond
     [(= name-id (cbi.compiler-builtin-ctfe-ref 262))
       (ResultAstReduceOp.Ok (ast.AstReduceOp.Sum))]
@@ -7497,46 +7519,36 @@
     [else
       (ResultAstReduceOp.Err
         (str_cat.str-cat
-          "parse: unsupported spmd-reduce operator `"
+          "parse: unsupported "
+          form-name
+          " operator `"
           (compiler-parse-dispatch-name-text dispatch name-id)
           "`; expected one of sum, min, max, all, any"))]))
 
-(define (parse-ast-scan-op [dispatch : sym_i64_env.SymI64Env] [name-id : i64]) : ResultAstReduceOp
-  (cond
-    [(= name-id (cbi.compiler-builtin-ctfe-ref 262))
-      (ResultAstReduceOp.Ok (ast.AstReduceOp.Sum))]
-    [(= name-id (cbi.compiler-builtin-ctfe-ref 263))
-      (ResultAstReduceOp.Ok (ast.AstReduceOp.Min))]
-    [(= name-id (cbi.compiler-builtin-ctfe-ref 264))
-      (ResultAstReduceOp.Ok (ast.AstReduceOp.Max))]
-    [(= name-id (cbi.compiler-builtin-ctfe-ref 219))
-      (ResultAstReduceOp.Ok (ast.AstReduceOp.All))]
-    [(= name-id (cbi.compiler-builtin-ctfe-ref 220))
-      (ResultAstReduceOp.Ok (ast.AstReduceOp.Any))]
-    [else
-      (ResultAstReduceOp.Err
-        (str_cat.str-cat
-          "parse: unsupported spmd-scan operator `"
-          (compiler-parse-dispatch-name-text dispatch name-id)
-          "`; expected one of sum, min, max, all, any"))]))
-
-(define (parse-ast-spmd-reduce-binding
+;; Parse only the shared binding grammar and type here. Expression parsing
+;; stays in each form-specific caller so start/end/init/value/body retain their
+;; established left-to-right error order and original spanned syntax nodes.
+(define (parse-ast-spmd-typed-range-binding
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [op : ast.AstReduceOp]
   [binding : reader.SpannedSexpr]
-  [init : reader.SpannedSexpr]
-  [value : reader.SpannedSexpr]) : ResultAstExpr
+  [expected-colon-message : String]
+  [malformed-message : String]) : ResultParseAstSpmdTypedRangeBinding
   (match (reader.spanned-sexpr-view binding)
     [(reader.SpannedSexprView.BracketList items _)
-      (parse-ast-spmd-reduce-binding dispatch pools op items init value)]
-    [(reader.SpannedSexprView.Cons index-node colon-tail _)
-      (match (reader.spanned-sexpr-view index-node)
-        [(reader.SpannedSexprView.Sym index _)
+      (parse-ast-spmd-typed-range-binding
+        dispatch
+        pools
+        items
+        expected-colon-message
+        malformed-message)]
+    [(reader.SpannedSexprView.Cons name-node colon-tail _)
+      (match (reader.spanned-sexpr-view name-node)
+        [(reader.SpannedSexprView.Sym name _)
           (match (reader.spanned-sexpr-view colon-tail)
-            [(reader.SpannedSexprView.Cons colon index-ty-tail _)
-              (match (reader.spanned-sexpr-view index-ty-tail)
-                [(reader.SpannedSexprView.Cons index-ty start-tail _)
+            [(reader.SpannedSexprView.Cons colon ty-tail _)
+              (match (reader.spanned-sexpr-view ty-tail)
+                [(reader.SpannedSexprView.Cons ty start-tail _)
                   (match (reader.spanned-sexpr-view start-tail)
                     [(reader.SpannedSexprView.Cons start end-tail _)
                       (match (reader.spanned-sexpr-view end-tail)
@@ -7546,68 +7558,130 @@
                               (if (sexpr-colon?
                                 (reader.spanned-sexpr-form colon))
                                 (match (parse-ast-type-spanned
-                                  (compiler-parse-place-shared-view dispatch)
-                                  (compiler-parse-place-shared-view pools)
-                                  index-ty)
-                                  [(ResultAstType.Ok parsed-index-ty)
-                                    (match (parse-ast-expr-with-pools
-                                      (compiler-parse-place-shared-view
-                                        dispatch)
-                                      (compiler-parse-place-shared-view pools)
-                                      start)
-                                      [(ResultAstExpr.Ok parsed-start)
-                                        (match (parse-ast-expr-with-pools
-                                          (compiler-parse-place-shared-view
-                                            dispatch)
-                                          (compiler-parse-place-shared-view
-                                            pools)
-                                          end)
-                                          [(ResultAstExpr.Ok parsed-end)
-                                            (match (parse-ast-expr-with-pools
-                                              (compiler-parse-place-shared-view
-                                                dispatch)
-                                              (compiler-parse-place-shared-view
-                                                pools)
-                                              init)
-                                              [(ResultAstExpr.Ok parsed-init)
-                                                (match (parse-ast-expr-with-pools
-                                                  dispatch
-                                                  (compiler-parse-place-shared-view
-                                                    pools)
-                                                  value)
-                                                  [(ResultAstExpr.Ok
-                                                      parsed-value)
-                                                    (ResultAstExpr.Ok
-                                                      (ast.ast-expr-spmd-reduce-id-with-pools
-                                                        pools
-                                                        op
-                                                        (ci.intern-syntax-id-value
-                                                          index)
-                                                        parsed-index-ty
-                                                        parsed-start
-                                                        parsed-end
-                                                        parsed-init
-                                                        parsed-value))]
-                                                  [(ResultAstExpr.Err message)
-                                                    (ResultAstExpr.Err message)])]
-                                              [(ResultAstExpr.Err message)
-                                                (ResultAstExpr.Err message)])]
-                                          [(ResultAstExpr.Err message)
-                                            (ResultAstExpr.Err message)])]
-                                      [(ResultAstExpr.Err message)
-                                        (ResultAstExpr.Err message)])]
+                                  dispatch
+                                  pools
+                                  ty)
+                                  [(ResultAstType.Ok parsed-ty)
+                                    (ResultParseAstSpmdTypedRangeBinding.Ok
+                                      (ParseAstSpmdTypedRangeBinding
+                                        (ci.intern-syntax-id-value name)
+                                        parsed-ty
+                                        start
+                                        end))]
                                   [(ResultAstType.Err message)
-                                    (ResultAstExpr.Err message)])
-                                (ResultAstExpr.Err
-                                  "parse: expected ':' in spmd-reduce"))]
+                                    (ResultParseAstSpmdTypedRangeBinding.Err
+                                      message)])
+                                (ResultParseAstSpmdTypedRangeBinding.Err
+                                  expected-colon-message))]
                             [_
-                              (ResultAstExpr.Err "parse: malformed spmd-reduce")])]
-                        [_ (ResultAstExpr.Err "parse: malformed spmd-reduce")])]
-                    [_ (ResultAstExpr.Err "parse: malformed spmd-reduce")])]
-                [_ (ResultAstExpr.Err "parse: malformed spmd-reduce")])]
-            [_ (ResultAstExpr.Err "parse: malformed spmd-reduce")])]
-        [_ (ResultAstExpr.Err "parse: malformed spmd-reduce")])]
-    [_ (ResultAstExpr.Err "parse: malformed spmd-reduce")]))
+                              (ResultParseAstSpmdTypedRangeBinding.Err
+                                malformed-message)])]
+                        [_
+                          (ResultParseAstSpmdTypedRangeBinding.Err
+                            malformed-message)])]
+                    [_
+                      (ResultParseAstSpmdTypedRangeBinding.Err
+                        malformed-message)])]
+                [_ (ResultParseAstSpmdTypedRangeBinding.Err malformed-message)])]
+            [_ (ResultParseAstSpmdTypedRangeBinding.Err malformed-message)])]
+        [_ (ResultParseAstSpmdTypedRangeBinding.Err malformed-message)])]
+    [_ (ResultParseAstSpmdTypedRangeBinding.Err malformed-message)]))
+
+(define (parse-ast-spmd-state-binding
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [binding : reader.SpannedSexpr]
+  [expected-colon-message : String]
+  [malformed-message : String]) : ResultParseAstSpmdStateBinding
+  (match (reader.spanned-sexpr-view binding)
+    [(reader.SpannedSexprView.BracketList items _)
+      (parse-ast-spmd-state-binding
+        dispatch
+        pools
+        items
+        expected-colon-message
+        malformed-message)]
+    [(reader.SpannedSexprView.Cons name-node colon-tail _)
+      (match (reader.spanned-sexpr-view name-node)
+        [(reader.SpannedSexprView.Sym name _)
+          (match (reader.spanned-sexpr-view colon-tail)
+            [(reader.SpannedSexprView.Cons colon ty-tail _)
+              (match (reader.spanned-sexpr-view ty-tail)
+                [(reader.SpannedSexprView.Cons ty init-tail _)
+                  (match (reader.spanned-sexpr-view init-tail)
+                    [(reader.SpannedSexprView.Cons init finish _)
+                      (match (reader.spanned-sexpr-view finish)
+                        [(reader.SpannedSexprView.Nil _)
+                          (if (sexpr-colon? (reader.spanned-sexpr-form colon))
+                            (match (parse-ast-type-spanned dispatch pools ty)
+                              [(ResultAstType.Ok parsed-ty)
+                                (ResultParseAstSpmdStateBinding.Ok
+                                  (ParseAstSpmdStateBinding
+                                    (ci.intern-syntax-id-value name)
+                                    parsed-ty
+                                    init))]
+                              [(ResultAstType.Err message)
+                                (ResultParseAstSpmdStateBinding.Err message)])
+                            (ResultParseAstSpmdStateBinding.Err
+                              expected-colon-message))]
+                        [_
+                          (ResultParseAstSpmdStateBinding.Err malformed-message)])]
+                    [_ (ResultParseAstSpmdStateBinding.Err malformed-message)])]
+                [_ (ResultParseAstSpmdStateBinding.Err malformed-message)])]
+            [_ (ResultParseAstSpmdStateBinding.Err malformed-message)])]
+        [_ (ResultParseAstSpmdStateBinding.Err malformed-message)])]
+    [_ (ResultParseAstSpmdStateBinding.Err malformed-message)]))
+
+(define (parse-ast-spmd-reduce-binding
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [op : ast.AstReduceOp]
+  [binding : reader.SpannedSexpr]
+  [init : reader.SpannedSexpr]
+  [value : reader.SpannedSexpr]) : ResultAstExpr
+  (match (parse-ast-spmd-typed-range-binding
+    (compiler-parse-place-shared-view dispatch)
+    (compiler-parse-place-shared-view pools)
+    binding
+    "parse: expected ':' in spmd-reduce"
+    "parse: malformed spmd-reduce")
+    [(ResultParseAstSpmdTypedRangeBinding.Err message)
+      (ResultAstExpr.Err message)]
+    [(ResultParseAstSpmdTypedRangeBinding.Ok parsed-binding)
+      (match (parse-ast-expr-with-pools
+        (compiler-parse-place-shared-view dispatch)
+        (compiler-parse-place-shared-view pools)
+        parsed-binding.start)
+        [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]
+        [(ResultAstExpr.Ok parsed-start)
+          (match (parse-ast-expr-with-pools
+            (compiler-parse-place-shared-view dispatch)
+            (compiler-parse-place-shared-view pools)
+            parsed-binding.end)
+            [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]
+            [(ResultAstExpr.Ok parsed-end)
+              (match (parse-ast-expr-with-pools
+                (compiler-parse-place-shared-view dispatch)
+                (compiler-parse-place-shared-view pools)
+                init)
+                [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]
+                [(ResultAstExpr.Ok parsed-init)
+                  (match (parse-ast-expr-with-pools
+                    dispatch
+                    (compiler-parse-place-shared-view pools)
+                    value)
+                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]
+                    [(ResultAstExpr.Ok parsed-value)
+                      (ResultAstExpr.Ok
+                        (ast.ast-expr-spmd-reduce-id-with-pools
+                          pools
+                          op
+                          parsed-binding.name
+                          parsed-binding.ty
+                          parsed-start
+                          parsed-end
+                          parsed-init
+                          parsed-value))])])])])]))
 
 (define (parse-ast-spmd-reduce
   [dispatch : sym_i64_env.SymI64Env]
@@ -7629,8 +7703,9 @@
                             [(reader.SpannedSexprView.Cons value end _)
                               (match (reader.spanned-sexpr-view end)
                                 [(reader.SpannedSexprView.Nil _)
-                                  (match (parse-ast-reduce-op
+                                  (match (parse-ast-spmd-reduce-op
                                     dispatch
+                                    "spmd-reduce"
                                     (ci.intern-syntax-id-value op-name))
                                     [(ResultAstReduceOp.Ok op)
                                       (parse-ast-spmd-reduce-binding
@@ -7678,8 +7753,9 @@
                                 [(reader.SpannedSexprView.Cons body end _)
                                   (match (reader.spanned-sexpr-view end)
                                     [(reader.SpannedSexprView.Nil _)
-                                      (match (parse-ast-scan-op
+                                      (match (parse-ast-spmd-reduce-op
                                         dispatch
+                                        "spmd-scan"
                                         (ci.intern-syntax-id-value op-name))
                                         [(ResultAstReduceOp.Ok op)
                                           (parse-ast-spmd-scan-bindings
@@ -7716,179 +7792,69 @@
   [prefix-binding : reader.SpannedSexpr]
   [value : reader.SpannedSexpr]
   [body : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-view range-binding)
-    [(reader.SpannedSexprView.BracketList items _)
-      (parse-ast-spmd-scan-bindings
-        dispatch
-        pools
-        op
-        items
+  (match (parse-ast-spmd-typed-range-binding
+    (compiler-parse-place-shared-view dispatch)
+    (compiler-parse-place-shared-view pools)
+    range-binding
+    "parse: expected ':' in spmd-scan range binding"
+    "parse: malformed spmd-scan range binding")
+    [(ResultParseAstSpmdTypedRangeBinding.Err message)
+      (ResultAstExpr.Err message)]
+    [(ResultParseAstSpmdTypedRangeBinding.Ok range)
+      (match (parse-ast-spmd-state-binding
+        (compiler-parse-place-shared-view dispatch)
+        (compiler-parse-place-shared-view pools)
         prefix-binding
-        value
-        body)]
-    [(reader.SpannedSexprView.Cons index-node colon-tail _)
-      (match (reader.spanned-sexpr-view index-node)
-        [(reader.SpannedSexprView.Sym index _)
-          (match (reader.spanned-sexpr-view colon-tail)
-            [(reader.SpannedSexprView.Cons colon index-ty-tail _)
-              (match (reader.spanned-sexpr-view index-ty-tail)
-                [(reader.SpannedSexprView.Cons index-ty start-tail _)
-                  (match (reader.spanned-sexpr-view start-tail)
-                    [(reader.SpannedSexprView.Cons start end-tail _)
-                      (match (reader.spanned-sexpr-view end-tail)
-                        [(reader.SpannedSexprView.Cons end finish _)
-                          (match (reader.spanned-sexpr-view finish)
-                            [(reader.SpannedSexprView.Nil _)
-                              (if (sexpr-colon?
-                                (reader.spanned-sexpr-form colon))
-                                (match (parse-ast-type-spanned
-                                  (compiler-parse-place-shared-view dispatch)
-                                  (compiler-parse-place-shared-view pools)
-                                  index-ty)
-                                  [(ResultAstType.Ok parsed-index-ty)
-                                    (parse-ast-spmd-scan-prefix-binding
-                                      dispatch
-                                      pools
-                                      op
-                                      (ci.intern-syntax-id-value index)
-                                      parsed-index-ty
-                                      start
-                                      end
-                                      prefix-binding
-                                      value
-                                      body)]
-                                  [(ResultAstType.Err message)
-                                    (ResultAstExpr.Err message)])
-                                (ResultAstExpr.Err
-                                  "parse: expected ':' in spmd-scan range binding"))]
-                            [_
-                              (ResultAstExpr.Err
-                                "parse: malformed spmd-scan range binding")])]
-                        [_
-                          (ResultAstExpr.Err
-                            "parse: malformed spmd-scan range binding")])]
-                    [_
-                      (ResultAstExpr.Err
-                        "parse: malformed spmd-scan range binding")])]
-                [_
-                  (ResultAstExpr.Err "parse: malformed spmd-scan range binding")])]
-            [_ (ResultAstExpr.Err "parse: malformed spmd-scan range binding")])]
-        [_ (ResultAstExpr.Err "parse: malformed spmd-scan range binding")])]
-    [_ (ResultAstExpr.Err "parse: malformed spmd-scan range binding")]))
-
-(define (parse-ast-spmd-scan-prefix-binding
-  [dispatch : sym_i64_env.SymI64Env]
-  [pools : ast.AstNodePoolContext]
-  [op : ast.AstReduceOp]
-  [index : i64]
-  [index-ty : ast.AstType]
-  [start : reader.SpannedSexpr]
-  [end : reader.SpannedSexpr]
-  [prefix-binding : reader.SpannedSexpr]
-  [value : reader.SpannedSexpr]
-  [body : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-view prefix-binding)
-    [(reader.SpannedSexprView.BracketList items _)
-      (parse-ast-spmd-scan-prefix-binding
-        dispatch
-        pools
-        op
-        index
-        index-ty
-        start
-        end
-        items
-        value
-        body)]
-    [(reader.SpannedSexprView.Cons prefix-node colon-tail _)
-      (match (reader.spanned-sexpr-view prefix-node)
-        [(reader.SpannedSexprView.Sym prefix _)
-          (match (reader.spanned-sexpr-view colon-tail)
-            [(reader.SpannedSexprView.Cons colon prefix-ty-tail _)
-              (match (reader.spanned-sexpr-view prefix-ty-tail)
-                [(reader.SpannedSexprView.Cons prefix-ty init-tail _)
-                  (match (reader.spanned-sexpr-view init-tail)
-                    [(reader.SpannedSexprView.Cons init finish _)
-                      (match (reader.spanned-sexpr-view finish)
-                        [(reader.SpannedSexprView.Nil _)
-                          (if (sexpr-colon? (reader.spanned-sexpr-form colon))
-                            (match (parse-ast-type-spanned
-                              (compiler-parse-place-shared-view dispatch)
-                              (compiler-parse-place-shared-view pools)
-                              prefix-ty)
-                              [(ResultAstType.Ok parsed-prefix-ty)
-                                (match (parse-ast-expr-with-pools
-                                  (compiler-parse-place-shared-view dispatch)
-                                  (compiler-parse-place-shared-view pools)
-                                  start)
-                                  [(ResultAstExpr.Ok parsed-start)
-                                    (match (parse-ast-expr-with-pools
-                                      (compiler-parse-place-shared-view
-                                        dispatch)
-                                      (compiler-parse-place-shared-view pools)
-                                      end)
-                                      [(ResultAstExpr.Ok parsed-end)
-                                        (match (parse-ast-expr-with-pools
-                                          (compiler-parse-place-shared-view
-                                            dispatch)
-                                          (compiler-parse-place-shared-view
-                                            pools)
-                                          init)
-                                          [(ResultAstExpr.Ok parsed-init)
-                                            (match (parse-ast-expr-with-pools
-                                              (compiler-parse-place-shared-view
-                                                dispatch)
-                                              (compiler-parse-place-shared-view
-                                                pools)
-                                              value)
-                                              [(ResultAstExpr.Ok parsed-value)
-                                                (match (parse-ast-expr-with-pools
-                                                  dispatch
-                                                  (compiler-parse-place-shared-view
-                                                    pools)
-                                                  body)
-                                                  [(ResultAstExpr.Ok
-                                                      parsed-body)
-                                                    (ResultAstExpr.Ok
-                                                      (ast.ast-expr-spmd-scan-id-with-pools
-                                                        pools
-                                                        op
-                                                        index
-                                                        index-ty
-                                                        parsed-start
-                                                        parsed-end
-                                                        (ci.intern-syntax-id-value
-                                                          prefix)
-                                                        parsed-prefix-ty
-                                                        parsed-init
-                                                        parsed-value
-                                                        parsed-body))]
-                                                  [(ResultAstExpr.Err message)
-                                                    (ResultAstExpr.Err message)])]
-                                              [(ResultAstExpr.Err message)
-                                                (ResultAstExpr.Err message)])]
-                                          [(ResultAstExpr.Err message)
-                                            (ResultAstExpr.Err message)])]
-                                      [(ResultAstExpr.Err message)
-                                        (ResultAstExpr.Err message)])]
-                                  [(ResultAstExpr.Err message)
-                                    (ResultAstExpr.Err message)])]
-                              [(ResultAstType.Err message)
-                                (ResultAstExpr.Err message)])
-                            (ResultAstExpr.Err
-                              "parse: expected ':' in spmd-scan prefix binding"))]
-                        [_
-                          (ResultAstExpr.Err
-                            "parse: malformed spmd-scan prefix binding")])]
-                    [_
-                      (ResultAstExpr.Err
-                        "parse: malformed spmd-scan prefix binding")])]
-                [_
-                  (ResultAstExpr.Err
-                    "parse: malformed spmd-scan prefix binding")])]
-            [_ (ResultAstExpr.Err "parse: malformed spmd-scan prefix binding")])]
-        [_ (ResultAstExpr.Err "parse: malformed spmd-scan prefix binding")])]
-    [_ (ResultAstExpr.Err "parse: malformed spmd-scan prefix binding")]))
+        "parse: expected ':' in spmd-scan prefix binding"
+        "parse: malformed spmd-scan prefix binding")
+        [(ResultParseAstSpmdStateBinding.Err message)
+          (ResultAstExpr.Err message)]
+        [(ResultParseAstSpmdStateBinding.Ok prefix)
+          (match (parse-ast-expr-with-pools
+            (compiler-parse-place-shared-view dispatch)
+            (compiler-parse-place-shared-view pools)
+            range.start)
+            [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]
+            [(ResultAstExpr.Ok parsed-start)
+              (match (parse-ast-expr-with-pools
+                (compiler-parse-place-shared-view dispatch)
+                (compiler-parse-place-shared-view pools)
+                range.end)
+                [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]
+                [(ResultAstExpr.Ok parsed-end)
+                  (match (parse-ast-expr-with-pools
+                    (compiler-parse-place-shared-view dispatch)
+                    (compiler-parse-place-shared-view pools)
+                    prefix.init)
+                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]
+                    [(ResultAstExpr.Ok parsed-init)
+                      (match (parse-ast-expr-with-pools
+                        (compiler-parse-place-shared-view dispatch)
+                        (compiler-parse-place-shared-view pools)
+                        value)
+                        [(ResultAstExpr.Err message)
+                          (ResultAstExpr.Err message)]
+                        [(ResultAstExpr.Ok parsed-value)
+                          (match (parse-ast-expr-with-pools
+                            dispatch
+                            (compiler-parse-place-shared-view pools)
+                            body)
+                            [(ResultAstExpr.Err message)
+                              (ResultAstExpr.Err message)]
+                            [(ResultAstExpr.Ok parsed-body)
+                              (ResultAstExpr.Ok
+                                (ast.ast-expr-spmd-scan-id-with-pools
+                                  pools
+                                  op
+                                  range.name
+                                  range.ty
+                                  parsed-start
+                                  parsed-end
+                                  prefix.name
+                                  prefix.ty
+                                  parsed-init
+                                  parsed-value
+                                  parsed-body))])])])])])])]))
 
 (define (parse-ast-spmd-compact
   [dispatch : sym_i64_env.SymI64Env]
@@ -7934,176 +7900,68 @@
   [slot-binding : reader.SpannedSexpr]
   [keep : reader.SpannedSexpr]
   [body : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-view range-binding)
-    [(reader.SpannedSexprView.BracketList items _)
-      (parse-ast-spmd-compact-bindings
-        dispatch
-        pools
-        items
+  (match (parse-ast-spmd-typed-range-binding
+    (compiler-parse-place-shared-view dispatch)
+    (compiler-parse-place-shared-view pools)
+    range-binding
+    "parse: expected ':' in spmd-compact range binding"
+    "parse: malformed spmd-compact range binding")
+    [(ResultParseAstSpmdTypedRangeBinding.Err message)
+      (ResultAstExpr.Err message)]
+    [(ResultParseAstSpmdTypedRangeBinding.Ok range)
+      (match (parse-ast-spmd-state-binding
+        (compiler-parse-place-shared-view dispatch)
+        (compiler-parse-place-shared-view pools)
         slot-binding
-        keep
-        body)]
-    [(reader.SpannedSexprView.Cons index-node colon-tail _)
-      (match (reader.spanned-sexpr-view index-node)
-        [(reader.SpannedSexprView.Sym index _)
-          (match (reader.spanned-sexpr-view colon-tail)
-            [(reader.SpannedSexprView.Cons colon index-ty-tail _)
-              (match (reader.spanned-sexpr-view index-ty-tail)
-                [(reader.SpannedSexprView.Cons index-ty start-tail _)
-                  (match (reader.spanned-sexpr-view start-tail)
-                    [(reader.SpannedSexprView.Cons start end-tail _)
-                      (match (reader.spanned-sexpr-view end-tail)
-                        [(reader.SpannedSexprView.Cons end finish _)
-                          (match (reader.spanned-sexpr-view finish)
-                            [(reader.SpannedSexprView.Nil _)
-                              (if (sexpr-colon?
-                                (reader.spanned-sexpr-form colon))
-                                (match (parse-ast-type-spanned
-                                  (compiler-parse-place-shared-view dispatch)
-                                  (compiler-parse-place-shared-view pools)
-                                  index-ty)
-                                  [(ResultAstType.Ok parsed-index-ty)
-                                    (parse-ast-spmd-compact-slot-binding
-                                      dispatch
-                                      pools
-                                      (ci.intern-syntax-id-value index)
-                                      parsed-index-ty
-                                      start
-                                      end
-                                      slot-binding
-                                      keep
-                                      body)]
-                                  [(ResultAstType.Err message)
-                                    (ResultAstExpr.Err message)])
-                                (ResultAstExpr.Err
-                                  "parse: expected ':' in spmd-compact range binding"))]
-                            [_
-                              (ResultAstExpr.Err
-                                "parse: malformed spmd-compact range binding")])]
-                        [_
-                          (ResultAstExpr.Err
-                            "parse: malformed spmd-compact range binding")])]
-                    [_
-                      (ResultAstExpr.Err
-                        "parse: malformed spmd-compact range binding")])]
-                [_
-                  (ResultAstExpr.Err
-                    "parse: malformed spmd-compact range binding")])]
-            [_
-              (ResultAstExpr.Err "parse: malformed spmd-compact range binding")])]
-        [_ (ResultAstExpr.Err "parse: malformed spmd-compact range binding")])]
-    [_ (ResultAstExpr.Err "parse: malformed spmd-compact range binding")]))
-
-(define (parse-ast-spmd-compact-slot-binding
-  [dispatch : sym_i64_env.SymI64Env]
-  [pools : ast.AstNodePoolContext]
-  [index : i64]
-  [index-ty : ast.AstType]
-  [start : reader.SpannedSexpr]
-  [end : reader.SpannedSexpr]
-  [slot-binding : reader.SpannedSexpr]
-  [keep : reader.SpannedSexpr]
-  [body : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-view slot-binding)
-    [(reader.SpannedSexprView.BracketList items _)
-      (parse-ast-spmd-compact-slot-binding
-        dispatch
-        pools
-        index
-        index-ty
-        start
-        end
-        items
-        keep
-        body)]
-    [(reader.SpannedSexprView.Cons slot-node colon-tail _)
-      (match (reader.spanned-sexpr-view slot-node)
-        [(reader.SpannedSexprView.Sym slot _)
-          (match (reader.spanned-sexpr-view colon-tail)
-            [(reader.SpannedSexprView.Cons colon slot-ty-tail _)
-              (match (reader.spanned-sexpr-view slot-ty-tail)
-                [(reader.SpannedSexprView.Cons slot-ty init-tail _)
-                  (match (reader.spanned-sexpr-view init-tail)
-                    [(reader.SpannedSexprView.Cons init finish _)
-                      (match (reader.spanned-sexpr-view finish)
-                        [(reader.SpannedSexprView.Nil _)
-                          (if (sexpr-colon? (reader.spanned-sexpr-form colon))
-                            (match (parse-ast-type-spanned
-                              (compiler-parse-place-shared-view dispatch)
-                              (compiler-parse-place-shared-view pools)
-                              slot-ty)
-                              [(ResultAstType.Ok parsed-slot-ty)
-                                (match (parse-ast-expr-with-pools
-                                  (compiler-parse-place-shared-view dispatch)
-                                  (compiler-parse-place-shared-view pools)
-                                  start)
-                                  [(ResultAstExpr.Ok parsed-start)
-                                    (match (parse-ast-expr-with-pools
-                                      (compiler-parse-place-shared-view
-                                        dispatch)
-                                      (compiler-parse-place-shared-view pools)
-                                      end)
-                                      [(ResultAstExpr.Ok parsed-end)
-                                        (match (parse-ast-expr-with-pools
-                                          (compiler-parse-place-shared-view
-                                            dispatch)
-                                          (compiler-parse-place-shared-view
-                                            pools)
-                                          init)
-                                          [(ResultAstExpr.Ok parsed-init)
-                                            (match (parse-ast-expr-with-pools
-                                              (compiler-parse-place-shared-view
-                                                dispatch)
-                                              (compiler-parse-place-shared-view
-                                                pools)
-                                              keep)
-                                              [(ResultAstExpr.Ok parsed-keep)
-                                                (match (parse-ast-expr-with-pools
-                                                  dispatch
-                                                  (compiler-parse-place-shared-view
-                                                    pools)
-                                                  body)
-                                                  [(ResultAstExpr.Ok
-                                                      parsed-body)
-                                                    (ResultAstExpr.Ok
-                                                      (ast.ast-expr-spmd-compact-id-with-pools
-                                                        pools
-                                                        index
-                                                        index-ty
-                                                        parsed-start
-                                                        parsed-end
-                                                        (ci.intern-syntax-id-value
-                                                          slot)
-                                                        parsed-slot-ty
-                                                        parsed-init
-                                                        parsed-keep
-                                                        parsed-body))]
-                                                  [(ResultAstExpr.Err message)
-                                                    (ResultAstExpr.Err message)])]
-                                              [(ResultAstExpr.Err message)
-                                                (ResultAstExpr.Err message)])]
-                                          [(ResultAstExpr.Err message)
-                                            (ResultAstExpr.Err message)])]
-                                      [(ResultAstExpr.Err message)
-                                        (ResultAstExpr.Err message)])]
-                                  [(ResultAstExpr.Err message)
-                                    (ResultAstExpr.Err message)])]
-                              [(ResultAstType.Err message)
-                                (ResultAstExpr.Err message)])
-                            (ResultAstExpr.Err
-                              "parse: expected ':' in spmd-compact slot binding"))]
-                        [_
-                          (ResultAstExpr.Err
-                            "parse: malformed spmd-compact slot binding")])]
-                    [_
-                      (ResultAstExpr.Err
-                        "parse: malformed spmd-compact slot binding")])]
-                [_
-                  (ResultAstExpr.Err
-                    "parse: malformed spmd-compact slot binding")])]
-            [_ (ResultAstExpr.Err "parse: malformed spmd-compact slot binding")])]
-        [_ (ResultAstExpr.Err "parse: malformed spmd-compact slot binding")])]
-    [_ (ResultAstExpr.Err "parse: malformed spmd-compact slot binding")]))
+        "parse: expected ':' in spmd-compact slot binding"
+        "parse: malformed spmd-compact slot binding")
+        [(ResultParseAstSpmdStateBinding.Err message)
+          (ResultAstExpr.Err message)]
+        [(ResultParseAstSpmdStateBinding.Ok slot)
+          (match (parse-ast-expr-with-pools
+            (compiler-parse-place-shared-view dispatch)
+            (compiler-parse-place-shared-view pools)
+            range.start)
+            [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]
+            [(ResultAstExpr.Ok parsed-start)
+              (match (parse-ast-expr-with-pools
+                (compiler-parse-place-shared-view dispatch)
+                (compiler-parse-place-shared-view pools)
+                range.end)
+                [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]
+                [(ResultAstExpr.Ok parsed-end)
+                  (match (parse-ast-expr-with-pools
+                    (compiler-parse-place-shared-view dispatch)
+                    (compiler-parse-place-shared-view pools)
+                    slot.init)
+                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]
+                    [(ResultAstExpr.Ok parsed-init)
+                      (match (parse-ast-expr-with-pools
+                        (compiler-parse-place-shared-view dispatch)
+                        (compiler-parse-place-shared-view pools)
+                        keep)
+                        [(ResultAstExpr.Err message)
+                          (ResultAstExpr.Err message)]
+                        [(ResultAstExpr.Ok parsed-keep)
+                          (match (parse-ast-expr-with-pools
+                            dispatch
+                            (compiler-parse-place-shared-view pools)
+                            body)
+                            [(ResultAstExpr.Err message)
+                              (ResultAstExpr.Err message)]
+                            [(ResultAstExpr.Ok parsed-body)
+                              (ResultAstExpr.Ok
+                                (ast.ast-expr-spmd-compact-id-with-pools
+                                  pools
+                                  range.name
+                                  range.ty
+                                  parsed-start
+                                  parsed-end
+                                  slot.name
+                                  slot.ty
+                                  parsed-init
+                                  parsed-keep
+                                  parsed-body))])])])])])])]))
 
 (define (parse-ast-spmd-broadcast
   [dispatch : sym_i64_env.SymI64Env]
@@ -16260,6 +16118,8 @@
     (compiler-parse-ok?
       "(define (main [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
     (compiler-parse-ok?
+      "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (array-ref xs i) (set! (array-ref out i) prefix)))")
+    (compiler-parse-ok?
       "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-broadcast (array-ref xs i) 0))) 0))")
     (compiler-parse-ok?
       "(define (main [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (set! (array-ref out i) (spmd-shuffle (array-ref xs i) i))) 0))")
@@ -16280,6 +16140,9 @@
       "(define (main [n : i64]) : i64 (spmd-reduce bogus ([i : i64 0 n]) 0 i))"
       "parse: unsupported spmd-reduce operator `bogus`; expected one of sum, min, max, all, any")
     (compiler-parse-error-ok?
+      "(define (main [n : i64]) : unit (spmd-scan bogus ([i : i64 0 n] [prefix : i64 0]) i unit))"
+      "parse: unsupported spmd-scan operator `bogus`; expected one of sum, min, max, all, any")
+    (compiler-parse-error-ok?
       "(define (main) : i64 (begin (foreach ([i i64 0 3 4]) unit) 0))"
       "parse: expected ':' in foreach")
     (compiler-parse-error-ok?
@@ -16291,6 +16154,65 @@
     (compiler-parse-error-ok?
       "(define (main) : i64 (spmd-reduce sum))"
       "parse: malformed spmd-reduce")
+    ;; Mirrored malformed binding cases lock down each shared grammar path's
+    ;; form-specific diagnostics and left-to-right first-error behavior.
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-reduce sum ([i nope i64 0 3]) 0 i))"
+      "parse: expected ':' in spmd-reduce")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-reduce sum ([i : i64 0]) 0 i))"
+      "parse: malformed spmd-reduce")
+    (compiler-parse-error-ok?
+      "(define (main) : unit (spmd-scan sum ([i nope i64 0 3] [prefix : i64 0]) i unit))"
+      "parse: expected ':' in spmd-scan range binding")
+    (compiler-parse-error-ok?
+      "(define (main) : unit (spmd-scan sum ([i : i64 0] [prefix : i64 0]) i unit))"
+      "parse: malformed spmd-scan range binding")
+    (compiler-parse-error-ok?
+      "(define (main) : unit (spmd-scan sum ([i : i64 0 3] [prefix nope i64 0]) i unit))"
+      "parse: expected ':' in spmd-scan prefix binding")
+    (compiler-parse-error-ok?
+      "(define (main) : unit (spmd-scan sum ([i : i64 0 3] [prefix : i64]) i unit))"
+      "parse: malformed spmd-scan prefix binding")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-reduce sum ([0 : i64 0 3]) 0 0))"
+      "parse: malformed spmd-reduce")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-reduce sum ([i : i64 0 3 4]) 0 i))"
+      "parse: malformed spmd-reduce")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-reduce sum ([i : (Ptr) 0 3]) 0 i))"
+      "parse: Ptr expects exactly one type")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-reduce sum ([i : i64 (if) 3]) 0 i))"
+      "parse: if expects condition, then branch, and else branch")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-reduce sum ([i : i64 0 (if)]) 0 i))"
+      "parse: if expects condition, then branch, and else branch")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-reduce sum ([i : i64 0 3]) (if) i))"
+      "parse: if expects condition, then branch, and else branch")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-reduce sum ([i : i64 0 3]) 0 (if)))"
+      "parse: if expects condition, then branch, and else branch")
+    (compiler-parse-error-ok?
+      "(define (main) : unit (spmd-scan sum ([i : i64 0 3] [0 : i64 0]) i unit))"
+      "parse: malformed spmd-scan prefix binding")
+    (compiler-parse-error-ok?
+      "(define (main) : unit (spmd-scan sum ([i : i64 0 3] [prefix : i64 0 1]) i unit))"
+      "parse: malformed spmd-scan prefix binding")
+    (compiler-parse-error-ok?
+      "(define (main) : unit (spmd-scan sum ([i : i64 0 3] [prefix : (Ptr) 0]) i unit))"
+      "parse: Ptr expects exactly one type")
+    (compiler-parse-error-ok?
+      "(define (main) : unit (spmd-scan sum ([i : i64 0 3] [prefix : i64 (if)]) i unit))"
+      "parse: if expects condition, then branch, and else branch")
+    (compiler-parse-error-ok?
+      "(define (main) : unit (spmd-scan sum ([i : i64 0 3] [prefix : i64 0]) (if) unit))"
+      "parse: if expects condition, then branch, and else branch")
+    (compiler-parse-error-ok?
+      "(define (main) : unit (spmd-scan sum ([i : i64 0 3] [prefix : i64 0]) i (if)))"
+      "parse: if expects condition, then branch, and else branch")
     (compiler-parse-error-ok?
       "(define (main) : i64 (spmd-compact))"
       "parse: malformed spmd-compact")
@@ -16306,6 +16228,24 @@
     (compiler-parse-error-ok?
       "(define (main) : i64 (spmd-compact ([i : i64 0 3] [slot : i64]) true unit))"
       "parse: malformed spmd-compact slot binding")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-compact ([i : i64 0 3] [0 : i64 0]) true unit))"
+      "parse: malformed spmd-compact slot binding")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-compact ([i : i64 0 3] [slot : i64 0 1]) true unit))"
+      "parse: malformed spmd-compact slot binding")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-compact ([i : i64 0 3] [slot : (Ptr) 0]) true unit))"
+      "parse: Ptr expects exactly one type")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-compact ([i : i64 0 3] [slot : i64 (if)]) true unit))"
+      "parse: if expects condition, then branch, and else branch")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-compact ([i : i64 0 3] [slot : i64 0]) (if) unit))"
+      "parse: if expects condition, then branch, and else branch")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (spmd-compact ([i : i64 0 3] [slot : i64 0]) true (if)))"
+      "parse: if expects condition, then branch, and else branch")
     (compiler-parse-error-ok?
       "(define (main) : i64 (spmd-broadcast 1))"
       "parse: malformed spmd-broadcast")

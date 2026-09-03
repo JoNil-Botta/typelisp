@@ -7908,7 +7908,8 @@
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (compiler-opt-global-shared-view func)
     [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
-      (if (< frame 1)
+      ;; bisect E: the word split is disabled (every frame is "too small").
+      (if (< frame 2147483647)
         func
         (let
           [flat : OptSplitFlat

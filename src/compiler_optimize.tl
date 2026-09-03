@@ -22811,6 +22811,180 @@
 (defenum OptLoopPreheadersPhiRewriteResult
   (Result ir.CompilerIrPhiInputSeq bool))
 
+;; --- preheader synthesis tracing ---------------------------------------------
+;;
+;; BCE-3. The pass above had no tracer at all, so a loop that reached the
+;; versioner without a preheader could not be told apart from a loop this pass
+;; refused: `bce-version|...|refuse|shape:no-preheader` names the VERSIONER's
+;; clause, not the synthesis clause that left the shape behind, and it is by far
+;; the largest refusal class on every guard-heavy row. One line per natural loop
+;; this pass EXAMINES:
+;;
+;;   preheader|<function>|<header>|<verdict>|<reason>|outside=<n>
+;;
+;; `verdict` is `existing` (the loop already had a safe preheader, so the pass
+;; had nothing to do), `synthesized` (this pass created one) or `refused`, and
+;; `reason` names the clause that decided. `outside` is the size of the outside
+;; predecessor set the clause weighed; it is -1 on the paths that never build
+;; that set -- an existing preheader, and the two verifier fallbacks, which are
+;; function-level and not loop-level decisions.
+;;
+;; WHAT COUNTS AS EXAMINED. `opt-loop-preheaders-synthesize-loops` walks the
+;; natural-loop list and stops at the first loop it rewrites, because the CFG
+;; (and the context) is stale afterwards; the surrounding round loop then walks
+;; the list again. So a loop refused in one round reports again in the next with
+;; the same verdict, and a census reads the LAST line for a header. The verifier
+;; fallback discards the whole function's rewrite, so a `verify` line retires
+;; every `synthesized` line the same pass run emitted for that function.
+;;
+;; COST. The flag is tested first and every string is built inside the guard, so
+;; a compile without `--trace-passes` pays one boolean test per examined loop and
+;; nothing else -- the same shape as INL-3's `inline-shape|` tracer. The
+;; inliner's throwaway measurement runs are suppressed exactly as the pass tracer
+;; is.
+(define (opt-preheader-reason-existing) : i64
+  0)
+
+(define (opt-preheader-reason-ok) : i64
+  1)
+
+;; The header has no outside predecessor this pass would redirect: an
+;; unreachable loop, or one whose every entry edge the dominator test attributes
+;; to the loop itself.
+(define (opt-preheader-reason-no-outside) : i64
+  2)
+
+;; This pass's own candidate scan already finds exactly one safe preheader among
+;; the outside predecessors, so synthesis declines. That scan drops preds the
+;; header dominates, which `opt-natural-loop-find-preheader` still counts, so
+;; this is the one refusal that can coexist with a versioner `no-preheader`.
+(define (opt-preheader-reason-existing-safe) : i64
+  3)
+
+;; The header label is not in the block list -- a loop record the CFG no longer
+;; backs.
+(define (opt-preheader-reason-header-missing) : i64
+  4)
+
+;; A header phi takes DIFFERENT values from two outside predecessors, so a
+;; single merged preheader edge cannot carry them.
+(define (opt-preheader-reason-header-phi) : i64
+  5)
+
+;; The rewrite was built and the post-pass verifier rejected it; the function
+;; falls back to its input, losing every preheader this run synthesized for it.
+(define (opt-preheader-reason-verify) : i64
+  6)
+
+;; The pass's own entry verify rejected the incoming function, so no loop in it
+;; was examined at all.
+(define (opt-preheader-reason-entry-verify) : i64
+  7)
+
+(define (opt-preheader-reason-text [reason : i64]) : String
+  (cond
+    [(= reason (opt-preheader-reason-existing)) "existing"]
+    [(= reason (opt-preheader-reason-ok)) "ok"]
+    [(= reason (opt-preheader-reason-no-outside)) "no-outside"]
+    [(= reason (opt-preheader-reason-existing-safe)) "existing-safe"]
+    [(= reason (opt-preheader-reason-header-missing)) "header-missing"]
+    [(= reason (opt-preheader-reason-header-phi)) "header-phi"]
+    [(= reason (opt-preheader-reason-verify)) "verify"]
+    [(= reason (opt-preheader-reason-entry-verify)) "entry-verify"]
+    [else "other"]))
+
+(define (opt-preheader-verdict-existing) : i64
+  0)
+
+(define (opt-preheader-verdict-synthesized) : i64
+  1)
+
+(define (opt-preheader-verdict-refused) : i64
+  2)
+
+(define (opt-preheader-verdict-text [verdict : i64]) : String
+  (cond
+    [(= verdict (opt-preheader-verdict-existing)) "existing"]
+    [(= verdict (opt-preheader-verdict-synthesized)) "synthesized"]
+    [else "refused"]))
+
+;; The function whose loops the pass is examining, set once per pass entry
+;; exactly as the versioner's tracer sets its own.
+(define opt-preheader-trace-function : i64
+  0)
+
+(define (opt-preheader-trace-function! [name : i64]) : unit
+  (set! opt-preheader-trace-function name))
+
+;; The header of the last synthesis this pass applied, so the verifier fallback
+;; -- which has only the function in hand by then -- can still name a loop.
+(define opt-preheader-trace-last-header : i64
+  0)
+
+(define (opt-preheader-trace-last-header! [header : i64]) : unit
+  (set! opt-preheader-trace-last-header header))
+
+(define (opt-preheader-trace!
+  [header : i64]
+  [verdict : i64]
+  [reason : i64]
+  [outside : i64]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (io.print-error
+      (str_cat.str-cat
+        "preheader|"
+        (ir.compiler-ir-symbol-text opt-preheader-trace-function)
+        "|"
+        (ir.compiler-ir-label-text header)
+        "|"
+        (opt-preheader-verdict-text verdict)
+        "|"
+        (opt-preheader-reason-text reason)
+        "|outside="
+        (string.int->string outside)
+        "\n"))
+    unit))
+
+;; The `existing` verdict's emission site. The header is read from the loop
+;; INSIDE the guard, so the majority path -- a loop that already has its
+;; preheader -- costs the one boolean test and no match at all.
+(define (opt-preheader-trace-loop!
+  [loop : OptNaturalLoop]
+  [verdict : i64]
+  [reason : i64]
+  [outside : i64]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (opt-preheader-trace!
+      (opt-natural-loop-header (compiler-opt-global-shared-view loop))
+      verdict
+      reason
+      outside)
+    unit))
+
+;; The pass's entry verify turned the whole function down, so not one loop in it
+;; was examined. Reported against the entry label, because a function-level
+;; refusal has no loop of its own.
+(define (opt-preheader-trace-entry-verify! [context : OptCfgContext]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (opt-preheader-trace!
+      context.entry-label
+      (opt-preheader-verdict-refused)
+      (opt-preheader-reason-entry-verify)
+      (- 0 1))
+    unit))
+
+;; The post-pass verifier rejected the rewritten function, which reverts every
+;; preheader this run synthesized for it. The line names the LAST synthesis,
+;; which is the one whose rewrite the verifier saw.
+(define (opt-preheader-trace-verify-rejected!) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (opt-preheader-trace!
+      opt-preheader-trace-last-header
+      (opt-preheader-verdict-refused)
+      (opt-preheader-reason-verify)
+      (- 0 1))
+    unit))
+
 (define (opt-loop-preheaders-outside-preds-scan
   [reachable : OptLabelSet]
   [doms : OptDomInfo]
@@ -22937,16 +23111,26 @@
         instrs
         (+ index 1)))))
 
-(define (opt-loop-preheaders-header-compatible?
+;; The header's own admission, as a CLAUSE CODE rather than a bool: the two
+;; ways it can fail -- a header the block list no longer holds, and a header phi
+;; with different values on two outside edges -- are different verdicts about
+;; the loop, and BCE-3's tracer has to name which one decided. The decision
+;; itself is the one `opt-loop-preheaders-header-compatible?` made.
+(define (opt-loop-preheaders-header-reason
   [blocks : ir.CompilerIrBlockList]
   [header : i64]
-  [outside : OptLabelSet]) : bool
+  [outside : OptLabelSet]) : i64
   (match (opt-cfg-find-block blocks header)
-    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.No) (opt-preheader-reason-header-missing)]
     [(OptMaybeBlock.Some block)
       (match (compiler-opt-global-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs)
-          (opt-loop-preheaders-header-instrs-compatible-from? outside instrs 0)])]))
+          (if (opt-loop-preheaders-header-instrs-compatible-from?
+            outside
+            instrs
+            0)
+            (opt-preheader-reason-ok)
+            (opt-preheader-reason-header-phi))])]))
 
 (define (opt-loop-preheaders-existing-candidate-scan
   [pred-map : OptPredMap]
@@ -23270,12 +23454,44 @@
         header
         preheader)]))
 
+;; The admission `and` the synthesis used to run, as the clause code that
+;; decided it. The clauses and their order are unchanged -- an empty outside
+;; set, then this pass's own existing-safe scan, then the header's admission --
+;; so the same loops are synthesized; only the verdict now has a name.
+(define (opt-loop-preheaders-refusal-reason
+  [blocks : ir.CompilerIrBlockList]
+  [pred-map : OptPredMap]
+  [header : i64]
+  [outside : OptLabelSet]) : i64
+  (cond
+    [(<= (opt-label-count (compiler-opt-global-shared-view outside)) 0)
+      (opt-preheader-reason-no-outside)]
+    [(opt-loop-preheaders-existing-safe-preheader?
+        pred-map
+        header
+        (compiler-opt-global-shared-view outside))
+      (opt-preheader-reason-existing-safe)]
+    [else
+      (opt-loop-preheaders-header-reason
+        (compiler-opt-global-shared-view blocks)
+        header
+        (compiler-opt-global-shared-view outside))]))
+
 (define (opt-loop-preheaders-synthesize-loop
   [blocks : ir.CompilerIrBlockList]
   [context : OptCfgContext]
   [loop : OptNaturalLoop]) : OptBlockListPassResult
   (match (opt-natural-loop-preheader (compiler-opt-global-shared-view loop))
-    [(OptLoopPreheader.Some _) (OptBlockListPassResult.Result blocks false)]
+    [(OptLoopPreheader.Some _)
+      (begin
+        ;; The loop already owns a safe preheader. The outside set is never
+        ;; built on this path, so the line reports `outside=-1`.
+        (opt-preheader-trace-loop!
+          (compiler-opt-global-shared-view loop)
+          (opt-preheader-verdict-existing)
+          (opt-preheader-reason-existing)
+          (- 0 1))
+        (OptBlockListPassResult.Result blocks false))]
     [(OptLoopPreheader.No)
       (let
         [header : i64
@@ -23288,17 +23504,15 @@
             context.doms
             header
             body)]
-        (if (and
-          (> (opt-label-count (compiler-opt-global-shared-view outside)) 0)
-          (not
-            (opt-loop-preheaders-existing-safe-preheader?
-              context.pred-map
-              header
-              (compiler-opt-global-shared-view outside)))
-          (opt-loop-preheaders-header-compatible?
+        [outside-count : i64
+          (opt-label-count (compiler-opt-global-shared-view outside))]
+        [reason : i64
+          (opt-loop-preheaders-refusal-reason
             (compiler-opt-global-shared-view blocks)
+            context.pred-map
             header
-            (compiler-opt-global-shared-view outside)))
+            (compiler-opt-global-shared-view outside))]
+        (if (= reason (opt-preheader-reason-ok))
           (let
             [preheader : i64
               (opt-loop-preheaders-fresh-label
@@ -23311,13 +23525,26 @@
                 header
                 outside
                 preheader)]
+            [_last : unit (opt-preheader-trace-last-header! header)]
+            [_trace : unit
+              (opt-preheader-trace!
+                header
+                (opt-preheader-verdict-synthesized)
+                (opt-preheader-reason-ok)
+                outside-count)]
             (OptBlockListPassResult.Result
               (opt-loop-preheaders-insert-before-header
                 rewritten
                 header
                 preheader)
               true))
-          (OptBlockListPassResult.Result blocks false)))]))
+          (begin
+            (opt-preheader-trace!
+              header
+              (opt-preheader-verdict-refused)
+              reason
+              outside-count)
+            (OptBlockListPassResult.Result blocks false))))]))
 
 (define (opt-loop-preheaders-synthesize-loops
   [blocks : ir.CompilerIrBlockList]
@@ -23398,50 +23625,59 @@
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
-  (match (opt-verify-gate
-    verified?
-    (compiler-opt-global-shared-view func)
-    (compiler-opt-global-shared-view context))
-    [(ResultCompilerOptimizeVerify.Ok)
-      (match (compiler-opt-global-shared-view func)
-        [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
-          (match (opt-loop-preheaders-blocks-fixed-result
-            (compiler-opt-global-shared-view blocks)
-            (compiler-opt-global-shared-view context)
-            (+
-              1
-              (ir.compiler-ir-block-list-count
-                (compiler-opt-global-shared-view blocks)))
-            false
-            true)
-            [(OptBlockListPassResult.Result next-blocks preheaders-changed?)
-              (if (not preheaders-changed?)
-                ;; No preheader was synthesized: the input context still
-                ;; describes the unchanged CFG, so skip the context rebuild
-                ;; and the post-pass verify entirely.
-                (OptFunctionCtxResult.Result func context)
-                (let
-                  [next : ir.CompilerIrFunction
-                    (ir.CompilerIrFunction.Function
-                      name
-                      params
-                      ret-ty
-                      frame
-                      (compiler-opt-global-shared-view next-blocks))]
-                  ;; Preheader synthesis may have inserted blocks, so build one
-                  ;; fresh context for the rewritten CFG, reuse it for the
-                  ;; post-pass verify, and hand it back for the next pass.
-                  [next-context : OptCfgContext
-                    (opt-cfg-context-build next-blocks)]
-                  (match (opt-verify-function-with-context
-                    (compiler-opt-global-shared-view next)
-                    (compiler-opt-global-shared-view next-context))
-                    [(ResultCompilerOptimizeVerify.Ok)
-                      (OptFunctionCtxResult.Result next next-context)]
-                    [(ResultCompilerOptimizeVerify.Err _)
-                      (OptFunctionCtxResult.Result func context)])))])])]
-    [(ResultCompilerOptimizeVerify.Err _)
-      (OptFunctionCtxResult.Result func context)]))
+  ;; The function name is published to the tracer before the entry verify, so
+  ;; the entry-verify refusal is attributed to the function it turned down.
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+      (let
+        [_trace-function : unit (opt-preheader-trace-function! name)]
+        (match (opt-verify-gate
+          verified?
+          (compiler-opt-global-shared-view func)
+          (compiler-opt-global-shared-view context))
+          [(ResultCompilerOptimizeVerify.Ok)
+            (match (opt-loop-preheaders-blocks-fixed-result
+              (compiler-opt-global-shared-view blocks)
+              (compiler-opt-global-shared-view context)
+              (+
+                1
+                (ir.compiler-ir-block-list-count
+                  (compiler-opt-global-shared-view blocks)))
+              false
+              true)
+              [(OptBlockListPassResult.Result next-blocks preheaders-changed?)
+                (if (not preheaders-changed?)
+                  ;; No preheader was synthesized: the input context still
+                  ;; describes the unchanged CFG, so skip the context rebuild
+                  ;; and the post-pass verify entirely.
+                  (OptFunctionCtxResult.Result func context)
+                  (let
+                    [next : ir.CompilerIrFunction
+                      (ir.CompilerIrFunction.Function
+                        name
+                        params
+                        ret-ty
+                        frame
+                        (compiler-opt-global-shared-view next-blocks))]
+                    ;; Preheader synthesis may have inserted blocks, so build one
+                    ;; fresh context for the rewritten CFG, reuse it for the
+                    ;; post-pass verify, and hand it back for the next pass.
+                    [next-context : OptCfgContext
+                      (opt-cfg-context-build next-blocks)]
+                    (match (opt-verify-function-with-context
+                      (compiler-opt-global-shared-view next)
+                      (compiler-opt-global-shared-view next-context))
+                      [(ResultCompilerOptimizeVerify.Ok)
+                        (OptFunctionCtxResult.Result next next-context)]
+                      [(ResultCompilerOptimizeVerify.Err _)
+                        (begin
+                          (opt-preheader-trace-verify-rejected!)
+                          (OptFunctionCtxResult.Result func context))])))])]
+          [(ResultCompilerOptimizeVerify.Err _)
+            (begin
+              (opt-preheader-trace-entry-verify!
+                (compiler-opt-global-shared-view context))
+              (OptFunctionCtxResult.Result func context))]))]))
 
 (define (opt-loop-preheaders-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (compiler-opt-global-shared-view func)
@@ -86165,6 +86401,11 @@
 (define (opt-bce-trace-note! [reason : i64]) : unit
   (set! opt-bce-trace-reason reason))
 
+;; The clause the last examined loop recorded. Read by the optimizer unit tests,
+;; which assert WHICH clause decided a loop and not merely that it was refused.
+(define (opt-bce-trace-reason-code) : i64
+  opt-bce-trace-reason)
+
 (define (opt-bce-trace-derivation! [derived : i64] [kept : i64]) : unit
   (begin
     (set! opt-bce-trace-derived derived)
@@ -94036,6 +94277,12 @@
               0)
             instr-max)
           (opt-bce-reason-body-too-big)]
+        ;; The scan's own entry (`opt-bce-mb-loop-shape`) now asks both of these
+        ;; before it asks about the preheader, so on that path they are already
+        ;; decided. They stay here as this function's own guarantee of the
+        ;; one-clone-per-loop invariant above, for any caller that reaches it
+        ;; without having asked: dropping them would let a clone be versioned
+        ;; again, which the growth budget does not price.
         [(opt-bce-mb-label-in-clone? header) (opt-bce-reason-already-versioned)]
         [(opt-cfg-block-exists?
             (compiler-opt-global-shared-view blocks)
@@ -94192,6 +94439,15 @@
 ;; no other loop header, true only the nests. Every loop belongs to exactly
 ;; one phase, and the driver runs the flat phase first (see
 ;; `opt-bce-mb-loops-scan-phased`).
+;; Whether the loop reached this scan without a dedicated preheader. A
+;; predicate rather than an arm of the outer match, because BCE-3's census
+;; showed that the ORDER in which this scan asks the question is what its
+;; vocabulary means -- see the clause below.
+(define (opt-bce-mb-preheader-missing? [preheader : OptLoopPreheader]) : bool
+  (match preheader
+    [(OptLoopPreheader.No) true]
+    [(OptLoopPreheader.Some _) false]))
+
 (define (opt-bce-mb-loop-shape
   [blocks : ir.CompilerIrBlockList]
   [loops : OptNaturalLoopList]
@@ -94203,66 +94459,110 @@
     [(OptNaturalLoop.Loop header latch body preheader)
       (let
         [_trace : unit (opt-bce-trace-begin! free?)]
-        (match preheader
-          [(OptLoopPreheader.No)
-            (opt-bce-trace-refuse-mb-shape (opt-bce-reason-no-preheader))]
-          [(OptLoopPreheader.Some pred)
-            (let
-              [nest? : bool
-                (opt-bce-mb-has-nested-loop?
-                  (compiler-opt-global-shared-view loops)
-                  header
-                  (compiler-opt-global-shared-view body.labels))]
-              [reason : i64
-                (cond
-                  ;; SINGLE-BLOCK self-loops belong to the dedicated pass above,
-                  ;; EXCEPT for the one thing that pass will not clone: a direct
-                  ;; call. `opt-bce-version-body-instr-ok?` has no call in it, and
-                  ;; the note at `opt-bce-mb-body-instr-ok?` assumed this scan
-                  ;; already reached such loops -- it did not, because of this very
-                  ;; clause, so a one-block loop holding a call was versioned by
-                  ;; neither pass. gvn_table's `gvn-run-block` is the measured
-                  ;; shape: a self-loop whose step-6 derived phi reads
-                  ;; `tokens[pos]` .. `tokens[pos+5]` around one `gvn-dispatch`
-                  ;; call, whose extremal pair derives as one derived family.
-                  ;; Everything downstream already prices and classifies the call
-                  ;; (opt-bce-mb-call-clone-min-derived, opt-bce-mb-stable-instr?);
-                  ;; only admission was missing. The single-block pass still runs
-                  ;; FIRST every round, so every call-free self-loop it can take is
-                  ;; still its.
-                  ;;
-                  ;; TRACING: this and the phase clause below are the two silences
-                  ;; that are NOT verdicts about the loop. The loop gets its line
-                  ;; from the scan (or the phase) that does own it, and reporting
-                  ;; it here as well would count the same loop twice, so both
-                  ;; record `none` -- the code the emission site reads as "this
-                  ;; step examined nothing". An entry header is a real refusal and
-                  ;; keeps its own code.
-                  [(and
-                      (= header latch)
-                      (<
-                        (opt-bce-mb-body-calls
-                          (compiler-opt-global-shared-view body.blocks)
-                          0)
-                        1))
-                    (opt-bce-reason-none)]
-                  [(if nested?
-                      (not nest?)
-                      nest?)
-                    (opt-bce-reason-none)]
-                  [(= header entry-label) (opt-bce-reason-entry-block)]
-                  [else (opt-bce-reason-ok)])]
-              (if (= reason (opt-bce-reason-ok))
-                (opt-bce-mb-loop-shape-with-preheader
-                  blocks
-                  loops
-                  nested?
-                  free?
-                  header
-                  latch
-                  body
-                  pred)
-                (opt-bce-trace-refuse-mb-shape reason)))]))]))
+        [nest? : bool
+          (opt-bce-mb-has-nested-loop?
+            (compiler-opt-global-shared-view loops)
+            header
+            (compiler-opt-global-shared-view body.labels))]
+        [reason : i64
+          (cond
+            ;; SINGLE-BLOCK self-loops belong to the dedicated pass above,
+            ;; EXCEPT for the one thing that pass will not clone: a direct
+            ;; call. `opt-bce-version-body-instr-ok?` has no call in it, and
+            ;; the note at `opt-bce-mb-body-instr-ok?` assumed this scan
+            ;; already reached such loops -- it did not, because of this very
+            ;; clause, so a one-block loop holding a call was versioned by
+            ;; neither pass. gvn_table's `gvn-run-block` is the measured
+            ;; shape: a self-loop whose step-6 derived phi reads
+            ;; `tokens[pos]` .. `tokens[pos+5]` around one `gvn-dispatch`
+            ;; call, whose extremal pair derives as one derived family.
+            ;; Everything downstream already prices and classifies the call
+            ;; (opt-bce-mb-call-clone-min-derived, opt-bce-mb-stable-instr?);
+            ;; only admission was missing. The single-block pass still runs
+            ;; FIRST every round, so every call-free self-loop it can take is
+            ;; still its.
+            ;;
+            ;; TRACING: this and the phase clause below are the two silences
+            ;; that are NOT verdicts about the loop. The loop gets its line
+            ;; from the scan (or the phase) that does own it, and reporting
+            ;; it here as well would count the same loop twice, so both
+            ;; record `none` -- the code the emission site reads as "this
+            ;; step examined nothing". An entry header is a real refusal and
+            ;; keeps its own code.
+            [(and
+                (= header latch)
+                (<
+                  (opt-bce-mb-body-calls
+                    (compiler-opt-global-shared-view body.blocks)
+                    0)
+                  1))
+              (opt-bce-reason-none)]
+            [(if nested?
+                (not nest?)
+                nest?)
+              (opt-bce-reason-none)]
+            ;; IDEMPOTENCE BEFORE SHAPE. These two tests -- the header is
+            ;; itself a clone label, and this header already owns a
+            ;; `__bce_guard` -- used to sit below, inside
+            ;; `opt-bce-mb-loop-shape-with-preheader`, so a loop this pass
+            ;; had ALREADY versioned could only reach them through the
+            ;; preheader test above. It never did: versioning a loop
+            ;; REMOVES its preheader (the `__bce_guard` chain the rewrite
+            ;; puts in front of the header is a branch, not a
+            ;; single-successor block), so every later phase and every
+            ;; later pipeline round re-examined a finished loop and
+            ;; reported it as `shape:no-preheader`.
+            ;;
+            ;; That is not a verdict about the loop's shape; it is the
+            ;; pass reading its own footprint. Measured at 46df0e08 it was
+            ;; the whole of that reason's census: of the loops reported
+            ;; `no-preheader` on cfg_domloops / ssa_construct /
+            ;; intern_table / callgraph_scc, 23/53/15/18 were the pass's
+            ;; own `__bce_fast` clones and 23/51/15/18 were loops it had
+            ;; versioned -- 0, 0, 0 and 1 were loops that genuinely lacked
+            ;; one, and that one holds no bounds check at all. Asking the
+            ;; idempotence questions first costs nothing (both are pure
+            ;; functions of `header` and `blocks`) and leaves
+            ;; `shape:no-preheader` naming only loops that really lack a
+            ;; preheader. No loop's ADMISSION changes: a loop that reached
+            ;; the clauses below with a preheader was refused there for
+            ;; the same reason it is refused here.
+            [(opt-bce-mb-label-in-clone? header)
+              (opt-bce-reason-already-versioned)]
+            [(opt-cfg-block-exists?
+                (compiler-opt-global-shared-view blocks)
+                (ir.compiler-ir-label
+                  (str_cat.str-cat
+                    (ir.compiler-ir-label-text header)
+                    "__bce_guard")))
+              (opt-bce-reason-already-versioned)]
+            ;; And the preheader test itself moves below the two silences
+            ;; above for the same reason: a loop this phase does not own,
+            ;; or one the single-block scan owns, gets its line from the
+            ;; scan that owns it, and a preheaderless loop used to get an
+            ;; extra line here from every phase as well.
+            [(opt-bce-mb-preheader-missing?
+                (compiler-opt-global-shared-view preheader))
+              (opt-bce-reason-no-preheader)]
+            [(= header entry-label) (opt-bce-reason-entry-block)]
+            [else (opt-bce-reason-ok)])]
+        (if (= reason (opt-bce-reason-ok))
+          (match preheader
+            [(OptLoopPreheader.Some pred)
+              (opt-bce-mb-loop-shape-with-preheader
+                blocks
+                loops
+                nested?
+                free?
+                header
+                latch
+                body
+                pred)]
+            ;; Unreachable: the clause above already refused a loop with no
+            ;; preheader. The arm exists because the enum is total.
+            [(OptLoopPreheader.No)
+              (opt-bce-trace-refuse-mb-shape (opt-bce-reason-no-preheader))])
+          (opt-bce-trace-refuse-mb-shape reason)))]))
 
 ;; --- outside uses --------------------------------------------------------------
 ;; Uses of loop defs anywhere outside the loop, except as the loop-edge

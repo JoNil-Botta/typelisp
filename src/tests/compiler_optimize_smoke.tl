@@ -3421,6 +3421,14 @@
       (compiler_optimize_tests.compiler-optimize-natural-loop-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-preheader-synthesis-self-test"
+      (compiler_optimize_tests.compiler-optimize-preheader-synthesis-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-shape-clause-order-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-shape-clause-order-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-loop-rotation-self-test"
       (compiler_optimize_tests.compiler-optimize-loop-rotation-self-test)
       42)

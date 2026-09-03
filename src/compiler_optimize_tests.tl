@@ -56621,7 +56621,7 @@
 ;; --- invariant-offset Gep splitting: a refused preheader is not fatal --------
 ;; Two candidate loops. `rem` comes first in block order and its header phi takes
 ;; DIFFERENT values from its two outside predecessors, so
-;; `opt-loop-preheaders-header-compatible?` cannot fold them into one preheader
+;; `opt-loop-preheaders-header-reason` cannot fold them into one preheader
 ;; and synthesis refuses -- the shape every unrolled loop's REMAINDER header has
 ;; (the unroll guard supplies 0, the unroll body supplies the counter). `loopb`
 ;; behind it is an ordinary preheaderless candidate. Ending the synthesis round
@@ -64420,6 +64420,403 @@
                   (compiler_ir_types.CompilerIrMaybeValue.Some
                     (compiler_ir_types.CompilerIrValue.Var 1)))))
             (compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+;; --- BCE-3: preheader synthesis verdicts -------------------------------------
+;;
+;; The synthesis pass had no tracer, so a loop that reached the versioner with
+;; no preheader could not be told apart from a loop this pass refused. These
+;; fixtures pin the CLAUSE the tracer names for each of the three shapes the
+;; census distinguishes, because the clause code is what a census reads -- an
+;; outcome-only test would pass with every reason reported as `other`.
+(define (opt-preheader-rotated-guard-blocks) : compiler_ir_types.CompilerIrBlockList
+  ;; A rotated loop: its ONE outside predecessor is the zero-trip guard, whose
+  ;; terminator is a Branch, so it is not a safe preheader and the pass has to
+  ;; split that edge.
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Bool true)
+          (compiler_ir_types.compiler-ir-label "loop")
+          (compiler_ir_types.compiler-ir-label "exit"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Bool true)
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-label "exit"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "body")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "loop"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 0)))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-preheader-two-entry-blocks
+  [left : compiler_ir_types.CompilerIrValue]
+  [right : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrBlockList
+  ;; Two outside predecessors, and a header phi that takes `left` from one and
+  ;; `right` from the other. With the two equal the outside edges collapse onto
+  ;; one preheader edge; with them different they cannot, which is the
+  ;; `header-phi` clause.
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Bool true)
+          (compiler_ir_types.compiler-ir-label "pre-one")
+          (compiler_ir_types.compiler-ir-label "pre-two"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "pre-one")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "loop"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "pre-two")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "loop"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "loop")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Phi
+                0
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  left
+                  (compiler_ir_types.compiler-ir-label "pre-one")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                    right
+                    (compiler_ir_types.compiler-ir-label "pre-two")
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Bool true)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-label "exit"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "body")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "loop"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "exit")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.I64 0)))))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+(define (opt-preheader-safe-blocks) : compiler_ir_types.CompilerIrBlockList
+  ;; The loop already owns a safe preheader: `entry`'s only successor is the
+  ;; header, so the pass has nothing to do and must leave the CFG alone.
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "loop"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Bool true)
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-label "exit"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "body")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "loop"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 0)))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; The outside predecessor set the two-entry fixtures present to the header
+;; clause, built by hand so the clause can be asked directly.
+(define (opt-preheader-two-entry-outside) : compiler_optimize.OptLabelSet
+  (compiler_optimize.opt-label-add
+    (compiler_optimize.opt-label-add
+      (compiler_optimize.OptLabelSet.Nil)
+      (compiler_ir_types.compiler-ir-label "pre-one"))
+    (compiler_ir_types.compiler-ir-label "pre-two")))
+
+(define (opt-preheader-instr-total
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (+
+        (match (compiler_ir_types.compiler-ir-global-shared-view block)
+          [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+            (compiler_ir_types.compiler-ir-instr-seq-count instrs)])
+        (opt-preheader-instr-total
+          (compiler_optimize.compiler-opt-box-shared-view rest)))]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-preheader-instr-total
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-preheader-loop-has-preheader?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [header : String]
+  [latch : String]) : bool
+  (match (compiler_optimize.opt-natural-loop-find
+    (compiler_optimize.opt-cfg-natural-loops blocks)
+    (compiler_ir_types.compiler-ir-label header)
+    (compiler_ir_types.compiler-ir-label latch))
+    [(compiler_optimize.OptMaybeNaturalLoop.No) false]
+    [(compiler_optimize.OptMaybeNaturalLoop.Some loop)
+      (match (compiler_optimize.opt-natural-loop-preheader loop)
+        [(compiler_optimize.OptLoopPreheader.No) false]
+        [(compiler_optimize.OptLoopPreheader.Some _) true])]))
+
+(define (compiler-optimize-preheader-synthesis-self-test) : i64
+  (let
+    ;; (c) The rotated guard: one outside predecessor, terminator a Branch.
+    [guard-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-loop-preheaders-blocks
+        (opt-preheader-rotated-guard-blocks))]
+    ;; (b) Two outside predecessors whose header phi values DIFFER.
+    [conflict-input : compiler_ir_types.CompilerIrBlockList
+      (opt-preheader-two-entry-blocks
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ir_types.CompilerIrValue.I64 2))]
+    [conflict-reason : i64
+      (compiler_optimize.opt-loop-preheaders-header-reason
+        (compiler_optimize.compiler-opt-global-shared-view conflict-input)
+        (compiler_ir_types.compiler-ir-label "loop")
+        (opt-preheader-two-entry-outside))]
+    [conflict-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-loop-preheaders-blocks conflict-input)]
+    ;; The same shape with the two values EQUAL: the outside edges collapse and
+    ;; the pass takes it, which is what makes the clause above about the values
+    ;; and not about the predecessor count.
+    [agree-input : compiler_ir_types.CompilerIrBlockList
+      (opt-preheader-two-entry-blocks
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ir_types.CompilerIrValue.I64 1))]
+    [agree-reason : i64
+      (compiler_optimize.opt-loop-preheaders-header-reason
+        (compiler_optimize.compiler-opt-global-shared-view agree-input)
+        (compiler_ir_types.compiler-ir-label "loop")
+        (opt-preheader-two-entry-outside))]
+    [agree-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-loop-preheaders-blocks agree-input)]
+    ;; A loop that already owns a safe preheader must come back untouched.
+    [safe-input : compiler_ir_types.CompilerIrBlockList
+      (opt-preheader-safe-blocks)]
+    [safe-block-count : i64
+      (compiler_ir_types.compiler-ir-block-list-count
+        (compiler_optimize.compiler-opt-global-shared-view safe-input))]
+    [safe-instr-count : i64
+      (opt-preheader-instr-total
+        (compiler_optimize.compiler-opt-global-shared-view safe-input))]
+    [safe-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-loop-preheaders-blocks safe-input)]
+    (cond
+      ;; The rotated guard's edge is split, and the new block is the loop's
+      ;; preheader.
+      [(not
+          (compiler_optimize.opt-cfg-block-exists?
+            (compiler_optimize.compiler-opt-global-shared-view guard-blocks)
+            (compiler_ir_types.compiler-ir-label "loop__preheader")))
+        1]
+      [(not
+          (opt-preheader-loop-has-preheader?
+            (compiler_optimize.compiler-opt-global-shared-view guard-blocks)
+            "loop"
+            "body"))
+        2]
+      ;; The disagreeing header phi is refused, and by THAT clause.
+      [(not
+          (=
+            conflict-reason
+            (compiler_optimize.opt-preheader-reason-header-phi)))
+        3]
+      [(compiler_optimize.opt-cfg-block-exists?
+          (compiler_optimize.compiler-opt-global-shared-view conflict-blocks)
+          (compiler_ir_types.compiler-ir-label "loop__preheader"))
+        4]
+      [(opt-preheader-loop-has-preheader?
+          (compiler_optimize.compiler-opt-global-shared-view conflict-blocks)
+          "loop"
+          "body")
+        5]
+      ;; The agreeing header phi is admitted, and by the `ok` clause.
+      [(not (= agree-reason (compiler_optimize.opt-preheader-reason-ok))) 6]
+      [(not
+          (compiler_optimize.opt-cfg-block-exists?
+            (compiler_optimize.compiler-opt-global-shared-view agree-blocks)
+            (compiler_ir_types.compiler-ir-label "loop__preheader")))
+        7]
+      [(not
+          (opt-preheader-loop-has-preheader?
+            (compiler_optimize.compiler-opt-global-shared-view agree-blocks)
+            "loop"
+            "body"))
+        8]
+      ;; The loop that already owns one is left alone: no block added, no
+      ;; instruction added, and no synthesized label anywhere.
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count
+              (compiler_optimize.compiler-opt-global-shared-view safe-blocks))
+            safe-block-count))
+        9]
+      [(not
+          (=
+            (opt-preheader-instr-total
+              (compiler_optimize.compiler-opt-global-shared-view safe-blocks))
+            safe-instr-count))
+        10]
+      [(compiler_optimize.opt-cfg-block-exists?
+          (compiler_optimize.compiler-opt-global-shared-view safe-blocks)
+          (compiler_ir_types.compiler-ir-label "loop__preheader"))
+        11]
+      [else 42])))
+
+;; --- BCE-3 follow-up: the versioner reports a finished loop as finished ------
+;;
+;; Versioning a loop removes its preheader (the `__bce_guard` chain the rewrite
+;; puts in front of the header is a branch), so every later phase and round
+;; re-examines a loop the pass has already handled. The shape scan used to ask
+;; about the preheader FIRST, so those re-examinations were reported as
+;; `shape:no-preheader` and the census read as though the versioner was starved
+;; of preheaders. These fixtures are the two footprints the scan now recognizes
+;; before it asks about shape, plus the control that keeps `no-preheader`
+;; meaning what it says.
+(define (opt-bce-versioned-shape-blocks
+  [guard : String]
+  [header : String]
+  [body : String]) : compiler_ir_types.CompilerIrBlockList
+  ;; `guard` is entered from `entry` and branches into the loop, so the loop's
+  ;; single outside predecessor has two successors and the loop has NO safe
+  ;; preheader -- exactly the CFG a versioned loop is left in. The labels are
+  ;; interned once because a String argument moves on first use.
+  (let
+    [guard-label : i64 (compiler_ir_types.compiler-ir-label guard)]
+    [header-label : i64 (compiler_ir_types.compiler-ir-label header)]
+    [body-label : i64 (compiler_ir_types.compiler-ir-label body)]
+    [exit-label : i64 (compiler_ir_types.compiler-ir-label "exit")]
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs (compiler_ir_types.CompilerIrInstr.Jump guard-label)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          guard-label
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Bool true)
+              header-label
+              exit-label)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            header-label
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Bool true)
+                body-label
+                exit-label)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              body-label
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump header-label)))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                exit-label
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.I64 0)))))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+;; Offer one loop to the multi-block shape scan and hand back the clause it
+;; recorded, which is the exact value the `bce-version|` line prints.
+(define (opt-bce-shape-clause-for
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [header : String]
+  [latch : String]) : i64
+  (let
+    [loops : compiler_optimize.OptNaturalLoopList
+      (compiler_optimize.opt-cfg-natural-loops
+        (compiler_optimize.compiler-opt-global-shared-view blocks))]
+    (match (compiler_optimize.opt-natural-loop-find
+      (compiler_optimize.compiler-opt-global-shared-view loops)
+      (compiler_ir_types.compiler-ir-label header)
+      (compiler_ir_types.compiler-ir-label latch))
+      [(compiler_optimize.OptMaybeNaturalLoop.No) (- 0 1)]
+      [(compiler_optimize.OptMaybeNaturalLoop.Some loop)
+        (let
+          [_shape : compiler_optimize.OptBceMbMaybeShape
+            (compiler_optimize.opt-bce-mb-loop-shape
+              blocks
+              loops
+              (compiler_ir_types.compiler-ir-label "entry")
+              false
+              false
+              loop)]
+          (compiler_optimize.opt-bce-trace-reason-code))])))
+
+(define (compiler-optimize-bce-shape-clause-order-self-test) : i64
+  (let
+    ;; The pass's own fast clone: the header label carries `__bce_fast`.
+    [clone-clause : i64
+      (opt-bce-shape-clause-for
+        (opt-bce-versioned-shape-blocks
+          "loop__bce_guard"
+          "loop__bce_fast"
+          "body__bce_fast")
+        "loop__bce_fast"
+        "body__bce_fast")]
+    ;; A loop this pass versioned: its `<header>__bce_guard` block exists.
+    [guarded-clause : i64
+      (opt-bce-shape-clause-for
+        (opt-bce-versioned-shape-blocks "loop__bce_guard" "loop" "body")
+        "loop"
+        "body")]
+    ;; The control: the same preheaderless CFG with neither footprint still
+    ;; reports `no-preheader`, so the reorder did not blanket-suppress it.
+    [plain-clause : i64
+      (opt-bce-shape-clause-for
+        (opt-bce-versioned-shape-blocks "guard" "loop" "body")
+        "loop"
+        "body")]
+    (cond
+      [(not
+          (= clone-clause (compiler_optimize.opt-bce-reason-already-versioned)))
+        1]
+      [(not
+          (=
+            guarded-clause
+            (compiler_optimize.opt-bce-reason-already-versioned)))
+        2]
+      [(not (= plain-clause (compiler_optimize.opt-bce-reason-no-preheader))) 3]
+      [else 42])))
 
 (define (compiler-optimize-natural-loop-self-test) : i64
   (let
@@ -83011,15 +83408,19 @@
             (opt-bce-mb-test-function (opt-bce-mb-test-blocks 2)))
           (compiler_optimize.opt-bce-reason-floor)))
       6]
-    ;; and the fast clone the versioning left behind is offered again: its
+    ;; and the fast clone the versioning left behind is offered again. Its
     ;; header's only outside predecessor is the guard block, which branches two
-    ;; ways, so it has no dedicated preheader and is refused on that
+    ;; ways, so it has no dedicated preheader either -- but that is the pass
+    ;; reading its own footprint, not a verdict about the loop, so the scan asks
+    ;; the two idempotence questions FIRST and the clone is refused as what it
+    ;; is. `shape:no-preheader` now names only a loop that really lacks one
+    ;; (`compiler-optimize-bce-shape-clause-order-self-test` keeps the control).
     [(not
         (=
           (compiler_optimize.opt-bce-version-reason-probe
             (- 0 1)
             (opt-bce-mb-test-function (opt-vt-versioned 3)))
-          (compiler_optimize.opt-bce-reason-no-preheader)))
+          (compiler_optimize.opt-bce-reason-already-versioned)))
       7]
     [else 42]))
 
@@ -86692,7 +87093,7 @@
   (test.assert-i64-eq
     (compiler-optimize-vt-trace-reason-self-test)
     42
-    "the clause the versioner records for `--trace-passes` names the decision: `ok` for a versioned loop, `guard:derived-zero` for a body whose derivation proves nothing, `shape:not-a-counter` for a loop test the recovery cannot read, `shape:no-check` for a body with nothing to remove, `shape:step-not-unit` for a descending counter of magnitude two, `guard:floor` for a call-carrying clone that owes more removals than it has, and `shape:no-preheader` for the fast clone a versioning leaves behind"))
+    "the clause the versioner records for `--trace-passes` names the decision: `ok` for a versioned loop, `guard:derived-zero` for a body whose derivation proves nothing, `shape:not-a-counter` for a loop test the recovery cannot read, `shape:no-check` for a body with nothing to remove, `shape:step-not-unit` for a descending counter of magnitude two, `guard:floor` for a call-carrying clone that owes more removals than it has, and `shape:already-versioned` for the fast clone a versioning leaves behind"))
 
 (test
   ck-local-allocation-shape-length-equality

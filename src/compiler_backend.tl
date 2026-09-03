@@ -54581,15 +54581,30 @@
       (if (and need-index-scratch (not (string.eq index-home "")))
         1
         0)]
+    ;; Both planned homes are CONSUMED through planned-or-scavenge-reg-here,
+    ;; never read raw. The planner may hand the dispatch a register it
+    ;; deliberately BORROWED from a live-through value (CompilerRegScratch-
+    ;; Assignment.preserve): the Win64 self-host reaches that in a function
+    ;; whose first plan homed the table register in %rbp, whose FPO audit then
+    ;; demoted it, and whose re-plan without %rbp had no free register left for
+    ;; the table -- it borrowed the `expr` parameter's %rsi. Reading the
+    ;; spelling raw skipped compiler-backend-preserve-planned-register!, so the
+    ;; emergency wrap was never armed, `emergency-pending` stayed false, and the
+    ;; plain `leaq table,%rsi; jmp *(%rsi,idx,8)` form went out with no restore:
+    ;; the parameter was destroyed on every arm (the scratch-vreg + TLCI twin
+    ;; on Windows failed typechecking its own macro expansions). Consuming
+    ;; through the helper arms the borrow, which selects the slot-indirect
+    ;; emergency form below (GAP2b-v2) that restores the occupant BEFORE the
+    ;; transfer; it also fails closed under scratch-vreg when a modeled scratch
+    ;; is missing, and is byte-identical for a non-planned (scavenged) home.
     [index-reg : String
       (if need-index-scratch
-        (if (string.eq planned-index-reg "")
-          (compiler-backend-scavenge-reg-here
-            index-exclude
-            index-exclude-n
-            "%r8"
-            backend-state)
-          planned-index-reg)
+        (compiler-backend-planned-or-scavenge-reg-here
+          planned-index-reg
+          index-exclude
+          index-exclude-n
+          "%r8"
+          backend-state)
         index-home)]
     [table-exclude : (__tl_dyn-array String)
       (compiler-backend-one-exclude
@@ -54597,13 +54612,12 @@
     [table-reg : String
       (if (compiler-backend-state-absolute-switch-ok? backend-state)
         ""
-        (if (string.eq planned-table-reg "")
-          (compiler-backend-scavenge-reg-here
-            table-exclude
-            1
-            "%r9"
-            backend-state)
-          planned-table-reg))]
+        (compiler-backend-planned-or-scavenge-reg-here
+          planned-table-reg
+          table-exclude
+          1
+          "%r9"
+          backend-state))]
     [index-load : ResultCompilerBackend
       (if need-index-scratch
         (compiler-backend-emit-load-value-with-plan

@@ -19425,6 +19425,47 @@ g:
         (compiler_ir_types.compiler-ir-label "two")))
     (compiler_ir_types.compiler-ir-label "other")))
 
+(define (compiler-backend-switch-test-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler-backend-test-instr-seq-prepend
+        (compiler-backend-switch-test-instr)
+        (compiler_ir_types.compiler-ir-instr-seq-empty)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "zero")
+        (compiler-backend-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.I64 0)))
+          (compiler_ir_types.compiler-ir-instr-seq-empty)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "one")
+          (compiler-backend-test-instr-seq-prepend
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.I64 1)))
+            (compiler_ir_types.compiler-ir-instr-seq-empty)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "two")
+            (compiler-backend-test-instr-seq-prepend
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 2)))
+              (compiler_ir_types.compiler-ir-instr-seq-empty)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "other")
+              (compiler-backend-test-instr-seq-prepend
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.I64 42)))
+                (compiler_ir_types.compiler-ir-instr-seq-empty)))
+            compiler_ir_types.CompilerIrBlockList.Nil))))))
+
 (define (compiler-backend-switch-test-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
@@ -19434,45 +19475,7 @@ g:
         (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         1
-        (compiler_ir_types.compiler-ir-block-cons
-          (compiler_ir_types.CompilerIrBlock.Block
-            (compiler_ir_types.compiler-ir-label "entry")
-            (compiler-backend-test-instr-seq-prepend
-              (compiler-backend-switch-test-instr)
-              (compiler_ir_types.compiler-ir-instr-seq-empty)))
-          (compiler_ir_types.compiler-ir-block-cons
-            (compiler_ir_types.CompilerIrBlock.Block
-              (compiler_ir_types.compiler-ir-label "zero")
-              (compiler-backend-test-instr-seq-prepend
-                (compiler_ir_types.CompilerIrInstr.Return
-                  (compiler_ir_types.CompilerIrMaybeValue.Some
-                    (compiler_ir_types.CompilerIrValue.I64 0)))
-                (compiler_ir_types.compiler-ir-instr-seq-empty)))
-            (compiler_ir_types.compiler-ir-block-cons
-              (compiler_ir_types.CompilerIrBlock.Block
-                (compiler_ir_types.compiler-ir-label "one")
-                (compiler-backend-test-instr-seq-prepend
-                  (compiler_ir_types.CompilerIrInstr.Return
-                    (compiler_ir_types.CompilerIrMaybeValue.Some
-                      (compiler_ir_types.CompilerIrValue.I64 1)))
-                  (compiler_ir_types.compiler-ir-instr-seq-empty)))
-              (compiler_ir_types.compiler-ir-block-cons
-                (compiler_ir_types.CompilerIrBlock.Block
-                  (compiler_ir_types.compiler-ir-label "two")
-                  (compiler-backend-test-instr-seq-prepend
-                    (compiler_ir_types.CompilerIrInstr.Return
-                      (compiler_ir_types.CompilerIrMaybeValue.Some
-                        (compiler_ir_types.CompilerIrValue.I64 2)))
-                    (compiler_ir_types.compiler-ir-instr-seq-empty)))
-                (compiler_ir_types.compiler-ir-block-cons
-                  (compiler_ir_types.CompilerIrBlock.Block
-                    (compiler_ir_types.compiler-ir-label "other")
-                    (compiler-backend-test-instr-seq-prepend
-                      (compiler_ir_types.CompilerIrInstr.Return
-                        (compiler_ir_types.CompilerIrMaybeValue.Some
-                          (compiler_ir_types.CompilerIrValue.I64 42)))
-                      (compiler_ir_types.compiler-ir-instr-seq-empty)))
-                  compiler_ir_types.CompilerIrBlockList.Nil))))))
+        (compiler-backend-switch-test-blocks))
       (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
@@ -20171,6 +20174,92 @@ g:
       (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
+(define (compiler-backend-switch-dispatch-planned-table-asm [borrowed : bool]) : compiler_backend.ResultCompilerBackend
+  (let
+    [program-index : compiler_backend.CompilerBackendProgramIndex
+      (compiler_backend.compiler-backend-program-index-build
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-function-seq-empty)
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
+    [backend-state : compiler_backend.CompilerBackendState
+      program-index.backend-state]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-rax))
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
+    (begin
+      (compiler-backend-test-scavenge-install-ctx!
+        "switch_planned_table"
+        (compiler_ir_types.compiler-ir-param-seq-empty)
+        (compiler_ast_types.AstType.I64)
+        1
+        (compiler-backend-switch-test-blocks)
+        (owned_view.compiler-owned-shared-view assignments)
+        backend-state)
+      ;; The PIC/Win64 form: the dispatch needs a table register.
+      (compiler_backend.compiler-backend-state-set-absolute-switch-ok!
+        backend-state
+        false)
+      ;; What the plan lookup records when the allocator BORROWED %rsi from a
+      ;; live-through value for this step (CompilerRegScratchAssignment.preserve).
+      (if borrowed
+        (compiler_backend.compiler-backend-current-planned-preserve-add!
+          (compiler_backend.compiler-backend-state-function-state backend-state)
+          compiler_abi.compiler-reg-id-rsi)
+        unit)
+      (compiler_backend.compiler-backend-emit-switch-dispatch
+        backend-state
+        "switch_planned_table"
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        0
+        3
+        (compiler_ir_types.compiler-ir-label "other")
+        false
+        assignments
+        ""
+        "%rsi"))))
+
+;; A planned table register the allocator BORROWED from a live-through value
+;; must reach the dispatch through the arming helper: the emitted form is then
+;; the slot-indirect one (target stashed, occupant restored BEFORE the
+;; transfer), never `jmp *(%rsi,idx,8)` with the occupant destroyed. The Win64
+;; scratch-vreg self-host reached exactly this in ctfe-quote-expr: the first
+;; plan homed the table register in %rbp, the FPO audit demoted the function,
+;; and the re-plan without %rbp borrowed the `expr` parameter's %rsi; the raw
+;; spelling went out unarmed and every arm read a destroyed parameter. The
+;; control keeps the plain form for a planned register that overlaps nothing.
+(define (compiler-backend-switch-dispatch-borrowed-table-reg-ok?) : bool
+  (and
+    (match (compiler-backend-switch-dispatch-planned-table-asm true)
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "_disp_j:\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    jmp *(%rsi"))
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            ", %rsi\n    jmp *"))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])
+    (match (compiler-backend-switch-dispatch-planned-table-asm false)
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    jmp *(%rsi,%rax,8)\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "_disp_j")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
 (define (compiler-backend-switch-negative-case-label-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-program-linux
     (compiler-backend-switch-negative-case-program))
@@ -20352,6 +20441,7 @@ g:
     (compiler-backend-switch-base-asm-ok?)
     (compiler-backend-switch-shape-diagnostic-ok?)
     (compiler-backend-switch-phi-edge-copy-ok?)
+    (compiler-backend-switch-dispatch-borrowed-table-reg-ok?)
     (compiler-backend-switch-negative-case-label-ok?)
     (compiler-backend-switch-object-image-ok?)
     (compiler-backend-switch-base-object-image-ok?)

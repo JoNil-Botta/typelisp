@@ -29008,25 +29008,6 @@
                       result-ty))])])]
         [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]))
 
-;; SROA-2 item 2. A memory-resident nominal aggregate whose every field and
-;; payload is Copy -- no owning handle anywhere inside it, no `cleanup`
-;; destructor on any declaration it reaches, which is exactly what the move
-;; checker's `tc-type-copyable?` decides -- has nothing for a generated clone
-;; helper to do beyond reproducing its bytes. The helper spells that as a match
-;; on the tag with a per-arm rebuild into an sret buffer, and after the
-;; aggregate word split that match survives as phis over the arms even though
-;; the value it produces is the source verbatim. Lower it as the whole-buffer
-;; copy it is: one fresh inline buffer and one `copy_bytes`, which the split
-;; then turns into word loads from the source with no match at all.
-;;
-;; This is the lowering half of the packet's item 2 rather than a fold in the
-;; split, because the split can only ever recover the copy from a shape it has
-;; to re-prove per call site, and this decides it once from the type.
-(define (lower-clone-whole-buffer-copy?
-  [ctx : tc_core.TcContext]
-  [ty : ast.AstType]) : bool
-  (tc_core.tc-type-copyable? ctx ty))
-
 (define (lower-clone-dispatch
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -29084,27 +29065,17 @@
       ;; register, so cloning it is a value copy -- no deep-clone helper, no
       ;; memory traversal.
       [(ast.AstType.Enum name)
-        (cond
-          [(lower-type-register-resident?
-              (lower-global-shared-view ctx)
-              (lower-global-shared-view clone-ty))
-            (ResultLowerExpr.Ok (LowerExpr.Expr state value clone-ty))]
-          [(lower-clone-whole-buffer-copy?
-              (lower-global-shared-view ctx)
-              (lower-global-shared-view clone-ty))
-            (lower-copy-inline-aggregate-to-inline ctx state value clone-ty)]
-          [else (lower-clone-named ctx state env name value clone-ty)])]
+        (if (lower-type-register-resident?
+          (lower-global-shared-view ctx)
+          (lower-global-shared-view clone-ty))
+          (ResultLowerExpr.Ok (LowerExpr.Expr state value clone-ty))
+          (lower-clone-named ctx state env name value clone-ty))]
       [(ast.AstType.Struct name)
-        (cond
-          [(lower-type-register-resident?
-              (lower-global-shared-view ctx)
-              (lower-global-shared-view clone-ty))
-            (ResultLowerExpr.Ok (LowerExpr.Expr state value clone-ty))]
-          [(lower-clone-whole-buffer-copy?
-              (lower-global-shared-view ctx)
-              (lower-global-shared-view clone-ty))
-            (lower-copy-inline-aggregate-to-inline ctx state value clone-ty)]
-          [else (lower-clone-named ctx state env name value clone-ty)])]
+        (if (lower-type-register-resident?
+          (lower-global-shared-view ctx)
+          (lower-global-shared-view clone-ty))
+          (ResultLowerExpr.Ok (LowerExpr.Expr state value clone-ty))
+          (lower-clone-named ctx state env name value clone-ty))]
       [(ast.AstType.Var name)
         (lower-clone-named ctx state env name value clone-ty)]
       [_

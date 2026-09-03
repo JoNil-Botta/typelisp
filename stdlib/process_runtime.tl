@@ -2270,8 +2270,8 @@
 ;: Run a command and capture stdout, stderr, and exit status.
 ;: The caller must have validated command storage, the implementation count
 ;: cap, and every C-string-bound field through `stdlib.process`.
-;; lint-allow: function-name-case -- stable runtime ABI symbol
 (unsafe
+  ;; lint-allow: function-name-case -- stable runtime ABI symbol
   (define (tl_process_output [command : ProcessRuntimeCommand]) : ResultProcessRuntimeOutput
     (unsafe
       (cfg
@@ -2282,8 +2282,8 @@
 ;: Run a command with child stdout/stderr inherited from the caller and return
 ;: its status with no captured output payload.
 ;: The same validated-command preconditions as `tl_process_output` apply.
-;; lint-allow: function-name-case -- stable runtime ABI symbol
 (unsafe
+  ;; lint-allow: function-name-case -- stable runtime ABI symbol
   (define (tl_process_inherit [command : ProcessRuntimeCommand]) : ResultProcessRuntimeOutput
     (unsafe
       (cfg
@@ -2293,8 +2293,8 @@
 
 ;: Start a command without waiting; Windows reports async as unsupported.
 ;: The same validated-command preconditions as `tl_process_output` apply.
-;; lint-allow: function-name-case -- stable runtime ABI symbol
 (unsafe
+  ;; lint-allow: function-name-case -- stable runtime ABI symbol
   (define (tl_process_start [command : ProcessRuntimeCommand]) : ResultProcessRuntimeChild
     (unsafe
       (cfg
@@ -2303,8 +2303,8 @@
         (stdlib.process_runtime.linux-start command)))))
 
 ;: Wait for a started child; Windows reports async as unsupported.
-;; lint-allow: function-name-case -- stable runtime ABI symbol
 (unsafe
+  ;; lint-allow: function-name-case -- stable runtime ABI symbol
   (define (tl_process_wait [child : ProcessRuntimeChild]) : ResultProcessRuntimeOutput
     (unsafe
       (cfg

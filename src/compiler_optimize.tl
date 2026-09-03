@@ -252,10 +252,6 @@
   [verify-ir : bool]) : unit
   (begin
     (set! compiler-opt-debug-trace-passes trace-passes)
-    ;; RG-1: the register allocator's home tracer rides the same flag and the
-    ;; same command boundary, so `--trace-passes` turns both on and a command
-    ;; that does not ask for it leaves the allocator silent.
-    (reg.compiler-reg-debug-set-trace-homes! trace-passes)
     (set! compiler-opt-debug-verify-ir verify-ir)
     ;; Pass snapshots accumulate in a segmented buffer: each observation is
     ;; O(its rendered size) instead of a whole-prefix string copy (#6115).
@@ -131701,9 +131697,6 @@
 (define (opt-inline-checked-alloc-cost [func : ir.CompilerIrFunction]) : i64
   (let
     [_suppress-image-maps : unit (reg.compiler-reg-suppress-program-maps! true)]
-    ;; RG-1: and the allocator's home tracer, for the same reason the pass
-    ;; tracer is silenced around a measured plan.
-    [_suppress-reg-trace : unit (reg.compiler-reg-trace-set-suppressed! true)]
     [plan : reg.CompilerRegPlan
       (reg.compiler-reg-plan-function-scalar
         (compiler-opt-global-shared-view func))]
@@ -131727,7 +131720,6 @@
             0))
         (opt-inline-checked-spill-cost-from assignments weights 0 vars 0))]
     [_restore-image-maps : unit (reg.compiler-reg-suppress-program-maps! false)]
-    [_restore-reg-trace : unit (reg.compiler-reg-trace-set-suppressed! false)]
     cost))
 
 ;; `offset` and `entry-weight` place the body: `offset` is the loop depth its

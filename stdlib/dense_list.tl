@@ -162,10 +162,9 @@
           1
           capacity))]
     [new-capacity : Expr
-      (comptime.expr-int
-        (if zero-capacity
-          0
-          4))]
+      (if zero-capacity
+        (comptime.expr-int 0)
+        (comptime.expr-int 4))]
     [constructor-body : Expr
       (if shared-zero-capacity
         `(if (<= capacity 0)

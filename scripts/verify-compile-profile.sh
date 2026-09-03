@@ -1995,10 +1995,14 @@ if [ "$NL_HOST_OS" = windows ]; then
     # and stable result taxonomy: the authoritative Windows probe measured
     # 28,710 used nodes and crossed to 29 segments, 29,696 capacity, and 712,704
     # physical payload bytes.
+    # #7277's typed lint policy registry, groups, provenance, and resolver
+    # results cross the next boundary: the authoritative Windows probe measured
+    # 29,931 used nodes, 30 segments, 30,720 capacity, and 737,280 physical
+    # payload bytes.
     # #5407's semantic completion provider measured 26,662 used nodes and 27
     # segments on the pre-ownership mainline tree.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool macro_expand 29 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool macro_expand 30 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # #6828's dense flag-exit/BCE storage declarations cross the next type-pool
     # typecheck boundary: the authoritative Windows probe measured 9,221 used

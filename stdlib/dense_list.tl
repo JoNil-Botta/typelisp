@@ -225,58 +225,61 @@
           [(Expr.Begin decls) decls]
           [_ (expr-list-empty)])
         (expr-list-empty))]
-    (if (if (not caller-provided-fallback)
-      true
-      (if (> capability-count 3)
-        true
-        (not (= capability-count recognized-count))))
-      (comptime-error
-        "compiler-dense-list-operations: expected caller-provided fallback and unique `len`, `empty?`, or `append-from` capabilities")
-      `(begin
-        ,@shared-zero-decls
-        (define (,with-capacity-name [capacity : i64]) : ,list-type
-          ,constructor-body)
-        (define (,new-name) : ,list-type
-          (,with-capacity-name ,new-capacity))
-        ,@len-decls
-        ,@empty-decls
-        (define (,get-name
-          [v : (& v ,list-type)]
-          [index : i64]
-          [fallback-value : ,T]) : ,T
-          (if (and (>= index 0) (< index v.len))
-            (array-ref v.slots index)
-            fallback-value))
-        (define (,copy-range-name
-          [dst : (&mut dst (__tl_dyn-array ,T))]
-          [src : (& src (__tl_dyn-array ,T))]
-          [index : i64]
-          [count : i64]) : unit
-          (if (>= index count)
-            unit
-            (begin
-              (set! (array-ref dst index) (array-ref src index))
-              (,copy-range-name dst src (+ index 1) count))))
-        (define (,grow-name [v : (&mut v ,list-type)]) : unit
-          (let
-            [n : i64 v.len]
-            [old-cap : i64 (array-length v.slots)]
-            [new-cap : i64
-              (if (< old-cap 1)
-                1
-                (* old-cap 2))]
-            [bigger : (__tl_dyn-array ,T) (__tl_make-array ,T new-cap)]
-            (begin
-              (,copy-range-name (&mut bigger) (& v.slots) 0 n)
-              (set! v.slots bigger))))
-        (define (,push-name [v : (&mut v ,list-type)] [value : ,T]) : unit
-          (begin
-            (if (< v.len (array-length v.slots))
-              unit
-              (,grow-name v))
-            (let
-              [index : i64 v.len]
+    ;; lint-allow: return-path-chain -- direct guards keep the macro natively lowerable.
+    (if caller-provided-fallback
+      (if (<= capability-count 3)
+        (if (= capability-count recognized-count)
+          `(begin
+            ,@shared-zero-decls
+            (define (,with-capacity-name [capacity : i64]) : ,list-type
+              ,constructor-body)
+            (define (,new-name) : ,list-type
+              (,with-capacity-name ,new-capacity))
+            ,@len-decls
+            ,@empty-decls
+            (define (,get-name
+              [v : (& v ,list-type)]
+              [index : i64]
+              [fallback-value : ,T]) : ,T
+              (if (and (>= index 0) (< index v.len))
+                (array-ref v.slots index)
+                fallback-value))
+            (define (,copy-range-name
+              [dst : (&mut dst (__tl_dyn-array ,T))]
+              [src : (& src (__tl_dyn-array ,T))]
+              [index : i64]
+              [count : i64]) : unit
+              (if (>= index count)
+                unit
+                (begin
+                  (set! (array-ref dst index) (array-ref src index))
+                  (,copy-range-name dst src (+ index 1) count))))
+            (define (,grow-name [v : (&mut v ,list-type)]) : unit
+              (let
+                [n : i64 v.len]
+                [old-cap : i64 (array-length v.slots)]
+                [new-cap : i64
+                  (if (< old-cap 1)
+                    1
+                    (* old-cap 2))]
+                [bigger : (__tl_dyn-array ,T) (__tl_make-array ,T new-cap)]
+                (begin
+                  (,copy-range-name (&mut bigger) (& v.slots) 0 n)
+                  (set! v.slots bigger))))
+            (define (,push-name [v : (&mut v ,list-type)] [value : ,T]) : unit
               (begin
-                (set! (array-ref v.slots index) value)
-                (set! v.len (+ index 1))))))
-        ,@append-decls))))
+                (if (< v.len (array-length v.slots))
+                  unit
+                  (,grow-name v))
+                (let
+                  [index : i64 v.len]
+                  (begin
+                    (set! (array-ref v.slots index) value)
+                    (set! v.len (+ index 1))))))
+            ,@append-decls)
+          (comptime-error
+            "compiler-dense-list-operations: expected caller-provided fallback and unique `len`, `empty?`, or `append-from` capabilities"))
+        (comptime-error
+          "compiler-dense-list-operations: expected caller-provided fallback and unique `len`, `empty?`, or `append-from` capabilities"))
+      (comptime-error
+        "compiler-dense-list-operations: expected caller-provided fallback and unique `len`, `empty?`, or `append-from` capabilities"))))

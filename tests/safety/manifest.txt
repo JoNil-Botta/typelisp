@@ -42,6 +42,8 @@ process_runtime_safe_linux_output_reject|check-fail|tests/safety/process_runtime
 process_runtime_safe_raw_helper_reject|check-fail|tests/safety/process_runtime_safe_raw_helper_reject.tl|-|process_runtime/linux-build-argv requires unsafe context
 process_runtime_redundant_count_reject|check-fail|tests/safety/process_runtime_redundant_count_reject.tl|-|process_runtime.ProcessRuntimeStringList expected 1 argument, got 2 arguments
 process_nul_validation_ok|run-exit|tests/safety/process_nul_validation_ok.tl|42|-
+process_owned_shared_view_bounds_trap|run-trap|tests/safety/process_owned_shared_view_bounds_trap.tl|134|array index out of bounds: index=0 length=0
+process_runtime_shared_view_bounds_trap|run-trap|tests/safety/process_runtime_shared_view_bounds_trap.tl|134|array index out of bounds: index=0 length=0
 unsafe_syscall_defined|check-ok|tests/safety/unsafe_syscall_defined.tl|-|-
 mutable_reference_reborrow_subscope_ok|check-ok|tests/safety/mutable_reference_reborrow_subscope_ok.tl|-|-
 mutable_reference_read_disjoint_ok|check-ok|tests/safety/mutable_reference_read_disjoint_ok.tl|-|-

@@ -183,6 +183,7 @@ write_differential_rows() {
 : > "$DIFFERENTIAL_LIST"
 write_differential_rows ordinary tests/integration/hello.tl
 write_differential_rows string_data tests/integration/string_length.tl
+write_differential_rows string_record_extent tests/integration/string_record_extent.tl
 write_differential_rows allowed_external "$ALLOWED_EXTERN_SOURCE"
 write_differential_rows nt_create_file "$NT_CREATE_FILE_SOURCE"
 write_differential_rows nt_open_file "$NT_OPEN_FILE_SOURCE"
@@ -222,6 +223,7 @@ write_differential_expected() {
 }
 write_differential_expected ordinary tests/integration/hello.tl
 write_differential_expected string_data tests/integration/string_length.tl
+write_differential_expected string_record_extent tests/integration/string_record_extent.tl
 write_differential_expected allowed_external "$ALLOWED_EXTERN_SOURCE"
 write_differential_expected nt_create_file "$NT_CREATE_FILE_SOURCE"
 write_fallback_differential_expected() {
@@ -248,7 +250,8 @@ write_fallback_differential_expected u64_float_casts tests/integration/u64_float
 cmp "$DIFFERENTIAL_EXPECTED" "$DIFFERENTIAL_PLAN" ||
     fail "Windows COFF differential plan changed classification"
 
-for differential_case in ordinary string_data allowed_external nt_create_file; do
+for differential_case in ordinary string_data string_record_extent \
+    allowed_external nt_create_file; do
     [ -s "$WORKDIR/$differential_case.direct.obj" ] ||
         fail "differential direct object missing: $differential_case"
     [ ! -e "$WORKDIR/$differential_case.direct.s" ] ||
@@ -419,8 +422,8 @@ if [ "$HOST_OS" = windows ]; then
     }
 
     echo "[compile-batch-windows-coff] direct-object/forced-assembly differential"
-    for differential_case in ordinary string_data allowed_external nt_create_file \
-        nt_open_file runtime_trap \
+    for differential_case in ordinary string_data string_record_extent \
+        allowed_external nt_create_file nt_open_file runtime_trap \
         wide_immediate branch_phi_switch tail_call register_group pointer_copy \
         bounds_check string_match u64_float_casts; do
         differential_direct_object="$WORKDIR/$differential_case.direct.obj"
@@ -455,7 +458,8 @@ if [ "$HOST_OS" = windows ]; then
             fail "Windows COFF differential stderr mismatch: $differential_case"
 
         case "$differential_case" in
-            ordinary | allowed_external | nt_create_file | nt_open_file | \
+            ordinary | string_record_extent | allowed_external | \
+                nt_create_file | nt_open_file | \
                 wide_immediate | branch_phi_switch | \
                 tail_call | register_group | bounds_check | string_match)
                 [ "$differential_direct_exit" = 42 ] ||

@@ -166,20 +166,7 @@
 (define (compiler-object-elf-data-record-end-offset
   [record : cobj.CompilerObjectDataRecord]
   [offset : i64]) : i64
-  (match record
-    [(cobj.CompilerObjectDataRecord.Label _) offset]
-    [(cobj.CompilerObjectDataRecord.Align align)
-      (compiler-object-elf-align-offset offset align)]
-    [(cobj.CompilerObjectDataRecord.Bytes bytes)
-      (+ offset (compiler-object-elf-string-length bytes))]
-    [(cobj.CompilerObjectDataRecord.String text)
-      (+ offset (+ (compiler-object-elf-string-length text) 1))]
-    [(cobj.CompilerObjectDataRecord.F64 _) (+ offset 8)]
-    [(cobj.CompilerObjectDataRecord.F32 _) (+ offset 4)]
-    [(cobj.CompilerObjectDataRecord.I64 _) (+ offset 8)]
-    [(cobj.CompilerObjectDataRecord.Zero count) (+ offset count)]
-    [(cobj.CompilerObjectDataRecord.SymbolAddress _) (+ offset 8)]
-    [(cobj.CompilerObjectDataRecord.SymbolRva32 _) (+ offset 4)]))
+  (cobj.compiler-object-data-record-end-offset record offset))
 
 (define (compiler-object-elf-data-records-size-from
   [records : cobj.CompilerObjectDataRecordList]
@@ -1154,7 +1141,9 @@
           out
           (owned_view.compiler-owned-shared-view text))
         (compiler-object-elf-push-u8! out 0)
-        (+ offset (+ (compiler-object-elf-string-length text) 1)))]
+        (compiler-object-elf-data-record-end-offset
+          (cobj.CompilerObjectDataRecord.String text)
+          offset))]
     [(cobj.CompilerObjectDataRecord.F64 bits)
       (begin
         (compiler-object-elf-push-u64! out bits)
@@ -2396,6 +2385,69 @@
 
 (cfg
   test
+  (define (compiler-object-elf-interior-nul-string) : String
+    (let
+      [out : byte_buf_core.ByteBufBuilder
+        (byte_buf_core.byte-buf-builder-with-capacity 3)]
+      (begin
+        (byte_buf_core.byte-buf-builder-push (&mut out) 0x61)
+        (byte_buf_core.byte-buf-builder-push (&mut out) 0)
+        (byte_buf_core.byte-buf-builder-push (&mut out) 0x62)
+        (byte_buf_core.byte-buf-builder-finish-string (& out))))))
+
+(cfg
+  test
+  (define (compiler-object-elf-string-record-layout-ok?) : bool
+    (let
+      [out : byte_buf_core.ByteBufBuilder
+        (byte_buf_core.byte-buf-builder-with-capacity 8)]
+      [after-empty : i64
+        (compiler-object-elf-render-data-record!
+          (&mut out)
+          (cobj.CompilerObjectDataRecord.String "")
+          0)]
+      [after-interior-nul : i64
+        (compiler-object-elf-render-data-record!
+          (&mut out)
+          (cobj.CompilerObjectDataRecord.String
+            (compiler-object-elf-interior-nul-string))
+          after-empty)]
+      [bytes : String (byte_buf_core.byte-buf-builder-finish-string (& out))]
+      (and
+        (= after-empty 1)
+        (= after-interior-nul 5)
+        (=
+          (compiler-object-elf-string-length
+            (owned_view.compiler-owned-shared-view bytes))
+          5)
+        (=
+          (compiler-object-elf-u8-at
+            (owned_view.compiler-owned-shared-view bytes)
+            0)
+          0)
+        (=
+          (compiler-object-elf-u8-at
+            (owned_view.compiler-owned-shared-view bytes)
+            1)
+          0x61)
+        (=
+          (compiler-object-elf-u8-at
+            (owned_view.compiler-owned-shared-view bytes)
+            2)
+          0)
+        (=
+          (compiler-object-elf-u8-at
+            (owned_view.compiler-owned-shared-view bytes)
+            3)
+          0x62)
+        (=
+          (compiler-object-elf-u8-at
+            (owned_view.compiler-owned-shared-view bytes)
+            4)
+          0)))))
+
+(cfg
+  test
   (define (compiler-object-elf-text-smoke-image) : cobj.CompilerObjectImage
     (let
       [empty-data : cobj.CompilerObjectDataRecordList
@@ -2846,6 +2898,9 @@
   (test
     compiler-object-elf-smoke
     (begin
+      (test.assert-true
+        (compiler-object-elf-string-record-layout-ok?)
+        "elf string records include one terminal zero")
       (test.assert-true (compiler-object-elf-smoke-ok?) "elf object smoke")
       (test.assert-true
         (compiler-object-elf-text-smoke-ok?)

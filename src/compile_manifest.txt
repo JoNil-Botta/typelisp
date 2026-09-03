@@ -400,6 +400,7 @@ decision|src/compiler_regalloc_tests.tl|register-allocator self-test companion s
 decision|src/compiler_diagnostic_tests.tl|diagnostic self-check companion split from compiler_diagnostic.tl (simplify.md A1, #5169 pattern): main-less, imported by src/tests/compiler_parse_smoke.tl; holds the render/metadata/typecheck-code fixtures and the compiler-diagnostic-self-test entry; production assembly coverage stays on selfhost_compiler_diagnostic
 decision|src/compiler_liveness_tests.tl|liveness self-test companion split from compiler_liveness.tl (simplify.md A1, #5169 pattern): main-less, imported by src/tests/compiler_liveness_smoke.tl; holds the fixture builders and -ok? checks plus the compiler-live-self-test entry; production assembly coverage stays on selfhost_compiler_liveness, runtime coverage via the compiler_liveness_smoke native integration test
 decision|src/lint_core_tests.tl|lint self-test companion split from lint_core.tl (simplify.md A1, #5169 pattern): main-less, imported by src/tests/lint_smoke.tl; holds the fixture helpers and the compiler-lint-self-test entry; lint_core.tl itself carries no manifest case
+decision|src/lint_policy_core_tests.tl|focused main-less lint policy resolver tests (#7277): imported by src/tests/lint_smoke.tl; covers registry defaults/order, group expansion, precedence, cfg selection, forbid, structured invalid-input diagnostics, legacy floors, provenance, and bounded work accounting
 decision|src/lint_driver_core_tests.tl|lint driver self-test companion split from lint_driver_core.tl (simplify.md A1, #5169 pattern): main-less, imported by src/tests/lint_driver_smoke.tl; holds the fixture sources/decls builders, finding helpers, and the six self-test entries; lint_driver_core.tl itself stays decision-only
 decision|src/git_delta_core.tl|bounded pure Git pack delta instruction decoder and dependency resolver (#7076): main-less library with caller-supplied inflated bytes and lookup tables; exercised through focused inline tests and the cross-platform git_delta_smoke native integration case
 decision|src/git_delta_tests.tl|focused Git delta varint, instruction, budget, OFS/REF/thin dependency, malformed-input, and graph-resolution fixtures (#7076): main-less test companion imported by src/tests/git_delta_smoke.tl and discovered by typelisp test
@@ -770,6 +771,8 @@ contains|_tl_source_error_message:
 end
 
 decision|src/lint_core.tl|lint rule engine (nested-if-ladder rule, #1163); imported by src/tests/lint_smoke.tl and exercised through the selfhost_lint_smoke case; has no main to compile directly
+
+decision|src/lint_policy_core.tl|pure deterministic lint severity/group policy resolver (#7277): typed origin-bearing inputs, documented layer precedence, forbid protection, structured validation diagnostics, trace/provenance, legacy flag floors, and bounded work census; exercised through src/tests/lint_smoke.tl and the lint driver compatibility adapter
 
 decision|src/lint_driver_core.tl|selfhost lint driver logic (#1163/#1987): arg parsing, finding rendering (path:line:col), and file/package source linting; main-less, imported by src/main.tl and src/tests/lint_driver_smoke.tl and exercised through the selfhost_lint_driver_smoke and selfhost_main cases; has no main to compile directly
 

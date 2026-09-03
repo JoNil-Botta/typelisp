@@ -35,6 +35,11 @@
   (RipAddress)
   (Branch))
 
+;; `String` records have an object-format backing contract distinct from the
+;; language-level String/Str contract: their physical payload is the explicit
+;; string bytes followed by exactly one zero byte.  The byte is part of object
+;; layout only and does not make one-past-length reads or C-string conversion
+;; valid in source programs.
 (defenum CompilerObjectDataRecord
   (Label String)
   (Align i64)
@@ -46,6 +51,33 @@
   (Zero i64)
   (SymbolAddress String)
   (SymbolRva32 String))
+
+;; Canonical physical end offset for data records.  Serializers retain their
+;; target-specific section validation, but must use this walk for record extent
+;; so labels, symbols, and relocation sites cannot drift between sinks.
+(define (compiler-object-data-record-end-offset
+  [record : CompilerObjectDataRecord]
+  [offset : i64]) : i64
+  (match record
+    [(CompilerObjectDataRecord.Label _) offset]
+    [(CompilerObjectDataRecord.Align align)
+      (if (<= align 1)
+        offset
+        (let
+          [rem : i64 (% offset align)]
+          (if (= rem 0)
+            offset
+            (+ offset (- align rem)))))]
+    [(CompilerObjectDataRecord.Bytes bytes)
+      (+ offset (__tl_string_length bytes))]
+    [(CompilerObjectDataRecord.String text)
+      (+ offset (+ (__tl_string_length text) 1))]
+    [(CompilerObjectDataRecord.F64 _) (+ offset 8)]
+    [(CompilerObjectDataRecord.F32 _) (+ offset 4)]
+    [(CompilerObjectDataRecord.I64 _) (+ offset 8)]
+    [(CompilerObjectDataRecord.Zero count) (+ offset count)]
+    [(CompilerObjectDataRecord.SymbolAddress _) (+ offset 8)]
+    [(CompilerObjectDataRecord.SymbolRva32 _) (+ offset 4)]))
 
 (defstruct CompilerObjectDataRecordList
   (slots (__tl_dyn-array CompilerObjectDataRecord))

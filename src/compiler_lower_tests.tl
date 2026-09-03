@@ -6121,6 +6121,32 @@
   [name : String]) : bool
   (lower-test-global-seq-has-name-at? globals name 0))
 
+(define (lower-test-dispatch-cache-word-at?
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
+  [name : String]
+  [index : i64]) : bool
+  (if (>= index globals.len)
+    false
+    (match (compiler_ir_types.compiler-ir-global-seq-ref
+      (owned_view.compiler-owned-shared-view globals)
+      index)
+      [(compiler_ir_types.CompilerIrGlobal.Global global-name ty initial)
+        (if (string.eq
+          (compiler_ir_types.compiler-ir-symbol-text global-name)
+          (owned_view.compiler-owned-shared-view name))
+          (match ty
+            [(compiler_ast_types.AstType.I64)
+              (match initial
+                [(compiler_ir_types.CompilerIrValue.Unit) true]
+                [_ false])]
+            [_ false])
+          (lower-test-dispatch-cache-word-at? globals name (+ index 1)))])))
+
+(define (lower-test-dispatch-cache-word?
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
+  [name : String]) : bool
+  (lower-test-dispatch-cache-word-at? globals name 0))
+
 (define (compiler-lower-defdispatch-thunk-shape-ok?) : bool
   (match (compiler_lower.lower-compiler-source
     (compiler-lower-defdispatch-source))
@@ -6136,7 +6162,7 @@
               "__tl_dispatch_variant_avx512_dot__dot-avx512"]
             [ok : bool true]
             (begin
-              (if (lower-test-global-list-has-name?
+              (if (lower-test-dispatch-cache-word?
                 globals
                 (owned_view.compiler-owned-shared-view cache-name))
                 unit
@@ -6196,7 +6222,37 @@
                   (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "dot"
                   cache-name)
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "dot"
+                  "tl_atomic_i64_load_ptr")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "dot"
+                  "tl_atomic_i64_cas_ptr")
                 3)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-select-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "dot")
+                3)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-cast-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "dot")
+                4)
                 unit
                 (set! ok false))
               (if (>=
@@ -6212,25 +6268,28 @@
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-function-indirect-callee-function-count
+                (lower-test-function-call-arg-function-count
                   (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "dot"
+                  "tl_atomic_i64_cas_ptr"
                   scalar-name)
                 1)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-function-indirect-callee-function-count
+                (lower-test-function-call-arg-function-count
                   (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "dot"
+                  "tl_atomic_i64_cas_ptr"
                   avx2-name)
                 1)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-function-indirect-callee-function-count
+                (lower-test-function-call-arg-function-count
                   (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "dot"
+                  "tl_atomic_i64_cas_ptr"
                   avx512-name)
                 1)
                 unit

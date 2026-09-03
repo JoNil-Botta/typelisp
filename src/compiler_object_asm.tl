@@ -264,7 +264,9 @@
     [(cobj.CompilerObjectDataRecord.Bytes bytes)
       (compiler-object-asm-append-bytes! out bytes)]
     [(cobj.CompilerObjectDataRecord.String text)
-      (compiler-object-asm-append-bytes! out text)]
+      (begin
+        (compiler-object-asm-append-bytes! out text)
+        (compiler-object-asm-append! out "    .byte 0\n"))]
     [(cobj.CompilerObjectDataRecord.F64 bits)
       (begin
         (compiler-object-asm-append! out "    .quad ")
@@ -392,6 +394,41 @@
           (byte_buf_core.byte-buf-builder-finish-string (& out)))
         (ResultCompilerObjectAsm.Err
           "structured assembly rendering does not support raw instructions")))))
+
+(cfg
+  test
+  (define (compiler-object-asm-interior-nul-string) : String
+    (let
+      [out : byte_buf_core.ByteBufBuilder
+        (byte_buf_core.byte-buf-builder-with-capacity 3)]
+      (begin
+        (byte_buf_core.byte-buf-builder-push (&mut out) 0x61)
+        (byte_buf_core.byte-buf-builder-push (&mut out) 0)
+        (byte_buf_core.byte-buf-builder-push (&mut out) 0x62)
+        (byte_buf_core.byte-buf-builder-finish-string (& out))))))
+
+(cfg
+  test
+  (test
+    compiler-object-asm-string-record-layout
+    (let
+      [out : byte_buf_core.ByteBufBuilder
+        (byte_buf_core.byte-buf-builder-with-capacity 64)]
+      [_empty : unit
+        (compiler-object-asm-render-data-record!
+          (&mut out)
+          (cobj.CompilerObjectDataRecord.String ""))]
+      [_interior-nul : unit
+        (compiler-object-asm-render-data-record!
+          (&mut out)
+          (cobj.CompilerObjectDataRecord.String
+            (compiler-object-asm-interior-nul-string)))]
+      [rendered : String (byte_buf_core.byte-buf-builder-finish-string (& out))]
+      (test.assert-true
+        (string.eq
+          rendered
+          "    .byte 0\n    .byte 0x61,0x00,0x62\n    .byte 0\n")
+        "structured assembly string records include one terminal zero"))))
 
 (cfg
   test

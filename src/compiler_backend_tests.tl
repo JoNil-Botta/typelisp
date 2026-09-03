@@ -28,6 +28,7 @@
 (import compiler_intern as ci)
 (import compiler_owned_view as owned_view)
 (import compiler_profile_state as profile_state)
+(import stdlib.byte_buf_core)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.text_buf)
@@ -2080,20 +2081,132 @@
         "backend: --pic supports only internal references")]))
 
 (define (compiler-backend-pic-object-helper-ok?) : bool
-  (and
-    (=
-      (compiler_backend.compiler-backend-pic-data-record-end-offset
-        (cobj.CompilerObjectDataRecord.SymbolRva32 ".L_target")
+  (let
+    [interior-nul-builder : byte_buf_core.ByteBufBuilder
+      (byte_buf_core.byte-buf-builder-with-capacity 3)]
+    [_interior-nul-bytes : unit
+      (begin
+        (byte_buf_core.byte-buf-builder-push (&mut interior-nul-builder) 0x61)
+        (byte_buf_core.byte-buf-builder-push (&mut interior-nul-builder) 0)
+        (byte_buf_core.byte-buf-builder-push (&mut interior-nul-builder) 0x62))]
+    [interior-nul : String
+      (byte_buf_core.byte-buf-builder-finish-string (& interior-nul-builder))]
+    [records0 : cobj.CompilerObjectDataRecordBuilder
+      (cobj.compiler-object-data-record-builder-with-capacity 8)]
+    [records1 : cobj.CompilerObjectDataRecordBuilder
+      (cobj.compiler-object-data-record-builder-push
+        records0
+        (cobj.CompilerObjectDataRecord.Label ".L_start"))]
+    [records2 : cobj.CompilerObjectDataRecordBuilder
+      (cobj.compiler-object-data-record-builder-push
+        records1
+        (cobj.CompilerObjectDataRecord.String ""))]
+    [records3 : cobj.CompilerObjectDataRecordBuilder
+      (cobj.compiler-object-data-record-builder-push
+        records2
+        (cobj.CompilerObjectDataRecord.Label ".L_after_empty"))]
+    [records4 : cobj.CompilerObjectDataRecordBuilder
+      (cobj.compiler-object-data-record-builder-push
+        records3
+        (cobj.CompilerObjectDataRecord.String
+          (owned_view.compiler-owned-shared-view interior-nul)))]
+    [records5 : cobj.CompilerObjectDataRecordBuilder
+      (cobj.compiler-object-data-record-builder-push
+        records4
+        (cobj.CompilerObjectDataRecord.Align 8))]
+    [records6 : cobj.CompilerObjectDataRecordBuilder
+      (cobj.compiler-object-data-record-builder-push
+        records5
+        (cobj.CompilerObjectDataRecord.Label ".L_after_string"))]
+    [records7 : cobj.CompilerObjectDataRecordBuilder
+      (cobj.compiler-object-data-record-builder-push
+        records6
+        (cobj.CompilerObjectDataRecord.SymbolAddress ".L_start"))]
+    [records8 : cobj.CompilerObjectDataRecordBuilder
+      (cobj.compiler-object-data-record-builder-push
+        records7
+        (cobj.CompilerObjectDataRecord.Label ".L_after_fixup"))]
+    [records : cobj.CompilerObjectDataRecordList
+      (cobj.compiler-object-data-record-builder-finish records8)]
+    (and
+      (=
+        (cobj.compiler-object-data-record-end-offset
+          (cobj.CompilerObjectDataRecord.String "")
+          0)
+        1)
+      (=
+        (cobj.compiler-object-data-record-end-offset
+          (cobj.CompilerObjectDataRecord.String
+            (owned_view.compiler-owned-shared-view interior-nul))
+          1)
+        5)
+      (=
+        (coff.compiler-object-coff-data-label-offset-from
+          (owned_view.compiler-owned-shared-view records)
+          ".L_after_empty"
+          0)
+        1)
+      (=
+        (elf.compiler-object-elf-data-label-offset-from
+          (owned_view.compiler-owned-shared-view records)
+          ".L_after_empty"
+          0)
+        1)
+      (=
+        (compiler_backend.compiler-backend-pic-data-label-offset-from
+          (owned_view.compiler-owned-shared-view records)
+          ".L_after_empty"
+          0)
+        1)
+      (=
+        (coff.compiler-object-coff-data-label-offset-from
+          (owned_view.compiler-owned-shared-view records)
+          ".L_after_string"
+          0)
         8)
-      12)
-    (string.eq
-      (compiler_backend.compiler-backend-pic-section-name
-        (cobj.CompilerObjectSectionKind.Pdata))
-      "pdata")
-    (string.eq
-      (compiler_backend.compiler-backend-pic-section-name
-        (cobj.CompilerObjectSectionKind.Xdata))
-      "xdata")))
+      (=
+        (elf.compiler-object-elf-data-label-offset-from
+          (owned_view.compiler-owned-shared-view records)
+          ".L_after_string"
+          0)
+        8)
+      (=
+        (compiler_backend.compiler-backend-pic-data-label-offset-from
+          (owned_view.compiler-owned-shared-view records)
+          ".L_after_string"
+          0)
+        8)
+      (=
+        (coff.compiler-object-coff-data-label-offset-from
+          (owned_view.compiler-owned-shared-view records)
+          ".L_after_fixup"
+          0)
+        16)
+      (=
+        (elf.compiler-object-elf-data-label-offset-from
+          (owned_view.compiler-owned-shared-view records)
+          ".L_after_fixup"
+          0)
+        16)
+      (=
+        (compiler_backend.compiler-backend-pic-data-label-offset-from
+          (owned_view.compiler-owned-shared-view records)
+          ".L_after_fixup"
+          0)
+        16)
+      (=
+        (compiler_backend.compiler-backend-pic-data-record-end-offset
+          (cobj.CompilerObjectDataRecord.SymbolRva32 ".L_target")
+          8)
+        12)
+      (string.eq
+        (compiler_backend.compiler-backend-pic-section-name
+          (cobj.CompilerObjectSectionKind.Pdata))
+        "pdata")
+      (string.eq
+        (compiler_backend.compiler-backend-pic-section-name
+          (cobj.CompilerObjectSectionKind.Xdata))
+        "xdata"))))
 
 (define (compiler-backend-pic-ok?) : bool
   (and
@@ -42861,6 +42974,12 @@ g:
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
             "main:\n"))
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view asm)
+          "    lock cmpxchgq ")
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view asm)
+          "    .comm _tl___tl_dispatch_cache_dot, 8, 8\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)

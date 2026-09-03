@@ -114,7 +114,16 @@
 
 (defstruct OptInlineOwnedState
   (verify-scratch arena.Arena)
-  (multiblock-ok-memo (__tl_dyn-array i64)))
+  (multiblock-ok-memo (__tl_dyn-array i64))
+  ;; INL-5: one slot per function index, holding the shape refusal the
+  ;; SINGLE-BLOCK callee gate has already reported for that callee under
+  ;; --trace-passes, or -1 for "not reported yet". It is a trace-dedup ledger,
+  ;; not a verdict cache: the single-block gate's answer also depends on the
+  ;; CALLER (it refuses a self-call by name), so only the caller-independent
+  ;; SHAPE reason is recorded here, and only so a callee with fifteen refused
+  ;; sites produces one line instead of fifteen -- the property the multiblock
+  ;; tracer gets from its verdict memo.
+  (single-shape-traced (__tl_dyn-array i64)))
 
 ;; The optimizer's two cross-function arena protocols are process-serial, but
 ;; their owners and every global view backed by the surrounding compile job
@@ -143,7 +152,10 @@
 
 (define compiler-opt-owned-state : CompilerOptOwnedState
   (CompilerOptOwnedState
-    (OptInlineOwnedState (arena.Arena 0) (__tl_make-array i64 0))
+    (OptInlineOwnedState
+      (arena.Arena 0)
+      (__tl_make-array i64 0)
+      (__tl_make-array i64 0))
     (OptDebugState
       (arena.Arena 0)
       (cis.InternStructuralSessionHandle 0)
@@ -254,7 +266,10 @@
     (set!
       compiler-opt-owned-state
       (CompilerOptOwnedState
-        (OptInlineOwnedState (arena.Arena 0) (__tl_make-array i64 0))
+        (OptInlineOwnedState
+          (arena.Arena 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0))
         (OptDebugState
           (arena.current)
           structural-session
@@ -124258,6 +124273,46 @@
     [(ir.CompilerIrInstr.StorePtr _ _ _) true]
     [(ir.CompilerIrInstr.StoreOwned _ _ _) true]
     [(ir.CompilerIrInstr.CopyBytes _ _ _) true]
+    ;; INL-5. `Store` -- the write to a module global CELL, the lowering of
+    ;; `(set! <global> v)` -- stays REFUSED in this list, which is the
+    ;; MULTIBLOCK gate's whitelist (opt-inline-multiblock-instr-reason's
+    ;; fall-through), and is admitted by the single-block list below. The
+    ;; refusal is a measured verdict, not a soundness one; the soundness
+    ;; argument and the win are recorded at opt-inline-body-instr-ok?.
+    ;;
+    ;; MEASURED on this tree (base = 258f6409, `--benchmarks-only`, 23 rows).
+    ;; Admitting `Store` here as well turns the shape gate loose on the
+    ;; loop-and-call-bearing bodies the MEASURED tier prices, and the corpus
+    ;; splits: gvn_table -1.154%, read_sexpr -1.713%, callgraph_scc -1.454%
+    ;; and ssa_construct -0.500% against sccp_lattice +0.263%,
+    ;; regalloc_greedy +0.049% and asm_render +3.843% -- the row this packet
+    ;; exists to move, moving the wrong way by more than the single-block
+    ;; admission wins.
+    ;;
+    ;; The loser has a name. `asm-render-chunk` is a 142-instruction body
+    ;; whose `(set! asm-cursor ...)` is the only thing this clause refused; it
+    ;; carries a 512-iteration loop with a CALL in it. The measured tier
+    ;; prices it twice and answers twice: at its first site
+    ;; (`caller=asm-round`, depth 1, weight 8) `saving=-55` and it REVERTS;
+    ;; then `asm-round` is itself kept into `asm-bench`, the same merge is
+    ;; re-priced at the rescan site it created (`gen=2`, depth 2, weight 64)
+    ;; where the boundary term is eight times larger, and `saving=599`
+    ;; against `boundary=576` keeps it. The keep is priced in isolation and
+    ;; is roughly neutral on its own; what it costs is what it ENABLES. With
+    ;; `asm-bench` reshaped, a later band moves `asm-fold-text`'s byte loop
+    ;; in as well, and in the merged frame the fold accumulator no longer
+    ;; holds a register across the calls: the unrolled body writes it back to
+    ;; its home slot after every `xor` and every `imul`. `asm-bench` goes
+    ;; from 9 frame-slot references to 74 and from 0.3M to 194.9M Ir self,
+    ;; against 121.9M of absorbed callee -- +72.6M of pure spill traffic, and
+    ;; +33.5M on the row.
+    ;;
+    ;; So the mispricing is the measured tier's, not this whitelist's: the
+    ;; tier re-plans the merge it is asked about, but a keep also reshapes
+    ;; the caller for every LATER band decision, and those bands are
+    ;; predictive. Fixing that is a change to the tier, not to this list.
+    ;; Until it is fixed, this clause is where the loser is recorded, and the
+    ;; multiblock tier keeps its refusal.
     [_ false]))
 
 (define (opt-inline-body-instr-ok? [instr : ir.CompilerIrInstr] [np : i64]) : bool
@@ -124280,6 +124335,40 @@
     [(ir.CompilerIrInstr.StorePtr _ _ _) true]
     [(ir.CompilerIrInstr.StoreOwned _ _ _) true]
     [(ir.CompilerIrInstr.CopyBytes _ _ _) true]
+    ;; INL-5: the write to a module global CELL -- the lowering of
+    ;; `(set! <global> v)`, and the SINGLE-BLOCK tier's admission of it. (The
+    ;; multiblock whitelist above keeps its refusal; the measurement that
+    ;; bought that split is recorded there.)
+    ;;
+    ;; Nothing about the instruction is frame-relative. `Store <symbol>
+    ;; <value> <type>` names its destination by SYMBOL, which the backend
+    ;; turns into a rip-relative address (compiler_backend.tl, the Store arm
+    ;; of the instruction emitter), so the clone has exactly one operand to
+    ;; remap -- the stored value -- and keeps the symbol as it stands
+    ;; (opt-inline-clone-instr's Store arm). It defines no var
+    ;; (opt-instr-def-var answers None), so it cannot be the "writes a
+    ;; parameter slot" shape the dst-carrying arms above guard with `>= np`,
+    ;; and it is admitted unconditionally for that reason.
+    ;;
+    ;; It is not a new obligation on the caller either. The caller already had
+    ;; to assume the CALL could write that cell -- P18's per-global call
+    ;; mod-ref treats a returning direct call as a write of every cell it
+    ;; cannot rule out -- so after the splice the write is VISIBLE where it
+    ;; was summarised, which is strictly more precise for the global_cell pass
+    ;; and for the loop-scope global-cell promotion.
+    ;;
+    ;; What refusing it cost: every helper that bumps a counter, advances a
+    ;; cursor, sets a flag or records a trace cell was refused by SHAPE,
+    ;; before any band priced a site. asm_render's `asm-tok-next` is thirteen
+    ;; instructions in one block -- two global-cell loads, a descriptor load,
+    ;; a bounds check, an element load, an add, the cursor store and a return
+    ;; -- called 7,478,930 times per run from twenty sites, and 89.7M Ir of
+    ;; the row (10.3%) was the call boundary and the global reloads the caller
+    ;; would otherwise have kept in registers. Admitting it retires all
+    ;; nineteen calls and the out-of-line body with them: asm_render
+    ;; 872,029,237 -> 832,842,937, -4.494%, with `asm-tok-next`'s 89.7M
+    ;; becoming 50.6M inside `asm-next-operand` and `asm-render-line`.
+    [(ir.CompilerIrInstr.Store _ _ _) true]
     [_ false]))
 
 (define (opt-inline-body-instr-seq-ok?
@@ -124678,8 +124767,29 @@
 (define (opt-inline-shape-structure) : i64
   6)
 
-(define (opt-inline-shape-other-base) : i64
+;; INL-5: the three clauses only the SINGLE-BLOCK gate can refuse on, reported
+;; by `inline-shape-single|<callee>|<reason>`. They share the code space above
+;; with the multiblock reasons so one `opt-inline-shape-reason-text` serves both
+;; tracers; a multiblock refusal never produces them (a body of two blocks is
+;; that tier's ordinary input) and a single-block refusal never produces
+;; `alloc`, `addr_of` or `return-type` (those clauses live in the multiblock
+;; callee gate, which the single-block gate does not run).
+;;
+;; `blocks` is the common one and it is not a defect: every callee the
+;; MULTIBLOCK tier handles is refused here by block count, so a census over
+;; both tracers reads `blocks` as "handed to the other tier", not as a
+;; refusal to inline.
+(define (opt-inline-shape-blocks) : i64
+  7)
+
+(define (opt-inline-shape-body-size) : i64
   8)
+
+(define (opt-inline-shape-terminator) : i64
+  9)
+
+(define (opt-inline-shape-other-base) : i64
+  10)
 
 ;; The kinds an `other-instr:` refusal can name. Only instructions the
 ;; multiblock whitelist does not admit can reach this, so the arms are the
@@ -124740,6 +124850,9 @@
     [(= reason (opt-inline-shape-params-not-sequential))
       "params-not-sequential"]
     [(= reason (opt-inline-shape-structure)) "structure"]
+    [(= reason (opt-inline-shape-blocks)) "blocks"]
+    [(= reason (opt-inline-shape-body-size)) "body-size"]
+    [(= reason (opt-inline-shape-terminator)) "terminator"]
     [else
       (str_cat.str-cat
         "other-instr:"
@@ -124829,6 +124942,97 @@
   [instr : ir.CompilerIrInstr]
   [np : i64]) : bool
   (= (opt-inline-multiblock-instr-reason instr np) (opt-inline-shape-ok)))
+
+;; --- INL-5: the single-block tier's shape reasons ---------------------------
+;;
+;; The multiblock tier has reported its refusals by clause since INL-3; the
+;; single-block tier reported nothing at all, and the only `--trace-passes`
+;; line a one-block callee got was the MULTIBLOCK tier's `structure` -- which
+;; says "not that tier's shape", not why the tier that does handle one-block
+;; bodies turned it down. asm_render's `asm-tok-next` is exactly that case: it
+;; was refused by the per-instruction clause below for its cursor `Store` and
+;; nothing in any trace said so.
+;;
+;; These mirror opt-inline-multiblock-instr-reason / -blocks-reason /
+;; -callee-shape-reason clause for clause, so the two tracers report the same
+;; vocabulary and a census can join them. Every predicate they consult is the
+;; one the gate itself consults (opt-inline-body-instr-ok?,
+;; opt-inline-body-terminator-ok?, opt-inline-max-body), so the reason cannot
+;; drift from the verdict.
+(define (opt-inline-single-instr-reason [instr : ir.CompilerIrInstr] [np : i64]) : i64
+  (if (opt-inline-body-instr-ok? (compiler-opt-global-shared-view instr) np)
+    (opt-inline-shape-ok)
+    ;; An instruction whose OP the whitelist carries but whose destination is a
+    ;; parameter slot is refused by the `>= np` half of that predicate, not by
+    ;; the whitelist. `structure` is the code the multiblock gate uses for the
+    ;; same "body writes something the site substitutes" family.
+    (if (opt-inline-body-instr-op-ok? (compiler-opt-global-shared-view instr))
+      (opt-inline-shape-structure)
+      (match (compiler-opt-global-shared-view instr)
+        ;; The storage-run pair the multiblock gate admits and this whitelist
+        ;; does not. They carry no `opt-inline-instr-kind-code` of their own --
+        ;; that table only enumerates the kinds the MULTIBLOCK gate can refuse,
+        ;; where these two have dedicated codes -- so without these arms a
+        ;; one-block struct-building body reports the useless `other-instr:other`
+        ;; and the census cannot tell it from an unclassified kind.
+        [(ir.CompilerIrInstr.Alloc _ _) (opt-inline-shape-alloc)]
+        [(ir.CompilerIrInstr.AddrOf _ _) (opt-inline-shape-addr-of)]
+        [_ (+ (opt-inline-shape-other-base) (opt-inline-instr-kind-code instr))]))))
+
+(define (opt-inline-single-seq-reason-from
+  [instrs : ir.CompilerIrInstrSeq]
+  [np : i64]
+  [index : i64]
+  [last : i64]) : i64
+  (cond
+    [(> index last) (opt-inline-shape-terminator)]
+    [(= index last)
+      (if (opt-inline-body-terminator-ok?
+        (ir.compiler-ir-instr-seq-ref instrs index))
+        (opt-inline-shape-ok)
+        (opt-inline-shape-terminator))]
+    [else
+      (let
+        [reason : i64
+          (opt-inline-single-instr-reason
+            (ir.compiler-ir-instr-seq-ref
+              (compiler-opt-global-shared-view instrs)
+              index)
+            np)]
+        (if (= reason (opt-inline-shape-ok))
+          (opt-inline-single-seq-reason-from instrs np (+ index 1) last)
+          reason))]))
+
+(define (opt-inline-single-seq-reason [seq : ir.CompilerIrInstrSeq] [np : i64]) : i64
+  (let
+    [n : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view seq))]
+    (if (< n 1)
+      (opt-inline-shape-body-size)
+      (if (> (- n 1) (opt-inline-max-body))
+        (opt-inline-shape-body-size)
+        (opt-inline-single-seq-reason-from seq np 0 (- n 1))))))
+
+(define (opt-inline-single-blocks-reason
+  [blocks : ir.CompilerIrBlockList]
+  [np : i64]) : i64
+  (match blocks
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match (compiler-opt-box-shared-view rest)
+        [(ir.CompilerIrBlockList.Nil)
+          (match (compiler-opt-global-shared-view block)
+            [(ir.CompilerIrBlock.Block _ seq)
+              (opt-inline-single-seq-reason seq np)])]
+        [_ (opt-inline-shape-blocks)])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (if (=
+        (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))
+        1)
+        (match (ir.compiler-ir-block-seq-ref seq 0)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-inline-single-seq-reason instrs np)])
+        (opt-inline-shape-blocks))]
+    [_ (opt-inline-shape-blocks)]))
 
 (define (opt-inline-instr-seq-has-bounds-check-from?
   [instrs : ir.CompilerIrInstrSeq]
@@ -125301,13 +125505,27 @@
     [count : i64
       (opt-function-index-count (compiler-opt-global-shared-view index))]
     [memo : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    ;; INL-5: allocated only when --trace-passes asked for the single-block
+    ;; shape lines. A production compile keeps the zero-length array and the
+    ;; tracer's bounds test then answers "no ledger", which costs one compare
+    ;; on a path that is already behind the flag test.
+    [traced : (__tl_dyn-array i64)
+      (__tl_make-array
+        i64
+        (if compiler-opt-debug-trace-passes
+          count
+          0))]
     [scratch : arena.Arena (arena.make)]
     (begin
       (opt-cfg-fill-i64! (compiler-opt-global-shared-view memo) count (- 0 1))
+      (opt-cfg-fill-i64!
+        (compiler-opt-global-shared-view traced)
+        (array-length (compiler-opt-global-shared-view traced))
+        (- 0 1))
       (__tl-project-set-field
         compiler-opt-owned-state
         inline-state
-        (OptInlineOwnedState scratch memo)))))
+        (OptInlineOwnedState scratch memo traced)))))
 
 (define (opt-inline-owned-state-reset! [destroy-owner? : bool]) : unit
   (let
@@ -125322,7 +125540,10 @@
       (__tl-project-set-field
         compiler-opt-owned-state
         inline-state
-        (OptInlineOwnedState (arena.Arena 0) (__tl_make-array i64 0)))
+        (OptInlineOwnedState
+          (arena.Arena 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)))
       (if (or (not destroy-owner?) (= (arena.raw-handle scratch) 0))
         unit
         (unsafe
@@ -125481,6 +125702,96 @@
                 (opt-inline-bounds-leaf-ok? cblocks np cret))
               false)
             false)))]))
+
+;; INL-5: the clause that refused a callee at the gate above, in the same
+;; vocabulary the multiblock tracer uses. The clause order is that gate's
+;; order, so the reason names the FIRST clause to refuse, exactly as the
+;; verdict does.
+;;
+;; The bounds-leaf band is deliberately not consulted. It is a second, wider
+;; admission over the same one-block shape (opt-inline-bounds-leaf-ok?), so it
+;; can only turn a refusal into an admission; a callee that reaches the tracer
+;; at all was refused by both, and reporting the generic path's clause is what
+;; names the shape the body would have to change.
+(define (opt-inline-single-callee-shape-reason
+  [cparams : ir.CompilerIrParamSeq]
+  [cvars : i64]
+  [cblocks : ir.CompilerIrBlockList]) : i64
+  (let
+    [np : i64
+      (opt-inline-param-count (compiler-opt-global-shared-view cparams))]
+    (cond
+      [(opt-inline-params-have-private-memory?
+          (compiler-opt-global-shared-view cparams))
+        (opt-inline-shape-private-memory-param)]
+      [(not (opt-inline-params-sequential? cparams 0))
+        (opt-inline-shape-params-not-sequential)]
+      [(< cvars np) (opt-inline-shape-structure)]
+      [else (opt-inline-single-blocks-reason cblocks np)])))
+
+;; `--trace-passes` observability for the single-block tier, the twin of
+;; opt-inline-trace-shape! above. The string is built inside the flag guard, so
+;; a compile without the flag pays one boolean test, and the checked tier's
+;; throwaway measurement runs are suppressed the same way.
+(define (opt-inline-trace-shape-single! [callee-name : i64] [reason : i64]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (io.print-error
+      (str_cat.str-cat
+        "inline-shape-single|"
+        (ir.compiler-ir-symbol-text callee-name)
+        "|"
+        (opt-inline-shape-reason-text reason)
+        "\n"))
+    unit))
+
+;; One line per CALLEE rather than per refused SITE. The multiblock tracer gets
+;; that from its verdict memo, which is computed once; this gate has no verdict
+;; memo (its answer is cheap and caller-dependent), so the ledger installed by
+;; opt-inline-owned-state-install! records which callees have been reported.
+;; The ledger is zero-length unless --trace-passes asked for these lines, which
+;; is what keeps a production compile out of this function past its first test.
+;;
+;; A SELF-CALL is skipped. The gate refuses it by name, before it looks at the
+;; body at all, and a body's shape reason would be the wrong thing to print for
+;; a refusal that has nothing to do with its shape -- the multiblock tracer
+;; keeps the same name check outside its memo for the same reason.
+(define (opt-inline-trace-shape-single-once!
+  [callee-slot : i64]
+  [callee : ir.CompilerIrFunction]
+  [caller-name : i64]) : unit
+  (if (not
+    (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?)))
+    unit
+    (let
+      [inline-state : OptInlineOwnedState
+        (compiler-opt-global-shared-view compiler-opt-owned-state.inline-state)]
+      [traced : (__tl_dyn-array i64)
+        (compiler-opt-global-shared-view inline-state.single-shape-traced)]
+      (match callee
+        [(ir.CompilerIrFunction.Function cname cparams _ cvars cblocks)
+          (cond
+            [(ir.compiler-ir-symbol-eq? cname caller-name) unit]
+            [(or (< callee-slot 0) (>= callee-slot (array-length traced))) unit]
+            [(>= (array-ref traced callee-slot) 0) unit]
+            [else
+              (let
+                [reason : i64
+                  (opt-inline-single-callee-shape-reason cparams cvars cblocks)]
+                (begin
+                  (set! (array-ref traced callee-slot) reason)
+                  (opt-inline-trace-shape-single! cname reason)))])]))))
+
+(define (opt-inline-callee-ok-traced?
+  [callee-slot : i64]
+  [callee : ir.CompilerIrFunction]
+  [caller-name : i64]) : bool
+  (if (opt-inline-callee-ok?
+    (compiler-opt-global-shared-view callee)
+    caller-name)
+    true
+    (begin
+      (opt-inline-trace-shape-single-once! callee-slot callee caller-name)
+      false)))
 
 (define (opt-inline-arity-ok? [args : ir.CompilerIrCallArgs] [np : i64]) : bool
   (match args
@@ -126148,6 +126459,29 @@
         (opt-inline-remap-value d (compiler-opt-global-shared-view sa) np base)
         (opt-inline-remap-value s sa np base)
         size)]
+    ;; INL-5. The destination is a module global named by SYMBOL, not a frame
+    ;; slot: it is the same cell whichever function the instruction sits in, so
+    ;; there is nothing to rebase and the symbol is carried across unchanged
+    ;; (cloned only because symbol ids are owned values). The VALUE is remapped
+    ;; exactly like a StorePtr's stored operand -- a body-local becomes the
+    ;; rebased caller temp, a parameter becomes the site's argument.
+    ;;
+    ;; This arm has to exist rather than fall through to the catch-all below:
+    ;; `[_ instr]` returns the callee's instruction verbatim, which for a
+    ;; `Store g, %v` would leave the CALLEE's var id inside the caller -- the
+    ;; same class of miscompile the Pack/Word arms above were added for.
+    ;;
+    ;; It is written for BOTH tiers even though only the single-block one
+    ;; admits stores today (opt-inline-body-instr-op-ok? records why the
+    ;; multiblock gate keeps its refusal). The multiblock clone reaches every
+    ;; non-terminator instruction through this function
+    ;; (opt-inline-clone-multiblock-instr's fall-through), so the arm is what
+    ;; makes lifting that refusal a gate change and nothing else.
+    [(ir.CompilerIrInstr.Store name value ty)
+      (ir.CompilerIrInstr.Store
+        (ir.compiler-ir-symbol-clone name)
+        (opt-inline-remap-value value sa np base)
+        (clone ty))]
     [(ir.CompilerIrInstr.Call dst name a ty)
       (ir.CompilerIrInstr.Call
         (opt-inline-rebase-var dst np base)
@@ -127258,7 +127592,8 @@
             (compiler-opt-global-array-element-shared-view
               index.values
               callee-slot)]
-          (if (opt-inline-callee-ok?
+          (if (opt-inline-callee-ok-traced?
+            callee-slot
             (compiler-opt-global-shared-view callee)
             caller-name)
             (OptMaybeFunction.Some callee)

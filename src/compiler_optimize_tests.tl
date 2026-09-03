@@ -86079,6 +86079,10 @@
         (not (= (arena.raw-handle live.verify-scratch) 0))
         (= (array-length live.multiblock-ok-memo) 1)
         (= (array-ref live.multiblock-ok-memo 0) (- 0 1))
+        ;; INL-5: the single-block trace ledger installs alongside the verdict
+        ;; memo but is sized only when --trace-passes asked for those lines, so
+        ;; a test session (and every production compile) publishes it empty.
+        (= (array-length live.single-shape-traced) 0)
         (arena.eq? (arena.current) home))]
     [_retire : unit (compiler_optimize.opt-inline-owned-state-reset! true)]
     [retired-owned : compiler_optimize.CompilerOptOwnedState
@@ -86088,6 +86092,7 @@
       (and
         (= (arena.raw-handle retired.verify-scratch) 0)
         (= (array-length retired.multiblock-ok-memo) 0)
+        (= (array-length retired.single-shape-traced) 0)
         (arena.eq? (arena.current) home))]
     [_reset-debug : unit
       (compiler_optimize.compiler-opt-debug-configure!
@@ -98240,3 +98245,398 @@
     (compiler-optimize-bce-hoist-self-test)
     42
     "a check whose index is loop-invariant or a descending counter, standing in the header ahead of every observable effect and every other trap site, MOVES to a dedicated preheader with its own ok-label and its first-iteration index; an ASCENDING unit counter in a loop that nests another and calls out of its body instead keeps its abort where it was and tightens the trip range to min(limit, length), re-issuing the check on the way out under the clone suffix the span table strips; and the flat ascending loop, the floor that admits a negative index, the step of two, a preceding call, a preceding check, a branching preheader and a loop-variant length each leave the loop alone"))
+
+;; --- INL-5: global-cell stores in inlinable bodies ---------------------------
+;;
+;; `CompilerIrInstr.Store <symbol> <value> <type>` is the lowering of
+;; `(set! <global> v)`: the one write form whose destination is a SYMBOL rather
+;; than a frame-relative operand. The inliner's instruction whitelists carried
+;; `StorePtr`, `StoreOwned` and `CopyBytes` but not it, so every helper that
+;; bumps a counter, advances a cursor or sets a flag was refused by SHAPE
+;; before any band priced a site -- asm_render's thirteen-instruction
+;; `asm-tok-next` at twenty call sites among them.
+;;
+;; These fixtures pin the single-block admission and the clone's one
+;; obligation: the SYMBOL is carried across and only the VALUE is remapped.
+;; The caller's frame is laid out so a clone that skipped the remap is
+;; observable rather than accidentally right -- the callee's own var ids name
+;; live caller vars holding different values.
+;;
+;; They also pin the two refusals that stand, each for its own recorded
+;; reason: the MULTIBLOCK gate (measured -- see
+;; opt-inline-body-instr-op-ok?), and the tiny-predicate band, whose
+;; whitelist is a side-effect-free-body list that carries no store of any
+;; kind.
+(defstruct OptInlineStoreTestSymbols
+  (main i64)
+  (bump i64)
+  (tok-next i64)
+  (cursor i64)
+  (tokens i64))
+
+(define (opt-inline-store-test-symbols) : OptInlineStoreTestSymbols
+  (OptInlineStoreTestSymbols
+    (opt-test-symbol "main")
+    (opt-test-symbol "inline_bump_cursor")
+    (opt-test-symbol "inline_tok_next")
+    (opt-test-symbol "store_cursor")
+    (opt-test-symbol "store_tokens")))
+
+(define (opt-inline-store-params) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "delta"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.compiler-ir-param-seq-empty)))
+
+;; `delta + 1` into a body-local, that local stored to the global cell, that
+;; local returned. Both uses of the local are what make a missed remap visible:
+;; the return's value goes through the exit rewrite (which has always remapped)
+;; and the store's goes through the clone arm under test.
+(define (opt-inline-store-callee-body [symbols : OptInlineStoreTestSymbols]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          1
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Store
+          symbols.cursor
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 1)))))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+(define (opt-inline-store-callee [symbols : OptInlineStoreTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.bump
+    (opt-inline-store-params)
+    (compiler_ast_types.AstType.I64)
+    2
+    (opt-inline-store-callee-body
+      (compiler_optimize.compiler-opt-global-shared-view symbols))))
+
+;; Var 0 is a spacer the site never passes and var 1 is the argument, so the
+;; callee's own ids (param 0, local 1) both name caller vars holding OTHER
+;; values. A clone that returned the store verbatim would write caller var 1 --
+;; the constant 41 -- instead of the rebased sum.
+(define (opt-inline-store-caller [symbols : OptInlineStoreTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.main
+    (compiler_ir_types.compiler-ir-param-seq-empty)
+    (compiler_ast_types.AstType.I64)
+    3
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Mov
+            0
+            (compiler_ir_types.CompilerIrValue.I64 99)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Mov
+            1
+            (compiler_ir_types.CompilerIrValue.I64 41)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Call
+            2
+            symbols.bump
+            (compiler_ir_types.CompilerIrCallArgs.One
+              (compiler_ir_types.CompilerIrValue.Var 1))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 2)))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-inline-store-functions [symbols : OptInlineStoreTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-inline-store-caller
+      (compiler_optimize.compiler-opt-global-shared-view symbols))
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-inline-store-callee symbols)
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
+
+;; The dst of the first `BinOp` in the sequence, or -1.
+(define (opt-inline-store-binop-dst-from
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : i64
+  (if (>=
+    index
+    (compiler_ir_types.compiler-ir-instr-seq-count
+      (compiler_optimize.compiler-opt-global-shared-view instrs)))
+    (- 0 1)
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(compiler_ir_types.CompilerIrInstr.BinOp dst _ _ _ _) dst]
+      [_ (opt-inline-store-binop-dst-from instrs (+ index 1))])))
+
+;; The var id the first `Store` of `name` writes, -1 when it stores a
+;; non-var value, and -2 when the sequence carries no such store at all.
+(define (opt-inline-store-value-var-from
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [name : i64]) : i64
+  (if (>=
+    index
+    (compiler_ir_types.compiler-ir-instr-seq-count
+      (compiler_optimize.compiler-opt-global-shared-view instrs)))
+    (- 0 2)
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(compiler_ir_types.CompilerIrInstr.Store store-name value _)
+        (if (= store-name name)
+          (match value
+            [(compiler_ir_types.CompilerIrValue.Var var) var]
+            [_ (- 0 1)])
+          (opt-inline-store-value-var-from instrs (+ index 1) name))]
+      [_ (opt-inline-store-value-var-from instrs (+ index 1) name)])))
+
+(define (opt-inline-store-count-from
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [name : i64]) : i64
+  (if (>=
+    index
+    (compiler_ir_types.compiler-ir-instr-seq-count
+      (compiler_optimize.compiler-opt-global-shared-view instrs)))
+    0
+    (+
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+        [(compiler_ir_types.CompilerIrInstr.Store store-name _ _)
+          (if (= store-name name)
+            1
+            0)]
+        [_ 0])
+      (opt-inline-store-count-from instrs (+ index 1) name))))
+
+(define (compiler-optimize-inline-global-store-single-ok?) : bool
+  (let
+    [symbols : OptInlineStoreTestSymbols (opt-inline-store-test-symbols)]
+    [cursor : i64 symbols.cursor]
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-store-functions
+          (compiler_optimize.compiler-opt-global-shared-view symbols))
+        2)]
+    [instrs : compiler_ir_types.CompilerIrInstrSeq
+      (opt-inline-function-instrs optimized "main")]
+    [binop-dst : i64
+      (opt-inline-store-binop-dst-from
+        (compiler_optimize.compiler-opt-global-shared-view instrs)
+        0)]
+    [store-var : i64
+      (opt-inline-store-value-var-from
+        (compiler_optimize.compiler-opt-global-shared-view instrs)
+        0
+        cursor)]
+    (and
+      ;; The call is gone: the single-block tier admitted the body.
+      (=
+        (opt-count-direct-call-name-instr-seq
+          (compiler_optimize.compiler-opt-global-shared-view instrs)
+          "inline_bump_cursor")
+        0)
+      ;; ...the store came along, exactly once, still naming the same cell...
+      (=
+        (opt-inline-store-count-from
+          (compiler_optimize.compiler-opt-global-shared-view instrs)
+          0
+          cursor)
+        1)
+      ;; ...and it writes the REBASED sum, not the callee-local id 1 (which
+      ;; names the caller's 41) and not the spacer.
+      (>= binop-dst 0)
+      (= store-var binop-dst)
+      (>= store-var 3))))
+
+;; --- the shape tracer's vocabulary ------------------------------------------
+;;
+;; `inline-shape-single|<callee>|<reason>` names the clause that refused a
+;; one-block callee. These are the codes it can carry, each produced by a body
+;; that trips exactly that clause, plus the text the trace line prints.
+(define (opt-inline-store-reason
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (compiler_optimize.opt-inline-single-callee-shape-reason
+    (opt-inline-store-params)
+    2
+    blocks))
+
+(define (opt-inline-store-two-block-body [symbols : OptInlineStoreTestSymbols]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.BoundsCheck
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 8)
+          (compiler_ir_types.compiler-ir-label "store_two.ok"))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "store_two.cont"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "store_two.cont")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Store
+            symbols.cursor
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 0)))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-inline-store-terminator-body [symbols : OptInlineStoreTestSymbols]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Store
+          symbols.cursor
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "store_term.cont"))))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+(define (opt-inline-store-entry-arg-body) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.EntryArgc 1)
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 1)))))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+(define (opt-inline-store-alloc-body) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Alloc
+          1
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 1)))))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+(define (opt-inline-store-filler-mov [dst : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Mov
+    dst
+    (compiler_ir_types.CompilerIrValue.I64 7)
+    (compiler_ast_types.AstType.I64)))
+
+;; Thirteen movs before the return: one past opt-inline-max-body.
+(define (opt-inline-store-oversized-body) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (opt-inline-store-filler-mov 1)
+        (opt-inline-store-filler-mov 2)
+        (opt-inline-store-filler-mov 3)
+        (opt-inline-store-filler-mov 4)
+        (opt-inline-store-filler-mov 5)
+        (opt-inline-store-filler-mov 6)
+        (opt-inline-store-filler-mov 7)
+        (opt-inline-store-filler-mov 8)
+        (opt-inline-store-filler-mov 9)
+        (opt-inline-store-filler-mov 10)
+        (opt-inline-store-filler-mov 11)
+        (opt-inline-store-filler-mov 12)
+        (opt-inline-store-filler-mov 13)
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 1)))))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+(define (compiler-optimize-inline-global-store-shape-ok?) : bool
+  (let
+    [symbols : OptInlineStoreTestSymbols (opt-inline-store-test-symbols)]
+    [store-instr : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.CompilerIrInstr.Store
+        symbols.cursor
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.I64))]
+    [admitted : i64
+      (opt-inline-store-reason
+        (opt-inline-store-callee-body
+          (compiler_optimize.compiler-opt-global-shared-view symbols)))]
+    [blocks : i64
+      (opt-inline-store-reason
+        (opt-inline-store-two-block-body
+          (compiler_optimize.compiler-opt-global-shared-view symbols)))]
+    [terminator : i64
+      (opt-inline-store-reason
+        (opt-inline-store-terminator-body
+          (compiler_optimize.compiler-opt-global-shared-view symbols)))]
+    [body-size : i64
+      (opt-inline-store-reason (opt-inline-store-oversized-body))]
+    [entry-arg : i64
+      (opt-inline-store-reason (opt-inline-store-entry-arg-body))]
+    [alloc : i64 (opt-inline-store-reason (opt-inline-store-alloc-body))]
+    [multiblock : i64
+      (compiler_optimize.opt-inline-multiblock-instr-reason
+        (compiler_optimize.compiler-opt-global-shared-view store-instr)
+        1)]
+    (and
+      ;; The single-block gate admits the store body and names every clause
+      ;; that refuses one of its neighbours.
+      (= admitted (compiler_optimize.opt-inline-shape-ok))
+      (= blocks (compiler_optimize.opt-inline-shape-blocks))
+      (= terminator (compiler_optimize.opt-inline-shape-terminator))
+      (= body-size (compiler_optimize.opt-inline-shape-body-size))
+      (= entry-arg (+ (compiler_optimize.opt-inline-shape-other-base) 8))
+      (= alloc (compiler_optimize.opt-inline-shape-alloc))
+      (string.eq (compiler_optimize.opt-inline-shape-reason-text admitted) "ok")
+      (string.eq
+        (compiler_optimize.opt-inline-shape-reason-text blocks)
+        "blocks")
+      (string.eq
+        (compiler_optimize.opt-inline-shape-reason-text terminator)
+        "terminator")
+      (string.eq
+        (compiler_optimize.opt-inline-shape-reason-text body-size)
+        "body-size")
+      (string.eq
+        (compiler_optimize.opt-inline-shape-reason-text entry-arg)
+        "other-instr:entry-arg")
+      (string.eq (compiler_optimize.opt-inline-shape-reason-text alloc) "alloc")
+      ;; The two refusals that stand. The MULTIBLOCK gate keeps a store out
+      ;; for the measured reason recorded at opt-inline-body-instr-op-ok?...
+      (= multiblock (+ (compiler_optimize.opt-inline-shape-other-base) 1))
+      (string.eq
+        (compiler_optimize.opt-inline-shape-reason-text multiblock)
+        "other-instr:store")
+      (not
+        (compiler_optimize.opt-inline-body-instr-op-ok?
+          (compiler_optimize.compiler-opt-global-shared-view store-instr)))
+      ;; ...and the tiny-predicate band's whitelist is a side-effect-free-body
+      ;; list, which carries no store of any kind (not StorePtr either).
+      (not
+        (compiler_optimize.opt-inline-tiny-predicate-instr-ok?
+          (compiler_optimize.compiler-opt-global-shared-view store-instr)))
+      ;; The single-block whitelist admits it with no destination condition:
+      ;; a store defines no var, so no parameter slot can be its target.
+      (compiler_optimize.opt-inline-body-instr-ok? store-instr 1))))
+
+(test
+  inline-global-store-single-block
+  (test.assert-true
+    (compiler-optimize-inline-global-store-single-ok?)
+    "a single-block callee that writes a module global inlines, and the cloned store keeps the symbol while its value is remapped to the caller's"))
+
+(test
+  inline-global-store-shape-reasons
+  (test.assert-true
+    (compiler-optimize-inline-global-store-shape-ok?)
+    "the single-block shape tracer names its clause for a store body and each refusing neighbour, and the multiblock gate and the tiny-predicate band keep their store refusals"))

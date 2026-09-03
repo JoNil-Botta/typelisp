@@ -1102,7 +1102,14 @@ check_rmw_mem_operand_fold() {
         _asm=$(compile_gate "rmw_mem_operand_fold_$_suffix" \
             tests/integration/rmw_mem_operand_fold.tl "$_target")
         _bump=$(function_body "$_asm" _tl_rmw_mem_operand_fold_rmw_bump)
-        _read=$(function_body "$_asm" _tl_rmw_mem_operand_fold_rmw_bump_and_read)
+        # INL-5: `rmw-bump-and-read` is two instructions -- a global-cell
+        # update and a read of that cell -- and the inliner's whitelist now
+        # carries `Store`, so its single site takes it and no out-of-line body
+        # survives to extract. The claim below is about the FOLD, not about the
+        # function boundary, and `rmw-hits` is updated in exactly one place in
+        # the program, so asserting it over the whole assembly pins the same
+        # thing wherever the copy lands.
+        _read=$_asm
 
         # RMW-2: five `g = g op k` updates, five different ops, both operand
         # forms -- two immediates and three registers. Each was
@@ -1304,6 +1311,59 @@ check_checked_cheap_tier_claim() {
         assert_regex_count_eq "$_asm" \
             '^[[:space:]]+call _tl_checked_cheap_tier_claim_hash_words$' 1 \
             "checked-cheap-tier-claim-$_target"
+    done
+}
+
+# INL-5. The inliner's instruction whitelist admits `Store` -- the write to a
+# module global cell -- so a helper that advances a global CURSOR is inlinable.
+# `gc-next` is `benchmarks/asm_render/bench.tl`'s `asm-tok-next` shape: one
+# block that reads `tokens[cursor]` and bumps `cursor`, called from five sites,
+# three of them inside `gc-run`'s loop.
+check_global_cursor_helper() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "global_cursor_helper_$_suffix" \
+            tests/integration/global_cursor_helper.tl "$_target")
+
+        # No site keeps the boundary, and with every site inlined the helper
+        # keeps no out-of-line body at all.
+        assert_regex_count_eq "$_asm" \
+            '^[[:space:]]+call _tl_global_cursor_helper_gc_next$' 0 \
+            "global-cursor-helper-$_target"
+        assert_not_matches "$_asm" '^_tl_global_cursor_helper_gc_next:$' \
+            "global-cursor-helper-$_target"
+
+        _run=$(function_body "$_asm" _tl_global_cursor_helper_gc_run)
+
+        # Three copies landed in the loop, one per site, each with its own
+        # freshened bounds ok-label.
+        assert_regex_count_eq "$_run" \
+            '^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok[A-Za-z0-9_.]*:$' 3 \
+            "global-cursor-helper-$_target"
+
+        # What the splice buys beyond the boundary: the token array's
+        # descriptor -- the two global-cell words each of the three calls used
+        # to reload -- is now loop-invariant inside this caller and is read
+        # ONCE, in the preheader, with the loop body addressing the elements
+        # out of registers. (Other functions read the same cell; the claim is
+        # about this caller's loop.)
+        assert_regex_count_eq "$_run" \
+            '^[[:space:]]+movq _tl_global_cursor_helper_gc_tokens\(%rip\), %r' 1 \
+            "global-cursor-helper-$_target"
+
+        # The cursor write survived the clone at every site -- three stores to
+        # the cell, one per copy, each writing a register rather than leaving
+        # the cell to a call. A clone that dropped the store would leave one
+        # or none here and every site would read position zero; a clone that
+        # duplicated it would leave more and the run would skip tokens. The
+        # read side is the matching three, so each copy does its own
+        # read-modify-write exactly as the out-of-line body did.
+        assert_regex_count_eq "$_run" \
+            '^[[:space:]]+movq %r[a-z0-9]+, _tl_global_cursor_helper_gc_cursor\(%rip\)$' 3 \
+            "global-cursor-helper-$_target"
+        assert_regex_count_eq "$_run" \
+            '^[[:space:]]+movq _tl_global_cursor_helper_gc_cursor\(%rip\), %r' 3 \
+            "global-cursor-helper-$_target"
     done
 }
 
@@ -2651,6 +2711,7 @@ check_alu_mem_operand_sink
 check_checked_depth0_site
 check_checked_setup_helper
 check_checked_cheap_tier_claim
+check_global_cursor_helper
 check_synth_wrapped_probe
 check_synth_tail_wrapper
 check_synth_struct_accessor

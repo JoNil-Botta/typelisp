@@ -231,6 +231,10 @@ verify_linux_direct_object_link() {
     _shim="$_dir/no-assembler-bin"
     _out="$_dir/build.stdout"
     _err="$_dir/build.stderr"
+    _string_src="$ROOT/tests/integration/string_record_extent.tl"
+    _string_bin="$_dir/string-record-extent"
+    _string_out="$_dir/string-record-extent-build.stdout"
+    _string_err="$_dir/string-record-extent-build.stderr"
     _pkg="$_dir/package"
     _dep="$_pkg/vendor/math"
     _pkg_bin="$_pkg/target/release/direct_object_pkg"
@@ -271,6 +275,34 @@ EOF
     set -e
     if [ "$_run_got" -ne 42 ]; then
         echo "FAIL: Linux direct object executable exited $_run_got, expected 42" >&2
+        exit 1
+    fi
+
+    echo "[selfhost-native] Linux direct ELF String records link without assembler"
+    set +e
+    PATH="$_shim:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 \
+        "$_tool" build --direct "$_string_src" --target linux-x86_64 \
+        --backend-mode scalar --stdlib-root "$ROOT/stdlib" -o "$_string_bin" \
+        > "$_string_out" 2> "$_string_err"
+    _got=$?
+    set -e
+    if [ "$_got" -ne 0 ]; then
+        echo "FAIL: Linux direct String-record object build exited $_got" >&2
+        if [ -s "$_string_out" ]; then sed 's/^/  stdout: /' "$_string_out" >&2; fi
+        if [ -s "$_string_err" ]; then sed 's/^/  stderr: /' "$_string_err" >&2; fi
+        exit 1
+    fi
+    assert_empty "$_string_err" "Linux direct String-record object build stderr"
+    assert_contains "$_string_out" "Built $_string_bin" \
+        "Linux direct String-record object build stdout"
+    [ -x "$_string_bin" ] ||
+        fail "Linux direct String-record object build did not write executable"
+    set +e
+    "$_string_bin"
+    _string_run_got=$?
+    set -e
+    if [ "$_string_run_got" -ne 42 ]; then
+        echo "FAIL: Linux direct String-record executable exited $_string_run_got, expected 42" >&2
         exit 1
     fi
 

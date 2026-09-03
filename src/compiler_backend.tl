@@ -101559,32 +101559,10 @@
           (set! index (+ index 1))))
       out)))
 
-(define (compiler-backend-pic-align-offset [offset : i64] [align : i64]) : i64
-  (if (<= align 1)
-    offset
-    (let
-      [rem : i64 (% offset align)]
-      (if (= rem 0)
-        offset
-        (+ offset (- align rem))))))
-
 (define (compiler-backend-pic-data-record-end-offset
   [record : cobj.CompilerObjectDataRecord]
   [offset : i64]) : i64
-  (match record
-    [(cobj.CompilerObjectDataRecord.Label _) offset]
-    [(cobj.CompilerObjectDataRecord.Align align)
-      (compiler-backend-pic-align-offset offset align)]
-    [(cobj.CompilerObjectDataRecord.Bytes bytes)
-      (+ offset (string.string-length bytes))]
-    [(cobj.CompilerObjectDataRecord.String text)
-      (+ offset (+ (string.string-length text) 1))]
-    [(cobj.CompilerObjectDataRecord.F64 _) (+ offset 8)]
-    [(cobj.CompilerObjectDataRecord.F32 _) (+ offset 4)]
-    [(cobj.CompilerObjectDataRecord.I64 _) (+ offset 8)]
-    [(cobj.CompilerObjectDataRecord.Zero count) (+ offset count)]
-    [(cobj.CompilerObjectDataRecord.SymbolAddress _) (+ offset 8)]
-    [(cobj.CompilerObjectDataRecord.SymbolRva32 _) (+ offset 4)]))
+  (cobj.compiler-object-data-record-end-offset record offset))
 
 (define (compiler-backend-pic-data-label-offset-from
   [records : cobj.CompilerObjectDataRecordList]

@@ -5308,7 +5308,31 @@
       55
       (compiler_ir_types.CompilerIrValue.F64 (opt-test-f32-bits "-3.9"))
       (compiler_ast_types.AstType.F32)
-      (compiler_ast_types.AstType.I64))))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Cast
+      63
+      (compiler_ir_types.CompilerIrValue.F64
+        (opt-test-f64-bits "9223372036854775808.0"))
+      (compiler_ast_types.AstType.F64)
+      (compiler_ast_types.AstType.U64))
+    (compiler_ir_types.CompilerIrInstr.Cast
+      64
+      (compiler_ir_types.CompilerIrValue.F64
+        (opt-test-f64-bits "9223372036854777856.0"))
+      (compiler_ast_types.AstType.F64)
+      (compiler_ast_types.AstType.U64))
+    (compiler_ir_types.CompilerIrInstr.Cast
+      65
+      (compiler_ir_types.CompilerIrValue.F64
+        (opt-test-f64-bits "18446744073709549568.0"))
+      (compiler_ast_types.AstType.F64)
+      (compiler_ast_types.AstType.U64))
+    (compiler_ir_types.CompilerIrInstr.Cast
+      66
+      (compiler_ir_types.CompilerIrValue.F64
+        (opt-test-f32-bits "18446742974197923840.0"))
+      (compiler_ast_types.AstType.F32)
+      (compiler_ast_types.AstType.U64))))
 
 (define (opt-finite-cast-no-fold-instrs) : compiler_ir_types.CompilerIrInstrSeq
   (opt-test-instrs
@@ -5327,13 +5351,7 @@
       62
       (compiler_ir_types.CompilerIrValue.F64 (opt-test-f64-bits "256.0"))
       (compiler_ast_types.AstType.F64)
-      (compiler_ast_types.AstType.Char))
-    (compiler_ir_types.CompilerIrInstr.Cast
-      63
-      (compiler_ir_types.CompilerIrValue.F64
-        (opt-test-f64-bits "9223372036854775808.0"))
-      (compiler_ast_types.AstType.F64)
-      (compiler_ast_types.AstType.U64))))
+      (compiler_ast_types.AstType.Char))))
 
 (define (compiler-optimize-float-fold-ok?) : bool
   (let
@@ -5449,9 +5467,33 @@
           999)
         (- 0 3))
       (=
+        (opt-mov-dst-i64-value-instr-seq
+          (compiler_ir_types.compiler-ir-global-shared-view finite-casts)
+          63
+          999)
+        -9223372036854775808)
+      (=
+        (opt-mov-dst-i64-value-instr-seq
+          (compiler_ir_types.compiler-ir-global-shared-view finite-casts)
+          64
+          999)
+        -9223372036854773760)
+      (=
+        (opt-mov-dst-i64-value-instr-seq
+          (compiler_ir_types.compiler-ir-global-shared-view finite-casts)
+          65
+          999)
+        -2048)
+      (=
+        (opt-mov-dst-i64-value-instr-seq
+          (compiler_ir_types.compiler-ir-global-shared-view finite-casts)
+          66
+          999)
+        -1099511627776)
+      (=
         (opt-count-cast-instr-seq
           (compiler_ir_types.compiler-ir-global-shared-view deferred-casts))
-        4))))
+        3))))
 
 ;; --- commutative constant-lhs canonicalisation --------------------------------
 ;;

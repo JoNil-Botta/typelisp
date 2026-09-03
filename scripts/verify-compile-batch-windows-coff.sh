@@ -278,8 +278,12 @@ done
 [ ! -e "$WORKDIR/u64_float_casts.forced-unused.obj" ] ||
     fail "forced assembly text sentinel wrote an object"
 assert_contains "$WORKDIR/u64_float_casts.forced.s" "cast_u64_float_"
+assert_contains "$WORKDIR/u64_float_casts.forced.s" "cast_float_u64_"
 assert_contains "$WORKDIR/u64_float_casts.forced.s" "    addsd "
 assert_contains "$WORKDIR/u64_float_casts.forced.s" "    addss "
+assert_contains "$WORKDIR/u64_float_casts.forced.s" "    ucomisd "
+assert_contains "$WORKDIR/u64_float_casts.forced.s" "    ucomiss "
+assert_contains "$WORKDIR/u64_float_casts.forced.s" '    btsq $63, '
 
 MALFORMED_LIST="$WORKDIR/malformed.list"
 MALFORMED_PLAN="$WORKDIR/malformed.plan"

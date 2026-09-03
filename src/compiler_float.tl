@@ -180,9 +180,7 @@
 
 (define (compiler-finite-cast-unsigned-max-exclusive [ty : ast.AstType]) : f64
   (match ty
-    ;; Runtime float-to-int lowering converts through the signed 64-bit path
-    ;; before typed storage, so high u64 float results stay runtime-only.
-    [(ast.AstType.U64) 9223372036854775808.0]
+    [(ast.AstType.U64) 18446744073709551616.0]
     [(ast.AstType.U32) 4294967296.0]
     [(ast.AstType.U16) 65536.0]
     [(ast.AstType.U8) 256.0]
@@ -236,7 +234,15 @@
       [(ast.AstType.I8)
         (CompilerFiniteCastResultI64 (cast (cast value : i8) : i64))]
       [(ast.AstType.U64)
-        (CompilerFiniteCastResultI64 (cast (cast value : u64) : i64))]
+        ;; Keep the host execution of the compiler inside signed conversion's
+        ;; defined range too. The payload is stored as i64, so restoring bit 63
+        ;; produces the exact u64 bits consumed by the optimizer/backend.
+        (CompilerFiniteCastResultI64
+          (if (< value 9223372036854775808.0)
+            (cast value : i64)
+            (bit-or
+              (cast (- value 9223372036854775808.0) : i64)
+              -9223372036854775808)))]
       [(ast.AstType.U32)
         (CompilerFiniteCastResultI64 (cast (cast value : u32) : i64))]
       [(ast.AstType.U16)

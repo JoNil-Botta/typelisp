@@ -860,6 +860,46 @@ check_global_cmp_mem_fold() {
     done
 }
 
+check_rmw_mem_operand_fold() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "rmw_mem_operand_fold_$_suffix" \
+            tests/integration/rmw_mem_operand_fold.tl "$_target")
+        _bump=$(function_body "$_asm" _tl_rmw_mem_operand_fold_rmw_bump)
+        _read=$(function_body "$_asm" _tl_rmw_mem_operand_fold_rmw_bump_and_read)
+
+        # RMW-2: five `g = g op k` updates, five different ops, both operand
+        # forms -- two immediates and three registers. Each was
+        # `movq g(%rip),%rX ; op src,%rX ; movq %rX,g(%rip)` before the fold and
+        # is ONE memory-operand instruction after it.
+        assert_regex_count_eq "$_bump" \
+            '^[[:space:]]+(addq|subq|orq|andq|xorq) (\$[0-9-]+|%r[a-z0-9]+), _tl_rmw_mem_operand_fold_rmw_[a-z]+\(%rip\)$' 5 \
+            "rmw-mem-operand-fold-$_target"
+        # Nothing stages a cell into a register first: the loads the fold
+        # consumed are gone, and so are the stores that closed each triple.
+        assert_not_matches "$_bump" \
+            '^[[:space:]]+movq _tl_rmw_mem_operand_fold_rmw_[a-z]+\(%rip\), %r' \
+            "rmw-mem-operand-fold-$_target"
+        assert_not_matches "$_bump" \
+            '^[[:space:]]+movq %r[a-z0-9]+, _tl_rmw_mem_operand_fold_rmw_[a-z]+\(%rip\)$' \
+            "rmw-mem-operand-fold-$_target"
+
+        # The read-after-write neighbour. The update still folds -- the emitter
+        # answers the read with a RELOAD rather than by keeping the register, so
+        # the register dies at the store exactly as in the loop above -- and the
+        # reload that follows reads back the cell the folded instruction wrote.
+        # That ordering is the fold's correctness in one line: the memory write
+        # must happen at the folded instruction, not later.
+        assert_regex_count_eq "$_read" \
+            '^[[:space:]]+addq %r[a-z0-9]+, _tl_rmw_mem_operand_fold_rmw_hits\(%rip\)$' 1 \
+            "rmw-mem-operand-fold-read-$_target"
+        assert_next_line_matches "$_read" \
+            'addq %r[a-z0-9]+, _tl_rmw_mem_operand_fold_rmw_hits[(]%rip[)]' \
+            '^[[:space:]]+movq _tl_rmw_mem_operand_fold_rmw_hits[(]%rip[)], %r' \
+            "rmw-mem-operand-fold-read-$_target"
+    done
+}
+
 check_alu_mem_operand_tie() {
     _asm=$(compile_gate alu_mem_operand_tie tests/integration/alu_mem_operand_tie.tl)
     _body=$(function_body "$_asm" _tl_alu_mem_operand_tie_fold_words)
@@ -931,6 +971,104 @@ check_const_global_mask_unroll() {
     assert_contains "$_global" '__bce_fast__unroll_body' const-global-mask-unroll
     assert_contains "$_global" '__bce_fast__unroll_guard' const-global-mask-unroll
     assert_contains "$_literal" '__bce_fast__unroll_body' const-global-mask-unroll
+}
+
+check_checked_depth0_site() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "checked_depth0_site_$_suffix" \
+            tests/integration/checked_depth0_site.tl "$_target")
+        _probe=$(function_body "$_asm" _tl_checked_depth0_site_probe)
+
+        # CB-2(c): the hash leaf's site is `probe`'s ENTRY block -- loop depth
+        # zero -- and every static band refuses it there. Before CB-2 so did the
+        # measured tier, on a site-depth clause that stood in for a plan model
+        # which priced an allocation once per invocation. The plan now weights
+        # each spill and carrier slot by the census depth weight of the blocks
+        # it is touched in, the floor stands down where the composite frequency
+        # already carries the evidence (`main` reaches `probe` through a loop),
+        # and the verdict keeps this site: the call is gone and the leaf's own
+        # body -- its FNV seed and its word loop -- is inside the caller.
+        assert_not_matches "$_probe" \
+            '^[[:space:]]+call _tl_checked_depth0_site_hash_words$' \
+            "checked-depth0-site-$_target"
+        assert_matches "$_probe" '^[[:space:]]+movq \$2166136261, %r' \
+            "checked-depth0-site-$_target"
+        assert_matches "$_probe" '^\.L[A-Za-z0-9_]+_inl\.' \
+            "checked-depth0-site-$_target"
+
+        # The tier COPIES a body into one site and leaves the callee reachable
+        # from that site's siblings; the cold second reference still calls it.
+        assert_matches "$_asm" '^_tl_checked_depth0_site_hash_words:$' \
+            "checked-depth0-site-$_target"
+        assert_regex_count_eq "$_asm" \
+            '^[[:space:]]+call _tl_checked_depth0_site_hash_words$' 1 \
+            "checked-depth0-site-$_target"
+    done
+}
+
+check_checked_setup_helper() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "checked_setup_helper_$_suffix" \
+            tests/integration/checked_setup_helper.tl "$_target")
+        _run=$(function_body "$_asm" _tl_checked_setup_helper_run)
+
+        # The recorded loser's shape: a seven-parameter setup builder at the
+        # ENTRY block of a caller that holds a hot loop, reached through a loop
+        # of its own caller. The site-depth clause used to refuse it without
+        # pricing it; it is now offered to the verdict and the verdict refuses
+        # it BY COST, and the difference is visible only here -- absorbing the
+        # builder is correct, just slower, so an exit code cannot tell the two
+        # apart. `--trace-passes` reports the numbers.
+        assert_regex_count_eq "$_run" \
+            '^[[:space:]]+call _tl_checked_setup_helper_build_csr$' 1 \
+            "checked-setup-helper-$_target"
+        # ...and nothing else was absorbed into the loop-holding caller either:
+        # an imported body carries the inline label prefix.
+        assert_not_matches "$_run" '^\.L[A-Za-z0-9_]+_inl\.' \
+            "checked-setup-helper-$_target"
+    done
+}
+
+check_checked_cheap_tier_claim() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "checked_cheap_tier_claim_$_suffix" \
+            tests/integration/checked_cheap_tier_claim.tl "$_target")
+        _probe=$(function_body "$_asm" _tl_checked_cheap_tier_claim_probe)
+
+        # CB-2b: the measured tier CLAIMS `hash-words` at `probe`'s entry site
+        # -- the relaxed depth floor is the only clause that admits it -- so the
+        # FNV seed and the word loop are inside the caller.
+        assert_not_matches "$_probe" \
+            '^[[:space:]]+call _tl_checked_cheap_tier_claim_hash_words$' \
+            "checked-cheap-tier-claim-$_target"
+        assert_matches "$_probe" '^[[:space:]]+movq \$2166136261, %r' \
+            "checked-cheap-tier-claim-$_target"
+
+        # ...and the claim takes NOTHING away. `mix` is the four-site tiny leaf
+        # the unmeasured bands inline for free, two of its sites inside this
+        # very caller's loop: no call to it survives here...
+        assert_not_matches "$_probe" \
+            '^[[:space:]]+call _tl_checked_cheap_tier_claim_mix$' \
+            "checked-cheap-tier-claim-$_target"
+        # ...nor anywhere else in the program, and with all four sites inlined
+        # the leaf keeps no out-of-line body at all.
+        assert_regex_count_eq "$_asm" \
+            '^[[:space:]]+call _tl_checked_cheap_tier_claim_mix$' 0 \
+            "checked-cheap-tier-claim-$_target"
+        assert_not_matches "$_asm" '^_tl_checked_cheap_tier_claim_mix:$' \
+            "checked-cheap-tier-claim-$_target"
+
+        # The claimed callee is COPIED, not absorbed: the cold second reference
+        # in `checksum` still calls it, so the claim is a real one.
+        assert_matches "$_asm" '^_tl_checked_cheap_tier_claim_hash_words:$' \
+            "checked-cheap-tier-claim-$_target"
+        assert_regex_count_eq "$_asm" \
+            '^[[:space:]]+call _tl_checked_cheap_tier_claim_hash_words$' 1 \
+            "checked-cheap-tier-claim-$_target"
+    done
 }
 
 check_const_index_bounds() {
@@ -1823,8 +1961,12 @@ check_loadcse_forward
 check_switch_dispatch_scavenge
 check_cmp_fold_load
 check_global_cmp_mem_fold
+check_rmw_mem_operand_fold
 check_alu_mem_operand_tie
 check_alu_mem_operand_sink
+check_checked_depth0_site
+check_checked_setup_helper
+check_checked_cheap_tier_claim
 check_const_index_bounds
 check_const_global_mask_unroll
 check_rbp_sixth_csr

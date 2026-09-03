@@ -11,6 +11,7 @@ inline_aggregate_global_three_field|tests/integration/inline_aggregate_global_th
 inline_aggregate_global_nested|tests/integration/inline_aggregate_global_nested.tl|42|555\n897\n|-|stdlib/io.tl stdlib/string.tl
 cli_common_option|tests/integration/cli_common_option.tl|42|-|-|cli_option_core.tl stdlib/io.tl stdlib/string.tl
 arg_global_len_eq_pair|tests/integration/arg_global_len_eq_pair.tl|42|711\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+arg_specialize_global|tests/integration/arg_specialize_global.tl|42|36\n2\n64\n108\n80\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 main_private_stack|tests/integration/main_private_stack.tl|42|-|-|-
 guard_sink_invalidate_walk|tests/integration/guard_sink_invalidate_walk.tl|42|0\n0\n2\n13\n|-|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 guard_sink_store_across_guard|tests/integration/guard_sink_store_across_guard.tl|42|25\n210\n-1\n|-|stdlib/io.tl stdlib/string.tl
@@ -22,6 +23,8 @@ content_bounds_induction|tests/integration/content_bounds_induction.tl|42|71\n|8
 content_bounds_induction_abort|tests/integration/content_bounds_induction_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/windows/content_bounds_induction_abort/content_bounds_induction_abort.tl:38:29: array index out of bounds: index=8 length=8\n
 content_bounds_checked|tests/integration/content_bounds_checked.tl|42|32\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 content_bounds_checked_abort|tests/integration/content_bounds_checked_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/windows/content_bounds_checked_abort/content_bounds_checked_abort.tl:55:35: array index out of bounds: index=8 length=8\n
+ck_local_len_eq|tests/integration/ck_local_len_eq.tl|42|272\n|8 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+ck_local_len_eq_abort|tests/integration/ck_local_len_eq_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/windows/ck_local_len_eq_abort/ck_local_len_eq_abort.tl:32:63: array index out of bounds: index=8 length=8\n
 guard_dedup_bypass_descriptor|tests/integration/guard_dedup_bypass_descriptor.tl|42|-5915004525821994045\n|24|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 guard_dedup_mutated_slice|tests/integration/guard_dedup_mutated_slice.tl|42|172085089044\n|20 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 guard_dedup_mutated_slice_abort|tests/integration/guard_dedup_mutated_slice.tl|134|-|20 17|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/windows/guard_dedup_mutated_slice_abort/guard_dedup_mutated_slice_abort.tl:62:57: array index out of bounds: index=17 length=17\n
@@ -186,6 +189,10 @@ global_cmp_mem_fold|tests/integration/global_cmp_mem_fold.tl|42|-|-|-
 load_widen_cast_fold|tests/integration/load_widen_cast_fold.tl|42|-|-|-
 gep_load_cmp_spilled_stage|tests/integration/gep_load_cmp_spilled_stage.tl|42|-|-|-
 alu_mem_operand_tie|tests/integration/alu_mem_operand_tie.tl|42|-|-|-
+checked_depth0_site|tests/integration/checked_depth0_site.tl|42|-|-|-
+checked_setup_helper|tests/integration/checked_setup_helper.tl|42|-|-|-
+checked_cheap_tier_claim|tests/integration/checked_cheap_tier_claim.tl|42|-|-|-
+rmw_mem_operand_fold|tests/integration/rmw_mem_operand_fold.tl|42|8 -24\n7 1024 0\n24 108\n36 24\n6 3\n|8 3|stdlib/io.tl stdlib/string.tl
 mem_dest_rmw_fold|tests/integration/mem_dest_rmw_fold.tl|42|-|-|-
 copy_call_word|tests/integration/copy_call_word.tl|42|-|-|-
 load_sink_trap_parity|tests/integration/load_sink_trap_parity.tl|134|rows\n|-|stdlib/io.tl|expected-stderr:tl: target/integration-verify/windows/load_sink_trap_parity/load_sink_trap_parity.tl:33:37: array index out of bounds: index=4 length=4\n

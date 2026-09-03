@@ -7210,6 +7210,204 @@
 ;; The paired neighbour is the SAME text with a live slot region (frame = 16):
 ;; both the prologue subq and the pop-run addq must come back, which is what
 ;; keeps the drop keyed on the amount being zero rather than on the shape.
+;; ---------------------------------------------------------------------------
+;; RG-1 fix B: a callee-saved register the body never names is not pushed.
+;;
+;; The body below saves r12/r13/r14 (slot-vars = 3, so the saved-CSR slots are
+;; -32/-40/-48) and then names %r12 and %r14 and nothing else. %r13's push and
+;; pop are pure cost: two instructions on every call of the function. The first
+;; rebase reports what the body names; re-running it with %r13 out of the PUSH
+;; set -- and the full set still classifying, so its save/restore movqs are
+;; deleted exactly as before -- must drop its `popq` with its `pushq`.
+(define (compiler-backend-csr-unused-save-body) : String
+  "    movq %r12, -32(%rbp)
+    movq %r13, -40(%rbp)
+    movq %r14, -48(%rbp)
+    movq -8(%rbp), %r12
+    addq %r14, %r12
+    movq %r12, %rax
+    leaq -48(%rbp), %rsp
+    popq %r14
+    popq %r13
+    popq %r12
+    leave
+    ret
+")
+
+;; The same body with %r13 named through its 32-bit spelling. A register named
+;; at ANY width is used; reading only the 64-bit spellings makes this body look
+;; empty of %r13 and trims a save the function needs.
+(define (compiler-backend-csr-narrow-spelling-body) : String
+  "    movq %r12, -32(%rbp)
+    movq %r13, -40(%rbp)
+    movq %r14, -48(%rbp)
+    movq -8(%rbp), %r12
+    addl %r13d, %r12d
+    addq %r14, %r12
+    movq %r12, %rax
+    leaq -48(%rbp), %rsp
+    popq %r14
+    popq %r13
+    popq %r12
+    leave
+    ret
+")
+
+(define (compiler-backend-csr-trim-mask-of [body : String]) : i64
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [_abi : unit
+      (compiler_backend.compiler-backend-set-current-fn-linux! backend-state)]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler-backend-callee-save-assignments3)]
+    [push-regs : (__tl_dyn-array String)
+      (compiler_backend.compiler-backend-rsp-rebase-make-push-regs)]
+    [push-count : i64
+      (compiler_backend.compiler-backend-fill-push-csr-regs!
+        assignments
+        (owned_view.compiler-owned-shared-view push-regs)
+        backend-state)]
+    [result : compiler_backend.CompilerBackendRspRebaseResult
+      (compiler_backend.compiler-backend-rsp-rebase-full-result
+        (owned_view.compiler-owned-shared-view body)
+        64
+        true
+        (owned_view.compiler-owned-shared-view push-regs)
+        push-count
+        3
+        backend-state)]
+    (if result.ok
+      result.csr-ref-mask
+      0)))
+
+(define (compiler-backend-csr-unused-save-trim-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [_abi : unit
+      (compiler_backend.compiler-backend-set-current-fn-linux! backend-state)]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler-backend-callee-save-assignments3)]
+    [push-regs : (__tl_dyn-array String)
+      (compiler_backend.compiler-backend-rsp-rebase-make-push-regs)]
+    [push-count : i64
+      (compiler_backend.compiler-backend-fill-push-csr-regs!
+        assignments
+        (owned_view.compiler-owned-shared-view push-regs)
+        backend-state)]
+    [body : String (compiler-backend-csr-unused-save-body)]
+    [untrimmed : compiler_backend.CompilerBackendRspRebaseResult
+      (compiler_backend.compiler-backend-rsp-rebase-full-result
+        (owned_view.compiler-owned-shared-view body)
+        64
+        true
+        (owned_view.compiler-owned-shared-view push-regs)
+        push-count
+        3
+        backend-state)]
+    [trim-regs : (__tl_dyn-array String)
+      (compiler_backend.compiler-backend-csr-trimmed-push-regs
+        (owned_view.compiler-owned-shared-view push-regs)
+        untrimmed.csr-ref-mask
+        backend-state)]
+    [trim-count : i64
+      (compiler_backend.compiler-backend-csr-push-reg-count
+        (owned_view.compiler-owned-shared-view trim-regs))]
+    [trimmed : compiler_backend.CompilerBackendRspRebaseResult
+      (compiler_backend.compiler-backend-rsp-rebase-full-result-with-saves
+        (owned_view.compiler-owned-shared-view body)
+        64
+        true
+        (owned_view.compiler-owned-shared-view trim-regs)
+        trim-count
+        (owned_view.compiler-owned-shared-view push-regs)
+        push-count
+        3
+        backend-state)]
+    [prologue : String
+      (compiler_backend.compiler-backend-emit-function-entry-fpo-push
+        backend-state
+        "_tl_rg1_trim_unit"
+        64
+        (owned_view.compiler-owned-shared-view trim-regs)
+        trim-count)]
+    [untrimmed-text : String untrimmed.text]
+    [trimmed-text : String trimmed.text]
+    [trimmed-slot1 : String
+      (compiler_backend.compiler-backend-global-array-element-shared-view
+        trim-regs
+        1)]
+    (and
+      ;; The control: before the trim the pop run restores all three.
+      (= push-count 3)
+      untrimmed.ok
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view untrimmed-text)
+        "    popq %r13\n")
+      ;; The body names %r12 and %r14 and not %r13.
+      (= trim-count 2)
+      (string.eq trimmed-slot1 "")
+      trimmed.ok
+      ;; Neither half of the pair survives, and the register is named nowhere.
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view trimmed-text)
+          "%r13"))
+      ;; The saves the classification set still deleted.
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view trimmed-text)
+          "(%rbp)"))
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view trimmed-text)
+        "    popq %r14\n")
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view trimmed-text)
+        "    popq %r12\n")
+      ;; ALIGNMENT. The frame adjustment follows the push count: two pushes are
+      ;; an even run, so the 8-byte pad comes back and the prologue's total
+      ;; displacement D = 8*pushes + sub stays at D % 16 == 8 -- the offset a
+      ;; returning call needs. (Three pushes paid the same 88 with sub = 64.)
+      (string.eq
+        prologue
+        "_tl_rg1_trim_unit:
+    pushq %r12
+    pushq %r14
+    subq $72, %rsp
+")
+      (= (bit-and (+ (* 8 trim-count) 72) 15) 8)
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view trimmed-text)
+        "    addq $72, %rsp\n"))))
+
+;; The negative: a register named only through a narrow spelling is USED, and
+;; nothing is trimmed.
+(define (compiler-backend-csr-narrow-spelling-keeps-save-ok?) : bool
+  (let
+    [wide : i64
+      (compiler-backend-csr-trim-mask-of
+        (compiler-backend-csr-unused-save-body))]
+    [narrow : i64
+      (compiler-backend-csr-trim-mask-of
+        (compiler-backend-csr-narrow-spelling-body))]
+    [r13-bit : i64
+      (compiler_backend.compiler-backend-plan-reg-id-bit
+        compiler_abi.compiler-reg-id-r13)]
+    [r12-bit : i64
+      (compiler_backend.compiler-backend-plan-reg-id-bit
+        compiler_abi.compiler-reg-id-r12)]
+    [r14-bit : i64
+      (compiler_backend.compiler-backend-plan-reg-id-bit
+        compiler_abi.compiler-reg-id-r14)]
+    (and
+      (not (= (bit-and wide r12-bit) 0))
+      (not (= (bit-and wide r14-bit) 0))
+      (= (bit-and wide r13-bit) 0)
+      (not (= (bit-and narrow r13-bit) 0)))))
+
 (define (compiler-backend-dead-slot-region-push-body) : String
   "    movq %r12, -8(%rbp)
     movq %r13, -16(%rbp)
@@ -37041,9 +37239,10 @@ g:
               (owned_view.compiler-owned-shared-view backend-state))]
           (compiler_backend.CompilerBackendRspRebaseResult
             (compiler_backend.compiler-backend-peephole-asm result.text)
-            result.ok))]
+            result.ok
+            result.csr-ref-mask))]
       [(compiler_backend.ResultCompilerBackend.Err _)
-        (compiler_backend.CompilerBackendRspRebaseResult "" false)])))
+        (compiler_backend.CompilerBackendRspRebaseResult "" false 0)])))
 
 (define (compiler-backend-rbp-immediate-add-final-ok?) : bool
   (let
@@ -56449,6 +56648,8 @@ b_keep:
         (compiler-backend-fusion-pin-store-fusion-ok?)
         (compiler-backend-callee-save-pop-epilogue-ok?)
         (compiler-backend-callee-save-push-prologue-rebase-ok?)
+        (compiler-backend-csr-unused-save-trim-ok?)
+        (compiler-backend-csr-narrow-spelling-keeps-save-ok?)
         (compiler-backend-dead-slot-region-push-ok?)
         (compiler-backend-win64-callee-save-homes-ok?)
         (compiler-backend-win64-fpo-seh-prologue-ok?)

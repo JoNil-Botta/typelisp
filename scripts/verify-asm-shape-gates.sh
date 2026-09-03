@@ -764,6 +764,92 @@ assert_dead_slot_region() {
     fi
 }
 
+# RG-1 fix B: every callee-saved register the prologue pushes must be NAMED by
+# the body. A register that is pushed and popped and appears nowhere between is
+# two instructions on every call of the function for nothing -- cg-map-probe
+# pays 2.63M Ir per callgraph_scc run that way, and the probe fixture below is
+# its shape.
+#
+# The check reads the pushes out of the prologue and then asks whether the
+# register occurs anywhere else in the body, at ANY width: a `%rbx` a function
+# only ever names as `%ebx` is used, and trimming its save would clobber the
+# caller's. A frame reference `K(%rbp)` is not a use of %rbp, which is why the
+# %rbp scan drops the occurrences that follow a '('.
+#
+# Pre-change both `insert!` and `lookup` push %r15 and name it nowhere, so the
+# assertion is proven forcing.
+# The callee-saved registers a function's PROLOGUE pushes: the pushq run
+# before the first inner label. An abort site marshals its arguments with its
+# own pushq/popq pair, so counting pushes over the whole body would read one of
+# those as a second prologue save.
+prologue_pushed_csrs() {
+    awk '
+        NR == 1 { next }
+        /:[[:space:]]*$/ { exit }
+        /^[[:space:]]+pushq %(r1[2-5]|rbx|rbp)$/ {
+            sub(/^[[:space:]]+pushq %/, "")
+            print
+        }
+    ' "$1"
+}
+
+assert_pushed_csrs_named() {
+    _body=$1
+    _label=$2
+    for _reg in $(prologue_pushed_csrs "$_body"); do
+        case $_reg in
+            rbx) _pat='%rbx|%ebx|%bx|%bl' ;;
+            rbp) _pat='%rbp|%ebp|%bp|%bpl' ;;
+            *) _pat="%$_reg" ;;
+        esac
+        # Every line naming the register at any width, with the frame operands
+        # blanked (a `K(%rbp)` base is not a use of the value register) and the
+        # restores dropped, less the one prologue push.
+        _mentions=$(sed 's/[-0-9]*(%r[bs]p[^)]*)/FRAME/g' "$_body" \
+            | grep -E "$_pat" \
+            | grep -v -c -E "^[[:space:]]+popq %$_reg\$" || true)
+        if [ "$_mentions" -le 1 ]; then
+            fail "$_label pushes %$_reg and never names it"
+        fi
+    done
+}
+
+check_csr_unused_save() {
+    _asm=$(compile_gate csr_unused_save tests/integration/csr_unused_save.tl)
+    for _fn in _tl_csr_unused_save_insert_bang _tl_csr_unused_save_lookup; do
+        _body=$(function_body "$_asm" "$_fn")
+        _saved=$(prologue_pushed_csrs "$_body" | wc -l | tr -d '[:space:]')
+        if [ "$_saved" -lt 1 ]; then
+            fail "csr-unused-save $_fn expected at least one pushed CSR home, got $_saved"
+        fi
+        assert_pushed_csrs_named "$_body" "csr-unused-save-$_fn"
+    done
+}
+
+# RG-1 fix B on a CALL-CARRYING loop: the census-shaped walk. Both arms of the
+# inner scan call, so the loop's carried values are callee-saved-only
+# candidates and the function runs with a full callee-saved run pushed -- the
+# shape where an unnamed save costs two instructions on every one of the
+# function's calls. The gate pins that the run is there, that every register in
+# it is named by the body, and that the prologue's total displacement still
+# leaves the body's calls 16-byte aligned after the trim has had its say.
+check_csr_census_loop() {
+    _asm=$(compile_gate csr_census_loop tests/integration/csr_census_loop.tl)
+    _body=$(function_body "$_asm" _tl_csr_census_loop_ccl_census_blocks)
+    _saved=$(prologue_pushed_csrs "$_body" | wc -l | tr -d '[:space:]')
+    if [ "$_saved" -lt 4 ]; then
+        fail "csr-census-loop expected at least 4 pushed CSR homes, got $_saved"
+    fi
+    assert_pushed_csrs_named "$_body" csr-census-loop
+    assert_call_alignment "$_body" "$_saved" csr-census-loop
+    # The inner scan's two arms both call, so the loop is genuinely
+    # call-carrying: without a call in the body the shape proves nothing. The
+    # arms' own `ccl-bump` is inlined into the walk (as cg-census-blocks inlines
+    # cg-census-bump-map), and what survives is its probe -- the same call the
+    # benchmark's loop carries.
+    assert_contains "$_body" 'call _tl_csr_census_loop_ccl_probe' csr-census-loop
+}
+
 check_csr_push_prologue() {
     _asm=$(compile_gate csr_push_prologue tests/integration/csr_push_prologue.tl)
     _body=$(function_body "$_asm" _tl_csr_push_prologue_churn3)
@@ -2546,6 +2632,8 @@ check_wide_const_hoist
 check_group_pair_home
 check_group_pair_phi_home
 check_csr_push_prologue
+check_csr_unused_save
+check_csr_census_loop
 check_dead_frame_boundary
 check_dead_frame_abort_only_trap
 check_dead_frame_boundary_win64

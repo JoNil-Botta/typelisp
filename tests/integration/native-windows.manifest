@@ -166,6 +166,10 @@ jump_only_forward|tests/integration/jump_only_forward.tl|42|-|-|-
 wide_const_hoist|tests/integration/wide_const_hoist.tl|42|-|-|stdlib/io.tl
 target_asm_loop_divmod_parity|tests/integration/target_asm_loop_divmod_parity.tl|42|-|-|stdlib/io.tl
 csr_push_prologue|tests/integration/csr_push_prologue.tl|42|-|-|stdlib/io.tl
+csr_unused_save|tests/integration/csr_unused_save.tl|42|900\n|-|stdlib/io.tl
+csr_census_loop|tests/integration/csr_census_loop.tl|42|24 24\n|3 0|stdlib/io.tl stdlib/string.tl
+csr_census_loop_abort|tests/integration/csr_census_loop.tl|134|-|3 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/csr_census_loop_abort/csr_census_loop_abort.tl:77:53: array index out of bounds: index=8 length=8\n
+csr_census_loop_abort_opt2|tests/integration/csr_census_loop.tl|134|-|3 1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/windows/csr_census_loop_abort_opt2/csr_census_loop_abort_opt2.tl:77:53: array index out of bounds: index=8 length=8\n
 dead_frame_boundary|tests/integration/dead_frame_boundary.tl|42|-|-|stdlib/io.tl
 red_zone_leaf|tests/integration/red_zone_leaf.tl|42|-|-|stdlib/io.tl
 select_flags_lea|tests/integration/select_flags_lea.tl|42|-|-|stdlib/io.tl

@@ -4839,7 +4839,7 @@
   inline-checked-entry-equivalent
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-checked-entry-equivalent-ok?)
-    "a depth-0 site reads as entry-equivalent at the entry block, at a block that post-dominates it and at an arm of the entry branch whose sibling leaves the function -- the last two only in a wrapper-shaped caller"))
+    "a depth-0 site reads as entry-equivalent at the entry block, at a block that post-dominates it in a loop-free caller and at an arm of the entry branch whose sibling leaves the function in a wrapper-shaped caller"))
 
 (test
   inline-checked-depth0-hot-site
@@ -4868,6 +4868,20 @@
     (compiler_optimize_tests.opt-inline-checked-depth0-self-test 3)
     101
     "putting the same site below a guard whose other arm returns makes its block neither the entry's post-dominator nor an arm of the entry branch, and the floor stands exactly as it did before the widening: one verdict fewer, the call still there"))
+
+(test
+  inline-checked-inl8-post-multi-call-caller
+  (test.assert-i64-eq
+    (compiler_optimize_tests.opt-inline-checked-inl8-self-test 0)
+    3000
+    "a callee taken at a small wrapper and left out of line at a straight-line caller carrying calls of its own: INL-8 MEASURES the second caller's post-dominating site -- three verdicts, and neither caller keeps the call"))
+
+(test
+  inline-checked-inl8-post-multi-call-caller-loop
+  (test.assert-i64-eq
+    (compiler_optimize_tests.opt-inline-checked-inl8-self-test 1)
+    1010
+    "the same pair with a LOOP below the second caller's site, which is the reading the caller clause had before: the site never reaches a verdict -- `site-depth` with `pos` reading `none` -- so one verdict fewer and that caller keeps its call out of line"))
 
 (test
   inline-checked-lock-bodies

@@ -22498,9 +22498,14 @@
 ;; INL-4 widened the depth floor's ENTRY clause to ENTRY-EQUIVALENT
 ;; (opt-inline-checked-position-class): a block that POST-DOMINATES the caller's
 ;; entry, or an ARM of the entry branch whose sibling leaves the function, is
-;; run once per invocation just as the entry block is. Both new readings are
-;; admitted only in a WRAPPER-SHAPED caller -- one carrying no call the site
-;; does not account for -- and the true entry site keeps the admission it had.
+;; run once per invocation just as the entry block is. The true entry site keeps
+;; the admission it had; the two new readings are gated by the caller clause,
+;; which INL-8 split (opt-inline-checked-depth0-caller-ok?): a POST site is
+;; admitted in a LOOP-FREE caller, whose plan cost is the per-invocation number
+;; the boundary is credited against, and an ARM site still needs the caller to
+;; be WRAPPER-SHAPED -- to carry no call the site does not account for -- because
+;; its block runs on only a fraction of the invocations the whole boundary is
+;; credited against.
 ;;
 ;; Each shape below is asked in BOTH block-list spellings the walk has to
 ;; handle, and `opt-inline-pos-site` answers -1 if the two ever disagree.
@@ -22688,6 +22693,47 @@
         (compiler_ir_types.compiler-ir-label "arm_bail")
         (opt-test-instrs (opt-inline-pos-return-literal))
         compiler_ir_types.CompilerIrBlockList.Nil)]
+    ;; 9: mode 1's caller -- the post merge, two extra calls -- given a LOOP of
+    ;; its own below the site. The merge still post-dominates the entry, and the
+    ;; caller's plan cost is no longer a per-invocation number, so the reading
+    ;; INL-8 added stands down and the count refuses the site as it always did.
+    [(= mode 9)
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (opt-test-instrs
+            (opt-inline-pos-call (opt-inline-pos-other) 4)
+            (opt-inline-pos-call (opt-inline-pos-other) 5)
+            (opt-inline-pos-branch "pos_hit" "pos_miss")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "pos_hit")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "pos_merge"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "pos_miss")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "pos_merge"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "pos_merge")
+                (opt-test-instrs
+                  (opt-inline-pos-call (opt-inline-pos-callee) 3)
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "pos_loop"))))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "pos_loop")
+                  (opt-test-instrs
+                    (opt-inline-pos-branch "pos_loop" "pos_done")))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.CompilerIrBlock.Block
+                    (compiler_ir_types.compiler-ir-label "pos_done")
+                    (opt-test-instrs (opt-inline-pos-return 3)))
+                  compiler_ir_types.CompilerIrBlockList.Nil))))))]
     ;; 8: NEITHER. One arm returns, so the merge below the other does not
     ;; post-dominate the entry, and the merge is no arm of the entry branch.
     [else
@@ -22713,6 +22759,44 @@
                   (opt-inline-pos-return 1)))
               compiler_ir_types.CompilerIrBlockList.Nil))))]))
 
+;; The shape as a function, so the caller facts the clause reads -- the natural
+;; loop set and the self-recursion flag -- can be installed for it. INL-8's
+;; reading of the post class is a caller FACT rather than a property of the
+;; block list, so a fixture that asked the class without installing them would
+;; be asking about whichever caller the walk installed last.
+(define (opt-inline-pos-caller-name) : i64
+  (opt-test-symbol "pos_caller"))
+
+(define (opt-inline-pos-function
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-inline-pos-caller-name)
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    8
+    blocks))
+
+(define (opt-inline-pos-install!
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : unit
+  (let
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-inline-pos-function
+          (compiler_optimize.compiler-opt-global-shared-view blocks))
+        (compiler_ir_types.compiler-ir-function-seq-empty))]
+    [index : compiler_optimize.OptFunctionIndex
+      (compiler_optimize.opt-function-index-build
+        (compiler_optimize.compiler-opt-global-shared-view functions))]
+    [census : compiler_optimize.OptInlineCensus
+      (compiler_optimize.opt-inline-census-build
+        (compiler_optimize.compiler-opt-global-shared-view index)
+        functions)]
+    (compiler_optimize.opt-inline-caller-facts-install!
+      (compiler_optimize.compiler-opt-global-shared-view index)
+      (compiler_optimize.compiler-opt-global-shared-view census)
+      (opt-inline-pos-caller-name)
+      (compiler_optimize.compiler-opt-global-shared-view blocks))))
+
 (define (opt-inline-pos-at
   [mode : i64]
   [position : i64]
@@ -22720,13 +22804,18 @@
   [array? : bool]) : i64
   (let
     [built : compiler_ir_types.CompilerIrBlockList (opt-inline-pos-blocks mode)]
-    (if array?
-      (compiler_optimize.opt-inline-checked-position-class
+    [spelled : compiler_ir_types.CompilerIrBlockList
+      (if array?
         (compiler_ir_types.CompilerIrBlockList.Array
           (compiler_ir_types.compiler-ir-block-seq-from-list built))
-        position
-        label)
-      (compiler_optimize.opt-inline-checked-position-class built position label))))
+        built)]
+    [_install : unit
+      (opt-inline-pos-install!
+        (compiler_optimize.compiler-opt-global-shared-view spelled))]
+    (compiler_optimize.opt-inline-checked-position-class
+      (compiler_optimize.compiler-opt-global-shared-view spelled)
+      position
+      label)))
 
 ;; The answer both spellings give, or -1 where they disagree.
 (define (opt-inline-pos-site [mode : i64] [position : i64] [name : String]) : i64
@@ -22754,14 +22843,32 @@
       (opt-inline-pos-site 0 3 "pos_merge")
       (compiler_optimize.opt-inline-checked-pos-post))
     (= (opt-inline-pos-floor (compiler_optimize.opt-inline-checked-pos-post)) 0)
-    ;; ...the SAME block in a caller carrying two more calls of its own: the
-    ;; boundary would be credited against work this site does not account for
+    ;; ...the SAME block in a caller carrying two more calls of its own. The
+    ;; count refuses it -- it is no wrapper -- and INL-8 admits it anyway,
+    ;; because a post block runs once per invocation and a LOOP-FREE caller's
+    ;; plan cost is the per-invocation number the boundary is credited against.
+    ;; This is `cg-map-probe` into `cg-map-insert-ref!`, callgraph_scc -4.04%.
+    (not
+      (compiler_optimize.opt-inline-checked-wrapper-shaped?
+        (opt-inline-pos-blocks 1)
+        (compiler_optimize.opt-inline-checked-pos-post)))
     (=
       (opt-inline-pos-site 1 3 "pos_merge")
+      (compiler_optimize.opt-inline-checked-pos-post))
+    ;; ...and the same caller given a loop of its own is refused again: the
+    ;; plan charges its loop body eight times per invocation, so the boundary
+    ;; this site retires is not in the currency the verdict compares. The floor
+    ;; then stands, and `site-depth` is the clause the census reports.
+    (=
+      (opt-inline-pos-site 9 3 "pos_merge")
       (compiler_optimize.opt-inline-checked-pos-none))
     (=
       (opt-inline-pos-floor (compiler_optimize.opt-inline-checked-pos-none))
       (compiler_optimize.opt-inline-checked-min-site-depth))
+    (string.eq
+      (compiler_optimize.opt-inline-checked-clause-text
+        (compiler_optimize.opt-inline-checked-clause-site-depth))
+      "site-depth")
     ;; ARM: the sibling arm returns a literal, so the two arms run the caller
     ;; out between them
     (=
@@ -22772,7 +22879,11 @@
     (=
       (opt-inline-pos-site 3 1 "arm_work")
       (compiler_optimize.opt-inline-checked-pos-arm))
-    ;; ...and one call past that pair is one too many
+    ;; ...and one call past that pair is one too many. The ARM reading keeps the
+    ;; count that INL-8 stood down for POST: an arm block runs on some fraction
+    ;; of invocations and is credited a whole boundary anyway, which is sound
+    ;; only while the caller holds no call this site does not account for.
+    ;; Standing it down here is lex_source +568,664.
     (=
       (opt-inline-pos-site 4 1 "arm_work")
       (compiler_optimize.opt-inline-checked-pos-none))
@@ -22961,6 +23072,250 @@
         callee-name
         (compiler_ir_types.CompilerIrCallArgs.Array args)
         (compiler_ast_types.AstType.I64)))))
+
+;; --- INL-8: the same callee at a wrapper and at a caller with calls of its own
+;;
+;; The shape the packet is about, and the one callgraph_scc's hash-map chain
+;; has: a callee taken at a SMALL caller -- a wrapper whose only call is the
+;; site's own -- while ANOTHER caller of it keeps the site out of line. That
+;; second caller is straight-line and carries calls of its own, and the block
+;; the site sits in post-dominates its entry, so the boundary is credited once
+;; per invocation exactly as the wrapper's is. Before INL-8 the caller clause
+;; refused it on the call COUNT and the census reported `site-depth` with `pos`
+;; reading `none`; the site never reached a verdict at all.
+;;
+;; The two modes are the clause, run in one binary. Mode 0 is the caller as it
+;; stands -- straight-line, three calls -- and its site is MEASURED: it spends a
+;; verdict of its own. Mode 1 gives the same caller a loop below the site and
+;; nothing else, which is the reading the clause had before, and its site is
+;; refused before any pricing: one verdict fewer, the call still there.
+(define (opt-inline-inl8-wrapper-function [func-name : i64] [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    4
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (opt-inline-loop-site-call callee-name 3)
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 3)))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-inline-inl8-holder-tail [loop? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (if loop?
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "i8_loop")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "i8_loop")
+            (compiler_ir_types.compiler-ir-label "i8_done"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "i8_done")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 5)))))
+        compiler_ir_types.CompilerIrBlockList.Nil))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+(define (opt-inline-inl8-holder-function
+  [func-name : i64]
+  [callee-name : i64]
+  [helper-name : i64]
+  [loop? : bool]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    6
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (opt-inline-loop-site-call helper-name 3)
+          (opt-inline-loop-site-call helper-name 4)
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "i8_hit")
+            (compiler_ir_types.compiler-ir-label "i8_miss"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "i8_hit")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "i8_merge"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "i8_miss")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "i8_merge"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "i8_merge")
+              (opt-test-instrs
+                (opt-inline-loop-site-call callee-name 5)
+                (if loop?
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "i8_loop"))
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 5))))))
+            (opt-inline-inl8-holder-tail loop?)))))))
+
+;; The driver whose loop reaches both callers, which is what carries their
+;; depth-0 sites over the composite-frequency floor.
+(define (opt-inline-inl8-driver-function
+  [func-name : i64]
+  [wrapper-name : i64]
+  [holder-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    7
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Mov
+            3
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "header"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "header")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Phi
+              4
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.compiler-ir-label "entry")
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var 6)
+                  (compiler_ir_types.compiler-ir-label "latch")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.compiler-ir-label "body")
+              (compiler_ir_types.compiler-ir-label "exit"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "body")
+            (opt-test-instrs
+              (opt-inline-loop-site-call wrapper-name 5)
+              (opt-inline-loop-site-call holder-name 6)
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "latch"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "latch")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "header"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "exit")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 4)))))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+;; 1000 * verdicts spent + 10 * calls left in the holder + calls left in the
+;; wrapper, so a change in any of the three reads straight off the number.
+;; Its own four symbols: the fixture's leaf is a different body from every other
+;; fixture's, and sharing a name with one of them would let whichever ran first
+;; decide what the other measured.
+(define (opt-inline-inl8-leaf-name) : i64
+  (opt-test-symbol "inl8_leaf"))
+
+(define (opt-inline-inl8-wrapper-name) : i64
+  (opt-test-symbol "inl8_wrapper"))
+
+(define (opt-inline-inl8-holder-name) : i64
+  (opt-test-symbol "inl8_holder"))
+
+(define (opt-inline-inl8-driver-name) : i64
+  (opt-test-symbol "inl8_driver"))
+
+(define (opt-inline-checked-inl8-self-test [mode : i64]) : i64
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (opt-inline-inl8-leaf-name)]
+    [loop? : bool (= mode 1)]
+    [_arm : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-set-active! true)
+        (compiler_optimize.opt-inline-checked-program-begin!))]
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-inline-inl8-driver-function
+            (opt-inline-inl8-driver-name)
+            (opt-inline-inl8-wrapper-name)
+            (opt-inline-inl8-holder-name))
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-inline-inl8-wrapper-function
+              (opt-inline-inl8-wrapper-name)
+              callee-name)
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (opt-inline-inl8-holder-function
+                (opt-inline-inl8-holder-name)
+                callee-name
+                symbols.external-predicate
+                loop?)
+              (compiler_ir_types.compiler-ir-function-seq-prepend
+                (opt-inline-dup-leaf-plain callee-name)
+                (compiler_ir_types.compiler-ir-function-seq-empty)))))
+        2)]
+    [spent : i64
+      (+
+        (-
+          (compiler_optimize.opt-inline-checked-program-budget)
+          (compiler_optimize.opt-inline-checked-budget-current))
+        (-
+          (compiler_optimize.opt-inline-checked-relaxed-program-budget)
+          (compiler_optimize.opt-inline-checked-relaxed-budget-current)))]
+    [holder-calls : i64
+      (opt-count-direct-call-name-function-seq
+        (compiler_optimize.compiler-opt-global-shared-view optimized)
+        "inl8_holder"
+        "inl8_leaf")]
+    [wrapper-calls : i64
+      (opt-count-direct-call-name-function-seq
+        (compiler_optimize.compiler-opt-global-shared-view optimized)
+        "inl8_wrapper"
+        "inl8_leaf")]
+    [verified? : bool
+      (and
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view optimized)
+          "inl8_driver")
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view optimized)
+          "inl8_holder")
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view optimized)
+          "inl8_wrapper")
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view optimized)
+          "inl8_leaf"))]
+    [_disarm : unit (compiler_optimize.opt-inline-checked-set-active! false)]
+    (if verified?
+      (+ (* 1000 spent) (+ (* 10 holder-calls) wrapper-calls))
+      (- 0 1))))
 
 ;; A DEPTH-0 site in a caller that holds its own hot loop: the shape both
 ;; recorded losses have (`cfg-build-csr` into `cfg-function`, a builder at a

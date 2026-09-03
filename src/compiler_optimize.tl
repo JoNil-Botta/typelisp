@@ -132104,10 +132104,13 @@
 ;;     The ENTRY block is the reading of that guarantee which costs nothing to
 ;;     check, and two more block shapes carry it just as well -- a block that
 ;;     post-dominates the entry, and an arm of the entry branch whose sibling
-;;     leaves the function. Those two are admitted only in a WRAPPER-SHAPED
-;;     caller; see opt-inline-checked-position-class for all three readings, and
+;;     leaves the function. Those two are admitted only where the caller's plan
+;;     cost is quoted in the same currency as the boundary -- a loop-free
+;;     caller, or a wrapper-shaped one; see
+;;     opt-inline-checked-position-class for all three readings,
 ;;     opt-inline-checked-wrapper-shaped? for the two rows that clause costs
-;;     when it is left out.
+;;     when it is left out, and opt-inline-checked-depth0-caller-ok? for what
+;;     the count was standing in for.
 ;;   * THE CALLEE IS CALL-FREE. This tier deliberately carries no call-free
 ;;     clause (see opt-inline-checked-ok?) because at depth 1 and below the
 ;;     boundary is 8 to 64 times larger and the re-plan can resolve what an
@@ -132749,6 +132752,78 @@
         1)]
     (<= calls allowed)))
 
+;; --- what the call count was standing in for, and where (INL-8) -------------
+;;
+;; The count above prices the caller by ARITY OF WORK, and the thing it is
+;; really asking is whether the caller's plan cost is quoted in the same
+;; currency as the boundary this site retires. A POST site's block runs on every
+;; path out of the entry, so its boundary is credited exactly once per
+;; invocation -- and the plan prices one allocation of the whole function, which
+;; is also once per invocation. Where the caller is straight-line those two
+;; numbers are commensurate and the verdict is a real comparison of them.
+;;
+;; A LOOP IN THE CALLER is what breaks that for a post site, and it is the only
+;; thing that does. The plan's weighted instruction sum charges a loop body
+;; eight -- sixty-four one level deeper -- times per invocation, so a boundary of
+;; six-plus-arity is compared against a number that one register-allocation
+;; decision inside the nest moves by an order of magnitude more; and what the
+;; merged body actually costs is the pressure it adds to that nest, which the
+;; plan prices once. This file already carries that autopsy in full at
+;; opt-inline-checked-min-site-depth -- `cfg-build-csr` into `cfg-function`,
+;; admitted at a modelled saving of 23 against a boundary of 13 and costing
+;; cfg_domloops +1.085%, where "the tax lands on the caller's LOOPS". The post
+;; loser the call count was measured on is the same shape: `cfg-stamp-euler`
+;; into `cfg-function`, and `cfg-function` is a pass built out of `while`s. Read
+;; the loop and it is refused on its own terms rather than by proxy -- measured,
+;; cfg_domloops is byte identical with the count's reading replaced by this one.
+;;
+;; The proxy meanwhile refuses a class it never meant to: the STRAIGHT-LINE
+;; caller that happens to hold more than one call. callgraph_scc's hash-map
+;; chain is the case, and the census (`--trace-passes`) names the clause:
+;;
+;;   inline-checked|cg-map-probe|caller=cg-map-insert-ref!|block=if_merge.2
+;;     |depth=0|frequency=20544|pos=none|...|mode=scan|site=call|gen=1|site-depth
+;;
+;; The block is the merge below the grow guard, which post-dominates the entry;
+;; the caller carries eight calls, so `allowed` is one, `pos` reads `none` and
+;; the site dies on the depth floor. It is the one call C's `cg_map_insert_ref`
+;; has inlined and TypeLisp had not -- 85.4M plus 57.5M Ir against C's 66.1M for
+;; the pair -- and reading the loop instead takes it (a modelled saving of 15
+;; against a boundary of 8, margin clear) for callgraph_scc -26,396,594 (-4.04%)
+;; with every other gated row byte identical.
+;;
+;; THE ARM READING KEEPS THE COUNT, and that asymmetry is the measurement.
+;; A post block runs on EVERY invocation; an arm block runs on some unknown
+;; fraction of them, and the reading admits it anyway because the sibling arm
+;; does no work, so the pair together is what the caller pays once. That
+;; argument is about the SITE's share of the caller, not about the currency the
+;; caller is priced in -- so what makes it sound is exactly the clause above:
+;; the caller may hold no call this site does not account for. Standing the
+;; count down for an arm site in a loop-free caller costs lex_source +568,664
+;; (+0.120%), and by the mechanism the count was measured on: `ls-number-float?`
+;; is loop-free and carries four calls, its two arm sites are then kept (savings
+;; 7 and 15 against boundaries of 8 and 9), the caller it grows is no longer
+;; small enough for the band that used to absorb it into `ls-tokenize`, and the
+;; depth-1 keep that absorption exposed -- `ls-float-tail?` at a modelled saving
+;; of 88 against a boundary of 72 -- is never offered. So the widening is the
+;; post reading's alone; every caller the count admits today is still admitted
+;; at either reading, so this adds sites and moves none.
+(define (opt-inline-checked-depth0-caller-ok?
+  [blocks : ir.CompilerIrBlockList]
+  [pos : i64]) : bool
+  (or
+    (and
+      (= pos (opt-inline-checked-pos-post))
+      ;; Asked first: the caller facts the site's own depth already forced
+      ;; answer it with a label-set count, where the count below walks every
+      ;; block. `opt-inline-caller-loop-free?` also refuses a self-recursive
+      ;; caller, whose tail call `opt-tailrec-function` turns into a loop one
+      ;; pass later.
+      (opt-inline-caller-loop-free?))
+    (opt-inline-checked-wrapper-shaped?
+      (compiler-opt-global-shared-view blocks)
+      pos)))
+
 ;; The two new readings, tried post first. Answers `none` for a caller too wide
 ;; to walk, for a caller whose entry block cannot be found, and for the entry
 ;; block itself -- which never reaches here, because position zero is answered
@@ -132779,7 +132854,8 @@
       [else (opt-inline-checked-pos-none)])))
 
 ;; The class of one site's block: `entry` for the caller's entry block, then the
-;; two widened readings gated by the caller clause, then `none`.
+;; two widened readings gated by the caller clause
+;; (opt-inline-checked-depth0-caller-ok?), then `none`.
 (define (opt-inline-checked-position-class
   [blocks : ir.CompilerIrBlockList]
   [position : i64]
@@ -132793,7 +132869,7 @@
           label)]
       (if (= pos (opt-inline-checked-pos-none))
         (opt-inline-checked-pos-none)
-        (if (opt-inline-checked-wrapper-shaped?
+        (if (opt-inline-checked-depth0-caller-ok?
           (compiler-opt-global-shared-view blocks)
           pos)
           pos
@@ -132997,11 +133073,35 @@
 ;; cheapest first, so a clause code is also a statement of how far the candidate
 ;; got.
 ;;
-;; The tier's own state (disarmed, budget, target key) is not a property of the
-;; candidate, so those codes exist to be returned and are not traced: on a
-;; target walk every site but one answers `not-target`, and a trace of that is a
-;; trace of the walk, not of the tier. Tracing starts at the callee lock,
-;; which is the first clause that judges the candidate itself.
+;; EVERY CLAUSE IS TRACED, the tier's own state (disarmed, budget, target key)
+;; included. The reading this had -- those codes are not a property of the
+;; candidate, and on a target walk every site but one answers `not-target`, so a
+;; trace of them is a trace of the walk rather than of the tier -- is true of
+;; the LINE and false of the question the line exists to answer. A site that
+;; never reaches a verdict is refused by exactly one clause, and a census that
+;; prints only the clauses at or above the callee lock reports SILENCE for a
+;; refusal by any clause below it: the reader cannot tell a candidate the tier
+;; never considered from one a budget turned down. INL-8's three hot sites on
+;; callgraph_scc's hash-map chain were read as unpriced for exactly that reason.
+;;
+;; The volume the old reading was protecting against is not there on a
+;; benchmark: the whole checked census of callgraph_scc is 144 lines at the old
+;; reading and 219 at this one, of which 36 are `caller-taken`, 30 `not-target`,
+;; 9 `readmitted` and NONE `disarmed` -- the tier is armed for the whole of a
+;; level-2 whole-program walk, and a walk that never arms it never asks.
+;;
+;; On a program that SPENDS the tier's budget the census is dominated by one
+;; clause, and that is the reading rather than a defect: an opt-2 self-compile
+;; goes from 1,259 lines to 50,659, of which 49,113 are `program-budget` --
+;; every candidate the walk passed after the forty-eighth verdict. That is the
+;; single most common refusal in a large program and the old census reported
+;; SILENCE for all of it, which is exactly the reading a budget question has to
+;; ask. Read a census by clause (`| sed 's/.*|//' | sort | uniq -c`) rather than
+;; by line.
+;;
+;; The cost model is unchanged -- the string is still built inside the flag's
+;; guard, so a compile without `--trace-passes` pays one boolean test per
+;; candidate.
 (define (opt-inline-checked-clause-admitted) : i64
   0)
 
@@ -133065,10 +133165,7 @@
     (= clause (opt-inline-checked-clause-readmitted))))
 
 (define (opt-inline-checked-clause-traced? [clause : i64]) : bool
-  (or
-    (= clause (opt-inline-checked-clause-admitted))
-    (= clause (opt-inline-checked-clause-scanned))
-    (>= clause (opt-inline-checked-clause-callee-lock))))
+  (>= clause (opt-inline-checked-clause-admitted)))
 
 (define (opt-inline-checked-clause-text [clause : i64]) : String
   (cond
@@ -133292,10 +133389,54 @@
 ;; and the clause that decided. The string is built inside the guard, so a
 ;; compile without the flag pays one boolean test per candidate; the tier's own
 ;; throwaway measurement runs are suppressed exactly as the pass tracer is.
-;; `site` is the class of the site (`call` or `tail`) and `gen` the generation
-;; of the caller's walk the candidate was seen in, so a line says which of the
-;; two site classes it is about and whether the site was one the caller's own
-;; text offered or one a keep exposed.
+;;
+;; THE VOCABULARY. A line is `inline-checked|<callee>|` and then, in order:
+;;
+;;   caller     the function being walked.
+;;   block      the label of the site's block in that caller. An `inl.`-prefixed
+;;              label is a block a previous generation's keep spliced in, so it
+;;              names a site the caller's own text never offered.
+;;   depth      the site's RAW loop depth in the caller, or -1 when the
+;;              candidate was refused before the site clauses computed it.
+;;   frequency  the composite site frequency: the caller's depth-weighted
+;;              reference count times the depth weight of the site's block.
+;;              -1 for the same reason.
+;;   pos        which reading of "runs exactly once per invocation" the site's
+;;              block cleared -- `entry`, `post`, `arm`, or `none` for a block
+;;              that cleared none of them or was never asked
+;;              (opt-inline-checked-position-class).
+;;   hot        the census's one-level hot reference count for the caller, which
+;;              is what `frequency` was before the call graph's synthetic counts
+;;              replaced it. Read for the trace and for nothing else.
+;;   instrs/np  the callee's instruction count and arity, which is what the size
+;;              clauses and the boundary cost read.
+;;   mode       `scan` (the walk that ranks a caller's candidates and admits
+;;              none) or `target` (the walk that admits the one site a round is
+;;              pricing).
+;;   site       `call` or `tail`, the site's class. A tail site reaches this
+;;              tier or it reaches nothing; no band is offered one.
+;;   gen        the generation of the caller's walk: 1 is the caller's own text,
+;;              2 the rescan of what generation 1 left.
+;;   <clause>   the clause that decided, as opt-inline-checked-clause-text
+;;              spells it, ALWAYS LAST. Every clause prints; see
+;;              opt-inline-checked-clause-traced?. Reading the refusals:
+;;              `disarmed` the tier is not armed on this walk; `readmitted` an
+;;              already-kept site of this caller, re-spliced by a later round;
+;;              `caller-taken` this walk has already placed its one new site;
+;;              `program-budget`/`caller-verdicts` the verdict allowances;
+;;              `not-target` a site of a target walk that is not the armed one;
+;;              `callee-lock` too many distinct bodies in this caller;
+;;              `unreferenced`, `callee-size`, `callee-blocks`, `address-taken`
+;;              the callee's own integer clauses; `heavy-gate`/`block-ceiling`
+;;              the growth budgets; `frequency` and `site-depth` the two site
+;;              clauses (a depth-0 site refused by `site-depth` was refused by
+;;              the entry-equivalence reading -- read `pos` to see which);
+;;              `relaxed-budget` a relaxed candidate the ranking could not
+;;              afford; `scanned` recorded by a scan walk; `admitted` the site
+;;              this round prices.
+;;
+;; Each candidate's verdict, if it reaches one, prints its own
+;; `inline-checked-verdict|` line below.
 (define (opt-inline-checked-trace-clause!
   [callee-name : i64]
   [callee-instrs : i64]

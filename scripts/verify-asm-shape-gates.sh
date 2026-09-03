@@ -1906,6 +1906,60 @@ check_checked_arm_wrapper() {
     done
 }
 
+check_checked_post_multi_call() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "checked_post_multi_call_$_suffix" \
+            tests/integration/checked_post_multi_call.tl "$_target")
+        _lookup=$(function_body "$_asm" _tl_checked_post_multi_call_pm_lookup)
+
+        # INL-8: the accessor's site is the merge below `pm-lookup`'s guard,
+        # which POST-DOMINATES the entry, in a caller that is straight-line but
+        # carries `pm-crowded?` and `pm-penalty` of its own. The caller clause
+        # used to refuse that reading on the call COUNT -- the census line ended
+        # `site-depth` with `pos` reading `none` and no verdict was priced --
+        # and now asks the caller's LOOPS instead, which a straight-line caller
+        # has none of. The verdict keeps the site, so the merge holds no call to
+        # the accessor at all. This is callgraph_scc's `cg-map-probe` into
+        # `cg-map-insert-ref!`, mirrored: the row's largest single gap to C.
+        assert_matches "$_asm" '^_tl_checked_post_multi_call_pm_lookup:$' \
+            "checked-post-multi-call-$_target"
+        assert_not_matches "$_lookup" \
+            '^[[:space:]]+call _tl_checked_post_multi_call_pm_probe$' \
+            "checked-post-multi-call-$_target"
+        assert_not_matches "$_lookup" \
+            '^[[:space:]]+jmp _tl_checked_post_multi_call_pm_probe$' \
+            "checked-post-multi-call-$_target"
+        # ...and what landed there is the accessor's own LOOP: the probe's Knuth
+        # multiplier, inside the caller's body.
+        assert_matches "$_lookup" '2654435761' "checked-post-multi-call-$_target"
+
+        # The accessor is COPIED, not absorbed: the cold second reference still
+        # calls the out-of-line body, so the keep is a real one and no
+        # single-site band could have taken it first.
+        assert_matches "$_asm" '^_tl_checked_post_multi_call_pm_probe:$' \
+            "checked-post-multi-call-$_target"
+
+        # The splice retires no bounds check: every load the accessor makes is
+        # still checked inside the merged body, which is what the abort twin
+        # (tests/integration/checked_post_multi_call_abort.tl) then runs into.
+        assert_regex_count_at_least "$_lookup" \
+            '^[[:space:]]+call tl_oob_abort' 1 \
+            "checked-post-multi-call-$_target"
+
+        _abort_asm=$(compile_gate "checked_post_multi_call_abort_$_suffix" \
+            tests/integration/checked_post_multi_call_abort.tl "$_target")
+        _abort_lookup=$(function_body "$_abort_asm" \
+            _tl_checked_post_multi_call_abort_pm_lookup)
+        assert_not_matches "$_abort_lookup" \
+            '^[[:space:]]+call _tl_checked_post_multi_call_abort_pm_probe$' \
+            "checked-post-multi-call-abort-$_target"
+        assert_regex_count_at_least "$_abort_lookup" \
+            '^[[:space:]]+call tl_oob_abort' 1 \
+            "checked-post-multi-call-abort-$_target"
+    done
+}
+
 check_const_index_bounds() {
     _asm=$(compile_gate const_index_bounds tests/integration/const_index_bounds.tl)
     _body=$(function_body "$_asm" _tl_const_index_bounds_get2)
@@ -3161,6 +3215,7 @@ check_synth_wrapped_probe
 check_synth_tail_wrapper
 check_synth_struct_accessor
 check_checked_arm_wrapper
+check_checked_post_multi_call
 check_const_index_bounds
 check_const_global_mask_unroll
 check_rbp_sixth_csr

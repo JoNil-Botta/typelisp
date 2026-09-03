@@ -4722,6 +4722,12 @@
     "the tier keeps a call-carrying site one loop deeper too, and both callers verify"))
 
 (test
+  inline-rescan-loop-nest
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-rescan-loop-nest-ok?)
+    "the rescan clause is inert in generation one and separates a loop-bearing callee from the acyclic body of the same size"))
+
+(test
   inline-multiblock-alloc-shape
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-multiblock-alloc-shape-ok?)

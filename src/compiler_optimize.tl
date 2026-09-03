@@ -124273,46 +124273,63 @@
     [(ir.CompilerIrInstr.StorePtr _ _ _) true]
     [(ir.CompilerIrInstr.StoreOwned _ _ _) true]
     [(ir.CompilerIrInstr.CopyBytes _ _ _) true]
-    ;; INL-5. `Store` -- the write to a module global CELL, the lowering of
-    ;; `(set! <global> v)` -- stays REFUSED in this list, which is the
-    ;; MULTIBLOCK gate's whitelist (opt-inline-multiblock-instr-reason's
-    ;; fall-through), and is admitted by the single-block list below. The
-    ;; refusal is a measured verdict, not a soundness one; the soundness
-    ;; argument and the win are recorded at opt-inline-body-instr-ok?.
+    ;; INL-5/INL-6. `Store` -- the write to a module global CELL, the lowering
+    ;; of `(set! <global> v)`. This is the MULTIBLOCK gate's whitelist
+    ;; (opt-inline-multiblock-instr-reason's fall-through); the single-block
+    ;; list below carries the same admission and the soundness argument for
+    ;; both, which is the same argument at either size: the destination is a
+    ;; SYMBOL the backend turns into a rip-relative address, so the clone
+    ;; remaps the value and keeps the symbol, and the write was already
+    ;; summarised on the caller by P18's per-global call mod-ref.
     ;;
-    ;; MEASURED on this tree (base = 258f6409, `--benchmarks-only`, 23 rows).
-    ;; Admitting `Store` here as well turns the shape gate loose on the
-    ;; loop-and-call-bearing bodies the MEASURED tier prices, and the corpus
-    ;; splits: gvn_table -1.154%, read_sexpr -1.713%, callgraph_scc -1.454%
-    ;; and ssa_construct -0.500% against sccp_lattice +0.263%,
-    ;; regalloc_greedy +0.049% and asm_render +3.843% -- the row this packet
-    ;; exists to move, moving the wrong way by more than the single-block
-    ;; admission wins.
+    ;; INL-5 admitted it only below and recorded a measured refusal here:
+    ;; admitting it at multiblock size gave gvn_table -1.154%, read_sexpr
+    ;; -1.713%, callgraph_scc -1.454% and ssa_construct -0.500% -- against
+    ;; asm_render +3.843%, the row that packet existed to move, moving the
+    ;; wrong way by more than the single-block admission won.
     ;;
-    ;; The loser has a name. `asm-render-chunk` is a 142-instruction body
-    ;; whose `(set! asm-cursor ...)` is the only thing this clause refused; it
-    ;; carries a 512-iteration loop with a CALL in it. The measured tier
-    ;; prices it twice and answers twice: at its first site
-    ;; (`caller=asm-round`, depth 1, weight 8) `saving=-55` and it REVERTS;
-    ;; then `asm-round` is itself kept into `asm-bench`, the same merge is
-    ;; re-priced at the rescan site it created (`gen=2`, depth 2, weight 64)
-    ;; where the boundary term is eight times larger, and `saving=599`
-    ;; against `boundary=576` keeps it. The keep is priced in isolation and
-    ;; is roughly neutral on its own; what it costs is what it ENABLES. With
-    ;; `asm-bench` reshaped, a later band moves `asm-fold-text`'s byte loop
-    ;; in as well, and in the merged frame the fold accumulator no longer
-    ;; holds a register across the calls: the unrolled body writes it back to
-    ;; its home slot after every `xor` and every `imul`. `asm-bench` goes
-    ;; from 9 frame-slot references to 74 and from 0.3M to 194.9M Ir self,
-    ;; against 121.9M of absorbed callee -- +72.6M of pure spill traffic, and
-    ;; +33.5M on the row.
+    ;; That loss was never this whitelist's. `asm-render-chunk` is a
+    ;; 142-instruction body carrying a 512-trip loop with a call, whose
+    ;; `(set! asm-cursor ...)` was the only thing this clause refused. The
+    ;; measured tier priced it as revert at its first site (`caller=asm-round`,
+    ;; depth 1, `saving=-55`) and as KEEP at the rescan site `asm-round`'s own
+    ;; keep created inside `asm-bench` (`gen=2`, depth 2, `saving=599` against
+    ;; `boundary=576`) -- and that keep also committed the rescan generation's
+    ;; whole band walk, which had absorbed `asm-fold-text`'s byte loop into the
+    ;; same caller. In the merged frame the fold accumulator stopped holding a
+    ;; register across the calls: `asm-bench` went from 9 frame-slot references
+    ;; to 74, +33.5M on the row.
     ;;
-    ;; So the mispricing is the measured tier's, not this whitelist's: the
-    ;; tier re-plans the merge it is asked about, but a keep also reshapes
-    ;; the caller for every LATER band decision, and those bands are
-    ;; predictive. Fixing that is a change to the tier, not to this list.
-    ;; Until it is fixed, this clause is where the loser is recorded, and the
-    ;; multiblock tier keeps its refusal.
+    ;; INL-6 closed that off at the band that did the damage: a rescan
+    ;; generation may not absorb a LOOP-BEARING callee into a loop of a caller
+    ;; this tier merged (opt-inline-checked-rescan-loop-import?, which carries
+    ;; the argument, the two pricing fixes that were measured first and why
+    ;; neither pays). `asm-fold-text` stays out of line, `asm-render-chunk` is
+    ;; kept on its own, and the accumulator keeps its register.
+    ;;
+    ;; MEASURED with that clause in the tree (base = 30cfbd21,
+    ;; `--benchmarks-only`, 23 rows): read_sexpr -1.717%, callgraph_scc
+    ;; -1.454%, gvn_table -1.154%, ssa_construct -0.500%, and asm_render DOWN,
+    ;; 832,842,937 -> 832,341,109 (-0.060%), against sccp_lattice +0.263% and
+    ;; regalloc_greedy +0.049%; every other row within eight instructions of
+    ;; base. The four winners are what this admission is for: each is a
+    ;; multi-block helper that advances a cursor or bumps a counter and was
+    ;; refused by SHAPE before any band priced its site.
+    ;;
+    ;; The two rows that rise are ONE site apiece and neither is this
+    ;; whitelist's either. sccp_lattice's is `sccp-state-mark-executable` --
+    ;; 114 instructions, eight static references, carrying the loop of a leaf a
+    ;; band absorbed into it -- kept by the measured tier into
+    ;; `sccp-mark-switch-targets`'s loop at `saving=78` against `boundary=56`,
+    ;; a clear margin, where the merged caller goes from 42 instructions and no
+    ;; frame references to 114 and thirteen. It is a loop merged into a loop,
+    ;; the shape whose two priced sides are dominated by the same nested term
+    ;; so that the verdict turns on a residual the scalar plan proxy reads
+    ;; worst; refusing that class outright was measured and is far worse
+    ;; (hashmap_get +15.8%, ssa_construct +0.86%, intern_table +0.47%, and
+    ;; sccp_lattice not even recovered), so it is left to a packet that can
+    ;; price it rather than paid for with four other rows.
+    [(ir.CompilerIrInstr.Store _ _ _) true]
     [_ false]))
 
 (define (opt-inline-body-instr-ok? [instr : ir.CompilerIrInstr] [np : i64]) : bool
@@ -124337,8 +124354,9 @@
     [(ir.CompilerIrInstr.CopyBytes _ _ _) true]
     ;; INL-5: the write to a module global CELL -- the lowering of
     ;; `(set! <global> v)`, and the SINGLE-BLOCK tier's admission of it. (The
-    ;; multiblock whitelist above keeps its refusal; the measurement that
-    ;; bought that split is recorded there.)
+    ;; multiblock whitelist above carries the same admission since INL-6, and
+    ;; the measurement that first split the two and then rejoined them is
+    ;; recorded there.)
     ;;
     ;; Nothing about the instruction is frame-relative. `Store <symbol>
     ;; <value> <type>` names its destination by SYMBOL, which the backend
@@ -126471,12 +126489,12 @@
     ;; `Store g, %v` would leave the CALLEE's var id inside the caller -- the
     ;; same class of miscompile the Pack/Word arms above were added for.
     ;;
-    ;; It is written for BOTH tiers even though only the single-block one
-    ;; admits stores today (opt-inline-body-instr-op-ok? records why the
-    ;; multiblock gate keeps its refusal). The multiblock clone reaches every
+    ;; It is written for BOTH tiers, and since INL-6 both admit stores
+    ;; (opt-inline-body-instr-op-ok? records the measurement that first split
+    ;; them and then rejoined them). The multiblock clone reaches every
     ;; non-terminator instruction through this function
-    ;; (opt-inline-clone-multiblock-instr's fall-through), so the arm is what
-    ;; makes lifting that refusal a gate change and nothing else.
+    ;; (opt-inline-clone-multiblock-instr's fall-through), which is why lifting
+    ;; that refusal was a gate change and nothing else.
     [(ir.CompilerIrInstr.Store name value ty)
       (ir.CompilerIrInstr.Store
         (ir.compiler-ir-symbol-clone name)
@@ -132509,6 +132527,184 @@
         vars2
         added2)]))
 
+;; --- INL-6: what a band may not do to a caller the TIER just merged ---------
+;;
+;; A caller's rounds end, a site was kept, and the tier scans the RESULT once
+;; more (opt-inline-checked-generations). That rescan is a full walk, so every
+;; predictive band is offered the merged caller -- and a merged caller is not
+;; the population any band was calibrated on. Two things are true of it that are
+;; true of no caller as written: its loops may be loops the tier itself created
+;; by splicing a body one level deeper, and whether the rescan's rewrite SURVIVES
+;; at all depends on a verdict that is about a different site, since a generation
+;; that keeps nothing is discarded whole. A band admission there is therefore
+;; both unpriced and conditional on something unrelated to it.
+;;
+;; One shape in that class costs a row. asm_render: `asm-bench` keeps `asm-round`
+;; in generation one, which moves `asm-round`'s straight-line call of
+;; `asm-fold-text` -- 29 instructions, one static reference, a BYTE LOOP -- into
+;; `asm-bench`'s own loop. `opt-inline-bounds-loop-site-in-loop?` is the clause
+;; that flips: at its original site the body was refused by every band and by the
+;; depth floor, and one generation later the same body is admitted, by the cost
+;; model's absorb credit, at a site that is now inside a loop. The merged frame
+;; then loses the fold accumulator's register -- the unrolled body writes it back
+;; to its home slot after every `xor` and every `imul`, `asm-bench` goes from 9
+;; frame-slot references to 74 -- and the row pays +33.5M. `--trace-passes` shows
+;; it as `inline-band|asm-fold-text|caller=asm-bench|in-loop=1|band=cost|gen=2`,
+;; with no `inline-checked` line of any kind: no tier priced it.
+;;
+;; So this clause refuses exactly that: in a RESCAN generation, no band absorbs
+;; or copies a LOOP-BEARING callee at a site inside a natural loop of the caller.
+;; The three conjuncts are the three halves of the argument and are ordered by
+;; cost:
+;;
+;;   1. the generation is a rescan. In generation one the caller is its own
+;;      text, every band is on the population it was calibrated for, and a walk
+;;      that keeps nothing is still committed -- so nothing here applies. This
+;;      is one integer compare, and it is what keeps the clause free on every
+;;      caller in the program that never reaches a second generation;
+;;   2. the SITE is in a natural loop of the caller. A loop-bearing body
+;;      absorbed at a straight-line site adds a loop; absorbed at an in-loop
+;;      site it adds a NEST, and the working set of the inner loop then has to
+;;      live across the outer loop's own values. That is the allocator cost the
+;;      predictive bands do not carry -- it is the cost the measured tier was
+;;      built to resolve -- and the caller facts this asks are memoized and
+;;      already forced by every band that reached this point;
+;;   3. the CALLEE carries a loop, by the same back-edge test the tiny-predicate
+;;      band uses. A straight-line body absorbed into a loop is the ordinary
+;;      trade every band above already prices, and refusing it here would retire
+;;      lex_source's two character-class predicates for nothing.
+;;
+;; Measured (base = 30cfbd21 plus the multiblock `Store` admission this packet
+;; lands): the clause is what turns that admission's asm_render from +3.843%
+;; into -0.060% (832,842,937 -> 832,341,109) while read_sexpr, callgraph_scc,
+;; gvn_table and ssa_construct take their -1.72%, -1.45%, -1.15% and -0.50%.
+;; With the clause and WITHOUT the `Store` admission the corpus is byte
+;; identical to base on all 23 rows: no caller in it reaches a rescan holding
+;; this shape until the admission puts one there, which is the narrowest
+;; evidence that the clause refuses what it says and nothing else.
+;;
+;; What `--trace-passes` shows after it: the site becomes an ordinary candidate
+;; of the measured tier instead (`checked?` is asked exactly of the sites no
+;; band takes), and the tier refuses it on the accept window's UPPER bound --
+;; `inline-checked-verdict|asm-fold-text|...|saving=8232|boundary=64|revert`,
+;; 128x what a free inline could produce, which is the window's own statement
+;; that the model has stopped being commensurate. The clause moves the decision
+;; to the tier that can say so; it does not silently drop the site.
+;;
+;; WHY NOT A PRICING FIX, which is where this began. Making the rescan's verdict
+;; price against the body a revert restores -- so the walk's rewrite is charged
+;; to the keep that commits it -- was implemented and measured. It flips
+;; asm_render's verdict for the right reason and it loses lex_source: that
+;; caller's rescan walk absorbs two acyclic character-class predicates, the plan
+;; model reads them as +152 (almost exactly the instructions they moved in), and
+;; `ls-float-tail?` then models -64 instead of +88 and reverts, for +629,416
+;; (+0.13%) on the row. Charging a keep for its generation's instruction growth
+;; charges it for a term the bands already price and already pay for out of the
+;; boundaries they retire. Splitting the baseline to charge only the ALLOCATION
+;; half of the walk's delta does not separate the two rows either: on `asm-bench`
+;; the whole 1,072 is the instruction term, the two bodies' allocation halves
+;; price identically, and the verdict does not move. The plan model reads a loop
+;; absorbed into a loop as a bargain -- it charges the callee's own cost on the
+;; `before` side at the site's weight, which is the very reading that is wrong
+;; here -- so no baseline built from it can tell asm_render from lex_source. The
+;; difference between them is a SHAPE, and a shape clause is what states it.
+(define (opt-inline-checked-rescan-loop-import?
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (and
+    (> opt-inline-checked-generation 1)
+    (opt-inline-bounds-loop-site-in-loop?)
+    (not (opt-inline-tiny-predicate-acyclic? blocks))))
+
+;; --- what the BANDS decided --------------------------------------------------
+;;
+;; INL-6. The measured tier prints a candidate line and a verdict line for every
+;; site it prices, and the callee gate prints its shape refusals; the PREDICTIVE
+;; bands printed nothing at all. A band's admission is invisible in a trace, so
+;; a caller whose final shape is decided by a band -- and every caller the
+;; measured tier reshapes gets its next decisions from the bands -- could only
+;; be read off the emitted assembly.
+;;
+;; That is what this packet's cascade needed. `asm-fold-text` moves into
+;; `asm-bench` with no `inline-checked` line of any kind, because no band
+;; announces itself. One line per ADMITTED site closes the gap: the band whose
+;; fuel the site charges, the numbers that band's clauses read, and whether the
+;; site is in a natural loop of the caller -- which is the clause that flips
+;; when a keep moves a site one level deeper.
+;;
+;; Only admissions are traced, not refusals. A refusal line per band per site
+;; would be the cross product of ten bands and every call in the program, and
+;; the refusals that matter already have tracers of their own (the shape gate's
+;; and the measured tier's). The name reported is the band that owns the site's
+;; BLOCKS -- the import flags' own accounting -- so the line says which budget
+;; the growth was charged to, and `cost` means the shared cost model admitted it
+;; with no band's own fuel spent.
+;;
+;; The MULTIBLOCK site classes only. A single-block callee's admission is a
+;; different question with a different vocabulary -- one predicate, no block
+;; fuel and no import accounting -- and its refusals already print through
+;; `inline-shape-single`. Every band that can absorb a loop, which is the class
+;; this tracer exists to follow, is a multiblock band.
+(define (opt-inline-band-text
+  [hot-import? : bool]
+  [chain-import? : bool]
+  [absorb-import? : bool]
+  [accessor-import? : bool]) : String
+  (cond
+    [hot-import? "hot-loop-leaf"]
+    [chain-import? "branch-chain"]
+    [absorb-import? "single-site-absorb"]
+    [accessor-import? "shared-accessor"]
+    [else "cost"]))
+
+;; The string is built inside the guard, so a compile without `--trace-passes`
+;; pays one boolean test per admitted site; the in-loop question is asked inside
+;; it too, because answering it forces the caller's natural-loop facts and no
+;; untraced compile should pay for that on this account.
+(define (opt-inline-trace-band-admit!
+  [callee-name : i64]
+  [callee-instrs : i64]
+  [np : i64]
+  [added-blocks : i64]
+  [refs : i64]
+  [absorb-class : i64]
+  [hot-import? : bool]
+  [chain-import? : bool]
+  [absorb-import? : bool]
+  [accessor-import? : bool]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (io.print-error
+      (str_cat.str-cat
+        "inline-band|"
+        (ir.compiler-ir-symbol-text callee-name)
+        "|caller="
+        (ir.compiler-ir-symbol-text opt-inline-caller-name)
+        "|block="
+        (ir.compiler-ir-label-text opt-inline-current-block-label)
+        "|in-loop="
+        (if (opt-inline-bounds-loop-site-in-loop?)
+          "1"
+          "0")
+        "|instrs="
+        (string.int->string callee-instrs)
+        "|np="
+        (string.int->string np)
+        "|blocks="
+        (string.int->string added-blocks)
+        "|refs="
+        (string.int->string refs)
+        "|absorb="
+        (string.int->string absorb-class)
+        "|band="
+        (opt-inline-band-text
+          hot-import?
+          chain-import?
+          absorb-import?
+          accessor-import?)
+        "|gen="
+        (string.int->string opt-inline-checked-generation)
+        "\n"))
+    unit))
+
 ;; Build the rewrite for ONE multiblock site, at either of the two site classes
 ;; the walk can stand at. `dst` and `tail-site?` are what tell them apart, and
 ;; what they decide is only where the spliced body's exits go:
@@ -132757,6 +132953,11 @@
                 (not tail-site?)
                 bounds-ok?
                 bounds-loop-ok?
+                ;; INL-6: not a loop into a loop of a caller this tier merged.
+                ;; See opt-inline-checked-rescan-loop-import? for the row.
+                (not
+                  (opt-inline-checked-rescan-loop-import?
+                    (compiler-opt-global-shared-view cblocks)))
                 (or
                   legacy-cost-ok?
                   hot-loop-leaf?
@@ -132827,6 +133028,23 @@
                       (set!
                         opt-inline-caller-site-count
                         (+ opt-inline-caller-site-count 1))]
+                    ;; INL-6: one `--trace-passes` line per site a BAND took,
+                    ;; naming the band whose fuel it charges. The measured
+                    ;; tier's sites are already traced by their own verdict.
+                    [_band-trace : unit
+                      (if band-admits?
+                        (opt-inline-trace-band-admit!
+                          callee-name
+                          callee-instrs
+                          np
+                          added-blocks
+                          refs
+                          absorb-class
+                          hot-import?
+                          chain-import?
+                          absorb-import?
+                          accessor-import?)
+                        unit)]
                     [prefix : String
                       (opt-inline-site-prefix
                         func-name
@@ -133943,6 +134161,11 @@
                 (not tail-site?)
                 bounds-ok?
                 bounds-loop-ok?
+                ;; INL-6: not a loop into a loop of a caller this tier merged.
+                ;; See opt-inline-checked-rescan-loop-import? for the row.
+                (not
+                  (opt-inline-checked-rescan-loop-import?
+                    (compiler-opt-global-shared-view cblocks)))
                 (or
                   legacy-cost-ok?
                   hot-loop-leaf?
@@ -134014,6 +134237,23 @@
                       (set!
                         opt-inline-caller-site-count
                         (+ opt-inline-caller-site-count 1))]
+                    ;; INL-6: one `--trace-passes` line per site a BAND took,
+                    ;; naming the band whose fuel it charges. The measured
+                    ;; tier's sites are already traced by their own verdict.
+                    [_band-trace : unit
+                      (if band-admits?
+                        (opt-inline-trace-band-admit!
+                          callee-name
+                          callee-instrs
+                          np
+                          added-blocks
+                          refs
+                          absorb-class
+                          hot-import?
+                          chain-import?
+                          absorb-import?
+                          accessor-import?)
+                        unit)]
                     [prefix : String
                       (opt-inline-site-prefix
                         func-name
@@ -134986,6 +135226,7 @@
 ;; price it against `state`, and recurse on whichever side the verdict names.
 ;; The recursion terminates because arming a target spends its scan row whether
 ;; or not the walk can still place it.
+;;
 (define (opt-inline-checked-rounds
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
@@ -135059,6 +135300,34 @@
 ;; A generation that keeps NOTHING leaves the caller exactly as the previous one
 ;; left it: `state`, not the rescan's own walk. The rescan is a search for more
 ;; sites, and finding none must not be a rewrite.
+;;
+;; AND THAT DISCARD IS WHAT A KEEP CAN OVERTURN. INL-6's diagnosis: a rescan
+;; generation's scan walk is a BAND rewrite of a caller the measured tier
+;; synthesized, and it is committed or thrown away by whether some verdict in
+;; this generation keeps -- so a keep drags in a rewrite that nothing priced.
+;; asm_render's `asm-bench` keeps `asm-round` in generation one; the rescan's
+;; walk then absorbs `asm-fold-text`'s byte loop into the loop that keep created
+;; (opt-inline-checked-rescan-loop-import? names the clause and carries the
+;; measurement); and `asm-render-chunk`'s keep in the same generation is what
+;; commits it, for +33.5M on the row.
+;;
+;; The fix is at the BAND, not here, and the reason is that this tier's model
+;; cannot see the loss. Pricing the verdict against the previous survivor
+;; instead of against `banked` was measured and does not pay: it flips
+;; asm_render's verdict for the right reason, but it charges every keep for the
+;; INSTRUCTIONS its generation's band walk moved in -- a term the bands already
+;; price and pay for out of the boundaries they retire -- and lex_source's
+;; `ls-float-tail?`, whose walk absorbs two character-class predicates for +152,
+;; then models -64 instead of +88 and reverts, costing that row +629,416
+;; (+0.13%). Splitting the baseline so only the ALLOCATION half of the walk's
+;; delta is charged does not separate them either: on `asm-bench` the whole
+;; 1,072 is term 1, the allocation halves of the two bodies price the same, and
+;; the verdict does not move at all. The plan model prices a loop absorbed into
+;; a loop as a bargain -- the callee's own cost at the site is charged on the
+;; `before` side at the site's weight -- which is exactly the reading that is
+;; wrong here, so no baseline built out of it can tell the two rows apart.
+;; What separates them is a SHAPE: asm_render's absorbed body carries a loop and
+;; lex_source's two do not.
 (define (opt-inline-checked-generations
   [type-segment-bases : i64]
   [state : ir.CompilerIrFunction]

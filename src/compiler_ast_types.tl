@@ -8,7 +8,7 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_intern as ci)
 (import compiler_builtin_ids as cbi)
-(import compiler_dense_list as dense_list)
+(import stdlib.dense_list)
 (cfg test (import stdlib.io))
 
 ;; Arena access for the node-pool grow paths -- a regrown pool array must

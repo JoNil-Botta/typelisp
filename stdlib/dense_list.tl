@@ -1,4 +1,4 @@
-;; compiler_dense_list.tl - Declaration generator for compiler-private dense lists.
+;; dense_list.tl - Declaration generator for compiler-private dense lists.
 ;;
 ;; The generated containers remain ordinary concrete `{slots, len}` structs
 ;; declared by their owning compiler module. This macro only centralizes their

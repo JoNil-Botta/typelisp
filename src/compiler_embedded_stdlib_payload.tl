@@ -19,6 +19,8 @@
 
 (include-str-lzss payload-core-macros "../stdlib/core_macros.tl")
 
+(include-str-lzss payload-dense-list "../stdlib/dense_list.tl")
+
 (include-str-lzss payload-env "../stdlib/env.tl")
 
 (include-str-lzss payload-eq "../stdlib/eq.tl")
@@ -139,6 +141,8 @@
       (compiler-embedded-stdlib-payload-copy payload-comptime)]
     [(string.eq suffix "core_macros.tl")
       (compiler-embedded-stdlib-payload-copy payload-core-macros)]
+    [(string.eq suffix "dense_list.tl")
+      (compiler-embedded-stdlib-payload-copy payload-dense-list)]
     [(string.eq suffix "env.tl")
       (compiler-embedded-stdlib-payload-copy payload-env)]
     [(string.eq suffix "eq.tl")

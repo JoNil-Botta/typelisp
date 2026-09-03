@@ -39,6 +39,10 @@
   payload-net-http-head-codec
   "../stdlib/net/http_head_codec.tl")
 
+(include-str-lzss
+  payload-net-http-trailer-policy
+  "../stdlib/net/http_trailer_policy.tl")
+
 (include-str-lzss payload-net-http-types "../stdlib/net/http_types.tl")
 
 (include-str-lzss payload-net-ip "../stdlib/net/ip.tl")
@@ -161,6 +165,8 @@
       (compiler-embedded-stdlib-payload-copy payload-hashmap)]
     [(string.eq suffix "net/http_head_codec.tl")
       (compiler-embedded-stdlib-payload-copy payload-net-http-head-codec)]
+    [(string.eq suffix "net/http_trailer_policy.tl")
+      (compiler-embedded-stdlib-payload-copy payload-net-http-trailer-policy)]
     [(string.eq suffix "net/http_types.tl")
       (compiler-embedded-stdlib-payload-copy payload-net-http-types)]
     [(string.eq suffix "net/ip.tl")

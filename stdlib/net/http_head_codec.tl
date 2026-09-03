@@ -11,6 +11,7 @@
 ;#
 ;# Usage: `(import stdlib.net.http_head_codec)`.
 (import stdlib.byte_buf)
+(import stdlib.net.http_trailer_policy)
 (import stdlib.net.http_types)
 (import stdlib.string)
 
@@ -695,23 +696,6 @@
             value-offset))]
       [else (HttpResponseFieldOk state)])))
 
-;: True when a declared trailer name is forbidden by framing, routing, auth,
-;: connection, cookie, or response-control semantics.
-(define (trailer-name-forbidden?
-  [value : (& value bytes)]
-  [start : i64]
-  [end : i64]) : bool
-  (or
-    (connection-option-forbidden? value start end)
-    (byte-range-eq-ascii-string value start end "proxy-connection")
-    (byte-range-eq-ascii-string value start end "keep-alive")
-    (byte-range-eq-ascii-string value start end "upgrade")
-    (byte-range-eq-ascii-string value start end "authorization")
-    (byte-range-eq-ascii-string value start end "proxy-authenticate")
-    (byte-range-eq-ascii-string value start end "www-authenticate")
-    (byte-range-eq-ascii-string value start end "cookie")
-    (byte-range-eq-ascii-string value start end "set-cookie")))
-
 ;: Parse and normalize one Trailer declaration field.
 (define (apply-trailer-names
   [set : http_types.HttpHeaderNameSet]
@@ -733,6 +717,8 @@
           (let
             [start : i64 cursor]
             [end : i64 (skip-token value cursor)]
+            [name : (& value bytes)
+              (byte_buf.bytes-slice-view value start (- end start))]
             (if (= start end)
               (begin
                 (set! failed true)
@@ -745,16 +731,15 @@
                     (set! name-too-long true)
                     (set! error-offset (+ base-offset max-name-bytes)))
                   unit)
-                (if (and (not failed) (trailer-name-forbidden? value start end))
+                (if (and
+                  (not failed)
+                  (http_trailer_policy.trailer-name-forbidden-bytes? name))
                   (begin
                     (set! failed true)
                     (set! forbidden true)
                     (set! error-offset (+ base-offset start)))
                   (if (not failed)
-                    (let
-                      [name : (& value bytes)
-                        (byte_buf.bytes-slice-view value start (- end start))]
-                      (set! set (http_types.header-name-set-add set name)))
+                    (set! set (http_types.header-name-set-add set name))
                     unit))
                 (if (not failed)
                   (begin
@@ -989,7 +974,7 @@
               [(http_types.HttpFieldLineErr error) (HttpParserLineErr error)]
               [(http_types.HttpFieldLineOk field)
                 (begin
-                  (if (sensitive-field-name? (& field.name))
+                  (if (http_types.header-name-known-sensitive? (& field.name))
                     (set! field.sensitivity (http_types.HttpHeaderSensitive))
                     unit)
                   (match (apply-response-field
@@ -1271,105 +1256,15 @@
                 limits.max-line-bytes))]
           [else (HttpRequestValidationOk)])))))
 
-;: True when a field's value must never be treated as public diagnostic data.
-(define (sensitive-field-name? [name : (& name http_types.HttpHeaderName)]) : bool
-  (or
-    (name-eq-string name "authorization")
-    (name-eq-string name "proxy-authorization")
-    (name-eq-string name "cookie")
-    (name-eq-string name "set-cookie")))
-
 ;: Validate one already-typed request field's token/value shape and canonical
 ;: surrounding whitespace without allocating output.
 (define (validate-request-field-shape
   [field : (& field http_types.HttpHeaderField)]
   [line-offset : i64]
   [limits : (& limits http_types.HttpHeadLimits)]) : HttpRequestValidationResult
-  (let
-    [name : (& field bytes) (http_types.header-name-bytes (& field.name))]
-    [value : (& field bytes) (http_types.header-value-bytes (& field.value))]
-    [name-len : i64 (byte_buf.bytes-length name)]
-    [value-len : i64 (byte_buf.bytes-length value)]
-    [index : i64 0]
-    [bad-name : i64 -1]
-    [bad-value : i64 -1]
-    (begin
-      (while (and (< index name-len) (< bad-name 0))
-        (begin
-          (if (not (http_types.token-byte? (byte_buf.bytes-ref name index)))
-            (set! bad-name index)
-            unit)
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (and (< index value-len) (< bad-value 0))
-        (let
-          [code : i64 (cast (byte_buf.bytes-ref value index) : i64)]
-          (begin
-            (if (or
-              (= code 0)
-              (= code 10)
-              (= code 13)
-              (and (< code 32) (!= code 9))
-              (= code 127))
-              (set! bad-value index)
-              unit)
-            (set! index (+ index 1)))))
-      (let
-        [line-size-0 : i64
-          (bounded-length-add name-len 2 limits.max-line-bytes)]
-        [line-size-1 : i64
-          (bounded-length-add line-size-0 value-len limits.max-line-bytes)]
-        (cond
-          [(= name-len 0)
-            (HttpRequestValidationErr
-              (http_types.local-error
-                (http_types.HttpInvalidFieldName)
-                line-offset))]
-          [(> name-len limits.max-name-bytes)
-            (HttpRequestValidationErr
-              (http_types.local-error
-                (http_types.HttpNameTooLong)
-                (+ line-offset limits.max-name-bytes)))]
-          [(>= bad-name 0)
-            (HttpRequestValidationErr
-              (http_types.local-error
-                (http_types.HttpInvalidFieldName)
-                (+ line-offset bad-name)))]
-          [(> value-len limits.max-value-bytes)
-            (HttpRequestValidationErr
-              (http_types.local-error
-                (http_types.HttpValueTooLong)
-                (+ (+ line-offset name-len) (+ 2 limits.max-value-bytes))))]
-          [(>= bad-value 0)
-            (HttpRequestValidationErr
-              (http_types.local-error
-                (if (= (cast (byte_buf.bytes-ref value bad-value) : i64) 0)
-                  (http_types.HttpNulByte)
-                  (http_types.HttpInvalidControlByte))
-                (+ (+ line-offset name-len) (+ 2 bad-value))))]
-          [(and
-              (> value-len 0)
-              (or
-                (ows-byte? (byte_buf.bytes-ref value 0))
-                (ows-byte? (byte_buf.bytes-ref value (- value-len 1)))))
-            (HttpRequestValidationErr
-              (http_types.local-error
-                (http_types.HttpNonCanonicalFieldValueWhitespace)
-                (+ line-offset name-len 2)))]
-          [(< line-size-1 0)
-            (HttpRequestValidationErr
-              (http_types.local-error
-                (http_types.HttpLineTooLong)
-                (+ line-offset limits.max-line-bytes)))]
-          [(sensitive-field-name? (& field.name))
-            (match field.sensitivity
-              [(http_types.HttpHeaderSensitive) (HttpRequestValidationOk)]
-              [(http_types.HttpHeaderPublic)
-                (HttpRequestValidationErr
-                  (http_types.local-error
-                    (http_types.HttpSensitiveHeaderMustBeMarked)
-                    line-offset))])]
-          [else (HttpRequestValidationOk)])))))
+  (match (http_types.validate-typed-field field line-offset limits)
+    [(http_types.HttpTypedFieldOk) (HttpRequestValidationOk)]
+    [(http_types.HttpTypedFieldErr error) (HttpRequestValidationErr error)]))
 
 ;: Validate request fields, Host, framing, connection options, and normalized
 ;: Trailer declarations in caller order.

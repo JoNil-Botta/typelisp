@@ -419,6 +419,7 @@ stdlib_math_log|tests/integration/stdlib_math_log.tl|0|-|-|stdlib/math.tl
 stdlib_math_pow|tests/integration/stdlib_math_pow.tl|0|-|-|stdlib/math.tl
 stdlib_math_trig|tests/integration/stdlib_math_trig.tl|0|-|-|stdlib/math.tl
 string_length|tests/integration/string_length.tl|5|-|-|stdlib/string.tl
+string_record_extent|tests/integration/string_record_extent.tl|42|-|-|-
 string_match|tests/integration/string_match.tl|42|-|-|-
 struct_field_set|tests/integration/struct_field_set.tl|42|-|-|-
 substring|tests/integration/substring.tl|55|-|-|stdlib/string.tl

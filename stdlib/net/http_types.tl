@@ -188,6 +188,11 @@
   (HttpFieldLineOk HttpHeaderField)
   (HttpFieldLineErr HttpHeadError))
 
+;: Result of validating one already-typed field without copying its bytes.
+(defenum HttpTypedFieldResult
+  (HttpTypedFieldOk)
+  (HttpTypedFieldErr HttpHeadError))
+
 ;: Return conservative defaults suitable for ordinary client response heads.
 (define (default-head-limits) : HttpHeadLimits
   (HttpHeadLimits 65536 8192 100 1024 8192))
@@ -460,6 +465,190 @@
       (= code 124)
       (= code 126))))
 
+;: True for optional-whitespace bytes permitted inside a field value.
+(define (field-ows-byte? [byte : u8]) : bool
+  (let
+    [code : i64 (cast byte : i64)]
+    (or (= code 32) (= code 9))))
+
+;: True when standard credential-bearing name bytes require sensitivity.
+(define (header-name-bytes-known-sensitive? [name : (& name bytes)]) : bool
+  (let
+    [authorization : String "authorization"]
+    [proxy-authorization : String "proxy-authorization"]
+    [cookie : String "cookie"]
+    [set-cookie : String "set-cookie"]
+    [authorization-bytes : (& authorization bytes)
+      (byte_buf.str-as-bytes (& authorization))]
+    [proxy-authorization-bytes : (& proxy-authorization bytes)
+      (byte_buf.str-as-bytes (& proxy-authorization))]
+    [cookie-bytes : (& cookie bytes) (byte_buf.str-as-bytes (& cookie))]
+    [set-cookie-bytes : (& set-cookie bytes)
+      (byte_buf.str-as-bytes (& set-cookie))]
+    (or
+      (bytes-eq-ascii-case name authorization-bytes)
+      (bytes-eq-ascii-case name proxy-authorization-bytes)
+      (bytes-eq-ascii-case name cookie-bytes)
+      (bytes-eq-ascii-case name set-cookie-bytes))))
+
+;: True when a standard credential-bearing field must be marked sensitive.
+(define (header-name-known-sensitive? [name : (& name HttpHeaderName)]) : bool
+  (header-name-bytes-known-sensitive? (header-name-bytes name)))
+
+;: Construct a field-shape error for peer input or local typed input.
+(define (field-shape-error
+  [kind : HttpHeadErrorKind]
+  [offset : i64]
+  [peer-input : bool]) : HttpHeadError
+  (if peer-input
+    (peer-error kind offset)
+    (local-error kind offset)))
+
+;: Add nonnegative field lengths under a nonnegative cap. Return `-1` when
+;: arithmetic or the cap would be exceeded.
+(define (bounded-field-length-add [current : i64] [amount : i64] [limit : i64]) : i64
+  (if (or
+    (< current 0)
+    (< amount 0)
+    (< limit current)
+    (> amount (- limit current)))
+    -1
+    (+ current amount)))
+
+;: Add a nonnegative relative offset, saturating at the largest `i64` so error
+;: reporting cannot overflow even for a directly supplied extreme base offset.
+(define (field-offset-add [current : i64] [amount : i64]) : i64
+  (if (or (< current 0) (< amount 0) (> amount (- 9223372036854775807 current)))
+    9223372036854775807
+    (+ current amount)))
+
+;: Validate borrowed canonical name/value parts. `name-offset` and
+;: `value-offset` let the raw-line and already-typed entry points share one
+;: grammar while preserving their own stable offsets and poison disposition.
+(define (validate-field-parts
+  [name : (& name bytes)]
+  [value : (& value bytes)]
+  [name-offset : i64]
+  [value-offset : i64]
+  [line-length : i64]
+  [limits : (& limits HttpHeadLimits)]
+  [sensitivity : HttpHeaderSensitivity]
+  [enforce-sensitivity : bool]
+  [peer-input : bool]) : HttpTypedFieldResult
+  (let
+    [name-len : i64 (byte_buf.bytes-length name)]
+    [value-len : i64 (byte_buf.bytes-length value)]
+    [index : i64 0]
+    [bad-name : i64 -1]
+    [bad-value : i64 -1]
+    (begin
+      (while (and (< index name-len) (< bad-name 0))
+        (begin
+          (if (not (token-byte? (byte_buf.bytes-ref name index)))
+            (set! bad-name index)
+            unit)
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (and (< index value-len) (< bad-value 0))
+        (let
+          [code : i64 (cast (byte_buf.bytes-ref value index) : i64)]
+          (begin
+            (if (or
+              (= code 0)
+              (= code 10)
+              (= code 13)
+              (and (< code 32) (!= code 9))
+              (= code 127))
+              (set! bad-value index)
+              unit)
+            (set! index (+ index 1)))))
+      (cond
+        [(not (head-limits-valid? limits))
+          (HttpTypedFieldErr
+            (field-shape-error (HttpInvalidLimits) name-offset peer-input))]
+        [(= name-len 0)
+          (HttpTypedFieldErr
+            (field-shape-error (HttpInvalidFieldName) name-offset peer-input))]
+        [(> name-len limits.max-name-bytes)
+          (HttpTypedFieldErr
+            (field-shape-error
+              (HttpNameTooLong)
+              (field-offset-add name-offset limits.max-name-bytes)
+              peer-input))]
+        [(>= bad-name 0)
+          (HttpTypedFieldErr
+            (field-shape-error
+              (if (= (cast (byte_buf.bytes-ref name bad-name) : i64) 0)
+                (HttpNulByte)
+                (HttpInvalidFieldName))
+              (field-offset-add name-offset bad-name)
+              peer-input))]
+        [(> value-len limits.max-value-bytes)
+          (HttpTypedFieldErr
+            (field-shape-error
+              (HttpValueTooLong)
+              (field-offset-add value-offset limits.max-value-bytes)
+              peer-input))]
+        [(>= bad-value 0)
+          (HttpTypedFieldErr
+            (field-shape-error
+              (if (= (cast (byte_buf.bytes-ref value bad-value) : i64) 0)
+                (HttpNulByte)
+                (HttpInvalidControlByte))
+              (field-offset-add value-offset bad-value)
+              peer-input))]
+        [(and
+            (> value-len 0)
+            (or
+              (field-ows-byte? (byte_buf.bytes-ref value 0))
+              (field-ows-byte? (byte_buf.bytes-ref value (- value-len 1)))))
+          (HttpTypedFieldErr
+            (field-shape-error
+              (HttpNonCanonicalFieldValueWhitespace)
+              value-offset
+              peer-input))]
+        [(or (< line-length 0) (> line-length limits.max-line-bytes))
+          (HttpTypedFieldErr
+            (field-shape-error
+              (HttpLineTooLong)
+              (field-offset-add name-offset limits.max-line-bytes)
+              peer-input))]
+        [(and enforce-sensitivity (header-name-bytes-known-sensitive? name))
+          (match sensitivity
+            [(HttpHeaderSensitive) (HttpTypedFieldOk)]
+            [(HttpHeaderPublic)
+              (HttpTypedFieldErr
+                (field-shape-error
+                  (HttpSensitiveHeaderMustBeMarked)
+                  name-offset
+                  peer-input))])]
+        [else (HttpTypedFieldOk)]))))
+
+;: Validate an already-typed field without allocating or copying its bytes.
+(define (validate-typed-field
+  [field : (& field HttpHeaderField)]
+  [line-offset : i64]
+  [limits : (& limits HttpHeadLimits)]) : HttpTypedFieldResult
+  (let
+    [name : (& field bytes) (header-name-bytes (& field.name))]
+    [value : (& field bytes) (header-value-bytes (& field.value))]
+    [name-len : i64 (byte_buf.bytes-length name)]
+    [value-len : i64 (byte_buf.bytes-length value)]
+    [line-size-0 : i64
+      (bounded-field-length-add name-len 2 limits.max-line-bytes)]
+    [line-size-1 : i64
+      (bounded-field-length-add line-size-0 value-len limits.max-line-bytes)]
+    (validate-field-parts
+      name
+      value
+      line-offset
+      (field-offset-add line-offset (field-offset-add name-len 2))
+      line-size-1
+      limits
+      (clone field.sensitivity)
+      true
+      false)))
+
 ;: Validate and copy one header field line without its CRLF. The result stores
 ;: trimmed field-value bytes, preserves their remaining octets, and reports
 ;: offsets relative to the enclosing input using `base-offset`.
@@ -478,7 +667,9 @@
         (HttpFieldLineErr (peer-error (HttpInvalidLimits) base-offset))]
       [(> line-len limits.max-line-bytes)
         (HttpFieldLineErr
-          (peer-error (HttpLineTooLong) (+ base-offset limits.max-line-bytes)))]
+          (peer-error
+            (HttpLineTooLong)
+            (field-offset-add base-offset limits.max-line-bytes)))]
       [(= line-len 0)
         (HttpFieldLineErr (peer-error (HttpMissingFieldColon) base-offset))]
       [(let
@@ -503,17 +694,19 @@
                   (if (= (cast (byte_buf.bytes-ref line bad-offset) : i64) 0)
                     (HttpNulByte)
                     (HttpInvalidFieldName))
-                  (+ base-offset bad-offset)))]
+                  (field-offset-add base-offset bad-offset)))]
             [(< colon 0)
               (HttpFieldLineErr
-                (peer-error (HttpMissingFieldColon) (+ base-offset line-len)))]
+                (peer-error
+                  (HttpMissingFieldColon)
+                  (field-offset-add base-offset line-len)))]
             [(= colon 0)
               (HttpFieldLineErr (peer-error (HttpInvalidFieldName) base-offset))]
             [(> colon limits.max-name-bytes)
               (HttpFieldLineErr
                 (peer-error
                   (HttpNameTooLong)
-                  (+ base-offset limits.max-name-bytes)))]
+                  (field-offset-add base-offset limits.max-name-bytes)))]
             [else
               (let
                 [raw-value-start : i64 (+ colon 1)]
@@ -536,41 +729,31 @@
                     (set! value-end (- value-end 1)))
                   (let
                     [value-len : i64 (- value-end value-start)]
-                    [scan : i64 value-start]
-                    [invalid : i64 -1]
-                    (begin
-                      (while (and (< scan value-end) (< invalid 0))
-                        (let
-                          [code : i64
-                            (cast (byte_buf.bytes-ref line scan) : i64)]
-                          (begin
-                            (if (or
-                              (= code 0)
-                              (= code 10)
-                              (= code 13)
-                              (and (< code 32) (!= code 9))
-                              (= code 127))
-                              (set! invalid scan)
-                              unit)
-                            (set! scan (+ scan 1)))))
-                      (cond
-                        [(> (- line-len raw-value-start) limits.max-value-bytes)
-                          (HttpFieldLineErr
-                            (peer-error
-                              (HttpValueTooLong)
-                              (+
-                                raw-value-start
-                                (+ base-offset limits.max-value-bytes))))]
-                        [(>= invalid 0)
-                          (HttpFieldLineErr
-                            (peer-error
-                              (if (=
-                                (cast (byte_buf.bytes-ref line invalid) : i64)
-                                0)
-                                (HttpNulByte)
-                                (HttpInvalidControlByte))
-                              (+ base-offset invalid)))]
-                        [else
+                    [name-view : (& line bytes)
+                      (byte_buf.bytes-slice-view line 0 colon)]
+                    [value-view : (& line bytes)
+                      (byte_buf.bytes-slice-view line value-start value-len)]
+                    (if (> (- line-len raw-value-start) limits.max-value-bytes)
+                      (HttpFieldLineErr
+                        (peer-error
+                          (HttpValueTooLong)
+                          (field-offset-add
+                            base-offset
+                            (field-offset-add
+                              raw-value-start
+                              limits.max-value-bytes))))
+                      (match (validate-field-parts
+                        name-view
+                        value-view
+                        base-offset
+                        (field-offset-add base-offset value-start)
+                        line-len
+                        limits
+                        sensitivity
+                        false
+                        true)
+                        [(HttpTypedFieldErr error) (HttpFieldLineErr error)]
+                        [(HttpTypedFieldOk)
                           (HttpFieldLineOk
                             (HttpHeaderField
                               (HttpHeaderName (copy-byte-range line 0 colon))

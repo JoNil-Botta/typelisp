@@ -215,7 +215,6 @@ _tl_stdlib_runtime_stdlib_runtime_abort_write_decimal:
     shrq $3, %rax
     movq %rax, %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write_decimal
-    jmp .Lf3_if_merge.2
 .Lf3_if_else.1:
 .Lf3_if_merge.2:
     movq 88(%rsp), %rax
@@ -261,7 +260,6 @@ _tl_stdlib_runtime_stdlib_runtime_abort_write_negative_decimal:
     addq %rdx, %rax
     movq %rax, %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write_negative_decimal
-    jmp .Lf4_if_merge.2
 .Lf4_if_else.1:
 .Lf4_if_merge.2:
     movq 88(%rsp), %r10

@@ -17801,12 +17801,6 @@
                       (owned_view.compiler-owned-shared-view entry.stderr-path)
                       (owned_view.compiler-owned-shared-view result.stderr))
                     (lsp-write-file-text
-                      (owned_view.compiler-owned-shared-view entry.stdout-path)
-                      (owned_view.compiler-owned-shared-view result.stdout))
-                    (lsp-write-file-text
-                      (owned_view.compiler-owned-shared-view entry.stderr-path)
-                      (owned_view.compiler-owned-shared-view result.stderr))
-                    (lsp-write-file-text
                       (owned_view.compiler-owned-shared-view entry.status-path)
                       (str_cat.str-cat (string.int->string result.status) "\n"))
                     (io.print-format

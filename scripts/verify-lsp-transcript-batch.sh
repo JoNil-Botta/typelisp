@@ -41,6 +41,47 @@ WORKDIR="$ROOT/target/lsp-transcript-batch-verify"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 HEADER=typelisp-lsp-transcript-batch-v1
+
+# Overwrite semantics hide duplicate publications from byte comparisons. Keep
+# the production call sequence checked until the file boundary is injectable.
+artifact_write_targets=$(
+    awk '
+    $0 == "(define (lsp-transcript-batch-run-entries" {
+        in_run_entries = 1
+    }
+    in_run_entries && $0 == "(define (lsp-transcript-batch-run" {
+        if (pending_write) print "unresolved"
+        pending_write = 0
+        in_run_entries = 0
+    }
+    in_run_entries && index($0, "(lsp-write-file-text") != 0 {
+        if (pending_write) print "unresolved"
+        pending_write = 1
+    }
+    in_run_entries && pending_write && index($0, "entry.stdout-path") != 0 {
+        print "stdout"
+        pending_write = 0
+    }
+    in_run_entries && pending_write && index($0, "entry.stderr-path") != 0 {
+        print "stderr"
+        pending_write = 0
+    }
+    in_run_entries && pending_write && index($0, "entry.status-path") != 0 {
+        print "status"
+        pending_write = 0
+    }
+    END {
+        if (in_run_entries && pending_write) print "unresolved"
+    }
+    ' "$ROOT/src/lsp_frame_core.tl"
+)
+expected_artifact_write_targets=$(printf 'stdout\nstderr\nstatus')
+if [ "$artifact_write_targets" != "$expected_artifact_write_targets" ]; then
+    echo "LSP transcript batch artifact writes must be exactly stdout, stderr, status" >&2
+    printf '%s\n' "$artifact_write_targets" | sed 's/^/  /' >&2
+    exit 1
+fi
+
 EMPTY_INPUT="$WORKDIR/empty.in"
 TRUNCATED_INPUT="$WORKDIR/truncated.in"
 : > "$EMPTY_INPUT"

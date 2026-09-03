@@ -8442,6 +8442,9 @@
 (defstruct AstProgramCompactionRemap
   (source-pools AstNodePoolContext)
   (dest-pools AstNodePoolContext)
+  ;; These are invocation-stable scalar facts. Read them directly from the
+  ;; borrowed remap in recursive probes: materializing a borrow cell and
+  ;; recovering the remap address on every visit only repeats pointer traffic.
   (expr-map-address u64)
   (type-map-address u64)
   (source-expr-bases i64)
@@ -8469,27 +8472,6 @@
 
 (defmacro (ast-i32-array-address [items : Expr]) : Expr
   `(ast-i32-array-address-of (& ,items)))
-
-(defstruct AstProgramCompactionRemapRef
-  (:lifetimes remap)
-  (value (& remap AstProgramCompactionRemap)))
-
-;; Borrowed aggregate field projection can be lowered as a projected descriptor
-;; field by the previous compiler generation. Resolve the aggregate address via
-;; a borrow cell and load the scalar backing address at the known word offset.
-(define (ast-compaction-remap-map-address
-  [remap : (& remap AstProgramCompactionRemap)]
-  [word-offset : i64]) : u64
-  (let
-    [cell : (AstProgramCompactionRemapRef remap)
-      (AstProgramCompactionRemapRef remap)]
-    [remap-address : u64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
-    [map-address : u64
-      (unsafe
-        (ptr-read (ptr-offset (int->ptr remap-address : (Ptr u64)) word-offset)))]
-    map-address))
 
 (define (ast-compaction-map-ref [address : u64] [index : i64]) : i32
   (unsafe
@@ -8847,7 +8829,7 @@
         (cfg compile-profile (ast-compaction-profile-note-shared-type! id))
         id)
       (let
-        [type-map-address : u64 (ast-compaction-remap-map-address remap 7)]
+        [type-map-address : u64 remap.type-map-address]
         [slot : i64 (- id base)]
         [cached : i32 (ast-compaction-map-ref type-map-address slot)]
         (if (> cached 0)
@@ -9799,7 +9781,7 @@
         (cfg compile-profile (ast-compaction-profile-note-source-expr!))
         id)
       (let
-        [expr-map-address : u64 (ast-compaction-remap-map-address remap 6)]
+        [expr-map-address : u64 remap.expr-map-address]
         [slot : i64 (- id base)]
         [cached : i32 (ast-compaction-map-ref expr-map-address slot)]
         [persist? : bool remap.persist-in-place]

@@ -24054,9 +24054,46 @@
   (FrozenWord i64)
   (FrozenDataSlot i64 i64))
 
-(defenum OptLicmPtrEnv
-  (Nil)
-  (Cons i64 OptLicmPtrKind (Box OptLicmPtrEnv)))
+(import (vector.vector OptLicmPtrKind core) as opt_licm_ptr_kind_vec)
+
+;; --- the pointer-provenance environment -------------------------------------
+;;
+;; var id -> the provenance class of the pointer that var holds, for the vars
+;; whose class is known.
+;;
+;; INVARIANT: at most one class per var. `bind` with `Unknown` REMOVES the var's
+;; class rather than recording one, `lookup` of a var carrying no class answers
+;; `Unknown`, and rebinding a var replaces its class outright. Absence and
+;; `Unknown` are therefore the same fact, and nothing is ever shadowed: there is
+;; no second binding for a var to uncover.
+;;
+;; This was a cons-list association environment, and the list's ORDER was never
+;; observable. `opt-licm-ptr-lookup`, `opt-licm-ptr-env-bound?` and
+;; `opt-licm-ptr-unbind` are its only readers -- no consumer folds over it or
+;; walks it for anything but one var -- and with at most one binding per var,
+;; "first match from the front" and "the var's class" are the same answer. The
+;; only other thing the list bought was PERSISTENCE, which this pass does not
+;; use either: the environment is threaded through one strictly linear fold per
+;; function (opt-licm-provenance-state-blocks over blocks over instruction
+;; sequences, one state in and one state out), and the one place a second walk
+;; starts from a saved environment -- opt-licm-apply-loop, which seeds each
+;; loop's state with the function's provenance env -- runs with
+;; `track-provenance?` false and so never binds or unbinds at all.
+;;
+;; What the list DID cost was quadratic. `bound?` and `lookup` scanned every
+;; live binding, once per instruction, and `unbind` rebuilt the whole chain; on
+;; the opt2 self-compile that put opt-licm-ptr-unbind and
+;; opt-licm-ptr-env-bound? at #1 and #2 of the whole profile -- 6.85% of the
+;; base compile between the three of them, and 8.9% once INL-3 absorbed 1,692
+;; callees into their sole callers and made the functions longer.
+;;
+;; So the environment is a var-indexed table instead, in exactly the shape
+;; opt-ssa-var-types-set already uses for the TYPE environment threaded beside
+;; it: a vector grown on demand to the highest var bound so far, updated in
+;; place and handed back as the value. Every operation is O(1), and `Unknown`
+;; fills the slots no bind has reached.
+(defstruct OptLicmPtrEnv
+  (kinds opt_licm_ptr_kind_vec.Vec))
 
 (defenum OptLicmRoot
   (NoRoot)
@@ -24675,53 +24712,70 @@
           (opt-licm-store-summary-header-or-unknown-store)]
         [_ (opt-licm-store-summary-call-or-unknown)]))))
 
-(define (opt-licm-ptr-unbind [env : OptLicmPtrEnv] [var : i64]) : OptLicmPtrEnv
-  (match (compiler-opt-global-shared-view env)
-    [(OptLicmPtrEnv.Nil) (OptLicmPtrEnv.Nil)]
-    [(OptLicmPtrEnv.Cons id kind rest)
-      (let
-        [tail : OptLicmPtrEnv
-          (opt-licm-ptr-unbind (compiler-opt-box-shared-view rest) var)]
-        (if (= id var)
-          tail
-          (OptLicmPtrEnv.Cons id kind (box tail))))]))
+(define (opt-licm-ptr-env-new) : OptLicmPtrEnv
+  (OptLicmPtrEnv (opt_licm_ptr_kind_vec.new)))
 
-;; Read-only membership probe for the env above. Unbinding an absent variable
-;; rebuilt the whole chain into a structurally identical copy -- one Cons and
-;; one box per live binding on every fresh-SSA rebind -- so callers probe first
-;; and keep the original env when nothing would be removed.
+;; Drop a var's class. A var the table has never reached is already `Unknown`,
+;; so an out-of-range id is a no-op rather than a reason to grow the table --
+;; which is what the old chain did too, by rebuilding a list that did not
+;; contain the var.
+(define (opt-licm-ptr-unbind [env : OptLicmPtrEnv] [var : i64]) : OptLicmPtrEnv
+  (let
+    [kinds : opt_licm_ptr_kind_vec.Vec
+      (compiler-opt-global-shared-view env.kinds)]
+    (begin
+      (if (or (< var 0) (>= var (opt_licm_ptr_kind_vec.len (& kinds))))
+        unit
+        (opt_licm_ptr_kind_vec.set-ref!
+          (&mut kinds)
+          var
+          (OptLicmPtrKind.Unknown)))
+      (OptLicmPtrEnv kinds))))
+
+;; Membership probe: absence and `Unknown` are the same fact, so this is the
+;; lookup with its payload thrown away. It survives the change because it says
+;; what it means at the two places that ask it; it is no longer a scan, and the
+;; probe-before-unbind the old chain needed to avoid rebuilding itself is gone
+;; with the chain.
 (define (opt-licm-ptr-env-bound? [env : OptLicmPtrEnv] [var : i64]) : bool
-  (match (compiler-opt-global-shared-view env)
-    [(OptLicmPtrEnv.Nil) false]
-    [(OptLicmPtrEnv.Cons id _ rest)
-      (if (= id var)
-        true
-        (opt-licm-ptr-env-bound? (compiler-opt-box-shared-view rest) var))]))
+  (match (opt-licm-ptr-lookup env var)
+    [(OptLicmPtrKind.Unknown) false]
+    [_ true]))
 
 (define (opt-licm-ptr-unbind-bound [env : OptLicmPtrEnv] [var : i64]) : OptLicmPtrEnv
-  (if (opt-licm-ptr-env-bound? (compiler-opt-global-shared-view env) var)
-    (opt-licm-ptr-unbind env var)
-    env))
+  (opt-licm-ptr-unbind env var))
 
 (define (opt-licm-ptr-bind
   [env : OptLicmPtrEnv]
   [var : i64]
   [kind : OptLicmPtrKind]) : OptLicmPtrEnv
-  (if (opt-licm-ptr-env-bound? (compiler-opt-global-shared-view env) var)
-    (match kind
-      [(OptLicmPtrKind.Unknown) (opt-licm-ptr-unbind env var)]
-      [_ (OptLicmPtrEnv.Cons var kind (box (opt-licm-ptr-unbind env var)))])
-    (match kind
-      [(OptLicmPtrKind.Unknown) env]
-      [_ (OptLicmPtrEnv.Cons var kind (box env))])))
+  (match kind
+    ;; Binding `Unknown` is how the walk RETIRES a class, at a redefinition of
+    ;; the var or at a copy whose source carries none. It must not record one.
+    [(OptLicmPtrKind.Unknown) (opt-licm-ptr-unbind env var)]
+    [_
+      (let
+        [kinds : opt_licm_ptr_kind_vec.Vec
+          (compiler-opt-global-shared-view env.kinds)]
+        (if (< var 0)
+          (OptLicmPtrEnv kinds)
+          (begin
+            (while (<= (opt_licm_ptr_kind_vec.len (& kinds)) var)
+              (opt_licm_ptr_kind_vec.push-ref!
+                (&mut kinds)
+                (OptLicmPtrKind.Unknown)))
+            (opt_licm_ptr_kind_vec.set-ref! (&mut kinds) var kind)
+            (OptLicmPtrEnv kinds))))]))
 
 (define (opt-licm-ptr-lookup [env : OptLicmPtrEnv] [var : i64]) : OptLicmPtrKind
-  (match env
-    [(OptLicmPtrEnv.Nil) (OptLicmPtrKind.Unknown)]
-    [(OptLicmPtrEnv.Cons id kind rest)
-      (if (= id var)
-        kind
-        (opt-licm-ptr-lookup (compiler-opt-box-shared-view rest) var))]))
+  (let
+    [kinds : opt_licm_ptr_kind_vec.Vec
+      (compiler-opt-global-shared-view env.kinds)]
+    (if (or (< var 0) (>= var (opt_licm_ptr_kind_vec.len (& kinds))))
+      (OptLicmPtrKind.Unknown)
+      (compiler-opt-borrowed-array-element-shared-view
+        (opt_licm_ptr_kind_vec.slots (& kinds))
+        var))))
 
 (define (opt-licm-type-env-bind
   [types : OptSsaVarTypes]
@@ -26578,7 +26632,7 @@
       : OptLicmStoreState
       ;; Provenance only; this state's write sets are never consulted.
       (opt-licm-store-state-with-provenance
-        (OptLicmPtrEnv.Nil)
+        (opt-licm-ptr-env-new)
         roots
         (opt-global-mod-ref-any)
         (opt-global-obj-any))]
@@ -27396,7 +27450,7 @@
         (OptLicmStoreState
           summary
           (opt-licm-store-summary-empty)
-          (OptLicmPtrEnv.Nil)
+          (opt-licm-ptr-env-new)
           (opt-licm-root-env-with-capacity 17 (opt_i64_i64_map.with-capacity 1))
           (opt-licm-store-roots-new)
           false
@@ -58739,6 +58793,282 @@
         (- 0 1))]
     [_ (- 0 1)]))
 
+;; --- CK-1: LOCAL allocation-shape length-equality families -------------------
+;;
+;; P-B's families are keyed by global CELLS, so a struct-of-arrays workload
+;; whose parallel arrays are FUNCTION-LOCAL values has no cell for the
+;; whole-program walk to key on and every twin pair keeps both of its checks
+;; (BC-P-B round 1 measured intern_table at exactly 0 for that reason: its maps
+;; are benchmark LOCALS, not global cells).
+;;
+;; This is the same relation proved per FUNCTION, about the WORD a length load
+;; reads rather than about a cell. A length spelling is keyed by
+;; opt-ck-local-length-key as `var * 2 + level`:
+;;
+;;   level 0   `load (gep v, 1)`                  word 1 of the object `v` names
+;;                                                (a descriptor's own length)
+;;   level 1   `load (gep (load (gep v, 0)), 1)`  the length of the array the
+;;                                                Vec box `v` holds
+;;
+;; and two keys are LENGTH-EQUAL when the word each names is written exactly
+;; once with values that denote one runtime value. The clauses mirror P-B's:
+;;
+;;  (1) ONE DEFINITION, ONE WRITE. The object var has exactly one defining
+;;      instruction (opt-len-eq-def-count), no `copy_bytes` into it, and the
+;;      word this key names is written by exactly one `store_ptr` in the whole
+;;      function -- the n0/n1 counters of opt-len-eq-defs-build, which mark an
+;;      address the walk cannot place as multiply written, so an unmodelled
+;;      offset refuses the object rather than being believed. Level 1 also
+;;      admits the box a SINGLE-RETURN ALLOCATING HELPER filled, through the
+;;      same constructor summary opt-len-eq-ctor-length reads (the shape
+;;      opt-cb-zero-ctors-build recognises); such a box carries no in-function
+;;      store at all.
+;;
+;;  (2) THE WRITE HAPPENS BEFORE EVERY READ. The store is in the SAME BLOCK as
+;;      the object's definition and, inside that block, before every load of
+;;      that word. The optimizer verifier this slot runs first proves every use
+;;      is dominated by its definition, so a load in any OTHER block is reached
+;;      only through the defining block and therefore only after the store.
+;;
+;;  (3) NOTHING ELSE CAN REACH THE OBJECT. Every operand occurrence of the var
+;;      is either the base of a `gep` whose result addresses nothing but loads
+;;      and the stores already counted, or an argument of a DIRECT call whose
+;;      call-memory summary proves it writes nothing through that parameter
+;;      (opt-call-memory-summary-param-write?, the same summary P-B's condition
+;;      (2) consults). An address-taken object, one handed to an indirect or
+;;      unsummarised callee, one stored into memory, returned, or copied is
+;;      refused. A constructor call fills the caller's `__sret` buffer and
+;;      returns its address, so that buffer and the box the call defines are ONE
+;;      object: the `addr_of` argument and the `alloc` under it must have no
+;;      other use in the function, and more than one such argument is refused
+;;      rather than guessed. For level 1 the descriptor is held to the same
+;;      rule, so nothing can re-point it or rewrite its length word.
+;;
+;;  (4) THE LENGTHS MATCH. The two written values denote one runtime value: the
+;;      same value after `Mov` resolution, or two evaluations of one pure
+;;      integer BinOp over the same resolved operands -- exactly the relation
+;;      opt-len-eq-canonical folds for P-B's write list, spelled pairwise so no
+;;      per-var frame scan is needed.
+;;
+;; Given (1)-(4) the two loads return one value wherever both keys are defined,
+;; so a dominating PASSED check of one index against one member decides the same
+;; index against the other. The FIRST check of each pair stays and aborts at its
+;; own site: trap parity is by construction.
+;;
+;; PHIS. A phi all of whose inputs are members of one family joins that family
+;; (opt-ck-local-phi-join-level!). Beyond that, two phis are compared PAIRWISE
+;; and fail closed exactly like opt-bounds-dom-masked-or-phi?: their predecessor
+;; labels must agree position by position and EVERY input pair must itself be
+;; length-equal; one unresolvable pair refuses the whole phi.
+;;
+;; WHERE IT IS READ. Only below the level-2 fixpoint, in
+;; opt-arg-global-final-sweep, for the reason that slot exists at all: facts
+;; read inside the pipeline starve the next round's bce_version. Every
+;; in-pipeline build is handed opt-ck-locals-empty.
+(defstruct OptCkLocals
+  (on? bool)
+  ;; `1 + the family id` of each length key, 0 for a key that is not a member.
+  (fam (__tl_dyn-array i64))
+  ;; Every var's defining instruction and how many definitions it has; the
+  ;; pairwise phi rule reads both.
+  (defs (__tl_dyn-array OptBoolBranchDef))
+  (count (__tl_dyn-array i64)))
+
+(define (opt-ck-locals-empty) : OptCkLocals
+  (OptCkLocals
+    false
+    (__tl_make-array i64 1)
+    (__tl_make-array OptBoolBranchDef 1)
+    (__tl_make-array i64 1)))
+
+;; At most this many length keys are admitted per function. Family assignment is
+;; pairwise, so the cap bounds it at O(cap^2) comparisons; a function with more
+;; declines the rest in key order rather than growing the table.
+(define (opt-ck-local-candidate-cap) : i64
+  64)
+
+;; How many rounds the phi-join closure runs, and how deep the pairwise phi rule
+;; descends before failing closed.
+(define (opt-ck-local-phi-rounds) : i64
+  4)
+
+(define (opt-ck-local-phi-depth) : i64
+  4)
+
+(define (opt-ck-local-key [var : i64] [level : i64]) : i64
+  (+ (* var 2) level))
+
+(define (opt-ck-local-key-var [key : i64]) : i64
+  (/ key 2))
+
+(define (opt-ck-local-key-level [key : i64]) : i64
+  (- key (* (/ key 2) 2)))
+
+(define (opt-ck-local-fam-at [fam : (__tl_dyn-array i64)] [key : i64]) : i64
+  (if (and (>= key 0) (< key (array-length fam)))
+    (array-ref fam key)
+    0))
+
+(define (opt-ck-locals-family [locals : OptCkLocals] [key : i64]) : i64
+  (opt-ck-local-fam-at (compiler-opt-global-shared-view locals.fam) key))
+
+;; The single definition of `var`, or `No`; a var with more than one names more
+;; than one runtime value, so no fact may follow it.
+(define (opt-ck-locals-def [locals : OptCkLocals] [var : i64]) : OptBoolBranchDef
+  (if (and
+    (>= var 0)
+    (< var (array-length locals.defs))
+    (= (array-ref locals.count var) 1))
+    (compiler-opt-global-array-element-shared-view locals.defs var)
+    (OptBoolBranchDef.No)))
+
+;; The local length key a value names, or -1. The two levels are exactly the two
+;; spellings opt-len-eq-slots-global recovers for a global cell, stopping at the
+;; in-function value instead of at `@g`.
+(define (opt-ck-local-length-key
+  [type-segment-bases : i64]
+  [use : OptLenEqUse]
+  [copies : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : i64
+  (match (opt-len-eq-loaded-word
+    type-segment-bases
+    (compiler-opt-global-shared-view use)
+    (compiler-opt-global-shared-view copies)
+    value
+    1)
+    [(OptLenEqBase.No) (- 0 1)]
+    [(OptLenEqBase.Some slots)
+      (match (opt-len-eq-loaded-word
+        type-segment-bases
+        (compiler-opt-global-shared-view use)
+        (compiler-opt-global-shared-view copies)
+        (compiler-opt-global-shared-view slots)
+        0)
+        [(OptLenEqBase.Some cell)
+          (match (opt-bounds-dom-resolve
+            (compiler-opt-global-shared-view copies)
+            cell)
+            [(ir.CompilerIrValue.Var var) (opt-ck-local-key var 1)]
+            [_ (- 0 1)])]
+        [(OptLenEqBase.No)
+          (match (opt-bounds-dom-resolve copies slots)
+            [(ir.CompilerIrValue.Var var) (opt-ck-local-key var 0)]
+            [_ (- 0 1)])])]))
+
+(define (opt-ck-local-input-key [value : ir.CompilerIrValue] [level : i64]) : i64
+  (match value
+    [(ir.CompilerIrValue.Var var) (opt-ck-local-key var level)]
+    [_ (- 0 1)]))
+
+;; Do two length keys name one runtime value? Same family, or two phis whose
+;; predecessor labels agree position by position and whose input pairs are
+;; themselves equal.
+(define (opt-ck-local-keys-equal?
+  [locals : OptCkLocals]
+  [a : i64]
+  [b : i64]
+  [depth : i64]) : bool
+  (if (or (< a 0) (< b 0))
+    false
+    (let
+      [family : i64
+        (opt-ck-locals-family (compiler-opt-global-shared-view locals) a)]
+      (if (and
+        (> family 0)
+        (=
+          family
+          (opt-ck-locals-family (compiler-opt-global-shared-view locals) b)))
+        true
+        (if (<= depth 0)
+          false
+          (opt-ck-local-phi-keys-equal?
+            (compiler-opt-global-shared-view locals)
+            a
+            b
+            depth))))))
+
+(define (opt-ck-local-phi-keys-equal?
+  [locals : OptCkLocals]
+  [a : i64]
+  [b : i64]
+  [depth : i64]) : bool
+  (let
+    [level : i64 (opt-ck-local-key-level a)]
+    (if (not (= level (opt-ck-local-key-level b)))
+      false
+      (match (opt-ck-locals-def
+        (compiler-opt-global-shared-view locals)
+        (opt-ck-local-key-var a))
+        [(OptBoolBranchDef.Some left _)
+          (match (compiler-opt-global-shared-view left)
+            [(ir.CompilerIrInstr.Phi _ left-inputs _)
+              (match (opt-ck-locals-def
+                (compiler-opt-global-shared-view locals)
+                (opt-ck-local-key-var b))
+                [(OptBoolBranchDef.Some right _)
+                  (match (compiler-opt-global-shared-view right)
+                    [(ir.CompilerIrInstr.Phi _ right-inputs _)
+                      (opt-ck-local-phi-inputs-equal?
+                        (compiler-opt-global-shared-view locals)
+                        (compiler-opt-global-shared-view left-inputs)
+                        (compiler-opt-global-shared-view right-inputs)
+                        level
+                        0
+                        depth)]
+                    [_ false])]
+                [(OptBoolBranchDef.No) false])]
+            [_ false])]
+        [(OptBoolBranchDef.No) false]))))
+
+(define (opt-ck-local-phi-inputs-equal?
+  [locals : OptCkLocals]
+  [left : ir.CompilerIrPhiInputSeq]
+  [right : ir.CompilerIrPhiInputSeq]
+  [level : i64]
+  [index : i64]
+  [depth : i64]) : bool
+  (let
+    [count : i64
+      (ir.compiler-ir-phi-input-seq-count
+        (compiler-opt-global-shared-view left))]
+    (if (or
+      (= count 0)
+      (not
+        (=
+          count
+          (ir.compiler-ir-phi-input-seq-count
+            (compiler-opt-global-shared-view right)))))
+      false
+      (if (>= index count)
+        true
+        (let
+          [left-input : ir.CompilerIrPhiInput
+            (ir.compiler-ir-phi-input-seq-ref
+              (ir.compiler-ir-global-shared-view left)
+              index)]
+          [right-input : ir.CompilerIrPhiInput
+            (ir.compiler-ir-phi-input-seq-ref
+              (ir.compiler-ir-global-shared-view right)
+              index)]
+          (and
+            (= left-input.label right-input.label)
+            (opt-ck-local-keys-equal?
+              (compiler-opt-global-shared-view locals)
+              (opt-ck-local-input-key
+                (compiler-opt-global-shared-view left-input.value)
+                level)
+              (opt-ck-local-input-key
+                (compiler-opt-global-shared-view right-input.value)
+                level)
+              (- depth 1))
+            (opt-ck-local-phi-inputs-equal?
+              (compiler-opt-global-shared-view locals)
+              (compiler-opt-global-shared-view left)
+              (compiler-opt-global-shared-view right)
+              level
+              (+ index 1)
+              depth)))))))
+
 ;; --- P-B: reading the length-equality table inside bounds_dom ----------------
 ;;
 ;; The table is a fact about global CELLS; a check speaks about IR values. The
@@ -58792,7 +59122,11 @@
   ;; `args` it is non-empty only in the below-the-fixpoint slot -- reading it
   ;; in-pipeline would empty a loop's derivation set and cost the versioner its
   ;; clone, which is the measurement that put GAP-1's facts there too.
-  (content opt_i64_i64_map.Map))
+  (content opt_i64_i64_map.Map)
+  ;; CK-1's per-function LOCAL length-equality families (opt-ck-locals-build).
+  ;; It rides here for the same reason `args` and `content` do, and like them it
+  ;; is non-empty only in the below-the-fixpoint slot.
+  (locals OptCkLocals))
 
 (define (opt-len-eq-use-empty) : OptLenEqUse
   (OptLenEqUse
@@ -58803,7 +59137,8 @@
     false
     (opt-lp-memo-empty)
     (opt-arg-global-slots-empty)
-    (opt_i64_i64_map.with-capacity 1)))
+    (opt_i64_i64_map.with-capacity 1)
+    (opt-ck-locals-empty)))
 
 ;; Hand the late slot's bounds_dom run P-C's memo.
 (define (opt-len-eq-use-with-memo
@@ -58817,7 +59152,8 @@
     use.late?
     lp
     use.args
-    use.content))
+    use.content
+    use.locals))
 
 ;; Hand the below-the-fixpoint slot's bounds_dom run CB-1's content table.
 (define (opt-len-eq-use-with-content
@@ -58831,7 +59167,8 @@
     use.late?
     use.lp
     use.args
-    content))
+    content
+    use.locals))
 
 (define (opt-len-eq-use-def [use : OptLenEqUse] [var : i64]) : OptBoolBranchDef
   (if (and (>= var 0) (< var (array-length use.defs)))
@@ -58896,7 +59233,8 @@
     blocks
     false
     arg-global
-    params))
+    params
+    (opt-ck-locals-empty)))
 
 ;; The late slot's twin: no loop set, so in-loop checks are covered too.
 (define (opt-len-eq-use-build-late
@@ -58915,7 +59253,32 @@
     blocks
     true
     arg-global
-    params))
+    params
+    (opt-ck-locals-empty)))
+
+;; The below-the-fixpoint twin, which additionally carries CK-1's local
+;; families. The memory def table the two length spellings are recovered
+;; through is built whenever EITHER channel is on, so a function with local
+;; families but no global one still gets it.
+(define (opt-len-eq-use-build-late-with-locals
+  [table : opt_i64_i64_map.Map]
+  [clean : opt_i64_i64_map.Map]
+  [name : i64]
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [arg-global : opt_i64_i64_map.Map]
+  [params : ir.CompilerIrParamSeq]
+  [locals : OptCkLocals]) : OptLenEqUse
+  (opt-len-eq-use-build-slot
+    table
+    clean
+    name
+    frame
+    blocks
+    true
+    arg-global
+    params
+    locals))
 
 (define (opt-len-eq-use-build-slot
   [table : opt_i64_i64_map.Map]
@@ -58925,31 +59288,36 @@
   [blocks : ir.CompilerIrBlockList]
   [late? : bool]
   [arg-global : opt_i64_i64_map.Map]
-  [params : ir.CompilerIrParamSeq]) : OptLenEqUse
-  (if (or
-    (= (opt_i64_i64_map.len (& table)) 0)
-    (not (opt_i64_i64_map.contains? (& clean) name)))
-    (opt-len-eq-use-empty)
-    (let
-      [defs : (__tl_dyn-array OptBoolBranchDef)
-        (__tl_make-array
-          OptBoolBranchDef
-          (if (> frame 0)
-            frame
-            1))]
-      (begin
-        (opt-len-eq-mem-defs-fill-blocks!
-          (compiler-opt-global-shared-view defs)
-          blocks)
-        (OptLenEqUse
-          table
-          defs
-          true
-          (__tl_make-array bool 1)
-          late?
-          (opt-lp-memo-empty)
-          (opt-arg-global-slots arg-global name params frame)
-          (opt_i64_i64_map.with-capacity 1))))))
+  [params : ir.CompilerIrParamSeq]
+  [locals : OptCkLocals]) : OptLenEqUse
+  (let
+    [global-on? : bool
+      (and
+        (> (opt_i64_i64_map.len (& table)) 0)
+        (opt_i64_i64_map.contains? (& clean) name))]
+    (if (and (not global-on?) (not locals.on?))
+      (opt-len-eq-use-empty)
+      (let
+        [defs : (__tl_dyn-array OptBoolBranchDef)
+          (__tl_make-array
+            OptBoolBranchDef
+            (if (> frame 0)
+              frame
+              1))]
+        (begin
+          (opt-len-eq-mem-defs-fill-blocks!
+            (compiler-opt-global-shared-view defs)
+            blocks)
+          (OptLenEqUse
+            table
+            defs
+            global-on?
+            (__tl_make-array bool 1)
+            late?
+            (opt-lp-memo-empty)
+            (opt-arg-global-slots arg-global name params frame)
+            (opt_i64_i64_map.with-capacity 1)
+            locals))))))
 
 ;; The natural-loop body of one back edge `latch -> header`: the header plus
 ;; every block a backward walk from the latch reaches without passing through
@@ -59058,7 +59426,8 @@
       false
       use.lp
       use.args
-      use.content)))
+      use.content
+      use.locals)))
 
 ;; May the LE relation be read for a check in this block?
 (define (opt-len-eq-usable-at? [use : OptLenEqUse] [block-id : i64]) : bool
@@ -59161,7 +59530,110 @@
 ;; Does a dominating check of the SAME index against a length-equal member's
 ;; array retire this one? The fusion rule loop versioning applies at runtime
 ;; under a guard, with the static relation in place of the guard conjunct.
+;; Two channels answer it: P-B's families over global CELLS, and CK-1's over
+;; this function's own allocations. They are disjoint by construction -- a
+;; length chain bottoms out either in `@g`/a GAP-1 parameter or in a local
+;; value -- so the second is asked only where the first found nothing.
 (define (opt-len-eq-facts-cover?
+  [type-segment-bases : i64]
+  [use : OptLenEqUse]
+  [copies : opt_i64_i64_map.Map]
+  [facts : OptBoundsFacts]
+  [block-id : i64]
+  [index : ir.CompilerIrValue]
+  [length : ir.CompilerIrValue]) : bool
+  (or
+    (opt-len-eq-global-facts-cover?
+      type-segment-bases
+      (compiler-opt-global-shared-view use)
+      (compiler-opt-global-shared-view copies)
+      (compiler-opt-global-shared-view facts)
+      block-id
+      (compiler-opt-global-shared-view index)
+      (compiler-opt-global-shared-view length))
+    (opt-ck-local-facts-cover?
+      type-segment-bases
+      use
+      copies
+      facts
+      block-id
+      index
+      length)))
+
+;; May CK-1's local relation be read for a check in this block? The loop rule is
+;; P-B's, and the local channel only ever reaches the below-the-fixpoint slot,
+;; where the loop set is withdrawn.
+(define (opt-ck-local-usable-at? [use : OptLenEqUse] [block-id : i64]) : bool
+  (and
+    use.locals.on?
+    (or
+      (< block-id 0)
+      (>= block-id (array-length use.loops))
+      (not (array-ref use.loops block-id)))))
+
+;; CK-1: a dominating check of the SAME index against a LOCAL length-equal
+;; member retires this one.
+(define (opt-ck-local-facts-cover?
+  [type-segment-bases : i64]
+  [use : OptLenEqUse]
+  [copies : opt_i64_i64_map.Map]
+  [facts : OptBoundsFacts]
+  [block-id : i64]
+  [index : ir.CompilerIrValue]
+  [length : ir.CompilerIrValue]) : bool
+  (if (not
+    (opt-ck-local-usable-at? (compiler-opt-global-shared-view use) block-id))
+    false
+    (let
+      [key : i64
+        (opt-ck-local-length-key
+          type-segment-bases
+          (compiler-opt-global-shared-view use)
+          (compiler-opt-global-shared-view copies)
+          length)]
+      (if (< key 0)
+        false
+        (opt-ck-local-facts-scan?
+          type-segment-bases
+          (compiler-opt-global-shared-view use)
+          (compiler-opt-global-shared-view copies)
+          facts
+          index
+          key)))))
+
+(define (opt-ck-local-facts-scan?
+  [type-segment-bases : i64]
+  [use : OptLenEqUse]
+  [copies : opt_i64_i64_map.Map]
+  [facts : OptBoundsFacts]
+  [index : ir.CompilerIrValue]
+  [key : i64]) : bool
+  (match (compiler-opt-global-shared-view facts)
+    [(OptBoundsFacts.Nil) false]
+    [(OptBoundsFacts.Cons fact rest)
+      (or
+        (match fact
+          [(OptBoundsFact.Fact fact-index fact-length)
+            (and
+              (opt-value-eq fact-index (compiler-opt-global-shared-view index))
+              (opt-ck-local-keys-equal?
+                (compiler-opt-global-shared-view use.locals)
+                key
+                (opt-ck-local-length-key
+                  type-segment-bases
+                  (compiler-opt-global-shared-view use)
+                  (compiler-opt-global-shared-view copies)
+                  fact-length)
+                (opt-ck-local-phi-depth)))])
+        (opt-ck-local-facts-scan?
+          type-segment-bases
+          (compiler-opt-global-shared-view use)
+          (compiler-opt-global-shared-view copies)
+          (compiler-opt-box-shared-view rest)
+          (compiler-opt-global-shared-view index)
+          key))]))
+
+(define (opt-len-eq-global-facts-cover?
   [type-segment-bases : i64]
   [use : OptLenEqUse]
   [copies : opt_i64_i64_map.Map]
@@ -64480,19 +64952,44 @@
   [content : opt_i64_i64_map.Map]
   [context : OptCfgContext]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (opt-len-eq-late-sweep-with-locals
+    type-segment-bases
+    table
+    clean
+    nonneg
+    arg-global
+    content
+    (opt-ck-locals-empty)
+    context
+    func))
+
+;; The same sweep with CK-1's local families in hand. Only the
+;; below-the-fixpoint slot passes a non-empty one.
+(define (opt-len-eq-late-sweep-with-locals
+  [type-segment-bases : i64]
+  [table : opt_i64_i64_map.Map]
+  [clean : opt_i64_i64_map.Map]
+  [nonneg : opt_i64_i64_map.Map]
+  [arg-global : opt_i64_i64_map.Map]
+  [content : opt_i64_i64_map.Map]
+  [locals : OptCkLocals]
+  [context : OptCfgContext]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (compiler-opt-global-shared-view func)
     [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
       (let
+        [locals-on? : bool locals.on?]
         [use : OptLenEqUse
           (opt-len-eq-use-with-content
-            (opt-len-eq-use-build-late
+            (opt-len-eq-use-build-late-with-locals
               (compiler-opt-global-shared-view table)
               (compiler-opt-global-shared-view clean)
               (ir.compiler-ir-symbol-id name)
               frame
               (compiler-opt-global-shared-view blocks)
               (compiler-opt-global-shared-view arg-global)
-              (compiler-opt-global-shared-view params))
+              (compiler-opt-global-shared-view params)
+              locals)
             (compiler-opt-global-shared-view content))]
         ;; P-C rides the same slot. Its memo is a property of THIS function's
         ;; CFG and of nothing the whole-program tables say, so it is computed
@@ -64509,6 +65006,7 @@
         (if (or
           (and
             (not use.on?)
+            (not locals-on?)
             (not (opt-lp-memo-any? (compiler-opt-global-shared-view lp))))
           (not
             (opt-verify-ok?
@@ -65674,7 +66172,15 @@
   ;; CB-1's element-content table (opt-cb-build): global symbol id ->
   ;; `1 + the family id` every element of that global's array indexes safely.
   ;; Not built (and empty) wherever P-B's families or GAP-1's facts are.
-  (content opt_i64_i64_map.Map))
+  (content opt_i64_i64_map.Map)
+  ;; CK-1's constructor summaries (opt-len-eq-ctors-build): the symbol id of
+  ;; every single-return allocating helper -> the parameter its `make-array`
+  ;; length came from, encoded by opt-len-eq-encode. P-B builds the same table
+  ;; internally and only when it has global candidates; this copy is built
+  ;; whenever the program is under the whole-program function-count gate,
+  ;; because CK-1's families are per FUNCTION and need no global cell at all.
+  ;; Its emptiness is also the program-level gate on the local channel.
+  (len-ctors opt_i64_i64_map.Map))
 
 (define (opt-global-cell-summary-empty) : OptGlobalCellSummary
   (OptGlobalCellSummary
@@ -65689,6 +66195,7 @@
     (opt_i64_i64_map.with-capacity 1)
     (opt_i64_i64_map.with-capacity 1)
     (opt-global-obj-mod-ref-none)
+    (opt_i64_i64_map.with-capacity 1)
     (opt_i64_i64_map.with-capacity 1)
     (opt_i64_i64_map.with-capacity 1)))
 
@@ -65708,7 +66215,8 @@
     arg-global
     cell.obj-mod-ref
     cell.len-reset
-    cell.content))
+    cell.content
+    cell.len-ctors))
 
 (define (opt-global-cell-summary-with-obj-mod-ref
   [cell : OptGlobalCellSummary]
@@ -65726,7 +66234,8 @@
     cell.arg-global
     obj-mod-ref
     cell.len-reset
-    cell.content))
+    cell.content
+    cell.len-ctors))
 
 (define (opt-global-cell-summary-with-content
   [cell : OptGlobalCellSummary]
@@ -65744,7 +66253,27 @@
     cell.arg-global
     cell.obj-mod-ref
     cell.len-reset
-    content))
+    content
+    cell.len-ctors))
+
+(define (opt-global-cell-summary-with-len-ctors
+  [cell : OptGlobalCellSummary]
+  [len-ctors : opt_i64_i64_map.Map]) : OptGlobalCellSummary
+  (OptGlobalCellSummary
+    cell.addr-taken
+    cell.type-index
+    cell.types
+    cell.word-cell
+    cell.mod-ref
+    cell.frozen
+    cell.nonneg
+    cell.len-eq
+    cell.len-eq-clean
+    cell.arg-global
+    cell.obj-mod-ref
+    cell.len-reset
+    cell.content
+    len-ctors))
 
 (defstruct OptLoopBceSummaries
   (enabled bool)
@@ -116305,30 +116834,53 @@
 ;; function none of whose parameters carries one pays one lookup per parameter:
 ;; the CFG context and the sweep itself are built only where a fact can
 ;; actually decide something.
+;; CK-1 rides the same slot, and for the same reason: its families are function
+;; facts, so reading them in the pipeline would starve the next round's
+;; bce_version exactly as GAP-1's did. The "is this sweep worth its CFG context"
+;; gate is therefore widened from "this function has a GAP-1 parameter fact" to
+;; "this function has a fact of ANY kind": either such a parameter, or a local
+;; length-equality family this function's own allocations support. A program
+;; with neither channel switched on pays one map-length test per function.
 (define (opt-arg-global-final-sweep
   [type-segment-bases : i64]
   [summaries : OptLoopBceSummaries]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (if (= (opt_i64_i64_map.len (& summaries.global-cell.arg-global)) 0)
+  (if (and
+    (= (opt_i64_i64_map.len (& summaries.global-cell.arg-global)) 0)
+    (= (opt_i64_i64_map.len (& summaries.global-cell.len-ctors)) 0))
     func
     (match (compiler-opt-global-shared-view func)
-      [(ir.CompilerIrFunction.Function name params _ _ blocks)
-        (if (not
-          (opt-arg-global-any-fact?
-            (compiler-opt-global-shared-view summaries.global-cell.arg-global)
-            (ir.compiler-ir-symbol-id name)
-            (compiler-opt-global-shared-view params)
-            0))
-          func
-          (opt-len-eq-late-sweep
-            type-segment-bases
-            (compiler-opt-global-shared-view summaries.global-cell.len-eq)
-            (compiler-opt-global-shared-view summaries.global-cell.len-eq-clean)
-            (compiler-opt-global-shared-view summaries.global-cell.nonneg)
-            (compiler-opt-global-shared-view summaries.global-cell.arg-global)
-            (compiler-opt-global-shared-view summaries.global-cell.content)
-            (opt-cfg-context-build (compiler-opt-global-shared-view blocks))
-            func))])))
+      [(ir.CompilerIrFunction.Function name params _ frame blocks)
+        (let
+          [args? : bool
+            (opt-arg-global-any-fact?
+              (compiler-opt-global-shared-view summaries.global-cell.arg-global)
+              (ir.compiler-ir-symbol-id name)
+              (compiler-opt-global-shared-view params)
+              0)]
+          [locals : OptCkLocals
+            (if (= (opt_i64_i64_map.len (& summaries.global-cell.len-ctors)) 0)
+              (opt-ck-locals-empty)
+              (opt-ck-locals-build
+                type-segment-bases
+                (compiler-opt-global-shared-view
+                  summaries.global-cell.len-ctors)
+                (compiler-opt-global-shared-view summaries.call-memory)
+                frame
+                (compiler-opt-global-shared-view blocks)))]
+          (if (and (not args?) (not locals.on?))
+            func
+            (opt-len-eq-late-sweep-with-locals
+              type-segment-bases
+              (compiler-opt-global-shared-view summaries.global-cell.len-eq)
+              (compiler-opt-global-shared-view
+                summaries.global-cell.len-eq-clean)
+              (compiler-opt-global-shared-view summaries.global-cell.nonneg)
+              (compiler-opt-global-shared-view summaries.global-cell.arg-global)
+              (compiler-opt-global-shared-view summaries.global-cell.content)
+              locals
+              (opt-cfg-context-build (compiler-opt-global-shared-view blocks))
+              func)))])))
 
 (define (optimize-function-fixed-pass-with-summaries
   [pools : ast.AstNodePoolContext]
@@ -123721,8 +124273,72 @@
 ;; The frequency floor above is subsumed by this clause on the caller's own
 ;; loops (a depth-1 site already weighs 8), and remains the clause that
 ;; disqualifies an in-loop site inside a caller nothing ever reaches.
+;;
+;; WHY THE FLOOR NOW STANDS DOWN, AND EXACTLY WHERE. The autopsy above is an
+;; argument about EVIDENCE, not about depth: a depth-0 site was refused because
+;; nothing told the check how often the site ran or what the merged body would
+;; do to the caller. Both of those are now askable, and where all three answers
+;; are available the verdict -- a real re-plan -- is a better judge than a shape
+;; clause. `cfg-build-csr` into `cfg-function` is the proof: re-measured on this
+;; tree it is offered to the verdict and REFUSED BY COST, at a modelled saving
+;; of -47 against a boundary of 13, which the tier's `--trace-passes` line
+;; shows. The clause it used to die on is not what was protecting cfg_domloops.
+;;
+;; The three answers, and why each is required:
+;;
+;;   * COMPOSITE FREQUENCY >= one census weight. The site is reached through at
+;;     least one loop level, counting a loop in the caller and a loop above the
+;;     caller alike. Below that a straight-line site in a caller nothing runs
+;;     cannot repay a boundary at all.
+;;   * THE SITE IS THE CALLER'S ENTRY BLOCK. Every cost this tier compares is
+;;     priced PER INVOCATION of the caller, and a depth-0 boundary is credited
+;;     exactly once against that. The entry block is where "runs exactly once
+;;     per invocation" is known without an analysis; a depth-0 site in a
+;;     conditional arm runs some unknown fraction of the time, and crediting it
+;;     a whole boundary is the same mistake the frequency floor exists to stop.
+;;     Measured: `grow!` into `insert-ref!` at a cold `if_then` arm of
+;;     hashmap_insert prices as a free inline (saving 8 against a boundary of 7)
+;;     and costs that row +13.6%.
+;;   * THE CALLEE IS CALL-FREE. This tier deliberately carries no call-free
+;;     clause (see opt-inline-checked-ok?) because at depth 1 and below the
+;;     boundary is 8 to 64 times larger and the re-plan can resolve what an
+;;     imported call does to the caller's prologue, callee-saved set and spill
+;;     traffic. At depth 0 the boundary is 6+np -- the smallest number this
+;;     check ever compares -- and the one thing a depth-0 inline can win beyond
+;;     it is the caller's LEAF FRAME, which an imported call makes impossible.
+;;     So the clause the tier can afford to omit where the measurement has
+;;     resolution is required where it does not. Measured: `gvn-table-lookup`,
+;;     which carries a call to `gvn-key-matches?`, prices into `gvn-table-bind`
+;;     as an exactly free inline (after == banked + callee, saving 6 against a
+;;     boundary of 6 -- the model found nothing at all) and costs gvn_table
+;;     +0.294%.
+;;
+;; Below any of the three the floor stands, and the site never reaches a
+;; verdict.
+;;
+;; A site admitted by this relaxation is a RELAXED candidate: it is ranked
+;; behind every candidate that cleared the unrelaxed floor and it spends the
+;; relaxations' own reserve, never the budget those candidates read. See
+;; opt-inline-checked-relaxed-program-budget for the regression that rule is.
 (define (opt-inline-checked-min-site-depth) : i64
   1)
+
+;; The composite frequency at which the depth floor relaxes to zero. One census
+;; weight, the same rung opt-inline-checked-min-frequency reads: the site runs
+;; through one loop level or better.
+(define (opt-inline-checked-depth-relaxed-frequency) : i64
+  8)
+
+(define (opt-inline-checked-effective-min-site-depth
+  [frequency : i64]
+  [entry-site? : bool]
+  [call-free? : bool]) : i64
+  (if (and
+    entry-site?
+    call-free?
+    (>= frequency (opt-inline-checked-depth-relaxed-frequency)))
+    0
+    (opt-inline-checked-min-site-depth)))
 
 ;; VERDICTS per program, not accepts. This is the tier's compile-time bound and
 ;; it has to count the work, which a cap on accepts does not: a rejected
@@ -123743,6 +124359,67 @@
 ;; helper -- with a round to spare.
 (define (opt-inline-checked-max-caller-verdicts) : i64
   4)
+
+;; --- the relaxations' own reserve, and why the budget above needs one -------
+;;
+;; The budget above is spent by REFUSALS exactly as it is by accepts, and it is
+;; spent in walk order, so it is a race: the callers the walk reaches first
+;; price their candidates and the callers it reaches last get whatever is left.
+;; That is the right shape while every candidate in the race is one this tier
+;; would have priced anyway -- the race is then between equals. It stops being
+;; right the moment a clause is RELAXED for a candidate, because a relaxation
+;; admits the MARGINAL case by construction, and a marginal candidate that
+;; reverts still spends a verdict that a candidate the unrelaxed tier would have
+;; KEPT was going to get.
+;;
+;; That is not a theoretical cost; it is a measured one. ssa_construct offers
+;; this tier exactly twenty-four candidates without the relaxations and the
+;; program budget is exactly twenty-four, so the entry-site and second-body
+;; admissions -- five extra candidates in the first half of the program, every
+;; one of them a revert -- pushed five candidates off the end of the budget, and
+;; two of those were keeps: `ssa-instr-dst` into `ssa-verify-defs` (a modelled
+;; saving of 960 against a boundary of 512) and `ssa-instr-next` into
+;; `ssa-verify` (1008 against 512). Both callees then stayed out of line at
+;; every site the bands also refuse, and the row paid +6,495,048.
+;;
+;; So the relaxations get their OWN reserve, which is the construction every
+;; band in this file already uses for its own imports: a hot-loop, chain,
+;; accessor or absorb import spends its gate's fuel and never the fuel the
+;; caller's banked absorptions draw on. A candidate that reaches the verdict
+;; only because a clause was relaxed for it -- a site below the depth floor, or
+;; a body the one-callee lock would have refused -- spends from HERE, and is
+;; ranked behind every candidate that needed no relaxation
+;; (opt-inline-checked-arm-next-target!). It can therefore neither take a core
+;; candidate's verdict nor be priced ahead of one, which is the whole claim:
+;; adding a relaxation may only ADD verdicts, never move them.
+;;
+;; ONE PER CALLER. A relaxed candidate is a caller's marginal chance, not a
+;; second chain of them, and every relaxed accept the corpus measures is one
+;; caller's one site: `it-map-insert-from` into `it-intern-slice`
+;; (intern_table -719,598), `pl-owners-empty` into `pl-run-chunk`
+;; (peephole_lines -9,528), `ls-digit?` into `ls-hex-digit?` and
+;; `ls-colon-symbol-head?` into `ls-colon-token-end` (lex_source -641,520). The
+;; callers that wanted more than one wanted them for reverts: `ssa-def-blocks`
+;; and `ls-tokenize` each offered three and kept none.
+(define (opt-inline-checked-max-caller-relaxed-verdicts) : i64
+  1)
+
+;; ...and program-wide, one such chance for each caller the tier's own budget
+;; could serve: twenty-four verdicts at four per caller is six callers. The
+;; reserve is stated as that quotient rather than as a number of its own,
+;; because it is not a second thing to tune -- it is the same bound read at the
+;; granularity the relaxations spend it in.
+(define (opt-inline-checked-relaxed-program-budget) : i64
+  (/
+    (opt-inline-checked-program-budget)
+    (opt-inline-checked-max-caller-verdicts)))
+
+;; How many sites one caller may end up with in the accepted table: its core
+;; verdicts and its relaxed one can all keep.
+(define (opt-inline-checked-max-caller-accepts) : i64
+  (+
+    (opt-inline-checked-max-caller-verdicts)
+    (opt-inline-checked-max-caller-relaxed-verdicts)))
 
 ;; How many candidate sites one caller's SCAN walk ranks. Only the richest
 ;; opt-inline-checked-max-caller-verdicts of them can ever be priced, so the
@@ -123790,10 +124467,126 @@
       1
       callee-instrs)))
 
+;; --- the clause that decided, and the trace that reports it -----------------
+;;
+;; The admission test is a conjunction, and a conjunction answers "no" without
+;; saying which term said so. Every later admission question this tier is asked
+;; -- why is this callee not priced, which clause is the one to move -- needs
+;; exactly that name, so the test returns the CLAUSE rather than a bool and the
+;; bool is derived from it. The order below is the order the test evaluates in,
+;; cheapest first, so a clause code is also a statement of how far the candidate
+;; got.
+;;
+;; The tier's own state (disarmed, budget, target key) is not a property of the
+;; candidate, so those codes exist to be returned and are not traced: on a
+;; target walk every site but one answers `not-target`, and a trace of that is a
+;; trace of the walk, not of the tier. Tracing starts at the one-callee lock,
+;; which is the first clause that judges the candidate itself.
+(define (opt-inline-checked-clause-admitted) : i64
+  0)
+
+(define (opt-inline-checked-clause-scanned) : i64
+  1)
+
+(define (opt-inline-checked-clause-readmitted) : i64
+  2)
+
+(define (opt-inline-checked-clause-disarmed) : i64
+  3)
+
+(define (opt-inline-checked-clause-caller-taken) : i64
+  4)
+
+(define (opt-inline-checked-clause-program-budget) : i64
+  5)
+
+(define (opt-inline-checked-clause-caller-verdicts) : i64
+  6)
+
+(define (opt-inline-checked-clause-not-target) : i64
+  7)
+
+(define (opt-inline-checked-clause-callee-lock) : i64
+  8)
+
+(define (opt-inline-checked-clause-unreferenced) : i64
+  9)
+
+(define (opt-inline-checked-clause-callee-size) : i64
+  10)
+
+(define (opt-inline-checked-clause-callee-blocks) : i64
+  11)
+
+(define (opt-inline-checked-clause-address-taken) : i64
+  12)
+
+(define (opt-inline-checked-clause-heavy-gate) : i64
+  13)
+
+(define (opt-inline-checked-clause-block-ceiling) : i64
+  14)
+
+(define (opt-inline-checked-clause-frequency) : i64
+  15)
+
+(define (opt-inline-checked-clause-site-depth) : i64
+  16)
+
+;; Ranked as a RELAXED candidate -- one only a relaxed clause admits -- with the
+;; relaxations' reserve already spent. Reported by the ranking, like the lock,
+;; because a row refused there never reaches the admission test.
+(define (opt-inline-checked-clause-relaxed-budget) : i64
+  17)
+
+(define (opt-inline-checked-clause-admits? [clause : i64]) : bool
+  (or
+    (= clause (opt-inline-checked-clause-admitted))
+    (= clause (opt-inline-checked-clause-readmitted))))
+
+(define (opt-inline-checked-clause-traced? [clause : i64]) : bool
+  (or
+    (= clause (opt-inline-checked-clause-admitted))
+    (= clause (opt-inline-checked-clause-scanned))
+    (>= clause (opt-inline-checked-clause-callee-lock))))
+
+(define (opt-inline-checked-clause-text [clause : i64]) : String
+  (cond
+    [(= clause (opt-inline-checked-clause-admitted)) "admitted"]
+    [(= clause (opt-inline-checked-clause-scanned)) "scanned"]
+    [(= clause (opt-inline-checked-clause-readmitted)) "readmitted"]
+    [(= clause (opt-inline-checked-clause-disarmed)) "disarmed"]
+    [(= clause (opt-inline-checked-clause-caller-taken)) "caller-taken"]
+    [(= clause (opt-inline-checked-clause-program-budget)) "program-budget"]
+    [(= clause (opt-inline-checked-clause-caller-verdicts)) "caller-verdicts"]
+    [(= clause (opt-inline-checked-clause-not-target)) "not-target"]
+    [(= clause (opt-inline-checked-clause-callee-lock)) "callee-lock"]
+    [(= clause (opt-inline-checked-clause-unreferenced)) "unreferenced"]
+    [(= clause (opt-inline-checked-clause-callee-size)) "callee-size"]
+    [(= clause (opt-inline-checked-clause-callee-blocks)) "callee-blocks"]
+    [(= clause (opt-inline-checked-clause-address-taken)) "address-taken"]
+    [(= clause (opt-inline-checked-clause-heavy-gate)) "heavy-gate"]
+    [(= clause (opt-inline-checked-clause-block-ceiling)) "block-ceiling"]
+    [(= clause (opt-inline-checked-clause-frequency)) "frequency"]
+    [(= clause (opt-inline-checked-clause-relaxed-budget)) "relaxed-budget"]
+    [(= clause (opt-inline-checked-clause-site-depth)) "site-depth"]
+    [else "unknown"]))
+
 (define opt-inline-checked-active? : bool
   false)
 (define opt-inline-checked-budget : i64
   0)
+
+;; The relaxations' reserve, spent only by candidates a relaxed clause admitted.
+(define opt-inline-checked-relaxed-budget : i64
+  0)
+
+;; Which of the two budgets the armed target draws on. Set by the arming step,
+;; which is the only place that knows: the depth relaxation is a property of the
+;; ROW, the lock relaxation a property of the caller's accepted table at the
+;; moment the row is armed.
+(define opt-inline-checked-target-relaxed? : bool
+  false)
 
 ;; SCAN or TARGET, the two modes a caller walk runs in. A scan walk admits no
 ;; new site -- so its result is exactly the caller's banked-band-only rewrite,
@@ -123815,24 +124608,31 @@
 
 ;; The ACCEPTED table: the caller's sites that have already been priced and
 ;; kept, three columns per row (callee name, block label, site position), room
-;; for opt-inline-checked-max-caller-verdicts rows.
+;; for opt-inline-checked-max-caller-accepts rows.
 (define opt-inline-checked-accepted : (__tl_dyn-array i64)
-  (__tl_make-array i64 12))
+  (__tl_make-array i64 15))
 (define opt-inline-checked-accepted-count : i64
   0)
 
-;; The SCAN table: one row per candidate the scan walk found, four columns --
-;; callee name, block label, site position, and the site's RICHNESS, which is
-;; what a free inline of it would be worth (how often the site runs times what
-;; its boundary costs). Room for opt-inline-checked-scan-cap rows. A row whose
-;; richness has been set negative has already been armed as a target.
+;; The SCAN table: one row per candidate the scan walk found, five columns --
+;; callee name, block label, site position, the site's RICHNESS, which is what a
+;; free inline of it would be worth (how often the site runs times what its
+;; boundary costs), and whether the site cleared the depth floor only because
+;; the floor was RELAXED for it. Room for opt-inline-checked-scan-cap rows. A
+;; row whose richness has been set negative has already been armed as a target.
+(define (opt-inline-checked-scan-stride) : i64
+  5)
+
 (define opt-inline-checked-scan : (__tl_dyn-array i64)
-  (__tl_make-array i64 32))
+  (__tl_make-array i64 40))
 (define opt-inline-checked-scan-count : i64
   0)
 
-;; Verdicts spent on the caller being walked, against the per-caller cap.
+;; Verdicts spent on the caller being walked, against the per-caller cap, and
+;; the relaxed one spent against its own.
 (define opt-inline-checked-caller-verdicts : i64
+  0)
+(define opt-inline-checked-caller-relaxed-verdicts : i64
   0)
 
 ;; Set by the admission test to say which kind of site it just admitted: a NEW
@@ -123847,6 +124647,22 @@
 ;; means "not known", which is what the first round starts from.
 (define opt-inline-checked-next-state-cost : i64
   (- 0 1))
+
+;; Did the verdict just published deliver the WHOLE modelled saving, or only the
+;; half the accept window's floor demands? The window keeps a site anywhere in
+;; [boundary/2, 2*boundary]; an accept at the top of that range is one the model
+;; and the measurement agree on outright, and an accept near its floor is one
+;; that only just repaid. The one-callee lock reads the first accept's answer.
+(define opt-inline-checked-last-margin-clear? : bool
+  false)
+
+(define (opt-inline-checked-publish-margin! [clear? : bool]) : unit
+  (set! opt-inline-checked-last-margin-clear? clear?))
+
+;; ...banked at the moment the caller's FIRST site was accepted, which is the
+;; only accept the lock's rule is about.
+(define opt-inline-checked-first-margin-clear? : bool
+  false)
 (define opt-inline-caller-checked-blocks : i64
   0)
 (define opt-inline-caller-checked-taken? : bool
@@ -123863,10 +124679,122 @@
 ;; be accepted on the arithmetic alone.
 (define opt-inline-checked-site-depth : i64
   0)
+
+;; The POSITION of the site's block in the caller's block list, set by the same
+;; walk that reads the site's depth. Position zero is the caller's entry block,
+;; which is the one block a caller runs exactly once per invocation -- see
+;; opt-inline-checked-effective-min-site-depth for why that is the question a
+;; depth-0 site has to answer.
+(define opt-inline-checked-site-position : i64
+  (- 0 1))
 (define opt-inline-checked-callee-slot : i64
   (- 0 1))
 (define opt-inline-checked-callee-params : i64
   0)
+
+;; The site depth and composite frequency the admission test last computed, or
+;; -1 when the candidate was refused before reaching them. They exist so the
+;; trace can report the two numbers the relaxed depth clause turns on without
+;; the test computing them twice.
+(define opt-inline-checked-trace-depth : i64
+  (- 0 1))
+(define opt-inline-checked-trace-frequency : i64
+  (- 0 1))
+
+;; `--trace-passes` observability: one line per checked-tier candidate, naming
+;; the callee, the caller and the site, the two numbers the site clauses read,
+;; and the clause that decided. The string is built inside the guard, so a
+;; compile without the flag pays one boolean test per candidate; the tier's own
+;; throwaway measurement runs are suppressed exactly as the pass tracer is.
+(define (opt-inline-checked-trace-clause!
+  [callee-name : i64]
+  [callee-instrs : i64]
+  [np : i64]
+  [clause : i64]) : unit
+  (if (and
+    compiler-opt-debug-trace-passes
+    (not compiler-opt-debug-suppressed?)
+    (opt-inline-checked-clause-traced? clause))
+    (io.print-error
+      (str_cat.str-cat
+        "inline-checked|"
+        (ir.compiler-ir-symbol-text callee-name)
+        "|caller="
+        (ir.compiler-ir-symbol-text opt-inline-caller-name)
+        "|block="
+        (ir.compiler-ir-label-text opt-inline-current-block-label)
+        "|depth="
+        (string.int->string opt-inline-checked-trace-depth)
+        "|frequency="
+        (string.int->string opt-inline-checked-trace-frequency)
+        "|instrs="
+        (string.int->string callee-instrs)
+        "|np="
+        (string.int->string np)
+        "|mode="
+        (if opt-inline-checked-scanning?
+          "scan"
+          "target")
+        "|"
+        (opt-inline-checked-clause-text clause)
+        "\n"))
+    unit))
+
+;; ...and one line per VERDICT: the priced numbers on both sides, the boundary a
+;; free inline would retire, the modelled saving, and which way the two-sided
+;; window fell. `margin` reports whether the whole modelled saving survived
+;; re-optimization or only the half the window's floor demands -- the reading
+;; the one-callee lock consults before it lets a caller take a second body.
+(define (opt-inline-checked-trace-verdict!
+  [callee-name : i64]
+  [site-depth : i64]
+  [site-weight : i64]
+  [np : i64]
+  [banked-cost : i64]
+  [callee-cost : i64]
+  [after : i64]
+  [boundary : i64]
+  [keep? : bool]
+  [margin-clear? : bool]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (io.print-error
+      (str_cat.str-cat
+        "inline-checked-verdict|"
+        (ir.compiler-ir-symbol-text callee-name)
+        "|caller="
+        (ir.compiler-ir-symbol-text opt-inline-caller-name)
+        "|block="
+        (ir.compiler-ir-label-text opt-inline-checked-target-block)
+        "|depth="
+        (string.int->string site-depth)
+        "|weight="
+        (string.int->string site-weight)
+        "|np="
+        (string.int->string np)
+        "|banked="
+        (string.int->string banked-cost)
+        "|callee="
+        (string.int->string callee-cost)
+        "|after="
+        (string.int->string after)
+        "|boundary="
+        (string.int->string boundary)
+        "|saving="
+        (string.int->string (- (+ banked-cost (+ boundary callee-cost)) after))
+        "|"
+        (if keep?
+          "keep"
+          "revert")
+        "|margin="
+        (if margin-clear?
+          "clear"
+          "slim")
+        "|class="
+        (if opt-inline-checked-target-relaxed?
+          "relaxed"
+          "core")
+        "\n"))
+    unit))
 
 ;; Per-program state reset, run by the level-2 inline driver before the SCC
 ;; walk. It resets the budget and the per-caller flags but does NOT arm the
@@ -123889,11 +124817,18 @@
     (set! opt-inline-checked-accepted-count 0)
     (set! opt-inline-checked-scan-count 0)
     (set! opt-inline-checked-caller-verdicts 0)
+    (set! opt-inline-checked-caller-relaxed-verdicts 0)
+    (set! opt-inline-checked-target-relaxed? false)
+    (set! opt-inline-checked-last-margin-clear? false)
+    (set! opt-inline-checked-first-margin-clear? false)
     (set! opt-inline-checked-scanning? true)))
 
 (define (opt-inline-checked-program-begin!) : unit
   (begin
     (set! opt-inline-checked-budget (opt-inline-checked-program-budget))
+    (set!
+      opt-inline-checked-relaxed-budget
+      (opt-inline-checked-relaxed-program-budget))
     (set! opt-inline-caller-checked-taken? false)
     (opt-inline-checked-caller-begin!)))
 
@@ -123912,11 +124847,22 @@
 (define (opt-inline-checked-budget-current) : i64
   opt-inline-checked-budget)
 
+(define (opt-inline-checked-relaxed-budget-current) : i64
+  opt-inline-checked-relaxed-budget)
+
 ;; Verdicts spent on, and sites kept in, the caller most recently walked. Both
 ;; are what a fixture reads to assert the SEQUENCE: how many sites one caller
 ;; was allowed to price, and how many of them survived their own verdict.
 (define (opt-inline-checked-caller-verdicts-current) : i64
   opt-inline-checked-caller-verdicts)
+
+(define (opt-inline-checked-caller-relaxed-verdicts-current) : i64
+  opt-inline-checked-caller-relaxed-verdicts)
+
+;; Which budget the armed target draws on, for a fixture that drives the
+;; sequence by hand.
+(define (opt-inline-checked-target-relaxed-current?) : bool
+  opt-inline-checked-target-relaxed?)
 
 (define (opt-inline-checked-accepted-current) : i64
   opt-inline-checked-accepted-count)
@@ -123981,16 +124927,23 @@
   [callee-name : i64]
   [block-label : i64]
   [site-pos : i64]
-  [richness : i64]) : unit
+  [richness : i64]
+  [depth-relaxed? : bool]) : unit
   (if (>= opt-inline-checked-scan-count (opt-inline-checked-scan-cap))
     unit
     (let
-      [base : i64 (* opt-inline-checked-scan-count 4)]
+      [base : i64
+        (* opt-inline-checked-scan-count (opt-inline-checked-scan-stride))]
       (begin
         (set! (array-ref opt-inline-checked-scan base) callee-name)
         (set! (array-ref opt-inline-checked-scan (+ base 1)) block-label)
         (set! (array-ref opt-inline-checked-scan (+ base 2)) site-pos)
         (set! (array-ref opt-inline-checked-scan (+ base 3)) richness)
+        (set!
+          (array-ref opt-inline-checked-scan (+ base 4))
+          (if depth-relaxed?
+            1
+            0))
         (set! opt-inline-checked-scan-count (+ opt-inline-checked-scan-count 1))))))
 
 ;; ONE CALLEE PER CALLER, and it is a measured rule rather than a budget.
@@ -124009,71 +124962,298 @@
 ;; what pushes the caller's own loops into spilling.
 ;;
 ;; A refused candidate does not claim the caller: only an accept does.
-(define (opt-inline-checked-callee-allowed? [callee-name : i64]) : bool
+;;
+;; WHY THE LOCK NOW OPENS ONCE, AND ONLY BEHIND TWO CLEAR MARGINS. Both losses
+;; the rule was written for were measured before IT-1, IT-2, LP-1, R3S-1 and R4;
+;; re-measured on this tree the interner's own case has changed sign --
+;; `it-map-insert-from` as a SECOND body in `it-intern-slice` is worth
+;; intern_table -0.20%, where the recorded reading was +1.60%. What has not
+;; changed is the argument: a second, different body is a second independent
+;; demand on the caller's frame, and the plan prices that demand through an
+;; estimate.
+;;
+;; So the relaxation is spent on the case where the estimate is not what
+;; decided, and the tier already has a reading of that. The accept window keeps
+;; a site anywhere between half its modelled saving and twice it; an accept at
+;; the window's floor repaid only the half the floor demands and is exactly the
+;; verdict the estimate's error decided. A caller may therefore price a second
+;; body only when its FIRST accept delivered the whole modelled saving, and the
+;; second body is kept only when it delivers its own whole modelled saving too
+;; (see opt-inline-checked-verdict). Two clear margins, and no third body: two
+;; distinct bodies is what the corpus measured.
+;;
+;; Measured on this tree, that pair of conditions is what separates the
+;; interner's two second-body candidates: `it-map-insert-from` clears both and
+;; is kept; `it-hash-words` into `it-grow!` models 62 against a boundary of 72,
+;; clears the window's floor and not the clear margin, and reverts.
+;;
+;; A body admitted by this relaxation is a RELAXED candidate on the same terms
+;; as a below-the-floor site: ranked last, and charged to the relaxations' own
+;; reserve (opt-inline-checked-relaxed-program-budget).
+(define (opt-inline-checked-accepted-callee-from?
+  [callee-name : i64]
+  [row : i64]) : bool
+  (if (>= row opt-inline-checked-accepted-count)
+    false
+    (or
+      (= (array-ref opt-inline-checked-accepted (* row 3)) callee-name)
+      (opt-inline-checked-accepted-callee-from? callee-name (+ row 1)))))
+
+;; Has this callee already appeared in a row BEFORE `row`?
+(define (opt-inline-checked-accepted-callee-earlier?
+  [callee-name : i64]
+  [row : i64]
+  [scan : i64]) : bool
+  (if (>= scan row)
+    false
+    (or
+      (= (array-ref opt-inline-checked-accepted (* scan 3)) callee-name)
+      (opt-inline-checked-accepted-callee-earlier? callee-name row (+ scan 1)))))
+
+;; Distinct callees the caller has already kept: the rows whose callee is not a
+;; repeat of an earlier row's. Bounded by the accepted table, which holds
+;; opt-inline-checked-max-caller-verdicts rows.
+(define (opt-inline-checked-accepted-callees-from [row : i64] [acc : i64]) : i64
+  (if (>= row opt-inline-checked-accepted-count)
+    acc
+    (opt-inline-checked-accepted-callees-from
+      (+ row 1)
+      (+
+        acc
+        (if (opt-inline-checked-accepted-callee-earlier?
+          (array-ref opt-inline-checked-accepted (* row 3))
+          row
+          0)
+          0
+          1)))))
+
+(define (opt-inline-checked-accepted-callee-count) : i64
+  (opt-inline-checked-accepted-callees-from 0 0))
+
+;; How many DISTINCT callees one caller may keep. One outright; a second only
+;; behind a first accept whose whole modelled saving survived.
+(define (opt-inline-checked-max-callees) : i64
+  2)
+
+;; The rule with the margin passed rather than read, so the relaxation can be
+;; pinned on its own against a caller's accepted table.
+(define (opt-inline-checked-callee-allowed-with?
+  [callee-name : i64]
+  [margin-clear? : bool]) : bool
   (or
     (= opt-inline-checked-accepted-count 0)
-    (= (array-ref opt-inline-checked-accepted 0) callee-name)))
+    (opt-inline-checked-accepted-callee-from? callee-name 0)
+    (and
+      margin-clear?
+      (<
+        (opt-inline-checked-accepted-callee-count)
+        (opt-inline-checked-max-callees)))))
 
-;; The richest allowed row still unarmed, or -1. Ties go to the earlier row, so
-;; the ordering is the scan's walk order refined by richness and never depends
-;; on anything but the caller's own text.
+;; Is the armed target a body this caller has not kept before? Only such a
+;; site can be reaching the verdict through the relaxed lock.
+(define (opt-inline-checked-second-body?) : bool
+  (and
+    (> opt-inline-checked-accepted-count 0)
+    (not
+      (opt-inline-checked-accepted-callee-from?
+        opt-inline-checked-target-callee
+        0))))
+
+(define (opt-inline-checked-callee-allowed? [callee-name : i64]) : bool
+  (opt-inline-checked-callee-allowed-with?
+    callee-name
+    opt-inline-checked-first-margin-clear?))
+
+;; A row's CLASS. A core row is one this tier would have offered a verdict with
+;; no clause relaxed for it: its site cleared the unrelaxed depth floor, and its
+;; callee clears the one-callee lock read without the second-body relaxation
+;; (which is exactly opt-inline-checked-callee-allowed-with? asked with no
+;; margin). Every other row the full lock still admits is a relaxed row.
+;;
+;; The class is asked at ARMING time rather than recorded with the row, because
+;; only half of it is a property of the row: the depth relaxation is fixed when
+;; the site is scanned, while the lock relaxation depends on what this caller
+;; has accepted since.
+(define (opt-inline-checked-row-core? [base : i64]) : bool
+  (and
+    (= (array-ref opt-inline-checked-scan (+ base 4)) 0)
+    (opt-inline-checked-callee-allowed-with?
+      (array-ref opt-inline-checked-scan base)
+      false)))
+
+(define (opt-inline-checked-row-relaxed? [base : i64]) : bool
+  (and
+    (not (opt-inline-checked-row-core? base))
+    (opt-inline-checked-callee-allowed?
+      (array-ref opt-inline-checked-scan base))))
+
+;; The richest row of one class still unarmed, or -1. Ties go to the earlier
+;; row, so the ordering is the scan's walk order refined by richness and never
+;; depends on anything but the caller's own text.
 (define (opt-inline-checked-scan-best-from
+  [relaxed? : bool]
   [row : i64]
   [best : i64]
   [best-richness : i64]) : i64
   (if (>= row opt-inline-checked-scan-count)
     best
     (let
-      [base : i64 (* row 4)]
+      [base : i64 (* row (opt-inline-checked-scan-stride))]
       [richness : i64 (array-ref opt-inline-checked-scan (+ base 3))]
       (if (and
         (> richness best-richness)
-        (opt-inline-checked-callee-allowed?
-          (array-ref opt-inline-checked-scan base)))
-        (opt-inline-checked-scan-best-from (+ row 1) row richness)
-        (opt-inline-checked-scan-best-from (+ row 1) best best-richness)))))
+        (if relaxed?
+          (opt-inline-checked-row-relaxed? base)
+          (opt-inline-checked-row-core? base)))
+        (opt-inline-checked-scan-best-from relaxed? (+ row 1) row richness)
+        (opt-inline-checked-scan-best-from
+          relaxed?
+          (+ row 1)
+          best
+          best-richness)))))
 
-;; Arm the next round's target: the richest candidate the caller has left, if
-;; the caller and the program can still afford a verdict. The row is spent here
-;; rather than at the verdict, so a target the current state can no longer place
-;; is never retried.
-(define (opt-inline-checked-arm-next-target!) : bool
-  (if (or
+;; The lock decides in the RANKING, not in the admission test: a locked-out
+;; candidate is never armed, so its site never reaches the test that would name
+;; the clause. These report it where it happens -- one line per scan row still
+;; unarmed when the caller has run out of targets, which is exactly the set the
+;; lock excluded.
+(define (opt-inline-checked-trace-locked-from! [row : i64]) : unit
+  (if (>= row opt-inline-checked-scan-count)
+    unit
+    (let
+      [base : i64 (* row (opt-inline-checked-scan-stride))]
+      [richness : i64 (array-ref opt-inline-checked-scan (+ base 3))]
+      [callee-name : i64 (array-ref opt-inline-checked-scan base)]
+      ;; Two things can leave a row on the table once the caller has run out of
+      ;; targets: the lock refused the callee outright, or the row is a RELAXED
+      ;; one and the relaxations' reserve is spent. The second is the refusal
+      ;; that keeps a relaxation from taking a core candidate's verdict, so it
+      ;; is named rather than left silent.
+      [clause : i64
+        (if (not (opt-inline-checked-callee-allowed? callee-name))
+          (opt-inline-checked-clause-callee-lock)
+          (if (opt-inline-checked-row-relaxed? base)
+            (opt-inline-checked-clause-relaxed-budget)
+            (- 0 1)))]
+      (begin
+        (if (and (>= richness 0) (>= clause 0))
+          (io.print-error
+            (str_cat.str-cat
+              "inline-checked|"
+              (ir.compiler-ir-symbol-text callee-name)
+              "|caller="
+              (ir.compiler-ir-symbol-text opt-inline-caller-name)
+              "|block="
+              (ir.compiler-ir-label-text
+                (array-ref opt-inline-checked-scan (+ base 1)))
+              "|richness="
+              (string.int->string richness)
+              "|mode=rank|"
+              (opt-inline-checked-clause-text clause)
+              "\n"))
+          unit)
+        (opt-inline-checked-trace-locked-from! (+ row 1))))))
+
+(define (opt-inline-checked-trace-locked!) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (opt-inline-checked-trace-locked-from! 0)
+    unit))
+
+;; Can this caller still afford a verdict of each class?
+(define (opt-inline-checked-core-affordable?) : bool
+  (and
+    (<
+      opt-inline-checked-caller-verdicts
+      (opt-inline-checked-max-caller-verdicts))
+    (> opt-inline-checked-budget 0)))
+
+(define (opt-inline-checked-relaxed-affordable?) : bool
+  (and
+    (<
+      opt-inline-checked-caller-relaxed-verdicts
+      (opt-inline-checked-max-caller-relaxed-verdicts))
+    (> opt-inline-checked-relaxed-budget 0)))
+
+;; What the ADMISSION test asks, which is the weaker question: a walk still
+;; holding either budget has to record what it passes over, because a row's
+;; class is not settled until the ranking. The arming step above spends the
+;; right one.
+(define (opt-inline-checked-program-budget-spent?) : bool
+  (and
+    (<= opt-inline-checked-budget 0)
+    (<= opt-inline-checked-relaxed-budget 0)))
+
+(define (opt-inline-checked-caller-verdicts-spent?) : bool
+  (and
     (>=
       opt-inline-checked-caller-verdicts
       (opt-inline-checked-max-caller-verdicts))
-    (<= opt-inline-checked-budget 0))
-    false
-    (let
-      [row : i64 (opt-inline-checked-scan-best-from 0 (- 0 1) 0)]
-      (if (< row 0)
-        false
-        (let
-          [base : i64 (* row 4)]
+    (>=
+      opt-inline-checked-caller-relaxed-verdicts
+      (opt-inline-checked-max-caller-relaxed-verdicts))))
+
+(define (opt-inline-checked-arm-row! [row : i64] [relaxed? : bool]) : bool
+  (let
+    [base : i64 (* row (opt-inline-checked-scan-stride))]
+    (begin
+      (set!
+        opt-inline-checked-target-callee
+        (array-ref opt-inline-checked-scan base))
+      (set!
+        opt-inline-checked-target-block
+        (array-ref opt-inline-checked-scan (+ base 1)))
+      (set!
+        opt-inline-checked-target-pos
+        (array-ref opt-inline-checked-scan (+ base 2)))
+      (set! (array-ref opt-inline-checked-scan (+ base 3)) (- 0 1))
+      (set! opt-inline-checked-target-relaxed? relaxed?)
+      (set! opt-inline-checked-scanning? false)
+      true)))
+
+;; Arm the next round's target: the richest CORE candidate the caller has left,
+;; and only when it has none the richest RELAXED one. The two classes are ranked
+;; apart and budgeted apart (opt-inline-checked-relaxed-program-budget), so a
+;; relaxation can only ever ADD a verdict to what the unrelaxed tier would have
+;; priced -- never take one, and never be priced ahead of one and change the
+;; state a core candidate is priced against. The row is spent here rather than
+;; at the verdict, so a target the current state can no longer place is never
+;; retried.
+(define (opt-inline-checked-arm-next-target!) : bool
+  (let
+    [core-row : i64
+      (if (opt-inline-checked-core-affordable?)
+        (opt-inline-checked-scan-best-from false 0 (- 0 1) 0)
+        (- 0 1))]
+    (if (>= core-row 0)
+      (opt-inline-checked-arm-row! core-row false)
+      (let
+        [relaxed-row : i64
+          (if (opt-inline-checked-relaxed-affordable?)
+            (opt-inline-checked-scan-best-from true 0 (- 0 1) 0)
+            (- 0 1))]
+        (if (>= relaxed-row 0)
+          (opt-inline-checked-arm-row! relaxed-row true)
           (begin
-            (set!
-              opt-inline-checked-target-callee
-              (array-ref opt-inline-checked-scan base))
-            (set!
-              opt-inline-checked-target-block
-              (array-ref opt-inline-checked-scan (+ base 1)))
-            (set!
-              opt-inline-checked-target-pos
-              (array-ref opt-inline-checked-scan (+ base 2)))
-            (set! (array-ref opt-inline-checked-scan (+ base 3)) (- 0 1))
-            (set! opt-inline-checked-scanning? false)
-            true))))))
+            (opt-inline-checked-trace-locked!)
+            false))))))
 
 ;; Move the armed target into the accepted table: from here on every walk of
 ;; this caller rebuilds the site.
 (define (opt-inline-checked-accept-target!) : unit
   (if (>=
     opt-inline-checked-accepted-count
-    (opt-inline-checked-max-caller-verdicts))
+    (opt-inline-checked-max-caller-accepts))
     unit
     (let
       [base : i64 (* opt-inline-checked-accepted-count 3)]
       (begin
+        ;; The lock's rule is about the caller's FIRST accept, so its margin is
+        ;; banked here and never overwritten by a later round's.
+        (if (= opt-inline-checked-accepted-count 0)
+          (set!
+            opt-inline-checked-first-margin-clear?
+            opt-inline-checked-last-margin-clear?)
+          unit)
         (set!
           (array-ref opt-inline-checked-accepted base)
           opt-inline-checked-target-callee)
@@ -124087,12 +125267,22 @@
           opt-inline-checked-accepted-count
           (+ opt-inline-checked-accepted-count 1))))))
 
+;; The verdict is charged to the budget its target's class draws on, which is
+;; what makes the reserve a reserve.
 (define (opt-inline-checked-spend-verdict!) : unit
-  (begin
-    (set! opt-inline-checked-budget (- opt-inline-checked-budget 1))
-    (set!
-      opt-inline-checked-caller-verdicts
-      (+ opt-inline-checked-caller-verdicts 1))))
+  (if opt-inline-checked-target-relaxed?
+    (begin
+      (set!
+        opt-inline-checked-relaxed-budget
+        (- opt-inline-checked-relaxed-budget 1))
+      (set!
+        opt-inline-checked-caller-relaxed-verdicts
+        (+ opt-inline-checked-caller-relaxed-verdicts 1)))
+    (begin
+      (set! opt-inline-checked-budget (- opt-inline-checked-budget 1))
+      (set!
+        opt-inline-checked-caller-verdicts
+        (+ opt-inline-checked-caller-verdicts 1)))))
 
 ;; The loop depth of the caller block the walk is standing in, as a census
 ;; weight. Built from the caller's current blocks with the census's own
@@ -124108,7 +125298,9 @@
       (match block
         [(ir.CompilerIrBlock.Block block-label _)
           (if (= block-label label)
-            (opt-inline-census-depth-at position)
+            (begin
+              (set! opt-inline-checked-site-position position)
+              (opt-inline-census-depth-at position))
             (opt-inline-checked-block-weight-from
               (compiler-opt-box-shared-view rest)
               label
@@ -124124,6 +125316,7 @@
     [blocks : ir.CompilerIrBlockList
       (opt-inline-caller-facts-blocks-shared-view)]
     (begin
+      (set! opt-inline-checked-site-position (- 0 1))
       (opt-inline-census-depths-build! (compiler-opt-global-shared-view blocks))
       (opt-inline-checked-block-weight-from
         blocks
@@ -124171,6 +125364,138 @@
 ;; refuse. Measured on this tree, dropping it leaves all twenty-two
 ;; instruction-count rows byte identical and hands the check thirteen new
 ;; candidates across the corpus, of which it accepts five and reverts the rest.
+;;
+;; The test answers with the CLAUSE, not with a bool: a conjunction that says
+;; only "no" is exactly what left this tier unobservable, and the clause name is
+;; what `--trace-passes` reports and what every later admission question asks
+;; for. The evaluation order is unchanged -- the tier's own state and the target
+;; key, then the integer size clauses, then the growth budgets, and last the
+;; site weight -- so the cost of a refused site is what it was.
+;;
+;; The two site clauses swap places against the reading they had: the composite
+;; FREQUENCY is now tested first because the depth floor is stated in terms of
+;; it (opt-inline-checked-effective-min-site-depth). The conjunction is the
+;; same; only the name the trace reports for a site that fails both changes.
+(define (opt-inline-checked-clause
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [callee-name : i64]
+  [refs : i64]
+  [callee-instrs : i64]
+  [np : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [added-blocks : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]
+  [site-pos : i64]) : i64
+  (begin
+    (set! opt-inline-checked-trace-depth (- 0 1))
+    (set! opt-inline-checked-trace-frequency (- 0 1))
+    (cond
+      [(not opt-inline-checked-active?) (opt-inline-checked-clause-disarmed)]
+      [(opt-inline-checked-accepted?
+          callee-name
+          opt-inline-current-block-label
+          site-pos)
+        (begin
+          (set! opt-inline-checked-new-site? false)
+          (opt-inline-checked-clause-readmitted))]
+      [opt-inline-caller-checked-taken?
+        (opt-inline-checked-clause-caller-taken)]
+      [(opt-inline-checked-program-budget-spent?)
+        (opt-inline-checked-clause-program-budget)]
+      [(opt-inline-checked-caller-verdicts-spent?)
+        (opt-inline-checked-clause-caller-verdicts)]
+      [(not
+          (or
+            opt-inline-checked-scanning?
+            (opt-inline-checked-target-match?
+              callee-name
+              opt-inline-current-block-label
+              site-pos)))
+        (opt-inline-checked-clause-not-target)]
+      [(not (opt-inline-checked-callee-allowed? callee-name))
+        (opt-inline-checked-clause-callee-lock)]
+      [(< refs 1) (opt-inline-checked-clause-unreferenced)]
+      [(> callee-instrs (opt-inline-checked-max-body))
+        (opt-inline-checked-clause-callee-size)]
+      [(>
+          (ir.compiler-ir-block-list-count
+            (compiler-opt-global-shared-view blocks))
+          (opt-inline-checked-max-blocks))
+        (opt-inline-checked-clause-callee-blocks)]
+      [(opt-inline-census-address-taken?
+          (compiler-opt-global-shared-view index)
+          (compiler-opt-global-shared-view census)
+          callee-name)
+        (opt-inline-checked-clause-address-taken)]
+      ;; The heavy gate is asked about TOTAL caller growth, this tier's blocks
+      ;; included; the block ceiling below is also this tier's own fuel, so a
+      ;; checked import never spends the fuel the caller's banked absorptions
+      ;; draw on.
+      [(opt-inline-cost-crosses-heavy-gate?
+          caller-blocks
+          (+ added-so-far opt-inline-caller-checked-blocks)
+          added-blocks)
+        (opt-inline-checked-clause-heavy-gate)]
+      [(>
+          (+ opt-inline-caller-checked-blocks added-blocks)
+          (opt-inline-checked-max-blocks))
+        (opt-inline-checked-clause-block-ceiling)]
+      [else
+        (let
+          [site-depth : i64 (opt-inline-checked-site-depth-now)]
+          [site-weight : i64 (opt-inline-census-depth-weight site-depth)]
+          [frequency : i64
+            (opt-inline-checked-site-frequency
+              (compiler-opt-global-shared-view index)
+              census
+              site-weight)]
+          [_publish : unit
+            (begin
+              (set! opt-inline-checked-trace-depth site-depth)
+              (set! opt-inline-checked-trace-frequency frequency))]
+          (cond
+            [(< frequency (opt-inline-checked-min-frequency))
+              (opt-inline-checked-clause-frequency)]
+            [(<
+                site-depth
+                (opt-inline-checked-effective-min-site-depth
+                  frequency
+                  (= opt-inline-checked-site-position 0)
+                  (opt-inline-blocks-call-free?
+                    (compiler-opt-global-shared-view blocks))))
+              (opt-inline-checked-clause-site-depth)]
+            ;; RICHNESS: what a free inline of this site would be worth -- how
+            ;; often the site runs times what its boundary costs. It is the
+            ;; `boundary` term of the verdict itself, scaled by the caller's own
+            ;; hot reference count, which is the only ranking that puts the
+            ;; biggest claim in front of the smallest state.
+            [opt-inline-checked-scanning?
+              (begin
+                ;; A site that only cleared the floor because the floor stood
+                ;; down for it is recorded as RELAXED, so the ranking can put it
+                ;; behind the candidates that needed no relaxation.
+                (opt-inline-checked-scan-record!
+                  callee-name
+                  opt-inline-current-block-label
+                  site-pos
+                  (opt-inline-checked-richness frequency np callee-instrs)
+                  (< site-depth (opt-inline-checked-min-site-depth)))
+                (opt-inline-checked-clause-scanned))]
+            [else
+              (begin
+                (set! opt-inline-checked-site-depth site-depth)
+                (set! opt-inline-checked-site-weight site-weight)
+                (set! opt-inline-checked-callee-params np)
+                (set!
+                  opt-inline-checked-callee-slot
+                  (match (opt-function-index-slot index callee-name)
+                    [(option_i64.Some slot) slot]
+                    [(option_i64.None) (- 0 1)]))
+                (set! opt-inline-checked-new-site? true)
+                (opt-inline-checked-clause-admitted))]))])))
+
 (define (opt-inline-checked-ok?
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -124183,87 +125508,23 @@
   [caller-blocks : i64]
   [added-so-far : i64]
   [site-pos : i64]) : bool
-  (if (not opt-inline-checked-active?)
-    false
-    (if (opt-inline-checked-accepted?
-      callee-name
-      opt-inline-current-block-label
-      site-pos)
-      (begin
-        (set! opt-inline-checked-new-site? false)
-        true)
-      (and
-        (not opt-inline-caller-checked-taken?)
-        (> opt-inline-checked-budget 0)
-        (<
-          opt-inline-checked-caller-verdicts
-          (opt-inline-checked-max-caller-verdicts))
-        (or
-          opt-inline-checked-scanning?
-          (opt-inline-checked-target-match?
-            callee-name
-            opt-inline-current-block-label
-            site-pos))
-        (opt-inline-checked-callee-allowed? callee-name)
-        (>= refs 1)
-        (<= callee-instrs (opt-inline-checked-max-body))
-        (<=
-          (ir.compiler-ir-block-list-count
-            (compiler-opt-global-shared-view blocks))
-          (opt-inline-checked-max-blocks))
-        (not
-          (opt-inline-census-address-taken?
-            (compiler-opt-global-shared-view index)
-            (compiler-opt-global-shared-view census)
-            callee-name))
-        ;; The heavy gate is asked about TOTAL caller growth, this tier's blocks
-        ;; included; the block ceiling above is also this tier's own fuel, so a
-        ;; checked import never spends the fuel the caller's banked absorptions
-        ;; draw on.
-        (not
-          (opt-inline-cost-crosses-heavy-gate?
-            caller-blocks
-            (+ added-so-far opt-inline-caller-checked-blocks)
-            added-blocks))
-        (<=
-          (+ opt-inline-caller-checked-blocks added-blocks)
-          (opt-inline-checked-max-blocks))
-        (let
-          [site-depth : i64 (opt-inline-checked-site-depth-now)]
-          [site-weight : i64 (opt-inline-census-depth-weight site-depth)]
-          [frequency : i64
-            (opt-inline-checked-site-frequency
-              (compiler-opt-global-shared-view index)
-              census
-              site-weight)]
-          (if (and
-            (>= site-depth (opt-inline-checked-min-site-depth))
-            (>= frequency (opt-inline-checked-min-frequency)))
-            (if opt-inline-checked-scanning?
-              ;; RICHNESS: what a free inline of this site would be worth --
-              ;; how often the site runs times what its boundary costs. It is
-              ;; the `boundary` term of the verdict itself, scaled by the
-              ;; caller's own hot reference count, which is the only ranking
-              ;; that puts the biggest claim in front of the smallest state.
-              (begin
-                (opt-inline-checked-scan-record!
-                  callee-name
-                  opt-inline-current-block-label
-                  site-pos
-                  (opt-inline-checked-richness frequency np callee-instrs))
-                false)
-              (begin
-                (set! opt-inline-checked-site-depth site-depth)
-                (set! opt-inline-checked-site-weight site-weight)
-                (set! opt-inline-checked-callee-params np)
-                (set!
-                  opt-inline-checked-callee-slot
-                  (match (opt-function-index-slot index callee-name)
-                    [(option_i64.Some slot) slot]
-                    [(option_i64.None) (- 0 1)]))
-                (set! opt-inline-checked-new-site? true)
-                true))
-            false))))))
+  (let
+    [clause : i64
+      (opt-inline-checked-clause
+        (compiler-opt-global-shared-view index)
+        (compiler-opt-global-shared-view census)
+        callee-name
+        refs
+        callee-instrs
+        np
+        (compiler-opt-global-shared-view blocks)
+        added-blocks
+        caller-blocks
+        added-so-far
+        site-pos)]
+    [_trace : unit
+      (opt-inline-checked-trace-clause! callee-name callee-instrs np clause)]
+    (opt-inline-checked-clause-admits? clause)))
 
 ;; --- pricing one function's plan --------------------------------------------
 (define (opt-inline-checked-weighted-instrs-from
@@ -124513,13 +125774,38 @@
     ;; not, the model is not trusted in either direction and the site reverts.
     ;; This is the clear-margin discipline read as a confidence interval, which
     ;; is the only honest reading of a two-sided estimate.
-    [keep? : bool (opt-inline-checked-window-ok? (- before after) boundary)]
+    [saving : i64 (- before after)]
+    ;; The whole modelled saving survived, not merely the half the window's
+    ;; floor demands. The one-callee lock reads this off the caller's first
+    ;; accept before it will price a second body, and a second body is held to
+    ;; it in its own right: the relaxation is for the case both sides of the
+    ;; model agree on, not for the case the window's floor barely admits.
+    [clear? : bool (>= saving boundary)]
+    [keep? : bool
+      (and
+        (opt-inline-checked-window-ok? saving boundary)
+        (or (not (opt-inline-checked-second-body?)) clear?))]
+    [margin-clear? : bool (and keep? clear?)]
     [_publish : unit
-      (set!
-        opt-inline-checked-next-state-cost
-        (if keep?
-          after
-          banked-cost))]
+      (begin
+        (opt-inline-checked-publish-margin! margin-clear?)
+        (set!
+          opt-inline-checked-next-state-cost
+          (if keep?
+            after
+            banked-cost)))]
+    [_trace : unit
+      (opt-inline-checked-trace-verdict!
+        opt-inline-checked-target-callee
+        site-depth
+        site-weight
+        np
+        banked-cost
+        callee-cost
+        after
+        boundary
+        keep?
+        margin-clear?)]
     keep?))
 
 ;; The check allocates three optimizer generations and three allocation plans
@@ -127115,6 +128401,7 @@
     ;; and the state the next round is priced against is unchanged.
     [(OptMaybeFunction.No)
       (begin
+        (opt-inline-checked-publish-margin! false)
         (set! opt-inline-checked-next-state-cost banked-cost)
         false)]))
 
@@ -138651,6 +139938,1005 @@
           (set! index (+ index 1))))
       out)))
 
+;; CK-1's copy of the constructor summaries, under the same function-count gate
+;; every other whole-program summary applies. P-B builds the table only when it
+;; already has global candidates; CK-1's families are per FUNCTION and need no
+;; global cell, so the table is built for every program under the gate and its
+;; emptiness is the program-level switch for the local channel. Above the gate
+;; it is empty and nothing in this lineage runs, exactly as CB-1 recorded for
+;; src/main.tl.
+(define (opt-ck-local-ctors-table
+  [type-segment-bases : i64]
+  [functions : ir.CompilerIrFunctionSeq]) : opt_i64_i64_map.Map
+  (let
+    [count : i64
+      (opt-function-seq-count (compiler-opt-global-shared-view functions))]
+    (if (> count (opt-loop-bce-summary-function-limit))
+      (opt_i64_i64_map.with-capacity 1)
+      (opt-len-eq-ctors-build
+        type-segment-bases
+        functions
+        (opt_i64_i64_map.with-capacity
+          (opt-function-index-capacity (+ count 1)))))))
+
+;; --- CK-1: building one function's local length-equality families -------------
+;;
+;; Four linear scan phases over the function, the shared use collector, and a
+;; bounded phi-accounting round -- and no table iteration order anywhere: the
+;; key space is `var * 2 + level`, everything below indexes it directly, and
+;; keys are visited in ascending order, so the families are a function of the IR
+;; alone -- which the stage2 == stage3 fixpoint requires.
+(defstruct OptCkLocalScan
+  ;; Every operand occurrence of each var (the shared collector DCE uses).
+  (uses (__tl_dyn-array i64))
+  ;; The occurrences clause (3) accounts for: a `gep` base whose result only
+  ;; addresses loads and stores, and a proven-clean direct call argument.
+  (ok (__tl_dyn-array i64))
+  ;; Occurrences as the address operand of a `load` or `store_ptr`.
+  (addr (__tl_dyn-array i64))
+  ;; 1 when a descriptor this var's word 0 yields is not itself confined.
+  (desc-bad (__tl_dyn-array i64))
+  ;; Indexed by `var * 2 + word`: 1 when that word is read, in the block its
+  ;; single store is in, before that store.
+  (order-bad (__tl_dyn-array i64))
+  ;; `1 + the block` each var is defined in, 0 for a parameter or an unknown.
+  (dblk (__tl_dyn-array i64))
+  ;; Indexed by `var * 2 + word`: `1 +` the block and instruction index of the
+  ;; `store_ptr` that writes it, 0 for none.
+  (wblk (__tl_dyn-array i64))
+  (wpos (__tl_dyn-array i64))
+  ;; 1 once a phi's input occurrences have been accounted for; see
+  ;; opt-ck-local-phi-account-fixed!.
+  (phi-done (__tl_dyn-array i64)))
+
+(define (opt-ck-local-scan-new [size : i64] [uses : (__tl_dyn-array i64)]) : OptCkLocalScan
+  (OptCkLocalScan
+    uses
+    (__tl_make-array i64 size)
+    (__tl_make-array i64 size)
+    (__tl_make-array i64 size)
+    (__tl_make-array i64 (* size 2))
+    (__tl_make-array i64 size)
+    (__tl_make-array i64 (* size 2))
+    (__tl_make-array i64 (* size 2))
+    (__tl_make-array i64 size)))
+
+;; Every operand occurrence of this var is one the walk accounted for.
+(define (opt-ck-local-confined? [scan : OptCkLocalScan] [var : i64]) : bool
+  (and
+    (>= var 0)
+    (< var (array-length scan.uses))
+    (= (array-ref scan.uses var) (array-ref scan.ok var))))
+
+;; A descriptor this function stored into a confined box's word 0 has exactly
+;; ONE occurrence the walk cannot account for: that store's value operand.
+(define (opt-ck-local-confined-but-stored? [scan : OptCkLocalScan] [var : i64]) : bool
+  (and
+    (>= var 0)
+    (< var (array-length scan.uses))
+    (= (array-ref scan.uses var) (+ (array-ref scan.ok var) 1))))
+
+;; A `gep` result whose every use is a load or store ADDRESS: reading or writing
+;; a word of the object its base names, both of which the n0/n1 counters saw.
+(define (opt-ck-local-word-only? [scan : OptCkLocalScan] [var : i64]) : bool
+  (and
+    (>= var 0)
+    (< var (array-length scan.uses))
+    (= (array-ref scan.uses var) (array-ref scan.addr var))))
+
+;; Clause (2): the single store of this word is in the var's own defining block
+;; and no load of the word runs before it there.
+(define (opt-ck-local-word-written-ok?
+  [scan : OptCkLocalScan]
+  [var : i64]
+  [word : i64]) : bool
+  (let
+    [key : i64 (opt-ck-local-key var word)]
+    (and
+      (>= key 0)
+      (< key (array-length scan.wblk))
+      (>= var 0)
+      (< var (array-length scan.dblk))
+      (> (array-ref scan.wblk key) 0)
+      (= (array-ref scan.wblk key) (array-ref scan.dblk var))
+      (= (array-ref scan.order-bad key) 0))))
+
+;; Does this callee leave the object its argument at `index` names alone? The
+;; parameter-write bits mean "writes through the object argument i names", which
+;; is exactly the question, and an unknown or unsummarised callee is refused.
+;; This is P-B condition (2)'s clause verbatim, and it rests on the same
+;; assumption: a callee may not park the argument's ADDRESS somewhere a later
+;; call reaches without naming it. In this language it cannot -- a `(& x Vec)`
+;; reference outlives nothing it could be stored into, and a store through a
+;; pointer the callee did not receive as a parameter has no root, which the
+;; summary reports as `unknown`.
+(define (opt-ck-local-call-arg-clean?
+  [call-memory : opt_i64_i64_map.Map]
+  [name : i64]
+  [index : i64]) : bool
+  (if (>= index (opt-call-memory-param-limit))
+    false
+    (match (opt_i64_i64_map.get (& call-memory) name)
+      [(opt_i64_i64_map.LookupFound summary)
+        (and
+          (not (opt-call-memory-summary-unknown? summary))
+          (not (opt-call-memory-summary-param-write? summary index)))]
+      [(opt_i64_i64_map.LookupMissing) false])))
+
+(define (opt-ck-local-ok-args!
+  [scan : OptCkLocalScan]
+  [call-memory : opt_i64_i64_map.Map]
+  [name : i64]
+  [args : ir.CompilerIrCallArgs]
+  [index : i64]) : unit
+  (match (opt-call-memory-arg-at (compiler-opt-global-shared-view args) index)
+    [(ir.CompilerIrMaybeValue.No) unit]
+    [(ir.CompilerIrMaybeValue.Some value)
+      (begin
+        (if (opt-ck-local-call-arg-clean?
+          (compiler-opt-global-shared-view call-memory)
+          name
+          index)
+          (opt-collect-value-uses-array
+            (compiler-opt-global-shared-view scan.ok)
+            value)
+          unit)
+        (opt-ck-local-ok-args!
+          (compiler-opt-global-shared-view scan)
+          (compiler-opt-global-shared-view call-memory)
+          name
+          (compiler-opt-global-shared-view args)
+          (+ index 1)))]))
+
+;; A constructor call fills the caller's `__sret` buffer and returns its
+;; address, so that buffer and the box the call defines are ONE object. Admit
+;; that only when the `addr_of` argument and the `alloc` under it have no other
+;; use in the function: a second handle on the same storage would make the
+;; confinement test prove nothing. More than one such argument is refused.
+(define (opt-ck-local-alias-ok?
+  [scan : OptCkLocalScan]
+  [defs : OptLenEqDefs]
+  [args : ir.CompilerIrCallArgs]
+  [index : i64]
+  [seen : i64]) : bool
+  (match (opt-call-memory-arg-at (compiler-opt-global-shared-view args) index)
+    [(ir.CompilerIrMaybeValue.No) (<= seen 1)]
+    [(ir.CompilerIrMaybeValue.Some value)
+      (match (compiler-opt-global-shared-view value)
+        [(ir.CompilerIrValue.Var var)
+          (match (opt-len-eq-def (compiler-opt-global-shared-view defs) var)
+            [(OptBoolBranchDef.Some instr _)
+              (match (compiler-opt-global-shared-view instr)
+                [(ir.CompilerIrInstr.AddrOf _ src)
+                  (if (and
+                    (=
+                      (opt-ck-local-use-count
+                        (compiler-opt-global-shared-view scan)
+                        var)
+                      1)
+                    (=
+                      (opt-ck-local-use-count
+                        (compiler-opt-global-shared-view scan)
+                        src)
+                      1))
+                    (opt-ck-local-alias-ok?
+                      (compiler-opt-global-shared-view scan)
+                      (compiler-opt-global-shared-view defs)
+                      (compiler-opt-global-shared-view args)
+                      (+ index 1)
+                      (+ seen 1))
+                    false)]
+                [_
+                  (opt-ck-local-alias-ok?
+                    (compiler-opt-global-shared-view scan)
+                    (compiler-opt-global-shared-view defs)
+                    (compiler-opt-global-shared-view args)
+                    (+ index 1)
+                    seen)])]
+            [(OptBoolBranchDef.No)
+              (opt-ck-local-alias-ok?
+                (compiler-opt-global-shared-view scan)
+                (compiler-opt-global-shared-view defs)
+                (compiler-opt-global-shared-view args)
+                (+ index 1)
+                seen)])]
+        [_
+          (opt-ck-local-alias-ok?
+            (compiler-opt-global-shared-view scan)
+            (compiler-opt-global-shared-view defs)
+            (compiler-opt-global-shared-view args)
+            (+ index 1)
+            seen)])]))
+
+(define (opt-ck-local-use-count [scan : OptCkLocalScan] [var : i64]) : i64
+  (if (and (>= var 0) (< var (array-length scan.uses)))
+    (array-ref scan.uses var)
+    (- 0 1)))
+
+;; --- the four scan phases ----------------------------------------------------
+(define (opt-ck-local-addr-instr!
+  [scan : OptCkLocalScan]
+  [instr : ir.CompilerIrInstr]) : unit
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Load _ src _)
+      (opt-collect-value-uses-array
+        (compiler-opt-global-shared-view scan.addr)
+        src)]
+    [(ir.CompilerIrInstr.StorePtr ptr _ _)
+      (opt-collect-value-uses-array
+        (compiler-opt-global-shared-view scan.addr)
+        ptr)]
+    [_ unit]))
+
+(define (opt-ck-local-ok-instr!
+  [scan : OptCkLocalScan]
+  [call-memory : opt_i64_i64_map.Map]
+  [instr : ir.CompilerIrInstr]) : unit
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Gep dst base _ _)
+      (if (opt-ck-local-word-only? (compiler-opt-global-shared-view scan) dst)
+        (opt-collect-value-uses-array
+          (compiler-opt-global-shared-view scan.ok)
+          base)
+        unit)]
+    [(ir.CompilerIrInstr.Call _ name args _)
+      (opt-ck-local-ok-args!
+        (compiler-opt-global-shared-view scan)
+        (compiler-opt-global-shared-view call-memory)
+        (ir.compiler-ir-symbol-id name)
+        args
+        0)]
+    [(ir.CompilerIrInstr.TailCall name args _)
+      (opt-ck-local-ok-args!
+        (compiler-opt-global-shared-view scan)
+        (compiler-opt-global-shared-view call-memory)
+        (ir.compiler-ir-symbol-id name)
+        args
+        0)]
+    [_ unit]))
+
+(define (opt-ck-local-place-instr!
+  [type-segment-bases : i64]
+  [scan : OptCkLocalScan]
+  [defs : OptLenEqDefs]
+  [scratch : (__tl_dyn-array i64)]
+  [block : i64]
+  [pos : i64]
+  [instr : ir.CompilerIrInstr]) : unit
+  (begin
+    (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
+      [(option_i64.Some dst)
+        (if (and (>= dst 0) (< dst (array-length scan.dblk)))
+          (set! (array-ref scan.dblk dst) (+ block 1))
+          unit)]
+      [(option_i64.None) unit])
+    (match (compiler-opt-global-shared-view instr)
+      [(ir.CompilerIrInstr.StorePtr address _ _)
+        (let
+          [base : i64
+            (opt-len-eq-store-base
+              type-segment-bases
+              (compiler-opt-global-shared-view defs)
+              address
+              (compiler-opt-global-shared-view scratch))]
+          [word : i64 (array-ref scratch 0)]
+          [key : i64 (opt-ck-local-key base word)]
+          (if (and
+            (>= base 0)
+            (>= word 0)
+            (<= word 1)
+            (< key (array-length scan.wblk)))
+            (begin
+              (set! (array-ref scan.wblk key) (+ block 1))
+              (set! (array-ref scan.wpos key) (+ pos 1)))
+            unit))]
+      [_ unit])))
+
+(define (opt-ck-local-order-instr!
+  [type-segment-bases : i64]
+  [scan : OptCkLocalScan]
+  [defs : OptLenEqDefs]
+  [block : i64]
+  [pos : i64]
+  [instr : ir.CompilerIrInstr]) : unit
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Load dst src _)
+      (match (compiler-opt-global-shared-view src)
+        [(ir.CompilerIrValue.Var address)
+          (match (opt-len-eq-def (compiler-opt-global-shared-view defs) address)
+            [(OptBoolBranchDef.Some gep _)
+              (match (compiler-opt-global-shared-view gep)
+                [(ir.CompilerIrInstr.Gep _ base offset ty)
+                  (opt-ck-local-order-load!
+                    type-segment-bases
+                    (compiler-opt-global-shared-view scan)
+                    block
+                    pos
+                    dst
+                    (compiler-opt-global-shared-view base)
+                    (compiler-opt-global-shared-view offset)
+                    ty)]
+                [_ unit])]
+            [(OptBoolBranchDef.No) unit])]
+        [_ unit])]
+    [_ unit]))
+
+(define (opt-ck-local-order-load!
+  [type-segment-bases : i64]
+  [scan : OptCkLocalScan]
+  [block : i64]
+  [pos : i64]
+  [dst : i64]
+  [base : ir.CompilerIrValue]
+  [offset : ir.CompilerIrValue]
+  [ty : ast.AstType]) : unit
+  (match base
+    [(ir.CompilerIrValue.Var owner)
+      (let
+        [word : i64
+          (if (opt-len-eq-word0? (compiler-opt-global-shared-view offset))
+            0
+            (if (opt-bounds-object-length-slot? type-segment-bases offset ty)
+              1
+              (- 0 1)))]
+        [key : i64 (opt-ck-local-key owner word)]
+        (if (or (< word 0) (< owner 0) (>= key (array-length scan.order-bad)))
+          unit
+          (begin
+            (if (and
+              (= (array-ref scan.wblk key) (+ block 1))
+              (< (+ pos 1) (array-ref scan.wpos key)))
+              (set! (array-ref scan.order-bad key) 1)
+              unit)
+            (if (= word 0)
+              (if (opt-ck-local-confined?
+                (compiler-opt-global-shared-view scan)
+                dst)
+                unit
+                (opt-used-array-add scan.desc-bad owner))
+              unit))))]
+    [_ unit]))
+
+(define (opt-ck-local-scan-instr!
+  [type-segment-bases : i64]
+  [scan : OptCkLocalScan]
+  [call-memory : opt_i64_i64_map.Map]
+  [defs : OptLenEqDefs]
+  [scratch : (__tl_dyn-array i64)]
+  [phase : i64]
+  [block : i64]
+  [pos : i64]
+  [instr : ir.CompilerIrInstr]) : unit
+  (cond
+    [(= phase 0) (opt-ck-local-addr-instr! scan instr)]
+    [(= phase 1) (opt-ck-local-ok-instr! scan call-memory instr)]
+    [(= phase 2)
+      (opt-ck-local-place-instr!
+        type-segment-bases
+        scan
+        defs
+        scratch
+        block
+        pos
+        instr)]
+    [else
+      (opt-ck-local-order-instr! type-segment-bases scan defs block pos instr)]))
+
+(define (opt-ck-local-scan-instrs!
+  [type-segment-bases : i64]
+  [scan : OptCkLocalScan]
+  [call-memory : opt_i64_i64_map.Map]
+  [defs : OptLenEqDefs]
+  [scratch : (__tl_dyn-array i64)]
+  [phase : i64]
+  [block : i64]
+  [instrs : ir.CompilerIrInstrSeq]) : unit
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [pos : i64 0]
+    (while (< pos count)
+      (begin
+        (opt-ck-local-scan-instr!
+          type-segment-bases
+          (compiler-opt-global-shared-view scan)
+          (compiler-opt-global-shared-view call-memory)
+          (compiler-opt-global-shared-view defs)
+          (compiler-opt-global-shared-view scratch)
+          phase
+          block
+          pos
+          (ir.compiler-ir-instr-seq-ref
+            (compiler-opt-global-shared-view instrs)
+            pos))
+        (set! pos (+ pos 1))))))
+
+(define (opt-ck-local-scan-blocks!
+  [type-segment-bases : i64]
+  [scan : OptCkLocalScan]
+  [call-memory : opt_i64_i64_map.Map]
+  [defs : OptLenEqDefs]
+  [scratch : (__tl_dyn-array i64)]
+  [phase : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [block : i64]) : i64
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) block]
+    [(ir.CompilerIrBlockList.Cons head rest)
+      (begin
+        (match (compiler-opt-global-shared-view head)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-ck-local-scan-instrs!
+              type-segment-bases
+              (compiler-opt-global-shared-view scan)
+              (compiler-opt-global-shared-view call-memory)
+              (compiler-opt-global-shared-view defs)
+              (compiler-opt-global-shared-view scratch)
+              phase
+              block
+              instrs)])
+        (opt-ck-local-scan-blocks!
+          type-segment-bases
+          (compiler-opt-global-shared-view scan)
+          (compiler-opt-global-shared-view call-memory)
+          (compiler-opt-global-shared-view defs)
+          (compiler-opt-global-shared-view scratch)
+          phase
+          (compiler-opt-box-shared-view rest)
+          (+ block 1)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-ck-local-scan-blocks!
+        type-segment-bases
+        scan
+        call-memory
+        defs
+        scratch
+        phase
+        (ir.compiler-ir-block-seq-to-list seq)
+        block)]))
+
+;; --- admission ---------------------------------------------------------------
+;;
+;; Clause (1)/(3) for the object var itself.
+(define (opt-ck-local-owner-ok?
+  [scan : OptCkLocalScan]
+  [defs : OptLenEqDefs]
+  [var : i64]) : bool
+  (and
+    (>= var 0)
+    (< var (array-length defs.n0))
+    (= (opt-len-eq-def-count (compiler-opt-global-shared-view defs) var) 1)
+    (= (array-ref defs.ncopy var) 0)
+    (opt-ck-local-confined? (compiler-opt-global-shared-view scan) var)))
+
+;; Level 0: word 1 of the object `var` names.
+(define (opt-ck-local-direct-length
+  [scan : OptCkLocalScan]
+  [defs : OptLenEqDefs]
+  [var : i64]) : OptLenEqLength
+  (if (not
+    (and
+      (= (array-ref defs.n1 var) 1)
+      (opt-ck-local-word-written-ok?
+        (compiler-opt-global-shared-view scan)
+        var
+        1)))
+    (OptLenEqLength.No)
+    (OptLenEqLength.Some
+      (opt-len-eq-resolve
+        (compiler-opt-global-shared-view defs)
+        (compiler-opt-global-array-element-shared-view defs.w1 var)
+        4)
+      false)))
+
+;; Level 1, the descriptor this function itself stored into word 0.
+(define (opt-ck-local-stored-slots-length
+  [scan : OptCkLocalScan]
+  [defs : OptLenEqDefs]
+  [var : i64]) : OptLenEqLength
+  (if (not
+    (opt-ck-local-word-written-ok? (compiler-opt-global-shared-view scan) var 0))
+    (OptLenEqLength.No)
+    (match (compiler-opt-global-array-element-shared-view defs.w0 var)
+      [(ir.CompilerIrValue.Var slots)
+        (if (not
+          (and
+            (>= slots 0)
+            (< slots (array-length defs.n1))
+            (=
+              (opt-len-eq-def-count
+                (compiler-opt-global-shared-view defs)
+                slots)
+              1)
+            (= (array-ref defs.ncopy slots) 0)
+            (= (array-ref defs.n1 slots) 1)
+            (= (array-ref defs.arg? slots) 0)
+            (opt-ck-local-confined-but-stored?
+              (compiler-opt-global-shared-view scan)
+              slots)
+            (opt-ck-local-word-written-ok?
+              (compiler-opt-global-shared-view scan)
+              slots
+              1)))
+          (OptLenEqLength.No)
+          (OptLenEqLength.Some
+            (opt-len-eq-resolve
+              (compiler-opt-global-shared-view defs)
+              (compiler-opt-global-array-element-shared-view defs.w1 slots)
+              4)
+            false))]
+      [_ (OptLenEqLength.No)])))
+
+;; Level 1, the descriptor a single-return allocating helper filled.
+(define (opt-ck-local-ctor-slots-length
+  [scan : OptCkLocalScan]
+  [defs : OptLenEqDefs]
+  [ctors : opt_i64_i64_map.Map]
+  [var : i64]) : OptLenEqLength
+  (match (opt-len-eq-def (compiler-opt-global-shared-view defs) var)
+    [(OptBoolBranchDef.Some instr _)
+      (match (compiler-opt-global-shared-view instr)
+        [(ir.CompilerIrInstr.Call _ name args _)
+          (if (not
+            (opt-ck-local-alias-ok?
+              (compiler-opt-global-shared-view scan)
+              (compiler-opt-global-shared-view defs)
+              (compiler-opt-global-shared-view args)
+              0
+              0))
+            (OptLenEqLength.No)
+            (match (opt-len-eq-ctor-length
+              (compiler-opt-global-shared-view ctors)
+              name
+              (compiler-opt-global-shared-view args))
+              [(OptLenEqLength.No) (OptLenEqLength.No)]
+              [(OptLenEqLength.Some len fits?)
+                (OptLenEqLength.Some
+                  (opt-len-eq-resolve
+                    (compiler-opt-global-shared-view defs)
+                    len
+                    4)
+                  fits?)]))]
+        [_ (OptLenEqLength.No)])]
+    [(OptBoolBranchDef.No) (OptLenEqLength.No)]))
+
+(define (opt-ck-local-slots-length
+  [scan : OptCkLocalScan]
+  [defs : OptLenEqDefs]
+  [ctors : opt_i64_i64_map.Map]
+  [var : i64]) : OptLenEqLength
+  (cond
+    [(not (= (array-ref scan.desc-bad var) 0)) (OptLenEqLength.No)]
+    [(= (array-ref defs.n0 var) 1)
+      (opt-ck-local-stored-slots-length
+        (compiler-opt-global-shared-view scan)
+        (compiler-opt-global-shared-view defs)
+        var)]
+    [(not (and (= (array-ref defs.n0 var) 0) (= (array-ref defs.n1 var) 0)))
+      (OptLenEqLength.No)]
+    [else
+      (opt-ck-local-ctor-slots-length
+        (compiler-opt-global-shared-view scan)
+        (compiler-opt-global-shared-view defs)
+        ctors
+        var)]))
+
+;; The value the word a key names was written with, or No.
+(define (opt-ck-local-key-length
+  [scan : OptCkLocalScan]
+  [defs : OptLenEqDefs]
+  [ctors : opt_i64_i64_map.Map]
+  [var : i64]
+  [level : i64]) : OptLenEqLength
+  (if (not
+    (opt-ck-local-owner-ok?
+      (compiler-opt-global-shared-view scan)
+      (compiler-opt-global-shared-view defs)
+      var))
+    (OptLenEqLength.No)
+    (if (= level 0)
+      (opt-ck-local-direct-length
+        (compiler-opt-global-shared-view scan)
+        (compiler-opt-global-shared-view defs)
+        var)
+      (opt-ck-local-slots-length
+        (compiler-opt-global-shared-view scan)
+        (compiler-opt-global-shared-view defs)
+        ctors
+        var))))
+
+;; Clause (4): do two length operands denote one runtime value? The same value
+;; after `Mov` resolution, or two evaluations of one pure integer BinOp over the
+;; same resolved operands -- the relation opt-len-eq-canonical folds, pairwise.
+(define (opt-ck-local-len-same?
+  [defs : OptLenEqDefs]
+  [a : ir.CompilerIrValue]
+  [b : ir.CompilerIrValue]) : bool
+  (let
+    [ra : ir.CompilerIrValue
+      (opt-len-eq-resolve (compiler-opt-global-shared-view defs) a 4)]
+    [rb : ir.CompilerIrValue
+      (opt-len-eq-resolve (compiler-opt-global-shared-view defs) b 4)]
+    (if (opt-value-eq
+      (compiler-opt-global-shared-view ra)
+      (compiler-opt-global-shared-view rb))
+      true
+      (match (compiler-opt-global-shared-view ra)
+        [(ir.CompilerIrValue.Var left)
+          (match (compiler-opt-global-shared-view rb)
+            [(ir.CompilerIrValue.Var right)
+              (match (opt-len-eq-def
+                (compiler-opt-global-shared-view defs)
+                left)
+                [(OptBoolBranchDef.Some instr _)
+                  (match (compiler-opt-global-shared-view instr)
+                    [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
+                      (if (not
+                        (opt-len-eq-pure-binop?
+                          (compiler-opt-global-shared-view op)))
+                        false
+                        (match (opt-len-eq-def
+                          (compiler-opt-global-shared-view defs)
+                          right)
+                          [(OptBoolBranchDef.Some other _)
+                            (opt-len-eq-binop-same?
+                              (compiler-opt-global-shared-view defs)
+                              op
+                              lhs
+                              rhs
+                              other)]
+                          [(OptBoolBranchDef.No) false]))]
+                    [_ false])]
+                [(OptBoolBranchDef.No) false])]
+            [_ false])]
+        [_ false]))))
+
+;; --- accounting a phi's input occurrences -------------------------------------
+;;
+;; A phi COPIES a pointer, so an input occurrence leaks nothing as long as the
+;; phi's own result is held to the same rule: no word of it is written, every
+;; descriptor read out of it is confined, and it does not itself escape. The
+;; rounds run AFTER the four scan phases, so every verdict they read was
+;; computed with FEWER occurrences accounted -- which can only refuse more, not
+;; less. A chain of phis deeper than the round cap simply keeps its inputs
+;; unaccounted, and they are refused.
+(define (opt-ck-local-phi-clean? [scan : OptCkLocalScan] [dst : i64]) : bool
+  (and
+    (>= dst 0)
+    (< dst (array-length scan.desc-bad))
+    (= (array-ref scan.desc-bad dst) 0)
+    (= (array-ref scan.wblk (opt-ck-local-key dst 0)) 0)
+    (= (array-ref scan.wblk (opt-ck-local-key dst 1)) 0)
+    (opt-ck-local-confined? (compiler-opt-global-shared-view scan) dst)))
+
+(define (opt-ck-local-phi-account-inputs!
+  [scan : OptCkLocalScan]
+  [inputs : ir.CompilerIrPhiInputSeq]
+  [index : i64]) : unit
+  (let
+    [count : i64
+      (ir.compiler-ir-phi-input-seq-count
+        (compiler-opt-global-shared-view inputs))]
+    (while (< index count)
+      (begin
+        (let
+          [input : ir.CompilerIrPhiInput
+            (ir.compiler-ir-phi-input-seq-ref
+              (ir.compiler-ir-global-shared-view inputs)
+              index)]
+          (opt-collect-value-uses-array
+            (compiler-opt-global-shared-view scan.ok)
+            (compiler-opt-global-shared-view input.value)))
+        (set! index (+ index 1))))))
+
+(define (opt-ck-local-phi-account-instr!
+  [scan : OptCkLocalScan]
+  [instr : ir.CompilerIrInstr]) : i64
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Phi dst inputs _)
+      (if (and
+        (>= dst 0)
+        (< dst (array-length scan.phi-done))
+        (= (array-ref scan.phi-done dst) 0)
+        (opt-ck-local-phi-clean? (compiler-opt-global-shared-view scan) dst))
+        (begin
+          (set! (array-ref scan.phi-done dst) 1)
+          (opt-ck-local-phi-account-inputs!
+            (compiler-opt-global-shared-view scan)
+            inputs
+            0)
+          1)
+        0)]
+    [_ 0]))
+
+(define (opt-ck-local-phi-account-instrs!
+  [scan : OptCkLocalScan]
+  [instrs : ir.CompilerIrInstrSeq]) : i64
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [index : i64 0]
+    [changed : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            changed
+            (+
+              changed
+              (opt-ck-local-phi-account-instr!
+                (compiler-opt-global-shared-view scan)
+                (ir.compiler-ir-instr-seq-ref
+                  (compiler-opt-global-shared-view instrs)
+                  index))))
+          (set! index (+ index 1))))
+      changed)))
+
+(define (opt-ck-local-phi-account-blocks!
+  [scan : OptCkLocalScan]
+  [blocks : ir.CompilerIrBlockList]
+  [changed : i64]) : i64
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) changed]
+    [(ir.CompilerIrBlockList.Cons head rest)
+      (opt-ck-local-phi-account-blocks!
+        (compiler-opt-global-shared-view scan)
+        (compiler-opt-box-shared-view rest)
+        (+
+          changed
+          (match (compiler-opt-global-shared-view head)
+            [(ir.CompilerIrBlock.Block _ instrs)
+              (opt-ck-local-phi-account-instrs!
+                (compiler-opt-global-shared-view scan)
+                instrs)])))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-ck-local-phi-account-blocks!
+        scan
+        (ir.compiler-ir-block-seq-to-list seq)
+        changed)]))
+
+(define (opt-ck-local-phi-account-fixed!
+  [scan : OptCkLocalScan]
+  [blocks : ir.CompilerIrBlockList]
+  [rounds : i64]) : unit
+  (if (<= rounds 0)
+    unit
+    (if (=
+      (opt-ck-local-phi-account-blocks!
+        (compiler-opt-global-shared-view scan)
+        (compiler-opt-global-shared-view blocks)
+        0)
+      0)
+      unit
+      (opt-ck-local-phi-account-fixed! scan blocks (- rounds 1)))))
+
+;; --- the phi join ------------------------------------------------------------
+(define (opt-ck-local-phi-join-level!
+  [fam : (__tl_dyn-array i64)]
+  [dst : i64]
+  [inputs : ir.CompilerIrPhiInputSeq]
+  [level : i64]) : i64
+  (let
+    [key : i64 (opt-ck-local-key dst level)]
+    [count : i64
+      (ir.compiler-ir-phi-input-seq-count
+        (compiler-opt-global-shared-view inputs))]
+    [index : i64 0]
+    [family : i64 0]
+    [ok? : bool
+      (and
+        (>= dst 0)
+        (>= key 0)
+        (< key (array-length fam))
+        (> count 0)
+        (= (array-ref fam key) 0))]
+    (begin
+      (while (< index count)
+        (begin
+          (if ok?
+            (let
+              [input : ir.CompilerIrPhiInput
+                (ir.compiler-ir-phi-input-seq-ref
+                  (ir.compiler-ir-global-shared-view inputs)
+                  index)]
+              [member : i64
+                (opt-ck-local-fam-at
+                  (compiler-opt-global-shared-view fam)
+                  (opt-ck-local-input-key
+                    (compiler-opt-global-shared-view input.value)
+                    level))]
+              (cond
+                [(= member 0) (set! ok? false)]
+                [(= family 0) (set! family member)]
+                [(= family member) unit]
+                [else (set! ok? false)]))
+            unit)
+          (set! index (+ index 1))))
+      (if (and ok? (> family 0))
+        (begin
+          (set! (array-ref fam key) family)
+          1)
+        0))))
+
+(define (opt-ck-local-phi-join-instr!
+  [fam : (__tl_dyn-array i64)]
+  [instr : ir.CompilerIrInstr]) : i64
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Phi dst inputs _)
+      (+
+        (opt-ck-local-phi-join-level!
+          (compiler-opt-global-shared-view fam)
+          dst
+          (compiler-opt-global-shared-view inputs)
+          0)
+        (opt-ck-local-phi-join-level! fam dst inputs 1))]
+    [_ 0]))
+
+(define (opt-ck-local-phi-join-instrs!
+  [fam : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]) : i64
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [index : i64 0]
+    [joined : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            joined
+            (+
+              joined
+              (opt-ck-local-phi-join-instr!
+                (compiler-opt-global-shared-view fam)
+                (ir.compiler-ir-instr-seq-ref
+                  (compiler-opt-global-shared-view instrs)
+                  index))))
+          (set! index (+ index 1))))
+      joined)))
+
+(define (opt-ck-local-phi-join-blocks!
+  [fam : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]
+  [joined : i64]) : i64
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) joined]
+    [(ir.CompilerIrBlockList.Cons head rest)
+      (opt-ck-local-phi-join-blocks!
+        (compiler-opt-global-shared-view fam)
+        (compiler-opt-box-shared-view rest)
+        (+
+          joined
+          (match (compiler-opt-global-shared-view head)
+            [(ir.CompilerIrBlock.Block _ instrs)
+              (opt-ck-local-phi-join-instrs!
+                (compiler-opt-global-shared-view fam)
+                instrs)])))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-ck-local-phi-join-blocks!
+        fam
+        (ir.compiler-ir-block-seq-to-list seq)
+        joined)]))
+
+(define (opt-ck-local-phi-join-fixed!
+  [fam : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]
+  [rounds : i64]) : unit
+  (if (<= rounds 0)
+    unit
+    (if (=
+      (opt-ck-local-phi-join-blocks!
+        (compiler-opt-global-shared-view fam)
+        (compiler-opt-global-shared-view blocks)
+        0)
+      0)
+      unit
+      (opt-ck-local-phi-join-fixed! fam blocks (- rounds 1)))))
+
+;; --- the builder -------------------------------------------------------------
+(define (opt-ck-locals-build
+  [type-segment-bases : i64]
+  [ctors : opt_i64_i64_map.Map]
+  [call-memory : opt_i64_i64_map.Map]
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : OptCkLocals
+  (let
+    [size : i64
+      (if (> frame 0)
+        frame
+        1)]
+    [defs : OptLenEqDefs
+      (opt-len-eq-defs-build
+        type-segment-bases
+        size
+        (compiler-opt-global-shared-view blocks))]
+    [scan : OptCkLocalScan
+      (opt-ck-local-scan-new
+        size
+        (opt-collect-blocks-uses-array
+          size
+          (compiler-opt-global-shared-view blocks)))]
+    [scratch : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [fam : (__tl_dyn-array i64) (__tl_make-array i64 (* size 2))]
+    [keys : (__tl_dyn-array i64)
+      (__tl_make-array i64 (opt-ck-local-candidate-cap))]
+    [lens : (__tl_dyn-array ir.CompilerIrValue)
+      (__tl_make-array ir.CompilerIrValue (opt-ck-local-candidate-cap))]
+    [members : (__tl_dyn-array i64)
+      (__tl_make-array i64 (+ (opt-ck-local-candidate-cap) 1))]
+    [phase : i64 0]
+    [found : i64 0]
+    [families : i64 0]
+    [pairs : i64 0]
+    [key : i64 0]
+    (begin
+      (while (< phase 4)
+        (begin
+          (opt-ck-local-scan-blocks!
+            type-segment-bases
+            (compiler-opt-global-shared-view scan)
+            (compiler-opt-global-shared-view call-memory)
+            (compiler-opt-global-shared-view defs)
+            (compiler-opt-global-shared-view scratch)
+            phase
+            (compiler-opt-global-shared-view blocks)
+            0)
+          (set! phase (+ phase 1))))
+      (opt-ck-local-phi-account-fixed!
+        (compiler-opt-global-shared-view scan)
+        (compiler-opt-global-shared-view blocks)
+        (opt-ck-local-phi-rounds))
+      (while (and (< key (* size 2)) (< found (opt-ck-local-candidate-cap)))
+        (begin
+          (match (opt-ck-local-key-length
+            (compiler-opt-global-shared-view scan)
+            (compiler-opt-global-shared-view defs)
+            (compiler-opt-global-shared-view ctors)
+            (opt-ck-local-key-var key)
+            (opt-ck-local-key-level key))
+            [(OptLenEqLength.No) unit]
+            [(OptLenEqLength.Some len _)
+              (let
+                [index : i64 0]
+                [family : i64 0]
+                (begin
+                  (while (< index found)
+                    (begin
+                      (if (and
+                        (= family 0)
+                        (opt-ck-local-len-same?
+                          (compiler-opt-global-shared-view defs)
+                          (compiler-opt-global-array-element-shared-view
+                            lens
+                            index)
+                          (compiler-opt-global-shared-view len)))
+                        (set! family (array-ref fam (array-ref keys index)))
+                        unit)
+                      (set! index (+ index 1))))
+                  (if (= family 0)
+                    (begin
+                      (set! families (+ families 1))
+                      (set! family families))
+                    unit)
+                  (set! (array-ref fam key) family)
+                  (set! (array-ref keys found) key)
+                  (set! (array-ref lens found) len)
+                  (set!
+                    (array-ref members family)
+                    (+ (array-ref members family) 1))
+                  (if (= (array-ref members family) 2)
+                    (set! pairs (+ pairs 1))
+                    unit)
+                  (set! found (+ found 1))))])
+          (set! key (+ key 1))))
+      (if (> pairs 0)
+        (opt-ck-local-phi-join-fixed!
+          (compiler-opt-global-shared-view fam)
+          (compiler-opt-global-shared-view blocks)
+          (opt-ck-local-phi-rounds))
+        unit)
+      (OptCkLocals (> pairs 0) fam defs.defs defs.count))))
+
 ;; --- families ----------------------------------------------------------------
 (define (opt-len-eq-count-admitted
   [writes : OptLenEqWrites]
@@ -143899,6 +146185,1293 @@
       (compiler-opt-global-shared-view cell.addr-taken)
       capacity)))
 
+;; --- LGA-1: literal-global argument specialization ---------------------------
+;;
+;; The phase-5 call-boundary packet named CB-1. The `opt-cb-*` prefix already
+;; belongs to the earlier content-bounds packet of that name, so this family is
+;; spelled `opt-lga-`.
+;;
+;; WHAT IT DOES. An internal function F whose EVERY direct call site passes the
+;; same `CompilerIrValue.Global g` for a `(& g T)` / `(&mut g T)` parameter p
+;; does not need p: inside F, `Global g` denotes exactly the address the caller
+;; marshalled. Substituting `Global g` for p's uses and dropping the argument at
+;; every site is IPSCCP's constant-argument propagation followed by dead
+;; argument elimination. No code MOVES, so unlike absorbing F into its callers
+;; it cannot raise register pressure at the site. The win is on both sides of
+;; the boundary: the caller stops materialising `leaq g(%rip)` into an argument
+;; register at every call, and the callee's `p -> slots -> len/data` descriptor
+;; chains become GLOBAL-ROOTED (`@g -> slots -> len/data`), which is the form
+;; IAG-1 lowers to a link-time constant address, IAG-2 admits to the entry, and
+;; MF/load-CSE hoists and reuses. GAP-1's per-parameter identity facts become
+;; ordinary intra-function facts for the same reason.
+;;
+;; WHERE IT RUNS. Once, BELOW the level-2 per-function pipeline: on the final
+;; pruned function sequence, immediately before the late pass list. It is not in
+;; the inline stage's slot, and the reason is measured.
+;;
+;; Placed before the summaries (the packet's first choice), the specialized
+;; operands are visible to the pipeline itself, and cfg_domloops REGRESSES by
+;; +36,728,422 Ir (551,773,899 -> 588,502,321). The call boundary still pays
+;; what it should -- cfg-function alone drops 7,367,556 Ir -- but every helper
+;; loses more than that. `--trace-passes` on `cfg-idom-iterate` names the
+;; mechanism exactly: with global-rooted lengths the round-1 `bounds_dom_le`
+;; slot retires four more checks (243 -> 238 instructions instead of 243 ->
+;; 242), which empties the derivation set the round-2 `bce_version` reads, and
+;; the versioner then clones 21 blocks instead of 33 (35 -> 56 instead of 35 ->
+;; 68). The inner loop's guard, hoisted to the function entry in the versioned
+;; form, goes back to running once per OUTER iteration. That is GAP-1's recorded
+;; interaction ("a round-1 retirement starving round-2 bce_version, +5.8M on
+;; cfg") reached through operands rather than through facts, and it is why
+;; GAP-1's own consumer sits below the fixpoint.
+;;
+;; Below the pipeline the same 47 parameters are specialized, every in-pipeline
+;; decision is taken on the operands the pipeline had before, and cfg_domloops
+;; drops 13,136,520 Ir (551,773,899 -> 538,637,379) with all ten of its
+;; functions improving. The census reads the same shapes there: no pipeline pass
+;; changes a signature or rewrites a `CompilerIrValue.Global` argument into a
+;; var, so the sites the walk needs are still the ones the front end lowered.
+;; The late pass list then runs over the specialized bodies, which is where the
+;; global-rooted chains get their cleanup.
+;;
+;; THE GATE. Both tables this pass rests on -- P18's cell mod-ref and IAG-2's
+;; storage-write table -- decline above `opt-loop-bce-summary-function-limit`
+;; and outside the empty-address-taken precondition, so above that limit every
+;; candidate would be refused anyway. Declining there up front keeps the census
+;; free for a big program instead of walking it to reach the same answer.
+;;
+;; WHY IT IS SOUND. `Global g` READS g's cell (`movq g(%rip)`; after IAG-1's
+;; inline-storage classification it is a `leaq` of a link-time constant, which
+;; is strictly stronger). The caller evaluated exactly that value at the call
+;; site, so the substitution is exact as long as no execution between the site
+;; and a use inside F can REBIND the cell. Four refusals close that:
+;;
+;;   (1) g's address is never taken -- it is not in the cell summary's
+;;       `addr-taken` set (opt-global-cell-addr-taken-fill: the globals a
+;;       `CompilerIrValue.GlobalAddr` operand names and no `Store` targets). A
+;;       pointer to the cell is the only way a `StorePtr` could write it without
+;;       a `Store g`. P18's table rests on the same fact and refuses to build at
+;;       all while that set is non-empty, so reaching the census already implies
+;;       it; the clause is kept per-global so the pass stays fail-closed if that
+;;       precondition is ever relaxed.
+;;   (2) P18's cell mod-ref row for F does not name g. That row is transitive
+;;       over direct call edges and answers "any cell" for an indirect one, so
+;;       it proves nothing F can reach performs `(set! g ...)`. A program
+;;       without the table refuses every candidate.
+;;   (3) p does not escape: every use of p inside F sits in a position IAG-2's
+;;       own cell-address escape check licenses (opt-lga-allowed-use, which
+;;       mirrors opt-global-obj-allowed-use minus `AddrOf`, whose operand is a
+;;       var slot rather than a value and so cannot carry a substitution). A
+;;       parameter that is STORED into memory, returned, handed to an indirect
+;;       call or used as an operand of anything the storage analysis does not
+;;       model is refused rather than re-rooted, and the same list is what
+;;       bounds the rewrite below to the ten instruction forms that can hold
+;;       the substituted operand.
+;;   (4) mixed sites, indirect activations and the shapes the positional walk
+;;       cannot read are already refused by GAP-1's census, which this pass
+;;       reuses rather than recomputing: an address-taken F, an F the program
+;;       can enter without a call site (the entry, a provided extern, a global's
+;;       hidden initializer), a `CallCAbiStoreResult` or `SpmdCall` naming F, an
+;;       argument count that does not match F's parameter list, and any position
+;;       two sites disagree about -- including a recursive edge that passes
+;;       something other than `@g`.
+;;
+;; The startup sequence's one non-IR cell write (`movq %rax, g(%rip)` after
+;; `call __global_init_g`, compiler_backend.tl) runs before `main`, hence before
+;; any activation of F that could observe a difference, and it writes the same
+;; cell the caller would have read; it is not a rebind this pass must exclude.
+;;
+;; A parameter F WRITES THROUGH is additionally required to be one IAG-2 already
+;; models as a write of g's own storage: its row for F must name g. Writing
+;; through p is exactly what the caller licensed, so this is a consistency
+;; condition rather than a soundness one -- if the storage table does not carry
+;; the write, the analysis and the code disagree about it, and this pass refuses
+;; rather than re-rooting the operand under a table that does not model it. The
+;; question is asked of the WRITE, not of the declared mutability: a `(&mut g)`
+;; helper that only writes ELEMENTS reaches them through the descriptor pointer
+;; it LOADS out of the cell, which addresses a different allocation and is no
+;; storage write at all (opt-lga-function-facts).
+;;
+;; SIGNATURE PLUMBING. A parameter carries an explicit var id
+;; (`CompilerIrParam.Param name ty var`) and every consumer below the inline
+;; stage reads that field, but the inline stage itself identifies a parameter by
+;; POSITION (`opt-inline-remap-value`'s `id < np`). This pass therefore refuses
+;; a function whose parameter var ids are not 0..n-1 in order, and after
+;; removing a parameter it leaves every surviving parameter's var id alone:
+;; positions shift, var ids do not, and the removed id becomes an unused slot of
+;; the unchanged frame. Call sites drop the same positions, so callee signature
+;; and argument list stay aligned.
+;;
+;; DETERMINISM. Every walk is by index over the function, parameter, block and
+;; instruction sequences; the tables are only looked up, never iterated. That is
+;; what the stage2.s == stage3.s fixpoint needs.
+;; The plan: which (function, parameter position) pairs lose their parameter,
+;; and which functions have at least one, so a caller with nothing to drop is
+;; recognised without a second lookup per argument.
+(defstruct OptLgaPlan
+  ;; opt-arg-global-key of (function symbol id, parameter position) ->
+  ;; 1 + the global symbol id substituted for that parameter.
+  (removals opt_i64_i64_map.Map)
+  ;; function symbol id -> 1 for every function with a removal.
+  (specialized opt_i64_i64_map.Map))
+
+(define (opt-lga-plan-empty [capacity : i64]) : OptLgaPlan
+  (OptLgaPlan
+    (opt_i64_i64_map.with-capacity capacity)
+    (opt_i64_i64_map.with-capacity capacity)))
+
+;; -2 licenses every use of the instruction (a direct call, whose var operands
+;; are arguments the callee accounts for, and a `Phi`, whose inputs the join
+;; accounts for). Otherwise the ONE var this instruction may hold at a cell
+;; address; a use anywhere else escapes. Mirrors opt-global-obj-allowed-use,
+;; minus its `AddrOf` arm: that arm's operand is a var SLOT, not a value, so a
+;; parameter used there cannot be rewritten to `Global g` at all.
+(define (opt-lga-allowed-use [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.Call _ _ _ _) -2]
+    [(ir.CompilerIrInstr.TailCall _ _ _) -2]
+    [(ir.CompilerIrInstr.Phi _ _ _) -2]
+    [(ir.CompilerIrInstr.Load _ src _) (opt-global-obj-value-var src)]
+    [(ir.CompilerIrInstr.Mov _ src _) (opt-global-obj-value-var src)]
+    [(ir.CompilerIrInstr.Cast _ src _ _) (opt-global-obj-value-var src)]
+    [(ir.CompilerIrInstr.Bitcast _ src _ _) (opt-global-obj-value-var src)]
+    [(ir.CompilerIrInstr.Gep _ base _ _) (opt-global-obj-value-var base)]
+    [(ir.CompilerIrInstr.StorePtr ptr _ _) (opt-global-obj-value-var ptr)]
+    [(ir.CompilerIrInstr.CopyBytes dst _ _) (opt-global-obj-value-var dst)]
+    [_ -1]))
+
+;; Mark every parameter var this instruction uses outside its allowed position.
+;; `uses` is scratch of exactly `np` counters, so a var above the parameter
+;; range is dropped by opt-used-array-add's own bounds guard.
+(define (opt-lga-mark-escapes-instr!
+  [instr : ir.CompilerIrInstr]
+  [np : i64]
+  [uses : (__tl_dyn-array i64)]
+  [escaped : (__tl_dyn-array bool)]) : unit
+  (let
+    [allowed : i64
+      (opt-lga-allowed-use (compiler-opt-global-shared-view instr))]
+    [index : i64 0]
+    (if (= allowed -2)
+      unit
+      (begin
+        (while (< index np)
+          (begin
+            (set! (array-ref uses index) 0)
+            (set! index (+ index 1))))
+        (opt-collect-instr-uses-array
+          (compiler-opt-global-shared-view uses)
+          instr)
+        (set! index 0)
+        (while (< index np)
+          (begin
+            (if (and (> (array-ref uses index) 0) (not (= index allowed)))
+              (set! (array-ref escaped index) true)
+              unit)
+            (set! index (+ index 1))))))))
+
+(define (opt-lga-mark-escapes-seq!
+  [instrs : ir.CompilerIrInstrSeq]
+  [position : i64]
+  [count : i64]
+  [np : i64]
+  [uses : (__tl_dyn-array i64)]
+  [escaped : (__tl_dyn-array bool)]) : unit
+  (if (>= position count)
+    unit
+    (begin
+      (opt-lga-mark-escapes-instr!
+        (ir.compiler-ir-instr-seq-ref
+          (compiler-opt-global-shared-view instrs)
+          position)
+        np
+        (compiler-opt-global-shared-view uses)
+        (compiler-opt-global-shared-view escaped))
+      (opt-lga-mark-escapes-seq! instrs (+ position 1) count np uses escaped))))
+
+(define (opt-lga-mark-escapes-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [np : i64]
+  [uses : (__tl_dyn-array i64)]
+  [escaped : (__tl_dyn-array bool)]) : unit
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match (compiler-opt-global-shared-view block)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-lga-mark-escapes-seq!
+              (compiler-opt-global-shared-view instrs)
+              0
+              (ir.compiler-ir-instr-seq-count instrs)
+              np
+              (compiler-opt-global-shared-view uses)
+              (compiler-opt-global-shared-view escaped))])
+        (opt-lga-mark-escapes-blocks!
+          (compiler-opt-box-shared-view rest)
+          np
+          uses
+          escaped))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64
+          (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+        [i : i64 0]
+        (while (< i count)
+          (begin
+            (match (ir.compiler-ir-block-seq-ref
+              (compiler-opt-global-shared-view seq)
+              i)
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (opt-lga-mark-escapes-seq!
+                  (compiler-opt-global-shared-view instrs)
+                  0
+                  (ir.compiler-ir-instr-seq-count instrs)
+                  np
+                  (compiler-opt-global-shared-view uses)
+                  (compiler-opt-global-shared-view escaped))])
+            (set! i (+ i 1)))))]))
+
+;; Which parameters this body may write THROUGH, and which escape. The write
+;; question is IAG-2's owner propagation restricted to the parameter roots: a
+;; pointer that addresses a word of the object a parameter designates can only
+;; be formed from that parameter by `Gep`, `Mov`, `Cast`, `Bitcast` and `Phi` --
+;; never by a `Load`, whose result addresses a DIFFERENT allocation, which is
+;; exactly why a helper that writes ELEMENTS through the `slots` pointer it
+;; loads out of the descriptor is not writing the global's own storage. One bit
+;; per parameter position, so one propagation answers for all of them at once.
+(defstruct OptLgaParamFacts
+  ;; position -> true when a use of that parameter sits outside the positions
+  ;; opt-lga-allowed-use licenses.
+  (escaped (__tl_dyn-array bool))
+  ;; bit k set when a `StorePtr`/`CopyBytes` in this body writes through a
+  ;; pointer derived from parameter k.
+  (writes i64)
+  ;; False when the bounded root propagation still changed on its last round.
+  ;; In that case `writes` is only a prefix of the answer and no parameter may
+  ;; use it to clear the storage-consistency admission clause.
+  (settled? bool))
+
+;; A var either carries a root set or does not, so a handful of rounds settles
+;; every ordinary shape. The cap bounds a pathological reverse-ordered move or
+;; phi chain. An exhausted walk is UNKNOWN rather than the smaller write mask:
+;; missing a write would skip the storage-consistency refusal below, which is
+;; the permissive side of that test rather than the safe one.
+(define (opt-lga-root-round-cap) : i64
+  8)
+
+;; The parameter roots a value carries. An out-of-range var is one the max-var
+;; walk did not account for: answer "every root", which can only add writes.
+(define (opt-lga-root-of-value
+  [roots : (__tl_dyn-array i64)]
+  [value : ir.CompilerIrValue]) : i64
+  (match value
+    [(ir.CompilerIrValue.Var id)
+      (if (and (>= id 0) (< id (array-length roots)))
+        (array-ref roots id)
+        (- 0 1))]
+    [_ 0]))
+
+(define (opt-lga-root-add!
+  [roots : (__tl_dyn-array i64)]
+  [dst : i64]
+  [mask : i64]
+  [changed : (__tl_dyn-array bool)]) : unit
+  (if (or (= mask 0) (< dst 0) (>= dst (array-length roots)))
+    unit
+    (let
+      [before : i64 (array-ref roots dst)]
+      [after : i64 (bit-or before mask)]
+      (if (= before after)
+        unit
+        (begin
+          (set! (array-ref roots dst) after)
+          (set! (array-ref changed 0) true))))))
+
+(define (opt-lga-root-of-phi
+  [roots : (__tl_dyn-array i64)]
+  [inputs : ir.CompilerIrPhiInputSeq]
+  [index : i64]
+  [mask : i64]) : i64
+  (if (>= index inputs.len)
+    mask
+    (let
+      [input : ir.CompilerIrPhiInput
+        (ir.compiler-ir-phi-input-seq-ref
+          (compiler-opt-global-shared-view inputs)
+          index)]
+      (opt-lga-root-of-phi
+        (compiler-opt-global-shared-view roots)
+        (compiler-opt-global-shared-view inputs)
+        (+ index 1)
+        (bit-or
+          mask
+          (opt-lga-root-of-value
+            (compiler-opt-global-shared-view roots)
+            input.value))))))
+
+(define (opt-lga-roots-instr!
+  [roots : (__tl_dyn-array i64)]
+  [changed : (__tl_dyn-array bool)]
+  [instr : ir.CompilerIrInstr]) : unit
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Gep dst base _ _)
+      (opt-lga-root-add!
+        (compiler-opt-global-shared-view roots)
+        dst
+        (opt-lga-root-of-value (compiler-opt-global-shared-view roots) base)
+        changed)]
+    [(ir.CompilerIrInstr.Mov dst src _)
+      (opt-lga-root-add!
+        (compiler-opt-global-shared-view roots)
+        dst
+        (opt-lga-root-of-value (compiler-opt-global-shared-view roots) src)
+        changed)]
+    [(ir.CompilerIrInstr.Cast dst src _ _)
+      (opt-lga-root-add!
+        (compiler-opt-global-shared-view roots)
+        dst
+        (opt-lga-root-of-value (compiler-opt-global-shared-view roots) src)
+        changed)]
+    [(ir.CompilerIrInstr.Bitcast dst src _ _)
+      (opt-lga-root-add!
+        (compiler-opt-global-shared-view roots)
+        dst
+        (opt-lga-root-of-value (compiler-opt-global-shared-view roots) src)
+        changed)]
+    [(ir.CompilerIrInstr.Phi dst inputs _)
+      (opt-lga-root-add!
+        (compiler-opt-global-shared-view roots)
+        dst
+        (opt-lga-root-of-phi (compiler-opt-global-shared-view roots) inputs 0 0)
+        changed)]
+    [_ unit]))
+
+(define (opt-lga-write-mask-instr
+  [roots : (__tl_dyn-array i64)]
+  [instr : ir.CompilerIrInstr]) : i64
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.StorePtr ptr _ _) (opt-lga-root-of-value roots ptr)]
+    [(ir.CompilerIrInstr.CopyBytes dst _ _) (opt-lga-root-of-value roots dst)]
+    [_ 0]))
+
+(define (opt-lga-roots-seq!
+  [instrs : ir.CompilerIrInstrSeq]
+  [position : i64]
+  [count : i64]
+  [roots : (__tl_dyn-array i64)]
+  [changed : (__tl_dyn-array bool)]
+  [writes : (__tl_dyn-array i64)]) : unit
+  (if (>= position count)
+    unit
+    (let
+      [instr : ir.CompilerIrInstr
+        (ir.compiler-ir-instr-seq-ref
+          (compiler-opt-global-shared-view instrs)
+          position)]
+      (begin
+        (opt-lga-roots-instr!
+          (compiler-opt-global-shared-view roots)
+          (compiler-opt-global-shared-view changed)
+          (compiler-opt-global-shared-view instr))
+        (set!
+          (array-ref writes 0)
+          (bit-or
+            (array-ref writes 0)
+            (opt-lga-write-mask-instr
+              (compiler-opt-global-shared-view roots)
+              instr)))
+        (opt-lga-roots-seq! instrs (+ position 1) count roots changed writes)))))
+
+(define (opt-lga-roots-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [roots : (__tl_dyn-array i64)]
+  [changed : (__tl_dyn-array bool)]
+  [writes : (__tl_dyn-array i64)]) : unit
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match (compiler-opt-global-shared-view block)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-lga-roots-seq!
+              (compiler-opt-global-shared-view instrs)
+              0
+              (ir.compiler-ir-instr-seq-count instrs)
+              (compiler-opt-global-shared-view roots)
+              (compiler-opt-global-shared-view changed)
+              (compiler-opt-global-shared-view writes))])
+        (opt-lga-roots-blocks!
+          (compiler-opt-box-shared-view rest)
+          roots
+          changed
+          writes))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-lga-roots-blocks!
+        (ir.compiler-ir-block-seq-to-list seq)
+        roots
+        changed
+        writes)]))
+
+(define (opt-lga-roots-fixed!
+  [blocks : ir.CompilerIrBlockList]
+  [roots : (__tl_dyn-array i64)]
+  [writes : (__tl_dyn-array i64)]
+  [remaining : i64]) : bool
+  (if (<= remaining 0)
+    false
+    (let
+      [changed : (__tl_dyn-array bool) (__tl_make-array bool 1)]
+      (begin
+        (opt-lga-roots-blocks!
+          (compiler-opt-global-shared-view blocks)
+          (compiler-opt-global-shared-view roots)
+          (compiler-opt-global-shared-view changed)
+          (compiler-opt-global-shared-view writes))
+        (if (array-ref changed 0)
+          (opt-lga-roots-fixed! blocks roots writes (- remaining 1))
+          true)))))
+
+(define (opt-lga-function-facts
+  [params : ir.CompilerIrParamSeq]
+  [blocks : ir.CompilerIrBlockList]
+  [np : i64]
+  [frame : i64]) : OptLgaParamFacts
+  (let
+    [vars : i64
+      (+
+        1
+        (opt-sccp-max-var-blocks
+          (compiler-opt-global-shared-view blocks)
+          (opt-sccp-max-var-params
+            (compiler-opt-global-shared-view params)
+            (if (> frame np)
+              frame
+              np))))]
+    [roots : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    [writes : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [escaped : (__tl_dyn-array bool) (__tl_make-array bool np)]
+    [uses : (__tl_dyn-array i64) (__tl_make-array i64 np)]
+    [position : i64 0]
+    [settled? : bool false]
+    (begin
+      (while (< position np)
+        (begin
+          (set! (array-ref roots position) (shl 1 position))
+          (set! position (+ position 1))))
+      (opt-lga-mark-escapes-blocks!
+        (compiler-opt-global-shared-view blocks)
+        np
+        uses
+        (compiler-opt-global-shared-view escaped))
+      (set!
+        settled?
+        (opt-lga-roots-fixed!
+          (compiler-opt-global-shared-view blocks)
+          (compiler-opt-global-shared-view roots)
+          (compiler-opt-global-shared-view writes)
+          (opt-lga-root-round-cap)))
+      (OptLgaParamFacts escaped (array-ref writes 0) settled?))))
+
+;; Every parameter's var id is its position. The inline stage identifies a
+;; parameter that way, so a function that does not hold it is refused.
+(define (opt-lga-params-positional?
+  [params : ir.CompilerIrParamSeq]
+  [position : i64]) : bool
+  (if (>= position params.len)
+    true
+    (match (ir.compiler-ir-param-seq-ref
+      (compiler-opt-global-shared-view params)
+      position)
+      [(ir.CompilerIrParam.Param _ _ var)
+        (and
+          (= var position)
+          (opt-lga-params-positional? params (+ position 1)))])))
+
+;; A function's own row out of a packed whole-program table, or the refusal
+;; value: a name the fixpoint did not fill is one the walks disagree about, and
+;; the safe answer to that is "writes everything".
+(define (opt-lga-row [writes : opt_i64_i64_map.Map] [name : i64] [absent : i64]) : i64
+  (match (opt_i64_i64_map.get (& writes) name)
+    [(opt_i64_i64_map.LookupFound mask) mask]
+    [(opt_i64_i64_map.LookupMissing) absent]))
+
+;; `--trace-passes` observability: one line per reference parameter the census
+;; considered, naming the global its sites agreed on and the clause that decided
+;; it. The string is built inside the guard, so a compile without the flag pays
+;; one boolean test per parameter.
+(define (opt-lga-trace-param!
+  [name : i64]
+  [position : i64]
+  [global-id : i64]
+  [verdict : String]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (io.print-error
+      (str_cat.str-cat
+        "arg-specialize|"
+        (ir.compiler-ir-symbol-text name)
+        "|position="
+        (string.int->string position)
+        "|global="
+        (if (< global-id 0)
+          "-"
+          (ir.compiler-ir-symbol-text global-id))
+        "|"
+        (compiler-opt-global-shared-view verdict)
+        "\n"))
+    unit))
+
+(define (opt-lga-trace-gate! [verdict : String] [count : i64]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (io.print-error
+      (str_cat.str-cat
+        "arg-specialize|program|functions="
+        (string.int->string count)
+        "|"
+        (compiler-opt-global-shared-view verdict)
+        "\n"))
+    unit))
+
+;; The clause that refuses one parameter, or the empty string when every clause
+;; passes. The order is the header's: the census fact first, then the shape,
+;; then the three cell-identity proofs, then IAG-2's storage consistency row.
+(define (opt-lga-refusal
+  [mod-ref : OptGlobalModRef]
+  [obj : OptGlobalObjModRef]
+  [addr-taken : opt_i64_i64_map.Map]
+  [facts : OptLgaParamFacts]
+  [cell-row : i64]
+  [obj-row : i64]
+  [position : i64]
+  [seen : i64]) : String
+  (let
+    [global-id : i64 (- seen 1)]
+    (cond
+      [(<= seen 0) "refused-mixed-or-unread-sites"]
+      [(not facts.settled?) "refused-root-analysis-budget"]
+      [(array-ref facts.escaped position) "refused-parameter-escapes"]
+      [(opt_i64_i64_map.contains? (& addr-taken) global-id)
+        "refused-global-address-taken"]
+      [(opt-global-mod-ref-mask-may-write?
+          (compiler-opt-global-shared-view mod-ref.index)
+          cell-row
+          global-id)
+        "refused-reachable-rebind"]
+      ;; The write-through consistency clause. A body that writes THROUGH the
+      ;; parameter writes the global's own storage, and IAG-2's row for this
+      ;; function must already say so -- it is the same write the caller
+      ;; licensed, reached through the same address. A row that does not carry
+      ;; it means the storage analysis and the code disagree, and this pass
+      ;; refuses rather than re-rooting the operand under a table that does not
+      ;; model it. A helper that only writes ELEMENTS (through the `slots`
+      ;; pointer it LOADS out of the descriptor) writes no storage word, so the
+      ;; clause does not apply to it.
+      [(and
+          (not (= (bit-and facts.writes (shl 1 position)) 0))
+          (not
+            (and
+              obj.built?
+              (opt-global-obj-mask-may-write?
+                (compiler-opt-global-shared-view obj.index)
+                obj-row
+                global-id))))
+        "refused-unmodelled-storage-write"]
+      [else ""])))
+
+(define (opt-lga-collect-params
+  [type-segment-bases : i64]
+  [scan : OptArgGlobalScan]
+  [mod-ref : OptGlobalModRef]
+  [obj : OptGlobalObjModRef]
+  [addr-taken : opt_i64_i64_map.Map]
+  [facts : OptLgaParamFacts]
+  [cell-row : i64]
+  [obj-row : i64]
+  [name : i64]
+  [params : ir.CompilerIrParamSeq]
+  [position : i64]
+  [plan : OptLgaPlan]) : OptLgaPlan
+  (if (>= position params.len)
+    plan
+    (opt-lga-collect-params
+      type-segment-bases
+      (compiler-opt-global-shared-view scan)
+      (compiler-opt-global-shared-view mod-ref)
+      (compiler-opt-global-shared-view obj)
+      (compiler-opt-global-shared-view addr-taken)
+      (compiler-opt-global-shared-view facts)
+      cell-row
+      obj-row
+      name
+      (compiler-opt-global-shared-view params)
+      (+ position 1)
+      (match (ir.compiler-ir-param-seq-ref
+        (compiler-opt-global-shared-view params)
+        position)
+        [(ir.CompilerIrParam.Param _ ty _)
+          (if (not
+            (opt-arg-global-ref-param?
+              type-segment-bases
+              (compiler-opt-global-shared-view ty)))
+            plan
+            (let
+              [seen : i64
+                (opt-arg-global-fact
+                  (compiler-opt-global-shared-view scan.sites)
+                  name
+                  position)]
+              [refusal : String
+                (opt-lga-refusal
+                  (compiler-opt-global-shared-view mod-ref)
+                  (compiler-opt-global-shared-view obj)
+                  (compiler-opt-global-shared-view addr-taken)
+                  (compiler-opt-global-shared-view facts)
+                  cell-row
+                  obj-row
+                  position
+                  seen)]
+              [admitted? : bool (= (string.string-length (& refusal)) 0)]
+              (begin
+                (opt-lga-trace-param!
+                  name
+                  position
+                  (- seen 1)
+                  (if admitted?
+                    "specialized"
+                    (compiler-opt-global-shared-view refusal)))
+                (if admitted?
+                  (match (compiler-opt-global-shared-view plan)
+                    [(OptLgaPlan removals specialized)
+                      (begin
+                        (opt_i64_i64_map.insert-ref!
+                          (&mut removals)
+                          (opt-arg-global-key name position)
+                          seen)
+                        (opt_i64_i64_map.insert-ref! (&mut specialized) name 1)
+                        (OptLgaPlan removals specialized))])
+                  plan))))]))))
+
+(define (opt-lga-collect-function
+  [type-segment-bases : i64]
+  [scan : OptArgGlobalScan]
+  [mod-ref : OptGlobalModRef]
+  [obj : OptGlobalObjModRef]
+  [addr-taken : opt_i64_i64_map.Map]
+  [func : ir.CompilerIrFunction]
+  [plan : OptLgaPlan]) : OptLgaPlan
+  (match func
+    [(ir.CompilerIrFunction.Function name params _ frame blocks)
+      (let
+        [id : i64 (ir.compiler-ir-symbol-id name)]
+        [np : i64 params.len]
+        [candidate? : bool
+          (and
+            (>= id 0)
+            (> np 0)
+            (opt-arg-global-any-fact?
+              (compiler-opt-global-shared-view scan.sites)
+              id
+              (compiler-opt-global-shared-view params)
+              0))]
+        [refusal : String
+          (cond
+            [(not candidate?) "-"]
+            [(opt_i64_i64_map.contains? (& scan.opaque) id)
+              "refused-callee-not-enumerable"]
+            [(not
+                (=
+                  (opt-arg-global-arity-of
+                    (compiler-opt-global-shared-view scan)
+                    id)
+                  np))
+              "refused-arity-unreadable"]
+            [(not
+                (opt-lga-params-positional?
+                  (compiler-opt-global-shared-view params)
+                  0))
+              "refused-parameter-vars-not-positional"]
+            [else ""])]
+        (if (or (not candidate?) (not (= (string.string-length (& refusal)) 0)))
+          (begin
+            (if candidate?
+              (opt-lga-trace-param!
+                id
+                (- 0 1)
+                (- 0 1)
+                (compiler-opt-global-shared-view refusal))
+              unit)
+            plan)
+          (opt-lga-collect-params
+            type-segment-bases
+            (compiler-opt-global-shared-view scan)
+            (compiler-opt-global-shared-view mod-ref)
+            (compiler-opt-global-shared-view obj)
+            (compiler-opt-global-shared-view addr-taken)
+            (opt-lga-function-facts
+              (compiler-opt-global-shared-view params)
+              (compiler-opt-global-shared-view blocks)
+              np
+              frame)
+            (opt-lga-row
+              (compiler-opt-global-shared-view mod-ref.writes)
+              id
+              (opt-global-mod-ref-any))
+            (opt-lga-row (compiler-opt-global-shared-view obj.writes) id 0)
+            id
+            params
+            0
+            plan)))]))
+
+(define (opt-lga-collect
+  [type-segment-bases : i64]
+  [scan : OptArgGlobalScan]
+  [mod-ref : OptGlobalModRef]
+  [obj : OptGlobalObjModRef]
+  [addr-taken : opt_i64_i64_map.Map]
+  [functions : ir.CompilerIrFunctionSeq]
+  [index : i64]
+  [plan : OptLgaPlan]) : OptLgaPlan
+  (if (>= index functions.len)
+    plan
+    (opt-lga-collect
+      type-segment-bases
+      (compiler-opt-global-shared-view scan)
+      (compiler-opt-global-shared-view mod-ref)
+      (compiler-opt-global-shared-view obj)
+      (compiler-opt-global-shared-view addr-taken)
+      (compiler-opt-global-shared-view functions)
+      (+ index 1)
+      (opt-lga-collect-function
+        type-segment-bases
+        (compiler-opt-global-shared-view scan)
+        (compiler-opt-global-shared-view mod-ref)
+        (compiler-opt-global-shared-view obj)
+        (compiler-opt-global-shared-view addr-taken)
+        (compiler-opt-global-array-element-shared-view functions.slots index)
+        plan))))
+
+;; --- the rewrite -------------------------------------------------------------
+;; `1 + the global symbol id` at every removed parameter's var (which is its
+;; position), 0 elsewhere. Empty for a function with no removal.
+(define (opt-lga-removed-slots
+  [removals : opt_i64_i64_map.Map]
+  [name : i64]
+  [np : i64]) : (__tl_dyn-array i64)
+  (let
+    [slots : (__tl_dyn-array i64) (__tl_make-array i64 np)]
+    [position : i64 0]
+    (begin
+      (while (< position np)
+        (begin
+          (set!
+            (array-ref slots position)
+            (opt-arg-global-fact
+              (compiler-opt-global-shared-view removals)
+              name
+              position))
+          (set! position (+ position 1))))
+      slots)))
+
+(define (opt-lga-subst-value
+  [removed : (__tl_dyn-array i64)]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (match (compiler-opt-global-shared-view value)
+    [(ir.CompilerIrValue.Var id)
+      (if (and (>= id 0) (< id (array-length removed)))
+        (let
+          [seen : i64 (array-ref removed id)]
+          (if (> seen 0)
+            (ir.CompilerIrValue.Global (ir.compiler-ir-symbol-clone (- seen 1)))
+            value))
+        value)]
+    [_ value]))
+
+(define (opt-lga-rewrite-phi-inputs
+  [removed : (__tl_dyn-array i64)]
+  [inputs : ir.CompilerIrPhiInputSeq]) : ir.CompilerIrPhiInputSeq
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrPhiInput)
+      (__tl_make-array ir.CompilerIrPhiInput inputs.len)]
+    [index : i64 0]
+    (begin
+      (while (< index inputs.len)
+        (begin
+          (let
+            [input : ir.CompilerIrPhiInput
+              (ir.compiler-ir-phi-input-seq-ref
+                (compiler-opt-global-shared-view inputs)
+                index)]
+            (set!
+              (array-ref slots index)
+              (ir.CompilerIrPhiInput
+                (opt-lga-subst-value
+                  (compiler-opt-global-shared-view removed)
+                  input.value)
+                input.label)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrPhiInputSeq slots 0 inputs.len))))
+
+;; Substitute the parameter in every argument, keeping the list's SHAPE: a call
+;; whose callee lost no parameter must come out of this pass in exactly the
+;; representation it went in, or an unrelated site's codegen moves.
+(define (opt-lga-subst-args
+  [removed : (__tl_dyn-array i64)]
+  [args : ir.CompilerIrCallArgs]) : ir.CompilerIrCallArgs
+  (match (compiler-opt-global-shared-view args)
+    [(ir.CompilerIrCallArgs.Nil) (ir.CompilerIrCallArgs.Nil)]
+    [(ir.CompilerIrCallArgs.One a)
+      (ir.CompilerIrCallArgs.One (opt-lga-subst-value removed a))]
+    [(ir.CompilerIrCallArgs.Two a b)
+      (ir.CompilerIrCallArgs.Two
+        (opt-lga-subst-value (compiler-opt-global-shared-view removed) a)
+        (opt-lga-subst-value removed b))]
+    [(ir.CompilerIrCallArgs.Array values)
+      (let
+        [count : i64 (array-length (compiler-opt-global-shared-view values))]
+        [slots : (__tl_dyn-array ir.CompilerIrValue)
+          (__tl_make-array ir.CompilerIrValue count)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (set!
+                (array-ref slots index)
+                (opt-lga-subst-value
+                  (compiler-opt-global-shared-view removed)
+                  (compiler-opt-global-array-element-shared-view values index)))
+              (set! index (+ index 1))))
+          (ir.CompilerIrCallArgs.Array slots)))]))
+
+;; How many of this callee's arguments this pass drops at a site.
+(define (opt-lga-drop-count
+  [removals : opt_i64_i64_map.Map]
+  [callee : i64]
+  [count : i64]
+  [position : i64]
+  [dropped : i64]) : i64
+  (if (>= position count)
+    dropped
+    (opt-lga-drop-count
+      (compiler-opt-global-shared-view removals)
+      callee
+      count
+      (+ position 1)
+      (if (>
+        (opt-arg-global-fact
+          (compiler-opt-global-shared-view removals)
+          callee
+          position)
+        0)
+        (+ dropped 1)
+        dropped))))
+
+;; Substitute every argument, then drop the positions the callee no longer
+;; takes. The surviving list takes the same canonical representation the inline
+;; stage's own argument staging builds (opt-inline-staged-args).
+(define (opt-lga-rewrite-args
+  [removed : (__tl_dyn-array i64)]
+  [removals : opt_i64_i64_map.Map]
+  [callee : i64]
+  [args : ir.CompilerIrCallArgs]) : ir.CompilerIrCallArgs
+  (let
+    [count : i64
+      (opt-arg-global-args-count (compiler-opt-global-shared-view args))]
+    [dropped : i64
+      (opt-lga-drop-count
+        (compiler-opt-global-shared-view removals)
+        callee
+        count
+        0
+        0)]
+    (if (= dropped 0)
+      (opt-lga-subst-args removed args)
+      (let
+        [kept : i64 (- count dropped)]
+        [slots : (__tl_dyn-array ir.CompilerIrValue)
+          (__tl_make-array ir.CompilerIrValue kept)]
+        [filled : i64 0]
+        [position : i64 0]
+        (begin
+          (while (< position count)
+            (begin
+              (if (>
+                (opt-arg-global-fact
+                  (compiler-opt-global-shared-view removals)
+                  callee
+                  position)
+                0)
+                unit
+                (begin
+                  (set!
+                    (array-ref slots filled)
+                    (opt-lga-subst-value
+                      (compiler-opt-global-shared-view removed)
+                      (opt-inline-clone-arg-at
+                        (compiler-opt-global-shared-view args)
+                        position)))
+                  (set! filled (+ filled 1))))
+              (set! position (+ position 1))))
+          (cond
+            [(= kept 0) (ir.CompilerIrCallArgs.Nil)]
+            [(= kept 1)
+              (ir.CompilerIrCallArgs.One
+                (compiler-opt-global-array-element-shared-view slots 0))]
+            [(= kept 2)
+              (ir.CompilerIrCallArgs.Two
+                (compiler-opt-global-array-element-shared-view slots 0)
+                (compiler-opt-global-array-element-shared-view slots 1))]
+            [else (ir.CompilerIrCallArgs.Array slots)]))))))
+
+;; The ten forms opt-lga-allowed-use licenses a parameter to appear in, plus the
+;; two direct-call forms whose argument list may lose a position. Every other
+;; instruction is returned untouched: a candidate parameter that appeared in one
+;; was refused by the escape check, and no other instruction names a callee this
+;; pass specialized.
+(define (opt-lga-rewrite-instr
+  [removed : (__tl_dyn-array i64)]
+  [removals : opt_i64_i64_map.Map]
+  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Load dst src ty)
+      (ir.CompilerIrInstr.Load dst (opt-lga-subst-value removed src) ty)]
+    [(ir.CompilerIrInstr.Mov dst src ty)
+      (ir.CompilerIrInstr.Mov dst (opt-lga-subst-value removed src) ty)]
+    [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
+      (ir.CompilerIrInstr.Cast
+        dst
+        (opt-lga-subst-value removed src)
+        from-ty
+        to-ty)]
+    [(ir.CompilerIrInstr.Bitcast dst src from-ty to-ty)
+      (ir.CompilerIrInstr.Bitcast
+        dst
+        (opt-lga-subst-value removed src)
+        from-ty
+        to-ty)]
+    [(ir.CompilerIrInstr.Gep dst base offset ty)
+      (ir.CompilerIrInstr.Gep
+        dst
+        (opt-lga-subst-value (compiler-opt-global-shared-view removed) base)
+        (opt-lga-subst-value removed offset)
+        ty)]
+    [(ir.CompilerIrInstr.StorePtr ptr value ty)
+      (ir.CompilerIrInstr.StorePtr
+        (opt-lga-subst-value (compiler-opt-global-shared-view removed) ptr)
+        (opt-lga-subst-value removed value)
+        ty)]
+    [(ir.CompilerIrInstr.CopyBytes dst src ty)
+      (ir.CompilerIrInstr.CopyBytes
+        (opt-lga-subst-value (compiler-opt-global-shared-view removed) dst)
+        (opt-lga-subst-value removed src)
+        ty)]
+    [(ir.CompilerIrInstr.Phi dst inputs ty)
+      (ir.CompilerIrInstr.Phi
+        dst
+        (opt-lga-rewrite-phi-inputs removed inputs)
+        ty)]
+    [(ir.CompilerIrInstr.Call dst name args ty)
+      (ir.CompilerIrInstr.Call
+        dst
+        name
+        (opt-lga-rewrite-args
+          removed
+          removals
+          (ir.compiler-ir-symbol-id name)
+          args)
+        ty)]
+    [(ir.CompilerIrInstr.TailCall name args ty)
+      (ir.CompilerIrInstr.TailCall
+        name
+        (opt-lga-rewrite-args
+          removed
+          removals
+          (ir.compiler-ir-symbol-id name)
+          args)
+        ty)]
+    [_ instr]))
+
+(define (opt-lga-rewrite-seq
+  [removed : (__tl_dyn-array i64)]
+  [removals : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [slots : (__tl_dyn-array ir.CompilerIrInstr)
+      (__tl_make-array ir.CompilerIrInstr count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            (array-ref slots index)
+            (opt-lga-rewrite-instr
+              (compiler-opt-global-shared-view removed)
+              (compiler-opt-global-shared-view removals)
+              (ir.compiler-ir-instr-seq-ref
+                (compiler-opt-global-shared-view instrs)
+                index)))
+          (set! index (+ index 1))))
+      (ir.CompilerIrInstrSeq slots count))))
+
+(define (opt-lga-rewrite-blocks
+  [removed : (__tl_dyn-array i64)]
+  [removals : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) ir.CompilerIrBlockList.Nil]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (ir.compiler-ir-block-cons
+        (match (compiler-opt-global-shared-view block)
+          [(ir.CompilerIrBlock.Block label instrs)
+            (ir.CompilerIrBlock.Block
+              label
+              (opt-lga-rewrite-seq
+                (compiler-opt-global-shared-view removed)
+                (compiler-opt-global-shared-view removals)
+                instrs))])
+        (opt-lga-rewrite-blocks
+          removed
+          removals
+          (compiler-opt-box-shared-view rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-lga-rewrite-blocks
+        removed
+        removals
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; The parameters that survive, in position order, each keeping its var id.
+(define (opt-lga-filter-params
+  [removed : (__tl_dyn-array i64)]
+  [params : ir.CompilerIrParamSeq]) : ir.CompilerIrParamSeq
+  (let
+    [builder : ir.CompilerIrParamBuilder
+      (ir.compiler-ir-param-builder-with-capacity params.len)]
+    [position : i64 0]
+    (begin
+      (while (< position params.len)
+        (begin
+          (if (> (array-ref removed position) 0)
+            unit
+            (ir.compiler-ir-param-builder-push!
+              (&mut builder)
+              (ir.compiler-ir-param-seq-ref
+                (compiler-opt-global-shared-view params)
+                position)))
+          (set! position (+ position 1))))
+      (ir.compiler-ir-param-builder-to-seq builder))))
+
+;; Does this instruction name a callee whose argument list this pass shortened?
+(define (opt-lga-instr-calls-specialized?
+  [specialized : opt_i64_i64_map.Map]
+  [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Call _ name _ _)
+      (opt_i64_i64_map.contains?
+        (& specialized)
+        (ir.compiler-ir-symbol-id name))]
+    [(ir.CompilerIrInstr.TailCall name _ _)
+      (opt_i64_i64_map.contains?
+        (& specialized)
+        (ir.compiler-ir-symbol-id name))]
+    [_ false]))
+
+(define (opt-lga-seq-calls-specialized?
+  [specialized : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]
+  [position : i64]
+  [count : i64]) : bool
+  (if (>= position count)
+    false
+    (if (opt-lga-instr-calls-specialized?
+      (compiler-opt-global-shared-view specialized)
+      (ir.compiler-ir-instr-seq-ref
+        (compiler-opt-global-shared-view instrs)
+        position))
+      true
+      (opt-lga-seq-calls-specialized? specialized instrs (+ position 1) count))))
+
+(define (opt-lga-blocks-call-specialized?
+  [specialized : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (if (match (compiler-opt-global-shared-view block)
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-lga-seq-calls-specialized?
+            (compiler-opt-global-shared-view specialized)
+            (compiler-opt-global-shared-view instrs)
+            0
+            (ir.compiler-ir-instr-seq-count instrs))])
+        true
+        (opt-lga-blocks-call-specialized?
+          specialized
+          (compiler-opt-box-shared-view rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-lga-blocks-call-specialized?
+        specialized
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-lga-rewrite-function
+  [plan : OptLgaPlan]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+      (let
+        [id : i64 (ir.compiler-ir-symbol-id name)]
+        [own? : bool (opt_i64_i64_map.contains? (& plan.specialized) id)]
+        (if (and
+          (not own?)
+          (not
+            (opt-lga-blocks-call-specialized?
+              (compiler-opt-global-shared-view plan.specialized)
+              (compiler-opt-global-shared-view blocks))))
+          func
+          (let
+            [removed : (__tl_dyn-array i64)
+              (if own?
+                (opt-lga-removed-slots
+                  (compiler-opt-global-shared-view plan.removals)
+                  id
+                  params.len)
+                (__tl_make-array i64 0))]
+            (ir.CompilerIrFunction.Function
+              name
+              (if own?
+                (opt-lga-filter-params
+                  (compiler-opt-global-shared-view removed)
+                  (compiler-opt-global-shared-view params))
+                params)
+              ret-ty
+              frame
+              (opt-lga-rewrite-blocks
+                (compiler-opt-global-shared-view removed)
+                (compiler-opt-global-shared-view plan.removals)
+                blocks)))))]))
+
+(define (opt-lga-rewrite-functions
+  [plan : OptLgaPlan]
+  [functions : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
+  (let
+    [builder : ir.CompilerIrFunctionBuilder
+      (ir.compiler-ir-function-builder-with-capacity functions.len)]
+    [index : i64 0]
+    (begin
+      (while (< index functions.len)
+        (begin
+          (ir.compiler-ir-function-builder-push!
+            (&mut builder)
+            (opt-lga-rewrite-function
+              (compiler-opt-global-shared-view plan)
+              (compiler-opt-global-array-element-shared-view
+                functions.slots
+                index)))
+          (set! index (+ index 1))))
+      (ir.compiler-ir-function-builder-to-seq builder))))
+
+;; The pass. Declines to the identity everywhere its two tables decline, so a
+;; program outside their preconditions is compiled exactly as before.
+(define (opt-lga-specialize-program
+  [type-segment-bases : i64]
+  [globals : ir.CompilerIrGlobalSeq]
+  [externs : ir.CompilerIrExternSeq]
+  [functions : ir.CompilerIrFunctionSeq]
+  [level : i64]) : ir.CompilerIrFunctionSeq
+  (let
+    [count : i64
+      (opt-function-seq-count (compiler-opt-global-shared-view functions))]
+    (if (or
+      (< level 2)
+      (<= count 0)
+      (> count (opt-loop-bce-summary-function-limit))
+      (=
+        (ir.compiler-ir-global-seq-count
+          (compiler-opt-global-shared-view globals))
+        0))
+      (begin
+        (if (>= level 2)
+          (opt-lga-trace-gate! "declined-program-gate" count)
+          unit)
+        functions)
+      (let
+        [capacity : i64 (opt-function-index-capacity count)]
+        ;; The cell summary's own derivation, at the same program point:
+        ;; `disq` records a global on a `Store` target OR a `GlobalAddr`
+        ;; operand, so subtracting the direct-store targets leaves precisely the
+        ;; globals whose ADDRESS the program takes.
+        [disq : opt_i64_i64_map.Map
+          (opt-const-globals-disqualified
+            (opt_i64_i64_map.with-capacity capacity)
+            (compiler-opt-global-shared-view functions))]
+        [cell-scan : OptGlobalCellScan
+          (opt-global-cell-scan-functions
+            (opt-global-cell-scan-new)
+            (compiler-opt-global-shared-view functions))]
+        [addr-taken : opt_i64_i64_map.Map
+          (opt-global-cell-addr-taken-fill
+            (compiler-opt-global-shared-view globals)
+            (compiler-opt-global-shared-view disq)
+            (compiler-opt-global-shared-view cell-scan.stores)
+            (opt_i64_i64_map.with-capacity capacity)
+            0)]
+        [mod-ref : OptGlobalModRef
+          (opt-global-mod-ref-build
+            (compiler-opt-global-shared-view globals)
+            (compiler-opt-global-shared-view functions)
+            (compiler-opt-global-shared-view cell-scan.stores)
+            (compiler-opt-global-shared-view addr-taken)
+            capacity)]
+        (if (not mod-ref.built?)
+          (begin
+            (opt-lga-trace-gate! "declined-no-cell-mod-ref-table" count)
+            functions)
+          (let
+            [scan : OptArgGlobalScan
+              (opt-arg-global-scan-functions
+                (opt-arg-global-seed-globals
+                  (opt-arg-global-seed-externs
+                    (opt-arg-global-seed-functions
+                      (OptArgGlobalScan
+                        (opt_i64_i64_map.with-capacity capacity)
+                        (opt_i64_i64_map.with-capacity capacity)
+                        (opt_i64_i64_map.with-capacity capacity))
+                      (compiler-opt-global-shared-view functions)
+                      0)
+                    (compiler-opt-global-shared-view externs)
+                    0)
+                  (compiler-opt-global-shared-view globals)
+                  0)
+                (compiler-opt-global-shared-view functions))]
+            [obj : OptGlobalObjModRef
+              (opt-global-obj-build
+                type-segment-bases
+                (compiler-opt-global-shared-view globals)
+                (compiler-opt-global-shared-view externs)
+                (compiler-opt-global-shared-view functions)
+                (compiler-opt-global-shared-view addr-taken)
+                capacity)]
+            [plan : OptLgaPlan
+              (opt-lga-collect
+                type-segment-bases
+                (compiler-opt-global-shared-view scan)
+                (compiler-opt-global-shared-view mod-ref)
+                (compiler-opt-global-shared-view obj)
+                (compiler-opt-global-shared-view addr-taken)
+                (compiler-opt-global-shared-view functions)
+                0
+                (opt-lga-plan-empty capacity))]
+            (begin
+              (opt-lga-trace-gate!
+                (if obj.built?
+                  "storage-table-built"
+                  "storage-table-absent")
+                (opt_i64_i64_map.len (& plan.removals)))
+              (if (= (opt_i64_i64_map.len (& plan.removals)) 0)
+                functions
+                (opt-lga-rewrite-functions
+                  (compiler-opt-global-shared-view plan)
+                  functions)))))))))
+
 ;; --- whole-program non-negative scalar globals -------------------------------
 ;;
 ;; IPSCCP-style range seeding, restricted to the one fact the range merge needs:
@@ -144562,7 +148135,12 @@
       (ir.compiler-ir-global-seq-count
         (compiler-opt-global-shared-view globals))]
     (if (= count 0)
-      (opt-global-cell-summary-empty)
+      ;; No global cells at all, so every P-B table is empty -- but CK-1's
+      ;; families live inside functions, so its constructor summaries are still
+      ;; worth having.
+      (opt-global-cell-summary-with-len-ctors
+        (opt-global-cell-summary-empty)
+        (opt-ck-local-ctors-table type-segment-bases functions))
       (let
         [capacity : i64 (opt-function-index-capacity count)]
         [types : (__tl_dyn-array ast.AstType)
@@ -144604,6 +148182,7 @@
             (opt_i64_i64_map.with-capacity 1)
             (opt-global-obj-mod-ref-none)
             (opt_i64_i64_map.with-capacity 1)
+            (opt_i64_i64_map.with-capacity 1)
             (opt_i64_i64_map.with-capacity 1))]
         [nonneg : opt_i64_i64_map.Map
           (opt-nonneg-globals-build
@@ -144622,6 +148201,10 @@
             call-memory
             capacity
             (&mut len-reset))]
+        [len-ctors : opt_i64_i64_map.Map
+          (opt-ck-local-ctors-table
+            type-segment-bases
+            (compiler-opt-global-shared-view functions))]
         (OptGlobalCellSummary
           (compiler-opt-global-shared-view addr-taken)
           (compiler-opt-global-shared-view type-index)
@@ -144658,7 +148241,8 @@
           (compiler-opt-global-shared-view len-reset)
           ;; CB-1's content table is attached by opt-cb-attach, which needs
           ;; GAP-1's facts and therefore runs from the program-summary builder.
-          (opt_i64_i64_map.with-capacity 1))))))
+          (opt_i64_i64_map.with-capacity 1)
+          len-ctors)))))
 
 ;; --- condition (a): stores a later read can OBSERVE ---------------------------
 ;;
@@ -146314,11 +149898,18 @@
                         (compiler-opt-global-shared-view final-pruned))]
                     [final-functions : ir.CompilerIrFunctionSeq
                       (opt-pruned-program-functions final-pruned)]
+                    [specialized-functions : ir.CompilerIrFunctionSeq
+                      (opt-lga-specialize-program
+                        type-segment-bases
+                        (compiler-opt-global-shared-view final-globals)
+                        (compiler-opt-global-shared-view externs)
+                        final-functions
+                        level)]
                     [late-functions : ir.CompilerIrFunctionSeq
                       (opt-late-function-seq-with-level
                         pools
                         type-segment-bases
-                        final-functions
+                        specialized-functions
                         level)]
                     (begin
                       (cfg
@@ -146868,11 +150459,18 @@
                             (compiler-opt-global-shared-view final-pruned))]
                         [final-functions : ir.CompilerIrFunctionSeq
                           (opt-pruned-program-functions final-pruned)]
+                        [specialized-functions : ir.CompilerIrFunctionSeq
+                          (opt-lga-specialize-program
+                            type-segment-bases
+                            (compiler-opt-global-shared-view final-globals)
+                            (compiler-opt-global-shared-view externs)
+                            final-functions
+                            level)]
                         [late-functions : ir.CompilerIrFunctionSeq
                           (opt-late-function-seq-with-level
                             pools
                             type-segment-bases
-                            final-functions
+                            specialized-functions
                             level)]
                         [optimized : ir.CompilerIrProgram
                           (ir.CompilerIrProgram.Program

@@ -3,8 +3,9 @@ set -eu
 
 # verify-spmd-runtime-dispatch.sh - single-binary runtime SIMD dispatch check.
 #
-# Builds one defdispatch program without --backend-mode, runs it once, and
-# checks that the selected variant is the best runnable ISA on this host:
+# Builds one defdispatch program without --backend-mode, then repeatedly races
+# four safe task threads at its cold first call and checks that every process
+# selects the best runnable ISA on this host:
 # avx512 when the F+BW+DQ backend contract is runnable, else avx2 when avx2 is
 # runnable, else scalar.
 # The fixture encodes both the selected variant and the shared SPMD checksum in
@@ -90,6 +91,25 @@ assert_asm_contains() {
     fi
 }
 
+assert_asm_not_matches() {
+    if grep -E -- "$1" "$ASM" >/dev/null 2>&1; then
+        echo "spmd-runtime-dispatch: assembly unexpectedly matches '$1'" >&2
+        exit 1
+    fi
+}
+
+assert_cache_atomic_cas() {
+    if ! awk '
+        /__tl_dispatch_cache_/ { nearby = 12 }
+        nearby > 0 && /lock cmpxchgq / { found = 1 }
+        nearby > 0 { nearby-- }
+        END { exit found ? 0 : 1 }
+    ' "$ASM"; then
+        echo "spmd-runtime-dispatch: cache address is not followed by atomic CAS" >&2
+        exit 1
+    fi
+}
+
 assert_asm_contains "__tl_dispatch_cache_"
 assert_asm_contains "dispatch_run"
 assert_asm_contains "__tl_dispatch_variant_scalar_"
@@ -103,12 +123,16 @@ assert_asm_contains "xgetbv"
 # CPUID.7.0:EBX AVX512F (bit 16), DQ (17), and BW (30).
 assert_asm_contains "1073938432"
 assert_asm_contains "call *"
+assert_asm_contains "lock cmpxchgq "
+assert_cache_atomic_cas
+assert_asm_not_matches '^[[:space:]]+movq [^,]+, .*__tl_dispatch_cache_.*\(%rip\)'
 
 RUN_OUT="$WORKDIR/run.out"
 RUN_ERR="$WORKDIR/run.err"
 : > "$RUN_OUT"
 : > "$RUN_ERR"
 
+BIN=
 if [ "$HOST_OS" = linux ]; then
     OBJ="$WORKDIR/runtime_dispatch_select.o"
     BIN="$WORKDIR/runtime_dispatch_select"
@@ -123,27 +147,32 @@ if [ "$HOST_OS" = linux ]; then
         sed 's/^/  /' "$RUN_ERR" >&2
         exit 1
     fi
+fi
+
+run_index=1
+run_count=8
+while [ "$run_index" -le "$run_count" ]; do
     set +e
-    "$BIN" >> "$RUN_OUT" 2>> "$RUN_ERR"
+    if [ "$HOST_OS" = linux ]; then
+        "$BIN" >> "$RUN_OUT" 2>> "$RUN_ERR"
+    else
+        "$COMPILER" run "$PROGRAM" >> "$RUN_OUT" 2>> "$RUN_ERR"
+    fi
     run_code=$?
     set -e
-else
-    set +e
-    "$COMPILER" run "$PROGRAM" > "$RUN_OUT" 2> "$RUN_ERR"
-    run_code=$?
-    set -e
-fi
 
-if [ -s "$RUN_ERR" ]; then
-    echo "spmd-runtime-dispatch: run produced stderr" >&2
-    sed 's/^/  /' "$RUN_ERR" >&2
-    exit 1
-fi
+    if [ -s "$RUN_ERR" ]; then
+        echo "spmd-runtime-dispatch: run $run_index produced stderr" >&2
+        sed 's/^/  /' "$RUN_ERR" >&2
+        exit 1
+    fi
 
-if [ "$run_code" != "$expected_code" ]; then
-    echo "spmd-runtime-dispatch: expected $expected_variant exit $expected_code, got $run_code" >&2
-    echo "  runnable isas: $(printf '%s' "$SIMD_ISAS" | tr '\n' ' ')" >&2
-    exit 1
-fi
+    if [ "$run_code" != "$expected_code" ]; then
+        echo "spmd-runtime-dispatch: run $run_index expected $expected_variant exit $expected_code, got $run_code" >&2
+        echo "  runnable isas: $(printf '%s' "$SIMD_ISAS" | tr '\n' ' ')" >&2
+        exit 1
+    fi
+    run_index=$((run_index + 1))
+done
 
-echo "spmd runtime dispatch verification passed (host=$HOST_OS, selected=$expected_variant, isas='$(printf '%s' "$SIMD_ISAS" | tr '\n' ' ')')"
+echo "spmd runtime dispatch verification passed (host=$HOST_OS, runs=$run_count, selected=$expected_variant, isas='$(printf '%s' "$SIMD_ISAS" | tr '\n' ' ')')"

@@ -7,7 +7,6 @@ stdlib.clone/clone-struct-root	2	fixed	expr	tests/integration/explicit_clone_gen
 stdlib.clone/clone-enum-root	2	fixed	expr	tests/integration/explicit_clone_generation.tl	ok	default	assembly
 stdlib.clone/gen-clone	1	fixed	decls	tests/integration/explicit_clone_generation.tl	ok	default	assembly
 stdlib.clone/synthesize-helpers	1	variadic	decls	tests/integration/clone_deep_copy.tl	ok	default	assembly
-stdlib.dense_list/compiler-dense-list-operations	6	variadic	decls	tests/integration/dense_list_generated.tl	ok	default	assembly
 stdlib.core_macros/__tl-compiler-owned-shared-view-dyn-ref-as	2	fixed	expr	tests/integration/tlci_identity_owned_views.tl	ok	default	assembly
 stdlib.core_macros/__tl-project-field	2	fixed	expr	tests/integration/tlci_native_index_folds.tl	ok	default	assembly
 stdlib.core_macros/__tl-project-set-field	3	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
@@ -20,6 +19,7 @@ stdlib.core_macros/when	2	variadic	expr	tests/integration/stdlib_serialize_json.
 stdlib.core_macros/unless	2	variadic	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.core_macros/cond	1	variadic	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.core_macros/for	2	variadic	expr	tests/integration/for_macro.tl	ok	default	assembly
+stdlib.dense_list/compiler-dense-list-operations	6	variadic	decls	tests/integration/dense_list_generated.tl	ok	default	assembly
 stdlib.eq/eq-shared-view	1	fixed	expr	tests/integration/stdlib_eq_aggregate.tl	ok	default	assembly
 stdlib.eq/struct-eq-fields	4	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
 stdlib.eq/tuple-eq-elements	4	fixed	expr	tests/integration/stdlib_eq_aggregate.tl	ok	default	assembly

@@ -70645,27 +70645,35 @@
         (opt-call-memory-cycle-body first cell global?))
       (compiler_ir_types.compiler-ir-function-seq-empty))))
 
-;; The optimistic phase driven directly, so its BUDGET can be pinned: with no
-;; rounds left it must hand back the pessimistic map it was given rather than
-;; the optimistic one it was building.
+;; SUM-1. The condensation walk driven directly, so its per-component ROUND CAP
+;; and its VISIT BUDGET can be pinned: a cycle that does not settle inside the
+;; cap, and a program that does not fit the budget, must leave the functions
+;; ABSENT -- which every consumer reads as opaque, the same verdict the old
+;; two-phase builder gave a recursive cycle it could not resolve.
+(define (opt-call-memory-cycle-over-plan
+  [first : i64]
+  [second : i64]
+  [cell : i64]
+  [rounds : i64]
+  [budget : i64]) : opt_i64_i64_map.Map
+  (compiler_optimize.opt-call-memory-build-over-plan
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_optimize.opt-summary-scc-plan-build
+      (opt-call-memory-cycle-functions first second cell false))
+    (compiler_optimize.opt-call-memory-function-set
+      (opt-call-memory-cycle-functions first second cell false)
+      (opt_i64_i64_map.with-capacity 8))
+    0
+    8
+    rounds
+    budget))
+
 (define (opt-call-memory-cycle-optimistic
   [first : i64]
   [second : i64]
   [cell : i64]
   [rounds : i64]) : opt_i64_i64_map.Map
-  (compiler_optimize.opt-call-memory-optimistic-fixed
-    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (opt-call-memory-cycle-functions first second cell false)
-    (opt_i64_i64_map.with-capacity 8)
-    (compiler_optimize.opt-call-memory-function-set
-      (opt-call-memory-cycle-functions first second cell false)
-      (opt_i64_i64_map.with-capacity 8))
-    (compiler_optimize.opt-call-memory-seed-optimistic
-      (opt-call-memory-cycle-functions first second cell false)
-      (opt_i64_i64_map.with-capacity 8)
-      (opt_i64_i64_map.with-capacity 8))
-    8
-    rounds))
+  (opt-call-memory-cycle-over-plan first second cell rounds 1000000))
 
 (define (opt-call-memory-cycle-clean-bits
   [first : i64]
@@ -78470,17 +78478,19 @@
               (compiler_ir_types.compiler-ir-global-shared-view unproven))
             0))
         4]
+      ;; SUM-1. `(& lp_g1)` handed to the callee now withdraws lp_g1's bit and
+      ;; only that: lp_g1's operand stays in the loop and lp_g2 promotes.
       [(not
           (=
             (opt-lp-loop-body-cell-operands
               (compiler_ir_types.compiler-ir-global-shared-view addr-taken))
-            2))
+            1))
         5]
       [(not
           (=
             (opt-lp-preheader-cell-loads
               (compiler_ir_types.compiler-ir-global-shared-view addr-taken))
-            0))
+            1))
         6]
       [(not
           (=
@@ -78879,7 +78889,9 @@
     (opt-mr-wide-stores count (opt_i64_i64_map.with-capacity 128) 0)
     (compiler_optimize.opt-global-mod-ref-overflow-bit
       (opt-mr-wide-globals count)
-      (opt-mr-wide-stores count (opt_i64_i64_map.with-capacity 128) 0))
+      (opt-mr-wide-stores count (opt_i64_i64_map.with-capacity 128) 0)
+      0)
+    (compiler_optimize.opt-global-mod-ref-store-limit 0)
     (opt_i64_i64_map.with-capacity 128)
     0
     0))
@@ -78963,8 +78975,9 @@
       (opt-mr-promoted
         (compiler_optimize.compiler-opt-global-shared-view cells)
         (opt-mr-store-body-blocks symbols))]
-    ;; the same write-a loop in a program that takes a cell's address: the
-    ;; table's precondition is gone, so nothing is refined and nothing promotes
+    ;; SUM-1. The same write-a loop in a program that takes mr_c's address:
+    ;; the precondition is now per cell, so mr_c is the only one it withdraws
+    ;; and the loop promotes mr_b across the call exactly as it does without it
     [via-a-addr-taken : compiler_ir_types.CompilerIrBlockList
       (opt-mr-promoted
         (compiler_optimize.compiler-opt-global-shared-view addr-cells)
@@ -79011,14 +79024,31 @@
       [(not (compiler_optimize.opt-global-mod-ref-any? opaque-mask)) 10]
       ;; an extern has no IR body and so performs no `Store`
       [(not (= extern-mask 0)) 11]
-      ;; one `GlobalAddr` anywhere withdraws the table
-      [addr-mod-ref.built? 12]
+      ;; SUM-1. One `GlobalAddr mr_c` no longer withdraws the table: mr_c
+      ;; shares the conservative address-taken bit and every other cell keeps
+      ;; its own, so `mr_write_a` still names exactly mr_a.
+      [(not addr-mod-ref.built?) 12]
+      [(compiler_optimize.opt-global-mod-ref-any?
+          (compiler_optimize.opt-global-mod-ref-call-mask
+            (compiler_optimize.compiler-opt-global-shared-view addr-mod-ref)
+            symbols.write-a))
+        13]
       [(not
-          (compiler_optimize.opt-global-mod-ref-any?
+          (compiler_optimize.opt-global-mod-ref-mask-may-write?
+            (compiler_optimize.compiler-opt-global-shared-view
+              addr-mod-ref.index)
             (compiler_optimize.opt-global-mod-ref-call-mask
               (compiler_optimize.compiler-opt-global-shared-view addr-mod-ref)
-              symbols.write-a)))
-        13]
+              symbols.elem)
+            symbols.c))
+        36]
+      [(compiler_optimize.opt-global-mod-ref-mask-may-write?
+          (compiler_optimize.compiler-opt-global-shared-view addr-mod-ref.index)
+          (compiler_optimize.opt-global-mod-ref-call-mask
+            (compiler_optimize.compiler-opt-global-shared-view addr-mod-ref)
+            symbols.elem)
+          symbols.a)
+        37]
       ;; the packed row's capacity: one bit per stored global up to it...
       [(not
           (opt-mr-wide-index-built?
@@ -79113,16 +79143,17 @@
             1))
         32]
       [(not (= (opt-lp-preheader-cell-loads in-loop-store) 1)) 33]
-      ;; and with a cell address in the program, the refinement is withdrawn
-      ;; and the older loop-wide refusal stands for both cells
+      ;; and with mr_c's address in the program, only mr_c loses its bit: the
+      ;; loop still keeps mr_a's operand (the callee writes it) and still
+      ;; promotes mr_b
       [(not
           (=
             (opt-lp-loop-body-cell-operands
               (compiler_ir_types.compiler-ir-global-shared-view
                 via-a-addr-taken))
-            2))
+            1))
         34]
-      [(not (= (opt-lp-preheader-cell-loads via-a-addr-taken) 0)) 35]
+      [(not (= (opt-lp-preheader-cell-loads via-a-addr-taken) 1)) 35]
       [else 42])))
 
 ;; --- P20: frozen memory-class globals ----------------------------------------
@@ -80862,8 +80893,28 @@
           symbols.plain
           symbols.a)
         13]
-      ;; `GlobalAddr` withdraws the precondition and the table is not built
-      [addr.built? 14]
+      ;; SUM-1. `GlobalAddr og_c` no longer withdraws the table: the
+      ;; address-taken set shares one conservative mask that every row carries,
+      ;; so og_c answers "may write" from a function with no writes at all
+      ;; while its neighbours keep their own per-global verdicts.
+      [(not addr.built?) 14]
+      [(not
+          (opt-og-writes?
+            (compiler_optimize.compiler-opt-global-shared-view addr)
+            symbols.plain
+            symbols.c))
+        17]
+      [(opt-og-writes?
+          (compiler_optimize.compiler-opt-global-shared-view addr)
+          symbols.plain
+          symbols.a)
+        18]
+      [(not
+          (opt-og-writes?
+            (compiler_optimize.compiler-opt-global-shared-view addr)
+            symbols.mut-writer
+            symbols.a))
+        19]
       [else 42])))
 
 (define (compiler-optimize-licm-global-header-hoist-self-test) : i64
@@ -85568,14 +85619,14 @@
   (test.assert-i64-eq
     (compiler-optimize-licm-global-clean-call-self-test)
     42
-    "a callee the call-memory fixpoint proves writes no global storage stops blocking cell promotion, and a memory-clean one is admitted under the live-in budget; an unresolved callee, a GlobalAddr argument, and a memory-clean callee in an over-budget loop each still refuse"))
+    "a callee the call-memory fixpoint proves writes no global storage stops blocking cell promotion, and a memory-clean one is admitted under the live-in budget; an unresolved callee and a memory-clean callee in an over-budget loop each still refuse, and a GlobalAddr argument withdraws the promotion of that cell alone"))
 
 (test
   licm-global-cell-mod-ref
   (test.assert-i64-eq
     (compiler-optimize-licm-global-mod-ref-self-test)
     42
-    "the per-global mod-ref table names the cells a callee may write, carries them one call-graph edge, and lets a loop promote every OTHER cell across it; a pointer-writing and an extern callee refuse nothing, an indirect callee and a program-wide cell address refuse everything, an in-loop set! refuses only its own cell, and the packed row gives every stored global its own bit up to its capacity and one shared bit to the globals past it"))
+    "the per-global mod-ref table names the cells a callee may write, carries them one call-graph edge, and lets a loop promote every OTHER cell across it; a pointer-writing and an extern callee refuse nothing while no cell address exists, an indirect callee refuses everything, a cell whose ADDRESS the program takes is refused alone and its neighbours stay refined, an in-loop set! refuses only its own cell, and the packed row gives every stored global its own bit up to its capacity and one shared bit to the globals past it"))
 
 (test
   licm-frozen-global-box-chain
@@ -95266,13 +95317,13 @@
         empty.type-index
         empty.types
         empty.word-cell
-        (compiler_optimize.OptGlobalModRef true cell-index cell-writes)
+        (compiler_optimize.OptGlobalModRef true cell-index cell-writes 0)
         empty.frozen
         empty.nonneg
         empty.len-eq
         empty.len-eq-clean
         empty.arg-global
-        (compiler_optimize.OptGlobalObjModRef true obj-index obj-writes)
+        (compiler_optimize.OptGlobalObjModRef true obj-index obj-writes 0)
         empty.len-reset
         empty.content
         empty.len-ctors))))
@@ -99718,3 +99769,377 @@
   (test.assert-true
     (compiler-optimize-inline-global-store-shape-ok?)
     "the single-block shape tracer names its clause for a store body and each refusing neighbour, both whitelists admit the store, and the tiny-predicate band keeps its refusal"))
+
+;; --- SUM-1: the condensation walk, its budget, and the per-cell precondition -
+;;
+;; One program carrying the three call-graph shapes the walk has to tell apart:
+;; a LEAF CHAIN (top -> mid -> leaf), a DIAMOND (diamond -> {dl, dr} -> leaf)
+;; and a CYCLE (cyc_a <-> cyc_b). `leaf` and `cyc_b` each `set!` one global
+;; cell, so the answer for every function that reaches one is the global bit and
+;; the answer for the one function that reaches neither is exactly zero. The old
+;; Kleene iteration reached the same map by moving one fact one call edge per
+;; whole-program round; the condensation reaches it with one evaluation per
+;; acyclic component and one bounded iteration per cycle.
+(defstruct OptSum1Symbols
+  (cell i64)
+  (leaf i64)
+  (mid i64)
+  (top i64)
+  (dl i64)
+  (dr i64)
+  (diamond i64)
+  (cyc-a i64)
+  (cyc-b i64)
+  (pure i64))
+
+(define (opt-sum1-symbols) : OptSum1Symbols
+  (OptSum1Symbols
+    (opt-test-symbol "sum1_cell")
+    (opt-test-symbol "sum1_leaf")
+    (opt-test-symbol "sum1_mid")
+    (opt-test-symbol "sum1_top")
+    (opt-test-symbol "sum1_dl")
+    (opt-test-symbol "sum1_dr")
+    (opt-test-symbol "sum1_diamond")
+    (opt-test-symbol "sum1_cyc_a")
+    (opt-test-symbol "sum1_cyc_b")
+    (opt-test-symbol "sum1_pure")))
+
+(define (opt-sum1-store-instr [cell : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Store
+    cell
+    (compiler_ir_types.CompilerIrValue.I64 9)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-sum1-call-instr [dst : i64] [callee : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Call
+    dst
+    callee
+    (compiler_ir_types.CompilerIrCallArgs.Nil)
+    (compiler_ast_types.AstType.Unit)))
+
+(define (opt-sum1-function
+  [name : i64]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrFunction
+  (opt-call-memory-test-function
+    name
+    (compiler_ir_types.compiler-ir-param-seq-empty)
+    instrs))
+
+(define (opt-sum1-functions [symbols : OptSum1Symbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-sum1-function
+      symbols.top
+      (opt-test-instrs (opt-sum1-call-instr 5 symbols.mid)))
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-sum1-function
+        symbols.diamond
+        (opt-test-instrs
+          (opt-sum1-call-instr 5 symbols.dl)
+          (opt-sum1-call-instr 6 symbols.dr)))
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-sum1-function
+          symbols.mid
+          (opt-test-instrs (opt-sum1-call-instr 5 symbols.leaf)))
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-sum1-function
+            symbols.dl
+            (opt-test-instrs (opt-sum1-call-instr 5 symbols.leaf)))
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-sum1-function
+              symbols.dr
+              (opt-test-instrs (opt-sum1-call-instr 5 symbols.leaf)))
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (opt-sum1-function
+                symbols.leaf
+                (opt-test-instrs (opt-sum1-store-instr symbols.cell)))
+              (compiler_ir_types.compiler-ir-function-seq-prepend
+                (opt-sum1-function
+                  symbols.cyc-a
+                  (opt-test-instrs (opt-sum1-call-instr 5 symbols.cyc-b)))
+                (compiler_ir_types.compiler-ir-function-seq-prepend
+                  (opt-sum1-function
+                    symbols.cyc-b
+                    (opt-test-instrs
+                      (opt-sum1-call-instr 5 symbols.cyc-a)
+                      (opt-sum1-store-instr symbols.cell)))
+                  (compiler_ir_types.compiler-ir-function-seq-prepend
+                    (opt-sum1-function
+                      symbols.pure
+                      (opt-test-instrs
+                        (compiler_ir_types.CompilerIrInstr.Mov
+                          5
+                          (compiler_ir_types.CompilerIrValue.I64 1)
+                          (compiler_ast_types.AstType.I64))))
+                    (compiler_ir_types.compiler-ir-function-seq-empty)))))))))))
+
+(define (opt-sum1-call-memory [symbols : OptSum1Symbols]) : opt_i64_i64_map.Map
+  (compiler_optimize.opt-call-memory-build
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-sum1-functions
+      (compiler_optimize.compiler-opt-global-shared-view symbols))
+    32))
+
+;; The same walk with the VISIT BUDGET spent: every component is charged before
+;; it is entered, so nothing resolves and every function stays absent.
+(define (opt-sum1-call-memory-over-budget
+  [symbols : OptSum1Symbols]
+  [budget : i64]) : opt_i64_i64_map.Map
+  (compiler_optimize.opt-call-memory-build-over-plan
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_optimize.opt-summary-scc-plan-build
+      (opt-sum1-functions
+        (compiler_optimize.compiler-opt-global-shared-view symbols)))
+    (compiler_optimize.opt-call-memory-function-set
+      (opt-sum1-functions
+        (compiler_optimize.compiler-opt-global-shared-view symbols))
+      (opt_i64_i64_map.with-capacity 32))
+    0
+    32
+    4
+    budget))
+
+;; --- SUM-1: the PER-CELL address-taken precondition --------------------------
+;;
+;; `sum1_pc_open`'s address is taken and `sum1_pc_closed`'s is not. A write
+;; through an unknown pointer can reach the first and cannot reach the second,
+;; so the table is built for both: the open cell shares the conservative
+;; address-taken bit and the closed one keeps its own.
+(defstruct OptSum1CellSymbols
+  (closed i64)
+  (open i64)
+  (store i64)
+  (ptr i64)
+  (addr i64))
+
+(define (opt-sum1-cell-symbols) : OptSum1CellSymbols
+  (OptSum1CellSymbols
+    (opt-test-symbol "sum1_pc_closed")
+    (opt-test-symbol "sum1_pc_open")
+    (opt-test-symbol "sum1_pc_store")
+    (opt-test-symbol "sum1_pc_ptr")
+    (opt-test-symbol "sum1_pc_addr")))
+
+(define (opt-sum1-cell-globals [symbols : OptSum1CellSymbols]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 2)]
+    (begin
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.closed
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.open
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+
+(define (opt-sum1-cell-functions
+  [symbols : OptSum1CellSymbols]
+  [take-address? : bool]) : compiler_ir_types.CompilerIrFunctionSeq
+  (let
+    [tail : compiler_ir_types.CompilerIrFunctionSeq
+      (if take-address?
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-sum1-function
+            symbols.addr
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Mov
+                41
+                (compiler_ir_types.CompilerIrValue.GlobalAddr symbols.open)
+                (compiler_ast_types.AstType.U64))))
+          (compiler_ir_types.compiler-ir-function-seq-empty))
+        (compiler_ir_types.compiler-ir-function-seq-empty))]
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-sum1-function
+        symbols.store
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Store
+            symbols.closed
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))))
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-sum1-function
+          symbols.ptr
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.StorePtr
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.CompilerIrValue.I64 7)
+              (compiler_ast_types.AstType.U64))))
+        tail))))
+
+(define (opt-sum1-cell-mod-ref
+  [symbols : OptSum1CellSymbols]
+  [take-address? : bool]) : compiler_optimize.OptGlobalModRef
+  (let
+    [cells : compiler_optimize.OptGlobalCellSummary
+      (compiler_optimize.opt-global-cell-summary-build
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-sum1-cell-globals
+          (compiler_optimize.compiler-opt-global-shared-view symbols))
+        (opt-sum1-cell-functions
+          (compiler_optimize.compiler-opt-global-shared-view symbols)
+          take-address?))]
+    cells.mod-ref))
+
+(define (opt-sum1-cell-writes?
+  [mod-ref : compiler_optimize.OptGlobalModRef]
+  [function : i64]
+  [global : i64]) : bool
+  (compiler_optimize.opt-global-mod-ref-mask-may-write?
+    (compiler_optimize.compiler-opt-global-shared-view mod-ref.index)
+    (compiler_optimize.opt-global-mod-ref-call-mask
+      (compiler_optimize.compiler-opt-global-shared-view mod-ref)
+      function)
+    global))
+
+(define (compiler-optimize-sum1-summary-self-test) : i64
+  (let
+    [symbols : OptSum1Symbols (opt-sum1-symbols)]
+    [summaries : opt_i64_i64_map.Map
+      (opt-sum1-call-memory
+        (compiler_optimize.compiler-opt-global-shared-view symbols))]
+    [starved : opt_i64_i64_map.Map
+      (opt-sum1-call-memory-over-budget
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        0)]
+    [global-only : i64 (compiler_optimize.opt-call-memory-summary-add-global 0)]
+    [cells : OptSum1CellSymbols (opt-sum1-cell-symbols)]
+    [open-table : compiler_optimize.OptGlobalModRef
+      (opt-sum1-cell-mod-ref
+        (compiler_optimize.compiler-opt-global-shared-view cells)
+        true)]
+    [closed-table : compiler_optimize.OptGlobalModRef
+      (opt-sum1-cell-mod-ref
+        (compiler_optimize.compiler-opt-global-shared-view cells)
+        false)]
+    (cond
+      ;; the leaf chain: one evaluation per component, the store's bit reaching
+      ;; the top of the chain
+      [(not
+          (opt-call-memory-summary-is?
+            (compiler_optimize.compiler-opt-global-shared-view summaries)
+            symbols.leaf
+            global-only))
+        1]
+      [(not
+          (opt-call-memory-summary-is?
+            (compiler_optimize.compiler-opt-global-shared-view summaries)
+            symbols.mid
+            global-only))
+        2]
+      [(not
+          (opt-call-memory-summary-is?
+            (compiler_optimize.compiler-opt-global-shared-view summaries)
+            symbols.top
+            global-only))
+        3]
+      ;; the diamond: both arms and the join
+      [(not
+          (opt-call-memory-summary-is?
+            (compiler_optimize.compiler-opt-global-shared-view summaries)
+            symbols.dl
+            global-only))
+        4]
+      [(not
+          (opt-call-memory-summary-is?
+            (compiler_optimize.compiler-opt-global-shared-view summaries)
+            symbols.dr
+            global-only))
+        5]
+      [(not
+          (opt-call-memory-summary-is?
+            (compiler_optimize.compiler-opt-global-shared-view summaries)
+            symbols.diamond
+            global-only))
+        6]
+      ;; the cycle: the store inside it reaches BOTH members, which is the
+      ;; least fixed point and not an optimistic seed
+      [(not
+          (opt-call-memory-summary-is?
+            (compiler_optimize.compiler-opt-global-shared-view summaries)
+            symbols.cyc-a
+            global-only))
+        7]
+      [(not
+          (opt-call-memory-summary-is?
+            (compiler_optimize.compiler-opt-global-shared-view summaries)
+            symbols.cyc-b
+            global-only))
+        8]
+      ;; the function that reaches neither store is exactly zero
+      [(not
+          (opt-call-memory-summary-is?
+            (compiler_optimize.compiler-opt-global-shared-view summaries)
+            symbols.pure
+            0))
+        9]
+      ;; the visit budget: every component is charged before it is entered, so
+      ;; with none left every function stays ABSENT -- opaque, not "writes
+      ;; nothing"
+      [(opt_i64_i64_map.contains?
+          (& starved)
+          (compiler_ir_types.compiler-ir-symbol-id symbols.leaf))
+        10]
+      [(opt_i64_i64_map.contains?
+          (& starved)
+          (compiler_ir_types.compiler-ir-symbol-id symbols.cyc-a))
+        11]
+      [(opt_i64_i64_map.contains?
+          (& starved)
+          (compiler_ir_types.compiler-ir-symbol-id symbols.pure))
+        12]
+      ;; the per-cell precondition: the table is built although the program
+      ;; takes a cell's address
+      [(not open-table.built?) 13]
+      ;; the closed cell keeps its own verdict on both sides
+      [(not
+          (opt-sum1-cell-writes?
+            (compiler_optimize.compiler-opt-global-shared-view open-table)
+            cells.store
+            cells.closed))
+        14]
+      [(opt-sum1-cell-writes?
+          (compiler_optimize.compiler-opt-global-shared-view open-table)
+          cells.ptr
+          cells.closed)
+        15]
+      ;; ...while the OPEN cell is claimed by the pointer write and by nothing
+      ;; else: opaque for that cell, summarized for its neighbour
+      [(not
+          (opt-sum1-cell-writes?
+            (compiler_optimize.compiler-opt-global-shared-view open-table)
+            cells.ptr
+            cells.open))
+        16]
+      [(opt-sum1-cell-writes?
+          (compiler_optimize.compiler-opt-global-shared-view open-table)
+          cells.store
+          cells.open)
+        17]
+      ;; with no address taken anywhere the shared mask is 0 and the pointer
+      ;; write contributes nothing, which is the verdict the program-wide
+      ;; precondition produced
+      [(not closed-table.built?) 18]
+      [(opt-sum1-cell-writes?
+          (compiler_optimize.compiler-opt-global-shared-view closed-table)
+          cells.ptr
+          cells.closed)
+        19]
+      [(not
+          (opt-sum1-cell-writes?
+            (compiler_optimize.compiler-opt-global-shared-view closed-table)
+            cells.store
+            cells.closed))
+        20]
+      [else 42])))
+
+(test
+  sum1-summaries-over-the-condensation
+  (test.assert-i64-eq
+    (compiler-optimize-sum1-summary-self-test)
+    42
+    "the call-memory condensation gives a leaf chain, a diamond and a cycle the same summaries the whole-program iteration did, an exhausted visit budget leaves every function opaque rather than clean, and the per-cell address-taken precondition builds the cell mod-ref table for a program that takes one cell's address -- keeping that cell opaque while its neighbour stays summarized"))

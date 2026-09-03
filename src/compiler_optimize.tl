@@ -28496,6 +28496,7 @@
             (opt-licm-store-state-add-cell-writes
               provenance
               (opt-global-mod-ref-effect-mask
+                global-cells.mod-ref.addr-mask
                 (ir.compiler-ir-instr-effect
                   (compiler-opt-global-shared-view instr))))
             (opt-global-obj-effect-mask
@@ -113080,6 +113081,7 @@
       [(ir.CompilerIrInstr.TailCallIndirect _ _ _) (opt-global-mod-ref-any)]
       [_
         (opt-global-mod-ref-effect-mask
+          mod-ref.addr-mask
           (ir.compiler-ir-instr-effect (compiler-opt-global-shared-view instr)))])))
 
 ;; The global STORAGE one instruction may write (IAG-2's row).
@@ -140919,81 +140921,238 @@
               (opt_i64_i64_map.with-capacity 1))
             blocks)))]))
 
-(defenum OptCallMemoryBuildPass
-  (Pass opt_i64_i64_map.Map bool))
+;; --- SUM-1: the call-graph SCC plan the whole-program summaries iterate over -
+;;
+;; Every builder in this family is a MONOTONE TRANSFER OVER THE CALL GRAPH: a
+;; function's row is its own instructions' contribution joined with its direct
+;; callees' rows. Iterating that by re-walking EVERY body once per round costs
+;; (rounds x program), and the round count is the call-graph DEPTH, because a
+;; round reads the PREVIOUS round's map and so moves a fact exactly one call
+;; edge. Measured on the compiler's own program (17,220 reachable functions):
+;; 21 rounds, 303,265 function evaluations, of which 268,000 were re-evaluations
+;; of the 12,795 functions that REACH a cycle and can never resolve in that
+;; phase at all.
+;;
+;; Tarjan's condensation removes both costs at once. `opt-scc-compute` numbers
+;; the components in POP order and Tarjan pops a callee's component before its
+;; caller's, so ASCENDING COMPONENT ID IS A REVERSE-TOPOLOGICAL ORDER: when
+;; component C is reached, every component C calls is already final. A component
+;; that is one function with no self edge is therefore finished by ONE
+;; evaluation, and only a genuine cycle iterates -- over its own members, never
+;; over the program. The total work is linear in the program plus, for each
+;; cycle, (its members x its own rounds).
+;;
+;; This plan is the shared index/graph/condensation the builders read. Building
+;; it costs one call-only walk of the program (`opt-callgraph-build` looks at
+;; the four call arms and nothing else) plus Tarjan, both linear.
+(defstruct OptSummarySccPlan
+  (index OptFunctionIndex)
+  (graph OptCallGraph)
+  (scc OptSccResult)
+  ;; Function slots grouped by ascending component id; within a component the
+  ;; members are in ascending SLOT order, so every walk below is a function of
+  ;; the program text alone -- which the stage2 == stage3 fixpoint requires.
+  (members (__tl_dyn-array i64))
+  ;; `starts[c] .. starts[c + 1]` is component c's slice of `members`.
+  (starts (__tl_dyn-array i64))
+  ;; Number of components.
+  (count i64)
+  ;; Per-slot instruction count, summed once here so a builder's visit budget
+  ;; is charged in O(1) per component instead of by counting as it walks.
+  (instrs (__tl_dyn-array i64)))
 
-(define (opt-call-memory-build-pass-from
-  [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionSeq]
-  [current : opt_i64_i64_map.Map]
-  [function-set : opt_i64_i64_map.Map]
-  [out : opt_i64_i64_map.Map]
-  [changed : bool]
-  [index : i64]) : OptCallMemoryBuildPass
-  (if (>= index functions.len)
-    (OptCallMemoryBuildPass.Pass out changed)
-    (let
-      [func : ir.CompilerIrFunction
-        (compiler-opt-global-array-element-shared-view functions.slots index)]
-      (match (compiler-opt-global-shared-view func)
-        [(ir.CompilerIrFunction.Function name _ _ _ _)
-          (let
-            [name-id : i64 (ir.compiler-ir-symbol-id name)]
-            [next : opt_i64_i64_map.Map (compiler-opt-global-shared-view out)]
-            (match (opt_i64_i64_map.get (& current) name-id)
-              [(opt_i64_i64_map.LookupFound summary)
-                (begin
-                  (opt_i64_i64_map.insert-ref! (&mut next) name-id summary)
-                  (opt-call-memory-build-pass-from
-                    type-segment-bases
-                    functions
-                    (compiler-opt-global-shared-view current)
-                    (compiler-opt-global-shared-view function-set)
-                    next
-                    changed
-                    (+ index 1)))]
-              [(opt_i64_i64_map.LookupMissing)
-                (match (opt-call-memory-function-candidate
-                  type-segment-bases
-                  (compiler-opt-global-shared-view current)
-                  (compiler-opt-global-shared-view function-set)
-                  func)
-                  [(OptCallMemoryCandidate.Unresolved)
-                    (opt-call-memory-build-pass-from
-                      type-segment-bases
-                      functions
-                      current
-                      function-set
-                      next
-                      changed
-                      (+ index 1))]
-                  [(OptCallMemoryCandidate.Known summary)
-                    (begin
-                      (opt_i64_i64_map.insert-ref! (&mut next) name-id summary)
-                      (opt-call-memory-build-pass-from
-                        type-segment-bases
-                        functions
-                        current
-                        function-set
-                        next
-                        true
-                        (+ index 1)))])]))]))))
+(define (opt-summary-plan-block-instrs
+  [blocks : ir.CompilerIrBlockList]
+  [total : i64]) : i64
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) total]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (opt-summary-plan-block-instrs
+        (compiler-opt-box-shared-view rest)
+        (match (compiler-opt-global-shared-view block)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (+ total (ir.compiler-ir-instr-seq-count instrs))]))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64
+          (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+        [sum : i64 total]
+        [i : i64 0]
+        (begin
+          (while (< i count)
+            (begin
+              (match (ir.compiler-ir-block-seq-ref
+                (compiler-opt-global-shared-view seq)
+                i)
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (set! sum (+ sum (ir.compiler-ir-instr-seq-count instrs)))])
+              (set! i (+ i 1))))
+          sum))]))
 
-(define (opt-call-memory-build-pass
-  [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionSeq]
-  [current : opt_i64_i64_map.Map]
-  [function-set : opt_i64_i64_map.Map]
-  [out : opt_i64_i64_map.Map]
-  [changed : bool]) : OptCallMemoryBuildPass
-  (opt-call-memory-build-pass-from
-    type-segment-bases
-    functions
-    current
-    function-set
-    out
-    changed
-    0))
+(define (opt-summary-plan-function-instrs [func : ir.CompilerIrFunction]) : i64
+  (match func
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+      (opt-summary-plan-block-instrs blocks 0)]))
+
+;; The whole program's IR instruction count, walked at BLOCK granularity (one
+;; `instr-seq-count` per block, no per-instruction visit), which is what the
+;; builders below charge against the visit budget.
+(define (opt-summary-program-instrs [functions : ir.CompilerIrFunctionSeq]) : i64
+  (let
+    [total : i64 0]
+    [index : i64 0]
+    (begin
+      (while (< index functions.len)
+        (begin
+          (set!
+            total
+            (+
+              total
+              (opt-summary-plan-function-instrs
+                (compiler-opt-global-array-element-shared-view
+                  functions.slots
+                  index))))
+          (set! index (+ index 1))))
+      total)))
+
+(define (opt-summary-scc-plan-build [functions : ir.CompilerIrFunctionSeq]) : OptSummarySccPlan
+  (let
+    [index : OptFunctionIndex (opt-function-index-build functions)]
+    [graph : OptCallGraph
+      (opt-callgraph-build (compiler-opt-global-shared-view index))]
+    [scc : OptSccResult
+      (opt-scc-compute (compiler-opt-global-shared-view graph))]
+    [slots : i64 graph.count]
+    [components : i64 (array-length scc.order)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 (+ components 1))]
+    [cursor : (__tl_dyn-array i64) (__tl_make-array i64 (+ components 1))]
+    [members : (__tl_dyn-array i64) (__tl_make-array i64 (+ slots 1))]
+    [instrs : (__tl_dyn-array i64) (__tl_make-array i64 (+ slots 1))]
+    [i : i64 0]
+    (begin
+      (while (<= i components)
+        (begin
+          (set! (array-ref starts i) 0)
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (< i slots)
+        (let
+          [component : i64 (array-ref scc.scc-of i)]
+          (begin
+            (set!
+              (array-ref starts (+ component 1))
+              (+ (array-ref starts (+ component 1)) 1))
+            (set!
+              (array-ref instrs i)
+              (opt-summary-plan-function-instrs
+                (opt-function-index-at-slot
+                  (compiler-opt-global-shared-view index)
+                  i)))
+            (set! i (+ i 1)))))
+      (set! i 0)
+      (while (< i components)
+        (begin
+          (set!
+            (array-ref starts (+ i 1))
+            (+ (array-ref starts (+ i 1)) (array-ref starts i)))
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (<= i components)
+        (begin
+          (set! (array-ref cursor i) (array-ref starts i))
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (< i slots)
+        (let
+          [component : i64 (array-ref scc.scc-of i)]
+          (begin
+            (set! (array-ref members (array-ref cursor component)) i)
+            (set!
+              (array-ref cursor component)
+              (+ (array-ref cursor component) 1))
+            (set! i (+ i 1)))))
+      (OptSummarySccPlan index graph scc members starts components instrs))))
+
+(define (opt-summary-plan-name-id [plan : OptSummarySccPlan] [slot : i64]) : i64
+  (match (opt-function-index-at-slot
+    (compiler-opt-global-shared-view plan.index)
+    slot)
+    [(ir.CompilerIrFunction.Function name _ _ _ _)
+      (ir.compiler-ir-symbol-id name)]))
+
+;; A component iterates only when it is a genuine cycle: more than one member,
+;; or one member that calls itself. Everything else is finished by the single
+;; evaluation its reverse-topological position already makes final.
+(define (opt-summary-plan-component-cyclic?
+  [plan : OptSummarySccPlan]
+  [from : i64]
+  [to : i64]) : bool
+  (or
+    (> (- to from) 1)
+    (opt-callgraph-has-edge?
+      (compiler-opt-global-shared-view plan.graph)
+      (array-ref plan.members from)
+      (array-ref plan.members from))))
+
+;; How many instructions one component's own iteration will visit, charged
+;; against the builder's budget before the component is entered so the charge
+;; is paid whether or not the iteration settles early.
+(define (opt-summary-plan-component-cost
+  [plan : OptSummarySccPlan]
+  [from : i64]
+  [to : i64]
+  [rounds : i64]) : i64
+  (let
+    [total : i64 0]
+    [i : i64 from]
+    (begin
+      (while (< i to)
+        (begin
+          (set!
+            total
+            (+ total (array-ref plan.instrs (array-ref plan.members i))))
+          (set! i (+ i 1))))
+      (* total rounds))))
+
+;; The VISIT BUDGET, in instructions the whole-program summary builders are
+;; allowed to walk for one program. It replaces "cap the program size" with
+;; "cap the work": a builder charges each component it enters (its members'
+;; instructions times the rounds it may spend on them) and, once the budget is
+;; spent, leaves every remaining function UNRESOLVED -- which every consumer
+;; already reads as OPAQUE, exactly as it reads a recursive cycle the old
+;; two-phase builder never resolved. So an over-budget program degrades one
+;; function at a time to today's verdict instead of losing the whole table, and
+;; the degradation is a function of the program text alone (components are
+;; entered in condensation order and members in slot order), which the
+;; stage2 == stage3 fixpoint requires.
+;;
+;; The value is set so that the compiler's own program -- the largest TypeLisp
+;; program that exists, at about 1.5M IR instructions after inlining -- fits
+;; with room to spare, and a program an order of magnitude larger than that
+;; still terminates in bounded time rather than in (rounds x program).
+(define (opt-summary-visit-budget) : i64
+  64000000)
+
+;; The budget for the whole-program summaries this packet did NOT convert to a
+;; condensation walk: they are Kleene iterations that re-walk every body once
+;; per round, so their work is (rounds x program) with the round count bounded
+;; only by the call-graph depth -- 21 rounds on the compiler's own program. A
+;; program above this budget gets none of them, and every consumer already reads
+;; their absence as the pre-summary verdict: `direct-call-clean` keeps only the
+;; bits the call-memory condensation proves, the return-alias and owned-param
+;; tables stay empty (LICM provenance falls back to "no fact"), and P20/P-B/CK-1
+;; /CB-1/GAP-1/LGA-1 decline exactly as they do above the function-count gate.
+;; So the fallback is "unresolved = opaque", the same one a recursive cycle gets.
+;;
+;; The value admits every program whose whole IR is smaller than a quarter of a
+;; million instructions -- which is every benchmark in perf/ by more than an
+;; order of magnitude, and every program the old 1024-function gate admitted --
+;; and turns them off for the compiler's own 17,220-function program, whose
+;; 1.4M instructions would cost those iterations 4.4 s and 5.1 GB for tables
+;; that the census reports EMPTY on it (P-B finds no length family, so CB-1 and
+;; GAP-1 have nothing to read and LGA-1 has nothing to specialize).
+(define (opt-summary-round-visit-budget) : i64
+  262144)
 
 ;; Three runtime builtins have a memory footprint precise enough to summarize,
 ;; which lets a caller's cached load table survive them instead of being wiped:
@@ -141043,47 +141202,10 @@
       cbi.compiler-builtin-id-tl-mem-fill8
       (shl 1 0))))
 
-(define (opt-call-memory-build-fixed
-  [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionSeq]
-  [function-set : opt_i64_i64_map.Map]
-  [current : opt_i64_i64_map.Map]
-  [capacity : i64]
-  [remaining : i64]) : opt_i64_i64_map.Map
-  (if (<= remaining 0)
-    current
-    ;; Each round builds a fresh `out` and copies rows in per function name, so
-    ;; the builtin seeds are re-applied here as well as to the initial map --
-    ;; otherwise they would vanish after round one.
-    (match (opt-call-memory-build-pass
-      type-segment-bases
-      (compiler-opt-global-shared-view functions)
-      (compiler-opt-global-shared-view current)
-      (compiler-opt-global-shared-view function-set)
-      (opt-call-memory-seed-builtins (opt_i64_i64_map.with-capacity capacity))
-      false)
-      [(OptCallMemoryBuildPass.Pass next changed)
-        (if changed
-          (opt-call-memory-build-fixed
-            type-segment-bases
-            (compiler-opt-global-shared-view functions)
-            (compiler-opt-global-shared-view function-set)
-            next
-            capacity
-            (- remaining 1))
-          next)])))
-
-;; --- optimistic phase: least fixed point over the recursive residue ---------
+;; --- the condensation walk: least fixed point, component by component -------
 ;;
-;; The pass above is a WORKLIST over a DAG: it can only ever commit a function
-;; whose callees are already committed, so a call-graph CYCLE is unresolvable by
-;; construction and every function that reaches one stays absent from the map.
-;; That is the whole reason a self-recursive walker -- `qs-sort`, and most of a
-;; compiler written as recursive list walks -- reloads a descriptor word on
-;; every trip of the loop its own tail call becomes.
-;;
-;; The standard answer is to seed the cycle at the lattice BOTTOM and iterate up.
-;; What makes that sound here, spelled out against this code:
+;; The lattice and the transfer are unchanged from the two-phase builder this
+;; replaces:
 ;;
 ;;   THE LATTICE. A summary is a bit set (parameter bits 0..59, global, unknown,
 ;;   element). Order it by inclusion; join is `bit-or`; bottom is 0 ("writes
@@ -141112,193 +141234,240 @@
 ;;   approximate the writes of every terminating execution of the function. Any
 ;;   such execution performs finitely many nested calls, so its writes are
 ;;   covered by F^k(bottom) for some finite k, hence by the lfp. Iterating from
-;;   bottom and committing only a map the transfer REPRODUCES (`changed` false)
-;;   is what makes the committed map a genuine fixed point rather than an
-;;   optimistic guess.
+;;   bottom and committing only a map the transfer REPRODUCES is what makes the
+;;   committed map a genuine fixed point rather than an optimistic guess.
 ;;
-;; The budget is what keeps this honest. If the iteration has not stabilized
-;; within opt-call-memory-optimistic-rounds, the optimistic map is DISCARDED and
-;; the pessimistic one is committed unchanged -- so an over-budget program bails
-;; to exactly today's verdict (those functions stay absent, hence opaque) rather
-;; than shipping a non-fixed-point. The same fallback covers the defensive
-;; `Unresolved` arm below, which cannot fire: every function of the list is
-;; seeded, and `function-set` is built from that same list.
-(define (opt-call-memory-optimistic-rounds) : i64
+;; WHAT THE CONDENSATION CHANGES, AND WHY THE ANSWER IS THE SAME. Solving the
+;; system component by component in reverse-topological order computes the SAME
+;; least fixed point as solving it globally: a component's rows depend only on
+;; its own members and on components already final, so the global lfp restricted
+;; to a component is the lfp of the component's own system with those callees
+;; frozen -- which is what this walk computes. The old builder reached the same
+;; point in two phases (a DAG-only pass, then a bottom-seeded pass over the
+;; residue); an acyclic component here IS that DAG pass's verdict, computed with
+;; one evaluation instead of one per round, and a cyclic component here IS the
+;; residue pass, run over the cycle instead of over the whole program.
+;;
+;; THE ROUND CAP IS PER COMPONENT, and it is the old builder's global cap.
+;; Global iteration has to spend rounds propagating ACROSS components as well as
+;; inside them, so any program the old global cap settled, a per-component cap
+;; of the same size settles too -- the per-component iteration is the same
+;; iteration with the cross-component propagation already done. A component that
+;; does NOT settle inside the cap is left opaque, and only that component: the
+;; old builder discarded the whole residue map on the same event.
+(define (opt-call-memory-component-rounds) : i64
   4)
 
-;; Round zero: pessimistic rows copied through, residue rows at bottom.
-(define (opt-call-memory-seed-optimistic
-  [functions : ir.CompilerIrFunctionSeq]
-  [resolved : opt_i64_i64_map.Map]
-  [out : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
-  (let
-    [index : i64 0]
-    [next : opt_i64_i64_map.Map (compiler-opt-global-shared-view out)]
-    (begin
-      (while (< index functions.len)
-        (begin
-          (match (compiler-opt-global-array-element-shared-view
-            functions.slots
-            index)
-            [(ir.CompilerIrFunction.Function name _ _ _ _)
-              (let
-                [name-id : i64 (ir.compiler-ir-symbol-id name)]
-                [seed : i64
-                  (match (opt_i64_i64_map.get (& resolved) name-id)
-                    [(opt_i64_i64_map.LookupFound summary) summary]
-                    [(opt_i64_i64_map.LookupMissing) 0])]
-                (opt_i64_i64_map.insert-ref! (&mut next) name-id seed))])
-          (set! index (+ index 1))))
-      next)))
-
-(define (opt-call-memory-unresolved-count
-  [functions : ir.CompilerIrFunctionSeq]
-  [resolved : opt_i64_i64_map.Map]
-  [count : i64]) : i64
-  (let
-    [index : i64 0]
-    [total : i64 count]
-    (begin
-      (while (< index functions.len)
-        (begin
-          (match (compiler-opt-global-array-element-shared-view
-            functions.slots
-            index)
-            [(ir.CompilerIrFunction.Function name _ _ _ _)
-              (match (opt_i64_i64_map.get
-                (& resolved)
-                (ir.compiler-ir-symbol-id name))
-                [(opt_i64_i64_map.LookupFound _) unit]
-                [(opt_i64_i64_map.LookupMissing) (set! total (+ total 1))])])
-          (set! index (+ index 1))))
-      total)))
-
-;; `out`, whether any residue row moved this round, and whether the round is
-;; usable at all (see the `Unresolved` arm).
-(defenum OptCallMemoryOptimisticPass
-  (Pass opt_i64_i64_map.Map bool bool))
-
-(define (opt-call-memory-optimistic-pass-from
-  [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionSeq]
-  [resolved : opt_i64_i64_map.Map]
-  [current : opt_i64_i64_map.Map]
-  [function-set : opt_i64_i64_map.Map]
-  [out : opt_i64_i64_map.Map]
-  [changed : bool]
-  [usable? : bool]
-  [index : i64]) : OptCallMemoryOptimisticPass
-  (if (>= index functions.len)
-    (OptCallMemoryOptimisticPass.Pass out changed usable?)
+;; SUM-1's per-function scratch, as three primitives over a RAW arena handle
+;; (0 = "no scratch", every primitive a no-op, so a caller with no arena to lend
+;; runs exactly as before). A builder that allocates a throwaway environment per
+;; function per round takes a mark once, and rewinds to it after each function:
+;; the bump allocator frees nothing on its own, so without this the builder's
+;; peak is (evaluations x per-function scratch). Nothing but an i64 (a summary,
+;; a mask, an owner code) is ever read after the rewind.
+(define (opt-summary-arena-mark [scratch : i64]) : i64
+  (if (= scratch 0)
+    0
     (let
-      [func : ir.CompilerIrFunction
-        (compiler-opt-global-array-element-shared-view functions.slots index)]
-      (match (compiler-opt-global-shared-view func)
-        [(ir.CompilerIrFunction.Function name _ _ _ _)
-          (let
-            [name-id : i64 (ir.compiler-ir-symbol-id name)]
-            [next : opt_i64_i64_map.Map (compiler-opt-global-shared-view out)]
-            (match (opt_i64_i64_map.get (& resolved) name-id)
-              ;; A pessimistically resolved row was computed from callees that
-              ;; were themselves already committed, so no residue row can reach
-              ;; it: it is a constant of this iteration.
-              [(opt_i64_i64_map.LookupFound summary)
-                (begin
-                  (opt_i64_i64_map.insert-ref! (&mut next) name-id summary)
-                  (opt-call-memory-optimistic-pass-from
-                    type-segment-bases
-                    functions
-                    resolved
-                    (compiler-opt-global-shared-view current)
-                    (compiler-opt-global-shared-view function-set)
-                    next
-                    changed
-                    usable?
-                    (+ index 1)))]
-              [(opt_i64_i64_map.LookupMissing)
-                (let
-                  [previous : i64
-                    (match (opt_i64_i64_map.get (& current) name-id)
-                      [(opt_i64_i64_map.LookupFound value) value]
-                      [(opt_i64_i64_map.LookupMissing) 0])]
-                  (match (opt-call-memory-function-candidate
-                    type-segment-bases
-                    (compiler-opt-global-shared-view current)
-                    (compiler-opt-global-shared-view function-set)
-                    func)
-                    ;; Unreachable in practice; taking it abandons the round.
-                    [(OptCallMemoryCandidate.Unresolved)
-                      (OptCallMemoryOptimisticPass.Pass next changed false)]
-                    [(OptCallMemoryCandidate.Known summary)
-                      (begin
-                        (opt_i64_i64_map.insert-ref!
-                          (&mut next)
-                          name-id
-                          summary)
-                        (opt-call-memory-optimistic-pass-from
-                          type-segment-bases
-                          functions
-                          resolved
-                          current
-                          function-set
-                          next
-                          (or changed (not (= summary previous)))
-                          usable?
-                          (+ index 1)))]))]))]))))
+      [enclosing : arena.Arena (arena.current)]
+      [_switch : unit
+        (unsafe
+          (arena.set! (arena.Arena scratch)))]
+      [mark : i64 (arena.mark-raw-handle (arena.mark))]
+      (begin
+        ;; Arena handles are stable roots after #6285; rewinding cannot require
+        ;; recapturing and republishing a newer physical head.
+        (unsafe
+          (arena.set! enclosing))
+        mark))))
 
-(define (opt-call-memory-optimistic-pass
+(define (opt-summary-arena-enter [scratch : i64]) : i64
+  (if (= scratch 0)
+    0
+    (let
+      [enclosing : i64 (arena.raw-handle (arena.current))]
+      (begin
+        (unsafe
+          (arena.set! (arena.Arena scratch)))
+        enclosing))))
+
+(define (opt-summary-arena-leave! [enclosing : i64]) : unit
+  (if (= enclosing 0)
+    unit
+    (unsafe
+      (arena.set! (arena.Arena enclosing)))))
+
+(define (opt-summary-arena-rewind! [scratch : i64] [mark : i64]) : unit
+  (if (= scratch 0)
+    unit
+    (let
+      [enclosing : arena.Arena (arena.current)]
+      (unsafe
+        (arena.set! (arena.Arena scratch))
+        (arena.rewind (arena.ArenaMark mark))
+        (arena.set! enclosing)))))
+
+;; The candidate as a plain code: -1 for unresolved, otherwise the summary. The
+;; summary is a bit set over bits 0..61, so it is never negative and the two
+;; cases cannot collide.
+(define (opt-call-memory-candidate-code
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionSeq]
-  [resolved : opt_i64_i64_map.Map]
-  [current : opt_i64_i64_map.Map]
+  [summaries : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
-  [out : opt_i64_i64_map.Map]
-  [changed : bool]
-  [usable? : bool]) : OptCallMemoryOptimisticPass
-  (opt-call-memory-optimistic-pass-from
+  [func : ir.CompilerIrFunction]) : i64
+  (match (opt-call-memory-function-candidate
     type-segment-bases
-    functions
-    resolved
-    current
+    summaries
     function-set
-    out
-    changed
-    usable?
-    0))
+    func)
+    [(OptCallMemoryCandidate.Unresolved) (- 0 1)]
+    [(OptCallMemoryCandidate.Known summary) summary]))
 
-(define (opt-call-memory-optimistic-fixed
+;; One function's candidate, computed in a scratch arena that is rewound before
+;; the next one. The evaluation allocates a source map, a root environment, an
+;; element map and a var-type environment per function per round; none of that
+;; is read after the i64 code is extracted, and the bump allocator frees nothing
+;; on its own, so without the rewind the builder's peak is (evaluations x
+;; per-function scratch) -- 5.0 GB on the compiler's own program. `scratch` is 0
+;; when the caller has no arena to lend, in which case the evaluation runs in
+;; the enclosing arena exactly as before.
+(define (opt-call-memory-candidate-code-reclaiming
+  [scratch : i64]
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionSeq]
-  [resolved : opt_i64_i64_map.Map]
+  [summaries : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
-  [current : opt_i64_i64_map.Map]
-  [capacity : i64]
-  [remaining : i64]) : opt_i64_i64_map.Map
-  (if (<= remaining 0)
-    resolved
-    (match (opt-call-memory-optimistic-pass
+  [func : ir.CompilerIrFunction]) : i64
+  (if (= scratch 0)
+    (opt-call-memory-candidate-code
       type-segment-bases
-      (compiler-opt-global-shared-view functions)
-      (compiler-opt-global-shared-view resolved)
-      (compiler-opt-global-shared-view current)
-      (compiler-opt-global-shared-view function-set)
-      (opt-call-memory-seed-builtins (opt_i64_i64_map.with-capacity capacity))
-      false
-      true)
-      [(OptCallMemoryOptimisticPass.Pass next changed usable?)
-        (if (not usable?)
-          resolved
-          (if changed
-            (opt-call-memory-optimistic-fixed
-              type-segment-bases
-              functions
-              resolved
-              function-set
-              next
-              capacity
-              (- remaining 1))
-            ;; The transfer reproduced this map: it is a fixed point, commit it.
-            next))])))
+      summaries
+      function-set
+      func)
+    (let
+      [enclosing : arena.Arena (arena.current)]
+      [_switch : unit
+        (unsafe
+          (arena.set! (arena.Arena scratch)))]
+      [mark : arena.ArenaMark (arena.mark)]
+      [code : i64
+        (opt-call-memory-candidate-code
+          type-segment-bases
+          summaries
+          function-set
+          func)]
+      (begin
+        ;; Arena handles are stable roots after #6285; rewinding cannot require
+        ;; recapturing and republishing a newer physical head.
+        (unsafe
+          (arena.rewind mark)
+          (arena.set! enclosing))
+        code))))
+
+(define (opt-call-memory-build-over-plan
+  [type-segment-bases : i64]
+  [plan : OptSummarySccPlan]
+  [function-set : opt_i64_i64_map.Map]
+  [scratch : i64]
+  [capacity : i64]
+  [cycle-rounds : i64]
+  [visit-budget : i64]) : opt_i64_i64_map.Map
+  (let
+    [current : opt_i64_i64_map.Map
+      (opt-call-memory-seed-builtins (opt_i64_i64_map.with-capacity capacity))]
+    [component : i64 0]
+    [budget : i64 visit-budget]
+    (begin
+      (while (< component plan.count)
+        (let
+          [from : i64 (array-ref plan.starts component)]
+          [to : i64 (array-ref plan.starts (+ component 1))]
+          [cyclic? : bool
+            (opt-summary-plan-component-cyclic?
+              (compiler-opt-global-shared-view plan)
+              from
+              to)]
+          [cap : i64
+            (if cyclic?
+              cycle-rounds
+              1)]
+          [cost : i64
+            (opt-summary-plan-component-cost
+              (compiler-opt-global-shared-view plan)
+              from
+              to
+              cap)]
+          [ok : bool (<= cost budget)]
+          [settled : bool false]
+          [rounds : i64 0]
+          [i : i64 from]
+          (begin
+            (set! budget (- budget cost))
+            ;; Seed every member at the lattice bottom, which is also what makes
+            ;; the members visible to each other: no member can be UNRESOLVED
+            ;; because of another member of its own component.
+            (while (< i to)
+              (begin
+                (opt_i64_i64_map.insert-ref!
+                  (&mut current)
+                  (opt-summary-plan-name-id
+                    (compiler-opt-global-shared-view plan)
+                    (array-ref plan.members i))
+                  0)
+                (set! i (+ i 1))))
+            (while (and ok (not settled) (< rounds cap))
+              (let
+                [changed : bool false]
+                [j : i64 from]
+                (begin
+                  (while (and ok (< j to))
+                    (let
+                      [slot : i64 (array-ref plan.members j)]
+                      [id : i64
+                        (opt-summary-plan-name-id
+                          (compiler-opt-global-shared-view plan)
+                          slot)]
+                      [previous : i64
+                        (opt_i64_i64_map.get-value-or (& current) id 0)]
+                      [code : i64
+                        (opt-call-memory-candidate-code-reclaiming
+                          scratch
+                          type-segment-bases
+                          (compiler-opt-global-shared-view current)
+                          (compiler-opt-global-shared-view function-set)
+                          (opt-function-index-at-slot
+                            (compiler-opt-global-shared-view plan.index)
+                            slot))]
+                      (begin
+                        (if (< code 0)
+                          (set! ok false)
+                          (begin
+                            (if (= code previous)
+                              unit
+                              (set! changed true))
+                            (opt_i64_i64_map.insert-ref! (&mut current) id code)))
+                        (set! j (+ j 1)))))
+                  (set! rounds (+ rounds 1))
+                  (if (or (not cyclic?) (not changed))
+                    (set! settled true)
+                    unit))))
+            (if (and ok settled)
+              unit
+              ;; Opaque: drop every seeded row so a caller reads the component
+              ;; exactly as it reads an unresolved recursive cycle today.
+              (let
+                [k : i64 from]
+                (while (< k to)
+                  (let
+                    [_removed : bool
+                      (opt_i64_i64_map.remove-ok?
+                        (opt_i64_i64_map.remove-ref!
+                          (&mut current)
+                          (opt-summary-plan-name-id
+                            (compiler-opt-global-shared-view plan)
+                            (array-ref plan.members k))))]
+                    (set! k (+ k 1))))))
+            (set! component (+ component 1)))))
+      current)))
 
 (define (opt-call-memory-build
   [type-segment-bases : i64]
@@ -141309,35 +141478,20 @@
       (opt-call-memory-function-set
         (compiler-opt-global-shared-view functions)
         (opt_i64_i64_map.with-capacity capacity))]
-    [resolved : opt_i64_i64_map.Map
-      (opt-call-memory-build-fixed
+    [plan : OptSummarySccPlan (opt-summary-scc-plan-build functions)]
+    [scratch : arena.Arena (arena.make)]
+    [result : opt_i64_i64_map.Map
+      (opt-call-memory-build-over-plan
         type-segment-bases
-        (compiler-opt-global-shared-view functions)
+        (compiler-opt-global-shared-view plan)
         (compiler-opt-global-shared-view function-set)
-        (opt-call-memory-seed-builtins (opt_i64_i64_map.with-capacity capacity))
+        (arena.raw-handle scratch)
         capacity
-        (+
-          (opt-function-seq-count (compiler-opt-global-shared-view functions))
-          1))]
-    (if (=
-      (opt-call-memory-unresolved-count
-        (compiler-opt-global-shared-view functions)
-        (compiler-opt-global-shared-view resolved)
-        0)
-      0)
-      resolved
-      (opt-call-memory-optimistic-fixed
-        type-segment-bases
-        (compiler-opt-global-shared-view functions)
-        (compiler-opt-global-shared-view resolved)
-        (compiler-opt-global-shared-view function-set)
-        (opt-call-memory-seed-optimistic
-          (compiler-opt-global-shared-view functions)
-          (compiler-opt-global-shared-view resolved)
-          (opt-call-memory-seed-builtins
-            (opt_i64_i64_map.with-capacity capacity)))
-        capacity
-        (opt-call-memory-optimistic-rounds)))))
+        (opt-call-memory-component-rounds)
+        (opt-summary-visit-budget))]
+    (begin
+      (arena.destroy-safe! scratch)
+      result)))
 
 ;; Prove which globals are compile-time constants so their value can be
 ;; substituted for the global at its uses. The win is twofold: (a) every global
@@ -141923,7 +142077,89 @@
   ;; Dotted stdlib imports can leave small programs with more pre-prune reachable
   ;; functions than the old 64-function gate, even when the final program is still
   ;; tiny. Keep the fixpoint summary pass bounded, but high enough for those cases.
+  ;;
+  ;; SUM-1 asked for this to be raised to cover the compiler's own 17,220-function
+  ;; program, ONCE the builders scale and the opt2 self-compile wall stays within
+  ;; +3%. The builders were made to scale (see opt-summary-scc-plan-build and the
+  ;; condensation walks below: call-memory went from 21 whole-program rounds and
+  ;; 5.0 GB to one pass per component and 0 GB; P18 and IAG-2 went from a Kleene
+  ;; iteration to an exact one-pass solve), and the visit budgets below cap what
+  ;; is left. With ALL of that in place, raising this constant to 65536 still
+  ;; measured +8.4% opt2 self-compile wall (22.33 s -> 24.19 s) and +3.1% opt2
+  ;; self-compile Ir, against a self-compile code-quality change of +0.1% -- the
+  ;; per-global tables ARE built and LICM refuses 8,609 fewer candidates, but the
+  ;; compiler's own hot path does not read them. So the raise is not taken: the
+  ;; condition SUM-1 itself attaches to it is not met. Raising it is now a
+  ;; one-constant change on top of builders that no longer cost (rounds x
+  ;; program).
   1024)
+
+;; SUM-1 observability: one line per whole-program summary saying whether it was
+;; BUILT or DECLINED and, when declined, which precondition turned it down. On
+;; the same flag `--trace-passes` sets and suppressed in the inliner's throwaway
+;; measurement runs exactly as every other optimizer tracer is, so an ordinary
+;; compile pays one boolean test per summary per program.
+(define (opt-summary-trace-built! [name : String] [functions : i64]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (io.print-error
+      (str_cat.str-cat
+        "summary|"
+        (compiler-opt-global-shared-view name)
+        "|built|functions="
+        (string.int->string functions)
+        "\n"))
+    unit))
+
+(define (opt-summary-trace-declined!
+  [name : String]
+  [reason : String]
+  [functions : i64]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (io.print-error
+      (str_cat.str-cat
+        "summary|"
+        (compiler-opt-global-shared-view name)
+        "|declined|reason="
+        (compiler-opt-global-shared-view reason)
+        "|functions="
+        (string.int->string functions)
+        "\n"))
+    unit))
+
+;; The two preconditions the per-global tables share, reported once per program
+;; so the declined lines below can be read against them.
+;; One line per program with the two numbers every gate below reads. The
+;; instruction census is walked INSIDE the flag guard: a program the
+;; function-count gate has already turned down never pays for a number no gate
+;; will read, so an over-limit compile is exactly as expensive as it was.
+(define (opt-summary-trace-program!
+  [count : i64]
+  [functions : ir.CompilerIrFunctionSeq]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (io.print-error
+      (str_cat.str-cat
+        "summary|program|functions="
+        (string.int->string count)
+        "|instrs="
+        (string.int->string (opt-summary-program-instrs functions))
+        "\n"))
+    unit))
+
+(define (opt-summary-trace-cells!
+  [globals : i64]
+  [addr-taken : i64]
+  [functions : i64]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (io.print-error
+      (str_cat.str-cat
+        "summary|global-cells|globals="
+        (string.int->string globals)
+        "|addr-taken="
+        (string.int->string addr-taken)
+        "|functions="
+        (string.int->string functions)
+        "\n"))
+    unit))
 
 ;; Every function whose call-memory summary is exactly 0 writes no memory at
 ;; all: no parameter-rooted write (bits 0..59), no global storage write
@@ -142076,6 +142312,15 @@
           (compiler-opt-global-shared-view functions)
           capacity)
         (opt_i64_i64_map.with-capacity 1))]
+    ;; The SYNTACTIC clean map is a Kleene iteration that re-walks every body
+    ;; per round, so it rides the round budget; the call-memory union below does
+    ;; not, because the condensation already resolved it. Above the budget the
+    ;; clean map is therefore exactly what call-memory proves and nothing more,
+    ;; which is a SUBSET of today's verdict -- never a relaxation.
+    [rounds? : bool
+      (<=
+        (opt-summary-program-instrs (compiler-opt-global-shared-view functions))
+        (opt-summary-round-visit-budget))]
     ;; `call-memory` is built first so the clean map can union in its
     ;; provably-write-nothing leaves. `build-direct-call-clean` is the level>=2
     ;; gate, so opt0/opt1 keep an empty map and stay byte-identical.
@@ -142084,15 +142329,18 @@
         (opt-loop-bce-direct-call-clean-add-memory-clean
           (compiler-opt-global-shared-view functions)
           (compiler-opt-global-shared-view call-memory)
-          (opt-loop-bce-direct-call-clean-map
-            (compiler-opt-global-shared-view functions)
-            capacity))
+          (if rounds?
+            (opt-loop-bce-direct-call-clean-map
+              (compiler-opt-global-shared-view functions)
+              capacity)
+            (opt_i64_i64_map.with-capacity capacity)))
         (opt_i64_i64_map.with-capacity 1))]
     ;; The return-alias table rides the same level>=2 gate as
-    ;; `direct-call-clean`: it feeds LICM provenance only, and leaving it empty
-    ;; below that level keeps opt0/opt1 byte-identical.
+    ;; `direct-call-clean`, plus the round budget: its `fresh` half is another
+    ;; per-round program walk. It feeds LICM provenance only, and leaving it
+    ;; empty below either gate keeps those compiles byte-identical.
     [return-alias : opt_i64_i64_map.Map
-      (if build-direct-call-clean
+      (if (and build-direct-call-clean rounds?)
         (opt-licm-return-alias-map functions capacity)
         (opt_i64_i64_map.with-capacity 1))]
     (OptLoopBceSummaries
@@ -142201,22 +142449,53 @@
   [reachable-functions : ir.CompilerIrFunctionSeq]
   [level : i64]) : OptLoopBceSummaries
   (let
-    [capacity : i64
-      (opt-function-index-capacity
-        (opt-function-seq-count
-          (compiler-opt-global-shared-view reachable-functions)))]
+    [count : i64
+      (opt-function-seq-count
+        (compiler-opt-global-shared-view reachable-functions))]
+    [_census : unit
+      (opt-summary-trace-program!
+        count
+        (compiler-opt-global-shared-view reachable-functions))]
+    ;; Only the programs the function-count gate admits are measured: above it
+    ;; every summary is declined on the count alone and the census would be a
+    ;; whole-program walk nothing reads.
+    [instrs : i64
+      (if (<= count (opt-loop-bce-summary-function-limit))
+        (opt-summary-program-instrs
+          (compiler-opt-global-shared-view reachable-functions))
+        0)]
+    [capacity : i64 (opt-function-index-capacity count)]
     [base-unowned : OptLoopBceSummaries
       (opt-loop-bce-summaries-set-const-divisors
-        (if (<=
-          (opt-function-seq-count
-            (compiler-opt-global-shared-view reachable-functions))
-          (opt-loop-bce-summary-function-limit))
-          (opt-loop-bce-build-summaries-with-direct-call-clean
-            type-segment-bases
-            (compiler-opt-global-shared-view reachable-functions)
-            (>= level 2)
-            (>= level 1))
-          (opt-loop-bce-empty-summaries))
+        ;; SUM-1. Above the visit budget the family is built for the LEVEL-2
+        ;; pipeline only. Measured on the compiler's own program: the three
+        ;; level-1 members (argc-return, length-clean, call-memory) cost
+        ;; +3.0e9 Ir on an opt1 self-compile -- 3.4% of the whole compile --
+        ;; while the level-1 pipeline's only consumers of them are load-CSE's
+        ;; direct-call summary and the block-local bounds walk, which returned
+        ;; a fraction of that. The level-2 pipeline, which runs LICM, the
+        ;; loop-scope cell promotion and the IAG-2 header hoists, is where the
+        ;; family is actually read. Below the budget nothing moves, so every
+        ;; program the old gate admitted is compiled exactly as before at every
+        ;; level.
+        (if (and
+          (<= count (opt-loop-bce-summary-function-limit))
+          (or (>= level 2) (<= instrs (opt-summary-round-visit-budget))))
+          (begin
+            (opt-summary-trace-built! "call-family" count)
+            (opt-loop-bce-build-summaries-with-direct-call-clean
+              type-segment-bases
+              (compiler-opt-global-shared-view reachable-functions)
+              (>= level 2)
+              (>= level 1)))
+          (begin
+            (opt-summary-trace-declined!
+              "call-family"
+              (if (> count (opt-loop-bce-summary-function-limit))
+                "function-limit"
+                "visit-budget-level1")
+              count)
+            (opt-loop-bce-empty-summaries)))
         (if (>= level 2)
           (opt-const-divisors-build
             (compiler-opt-global-shared-view globals)
@@ -142227,18 +142506,30 @@
         (compiler-opt-global-shared-view base-unowned)
         (if (and
           (>= level 2)
+          (<= count (opt-loop-bce-summary-function-limit))
           (<=
-            (opt-function-seq-count
+            (opt-summary-program-instrs
               (compiler-opt-global-shared-view reachable-functions))
-            (opt-loop-bce-summary-function-limit)))
-          (opt-owned-param-map
-            type-segment-bases
-            (compiler-opt-global-shared-view globals)
-            (compiler-opt-global-shared-view externs)
-            (compiler-opt-global-shared-view reachable-functions)
-            (compiler-opt-global-shared-view base-unowned.return-alias)
-            capacity)
-          (opt_i64_i64_map.with-capacity 1)))]
+            (opt-summary-round-visit-budget)))
+          (begin
+            (opt-summary-trace-built! "owned-params" count)
+            (opt-owned-param-map
+              type-segment-bases
+              (compiler-opt-global-shared-view globals)
+              (compiler-opt-global-shared-view externs)
+              (compiler-opt-global-shared-view reachable-functions)
+              (compiler-opt-global-shared-view base-unowned.return-alias)
+              capacity))
+          (begin
+            (if (>= level 2)
+              (opt-summary-trace-declined!
+                "owned-params"
+                (if (> count (opt-loop-bce-summary-function-limit))
+                  "function-limit"
+                  "visit-budget")
+                count)
+              unit)
+            (opt_i64_i64_map.with-capacity 1))))]
     (opt-loop-bce-summaries-set-global-cell
       (compiler-opt-global-shared-view base)
       (if (>= level 2)
@@ -143453,13 +143744,53 @@
   ;; it is false.
   (index opt_i64_i64_map.Map)
   ;; function symbol id -> that function's packed cell-write set. Every
-  ;; function of the program has a row; an absent name is an extern.
-  (writes opt_i64_i64_map.Map))
+  ;; function of the program has a row; an absent name is an extern, which
+  ;; writes exactly `addr-mask`.
+  (writes opt_i64_i64_map.Map)
+  ;; SUM-1. The bit that stands for "some cell whose ADDRESS THE PROGRAM TAKES",
+  ;; or 0 when the program takes none. See opt-global-mod-ref-addr-bit.
+  (addr-mask i64))
 
 ;; One bit per directly-stored global; bit 62 is the "any cell" marker, so a
-;; program with more `Store` targets than this gets no table.
+;; program with more `Store` targets than this gets no table. When the program
+;; takes the address of a cell, bit 61 is reserved for the whole address-taken
+;; set and the per-global range shrinks to 0..60.
 (define (opt-global-mod-ref-limit) : i64
   62)
+
+;; --- SUM-1: the address-taken precondition, made PER CELL ---------------------
+;;
+;; The header's second bullet argues: `CompilerIrValue.GlobalAddr` is the only
+;; IR value form that produces a cell address, so when the program's
+;; address-taken set is EMPTY no pointer can name a cell and no `StorePtr`,
+;; `CopyBytes`, vector store, syscall or extern callee reaches one. That
+;; argument is about ONE cell at a time and was only ever applied program-wide.
+;;
+;; PER CELL. A global's cell is its own statically allocated object, named by
+;; its symbol and by nothing else; no IR operation derives one cell's address
+;; from another's (address arithmetic on a cell address stays inside that cell's
+;; own object -- the same assumption the program-wide reading already makes when
+;; it holds heap storage disjoint from every cell). So the set of cells that any
+;; pointer VALUE in the program can name is exactly the set of globals whose
+;; address is taken: a cell whose address is never taken cannot be reached
+;; through a pointer even when another cell's can.
+;;
+;; So a pointer write, a syscall and an extern callee contribute exactly "some
+;; address-taken cell" and nothing else, and the whole address-taken set shares
+;; ONE bit -- those cells are simply not refined, which is precisely the verdict
+;; the whole program used to get. Every other cell keeps its own bit and its own
+;; verdict. When the address-taken set is empty the shared mask is 0, every bit
+;; assignment is the one the old precondition produced, and every mask is
+;; identical -- so a program that satisfied the program-wide precondition is
+;; compiled exactly as before.
+(define (opt-global-mod-ref-addr-bit) : i64
+  61)
+
+;; The per-global bit range: one narrower when bit 61 is reserved above.
+(define (opt-global-mod-ref-store-limit [addr-mask : i64]) : i64
+  (if (= addr-mask 0)
+    (opt-global-mod-ref-limit)
+    (opt-global-mod-ref-addr-bit)))
 
 (define (opt-global-mod-ref-any) : i64
   (shl 1 62))
@@ -143471,7 +143802,8 @@
   (OptGlobalModRef
     false
     (opt_i64_i64_map.with-capacity 1)
-    (opt_i64_i64_map.with-capacity 1)))
+    (opt_i64_i64_map.with-capacity 1)
+    0))
 
 ;; The bit that stands for g's cell, or 0 when the program never stores g.
 (define (opt-global-mod-ref-cell-bit [index : opt_i64_i64_map.Map] [name : i64]) : i64
@@ -143509,7 +143841,9 @@
       (& mod-ref.writes)
       (ir.compiler-ir-symbol-id name))
       [(opt_i64_i64_map.LookupFound mask) mask]
-      [(opt_i64_i64_map.LookupMissing) 0])))
+      ;; An extern has no IR body, so it performs no `Store`; the only cells it
+      ;; can reach are the ones a pointer can name.
+      [(opt_i64_i64_map.LookupMissing) mod-ref.addr-mask])))
 
 ;; The cells a `Store name` writes: exactly name's, when there is a table.
 (define (opt-global-mod-ref-instr-store-mask
@@ -143565,21 +143899,62 @@
 ;; counts the globals some `Store` names, IAG-2's counts the non-scalar ones.
 (define (opt-global-mod-ref-overflow-bit
   [globals : ir.CompilerIrGlobalSeq]
-  [stores : opt_i64_i64_map.Map]) : i64
+  [stores : opt_i64_i64_map.Map]
+  [addr-mask : i64]) : i64
   (if (>
     (opt-global-mod-ref-store-count
       (compiler-opt-global-shared-view globals)
       (compiler-opt-global-shared-view stores)
       0
       0)
-    (opt-global-mod-ref-limit))
-    (- (opt-global-mod-ref-limit) 1)
+    (opt-global-mod-ref-store-limit addr-mask))
+    (- (opt-global-mod-ref-store-limit addr-mask) 1)
     (- 0 1)))
+
+;; Bit 61 stands for every cell whose address the program takes, so the mask is
+;; that one bit -- or 0 when the program takes none, which is what keeps a
+;; program under the old precondition bit-identical.
+(define (opt-global-mod-ref-addr-mask [addr-taken : opt_i64_i64_map.Map]) : i64
+  (if (= (opt_i64_i64_map.len (& addr-taken)) 0)
+    0
+    (shl 1 (opt-global-mod-ref-addr-bit))))
+
+;; Give every address-taken global the shared bit, so a query for one of them
+;; reads the same conservative row a pointer write contributes.
+(define (opt-global-mod-ref-index-addr-taken
+  [globals : ir.CompilerIrGlobalSeq]
+  [addr-taken : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map]
+  [at : i64]) : opt_i64_i64_map.Map
+  (if (>= at globals.len)
+    out
+    (match (ir.compiler-ir-global-seq-ref
+      (compiler-opt-global-shared-view globals)
+      at)
+      [(ir.CompilerIrGlobal.Global name _ _)
+        (opt-global-mod-ref-index-addr-taken
+          (compiler-opt-global-shared-view globals)
+          (compiler-opt-global-shared-view addr-taken)
+          (if (opt_i64_i64_map.contains?
+            (& addr-taken)
+            (ir.compiler-ir-symbol-id name))
+            (let
+              [assigned : opt_i64_i64_map.Map
+                (compiler-opt-global-shared-view out)]
+              (begin
+                (opt_i64_i64_map.insert-ref!
+                  (&mut assigned)
+                  (ir.compiler-ir-symbol-id name)
+                  (opt-global-mod-ref-addr-bit))
+                assigned))
+            out)
+          (+ at 1))])))
 
 (define (opt-global-mod-ref-index-fill
   [globals : ir.CompilerIrGlobalSeq]
   [stores : opt_i64_i64_map.Map]
   [overflow-bit : i64]
+  [store-limit : i64]
   [out : opt_i64_i64_map.Map]
   [at : i64]
   [next : i64]) : OptGlobalModRefIndex
@@ -143595,12 +143970,13 @@
             globals
             stores
             overflow-bit
+            store-limit
             out
             (+ at 1)
             next)
           (let
             [bit : i64
-              (if (< next (opt-global-mod-ref-limit))
+              (if (< next store-limit)
                 next
                 overflow-bit)]
             (if (< bit 0)
@@ -143617,86 +143993,94 @@
                     globals
                     stores
                     overflow-bit
+                    store-limit
                     assigned
                     (+ at 1)
-                    (if (< next (opt-global-mod-ref-limit))
+                    (if (< next store-limit)
                       (+ next 1)
                       next)))))))])))
-
-(define (opt-global-mod-ref-callee-mask
-  [current : opt_i64_i64_map.Map]
-  [function-set : opt_i64_i64_map.Map]
-  [name : i64]) : i64
-  (if (not
-    (opt_i64_i64_map.contains? (& function-set) (ir.compiler-ir-symbol-id name)))
-    0
-    (match (opt_i64_i64_map.get (& current) (ir.compiler-ir-symbol-id name))
-      [(opt_i64_i64_map.LookupFound mask) mask]
-      [(opt_i64_i64_map.LookupMissing) 0])))
 
 ;; The classification for every instruction the arms below do not name. It is
 ;; read off the closed `CompilerIrEffect` enum rather than a second total match
 ;; over the instruction set, so a new IR instruction has to be given an effect
 ;; before it can reach here at all. `MemoryWrite` is a write THROUGH A POINTER
-;; for every instruction except `Store`, which is matched first, and the empty
-;; address-taken precondition denies every pointer a cell; `ControlFlow` covers
-;; branches, returns, bounds checks and `TailCall`, of which only the last can
-;; reach program code and is likewise matched first.
-(define (opt-global-mod-ref-effect-mask [effect : ir.CompilerIrEffect]) : i64
+;; for every instruction except `Store`, which is matched first, and a pointer
+;; can name only a cell whose address the program takes -- so such a write
+;; contributes exactly `addr-mask`, which is 0 when the program takes none.
+;; `ControlFlow` covers branches, returns, bounds checks and `TailCall`, of
+;; which only the last can reach program code and is likewise matched first.
+(define (opt-global-mod-ref-effect-mask
+  [addr-mask : i64]
+  [effect : ir.CompilerIrEffect]) : i64
   (match effect
     [(ir.CompilerIrEffect.Pure) 0]
     [(ir.CompilerIrEffect.MemoryRead) 0]
     [(ir.CompilerIrEffect.ControlFlow) 0]
-    [(ir.CompilerIrEffect.MemoryWrite) 0]
+    [(ir.CompilerIrEffect.MemoryWrite) addr-mask]
     [(ir.CompilerIrEffect.CpuProbe) (opt-global-mod-ref-any)]
     [(ir.CompilerIrEffect.Unknown) (opt-global-mod-ref-any)]))
 
-(define (opt-global-mod-ref-instr-mask
+;; One instruction's OWN cell writes, with the DIRECT callees left out: they are
+;; call-graph edges and the condensation below unions their rows in. A callee
+;; the program does not define is an extern, which performs no `Store` and can
+;; reach only what a pointer can name.
+(define (opt-global-mod-ref-local-instr-mask
   [index : opt_i64_i64_map.Map]
-  [current : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
+  [addr-mask : i64]
   [instr : ir.CompilerIrInstr]) : i64
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.Store name _ _)
       (opt-global-mod-ref-store-mask index name)]
     [(ir.CompilerIrInstr.Call _ name _ _)
-      (opt-global-mod-ref-callee-mask current function-set name)]
+      (if (opt_i64_i64_map.contains?
+        (& function-set)
+        (ir.compiler-ir-symbol-id name))
+        0
+        addr-mask)]
     [(ir.CompilerIrInstr.TailCall name _ _)
-      (opt-global-mod-ref-callee-mask current function-set name)]
+      (if (opt_i64_i64_map.contains?
+        (& function-set)
+        (ir.compiler-ir-symbol-id name))
+        0
+        addr-mask)]
     ;; The one call form the effect table classifies `ControlFlow` rather than
     ;; `Unknown`; its target is a function of this program, so name it here.
     [(ir.CompilerIrInstr.TailCallIndirect _ _ _) (opt-global-mod-ref-any)]
-    [_ (opt-global-mod-ref-effect-mask (ir.compiler-ir-instr-effect instr))]))
+    [_
+      (opt-global-mod-ref-effect-mask
+        addr-mask
+        (ir.compiler-ir-instr-effect instr))]))
 
-(define (opt-global-mod-ref-instrs-mask
+(define (opt-global-mod-ref-local-instrs-mask
   [index : opt_i64_i64_map.Map]
-  [current : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
+  [addr-mask : i64]
   [instrs : ir.CompilerIrInstrSeq]
   [at : i64]
   [mask : i64]) : i64
   (if (>= at (ir.compiler-ir-instr-seq-count instrs))
     mask
-    (opt-global-mod-ref-instrs-mask
+    (opt-global-mod-ref-local-instrs-mask
       (compiler-opt-global-shared-view index)
-      (compiler-opt-global-shared-view current)
       (compiler-opt-global-shared-view function-set)
+      addr-mask
       (compiler-opt-global-shared-view instrs)
       (+ at 1)
       (bit-or
         mask
-        (opt-global-mod-ref-instr-mask
+        (opt-global-mod-ref-local-instr-mask
           (compiler-opt-global-shared-view index)
-          (compiler-opt-global-shared-view current)
           (compiler-opt-global-shared-view function-set)
+          addr-mask
           (ir.compiler-ir-instr-seq-ref
             (compiler-opt-global-shared-view instrs)
             at))))))
 
-(define (opt-global-mod-ref-blocks-mask
+(define (opt-global-mod-ref-local-blocks-mask
   [index : opt_i64_i64_map.Map]
-  [current : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
+  [addr-mask : i64]
   [blocks : ir.CompilerIrBlockList]
   [mask : i64]) : i64
   (match (compiler-opt-global-shared-view blocks)
@@ -143704,122 +144088,162 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (match (compiler-opt-global-shared-view block)
         [(ir.CompilerIrBlock.Block _ instrs)
-          (opt-global-mod-ref-blocks-mask
+          (opt-global-mod-ref-local-blocks-mask
             (compiler-opt-global-shared-view index)
-            (compiler-opt-global-shared-view current)
             (compiler-opt-global-shared-view function-set)
+            addr-mask
             (compiler-opt-box-shared-view rest)
-            (opt-global-mod-ref-instrs-mask
+            (opt-global-mod-ref-local-instrs-mask
               (compiler-opt-global-shared-view index)
-              (compiler-opt-global-shared-view current)
               (compiler-opt-global-shared-view function-set)
+              addr-mask
               instrs
               0
               mask))])]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-global-mod-ref-blocks-mask
+      (opt-global-mod-ref-local-blocks-mask
         index
-        current
         function-set
+        addr-mask
         (ir.compiler-ir-block-seq-to-list seq)
         mask)]))
 
-(defenum OptGlobalModRefPass
-  (Pass opt_i64_i64_map.Map bool))
-
-(define (opt-global-mod-ref-pass-from
-  [functions : ir.CompilerIrFunctionSeq]
+(define (opt-global-mod-ref-local-mask
   [index : opt_i64_i64_map.Map]
-  [current : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
-  [out : opt_i64_i64_map.Map]
-  [changed : bool]
-  [position : i64]) : OptGlobalModRefPass
-  (if (>= position functions.len)
-    (OptGlobalModRefPass.Pass out changed)
-    (match (compiler-opt-global-array-element-shared-view
-      functions.slots
-      position)
-      [(ir.CompilerIrFunction.Function name _ _ _ blocks)
+  [addr-mask : i64]
+  [func : ir.CompilerIrFunction]) : i64
+  (match func
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+      (opt-global-mod-ref-local-blocks-mask
+        index
+        function-set
+        addr-mask
+        blocks
+        0)]))
+
+;; The union of the FINISHED rows of every component this slot calls other than
+;; its own. A callee inside the same component contributes nothing here: the
+;; component's own mask already carries every member's local contribution and
+;; every edge that leaves it, and all its members share that one mask.
+(define (opt-global-mod-ref-edge-mask-from
+  [rows : (__tl_dyn-array i64)]
+  [scc-of : (__tl_dyn-array i64)]
+  [component : i64]
+  [slots : OptSlotList]
+  [mask : i64]) : i64
+  (match slots
+    [(OptSlotList.Nil) mask]
+    [(OptSlotList.Cons slot rest)
+      (opt-global-mod-ref-edge-mask-from
+        (compiler-opt-global-shared-view rows)
+        (compiler-opt-global-shared-view scc-of)
+        component
+        (compiler-opt-box-shared-view rest)
+        (if (= (array-ref scc-of slot) component)
+          mask
+          (bit-or mask (array-ref rows (array-ref scc-of slot)))))]))
+
+;; The exact least solution of `row(f) = local(f) | union over callees g of
+;; row(g)`, computed in ONE pass over the condensation instead of a Kleene
+;; iteration over the whole program.
+;;
+;; WHY IT IS THE SAME ANSWER. The system is join-only, so its least solution is
+;; `row(f) = union of local(g) over every g reachable from f`. Every member of a
+;; strongly connected component reaches every other, so all members of a
+;; component share one row; and a component's reachable set is its own members
+;; plus the reachable sets of the components it calls, which is exactly the
+;; recurrence below. Components are visited in ascending id, which is
+;; reverse-topological (Tarjan pops a callee's component first), so every
+;; component read on the right-hand side is already final. The old iteration
+;; computed the same least solution by moving one bit one call edge per round
+;; and committing only a map the transfer reproduced; it needed as many rounds
+;; as the graph is deep and re-walked every body in each of them.
+(define (opt-global-mod-ref-solve
+  [plan : OptSummarySccPlan]
+  [index : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [addr-mask : i64]
+  [capacity : i64]) : opt_i64_i64_map.Map
+  (let
+    [slots : i64 plan.graph.count]
+    [rows : (__tl_dyn-array i64) (__tl_make-array i64 (+ plan.count 1))]
+    [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
+    [component : i64 0]
+    (begin
+      (while (<= component plan.count)
+        (begin
+          (set! (array-ref rows component) 0)
+          (set! component (+ component 1))))
+      (set! component 0)
+      (while (< component plan.count)
         (let
-          [name-id : i64 (ir.compiler-ir-symbol-id name)]
-          [previous : i64
-            (match (opt_i64_i64_map.get (& current) name-id)
-              [(opt_i64_i64_map.LookupFound mask) mask]
-              [(opt_i64_i64_map.LookupMissing) 0])]
-          [mask : i64
-            (opt-global-mod-ref-blocks-mask
-              (compiler-opt-global-shared-view index)
-              (compiler-opt-global-shared-view current)
-              (compiler-opt-global-shared-view function-set)
-              blocks
-              previous)]
-          [next : opt_i64_i64_map.Map (compiler-opt-global-shared-view out)]
+          [from : i64 (array-ref plan.starts component)]
+          [to : i64 (array-ref plan.starts (+ component 1))]
+          [mask : i64 0]
+          [i : i64 from]
           (begin
-            (opt_i64_i64_map.insert-ref! (&mut next) name-id mask)
-            (opt-global-mod-ref-pass-from
-              functions
-              index
-              current
-              function-set
-              next
-              (or changed (not (= mask previous)))
-              (+ position 1))))])))
+            (while (< i to)
+              (let
+                [slot : i64 (array-ref plan.members i)]
+                (begin
+                  (set!
+                    mask
+                    (bit-or
+                      mask
+                      (opt-global-mod-ref-local-mask
+                        (compiler-opt-global-shared-view index)
+                        (compiler-opt-global-shared-view function-set)
+                        addr-mask
+                        (opt-function-index-at-slot
+                          (compiler-opt-global-shared-view plan.index)
+                          slot))))
+                  (set!
+                    mask
+                    (opt-global-mod-ref-edge-mask-from
+                      (compiler-opt-global-shared-view rows)
+                      (compiler-opt-global-shared-view plan.scc.scc-of)
+                      component
+                      (compiler-opt-global-array-element-shared-view
+                        plan.graph.edges
+                        slot)
+                      mask))
+                  (set! i (+ i 1)))))
+            (set! (array-ref rows component) mask)
+            (set! component (+ component 1)))))
+      (set! component 0)
+      (while (< component slots)
+        (begin
+          (opt_i64_i64_map.insert-ref!
+            (&mut out)
+            (opt-summary-plan-name-id
+              (compiler-opt-global-shared-view plan)
+              component)
+            (array-ref rows (array-ref plan.scc.scc-of component)))
+          (set! component (+ component 1))))
+      out)))
 
-(define (opt-global-mod-ref-pass
-  [functions : ir.CompilerIrFunctionSeq]
-  [index : opt_i64_i64_map.Map]
-  [current : opt_i64_i64_map.Map]
-  [function-set : opt_i64_i64_map.Map]
-  [out : opt_i64_i64_map.Map]
-  [changed : bool]) : OptGlobalModRefPass
-  (opt-global-mod-ref-pass-from
-    functions
-    index
-    current
-    function-set
-    out
-    changed
-    0))
+;; The whole program's instruction count, which is what the linear builders
+;; charge against the visit budget: they make ONE pass, so their work is the
+;; program and there is no round count to cap.
+(define (opt-summary-plan-total-instrs [plan : OptSummarySccPlan]) : i64
+  (let
+    [total : i64 0]
+    [i : i64 0]
+    (begin
+      (while (< i plan.graph.count)
+        (begin
+          (set! total (+ total (array-ref plan.instrs i)))
+          (set! i (+ i 1))))
+      total)))
 
-(defenum OptGlobalModRefWrites
-  (No)
-  (Some opt_i64_i64_map.Map))
-
-(define (opt-global-mod-ref-fixed
-  [functions : ir.CompilerIrFunctionSeq]
-  [index : opt_i64_i64_map.Map]
-  [function-set : opt_i64_i64_map.Map]
-  [current : opt_i64_i64_map.Map]
-  [capacity : i64]
-  [remaining : i64]) : OptGlobalModRefWrites
-  (if (<= remaining 0)
-    (OptGlobalModRefWrites.No)
-    (match (opt-global-mod-ref-pass
-      (compiler-opt-global-shared-view functions)
-      (compiler-opt-global-shared-view index)
-      (compiler-opt-global-shared-view current)
-      (compiler-opt-global-shared-view function-set)
-      (opt_i64_i64_map.with-capacity capacity)
-      false)
-      [(OptGlobalModRefPass.Pass next changed)
-        (if changed
-          (opt-global-mod-ref-fixed
-            functions
-            index
-            function-set
-            next
-            capacity
-            (- remaining 1))
-          (OptGlobalModRefWrites.Some next))])))
-
-;; Build the table, or decline. The three preconditions are stated in the
-;; header: no global cell ADDRESS exists in the program (otherwise a pointer
-;; write could reach a cell and the per-instruction classification above would
-;; be wrong), the program is small enough that the summary passes run at all
-;; (the same gate opt-build-program-summaries applies, so a big program pays
-;; nothing for a table its LICM would not consult), and the directly-stored
-;; globals fit the packed row.
+;; Build the table, or decline. The preconditions are stated in the header: the
+;; program is small enough that the summary passes run at all (the same gate
+;; opt-build-program-summaries applies), its one condensation pass fits the
+;; visit budget, and the directly-stored globals fit the packed row. The
+;; address-taken set is no longer a precondition at all: it is carried as one
+;; shared bit (opt-global-mod-ref-addr-bit), so a program that takes a cell's
+;; address still gets a table for every OTHER cell.
 (define (opt-global-mod-ref-build
   [globals : ir.CompilerIrGlobalSeq]
   [functions : ir.CompilerIrFunctionSeq]
@@ -143829,31 +144253,61 @@
   (let
     [count : i64
       (opt-function-seq-count (compiler-opt-global-shared-view functions))]
-    (if (or
-      (> (opt_i64_i64_map.len (& addr-taken)) 0)
-      (> count (opt-loop-bce-summary-function-limit)))
-      (opt-global-mod-ref-none)
+    [addr-mask : i64
+      (opt-global-mod-ref-addr-mask
+        (compiler-opt-global-shared-view addr-taken))]
+    (if (> count (opt-loop-bce-summary-function-limit))
+      (begin
+        (opt-summary-trace-declined! "cell-mod-ref" "function-limit" count)
+        (opt-global-mod-ref-none))
       (match (opt-global-mod-ref-index-fill
         (compiler-opt-global-shared-view globals)
         (compiler-opt-global-shared-view stores)
-        (opt-global-mod-ref-overflow-bit globals stores)
-        (opt_i64_i64_map.with-capacity capacity)
+        (opt-global-mod-ref-overflow-bit
+          (compiler-opt-global-shared-view globals)
+          (compiler-opt-global-shared-view stores)
+          addr-mask)
+        (opt-global-mod-ref-store-limit addr-mask)
+        (opt-global-mod-ref-index-addr-taken
+          (compiler-opt-global-shared-view globals)
+          (compiler-opt-global-shared-view addr-taken)
+          (opt_i64_i64_map.with-capacity capacity)
+          0)
         0
         0)
-        [(OptGlobalModRefIndex.No) (opt-global-mod-ref-none)]
+        [(OptGlobalModRefIndex.No)
+          (begin
+            (opt-summary-trace-declined! "cell-mod-ref" "row-overflow" count)
+            (opt-global-mod-ref-none))]
         [(OptGlobalModRefIndex.Some index _)
-          (match (opt-global-mod-ref-fixed
-            (compiler-opt-global-shared-view functions)
-            (compiler-opt-global-shared-view index)
-            (opt-call-memory-function-set
-              (compiler-opt-global-shared-view functions)
-              (opt_i64_i64_map.with-capacity capacity))
-            (opt_i64_i64_map.with-capacity capacity)
-            capacity
-            (+ count 1))
-            [(OptGlobalModRefWrites.No) (opt-global-mod-ref-none)]
-            [(OptGlobalModRefWrites.Some writes)
-              (OptGlobalModRef true index writes)])]))))
+          (let
+            [plan : OptSummarySccPlan
+              (opt-summary-scc-plan-build
+                (compiler-opt-global-shared-view functions))]
+            (if (>
+              (opt-summary-plan-total-instrs
+                (compiler-opt-global-shared-view plan))
+              (opt-summary-visit-budget))
+              (begin
+                (opt-summary-trace-declined!
+                  "cell-mod-ref"
+                  "visit-budget"
+                  count)
+                (opt-global-mod-ref-none))
+              (begin
+                (opt-summary-trace-built! "cell-mod-ref" count)
+                (OptGlobalModRef
+                  true
+                  (compiler-opt-global-shared-view index)
+                  (opt-global-mod-ref-solve
+                    (compiler-opt-global-shared-view plan)
+                    (compiler-opt-global-shared-view index)
+                    (opt-call-memory-function-set
+                      (compiler-opt-global-shared-view functions)
+                      (opt_i64_i64_map.with-capacity capacity))
+                    addr-mask
+                    capacity)
+                  addr-mask))))]))))
 
 ;; --- P20: FROZEN memory-class globals ----------------------------------------
 ;;
@@ -145447,11 +145901,28 @@
   [functions : ir.CompilerIrFunctionSeq]
   [addr-taken : opt_i64_i64_map.Map]
   [capacity : i64]) : opt_i64_i64_map.Map
-  (if (>
-    (opt-function-seq-count (compiler-opt-global-shared-view functions))
-    (opt-loop-bce-summary-function-limit))
-    (opt_i64_i64_map.with-capacity 1)
+  (if (or
+    (>
+      (opt-function-seq-count (compiler-opt-global-shared-view functions))
+      (opt-loop-bce-summary-function-limit))
+    (>
+      (opt-summary-program-instrs (compiler-opt-global-shared-view functions))
+      (opt-summary-round-visit-budget)))
+    (begin
+      (opt-summary-trace-declined!
+        "frozen"
+        (if (>
+          (opt-function-seq-count (compiler-opt-global-shared-view functions))
+          (opt-loop-bce-summary-function-limit))
+          "function-limit"
+          "visit-budget")
+        (opt-function-seq-count (compiler-opt-global-shared-view functions)))
+      (opt_i64_i64_map.with-capacity 1))
     (let
+      [_trace : unit
+        (opt-summary-trace-built!
+          "frozen"
+          (opt-function-seq-count (compiler-opt-global-shared-view functions)))]
       [cand : OptGlobalFrozenCandidates
         (opt-global-frozen-candidates-fill
           (compiler-opt-global-shared-view globals)
@@ -145574,9 +146045,17 @@
   ;; global symbol id -> bit index. Every global of the program gets one.
   (index opt_i64_i64_map.Map)
   ;; function symbol id -> that function's packed storage-write set. An absent
-  ;; name is an extern: no IR body, and under the empty address-taken
-  ;; precondition no pointer it holds can name a cell, so it writes none.
-  (writes opt_i64_i64_map.Map))
+  ;; name is an extern: no IR body, so it performs no `Store` and the only
+  ;; storage it can reach through a pointer is `addr-mask`'s.
+  (writes opt_i64_i64_map.Map)
+  ;; SUM-1. The packed set of globals whose ADDRESS THE PROGRAM TAKES, or 0
+  ;; when it takes none. See opt-global-mod-ref-addr-bit for the per-cell
+  ;; argument; here it is what an EXTERN callee may write, the one place the
+  ;; owner walk below models nothing (an extern has no parameter owners, so a
+  ;; tracked value handed to one already ESCAPES the global it names -- this
+  ;; mask covers the remaining case, a raw `GlobalAddr` the walk resolved to a
+  ;; precise owner at every IR site and then passed out of the program).
+  (addr-mask i64))
 
 (define (opt-global-obj-limit) : i64
   62)
@@ -145591,7 +146070,8 @@
   (OptGlobalObjModRef
     false
     (opt_i64_i64_map.with-capacity 1)
-    (opt_i64_i64_map.with-capacity 1)))
+    (opt_i64_i64_map.with-capacity 1)
+    0))
 
 ;; The bit that stands for global id `id`, or 0 when the program has no such
 ;; global.
@@ -145632,7 +146112,36 @@
     (opt-global-obj-any)
     (match (opt_i64_i64_map.get (& obj.writes) (ir.compiler-ir-symbol-id name))
       [(opt_i64_i64_map.LookupFound mask) mask]
-      [(opt_i64_i64_map.LookupMissing) 0])))
+      [(opt_i64_i64_map.LookupMissing) obj.addr-mask])))
+
+;; The packed set of globals whose address the program takes. Scalar globals
+;; carry no bit of this row at all -- their storage IS their cell, which is
+;; P18's row and which every consumer of this row consults as well -- so they
+;; contribute nothing here and are answered there.
+(define (opt-global-obj-addr-mask
+  [globals : ir.CompilerIrGlobalSeq]
+  [addr-taken : opt_i64_i64_map.Map]
+  [index : opt_i64_i64_map.Map]
+  [at : i64]
+  [mask : i64]) : i64
+  (if (>= at globals.len)
+    mask
+    (match (ir.compiler-ir-global-seq-ref
+      (compiler-opt-global-shared-view globals)
+      at)
+      [(ir.CompilerIrGlobal.Global name _ _)
+        (opt-global-obj-addr-mask
+          (compiler-opt-global-shared-view globals)
+          (compiler-opt-global-shared-view addr-taken)
+          (compiler-opt-global-shared-view index)
+          (+ at 1)
+          (if (opt_i64_i64_map.contains?
+            (& addr-taken)
+            (ir.compiler-ir-symbol-id name))
+            (bit-or
+              mask
+              (opt-global-obj-id-bit index (ir.compiler-ir-symbol-id name)))
+            mask))])))
 
 ;; --- owner codes -------------------------------------------------------------
 (define (opt-global-obj-owner-mixed) : i64
@@ -145979,6 +146488,14 @@
       params
       (+ position 1))))
 
+;; The owner map's key space is this function's VARS, so it is sized like every
+;; other per-function scratch table here and grows into the function it is
+;; walking. It used to be seeded with the whole program's global-index capacity,
+;; which is unrelated to its keys and cost 64 KB per function per pass on the
+;; compiler's own program.
+(define (opt-global-obj-owner-map-capacity) : i64
+  17)
+
 (define (opt-global-obj-owners-for-function
   [type-segment-bases : i64]
   [param-owners : opt_i64_i64_map.Map]
@@ -145986,14 +146503,13 @@
   [resolved? : bool]
   [id : i64]
   [params : ir.CompilerIrParamSeq]
-  [blocks : ir.CompilerIrBlockList]
-  [capacity : i64]) : OptGlobalObjOwners
+  [blocks : ir.CompilerIrBlockList]) : OptGlobalObjOwners
   (let
     [changed : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [seeded : OptGlobalObjOwners
       (opt-global-obj-seed-params
         type-segment-bases
-        (opt-global-obj-owners-new capacity)
+        (opt-global-obj-owners-new (opt-global-obj-owner-map-capacity))
         changed
         param-owners
         opaque
@@ -146425,9 +146941,10 @@
   [index : opt_i64_i64_map.Map]
   [opaque : opt_i64_i64_map.Map]
   [fnset : opt_i64_i64_map.Map]
-  [capacity : i64]) : unit
+  [scratch : i64]) : unit
   (let
     [position : i64 0]
+    [mark : i64 (opt-summary-arena-mark scratch)]
     (while (< position functions.len)
       (begin
         (match (compiler-opt-global-array-element-shared-view
@@ -146435,6 +146952,12 @@
           position)
           [(ir.CompilerIrFunction.Function name params _ _ blocks)
             (let
+              ;; The owner environment is built in the scratch arena and only
+              ;; READ by the scan below, whose own writes (owner CODES into
+              ;; `param-owners`, one flag into `escaped`) must land in the
+              ;; enclosing arena -- hence the switch back before the scan and
+              ;; the rewind after it.
+              [enclosing : i64 (opt-summary-arena-enter scratch)]
               [owners : OptGlobalObjOwners
                 (opt-global-obj-owners-for-function
                   type-segment-bases
@@ -146445,18 +146968,53 @@
                   false
                   (ir.compiler-ir-symbol-id name)
                   (compiler-opt-global-shared-view params)
-                  (compiler-opt-global-shared-view blocks)
-                  capacity)]
-              (opt-global-obj-scan-blocks!
-                (compiler-opt-global-shared-view owners.map)
-                param-owners
-                (compiler-opt-global-shared-view escaped)
-                (compiler-opt-global-shared-view index)
-                (compiler-opt-global-shared-view fnset)
-                blocks))])
+                  (compiler-opt-global-shared-view blocks))]
+              [_leave : unit (opt-summary-arena-leave! enclosing)]
+              [_scan : unit
+                (opt-global-obj-scan-blocks!
+                  (compiler-opt-global-shared-view owners.map)
+                  param-owners
+                  (compiler-opt-global-shared-view escaped)
+                  (compiler-opt-global-shared-view index)
+                  (compiler-opt-global-shared-view fnset)
+                  blocks)]
+              (opt-summary-arena-rewind! scratch mark))])
         (set! position (+ position 1))))))
 
 ;; --- pass A: every function's own storage writes ----------------------------
+;; One function's own-write mask. Everything it builds -- the owner
+;; environment, the per-instruction reference scans -- is transient; only the
+;; i64 mask and the in-place `escaped` flag survive it.
+(define (opt-global-obj-function-own-mask
+  [type-segment-bases : i64]
+  [param-owners : opt_i64_i64_map.Map]
+  [escaped : (__tl_dyn-array i64)]
+  [index : opt_i64_i64_map.Map]
+  [opaque : opt_i64_i64_map.Map]
+  [id : i64]
+  [params : ir.CompilerIrParamSeq]
+  [blocks : ir.CompilerIrBlockList]) : i64
+  (let
+    [owners : OptGlobalObjOwners
+      (opt-global-obj-owners-for-function
+        type-segment-bases
+        (compiler-opt-global-shared-view param-owners)
+        (compiler-opt-global-shared-view opaque)
+        true
+        id
+        (compiler-opt-global-shared-view params)
+        (compiler-opt-global-shared-view blocks))]
+    (if (opt-global-obj-owners-converged?
+      (compiler-opt-global-shared-view owners)
+      (compiler-opt-global-shared-view blocks))
+      (opt-global-obj-own-blocks!
+        (compiler-opt-global-shared-view index)
+        (compiler-opt-global-shared-view owners)
+        (compiler-opt-global-shared-view escaped)
+        (compiler-opt-global-shared-view blocks)
+        0)
+      (opt-global-obj-any))))
+
 (define (opt-global-obj-own-writes!
   [type-segment-bases : i64]
   [functions : ir.CompilerIrFunctionSeq]
@@ -146465,9 +147023,10 @@
   [index : opt_i64_i64_map.Map]
   [opaque : opt_i64_i64_map.Map]
   [out : opt_i64_i64_map.Map]
-  [capacity : i64]) : opt_i64_i64_map.Map
+  [scratch : i64]) : opt_i64_i64_map.Map
   (let
     [position : i64 0]
+    [mark : i64 (opt-summary-arena-mark scratch)]
     [next : opt_i64_i64_map.Map (compiler-opt-global-shared-view out)]
     (begin
       (while (< position functions.len)
@@ -146478,184 +147037,100 @@
             [(ir.CompilerIrFunction.Function name params _ _ blocks)
               (let
                 [id : i64 (ir.compiler-ir-symbol-id name)]
-                [owners : OptGlobalObjOwners
-                  (opt-global-obj-owners-for-function
+                [enclosing : i64 (opt-summary-arena-enter scratch)]
+                [mask : i64
+                  (opt-global-obj-function-own-mask
                     type-segment-bases
                     (compiler-opt-global-shared-view param-owners)
+                    (compiler-opt-global-shared-view escaped)
+                    (compiler-opt-global-shared-view index)
                     (compiler-opt-global-shared-view opaque)
-                    true
                     id
                     (compiler-opt-global-shared-view params)
-                    (compiler-opt-global-shared-view blocks)
-                    capacity)]
-                [settled? : bool
-                  (opt-global-obj-owners-converged?
-                    (compiler-opt-global-shared-view owners)
                     (compiler-opt-global-shared-view blocks))]
-                [mask : i64
-                  (if settled?
-                    (opt-global-obj-own-blocks!
-                      (compiler-opt-global-shared-view index)
-                      (compiler-opt-global-shared-view owners)
-                      (compiler-opt-global-shared-view escaped)
-                      (compiler-opt-global-shared-view blocks)
-                      0)
-                    (opt-global-obj-any))]
+                [_leave : unit (opt-summary-arena-leave! enclosing)]
+                [_reclaim : unit (opt-summary-arena-rewind! scratch mark)]
                 (opt_i64_i64_map.insert-ref! (&mut next) id mask))])
           (set! position (+ position 1))))
       next)))
 
-;; --- pass B: the call-graph closure -----------------------------------------
-(define (opt-global-obj-callee-mask
-  [current : opt_i64_i64_map.Map]
-  [fnset : opt_i64_i64_map.Map]
-  [name : i64]) : i64
-  (if (not
-    (opt_i64_i64_map.contains? (& fnset) (ir.compiler-ir-symbol-id name)))
-    0
-    (match (opt_i64_i64_map.get (& current) (ir.compiler-ir-symbol-id name))
-      [(opt_i64_i64_map.LookupFound mask) mask]
-      [(opt_i64_i64_map.LookupMissing) 0])))
-
-(define (opt-global-obj-calls-instr-mask
-  [current : opt_i64_i64_map.Map]
-  [fnset : opt_i64_i64_map.Map]
-  [instr : ir.CompilerIrInstr]) : i64
-  (match (compiler-opt-global-shared-view instr)
-    [(ir.CompilerIrInstr.Call _ name _ _)
-      (opt-global-obj-callee-mask current fnset name)]
-    [(ir.CompilerIrInstr.TailCall name _ _)
-      (opt-global-obj-callee-mask current fnset name)]
-    [_ 0]))
-
-(define (opt-global-obj-calls-seq-mask
-  [current : opt_i64_i64_map.Map]
-  [fnset : opt_i64_i64_map.Map]
-  [instrs : ir.CompilerIrInstrSeq]
-  [position : i64]
-  [count : i64]
-  [mask : i64]) : i64
-  (if (>= position count)
-    mask
-    (opt-global-obj-calls-seq-mask
-      (compiler-opt-global-shared-view current)
-      (compiler-opt-global-shared-view fnset)
-      (compiler-opt-global-shared-view instrs)
-      (+ position 1)
-      count
-      (bit-or
-        mask
-        (opt-global-obj-calls-instr-mask
-          (compiler-opt-global-shared-view current)
-          (compiler-opt-global-shared-view fnset)
-          (ir.compiler-ir-instr-seq-ref
-            (compiler-opt-global-shared-view instrs)
-            position))))))
-
-(define (opt-global-obj-calls-blocks-mask
-  [current : opt_i64_i64_map.Map]
-  [fnset : opt_i64_i64_map.Map]
-  [blocks : ir.CompilerIrBlockList]
-  [mask : i64]) : i64
-  (match (compiler-opt-global-shared-view blocks)
-    [(ir.CompilerIrBlockList.Nil) mask]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (opt-global-obj-calls-blocks-mask
-        (compiler-opt-global-shared-view current)
-        (compiler-opt-global-shared-view fnset)
-        (compiler-opt-box-shared-view rest)
-        (match (compiler-opt-global-shared-view block)
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (opt-global-obj-calls-seq-mask
-              (compiler-opt-global-shared-view current)
-              (compiler-opt-global-shared-view fnset)
-              (compiler-opt-global-shared-view instrs)
-              0
-              (ir.compiler-ir-instr-seq-count instrs)
-              mask)]))]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-global-obj-calls-blocks-mask
-        current
-        fnset
-        (ir.compiler-ir-block-seq-to-list seq)
-        mask)]))
-
-(defenum OptGlobalObjPass
-  (Pass opt_i64_i64_map.Map bool))
-
-(define (opt-global-obj-pass-from
-  [functions : ir.CompilerIrFunctionSeq]
+;; --- pass B: the call-graph closure, solved over the condensation -----------
+;;
+;; `own` is already computed once, before this walk, because parameter owners do
+;; not depend on the rows; only the callee union iterates. That union is
+;; join-only, so it has the same one-pass condensation solution P18's does --
+;; see opt-global-mod-ref-solve for the argument. The old loop re-walked every
+;; body once per round to find the call sites again; the plan's edge lists
+;; already are those call sites.
+;;
+;; An EXTERN callee has no edge (the graph resolves in-program names only) and
+;; no row, so it is answered by `addr-mask` at the query. To keep that answer
+;; consistent with the rows themselves, `addr-mask` is unioned into every row
+;; here: the globals whose address the program takes are the ones this table
+;; does not refine, exactly as under the old program-wide precondition, and
+;; every other global keeps its own bit and its own verdict.
+(define (opt-global-obj-solve
+  [plan : OptSummarySccPlan]
   [own : opt_i64_i64_map.Map]
-  [current : opt_i64_i64_map.Map]
-  [fnset : opt_i64_i64_map.Map]
-  [out : opt_i64_i64_map.Map]
-  [changed : bool]
-  [position : i64]) : OptGlobalObjPass
-  (if (>= position functions.len)
-    (OptGlobalObjPass.Pass out changed)
-    (match (compiler-opt-global-array-element-shared-view
-      functions.slots
-      position)
-      [(ir.CompilerIrFunction.Function name _ _ _ blocks)
+  [addr-mask : i64]
+  [capacity : i64]) : opt_i64_i64_map.Map
+  (let
+    [slots : i64 plan.graph.count]
+    [rows : (__tl_dyn-array i64) (__tl_make-array i64 (+ plan.count 1))]
+    [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
+    [component : i64 0]
+    (begin
+      (while (<= component plan.count)
+        (begin
+          (set! (array-ref rows component) 0)
+          (set! component (+ component 1))))
+      (set! component 0)
+      (while (< component plan.count)
         (let
-          [id : i64 (ir.compiler-ir-symbol-id name)]
-          [previous : i64
-            (match (opt_i64_i64_map.get (& current) id)
-              [(opt_i64_i64_map.LookupFound mask) mask]
-              [(opt_i64_i64_map.LookupMissing) 0])]
-          [base : i64
-            (match (opt_i64_i64_map.get (& own) id)
-              [(opt_i64_i64_map.LookupFound mask) mask]
-              [(opt_i64_i64_map.LookupMissing) (opt-global-obj-any)])]
-          [mask : i64
-            (opt-global-obj-calls-blocks-mask
-              (compiler-opt-global-shared-view current)
-              (compiler-opt-global-shared-view fnset)
-              blocks
-              (bit-or base previous))]
-          [next : opt_i64_i64_map.Map (compiler-opt-global-shared-view out)]
+          [from : i64 (array-ref plan.starts component)]
+          [to : i64 (array-ref plan.starts (+ component 1))]
+          [mask : i64 addr-mask]
+          [i : i64 from]
           (begin
-            (opt_i64_i64_map.insert-ref! (&mut next) id mask)
-            (opt-global-obj-pass-from
-              functions
-              own
-              current
-              fnset
-              next
-              (or changed (not (= mask previous)))
-              (+ position 1))))])))
-
-(defenum OptGlobalObjWrites
-  (No)
-  (Some opt_i64_i64_map.Map))
-
-(define (opt-global-obj-fixed
-  [functions : ir.CompilerIrFunctionSeq]
-  [own : opt_i64_i64_map.Map]
-  [fnset : opt_i64_i64_map.Map]
-  [current : opt_i64_i64_map.Map]
-  [capacity : i64]
-  [remaining : i64]) : OptGlobalObjWrites
-  (if (<= remaining 0)
-    (OptGlobalObjWrites.No)
-    (match (opt-global-obj-pass-from
-      (compiler-opt-global-shared-view functions)
-      (compiler-opt-global-shared-view own)
-      (compiler-opt-global-shared-view current)
-      (compiler-opt-global-shared-view fnset)
-      (opt_i64_i64_map.with-capacity capacity)
-      false
-      0)
-      [(OptGlobalObjPass.Pass next changed)
-        (if changed
-          (opt-global-obj-fixed
-            functions
-            own
-            fnset
-            next
-            capacity
-            (- remaining 1))
-          (OptGlobalObjWrites.Some next))])))
+            (while (< i to)
+              (let
+                [slot : i64 (array-ref plan.members i)]
+                [id : i64
+                  (opt-summary-plan-name-id
+                    (compiler-opt-global-shared-view plan)
+                    slot)]
+                (begin
+                  (set!
+                    mask
+                    (bit-or
+                      mask
+                      (match (opt_i64_i64_map.get (& own) id)
+                        [(opt_i64_i64_map.LookupFound base) base]
+                        [(opt_i64_i64_map.LookupMissing) (opt-global-obj-any)])))
+                  (set!
+                    mask
+                    (opt-global-mod-ref-edge-mask-from
+                      (compiler-opt-global-shared-view rows)
+                      (compiler-opt-global-shared-view plan.scc.scc-of)
+                      component
+                      (compiler-opt-global-array-element-shared-view
+                        plan.graph.edges
+                        slot)
+                      mask))
+                  (set! i (+ i 1)))))
+            (set! (array-ref rows component) mask)
+            (set! component (+ component 1)))))
+      (set! component 0)
+      (while (< component slots)
+        (begin
+          (opt_i64_i64_map.insert-ref!
+            (&mut out)
+            (opt-summary-plan-name-id
+              (compiler-opt-global-shared-view plan)
+              component)
+            (array-ref rows (array-ref plan.scc.scc-of component)))
+          (set! component (+ component 1))))
+      out)))
 
 ;; An ESCAPED global's storage may be reached through a pointer this analysis
 ;; cannot see, so every row must claim it.
@@ -146822,22 +147297,38 @@
     [count : i64
       (opt-function-seq-count (compiler-opt-global-shared-view functions))]
     (if (or
-      (> (opt_i64_i64_map.len (& addr-taken)) 0)
       (> count (opt-loop-bce-summary-function-limit))
       (=
         (ir.compiler-ir-global-seq-count
           (compiler-opt-global-shared-view globals))
         0))
-      (opt-global-obj-mod-ref-none)
+      (begin
+        (opt-summary-trace-declined!
+          "obj-mod-ref"
+          (if (> count (opt-loop-bce-summary-function-limit))
+            "function-limit"
+            "no-globals")
+          count)
+        (opt-global-obj-mod-ref-none))
       (match (opt-global-obj-index-fill
         (compiler-opt-global-shared-view globals)
         (opt-global-obj-overflow-bit (compiler-opt-global-shared-view globals))
         (opt_i64_i64_map.with-capacity capacity)
         0
         0)
-        [(OptGlobalModRefIndex.No) (opt-global-obj-mod-ref-none)]
+        [(OptGlobalModRefIndex.No)
+          (begin
+            (opt-summary-trace-declined! "obj-mod-ref" "row-overflow" count)
+            (opt-global-obj-mod-ref-none))]
         [(OptGlobalModRefIndex.Some index _)
           (let
+            [addr-mask : i64
+              (opt-global-obj-addr-mask
+                (compiler-opt-global-shared-view globals)
+                (compiler-opt-global-shared-view addr-taken)
+                (compiler-opt-global-shared-view index)
+                0
+                0)]
             [fnset : opt_i64_i64_map.Map
               (opt-call-memory-function-set
                 (compiler-opt-global-shared-view functions)
@@ -146866,6 +147357,8 @@
             [escaped : (__tl_dyn-array i64) (__tl_make-array i64 1)]
             [param-owners : opt_i64_i64_map.Map
               (opt_i64_i64_map.with-capacity capacity)]
+            [scratch : arena.Arena (arena.make)]
+            [scratch-handle : i64 (arena.raw-handle scratch)]
             [_seed : unit
               (opt-global-obj-param-owners!
                 type-segment-bases
@@ -146875,7 +147368,7 @@
                 (compiler-opt-global-shared-view index)
                 (compiler-opt-global-shared-view opaque)
                 (compiler-opt-global-shared-view fnset)
-                capacity)]
+                scratch-handle)]
             [own : opt_i64_i64_map.Map
               (opt-global-obj-own-writes!
                 type-segment-bases
@@ -146885,23 +147378,32 @@
                 (compiler-opt-global-shared-view index)
                 (compiler-opt-global-shared-view opaque)
                 (opt_i64_i64_map.with-capacity capacity)
-                capacity)]
-            (match (opt-global-obj-fixed
-              (compiler-opt-global-shared-view functions)
-              (compiler-opt-global-shared-view own)
-              (compiler-opt-global-shared-view fnset)
-              (opt_i64_i64_map.with-capacity capacity)
-              capacity
-              (+ count 1))
-              [(OptGlobalObjWrites.No) (opt-global-obj-mod-ref-none)]
-              [(OptGlobalObjWrites.Some writes)
+                scratch-handle)]
+            [_release : unit (arena.destroy-safe! scratch)]
+            [plan : OptSummarySccPlan
+              (opt-summary-scc-plan-build
+                (compiler-opt-global-shared-view functions))]
+            (if (>
+              (opt-summary-plan-total-instrs
+                (compiler-opt-global-shared-view plan))
+              (opt-summary-visit-budget))
+              (begin
+                (opt-summary-trace-declined! "obj-mod-ref" "visit-budget" count)
+                (opt-global-obj-mod-ref-none))
+              (begin
+                (opt-summary-trace-built! "obj-mod-ref" count)
                 (OptGlobalObjModRef
                   true
                   index
                   (opt-global-obj-apply-escaped
-                    writes
+                    (opt-global-obj-solve
+                      (compiler-opt-global-shared-view plan)
+                      (compiler-opt-global-shared-view own)
+                      addr-mask
+                      capacity)
                     functions
-                    (array-ref escaped 0)))]))]))))
+                    (array-ref escaped 0))
+                  addr-mask))))]))))
 
 ;; --- P-B: static length-equality families over global Vec cells --------------
 ;;
@@ -148776,13 +149278,26 @@
   (let
     [count : i64
       (opt-function-seq-count (compiler-opt-global-shared-view functions))]
-    (if (> count (opt-loop-bce-summary-function-limit))
-      (opt_i64_i64_map.with-capacity 1)
-      (opt-len-eq-ctors-build
-        type-segment-bases
-        functions
-        (opt_i64_i64_map.with-capacity
-          (opt-function-index-capacity (+ count 1)))))))
+    (if (or
+      (> count (opt-loop-bce-summary-function-limit))
+      (>
+        (opt-summary-program-instrs (compiler-opt-global-shared-view functions))
+        (opt-summary-round-visit-budget)))
+      (begin
+        (opt-summary-trace-declined!
+          "len-ctors"
+          (if (> count (opt-loop-bce-summary-function-limit))
+            "function-limit"
+            "visit-budget")
+          count)
+        (opt_i64_i64_map.with-capacity 1))
+      (begin
+        (opt-summary-trace-built! "len-ctors" count)
+        (opt-len-eq-ctors-build
+          type-segment-bases
+          functions
+          (opt_i64_i64_map.with-capacity
+            (opt-function-index-capacity (+ count 1))))))))
 
 ;; --- CK-1: building one function's local length-equality families -------------
 ;;
@@ -149896,11 +150411,28 @@
   ;; CB-1's reset groups, filled from the same write list this walk builds; see
   ;; opt-cb-reset-assign. Left empty wherever the families are.
   [reset : (&mut reset opt_i64_i64_map.Map)]) : opt_i64_i64_map.Map
-  (if (>
-    (opt-function-seq-count (compiler-opt-global-shared-view functions))
-    (opt-loop-bce-summary-function-limit))
-    (opt_i64_i64_map.with-capacity 1)
+  (if (or
+    (>
+      (opt-function-seq-count (compiler-opt-global-shared-view functions))
+      (opt-loop-bce-summary-function-limit))
+    (>
+      (opt-summary-program-instrs (compiler-opt-global-shared-view functions))
+      (opt-summary-round-visit-budget)))
+    (begin
+      (opt-summary-trace-declined!
+        "len-eq"
+        (if (>
+          (opt-function-seq-count (compiler-opt-global-shared-view functions))
+          (opt-loop-bce-summary-function-limit))
+          "function-limit"
+          "visit-budget")
+        (opt-function-seq-count (compiler-opt-global-shared-view functions)))
+      (opt_i64_i64_map.with-capacity 1))
     (let
+      [_trace : unit
+        (opt-summary-trace-built!
+          "len-eq"
+          (opt-function-seq-count (compiler-opt-global-shared-view functions)))]
       [cand : OptGlobalFrozenCandidates
         (opt-global-frozen-candidates-fill
           globals
@@ -153390,9 +153922,25 @@
     (= (opt_i64_i64_map.len (& cell.len-reset)) 0)
     (>
       (opt-function-seq-count (compiler-opt-global-shared-view functions))
-      (opt-loop-bce-summary-function-limit)))
-    (opt_i64_i64_map.with-capacity 1)
+      (opt-loop-bce-summary-function-limit))
+    (>
+      (opt-summary-program-instrs (compiler-opt-global-shared-view functions))
+      (opt-summary-round-visit-budget)))
+    (begin
+      (opt-summary-trace-declined!
+        "cb-content"
+        (if (>
+          (opt-function-seq-count (compiler-opt-global-shared-view functions))
+          (opt-loop-bce-summary-function-limit))
+          "function-limit"
+          "no-len-eq")
+        (opt-function-seq-count (compiler-opt-global-shared-view functions)))
+      (opt_i64_i64_map.with-capacity 1))
     (let
+      [_trace : unit
+        (opt-summary-trace-built!
+          "cb-content"
+          (opt-function-seq-count (compiler-opt-global-shared-view functions)))]
       [cand : opt_i64_i64_map.Map
         (opt-cb-candidates
           (compiler-opt-global-shared-view globals)
@@ -154374,28 +154922,44 @@
     (= (opt_i64_i64_map.len (& len-eq)) 0)
     (>
       (opt-function-seq-count (compiler-opt-global-shared-view functions))
-      (opt-loop-bce-summary-function-limit)))
-    (opt_i64_i64_map.with-capacity 1)
-    (opt-arg-global-emit
-      type-segment-bases
-      (opt-arg-global-scan-functions
-        (opt-arg-global-seed-globals
-          (opt-arg-global-seed-externs
-            (opt-arg-global-seed-functions
-              (OptArgGlobalScan
-                (opt_i64_i64_map.with-capacity capacity)
-                (opt_i64_i64_map.with-capacity capacity)
-                (opt_i64_i64_map.with-capacity capacity))
-              (compiler-opt-global-shared-view functions)
+      (opt-loop-bce-summary-function-limit))
+    (>
+      (opt-summary-program-instrs (compiler-opt-global-shared-view functions))
+      (opt-summary-round-visit-budget)))
+    (begin
+      (opt-summary-trace-declined!
+        "arg-global"
+        (if (>
+          (opt-function-seq-count (compiler-opt-global-shared-view functions))
+          (opt-loop-bce-summary-function-limit))
+          "function-limit"
+          "no-len-eq")
+        (opt-function-seq-count (compiler-opt-global-shared-view functions)))
+      (opt_i64_i64_map.with-capacity 1))
+    (begin
+      (opt-summary-trace-built!
+        "arg-global"
+        (opt-function-seq-count (compiler-opt-global-shared-view functions)))
+      (opt-arg-global-emit
+        type-segment-bases
+        (opt-arg-global-scan-functions
+          (opt-arg-global-seed-globals
+            (opt-arg-global-seed-externs
+              (opt-arg-global-seed-functions
+                (OptArgGlobalScan
+                  (opt_i64_i64_map.with-capacity capacity)
+                  (opt_i64_i64_map.with-capacity capacity)
+                  (opt_i64_i64_map.with-capacity capacity))
+                (compiler-opt-global-shared-view functions)
+                0)
+              (compiler-opt-global-shared-view externs)
               0)
-            (compiler-opt-global-shared-view externs)
+            (compiler-opt-global-shared-view globals)
             0)
-          (compiler-opt-global-shared-view globals)
-          0)
-        (compiler-opt-global-shared-view functions))
-      functions
-      (opt_i64_i64_map.with-capacity capacity)
-      0)))
+          (compiler-opt-global-shared-view functions))
+        functions
+        (opt_i64_i64_map.with-capacity capacity)
+        0))))
 
 ;; GAP-1's facts ride the global-cell summary beside P-B's families, but are
 ;; computed here rather than inside opt-global-cell-summary-build-with-call-
@@ -156209,6 +156773,9 @@
       (< level 2)
       (<= count 0)
       (> count (opt-loop-bce-summary-function-limit))
+      (>
+        (opt-summary-program-instrs (compiler-opt-global-shared-view functions))
+        (opt-summary-round-visit-budget))
       (=
         (ir.compiler-ir-global-seq-count
           (compiler-opt-global-shared-view globals))
@@ -157009,6 +157576,11 @@
             (opt_i64_i64_map.with-capacity 1)
             (opt_i64_i64_map.with-capacity 1)
             (opt_i64_i64_map.with-capacity 1))]
+        [_census : unit
+          (opt-summary-trace-cells!
+            count
+            (opt_i64_i64_map.len (& addr-taken))
+            (opt-function-seq-count (compiler-opt-global-shared-view functions)))]
         [nonneg : opt_i64_i64_map.Map
           (opt-nonneg-globals-build
             type-segment-bases

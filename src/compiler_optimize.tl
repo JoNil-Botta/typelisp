@@ -125098,18 +125098,34 @@
     ;; refused by SHAPE before any band priced its site.
     ;;
     ;; The two rows that rise are ONE site apiece and neither is this
-    ;; whitelist's either. sccp_lattice's is `sccp-state-mark-executable` --
-    ;; 114 instructions, eight static references, carrying the loop of a leaf a
-    ;; band absorbed into it -- kept by the measured tier into
-    ;; `sccp-mark-switch-targets`'s loop at `saving=78` against `boundary=56`,
-    ;; a clear margin, where the merged caller goes from 42 instructions and no
-    ;; frame references to 114 and thirteen. It is a loop merged into a loop,
-    ;; the shape whose two priced sides are dominated by the same nested term
-    ;; so that the verdict turns on a residual the scalar plan proxy reads
-    ;; worst; refusing that class outright was measured and is far worse
-    ;; (hashmap_get +15.8%, ssa_construct +0.86%, intern_table +0.47%, and
-    ;; sccp_lattice not even recovered), so it is left to a packet that can
-    ;; price it rather than paid for with four other rows.
+    ;; whitelist's either.
+    ;;
+    ;; INL-6 read sccp_lattice's as the measured tier's keep of
+    ;; `sccp-state-mark-executable` into `sccp-mark-switch-targets`'s loop
+    ;; (`saving=78` against `boundary=56`, a loop merged into a loop) and left
+    ;; it to a packet that could price that class. INL-7 measured the class and
+    ;; the site, and the reading was WRONG in both directions. Refusing the
+    ;; class in the tier reproduces INL-6's own ablation -- hashmap_get +15.82%,
+    ;; intern_table +10.44%, ssa_construct +1.36%, callgraph_scc +2.34% -- and
+    ;; moves sccp_lattice the wrong way, to +0.024%, because that keep is a WIN
+    ;; of 174,272 (`sccp_state_mark_executable` -591,296 against
+    ;; `sccp_mark_switch_targets` +417,024). Pricing the class instead, with a
+    ;; term for the frame traffic the merged plan puts inside the nest read off
+    ;; the plan proxy's own spill set, does not move that site at all: the proxy
+    ;; prices the merged caller at four callee-saved registers and NO spills
+    ;; (`aalloc=8`, in-nest spill traffic zero), so the term is identically zero
+    ;; where it was proposed, and charging it costs lex_source +1.65%,
+    ;; intern_table +1.15% and asm_render +0.06%.
+    ;;
+    ;; The site this admission actually cost the row is a BAND import:
+    ;; `sccp-rewrite-phi` -- 102 instructions in 26 blocks, one static
+    ;; reference, its own phi loop, and the `(set! sccp-subs ...)` this clause
+    ;; used to refuse -- taken by the hot-loop-leaf band into
+    ;; `sccp-rewrite-rows`, whose self tail-call `opt-tailrec-function` turns
+    ;; into a loop one pass later. See opt-inline-caller-loop-free?, which is
+    ;; the clause that refuses it and carries the callgrind split; with it in
+    ;; the tree this admission's sccp_lattice reads -0.330% against base rather
+    ;; than +0.264%.
     [(ir.CompilerIrInstr.Store _ _ _) true]
     [_ false]))
 
@@ -129972,12 +129988,65 @@
 (define (opt-inline-hot-loop-leaf-block-fuel) : i64
   32)
 
-;; The caller has no natural loop of its own. Read off the same lazy caller
-;; facts the site clause forces, so a candidate only pays for them once.
+;; The caller has no loop of its own -- which is the clause the loop-free tier of
+;; clause 5 above rests its whole argument on: "the imported loop becomes the
+;; caller's ONLY one", so the caller's own values are never live across it more
+;; than once per invocation. The natural-loop set is read off the same lazy
+;; caller facts the site clause forces, so a candidate only pays for them once.
+;;
+;; INL-7. The natural-loop set alone does not answer that question, because the
+;; inliner runs BEFORE the per-function pipeline and one of the passes it runs
+;; before is `tailrec` (opt-tailrec-function, the first pass of
+;; optimize-function-once-with-summaries). That pass rewrites a SELF TAIL-CALL
+;; into a back edge to the entry block. A self-tail-recursive caller therefore
+;; presents to this band with an empty natural-loop set and leaves the pipeline
+;; with a loop around its whole body -- and an import admitted here on the
+;; strength of the empty set lands INSIDE that loop, which is the shape clause
+;; 5's middle tier refuses above sixteen caller blocks.
+;;
+;; A self-call that is NOT in tail position is refused by the same clause and
+;; for the neighbouring reason, which the recursive-site tier states in its own
+;; clause 2: a recursive caller re-enters its frame at every node of the
+;; recursion, so an import that costs it a register costs it that once per node.
+;; Either way a caller that calls itself is a loop -- one this pipeline is about
+;; to build, or one the machine runs on the stack -- and the tier's premise is
+;; false for it. So the fact this asks is the memoized self-call scan
+;; (opt-inline-caller-recursive?), which the recursive-site tier already
+;; forces on this population and which is asked LAST, after the empty-loop-set
+;; test that costs nothing extra.
+;;
+;; MEASURED on this tree (base = 6793511c, `--benchmarks-only`, 23 rows + the 5
+;; heavy rows). sccp_lattice 711,646,330 -> 709,300,106 (-2,346,224, -0.330%),
+;; regalloc_greedy -138,852 (-0.019%), and every other row byte-identical.
+;;
+;; The sccp_lattice loser this recovers is one import. `sccp-rewrite-rows` is
+;; the tail-recursive per-instruction rewrite driver -- no natural loop at
+;; inline time, 26 blocks -- and INL-6's multiblock `Store` admission made
+;; `sccp-rewrite-phi` (102 instructions, 26 blocks, one static reference, its
+;; own phi loop, a `(set! sccp-subs ...)` that was refused by SHAPE before)
+;; eligible for this band at its single straight-line site. Callgrind splits the
+;; trade exactly: `sccp_rewrite_rows` 32,885,952 -> 39,790,784 while
+;; `sccp_rewrite_phi` retires 4,558,608, so the copy inside the tail-recursion's
+;; loop executes 2,346,224 instructions more than the boundary it removes, and
+;; the merged frame goes from five callee-saved pushes and ten frame references
+;; to eight and seventeen. regalloc_greedy's -138,852 is the same shape twice
+;; over: `rg-forbidden?` imported into `rg-first-free` and `rg-first-evictable`,
+;; both of them self-tail-recursive register scans.
+;;
+;; That import is what INL-6 recorded at opt-inline-body-instr-op-ok? as the
+;; measured tier's loop-into-loop keep. It is not: the keep of
+;; `sccp-state-mark-executable` into `sccp-mark-switch-targets`'s loop is a WIN
+;; of 174,272 on this tree, which refusing it measures directly
+;; (sccp_state_mark_executable -591,296 against sccp_mark_switch_targets
+;; +417,024). See opt-inline-checked-verdict for the two pricing terms that were
+;; built and measured for that keep before this clause was found, and why
+;; neither is the answer.
 (define (opt-inline-caller-loop-free?) : bool
   (begin
     (opt-inline-caller-facts-ensure!)
-    (= (opt-label-count (opt-inline-caller-loop-labels-shared-view)) 0)))
+    (and
+      (= (opt-label-count (opt-inline-caller-loop-labels-shared-view)) 0)
+      (not (opt-inline-caller-recursive?)))))
 
 (define (opt-inline-hot-loop-leaf-ok?
   [index : OptFunctionIndex]
@@ -132582,6 +132651,40 @@
 ;; The verdict. Both sides priced per invocation of the caller; see the tier
 ;; comment for the model and the margin.
 ;;
+;; WHAT THIS TIER WAS ACCUSED OF AND DID NOT DO. INL-6 recorded sccp_lattice's
+;; +0.264% at opt-inline-body-instr-op-ok? as a mispricing here: a LOOP merged
+;; into a LOOP -- `sccp-state-mark-executable` into `sccp-mark-switch-targets`
+;; at `depth=1|weight=8|banked=138|callee=1800|after=1916|boundary=56|saving=78`
+;; -- on the argument that both priced sides are dominated by the same nested
+;; term so the verdict turns on a residual. INL-7 measured that, three ways, and
+;; the tier is not where the row was lost:
+;;
+;;   * REFUSING the class (an in-loop site with a cyclic callee, refused in this
+;;     tier) reproduces INL-6's own ablation and then some -- hashmap_get
+;;     +15.82%, intern_table +10.44%, callgraph_scc +2.34%, ssa_construct
+;;     +1.36% -- and sccp_lattice ends at +0.024%, WORSE than leaving the keep
+;;     alone. Callgrind says why: the keep is worth 174,272 to that row
+;;     (`sccp_state_mark_executable` -591,296 against `sccp_mark_switch_targets`
+;;     +417,024). The class is the corpus's best merge, not its worst;
+;;   * PRICING it with a term for the frame traffic the merged plan adds inside
+;;     the nest -- the plan proxy's own spill set, restricted to values whose
+;;     deepest reference is two loop levels in, weighted by the allocator's
+;;     spill weights and charged to `after` -- is identically ZERO at that site.
+;;     The proxy plans the merged caller at four callee-saved registers and no
+;;     spills at all, while the function the backend finally emits carries six
+;;     callee-saved pushes and thirteen frame references. The proxy is a
+;;     standalone scalar plan and the emitted plan is the product of the
+;;     backend's four-stage replan; where they differ this term cannot see the
+;;     difference. Charged anyway across the corpus it costs lex_source +1.65%,
+;;     intern_table +1.15% and asm_render +0.06% against callgraph_scc -1.86%
+;;     and ssa_construct -0.28%, and leaves sccp_lattice untouched to the byte;
+;;   * the same reading disposes of pricing the `after` side with the inner
+;;     loop's trip weight on the P3 memory-class carriers: the standalone scalar
+;;     plan runs no P3 round and chose no carriers at that site.
+;;
+;; The row was lost one pass earlier, at a PREDICTIVE band, to a caller whose
+;; loop did not exist yet. See opt-inline-caller-loop-free?.
+;;
 ;; `banked-cost-in` is the priced state's cost when a previous round in this
 ;; caller already computed it -- the sequence prices site after site against
 ;; states it built itself, and re-optimizing a function this tier has already
@@ -133441,6 +133544,16 @@
 ;; pays one boolean test per admitted site; the in-loop question is asked inside
 ;; it too, because answering it forces the caller's natural-loop facts and no
 ;; untraced compile should pay for that on this account.
+;;
+;; INL-7 adds `caller-rec=`, beside `in-loop=`, for the same reason `in-loop=`
+;; is there: it is the other half of "is this site inside a loop of the caller".
+;; `in-loop=0|caller-rec=1` is a site that reads as straight-line to every band
+;; and is inside a loop by the time the backend sees it, because
+;; opt-tailrec-function turns the caller's self tail-call into a back edge one
+;; pass later. That is the reading opt-inline-caller-loop-free? was missing, and
+;; a band line is where a survey can see it. It is asked inside the guard too --
+;; the self-call scan is memoized, but a candidate that never asked for it
+;; should not start paying for it because a tracer exists.
 (define (opt-inline-trace-band-admit!
   [callee-name : i64]
   [callee-instrs : i64]
@@ -133463,6 +133576,10 @@
         (ir.compiler-ir-label-text opt-inline-current-block-label)
         "|in-loop="
         (if (opt-inline-bounds-loop-site-in-loop?)
+          "1"
+          "0")
+        "|caller-rec="
+        (if (opt-inline-caller-recursive?)
           "1"
           "0")
         "|instrs="

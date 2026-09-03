@@ -26931,6 +26931,169 @@
         (opt-inline-dup-leaf-plain callee-name))]
     (= (opt-inline-shared-remaining-calls optimized 3) 0)))
 
+;; --- INL-7: the loop a loop-free caller has not been given yet ---------------
+;;
+;; The tier directly above rests on "the imported loop becomes the caller's ONLY
+;; one", read off the caller's natural loops. The inliner runs BEFORE the
+;; per-function pipeline, and that pipeline's FIRST pass (opt-tailrec-function)
+;; turns a self tail-call into a back edge to the entry block. So a
+;; self-tail-recursive caller presents here with an empty natural-loop set and
+;; leaves with a loop around its whole body, and an import admitted on the
+;; strength of the empty set lands inside it.
+;;
+;; These callers are the two answers, and they differ in exactly the property
+;; opt-inline-caller-loop-free? now reads: the same straight-line entry block
+;; with the same site, with and without a self tail-call behind a branch. The
+;; branch is what keeps the recursive shape's site straight-line -- the caller
+;; still has no natural loop, which is the whole point.
+(define (opt-inline-recursive-caller-self-args) : compiler_ir_types.CompilerIrCallArgs
+  (let
+    [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (__tl_make-array compiler_ir_types.CompilerIrValue 3)]
+    (begin
+      (set! (array-ref args 0) (compiler_ir_types.CompilerIrValue.Var 0))
+      (set! (array-ref args 1) (compiler_ir_types.CompilerIrValue.Var 1))
+      (set! (array-ref args 2) (compiler_ir_types.CompilerIrValue.Var 2))
+      (compiler_ir_types.CompilerIrCallArgs.Array args))))
+
+(define (opt-inline-recursive-caller-blocks
+  [self-name : i64]
+  [callee-name : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (opt-inline-switch-caller-call-named callee-name)
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "recur")
+          (compiler_ir_types.compiler-ir-label "done"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "recur")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.TailCall
+            self-name
+            (opt-inline-recursive-caller-self-args)
+            (compiler_ast_types.AstType.I64))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "done")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 3)))))
+        compiler_ir_types.CompilerIrBlockList.Nil))))
+
+(define (opt-inline-recursive-caller-function
+  [func-name : i64]
+  [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    4
+    (opt-inline-recursive-caller-blocks func-name callee-name)))
+
+(define (opt-inline-recursive-caller-chain
+  [names : compiler_optimize.OptSlotList]
+  [callee-name : i64]
+  [tail : compiler_ir_types.CompilerIrFunctionSeq]) : compiler_ir_types.CompilerIrFunctionSeq
+  (match names
+    [(compiler_optimize.OptSlotList.Nil) tail]
+    [(compiler_optimize.OptSlotList.Cons name rest)
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-inline-recursive-caller-function name callee-name)
+        (opt-inline-recursive-caller-chain
+          (compiler_ir_types.compiler-ir-box-shared-view rest)
+          callee-name
+          tail))]))
+
+;; The same big-tier cyclic leaf as the loop-free positive directly above, at
+;; the same three straight-line sites, in callers that call themselves: every
+;; site keeps its boundary. Nothing else about the program changed -- the leaf,
+;; the reference count, the site's block and every budget are identical -- so
+;; this pair is the clause and only the clause. (sccp_lattice's
+;; `sccp-rewrite-phi` into `sccp-rewrite-rows` is this shape at benchmark size:
+;; -2,346,224 on the row.)
+(define (compiler-optimize-inline-hot-loop-leaf-recursive-caller-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-recursive-caller-chain
+          (opt-inline-shared-caller-names symbols 3)
+          callee-name
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-inline-dup-leaf-plain callee-name)
+            (compiler_ir_types.compiler-ir-function-seq-empty)))
+        2)]
+    (= (opt-inline-shared-remaining-calls optimized 3) 3)))
+
+;; ...and the clause itself, on the three caller shapes it has to tell apart,
+;; with the value `--trace-passes` prints as the band line's `caller-rec=` field
+;; asserted beside each answer. A straight-line caller is loop-free and is not
+;; recursive; the same caller with a self tail-call behind a branch is STILL
+;; free of natural loops and is no longer loop-free to this clause; a caller
+;; with a real back edge is neither, and is refused by the reading the clause
+;; already had.
+(define (compiler-optimize-inline-recursive-caller-loop-free-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
+      (opt-inline-recursive-caller-chain
+        (opt-inline-shared-caller-names symbols 1)
+        callee-name
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-inline-dup-leaf-plain callee-name)
+          (compiler_ir_types.compiler-ir-function-seq-empty)))]
+    [index : compiler_optimize.OptFunctionIndex
+      (compiler_optimize.opt-function-index-build
+        (compiler_optimize.compiler-opt-global-shared-view functions))]
+    [census : compiler_optimize.OptInlineCensus
+      (compiler_optimize.opt-inline-census-build
+        (compiler_optimize.compiler-opt-global-shared-view index)
+        functions)]
+    [_install-flat : unit
+      (compiler_optimize.opt-inline-caller-facts-install!
+        (compiler_optimize.compiler-opt-global-shared-view index)
+        (compiler_optimize.compiler-opt-global-shared-view census)
+        symbols.main
+        (compiler_optimize.opt-function-blocks
+          (opt-inline-switch-caller-named symbols callee-name)))]
+    [flat-loop-free? : bool (compiler_optimize.opt-inline-caller-loop-free?)]
+    [flat-recursive? : bool (compiler_optimize.opt-inline-caller-recursive?)]
+    [_install-recursive : unit
+      (compiler_optimize.opt-inline-caller-facts-install!
+        (compiler_optimize.compiler-opt-global-shared-view index)
+        (compiler_optimize.compiler-opt-global-shared-view census)
+        symbols.main
+        (opt-inline-recursive-caller-blocks symbols.main callee-name))]
+    [recursive-loop-free? : bool
+      (compiler_optimize.opt-inline-caller-loop-free?)]
+    [recursive-recursive? : bool
+      (compiler_optimize.opt-inline-caller-recursive?)]
+    [_install-loop : unit
+      (compiler_optimize.opt-inline-caller-facts-install!
+        (compiler_optimize.compiler-opt-global-shared-view index)
+        census
+        symbols.main
+        (opt-inline-loop-site-caller-blocks
+          callee-name
+          (opt-inline-loop-site-entry-instrs)))]
+    [loop-loop-free? : bool (compiler_optimize.opt-inline-caller-loop-free?)]
+    [loop-recursive? : bool (compiler_optimize.opt-inline-caller-recursive?)]
+    (and
+      flat-loop-free?
+      (not flat-recursive?)
+      (not recursive-loop-free?)
+      recursive-recursive?
+      (not loop-loop-free?)
+      (not loop-recursive?))))
+
 ;; A caller that loops, but whose call sits in the loop's EXIT block: no site
 ;; tier fires -- the site is not in the loop, the caller is not loop-free, and
 ;; the in-loop tier never sees the exit block -- so the import keeps its

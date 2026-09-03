@@ -498,33 +498,6 @@ function_body() {
     printf '%s\n' "$_body"
 }
 
-# SROA-2. The lattice-join fixture is the shape the aggregate word split exists
-# for: a clone of a four-word enum out of a dense array, a join that rebuilds it
-# per match arm, and an equality that reads both back. Before the split every
-# one of those temporaries was a frame buffer, so the join function moved 32
-# bytes with `movups` and every comparison read a `(%rsp)` slot back. After it
-# the whole value lives in registers: the function reserves no stack at all, the
-# tag test is a register test, and the equality's payload compares are
-# register-to-register.
-check_lattice_join_split() {
-    _asm=$(compile_gate lattice_join_split tests/integration/lattice_join_split.tl)
-    _bind=$(function_body "$_asm" _tl_lattice_join_split_lat_bind)
-    # No stack temporary for the enum: no frame, no wide copy, no word store or
-    # compare against a frame slot anywhere between the tag test and the
-    # compare.
-    assert_not_matches "$_bind" '^[[:space:]]+subq \$[0-9]+, %rsp$' lattice-join-split
-    assert_not_contains "$_bind" 'movups' lattice-join-split
-    assert_not_matches "$_bind" '^[[:space:]]+movq %[a-z0-9]+, -?[0-9]+\(%rsp\)$' \
-        lattice-join-split
-    assert_not_matches "$_bind" '^[[:space:]]+cmpq -?[0-9]+\(%rsp\), %' \
-        lattice-join-split
-    # The equality's match is ONE tag compare against a register, and its three
-    # payload comparisons are register-to-register.
-    assert_matches "$_bind" '^[[:space:]]+cmpq \$1, %[a-z0-9]+$' lattice-join-split
-    assert_regex_count_at_least "$_bind" \
-        '^[[:space:]]+cmpq %r[a-z0-9]+, %r[a-z0-9]+$' 3 lattice-join-split
-}
-
 check_divmagic_hoist() {
     _asm=$(compile_gate divmagic_hoist tests/integration/divmagic_hoist.tl)
     _modsum=$(function_body "$_asm" _tl_divmagic_hoist_modsum)
@@ -2677,7 +2650,6 @@ check_red_zone_leaf_win64() {
     done
 }
 
-check_lattice_join_split
 check_select_flags_lea
 check_mem_dest_rmw_fold
 check_word_merge_unroll

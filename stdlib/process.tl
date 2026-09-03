@@ -17,6 +17,7 @@
 ;#
 (import stdlib.string)
 (import stdlib.vector)
+(import stdlib.io)
 (import (vector.vector String) as svec)
 
 ;; Process values are persistent arena-backed records. These shallow reads make
@@ -31,13 +32,12 @@
   `(unsafe
     (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
-;: Immutable sequence of process argument strings in argv order. `slots` holds
-;: the `len` live entries. Sequences are shared persistently, so helpers that
+;: Immutable sequence of process argument strings in argv order. Every backing
+;: array entry is live. Sequences are shared persistently, so helpers that
 ;: extend one copy into a right-sized array instead of mutating storage another
 ;: value still observes.
 (defstruct ProcessStringList
-  (slots (__tl_dyn-array String))
-  (len i64))
+  (slots (__tl_dyn-array String)))
 
 ;: Optional string value used for cwd and stdin configuration.
 (defenum ProcessMaybeString
@@ -45,13 +45,40 @@
   (ProcessSomeString String))
 
 ;: Immutable sequence of environment override name/value pairs.
-;: `names` and `values` hold the `len` live entries in override order. Values
-;: are persistent: builders allocate fresh backing arrays before extending a
-;: retained parent.
+;: `names` and `values` hold entries in override order. Their lengths must be
+;: equal. Accessors use only the common in-bounds prefix and command validation
+;: rejects a mismatch before conversion. Values are persistent: builders
+;: allocate fresh backing arrays before extending a retained parent.
 (defstruct ProcessEnvList
   (names (__tl_dyn-array String))
-  (values (__tl_dyn-array String))
-  (len i64))
+  (values (__tl_dyn-array String)))
+
+;: Maximum argv or environment entry count accepted by process builders and
+;: the command validation boundary.
+(define process-storage-max-count : i64
+  4096)
+
+;: Maximum byte length of one C-string-bound process field. Stdin remains
+;: length-delimited and is intentionally not subject to this cap.
+(define process-storage-max-string-bytes : i64
+  1048576)
+
+;: Return the smaller of two nonnegative storage lengths.
+(define (process-count-min [left : i64] [right : i64]) : i64
+  (if (< left right)
+    left
+    right))
+
+;: Reject builder growth before count arithmetic or allocation can overflow or
+;: exceed the implementation cap.
+(define (process-checked-count-add [left : i64] [right : i64]) : i64
+  (if (or
+    (< left 0)
+    (< right 0)
+    (> left process-storage-max-count)
+    (> right (- process-storage-max-count left)))
+    (io.panic "process: command storage limit exceeded")
+    (+ left right)))
 
 ;: Vector-backed process environment overrides. `names` and `values` are
 ;: parallel generated string-vector buffers with the invariant that their live
@@ -188,7 +215,7 @@
 ;: right-sized array so the stepped-over sequence keeps its own storage.
 (define (string-step [args : ProcessStringList]) : ProcessStringStep
   (let
-    [n : i64 (- args.len 1)]
+    [n : i64 (- (array-length args.slots) 1)]
     (if (< n 0)
       (ProcessStringStep false "" (args-empty))
       (let
@@ -204,7 +231,7 @@
           (ProcessStringStep
             true
             (process-array-shared-view args.slots 0)
-            (ProcessStringList slots n)))))))
+            (ProcessStringList slots)))))))
 
 ;: Return whether a destructured argv step contains an item.
 (define (string-step-present? [step : (& step ProcessStringStep)]) : bool
@@ -220,13 +247,13 @@
 
 ;: Return the environment name at `index`, or the empty string out of range.
 (define (env-name-ref [env : (& env ProcessEnvList)] [index : i64]) : String
-  (if (and (>= index 0) (< index env.len))
+  (if (and (>= index 0) (< index (env-count env)))
     (process-array-shared-view env.names index)
     ""))
 
 ;: Return the environment value at `index`, or the empty string out of range.
 (define (env-value-ref [env : (& env ProcessEnvList)] [index : i64]) : String
-  (if (and (>= index 0) (< index env.len))
+  (if (and (>= index 0) (< index (env-count env)))
     (process-array-shared-view env.values index)
     ""))
 
@@ -239,7 +266,7 @@
   [offset : i64]
   [start : i64]) : unit
   (let
-    [n : i64 env.len]
+    [n : i64 (env-count env)]
     [i : i64 start]
     (while (< i n)
       (begin
@@ -254,7 +281,7 @@
 ;: self-tail.
 (define (env-step [env : ProcessEnvList]) : ProcessEnvStep
   (let
-    [n : i64 env.len]
+    [n : i64 (env-count env)]
     (if (< n 1)
       (ProcessEnvStep false "" "" (env-empty))
       (let
@@ -272,7 +299,7 @@
             true
             (env-name-ref env 0)
             (env-value-ref env 0)
-            (ProcessEnvList tail-names tail-values tail-n)))))))
+            (ProcessEnvList tail-names tail-values)))))))
 
 ;: Return whether a destructured env step contains an item.
 (define (env-step-present? [step : (& step ProcessEnvStep)]) : bool
@@ -306,25 +333,25 @@
 
 ;: Return an empty argument list.
 (define (args-empty) : ProcessStringList
-  (ProcessStringList (__tl_make-array String 0) 0))
+  (ProcessStringList (__tl_make-array String 0)))
 
 ;: Return the number of argv entries in `args`.
 (define (args-count [args : (& args ProcessStringList)]) : i64
-  args.len)
+  (array-length args.slots))
 
 ;: Return the argv entry at `index`, or the empty string when out of range.
 (define (args-ref [args : (& args ProcessStringList)] [index : i64]) : String
-  (if (and (>= index 0) (< index args.len))
+  (if (and (>= index 0) (< index (array-length args.slots)))
     (process-array-shared-view args.slots index)
     ""))
 
-;: Copy the `len` live entries of `args` into `dst` starting at `offset`.
+;: Copy every backing-array entry of `args` into `dst` starting at `offset`.
 (define (args-copy-into
   [dst : (&mut dst (__tl_dyn-array String))]
   [args : (& args ProcessStringList)]
   [offset : i64]) : unit
   (let
-    [n : i64 args.len]
+    [n : i64 (array-length args.slots)]
     [i : i64 0]
     (while (< i n)
       (begin
@@ -336,12 +363,13 @@
 ;: Prepend an owned argument string to an argv list.
 (define (args-cons [value : String] [rest : ProcessStringList]) : ProcessStringList
   (let
-    [n : i64 rest.len]
-    [slots : (__tl_dyn-array String) (__tl_make-array String (+ n 1))]
+    [n : i64 (array-length rest.slots)]
+    [next : i64 (process-checked-count-add n 1)]
+    [slots : (__tl_dyn-array String) (__tl_make-array String next)]
     (begin
       (set! (array-ref slots 0) value)
       (args-copy-into (&mut slots) rest 1)
-      (ProcessStringList slots (+ n 1)))))
+      (ProcessStringList slots))))
 
 ;: Return a one-element argument list backed by an owned string.
 (define (args-single [value : String]) : ProcessStringList
@@ -349,53 +377,65 @@
     [slots : (__tl_dyn-array String) (__tl_make-array String 1)]
     (begin
       (set! (array-ref slots 0) value)
-      (ProcessStringList slots 1))))
+      (ProcessStringList slots))))
 
 ;: Concatenate two argument lists while preserving argv order.
 (define (args-append [left : ProcessStringList] [right : ProcessStringList]) : ProcessStringList
   (let
-    [ln : i64 left.len]
-    [rn : i64 right.len]
-    [slots : (__tl_dyn-array String) (__tl_make-array String (+ ln rn))]
+    [ln : i64 (array-length left.slots)]
+    [rn : i64 (array-length right.slots)]
+    [count : i64 (process-checked-count-add ln rn)]
+    [slots : (__tl_dyn-array String) (__tl_make-array String count)]
     (begin
       (args-copy-into (&mut slots) left 0)
       (args-copy-into (&mut slots) right ln)
-      (ProcessStringList slots (+ ln rn)))))
+      (ProcessStringList slots))))
 
 ;: Convert a generated string-vector argv buffer to the sequence representation
 ;: consumed by `ProcessCommand`, preserving vector order.
 (define (args-from-string-vec [args : (& args svec.Vec)]) : ProcessStringList
   (let
     [n : i64 (svec.len args)]
-    [slots : (__tl_dyn-array String) (__tl_make-array String n)]
-    [i : i64 0]
-    (begin
-      (while (< i n)
+    (if (> n process-storage-max-count)
+      (io.panic "process: command storage limit exceeded")
+      (let
+        [slots : (__tl_dyn-array String) (__tl_make-array String n)]
+        [i : i64 0]
         (begin
-          (set! (array-ref slots i) (svec.get args i ""))
-          (set! i (+ i 1))))
-      (ProcessStringList slots n))))
+          (while (< i n)
+            (begin
+              (set! (array-ref slots i) (svec.get args i ""))
+              (set! i (+ i 1))))
+          (ProcessStringList slots))))))
 
 ;: Return an empty environment override list.
 (define (env-empty) : ProcessEnvList
-  (ProcessEnvList (__tl_make-array String 0) (__tl_make-array String 0) 0))
+  (ProcessEnvList (__tl_make-array String 0) (__tl_make-array String 0)))
 
 ;: Return the number of env overrides in `env`.
 (define (env-count [env : (& env ProcessEnvList)]) : i64
-  env.len)
+  (process-count-min (array-length env.names) (array-length env.values)))
+
+;: Return true when the parallel environment arrays have the same bounded
+;: length.
+(define (env-storage-valid? [env : (& env ProcessEnvList)]) : bool
+  (and
+    (= (array-length env.names) (array-length env.values))
+    (<= (array-length env.names) process-storage-max-count)))
 
 ;: Prepend owned environment override strings to an env list. The retained
 ;: parent is never mutated.
 (define (env-cons [name : String] [value : String] [rest : ProcessEnvList]) : ProcessEnvList
   (let
-    [n : i64 rest.len]
-    [names : (__tl_dyn-array String) (__tl_make-array String (+ n 1))]
-    [values : (__tl_dyn-array String) (__tl_make-array String (+ n 1))]
+    [n : i64 (env-count rest)]
+    [next : i64 (process-checked-count-add n 1)]
+    [names : (__tl_dyn-array String) (__tl_make-array String next)]
+    [values : (__tl_dyn-array String) (__tl_make-array String next)]
     (begin
       (set! (array-ref names 0) name)
       (set! (array-ref values 0) value)
       (env-copy-into (&mut names) (&mut values) rest 1 0)
-      (ProcessEnvList names values (+ n 1)))))
+      (ProcessEnvList names values))))
 
 ;: Return true when `text` contains `needle`.
 (define (string-contains-char? [text : (& text str)] [needle : char]) : bool
@@ -428,7 +468,9 @@
       (if (< capacity 1)
         1
         capacity)]
-    (ProcessEnvVec (svec.with-capacity cap) (svec.with-capacity cap))))
+    (if (> cap process-storage-max-count)
+      (io.panic "process: command storage limit exceeded")
+      (ProcessEnvVec (svec.with-capacity cap) (svec.with-capacity cap)))))
 
 ;: Create an empty vector-backed env override set.
 (define (env-vec-new) : ProcessEnvVec
@@ -440,15 +482,33 @@
 (define (env-vec-count [env : (& env ProcessEnvVec)]) : i64
   (svec.len (env-vec-names env)))
 
+;: Return true when both vector live lengths are equal, nonnegative, within
+;: their backing arrays, and within the public process-storage cap.
+(define (env-vec-storage-valid? [env : (& env ProcessEnvVec)]) : bool
+  (let
+    [names-len : i64 (svec.len (env-vec-names env))]
+    [values-len : i64 (svec.len (env-vec-values env))]
+    (and
+      (>= names-len 0)
+      (>= values-len 0)
+      (= names-len values-len)
+      (<= names-len (array-length (svec.slots (env-vec-names env))))
+      (<= values-len (array-length (svec.slots (env-vec-values env))))
+      (<= names-len process-storage-max-count))))
+
 ;: Append one owned environment override at the end of the vector-backed set.
 ;: Duplicate names are preserved in append order.
 (define (env-vec-append!
   [env : (&mut env ProcessEnvVec)]
   [name : String]
   [value : String]) : unit
-  (begin
-    (svec.push-ref! (&mut env.names) name)
-    (svec.push-ref! (&mut env.values) value)))
+  (if (env-vec-storage-valid? env)
+    (let
+      [_next : i64 (process-checked-count-add (svec.len (& env.names)) 1)]
+      (begin
+        (svec.push-ref! (&mut env.names) name)
+        (svec.push-ref! (&mut env.values) value)))
+    (io.panic "process: environment vector storage is malformed")))
 
 ;: Fill dense public env storage from a vector-backed override set.
 (define (env-vec-to-list-fill
@@ -467,13 +527,15 @@
 ;: Convert vector-backed env overrides to the dense representation consumed by
 ;: `ProcessCommand` and the process runtime.
 (define (env-vec-to-list [env : (& env ProcessEnvVec)]) : ProcessEnvList
-  (let
-    [n : i64 (env-vec-count env)]
-    [names : (__tl_dyn-array String) (__tl_make-array String n)]
-    [values : (__tl_dyn-array String) (__tl_make-array String n)]
-    (begin
-      (env-vec-to-list-fill env (&mut names) (&mut values))
-      (ProcessEnvList names values n))))
+  (if (env-vec-storage-valid? env)
+    (let
+      [n : i64 (env-vec-count env)]
+      [names : (__tl_dyn-array String) (__tl_make-array String n)]
+      [values : (__tl_dyn-array String) (__tl_make-array String n)]
+      (begin
+        (env-vec-to-list-fill env (&mut names) (&mut values))
+        (ProcessEnvList names values)))
+    (io.panic "process: environment vector storage is malformed")))
 
 ;: Return the first vector-backed env validation error, or `ProcessNoString`.
 (define (env-vec-validation-error-from
@@ -483,11 +545,23 @@
     (ProcessNoString)
     (let
       [name : String (svec.get (env-vec-names env) index "")]
-      (if (string.eq name "")
-        (ProcessSomeString "process: environment variable name is empty")
-        (if (string-contains-char? (& name) '=')
-          (ProcessSomeString "process: environment variable name contains '='")
-          (env-vec-validation-error-from env (+ index 1)))))))
+      [value : String (svec.get (env-vec-values env) index "")]
+      (cond
+        [(string.eq name "")
+          (ProcessSomeString "process: environment variable name is empty")]
+        [(string-contains-char? (& name) '=')
+          (ProcessSomeString "process: environment variable name contains '='")]
+        [(> (string-length (& name)) process-storage-max-string-bytes)
+          (ProcessSomeString
+            "process: environment variable name exceeds storage limit")]
+        [(> (string-length (& value)) process-storage-max-string-bytes)
+          (ProcessSomeString
+            "process: environment variable value exceeds storage limit")]
+        [(string-contains-char? (& name) '\0')
+          (ProcessSomeString "process: environment variable name contains NUL")]
+        [(string-contains-char? (& value) '\0')
+          (ProcessSomeString "process: environment variable value contains NUL")]
+        [else (env-vec-validation-error-from env (+ index 1))]))))
 
 ;: Return the first vector-backed env validation error, or `ProcessNoString`.
 ;: The inherited environment is filtered by names that appear in the override
@@ -496,7 +570,9 @@
 (define (env-vec-validation-error [env : (& env ProcessEnvVec)]) : ProcessMaybeString
   (if (not (= (svec.len (env-vec-names env)) (svec.len (env-vec-values env))))
     (ProcessSomeString "process: environment vector name/value counts differ")
-    (env-vec-validation-error-from env 0)))
+    (if (env-vec-storage-valid? env)
+      (env-vec-validation-error-from env 0)
+      (ProcessSomeString "process: environment vector storage is malformed"))))
 
 ;: Return true when vector-backed env overrides satisfy the public invariant and
 ;: all override names are valid.
@@ -825,34 +901,86 @@
     [(ProcessUnsupported _) true]
     [_ false]))
 
-;: Return the first env validation error, or `ProcessNoString`.
+;: Return the first argv validation error, or `ProcessNoString`.
+(define (args-validation-error-from
+  [args : (& args ProcessStringList)]
+  [index : i64]) : ProcessMaybeString
+  (if (>= index (args-count args))
+    (ProcessNoString)
+    (let
+      [value : String (args-ref args index)]
+      (cond
+        [(> (string-length (& value)) process-storage-max-string-bytes)
+          (ProcessSomeString "process: argument exceeds storage limit")]
+        [(string-contains-char? (& value) '\0')
+          (ProcessSomeString "process: argument contains NUL")]
+        [else (args-validation-error-from args (+ index 1))]))))
+
+;: Return the first argv validation error, including the storage cap.
+(define (args-validation-error [args : (& args ProcessStringList)]) : ProcessMaybeString
+  (if (> (args-count args) process-storage-max-count)
+    (ProcessSomeString "process: argument storage limit exceeded")
+    (args-validation-error-from args 0)))
+
+;: Return the first env entry validation error after storage shape is proven.
 (define (env-validation-error-from [env : (& env ProcessEnvList)] [index : i64]) : ProcessMaybeString
-  (if (>= index env.len)
+  (if (>= index (env-count env))
     (ProcessNoString)
     (let
       [name : String (env-name-ref env index)]
-      (if (string.eq name "")
-        (ProcessSomeString "process: environment variable name is empty")
-        (if (string-contains-char? (& name) '=')
-          (ProcessSomeString "process: environment variable name contains '='")
-          (env-validation-error-from env (+ index 1)))))))
+      [value : String (env-value-ref env index)]
+      (cond
+        [(string.eq name "")
+          (ProcessSomeString "process: environment variable name is empty")]
+        [(string-contains-char? (& name) '=')
+          (ProcessSomeString "process: environment variable name contains '='")]
+        [(> (string-length (& name)) process-storage-max-string-bytes)
+          (ProcessSomeString
+            "process: environment variable name exceeds storage limit")]
+        [(> (string-length (& value)) process-storage-max-string-bytes)
+          (ProcessSomeString
+            "process: environment variable value exceeds storage limit")]
+        [(string-contains-char? (& name) '\0')
+          (ProcessSomeString "process: environment variable name contains NUL")]
+        [(string-contains-char? (& value) '\0')
+          (ProcessSomeString "process: environment variable value contains NUL")]
+        [else (env-validation-error-from env (+ index 1))]))))
 
 ;: Return the first environment override validation error, or `ProcessNoString`.
 (define (env-validation-error [env : (& env ProcessEnvList)]) : ProcessMaybeString
-  (env-validation-error-from env 0))
+  (if (env-storage-valid? env)
+    (env-validation-error-from env 0)
+    (ProcessSomeString "process: environment storage is malformed")))
 
 ;: Return the first command validation error, or `ProcessNoString`.
 (define (command-validation-error [command : (& command ProcessCommand)]) : ProcessMaybeString
   (let
+    [executable : String (command-executable command)]
+    [argv : ProcessStringList (command-argv command)]
     [env : ProcessEnvList (command-env command)]
-    (if (string.eq (command-executable command) "")
-      (ProcessSomeString "process: executable path is empty")
-      (match (command-cwd command)
-        [(ProcessSomeString cwd)
-          (if (string.eq cwd "")
-            (ProcessSomeString "process: cwd path is empty")
-            (env-validation-error env))]
-        [(ProcessNoString) (env-validation-error env)]))))
+    (cond
+      [(string.eq executable "")
+        (ProcessSomeString "process: executable path is empty")]
+      [(> (string-length (& executable)) process-storage-max-string-bytes)
+        (ProcessSomeString "process: executable path exceeds storage limit")]
+      [(string-contains-char? (& executable) '\0')
+        (ProcessSomeString "process: executable path contains NUL")]
+      [else
+        (match (args-validation-error argv)
+          [(ProcessSomeString message) (ProcessSomeString message)]
+          [(ProcessNoString)
+            (match (command-cwd command)
+              [(ProcessSomeString cwd)
+                (cond
+                  [(string.eq cwd "")
+                    (ProcessSomeString "process: cwd path is empty")]
+                  [(> (string-length (& cwd)) process-storage-max-string-bytes)
+                    (ProcessSomeString
+                      "process: cwd path exceeds storage limit")]
+                  [(string-contains-char? (& cwd) '\0')
+                    (ProcessSomeString "process: cwd path contains NUL")]
+                  [else (env-validation-error env)])]
+              [(ProcessNoString) (env-validation-error env)])])])))
 
 ;: Return true when `command` passes stdlib validation.
 (define (command-valid? [command : (& command ProcessCommand)]) : bool
@@ -984,7 +1112,8 @@
       (output-error-public
         (error-from-runtime-kind 0 (maybe-string-info-value info)))
       (output-from-runtime
-        (process_runtime.tl_process_output (runtime-command command))))))
+        (unsafe
+          (process_runtime.tl_process_output (runtime-command command)))))))
 
 ;: Run a command while inheriting the caller's stdout and stderr streams.
 ;:
@@ -999,7 +1128,8 @@
       (output-error-public
         (error-from-runtime-kind 0 (maybe-string-info-value info)))
       (output-from-runtime
-        (process_runtime.tl_process_inherit (runtime-command command))))))
+        (unsafe
+          (process_runtime.tl_process_inherit (runtime-command command)))))))
 
 ;: Run a command using the same captured-output path as `output`.
 (define (run [command : ProcessCommand]) : ResultProcessOutput
@@ -1015,12 +1145,15 @@
       (child-error-public
         (error-from-runtime-kind 0 (maybe-string-info-value info)))
       (child-from-runtime
-        (process_runtime.tl_process_start (runtime-command command))))))
+        (unsafe
+          (process_runtime.tl_process_start (runtime-command command)))))))
 
 ;: Wait for a child started by `start`, collect its captured output, and
 ;: release the child handle resources. Do not wait on the same child twice.
 (define (wait [child : ProcessChild]) : ResultProcessOutput
-  (output-from-runtime (process_runtime.tl_process_wait (runtime-child child))))
+  (output-from-runtime
+    (unsafe
+      (process_runtime.tl_process_wait (runtime-child child)))))
 
 ;: Inline test failure helper.
 (define (test-fail) : unit

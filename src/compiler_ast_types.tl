@@ -5588,6 +5588,7 @@
   ast-param-list
   caller-provided-fallback
   zero-capacity
+  compiler-dense-list-unused-shared-zero-storage
   len
   append-from)
 
@@ -5702,6 +5703,7 @@
   ast-macro-param-list
   caller-provided-fallback
   zero-capacity
+  compiler-dense-list-unused-shared-zero-storage
   len)
 
 (define (ast-field-cleanup-fn-id [name : ci.InternSyntaxId]) : AstFieldCleanup
@@ -5725,6 +5727,7 @@
   ast-field-def-list
   caller-provided-fallback
   minimum-one
+  compiler-dense-list-unused-shared-zero-storage
   len
   empty?
   append-from)
@@ -5746,6 +5749,7 @@
   ast-extern-link-input-list
   caller-provided-fallback
   minimum-one
+  compiler-dense-list-unused-shared-zero-storage
   len)
 
 (define (ast-fn-export-id [name : ci.InternId]) : AstFnExport
@@ -6193,7 +6197,8 @@
   AstVariantPayloadCleanupList
   ast-variant-payload-cleanup-list
   caller-provided-fallback
-  (shared-zero-capacity ast-empty-variant-payload-cleanup-slots)
+  shared-zero-capacity
+  ast-empty-variant-payload-cleanup-slots
   len
   append-from)
 
@@ -6232,6 +6237,7 @@
   ast-variant-def-list
   caller-provided-fallback
   minimum-one
+  compiler-dense-list-unused-shared-zero-storage
   len
   empty?
   append-from)
@@ -6265,6 +6271,7 @@
   ast-pattern-list
   caller-provided-fallback
   minimum-one
+  compiler-dense-list-unused-shared-zero-storage
   len
   empty?
   append-from)
@@ -6311,6 +6318,7 @@
   ast-let-binding-list
   caller-provided-fallback
   zero-capacity
+  compiler-dense-list-unused-shared-zero-storage
   len
   append-from)
 
@@ -6336,6 +6344,7 @@
   ast-resource-binding-list
   caller-provided-fallback
   zero-capacity
+  compiler-dense-list-unused-shared-zero-storage
   len
   append-from)
 
@@ -6363,6 +6372,7 @@
   ast-match-arm-list
   caller-provided-fallback
   minimum-one
+  compiler-dense-list-unused-shared-zero-storage
   len
   empty?
   append-from)
@@ -6487,7 +6497,8 @@
   AstExprClauseList
   ast-expr-clause-list
   caller-provided-fallback
-  minimum-one)
+  minimum-one
+  compiler-dense-list-unused-shared-zero-storage)
 
 (define (ast-expr-clause-list-tail [items : AstExprClauseList]) : AstExprClauseList
   (let
@@ -6529,7 +6540,8 @@
   AstExprBindingClauseList
   ast-expr-binding-clause-list
   caller-provided-fallback
-  minimum-one)
+  minimum-one
+  compiler-dense-list-unused-shared-zero-storage)
 
 (define (ast-expr-binding-clause-list-tail [items : AstExprBindingClauseList]) : AstExprBindingClauseList
   (let
@@ -7424,6 +7436,7 @@
   ast-dispatch-variant-list
   caller-provided-fallback
   minimum-one
+  compiler-dense-list-unused-shared-zero-storage
   len
   empty?)
 

@@ -11,6 +11,7 @@
   dense-list-generated
   caller-provided-fallback
   zero-capacity
+  dense-list-generated-unused-shared-zero-storage
   len
   empty?
   append-from)

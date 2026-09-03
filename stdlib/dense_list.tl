@@ -9,9 +9,10 @@
 ;: Emit the common operations for a concrete compiler-private `{slots, len}`
 ;: list. `fallback-policy` is currently the explicit
 ;: `caller-provided-fallback` contract used by checked `get`. Capacity policy is
-;: `zero-capacity`, `minimum-one`, or
-;: `(shared-zero-capacity <generated-global-name>)`. Optional capabilities are
-;: the unique bare names `len`, `empty?`, and `append-from`.
+;: `zero-capacity`, `minimum-one`, or `shared-zero-capacity`.
+;: `shared-zero-storage` is the generated global name for the shared policy;
+;: the other policies accept an unused bare-name placeholder. Optional
+;: capabilities are the unique bare names `len`, `empty?`, and `append-from`.
 (defmacro (compiler-dense-list-operations
   [T
     : type
@@ -20,6 +21,7 @@
   [prefix : Expr]
   [fallback-policy : Expr]
   [capacity-policy : Expr]
+  [shared-zero-storage : Expr]
   [capabilities : Expr ...]) : Decls
   (let
     [prefix-text : String
@@ -43,40 +45,28 @@
           (match value
             ["zero-capacity" true]
             ["minimum-one" false]
+            ["shared-zero-capacity" true]
             [_
               (comptime-error
-                "compiler-dense-list-operations: capacity policy must be `zero-capacity` or `minimum-one`")])]
-        [(Expr.Call callee items)
-          (match callee
-            [(Expr.Var value)
-              (match value
-                ["shared-zero-capacity"
-                  (if (= (expr-list-length items) 1)
-                    true
-                    (comptime-error
-                      "compiler-dense-list-operations: shared-zero-capacity expects one storage expression"))]
-                [_
-                  (comptime-error
-                    "compiler-dense-list-operations: capacity policy call must name `shared-zero-capacity`")])]
-            [_
-              (comptime-error
-                "compiler-dense-list-operations: capacity policy call must name `shared-zero-capacity`")])]
+                "compiler-dense-list-operations: capacity policy must be `zero-capacity`, `minimum-one`, or `shared-zero-capacity`")])]
         [_
           (comptime-error
-            "compiler-dense-list-operations: capacity policy must be a named policy")])]
+            "compiler-dense-list-operations: capacity policy must be a bare name")])]
     [shared-zero-capacity : bool
       (match capacity-policy
-        [(Expr.Call _ _) true]
+        [(Expr.Var value)
+          (match value
+            ["shared-zero-capacity" true]
+            [_ false])]
         [_ false])]
-    [shared-zero-slots : Expr
-      (match capacity-policy
-        [(Expr.Call _ items)
-          (match (expr-list-nth items 0)
-            [(Expr.Var value) (comptime.expr-var value)]
-            [_
-              (comptime-error
-                "compiler-dense-list-operations: shared zero storage must be a bare name")])]
-        [_ (comptime.expr-var "compiler-dense-list-unused-empty-slots")])]
+    [shared-zero-storage-name : String
+      (match shared-zero-storage
+        [(Expr.Var value) value]
+        [_
+          (comptime-error
+            "compiler-dense-list-operations: shared zero storage must be a bare name")])]
+    [shared-zero-storage-expr : Expr
+      (comptime.expr-var shared-zero-storage-name)]
     [capability-count : i64 (expr-list-length capabilities)]
     [capability0 : String
       (if (> capability-count 0)
@@ -182,9 +172,9 @@
           (,list-constructor
             (cfg
               stage0-seed-bootstrap
-              ,shared-zero-slots
+              ,shared-zero-storage-expr
               (unsafe
-                (ptr-read (ptr-addr-of ,shared-zero-slots))))
+                (ptr-read (ptr-addr-of ,shared-zero-storage-expr))))
             0)
           (,list-constructor (__tl_make-array ,T capacity) 0))
         `(let
@@ -231,7 +221,7 @@
     [shared-zero-decls : ExprList
       (if shared-zero-capacity
         (match `(begin
-          (define ,shared-zero-slots : (__tl_dyn-array ,T)
+          (define ,shared-zero-storage-expr : (__tl_dyn-array ,T)
             (__tl_make-array ,T 0)))
           [(Expr.Begin decls) decls]
           [_ (expr-list-empty)])

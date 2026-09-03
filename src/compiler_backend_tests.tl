@@ -32702,7 +32702,7 @@ g:
           (str_cat.str-cat "    sub" op " .L_tl_f"))
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
-          "    jae .L_tl_test_cast_float_u64_entry_v1_high\n")
+          "    jae .Ltest_cast_cast_float_u64_entry_v1_high\n")
         (=
           (compiler_backend.compiler-backend-string-count
             (owned_view.compiler-owned-shared-view asm)

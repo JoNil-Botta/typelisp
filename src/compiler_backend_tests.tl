@@ -32696,7 +32696,7 @@ g:
           load)
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
-          (str_cat.str-cat "    ucomi" op " .L_tl_f"))
+          (str_cat.str-cat "    ucomi" (clone op) " .L_tl_f"))
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           (str_cat.str-cat "    sub" op " .L_tl_f"))

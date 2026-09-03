@@ -5133,6 +5133,18 @@
     "a loop-free caller takes the loop leaf at a straight-line site: no caller loop is there to tax"))
 
 (test
+  inline-hot-loop-leaf-recursive-caller-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-recursive-caller-refusal-ok?)
+    "the same leaf at the same straight-line sites of SELF-RECURSIVE callers stays out of line: the caller's loop is the one tailrec is about to build"))
+
+(test
+  inline-recursive-caller-loop-free
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-recursive-caller-loop-free-ok?)
+    "the loop-free clause separates a straight-line caller, a self-tail-recursive one and a looping one, and reports each as the band line's caller-rec field"))
+
+(test
   inline-hot-loop-leaf-cold-site-refusal
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-cold-site-refusal-ok?)

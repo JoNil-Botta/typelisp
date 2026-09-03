@@ -336,6 +336,21 @@ assert_abort_tail_staging_push_not_memory() {
     fi
 }
 
+# INL-7: an upper bound rather than an exact count, for a claim about a whole
+# benchmark function's frame traffic. The number the gate cares about is the one
+# the refused import would add; pinning the exact count would make every
+# unrelated allocator change land on this gate instead of on its own.
+assert_regex_count_at_most() {
+    _file=$1
+    _regex=$2
+    _want=$3
+    _label=$4
+    _got=$(count_regex "$_file" "$_regex")
+    if [ "$_got" -gt "$_want" ]; then
+        fail "$_label expected at most $_want match(es) for /$_regex/, got $_got"
+    fi
+}
+
 assert_regex_count_at_least() {
     _file=$1
     _regex=$2
@@ -1552,6 +1567,94 @@ check_global_cursor_guarded() {
         assert_regex_count_eq "$_run" \
             '^[[:space:]]+movq _tl_global_cursor_guarded_gcg_tokens\(%rip\), %r' 1 \
             "global-cursor-guarded-$_target"
+    done
+}
+
+# INL-7. The hot-loop-leaf band's third site tier admits a cyclic, call-free
+# body at a STRAIGHT-LINE site when the caller has no natural loop, on the
+# argument that "the imported loop becomes the caller's only one". The inliner
+# runs before the per-function pipeline, whose first pass (opt-tailrec-function)
+# turns a SELF TAIL-CALL into a back edge -- so a self-tail-recursive caller
+# reads as loop-free here and leaves the pipeline with a loop around its whole
+# body, with the import inside it. opt-inline-caller-loop-free? refuses that.
+#
+# `sccp-rewrite-rows` is the measured case: the tail-recursive per-instruction
+# rewrite driver of benchmarks/sccp_lattice, into which INL-6's multiblock
+# `Store` admission let `sccp-rewrite-phi` (102 instructions, 26 blocks, one
+# static reference, its own phi loop) be imported. Callgrind split the trade
+# exactly -- `sccp_rewrite_rows` 32,885,952 -> 39,790,784 against
+# `sccp_rewrite_phi` retiring 4,558,608 -- so the copy inside the loop ran
+# 2,346,224 instructions more than the boundary it removed.
+#
+# Two claims, and the second is the one the row is about. The DECISION: the
+# boundary survives and a body is still emitted for it. The FRAME: the merged
+# driver went from ten frame-slot references to seventeen on linux and from 21
+# to 28 on win64 -- the loop-carried accumulator, the row cursor and the tape
+# base stopped holding registers across the imported loop. The bound is an
+# upper one, set above what the driver spends without the import and below what
+# it spends with it, so an unrelated allocator change does not land here.
+#
+# The benchmark itself is the fixture because the shape only exists at this
+# size; tests/integration/recursive_loop_import.tl is the miniature, and
+# check_recursive_loop_import below is its gate.
+check_sccp_rewrite_phi_import() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _bound=12
+        if [ "$_target" = windows-x86_64 ]; then
+            _bound=23
+        fi
+        _asm=$(compile_gate "sccp_rewrite_phi_import_$_suffix" \
+            benchmarks/sccp_lattice/bench.tl "$_target")
+
+        # The body is still emitted, and the driver still reaches it by call.
+        assert_matches "$_asm" '^_tl_bench_sccp_rewrite_phi:$' \
+            "sccp-rewrite-phi-import-$_target"
+        _rows=$(function_body "$_asm" _tl_bench_sccp_rewrite_rows)
+        assert_regex_count_eq "$_rows" \
+            '^[[:space:]]+call _tl_bench_sccp_rewrite_phi$' 1 \
+            "sccp-rewrite-phi-import-$_target"
+
+        # ...and the driver's own loop-carried values keep their registers.
+        assert_regex_count_at_most "$_rows" '[-0-9]+\(%rsp\)' "$_bound" \
+            "sccp-rewrite-phi-import-$_target"
+    done
+}
+
+# INL-7. The miniature of the pair above, with both answers over ONE callee so
+# the only thing that differs between them is the caller's own recursion.
+# `rli-scan` is cyclic, call-free, 42 instructions in 8 blocks and writes a
+# module global; `rli-rows` walks the tape by self tail-call and `rli-peek`
+# does not call itself. Both callers carry a bounds check of their own, so the
+# cascade clause is out of the comparison and only the recursion is in it.
+check_recursive_loop_import() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "recursive_loop_import_$_suffix" \
+            tests/integration/recursive_loop_import.tl "$_target")
+
+        # The callee keeps a body, because one of its two sites keeps its call.
+        assert_matches "$_asm" '^_tl_recursive_loop_import_rli_scan:$' \
+            "recursive-loop-import-$_target"
+
+        # The self-tail-recursive driver keeps its boundary...
+        _rows=$(function_body "$_asm" _tl_recursive_loop_import_rli_rows)
+        assert_regex_count_eq "$_rows" \
+            '^[[:space:]]+call _tl_recursive_loop_import_rli_scan$' 1 \
+            "recursive-loop-import-$_target"
+        # ...and no copy of the scan's fold landed in it. The FNV multiplier is
+        # the callee's own constant and appears nowhere else in the program.
+        assert_regex_count_eq "$_rows" '1099511628211' 0 \
+            "recursive-loop-import-$_target"
+
+        # The non-recursive caller at the same kind of site takes the copy: no
+        # call left, and the imported loop's multiplier is in its body.
+        _peek=$(function_body "$_asm" _tl_recursive_loop_import_rli_peek)
+        assert_regex_count_eq "$_peek" \
+            '^[[:space:]]+call _tl_recursive_loop_import_rli_scan$' 0 \
+            "recursive-loop-import-$_target"
+        assert_regex_count_at_least "$_peek" '1099511628211' 1 \
+            "recursive-loop-import-$_target"
     done
 }
 
@@ -2917,6 +3020,8 @@ check_checked_cheap_tier_claim
 check_global_cursor_helper
 check_global_cursor_guarded
 check_asm_render_fold_accumulator
+check_sccp_rewrite_phi_import
+check_recursive_loop_import
 check_synth_wrapped_probe
 check_synth_tail_wrapper
 check_synth_struct_accessor

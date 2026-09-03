@@ -22,6 +22,7 @@
 (import compiler_intern as ci)
 (import compiler_parse_core as parser)
 (import lint_core)
+(import lint_policy_core as lint_policy)
 (import package_source_core)
 (import stdlib.string)
 (import sym_i64_env)
@@ -61,6 +62,19 @@
   false)
 (define selfhost-lint-flat-output : bool
   false)
+
+;: Translate the staged lint switches into the shared typed policy without
+;: changing the legacy `--check` enforcement or renderer behavior.
+(define (selfhost-lint-compatibility-policy
+  [deprecated-string-concat : bool]
+  [redundant-function-name : bool]
+  [prefer-dotted-field : bool]
+  [name-case : bool]) : lint_policy.LintPolicyResolution
+  (lint_policy.lint-policy-legacy-resolution
+    deprecated-string-concat
+    redundant-function-name
+    prefer-dotted-field
+    name-case))
 
 ;; Test/driver hook: module globals are private, so smokes flip the renderer
 ;; through this setter instead of assigning the global directly.
@@ -1088,30 +1102,63 @@
   [program : ast.AstProgram]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
-  [_prefer-dotted-field : bool]
+  [prefer-dotted-field : bool]
   [name-case : bool]) : lint_core.LintFindings
   (match program
     [(ast.AstProgram.Program decls-box)
       (let
         [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
-        [base : lint_core.LintFindings
-          (lint_core.lint-program-with-source-options
+        ;; Keep the default path allocation-free with respect to lint policy.
+        ;; The policy adapter is only needed when a legacy opt-in is active.
+        (if (not
+          (or deprecated-string-concat redundant-function-name name-case))
+          (selfhost-lint-filter-derived-origins
+            (owned_view.compiler-owned-shared-view path)
             (owned_view.compiler-owned-shared-view source)
-            (ast.ast-program (owned_view.compiler-owned-shared-view decls))
-            (lint_core.lint-default-ladder-threshold)
-            deprecated-string-concat
-            name-case)]
-        [with-redundant : lint_core.LintFindings
-          (if redundant-function-name
-            (lint_core.lint-redundant-function-names-in-program
+            (lint_core.lint-program-with-source-options
               (owned_view.compiler-owned-shared-view source)
               (ast.ast-program (owned_view.compiler-owned-shared-view decls))
-              base)
-            base)]
-        ;; Dotted field projection is now the only public spelling. Keep the
-        ;; staged option as a no-op for command-line compatibility.
-        [with-prefer : lint_core.LintFindings with-redundant]
-        (selfhost-lint-filter-derived-origins path source with-prefer))]))
+              (lint_core.lint-default-ladder-threshold)
+              false
+              false))
+          (let
+            [compatibility-policy : lint_policy.LintPolicyResolution
+              (selfhost-lint-compatibility-policy
+                deprecated-string-concat
+                redundant-function-name
+                prefer-dotted-field
+                name-case)]
+            [deprecated-enabled : bool
+              (lint_policy.lint-policy-rule-enabled?
+                compatibility-policy
+                "deprecated-string-concat")]
+            [redundant-enabled : bool
+              (lint_policy.lint-policy-rule-enabled?
+                compatibility-policy
+                "redundant-function-name")]
+            [name-case-enabled : bool
+              (lint_policy.lint-policy-rule-enabled?
+                compatibility-policy
+                "global-name-case")]
+            [base : lint_core.LintFindings
+              (lint_core.lint-program-with-source-options
+                (owned_view.compiler-owned-shared-view source)
+                (ast.ast-program (owned_view.compiler-owned-shared-view decls))
+                (lint_core.lint-default-ladder-threshold)
+                deprecated-enabled
+                name-case-enabled)]
+            [with-redundant : lint_core.LintFindings
+              (if redundant-enabled
+                (lint_core.lint-redundant-function-names-in-program
+                  (owned_view.compiler-owned-shared-view source)
+                  (ast.ast-program
+                    (owned_view.compiler-owned-shared-view decls))
+                  base)
+                base)]
+            ;; Dotted field projection is now the only public spelling. Keep
+            ;; the staged option as a no-op for command-line compatibility.
+            [with-prefer : lint_core.LintFindings with-redundant]
+            (selfhost-lint-filter-derived-origins path source with-prefer))))]))
 
 (define (selfhost-lint-findings-append-from
   [src : lint_core.LintFindings]

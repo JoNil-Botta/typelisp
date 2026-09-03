@@ -870,7 +870,8 @@
   (stderr-fd i64)
   (exec-r i64)
   (exec-w i64)
-  (failed bool))
+  (failed bool)
+  (failure-result i64))
 
 ;: Spawn state for a child that inherits the caller's stdout and stderr.
 ;: It omits capture descriptors while retaining the stdin and exec-failure
@@ -888,20 +889,645 @@
   (stdin-w i64)
   (exec-r i64)
   (exec-w i64)
-  (failed bool))
+  (failed bool)
+  (failure-result i64))
 
-;: Close `fd` with the `close` syscall when it names an open descriptor.
-(unsafe
-  (define (linux-close-if [fd : i64]) : unit
-    (unsafe
-      (cfg
-        windows
-        unit
-        (if (>= fd 0)
+;: Exact parent-side interpretation of the close-on-exec status channel.
+(defenum ProcessLinuxExecStatus
+  (ProcessLinuxExecSucceeded)
+  (ProcessLinuxExecChildFailed i64)
+  (ProcessLinuxExecChannelFailed i64))
+
+;: Exec-channel interpretation plus the independent one-shot close outcome.
+(defstruct ProcessLinuxExecOutcome
+  (status ProcessLinuxExecStatus)
+  (close-result i64))
+
+;: Typed result of reading one seekable captured stream.
+(defenum ProcessLinuxCaptureResult
+  (ProcessLinuxCaptureOk byte_buf.ByteBuf)
+  (ProcessLinuxCaptureFailed i64))
+
+;: First execution failure plus the first later cleanup failure. Raw negative
+;: syscall results stay private and no acquired descriptor or child identity is
+;: retained in diagnostics.
+(defstruct ProcessLinuxFailure
+  (primary-operation i64)
+  (primary-result i64)
+  (secondary-operation i64)
+  (secondary-result i64))
+
+;: No Linux process operation has failed.
+(define process-linux-operation-none : i64
+  0)
+
+;: Pre-spawn descriptor setup or `vfork` failed.
+(define process-linux-operation-spawn : i64
+  1)
+
+;: A required child-side setup syscall failed before `execve`.
+(define process-linux-operation-child-setup : i64
+  2)
+
+;: `execve` returned in the child.
+(define process-linux-operation-exec : i64
+  3)
+
+;: The parent could not prove the exact exec-status protocol.
+(define process-linux-operation-exec-channel : i64
+  4)
+
+;: Feeding the configured stdin bytes failed.
+(define process-linux-operation-stdin : i64
+  5)
+
+;: Reaping the child failed.
+(define process-linux-operation-wait : i64
+  6)
+
+;: Captured stdout could not be read exactly.
+(define process-linux-operation-stdout : i64
+  7)
+
+;: Captured stderr could not be read exactly.
+(define process-linux-operation-stderr : i64
+  8)
+
+;: Closing one owned descriptor failed.
+(define process-linux-operation-close : i64
+  9)
+
+;: Child failure-record stage IDs. The record table uses fixed eight-byte rows
+;: so the vfork child selects one without allocating or modifying parent data.
+(define process-linux-child-stage-close-exec-read : i64
+  1)
+(define process-linux-child-stage-close-stdin-write : i64
+  2)
+(define process-linux-child-stage-dup-stdin : i64
+  3)
+(define process-linux-child-stage-close-stdin-read : i64
+  4)
+(define process-linux-child-stage-dup-stdout : i64
+  5)
+(define process-linux-child-stage-dup-stderr : i64
+  6)
+(define process-linux-child-stage-close-stdout : i64
+  7)
+(define process-linux-child-stage-close-stderr : i64
+  8)
+(define process-linux-child-stage-chdir : i64
+  9)
+(define process-linux-child-stage-exec : i64
+  10)
+
+;: Parent-side syscall IDs used by the focused Linux fault-injection gate.
+(define process-linux-syscall-pipe : i64
+  1)
+(define process-linux-syscall-memfd : i64
+  2)
+(define process-linux-syscall-vfork : i64
+  3)
+(define process-linux-syscall-close : i64
+  4)
+(define process-linux-syscall-stdin-write : i64
+  5)
+(define process-linux-syscall-exec-read : i64
+  6)
+(define process-linux-syscall-wait : i64
+  7)
+(define process-linux-syscall-capture-seek : i64
+  8)
+(define process-linux-syscall-capture-read : i64
+  9)
+(define process-linux-syscall-sigaction : i64
+  10)
+
+;: Child-side fault IDs are distinct because a vfork child must only read test
+;: configuration; it never increments parent-owned counters.
+(define process-linux-child-syscall-close-exec-read : i64
+  1)
+(define process-linux-child-syscall-close-stdin-write : i64
+  2)
+(define process-linux-child-syscall-dup-stdin : i64
+  3)
+(define process-linux-child-syscall-close-stdin-read : i64
+  4)
+(define process-linux-child-syscall-dup-stdout : i64
+  5)
+(define process-linux-child-syscall-dup-stderr : i64
+  6)
+(define process-linux-child-syscall-close-stdout : i64
+  7)
+(define process-linux-child-syscall-close-stderr : i64
+  8)
+(define process-linux-child-syscall-chdir : i64
+  9)
+(define process-linux-child-syscall-exec : i64
+  10)
+
+;: Sentinel distinct from every Linux syscall result.
+(define process-linux-no-injection : i64
+  -9223372036854775808)
+
+; Fault injection is compiled only into the dedicated native Linux gate.
+(cfg
+  process-linux-test-hooks
+  (define process-linux-test-counts : (__tl_dyn-array i64)
+    (__tl_make-array i64 16)))
+(cfg
+  process-linux-test-hooks
+  (define process-linux-test-fail-kind-a : i64
+    0))
+(cfg
+  process-linux-test-hooks
+  (define process-linux-test-fail-call-a : i64
+    0))
+(cfg
+  process-linux-test-hooks
+  (define process-linux-test-fail-errno-a : i64
+    0))
+(cfg
+  process-linux-test-hooks
+  (define process-linux-test-fail-kind-b : i64
+    0))
+(cfg
+  process-linux-test-hooks
+  (define process-linux-test-fail-call-b : i64
+    0))
+(cfg
+  process-linux-test-hooks
+  (define process-linux-test-fail-errno-b : i64
+    0))
+(cfg
+  process-linux-test-hooks
+  (define process-linux-test-write-max : i64
+    0))
+(cfg
+  process-linux-test-hooks
+  (define process-linux-test-read-max : i64
+    0))
+(cfg
+  process-linux-test-hooks
+  (define process-linux-test-child-fail-kind : i64
+    0))
+(cfg
+  process-linux-test-hooks
+  (define process-linux-test-child-fail-errno : i64
+    0))
+(cfg
+  process-linux-test-hooks
+  (define process-linux-test-marker-mode : i64
+    0))
+
+;: Reset all Linux process fault hooks and parent-side call counters.
+(cfg
+  process-linux-test-hooks
+  (define (linux-test-reset!) : unit
+    (let
+      [index : i64 0]
+      (begin
+        (while (< index (array-length process-linux-test-counts))
           (begin
-            (syscall 3 fd)
-            unit)
-          unit)))))
+            (set! (array-ref process-linux-test-counts index) 0)
+            (set! index (+ index 1))))
+        (set! process-linux-test-fail-kind-a 0)
+        (set! process-linux-test-fail-call-a 0)
+        (set! process-linux-test-fail-errno-a 0)
+        (set! process-linux-test-fail-kind-b 0)
+        (set! process-linux-test-fail-call-b 0)
+        (set! process-linux-test-fail-errno-b 0)
+        (set! process-linux-test-write-max 0)
+        (set! process-linux-test-read-max 0)
+        (set! process-linux-test-child-fail-kind 0)
+        (set! process-linux-test-child-fail-errno 0)
+        (set! process-linux-test-marker-mode 0)))))
+
+;: Inject one raw negative errno on a numbered parent-side syscall attempt.
+(cfg
+  process-linux-test-hooks
+  (define (linux-test-fail-on! [kind : i64] [call : i64] [errno-code : i64]) : unit
+    (begin
+      (set! process-linux-test-fail-kind-a kind)
+      (set! process-linux-test-fail-call-a call)
+      (set! process-linux-test-fail-errno-a errno-code))))
+
+;: Configure an independent second injected parent-side failure.
+(cfg
+  process-linux-test-hooks
+  (define (linux-test-fail-second-on!
+    [kind : i64]
+    [call : i64]
+    [errno-code : i64]) : unit
+    (begin
+      (set! process-linux-test-fail-kind-b kind)
+      (set! process-linux-test-fail-call-b call)
+      (set! process-linux-test-fail-errno-b errno-code))))
+
+;: Inject one child-side setup/exec failure without mutating parent storage.
+(cfg
+  process-linux-test-hooks
+  (define (linux-test-child-fail-on! [kind : i64] [errno-code : i64]) : unit
+    (begin
+      (set! process-linux-test-child-fail-kind kind)
+      (set! process-linux-test-child-fail-errno errno-code))))
+
+;: Bound real stdin writes to force partial-progress coverage.
+(cfg
+  process-linux-test-hooks
+  (define (linux-test-set-write-max! [count : i64]) : unit
+    (set! process-linux-test-write-max count)))
+
+;: Bound real exec/capture reads to force partial-progress coverage.
+(cfg
+  process-linux-test-hooks
+  (define (linux-test-set-read-max! [count : i64]) : unit
+    (set! process-linux-test-read-max count)))
+
+;: Select malformed child failure-record modes for the exec-channel gate.
+(cfg
+  process-linux-test-hooks
+  (define (linux-test-set-marker-mode! [mode : i64]) : unit
+    (set! process-linux-test-marker-mode mode)))
+
+;: Return one parent-side syscall call count.
+(cfg
+  process-linux-test-hooks
+  (define (linux-test-call-count [kind : i64]) : i64
+    (if (and (>= kind 0) (< kind (array-length process-linux-test-counts)))
+      (array-ref process-linux-test-counts kind)
+      0)))
+
+;: Count open descriptors below `limit` without going through an injected
+;: process syscall. The native fault gate compares this stable count after each
+;: failed operation and its successful follow-up.
+(cfg
+  process-linux-test-hooks
+  (define (linux-test-open-fd-count [limit : i64]) : i64
+    (let
+      [fd : i64 0]
+      [count : i64 0]
+      (begin
+        (while (< fd limit)
+          (begin
+            (if (>=
+              (unsafe
+                (syscall 72 fd 1))
+              0)
+              (set! count (+ count 1))
+              unit)
+            (set! fd (+ fd 1))))
+        count))))
+
+;: Prove that the caller owns no running or waitable child. A leaked zombie is
+;: reaped while returning false so one failed assertion cannot poison the rest
+;: of the deterministic gate.
+(cfg
+  process-linux-test-hooks
+  (define (linux-test-no-children?) : bool
+    (let
+      [status : (__tl_dyn-array i32) (__tl_make-array i32 1)]
+      [result : i64 -4]
+      (begin
+        (while (= result -4)
+          (set!
+            result
+            (unsafe
+              (syscall
+                61
+                -1
+                (stdlib.process_runtime.array-i32-addr
+                  (process-runtime-place-shared-view status))
+                1
+                0))))
+        (= result -10)))))
+
+;: Record a parent-side syscall and select either configured failure.
+(cfg
+  process-linux-test-hooks
+  (define (linux-test-injected-result [kind : i64]) : i64
+    (let
+      [call : i64 (+ (array-ref process-linux-test-counts kind) 1)]
+      (begin
+        (set! (array-ref process-linux-test-counts kind) call)
+        (cond
+          [(and
+              (= kind process-linux-test-fail-kind-a)
+              (= call process-linux-test-fail-call-a))
+            (- 0 process-linux-test-fail-errno-a)]
+          [(and
+              (= kind process-linux-test-fail-kind-b)
+              (= call process-linux-test-fail-call-b))
+            (- 0 process-linux-test-fail-errno-b)]
+          [else process-linux-no-injection])))))
+
+;: Production-erased bridge to the optional parent-side injection state.
+(define (linux-injected-result [_kind : i64]) : i64
+  (cfg
+    process-linux-test-hooks
+    (linux-test-injected-result _kind)
+    process-linux-no-injection))
+
+;: Production-erased bound for deterministic short writes.
+(define (linux-write-request-count [count : i64]) : i64
+  (cfg
+    process-linux-test-hooks
+    (if (and
+      (> process-linux-test-write-max 0)
+      (> count process-linux-test-write-max))
+      process-linux-test-write-max
+      count)
+    count))
+
+;: Production-erased bound for deterministic short reads.
+(define (linux-read-request-count [count : i64]) : i64
+  (cfg
+    process-linux-test-hooks
+    (if (and
+      (> process-linux-test-read-max 0)
+      (> count process-linux-test-read-max))
+      process-linux-test-read-max
+      count)
+    count))
+
+;: Read-only child injection bridge. It performs no test counter mutation.
+(define (linux-child-injected-result [_kind : i64]) : i64
+  (cfg
+    process-linux-test-hooks
+    (if (= _kind process-linux-test-child-fail-kind)
+      (- 0 process-linux-test-child-fail-errno)
+      process-linux-no-injection)
+    process-linux-no-injection))
+
+;: Current child failure-record test mode, erased from production artifacts.
+(define (linux-marker-mode) : i64
+  (cfg process-linux-test-hooks process-linux-test-marker-mode 0))
+
+;: Construct an empty first/secondary Linux failure record.
+(define (linux-failure-none) : ProcessLinuxFailure
+  (ProcessLinuxFailure
+    process-linux-operation-none
+    0
+    process-linux-operation-none
+    0))
+
+;: Record one failure without overwriting the first operation. Only the first
+;: later cleanup failure is retained, keeping the result bounded and stable.
+(define (linux-failure-add
+  [failure : ProcessLinuxFailure]
+  [operation : i64]
+  [raw-result : i64]) : ProcessLinuxFailure
+  (cond
+    [(= operation process-linux-operation-none) failure]
+    [(= failure.primary-operation process-linux-operation-none)
+      (ProcessLinuxFailure operation raw-result process-linux-operation-none 0)]
+    [(= failure.secondary-operation process-linux-operation-none)
+      (ProcessLinuxFailure
+        failure.primary-operation
+        failure.primary-result
+        operation
+        raw-result)]
+    [else failure]))
+
+;: Record an operation only when no earlier primary failure exists. Later
+;: operation observations do not consume the cleanup slot; descriptor, signal
+;: restoration, and reaping failures can therefore remain independently exact.
+(define (linux-failure-add-primary
+  [failure : ProcessLinuxFailure]
+  [operation : i64]
+  [raw-result : i64]) : ProcessLinuxFailure
+  (if (or
+    (= operation process-linux-operation-none)
+    (not (= failure.primary-operation process-linux-operation-none)))
+    failure
+    (ProcessLinuxFailure operation raw-result process-linux-operation-none 0)))
+
+;: True when a primary Linux execution/lifecycle failure is recorded.
+(define (linux-failure-present? [failure : (& failure ProcessLinuxFailure)]) : bool
+  (not (= failure.primary-operation process-linux-operation-none)))
+
+;: Stable operation spelling used only when returning a structured error.
+(define (linux-operation-name [operation : i64]) : String
+  (cond
+    [(= operation process-linux-operation-spawn) "spawn"]
+    [(= operation process-linux-operation-child-setup) "child setup"]
+    [(= operation process-linux-operation-exec) "exec"]
+    [(= operation process-linux-operation-exec-channel) "exec status"]
+    [(= operation process-linux-operation-stdin) "stdin"]
+    [(= operation process-linux-operation-wait) "wait"]
+    [(= operation process-linux-operation-stdout) "stdout capture"]
+    [(= operation process-linux-operation-stderr) "stderr capture"]
+    [(= operation process-linux-operation-close) "close"]
+    [else "process"]))
+
+;: Render a bounded diagnostic while keeping raw results in the typed internal
+;: record. Existing ordinary spawn/wait messages remain byte-identical.
+(define (linux-failure-message [failure : (& failure ProcessLinuxFailure)]) : String
+  (let
+    [base : String
+      (cond
+        [(or
+            (= failure.primary-operation process-linux-operation-spawn)
+            (= failure.primary-operation process-linux-operation-exec))
+          "process: spawn failed"]
+        [(= failure.primary-operation process-linux-operation-wait)
+          "process: wait failed"]
+        [else
+          (str_cat.str-cat
+            "process: "
+            (linux-operation-name failure.primary-operation)
+            " failed ("
+            (string.int->string failure.primary-result)
+            ")")])]
+    (if (= failure.secondary-operation process-linux-operation-none)
+      base
+      (str_cat.str-cat
+        base
+        "; cleanup: "
+        (linux-operation-name failure.secondary-operation)
+        " failed ("
+        (string.int->string failure.secondary-result)
+        ")"))))
+
+;: Spawn/setup/protocol failures retain the public spawn category; lifecycle,
+;: stream, and close failures retain the public wait category.
+(define (linux-failure-is-spawn? [failure : (& failure ProcessLinuxFailure)]) : bool
+  (or
+    (= failure.primary-operation process-linux-operation-spawn)
+    (= failure.primary-operation process-linux-operation-child-setup)
+    (= failure.primary-operation process-linux-operation-exec)
+    (= failure.primary-operation process-linux-operation-exec-channel)))
+
+;: Convert a typed Linux failure to the existing captured-output result model.
+(define (linux-failure-output [failure : ProcessLinuxFailure]) : ResultProcessRuntimeOutput
+  (let
+    [message : String (linux-failure-message (& failure))]
+    (if (linux-failure-is-spawn? (& failure))
+      (stdlib.process_runtime.output-spawn-failed message)
+      (stdlib.process_runtime.output-wait-failed message))))
+
+;: Convert a typed Linux failure to the existing async-start result model.
+(define (linux-failure-child [failure : ProcessLinuxFailure]) : ResultProcessRuntimeChild
+  (let
+    [message : String (linux-failure-message (& failure))]
+    (if (linux-failure-is-spawn? (& failure))
+      (stdlib.process_runtime.child-spawn-failed message)
+      (stdlib.process_runtime.child-wait-failed message))))
+
+;: Raw `pipe2(O_CLOEXEC)`. Pipe creation is atomic and is not retried.
+(unsafe
+  (define (linux-raw-pipe [address : i64]) : i64
+    (let
+      [injected : i64 (linux-injected-result process-linux-syscall-pipe)]
+      (if (not (= injected process-linux-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall 293 address 524288)))))))
+
+;: Raw `memfd_create`. Creation failure has no partial descriptor to clean up.
+(unsafe
+  (define (linux-raw-memfd [name-address : i64]) : i64
+    (let
+      [injected : i64 (linux-injected-result process-linux-syscall-memfd)]
+      (if (not (= injected process-linux-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall 319 name-address 0)))))))
+
+;: Resolve only the optional `vfork` fault before entering the shared-stack
+;: syscall. The actual syscall must remain inline in the owning spawn frame:
+;: returning through a helper after `vfork` lets the child overwrite the
+;: suspended parent's helper return address.
+(define (linux-vfork-injected-result) : i64
+  (linux-injected-result process-linux-syscall-vfork))
+
+;: Raw parent-side Linux close. The descriptor is attempted exactly once and
+;: never retried after EINTR because Linux releases the descriptor number early.
+;: Injected failures perform the real close first so the native gate cannot leak.
+(unsafe
+  (define (linux-raw-close [fd : i64]) : i64
+    (let
+      [injected : i64 (linux-injected-result process-linux-syscall-close)]
+      (if (not (= injected process-linux-no-injection))
+        (begin
+          (cfg
+            windows
+            -38
+            (unsafe
+              (syscall 3 fd)))
+          injected)
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall 3 fd)))))))
+
+;: Close one owned parent descriptor exactly once, returning its raw result.
+(unsafe
+  (define (linux-close-if [fd : i64]) : i64
+    (if (< fd 0)
+      0
+      (unsafe
+        (stdlib.process_runtime.linux-raw-close fd)))))
+
+;: Raw stdin write, optionally bounded by the focused short-write hook.
+(unsafe
+  (define (linux-raw-stdin-write [fd : i64] [address : i64] [count : i64]) : i64
+    (let
+      [injected : i64 (linux-injected-result process-linux-syscall-stdin-write)]
+      (if (not (= injected process-linux-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall 1 fd address (linux-write-request-count count))))))))
+
+;: Raw exec-status read, optionally bounded by the focused short-read hook.
+(unsafe
+  (define (linux-raw-exec-read [fd : i64] [address : i64] [count : i64]) : i64
+    (let
+      [injected : i64 (linux-injected-result process-linux-syscall-exec-read)]
+      (if (not (= injected process-linux-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall 0 fd address (linux-read-request-count count))))))))
+
+;: Raw wait4. An injected non-EINTR failure still performs the real wait so the
+;: failure gate preserves the production postcondition and cannot leave a zombie.
+(unsafe
+  (define (linux-raw-wait [pid : i64] [status-address : i64]) : i64
+    (let
+      [injected : i64 (linux-injected-result process-linux-syscall-wait)]
+      (if (not (= injected process-linux-no-injection))
+        (if (= injected -4)
+          injected
+          (cfg
+            windows
+            injected
+            (let
+              [cleanup-result : i64 -4]
+              (begin
+                (while (= cleanup-result -4)
+                  (set!
+                    cleanup-result
+                    (unsafe
+                      (syscall 61 pid status-address 0 0))))
+                injected))))
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall 61 pid status-address 0 0)))))))
+
+;: Raw capture seek used for both end discovery and rewind.
+(unsafe
+  (define (linux-raw-capture-seek [fd : i64] [offset : i64] [whence : i64]) : i64
+    (let
+      [injected : i64
+        (linux-injected-result process-linux-syscall-capture-seek)]
+      (if (not (= injected process-linux-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall 8 fd offset whence)))))))
+
+;: Raw capture read, optionally bounded by the focused short-read hook.
+(unsafe
+  (define (linux-raw-capture-read [fd : i64] [address : i64] [count : i64]) : i64
+    (let
+      [injected : i64
+        (linux-injected-result process-linux-syscall-capture-read)]
+      (if (not (= injected process-linux-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall 0 fd address (linux-read-request-count count))))))))
+
+;: Raw `rt_sigaction` used while feeding a pipe with SIGPIPE ignored.
+(unsafe
+  (define (linux-raw-sigaction [action-address : i64] [old-address : i64]) : i64
+    (let
+      [injected : i64 (linux-injected-result process-linux-syscall-sigaction)]
+      (if (not (= injected process-linux-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall 13 13 action-address old-address 8)))))))
 
 ;: Build a NUL-terminated `char**` argv (argv[0] = `exec-addr`) and return its
 ;: integer address.
@@ -1024,8 +1650,8 @@
       (+ 128 signal)
       (bit-and (shr value 8) 0xff))))
 
-;: Write `len` bytes at `data-addr` to `fd`, returning 0 on success, the raw
-;: negative `-errno` on a write error, or -1 on a zero-length write.
+;: Write `len` bytes at `data-addr` to `fd`. EINTR retries without progress and
+;: positive partial writes advance exactly; zero/impossible progress fails.
 (unsafe
   (define (linux-write-all [fd : i64] [data-addr : i64] [len : i64]) : i64
     (cfg
@@ -1040,69 +1666,106 @@
             (let
               [written : i64
                 (unsafe
-                  (syscall 1 fd (+ data-addr off) (- len off)))]
-              (if (< written 0)
-                (begin
-                  (set! result written)
-                  (set! done true))
-                (if (= written 0)
+                  (stdlib.process_runtime.linux-raw-stdin-write
+                    fd
+                    (+ data-addr off)
+                    (- len off)))]
+              (cond
+                [(= written -4) unit]
+                [(< written 0)
                   (begin
-                    (set! result -1)
-                    (set! done true))
-                  (set! off (+ off written))))))
+                    (set! result written)
+                    (set! done true))]
+                [(or (= written 0) (> written (- len off)))
+                  (begin
+                    (set! result -71)
+                    (set! done true))]
+                [else (set! off (+ off written))])))
           result)))))
 
 ;: Feed `data-addr`/`len` to the child stdin pipe while ignoring SIGPIPE, then
 ;: restore the old SIGPIPE disposition. Returns 0 when input was delivered (or a
-;: broken pipe was tolerated) and 1 on an unexpected write failure.
+;: broken pipe was tolerated). The returned state preserves the first primary
+;: error and any later signal-restoration or descriptor-close failure.
 (unsafe
   (define (linux-feed-stdin
     [has-stdin : bool]
     [stdin-r : i64]
     [stdin-w : i64]
     [data-addr : i64]
-    [len : i64]) : i64
+    [len : i64]
+    [failure : ProcessLinuxFailure]) : ProcessLinuxFailure
     (unsafe
       (cfg
         windows
-        1
+        (linux-failure-add-primary failure process-linux-operation-stdin -38)
         (if (not has-stdin)
-          0
+          failure
           (begin
-            (stdlib.process_runtime.linux-close-if stdin-r)
+            (set!
+              failure
+              (linux-record-close
+                failure
+                (stdlib.process_runtime.linux-close-if stdin-r)))
             (let
               [act : (__tl_dyn-array u64) (__tl_make-array u64 4)]
               [old : (__tl_dyn-array u64) (__tl_make-array u64 4)]
+              [installed : bool false]
               (begin
                 (set! (array-ref act 0) (cast 1 : u64))
-                (unsafe
-                  (syscall
-                    13
-                    13
-                    (stdlib.process_runtime.array-u64-addr act)
-                    (stdlib.process_runtime.array-u64-addr
-                      (process-runtime-place-shared-view old))
-                    8))
                 (let
-                  [written : i64
-                    (stdlib.process_runtime.linux-write-all
-                      stdin-w
-                      data-addr
-                      len)]
-                  (begin
-                    (stdlib.process_runtime.linux-close-if stdin-w)
+                  [install-result : i64
                     (unsafe
-                      (syscall
-                        13
-                        13
-                        (stdlib.process_runtime.array-u64-addr old)
-                        0
-                        8))
-                    (if (>= written 0)
-                      0
-                      (if (= written -32)
-                        0
-                        1))))))))))))
+                      (stdlib.process_runtime.linux-raw-sigaction
+                        (stdlib.process_runtime.array-u64-addr act)
+                        (stdlib.process_runtime.array-u64-addr
+                          (process-runtime-place-shared-view old))))]
+                  (if (< install-result 0)
+                    (set!
+                      failure
+                      (linux-failure-add-primary
+                        failure
+                        process-linux-operation-stdin
+                        install-result))
+                    (set! installed true)))
+                (if installed
+                  (let
+                    [written : i64
+                      (stdlib.process_runtime.linux-write-all
+                        stdin-w
+                        data-addr
+                        len)]
+                    (if (and (< written 0) (not (= written -32)))
+                      (set!
+                        failure
+                        (linux-failure-add-primary
+                          failure
+                          process-linux-operation-stdin
+                          written))
+                      unit))
+                  unit)
+                (set!
+                  failure
+                  (linux-record-close
+                    failure
+                    (stdlib.process_runtime.linux-close-if stdin-w)))
+                (if installed
+                  (let
+                    [restore-result : i64
+                      (unsafe
+                        (stdlib.process_runtime.linux-raw-sigaction
+                          (stdlib.process_runtime.array-u64-addr old)
+                          0))]
+                    (if (< restore-result 0)
+                      (set!
+                        failure
+                        (linux-failure-add
+                          failure
+                          process-linux-operation-stdin
+                          restore-result))
+                      unit))
+                  unit)
+                failure))))))))
 
 ;: Assemble argv/envp/cwd/marker C strings and open the capture descriptors
 ;: (memfd stdout/stderr, an optional stdin pipe, and the exec-failure pipe)
@@ -1113,7 +1776,7 @@
     (unsafe
       (cfg
         windows
-        (ProcessLinuxSpawn 0 0 0 0 0 false 0 0 -1 -1 -1 -1 -1 -1 true)
+        (ProcessLinuxSpawn 0 0 0 0 0 false 0 0 -1 -1 -1 -1 -1 -1 true -38)
         (let
           [exec-addr : i64
             (stdlib.process_runtime.array-u8-addr
@@ -1130,7 +1793,9 @@
               (stdlib.process_runtime.maybe-cstring-addr
                 (stdlib.process_runtime.command-cwd command)))]
           [marker-addr : i64
-            (stdlib.process_runtime.array-u8-addr (io.c-string "exec"))]
+            (stdlib.process_runtime.array-u8-addr
+              (io.c-string
+                "BAD!0000TLX!1000TLX!2000TLX!3000TLX!4000TLX!5000TLX!6000TLX!7000TLX!8000TLX!9000TLX!A000"))]
           [has-stdin : bool
             (stdlib.process_runtime.maybe-present?
               (stdlib.process_runtime.command-stdin command))]
@@ -1147,62 +1812,65 @@
           [exec-r : i64 -1]
           [exec-w : i64 -1]
           [failed : bool false]
+          [failure-result : i64 0]
           [pbuf : (__tl_dyn-array i32) (__tl_make-array i32 2)]
           [ebuf : (__tl_dyn-array i32) (__tl_make-array i32 2)]
           (begin
             (if has-stdin
-              (if (<
-                (unsafe
-                  (syscall
-                    293
-                    (stdlib.process_runtime.array-i32-addr
-                      (process-runtime-place-shared-view pbuf))
-                    524288))
-                0)
-                (set! failed true)
-                (begin
-                  (set! stdin-r (cast (array-ref pbuf 0) : i64))
-                  (set! stdin-w (cast (array-ref pbuf 1) : i64))))
+              (let
+                [result : i64
+                  (unsafe
+                    (stdlib.process_runtime.linux-raw-pipe
+                      (stdlib.process_runtime.array-i32-addr
+                        (process-runtime-place-shared-view pbuf))))]
+                (if (< result 0)
+                  (begin
+                    (set! failed true)
+                    (set! failure-result result))
+                  (begin
+                    (set! stdin-r (cast (array-ref pbuf 0) : i64))
+                    (set! stdin-w (cast (array-ref pbuf 1) : i64)))))
               unit)
             (if (not failed)
               (let
                 [fd : i64
                   (unsafe
-                    (syscall
-                      319
+                    (stdlib.process_runtime.linux-raw-memfd
                       (stdlib.process_runtime.array-u8-addr
-                        (io.c-string "typelisp-process-stdout"))
-                      0))]
+                        (io.c-string "typelisp-process-stdout"))))]
                 (if (< fd 0)
-                  (set! failed true)
+                  (begin
+                    (set! failed true)
+                    (set! failure-result fd))
                   (set! stdout-fd fd)))
               unit)
             (if (not failed)
               (let
                 [fd : i64
                   (unsafe
-                    (syscall
-                      319
+                    (stdlib.process_runtime.linux-raw-memfd
                       (stdlib.process_runtime.array-u8-addr
-                        (io.c-string "typelisp-process-stderr"))
-                      0))]
+                        (io.c-string "typelisp-process-stderr"))))]
                 (if (< fd 0)
-                  (set! failed true)
+                  (begin
+                    (set! failed true)
+                    (set! failure-result fd))
                   (set! stderr-fd fd)))
               unit)
             (if (not failed)
-              (if (<
-                (unsafe
-                  (syscall
-                    293
-                    (stdlib.process_runtime.array-i32-addr
-                      (process-runtime-place-shared-view ebuf))
-                    524288))
-                0)
-                (set! failed true)
-                (begin
-                  (set! exec-r (cast (array-ref ebuf 0) : i64))
-                  (set! exec-w (cast (array-ref ebuf 1) : i64))))
+              (let
+                [result : i64
+                  (unsafe
+                    (stdlib.process_runtime.linux-raw-pipe
+                      (stdlib.process_runtime.array-i32-addr
+                        (process-runtime-place-shared-view ebuf))))]
+                (if (< result 0)
+                  (begin
+                    (set! failed true)
+                    (set! failure-result result))
+                  (begin
+                    (set! exec-r (cast (array-ref ebuf 0) : i64))
+                    (set! exec-w (cast (array-ref ebuf 1) : i64)))))
               unit)
             (ProcessLinuxSpawn
               exec-addr
@@ -1219,7 +1887,8 @@
               stderr-fd
               exec-r
               exec-w
-              failed)))))))
+              failed
+              failure-result)))))))
 
 ;: Assemble the Linux inherited-stream spawn state. This has the same command,
 ;: cwd, environment, stdin, and exec-failure setup as `linux-prepare`, but
@@ -1230,7 +1899,7 @@
     (unsafe
       (cfg
         windows
-        (ProcessLinuxInheritedSpawn 0 0 0 0 0 false 0 0 -1 -1 -1 -1 true)
+        (ProcessLinuxInheritedSpawn 0 0 0 0 0 false 0 0 -1 -1 -1 -1 true -38)
         (let
           [exec-addr : i64
             (stdlib.process_runtime.array-u8-addr
@@ -1247,7 +1916,9 @@
               (stdlib.process_runtime.maybe-cstring-addr
                 (stdlib.process_runtime.command-cwd command)))]
           [marker-addr : i64
-            (stdlib.process_runtime.array-u8-addr (io.c-string "exec"))]
+            (stdlib.process_runtime.array-u8-addr
+              (io.c-string
+                "BAD!0000TLX!1000TLX!2000TLX!3000TLX!4000TLX!5000TLX!6000TLX!7000TLX!8000TLX!9000TLX!A000"))]
           [has-stdin : bool
             (stdlib.process_runtime.maybe-present?
               (stdlib.process_runtime.command-stdin command))]
@@ -1262,36 +1933,39 @@
           [exec-r : i64 -1]
           [exec-w : i64 -1]
           [failed : bool false]
+          [failure-result : i64 0]
           [pbuf : (__tl_dyn-array i32) (__tl_make-array i32 2)]
           [ebuf : (__tl_dyn-array i32) (__tl_make-array i32 2)]
           (begin
             (if has-stdin
-              (if (<
-                (unsafe
-                  (syscall
-                    293
-                    (stdlib.process_runtime.array-i32-addr
-                      (process-runtime-place-shared-view pbuf))
-                    524288))
-                0)
-                (set! failed true)
-                (begin
-                  (set! stdin-r (cast (array-ref pbuf 0) : i64))
-                  (set! stdin-w (cast (array-ref pbuf 1) : i64))))
+              (let
+                [result : i64
+                  (unsafe
+                    (stdlib.process_runtime.linux-raw-pipe
+                      (stdlib.process_runtime.array-i32-addr
+                        (process-runtime-place-shared-view pbuf))))]
+                (if (< result 0)
+                  (begin
+                    (set! failed true)
+                    (set! failure-result result))
+                  (begin
+                    (set! stdin-r (cast (array-ref pbuf 0) : i64))
+                    (set! stdin-w (cast (array-ref pbuf 1) : i64)))))
               unit)
             (if (not failed)
-              (if (<
-                (unsafe
-                  (syscall
-                    293
-                    (stdlib.process_runtime.array-i32-addr
-                      (process-runtime-place-shared-view ebuf))
-                    524288))
-                0)
-                (set! failed true)
-                (begin
-                  (set! exec-r (cast (array-ref ebuf 0) : i64))
-                  (set! exec-w (cast (array-ref ebuf 1) : i64))))
+              (let
+                [result : i64
+                  (unsafe
+                    (stdlib.process_runtime.linux-raw-pipe
+                      (stdlib.process_runtime.array-i32-addr
+                        (process-runtime-place-shared-view ebuf))))]
+                (if (< result 0)
+                  (begin
+                    (set! failed true)
+                    (set! failure-result result))
+                  (begin
+                    (set! exec-r (cast (array-ref ebuf 0) : i64))
+                    (set! exec-w (cast (array-ref ebuf 1) : i64)))))
               unit)
             (ProcessLinuxInheritedSpawn
               exec-addr
@@ -1306,47 +1980,237 @@
               stdin-w
               exec-r
               exec-w
-              failed)))))))
+              failed
+              failure-result)))))))
 
-;: Close every descriptor recorded in a spawn struct (pre-fork cleanup).
+;: Record a close result as the next failure without retrying the descriptor.
+(define (linux-record-close [failure : ProcessLinuxFailure] [result : i64]) : ProcessLinuxFailure
+  (if (< result 0)
+    (linux-failure-add failure process-linux-operation-close result)
+    failure))
+
+;: Close every descriptor recorded in a spawn struct exactly once.
 (unsafe
-  (define (linux-cleanup-spawn [spawn : ProcessLinuxSpawn]) : unit
+  (define (linux-cleanup-spawn
+    [spawn : ProcessLinuxSpawn]
+    [failure : ProcessLinuxFailure]) : ProcessLinuxFailure
     (unsafe
       (begin
-        (stdlib.process_runtime.linux-close-if spawn.stdin-r)
-        (stdlib.process_runtime.linux-close-if spawn.stdin-w)
-        (stdlib.process_runtime.linux-close-if spawn.stdout-fd)
-        (stdlib.process_runtime.linux-close-if spawn.stderr-fd)
-        (stdlib.process_runtime.linux-close-if spawn.exec-r)
-        (stdlib.process_runtime.linux-close-if spawn.exec-w)
-        unit))))
+        (set!
+          failure
+          (linux-record-close
+            failure
+            (stdlib.process_runtime.linux-close-if spawn.stdin-r)))
+        (set!
+          failure
+          (linux-record-close
+            failure
+            (stdlib.process_runtime.linux-close-if spawn.stdin-w)))
+        (set!
+          failure
+          (linux-record-close
+            failure
+            (stdlib.process_runtime.linux-close-if spawn.stdout-fd)))
+        (set!
+          failure
+          (linux-record-close
+            failure
+            (stdlib.process_runtime.linux-close-if spawn.stderr-fd)))
+        (set!
+          failure
+          (linux-record-close
+            failure
+            (stdlib.process_runtime.linux-close-if spawn.exec-r)))
+        (set!
+          failure
+          (linux-record-close
+            failure
+            (stdlib.process_runtime.linux-close-if spawn.exec-w)))
+        failure))))
 
 ;: Close every descriptor in an inherited-stream spawn state before a failed
 ;: Linux spawn returns to its caller.
 (unsafe
-  (define (linux-cleanup-inherited-spawn [spawn : ProcessLinuxInheritedSpawn]) : unit
+  (define (linux-cleanup-inherited-spawn
+    [spawn : ProcessLinuxInheritedSpawn]
+    [failure : ProcessLinuxFailure]) : ProcessLinuxFailure
     (unsafe
       (begin
-        (stdlib.process_runtime.linux-close-if spawn.stdin-r)
-        (stdlib.process_runtime.linux-close-if spawn.stdin-w)
-        (stdlib.process_runtime.linux-close-if spawn.exec-r)
-        (stdlib.process_runtime.linux-close-if spawn.exec-w)
-        unit))))
+        (set!
+          failure
+          (linux-record-close
+            failure
+            (stdlib.process_runtime.linux-close-if spawn.stdin-r)))
+        (set!
+          failure
+          (linux-record-close
+            failure
+            (stdlib.process_runtime.linux-close-if spawn.stdin-w)))
+        (set!
+          failure
+          (linux-record-close
+            failure
+            (stdlib.process_runtime.linux-close-if spawn.exec-r)))
+        (set!
+          failure
+          (linux-record-close
+            failure
+            (stdlib.process_runtime.linux-close-if spawn.exec-w)))
+        failure))))
 
-;: Child failure path: write the `exec` marker through the failure pipe so the
-;: parent learns `execve` did not take over, then exit(127). Never returns.
+;: Issue one child-side close exactly once. Close is never retried after EINTR.
 (unsafe
-  (define (linux-child-fail [exec-w : i64] [marker-addr : i64]) : never
+  (define (linux-child-close [kind : i64] [fd : i64]) : i64
+    (let
+      [injected : i64 (linux-child-injected-result kind)]
+      (if (not (= injected process-linux-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall 3 fd)))))))
+
+;: Retry a child-side dup2 only on EINTR. Injected EINTR is consumed once so
+;: the native gate exercises progress without child writes to hook counters.
+(unsafe
+  (define (linux-child-dup2-retry
+    [kind : i64]
+    [old-fd : i64]
+    [new-fd : i64]
+    [allow-injection : bool]) : i64
+    (let
+      [injected : i64
+        (if allow-injection
+          (linux-child-injected-result kind)
+          process-linux-no-injection)]
+      [result : i64
+        (if (not (= injected process-linux-no-injection))
+          injected
+          (cfg
+            windows
+            -38
+            (unsafe
+              (syscall 33 old-fd new-fd))))]
+      (if (= result -4)
+        (unsafe
+          (linux-child-dup2-retry kind old-fd new-fd false))
+        result))))
+
+;: Retry child chdir only on EINTR; the immutable C path remains unchanged.
+(unsafe
+  (define (linux-child-chdir-retry [path : i64] [allow-injection : bool]) : i64
+    (let
+      [injected : i64
+        (if allow-injection
+          (linux-child-injected-result process-linux-child-syscall-chdir)
+          process-linux-no-injection)]
+      [result : i64
+        (if (not (= injected process-linux-no-injection))
+          injected
+          (cfg
+            windows
+            -38
+            (unsafe
+              (syscall 80 path))))]
+      (if (= result -4)
+        (unsafe
+          (linux-child-chdir-retry path false))
+        result))))
+
+;: Issue execve once. A returned result is always a child failure.
+(unsafe
+  (define (linux-child-execve
+    [exec-address : i64]
+    [argv-address : i64]
+    [envp-address : i64]) : i64
+    (let
+      [injected : i64
+        (linux-child-injected-result process-linux-child-syscall-exec)]
+      (if (not (= injected process-linux-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall 59 exec-address argv-address envp-address)))))))
+
+;: Write a small child failure record completely. The only retry is EINTR and
+;: every positive partial result advances the record pointer.
+(unsafe
+  (define (linux-child-write-record
+    [fd : i64]
+    [address : i64]
+    [length : i64]
+    [offset : i64]
+    [inject-eintr : bool]) : bool
+    (if (>= offset length)
+      true
+      (if inject-eintr
+        (unsafe
+          (linux-child-write-record fd address length offset false))
+        (let
+          [remaining : i64 (- length offset)]
+          [requested : i64
+            (if (and (= (linux-marker-mode) 4) (> remaining 3))
+              3
+              remaining)]
+          [written : i64
+            (cfg
+              windows
+              -38
+              (unsafe
+                (syscall 1 fd (+ address offset) requested)))]
+          (cond
+            [(= written -4)
+              (unsafe
+                (linux-child-write-record fd address length offset false))]
+            [(<= written 0) false]
+            [(> written remaining) false]
+            [else
+              (unsafe
+                (linux-child-write-record
+                  fd
+                  address
+                  length
+                  (+ offset written)
+                  false))]))))))
+
+;: Child failure path: write one exact bounded stage record when possible and
+;: exit through `_exit(127)`. It never returns to parent/application control.
+(unsafe
+  (define (linux-child-fail
+    [exec-w : i64]
+    [record-base-address : i64]
+    [stage : i64]) : never
     (unsafe
       (cfg
         windows
-        (stdlib.process_runtime.linux-child-fail exec-w marker-addr)
-        (begin
-          (unsafe
-            (syscall 1 exec-w marker-addr 4))
-          (unsafe
-            (syscall 60 127))
-          (stdlib.process_runtime.linux-child-fail exec-w marker-addr))))))
+        (stdlib.process_runtime.linux-child-fail
+          exec-w
+          record-base-address
+          stage)
+        (let
+          [mode : i64 (linux-marker-mode)]
+          [record-address : i64
+            (if (= mode 2)
+              record-base-address
+              (+ record-base-address (* stage 8)))]
+          [record-length : i64 (cond [(= mode 1) 4] [(= mode 3) 9] [else 8])]
+          (begin
+            (unsafe
+              (linux-child-write-record
+                exec-w
+                record-address
+                record-length
+                0
+                (= mode 5)))
+            (unsafe
+              (syscall 60 127))
+            (stdlib.process_runtime.linux-child-fail
+              exec-w
+              record-base-address
+              stage)))))))
 
 ;: Child path after vfork (syscalls only, no allocation or parent-memory writes):
 ;: wire stdin/stdout/stderr, chdir, then `execve`. Never returns.
@@ -1357,47 +2221,119 @@
         windows
         (stdlib.process_runtime.linux-exec-child spawn)
         (begin
-          (unsafe
-            (syscall 3 spawn.exec-r))
+          (if (<
+            (unsafe
+              (linux-child-close
+                process-linux-child-syscall-close-exec-read
+                spawn.exec-r))
+            0)
+            (stdlib.process_runtime.linux-child-fail
+              spawn.exec-w
+              spawn.marker-addr
+              process-linux-child-stage-close-exec-read)
+            unit)
           (if (>= spawn.stdin-w 0)
             (begin
-              (unsafe
-                (syscall 3 spawn.stdin-w))
               (if (<
                 (unsafe
-                  (syscall 33 spawn.stdin-r 0))
+                  (linux-child-close
+                    process-linux-child-syscall-close-stdin-write
+                    spawn.stdin-w))
                 0)
                 (stdlib.process_runtime.linux-child-fail
                   spawn.exec-w
-                  spawn.marker-addr)
-                (begin
+                  spawn.marker-addr
+                  process-linux-child-stage-close-stdin-write)
+                unit)
+              (if (<
+                (unsafe
+                  (linux-child-dup2-retry
+                    process-linux-child-syscall-dup-stdin
+                    spawn.stdin-r
+                    0
+                    true))
+                0)
+                (stdlib.process_runtime.linux-child-fail
+                  spawn.exec-w
+                  spawn.marker-addr
+                  process-linux-child-stage-dup-stdin)
+                (if (<
                   (unsafe
-                    (syscall 3 spawn.stdin-r))
+                    (linux-child-close
+                      process-linux-child-syscall-close-stdin-read
+                      spawn.stdin-r))
+                  0)
+                  (stdlib.process_runtime.linux-child-fail
+                    spawn.exec-w
+                    spawn.marker-addr
+                    process-linux-child-stage-close-stdin-read)
                   unit)))
             unit)
-          (unsafe
-            (syscall 33 spawn.stdout-fd 1))
-          (unsafe
-            (syscall 33 spawn.stderr-fd 2))
-          (unsafe
-            (syscall 3 spawn.stdout-fd))
-          (unsafe
-            (syscall 3 spawn.stderr-fd))
+          (if (<
+            (unsafe
+              (linux-child-dup2-retry
+                process-linux-child-syscall-dup-stdout
+                spawn.stdout-fd
+                1
+                true))
+            0)
+            (stdlib.process_runtime.linux-child-fail
+              spawn.exec-w
+              spawn.marker-addr
+              process-linux-child-stage-dup-stdout)
+            unit)
+          (if (<
+            (unsafe
+              (linux-child-dup2-retry
+                process-linux-child-syscall-dup-stderr
+                spawn.stderr-fd
+                2
+                true))
+            0)
+            (stdlib.process_runtime.linux-child-fail
+              spawn.exec-w
+              spawn.marker-addr
+              process-linux-child-stage-dup-stderr)
+            unit)
+          (if (<
+            (unsafe
+              (linux-child-close
+                process-linux-child-syscall-close-stdout
+                spawn.stdout-fd))
+            0)
+            (stdlib.process_runtime.linux-child-fail
+              spawn.exec-w
+              spawn.marker-addr
+              process-linux-child-stage-close-stdout)
+            unit)
+          (if (<
+            (unsafe
+              (linux-child-close
+                process-linux-child-syscall-close-stderr
+                spawn.stderr-fd))
+            0)
+            (stdlib.process_runtime.linux-child-fail
+              spawn.exec-w
+              spawn.marker-addr
+              process-linux-child-stage-close-stderr)
+            unit)
           (if (not (= spawn.cwd-addr 0))
             (if (<
               (unsafe
-                (syscall 80 spawn.cwd-addr))
+                (linux-child-chdir-retry spawn.cwd-addr true))
               0)
               (stdlib.process_runtime.linux-child-fail
                 spawn.exec-w
-                spawn.marker-addr)
+                spawn.marker-addr
+                process-linux-child-stage-chdir)
               unit)
             unit)
           (unsafe
-            (syscall 59 spawn.exec-addr spawn.argv-addr spawn.envp-addr))
+            (linux-child-execve spawn.exec-addr spawn.argv-addr spawn.envp-addr))
           (stdlib.process_runtime.linux-child-fail
             spawn.exec-w
-            spawn.marker-addr))))))
+            spawn.marker-addr
+            process-linux-child-stage-exec))))))
 
 ;: Child path after vfork for inherited stdout/stderr: wire only an explicitly
 ;: supplied stdin pipe, leave descriptors 1 and 2 untouched, then execve.
@@ -1408,55 +2344,274 @@
         windows
         (stdlib.process_runtime.linux-exec-child-inherit spawn)
         (begin
-          (unsafe
-            (syscall 3 spawn.exec-r))
+          (if (<
+            (unsafe
+              (linux-child-close
+                process-linux-child-syscall-close-exec-read
+                spawn.exec-r))
+            0)
+            (stdlib.process_runtime.linux-child-fail
+              spawn.exec-w
+              spawn.marker-addr
+              process-linux-child-stage-close-exec-read)
+            unit)
           (if (>= spawn.stdin-w 0)
             (begin
-              (unsafe
-                (syscall 3 spawn.stdin-w))
               (if (<
                 (unsafe
-                  (syscall 33 spawn.stdin-r 0))
+                  (linux-child-close
+                    process-linux-child-syscall-close-stdin-write
+                    spawn.stdin-w))
                 0)
                 (stdlib.process_runtime.linux-child-fail
                   spawn.exec-w
-                  spawn.marker-addr)
-                (begin
+                  spawn.marker-addr
+                  process-linux-child-stage-close-stdin-write)
+                unit)
+              (if (<
+                (unsafe
+                  (linux-child-dup2-retry
+                    process-linux-child-syscall-dup-stdin
+                    spawn.stdin-r
+                    0
+                    true))
+                0)
+                (stdlib.process_runtime.linux-child-fail
+                  spawn.exec-w
+                  spawn.marker-addr
+                  process-linux-child-stage-dup-stdin)
+                (if (<
                   (unsafe
-                    (syscall 3 spawn.stdin-r))
+                    (linux-child-close
+                      process-linux-child-syscall-close-stdin-read
+                      spawn.stdin-r))
+                  0)
+                  (stdlib.process_runtime.linux-child-fail
+                    spawn.exec-w
+                    spawn.marker-addr
+                    process-linux-child-stage-close-stdin-read)
                   unit)))
             unit)
           (if (not (= spawn.cwd-addr 0))
             (if (<
               (unsafe
-                (syscall 80 spawn.cwd-addr))
+                (linux-child-chdir-retry spawn.cwd-addr true))
               0)
               (stdlib.process_runtime.linux-child-fail
                 spawn.exec-w
-                spawn.marker-addr)
+                spawn.marker-addr
+                process-linux-child-stage-chdir)
               unit)
             unit)
           (unsafe
-            (syscall 59 spawn.exec-addr spawn.argv-addr spawn.envp-addr))
+            (linux-child-execve spawn.exec-addr spawn.argv-addr spawn.envp-addr))
           (stdlib.process_runtime.linux-child-fail
             spawn.exec-w
-            spawn.marker-addr))))))
+            spawn.marker-addr
+            process-linux-child-stage-exec))))))
 
-;: Return true when the child wrote the `execve`-failure marker.
+;: Decode one exact eight-byte child failure record, returning zero when the
+;: magic, reserved bytes, or stage byte is malformed.
+(define (linux-exec-record-stage [buf : (& buf (__tl_dyn-array u8))]) : i64
+  (if (and
+    (= (array-length buf) 9)
+    (= (cast (array-ref buf 0) : i64) 84)
+    (= (cast (array-ref buf 1) : i64) 76)
+    (= (cast (array-ref buf 2) : i64) 88)
+    (= (cast (array-ref buf 3) : i64) 33)
+    (= (cast (array-ref buf 5) : i64) 48)
+    (= (cast (array-ref buf 6) : i64) 48)
+    (= (cast (array-ref buf 7) : i64) 48))
+    (let
+      [stage-byte : i64 (cast (array-ref buf 4) : i64)]
+      (if (and (>= stage-byte 49) (<= stage-byte 57))
+        (- stage-byte 48)
+        (if (= stage-byte 65)
+          10
+          0)))
+    0))
+
+;: Read the close-on-exec channel to exact EOF. Clean EOF before any byte proves
+;: successful exec; one exact record proves child failure; every read error,
+;: partial EOF, malformed record, or trailing byte is protocol failure.
 (unsafe
-  (define (linux-exec-failed? [exec-r : i64]) : bool
+  (define (linux-read-exec-status [exec-r : i64]) : ProcessLinuxExecOutcome
     (unsafe
       (cfg
         windows
-        true
+        (ProcessLinuxExecOutcome (ProcessLinuxExecChannelFailed -38) 0)
         (let
-          [buf : (__tl_dyn-array u8) (__tl_make-array u8 8)]
-          [count : i64
-            (unsafe
-              (syscall 0 exec-r (stdlib.process_runtime.array-u8-addr buf) 8))]
+          [buf : (__tl_dyn-array u8) (__tl_make-array u8 9)]
+          [offset : i64 0]
+          [done : bool false]
+          [failed-result : i64 0]
+          [status : ProcessLinuxExecStatus (ProcessLinuxExecSucceeded)]
           (begin
-            (stdlib.process_runtime.linux-close-if exec-r)
-            (> count 0)))))))
+            (while (not done)
+              (let
+                [requested : i64
+                  (if (< offset 8)
+                    (- 8 offset)
+                    1)]
+                [count : i64
+                  (unsafe
+                    (stdlib.process_runtime.linux-raw-exec-read
+                      exec-r
+                      (+
+                        (stdlib.process_runtime.array-u8-addr
+                          (process-runtime-place-shared-view buf))
+                        offset)
+                      requested))]
+                (cond
+                  [(= count -4) unit]
+                  [(< count 0)
+                    (begin
+                      (set! failed-result count)
+                      (set! done true))]
+                  [(= count 0) (set! done true)]
+                  [(> count requested)
+                    (begin
+                      (set! failed-result -71)
+                      (set! done true))]
+                  [(>= offset 8)
+                    (begin
+                      (set! offset (+ offset count))
+                      (set! failed-result -71)
+                      (set! done true))]
+                  [else (set! offset (+ offset count))])))
+            (set!
+              status
+              (cond
+                [(< failed-result 0)
+                  (ProcessLinuxExecChannelFailed failed-result)]
+                [(= offset 0) (ProcessLinuxExecSucceeded)]
+                [(= offset 8)
+                  (let
+                    [stage : i64 (linux-exec-record-stage (& buf))]
+                    (if (> stage 0)
+                      (ProcessLinuxExecChildFailed stage)
+                      (ProcessLinuxExecChannelFailed -71)))]
+                [else (ProcessLinuxExecChannelFailed -71)]))
+            (ProcessLinuxExecOutcome
+              status
+              (stdlib.process_runtime.linux-close-if exec-r))))))))
+
+;: Wait for exactly `pid`, retrying only EINTR. A different positive pid is an
+;: impossible result for this wait4 invocation and is treated as protocol error.
+(unsafe
+  (define (linux-wait-retry [pid : i64] [status-address : i64]) : i64
+    (unsafe
+      (cfg
+        windows
+        -38
+        (let
+          [result : i64 -4]
+          (begin
+            (while (= result -4)
+              (set!
+                result
+                (stdlib.process_runtime.linux-raw-wait pid status-address)))
+            (if (and (>= result 0) (not (= result pid)))
+              -71
+              result)))))))
+
+;: Seek one capture descriptor, retrying only EINTR.
+(unsafe
+  (define (linux-capture-seek-retry [fd : i64] [offset : i64] [whence : i64]) : i64
+    (let
+      [result : i64 -4]
+      (begin
+        (while (= result -4)
+          (set!
+            result
+            (unsafe
+              (stdlib.process_runtime.linux-raw-capture-seek fd offset whence))))
+        result))))
+
+;: Read one seekable capture exactly. Short reads advance, EINTR retries, and
+;: early EOF or impossible progress becomes an explicit typed failure.
+(unsafe
+  (define (linux-read-capture [fd : i64]) : ProcessLinuxCaptureResult
+    (unsafe
+      (cfg
+        windows
+        (ProcessLinuxCaptureFailed -38)
+        (let
+          [end : i64 (stdlib.process_runtime.linux-capture-seek-retry fd 0 2)]
+          (if (< end 0)
+            (ProcessLinuxCaptureFailed end)
+            (let
+              [rewound : i64
+                (stdlib.process_runtime.linux-capture-seek-retry fd 0 0)]
+              (if (< rewound 0)
+                (ProcessLinuxCaptureFailed rewound)
+                (if (not (= rewound 0))
+                  (ProcessLinuxCaptureFailed -71)
+                  (let
+                    [buf : (__tl_dyn-array u8) (__tl_make-array u8 end)]
+                    [offset : i64 0]
+                    [failure-result : i64 0]
+                    [done : bool false]
+                    (begin
+                      (while (and (not done) (< offset end))
+                        (let
+                          [requested : i64 (- end offset)]
+                          [count : i64
+                            (stdlib.process_runtime.linux-raw-capture-read
+                              fd
+                              (+
+                                (stdlib.process_runtime.array-u8-addr
+                                  (process-runtime-place-shared-view buf))
+                                offset)
+                              requested)]
+                          (cond
+                            [(= count -4) unit]
+                            [(< count 0)
+                              (begin
+                                (set! failure-result count)
+                                (set! done true))]
+                            [(or (= count 0) (> count requested))
+                              (begin
+                                (set! failure-result -71)
+                                (set! done true))]
+                            [else (set! offset (+ offset count))])))
+                      (if (< failure-result 0)
+                        (ProcessLinuxCaptureFailed failure-result)
+                        (ProcessLinuxCaptureOk
+                          (byte_buf.from-array-prefix buf end))))))))))))))
+
+;: Fold an exact exec-channel outcome into the bounded failure state. The
+;: returned flag is true only when close-on-exec EOF proved successful exec.
+(define (linux-record-exec-outcome
+  [outcome : ProcessLinuxExecOutcome]
+  [failure : ProcessLinuxFailure]) : ProcessLinuxFailure
+  (let
+    [close-result : i64 outcome.close-result]
+    (begin
+      (set!
+        failure
+        (match outcome.status
+          [(ProcessLinuxExecSucceeded) failure]
+          [(ProcessLinuxExecChildFailed stage)
+            (linux-failure-add-primary
+              failure
+              (if (= stage process-linux-child-stage-exec)
+                process-linux-operation-exec
+                process-linux-operation-child-setup)
+              (- 0 stage))]
+          [(ProcessLinuxExecChannelFailed raw-result)
+            (linux-failure-add-primary
+              failure
+              process-linux-operation-exec-channel
+              raw-result)]))
+      (linux-record-close failure close-result))))
+
+;: Return true only for the successful close-on-exec outcome.
+(define (linux-exec-succeeded? [outcome : (& outcome ProcessLinuxExecOutcome)]) : bool
+  (match (& outcome.status)
+    [(ProcessLinuxExecSucceeded) true]
+    [(ProcessLinuxExecChildFailed _) false]
+    [(ProcessLinuxExecChannelFailed _) false]))
 
 ;: Parent path for the captured-output runtime: feed stdin, wait for the child,
 ;: detect `execve` failure, then read the memfd-captured stdout/stderr.
@@ -1466,61 +2621,106 @@
       (cfg
         windows
         (stdlib.process_runtime.wait-error)
-        (begin
-          (stdlib.process_runtime.linux-close-if spawn.exec-w)
-          (let
-            [stdin-status : i64
+        (let
+          [failure : ProcessLinuxFailure (linux-failure-none)]
+          [statusbuf : (__tl_dyn-array i32) (__tl_make-array i32 1)]
+          [waited : i64 -1]
+          [exec-succeeded : bool false]
+          [stdout-text : String ""]
+          [stderr-text : String ""]
+          (begin
+            (set!
+              failure
+              (linux-record-close
+                failure
+                (stdlib.process_runtime.linux-close-if spawn.exec-w)))
+            (set!
+              failure
               (stdlib.process_runtime.linux-feed-stdin
                 spawn.has-stdin
                 spawn.stdin-r
                 spawn.stdin-w
                 spawn.stdin-data
-                spawn.stdin-len)]
-            (if (= stdin-status 1)
+                spawn.stdin-len
+                failure))
+            (set!
+              waited
+              (stdlib.process_runtime.linux-wait-retry
+                pid
+                (stdlib.process_runtime.array-i32-addr
+                  (process-runtime-place-shared-view statusbuf))))
+            (if (< waited 0)
               (begin
-                (stdlib.process_runtime.linux-close-if spawn.stdout-fd)
-                (stdlib.process_runtime.linux-close-if spawn.stderr-fd)
-                (stdlib.process_runtime.linux-close-if spawn.exec-r)
-                (stdlib.process_runtime.wait-error))
+                (set!
+                  failure
+                  (linux-failure-add
+                    failure
+                    process-linux-operation-wait
+                    waited))
+                (set!
+                  failure
+                  (linux-record-close
+                    failure
+                    (stdlib.process_runtime.linux-close-if spawn.exec-r))))
               (let
-                [statusbuf : (__tl_dyn-array i32) (__tl_make-array i32 1)]
-                [waited : i64
-                  (unsafe
-                    (syscall
-                      61
-                      pid
-                      (stdlib.process_runtime.array-i32-addr
-                        (process-runtime-place-shared-view statusbuf))
-                      0
-                      0))]
-                (if (< waited 0)
-                  (begin
-                    (stdlib.process_runtime.linux-close-if spawn.stdout-fd)
-                    (stdlib.process_runtime.linux-close-if spawn.stderr-fd)
-                    (stdlib.process_runtime.linux-close-if spawn.exec-r)
-                    (stdlib.process_runtime.wait-error))
-                  (if (stdlib.process_runtime.linux-exec-failed? spawn.exec-r)
-                    (begin
-                      (stdlib.process_runtime.linux-close-if spawn.stdout-fd)
-                      (stdlib.process_runtime.linux-close-if spawn.stderr-fd)
-                      (stdlib.process_runtime.spawn-error))
-                    (let
-                      [stdout-text : String
-                        (byte_buf.to-string
-                          (io.read-fd-to-byte-buf spawn.stdout-fd))]
-                      [stderr-text : String
-                        (byte_buf.to-string
-                          (io.read-fd-to-byte-buf spawn.stderr-fd))]
-                      [status : i64
-                        (stdlib.process_runtime.decode-status
-                          (array-ref statusbuf 0))]
-                      (begin
-                        (stdlib.process_runtime.linux-close-if spawn.stdout-fd)
-                        (stdlib.process_runtime.linux-close-if spawn.stderr-fd)
-                        (stdlib.process_runtime.output-ok
-                          status
-                          stdout-text
-                          stderr-text)))))))))))))
+                [exec-outcome : ProcessLinuxExecOutcome
+                  (stdlib.process_runtime.linux-read-exec-status spawn.exec-r)]
+                (begin
+                  (set! exec-succeeded (linux-exec-succeeded? (& exec-outcome)))
+                  (set!
+                    failure
+                    (linux-record-exec-outcome exec-outcome failure)))))
+            (if (and (>= waited 0) exec-succeeded)
+              (begin
+                (match (stdlib.process_runtime.linux-read-capture
+                  spawn.stdout-fd)
+                  [(ProcessLinuxCaptureOk bytes)
+                    (set! stdout-text (byte_buf.to-string bytes))]
+                  [(ProcessLinuxCaptureFailed raw-result)
+                    (set!
+                      failure
+                      (linux-failure-add-primary
+                        failure
+                        process-linux-operation-stdout
+                        raw-result))])
+                (set!
+                  failure
+                  (linux-record-close
+                    failure
+                    (stdlib.process_runtime.linux-close-if spawn.stdout-fd)))
+                (match (stdlib.process_runtime.linux-read-capture
+                  spawn.stderr-fd)
+                  [(ProcessLinuxCaptureOk bytes)
+                    (set! stderr-text (byte_buf.to-string bytes))]
+                  [(ProcessLinuxCaptureFailed raw-result)
+                    (set!
+                      failure
+                      (linux-failure-add-primary
+                        failure
+                        process-linux-operation-stderr
+                        raw-result))])
+                (set!
+                  failure
+                  (linux-record-close
+                    failure
+                    (stdlib.process_runtime.linux-close-if spawn.stderr-fd))))
+              (begin
+                (set!
+                  failure
+                  (linux-record-close
+                    failure
+                    (stdlib.process_runtime.linux-close-if spawn.stdout-fd)))
+                (set!
+                  failure
+                  (linux-record-close
+                    failure
+                    (stdlib.process_runtime.linux-close-if spawn.stderr-fd)))))
+            (if (linux-failure-present? (& failure))
+              (linux-failure-output failure)
+              (stdlib.process_runtime.output-ok
+                (stdlib.process_runtime.decode-status (array-ref statusbuf 0))
+                stdout-text
+                stderr-text))))))))
 
 ;: Parent path for the asynchronous start runtime: feed stdin, detect immediate
 ;: `execve` failure, otherwise return a child owning the capture descriptors.
@@ -1530,47 +2730,63 @@
       (cfg
         windows
         (stdlib.process_runtime.wait-error-child)
-        (begin
-          (stdlib.process_runtime.linux-close-if spawn.exec-w)
-          (let
-            [stdin-status : i64
+        (let
+          [failure : ProcessLinuxFailure (linux-failure-none)]
+          [exec-outcome : ProcessLinuxExecOutcome
+            (ProcessLinuxExecOutcome (ProcessLinuxExecChannelFailed -71) 0)]
+          [exec-succeeded : bool false]
+          (begin
+            (set!
+              failure
+              (linux-record-close
+                failure
+                (stdlib.process_runtime.linux-close-if spawn.exec-w)))
+            (set!
+              failure
               (stdlib.process_runtime.linux-feed-stdin
                 spawn.has-stdin
                 spawn.stdin-r
                 spawn.stdin-w
                 spawn.stdin-data
-                spawn.stdin-len)]
-            (if (= stdin-status 1)
-              (begin
-                (unsafe
-                  (syscall
-                    61
+                spawn.stdin-len
+                failure))
+            (set!
+              exec-outcome
+              (stdlib.process_runtime.linux-read-exec-status spawn.exec-r))
+            (set! exec-succeeded (linux-exec-succeeded? (& exec-outcome)))
+            (set! failure (linux-record-exec-outcome exec-outcome failure))
+            (if (and exec-succeeded (not (linux-failure-present? (& failure))))
+              (stdlib.process_runtime.child-ok
+                pid
+                spawn.stdout-fd
+                spawn.stderr-fd)
+              (let
+                [statusbuf : (__tl_dyn-array i32) (__tl_make-array i32 1)]
+                [waited : i64
+                  (stdlib.process_runtime.linux-wait-retry
                     pid
                     (stdlib.process_runtime.array-i32-addr
-                      (__tl_make-array i32 1))
-                    0
-                    0))
-                (stdlib.process_runtime.linux-close-if spawn.stdout-fd)
-                (stdlib.process_runtime.linux-close-if spawn.stderr-fd)
-                (stdlib.process_runtime.linux-close-if spawn.exec-r)
-                (stdlib.process_runtime.wait-error-child))
-              (if (stdlib.process_runtime.linux-exec-failed? spawn.exec-r)
+                      (process-runtime-place-shared-view statusbuf)))]
                 (begin
-                  (unsafe
-                    (syscall
-                      61
-                      pid
-                      (stdlib.process_runtime.array-i32-addr
-                        (__tl_make-array i32 1))
-                      0
-                      0))
-                  (stdlib.process_runtime.linux-close-if spawn.stdout-fd)
-                  (stdlib.process_runtime.linux-close-if spawn.stderr-fd)
-                  (stdlib.process_runtime.spawn-error-child))
-                (stdlib.process_runtime.child-ok
-                  pid
-                  spawn.stdout-fd
-                  spawn.stderr-fd)))))))))
+                  (if (< waited 0)
+                    (set!
+                      failure
+                      (linux-failure-add
+                        failure
+                        process-linux-operation-wait
+                        waited))
+                    unit)
+                  (set!
+                    failure
+                    (linux-record-close
+                      failure
+                      (stdlib.process_runtime.linux-close-if spawn.stdout-fd)))
+                  (set!
+                    failure
+                    (linux-record-close
+                      failure
+                      (stdlib.process_runtime.linux-close-if spawn.stderr-fd)))
+                  (linux-failure-child failure))))))))))
 
 ;: Linux captured-output runtime: prepare, vfork, and dispatch parent/child.
 (unsafe
@@ -1584,19 +2800,30 @@
             (unsafe
               (stdlib.process_runtime.linux-prepare command))]
           (if spawn.failed
-            (begin
-              (stdlib.process_runtime.linux-cleanup-spawn spawn)
-              (stdlib.process_runtime.spawn-error))
+            (linux-failure-output
+              (stdlib.process_runtime.linux-cleanup-spawn
+                spawn
+                (linux-failure-add
+                  (linux-failure-none)
+                  process-linux-operation-spawn
+                  spawn.failure-result)))
             (let
               ;; Use vfork so high-RSS selfhost builds can still exec tiny tools
               ;; on memory-constrained runners without copying page tables.
+              [vfork-injected : i64 (linux-vfork-injected-result)]
               [pid : i64
-                (unsafe
-                  (syscall 58))]
+                (if (not (= vfork-injected process-linux-no-injection))
+                  vfork-injected
+                  (unsafe
+                    (syscall 58)))]
               (if (< pid 0)
-                (begin
-                  (stdlib.process_runtime.linux-cleanup-spawn spawn)
-                  (stdlib.process_runtime.spawn-error))
+                (linux-failure-output
+                  (stdlib.process_runtime.linux-cleanup-spawn
+                    spawn
+                    (linux-failure-add
+                      (linux-failure-none)
+                      process-linux-operation-spawn
+                      pid)))
                 (if (= pid 0)
                   (stdlib.process_runtime.linux-exec-child spawn)
                   (stdlib.process_runtime.linux-output-parent spawn pid))))))))))
@@ -1612,50 +2839,65 @@
       (cfg
         windows
         (stdlib.process_runtime.wait-error)
-        (begin
-          (stdlib.process_runtime.linux-close-if spawn.exec-w)
-          (let
-            [stdin-status : i64
+        (let
+          [failure : ProcessLinuxFailure (linux-failure-none)]
+          [statusbuf : (__tl_dyn-array i32) (__tl_make-array i32 1)]
+          [waited : i64 -1]
+          [exec-succeeded : bool false]
+          (begin
+            (set!
+              failure
+              (linux-record-close
+                failure
+                (stdlib.process_runtime.linux-close-if spawn.exec-w)))
+            (set!
+              failure
               (stdlib.process_runtime.linux-feed-stdin
                 spawn.has-stdin
                 spawn.stdin-r
                 spawn.stdin-w
                 spawn.stdin-data
-                spawn.stdin-len)]
-            (if (= stdin-status 1)
+                spawn.stdin-len
+                failure))
+            (set!
+              waited
+              (stdlib.process_runtime.linux-wait-retry
+                pid
+                (stdlib.process_runtime.array-i32-addr
+                  (process-runtime-place-shared-view statusbuf))))
+            (if (< waited 0)
               (begin
-                (unsafe
-                  (syscall
-                    61
-                    pid
-                    (stdlib.process_runtime.array-i32-addr
-                      (__tl_make-array i32 1))
-                    0
-                    0))
-                (stdlib.process_runtime.linux-close-if spawn.exec-r)
-                (stdlib.process_runtime.wait-error))
+                (set!
+                  failure
+                  (linux-failure-add
+                    failure
+                    process-linux-operation-wait
+                    waited))
+                (set!
+                  failure
+                  (linux-record-close
+                    failure
+                    (stdlib.process_runtime.linux-close-if spawn.exec-r))))
               (let
-                [statusbuf : (__tl_dyn-array i32) (__tl_make-array i32 1)]
-                [waited : i64
-                  (unsafe
-                    (syscall
-                      61
-                      pid
-                      (stdlib.process_runtime.array-i32-addr
-                        (process-runtime-place-shared-view statusbuf))
-                      0
-                      0))]
-                (if (< waited 0)
-                  (begin
-                    (stdlib.process_runtime.linux-close-if spawn.exec-r)
-                    (stdlib.process_runtime.wait-error))
-                  (if (stdlib.process_runtime.linux-exec-failed? spawn.exec-r)
-                    (stdlib.process_runtime.spawn-error)
-                    (stdlib.process_runtime.output-ok
-                      (stdlib.process_runtime.decode-status
-                        (array-ref statusbuf 0))
-                      ""
-                      "")))))))))))
+                [exec-outcome : ProcessLinuxExecOutcome
+                  (stdlib.process_runtime.linux-read-exec-status spawn.exec-r)]
+                (begin
+                  (set! exec-succeeded (linux-exec-succeeded? (& exec-outcome)))
+                  (set!
+                    failure
+                    (linux-record-exec-outcome exec-outcome failure)))))
+            (if (linux-failure-present? (& failure))
+              (linux-failure-output failure)
+              (if exec-succeeded
+                (stdlib.process_runtime.output-ok
+                  (stdlib.process_runtime.decode-status (array-ref statusbuf 0))
+                  ""
+                  "")
+                (linux-failure-output
+                  (linux-failure-add
+                    failure
+                    process-linux-operation-exec-channel
+                    -71))))))))))
 
 ;: Linux inherited-stream runtime: prepare without output capture, vfork, and
 ;: keep child stdout/stderr attached to the caller until it exits.
@@ -1670,17 +2912,28 @@
             (unsafe
               (stdlib.process_runtime.linux-prepare-inherit command))]
           (if spawn.failed
-            (begin
-              (stdlib.process_runtime.linux-cleanup-inherited-spawn spawn)
-              (stdlib.process_runtime.spawn-error))
+            (linux-failure-output
+              (stdlib.process_runtime.linux-cleanup-inherited-spawn
+                spawn
+                (linux-failure-add
+                  (linux-failure-none)
+                  process-linux-operation-spawn
+                  spawn.failure-result)))
             (let
+              [vfork-injected : i64 (linux-vfork-injected-result)]
               [pid : i64
-                (unsafe
-                  (syscall 58))]
+                (if (not (= vfork-injected process-linux-no-injection))
+                  vfork-injected
+                  (unsafe
+                    (syscall 58)))]
               (if (< pid 0)
-                (begin
-                  (stdlib.process_runtime.linux-cleanup-inherited-spawn spawn)
-                  (stdlib.process_runtime.spawn-error))
+                (linux-failure-output
+                  (stdlib.process_runtime.linux-cleanup-inherited-spawn
+                    spawn
+                    (linux-failure-add
+                      (linux-failure-none)
+                      process-linux-operation-spawn
+                      pid)))
                 (if (= pid 0)
                   (stdlib.process_runtime.linux-exec-child-inherit spawn)
                   (stdlib.process_runtime.linux-inherit-parent spawn pid))))))))))
@@ -1697,19 +2950,30 @@
             (unsafe
               (stdlib.process_runtime.linux-prepare command))]
           (if spawn.failed
-            (begin
-              (stdlib.process_runtime.linux-cleanup-spawn spawn)
-              (stdlib.process_runtime.spawn-error-child))
+            (linux-failure-child
+              (stdlib.process_runtime.linux-cleanup-spawn
+                spawn
+                (linux-failure-add
+                  (linux-failure-none)
+                  process-linux-operation-spawn
+                  spawn.failure-result)))
             (let
               ;; Use vfork so high-RSS selfhost builds can still exec tiny tools
               ;; on memory-constrained runners without copying page tables.
+              [vfork-injected : i64 (linux-vfork-injected-result)]
               [pid : i64
-                (unsafe
-                  (syscall 58))]
+                (if (not (= vfork-injected process-linux-no-injection))
+                  vfork-injected
+                  (unsafe
+                    (syscall 58)))]
               (if (< pid 0)
-                (begin
-                  (stdlib.process_runtime.linux-cleanup-spawn spawn)
-                  (stdlib.process_runtime.spawn-error-child))
+                (linux-failure-child
+                  (stdlib.process_runtime.linux-cleanup-spawn
+                    spawn
+                    (linux-failure-add
+                      (linux-failure-none)
+                      process-linux-operation-spawn
+                      pid)))
                 (if (= pid 0)
                   (stdlib.process_runtime.linux-exec-child spawn)
                   (stdlib.process_runtime.linux-start-parent spawn pid))))))))))
@@ -1727,35 +2991,56 @@
           [stdout-fd : i64 child.stdout-handle]
           [stderr-fd : i64 child.stderr-handle]
           [statusbuf : (__tl_dyn-array i32) (__tl_make-array i32 1)]
+          [failure : ProcessLinuxFailure (linux-failure-none)]
+          [stdout-text : String ""]
+          [stderr-text : String ""]
           [waited : i64
-            (unsafe
-              (syscall
-                61
-                pid
-                (stdlib.process_runtime.array-i32-addr
-                  (process-runtime-place-shared-view statusbuf))
-                0
-                0))]
-          (if (< waited 0)
-            (begin
-              (stdlib.process_runtime.linux-close-if stdout-fd)
-              (stdlib.process_runtime.linux-close-if stderr-fd)
-              (stdlib.process_runtime.wait-error))
-            (let
-              [stdout-text : String
-                (byte_buf.to-string (io.read-fd-to-byte-buf stdout-fd))]
+            (stdlib.process_runtime.linux-wait-retry
+              pid
+              (stdlib.process_runtime.array-i32-addr
+                (process-runtime-place-shared-view statusbuf)))]
+          (begin
+            (if (< waited 0)
+              (set!
+                failure
+                (linux-failure-add failure process-linux-operation-wait waited))
               (begin
-                (stdlib.process_runtime.linux-close-if stdout-fd)
-                (let
-                  [stderr-text : String
-                    (byte_buf.to-string (io.read-fd-to-byte-buf stderr-fd))]
-                  (begin
-                    (stdlib.process_runtime.linux-close-if stderr-fd)
-                    (stdlib.process_runtime.output-ok
-                      (stdlib.process_runtime.decode-status
-                        (array-ref statusbuf 0))
-                      stdout-text
-                      stderr-text)))))))))))
+                (match (stdlib.process_runtime.linux-read-capture stdout-fd)
+                  [(ProcessLinuxCaptureOk bytes)
+                    (set! stdout-text (byte_buf.to-string bytes))]
+                  [(ProcessLinuxCaptureFailed raw-result)
+                    (set!
+                      failure
+                      (linux-failure-add-primary
+                        failure
+                        process-linux-operation-stdout
+                        raw-result))])
+                (match (stdlib.process_runtime.linux-read-capture stderr-fd)
+                  [(ProcessLinuxCaptureOk bytes)
+                    (set! stderr-text (byte_buf.to-string bytes))]
+                  [(ProcessLinuxCaptureFailed raw-result)
+                    (set!
+                      failure
+                      (linux-failure-add-primary
+                        failure
+                        process-linux-operation-stderr
+                        raw-result))])))
+            (set!
+              failure
+              (linux-record-close
+                failure
+                (stdlib.process_runtime.linux-close-if stdout-fd)))
+            (set!
+              failure
+              (linux-record-close
+                failure
+                (stdlib.process_runtime.linux-close-if stderr-fd)))
+            (if (linux-failure-present? (& failure))
+              (linux-failure-output failure)
+              (stdlib.process_runtime.output-ok
+                (stdlib.process_runtime.decode-status (array-ref statusbuf 0))
+                stdout-text
+                stderr-text))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Windows runtime (kernel32 CreateProcessA with temp-file redirection).

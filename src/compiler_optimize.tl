@@ -57721,7 +57721,26 @@
 ;; value some `bounds_check` uses as its LENGTH is non-negative read as an i64
 ;; wherever it is live -- that is what gives a scanner's `len` operand a sign
 ;; with no guard at all. Which values those are is collected once per function
-;; (`opt-bounds-dom-var-facts`).
+;; (`opt-bounds-dom-var-facts`), and that collection also reads the length a
+;; function never checks with: a `load` through a `gep base, length-slot` whose
+;; base is an array/string descriptor HANDLE at every definition site is the
+;; same `< 2^63` word (see `opt-bounds-dom-var-fact-length-slot` for why the
+;; base premise, and not the gep shape, is what makes that sound).
+;;
+;; NARROWING FORMS, admitted with no fence at all. The three fenced rules above
+;; are the ones that can LEAVE the range; these cannot, so each is decided by
+;; its operand alone:
+;;
+;;   * `x / c`, c > 0 a literal: signed division truncates toward zero, so a
+;;     non-negative x gives a quotient in [0, x]. The one signed divide that
+;;     overflows is `MIN / -1`, which a positive literal c excludes outright.
+;;   * `x >> k`, k a literal in [0, width): an ARITHMETIC shift right copies
+;;     the sign bit downward, so a clear sign bit stays clear -- the result is
+;;     floor(x / 2^k), in [0, x]. A shift right has no overflow.
+;;   * `x & m`: the result has a 1 bit only where BOTH operands do, so a clear
+;;     sign bit in EITHER operand clears the result's. It is therefore enough
+;;     that one side is non-negative, whichever side that is, and no bound on
+;;     the other side is needed. `and` has no overflow.
 ;;
 ;; WHAT THIS LATTICE DOES NOT DO: RETYPE. Proving both operands of a signed
 ;; `lt/le/gt/ge` non-negative also proves the SAME bool comes out of the
@@ -58084,8 +58103,12 @@
                     at-id
                     base
                     fuel))]))])]
-    [(opt-binop-eq op (ir.CompilerIrBinOp.Mul))
-      (match (opt-affine-var-const lhs rhs)
+    [(opt-binop-eq
+        (compiler-opt-global-shared-view op)
+        (ir.CompilerIrBinOp.Mul))
+      (match (opt-affine-var-const
+        (compiler-opt-global-shared-view lhs)
+        (compiler-opt-global-shared-view rhs))
         [(OptAffineOperands.No) false]
         [(OptAffineOperands.Some raw-var scale)
           (and
@@ -58110,6 +58133,99 @@
                 (compiler-opt-global-shared-view copies)
                 (ir.CompilerIrValue.Var raw-var))
               fuel))])]
+    ;; `x / c` for a positive literal c: the quotient of a non-negative
+    ;; dividend lies in [0, x] and the divide cannot overflow (see NARROWING
+    ;; FORMS). A non-literal or non-positive divisor decides nothing.
+    [(opt-binop-eq
+        (compiler-opt-global-shared-view op)
+        (ir.CompilerIrBinOp.Div))
+      (match (compiler-opt-global-shared-view rhs)
+        [(ir.CompilerIrValue.I64 divisor)
+          (and
+            (> divisor 0)
+            (opt-bounds-dom-nonneg-at?
+              type-segment-bases
+              (compiler-opt-global-shared-view index)
+              (compiler-opt-global-shared-view doms)
+              (compiler-opt-global-shared-view defs)
+              (compiler-opt-global-shared-view phi-defs)
+              (compiler-opt-global-shared-view var-facts)
+              (compiler-opt-global-shared-view checks)
+              (compiler-opt-global-shared-view copies)
+              (compiler-opt-global-shared-view cmp-facts)
+              (compiler-opt-global-shared-view phis)
+              at-id
+              (opt-bounds-dom-resolve
+                (compiler-opt-global-shared-view copies)
+                (compiler-opt-global-shared-view lhs))
+              fuel))]
+        [_ false])]
+    ;; `x >> k` for a literal k in [0, width): the arithmetic shift right of a
+    ;; non-negative value is floor(x / 2^k), still in [0, x]. A count outside
+    ;; that range is the checked-shift trap's business, not this rule's.
+    [(match (compiler-opt-global-shared-view op)
+        [(ir.CompilerIrBinOp.Shr _) true]
+        [_ false])
+      (match (compiler-opt-global-shared-view rhs)
+        [(ir.CompilerIrValue.I64 count)
+          (and
+            (>= count 0)
+            (< count 64)
+            (opt-bounds-dom-nonneg-at?
+              type-segment-bases
+              (compiler-opt-global-shared-view index)
+              (compiler-opt-global-shared-view doms)
+              (compiler-opt-global-shared-view defs)
+              (compiler-opt-global-shared-view phi-defs)
+              (compiler-opt-global-shared-view var-facts)
+              (compiler-opt-global-shared-view checks)
+              (compiler-opt-global-shared-view copies)
+              (compiler-opt-global-shared-view cmp-facts)
+              (compiler-opt-global-shared-view phis)
+              at-id
+              (opt-bounds-dom-resolve
+                (compiler-opt-global-shared-view copies)
+                (compiler-opt-global-shared-view lhs))
+              fuel))]
+        [_ false])]
+    ;; `x & m`: one clear sign bit clears the result's, so EITHER operand
+    ;; proving non-negative is enough and nothing is asked of the other.
+    [(match (compiler-opt-global-shared-view op)
+        [(ir.CompilerIrBinOp.BitAnd) true]
+        [_ false])
+      (or
+        (opt-bounds-dom-nonneg-at?
+          type-segment-bases
+          (compiler-opt-global-shared-view index)
+          (compiler-opt-global-shared-view doms)
+          (compiler-opt-global-shared-view defs)
+          (compiler-opt-global-shared-view phi-defs)
+          (compiler-opt-global-shared-view var-facts)
+          (compiler-opt-global-shared-view checks)
+          (compiler-opt-global-shared-view copies)
+          (compiler-opt-global-shared-view cmp-facts)
+          (compiler-opt-global-shared-view phis)
+          at-id
+          (opt-bounds-dom-resolve
+            (compiler-opt-global-shared-view copies)
+            (compiler-opt-global-shared-view lhs))
+          fuel)
+        (opt-bounds-dom-nonneg-at?
+          type-segment-bases
+          (compiler-opt-global-shared-view index)
+          (compiler-opt-global-shared-view doms)
+          (compiler-opt-global-shared-view defs)
+          (compiler-opt-global-shared-view phi-defs)
+          (compiler-opt-global-shared-view var-facts)
+          (compiler-opt-global-shared-view checks)
+          (compiler-opt-global-shared-view copies)
+          (compiler-opt-global-shared-view cmp-facts)
+          (compiler-opt-global-shared-view phis)
+          at-id
+          (opt-bounds-dom-resolve
+            (compiler-opt-global-shared-view copies)
+            (compiler-opt-global-shared-view rhs))
+          fuel))]
     [else false]))
 
 ;; One phi input, discharged at the block whose edge carries it: that is where
@@ -61837,6 +61953,90 @@
         [(OptDomCmpLookup.Some decided) decided]
         [(OptDomCmpLookup.No) false]))))
 
+;; --- a power-of-two divide whose dividend is known non-negative --------------
+;;
+;; `x / 2^k` at `: i64` lowers to `mov; sar $63; and $(2^k - 1); add; sar $k` --
+;; five instructions, of which the first four exist ONLY to round a NEGATIVE
+;; dividend toward zero (`%` pays the same five and a subtract on top). With
+;; `x >= 0` proven, that correction is dead: for a non-negative dividend the
+;; signed and the UNSIGNED quotient are the same number, and so are the two
+;; remainders, so the whole operation is one `shr $k` (one `and $(2^k - 1)` for
+;; the remainder). `opt-bce-version-affine-guard` states the same trade where it
+;; builds its own guard quotient: "a signed power-of-two divide is `mov; sar
+;; $63; and; add; sar` (five instructions) ... an unsigned one is a single
+;; `shr`".
+;;
+;; The rewrite is a RETYPE, not a new instruction: the operand vars are
+;; untouched and only the BinOp's operand/result type moves from `i64` to `u64`,
+;; which is exactly how the versioner spells its unsigned quotient. Every value
+;; involved is a 64-bit word whose bit pattern does not change; what changes is
+;; which lowering the backend picks for it.
+;;
+;; WHY A POWER OF TWO ONLY. For any other literal divisor both signednesses
+;; lower to a magic multiply of the same length, so a retype would buy nothing.
+;; The saving here IS the rounding correction, and only a power of two has one
+;; that a single shift replaces.
+;;
+;; WHY THE DIVISOR MUST BE A POSITIVE LITERAL. A negative divisor reads as a
+;; huge number unsigned, and a non-literal divisor is not known non-negative at
+;; all; a literal in (0, 2^62] denotes itself in both readings.
+;;
+;; WHY IT SITS ON THIS WALK. The dividend's proof is `opt-bounds-dom-nonneg?`,
+;; which is only as strong as the facts reaching the point the question is asked
+;; at -- the length reads and narrowing forms of the lattice above PLUS every
+;; `>= 0` guard and passed check dominating this instruction. Asked anywhere
+;; else it would see strictly less.
+(define (opt-bounds-dom-positive-power-of-two? [n : i64]) : bool
+  (and (> n 0) (= (bit-and n (- n 1)) 0)))
+
+(define (opt-bounds-dom-unsigned-divmod
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [copies : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [block-id : i64]
+  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
+      (if (and
+        (or
+          (opt-binop-eq
+            (compiler-opt-global-shared-view op)
+            (ir.CompilerIrBinOp.Div))
+          (opt-binop-eq
+            (compiler-opt-global-shared-view op)
+            (ir.CompilerIrBinOp.Mod)))
+        (opt-type-eq
+          type-segment-bases
+          (compiler-opt-global-shared-view ty)
+          (ast.AstType.I64))
+        (match (compiler-opt-global-shared-view rhs)
+          [(ir.CompilerIrValue.I64 divisor)
+            (opt-bounds-dom-positive-power-of-two? divisor)]
+          [_ false])
+        (opt-bounds-dom-nonneg?
+          type-segment-bases
+          (compiler-opt-global-shared-view index)
+          (compiler-opt-global-shared-view doms)
+          (compiler-opt-global-shared-view defs)
+          (compiler-opt-global-shared-view phi-defs)
+          (compiler-opt-global-shared-view var-facts)
+          (compiler-opt-global-shared-view checks)
+          (compiler-opt-global-shared-view copies)
+          (compiler-opt-global-shared-view cmp-facts)
+          block-id
+          (opt-bounds-dom-resolve
+            (compiler-opt-global-shared-view copies)
+            (compiler-opt-global-shared-view lhs))))
+        (ir.CompilerIrInstr.BinOp dst op lhs rhs (ast.AstType.U64))
+        instr)]
+    [_ instr]))
+
 (define (opt-bounds-dom-instrs-from
   [type-segment-bases : i64]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
@@ -62100,7 +62300,18 @@
                     block-id
                     (compiler-opt-global-shared-view cur-cmp-facts)
                     (compiler-opt-global-shared-view copies)
-                    instr))])
+                    (opt-bounds-dom-unsigned-divmod
+                      type-segment-bases
+                      (compiler-opt-global-shared-view cfg-index)
+                      (compiler-opt-global-shared-view doms)
+                      (compiler-opt-global-shared-view defs)
+                      (compiler-opt-global-shared-view phi-defs)
+                      (compiler-opt-global-shared-view var-facts)
+                      (compiler-opt-global-shared-view checks)
+                      (compiler-opt-global-shared-view copies)
+                      (compiler-opt-global-shared-view cur-cmp-facts)
+                      block-id
+                      instr)))])
             (set! pos (+ pos 1)))))
       (OptBoundsDomWalk.Walk
         (ir.compiler-ir-instr-builder-to-seq builder)
@@ -62632,6 +62843,36 @@
 (define (opt-bounds-dom-var-fact-length) : i64
   1)
 
+;; Bit 3, LENGTH SLOT: a `Gep` proved to address a descriptor's length word.
+;;
+;; A length a function only ever divides, compares or copies with -- the
+;; `(string-length s)` that feeds `(/ n 8)` in a copy helper, the
+;; `array-length` that bounds a word loop -- never reaches a `bounds_check`
+;; operand, so bit 0 above never fires for it and the value had no sign at all.
+;; The shape it DOES have is the one `lower-array-length-load-descriptor` emits
+;; and nothing else does:
+;;
+;;     %h = <a String / str / Bytes / dyn-array descriptor HANDLE>
+;;     %o = gep %h, 1, i64          ;; or `gep %h, 8, u8`, the byte spelling
+;;     %n = load %o, i64
+;;
+;; The refusal recorded above -- that `gep _, 1, i64` alone proves nothing,
+;; because offset 1 at an i64 scale is also every ordinary struct's second word
+;; -- stands, and this rule does not weaken it. What is added is a premise on
+;; the BASE: `opt-load-header-var?` holds only for a var whose declared type at
+;; EVERY definition site is an array/string descriptor handle (a redefinition
+;; with a disagreeing type poisons it), and word 1 of such a descriptor IS its
+;; length, by the same fixed layout the `bounds_check` lowering reads it with.
+;; That is exactly the premise `opt-bce-mb-descriptor-length` already hoists a
+;; length load into a guard block on, so no new trust is extended here. The
+;; length is `< 2^63` (the ubound header argument, O:79715), so the loaded i64
+;; is non-negative read as an i64 wherever it is live.
+;;
+;; The bit is bookkeeping for bit 0 -- it marks the ADDRESS, and the load
+;; through it is what carries the length fact -- and is never queried alone.
+(define (opt-bounds-dom-var-fact-length-slot) : i64
+  8)
+
 (define (opt-bounds-dom-var-fact?
   [var-facts : (__tl_dyn-array i64)]
   [var : i64]
@@ -62697,6 +62938,7 @@
 
 (define (opt-bounds-dom-var-facts-seq!
   [type-segment-bases : i64]
+  [header : OptLoadHeaderSet]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
   [sources : opt_i64_i64_map.Map]
@@ -62716,11 +62958,56 @@
               (compiler-opt-global-shared-view sources)
               (compiler-opt-global-shared-view var-facts)
               len)]
+          ;; The ADDRESS half of a descriptor length load (bit 3).
+          [(ir.CompilerIrInstr.Gep dst base offset gep-ty)
+            (match (compiler-opt-global-shared-view base)
+              [(ir.CompilerIrValue.Var base-var)
+                (if (and
+                  (opt-load-header-var?
+                    (compiler-opt-global-shared-view header)
+                    base-var)
+                  (opt-bounds-object-length-slot?
+                    type-segment-bases
+                    offset
+                    gep-ty))
+                  (opt-bounds-dom-var-facts-set!
+                    (compiler-opt-global-shared-view var-facts)
+                    dst
+                    (opt-bounds-dom-var-fact-length-slot))
+                  unit)]
+              [_ unit])]
+          ;; ...and its VALUE half: the word loaded through such an address is
+          ;; a container length, so it carries bit 0 wherever it is live. A var
+          ;; with more than one definition names more than one runtime value,
+          ;; so the pass-wide stability rule gates it exactly as bit 0's other
+          ;; producer does.
+          [(ir.CompilerIrInstr.Load dst src load-ty)
+            (match (compiler-opt-global-shared-view src)
+              [(ir.CompilerIrValue.Var src-var)
+                (if (and
+                  (opt-type-eq
+                    type-segment-bases
+                    (compiler-opt-global-shared-view load-ty)
+                    (ast.AstType.I64))
+                  (opt-bounds-dom-var-fact?
+                    (compiler-opt-global-shared-view var-facts)
+                    src-var
+                    (opt-bounds-dom-var-fact-length-slot))
+                  (opt-gvn-value-stable?
+                    (compiler-opt-global-shared-view sources)
+                    (ir.CompilerIrValue.Var dst)))
+                  (opt-bounds-dom-var-facts-set!
+                    (compiler-opt-global-shared-view var-facts)
+                    dst
+                    (opt-bounds-dom-var-fact-length))
+                  unit)]
+              [_ unit])]
           [_ unit])
         (set! i (+ i 1))))))
 
 (define (opt-bounds-dom-var-facts-blocks!
   [type-segment-bases : i64]
+  [header : OptLoadHeaderSet]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
   [sources : opt_i64_i64_map.Map]
@@ -62734,6 +63021,7 @@
           [(ir.CompilerIrBlock.Block _ instrs)
             (opt-bounds-dom-var-facts-seq!
               type-segment-bases
+              (compiler-opt-global-shared-view header)
               (compiler-opt-global-shared-view phi-defs)
               (compiler-opt-global-shared-view copies)
               (compiler-opt-global-shared-view sources)
@@ -62741,6 +63029,7 @@
               instrs)])
         (opt-bounds-dom-var-facts-blocks!
           type-segment-bases
+          (compiler-opt-global-shared-view header)
           (compiler-opt-global-shared-view phi-defs)
           (compiler-opt-global-shared-view copies)
           (compiler-opt-global-shared-view sources)
@@ -62749,16 +63038,23 @@
     [(ir.CompilerIrBlockList.Array seq)
       (opt-bounds-dom-var-facts-blocks!
         type-segment-bases
+        header
         phi-defs
         copies
         sources
         var-facts
         (ir.compiler-ir-block-seq-to-list seq))]))
 
-;; One linear pass: a check's length operand is a length wherever it is live, so
-;; nothing here propagates and nothing needs a second round.
+;; A check's length operand is a length wherever it is live, so that half needs
+;; no propagation. The descriptor rule is a two-instruction chain (`gep` then
+;; `load`), and BLOCK ORDER is not a topological order of the dominator tree --
+;; a `gep` hoisted into a preheader that the list holds AFTER the block loading
+;; through it would be missed by a single sweep. Two identical sweeps close it:
+;; the marks are monotone bit-ors, so the second sees every address the first
+;; recorded and a third could add nothing (the chain is one link deep).
 (define (opt-bounds-dom-var-facts
   [type-segment-bases : i64]
+  [header : OptLoadHeaderSet]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
   [sources : opt_i64_i64_map.Map]
@@ -62769,6 +63065,15 @@
     (begin
       (opt-bounds-dom-var-facts-blocks!
         type-segment-bases
+        (compiler-opt-global-shared-view header)
+        (compiler-opt-global-shared-view phi-defs)
+        (compiler-opt-global-shared-view copies)
+        (compiler-opt-global-shared-view sources)
+        (compiler-opt-global-shared-view var-facts)
+        (compiler-opt-global-shared-view blocks))
+      (opt-bounds-dom-var-facts-blocks!
+        type-segment-bases
+        (compiler-opt-global-shared-view header)
         (compiler-opt-global-shared-view phi-defs)
         (compiler-opt-global-shared-view copies)
         (compiler-opt-global-shared-view sources)
@@ -64682,9 +64987,19 @@
       (opt-bounds-dom-terms
         (compiler-opt-global-shared-view index)
         (compiler-opt-global-shared-view blocks))]
+    ;; Which vars are array/string descriptor HANDLES, read off their declared
+    ;; type at every definition site. It is what turns a `gep base, 1, i64`
+    ;; into a length-slot address rather than some struct's second word.
+    [length-header : OptLoadHeaderSet
+      (opt-load-header-set-from-function-with-size
+        type-segment-bases
+        (compiler-opt-global-shared-view params)
+        (compiler-opt-global-shared-view blocks)
+        frame)]
     [var-facts : (__tl_dyn-array i64)
       (opt-bounds-dom-var-facts
         type-segment-bases
+        (compiler-opt-global-shared-view length-header)
         (compiler-opt-global-shared-view phi-defs)
         (compiler-opt-global-shared-view copies)
         (compiler-opt-global-shared-view sources)
@@ -75287,6 +75602,33 @@
 ;; `seed < bound - K`) breaks even at ~4 trips instead of ~19. Loads without
 ;; stores and stores without loads keep K=16: their measured shapes are the
 ;; long-trip reductions and fills the larger factor was tuned for.
+;; ...AND NOT EVEN TWO, for a loop whose trip count is a REMAINDER. The factor
+;; above is a per-TRIP trade against a per-ENTRY guard, so it needs trips to
+;; pay it back, and the "~4 trips" break-even is where that happens. A byte
+;; tail seeded at `8 * (n / 8)` and bounded by `n` runs `n mod 8` times, which
+;; is at most seven for every n, so the trade can never be made: at most
+;; 1.5 x 7 = 10.5 Ir recovered against seven paid on every entry.
+;;
+;; The corpus numbers, measured on this tree at `benchmarks/asm_render`
+;; (`target/dev/tl-b3` vs the same tree with the refusal, `--dump-instr`
+;; callgrind over `asm-tape.txt`, 10 rounds):
+;;
+;;   asm-append5      205.97 -> 197.88 Ir per call over 554,850 calls (-4.5M)
+;;   asm-append4      161.41 -> 156.14 Ir per call over 211,710 calls
+;;   asm-append2      101.85 ->  99.72 Ir per call over 198,300 calls
+;;   concat3-borrowed 129.95 -> 123.77 Ir per call over 612,251 calls
+;;
+;; -- a shade over two instructions per copied piece, which is the guard's
+;; `lea` + `cmp` + `jl` minus what the K=2 group recovered over a tail that on
+;; this corpus is one to seven bytes long (operand parts: register names,
+;; mnemonics, small decimals). Over the whole benchmark the refusal is
+;; asm_render -11,228,158 Ir with no other row moving.
+;;
+;; The refusal is `opt-unroll-short-remainder?`, stated with its trip-count
+;; argument beside the bound oracle below. It applies to THIS class and to the
+;; word-merge tier, both of which are per-trip trades of the same shape; the
+;; x16 class and the cascade keep their measured constants and their admission
+;; untouched, and no loop of either class in this corpus carries the seed.
 (define (opt-unroll-load-store-group-copies) : i64
   2)
 
@@ -75486,6 +75828,352 @@
                     (OptUnrollMaybeShape.No))]
                 [_ (OptUnrollMaybeShape.No)])]
             [_ (OptUnrollMaybeShape.No)])))]))
+
+;; --- a loop bound known non-negative -----------------------------------------
+;;
+;; The guard below computes `ngroup = bound - K` and TypeLisp integer `-` WRAPS
+;; (SPEC 5.4), so the `ngroup <= bound` conjunct is there to reject a `bound` so
+;; negative that the subtraction came out ABOVE it. With `bound >= 0` that
+;; conjunct can never be false: `bound - K >= -K >= -16`, which is far above
+;; i64 MIN, so the subtraction is exact and `bound - K < bound` outright. The
+;; compare and the `and` that reads it are then two instructions paid on every
+;; loop ENTRY for a question already answered.
+;;
+;; The proof is the non-negativity lattice's, minus its program-point half. The
+;; guard block is FRESH -- it carries no dominating comparison of its own and
+;; the walk that collects those has long since run -- so only rules that are
+;; properties of the VALUE may be used here:
+;;
+;;   * a literal `>= 0`;
+;;   * a CONTAINER LENGTH: `load (gep h, length-slot), i64` for an `h` that is
+;;     an array/string descriptor handle at every definition site. A length is
+;;     `< 2^63`; see `opt-bounds-dom-var-fact-length-slot` for why the premise
+;;     on the BASE, and not the gep's shape, is what makes that sound.
+;;   * `x / c` (positive literal c), `x >> k` (literal k in [0, 64)) and
+;;     `x & m` of such a value -- none of the three can leave [0, x] and none
+;;     can overflow; the arguments are the lattice's NARROWING FORMS, read once
+;;     more here. A divide already retyped to the UNSIGNED spelling by
+;;     `opt-bounds-dom-unsigned-divmod` is admitted by the same rule and needs
+;;     nothing of its dividend at all: `x /u c` for c >= 2 is below 2^63 for
+;;     every 64-bit x. Asking for the dividend anyway is the conservative
+;;     reading, and it is the one that holds in both spellings.
+;;   * a `Mov` of any of the above.
+;;
+;; Deliberately NOT the lattice's FENCED forms (`x + k`, `x * c`) and not its
+;; guard or passed-check queries: every one of those is decided AT a program
+;; point, and the point this question is asked at does not exist yet.
+(define (opt-unroll-nonneg-fuel) : i64
+  6)
+
+;; A constant divide in either spelling. `divrem_safety` runs BELOW this pass
+;; but the pipeline ITERATES, so a loop first versioned on a later round sees
+;; the `SafeDiv` the earlier round's proof produced. The two differ only in
+;; whether the backend still emits a zero/overflow guard; the value is the
+;; same, so every rule here reads them alike.
+(define (opt-unroll-divide-op? [op : ir.CompilerIrBinOp]) : bool
+  (match op
+    [(ir.CompilerIrBinOp.Div) true]
+    [(ir.CompilerIrBinOp.SafeDiv) true]
+    [_ false]))
+
+;; The instruction defining a value after Mov copies are followed through --
+;; the loop passes' own spelling of "the same runtime word". SSA construction
+;; and the rotation leave a `mov` between a loop's seed expression and the phi
+;; that reads it, and every shape rule below would miss it otherwise.
+(define (opt-unroll-resolved-def [blocks : ir.CompilerIrBlockList] [var : i64]) : OptBceMbMaybeInstr
+  (opt-bce-mb-find-def
+    (compiler-opt-global-shared-view blocks)
+    (opt-bce-mb-resolve blocks var 16)))
+
+(define (opt-unroll-resolved-eq?
+  [blocks : ir.CompilerIrBlockList]
+  [a : ir.CompilerIrValue]
+  [b : ir.CompilerIrValue]) : bool
+  (match (compiler-opt-global-shared-view a)
+    [(ir.CompilerIrValue.Var av)
+      (match (compiler-opt-global-shared-view b)
+        [(ir.CompilerIrValue.Var bv)
+          (=
+            (opt-bce-mb-resolve (compiler-opt-global-shared-view blocks) av 16)
+            (opt-bce-mb-resolve blocks bv 16))]
+        [_ false])]
+    [_ (opt-value-eq a b)]))
+
+(define (opt-unroll-length-slot-address?
+  [type-segment-bases : i64]
+  [header : OptLoadHeaderSet]
+  [blocks : ir.CompilerIrBlockList]
+  [address : ir.CompilerIrValue]) : bool
+  (match (compiler-opt-global-shared-view address)
+    [(ir.CompilerIrValue.Var gep-var)
+      (match (opt-unroll-resolved-def
+        (compiler-opt-global-shared-view blocks)
+        gep-var)
+        [(OptBceMbMaybeInstr.No) false]
+        [(OptBceMbMaybeInstr.Some gep-instr)
+          (match (compiler-opt-global-shared-view gep-instr)
+            [(ir.CompilerIrInstr.Gep _ base offset gep-ty)
+              (match (compiler-opt-global-shared-view base)
+                [(ir.CompilerIrValue.Var base-var)
+                  (and
+                    (opt-load-header-var?
+                      (compiler-opt-global-shared-view header)
+                      base-var)
+                    (opt-bounds-object-length-slot?
+                      type-segment-bases
+                      offset
+                      gep-ty))]
+                [_ false])]
+            [_ false])])]
+    [_ false]))
+
+(define (opt-unroll-nonneg-def?
+  [type-segment-bases : i64]
+  [header : OptLoadHeaderSet]
+  [blocks : ir.CompilerIrBlockList]
+  [instr : ir.CompilerIrInstr]
+  [fuel : i64]) : bool
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Mov _ src _)
+      (opt-unroll-nonneg-value? type-segment-bases header blocks src fuel)]
+    [(ir.CompilerIrInstr.Load _ src ty)
+      (and
+        (opt-type-eq
+          type-segment-bases
+          (compiler-opt-global-shared-view ty)
+          (ast.AstType.I64))
+        (opt-unroll-length-slot-address? type-segment-bases header blocks src))]
+    [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
+      (cond
+        [(opt-unroll-divide-op? (compiler-opt-global-shared-view op))
+          (match (compiler-opt-global-shared-view rhs)
+            [(ir.CompilerIrValue.I64 divisor)
+              (and
+                (> divisor 0)
+                (opt-unroll-nonneg-value?
+                  type-segment-bases
+                  header
+                  blocks
+                  lhs
+                  fuel))]
+            [_ false])]
+        [(match (compiler-opt-global-shared-view op)
+            [(ir.CompilerIrBinOp.Shr _) true]
+            [_ false])
+          (match (compiler-opt-global-shared-view rhs)
+            [(ir.CompilerIrValue.I64 count)
+              (and
+                (>= count 0)
+                (< count 64)
+                (opt-unroll-nonneg-value?
+                  type-segment-bases
+                  header
+                  blocks
+                  lhs
+                  fuel))]
+            [_ false])]
+        [(match op
+            [(ir.CompilerIrBinOp.BitAnd) true]
+            [_ false])
+          (or
+            (opt-unroll-nonneg-value?
+              type-segment-bases
+              (compiler-opt-global-shared-view header)
+              (compiler-opt-global-shared-view blocks)
+              (compiler-opt-global-shared-view lhs)
+              fuel)
+            (opt-unroll-nonneg-value? type-segment-bases header blocks rhs fuel))]
+        [else false])]
+    [_ false]))
+
+(define (opt-unroll-nonneg-value?
+  [type-segment-bases : i64]
+  [header : OptLoadHeaderSet]
+  [blocks : ir.CompilerIrBlockList]
+  [value : ir.CompilerIrValue]
+  [fuel : i64]) : bool
+  (match (compiler-opt-global-shared-view value)
+    [(ir.CompilerIrValue.I64 literal) (>= literal 0)]
+    [(ir.CompilerIrValue.Var var)
+      (if (<= fuel 0)
+        false
+        (match (opt-unroll-resolved-def
+          (compiler-opt-global-shared-view blocks)
+          var)
+          [(OptBceMbMaybeInstr.No) false]
+          [(OptBceMbMaybeInstr.Some instr)
+            (opt-unroll-nonneg-def?
+              type-segment-bases
+              header
+              blocks
+              instr
+              (- fuel 1))]))]
+    [_ false]))
+
+;; --- a REMAINDER loop too short for the small tiers --------------------------
+;;
+;; The K=2 load-and-store class and the K=4 word-merge tier pay their entry
+;; guard on EVERY entry and recover 1.5 (K=2) resp. 2.25 (K=4) of the three
+;; loop-control instructions per trip -- the accounting written on
+;; `opt-unroll-load-store-group-copies` ("breaks even at ~4 trips") and on
+;; `opt-unroll-word-merge-group-copies` ("~7 trips"). A loop whose trip count is
+;; a REMAINDER can never reach either. The shape is the byte tail of every
+;; word-then-tail copy helper in this corpus:
+;;
+;;     w = 0;        while w < n/8 { ...one word... }
+;;     b = 8*(n/8);  while b < n   { ...one byte... }
+;;
+;; The tail runs `n - 8*(n/8)` times. For n >= 0 that is `n mod 8`; for n < 0
+;; truncating division rounds toward zero, so `8*(n/8) >= n` and the loop runs
+;; not at all. Either way the trip count is in [0, 7], so K=2 can recover at
+;; most 1.5 x 7 = 10.5 Ir while its guard costs seven on every entry -- and the
+;; entries are what there are a lot of: asm_render pays one per copied piece,
+;; five per `asm-append5` call over 554,850 calls.
+;;
+;; The `n & ~7` spelling of the same split is admitted on the same argument and
+;; is even simpler: `n - (n & ~7)` is `n & 7`, in [0, 7] for every n including
+;; the negative ones, with no division to reason about.
+;;
+;; THE RULE. Refuse a body whose class factor is at most the cascade factor
+;; when the loop's seed is `q * c` for `q = n / c` (or `n >> log2 c`), or
+;; `n & -c`, with `n` the loop's own bound and `c` in {2, 4, 8}: the trip count
+;; is then at most `c - 1 <= 7`. The x16 class and the cascade keep their
+;; measured constants and their admission untouched -- their factors are chosen
+;; for long-trip reductions and the sub-16 tails of those, and no loop of either
+;; class in this corpus carries this seed.
+(define (opt-unroll-short-remainder-max-trips) : i64
+  7)
+
+;; log2 of a factor whose remainder fits the trip bound above, or -1. The
+;; largest `n mod c` can be is `c - 1`, so the bound is what decides which
+;; factors this rule may read: raise it and the ladder has to grow with it,
+;; which is why the two are written against each other.
+(define (opt-unroll-small-power-shift [factor : i64]) : i64
+  (if (> (- factor 1) (opt-unroll-short-remainder-max-trips))
+    (- 0 1)
+    (cond [(= factor 2) 1] [(= factor 4) 2] [(= factor 8) 3] [else (- 0 1)])))
+
+;; `q = n / c` or `q = n >> log2 c`, for the very `n` the loop is bounded by.
+(define (opt-unroll-remainder-quotient?
+  [blocks : ir.CompilerIrBlockList]
+  [quotient-var : i64]
+  [bound : ir.CompilerIrValue]
+  [factor : i64]) : bool
+  (match (opt-unroll-resolved-def
+    (compiler-opt-global-shared-view blocks)
+    quotient-var)
+    [(OptBceMbMaybeInstr.No) false]
+    [(OptBceMbMaybeInstr.Some instr)
+      (match (compiler-opt-global-shared-view instr)
+        [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
+          (and
+            (opt-unroll-resolved-eq?
+              (compiler-opt-global-shared-view blocks)
+              (compiler-opt-global-shared-view lhs)
+              bound)
+            (match (compiler-opt-global-shared-view rhs)
+              [(ir.CompilerIrValue.I64 literal)
+                (cond
+                  [(opt-unroll-divide-op? (compiler-opt-global-shared-view op))
+                    (= literal factor)]
+                  [(match op
+                      [(ir.CompilerIrBinOp.Shr _) true]
+                      [_ false])
+                    (= literal (opt-unroll-small-power-shift factor))]
+                  [else false])]
+              [_ false]))]
+        [_ false])]))
+
+;; The mask spelling: `n & -c` clears the low log2(c) bits, so the difference
+;; from `n` is `n & (c - 1)`, in [0, c - 1] for every n.
+(define (opt-unroll-remainder-mask-literal? [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.I64 literal)
+      (or (= literal (- 0 2)) (= literal (- 0 4)) (= literal (- 0 8)))]
+    [_ false]))
+
+(define (opt-unroll-remainder-mask?
+  [blocks : ir.CompilerIrBlockList]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]) : bool
+  (or
+    (and
+      (opt-unroll-remainder-mask-literal? (compiler-opt-global-shared-view rhs))
+      (opt-unroll-resolved-eq?
+        (compiler-opt-global-shared-view blocks)
+        (compiler-opt-global-shared-view lhs)
+        (compiler-opt-global-shared-view bound)))
+    (and
+      (opt-unroll-remainder-mask-literal? lhs)
+      (opt-unroll-resolved-eq? blocks rhs bound))))
+
+(define (opt-unroll-short-remainder-seed?
+  [blocks : ir.CompilerIrBlockList]
+  [seed : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]) : bool
+  (match (compiler-opt-global-shared-view seed)
+    [(ir.CompilerIrValue.Var var)
+      (match (opt-unroll-resolved-def
+        (compiler-opt-global-shared-view blocks)
+        var)
+        [(OptBceMbMaybeInstr.No) false]
+        [(OptBceMbMaybeInstr.Some instr)
+          (match (compiler-opt-global-shared-view instr)
+            [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
+              (cond
+                [(opt-binop-eq
+                    (compiler-opt-global-shared-view op)
+                    (ir.CompilerIrBinOp.Mul))
+                  (match (opt-affine-var-const
+                    (compiler-opt-global-shared-view lhs)
+                    (compiler-opt-global-shared-view rhs))
+                    [(OptAffineOperands.No) false]
+                    [(OptAffineOperands.Some quotient-var factor)
+                      (and
+                        (> (opt-unroll-small-power-shift factor) 0)
+                        (opt-unroll-remainder-quotient?
+                          (compiler-opt-global-shared-view blocks)
+                          quotient-var
+                          (compiler-opt-global-shared-view bound)
+                          factor))])]
+                [(match op
+                    [(ir.CompilerIrBinOp.BitAnd) true]
+                    [_ false])
+                  (opt-unroll-remainder-mask?
+                    (compiler-opt-global-shared-view blocks)
+                    (compiler-opt-global-shared-view lhs)
+                    (compiler-opt-global-shared-view rhs)
+                    (compiler-opt-global-shared-view bound))]
+                [else false])]
+            [_ false])])]
+    [_ false]))
+
+;; Is this admitted shape one of the small tiers running a provably short
+;; remainder? The class factor is read from the same call the rewrite sizes its
+;; clone with, so admission and refusal can never disagree about which tier a
+;; body is in.
+(define (opt-unroll-short-remainder?
+  [blocks : ir.CompilerIrBlockList]
+  [block : ir.CompilerIrBlock]
+  [shape : OptUnrollShape]) : bool
+  (match (compiler-opt-global-shared-view block)
+    [(ir.CompilerIrBlock.Block _ instrs)
+      (let
+        [count : i64
+          (ir.compiler-ir-instr-seq-count
+            (compiler-opt-global-shared-view instrs))]
+        [copies : i64
+          (opt-unroll-body-copies
+            (compiler-opt-global-shared-view instrs.slots)
+            shape.phi-count
+            (- count 1))]
+        (and
+          (<= copies (opt-unroll-cascade-copies))
+          (opt-unroll-short-remainder-seed?
+            (compiler-opt-global-shared-view blocks)
+            (compiler-opt-global-shared-view shape.seed)
+            (compiler-opt-global-shared-view shape.bound))))]))
 
 ;; --- rewrite -----------------------------------------------------------------
 (define (opt-unroll-alloc-var [cell : (__tl_dyn-array i64)]) : i64
@@ -76316,6 +77004,7 @@
 ;; independent of U1's, and numbers them from the first factor onward so the
 ;; cloned BoundsCheck ok-labels of the two groups cannot collide.
 (define (opt-unroll-build-cascade
+  [bound-nonneg? : bool]
   [instrs : ir.CompilerIrInstrSeq]
   [phi-count : i64]
   [last : i64]
@@ -76445,14 +77134,18 @@
             (compiler-opt-global-shared-view bound)
             (ir.CompilerIrValue.I64 (opt-unroll-cascade-copies))
             (compiler-opt-global-shared-view ity)))
-        (ir.compiler-ir-instr-builder-push!
-          (&mut cguard-builder)
-          (ir.CompilerIrInstr.BinOp
-            gwrap2
-            (ir.CompilerIrBinOp.Le)
-            (ir.CompilerIrValue.Var ngroup2)
-            (compiler-opt-global-shared-view bound)
-            (compiler-opt-global-shared-view ity)))
+        ;; Same `bound`, same subtraction, same argument: a non-negative
+        ;; bound cannot wrap past itself at K = 4 either.
+        (if bound-nonneg?
+          unit
+          (ir.compiler-ir-instr-builder-push!
+            (&mut cguard-builder)
+            (ir.CompilerIrInstr.BinOp
+              gwrap2
+              (ir.CompilerIrBinOp.Le)
+              (ir.CompilerIrValue.Var ngroup2)
+              (compiler-opt-global-shared-view bound)
+              (compiler-opt-global-shared-view ity))))
         (ir.compiler-ir-instr-builder-push!
           (&mut cguard-builder)
           (ir.CompilerIrInstr.BinOp
@@ -76461,18 +77154,23 @@
             (ir.CompilerIrValue.Var j)
             (ir.CompilerIrValue.Var ngroup2)
             (compiler-opt-global-shared-view ity)))
-        (ir.compiler-ir-instr-builder-push!
-          (&mut cguard-builder)
-          (ir.CompilerIrInstr.BinOp
-            gok2
-            (ir.CompilerIrBinOp.And)
-            (ir.CompilerIrValue.Var gwrap2)
-            (ir.CompilerIrValue.Var gfirst2)
-            (ast.AstType.Bool)))
+        (if bound-nonneg?
+          unit
+          (ir.compiler-ir-instr-builder-push!
+            (&mut cguard-builder)
+            (ir.CompilerIrInstr.BinOp
+              gok2
+              (ir.CompilerIrBinOp.And)
+              (ir.CompilerIrValue.Var gwrap2)
+              (ir.CompilerIrValue.Var gfirst2)
+              (ast.AstType.Bool))))
         (ir.compiler-ir-instr-builder-push!
           (&mut cguard-builder)
           (ir.CompilerIrInstr.Branch
-            (ir.CompilerIrValue.Var gok2)
+            (ir.CompilerIrValue.Var
+              (if bound-nonneg?
+                gfirst2
+                gok2))
             cunrolled-label
             label)))]
     [cguard-block : ir.CompilerIrBlock
@@ -76634,6 +77332,8 @@
         guard-label)]))
 
 (define (opt-unroll-apply
+  [type-segment-bases : i64]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]
   [block : ir.CompilerIrBlock]
   [shape : OptUnrollShape]
@@ -76655,6 +77355,34 @@
         [bound : ir.CompilerIrValue shape.bound]
         [others : OptUnrollPhiList shape.others]
         [pred-label : i64 shape.pred-label]
+        ;; Which vars are array/string descriptor HANDLES: the premise the
+        ;; bound's length-load rule rests on (see the bound oracle above).
+        [bound-header : OptLoadHeaderSet
+          (opt-load-header-set-from-function
+            type-segment-bases
+            (compiler-opt-global-shared-view params)
+            (compiler-opt-global-shared-view blocks))]
+        ;; `bound - K` cannot wrap when `bound >= 0`, so the guard's wrap
+        ;; conjunct is dead and the `and` reading it with it. Only for a SIGNED
+        ;; counter: at an unsigned type `bound - K` genuinely wraps below K and
+        ;; the compare is the whole guard.
+        [bound-nonneg? : bool
+          (and
+            (opt-signed-integer-type? (compiler-opt-global-shared-view ity))
+            (opt-unroll-nonneg-value?
+              type-segment-bases
+              (compiler-opt-global-shared-view bound-header)
+              (compiler-opt-global-shared-view blocks)
+              (compiler-opt-global-shared-view bound)
+              (opt-unroll-nonneg-fuel)))]
+        ;; A literal-zero seed turns `seed < ngroup` into `ngroup > 0`, which is
+        ;; a compare against an immediate instead of a materialized zero -- one
+        ;; instruction rather than two, at every signedness (`0 < x` and
+        ;; `x > 0` are the same predicate read either way round).
+        [zero-seed? : bool
+          (match (compiler-opt-global-shared-view seed)
+            [(ir.CompilerIrValue.I64 literal) (= literal 0)]
+            [_ false])]
         [guard-label : i64
           (ir.compiler-ir-label
             (str_cat.str-cat (ir.compiler-ir-label-text label) "__unroll_guard"))]
@@ -76733,6 +77461,7 @@
           (if (< cascade-count 1)
             (OptUnrollCascade.No)
             (opt-unroll-build-cascade
+              bound-nonneg?
               (compiler-opt-global-shared-view instrs)
               phi-count
               last
@@ -76782,35 +77511,53 @@
                 (compiler-opt-global-shared-view bound)
                 (ir.CompilerIrValue.I64 copy-count)
                 (compiler-opt-global-shared-view ity)))
-            ;; false iff bound - copy-count wrapped past bound.
-            (ir.compiler-ir-instr-builder-push!
-              (&mut guard-builder)
-              (ir.CompilerIrInstr.BinOp
-                gwrap
-                (ir.CompilerIrBinOp.Le)
-                (ir.CompilerIrValue.Var ngroup)
-                (compiler-opt-global-shared-view bound)
-                (compiler-opt-global-shared-view ity)))
-            (ir.compiler-ir-instr-builder-push!
-              (&mut guard-builder)
-              (ir.CompilerIrInstr.BinOp
-                gfirst
-                (ir.CompilerIrBinOp.Lt)
-                (compiler-opt-global-shared-view seed)
-                (ir.CompilerIrValue.Var ngroup)
-                (compiler-opt-global-shared-view ity)))
-            (ir.compiler-ir-instr-builder-push!
-              (&mut guard-builder)
-              (ir.CompilerIrInstr.BinOp
-                gok
-                (ir.CompilerIrBinOp.And)
-                (ir.CompilerIrValue.Var gwrap)
-                (ir.CompilerIrValue.Var gfirst)
-                (ast.AstType.Bool)))
+            ;; false iff bound - copy-count wrapped past bound -- which a
+            ;; non-negative bound makes impossible, so it is not emitted then.
+            (if bound-nonneg?
+              unit
+              (ir.compiler-ir-instr-builder-push!
+                (&mut guard-builder)
+                (ir.CompilerIrInstr.BinOp
+                  gwrap
+                  (ir.CompilerIrBinOp.Le)
+                  (ir.CompilerIrValue.Var ngroup)
+                  (compiler-opt-global-shared-view bound)
+                  (compiler-opt-global-shared-view ity))))
+            (if zero-seed?
+              (ir.compiler-ir-instr-builder-push!
+                (&mut guard-builder)
+                (ir.CompilerIrInstr.BinOp
+                  gfirst
+                  (ir.CompilerIrBinOp.Gt)
+                  (ir.CompilerIrValue.Var ngroup)
+                  (ir.CompilerIrValue.I64 0)
+                  (compiler-opt-global-shared-view ity)))
+              (ir.compiler-ir-instr-builder-push!
+                (&mut guard-builder)
+                (ir.CompilerIrInstr.BinOp
+                  gfirst
+                  (ir.CompilerIrBinOp.Lt)
+                  (compiler-opt-global-shared-view seed)
+                  (ir.CompilerIrValue.Var ngroup)
+                  (compiler-opt-global-shared-view ity))))
+            ;; With the wrap conjunct gone the conjunction IS `gfirst`.
+            (if bound-nonneg?
+              unit
+              (ir.compiler-ir-instr-builder-push!
+                (&mut guard-builder)
+                (ir.CompilerIrInstr.BinOp
+                  gok
+                  (ir.CompilerIrBinOp.And)
+                  (ir.CompilerIrValue.Var gwrap)
+                  (ir.CompilerIrValue.Var gfirst)
+                  (ast.AstType.Bool))))
             (ir.compiler-ir-instr-builder-push!
               (&mut guard-builder)
               (ir.CompilerIrInstr.Branch
-                (ir.CompilerIrValue.Var gok)
+                (ir.CompilerIrValue.Var
+                  (if bound-nonneg?
+                    gfirst
+                    gok))
                 unrolled-label
                 next-label)))]
         [guard-block : ir.CompilerIrBlock
@@ -82059,6 +82806,8 @@
 ;; constant-trip arm is tried first: when it applies it strictly dominates the
 ;; guarded x16 rewrite (no guard, no remainder loop).
 (define (opt-unroll-blocks-scan
+  [type-segment-bases : i64]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]
   [remaining : ir.CompilerIrBlockList]
   [entry-label : i64]
@@ -82082,19 +82831,40 @@
             entry-label
             (compiler-opt-global-shared-view block))
             [(OptUnrollMaybeShape.Some shape)
-              (opt-unroll-apply
+              ;; A short-remainder loop is left exactly as it is, and the scan
+              ;; carries on: this invocation's single rewrite slot is better
+              ;; spent on the next candidate than on a guard that cannot pay
+              ;; for itself.
+              (if (opt-unroll-short-remainder?
                 (compiler-opt-global-shared-view blocks)
-                block
-                shape
-                frame)]
+                (compiler-opt-global-shared-view block)
+                (compiler-opt-global-shared-view shape))
+                (opt-unroll-blocks-scan
+                  type-segment-bases
+                  (compiler-opt-global-shared-view params)
+                  blocks
+                  (compiler-opt-box-shared-view rest)
+                  entry-label
+                  frame)
+                (opt-unroll-apply
+                  type-segment-bases
+                  (compiler-opt-global-shared-view params)
+                  (compiler-opt-global-shared-view blocks)
+                  block
+                  shape
+                  frame))]
             [(OptUnrollMaybeShape.No)
               (opt-unroll-blocks-scan
+                type-segment-bases
+                (compiler-opt-global-shared-view params)
                 blocks
                 (compiler-opt-box-shared-view rest)
                 entry-label
                 frame)])])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-unroll-blocks-scan
+        type-segment-bases
+        params
         blocks
         (ir.compiler-ir-block-seq-to-list seq)
         entry-label
@@ -82250,6 +83020,7 @@
           (compiler-opt-global-shared-view prescan-blocks)))
         (if verified?
           (opt-unroll-function-verified-with-context-result
+            type-segment-bases
             (compiler-opt-global-shared-view context)
             true
             (compiler-opt-global-shared-view func))
@@ -82258,6 +83029,7 @@
             (compiler-opt-global-shared-view context))
             [(ResultCompilerOptimizeVerify.Ok)
               (opt-unroll-function-verified-with-context-result
+                type-segment-bases
                 context
                 true
                 func)]
@@ -82288,6 +83060,7 @@
 ;; make a rewritten loop ineligible to its own shape scan, so later rounds
 ;; never re-process it.
 (define (opt-unroll-function-budget-result
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [func : ir.CompilerIrFunction]
   [budget : i64]) : OptFunctionCtxResult
@@ -82297,6 +83070,8 @@
     (match (compiler-opt-global-shared-view func)
       [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
         (match (opt-unroll-blocks-scan
+          type-segment-bases
+          (compiler-opt-global-shared-view params)
           (compiler-opt-global-shared-view blocks)
           (compiler-opt-global-shared-view blocks)
           (opt-cfg-entry-label (compiler-opt-global-shared-view blocks))
@@ -82321,6 +83096,7 @@
                   (compiler-opt-global-shared-view next-context))
                   [(ResultCompilerOptimizeVerify.Ok)
                     (opt-unroll-function-budget-result
+                      type-segment-bases
                       next-context
                       next
                       (- budget 1))]
@@ -82366,6 +83142,7 @@
                       (OptFunctionCtxResult.Result func context))])))])])))
 
 (define (opt-unroll-function-verified-with-context-result
+  [type-segment-bases : i64]
   [context : OptCfgContext]
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
@@ -82374,7 +83151,11 @@
     (compiler-opt-global-shared-view func)
     (compiler-opt-global-shared-view context))
     [(ResultCompilerOptimizeVerify.Ok)
-      (opt-unroll-function-budget-result context func (opt-loop-apply-budget))]
+      (opt-unroll-function-budget-result
+        type-segment-bases
+        context
+        func
+        (opt-loop-apply-budget))]
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
 

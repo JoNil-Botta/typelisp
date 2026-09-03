@@ -5486,10 +5486,9 @@
             (owned_view.compiler-owned-shared-view asm)
             "_tl_f"))
         ;; FPO (M-G3 stage 2) makes frame refs rsp-relative; T1-6 (a) puts
-        ;; this call-free leaf's frame in the red zone, so its params spill
-        ;; to NEGATIVE rsp slots and the spilled sum is reloaded into its
-        ;; modeled scratch (%rsi with scratch-vreg, legacy %r8 otherwise),
-        ;; leaving the product in %rax.
+        ;; this call-free leaf's frame in the red zone. Parameter identities
+        ;; stay pinned at -8/-16 while lifetime coloring compacts the sum into
+        ;; -32 and lets the later constant/product share -24.
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           "    movq %rdi, -8(%rsp)\n")
@@ -5500,11 +5499,14 @@
           (owned_view.compiler-owned-shared-view asm)
           (cfg
             scratch-vreg
-            "    movq -32(%rsp), %rsi\n"
-            "    movq -32(%rsp), %r8\n"))
+            "    movq %rsi, -24(%rsp)\n"
+            "    movq %r8, -24(%rsp)\n"))
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
-          (cfg scratch-vreg "    imulq %rsi, %rax\n" "    imulq %r8, %rax\n"))
+          (cfg
+            scratch-vreg
+            "    imulq -24(%rsp), %rsi\n"
+            "    imulq -24(%rsp), %r8\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
@@ -5518,7 +5520,9 @@
     (compiler-backend-regalloc-f64-source))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
-        ;; T1-6 (a) red-zone frame slots (a=-16, b=-32, sum=-40).
+        ;; T1-6 (a) red-zone frame slots. Without scalar-register web
+        ;; coalescing, the stack-only path keeps the two copied operands at
+        ;; -16/-24 while reusing the staging -8 slot for the sum.
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           "main:\n")
@@ -5526,23 +5530,23 @@
           (owned_view.compiler-owned-shared-view asm)
           (cfg
             scratch-vreg
-            "    movsd -16(%rsp), %xmm0\n"
-            "    movsd -16(%rsp), %xmm2\n"))
+            "    movsd -8(%rsp), %xmm0\n"
+            "    movsd -8(%rsp), %xmm2\n"))
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           (cfg
             scratch-vreg
-            "    addsd -32(%rsp), %xmm0\n"
-            "    addsd -32(%rsp), %xmm2\n"))
+            "    addsd -24(%rsp), %xmm0\n"
+            "    addsd -24(%rsp), %xmm2\n"))
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           (cfg
             scratch-vreg
-            "    movsd %xmm0, -40(%rsp)\n"
-            "    movsd %xmm2, -40(%rsp)\n"))
+            "    movsd %xmm0, -8(%rsp)\n"
+            "    movsd %xmm2, -8(%rsp)\n"))
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
-          "    movsd -40(%rsp), %xmm0\n")
+          "    movsd -8(%rsp), %xmm0\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
@@ -5550,10 +5554,7 @@
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            (cfg
-              scratch-vreg
-              "    movsd -16(%rsp), %xmm2\n"
-              "    movsd -16(%rsp), %xmm0\n")))
+            "    movsd -16(%rsp), %xmm0\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
@@ -6028,6 +6029,118 @@
                 true)))])]
     [(compiler_lower.ResultCompilerLower.Err diag)
       (compiler_backend.ResultCompilerBackend.Err diag)]))
+
+;; Emit the scalar stack-only path used by opt0/opt1. Keeping this helper
+;; separate from the opt2 helper above makes the no-register-allocation policy
+;; explicit at the test boundary.
+(define (compiler-backend-emit-source-stack-only-for-target-and-level
+  [source : String]
+  [target : compiler_backend.CompilerBackendTarget]
+  [level : i64]) : compiler_backend.ResultCompilerBackend
+  (match (compiler_backend.compiler-backend-lower-source-for-target
+    source
+    target)
+    [(compiler_lower.ResultCompilerLower.Ok program spans)
+      (match (compiler_optimize.optimize-program-with-spans-and-level
+        program
+        spans
+        level)
+        [(compiler_optimize.CompilerOptimizedProgram.Program
+            optimized
+            optimized-spans)
+          (let
+            [backend-state : compiler_backend.CompilerBackendState
+              (compiler_backend.compiler-backend-state-new
+                (ci.intern-compat-state-capture-active))]
+            (begin
+              (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
+                backend-state
+                false)
+              (compiler-backend-test-emit-program-with-state
+                backend-state
+                target
+                optimized
+                optimized-spans
+                true)))])]
+    [(compiler_lower.ResultCompilerLower.Err diag)
+      (compiler_backend.ResultCompilerBackend.Err diag)]))
+
+(define compiler-backend-stack-only-frame-color-source : String
+  "(extern (opaque [value : i64]) : i64 (:symbol \"opaque\"))
+(define (stack-only-branch-storage [condition : bool]) : i64
+  (if condition
+    (let
+      [items : (Array i64 8) (array 1 2 3 4 5 6 7 8)]
+      (opaque (array-ref items 7)))
+    (let
+      [items : (Array i64 8) (array 11 12 13 14 15 16 17 18)]
+      (opaque (array-ref items 6)))))
+(define keep-stack-only-branch-storage : (-> bool i64)
+  stack-only-branch-storage)
+(define (main) : i64
+  (stack-only-branch-storage (= (opaque 0) 0)))")
+
+(define (compiler-backend-stack-only-frame-color-target-level-ok?
+  [target : compiler_backend.CompilerBackendTarget]
+  [level : i64]) : bool
+  (match (compiler-backend-emit-source-stack-only-for-target-and-level
+    (string.copy (& compiler-backend-stack-only-frame-color-source))
+    target
+    level)
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (let
+        [body : String
+          (compiler-backend-asm-function-body
+            (owned_view.compiler-owned-shared-view asm)
+            "_tl_f0")]
+        [windows? : bool
+          (compiler_backend.compiler-backend-target-windows? target)]
+        [frame : String
+          (if windows?
+            (if (= level 0)
+              "    subq $304, %rsp\n"
+              "    subq $288, %rsp\n")
+            (if (= level 0)
+              "    subq $280, %rsp\n"
+              "    subq $264, %rsp\n"))]
+        [uncolored-frame : String
+          (if windows?
+            "    subq $544, %rsp\n"
+            "    subq $520, %rsp\n")]
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "#t _tl_f0 _tl_stack_only_branch_storage\n")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view body)
+            (owned_view.compiler-owned-shared-view frame))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view body)
+              (owned_view.compiler-owned-shared-view uncolored-frame)))
+          ;; The stack-only policy is unchanged: compaction must not smuggle
+          ;; scalar allocation or callee-saved homes into opt0/opt1.
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view body)
+              "%r12"))
+          (not (compiler_backend.compiler-backend-string-contains? body "%r13"))))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-stack-only-frame-color-ok?) : bool
+  (and
+    (compiler-backend-stack-only-frame-color-target-level-ok?
+      (compiler_backend.CompilerBackendTarget.Linux)
+      0)
+    (compiler-backend-stack-only-frame-color-target-level-ok?
+      (compiler_backend.CompilerBackendTarget.Linux)
+      1)
+    (compiler-backend-stack-only-frame-color-target-level-ok?
+      (compiler_backend.CompilerBackendTarget.Windows)
+      0)
+    (compiler-backend-stack-only-frame-color-target-level-ok?
+      (compiler_backend.CompilerBackendTarget.Windows)
+      1)))
 
 (define (compiler-backend-compare-self-operand? [body : String] [reg : String]) : bool
   (compiler_backend.compiler-backend-string-contains?
@@ -34744,19 +34857,21 @@ g:
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
             "    .float "))
-        ;; FPO rsp-relative frame slot (the b:f32 local spills to 176(%rsp)).
+        ;; FPO red-zone frame slot: lifetime coloring compacts b:f32 from its
+        ;; old positive 176(%rsp) identity slot to -64; literal temporaries
+        ;; independently reuse -8.
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           (cfg
             scratch-vreg
-            "    ucomiss 176(%rsp), %xmm0\n"
-            "    ucomiss 176(%rsp), %xmm2\n"))
+            "    ucomiss -64(%rsp), %xmm0\n"
+            "    ucomiss -64(%rsp), %xmm2\n"))
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           (cfg
             scratch-vreg
-            "    addss 176(%rsp), %xmm0\n"
-            "    addss 176(%rsp), %xmm2\n"))
+            "    addss -64(%rsp), %xmm0\n"
+            "    addss -64(%rsp), %xmm2\n"))
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           (cfg scratch-vreg "    setb %al\n" "    setb %r8b\n"))
@@ -38909,22 +39024,22 @@ g:
       (and
         (compiler_backend.backend-and8
           ;; Win64 FPO rebases local slots and the positive incoming fifth
-          ;; argument against the constant post-prologue %rsp.
+          ;; argument against the compacted post-prologue %rsp frame.
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "    movsd %xmm0, 72(%rsp)\n")
+            "    movsd %xmm0, 56(%rsp)\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "    movsd %xmm1, 64(%rsp)\n")
+            "    movsd %xmm1, 48(%rsp)\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "    movsd %xmm2, 56(%rsp)\n")
+            "    movsd %xmm2, 40(%rsp)\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "    movsd %xmm3, 48(%rsp)\n")
+            "    movsd %xmm3, 32(%rsp)\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "    subq $120, %rsp\n")
+            "    subq $72, %rsp\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
             "    movq 64(%rsp), %r10\n")
@@ -38933,7 +39048,7 @@ g:
             "    movq %r10, 32(%rsp)\n")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            "    movsd 128(%rsp), %xmm2\n"))
+            "    movsd 112(%rsp), %xmm2\n"))
         (or
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
@@ -40552,8 +40667,8 @@ g:
       (compiler-backend-direct-tail-call-i64-keeps-spills?
         (compiler-backend-direct-tail-call-nontrivial-source)
         (compiler_backend.CompilerBackendTarget.Windows)
-        (cfg scratch-vreg "120(%rsp)" "72(%rsp)")
-        (cfg scratch-vreg "112(%rsp)" "64(%rsp)"))
+        (cfg scratch-vreg "104(%rsp)" "56(%rsp)")
+        (cfg scratch-vreg "96(%rsp)" "48(%rsp)"))
       (compiler-backend-direct-tail-call-f64-keeps-spills?
         (compiler_backend.CompilerBackendTarget.Linux)
         "-8(%rsp)"
@@ -41671,13 +41786,13 @@ g:
       (and
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
-          "    testq $1, 48(%r8)\n    jnz .Lf0_allocentry_i0_v0_slow\n    movq 56(%r8), %r9\n")
+          "    testq $1, 48(%r8)\n    jnz .Lf0_allocentry_i0_v2_slow\n    movq 56(%r8), %r9\n")
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           "    movq 56(%r8), %r9\n    movq 16(%r9), %rax\n    leaq 16(%rax), %r8\n")
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
-          "    cmpq 64(%r9), %r8\n    ja .Lf0_allocentry_i0_v0_slow\n    movq %r8, 16(%r9)\n")
+          "    cmpq 64(%r9), %r8\n    ja .Lf0_allocentry_i0_v2_slow\n    movq %r8, 16(%r9)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
@@ -56290,6 +56405,7 @@ b_keep:
         (compiler-backend-never-branch-register-group-ok?))
       (and
         (compiler-backend-regalloc-ok?)
+        (compiler-backend-stack-only-frame-color-ok?)
         (compiler-backend-call-save-r9-wrap-ok?)
         (compiler-backend-shifted-loop-bound-win64-ok?)
         (compiler-backend-wide-bit-test-mask-ok?)

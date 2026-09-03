@@ -1949,10 +1949,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     # #7164's packets, rebased over #7376, cross the composed graph from 59 to
     # 60 segments: the authoritative Windows CI probe measured 3,892,000 used
     # nodes, 3,932,160 capacity, and 125,829,120 physical payload bytes.
-    # #7426's four optimizer/backend packets, rebased over #7431 and #7286,
-    # cross the composed graph from 60 to 61 segments: the authoritative
-    # Windows CI probe measured 3,935,779 used nodes, 3,997,696 capacity, and
-    # 127,926,272 physical payload bytes.
+    # #7419's stack-only lifetime and frame-coloring packets cross the composed
+    # graph from 60 to 61 segments: the authoritative Windows CI probe measured
+    # 3,932,251 used nodes, 3,997,696 capacity, and 127,926,272 physical payload
+    # bytes.
+    # #7426's optimizer/backend packets independently cross the same boundary:
+    # its authoritative Windows CI probe measured 3,935,779 used nodes with the
+    # same capacity and physical payload size.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 61 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

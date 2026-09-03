@@ -5799,9 +5799,9 @@
 ;; ---------------------------------------------------------------------------
 ;; Cheap block-level liveness for register planning (#perf).
 ;;
-;; The register allocator only needs, per variable, a single [first-live,
-;; last-live] interval, which can be built from block-level live-in/live-out plus
-;; per-instruction mentions. This pass reuses the tested use/def/successor
+;; Register and stack-slot planning only need, per variable, a single
+;; [first-live, last-live] interval, which can be built from block-level
+;; live-in/live-out plus per-instruction mentions. This pass reuses the tested use/def/successor
 ;; extraction from compiler-live-build-blocks, then runs the backward dataflow
 ;; fixpoint over MUTABLE i64-word bitsets (in place, no per-operation allocation),
 ;; instead of the shared liveness pass's immutable linked-list bitset unions and
@@ -6223,67 +6223,132 @@
     8
     (* count 2)))
 
+(define (compiler-reg-linear-block-intervals
+  [vars : i64]
+  [instrs : ir.CompilerIrInstrSeq]) : CompilerRegIntervalSeq
+  (let
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    (begin
+      (compiler-reg-fill-i64-array (compiler-reg-global-shared-view starts) -1)
+      (compiler-reg-fill-i64-array (compiler-reg-global-shared-view ends) -1)
+      (compiler-reg-bits-mentions-instr-seq
+        instrs
+        0
+        (compiler-reg-global-shared-view starts)
+        (compiler-reg-global-shared-view ends))
+      (compiler-reg-interval-arrays-to-seq
+        starts
+        ends
+        (- vars 1)
+        (compiler-reg-interval-seq-empty)))))
+
+(define (compiler-reg-block-intervals-full
+  [vars : i64]
+  [blocks : ir.CompilerIrBlockList]) : CompilerRegIntervalSeq
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (live.compiler-live-ir-block-list-to-seq
+        (compiler-reg-global-shared-view blocks))]
+    [live-blocks : (__tl_dyn-array live.CompilerLiveBlock)
+      (live.compiler-live-build-block-array
+        (compiler-reg-global-shared-view seq)
+        vars)]
+    [count : i64 (array-length live-blocks)]
+    [words : i64 (compiler-reg-bits-words vars)]
+    [cells : i64 (* count words)]
+    [use-rows : (__tl_dyn-array i64) (__tl_make-array i64 cells)]
+    [def-rows : (__tl_dyn-array i64) (__tl_make-array i64 cells)]
+    [live-in : (__tl_dyn-array i64) (__tl_make-array i64 cells)]
+    [live-out : (__tl_dyn-array i64) (__tl_make-array i64 cells)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    (begin
+      (compiler-reg-fill-i64-array (compiler-reg-global-shared-view starts) -1)
+      (compiler-reg-fill-i64-array (compiler-reg-global-shared-view ends) -1)
+      (let
+        [idmap : reg_label_i64_map.Map
+          (compiler-reg-bits-build-rows-from-array!
+            (compiler-reg-global-shared-view live-blocks)
+            (reg_label_i64_map.with-capacity
+              (compiler-reg-bits-map-capacity count))
+            (compiler-reg-global-shared-view use-rows)
+            (compiler-reg-global-shared-view def-rows)
+            words
+            0)]
+        (begin
+          (compiler-reg-bits-fixpoint!
+            (compiler-reg-global-shared-view live-blocks)
+            (compiler-reg-global-shared-view idmap)
+            count
+            words
+            (compiler-reg-global-shared-view use-rows)
+            (compiler-reg-global-shared-view live-in)
+            (compiler-reg-global-shared-view live-out)
+            (compiler-reg-global-shared-view def-rows))
+          (compiler-reg-bits-intervals-walk
+            (compiler-reg-global-shared-view blocks)
+            (compiler-reg-global-shared-view live-in)
+            (compiler-reg-global-shared-view live-out)
+            words
+            0
+            0
+            (compiler-reg-global-shared-view starts)
+            (compiler-reg-global-shared-view ends))
+          (compiler-reg-interval-arrays-to-seq
+            (compiler-reg-global-shared-view starts)
+            (compiler-reg-global-shared-view ends)
+            (- vars 1)
+            (compiler-reg-interval-seq-empty)))))))
+
+;; Most stack-only functions are one straight-line block. Parameters and every
+;; other frame value are stack-resident, so instruction mention hulls suffice
+;; for slot interference; avoid building block use/def sets, four CFG bit
+;; matrices, and a label map for that common case. A block with a successor
+;; (including a self-loop) keeps the full CFG fixpoint.
+(define (compiler-reg-stack-only-block-intervals [func : ir.CompilerIrFunction]) : CompilerRegIntervalSeq
+  (match (compiler-reg-global-shared-view func)
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+      (match (compiler-reg-global-shared-view blocks)
+        [(ir.CompilerIrBlockList.Cons block rest)
+          (match (ir.compiler-ir-box-shared-view rest)
+            [(ir.CompilerIrBlockList.Nil)
+              (if (=
+                (live.compiler-live-label-set-count
+                  (live.compiler-live-block-successors
+                    (compiler-reg-global-shared-view block)))
+                0)
+                (match block
+                  [(ir.CompilerIrBlock.Block _ instrs)
+                    (compiler-reg-linear-block-intervals vars instrs)])
+                (compiler-reg-block-intervals-full vars blocks))]
+            [_ (compiler-reg-block-intervals-full vars blocks)])]
+        [(ir.CompilerIrBlockList.Array seq)
+          (if (=
+            (ir.compiler-ir-block-seq-count
+              (compiler-reg-global-shared-view seq))
+            1)
+            (let
+              [block : ir.CompilerIrBlock
+                (ir.compiler-ir-block-seq-ref
+                  (compiler-reg-global-shared-view seq)
+                  0)]
+              (if (=
+                (live.compiler-live-label-set-count
+                  (live.compiler-live-block-successors
+                    (compiler-reg-global-shared-view block)))
+                0)
+                (match block
+                  [(ir.CompilerIrBlock.Block _ instrs)
+                    (compiler-reg-linear-block-intervals vars instrs)])
+                (compiler-reg-block-intervals-full vars blocks)))
+            (compiler-reg-block-intervals-full vars blocks))]
+        [(ir.CompilerIrBlockList.Nil) (compiler-reg-interval-seq-empty)])]))
+
 (define (compiler-reg-block-intervals [func : ir.CompilerIrFunction]) : CompilerRegIntervalSeq
   (match (compiler-reg-global-shared-view func)
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
-      (let
-        [seq : ir.CompilerIrBlockSeq
-          (live.compiler-live-ir-block-list-to-seq
-            (compiler-reg-global-shared-view blocks))]
-        [live-blocks : (__tl_dyn-array live.CompilerLiveBlock)
-          (live.compiler-live-build-block-array
-            (compiler-reg-global-shared-view seq)
-            vars)]
-        [count : i64 (array-length live-blocks)]
-        [words : i64 (compiler-reg-bits-words vars)]
-        [cells : i64 (* count words)]
-        [use-rows : (__tl_dyn-array i64) (__tl_make-array i64 cells)]
-        [def-rows : (__tl_dyn-array i64) (__tl_make-array i64 cells)]
-        [live-in : (__tl_dyn-array i64) (__tl_make-array i64 cells)]
-        [live-out : (__tl_dyn-array i64) (__tl_make-array i64 cells)]
-        [starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-        [ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-        (begin
-          (compiler-reg-fill-i64-array
-            (compiler-reg-global-shared-view starts)
-            -1)
-          (compiler-reg-fill-i64-array
-            (compiler-reg-global-shared-view ends)
-            -1)
-          (let
-            [idmap : reg_label_i64_map.Map
-              (compiler-reg-bits-build-rows-from-array!
-                (compiler-reg-global-shared-view live-blocks)
-                (reg_label_i64_map.with-capacity
-                  (compiler-reg-bits-map-capacity count))
-                (compiler-reg-global-shared-view use-rows)
-                (compiler-reg-global-shared-view def-rows)
-                words
-                0)]
-            (begin
-              (compiler-reg-bits-fixpoint!
-                (compiler-reg-global-shared-view live-blocks)
-                (compiler-reg-global-shared-view idmap)
-                count
-                words
-                (compiler-reg-global-shared-view use-rows)
-                (compiler-reg-global-shared-view live-in)
-                (compiler-reg-global-shared-view live-out)
-                (compiler-reg-global-shared-view def-rows))
-              (compiler-reg-bits-intervals-walk
-                (compiler-reg-global-shared-view blocks)
-                (compiler-reg-global-shared-view live-in)
-                (compiler-reg-global-shared-view live-out)
-                words
-                0
-                0
-                (compiler-reg-global-shared-view starts)
-                (compiler-reg-global-shared-view ends))
-              (compiler-reg-interval-arrays-to-seq
-                (compiler-reg-global-shared-view starts)
-                (compiler-reg-global-shared-view ends)
-                (- vars 1)
-                (compiler-reg-interval-seq-empty))))))]))
+      (compiler-reg-block-intervals-full vars blocks)]))
 
 ;; When handles-ok? is true (scalar path) 8-byte aggregate handles are register
 ;; eligible; when false (SIMD/AVX path, unchanged) only CPU scalars/pointers are.
@@ -38541,13 +38606,19 @@
   (let
     [type-info : CompilerRegVarTypes
       (compiler-reg-function-var-types-with-representations-and-metrics
-        func
+        (compiler-reg-global-shared-view func)
         representations
         metrics)]
+    ;; The stack-only opt0/opt1 path deliberately skips scalar register
+    ;; allocation, but frame-slot coloring still needs conservative lifetimes.
+    ;; Reuse the compact block-CFG bitset fixpoint instead of running the much
+    ;; more expensive scalar allocator just to obtain its fallback intervals.
+    [intervals : CompilerRegIntervalSeq
+      (compiler-reg-stack-only-block-intervals func)]
     (CompilerRegPlan.Plan
       (compiler-reg-assignment-table-empty)
       (live.compiler-live-set-empty)
-      (compiler-reg-interval-seq-empty)
+      intervals
       type-info
       (compiler-reg-call-split-empty)
       (compiler-reg-split-plan-empty))))
@@ -38575,9 +38646,10 @@
 ;; have a register home, dead raw-id holes, and register-only scratch pseudo-vars
 ;; receive free non-slot ids, and stack-homed register groups are remapped by
 ;; their word0 id; the backend places word1 in the matching second var-region.
-;; Plans with no intervals (the stack-only opt0/opt1 path skips liveness) pass
-;; through unchanged. The result's slot count replaces the raw var count in the
-;; backend's frame layout.
+;; Plans with no intervals pass through unchanged. Stack-only opt0/opt1 plans
+;; provide conservative CFG intervals so they can take this path without
+;; running scalar register allocation. The result's slot count replaces the raw
+;; var count in the backend's frame layout.
 (defenum CompilerRegColoring
   (None)
   (Remap (__tl_dyn-array i64) i64))
@@ -39087,6 +39159,25 @@
               (set! node largest))))))))
 
 (define (compiler-reg-color-heapsort
+  [items : (__tl_dyn-array CompilerRegInterval)]
+  [count : i64]) : unit
+  (let
+    [ordered? : bool true]
+    [scan : i64 1]
+    (begin
+      (while (and ordered? (< scan count))
+        (begin
+          (if (compiler-reg-color-interval-before?
+            (compiler-reg-global-array-element-shared-view items scan)
+            (compiler-reg-global-array-element-shared-view items (- scan 1)))
+            (set! ordered? false)
+            unit)
+          (set! scan (+ scan 1))))
+      (if ordered?
+        unit
+        (compiler-reg-color-heapsort-unordered! items count)))))
+
+(define (compiler-reg-color-heapsort-unordered!
   [items : (__tl_dyn-array CompilerRegInterval)]
   [count : i64]) : unit
   (begin
@@ -40816,20 +40907,28 @@
   [remap : (__tl_dyn-array i64)]
   [vars : i64]
   [assignments : CompilerRegAssignmentTable]) : CompilerRegAssignmentTable
-  (let
-    [present : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-    [items : (__tl_dyn-array CompilerRegLocation)
-      (__tl_make-array CompilerRegLocation vars)]
-    (begin
-      (compiler-reg-fill-location-array
-        (compiler-reg-global-shared-view items)
-        (CompilerRegLocation.Spill 0))
-      (compiler-reg-color-scatter-assignments
-        remap
-        (compiler-reg-global-shared-view present)
-        (compiler-reg-global-shared-view items)
-        assignments)
-      (CompilerRegAssignmentTable present items))))
+  ;; Stack-only plans have a genuinely empty table, not a vars-wide table of
+  ;; spills. Preserve that representation after coloring: otherwise every
+  ;; backend `plan-uses-reg?` query scans a vars-wide all-zero presence array.
+  (if (=
+    (compiler-reg-assignment-count
+      (compiler-reg-global-shared-view assignments))
+    0)
+    (compiler-reg-assignment-table-empty)
+    (let
+      [present : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+      [items : (__tl_dyn-array CompilerRegLocation)
+        (__tl_make-array CompilerRegLocation vars)]
+      (begin
+        (compiler-reg-fill-location-array
+          (compiler-reg-global-shared-view items)
+          (CompilerRegLocation.Spill 0))
+        (compiler-reg-color-scatter-assignments
+          remap
+          (compiler-reg-global-shared-view present)
+          (compiler-reg-global-shared-view items)
+          assignments)
+        (CompilerRegAssignmentTable present items)))))
 
 ;; Identity-pin scalar parameter variables: the prologue's param spill writes
 ;; each parameter to its remapped formula slot, and ordinary parameters keep
@@ -42564,16 +42663,14 @@
 ;; dense slot above them, and register-homed variables move to ids that are not
 ;; used by a stack slot. The assignment table is rebuilt on the new keys.
 ;;
-;; `fusion-pinned` names spilled variables whose IDENTITY the backend still
-;; needs after the renumbering: a single-use address temp the following
-;; instruction folds into its addressing mode (see
-;; compiler-backend-gep-fusion-pinned-vars). Merging one of those onto a shared
-;; representative would make the merged id's use count -- recomputed on the
-;; remapped blocks -- far greater than one and silently disable the fusion
-;; peephole. Pinned variables are therefore withheld from every sharing
-;; mechanism (the scalar walk and its phi/mov webs) and land in the private
-;; dense slots below, one fresh slot each.
-(define (compiler-reg-color-stack-slots
+;; `identity-pinned` names spilled variables whose DISTINCT identity the
+;; backend still needs after renumbering. This includes single-use address
+;; temps used by fusion and destination ids used as source-provenance keys.
+;; Merging one onto a shared representative would either disable a fusion
+;; peephole or make two diagnostics share one key. Pinned variables are
+;; therefore withheld from every sharing mechanism (the scalar walk and its
+;; phi/mov webs) and land in the private dense slots below, one fresh slot each.
+(define (compiler-reg-color-stack-slots-with-stack-only
   [type-segment-bases : i64]
   [plan : CompilerRegPlan]
   [group-vars : live.CompilerLiveI64Set]
@@ -42581,13 +42678,19 @@
   [blocks : ir.CompilerIrBlockList]
   [vars : i64]
   [slot-candidate-vars : i64]
-  [fusion-pinned : live.CompilerLiveI64Set]) : CompilerRegColoring
+  [identity-pinned : live.CompilerLiveI64Set]
+  [stack-only? : bool]) : CompilerRegColoring
   (let
     [intervals : CompilerRegIntervalSeq
       (compiler-reg-plan-intervals (compiler-reg-global-shared-view plan))]
     (if (compiler-reg-interval-seq-empty? intervals)
       CompilerRegColoring.None
       (let
+        [has-group-vars? : bool
+          (>
+            (live.compiler-live-set-word-count
+              (compiler-reg-global-shared-view group-vars))
+            0)]
         [vector-stack-words : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [_vector-stack-words : unit
           (begin
@@ -42612,10 +42715,19 @@
         [slot-ends : (__tl_dyn-array i64) (__tl_make-array i64 slots)]
         [assignments : CompilerRegAssignmentTable
           (compiler-reg-plan-assignments (compiler-reg-global-shared-view plan))]
+        ;; Preserve a logically empty assignment table through coloring;
+        ;; indexed lookup already returns `No` for every variable in it.
+        [empty-assignments? : bool
+          (=
+            (compiler-reg-assignment-count
+              (compiler-reg-global-shared-view assignments))
+            0)]
         [assignment-index : CompilerRegAssignmentTable
-          (compiler-reg-assignment-table-with-min-capacity
-            (compiler-reg-global-shared-view assignments)
-            vars)]
+          (if empty-assignments?
+            (compiler-reg-assignment-table-empty)
+            (compiler-reg-assignment-table-with-min-capacity
+              (compiler-reg-global-shared-view assignments)
+              vars))]
         [ineligible : live.CompilerLiveI64Set
           (compiler-reg-plan-ineligible (compiler-reg-global-shared-view plan))]
         [colorable : (__tl_dyn-array bool) (__tl_make-array bool vars)]
@@ -42661,14 +42773,14 @@
             ;; below to give it a fresh id of its own.
             (if (>
               (live.compiler-live-set-word-count
-                (compiler-reg-global-shared-view fusion-pinned))
+                (compiler-reg-global-shared-view identity-pinned))
               0)
               (let
                 [i : i64 0]
                 (while (< i vars)
                   (begin
                     (if (live.compiler-live-set-contains?
-                      (compiler-reg-global-shared-view fusion-pinned)
+                      (compiler-reg-global-shared-view identity-pinned)
                       i)
                       (set! (array-ref colorable i) false)
                       unit)
@@ -42682,9 +42794,13 @@
             (compiler-reg-color-reference-intervals!
               (compiler-reg-global-shared-view intervals)
               (compiler-reg-global-shared-view references))
-            (compiler-reg-ref-marks-blocks!
-              (compiler-reg-global-shared-view references)
-              (compiler-reg-global-shared-view blocks))
+            ;; Stack-only plans are built on these final blocks and no
+            ;; allocation rewrite can have introduced an interval-less value.
+            (if stack-only?
+              unit
+              (compiler-reg-ref-marks-blocks!
+                (compiler-reg-global-shared-view references)
+                (compiler-reg-global-shared-view blocks)))
             (compiler-reg-spmd-avx2-special-param-references!
               (compiler-reg-global-shared-view params)
               (compiler-reg-global-shared-view references)))]
@@ -42737,15 +42853,27 @@
         ;; edge-precise hulls never overlap (see the header above). Applied by
         ;; retargeting the members' intervals onto the root before the walk,
         ;; and by handing each member the root's slot after it.
-        [scalar-alias : (__tl_dyn-array i64)
-          (compiler-reg-color-scalar-alias
-            type-segment-bases
-            (compiler-reg-global-shared-view blocks)
-            vars
-            (compiler-reg-global-shared-view slot-eligible)
-            (compiler-reg-global-shared-view var-tys)
-            (compiler-reg-global-shared-view hull-starts)
-            (compiler-reg-global-shared-view vector-stack-words))]
+        [scalar-alias
+          : (__tl_dyn-array i64)
+          ;; Scalar phi/mov web coalescing exists to repair register/spill webs
+          ;; after scalar allocation. Stack-only plans have no such homes, and
+          ;; ordinary interval coloring below already shares disjoint values.
+          (if stack-only?
+            (let
+              [alias : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+              (begin
+                (compiler-reg-fill-i64-array
+                  (compiler-reg-global-shared-view alias)
+                  (- 0 1))
+                alias))
+            (compiler-reg-color-scalar-alias
+              type-segment-bases
+              (compiler-reg-global-shared-view blocks)
+              vars
+              (compiler-reg-global-shared-view slot-eligible)
+              (compiler-reg-global-shared-view var-tys)
+              (compiler-reg-global-shared-view hull-starts)
+              (compiler-reg-global-shared-view vector-stack-words)))]
         [sorted : (__tl_dyn-array CompilerRegInterval)
           (__tl_make-array
             CompilerRegInterval
@@ -42814,17 +42942,19 @@
               (compiler-reg-fill-i64-array
                 (compiler-reg-global-shared-view alias)
                 (- 0 1))
-              (compiler-reg-color-group-mov-alias-blocks!
-                type-segment-bases
-                (compiler-reg-global-shared-view blocks)
-                (compiler-reg-global-shared-view alias)
-                (compiler-reg-global-shared-view group-vars)
-                (compiler-reg-global-shared-view ineligible)
-                (compiler-reg-global-shared-view assignment-index)
-                (compiler-reg-global-shared-view var-tys)
-                (compiler-reg-global-shared-view remap)
-                (compiler-reg-global-shared-view hull-starts)
-                (compiler-reg-global-shared-view hull-ends))
+              (if has-group-vars?
+                (compiler-reg-color-group-mov-alias-blocks!
+                  type-segment-bases
+                  (compiler-reg-global-shared-view blocks)
+                  (compiler-reg-global-shared-view alias)
+                  (compiler-reg-global-shared-view group-vars)
+                  (compiler-reg-global-shared-view ineligible)
+                  (compiler-reg-global-shared-view assignment-index)
+                  (compiler-reg-global-shared-view var-tys)
+                  (compiler-reg-global-shared-view remap)
+                  (compiler-reg-global-shared-view hull-starts)
+                  (compiler-reg-global-shared-view hull-ends))
+                unit)
               alias))]
         [slot-count
           : i64
@@ -42959,6 +43089,26 @@
         (CompilerRegColoring.Remap
           remap
           (compiler-reg-max slot-count param-floor))))))
+
+(define (compiler-reg-color-stack-slots
+  [type-segment-bases : i64]
+  [plan : CompilerRegPlan]
+  [group-vars : live.CompilerLiveI64Set]
+  [params : ir.CompilerIrParamSeq]
+  [blocks : ir.CompilerIrBlockList]
+  [vars : i64]
+  [slot-candidate-vars : i64]
+  [identity-pinned : live.CompilerLiveI64Set]) : CompilerRegColoring
+  (compiler-reg-color-stack-slots-with-stack-only
+    type-segment-bases
+    plan
+    group-vars
+    params
+    blocks
+    vars
+    slot-candidate-vars
+    identity-pinned
+    false))
 
 ;; --- var-id remap application ----------------------------------------------
 ;; The backend computes stack slots from variable ids at many emission sites,

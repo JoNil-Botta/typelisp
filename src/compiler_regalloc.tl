@@ -44493,7 +44493,8 @@
   (let
     [from-float : bool
       (compiler-reg-float-type? (compiler-reg-global-shared-view from-ty))]
-    [to-float : bool (compiler-reg-float-type? to-ty)]
+    [to-float : bool
+      (compiler-reg-float-type? (compiler-reg-global-shared-view to-ty))]
     (cond
       [(and from-float to-float)
         (not
@@ -44506,10 +44507,15 @@
             (compiler-reg-global-shared-view assignments)
             dst))]
       [(and from-float (not to-float))
-        (not
-          (compiler-reg-scratch-value-register-homed?
-            (compiler-reg-global-shared-view assignments)
-            src))]
+        ;; The u64 high-half sequence subtracts 2^63 before signed conversion,
+        ;; so it always needs a disposable XMM value even when src is homed.
+        (match to-ty
+          [(ast.AstType.U64) true]
+          [_
+            (not
+              (compiler-reg-scratch-value-register-homed?
+                (compiler-reg-global-shared-view assignments)
+                src))])]
       [else false])))
 
 (define (compiler-reg-scratch-cast-gp-count

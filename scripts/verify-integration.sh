@@ -1292,12 +1292,18 @@ check_u64_float_cast_asm() {
     _asm=$1
     _label="u64_float_casts assembly"
     assert_contains "$_asm" "cast_u64_float_" "$_label"
+    assert_contains "$_asm" "cast_float_u64_" "$_label"
     assert_contains "$_asm" "    js " "$_label"
     assert_contains "$_asm" '    andq $1, ' "$_label"
     assert_contains "$_asm" '    shrq $1, ' "$_label"
     assert_contains "$_asm" "    orq " "$_label"
     assert_contains "$_asm" "    addsd " "$_label"
     assert_contains "$_asm" "    addss " "$_label"
+    assert_contains "$_asm" "    ucomisd " "$_label"
+    assert_contains "$_asm" "    ucomiss " "$_label"
+    assert_contains "$_asm" "    subsd " "$_label"
+    assert_contains "$_asm" "    subss " "$_label"
+    assert_contains "$_asm" '    btsq $63, ' "$_label"
     assert_contains "$_asm" "    movzbq" "$_label"
     if ! awk '
         /u8_to_f64/ { in_u8 = 1 }
@@ -2031,6 +2037,16 @@ run_linux_fatal_backtrace_fixture() {
 }
 
 run_linux_backend_fixtures() {
+    run_linux_program_fixture \
+        u64-float-casts-opt0 \
+        tests/integration/u64_float_casts.tl \
+        0 \
+        0
+    run_linux_program_fixture \
+        u64-float-casts-opt1 \
+        tests/integration/u64_float_casts.tl \
+        0 \
+        1
     # RMW-2: the load/op/store triple over one memory location folds to a single
     # memory-operand ALU instruction. The rewrite is a backend text peephole
     # that runs at every optimization level, so the opt0 and opt1 rows are the
@@ -2585,6 +2601,16 @@ run_windows_fatal_backtrace_fixture() {
 }
 
 run_windows_backend_fixtures() {
+    run_windows_program_fixture \
+        u64-float-casts-opt0 \
+        tests/integration/u64_float_casts.tl \
+        0 \
+        0
+    run_windows_program_fixture \
+        u64-float-casts-opt1 \
+        tests/integration/u64_float_casts.tl \
+        0 \
+        1
     run_windows_fatal_backtrace_fixture
     run_windows_program_fixture \
         constructor-alias-two-phase-opt0 \

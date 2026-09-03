@@ -27,11 +27,6 @@
   `(unsafe
     (ptr-read (ptr-addr-of ,place))))
 
-;: Return a representation-level shared view of a process array element.
-(defmacro (process-array-shared-view [items : Expr] [index : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
-
 ;: Immutable sequence of process argument strings in argv order. Every backing
 ;: array entry is live. Sequences are shared persistently, so helpers that
 ;: extend one copy into a right-sized array instead of mutating storage another
@@ -179,6 +174,13 @@
 ;: Re-expose a borrowed process string through the public String surface.
 (define (process-string-shared-view [value : (& value str)]) : String
   (__tl-compiler-owned-shared-view-dyn-ref-as value String))
+
+;: Return a checked representation-level shared view of a process string-array
+;: element.
+(define (process-array-shared-view
+  [items : (& items (__tl_dyn-array String))]
+  [index : i64]) : String
+  (process-string-shared-view (& (array-ref items index))))
 
 ;: Re-expose a borrowed argument list through the owning compatibility surface.
 (define (process-string-list-shared-view [value : (& value ProcessStringList)]) : ProcessStringList

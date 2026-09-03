@@ -1,6 +1,7 @@
 ;; Focused semantic witnesses for the shallow-view helpers introduced by the
-;; by-value ownership migration. These macros are part of the embedded stdlib
-;; TLCI inventory, but ordinary discovery does not reach every path together.
+;; by-value ownership migration. These remaining macros are part of the
+;; embedded stdlib TLCI inventory, but ordinary discovery does not reach every
+;; path together.
 (import stdlib.msvc)
 (import stdlib.process)
 (import stdlib.process_runtime)
@@ -21,18 +22,13 @@
     [box-view : i64 (msvc.msvc-box-shared-view boxed)]
     [process-place-view : TlciIdentityMsvcWitness
       (process.process-place-shared-view place)]
-    [process-item-view : i64 (process.process-array-shared-view items 0)]
     [runtime-place-view : TlciIdentityMsvcWitness
       (process_runtime.process-runtime-place-shared-view place)]
-    [runtime-item-view : i64
-      (process_runtime.process-runtime-array-shared-view items 0)]
     (cond
       [(not (= (string-length core-view) 4)) 2]
       [(not (= place-view.value 7)) 3]
       [(not (= item-view 0)) 4]
       [(not (= box-view 29)) 5]
       [(not (= process-place-view.value 7)) 6]
-      [(not (= process-item-view 0)) 7]
-      [(not (= runtime-place-view.value 7)) 8]
-      [(not (= runtime-item-view 0)) 9]
+      [(not (= runtime-place-view.value 7)) 7]
       [else 42])))

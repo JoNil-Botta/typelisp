@@ -113,9 +113,7 @@ stdlib.msvc/msvc-shared-view	1	fixed	expr	tests/integration/tlci_identity_owned_
 stdlib.msvc/msvc-array-element-shared-view	2	fixed	expr	tests/integration/tlci_identity_owned_views.tl	ok	default	assembly
 stdlib.msvc/msvc-box-shared-view	1	fixed	expr	tests/integration/tlci_identity_owned_views.tl	ok	default	assembly
 stdlib.process/process-place-shared-view	1	fixed	expr	tests/integration/tlci_identity_owned_views.tl	ok	default	assembly
-stdlib.process/process-array-shared-view	2	fixed	expr	tests/integration/tlci_identity_owned_views.tl	ok	default	assembly
 stdlib.process_runtime/process-runtime-place-shared-view	1	fixed	expr	tests/integration/tlci_identity_owned_views.tl	ok	default	assembly
-stdlib.process_runtime/process-runtime-array-shared-view	2	fixed	expr	tests/integration/tlci_identity_owned_views.tl	ok	default	assembly
 stdlib.queue/deque	1	fixed	module	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
 stdlib.result/result	2	fixed	module	tests/integration/generated_option_result_families.tl	ok	default	assembly
 stdlib.serialize/serialize-shared-view	1	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly

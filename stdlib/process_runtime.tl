@@ -42,11 +42,6 @@
       `(unsafe
         (ptr-read (ptr-addr-of ,place))))))
 
-;: Return a representation-level shared view of a runtime process array element.
-(defmacro (process-runtime-array-shared-view [items : Expr] [index : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
-
 ;: Runtime argv sequence. Its authoritative count is the backing-array length.
 ;: `stdlib.process` validates and converts the public model before invoking an
 ;: unsafe OS entry; source-level construction alone grants no execution access.
@@ -188,6 +183,37 @@
   (:lifetimes value)
   (value (& value ProcessRuntimeEnvList)))
 
+;: Internal wrapper around a borrowed runtime environment entry.
+(defstruct ProcessRuntimeEnvEntryRef
+  (:lifetimes value)
+  (value (& value ProcessRuntimeEnvEntry)))
+
+;: Return a checked shared view of a runtime string-array element.
+(define (process-runtime-string-array-shared-view
+  [items : (& items (__tl_dyn-array String))]
+  [index : i64]) : String
+  (__tl-compiler-owned-shared-view-dyn-ref-as
+    (& (array-ref items index))
+    String))
+
+;: Re-expose a borrowed runtime environment entry through the compatibility
+;: surface.
+(define (process-runtime-env-entry-shared-view
+  [value : (& value ProcessRuntimeEnvEntry)]) : ProcessRuntimeEnvEntry
+  (let
+    [cell : (ProcessRuntimeEnvEntryRef value) (ProcessRuntimeEnvEntryRef value)]
+    [address : u64
+      (unsafe
+        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
+    (unsafe
+      (ptr-read (int->ptr address : (Ptr ProcessRuntimeEnvEntry))))))
+
+;: Return a checked shared view of a runtime environment-entry array element.
+(define (process-runtime-env-array-shared-view
+  [items : (& items (__tl_dyn-array ProcessRuntimeEnvEntry))]
+  [index : i64]) : ProcessRuntimeEnvEntry
+  (process-runtime-env-entry-shared-view (& (array-ref items index))))
+
 ;: Re-expose a borrowed runtime argument list through the compatibility surface.
 (define (process-runtime-string-list-shared-view
   [value : (& value ProcessRuntimeStringList)]) : ProcessRuntimeStringList
@@ -240,7 +266,7 @@
         (begin
           (set!
             (array-ref slots (+ index 1))
-            (process-runtime-array-shared-view rest.slots index))
+            (process-runtime-string-array-shared-view (& rest.slots) index))
           (set! index (+ index 1))))
       (ProcessRuntimeStringList slots))))
 
@@ -266,7 +292,7 @@
         (begin
           (set!
             (array-ref slots (+ index 1))
-            (process-runtime-array-shared-view rest.slots index))
+            (process-runtime-env-array-shared-view (& rest.slots) index))
           (set! index (+ index 1))))
       (ProcessRuntimeEnvList slots))))
 
@@ -774,7 +800,7 @@
         (while (< index count)
           (let
             [entry : ProcessRuntimeEnvEntry
-              (process-runtime-array-shared-view env.slots index)]
+              (process-runtime-env-array-shared-view (& env.slots) index)]
             (begin
               (set!
                 (array-ref ov index)
@@ -890,7 +916,8 @@
         (set! (array-ref arr 0) (cast exec-addr : u64))
         (while (< index argc)
           (let
-            [text : String (process-runtime-array-shared-view argv.slots index)]
+            [text : String
+              (process-runtime-string-array-shared-view (& argv.slots) index)]
             (begin
               (set!
                 (array-ref arr (+ index 1))
@@ -1767,7 +1794,8 @@
     (begin
       (while (< index (array-length argv.slots))
         (let
-          [text : String (process-runtime-array-shared-view argv.slots index)]
+          [text : String
+            (process-runtime-string-array-shared-view (& argv.slots) index)]
           (begin
             (text_buf.append! line " ")
             (text_buf.append! line (stdlib.process_runtime.quote-arg text))

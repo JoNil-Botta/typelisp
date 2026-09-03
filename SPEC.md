@@ -8360,6 +8360,17 @@ unused parameters and locals, including type operands. Symbolic names without
 ASCII letters are exempt. Externs, imports/aliases, fields, variants, lifetimes,
 tests, and labels are outside this staged rule.
 
+The lint registry assigns every rule a default `allow`, `warn`, `deny`, or
+`forbid` level and membership in one or more of the initial `correctness`,
+`style`, `complexity`, `performance`, `unsafe`, `compatibility`, and
+`future-incompatibility` groups. Typed policy inputs resolve in the fixed order
+built-in, project, target/profile, CLI, module/item, then local. Within one
+layer, group assignments are applied before individual-rule assignments, and
+an effective `forbid` cannot be lowered. The staged CLI switches above map to
+at-least-`warn` policy floors (`--name-case` maps to all four name-case rules),
+while `--check` remains the separate compatibility enforcement switch. Project
+configuration syntax for these typed inputs is not yet enabled.
+
 `test` runs inline `(test ...)` declarations. `test --check` type-checks the
 generated inline test harnesses without assembling or running them, and
 `test --check --batch <inputs.txt>` checks newline-separated input paths in

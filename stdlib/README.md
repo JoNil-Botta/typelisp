@@ -507,6 +507,15 @@ Vec bang place macros as available yet.
   wipes the complete output range on failure, and never falls back to clocks,
   identifiers, device files, or deterministic randomness. Import it with
   `(import stdlib.crypto_random)`.
+- `crypto_sha512.tl`: self-hosted FIPS 180-4 SHA-512 over exact borrowed byte
+  views. It provides allocation-free incremental updates, a checked high/low
+  128-bit byte counter, exact 64-byte public digests, lowercase hexadecimal
+  rendering, and explicit consuming state/digest wipe hooks for secret-derived
+  callers. Unsafe raw-source and exact-sink adapters let cleanup-owned crypto
+  modules avoid an ordinary digest intermediate while retaining their own
+  generation, lifetime, and ownership checks. It imports no host crypto
+  provider or third-party dependency. Import it with
+  `(import stdlib.crypto_sha512)`.
 - `random.tl`: deterministic, seeded, non-cryptographic random helpers,
   array/vector/list weighted-index selection for selfhost tools, and an
   OS-entropy seed source. `random.from-system` still constructs the
@@ -792,6 +801,7 @@ borrowed process runtime wrappers likewise copy at their owned boundary.
 | `net/http_types.tl`, `net/http_head_codec.tl`, and `net/http_trailer_policy.tl` | Checked protocol tokens, retained field bytes, ordered header/trailer-name storage, policy entries, incremental parser buffering, response-head results, and serialized request heads allocate in the active arena. Parsing copies only the bounded head prefix and stops before a coalesced body suffix; completed lines are not rescanned. Header lookup, shared typed-field validation, syntax/framing inspection, trailer-policy lookup/list validation, sensitivity checks, and body-plan selection are otherwise non-allocating over retained bytes. Policy construction copies normalized approved names in deterministic insertion order. Request serialization validates all fields and the complete bounded output length before allocating its final `ByteBuf`; framing fields are emitted once in canonical form. |
 | `net/ip.tl` | Address construction, byte access, equality, ordering, hashing, and strict borrowed-text parsing are non-allocating. IPv4 and IPv6 formatting use bounded stack scratch storage, then allocate exactly the returned active-arena `String` backing bytes and handle; no growable intermediate buffer is allocated. |
 | `crypto_random.fill-random!` | Fills an exact caller-owned mutable `bytes` view from the operating-system cryptographic source without allocating output storage. Zero-length views succeed without a host call. Linux uses direct x86-64 `getrandom` with flags zero in at most 256-byte requests and checks partial/interrupted results. Windows loads `bcrypt.dll` through kernel32, validates and calls `BCryptGenRandom(NULL, ..., BCRYPT_USE_SYSTEM_PREFERRED_RNG)` through a raw C function pointer while its DLL reference remains live, then unloads it. Every failure is structured and wipes the complete valid view; there is no PRNG, clock, identifier, file, or third-party fallback. `fill-random-with!` is the low-level checked adapter seam for deterministic tests and explicitly injected protocol providers. |
+| `crypto_sha512.*` | `new`, `update!`, `finalize!`, `digest`, the unsafe scoped raw-source/exact-sink adapters, digest byte access/equality, and the checked high/low length machinery allocate nothing; a state retains exactly one 128-byte partial block. `to-hex` allocates one exact 128-byte lowercase `String`. Compression scratch and explicit consuming state/digest wipe hooks use volatile stores. Digests are ordinary public values; the unsafe adapters preserve caller-owned lifetime/generation checks, and the wipe hooks are a narrow secret-derived-caller seam rather than a side-channel or whole-machine erasure claim. |
 | `arena.*` helpers in `arena.tl` | First-class arena control returns typed `Arena` / `ArenaMark` / `ArenaPhase` wrappers around raw runtime handles. `arena.make` creates an independent ordinary arena, `arena.make-atomic` creates an independent atomic arena, `arena.current` observes the active arena, and `arena.mark` observes the current bump mark. `arena.phase` / `arena.rewind-safe!` use checker-proven direct owners; `arena.destroy-safe!` also accepts branded local aggregate owner places and invalidates their same-function brand users. `arena.set!`, `arena.destroy`, and `arena.rewind` can invalidate live heap handles and require `(unsafe ...)`; raw `i64` values do not satisfy those public helper signatures. |
 | `args-*` helpers in `args.tl` | Option specs, parse results, occurrence lists, positional `StringVec` storage, diagnostic payloads, and helper substrings allocate in the active arena. Token classification, option lookup, count/presence checks, and value accessors are non-allocating aside from caller-provided owned strings and existing result storage. |
 | `json-*` helpers | Parser, lookup, escaping, and JSON number parsing helpers borrow source text or keys. Object lookup compares borrowed keys without allocating. Parsed JSON aggregates, decoded strings, escaped strings, stringified output, float number text, validation copies, vector-builder backing arrays, and final list/member spines allocate owned results in the active arena. Array/object parsing accumulates elements in JSON-local vector builders and converts once to the public list model, preserving source order and first-match duplicate-key lookup. Float conversion is deterministic, finite-only, host-locale independent, and currently accepts up to 300 non-zero significant decimal digits; longer non-zero number text is rejected rather than rounded through an unbounded scratch representation. |
@@ -853,6 +863,7 @@ Stdlib modules are imported explicitly:
 (import stdlib.byte_buf)
 (import stdlib.clone)
 (import stdlib.crypto_random)
+(import stdlib.crypto_sha512)
 (import stdlib.env)
 (import stdlib.ffi)
 (import stdlib.fs)
@@ -933,9 +944,9 @@ contracts, and intentional panic/exit-status checks.
 3. Include a short header comment with its purpose and required primitives.
 4. Add the new top-level `.tl` file to `scripts/verify-stdlib.sh`'s module
    manifest.
-5. Add new top-level modules needed by installed compilers to one of the
-   bounded `src/compiler_embedded_stdlib_payload_[a-f].tl` build-input shards
-   and add its lookup arm to `src/compiler_embedded_stdlib_payload.tl`. The
+5. Add new top-level modules needed by installed compilers to
+   `src/compiler_embedded_stdlib_payload.tl`, including its explicit compressed
+   build input and lookup arm. The
    compiler build compresses the exact source bytes directly; never add
    `stdlib/tests/*.tl` fixtures.
 6. Add inline `(test ...)` items next to declarations for source-local runnable
@@ -957,7 +968,7 @@ contracts, and intentional panic/exit-status checks.
 12. Run `scripts/verify-inline-tests.sh` if the module adds inline tests.
 13. Link user-facing docs or tests to the new module when appropriate.
 
-Run `scripts/verify-embedded-stdlib-payload.sh` to validate all 42 explicit
+Run `scripts/verify-embedded-stdlib-payload.sh` to validate all 52 explicit
 build inputs, prove deterministic one-byte mutation propagation, and decode
 every embedded module against its exact source bytes.
 `scripts/verify-stdlib.sh` includes this gate in CI.

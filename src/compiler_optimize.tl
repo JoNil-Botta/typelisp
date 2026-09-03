@@ -31673,6 +31673,817 @@
         unit)
       admitted?)))
 
+;; --- ALIAS-2: LICM refusal tracing ---------------------------------------------
+;;
+;; Every clause below is a verdict about ONE loop-invariant CANDIDATE, and until
+;; now the only way to learn WHICH conjunct held a candidate inside its loop was
+;; to instrument the pass by hand. `--trace-passes` reported the pass's block and
+;; instruction counts, plus IAG-2's own budget arithmetic
+;; (opt-licm-global-header-trace!) for loops that reached it -- and a loop whose
+;; storage table was never built reaches it silently, reporting nothing at all.
+;; That is the exact shape ALIAS-2 is about: `ssa-dominance-frontier`'s inner
+;; loop reloads two global descriptor chains on every trip and no line anywhere
+;; says why.
+;;
+;; The tracer prints one line per candidate the loop KEPT that a call or a store
+;; is what kept:
+;;
+;;   licm-refuse|<function>|<loop header>|<candidate var>|<kind>|<reason>
+;;
+;; KINDS name the word the candidate reads or addresses, because that is what
+;; decides which proof applies:
+;;
+;;   global-cell        `gep @g, <literal>` and the load through it -- the
+;;                      descriptor HANDLE a memory-class global's own storage
+;;                      holds (IAG-1/IAG-2's head of chain), or a `Global`
+;;                      operand the loop-scope cell promotion left in place.
+;;   descriptor-length  the length word of a descriptor handle
+;;                      (opt-bounds-object-length-slot?/OptLicmPtrKind.HeaderSlot).
+;;   descriptor-data    its data-pointer word (opt-licm-data-slot?/DataSlot).
+;;   load               any other load left in the loop whose address is already
+;;                      available outside it.
+;;
+;; REASONS are the conjuncts themselves, never a paraphrase. The vocabulary:
+;;
+;;   globals-clean:mem-clean-call         the loop-wide `globals-clean?` answer is
+;;                                        false ONLY because a direct callee the
+;;                                        call-memory fixpoint proved writes no
+;;                                        memory at all set `mem-clean-call?`
+;;                                        (opt-licm-direct-call-keeps-globals-clean?,
+;;                                        `globals-clean-strict?` at the loop site).
+;;   globals-clean:cell-write:<blame>     `global-write?` is set; <blame> names the
+;;                                        call or store that set it.
+;;   iag2:no-table                        the program carries no OptGlobalObjModRef
+;;                                        at all, so every loop is seeded "may
+;;                                        write any storage" and
+;;                                        opt-licm-global-header-count answers 0
+;;                                        without scanning.
+;;   iag2:obj-any:<blame>                 the table exists but THIS loop's storage
+;;                                        set saturated at "any storage"; <blame>
+;;                                        names what saturated it.
+;;   iag2:p18-cell-write:<blame>          the per-global CELL row says this body may
+;;                                        write g's cell.
+;;   iag2:obj-write:<blame>               the per-global STORAGE row says this body
+;;                                        may write g's own storage.
+;;   iag2:side-exit-return                every side exit is return-shaped (kind 1),
+;;                                        which the header hoist declines.
+;;   iag2:frozen-gate                     P20's frozen-chain gate owns this loop.
+;;   iag2:no-refs                         the loop references no global whose storage
+;;                                        the two rows prove it does not write.
+;;   iag2:live-in-budget:<live-in>+<n>    opt-licm-global-header-hoist?'s budget
+;;                                        refused (live-in plus one word per global
+;;                                        against opt-licm-global-header-live-in-budget).
+;;   header-load-safe:call:<blame>        opt-licm-store-summary-header-load-safe? is
+;;                                        false because of a call.
+;;   header-load-safe:store:<blame>       ... because of a header-or-unknown store.
+;;   call-boundary:<blame>                the P6/R7 hoist-vs-allocate interlock
+;;                                        (opt-licm-store-summary-call-boundary?) at
+;;                                        an address-formation site.
+;;   side-exit-return                     the return-shaped side-exit poison closed
+;;                                        the general memory path and the
+;;                                        descriptor-header exception did not apply.
+;;   memory-root                          opt-licm-memory-safe? refused on root
+;;                                        identity alone: the body writes memory,
+;;                                        but through neither a call nor a
+;;                                        header-or-unknown store.
+;;   not-call-or-store                    the body writes no memory at all, so the
+;;                                        clause that kept this candidate is one of
+;;                                        the profitability ones this report does
+;;                                        not speak for (opt-gvn-stable-var?, the
+;;                                        hot-consumer gate, the pass mode).
+;;   chain-head                           the candidate's own base is still defined
+;;                                        inside the loop, so it is blocked behind
+;;                                        another line of this same report.
+;;
+;; <blame> is `call=<callee>`, `call=indirect`, `store=<global>`, `store=ptr`,
+;; `store=copy`, `effect=unknown` or `none` -- the first instruction of the body
+;; that contributes the refused fact.
+;;
+;; A `global-cell` line carries TWO clauses separated by `;`, because both have
+;; to fail for the operand to be refused: the loop-wide `globals-clean` answer
+;; and IAG-2's head-of-chain fallback. Every other kind carries one.
+;;
+;; COST. Everything here lives behind the same
+;; `compiler-opt-debug-trace-passes`/`compiler-opt-debug-suppressed?` guard the
+;; pass tracer and the IAG-2 budget tracer use, and the guard is tested ONCE per
+;; loop before any of it runs. The traced function name is recorded through the
+;; same guard, so a compile without `--trace-passes` pays one boolean test per
+;; function and one per loop, and builds no string at all. The walk reads the
+;; body the filter LEFT and the promotion rewrote, so a candidate that moved or
+;; a cell that was promoted produces no line: a line is a refusal.
+(define opt-licm-trace-function : i64
+  0)
+
+(define (opt-licm-trace-function! [name : i64]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (set! opt-licm-trace-function name)
+    unit))
+
+;; Which instruction of the body contributes a refused fact. `code` is the class
+;; and `name` the symbol it names, so the text is built once at the emission
+;; site rather than at every step of the walk.
+(defstruct OptLicmRefuseBlame
+  (code i64)
+  (name i64))
+
+(define (opt-licm-refuse-blame-none) : OptLicmRefuseBlame
+  (OptLicmRefuseBlame 0 0))
+
+(define (opt-licm-refuse-blame-some? [blame : OptLicmRefuseBlame]) : bool
+  (not (= blame.code 0)))
+
+(define (opt-licm-refuse-blame-text [blame : OptLicmRefuseBlame]) : String
+  (cond
+    [(= blame.code 1)
+      (str_cat.str-cat "call=" (ir.compiler-ir-symbol-text blame.name))]
+    [(= blame.code 2) "call=indirect"]
+    [(= blame.code 3)
+      (str_cat.str-cat "store=" (ir.compiler-ir-symbol-text blame.name))]
+    [(= blame.code 4) "store=ptr"]
+    [(= blame.code 5) "store=copy"]
+    [(= blame.code 6) "effect=unknown"]
+    [else "none"]))
+
+;; Blame modes. `cell` asks which instruction raised `global-write?` (the fact
+;; opt-licm-globals-clean? reads); `header-call` and `header-store` ask which
+;; CALL, and which STORE, closed opt-licm-store-summary-header-load-safe?, kept
+;; apart so the instruction the line names is one of the class the reason names;
+;; `obj` asks which one contributed the named global's own-storage bit.
+(define (opt-licm-refuse-blame-mode-cell) : i64
+  0)
+
+(define (opt-licm-refuse-blame-mode-header) : i64
+  1)
+
+(define (opt-licm-refuse-blame-mode-obj) : i64
+  2)
+
+(define (opt-licm-refuse-blame-mode-header-store) : i64
+  3)
+
+(define (opt-licm-refuse-obj-bit [cells : OptGlobalCellSummary] [name : i64]) : i64
+  (let
+    [obj : OptGlobalObjModRef cells.obj-mod-ref]
+    (bit-or (opt-global-obj-bit obj.index name) (opt-global-obj-any))))
+
+(define (opt-licm-refuse-blame-indirect [mode : i64]) : OptLicmRefuseBlame
+  (if (= mode (opt-licm-refuse-blame-mode-header-store))
+    (opt-licm-refuse-blame-none)
+    (OptLicmRefuseBlame 2 0)))
+
+(define (opt-licm-refuse-blame-call
+  [mode : i64]
+  [name : i64]
+  [direct-call-clean : opt_i64_i64_map.Map]
+  [cells : OptGlobalCellSummary]
+  [callee : i64]) : OptLicmRefuseBlame
+  (if (opt-direct-call-noreturn? callee)
+    (opt-licm-refuse-blame-none)
+    (cond
+      [(= mode (opt-licm-refuse-blame-mode-cell))
+        (if (opt-licm-direct-call-keeps-globals-clean?
+          (compiler-opt-global-shared-view direct-call-clean)
+          (compiler-opt-global-shared-view cells)
+          callee)
+          (opt-licm-refuse-blame-none)
+          (OptLicmRefuseBlame 1 callee))]
+      [(= mode (opt-licm-refuse-blame-mode-header-store))
+        (opt-licm-refuse-blame-none)]
+      [(= mode (opt-licm-refuse-blame-mode-header))
+        (if (opt-licm-store-summary-header-load-safe?
+          (opt-licm-store-summary-for-direct-call
+            (compiler-opt-global-shared-view direct-call-clean)
+            callee))
+          (opt-licm-refuse-blame-none)
+          (OptLicmRefuseBlame 1 callee))]
+      [else
+        (if (=
+          (bit-and
+            (opt-global-obj-call-mask
+              (compiler-opt-global-shared-view cells.obj-mod-ref)
+              callee)
+            (opt-licm-refuse-obj-bit
+              (compiler-opt-global-shared-view cells)
+              name))
+          0)
+          (opt-licm-refuse-blame-none)
+          (OptLicmRefuseBlame 1 callee))])))
+
+(define (opt-licm-refuse-blame-store
+  [mode : i64]
+  [name : i64]
+  [cells : OptGlobalCellSummary]
+  [ptrs : OptLicmPtrEnv]
+  [ptr : ir.CompilerIrValue]) : OptLicmRefuseBlame
+  (cond
+    [(= mode (opt-licm-refuse-blame-mode-obj))
+      (if (=
+        (bit-and
+          (opt-licm-store-obj-mask
+            (compiler-opt-global-shared-view cells)
+            (compiler-opt-global-shared-view ptrs)
+            (compiler-opt-global-shared-view ptr))
+          (opt-licm-refuse-obj-bit cells name))
+        0)
+        (opt-licm-refuse-blame-none)
+        (OptLicmRefuseBlame 4 0))]
+    ;; a CALL is what the header mode blames; a store is this arm's business
+    ;; only in the store mode.
+    [(= mode (opt-licm-refuse-blame-mode-header)) (opt-licm-refuse-blame-none)]
+    [(opt-licm-store-summary-header-load-safe?
+        (opt-licm-store-summary-for-storeptr
+          (compiler-opt-global-shared-view ptrs)
+          (compiler-opt-global-shared-view ptr)))
+      (opt-licm-refuse-blame-none)]
+    [else (OptLicmRefuseBlame 4 0)]))
+
+(define (opt-licm-refuse-blame-instr
+  [mode : i64]
+  [name : i64]
+  [direct-call-clean : opt_i64_i64_map.Map]
+  [cells : OptGlobalCellSummary]
+  [ptrs : OptLicmPtrEnv]
+  [instr : ir.CompilerIrInstr]) : OptLicmRefuseBlame
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Call _ callee _ _)
+      (opt-licm-refuse-blame-call mode name direct-call-clean cells callee)]
+    [(ir.CompilerIrInstr.TailCall callee _ _)
+      (opt-licm-refuse-blame-call mode name direct-call-clean cells callee)]
+    [(ir.CompilerIrInstr.CallIndirect _ _ _ _)
+      (opt-licm-refuse-blame-indirect mode)]
+    [(ir.CompilerIrInstr.CallIndirectC _ _ _ _)
+      (opt-licm-refuse-blame-indirect mode)]
+    [(ir.CompilerIrInstr.CallCAbiStoreResult _)
+      (opt-licm-refuse-blame-indirect mode)]
+    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult _)
+      (opt-licm-refuse-blame-indirect mode)]
+    [(ir.CompilerIrInstr.SpmdCall _) (opt-licm-refuse-blame-indirect mode)]
+    [(ir.CompilerIrInstr.TailCallIndirect _ _ _)
+      (opt-licm-refuse-blame-indirect mode)]
+    [(ir.CompilerIrInstr.Store target _ _)
+      (if (= mode (opt-licm-refuse-blame-mode-obj))
+        (opt-licm-refuse-blame-none)
+        (OptLicmRefuseBlame 3 target))]
+    [(ir.CompilerIrInstr.StorePtr ptr _ _)
+      (opt-licm-refuse-blame-store mode name cells ptrs ptr)]
+    [(ir.CompilerIrInstr.StoreOwned ptr _ _)
+      (opt-licm-refuse-blame-store mode name cells ptrs ptr)]
+    [(ir.CompilerIrInstr.CopyBytes dst _ _)
+      (if (= mode (opt-licm-refuse-blame-mode-obj))
+        (opt-licm-refuse-blame-store mode name cells ptrs dst)
+        (OptLicmRefuseBlame 5 0))]
+    [_ (opt-licm-refuse-blame-none)]))
+
+(define (opt-licm-refuse-blame-seq
+  [mode : i64]
+  [name : i64]
+  [direct-call-clean : opt_i64_i64_map.Map]
+  [cells : OptGlobalCellSummary]
+  [ptrs : OptLicmPtrEnv]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : OptLicmRefuseBlame
+  (if (>=
+    index
+    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
+    (opt-licm-refuse-blame-none)
+    (let
+      [here : OptLicmRefuseBlame
+        (opt-licm-refuse-blame-instr
+          mode
+          name
+          (compiler-opt-global-shared-view direct-call-clean)
+          (compiler-opt-global-shared-view cells)
+          (compiler-opt-global-shared-view ptrs)
+          (ir.compiler-ir-instr-seq-ref
+            (compiler-opt-global-shared-view instrs)
+            index))]
+      (if (opt-licm-refuse-blame-some? here)
+        here
+        (opt-licm-refuse-blame-seq
+          mode
+          name
+          direct-call-clean
+          cells
+          ptrs
+          instrs
+          (+ index 1))))))
+
+(define (opt-licm-refuse-blame-blocks
+  [mode : i64]
+  [name : i64]
+  [direct-call-clean : opt_i64_i64_map.Map]
+  [cells : OptGlobalCellSummary]
+  [ptrs : OptLicmPtrEnv]
+  [blocks : ir.CompilerIrBlockList]) : OptLicmRefuseBlame
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) (opt-licm-refuse-blame-none)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match (compiler-opt-global-shared-view block)
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (let
+            [here : OptLicmRefuseBlame
+              (opt-licm-refuse-blame-seq
+                mode
+                name
+                (compiler-opt-global-shared-view direct-call-clean)
+                (compiler-opt-global-shared-view cells)
+                (compiler-opt-global-shared-view ptrs)
+                (compiler-opt-global-shared-view instrs)
+                0)]
+            (if (opt-licm-refuse-blame-some? here)
+              here
+              (opt-licm-refuse-blame-blocks
+                mode
+                name
+                direct-call-clean
+                cells
+                ptrs
+                (compiler-opt-box-shared-view rest))))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-licm-refuse-blame-blocks
+        mode
+        name
+        direct-call-clean
+        cells
+        ptrs
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; The context one loop hands the walk. It is the same set of facts
+;; opt-licm-candidate? is called with, plus the three loop-site numbers whose
+;; arithmetic the reasons quote (side-exit kind, live-in count, header-ref
+;; count); bundling them keeps the walk's own arity at the traversal state.
+(defstruct OptLicmRefuseCtx
+  (type-segment-bases i64)
+  (types OptSsaVarTypes)
+  (ptrs OptLicmPtrEnv)
+  (globals OptLicmGlobalFacts)
+  (store-summary OptLicmStoreSummary)
+  (legacy-store-summary OptLicmStoreSummary)
+  ;; The composed body summary BEFORE the return-shaped side-exit poison is
+  ;; folded in. The poison is a profitability verdict spelled as a fake
+  ;; header-or-unknown store, so blaming a store for it would name an
+  ;; instruction that does not exist; the raw summary is what the call and
+  ;; store arms read, and `side-exit-kind` reports the poison by name.
+  (raw-legacy-summary OptLicmStoreSummary)
+  (direct-call-clean opt_i64_i64_map.Map)
+  (cells OptGlobalCellSummary)
+  ;; The body the filter LEFT and the promotion rewrote, for the blame walks
+  ;; and for `stayed-defs`.
+  (body ir.CompilerIrBlockList)
+  (stayed-defs opt_i64_i64_map.Map)
+  (global-write? bool)
+  (mem-clean-call? bool)
+  (any-call? bool)
+  (side-exit-kind i64)
+  (live-in i64)
+  (header-count i64)
+  (header i64))
+
+;; Why the loop-wide answer opt-licm-globals-clean? gives is `false`. The two
+;; causes are the two the loop site distinguishes: `global-write?` (something
+;; here may write a cell) and, when that is clear, the memory-clean direct-call
+;; tier that `globals-clean-strict?` subtracts.
+(define (opt-licm-refuse-clean-reason [ctx : OptLicmRefuseCtx]) : String
+  (if ctx.global-write?
+    (str_cat.str-cat
+      "globals-clean:cell-write:"
+      (opt-licm-refuse-blame-text
+        (opt-licm-refuse-blame-blocks
+          (opt-licm-refuse-blame-mode-cell)
+          0
+          (compiler-opt-global-shared-view ctx.direct-call-clean)
+          (compiler-opt-global-shared-view ctx.cells)
+          (compiler-opt-global-shared-view ctx.ptrs)
+          (compiler-opt-global-shared-view ctx.body))))
+    (if ctx.mem-clean-call?
+      "globals-clean:mem-clean-call"
+      "globals-clean:other")))
+
+;; Why the IAG-2 head-of-chain fallback (opt-licm-global-header-value?) did not
+;; admit `name`. The order is the order the code asks the questions in: the
+;; storage table's existence, the two per-global rows, then the pressure gate's
+;; three conditions.
+(define (opt-licm-refuse-iag2-reason [ctx : OptLicmRefuseCtx] [name : i64]) : String
+  (let
+    [globals : OptLicmGlobalFacts ctx.globals]
+    (cond
+      [(not (opt-licm-refuse-obj-table? (compiler-opt-global-shared-view ctx)))
+        "iag2:no-table"]
+      [(opt-global-obj-any? globals.obj-mask)
+        (str_cat.str-cat
+          "iag2:obj-any:"
+          (opt-licm-refuse-blame-text
+            (opt-licm-refuse-blame-blocks
+              (opt-licm-refuse-blame-mode-obj)
+              name
+              (compiler-opt-global-shared-view ctx.direct-call-clean)
+              (compiler-opt-global-shared-view ctx.cells)
+              (compiler-opt-global-shared-view ctx.ptrs)
+              (compiler-opt-global-shared-view ctx.body))))]
+      [(opt-global-mod-ref-mask-may-write? globals.index globals.mask name)
+        (str_cat.str-cat
+          "iag2:p18-cell-write:"
+          (opt-licm-refuse-blame-text
+            (opt-licm-refuse-blame-blocks
+              (opt-licm-refuse-blame-mode-cell)
+              name
+              (compiler-opt-global-shared-view ctx.direct-call-clean)
+              (compiler-opt-global-shared-view ctx.cells)
+              (compiler-opt-global-shared-view ctx.ptrs)
+              (compiler-opt-global-shared-view ctx.body))))]
+      [(opt-global-obj-mask-may-write? globals.obj-index globals.obj-mask name)
+        (str_cat.str-cat
+          "iag2:obj-write:"
+          (opt-licm-refuse-blame-text
+            (opt-licm-refuse-blame-blocks
+              (opt-licm-refuse-blame-mode-obj)
+              name
+              (compiler-opt-global-shared-view ctx.direct-call-clean)
+              (compiler-opt-global-shared-view ctx.cells)
+              (compiler-opt-global-shared-view ctx.ptrs)
+              (compiler-opt-global-shared-view ctx.body))))]
+      [(= ctx.side-exit-kind 1) "iag2:side-exit-return"]
+      [globals.frozen-hoist? "iag2:frozen-gate"]
+      [(= ctx.header-count 0) "iag2:no-refs"]
+      [else
+        (str_cat.str-cat
+          (str_cat.str-cat
+            (str_cat.str-cat
+              "iag2:live-in-budget:"
+              (string.int->string ctx.live-in))
+            "+")
+          (string.int->string ctx.header-count))])))
+
+;; Does the program carry IAG-2's storage table at all? A program that does not
+;; seeds every loop at "may write any storage", so no per-global answer exists
+;; to report and the whole class collapses onto one reason.
+(define (opt-licm-refuse-obj-table? [ctx : OptLicmRefuseCtx]) : bool
+  (let
+    [cells : OptGlobalCellSummary ctx.cells]
+    [obj : OptGlobalObjModRef cells.obj-mod-ref]
+    obj.built?))
+
+;; Does the Gep/Load arm's `Global` operand disjunct HOLD for `name`? The two
+;; halves are the loop-wide answer opt-licm-value-invariant? reads and IAG-2's
+;; head-of-chain admission; P20's frozen half is folded in through the same
+;; facts bundle.
+(define (opt-licm-refuse-global-invariant?
+  [ctx : OptLicmRefuseCtx]
+  [name : i64]) : bool
+  (let
+    [globals : OptLicmGlobalFacts ctx.globals]
+    (or
+      globals.clean?
+      (opt-licm-global-header-value?
+        (compiler-opt-global-shared-view globals)
+        (ir.CompilerIrValue.Global name))
+      (opt-licm-frozen-global-value? globals (ir.CompilerIrValue.Global name)))))
+
+(define (opt-licm-refuse-global-reason [ctx : OptLicmRefuseCtx] [name : i64]) : String
+  (str_cat.str-cat
+    (str_cat.str-cat
+      (opt-licm-refuse-clean-reason (compiler-opt-global-shared-view ctx))
+      ";")
+    (opt-licm-refuse-iag2-reason (compiler-opt-global-shared-view ctx) name)))
+
+;; The reason a LOAD or address whose own operands are already available
+;; outside the loop stayed in it: the memory gate opt-licm-memory-safe? and the
+;; address-formation interlock read, spelled through the clause that refused.
+(define (opt-licm-refuse-memory-reason [ctx : OptLicmRefuseCtx]) : String
+  (let
+    [legacy : OptLicmStoreSummary ctx.raw-legacy-summary]
+    [store : OptLicmStoreSummary ctx.store-summary]
+    (cond
+      [legacy.call-or-unknown?
+        (str_cat.str-cat
+          "header-load-safe:call:"
+          (opt-licm-refuse-blame-text
+            (opt-licm-refuse-blame-blocks
+              (opt-licm-refuse-blame-mode-header)
+              0
+              (compiler-opt-global-shared-view ctx.direct-call-clean)
+              (compiler-opt-global-shared-view ctx.cells)
+              (compiler-opt-global-shared-view ctx.ptrs)
+              (compiler-opt-global-shared-view ctx.body))))]
+      [legacy.header-or-unknown-store?
+        (str_cat.str-cat
+          "header-load-safe:store:"
+          (opt-licm-refuse-blame-text
+            (opt-licm-refuse-blame-blocks
+              (opt-licm-refuse-blame-mode-header-store)
+              0
+              (compiler-opt-global-shared-view ctx.direct-call-clean)
+              (compiler-opt-global-shared-view ctx.cells)
+              (compiler-opt-global-shared-view ctx.ptrs)
+              (compiler-opt-global-shared-view ctx.body))))]
+      [(= ctx.side-exit-kind 1) "side-exit-return"]
+      [(and ctx.any-call? (opt-licm-store-summary-call-boundary? store))
+        (str_cat.str-cat
+          "call-boundary:"
+          (opt-licm-refuse-blame-text
+            (opt-licm-refuse-blame-blocks
+              (opt-licm-refuse-blame-mode-header)
+              0
+              (compiler-opt-global-shared-view ctx.direct-call-clean)
+              (compiler-opt-global-shared-view ctx.cells)
+              (compiler-opt-global-shared-view ctx.ptrs)
+              (compiler-opt-global-shared-view ctx.body))))]
+      ;; Nothing in the body writes memory at all, so no call and no store is
+      ;; what kept this candidate: the clause that did is one of the
+      ;; profitability ones (opt-gvn-stable-var?, the hot-consumer gate, the
+      ;; pass mode), which this report deliberately does not speak for.
+      [(opt-licm-store-summary-clean? legacy) "not-call-or-store"]
+      [else "memory-root"])))
+
+;; Is this value available OUTSIDE the loop as the pass sees it after the
+;; filter ran? A var the filter left defined in the body is not, and the
+;; instruction that reads it is reported as blocked behind that definition
+;; rather than re-deriving a reason that belongs to the other line.
+(define (opt-licm-refuse-outside?
+  [ctx : OptLicmRefuseCtx]
+  [value : ir.CompilerIrValue]) : bool
+  (match (compiler-opt-global-shared-view value)
+    [(ir.CompilerIrValue.Var var)
+      (not
+        (opt-used-contains
+          (compiler-opt-global-shared-view ctx.stayed-defs)
+          var))]
+    [_ true]))
+
+(define (opt-licm-refuse-emit!
+  [ctx : OptLicmRefuseCtx]
+  [var : i64]
+  [kind : String]
+  [reason : String]) : unit
+  (io.print-error
+    (str_cat.str-cat
+      (str_cat.str-cat
+        (str_cat.str-cat
+          (str_cat.str-cat
+            (str_cat.str-cat
+              (str_cat.str-cat
+                (str_cat.str-cat
+                  (str_cat.str-cat
+                    "licm-refuse|"
+                    (ir.compiler-ir-symbol-text opt-licm-trace-function))
+                  "|")
+                (ir.compiler-ir-label-text ctx.header))
+              "|%")
+            (string.int->string var))
+          "|")
+        kind)
+      (str_cat.str-cat (str_cat.str-cat "|" reason) "\n"))))
+
+;; Is this Gep the length word or the data word of a descriptor handle? Those
+;; are the two the report names; every other offset off a handle is element
+;; indexing and no candidate of this pass.
+(define (opt-licm-refuse-header-gep-kind
+  [type-segment-bases : i64]
+  [offset : ir.CompilerIrValue]
+  [ty : ast.AstType]) : i64
+  (if (opt-bounds-object-length-slot?
+    type-segment-bases
+    (compiler-opt-global-shared-view offset)
+    (compiler-opt-global-shared-view ty))
+    1
+    (if (opt-licm-data-slot?
+      (compiler-opt-global-shared-view offset)
+      (compiler-opt-global-shared-view ty))
+      2
+      0)))
+
+(define (opt-licm-refuse-load!
+  [ctx : OptLicmRefuseCtx]
+  [dst : i64]
+  [ptr-var : i64]
+  [blocked? : bool]) : unit
+  (match (opt-licm-ptr-lookup
+    (compiler-opt-global-shared-view ctx.ptrs)
+    ptr-var)
+    [(OptLicmPtrKind.GlobalSlot name)
+      (opt-licm-refuse-emit!
+        (compiler-opt-global-shared-view ctx)
+        dst
+        "global-cell"
+        (cond
+          [blocked? "chain-head"]
+          [(opt-licm-refuse-global-invariant?
+              (compiler-opt-global-shared-view ctx)
+              name)
+            (opt-licm-refuse-memory-reason
+              (compiler-opt-global-shared-view ctx))]
+          [else
+            (opt-licm-refuse-global-reason
+              (compiler-opt-global-shared-view ctx)
+              name)]))]
+    [(OptLicmPtrKind.HeaderSlot _)
+      (opt-licm-refuse-emit!
+        (compiler-opt-global-shared-view ctx)
+        dst
+        "descriptor-length"
+        (if blocked?
+          "chain-head"
+          (opt-licm-refuse-memory-reason (compiler-opt-global-shared-view ctx))))]
+    [(OptLicmPtrKind.DataSlot _)
+      (opt-licm-refuse-emit!
+        (compiler-opt-global-shared-view ctx)
+        dst
+        "descriptor-data"
+        (if blocked?
+          "chain-head"
+          (opt-licm-refuse-memory-reason (compiler-opt-global-shared-view ctx))))]
+    [_
+      (if blocked?
+        unit
+        (opt-licm-refuse-emit!
+          (compiler-opt-global-shared-view ctx)
+          dst
+          "load"
+          (opt-licm-refuse-memory-reason (compiler-opt-global-shared-view ctx))))]))
+
+;; One instruction of the kept body. A Gep or a Load whose address class is one
+;; of the four the report names, and whose own operands are outside the loop,
+;; is a refused candidate; everything else produces nothing.
+(define (opt-licm-refuse-gep!
+  [ctx : OptLicmRefuseCtx]
+  [dst : i64]
+  [base : ir.CompilerIrValue]
+  [offset : ir.CompilerIrValue]
+  [ty : ast.AstType]) : unit
+  (match (compiler-opt-global-shared-view base)
+    [(ir.CompilerIrValue.Global name)
+      (match (compiler-opt-global-shared-view offset)
+        [(ir.CompilerIrValue.I64 _)
+          (opt-licm-refuse-emit!
+            (compiler-opt-global-shared-view ctx)
+            dst
+            "global-cell"
+            ;; The operand disjunct first: when `@g` IS invariant here (the
+            ;; loop-wide answer, or IAG-2's head-of-chain admission) the clause
+            ;; that kept this Gep is a memory one, and blaming the global would
+            ;; name a conjunct that held.
+            (if (opt-licm-refuse-global-invariant?
+              (compiler-opt-global-shared-view ctx)
+              name)
+              (opt-licm-refuse-memory-reason
+                (compiler-opt-global-shared-view ctx))
+              (opt-licm-refuse-global-reason
+                (compiler-opt-global-shared-view ctx)
+                name)))]
+        [_ unit])]
+    [(ir.CompilerIrValue.Var base-var)
+      (let
+        [kind : i64
+          (if (opt-licm-array-header-var?
+            ctx.type-segment-bases
+            (compiler-opt-global-shared-view ctx.types)
+            base-var)
+            (opt-licm-refuse-header-gep-kind
+              ctx.type-segment-bases
+              (compiler-opt-global-shared-view offset)
+              (compiler-opt-global-shared-view ty))
+            0)]
+        [reason : String
+          (if (= kind 0)
+            ""
+            (if (opt-licm-refuse-outside?
+              (compiler-opt-global-shared-view ctx)
+              (compiler-opt-global-shared-view base))
+              (opt-licm-refuse-memory-reason
+                (compiler-opt-global-shared-view ctx))
+              "chain-head"))]
+        (cond
+          [(= kind 1)
+            (opt-licm-refuse-emit!
+              (compiler-opt-global-shared-view ctx)
+              dst
+              "descriptor-length"
+              reason)]
+          [(= kind 2)
+            (opt-licm-refuse-emit!
+              (compiler-opt-global-shared-view ctx)
+              dst
+              "descriptor-data"
+              reason)]
+          [else unit]))]
+    [_ unit]))
+
+(define (opt-licm-refuse-instr!
+  [ctx : OptLicmRefuseCtx]
+  [instr : ir.CompilerIrInstr]) : unit
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Gep dst base offset ty)
+      (opt-licm-refuse-gep!
+        (compiler-opt-global-shared-view ctx)
+        dst
+        (compiler-opt-global-shared-view base)
+        (compiler-opt-global-shared-view offset)
+        (compiler-opt-global-shared-view ty))]
+    [(ir.CompilerIrInstr.Load dst src _)
+      (match (compiler-opt-global-shared-view src)
+        [(ir.CompilerIrValue.Var ptr-var)
+          (opt-licm-refuse-load!
+            (compiler-opt-global-shared-view ctx)
+            dst
+            ptr-var
+            (not
+              (opt-licm-refuse-outside?
+                (compiler-opt-global-shared-view ctx)
+                (compiler-opt-global-shared-view src))))]
+        [_ unit])]
+    [_ unit]))
+
+(define (opt-licm-refuse-seq!
+  [ctx : OptLicmRefuseCtx]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : unit
+  (if (>=
+    index
+    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
+    unit
+    (begin
+      (opt-licm-refuse-instr!
+        (compiler-opt-global-shared-view ctx)
+        (ir.compiler-ir-instr-seq-ref
+          (compiler-opt-global-shared-view instrs)
+          index))
+      (opt-licm-refuse-seq!
+        (compiler-opt-global-shared-view ctx)
+        (compiler-opt-global-shared-view instrs)
+        (+ index 1)))))
+
+(define (opt-licm-refuse-blocks!
+  [ctx : OptLicmRefuseCtx]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match (compiler-opt-global-shared-view block)
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (begin
+            (opt-licm-refuse-seq!
+              (compiler-opt-global-shared-view ctx)
+              (compiler-opt-global-shared-view instrs)
+              0)
+            (opt-licm-refuse-blocks!
+              (compiler-opt-global-shared-view ctx)
+              (compiler-opt-box-shared-view rest)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-licm-refuse-blocks!
+        (compiler-opt-global-shared-view ctx)
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; The loop's entry point into the report, called once per loop from
+;; opt-licm-apply-loop after the filter and the promotion have rewritten the
+;; body. The flag test is HERE, above everything else: the context struct, the
+;; kept-def set it needs and every string the walk builds are constructed
+;; inside the guard, so an ordinary compile pays one boolean test per loop and
+;; allocates nothing.
+(define (opt-licm-refuse-trace!
+  [type-segment-bases : i64]
+  [types : OptSsaVarTypes]
+  [ptrs : OptLicmPtrEnv]
+  [globals : OptLicmGlobalFacts]
+  [store-summary : OptLicmStoreSummary]
+  [legacy-store-summary : OptLicmStoreSummary]
+  [raw-legacy-summary : OptLicmStoreSummary]
+  [direct-call-clean : opt_i64_i64_map.Map]
+  [cells : OptGlobalCellSummary]
+  [global-write? : bool]
+  [mem-clean-call? : bool]
+  [any-call? : bool]
+  [side-exit-kind : i64]
+  [live-in : i64]
+  [header-count : i64]
+  [header : i64]
+  [map-capacity : i64]
+  [body : ir.CompilerIrBlockList]) : unit
+  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+    (opt-licm-refuse-blocks!
+      (OptLicmRefuseCtx
+        type-segment-bases
+        types
+        ptrs
+        globals
+        store-summary
+        legacy-store-summary
+        raw-legacy-summary
+        direct-call-clean
+        cells
+        (compiler-opt-global-shared-view body)
+        (opt-licm-collect-defs-blocks
+          (compiler-opt-global-shared-view body)
+          (opt_i64_i64_map.with-capacity map-capacity))
+        global-write?
+        mem-clean-call?
+        any-call?
+        side-exit-kind
+        live-in
+        header-count
+        header)
+      (compiler-opt-global-shared-view body))
+    unit))
+
 ;; Preheader instruction list: the hoisted instructions followed by the
 ;; promotion's cell loads. No promotion means the hoisted list is handed back
 ;; unchanged rather than copied, keeping the no-promotion path allocation- and
@@ -31904,7 +32715,7 @@
               1)
             0)
           descriptor-header-hoist?
-          globals
+          (compiler-opt-global-shared-view globals)
           hot-uses
           (opt_i64_i64_map.with-capacity map-capacity))
           [(OptLicmBlocksResult.Result filtered-body hoisted _ changed)
@@ -31917,7 +32728,7 @@
               [promotion : OptLicmGlobalPromotion
                 (if (or globals-promote-clean? globals-promote-filtered?)
                   (opt-licm-global-promote
-                    global-cells
+                    (compiler-opt-global-shared-view global-cells)
                     frame-cell
                     (if globals-promote-clean?
                       0
@@ -31929,6 +32740,30 @@
                     false))]
               [promoted-body : ir.CompilerIrBlockList promotion.blocks]
               [preheader-loads : ir.CompilerIrInstrSeq promotion.loads]
+              ;; ALIAS-2: report the candidates this loop KEPT, and the clause
+              ;; that kept each one. Reads the body after the filter and the
+              ;; promotion, so a line is a refusal and never a moved value.
+              [_refuse-trace : unit
+                (opt-licm-refuse-trace!
+                  type-segment-bases
+                  (compiler-opt-global-shared-view types)
+                  (compiler-opt-global-shared-view ptrs)
+                  (compiler-opt-global-shared-view globals)
+                  (compiler-opt-global-shared-view store-summary)
+                  (compiler-opt-global-shared-view legacy-store-summary)
+                  (compiler-opt-global-shared-view raw-legacy-summary)
+                  (compiler-opt-global-shared-view direct-call-clean)
+                  (compiler-opt-global-shared-view global-cells)
+                  store-state.global-write?
+                  store-state.mem-clean-call?
+                  any-call?
+                  side-exit-kind
+                  loop-live-in
+                  header-count
+                  (opt-natural-loop-header
+                    (compiler-opt-global-shared-view loop))
+                  map-capacity
+                  (compiler-opt-global-shared-view promoted-body))]
               (if (or changed promotion.changed?)
                 ;; M-G (B1): fold duplicate hoisted loads/geps onto their first
                 ;; occurrence (see opt-licm-dedup-env). An empty env means no
@@ -32179,6 +33014,10 @@
       (match (compiler-opt-global-shared-view func)
         [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
           (let
+            ;; ALIAS-2: the name every `licm-refuse|` line is attributed to.
+            ;; Recorded through the trace guard, so an ordinary compile pays
+            ;; one boolean test per function.
+            [_refuse-name : unit (opt-licm-trace-function! name)]
             [loops : OptNaturalLoopList
               (opt-cfg-natural-loops-with-context
                 (compiler-opt-global-shared-view blocks)
@@ -142684,9 +143523,63 @@
   (No)
   (Some opt_i64_i64_map.Map i64))
 
+(define (opt-global-mod-ref-store-count
+  [globals : ir.CompilerIrGlobalSeq]
+  [stores : opt_i64_i64_map.Map]
+  [at : i64]
+  [count : i64]) : i64
+  (if (>= at globals.len)
+    count
+    (match (ir.compiler-ir-global-seq-ref
+      (compiler-opt-global-shared-view globals)
+      at)
+      [(ir.CompilerIrGlobal.Global name _ _)
+        (opt-global-mod-ref-store-count
+          globals
+          (compiler-opt-global-shared-view stores)
+          (+ at 1)
+          (if (opt_i64_i64_map.contains?
+            (& stores)
+            (ir.compiler-ir-symbol-id name))
+            (+ count 1)
+            count))])))
+
+;; ALIAS-2. The CELL row's overflow bit, the exact analogue of
+;; opt-global-obj-overflow-bit and sound for the same reason: a row is a set of
+;; cells, a `Store g` contributes g's bit and a query tests it, so two globals
+;; sharing one bit are one element of the lattice -- a `set!` of either is
+;; reported as a `set!` of both. That over-approximates the write set, so no
+;; consumer is told a cell is invariant that is not.
+;;
+;; It replaces DECLINING the table when a program has more than 62 directly
+;; stored globals. That decline seeds every loop at "may write any cell"
+;; (opt-licm-global-cell-writes-seed), which withdraws P18's whole per-global
+;; refinement: the loop-scope cell promotion, the scalar operand arms, IAG-2's
+;; head-of-chain proof (opt-licm-global-storage-writable? asks this row first)
+;; and P20's frozen chain all fall back to the loop-wide answer at once.
+;; benchmarks/ssa_construct `set!`s 83 distinct globals in its setup and loses
+;; every one of those refinements on that count -- including in
+;; `ssa-dominance-frontier`, whose inner loop writes no cell at all.
+;;
+;; The two rows overflow independently and are counted independently: this one
+;; counts the globals some `Store` names, IAG-2's counts the non-scalar ones.
+(define (opt-global-mod-ref-overflow-bit
+  [globals : ir.CompilerIrGlobalSeq]
+  [stores : opt_i64_i64_map.Map]) : i64
+  (if (>
+    (opt-global-mod-ref-store-count
+      (compiler-opt-global-shared-view globals)
+      (compiler-opt-global-shared-view stores)
+      0
+      0)
+    (opt-global-mod-ref-limit))
+    (- (opt-global-mod-ref-limit) 1)
+    (- 0 1)))
+
 (define (opt-global-mod-ref-index-fill
   [globals : ir.CompilerIrGlobalSeq]
   [stores : opt_i64_i64_map.Map]
+  [overflow-bit : i64]
   [out : opt_i64_i64_map.Map]
   [at : i64]
   [next : i64]) : OptGlobalModRefIndex
@@ -142698,23 +143591,37 @@
       [(ir.CompilerIrGlobal.Global name _ _)
         (if (not
           (opt_i64_i64_map.contains? (& stores) (ir.compiler-ir-symbol-id name)))
-          (opt-global-mod-ref-index-fill globals stores out (+ at 1) next)
-          (if (>= next (opt-global-mod-ref-limit))
-            (OptGlobalModRefIndex.No)
-            (let
-              [assigned : opt_i64_i64_map.Map
-                (compiler-opt-global-shared-view out)]
-              (begin
-                (opt_i64_i64_map.insert-ref!
-                  (&mut assigned)
-                  (ir.compiler-ir-symbol-id name)
-                  next)
-                (opt-global-mod-ref-index-fill
-                  globals
-                  stores
-                  assigned
-                  (+ at 1)
-                  (+ next 1))))))])))
+          (opt-global-mod-ref-index-fill
+            globals
+            stores
+            overflow-bit
+            out
+            (+ at 1)
+            next)
+          (let
+            [bit : i64
+              (if (< next (opt-global-mod-ref-limit))
+                next
+                overflow-bit)]
+            (if (< bit 0)
+              (OptGlobalModRefIndex.No)
+              (let
+                [assigned : opt_i64_i64_map.Map
+                  (compiler-opt-global-shared-view out)]
+                (begin
+                  (opt_i64_i64_map.insert-ref!
+                    (&mut assigned)
+                    (ir.compiler-ir-symbol-id name)
+                    bit)
+                  (opt-global-mod-ref-index-fill
+                    globals
+                    stores
+                    overflow-bit
+                    assigned
+                    (+ at 1)
+                    (if (< next (opt-global-mod-ref-limit))
+                      (+ next 1)
+                      next)))))))])))
 
 (define (opt-global-mod-ref-callee-mask
   [current : opt_i64_i64_map.Map]
@@ -142927,8 +143834,9 @@
       (> count (opt-loop-bce-summary-function-limit)))
       (opt-global-mod-ref-none)
       (match (opt-global-mod-ref-index-fill
-        globals
-        stores
+        (compiler-opt-global-shared-view globals)
+        (compiler-opt-global-shared-view stores)
+        (opt-global-mod-ref-overflow-bit globals stores)
         (opt_i64_i64_map.with-capacity capacity)
         0
         0)
@@ -145800,8 +146708,69 @@
     [(ast.AstType.Char) true]
     [_ false]))
 
+(define (opt-global-obj-nonscalar-count
+  [globals : ir.CompilerIrGlobalSeq]
+  [at : i64]
+  [count : i64]) : i64
+  (if (>= at globals.len)
+    count
+    (match (ir.compiler-ir-global-seq-ref
+      (compiler-opt-global-shared-view globals)
+      at)
+      [(ir.CompilerIrGlobal.Global _ ty _)
+        (opt-global-obj-nonscalar-count
+          globals
+          (+ at 1)
+          (if (opt-global-obj-scalar-type? (compiler-opt-global-shared-view ty))
+            count
+            (+ count 1)))])))
+
+;; ALIAS-2. The bit every non-scalar global BEYOND the packed row's capacity
+;; shares, or -1 when they all fit and each gets its own.
+;;
+;; WHY SHARING IS SOUND, and why it is the right coarsening. A row is a set of
+;; globals, ordered by inclusion, and every reader asks one of two questions:
+;; a WRITE contributes `opt-global-obj-id-mask` (the global's bit) into the
+;; row, and a QUERY asks `opt-global-obj-mask-may-write?` (does the row contain
+;; the global's bit). Both go through the SAME index, so giving two globals one
+;; bit merges them into a single element of the lattice: a write to either is
+;; recorded as a write to both, and a query for either answers yes exactly when
+;; one of them was written. That is an OVER-approximation of the write set in
+;; both directions -- never an under-approximation -- so no consumer can be
+;; told a word is invariant that is not. It is the same coarsening bit 62
+;; ("any storage") already applies to the whole global set, applied to a
+;; NAMED remainder instead of to everything.
+;;
+;; WHAT IT REPLACES. Overflowing the row used to DECLINE the table outright
+;; (`OptGlobalModRefIndex.No`), which seeds every loop in the program at "may
+;; write any storage": opt-licm-global-header-count then answers 0 without
+;; scanning, the IAG-2 head-of-chain hoist is refused for every loop, and the
+;; descriptor length and data words behind that head stay in with it. That is
+;; a whole-program cliff keyed on a number that has nothing to do with the
+;; loop being compiled -- benchmarks/ssa_construct declares 67 non-scalar
+;; globals and loses the hoist for all of them, while gvn_table declares 30 of
+;; 77 and keeps it. The census this packet took over the 28 benchmarks and the
+;; opt2 self-compile reports that cliff as `iag2:no-table` and it is the top
+;; reason class by Ir at stake.
+;;
+;; PRECISION. Below the limit nothing changes: the count decides, so a program
+;; whose non-scalar globals fit assigns exactly the bits it assigned before and
+;; is byte-identical. Above it the first `limit` globals take bits 0 .. limit-1
+;; as before and every later one shares bit limit-1 with the last of them, so
+;; the loss is confined to the tail of the global list.
+(define (opt-global-obj-overflow-bit [globals : ir.CompilerIrGlobalSeq]) : i64
+  (if (>
+    (opt-global-obj-nonscalar-count
+      (compiler-opt-global-shared-view globals)
+      0
+      0)
+    (opt-global-obj-limit))
+    (- (opt-global-obj-limit) 1)
+    (- 0 1)))
+
 (define (opt-global-obj-index-fill
   [globals : ir.CompilerIrGlobalSeq]
+  [overflow-bit : i64]
   [out : opt_i64_i64_map.Map]
   [at : i64]
   [next : i64]) : OptGlobalModRefIndex
@@ -145812,18 +146781,30 @@
       at)
       [(ir.CompilerIrGlobal.Global name ty _)
         (if (opt-global-obj-scalar-type? (compiler-opt-global-shared-view ty))
-          (opt-global-obj-index-fill globals out (+ at 1) next)
-          (if (>= next (opt-global-obj-limit))
-            (OptGlobalModRefIndex.No)
-            (let
-              [assigned : opt_i64_i64_map.Map
-                (compiler-opt-global-shared-view out)]
-              (begin
-                (opt_i64_i64_map.insert-ref!
-                  (&mut assigned)
-                  (ir.compiler-ir-symbol-id name)
-                  next)
-                (opt-global-obj-index-fill globals assigned (+ at 1) (+ next 1))))))])))
+          (opt-global-obj-index-fill globals overflow-bit out (+ at 1) next)
+          (let
+            [bit : i64
+              (if (< next (opt-global-obj-limit))
+                next
+                overflow-bit)]
+            (if (< bit 0)
+              (OptGlobalModRefIndex.No)
+              (let
+                [assigned : opt_i64_i64_map.Map
+                  (compiler-opt-global-shared-view out)]
+                (begin
+                  (opt_i64_i64_map.insert-ref!
+                    (&mut assigned)
+                    (ir.compiler-ir-symbol-id name)
+                    bit)
+                  (opt-global-obj-index-fill
+                    globals
+                    overflow-bit
+                    assigned
+                    (+ at 1)
+                    (if (< next (opt-global-obj-limit))
+                      (+ next 1)
+                      next)))))))])))
 
 ;; Build the table, or decline. The preconditions are the ones the header
 ;; states: no global cell ADDRESS exists in the program (`GlobalAddr`, the one
@@ -145850,6 +146831,7 @@
       (opt-global-obj-mod-ref-none)
       (match (opt-global-obj-index-fill
         (compiler-opt-global-shared-view globals)
+        (opt-global-obj-overflow-bit (compiler-opt-global-shared-view globals))
         (opt_i64_i64_map.with-capacity capacity)
         0
         0)

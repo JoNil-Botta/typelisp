@@ -78871,15 +78871,33 @@
           1)
         (opt-mr-wide-stores count next (+ at 1))))))
 
-(define (opt-mr-wide-index-built? [count : i64]) : bool
-  (match (compiler_optimize.opt-global-mod-ref-index-fill
+;; ALIAS-2. The index the real builder computes for a program of `count`
+;; stored globals, overflow bit and all.
+(define (opt-mr-wide-index-fill [count : i64]) : compiler_optimize.OptGlobalModRefIndex
+  (compiler_optimize.opt-global-mod-ref-index-fill
     (opt-mr-wide-globals count)
     (opt-mr-wide-stores count (opt_i64_i64_map.with-capacity 128) 0)
+    (compiler_optimize.opt-global-mod-ref-overflow-bit
+      (opt-mr-wide-globals count)
+      (opt-mr-wide-stores count (opt_i64_i64_map.with-capacity 128) 0))
     (opt_i64_i64_map.with-capacity 128)
     0
-    0)
+    0))
+
+(define (opt-mr-wide-index-built? [count : i64]) : bool
+  (match (opt-mr-wide-index-fill count)
     [(compiler_optimize.OptGlobalModRefIndex.No) false]
     [(compiler_optimize.OptGlobalModRefIndex.Some _ _) true]))
+
+;; The single-bit mask `mr_wide_<at>` carries in that program, or 0 when the
+;; index does not name it.
+(define (opt-mr-wide-bit [count : i64] [at : i64]) : i64
+  (match (opt-mr-wide-index-fill count)
+    [(compiler_optimize.OptGlobalModRefIndex.No) 0]
+    [(compiler_optimize.OptGlobalModRefIndex.Some index _)
+      (compiler_optimize.opt-global-mod-ref-cell-bit
+        index
+        (opt-test-symbol (str_cat.str-cat "mr_wide_" (string.int->string at))))]))
 
 (define (compiler-optimize-licm-global-mod-ref-self-test) : i64
   (let
@@ -79001,15 +79019,43 @@
               (compiler_optimize.compiler-opt-global-shared-view addr-mod-ref)
               symbols.write-a)))
         13]
-      ;; the packed row's capacity: one bit per stored global, and no table
-      ;; past it
+      ;; the packed row's capacity: one bit per stored global up to it...
       [(not
           (opt-mr-wide-index-built?
             (compiler_optimize.opt-global-mod-ref-limit)))
         14]
-      [(opt-mr-wide-index-built?
-          (+ (compiler_optimize.opt-global-mod-ref-limit) 1))
+      [(=
+          (opt-mr-wide-bit
+            (compiler_optimize.opt-global-mod-ref-limit)
+            (- (compiler_optimize.opt-global-mod-ref-limit) 2))
+          (opt-mr-wide-bit
+            (compiler_optimize.opt-global-mod-ref-limit)
+            (- (compiler_optimize.opt-global-mod-ref-limit) 1)))
         15]
+      ;; ALIAS-2: ...and PAST it the table still exists, with the globals
+      ;; beyond the capacity sharing the last bit. Declining outright is what
+      ;; withdrew P18's whole per-global refinement from every loop of a
+      ;; program with more than 62 stored globals.
+      [(not
+          (opt-mr-wide-index-built?
+            (+ (compiler_optimize.opt-global-mod-ref-limit) 1)))
+        16]
+      [(not
+          (=
+            (opt-mr-wide-bit
+              (+ (compiler_optimize.opt-global-mod-ref-limit) 1)
+              (- (compiler_optimize.opt-global-mod-ref-limit) 1))
+            (opt-mr-wide-bit
+              (+ (compiler_optimize.opt-global-mod-ref-limit) 1)
+              (compiler_optimize.opt-global-mod-ref-limit))))
+        17]
+      ;; a global with its own bit is unaffected by the shared tail
+      [(=
+          (opt-mr-wide-bit (+ (compiler_optimize.opt-global-mod-ref-limit) 1) 0)
+          (opt-mr-wide-bit
+            (+ (compiler_optimize.opt-global-mod-ref-limit) 1)
+            (compiler_optimize.opt-global-mod-ref-limit)))
+        18]
       ;; --- the decision the table moves ---
       ;; a callee that writes mr_a keeps mr_b's cell promotable and refuses
       ;; mr_a's
@@ -80939,6 +80985,248 @@
               (compiler_ir_types.compiler-ir-global-shared-view without))
             2))
         11]
+      [else 42])))
+
+;; --- ALIAS-2: the packed storage row's OVERFLOW --------------------------------
+;;
+;; IAG-2's row is one i64 bit set, so it can name at most 62 globals. Beyond
+;; that the builder used to DECLINE the table outright, which seeds every loop
+;; in the program at "may write any storage": opt-licm-global-header-count then
+;; answers 0 without scanning, no loop anywhere takes a descriptor handle out,
+;; and the length and data words behind that handle stay in with it. The number
+;; that decides has nothing to do with the loop being compiled, which is what
+;; made this a whole-program cliff -- benchmarks/ssa_construct declares 67
+;; non-scalar globals and loses the hoist in every one of its loops.
+;;
+;; The fix gives the globals past the row's capacity ONE SHARED bit
+;; (opt-global-obj-overflow-bit). Writes contribute the bit and queries test the
+;; same bit, so sharing merges those globals into a single element of the
+;; lattice: a write to any of them is recorded as a write to all of them. That
+;; over-approximates the write set and can only refuse a hoist that the exact
+;; row would have admitted, never admit one it would have refused.
+;;
+;; These fixtures pad the three named globals with plain `DynArray` cells to
+;; land either side of the limit.
+(define (opt-og-pad-name [index : i64]) : i64
+  (opt-test-symbol (str_cat.str-cat "og_pad_" (string.int->string index))))
+
+(define (opt-og-pad-globals!
+  [builder : (&mut builder compiler_ir_types.CompilerIrGlobalBuilder)]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (opt-test-global-builder-push!
+        builder
+        (opt-og-pad-name index)
+        (compiler_ast_types.AstType.DynArray 0)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (opt-og-pad-globals! builder (+ index 1) count))))
+
+(define (opt-og-padded-globals [symbols : OptOgTestSymbols] [pad : i64]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity (+ pad 3))]
+    (begin
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.a
+        (compiler_ast_types.AstType.DynArray 0)
+        (compiler_ir_types.CompilerIrValue.I64 1))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.b
+        (compiler_ast_types.AstType.DynArray 0)
+        (compiler_ir_types.CompilerIrValue.I64 2))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.c
+        (compiler_ast_types.AstType.DynArray 0)
+        (compiler_ir_types.CompilerIrValue.I64 3))
+      (opt-og-pad-globals! (&mut builder) 0 pad)
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+
+(define (opt-og-build-padded
+  [symbols : OptOgTestSymbols]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [pad : i64]) : compiler_optimize.OptGlobalObjModRef
+  (compiler_optimize.opt-global-obj-build
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-og-padded-globals symbols pad)
+    (compiler_ir_types.compiler-ir-extern-seq-empty)
+    functions
+    (opt_i64_i64_map.with-capacity 1)
+    128))
+
+(define (opt-og-cells-padded
+  [symbols : OptOgTestSymbols]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [pad : i64]) : compiler_optimize.OptGlobalCellSummary
+  (compiler_optimize.opt-global-obj-attach
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-og-padded-globals
+      (compiler_optimize.compiler-opt-global-shared-view symbols)
+      pad)
+    (compiler_ir_types.compiler-ir-extern-seq-empty)
+    (compiler_optimize.compiler-opt-global-shared-view functions)
+    128
+    (compiler_optimize.opt-global-cell-summary-build
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (opt-og-padded-globals symbols pad)
+      functions)))
+
+;; One more caller, handing `og_mut_writer` a padded global rather than one of
+;; the three named ones, so the shared tail has a writer of its own.
+(define (opt-og-pad-writer-functions [symbols : OptOgTestSymbols] [index : i64]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-og-caller
+      (opt-test-symbol "og_call_pad")
+      41
+      (opt-test-symbol "og_pad_writer")
+      (opt-og-pad-name index))
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-og-param-writer (opt-test-symbol "og_pad_writer") false)
+      (opt-og-base-functions symbols))))
+
+(define (compiler-optimize-global-obj-overflow-self-test) : i64
+  (let
+    [symbols : OptOgTestSymbols (opt-og-test-symbols)]
+    ;; 3 named + 59 padding = 62 non-scalar globals, exactly the row's capacity
+    [fits : compiler_optimize.OptGlobalObjModRef
+      (opt-og-build-padded
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        (opt-og-base-functions
+          (compiler_optimize.compiler-opt-global-shared-view symbols))
+        59)]
+    ;; ...and 3 + 60 = 63, one past it: the case that used to decline
+    [over : compiler_optimize.OptGlobalObjModRef
+      (opt-og-build-padded
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        (opt-og-base-functions
+          (compiler_optimize.compiler-opt-global-shared-view symbols))
+        60)]
+    ;; the same over-capacity program with a writer of one SHARED-tail global.
+    ;; `og_pad_58` is the 62nd non-scalar global and takes the last bit;
+    ;; `og_pad_59` is the 63rd and shares it.
+    [tail : compiler_optimize.OptGlobalObjModRef
+      (opt-og-build-padded
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        (opt-og-pad-writer-functions
+          (compiler_optimize.compiler-opt-global-shared-view symbols)
+          58)
+        60)]
+    [pad-writer : i64 (opt-test-symbol "og_call_pad")]
+    ;; and the hoist itself, in an over-capacity program
+    [hoisted : compiler_ir_types.CompilerIrBlockList
+      (opt-og-licm-late
+        (opt-og-loop-blocks symbols.plain symbols.a)
+        (opt_i64_i64_map.with-capacity 1)
+        (opt-og-cells-padded
+          (compiler_optimize.compiler-opt-global-shared-view symbols)
+          (opt-og-base-functions
+            (compiler_optimize.compiler-opt-global-shared-view symbols))
+          60))]
+    ;; the negatives the packet's soundness argument keeps: a callee that
+    ;; writes that global's storage through a `(&mut ...)` parameter...
+    [written : compiler_ir_types.CompilerIrBlockList
+      (opt-og-licm-late
+        (opt-og-loop-blocks symbols.call-mut symbols.a)
+        (opt_i64_i64_map.with-capacity 1)
+        (opt-og-cells-padded
+          (compiler_optimize.compiler-opt-global-shared-view symbols)
+          (opt-og-base-functions
+            (compiler_optimize.compiler-opt-global-shared-view symbols))
+          60))]
+    ;; ...and an indirect call, which no per-global row can answer for
+    [indirect : compiler_ir_types.CompilerIrBlockList
+      (opt-og-licm-late
+        (opt-og-loop-blocks symbols.indirect symbols.a)
+        (opt_i64_i64_map.with-capacity 1)
+        (opt-og-cells-padded
+          (compiler_optimize.compiler-opt-global-shared-view symbols)
+          (opt-og-base-functions
+            (compiler_optimize.compiler-opt-global-shared-view symbols))
+          60))]
+    (cond
+      ;; at capacity the table was always built
+      [(not fits.built?) 1]
+      ;; one past it, it is built now
+      [(not over.built?) 2]
+      ;; and the individually-bitted globals keep their exact answers
+      [(opt-og-writes?
+          (compiler_optimize.compiler-opt-global-shared-view over)
+          symbols.plain
+          symbols.a)
+        3]
+      [(not
+          (opt-og-writes?
+            (compiler_optimize.compiler-opt-global-shared-view over)
+            symbols.call-mut
+            symbols.a))
+        4]
+      [(opt-og-writes?
+          (compiler_optimize.compiler-opt-global-shared-view over)
+          symbols.call-mut
+          symbols.b)
+        5]
+      ;; the shared tail is CONFLATED, and in the conservative direction: the
+      ;; writer of og_pad_58 is reported as a writer of og_pad_59 as well...
+      [(not
+          (opt-og-writes?
+            (compiler_optimize.compiler-opt-global-shared-view tail)
+            pad-writer
+            (opt-og-pad-name 58)))
+        6]
+      [(not
+          (opt-og-writes?
+            (compiler_optimize.compiler-opt-global-shared-view tail)
+            pad-writer
+            (opt-og-pad-name 59)))
+        7]
+      ;; ...while a global with its own bit is unaffected by it
+      [(opt-og-writes?
+          (compiler_optimize.compiler-opt-global-shared-view tail)
+          pad-writer
+          symbols.a)
+        8]
+      [(opt-og-writes?
+          (compiler_optimize.compiler-opt-global-shared-view tail)
+          pad-writer
+          (opt-og-pad-name 0))
+        9]
+      ;; the handle leaves the loop, which is what the whole packet is for
+      [(not
+          (=
+            (opt-fz-preheader-loads
+              (compiler_ir_types.compiler-ir-global-shared-view hoisted))
+            1))
+        10]
+      [(not
+          (=
+            (opt-fz-body-loads
+              (compiler_ir_types.compiler-ir-global-shared-view hoisted))
+            1))
+        11]
+      ;; and the two refusals still refuse
+      [(not
+          (=
+            (opt-fz-preheader-loads
+              (compiler_ir_types.compiler-ir-global-shared-view written))
+            0))
+        12]
+      [(not
+          (=
+            (opt-fz-body-loads
+              (compiler_ir_types.compiler-ir-global-shared-view written))
+            2))
+        13]
+      [(not
+          (=
+            (opt-fz-preheader-loads
+              (compiler_ir_types.compiler-ir-global-shared-view indirect))
+            0))
+        14]
       [else 42])))
 
 ;; --- ALIAS-1: a scalar element store cannot clobber a global's descriptor ----
@@ -85287,7 +85575,7 @@
   (test.assert-i64-eq
     (compiler-optimize-licm-global-mod-ref-self-test)
     42
-    "the per-global mod-ref table names the cells a callee may write, carries them one call-graph edge, and lets a loop promote every OTHER cell across it; a pointer-writing and an extern callee refuse nothing, an indirect callee and a program-wide cell address refuse everything, an in-loop set! refuses only its own cell, and the packed row declines past its capacity"))
+    "the per-global mod-ref table names the cells a callee may write, carries them one call-graph edge, and lets a loop promote every OTHER cell across it; a pointer-writing and an extern callee refuse nothing, an indirect callee and a program-wide cell address refuse everything, an in-loop set! refuses only its own cell, and the packed row gives every stored global its own bit up to its capacity and one shared bit to the globals past it"))
 
 (test
   licm-frozen-global-box-chain
@@ -85309,6 +85597,13 @@
     (compiler-optimize-licm-global-header-hoist-self-test)
     42
     "the descriptor HANDLE a global's inline cell holds leaves a loop that calls an unknown callee every trip, and the length load behind it stays inside because the descriptor proofs still refuse that callee -- while an element-only callee lets the length load follow it out; a callee that writes that global's storage through a mutable reference parameter refuses the chain, the same callee leaves a different global's chain hoistable, and an indirect call or an absent storage table refuses it"))
+
+(test
+  global-obj-storage-row-overflow
+  (test.assert-i64-eq
+    (compiler-optimize-global-obj-overflow-self-test)
+    42
+    "a program with more non-scalar globals than the packed storage row can name still gets a table: the globals past its capacity share one bit, which reports a write to any of them as a write to all of them and leaves every individually-bitted global's answer exact, and the descriptor handle of such a global leaves a loop that calls an unknown callee -- while a callee that writes that global's storage, and an indirect call, still refuse it"))
 
 (test
   licm-element-store-descriptor-invariance

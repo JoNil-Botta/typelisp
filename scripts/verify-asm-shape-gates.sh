@@ -2578,6 +2578,32 @@ extract_fast_self_loop_with() {
     printf '%s\n' "$_out"
 }
 
+# ALIAS-2: the descriptor chain of a global whose program overflows the packed
+# per-global rows. `aro-scan` reads two global cells and calls a store-free leaf
+# every trip; before the overflow bit both rows were declined for the whole
+# program and both cells were re-read inside the loop.
+check_alias_row_overflow() {
+    _asm=$(compile_gate alias_row_overflow tests/integration/alias_row_overflow.tl)
+    _sym=_tl_alias_row_overflow
+    _body=$(function_body "$_asm" "${_sym}_aro_scan")
+    # One read per cell in the whole function...
+    assert_fixed_count_eq "$_body" "${_sym}_aro_edge(%rip)" 1 alias-row-overflow
+    assert_fixed_count_eq "$_body" "${_sym}_aro_mark(%rip)" 1 alias-row-overflow
+    # ...and it is in the PREHEADER: nothing rip-relative for either cell
+    # survives from the loop's first block onward.
+    _loop="$WORKDIR/alias_row_overflow.loop"
+    awk '
+        inblk { print }
+        /^\.L[A-Za-z0-9_.]*while_body\.1[A-Za-z0-9_.]*:$/ { inblk = 1 }
+    ' "$_body" > "$_loop"
+    [ -s "$_loop" ] || fail "alias-row-overflow found no loop body"
+    assert_not_contains "$_loop" "${_sym}_aro_edge(%rip)" alias-row-overflow
+    assert_not_contains "$_loop" "${_sym}_aro_mark(%rip)" alias-row-overflow
+    # The call the chain has to survive is still inside the loop: this is a
+    # claim about invariance across a call, not about a call-free loop.
+    assert_contains "$_loop" "call ${_sym}_aro_marked_question" alias-row-overflow
+}
+
 check_alias_global_shift() {
     _asm=$(compile_gate alias_global_shift tests/integration/alias_global_shift.tl)
     _body=$(function_body "$_asm" main)
@@ -3051,6 +3077,7 @@ check_gep_load_cmp_spilled_stage
 check_range_merge_unsigned
 check_dce_late_flag_loop
 check_alias_global_shift
+check_alias_row_overflow
 check_vt_offset_copy
 check_vt_derived_stride
 

@@ -32723,6 +32723,267 @@ g:
         [(compiler_backend.ResultCompilerBackend.Err _) false])]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-float-to-u64-cast-with-homes
+  [from-ty : compiler_ast_types.AstType]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [planned-gp : String]) : compiler_backend.ResultCompilerBackend
+  (compiler_backend.compiler-backend-emit-cast
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    "test_cast"
+    (compiler_ir_types.compiler-ir-label "entry")
+    assignments
+    1
+    (compiler_ir_types.CompilerIrValue.Var 0)
+    from-ty
+    (compiler_ast_types.AstType.U64)
+    (compiler_backend.compiler-backend-program-index-build
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler_ir_types.compiler-ir-function-seq-empty)
+      (compiler_ir_types.compiler-ir-extern-seq-empty))
+    "%xmm4"
+    planned-gp
+    ""
+    (compiler_backend.compiler-backend-state-new
+      (ci.intern-compat-state-capture-active))))
+
+(define (compiler-backend-direct-float-to-u64-cast-asm
+  [from-ty : compiler_ast_types.AstType]) : compiler_backend.ResultCompilerBackend
+  (compiler-backend-float-to-u64-cast-with-homes
+    from-ty
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        0
+        (compiler_regalloc.CompilerRegLocation.Register
+          (compiler_abi.compiler-abi-xmm-register-id 2)))
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          1
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r12))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
+    ""))
+
+(define (compiler-backend-spill-dst-float-to-u64-cast-asm
+  [from-ty : compiler_ast_types.AstType]) : compiler_backend.ResultCompilerBackend
+  (compiler-backend-float-to-u64-cast-with-homes
+    from-ty
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        0
+        (compiler_regalloc.CompilerRegLocation.Register
+          (compiler_abi.compiler-abi-xmm-register-id 3)))
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          1
+          (compiler_regalloc.CompilerRegLocation.Spill -16))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
+    "%r8"))
+
+(define (compiler-backend-spill-src-float-to-u64-cast-asm
+  [from-ty : compiler_ast_types.AstType]) : compiler_backend.ResultCompilerBackend
+  (compiler-backend-float-to-u64-cast-with-homes
+    from-ty
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        0
+        (compiler_regalloc.CompilerRegLocation.Spill -8))
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          1
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r12))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))
+    ""))
+
+(define (compiler-backend-float-to-u64-cast-shape-ok?
+  [result : compiler_backend.ResultCompilerBackend]
+  [load : String]
+  [op : String]
+  [convert : String]
+  [store : String]) : bool
+  (match result
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view asm)
+          load)
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view asm)
+          (str_cat.str-cat "    ucomi" (clone op) " .L_tl_f"))
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view asm)
+          (str_cat.str-cat "    sub" op " .L_tl_f"))
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view asm)
+          "    jae .Ltest_cast_cast_float_u64_entry_v1_high\n")
+        (=
+          (compiler_backend.compiler-backend-string-count
+            (owned_view.compiler-owned-shared-view asm)
+            convert)
+          2)
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view asm)
+          "    btsq $63, ")
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view asm)
+          store)
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "%rax"))
+        (not (compiler_backend.compiler-backend-string-contains? asm "%xmm0")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-float-to-u64-cast-homes-ok?) : bool
+  (and
+    (compiler-backend-float-to-u64-cast-shape-ok?
+      (compiler-backend-direct-float-to-u64-cast-asm
+        (compiler_ast_types.AstType.F64))
+      "    movsd %xmm2, %xmm4\n"
+      "sd"
+      "    cvttsd2siq %xmm4, %r12\n"
+      "")
+    (compiler-backend-float-to-u64-cast-shape-ok?
+      (compiler-backend-direct-float-to-u64-cast-asm
+        (compiler_ast_types.AstType.F32))
+      "    movss %xmm2, %xmm4\n"
+      "ss"
+      "    cvttss2siq %xmm4, %r12\n"
+      "")
+    (compiler-backend-float-to-u64-cast-shape-ok?
+      (compiler-backend-spill-dst-float-to-u64-cast-asm
+        (compiler_ast_types.AstType.F64))
+      "    movsd %xmm3, %xmm4\n"
+      "sd"
+      "    cvttsd2siq %xmm4, %r8\n"
+      "    movq %r8, -16(%rbp)\n")
+    (compiler-backend-float-to-u64-cast-shape-ok?
+      (compiler-backend-spill-dst-float-to-u64-cast-asm
+        (compiler_ast_types.AstType.F32))
+      "    movss %xmm3, %xmm4\n"
+      "ss"
+      "    cvttss2siq %xmm4, %r8\n"
+      "    movq %r8, -16(%rbp)\n")
+    (compiler-backend-float-to-u64-cast-shape-ok?
+      (compiler-backend-spill-src-float-to-u64-cast-asm
+        (compiler_ast_types.AstType.F64))
+      "    movsd -8(%rbp), %xmm4\n"
+      "sd"
+      "    cvttsd2siq %xmm4, %r12\n"
+      "")
+    (compiler-backend-float-to-u64-cast-shape-ok?
+      (compiler-backend-spill-src-float-to-u64-cast-asm
+        (compiler_ast_types.AstType.F32))
+      "    movss -8(%rbp), %xmm4\n"
+      "ss"
+      "    cvttss2siq %xmm4, %r12\n"
+      "")))
+
+(define (compiler-backend-float-to-u64-scratch-plan-ok?) : bool
+  (let
+    [direct : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Register
+            (compiler_abi.compiler-abi-xmm-register-id 2)))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            1
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-r12))
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+    [spilled : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Spill -8))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            1
+            (compiler_regalloc.CompilerRegLocation.Spill -16))
+          (compiler_regalloc.compiler-reg-assignment-table-empty)))]
+    (and
+      (compiler_regalloc.compiler-reg-scratch-cast-xmm-needed?
+        (owned_view.compiler-owned-shared-view direct)
+        1
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.F64)
+        (compiler_ast_types.AstType.U64))
+      (=
+        (compiler_regalloc.compiler-reg-scratch-cast-gp-count
+          (owned_view.compiler-owned-shared-view direct)
+          1
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.F64)
+          (compiler_ast_types.AstType.U64))
+        0)
+      (=
+        (compiler_regalloc.compiler-reg-scratch-cast-slot-count
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (owned_view.compiler-owned-shared-view direct)
+          1
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.F64)
+          (compiler_ast_types.AstType.U64))
+        1)
+      (compiler_regalloc.compiler-reg-scratch-cast-xmm-needed?
+        (owned_view.compiler-owned-shared-view spilled)
+        1
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.F32)
+        (compiler_ast_types.AstType.U64))
+      (=
+        (compiler_regalloc.compiler-reg-scratch-cast-gp-count
+          (owned_view.compiler-owned-shared-view spilled)
+          1
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.F32)
+          (compiler_ast_types.AstType.U64))
+        1)
+      (=
+        (compiler_regalloc.compiler-reg-scratch-cast-slot-count
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (owned_view.compiler-owned-shared-view spilled)
+          1
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.F32)
+          (compiler_ast_types.AstType.U64))
+        2))))
+
+(define (compiler-backend-float-to-u64-threshold-collection-ok?) : bool
+  (let
+    [f64 : compiler_backend.CompilerBackendProgramCollections
+      (compiler_backend.compiler-backend-collect-instr-collections
+        (compiler_backend.compiler-backend-program-collections-new)
+        (compiler_ir_types.CompilerIrInstr.Cast
+          1
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.F64)
+          (compiler_ast_types.AstType.U64)))]
+    [both : compiler_backend.CompilerBackendProgramCollections
+      (compiler_backend.compiler-backend-collect-instr-collections
+        f64
+        (compiler_ir_types.CompilerIrInstr.Cast
+          2
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.F32)
+          (compiler_ast_types.AstType.U64)))]
+    [floats : compiler_backend.BackendFloatSeq
+      (compiler_backend.compiler-backend-program-collections-floats both)]
+    (and
+      (= floats.len 2)
+      (match (__tl-project-field (array-ref floats.slots 0) ty)
+        [(compiler_ast_types.AstType.F64) true]
+        [_ false])
+      (=
+        (__tl-project-field (array-ref floats.slots 0) bits)
+        4890909195324358656)
+      (match (__tl-project-field (array-ref floats.slots 1) ty)
+        [(compiler_ast_types.AstType.F32) true]
+        [_ false])
+      (= (__tl-project-field (array-ref floats.slots 1) bits) 1593835520))))
+
 (define (compiler-backend-spill-int-cast-home-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-cast
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -56383,6 +56644,9 @@ b_keep:
         (compiler-backend-spill-u64-to-float-cast-home-ok?)
         (compiler-backend-direct-float-to-int-cast-home-ok?)
         (compiler-backend-spill-float-to-int-cast-home-ok?)
+        (compiler-backend-float-to-u64-cast-homes-ok?)
+        (compiler-backend-float-to-u64-scratch-plan-ok?)
+        (compiler-backend-float-to-u64-threshold-collection-ok?)
         (compiler-backend-spill-int-cast-home-ok?)
         (compiler-backend-implicit-main-ok?))
       (and

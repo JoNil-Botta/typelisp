@@ -4186,6 +4186,13 @@
     bits
     (bit-and bits 0xffffffff)))
 
+(define (compiler-backend-float-to-u64-threshold-bits
+  [ty : compiler_ast_types.AstType]) : u64
+  (match ty
+    ;; IEEE-754 encodings of 2^63 in the source precision.
+    [(compiler_ast_types.AstType.F32) 1593835520]
+    [_ 4890909195324358656]))
+
 (define (compiler-backend-float-key
   [ty : compiler_ast_types.AstType]
   [bits : u64]) : String
@@ -39379,6 +39386,79 @@
       (str_cat.str-cat "    cvttss2siq " src-reg ", " dst-reg "\n")]
     [_ (str_cat.str-cat "    cvttsd2siq " src-reg ", " dst-reg "\n")]))
 
+(define (compiler-backend-float-to-u64-cast-label
+  [current-label : i64]
+  [dst : i64]
+  [suffix : String]) : i64
+  (compiler_ir_types.compiler-ir-label
+    (str_cat.str-cat
+      "cast_float_u64_"
+      (compiler_ir_types.compiler-ir-label-text current-label)
+      "_v"
+      (string.int->string dst)
+      suffix)))
+
+(define (compiler-backend-float-to-u64-cast-asm
+  [function : String]
+  [current-label : i64]
+  [dst : i64]
+  [from-ty : compiler_ast_types.AstType]
+  [src-reg : String]
+  [dst-reg : String]) : String
+  (let
+    [op : String
+      (compiler-backend-u64-to-float-cast-op
+        (compiler-backend-global-shared-view from-ty))]
+    [threshold : String
+      (compiler-backend-float-label
+        (compiler-backend-global-shared-view from-ty)
+        (compiler-backend-float-to-u64-threshold-bits
+          (compiler-backend-global-shared-view from-ty)))]
+    [high-label : i64
+      (compiler-backend-float-to-u64-cast-label current-label dst "_high")]
+    [done-label : i64
+      (compiler-backend-float-to-u64-cast-label current-label dst "_done")]
+    [high-symbol : String
+      (compiler-backend-asm-label
+        (compiler-backend-global-shared-view function)
+        high-label)]
+    [done-symbol : String (compiler-backend-asm-label function done-label)]
+    [convert : String
+      (compiler-backend-float-to-int-cast-reg-asm
+        from-ty
+        (compiler-backend-global-shared-view src-reg)
+        (compiler-backend-global-shared-view dst-reg))]
+    (str_cat.str-cat
+      (str_cat.str-cat
+        "    ucomi"
+        (compiler-backend-global-shared-view op)
+        " "
+        (compiler-backend-global-shared-view threshold)
+        "(%rip), "
+        (compiler-backend-global-shared-view src-reg)
+        "\n    jae "
+        (compiler-backend-global-shared-view high-symbol)
+        "\n")
+      (str_cat.str-cat
+        (compiler-backend-global-shared-view convert)
+        "    jmp "
+        (compiler-backend-global-shared-view done-symbol)
+        "\n"
+        (compiler-backend-global-shared-view high-symbol)
+        ":\n    sub"
+        (compiler-backend-global-shared-view op)
+        " "
+        (compiler-backend-global-shared-view threshold)
+        "(%rip), "
+        (compiler-backend-global-shared-view src-reg)
+        "\n"
+        convert
+        "    btsq $63, "
+        (compiler-backend-global-shared-view dst-reg)
+        "\n"
+        done-symbol
+        ":\n"))))
+
 (define (compiler-backend-emit-float-to-float-cast
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
@@ -39621,6 +39701,8 @@
               (ResultCompilerBackend.Err message)]))))))
 
 (define (compiler-backend-emit-float-to-int-cast
+  [function : String]
+  [current-label : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [src : compiler_ir_types.CompilerIrValue]
@@ -39640,7 +39722,12 @@
         backend-state
         (compiler-backend-global-shared-view assignments)
         (compiler-backend-global-shared-view src))]
+    [unsigned-u64? : bool
+      (match (compiler-backend-global-shared-view to-ty)
+        [(compiler_ast_types.AstType.U64) true]
+        [_ false])]
     (if (and
+      (not unsigned-u64?)
       (not (string.eq dst-home ""))
       (not
         (compiler-backend-string-prefix-at?
@@ -39652,16 +39739,30 @@
         (compiler-backend-float-to-int-cast-reg-asm from-ty src-reg dst-home))
       (let
         [src-tmp : String
-          (if (string.eq src-reg "")
+          (if unsigned-u64?
             (if (> (string.string-length planned-xmm) 0)
               planned-xmm
               (compiler-backend-scavenge-xmm-reg
                 dst
-                (__tl_make-array String 0)
-                0
+                (if (string.eq src-reg "")
+                  (__tl_make-array String 0)
+                  (compiler-backend-one-exclude
+                    (compiler-backend-global-shared-view src-reg)))
+                (if (string.eq src-reg "")
+                  0
+                  1)
                 "%xmm2"
                 backend-state))
-            src-reg)]
+            (if (string.eq src-reg "")
+              (if (> (string.string-length planned-xmm) 0)
+                planned-xmm
+                (compiler-backend-scavenge-xmm-reg
+                  dst
+                  (__tl_make-array String 0)
+                  0
+                  "%xmm2"
+                  backend-state))
+              src-reg))]
         [dst-reg : String
           (if (and
             (not (string.eq dst-home ""))
@@ -39679,7 +39780,7 @@
                 0
                 "%r8"
                 backend-state)))]
-        (match (if (string.eq src-reg "")
+        (match (if (or unsigned-u64? (string.eq src-reg ""))
           (compiler-backend-emit-load-float-value-with-plan
             (compiler-backend-global-shared-view assignments)
             src
@@ -39691,10 +39792,18 @@
             (ResultCompilerBackend.Ok
               (str_cat.str-cat
                 load
-                (compiler-backend-float-to-int-cast-reg-asm
-                  from-ty
-                  src-tmp
-                  (compiler-backend-global-shared-view dst-reg))
+                (if unsigned-u64?
+                  (compiler-backend-float-to-u64-cast-asm
+                    function
+                    current-label
+                    dst
+                    (compiler-backend-global-shared-view from-ty)
+                    (compiler-backend-global-shared-view src-tmp)
+                    (compiler-backend-global-shared-view dst-reg))
+                  (compiler-backend-float-to-int-cast-reg-asm
+                    from-ty
+                    src-tmp
+                    (compiler-backend-global-shared-view dst-reg)))
                 (compiler-backend-emit-store-typed-var-with-plan
                   assignments
                   dst
@@ -39793,6 +39902,8 @@
             backend-state)]
         [(and from-is-float (not to-is-float))
           (compiler-backend-emit-float-to-int-cast
+            function
+            current-label
             (compiler-backend-global-shared-view assignments)
             dst
             (compiler-backend-global-shared-view src)
@@ -83700,8 +83811,20 @@
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections index)
         length)]
-    [(compiler_ir_types.CompilerIrInstr.Cast _ src _ _)
-      (compiler-backend-collect-value-collections collections src)]
+    [(compiler_ir_types.CompilerIrInstr.Cast _ src from-ty to-ty)
+      (let
+        [with-source : CompilerBackendProgramCollections
+          (compiler-backend-collect-value-collections collections src)]
+        (match to-ty
+          [(compiler_ast_types.AstType.U64)
+            (if (compiler-backend-float-type?
+              (compiler-backend-global-shared-view from-ty))
+              (compiler-backend-program-collections-add-float
+                with-source
+                (compiler-backend-global-shared-view from-ty)
+                (compiler-backend-float-to-u64-threshold-bits from-ty))
+              with-source)]
+          [_ with-source]))]
     [(compiler_ir_types.CompilerIrInstr.Bitcast _ src _ _)
       (compiler-backend-collect-value-collections collections src)]
     [(compiler_ir_types.CompilerIrInstr.Splat _ value _ _)

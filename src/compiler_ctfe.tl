@@ -16989,7 +16989,7 @@
         (ast.ast-node-push
           (ast.AstExpr.Literal (ast.AstLiteral.Float "9223372036854775808.0")))
         (ast.AstType.I64))]
-    [f64-out-of-u64-portable-range : i64
+    [f64-u64-high-bit : i64
       (ast.ast-expr-cast
         (ast.ast-node-push
           (ast.AstExpr.Literal (ast.AstLiteral.Float "9223372036854775808.0")))
@@ -17034,10 +17034,7 @@
         f64-out-of-i64
         env
         "comptime: unsupported cast")
-      (compiler-ctfe-eval-error-ok?
-        f64-out-of-u64-portable-range
-        env
-        "comptime: unsupported cast")
+      (compiler-ctfe-eval-i64-ok? f64-u64-high-bit env -9223372036854775808)
       (compiler-ctfe-eval-error-ok?
         div-zero
         env

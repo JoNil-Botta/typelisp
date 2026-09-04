@@ -73,7 +73,9 @@
                     label)
                   "only matching edges change")
                 (test.assert-true
-                  (opt.opt-value-eq actual.value original.value)
+                  (opt.opt-value-eq
+                    actual.value
+                    (ir.compiler-ir-global-shared-view original.value))
                   "values and order preserved")
                 (test.assert-true
                   (opt.opt-value-eq

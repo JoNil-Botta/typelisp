@@ -1331,7 +1331,11 @@
   (cond
     [(= operation process-linux-operation-none) failure]
     [(= failure.primary-operation process-linux-operation-none)
-      (ProcessLinuxFailure operation raw-result process-linux-operation-none 0)]
+      (ProcessLinuxFailure
+        operation
+        raw-result
+        failure.secondary-operation
+        failure.secondary-result)]
     [(= failure.secondary-operation process-linux-operation-none)
       (ProcessLinuxFailure
         failure.primary-operation
@@ -1351,11 +1355,46 @@
     (= operation process-linux-operation-none)
     (not (= failure.primary-operation process-linux-operation-none)))
     failure
-    (ProcessLinuxFailure operation raw-result process-linux-operation-none 0)))
+    (ProcessLinuxFailure
+      operation
+      raw-result
+      failure.secondary-operation
+      failure.secondary-result)))
+
+;: Record cleanup independently even when it is observed before the primary
+;: execution failure. A cleanup-only outcome is promoted while rendering the
+;: public result; a later execution failure retains this slot as secondary.
+(define (linux-failure-add-cleanup
+  [failure : ProcessLinuxFailure]
+  [operation : i64]
+  [raw-result : i64]) : ProcessLinuxFailure
+  (if (or
+    (= operation process-linux-operation-none)
+    (not (= failure.secondary-operation process-linux-operation-none)))
+    failure
+    (ProcessLinuxFailure
+      failure.primary-operation
+      failure.primary-result
+      operation
+      raw-result)))
+
+;: Promote a cleanup-only failure to the primary slot before exposing it.
+(define (linux-failure-normalize [failure : ProcessLinuxFailure]) : ProcessLinuxFailure
+  (if (and
+    (= failure.primary-operation process-linux-operation-none)
+    (not (= failure.secondary-operation process-linux-operation-none)))
+    (ProcessLinuxFailure
+      failure.secondary-operation
+      failure.secondary-result
+      process-linux-operation-none
+      0)
+    failure))
 
 ;: True when a primary Linux execution/lifecycle failure is recorded.
 (define (linux-failure-present? [failure : (& failure ProcessLinuxFailure)]) : bool
-  (not (= failure.primary-operation process-linux-operation-none)))
+  (or
+    (not (= failure.primary-operation process-linux-operation-none))
+    (not (= failure.secondary-operation process-linux-operation-none))))
 
 ;: Stable operation spelling used only when returning a structured error.
 (define (linux-operation-name [operation : i64]) : String
@@ -1412,16 +1451,18 @@
 ;: Convert a typed Linux failure to the existing captured-output result model.
 (define (linux-failure-output [failure : ProcessLinuxFailure]) : ResultProcessRuntimeOutput
   (let
-    [message : String (linux-failure-message (& failure))]
-    (if (linux-failure-is-spawn? (& failure))
+    [normalized : ProcessLinuxFailure (linux-failure-normalize failure)]
+    [message : String (linux-failure-message (& normalized))]
+    (if (linux-failure-is-spawn? (& normalized))
       (stdlib.process_runtime.output-spawn-failed message)
       (stdlib.process_runtime.output-wait-failed message))))
 
 ;: Convert a typed Linux failure to the existing async-start result model.
 (define (linux-failure-child [failure : ProcessLinuxFailure]) : ResultProcessRuntimeChild
   (let
-    [message : String (linux-failure-message (& failure))]
-    (if (linux-failure-is-spawn? (& failure))
+    [normalized : ProcessLinuxFailure (linux-failure-normalize failure)]
+    [message : String (linux-failure-message (& normalized))]
+    (if (linux-failure-is-spawn? (& normalized))
       (stdlib.process_runtime.child-spawn-failed message)
       (stdlib.process_runtime.child-wait-failed message))))
 
@@ -1811,7 +1852,7 @@
                     (if (< restore-result 0)
                       (set!
                         failure
-                        (linux-failure-add
+                        (linux-failure-add-cleanup
                           failure
                           process-linux-operation-stdin
                           restore-result))
@@ -2038,7 +2079,7 @@
 ;: Record a close result as the next failure without retrying the descriptor.
 (define (linux-record-close [failure : ProcessLinuxFailure] [result : i64]) : ProcessLinuxFailure
   (if (< result 0)
-    (linux-failure-add failure process-linux-operation-close result)
+    (linux-failure-add-cleanup failure process-linux-operation-close result)
     failure))
 
 ;: Close every descriptor recorded in a spawn struct exactly once.
@@ -2123,8 +2164,11 @@
           (unsafe
             (syscall 3 fd)))))))
 
-;: Retry a child-side dup2 only on EINTR. Injected EINTR is consumed once so
-;: the native gate exercises progress without child writes to hook counters.
+;: Install one child standard descriptor, retrying only on EINTR. When the
+;: source already has the destination number, clear its pipe2 `FD_CLOEXEC`
+;: flag with `fcntl(F_SETFD)` because `dup2(fd, fd)` would leave the flag set.
+;: Injected EINTR is consumed once so the native gate exercises progress
+;: without child writes to hook counters.
 (unsafe
   (define (linux-child-dup2-retry
     [kind : i64]
@@ -2142,8 +2186,11 @@
           (cfg
             windows
             -38
-            (unsafe
-              (syscall 33 old-fd new-fd))))]
+            (if (= old-fd new-fd)
+              (unsafe
+                (syscall 72 old-fd 2 0))
+              (unsafe
+                (syscall 33 old-fd new-fd)))))]
       (if (= result -4)
         (unsafe
           (linux-child-dup2-retry kind old-fd new-fd false))
@@ -2309,66 +2356,96 @@
                   spawn.exec-w
                   spawn.marker-addr
                   process-linux-child-stage-dup-stdin)
+                (cond
+                  [(= spawn.stdin-r 0) unit]
+                  [(<
+                      (unsafe
+                        (linux-child-close
+                          process-linux-child-syscall-close-stdin-read
+                          spawn.stdin-r))
+                      0)
+                    (stdlib.process_runtime.linux-child-fail
+                      spawn.exec-w
+                      spawn.marker-addr
+                      process-linux-child-stage-close-stdin-read)]
+                  [else unit])))
+            unit)
+          (let
+            ;; When stderr's source is descriptor 1, preserve it in descriptor
+            ;; 2 before installing stdout. This occurs when caller standard
+            ;; descriptors are closed and the memfds reuse their numbers.
+            [stderr-first : bool
+              (and (= spawn.stderr-fd 1) (not (= spawn.stdout-fd 1)))]
+            (begin
+              (if stderr-first
                 (if (<
                   (unsafe
-                    (linux-child-close
-                      process-linux-child-syscall-close-stdin-read
-                      spawn.stdin-r))
+                    (linux-child-dup2-retry
+                      process-linux-child-syscall-dup-stderr
+                      spawn.stderr-fd
+                      2
+                      true))
                   0)
                   (stdlib.process_runtime.linux-child-fail
                     spawn.exec-w
                     spawn.marker-addr
-                    process-linux-child-stage-close-stdin-read)
-                  unit)))
-            unit)
-          (if (<
-            (unsafe
-              (linux-child-dup2-retry
-                process-linux-child-syscall-dup-stdout
-                spawn.stdout-fd
-                1
-                true))
-            0)
-            (stdlib.process_runtime.linux-child-fail
-              spawn.exec-w
-              spawn.marker-addr
-              process-linux-child-stage-dup-stdout)
-            unit)
-          (if (<
-            (unsafe
-              (linux-child-dup2-retry
-                process-linux-child-syscall-dup-stderr
-                spawn.stderr-fd
-                2
-                true))
-            0)
-            (stdlib.process_runtime.linux-child-fail
-              spawn.exec-w
-              spawn.marker-addr
-              process-linux-child-stage-dup-stderr)
-            unit)
-          (if (<
-            (unsafe
-              (linux-child-close
-                process-linux-child-syscall-close-stdout
-                spawn.stdout-fd))
-            0)
-            (stdlib.process_runtime.linux-child-fail
-              spawn.exec-w
-              spawn.marker-addr
-              process-linux-child-stage-close-stdout)
-            unit)
-          (if (<
-            (unsafe
-              (linux-child-close
-                process-linux-child-syscall-close-stderr
-                spawn.stderr-fd))
-            0)
-            (stdlib.process_runtime.linux-child-fail
-              spawn.exec-w
-              spawn.marker-addr
-              process-linux-child-stage-close-stderr)
-            unit)
+                    process-linux-child-stage-dup-stderr)
+                  unit)
+                unit)
+              (if (<
+                (unsafe
+                  (linux-child-dup2-retry
+                    process-linux-child-syscall-dup-stdout
+                    spawn.stdout-fd
+                    1
+                    true))
+                0)
+                (stdlib.process_runtime.linux-child-fail
+                  spawn.exec-w
+                  spawn.marker-addr
+                  process-linux-child-stage-dup-stdout)
+                unit)
+              (if stderr-first
+                unit
+                (if (<
+                  (unsafe
+                    (linux-child-dup2-retry
+                      process-linux-child-syscall-dup-stderr
+                      spawn.stderr-fd
+                      2
+                      true))
+                  0)
+                  (stdlib.process_runtime.linux-child-fail
+                    spawn.exec-w
+                    spawn.marker-addr
+                    process-linux-child-stage-dup-stderr)
+                  unit))))
+          (if (or (= spawn.stdout-fd 1) (= spawn.stdout-fd 2))
+            unit
+            (if (<
+              (unsafe
+                (linux-child-close
+                  process-linux-child-syscall-close-stdout
+                  spawn.stdout-fd))
+              0)
+              (stdlib.process_runtime.linux-child-fail
+                spawn.exec-w
+                spawn.marker-addr
+                process-linux-child-stage-close-stdout)
+              unit))
+          (if (or (= spawn.stderr-fd 1) (= spawn.stderr-fd 2))
+            unit
+            (if (<
+              (unsafe
+                (linux-child-close
+                  process-linux-child-syscall-close-stderr
+                  spawn.stderr-fd))
+              0)
+              (stdlib.process_runtime.linux-child-fail
+                spawn.exec-w
+                spawn.marker-addr
+                process-linux-child-stage-close-stderr)
+              unit))
           (if (not (= spawn.cwd-addr 0))
             (if (<
               (unsafe
@@ -2432,17 +2509,19 @@
                   spawn.exec-w
                   spawn.marker-addr
                   process-linux-child-stage-dup-stdin)
-                (if (<
-                  (unsafe
-                    (linux-child-close
-                      process-linux-child-syscall-close-stdin-read
-                      spawn.stdin-r))
-                  0)
-                  (stdlib.process_runtime.linux-child-fail
-                    spawn.exec-w
-                    spawn.marker-addr
-                    process-linux-child-stage-close-stdin-read)
-                  unit)))
+                (cond
+                  [(= spawn.stdin-r 0) unit]
+                  [(<
+                      (unsafe
+                        (linux-child-close
+                          process-linux-child-syscall-close-stdin-read
+                          spawn.stdin-r))
+                      0)
+                    (stdlib.process_runtime.linux-child-fail
+                      spawn.exec-w
+                      spawn.marker-addr
+                      process-linux-child-stage-close-stdin-read)]
+                  [else unit])))
             unit)
           (if (not (= spawn.cwd-addr 0))
             (if (<

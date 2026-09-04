@@ -27,6 +27,88 @@
 (define (printf-command [text : String]) : process.ProcessCommand
   (process.command "/usr/bin/printf" (process.args-single text)))
 
+(define (stdout-stderr-command) : process.ProcessCommand
+  (process.command
+    "/bin/sh"
+    (process.args-cons
+      "-c"
+      (process.args-single "printf closed-stdout; printf closed-stderr >&2"))))
+
+;: Duplicate one standard descriptor above the process runtime's working range.
+(define (save-standard-fd [fd : i64]) : i64
+  (let
+    [result : i64
+      (unsafe
+        (syscall 72 fd 1030 64))]
+    (if (< result 0)
+      (io.panic "failed to save standard descriptor")
+      result)))
+
+(define (close-standard-fd [fd : i64]) : unit
+  (if (<
+    (unsafe
+      (syscall 3 fd))
+    0)
+    (io.panic "failed to close standard descriptor")
+    unit))
+
+(define (restore-standard-fd [saved : i64] [fd : i64]) : unit
+  (let
+    [dup-result : i64
+      (unsafe
+        (syscall 33 saved fd))]
+    [close-result : i64
+      (unsafe
+        (syscall 3 saved))]
+    (if (or (not (= dup-result fd)) (< close-result 0))
+      (io.panic "failed to restore standard descriptor")
+      unit)))
+
+;: Close the standard descriptors selected by mask bits stdin=1, stdout=2,
+;: stderr=4 while one captured process runs, then restore them before returning.
+(define (output-with-closed-standard-fds
+  [command : process.ProcessCommand]
+  [mask : i64]) : process.ResultProcessOutput
+  (let
+    [close-stdin : bool (not (= (bit-and mask 1) 0))]
+    [close-stdout : bool (not (= (bit-and mask 2) 0))]
+    [close-stderr : bool (not (= (bit-and mask 4) 0))]
+    [saved-stdin : i64
+      (if close-stdin
+        (save-standard-fd 0)
+        -1)]
+    [saved-stdout : i64
+      (if close-stdout
+        (save-standard-fd 1)
+        -1)]
+    [saved-stderr : i64
+      (if close-stderr
+        (save-standard-fd 2)
+        -1)]
+    (begin
+      (if close-stdin
+        (close-standard-fd 0)
+        unit)
+      (if close-stdout
+        (close-standard-fd 1)
+        unit)
+      (if close-stderr
+        (close-standard-fd 2)
+        unit)
+      (let
+        [result : process.ResultProcessOutput (process.output command)]
+        (begin
+          (if close-stdin
+            (restore-standard-fd saved-stdin 0)
+            unit)
+          (if close-stdout
+            (restore-standard-fd saved-stdout 1)
+            unit)
+          (if close-stderr
+            (restore-standard-fd saved-stderr 2)
+            unit)
+          result)))))
+
 (define (assert-string-owned-eq
   [actual : String]
   [expected : String]
@@ -299,7 +381,56 @@
       (stdin-command)
       "process: stdin failed (-5); cleanup: wait failed (-10)"
       baseline-fds
-      "primary stdin and secondary wait failure")))
+      "primary stdin and secondary wait failure")
+    (process_runtime.linux-test-reset!)
+    (process_runtime.linux-test-fail-on!
+      process_runtime.process-linux-syscall-close
+      1
+      9)
+    (process_runtime.linux-test-fail-second-on!
+      process_runtime.process-linux-syscall-stdin-write
+      1
+      5)
+    (assert-output-failure-followed-by-success
+      (stdin-command)
+      "process: stdin failed (-5); cleanup: close failed (-9)"
+      baseline-fds
+      "early cleanup failure does not hide primary stdin failure")))
+
+(define (run-standard-fd-collisions [baseline-fds : i64]) : unit
+  (begin
+    (process_runtime.linux-test-reset!)
+    (assert-output-ok
+      (output-with-closed-standard-fds (printf-command "closed-stdout") 2)
+      0
+      "closed-stdout"
+      ""
+      "closed caller stdout capture")
+    (assert-no-resource-growth baseline-fds "closed caller stdout resources")
+    (process_runtime.linux-test-reset!)
+    (assert-output-ok
+      (output-with-closed-standard-fds (stdout-stderr-command) 4)
+      0
+      "closed-stdout"
+      "closed-stderr"
+      "closed caller stderr capture")
+    (assert-no-resource-growth baseline-fds "closed caller stderr resources")
+    (process_runtime.linux-test-reset!)
+    (assert-output-ok
+      (output-with-closed-standard-fds (stdout-stderr-command) 3)
+      0
+      "closed-stdout"
+      "closed-stderr"
+      "capture descriptor cross-wiring")
+    (assert-no-resource-growth baseline-fds "capture cross-wiring resources")
+    (process_runtime.linux-test-reset!)
+    (assert-output-ok
+      (output-with-closed-standard-fds (stdin-command) 7)
+      0
+      "fault-gate-stdin"
+      ""
+      "stdin descriptor zero wiring")
+    (assert-no-resource-growth baseline-fds "stdin descriptor zero resources")))
 
 (define (run-child-fault
   [kind : i64]
@@ -706,6 +837,7 @@
         (process_runtime.linux-test-no-children?)
         "initial child state")
       (run-parent-faults baseline-fds)
+      (run-standard-fd-collisions baseline-fds)
       (run-child-faults baseline-fds)
       (run-exec-channel-faults baseline-fds)
       (run-capture-faults baseline-fds)

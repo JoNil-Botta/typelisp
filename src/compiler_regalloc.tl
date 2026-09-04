@@ -1999,6 +1999,22 @@
       (compiler-reg-var-type-array-set! present types dst ty)]
     [(ir.CompilerIrInstr.Word dst _ _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
+    ;; SEL-1. A SCALAR select (`lanes` 0, the if-conversion result) defines a
+    ;; plain typed value like the Mov/BinOp it replaced, and it was the one
+    ;; scalar def this table did not record. Without a type the value is not
+    ;; register-eligible and cannot coalesce with the phi it feeds, so every
+    ;; if-converted loop carry -- `running = max(running, end)` spelled as
+    ;; `cmov` -- was homed on the stack: `cmovg %rsi, %r12; movq %r12, -40(%rsp)`
+    ;; and `movq -40(%rsp), %r11` on the back edge, four instructions where the
+    ;; cmov alone would do. Vector selects keep their own (vector) tables.
+    [(ir.CompilerIrInstr.Select payload-box)
+      (let
+        [dst (compiler-reg-box-field-shared-view payload-box dst)]
+        [lanes (compiler-reg-box-field-shared-view payload-box lanes)]
+        [ty (compiler-reg-box-field-shared-view payload-box ty)]
+        (if (= lanes 0)
+          (compiler-reg-var-type-array-set! present types dst ty)
+          unit))]
     [_ unit]))
 
 (define (compiler-reg-instr-seq-types-array!

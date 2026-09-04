@@ -13057,6 +13057,88 @@
       (compiler-reg-dense-var-types-ok?)
       "dense var types preserve holes, exact types, growth, and merge isolation")))
 
+;; SEL-1. A scalar `select` (lanes 0) defines a typed scalar value the
+;; function's type table must carry -- it is the register-eligibility and
+;; coalescing key for the cmov result -- while a vector select (lanes > 0)
+;; stays out of the scalar table.
+(cfg
+  test
+  (define (compiler-reg-select-var-types-function) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "select_var_types")
+      (ir.compiler-ir-param-seq-empty)
+      (compiler-reg-i64-ty)
+      5
+      (ir.compiler-ir-block-cons
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "entry")
+          (compiler-reg-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Mov
+              0
+              (ir.CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
+            (compiler-reg-test-instr-seq-prepend
+              (ir.CompilerIrInstr.Mov
+                1
+                (ir.CompilerIrValue.I64 9)
+                (compiler-reg-i64-ty))
+              (compiler-reg-test-instr-seq-prepend
+                (ir.CompilerIrInstr.BinOp
+                  2
+                  (ir.CompilerIrBinOp.Lt)
+                  (ir.CompilerIrValue.Var 0)
+                  (ir.CompilerIrValue.Var 1)
+                  (compiler-reg-i64-ty))
+                (compiler-reg-test-instr-seq-prepend
+                  (ir.ir-instr-select
+                    3
+                    (ir.CompilerIrValue.Var 2)
+                    (ir.CompilerIrValue.Var 0)
+                    (ir.CompilerIrValue.Var 1)
+                    0
+                    (compiler-reg-i64-ty))
+                  (compiler-reg-test-instr-seq-prepend
+                    (ir.ir-instr-select
+                      4
+                      (ir.CompilerIrValue.Var 2)
+                      (ir.CompilerIrValue.Var 0)
+                      (ir.CompilerIrValue.Var 1)
+                      4
+                      (compiler-reg-i64-ty))
+                    (compiler-reg-test-instr-seq-prepend
+                      (ir.CompilerIrInstr.Return
+                        (ir.CompilerIrMaybeValue.Some
+                          (ir.CompilerIrValue.Var 3)))
+                      (ir.compiler-ir-instr-seq-empty))))))))
+        ir.CompilerIrBlockList.Nil))))
+
+(cfg
+  test
+  (define (compiler-reg-select-var-types-ok?) : bool
+    (let
+      [types : reg.CompilerRegVarTypes
+        (reg.compiler-reg-function-var-types
+          (compiler-reg-select-var-types-function))]
+      (and
+        (match (reg.compiler-reg-var-types-lookup
+          (reg.compiler-reg-global-shared-view types)
+          3)
+          [(reg.CompilerRegMaybeType.Some (ast.AstType.I64)) true]
+          [_ false])
+        (match (reg.compiler-reg-var-types-lookup
+          (reg.compiler-reg-global-shared-view types)
+          4)
+          [(reg.CompilerRegMaybeType.No) true]
+          [_ false])))))
+
+(cfg
+  test
+  (test
+    regalloc-select-var-types
+    (test.assert-true
+      (compiler-reg-select-var-types-ok?)
+      "a scalar select's result is typed in the var table; a vector select's is not")))
+
 (cfg
   test
   (test

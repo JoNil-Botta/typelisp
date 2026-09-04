@@ -53,6 +53,8 @@ reject_diag() {
             printf 'typecheck: if condition must be bool' ;;
         stdlib/tests/core_macros_for_missing_protocol.tl)
             printf 'is missing protocol function into-iterator' ;;
+        stdlib/tests/crypto_sha512_unsafe_adapter_reject.tl)
+            printf 'requires unsafe context' ;;
         stdlib/tests/format_nonliteral_template_reject.tl)
             printf 'format: template must be a string literal' ;;
         stdlib/tests/format_bare_capture_reject.tl)

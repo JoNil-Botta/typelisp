@@ -139,11 +139,38 @@ for level in 0 1 2; do
     grep -E "^[[:space:]]+(call|jmp) $SCHEDULE$" "$compress_body" >/dev/null ||
         fail "opt${level}-compress no longer wipes its owning schedule"
 
-    verify_wipe_loop "$assembly" "$STATE_PUBLIC" 8 2 "opt${level}-state"
-    state_body="$WORKDIR/opt${level}-opt${level}-state.body"
+    # Single-call helpers may inline into this fixture's main. Check the
+    # surviving owner, then account for every inlined loop together so the
+    # state and digest checks cannot both pass on the same eight-word wipe.
+    inline_loops=0
+    inline_eight_bounds=0
+    if grep -Fx "$STATE_PUBLIC:" "$assembly" >/dev/null; then
+        verify_wipe_loop "$assembly" "$STATE_PUBLIC" 8 2 "opt${level}-state"
+        state_body="$WORKDIR/opt${level}-opt${level}-state.body"
+    else
+        inline_loops=$((inline_loops + 2))
+        inline_eight_bounds=$((inline_eight_bounds + 1))
+        state_body="$WORKDIR/opt${level}-main.body"
+        extract_function "$assembly" main "$state_body"
+    fi
     grep -F '$16' "$state_body" >/dev/null ||
         fail "opt${level}-state lost its 16-word partial-block wipe bound"
-    verify_wipe_loop "$assembly" "$DIGEST_PUBLIC" 8 1 "opt${level}-digest"
+    if grep -Fx "$DIGEST_PUBLIC:" "$assembly" >/dev/null; then
+        verify_wipe_loop "$assembly" "$DIGEST_PUBLIC" 8 1 "opt${level}-digest"
+    else
+        inline_loops=$((inline_loops + 1))
+        inline_eight_bounds=$((inline_eight_bounds + 1))
+    fi
+    if [ "$inline_loops" -gt 0 ]; then
+        verify_wipe_loop "$assembly" main 8 "$inline_loops" "opt${level}-inlined"
+        inline_body="$WORKDIR/opt${level}-opt${level}-inlined.body"
+        eight_bounds=$(grep -cE '^[[:space:]]+cmpq \$8,' "$inline_body" || true)
+        zero_stores=$(grep -cE '^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$' "$inline_body" || true)
+        [ "$eight_bounds" -ge "$inline_eight_bounds" ] ||
+            fail "opt${level}-inlined lost a distinct eight-word wipe"
+        [ "$zero_stores" -ge "$inline_loops" ] ||
+            fail "opt${level}-inlined lost a distinct volatile store"
+    fi
 done
 
 repeat=$(compile_level 2 -repeat)

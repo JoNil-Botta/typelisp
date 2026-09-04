@@ -579,6 +579,7 @@ run_with_compiler "$STAGE2_BIN" "stage2 cli build/run and chooser smoke" scripts
 run_with_compiler "$STAGE2_BIN" "stage2 public tool surface" scripts/verify-public-tools.sh
 run_with_compiler "$STAGE2_BIN" "IR observability golden" scripts/verify-ir-observability.sh
 run_with_compiler "$STAGE2_BIN" "TLCI format corpus" scripts/verify-tlci-corpus.sh
+run_with_compiler "$STAGE2_BIN" "TLCI native boundary manifest" scripts/verify-tlci-boundary-manifest.sh
 run_with_compiler "$STAGE2_BIN" "stage2 result-import harness integrity" scripts/verify-result-import-harness.sh
 if [ "$HOST_OS" = linux ]; then
     OPT2_REFERENCE_PATH_FILE="$ROOT/target/ci-verify-opt2-reference.path"

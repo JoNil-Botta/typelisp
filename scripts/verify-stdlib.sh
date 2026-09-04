@@ -207,6 +207,7 @@ byte_buf_core.tl
 clone.tl
 comptime.tl
 core_macros.tl
+crypto_rsa_core.tl
 crypto_random.tl
 dense_list.tl
 io_core.tl
@@ -273,6 +274,7 @@ stdlib/tests/arena_atomic_api.tl|42|-|-|-
 stdlib/tests/arena_patterns.tl|42|-|-|-
 stdlib/tests/byte_buf_api.tl|42|-|-
 stdlib/tests/byte_buf_core_api.tl|42|-|-
+stdlib/tests/crypto_rsa_core_api.tl|42|-|-|-
 stdlib/tests/format_api.tl|42|-|-|-
 stdlib/tests/format_debug_bytes.tl|42|-|-|-
 stdlib/tests/format_debug_length_overflow.tl|134|-|literal:format: Debug output length overflow|-

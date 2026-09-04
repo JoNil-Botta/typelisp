@@ -20,6 +20,7 @@ rejected. This census records the remaining compiler-private
 ## Intentional Private Storage
 
 - Binary and byte storage in `stdlib/byte_buf.tl`, `stdlib/byte_buf_core.tl`,
+  bounded public-input RSA limb/REDC storage in `stdlib/crypto_rsa_core.tl`,
   `stdlib/ffi.tl`, `stdlib/io.tl`, `stdlib/fs.tl`, and
   `stdlib/process_runtime.tl`.
 - Compiler scratch buffers, dense tables, captured-field lists, object/codegen

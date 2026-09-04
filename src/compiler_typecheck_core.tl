@@ -1005,8 +1005,7 @@
       (tc-job-state-new-with-profile-metrics-address (cast 0 : u64)))))
 
 (define (tc-job-state-data [state : TcJobState]) : TcJobStateData
-  (unsafe
-    (ptr-read (int->ptr (cast state.address : u64) : (Ptr TcJobStateData)))))
+  (tc-state-cell-read state.address TcJobStateData))
 
 (define (tc-job-state-macro-state [state : TcJobState]) : TcMacroState
   (TcMacroState
@@ -1111,45 +1110,67 @@
       address
       (,initialize ,state))))
 
+;; Keep typed slot allocation in one expression template. Explicit wrappers
+;; preserve the module's forward declarations and imported name bindings.
+(defmacro (tc-macro-state-cell-initialize
+  [state : Expr]
+  [_payload : Expr]
+  [slot : Expr]
+  [initial : Expr]) : Expr
+  `(let
+    [address : i64 (tc-macro-state-slot-address ,state ,slot)]
+    (if (> address 0)
+      address
+      (let
+        [owner : i64 (tc-macro-state-owner-arena ,state)]
+        (in-arena
+          (arena.Arena owner)
+          (let
+            [cell : (__tl_dyn-array ,_payload) (__tl_make-array ,_payload 1)]
+            [_init : unit (set! (array-ref cell 0) ,initial)]
+            [next : i64
+              (cast
+                (unsafe
+                  (ptr->int (ptr-cast (__tl_array-data cell) : (Ptr ,_payload))))
+                : i64)]
+            (begin
+              (tc-macro-state-slot-address-set! ,state ,slot next)
+              next)))))))
+
+(defmacro (tc-state-cell-read [address : Expr] [_payload : Expr]) : Expr
+  `(unsafe
+    (ptr-read (int->ptr (cast ,address : u64) : (Ptr ,_payload)))))
+
+(defmacro (tc-state-cell-write!
+  [address : Expr]
+  [_payload : Expr]
+  [data : Expr]) : Expr
+  `(unsafe
+    (ptr-write! (int->ptr (cast ,address : u64) : (MutPtr ,_payload)) ,data)))
+
 (define (tc-nominal-cache-state-data [state : TcNominalCacheState]) : TcNominalCacheStateData
-  (unsafe
-    (ptr-read
-      (int->ptr (cast state.address : u64) : (Ptr TcNominalCacheStateData)))))
+  (tc-state-cell-read state.address TcNominalCacheStateData))
 
 (define (tc-type-handle-cache-state-data [state : TcTypeHandleCacheState]) : TcTypeHandleCacheStateData
-  (unsafe
-    (ptr-read
-      (int->ptr (cast state.address : u64) : (Ptr TcTypeHandleCacheStateData)))))
+  (tc-state-cell-read state.address TcTypeHandleCacheStateData))
 
 (define (tc-type-handle-cache-state-data-set!
   [state : TcTypeHandleCacheState]
   [data : TcTypeHandleCacheStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr
-        (cast state.address : u64)
-        : (MutPtr TcTypeHandleCacheStateData))
-      data)))
+  (tc-state-cell-write! state.address TcTypeHandleCacheStateData data))
 
 (define (tc-nominal-cache-state-data-set!
   [state : TcNominalCacheState]
   [data : TcNominalCacheStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr (cast state.address : u64) : (MutPtr TcNominalCacheStateData))
-      data)))
+  (tc-state-cell-write! state.address TcNominalCacheStateData data))
 
 (define (tc-clone-state-data [state : TcCloneState]) : TcCloneStateData
-  (unsafe
-    (ptr-read (int->ptr (cast state.address : u64) : (Ptr TcCloneStateData)))))
+  (tc-state-cell-read state.address TcCloneStateData))
 
 (define (tc-clone-state-data-set!
   [state : TcCloneState]
   [data : TcCloneStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr (cast state.address : u64) : (MutPtr TcCloneStateData))
-      data)))
+  (tc-state-cell-write! state.address TcCloneStateData data))
 
 (define (tc-type-handle-cache-state-new [owner : i64]) : TcTypeHandleCacheState
   (in-arena
@@ -1337,17 +1358,12 @@
       arena-handle)))
 
 (define (tc-type-env-scoped-state-data [state : TcTypeEnvScopedState]) : TcTypeEnvScopedStateData
-  (unsafe
-    (ptr-read
-      (int->ptr (cast state.address : u64) : (Ptr TcTypeEnvScopedStateData)))))
+  (tc-state-cell-read state.address TcTypeEnvScopedStateData))
 
 (define (tc-type-env-scoped-state-data-set!
   [state : TcTypeEnvScopedState]
   [data : TcTypeEnvScopedStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr (cast state.address : u64) : (MutPtr TcTypeEnvScopedStateData))
-      data)))
+  (tc-state-cell-write! state.address TcTypeEnvScopedStateData data))
 
 (define (tc-type-env-scoped-state-new [owner : i64]) : TcTypeEnvScopedState
   (in-arena
@@ -1573,74 +1589,45 @@
       address)))
 
 (define (tc-scratch-arena-state-data [state : TcScratchArenaState]) : TcScratchArenaStateData
-  (unsafe
-    (ptr-read
-      (int->ptr (cast state.address : u64) : (Ptr TcScratchArenaStateData)))))
+  (tc-state-cell-read state.address TcScratchArenaStateData))
 
 (define (tc-scratch-arena-state-data-set!
   [state : TcScratchArenaState]
   [data : TcScratchArenaStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr (cast state.address : u64) : (MutPtr TcScratchArenaStateData))
-      data)))
+  (tc-state-cell-write! state.address TcScratchArenaStateData data))
 
 (define (tc-unused-unsafe-state-data [state : TcUnusedUnsafeState]) : TcUnusedUnsafeStateData
-  (unsafe
-    (ptr-read
-      (int->ptr (cast state.address : u64) : (Ptr TcUnusedUnsafeStateData)))))
+  (tc-state-cell-read state.address TcUnusedUnsafeStateData))
 
 (define (tc-unused-unsafe-state-data-set!
   [state : TcUnusedUnsafeState]
   [data : TcUnusedUnsafeStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr (cast state.address : u64) : (MutPtr TcUnusedUnsafeStateData))
-      data)))
+  (tc-state-cell-write! state.address TcUnusedUnsafeStateData data))
 
 (define (tc-inlay-hint-state-data [state : TcInlayHintState]) : TcInlayHintStateData
-  (unsafe
-    (ptr-read
-      (int->ptr (cast state.address : u64) : (Ptr TcInlayHintStateData)))))
+  (tc-state-cell-read state.address TcInlayHintStateData))
 
 (define (tc-inlay-hint-state-data-set!
   [state : TcInlayHintState]
   [data : TcInlayHintStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr (cast state.address : u64) : (MutPtr TcInlayHintStateData))
-      data)))
+  (tc-state-cell-write! state.address TcInlayHintStateData data))
 
 (define (tc-macro-call-site-state-data [state : TcMacroCallSiteState]) : TcMacroCallSiteStateData
-  (unsafe
-    (ptr-read
-      (int->ptr (cast state.address : u64) : (Ptr TcMacroCallSiteStateData)))))
+  (tc-state-cell-read state.address TcMacroCallSiteStateData))
 
 (define (tc-macro-call-site-state-data-set!
   [state : TcMacroCallSiteState]
   [data : TcMacroCallSiteStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr (cast state.address : u64) : (MutPtr TcMacroCallSiteStateData))
-      data)))
+  (tc-state-cell-write! state.address TcMacroCallSiteStateData data))
 
 (define (tc-checked-let-binding-fact-state-data
   [state : TcCheckedLetBindingFactState]) : TcCheckedLetBindingFactStateData
-  (unsafe
-    (ptr-read
-      (int->ptr
-        (cast state.address : u64)
-        : (Ptr TcCheckedLetBindingFactStateData)))))
+  (tc-state-cell-read state.address TcCheckedLetBindingFactStateData))
 
 (define (tc-checked-let-binding-fact-state-data-set!
   [state : TcCheckedLetBindingFactState]
   [data : TcCheckedLetBindingFactStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr
-        (cast state.address : u64)
-        : (MutPtr TcCheckedLetBindingFactStateData))
-      data)))
+  (tc-state-cell-write! state.address TcCheckedLetBindingFactStateData data))
 
 (define (tc-checked-let-binding-key-hash
   [declaration-ordinal : i64]
@@ -2083,63 +2070,37 @@
       (tc-macro-call-site-state-data-set! state data))))
 
 (define (tc-topenv-membership-state-data [state : TcTopEnvMembershipState]) : TcTopEnvMembershipStateData
-  (unsafe
-    (ptr-read
-      (int->ptr (cast state.address : u64) : (Ptr TcTopEnvMembershipStateData)))))
+  (tc-state-cell-read state.address TcTopEnvMembershipStateData))
 
 (define (tc-topenv-membership-state-data-set!
   [state : TcTopEnvMembershipState]
   [data : TcTopEnvMembershipStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr
-        (cast state.address : u64)
-        : (MutPtr TcTopEnvMembershipStateData))
-      data)))
+  (tc-state-cell-write! state.address TcTopEnvMembershipStateData data))
 
 (define (tc-thread-name-kind-state-data [state : TcThreadNameKindState]) : TcThreadNameKindStateData
-  (unsafe
-    (ptr-read
-      (int->ptr (cast state.address : u64) : (Ptr TcThreadNameKindStateData)))))
+  (tc-state-cell-read state.address TcThreadNameKindStateData))
 
 (define (tc-thread-name-kind-state-data-set!
   [state : TcThreadNameKindState]
   [data : TcThreadNameKindStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr (cast state.address : u64) : (MutPtr TcThreadNameKindStateData))
-      data)))
+  (tc-state-cell-write! state.address TcThreadNameKindStateData data))
 
 (define (tc-type-resolution-cache-state-data
   [state : TcTypeResolutionCacheState]) : TcTypeResolutionCacheStateData
-  (unsafe
-    (ptr-read
-      (int->ptr
-        (cast state.address : u64)
-        : (Ptr TcTypeResolutionCacheStateData)))))
+  (tc-state-cell-read state.address TcTypeResolutionCacheStateData))
 
 (define (tc-type-resolution-cache-state-data-set!
   [state : TcTypeResolutionCacheState]
   [data : TcTypeResolutionCacheStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr
-        (cast state.address : u64)
-        : (MutPtr TcTypeResolutionCacheStateData))
-      data)))
+  (tc-state-cell-write! state.address TcTypeResolutionCacheStateData data))
 
 (define (tc-agg-scalar-cache-state-data [state : TcAggScalarCacheState]) : TcAggScalarCacheStateData
-  (unsafe
-    (ptr-read
-      (int->ptr (cast state.address : u64) : (Ptr TcAggScalarCacheStateData)))))
+  (tc-state-cell-read state.address TcAggScalarCacheStateData))
 
 (define (tc-agg-scalar-cache-state-data-set!
   [state : TcAggScalarCacheState]
   [data : TcAggScalarCacheStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr (cast state.address : u64) : (MutPtr TcAggScalarCacheStateData))
-      data)))
+  (tc-state-cell-write! state.address TcAggScalarCacheStateData data))
 
 (define (tc-job-state-set-topenv-membership-enabled!
   [state : TcJobState]
@@ -3713,17 +3674,12 @@
           : i64)))))
 
 (define (tc-spmd-traversal-state-data [state : TcSpmdTraversalState]) : TcSpmdTraversalStateData
-  (unsafe
-    (ptr-read
-      (int->ptr (cast state.address : u64) : (Ptr TcSpmdTraversalStateData)))))
+  (tc-state-cell-read state.address TcSpmdTraversalStateData))
 
 (define (tc-spmd-traversal-state-data-set!
   [state : TcSpmdTraversalState]
   [data : TcSpmdTraversalStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr (cast state.address : u64) : (MutPtr TcSpmdTraversalStateData))
-      data)))
+  (tc-state-cell-write! state.address TcSpmdTraversalStateData data))
 
 ;; Lazy import aliases and their summary-use counters are mutable, intern-owned
 ;; typecheck state. Keep one lazily allocated table per compiler job so a reset
@@ -4025,17 +3981,12 @@
   (address i64))
 
 (define (tc-agg-layout-cache-state-data [state : TcAggLayoutCacheState]) : TcAggLayoutCacheStateData
-  (unsafe
-    (ptr-read
-      (int->ptr (cast state.address : u64) : (Ptr TcAggLayoutCacheStateData)))))
+  (tc-state-cell-read state.address TcAggLayoutCacheStateData))
 
 (define (tc-agg-layout-cache-state-data-set!
   [state : TcAggLayoutCacheState]
   [data : TcAggLayoutCacheStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr (cast state.address : u64) : (MutPtr TcAggLayoutCacheStateData))
-      data)))
+  (tc-state-cell-write! state.address TcAggLayoutCacheStateData data))
 
 (define (tc-job-state-agg-layout-cache-init! [job-state : TcJobState]) : TcAggLayoutCacheState
   (let
@@ -15758,34 +15709,11 @@
     0))
 
 (define (tc-macro-module-env-state-address-initialize [state : TcMacroState]) : i64
-  (let
-    [address : i64
-      (tc-macro-state-slot-address state tc-macro-state-slot-module-env)]
-    (if (> address 0)
-      address
-      (let
-        [owner : i64 (tc-macro-state-owner-arena state)]
-        (in-arena
-          (arena.Arena owner)
-          (let
-            [cell : (__tl_dyn-array TcMacroModuleEnvStateData)
-              (__tl_make-array TcMacroModuleEnvStateData 1)]
-            [_init : unit
-              (set! (array-ref cell 0) (tc-macro-module-env-state-new))]
-            [next : i64
-              (cast
-                (unsafe
-                  (ptr->int
-                    (ptr-cast
-                      (__tl_array-data cell)
-                      : (Ptr TcMacroModuleEnvStateData))))
-                : i64)]
-            (begin
-              (tc-macro-state-slot-address-set!
-                state
-                tc-macro-state-slot-module-env
-                next)
-              next)))))))
+  (tc-macro-state-cell-initialize
+    state
+    TcMacroModuleEnvStateData
+    tc-macro-state-slot-module-env
+    (tc-macro-module-env-state-new)))
 
 (define (tc-macro-module-env-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast
@@ -15794,21 +15722,17 @@
     tc-macro-module-env-state-address-initialize))
 
 (define (tc-macro-module-env-state-data [state : TcMacroState]) : TcMacroModuleEnvStateData
-  (unsafe
-    (ptr-read
-      (int->ptr
-        (cast (tc-macro-module-env-state-address state) : u64)
-        : (Ptr TcMacroModuleEnvStateData)))))
+  (tc-state-cell-read
+    (tc-macro-module-env-state-address state)
+    TcMacroModuleEnvStateData))
 
 (define (tc-macro-module-env-state-data-set!
   [state : TcMacroState]
   [data : TcMacroModuleEnvStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr
-        (cast (tc-macro-module-env-state-address state) : u64)
-        : (MutPtr TcMacroModuleEnvStateData))
-      data)))
+  (tc-state-cell-write!
+    (tc-macro-module-env-state-address state)
+    TcMacroModuleEnvStateData
+    data))
 
 ;; Arena that owns the module-local env cache chain. The cache lives in
 ;; the GLOBAL above, but hygiene lookups fire deep inside per-decl typechecking
@@ -19126,56 +19050,27 @@
   (stdlib-surface-ready bool))
 
 (define (tc-macro-helper-state-address-initialize [state : TcMacroState]) : i64
-  (let
-    [address : i64
-      (tc-macro-state-slot-address state tc-macro-state-slot-helper)]
-    (if (> address 0)
-      address
-      (let
-        [owner : i64 (tc-macro-state-owner-arena state)]
-        (in-arena
-          (arena.Arena owner)
-          (let
-            [cell : (__tl_dyn-array TcMacroHelperStateData)
-              (__tl_make-array TcMacroHelperStateData 1)]
-            [_init : unit
-              (set!
-                (array-ref cell 0)
-                (TcMacroHelperStateData false (tc-empty-env) false))]
-            [next : i64
-              (cast
-                (unsafe
-                  (ptr->int
-                    (ptr-cast
-                      (__tl_array-data cell)
-                      : (Ptr TcMacroHelperStateData))))
-                : i64)]
-            (begin
-              (tc-macro-state-slot-address-set!
-                state
-                tc-macro-state-slot-helper
-                next)
-              next)))))))
+  (tc-macro-state-cell-initialize
+    state
+    TcMacroHelperStateData
+    tc-macro-state-slot-helper
+    (TcMacroHelperStateData false (tc-empty-env) false)))
 
 (define (tc-macro-helper-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast state 1 tc-macro-helper-state-address-initialize))
 
 (define (tc-macro-helper-state-data [state : TcMacroState]) : TcMacroHelperStateData
-  (unsafe
-    (ptr-read
-      (int->ptr
-        (cast (tc-macro-helper-state-address state) : u64)
-        : (Ptr TcMacroHelperStateData)))))
+  (tc-state-cell-read
+    (tc-macro-helper-state-address state)
+    TcMacroHelperStateData))
 
 (define (tc-macro-helper-state-data-set!
   [state : TcMacroState]
   [data : TcMacroHelperStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr
-        (cast (tc-macro-helper-state-address state) : u64)
-        : (MutPtr TcMacroHelperStateData))
-      data)))
+  (tc-state-cell-write!
+    (tc-macro-helper-state-address state)
+    TcMacroHelperStateData
+    data))
 
 (define (tc-macro-helper-env-cache-reset! [state : TcMacroState]) : unit
   (let
@@ -25997,17 +25892,12 @@
   (tc-macro-state-lazy-import (tc-job-state-macro-state state)))
 
 (define (tc-lazy-import-state-data [state : TcLazyImportState]) : TcLazyImportStateData
-  (unsafe
-    (ptr-read
-      (int->ptr (cast state.address : u64) : (Ptr TcLazyImportStateData)))))
+  (tc-state-cell-read state.address TcLazyImportStateData))
 
 (define (tc-lazy-import-state-data-set!
   [state : TcLazyImportState]
   [data : TcLazyImportStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr (cast state.address : u64) : (MutPtr TcLazyImportStateData))
-      data)))
+  (tc-state-cell-write! state.address TcLazyImportStateData data))
 
 (define (tc-lazy-import-stub-storage-ensure-for-state!
   [state : TcLazyImportState]) : unit
@@ -75686,34 +75576,11 @@
     0))
 
 (define (tc-macro-abstract-state-address-initialize [state : TcMacroState]) : i64
-  (let
-    [address : i64
-      (tc-macro-state-slot-address state tc-macro-state-slot-abstract)]
-    (if (> address 0)
-      address
-      (let
-        [owner : i64 (tc-macro-state-owner-arena state)]
-        (in-arena
-          (arena.Arena owner)
-          (let
-            [cell : (__tl_dyn-array TcMacroAbstractStateData)
-              (__tl_make-array TcMacroAbstractStateData 1)]
-            [_init : unit
-              (set! (array-ref cell 0) (tc-macro-abstract-state-new))]
-            [next : i64
-              (cast
-                (unsafe
-                  (ptr->int
-                    (ptr-cast
-                      (__tl_array-data cell)
-                      : (Ptr TcMacroAbstractStateData))))
-                : i64)]
-            (begin
-              (tc-macro-state-slot-address-set!
-                state
-                tc-macro-state-slot-abstract
-                next)
-              next)))))))
+  (tc-macro-state-cell-initialize
+    state
+    TcMacroAbstractStateData
+    tc-macro-state-slot-abstract
+    (tc-macro-abstract-state-new)))
 
 (define (tc-macro-abstract-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast
@@ -75722,21 +75589,17 @@
     tc-macro-abstract-state-address-initialize))
 
 (define (tc-macro-abstract-state-data [state : TcMacroState]) : TcMacroAbstractStateData
-  (unsafe
-    (ptr-read
-      (int->ptr
-        (cast (tc-macro-abstract-state-address state) : u64)
-        : (Ptr TcMacroAbstractStateData)))))
+  (tc-state-cell-read
+    (tc-macro-abstract-state-address state)
+    TcMacroAbstractStateData))
 
 (define (tc-macro-abstract-state-data-set!
   [state : TcMacroState]
   [data : TcMacroAbstractStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr
-        (cast (tc-macro-abstract-state-address state) : u64)
-        : (MutPtr TcMacroAbstractStateData))
-      data)))
+  (tc-state-cell-write!
+    (tc-macro-abstract-state-address state)
+    TcMacroAbstractStateData
+    data))
 
 (define (tc-macro-abstract-state-save [state : TcMacroState]) : TcMacroAbstractState
   (let
@@ -75879,34 +75742,11 @@
     false))
 
 (define (tc-macro-proof-reuse-state-address-initialize [state : TcMacroState]) : i64
-  (let
-    [address : i64
-      (tc-macro-state-slot-address state tc-macro-state-slot-proof-reuse)]
-    (if (> address 0)
-      address
-      (let
-        [owner : i64 (tc-macro-state-owner-arena state)]
-        (in-arena
-          (arena.Arena owner)
-          (let
-            [cell : (__tl_dyn-array TcMacroProofReuseStateData)
-              (__tl_make-array TcMacroProofReuseStateData 1)]
-            [_init : unit
-              (set! (array-ref cell 0) (tc-macro-proof-reuse-state-new))]
-            [next : i64
-              (cast
-                (unsafe
-                  (ptr->int
-                    (ptr-cast
-                      (__tl_array-data cell)
-                      : (Ptr TcMacroProofReuseStateData))))
-                : i64)]
-            (begin
-              (tc-macro-state-slot-address-set!
-                state
-                tc-macro-state-slot-proof-reuse
-                next)
-              next)))))))
+  (tc-macro-state-cell-initialize
+    state
+    TcMacroProofReuseStateData
+    tc-macro-state-slot-proof-reuse
+    (tc-macro-proof-reuse-state-new)))
 
 (define (tc-macro-proof-reuse-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast
@@ -75915,21 +75755,17 @@
     tc-macro-proof-reuse-state-address-initialize))
 
 (define (tc-macro-proof-reuse-state-data [state : TcMacroState]) : TcMacroProofReuseStateData
-  (unsafe
-    (ptr-read
-      (int->ptr
-        (cast (tc-macro-proof-reuse-state-address state) : u64)
-        : (Ptr TcMacroProofReuseStateData)))))
+  (tc-state-cell-read
+    (tc-macro-proof-reuse-state-address state)
+    TcMacroProofReuseStateData))
 
 (define (tc-macro-proof-reuse-state-data-set!
   [state : TcMacroState]
   [data : TcMacroProofReuseStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr
-        (cast (tc-macro-proof-reuse-state-address state) : u64)
-        : (MutPtr TcMacroProofReuseStateData))
-      data)))
+  (tc-state-cell-write!
+    (tc-macro-proof-reuse-state-address state)
+    TcMacroProofReuseStateData
+    data))
 
 (defmacro (tc-macro-proof-field [state : Expr] [field : Expr]) : Expr
   `(let
@@ -76067,34 +75903,11 @@
     false))
 
 (define (tc-macro-identity-state-address-initialize [state : TcMacroState]) : i64
-  (let
-    [address : i64
-      (tc-macro-state-slot-address state tc-macro-state-slot-identity)]
-    (if (> address 0)
-      address
-      (let
-        [owner : i64 (tc-macro-state-owner-arena state)]
-        (in-arena
-          (arena.Arena owner)
-          (let
-            [cell : (__tl_dyn-array TcMacroIdentityStateData)
-              (__tl_make-array TcMacroIdentityStateData 1)]
-            [_init : unit
-              (set! (array-ref cell 0) (tc-macro-identity-state-new))]
-            [next : i64
-              (cast
-                (unsafe
-                  (ptr->int
-                    (ptr-cast
-                      (__tl_array-data cell)
-                      : (Ptr TcMacroIdentityStateData))))
-                : i64)]
-            (begin
-              (tc-macro-state-slot-address-set!
-                state
-                tc-macro-state-slot-identity
-                next)
-              next)))))))
+  (tc-macro-state-cell-initialize
+    state
+    TcMacroIdentityStateData
+    tc-macro-state-slot-identity
+    (tc-macro-identity-state-new)))
 
 (define (tc-macro-identity-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast
@@ -76103,21 +75916,17 @@
     tc-macro-identity-state-address-initialize))
 
 (define (tc-macro-identity-state-data [state : TcMacroState]) : TcMacroIdentityStateData
-  (unsafe
-    (ptr-read
-      (int->ptr
-        (cast (tc-macro-identity-state-address state) : u64)
-        : (Ptr TcMacroIdentityStateData)))))
+  (tc-state-cell-read
+    (tc-macro-identity-state-address state)
+    TcMacroIdentityStateData))
 
 (define (tc-macro-identity-state-data-set!
   [state : TcMacroState]
   [data : TcMacroIdentityStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr
-        (cast (tc-macro-identity-state-address state) : u64)
-        : (MutPtr TcMacroIdentityStateData))
-      data)))
+  (tc-state-cell-write!
+    (tc-macro-identity-state-address state)
+    TcMacroIdentityStateData
+    data))
 
 (define (tc-macro-owner-text-copy [state : TcMacroState] [text : String]) : String
   (let
@@ -100585,52 +100394,25 @@
     0))
 
 (define (tc-macro-walk-state-address-initialize [state : TcMacroState]) : i64
-  (let
-    [address : i64 (tc-macro-state-slot-address state tc-macro-state-slot-walk)]
-    (if (> address 0)
-      address
-      (let
-        [owner : i64 (tc-macro-state-owner-arena state)]
-        (in-arena
-          (arena.Arena owner)
-          (let
-            [cell : (__tl_dyn-array TcMacroWalkStateData)
-              (__tl_make-array TcMacroWalkStateData 1)]
-            [_init : unit (set! (array-ref cell 0) (tc-macro-walk-state-new))]
-            [next : i64
-              (cast
-                (unsafe
-                  (ptr->int
-                    (ptr-cast
-                      (__tl_array-data cell)
-                      : (Ptr TcMacroWalkStateData))))
-                : i64)]
-            (begin
-              (tc-macro-state-slot-address-set!
-                state
-                tc-macro-state-slot-walk
-                next)
-              next)))))))
+  (tc-macro-state-cell-initialize
+    state
+    TcMacroWalkStateData
+    tc-macro-state-slot-walk
+    (tc-macro-walk-state-new)))
 
 (define (tc-macro-walk-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast state 3 tc-macro-walk-state-address-initialize))
 
 (define (tc-macro-walk-state-data [state : TcMacroState]) : TcMacroWalkStateData
-  (unsafe
-    (ptr-read
-      (int->ptr
-        (cast (tc-macro-walk-state-address state) : u64)
-        : (Ptr TcMacroWalkStateData)))))
+  (tc-state-cell-read (tc-macro-walk-state-address state) TcMacroWalkStateData))
 
 (define (tc-macro-walk-state-data-set!
   [state : TcMacroState]
   [data : TcMacroWalkStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr
-        (cast (tc-macro-walk-state-address state) : u64)
-        : (MutPtr TcMacroWalkStateData))
-      data)))
+  (tc-state-cell-write!
+    (tc-macro-walk-state-address state)
+    TcMacroWalkStateData
+    data))
 
 (defmacro (tc-macro-walk-field [state : Expr] [field : Expr]) : Expr
   `(let
@@ -106323,34 +106105,11 @@
 
 (define (tc-macro-generated-module-state-address-initialize
   [state : TcMacroState]) : i64
-  (let
-    [address : i64
-      (tc-macro-state-slot-address state tc-macro-state-slot-generated-module)]
-    (if (> address 0)
-      address
-      (let
-        [owner : i64 (tc-macro-state-owner-arena state)]
-        (in-arena
-          (arena.Arena owner)
-          (let
-            [cell : (__tl_dyn-array TcMacroGeneratedModuleStateData)
-              (__tl_make-array TcMacroGeneratedModuleStateData 1)]
-            [_init : unit
-              (set! (array-ref cell 0) (tc-macro-generated-module-state-new))]
-            [next : i64
-              (cast
-                (unsafe
-                  (ptr->int
-                    (ptr-cast
-                      (__tl_array-data cell)
-                      : (Ptr TcMacroGeneratedModuleStateData))))
-                : i64)]
-            (begin
-              (tc-macro-state-slot-address-set!
-                state
-                tc-macro-state-slot-generated-module
-                next)
-              next)))))))
+  (tc-macro-state-cell-initialize
+    state
+    TcMacroGeneratedModuleStateData
+    tc-macro-state-slot-generated-module
+    (tc-macro-generated-module-state-new)))
 
 (define (tc-macro-generated-module-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast
@@ -106359,21 +106118,17 @@
     tc-macro-generated-module-state-address-initialize))
 
 (define (tc-macro-generated-module-state-data [state : TcMacroState]) : TcMacroGeneratedModuleStateData
-  (unsafe
-    (ptr-read
-      (int->ptr
-        (cast (tc-macro-generated-module-state-address state) : u64)
-        : (Ptr TcMacroGeneratedModuleStateData)))))
+  (tc-state-cell-read
+    (tc-macro-generated-module-state-address state)
+    TcMacroGeneratedModuleStateData))
 
 (define (tc-macro-generated-module-state-data-set!
   [state : TcMacroState]
   [data : TcMacroGeneratedModuleStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr
-        (cast (tc-macro-generated-module-state-address state) : u64)
-        : (MutPtr TcMacroGeneratedModuleStateData))
-      data)))
+  (tc-state-cell-write!
+    (tc-macro-generated-module-state-address state)
+    TcMacroGeneratedModuleStateData
+    data))
 
 (define (macro-generated-module-memo-reset! [state : TcMacroState]) : unit
   (let
@@ -106629,34 +106384,11 @@
 
 (define (tc-macro-generated-decls-state-address-initialize
   [state : TcMacroState]) : i64
-  (let
-    [address : i64
-      (tc-macro-state-slot-address state tc-macro-state-slot-generated-decls)]
-    (if (> address 0)
-      address
-      (let
-        [owner : i64 (tc-macro-state-owner-arena state)]
-        (in-arena
-          (arena.Arena owner)
-          (let
-            [cell : (__tl_dyn-array TcMacroGeneratedDeclsStateData)
-              (__tl_make-array TcMacroGeneratedDeclsStateData 1)]
-            [_init : unit
-              (set! (array-ref cell 0) (tc-macro-generated-decls-state-new))]
-            [next : i64
-              (cast
-                (unsafe
-                  (ptr->int
-                    (ptr-cast
-                      (__tl_array-data cell)
-                      : (Ptr TcMacroGeneratedDeclsStateData))))
-                : i64)]
-            (begin
-              (tc-macro-state-slot-address-set!
-                state
-                tc-macro-state-slot-generated-decls
-                next)
-              next)))))))
+  (tc-macro-state-cell-initialize
+    state
+    TcMacroGeneratedDeclsStateData
+    tc-macro-state-slot-generated-decls
+    (tc-macro-generated-decls-state-new)))
 
 (define (tc-macro-generated-decls-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast
@@ -106665,21 +106397,17 @@
     tc-macro-generated-decls-state-address-initialize))
 
 (define (tc-macro-generated-decls-state-data [state : TcMacroState]) : TcMacroGeneratedDeclsStateData
-  (unsafe
-    (ptr-read
-      (int->ptr
-        (cast (tc-macro-generated-decls-state-address state) : u64)
-        : (Ptr TcMacroGeneratedDeclsStateData)))))
+  (tc-state-cell-read
+    (tc-macro-generated-decls-state-address state)
+    TcMacroGeneratedDeclsStateData))
 
 (define (tc-macro-generated-decls-state-data-set!
   [state : TcMacroState]
   [data : TcMacroGeneratedDeclsStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr
-        (cast (tc-macro-generated-decls-state-address state) : u64)
-        : (MutPtr TcMacroGeneratedDeclsStateData))
-      data)))
+  (tc-state-cell-write!
+    (tc-macro-generated-decls-state-address state)
+    TcMacroGeneratedDeclsStateData
+    data))
 
 (define (macro-generated-decls-memo-reset! [state : TcMacroState]) : unit
   (let
@@ -109637,34 +109365,11 @@
     false))
 
 (define (tc-macro-surface-call-state-address-initialize [state : TcMacroState]) : i64
-  (let
-    [address : i64
-      (tc-macro-state-slot-address state tc-macro-state-slot-surface-call)]
-    (if (> address 0)
-      address
-      (let
-        [owner : i64 (tc-macro-state-owner-arena state)]
-        (in-arena
-          (arena.Arena owner)
-          (let
-            [cell : (__tl_dyn-array TcMacroSurfaceCallStateData)
-              (__tl_make-array TcMacroSurfaceCallStateData 1)]
-            [_init : unit
-              (set! (array-ref cell 0) (tc-macro-surface-call-state-new))]
-            [next : i64
-              (cast
-                (unsafe
-                  (ptr->int
-                    (ptr-cast
-                      (__tl_array-data cell)
-                      : (Ptr TcMacroSurfaceCallStateData))))
-                : i64)]
-            (begin
-              (tc-macro-state-slot-address-set!
-                state
-                tc-macro-state-slot-surface-call
-                next)
-              next)))))))
+  (tc-macro-state-cell-initialize
+    state
+    TcMacroSurfaceCallStateData
+    tc-macro-state-slot-surface-call
+    (tc-macro-surface-call-state-new)))
 
 (define (tc-macro-surface-call-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast
@@ -109673,21 +109378,17 @@
     tc-macro-surface-call-state-address-initialize))
 
 (define (tc-macro-surface-call-state-data [state : TcMacroState]) : TcMacroSurfaceCallStateData
-  (unsafe
-    (ptr-read
-      (int->ptr
-        (cast (tc-macro-surface-call-state-address state) : u64)
-        : (Ptr TcMacroSurfaceCallStateData)))))
+  (tc-state-cell-read
+    (tc-macro-surface-call-state-address state)
+    TcMacroSurfaceCallStateData))
 
 (define (tc-macro-surface-call-state-data-set!
   [state : TcMacroState]
   [data : TcMacroSurfaceCallStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr
-        (cast (tc-macro-surface-call-state-address state) : u64)
-        : (MutPtr TcMacroSurfaceCallStateData))
-      data)))
+  (tc-state-cell-write!
+    (tc-macro-surface-call-state-address state)
+    TcMacroSurfaceCallStateData
+    data))
 
 (define (macro-surface-call-decl-cache-reset! [state : TcMacroState]) : unit
   (let
@@ -111248,34 +110949,11 @@
 
 (define (tc-macro-hygiene-produced-state-address-initialize
   [state : TcMacroState]) : i64
-  (let
-    [address : i64
-      (tc-macro-state-slot-address state tc-macro-state-slot-hygiene-produced)]
-    (if (> address 0)
-      address
-      (let
-        [owner : i64 (tc-macro-state-owner-arena state)]
-        (in-arena
-          (arena.Arena owner)
-          (let
-            [cell : (__tl_dyn-array TcMacroHygieneProducedStateData)
-              (__tl_make-array TcMacroHygieneProducedStateData 1)]
-            [_init : unit
-              (set! (array-ref cell 0) (tc-macro-hygiene-produced-state-new))]
-            [next : i64
-              (cast
-                (unsafe
-                  (ptr->int
-                    (ptr-cast
-                      (__tl_array-data cell)
-                      : (Ptr TcMacroHygieneProducedStateData))))
-                : i64)]
-            (begin
-              (tc-macro-state-slot-address-set!
-                state
-                tc-macro-state-slot-hygiene-produced
-                next)
-              next)))))))
+  (tc-macro-state-cell-initialize
+    state
+    TcMacroHygieneProducedStateData
+    tc-macro-state-slot-hygiene-produced
+    (tc-macro-hygiene-produced-state-new)))
 
 (define (tc-macro-hygiene-produced-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast
@@ -111284,21 +110962,17 @@
     tc-macro-hygiene-produced-state-address-initialize))
 
 (define (tc-macro-hygiene-produced-state-data [state : TcMacroState]) : TcMacroHygieneProducedStateData
-  (unsafe
-    (ptr-read
-      (int->ptr
-        (cast (tc-macro-hygiene-produced-state-address state) : u64)
-        : (Ptr TcMacroHygieneProducedStateData)))))
+  (tc-state-cell-read
+    (tc-macro-hygiene-produced-state-address state)
+    TcMacroHygieneProducedStateData))
 
 (define (tc-macro-hygiene-produced-state-data-set!
   [state : TcMacroState]
   [data : TcMacroHygieneProducedStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr
-        (cast (tc-macro-hygiene-produced-state-address state) : u64)
-        : (MutPtr TcMacroHygieneProducedStateData))
-      data)))
+  (tc-state-cell-write!
+    (tc-macro-hygiene-produced-state-address state)
+    TcMacroHygieneProducedStateData
+    data))
 
 (define (macro-hygiene-produced-eval-start-with-pools!
   [state : TcMacroState]
@@ -114711,34 +114385,11 @@
         control))))
 
 (define (tc-macro-import-index-state-address-initialize [state : TcMacroState]) : i64
-  (let
-    [address : i64
-      (tc-macro-state-slot-address state tc-macro-state-slot-import-index)]
-    (if (> address 0)
-      address
-      (let
-        [owner : i64 (tc-macro-state-owner-arena state)]
-        (in-arena
-          (arena.Arena owner)
-          (let
-            [cell : (__tl_dyn-array TcMacroImportIndexStateData)
-              (__tl_make-array TcMacroImportIndexStateData 1)]
-            [_init : unit
-              (set! (array-ref cell 0) (tc-macro-import-index-state-new))]
-            [next : i64
-              (cast
-                (unsafe
-                  (ptr->int
-                    (ptr-cast
-                      (__tl_array-data cell)
-                      : (Ptr TcMacroImportIndexStateData))))
-                : i64)]
-            (begin
-              (tc-macro-state-slot-address-set!
-                state
-                tc-macro-state-slot-import-index
-                next)
-              next)))))))
+  (tc-macro-state-cell-initialize
+    state
+    TcMacroImportIndexStateData
+    tc-macro-state-slot-import-index
+    (tc-macro-import-index-state-new)))
 
 (define (tc-macro-import-index-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast
@@ -114747,21 +114398,17 @@
     tc-macro-import-index-state-address-initialize))
 
 (define (tc-macro-import-index-state-data [state : TcMacroState]) : TcMacroImportIndexStateData
-  (unsafe
-    (ptr-read
-      (int->ptr
-        (cast (tc-macro-import-index-state-address state) : u64)
-        : (Ptr TcMacroImportIndexStateData)))))
+  (tc-state-cell-read
+    (tc-macro-import-index-state-address state)
+    TcMacroImportIndexStateData))
 
 (define (tc-macro-import-index-state-data-set!
   [state : TcMacroState]
   [data : TcMacroImportIndexStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr
-        (cast (tc-macro-import-index-state-address state) : u64)
-        : (MutPtr TcMacroImportIndexStateData))
-      data)))
+  (tc-state-cell-write!
+    (tc-macro-import-index-state-address state)
+    TcMacroImportIndexStateData
+    data))
 
 (defmacro (tc-macro-import-index-control [state : Expr] [index : Expr]) : Expr
   `(array-ref
@@ -117852,36 +117499,11 @@
 
 (define (tc-macro-result-identity-state-address-initialize
   [state : TcMacroState]) : i64
-  (let
-    [address : i64
-      (tc-macro-state-slot-address state tc-macro-state-slot-result-identity)]
-    (if (> address 0)
-      address
-      (let
-        [owner : i64 (tc-macro-state-owner-arena state)]
-        (in-arena
-          (arena.Arena owner)
-          (let
-            [cell : (__tl_dyn-array TcMacroResultIdentityStateData)
-              (__tl_make-array TcMacroResultIdentityStateData 1)]
-            [_init : unit
-              (set!
-                (array-ref cell 0)
-                (TcMacroResultIdentityStateData -1 -1 -1 -1 -1))]
-            [next : i64
-              (cast
-                (unsafe
-                  (ptr->int
-                    (ptr-cast
-                      (__tl_array-data cell)
-                      : (Ptr TcMacroResultIdentityStateData))))
-                : i64)]
-            (begin
-              (tc-macro-state-slot-address-set!
-                state
-                tc-macro-state-slot-result-identity
-                next)
-              next)))))))
+  (tc-macro-state-cell-initialize
+    state
+    TcMacroResultIdentityStateData
+    tc-macro-state-slot-result-identity
+    (TcMacroResultIdentityStateData -1 -1 -1 -1 -1)))
 
 (define (tc-macro-result-identity-state-address [state : TcMacroState]) : i64
   (tc-macro-state-address-fast
@@ -117890,21 +117512,17 @@
     tc-macro-result-identity-state-address-initialize))
 
 (define (tc-macro-result-identity-state-data [state : TcMacroState]) : TcMacroResultIdentityStateData
-  (unsafe
-    (ptr-read
-      (int->ptr
-        (cast (tc-macro-result-identity-state-address state) : u64)
-        : (Ptr TcMacroResultIdentityStateData)))))
+  (tc-state-cell-read
+    (tc-macro-result-identity-state-address state)
+    TcMacroResultIdentityStateData))
 
 (define (tc-macro-result-identity-state-data-set!
   [state : TcMacroState]
   [data : TcMacroResultIdentityStateData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr
-        (cast (tc-macro-result-identity-state-address state) : u64)
-        : (MutPtr TcMacroResultIdentityStateData))
-      data)))
+  (tc-state-cell-write!
+    (tc-macro-result-identity-state-address state)
+    TcMacroResultIdentityStateData
+    data))
 
 (define (macro-stdlib-result-identity-ensure! [state : TcMacroState]) : unit
   (let

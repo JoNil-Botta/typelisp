@@ -170367,6 +170367,222 @@
             tail)
           tail))]))
 
+;; GVN-LOOP-2. The STORE-FREE loops (no store of any kind, no call, nothing
+;; that clears the table) and, per such loop, the vars its body USES. Across a
+;; store-free loop every entry of the preheader's table is still true at the
+;; header -- nothing on the back edge can write the word an entry names -- but
+;; carrying an entry is not free: its cached VALUE has to stay in a register
+;; (or a frame slot) across the whole loop, and the measured price of carrying
+;; every stable entry was intern_table +11.1% (its byte loops spilled their own
+;; values around carried ones). A value the loop body already reads is live
+;; across the loop whatever the table does, so carrying ITS entry costs nothing
+;; and only spares the code after the loop the re-derivation -- a hash probe's
+;; `base`, the slots length and data pointer an insert reads back after the
+;; probe. That is the rule: keep an entry across a store-free back edge exactly
+;; when its cached value is a literal or a var the body uses. Global-based
+;; entries stay out, as they do for the loop-safe carry.
+(defstruct OptLoadLoopCarry
+  ;; store-free loop headers.
+  (headers OptLabelSet)
+  ;; header label -> index into `uses`.
+  (index opt_i64_i64_map.Map)
+  ;; per store-free loop, the vars its body reads.
+  (uses (__tl_dyn-array opt_i64_i64_map.Map)))
+
+(define (opt-load-gvn-loop-store-free-instr? [instr : ir.CompilerIrInstr]) : bool
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.StorePtr _ _ _) false]
+    [(ir.CompilerIrInstr.StoreOwned _ _ _) false]
+    [(ir.CompilerIrInstr.Store _ _ _) false]
+    [(ir.CompilerIrInstr.VectorStore _) false]
+    [(ir.CompilerIrInstr.PredicatedStore _) false]
+    [(ir.CompilerIrInstr.CopyBytes _ _ _) false]
+    [_
+      (not
+        (opt-alias-instr-clears-all? (compiler-opt-global-shared-view instr)))]))
+
+(define (opt-load-gvn-loop-store-free-instr-seq?
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>=
+    index
+    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
+    true
+    (if (opt-load-gvn-loop-store-free-instr?
+      (ir.compiler-ir-instr-seq-ref
+        (compiler-opt-global-shared-view instrs)
+        index))
+      (opt-load-gvn-loop-store-free-instr-seq? instrs (+ index 1))
+      false)))
+
+(define (opt-load-gvn-loop-store-free-blocks? [body : ir.CompilerIrBlockList]) : bool
+  (match (compiler-opt-global-shared-view body)
+    [(ir.CompilerIrBlockList.Nil) true]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (if (opt-load-gvn-loop-store-free-instr-seq? instrs 0)
+            (opt-load-gvn-loop-store-free-blocks?
+              (compiler-opt-box-shared-view rest))
+            false)])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-load-gvn-loop-store-free-blocks?
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-load-gvn-body-uses-seq
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [uses : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  (if (>=
+    index
+    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
+    uses
+    (opt-load-gvn-body-uses-seq
+      (compiler-opt-global-shared-view instrs)
+      (+ index 1)
+      (opt-collect-instr-uses uses (ir.compiler-ir-instr-seq-ref instrs index)))))
+
+(define (opt-load-gvn-body-uses
+  [body : ir.CompilerIrBlockList]
+  [uses : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  (match (compiler-opt-global-shared-view body)
+    [(ir.CompilerIrBlockList.Nil) uses]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (opt-load-gvn-body-uses
+        (compiler-opt-box-shared-view rest)
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-load-gvn-body-uses-seq instrs 0 uses)]))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-load-gvn-body-uses (ir.compiler-ir-block-seq-to-list seq) uses)]))
+
+(define (opt-load-gvn-loop-count [loops : OptNaturalLoopList] [acc : i64]) : i64
+  (match (compiler-opt-global-shared-view loops)
+    [(OptNaturalLoopList.Nil) acc]
+    [(OptNaturalLoopList.Cons _ rest)
+      (opt-load-gvn-loop-count (compiler-opt-box-shared-view rest) (+ acc 1))]))
+
+(define (opt-load-gvn-loop-carry-fill
+  [loops : OptNaturalLoopList]
+  [carry : OptLoadLoopCarry]
+  [next : i64]) : OptLoadLoopCarry
+  (match (compiler-opt-global-shared-view loops)
+    [(OptNaturalLoopList.Nil) carry]
+    [(OptNaturalLoopList.Cons loop rest)
+      (if (opt-load-gvn-loop-store-free-blocks?
+        (opt-natural-loop-body-blocks (compiler-opt-global-shared-view loop)))
+        (let
+          [header : i64
+            (opt-natural-loop-header (compiler-opt-global-shared-view loop))]
+          [index : opt_i64_i64_map.Map
+            (compiler-opt-global-shared-view carry.index)]
+          (begin
+            (opt_i64_i64_map.insert-ref! (&mut index) header next)
+            (set!
+              (array-ref carry.uses next)
+              (opt-load-gvn-body-uses
+                (opt-natural-loop-body-blocks
+                  (compiler-opt-global-shared-view loop))
+                (opt_i64_i64_map.with-capacity 32)))
+            (opt-load-gvn-loop-carry-fill
+              (compiler-opt-box-shared-view rest)
+              (OptLoadLoopCarry
+                (opt-label-cons header carry.headers)
+                index
+                carry.uses)
+              (+ next 1))))
+        (opt-load-gvn-loop-carry-fill
+          (compiler-opt-box-shared-view rest)
+          carry
+          next))]))
+
+(define (opt-load-gvn-loop-carry-contains?
+  [carry : OptLoadLoopCarry]
+  [label : i64]) : bool
+  (opt-label-contains (compiler-opt-global-shared-view carry.headers) label))
+
+(define (opt-load-gvn-loop-carry-uses [carry : OptLoadLoopCarry] [label : i64]) : opt_i64_i64_map.Map
+  (match (opt_i64_i64_map.get (& carry.index) label)
+    [(opt_i64_i64_map.LookupFound at)
+      (compiler-opt-global-array-element-shared-view carry.uses at)]
+    [(opt_i64_i64_map.LookupMissing) (opt_i64_i64_map.with-capacity 1)]))
+
+(define (opt-load-gvn-loop-carry-collect [loops : OptNaturalLoopList]) : OptLoadLoopCarry
+  (let
+    [count : i64
+      (opt-load-gvn-loop-count (compiler-opt-global-shared-view loops) 0)]
+    (opt-load-gvn-loop-carry-fill
+      loops
+      (OptLoadLoopCarry
+        (OptLabelSet.Nil)
+        (opt_i64_i64_map.with-capacity (+ count 1))
+        (__tl_make-array opt_i64_i64_map.Map (+ count 1)))
+      0)))
+
+;; Keep every entry whose key vars are single-source and whose cached value
+;; is a literal or a var the loop body reads; a global-based key is dropped.
+;; With `descriptor?` (the loop is also loop-safe) the descriptor-field
+;; entries the loop-safe carry keeps stay as well, whatever their value.
+(define (opt-load-table-filter-live-values
+  [table : OptLoadTable]
+  [sources : opt_i64_i64_map.Map]
+  [uses : opt_i64_i64_map.Map]
+  [descriptor? : bool]) : OptLoadTable
+  (match (compiler-opt-global-shared-view table)
+    [(OptLoadTable.Nil) (OptLoadTable.Nil)]
+    [(OptLoadTable.Cons entry rest)
+      (let
+        [tail : OptLoadTable
+          (opt-load-table-filter-live-values
+            (compiler-opt-box-shared-view rest)
+            (compiler-opt-global-shared-view sources)
+            (compiler-opt-global-shared-view uses)
+            descriptor?)]
+        [descriptor-entry? : bool
+          (and
+            descriptor?
+            (match (opt-load-entry-key (compiler-opt-global-shared-view entry))
+              [(OptLoadKey.Field base _ _ header?)
+                (and
+                  header?
+                  (opt-gvn-stable-var?
+                    (compiler-opt-global-shared-view sources)
+                    base))]
+              [_ false]))]
+        [key-stable? : bool
+          (match (opt-load-entry-key (compiler-opt-global-shared-view entry))
+            [(OptLoadKey.Raw value _ _)
+              (match value
+                [(ir.CompilerIrValue.Var v)
+                  (opt-gvn-stable-var?
+                    (compiler-opt-global-shared-view sources)
+                    v)]
+                [_ false])]
+            [(OptLoadKey.Field base _ _ _)
+              (opt-gvn-stable-var?
+                (compiler-opt-global-shared-view sources)
+                base)]
+            [(OptLoadKey.ScaledField base index _ _)
+              (and
+                (opt-gvn-stable-var?
+                  (compiler-opt-global-shared-view sources)
+                  base)
+                (opt-gvn-stable-var?
+                  (compiler-opt-global-shared-view sources)
+                  index))]
+            [(OptLoadKey.GlobalField _ _ _ _) false])]
+        [value-free? : bool
+          (match (compiler-opt-global-shared-view entry)
+            [(OptLoadEntry.Entry _ value _)
+              (match value
+                [(ir.CompilerIrValue.Var v)
+                  (opt-used-contains (compiler-opt-global-shared-view uses) v)]
+                [(ir.CompilerIrValue.I64 _) true]
+                [_ false])])]
+        (if (or descriptor-entry? (and key-stable? value-free?))
+          (OptLoadTable.Cons entry (box tail))
+          tail))]))
+
 (define (opt-load-gvn-entry-from-preds
   [type-segment-bases : i64]
   [index : OptCfgIndex]
@@ -170374,6 +170590,7 @@
   [processed : (__tl_dyn-array bool)]
   [sources : opt_i64_i64_map.Map]
   [loop-safe : OptLabelSet]
+  [carry : OptLoadLoopCarry]
   [label : i64]
   [empty-state : OptLoadCseState]
   [edge : i64]
@@ -170404,11 +170621,26 @@
             [(OptLoadCseState.State empty-facts empty-table _ empty-cap _ _ _)
               (OptLoadCseState.State
                 empty-facts
-                (if (opt-load-gvn-loop-safe-contains? loop-safe label)
-                  (opt-load-table-filter-descriptor-stable
-                    (compiler-opt-global-shared-view acc-table)
-                    (compiler-opt-global-shared-view sources))
-                  empty-table)
+                (cond
+                  ;; GVN-LOOP-2: nothing on the back edge writes memory, so
+                  ;; every entry whose value is already live across the loop
+                  ;; carries, plus the descriptor-field entries when the loop
+                  ;; is also loop-safe (a store-free loop always is).
+                  [(opt-load-gvn-loop-carry-contains?
+                      (compiler-opt-global-shared-view carry)
+                      label)
+                    (opt-load-table-filter-live-values
+                      (compiler-opt-global-shared-view acc-table)
+                      (compiler-opt-global-shared-view sources)
+                      (opt-load-gvn-loop-carry-uses
+                        (compiler-opt-global-shared-view carry)
+                        label)
+                      (opt-load-gvn-loop-safe-contains? loop-safe label))]
+                  [(opt-load-gvn-loop-safe-contains? loop-safe label)
+                    (opt-load-table-filter-descriptor-stable
+                      (compiler-opt-global-shared-view acc-table)
+                      (compiler-opt-global-shared-view sources))]
+                  [else empty-table])
                 (opt-load-kinds-filter-stable
                   (compiler-opt-global-shared-view profile-state)
                   (compiler-opt-global-shared-view acc-kinds)
@@ -170432,6 +170664,7 @@
           processed
           sources
           loop-safe
+          carry
           label
           empty-state
           (+ edge 1)
@@ -170447,6 +170680,7 @@
             processed
             sources
             loop-safe
+            carry
             label
             empty-state
             (+ edge 1)
@@ -170463,6 +170697,7 @@
                 processed
                 sources
                 loop-safe
+                carry
                 label
                 empty-state
                 (+ edge 1)
@@ -170483,6 +170718,7 @@
                 processed
                 sources
                 loop-safe
+                carry
                 label
                 empty-state
                 (+ edge 1)
@@ -170498,6 +170734,7 @@
   [processed : (__tl_dyn-array bool)]
   [sources : opt_i64_i64_map.Map]
   [loop-safe : OptLabelSet]
+  [carry : OptLoadLoopCarry]
   [empty-state : OptLoadCseState]
   [id : i64]) : OptLoadCseState
   (let
@@ -170517,6 +170754,7 @@
             (compiler-opt-global-shared-view processed)
             (compiler-opt-global-shared-view sources)
             (compiler-opt-global-shared-view loop-safe)
+            (compiler-opt-global-shared-view carry)
             (opt-cfg-index-label (compiler-opt-global-shared-view index) id)
             (compiler-opt-global-shared-view empty-state)
             (array-ref preds.offsets id)
@@ -176139,6 +176377,7 @@
   [promote : OptLoadCellPromote]
   [joins : OptLoadJoinPhis]
   [loop-safe : OptLabelSet]
+  [carry : OptLoadLoopCarry]
   [exit-states : (__tl_dyn-array OptMaybeLoadCseState)]
   [processed : (__tl_dyn-array bool)]
   [out : (__tl_dyn-array OptGvnBlockResult)]
@@ -176162,6 +176401,7 @@
           (compiler-opt-global-shared-view processed)
           (compiler-opt-global-shared-view sources)
           (compiler-opt-global-shared-view loop-safe)
+          (compiler-opt-global-shared-view carry)
           (compiler-opt-global-shared-view empty-state)
           id))]
     (match (opt-cfg-index-block (compiler-opt-global-shared-view index) id)
@@ -176202,6 +176442,7 @@
   [promote : OptLoadCellPromote]
   [joins : OptLoadJoinPhis]
   [loop-safe : OptLabelSet]
+  [carry : OptLoadLoopCarry]
   [exit-states : (__tl_dyn-array OptMaybeLoadCseState)]
   [processed : (__tl_dyn-array bool)]
   [out : (__tl_dyn-array OptGvnBlockResult)]
@@ -176227,6 +176468,7 @@
             (compiler-opt-global-shared-view promote)
             (compiler-opt-global-shared-view joins)
             (compiler-opt-global-shared-view loop-safe)
+            (compiler-opt-global-shared-view carry)
             (compiler-opt-global-shared-view exit-states)
             (compiler-opt-global-shared-view processed)
             (compiler-opt-global-shared-view out)
@@ -176243,6 +176485,7 @@
             (compiler-opt-global-shared-view promote)
             (compiler-opt-global-shared-view joins)
             (compiler-opt-global-shared-view loop-safe)
+            (compiler-opt-global-shared-view carry)
             (compiler-opt-global-shared-view exit-states)
             (compiler-opt-global-shared-view processed)
             (compiler-opt-global-shared-view out)
@@ -176884,6 +177127,9 @@
           (compiler-opt-global-shared-view hs)
           (compiler-opt-global-shared-view work)
           (compiler-opt-global-shared-view loops))]
+      [carry : OptLoadLoopCarry
+        (opt-load-gvn-loop-carry-collect
+          (compiler-opt-global-shared-view loops))]
       [canon : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
       ;; Natural-loop membership, filled before the sweep because MF-5 (i)'s
       ;; reuse gate reads it; substitution mode reuses the same array.
@@ -176950,6 +177196,7 @@
           (compiler-opt-global-shared-view promote)
           (compiler-opt-global-shared-view joins)
           (compiler-opt-global-shared-view loop-safe)
+          (compiler-opt-global-shared-view carry)
           (compiler-opt-global-shared-view exit-states)
           (compiler-opt-global-shared-view processed)
           (compiler-opt-global-shared-view out)

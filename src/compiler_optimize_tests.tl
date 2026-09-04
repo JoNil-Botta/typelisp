@@ -33794,6 +33794,90 @@
             (opt-test-instrs (opt-load-subst-return 3)))
           (compiler_ir_types.CompilerIrBlockList.Nil))))))
 
+;; GVN-LOOP-2: a loop whose body has no store or call. The entry's read is
+;; carried across the back edge only when its value (var 3) is a use INSIDE
+;; the loop: here the header doubles it, so the exit's re-read of `ptr` folds
+;; onto the entry's load (one load left).
+(define (opt-load-subst-loop-carry-live-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs (opt-load-subst-read 3) (opt-load-subst-jump "header")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "header")
+        (opt-test-instrs
+          (opt-load-subst-double 5 3)
+          (opt-load-subst-branch "body" "exit")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "body")
+          (opt-test-instrs (opt-load-subst-jump "header")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (opt-test-instrs
+              (opt-load-subst-read 4)
+              (opt-load-subst-double 6 4)
+              (opt-load-subst-return 6)))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; The same store-free loop, but nothing inside it reads var 3: carrying the
+;; entry would pin a value across the loop that the loop never needs, so the
+;; table drops it and the exit re-reads `ptr` (two loads).
+(define (opt-load-subst-loop-carry-dead-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs (opt-load-subst-read 3) (opt-load-subst-jump "header")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "header")
+        (opt-test-instrs (opt-load-subst-branch "body" "exit")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "body")
+          (opt-test-instrs (opt-load-subst-jump "header")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (opt-test-instrs
+              (opt-load-subst-read 4)
+              (opt-load-subst-double 6 4)
+              (opt-load-subst-return 6)))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; The live-value loop with a store in its body: the back edge may have
+;; written `ptr`'s word, so nothing carries and the exit re-reads (two loads).
+(define (opt-load-subst-loop-carry-store-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs (opt-load-subst-read 3) (opt-load-subst-jump "header")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "header")
+        (opt-test-instrs
+          (opt-load-subst-double 5 3)
+          (opt-load-subst-branch "body" "exit")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "body")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.StorePtr
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ast_types.AstType.I64))
+            (opt-load-subst-jump "header")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (opt-test-instrs
+              (opt-load-subst-read 4)
+              (opt-load-subst-double 6 4)
+              (opt-load-subst-return 6)))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
 (define (opt-load-subst-run [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
   (compiler_optimize.opt-gvn-blocks
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -34332,6 +34416,12 @@
       (opt-load-subst-run (opt-load-subst-loop-escape-blocks))]
     [loop-inner : compiler_ir_types.CompilerIrBlockList
       (opt-load-subst-run (opt-load-subst-loop-inner-blocks))]
+    [carry-live : compiler_ir_types.CompilerIrBlockList
+      (opt-load-subst-run (opt-load-subst-loop-carry-live-blocks))]
+    [carry-dead : compiler_ir_types.CompilerIrBlockList
+      (opt-load-subst-run (opt-load-subst-loop-carry-dead-blocks))]
+    [carry-store : compiler_ir_types.CompilerIrBlockList
+      (opt-load-subst-run (opt-load-subst-loop-carry-store-blocks))]
     (cond
       ;; Diamond: one load left, no copy, and the operand reads the dominating
       ;; load directly.
@@ -34404,6 +34494,28 @@
             0))
         13]
       [(not (= (opt-blocks-binop-lhs-var loop-inner 5 (- 0 1)) 3)) 14]
+      ;; GVN-LOOP-2: the store-free loop carries the entry read whose value it
+      ;; uses, so the exit's re-read folds; a value the loop never reads is not
+      ;; carried, and a store in the body carries nothing.
+      [(not
+          (=
+            (opt-count-load-blocks
+              (compiler_optimize.compiler-opt-global-shared-view carry-live))
+            1))
+        15]
+      [(not (= (opt-blocks-binop-lhs-var carry-live 6 (- 0 1)) 3)) 16]
+      [(not
+          (=
+            (opt-count-load-blocks
+              (compiler_optimize.compiler-opt-global-shared-view carry-dead))
+            2))
+        17]
+      [(not
+          (=
+            (opt-count-load-blocks
+              (compiler_optimize.compiler-opt-global-shared-view carry-store))
+            2))
+        18]
       ;; The join-phi (MF-2) and bypass-edge load PRE (MF-3) families run from
       ;; here, so they are covered by this suite's one registered entry point.
       [else (compiler-optimize-load-join-pre-self-test)])))

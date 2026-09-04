@@ -1874,8 +1874,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # composed graph from 78 to 79 segments: the authoritative Windows CI probe
     # measured 5,112,197 used nodes, 5,177,344 capacity, and 165,675,008 physical
     # payload bytes.
+    # #7574's twenty optimizer/backend packets plus the switch-dispatch fix cross
+    # the composed graph from 79 to 80 segments: the authoritative Windows CI
+    # probe measured 5,196,047 used nodes, 5,242,880 capacity, and 167,772,160
+    # physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 79 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 80 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking
@@ -1956,8 +1960,11 @@ if [ "$NL_HOST_OS" = windows ]; then
     # #7426's optimizer/backend packets independently cross the same boundary:
     # its authoritative Windows CI probe measured 3,935,779 used nodes with the
     # same capacity and physical payload size.
+    # #7574's twenty packets cross the composed graph from 61 to 62 segments: the
+    # authoritative Windows CI probe measured 4,005,073 used nodes, 4,063,232
+    # capacity, and 130,023,424 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 61 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 62 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain
@@ -1999,6 +2006,9 @@ if [ "$NL_HOST_OS" = windows ]; then
     # results cross the next boundary: the authoritative Windows probe measured
     # 29,931 used nodes, 30 segments, 30,720 capacity, and 737,280 physical
     # payload bytes.
+    # #7574's twenty packets independently cross to 30 segments: its
+    # authoritative Windows CI probe measured 29,860 used nodes, 30,720
+    # capacity, and 737,280 physical payload bytes.
     # #5407's semantic completion provider measured 26,662 used nodes and 27
     # segments on the pre-ownership mainline tree.
     assert_selfhost_pool_family \

@@ -3421,6 +3421,22 @@
       (compiler_optimize_tests.compiler-optimize-natural-loop-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-preheader-synthesis-self-test"
+      (compiler_optimize_tests.compiler-optimize-preheader-synthesis-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-shape-clause-order-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-shape-clause-order-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-masked-capacity-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-masked-capacity-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-guard-price-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-guard-price-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-loop-rotation-self-test"
       (compiler_optimize_tests.compiler-optimize-loop-rotation-self-test)
       42)
@@ -3490,6 +3506,10 @@
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-unroll-load-store-self-test"
       (compiler_optimize_tests.compiler-optimize-unroll-load-store-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-unroll-descending-self-test"
+      (compiler_optimize_tests.compiler-optimize-unroll-descending-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-unroll-mb-self-test"
@@ -4435,6 +4455,10 @@
       (compiler_optimize_tests.compiler-optimize-aggregate-sroa-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-aggregate-split-self-test"
+      (compiler_optimize_tests.compiler-optimize-aggregate-split-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-spans-self-test"
       (compiler_optimize_tests.compiler-optimize-spans-self-test)
       42)
@@ -4718,6 +4742,56 @@
     "the tier keeps a call-carrying site one loop deeper too, and both callers verify"))
 
 (test
+  inline-rescan-loop-nest
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-rescan-loop-nest-ok?)
+    "the rescan clause is inert in generation one and separates a loop-bearing callee from the acyclic body of the same size"))
+
+(test
+  inline-multiblock-alloc-shape
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-multiblock-alloc-shape-ok?)
+    "the multiblock gate admits an aggregate-building body and names the clause that refuses each neighbour"))
+
+(test
+  inline-multiblock-alloc-splice
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-multiblock-alloc-splice-ok?)
+    "an aggregate-building sret body splices into a loop site once, and both storage runs keep the shape the allocator scans for"))
+
+(test
+  inline-multiblock-tail-site-indirect-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-multiblock-tail-site-indirect-refusal-ok?)
+    "an indirect tail-call site is not a site: the multiblock path admits only the direct form"))
+
+(test
+  inline-checked-tail-site-verdicts
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-inline-checked-tail-site-self-test)
+    200
+    "the measured tier prices a tail-call site and keeps it, the caller inherits the callee's exits, and neither caller keeps a call or a tail call to the leaf"))
+
+(test
+  inline-checked-rescan-generations
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-inline-checked-rescan-self-test)
+    11001
+    "a keep exposes its copy's own sites, the rescan generation prices them, and the third level stays out of line"))
+
+(test
+  inline-checked-generation-carry
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-generation-carry-ok?)
+    "a rescan generation carries the caller's verdicts, accepted rows and callee lock, and retires the finished generation's site keys"))
+
+(test
+  inline-checked-generation-accept-cap
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-generation-accept-cap-ok?)
+    "the per-caller accept cap is not refunded by a rescan: a site that would exceed it is refused there"))
+
+(test
   inline-checked-call-carrying-revert
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-checked-call-carrying-revert-ok?)
@@ -4778,6 +4852,12 @@
     "the site-depth floor relaxes to zero exactly where the composite frequency already carries the evidence"))
 
 (test
+  inline-checked-entry-equivalent
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-entry-equivalent-ok?)
+    "a depth-0 site reads as entry-equivalent at the entry block, at a block that post-dominates it in a loop-free caller, at an arm of the entry branch whose sibling leaves the function in a wrapper-shaped caller, and at an arm of a DISPATCH whose spine only compares and branches"))
+
+(test
   inline-checked-depth0-hot-site
   (test.assert-i64-eq
     (compiler_optimize_tests.opt-inline-checked-depth0-self-test 1)
@@ -4792,23 +4872,82 @@
     "the same depth-0 site under a caller nothing reaches through a loop never reaches a verdict"))
 
 (test
-  inline-checked-depth0-conditional-site
+  inline-checked-depth0-threaded-site
   (test.assert-i64-eq
     (compiler_optimize_tests.opt-inline-checked-depth0-self-test 2)
-    101
-    "moving the same site one unconditional jump off the entry block keeps the floor: one verdict fewer, the call still there"))
+    201
+    "moving the same site one unconditional jump off the entry block leaves it POST-DOMINATING the entry, so INL-4 reads it as entry-equivalent in this wrapper-shaped caller: the same two verdicts as the entry spelling, and the verdict still refuses it by cost"))
 
 (test
-  inline-checked-lock-margin
+  inline-checked-depth0-guarded-site
+  (test.assert-i64-eq
+    (compiler_optimize_tests.opt-inline-checked-depth0-self-test 3)
+    101
+    "putting the same site below a guard whose other arm returns makes its block neither the entry's post-dominator nor an arm of the entry branch, and the floor stands exactly as it did before the widening: one verdict fewer, the call still there"))
+
+(test
+  inline-checked-inl8-post-multi-call-caller
+  (test.assert-i64-eq
+    (compiler_optimize_tests.opt-inline-checked-inl8-self-test 0)
+    3000
+    "a callee taken at a small wrapper and left out of line at a straight-line caller carrying calls of its own: INL-8 MEASURES the second caller's post-dominating site -- three verdicts, and neither caller keeps the call"))
+
+(test
+  inline-checked-inl8-post-multi-call-caller-loop
+  (test.assert-i64-eq
+    (compiler_optimize_tests.opt-inline-checked-inl8-self-test 1)
+    1010
+    "the same pair with a LOOP below the second caller's site, which is the reading the caller clause had before: the site never reaches a verdict -- `site-depth` with `pos` reading `none` -- so one verdict fewer and that caller keeps its call out of line"))
+
+(test
+  inline-checked-inl9-dispatch-arms
+  (test.assert-i64-eq
+    (compiler_optimize_tests.opt-inline-checked-inl9-self-test 0)
+    3000
+    "the three arms of a dispatch, each calling one acyclic call-free leaf: INL-9 reads every arm as entry-equivalent -- only the first is a successor of the entry branch, and the call count is one per arm by construction -- so the tier prices all three, keeps all three, and no arm is left holding the call"))
+
+(test
+  inline-checked-inl9-dispatch-cyclic-callee
+  (test.assert-i64-eq
+    (compiler_optimize_tests.opt-inline-checked-inl9-self-test 1)
+    3
+    "the same dispatch with a LOOP around the same leaf's chain: the dispatch reading's own clause is on the callee, so no arm reaches a verdict at all -- `site-depth` with `pos` reading `none` -- three verdicts fewer and all three calls still there (gvn_table +8,031,268 when they are not)"))
+
+(test
+  inline-checked-lock-bodies
   (test.assert-true
-    (compiler_optimize_tests.compiler-optimize-inline-checked-lock-margin-ok?)
-    "the one-callee lock admits a second callee only behind a first accept whose whole modelled saving survived"))
+    (compiler_optimize_tests.compiler-optimize-inline-checked-lock-bodies-ok?)
+    "the callee lock admits the ranked bodies up to its bound and refuses the one past it; a slim accept no longer refuses the next body by proxy"))
 
 (test
   inline-checked-relaxed-rank
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-checked-relaxed-rank-ok?)
     "a relaxed candidate is ranked behind every core one and charged to the relaxations' own reserve"))
+
+(test
+  inline-synth-chain
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-synth-chain-ok?)
+    "a leaf two straight-line wrappers below a loop reads one census weight on the propagated count and one on the census's own"))
+
+(test
+  inline-synth-recursive
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-synth-recursive-ok?)
+    "a recursive component carries its own repetition, reproducibly and inside the saturating cap"))
+
+(test
+  inline-synth-address-taken
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-synth-address-taken-ok?)
+    "an address-taken callee starts at the unknown-caller base of one; the ordinary callee beside it starts at zero"))
+
+(test
+  inline-synth-order
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-synth-order-ok?)
+    "the hotter candidate is armed first whatever order the caller's walk found the sites in"))
 
 (test
   inline-checked-relaxed-reserve
@@ -5040,6 +5179,18 @@
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-loop-free-site-ok?)
     "a loop-free caller takes the loop leaf at a straight-line site: no caller loop is there to tax"))
+
+(test
+  inline-hot-loop-leaf-recursive-caller-refusal
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-recursive-caller-refusal-ok?)
+    "the same leaf at the same straight-line sites of SELF-RECURSIVE callers stays out of line: the caller's loop is the one tailrec is about to build"))
+
+(test
+  inline-recursive-caller-loop-free
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-recursive-caller-loop-free-ok?)
+    "the loop-free clause separates a straight-line caller, a self-tail-recursive one and a looping one, and reports each as the band line's caller-rec field"))
 
 (test
   inline-hot-loop-leaf-cold-site-refusal
@@ -5294,6 +5445,13 @@
     "16x unrolling remaps every admitted store-free SIMD instruction"))
 
 (test
+  unroll-descending-shift-two-copies
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-unroll-descending-self-test)
+    42
+    "descending shift unrolls with a mirrored guard and program-order copies"))
+
+(test
   unroll-load-store-body-two-copies
   (test.assert-i64-eq
     (compiler_optimize_tests.compiler-optimize-unroll-load-store-self-test)
@@ -5488,3 +5646,9 @@
     (compiler_optimize_tests.compiler-optimize-ubound-tangled-self-test)
     42
     "mutually dependent header phis and a three-edge phi terminate the search and are refused"))
+
+(test
+  inline-multiblock-bounds-clone-keeps-callee-location
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-spans-inline-multiblock-bounds-located-ok?)
+    "a BoundsCheck the multiblock with-spans path copies out of a callee keeps the CALLEE's located span -- path id included -- under the clone's freshened ok-label, in an ordinary build as well as under -g, so an abort raised inside an inlined body still names the load in the callee"))

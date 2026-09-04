@@ -22866,7 +22866,190 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-stack-only-storage-escape-ok?"
       (compiler-reg-stack-only-storage-escape-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-trace-reason-vocabulary-ok?"
+      (cfg test (compiler-reg-trace-reason-vocabulary-ok?) true))
     true))
+
+;; ---------------------------------------------------------------------------
+;; RG-1: the `--trace-passes` home tracer's reason vocabulary.
+;;
+;; The fixture is the smallest shape that produces the classes a census reads:
+;; six values that all span the function's one call, against a five-register
+;; callee-saved pool. Five take a callee-saved home, the sixth loses the heap's
+;; var-id tie-break and is left in memory with a multi-segment range, and the
+;; values around the call take ordinary caller-saved homes. The journal this
+;; reads is exactly what `--trace-passes` renders, so the spellings a census
+;; joins on are pinned here rather than in the renderer.
+(cfg
+  test
+  (define (compiler-reg-trace-fixture-add-instr [dst : i64] [a : i64] [b : i64]) : ir.CompilerIrInstr
+    (ir.CompilerIrInstr.BinOp
+      dst
+      (ir.CompilerIrBinOp.Add)
+      (ir.CompilerIrValue.Var a)
+      (ir.CompilerIrValue.Var b)
+      (compiler-reg-i64-ty))))
+
+(cfg
+  test
+  (define (compiler-reg-trace-fixture-function) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "trace_reason_vocabulary")
+      (ir.compiler-ir-param-seq-empty)
+      (ast.AstType.I64)
+      9
+      (ir.compiler-ir-block-cons
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "entry")
+          (compiler-reg-test-instr-seq-prepend
+            (ir.CompilerIrInstr.BinOp
+              0
+              (ir.CompilerIrBinOp.Add)
+              (ir.CompilerIrValue.I64 1)
+              (ir.CompilerIrValue.I64 1)
+              (compiler-reg-i64-ty))
+            (compiler-reg-test-instr-seq-prepend
+              (ir.CompilerIrInstr.BinOp
+                1
+                (ir.CompilerIrBinOp.Add)
+                (ir.CompilerIrValue.I64 2)
+                (ir.CompilerIrValue.I64 1)
+                (compiler-reg-i64-ty))
+              (compiler-reg-test-instr-seq-prepend
+                (ir.CompilerIrInstr.BinOp
+                  2
+                  (ir.CompilerIrBinOp.Add)
+                  (ir.CompilerIrValue.I64 3)
+                  (ir.CompilerIrValue.I64 1)
+                  (compiler-reg-i64-ty))
+                (compiler-reg-test-instr-seq-prepend
+                  (ir.CompilerIrInstr.BinOp
+                    3
+                    (ir.CompilerIrBinOp.Add)
+                    (ir.CompilerIrValue.I64 4)
+                    (ir.CompilerIrValue.I64 1)
+                    (compiler-reg-i64-ty))
+                  (compiler-reg-test-instr-seq-prepend
+                    (ir.CompilerIrInstr.BinOp
+                      4
+                      (ir.CompilerIrBinOp.Add)
+                      (ir.CompilerIrValue.I64 5)
+                      (ir.CompilerIrValue.I64 1)
+                      (compiler-reg-i64-ty))
+                    (compiler-reg-test-instr-seq-prepend
+                      (ir.CompilerIrInstr.BinOp
+                        5
+                        (ir.CompilerIrBinOp.Add)
+                        (ir.CompilerIrValue.I64 6)
+                        (ir.CompilerIrValue.I64 1)
+                        (compiler-reg-i64-ty))
+                      (compiler-reg-test-instr-seq-prepend
+                        (ir.CompilerIrInstr.Call
+                          6
+                          (ir.compiler-ir-test-symbol "work")
+                          ir.CompilerIrCallArgs.Nil
+                          (ast.AstType.I64))
+                        (compiler-reg-test-instr-seq-prepend
+                          (compiler-reg-trace-fixture-add-instr 7 0 1)
+                          (compiler-reg-test-instr-seq-prepend
+                            (compiler-reg-trace-fixture-add-instr 7 2 3)
+                            (compiler-reg-test-instr-seq-prepend
+                              (compiler-reg-trace-fixture-add-instr 7 4 5)
+                              (compiler-reg-test-instr-seq-prepend
+                                (compiler-reg-trace-fixture-add-instr 8 7 6)
+                                (compiler-reg-test-instr-seq-prepend
+                                  (ir.CompilerIrInstr.Return
+                                    (ir.CompilerIrMaybeValue.Some
+                                      (ir.CompilerIrValue.Var 8)))
+                                  (ir.compiler-ir-instr-seq-empty))))))))))))))
+        ir.CompilerIrBlockList.Nil))))
+
+(cfg
+  test
+  (define (compiler-reg-trace-reason-vocabulary-ok?) : bool
+    (let
+      [_on : unit (reg.compiler-reg-debug-set-trace-homes! true)]
+      [plan : reg.CompilerRegPlan
+        (reg.compiler-reg-plan-function-scalar-for-abi
+          cabi.CompilerRegTargetAbi.Linux
+          (compiler-reg-trace-fixture-function))]
+      [homed : i64 (reg.compiler-reg-trace-reason-at 0)]
+      [spilled : i64 (reg.compiler-reg-trace-reason-at 5)]
+      [_off : unit (reg.compiler-reg-debug-set-trace-homes! false)]
+      (and
+        (string.eq (reg.compiler-reg-trace-reason-name homed) "csr-pool-free")
+        (string.eq
+          (reg.compiler-reg-trace-reason-name spilled)
+          "spill-split-eligible")
+        (string.eq
+          (reg.compiler-reg-trace-reason-name
+            (reg.compiler-reg-trace-reason-arg-abi-pref))
+          "arg-abi-pref")
+        (string.eq
+          (reg.compiler-reg-trace-reason-name
+            (reg.compiler-reg-trace-reason-copy-hint))
+          "copy-hint")
+        (string.eq
+          (reg.compiler-reg-trace-reason-name
+            (reg.compiler-reg-trace-reason-pool-free))
+          "pool-free")
+        (string.eq
+          (reg.compiler-reg-trace-reason-name
+            (reg.compiler-reg-trace-reason-evict-lower))
+          "evict-lower")
+        (string.eq
+          (reg.compiler-reg-trace-reason-name
+            (reg.compiler-reg-trace-reason-csr-evict-lower))
+          "csr-evict-lower")
+        (string.eq
+          (reg.compiler-reg-trace-reason-name
+            (reg.compiler-reg-trace-reason-spill-whole))
+          "spill-whole")
+        (string.eq
+          (reg.compiler-reg-trace-reason-name
+            (reg.compiler-reg-trace-reason-scratch-unassigned))
+          "scratch-unassigned")
+        (string.eq
+          (reg.compiler-reg-trace-reason-name
+            (reg.compiler-reg-trace-reason-param-abi-pin))
+          "param-abi-pin")
+        (string.eq
+          (reg.compiler-reg-trace-reason-name
+            (reg.compiler-reg-trace-reason-preassigned))
+          "preassigned")
+        (string.eq
+          (reg.compiler-reg-trace-reason-name
+            (reg.compiler-reg-trace-reason-coalesced-member))
+          "coalesced-member")
+        (string.eq
+          (reg.compiler-reg-trace-reason-name
+            (reg.compiler-reg-trace-reason-group-pair))
+          "group-pair")
+        (string.eq
+          (reg.compiler-reg-trace-reason-name
+            (reg.compiler-reg-trace-reason-memory-rule))
+          "memory-rule")
+        (string.eq
+          (reg.compiler-reg-trace-reason-name
+            (reg.compiler-reg-trace-reason-blocked))
+          "blocked")
+        (string.eq
+          (reg.compiler-reg-trace-reason-name
+            (reg.compiler-reg-trace-reason-forced-carrier))
+          "forced-carrier")
+        (string.eq
+          (reg.compiler-reg-trace-reason-name
+            (reg.compiler-reg-trace-reason-call-save-carrier))
+          "call-save-carrier")
+        (string.eq
+          (reg.compiler-reg-trace-reason-name
+            (reg.compiler-reg-trace-reason-remat))
+          "remat")
+        (string.eq
+          (reg.compiler-reg-trace-reason-name
+            (reg.compiler-reg-trace-reason-none))
+          "none")))))
 
 (define (compiler-regalloc-self-test) : i64
   (begin

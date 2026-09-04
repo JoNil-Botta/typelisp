@@ -1164,6 +1164,160 @@
 (define (compiler-reg-set-rbp-pool-enabled! [on : bool]) : unit
   (set! compiler-reg-rbp-pool-enabled on))
 
+;; ---------------------------------------------------------------------------
+;; RG-1: the allocator's home tracer (`--trace-passes`).
+;;
+;; The allocator's home decisions were invisible: a value in a frame slot and a
+;; callee-saved register holding a colder one look the same from the outside.
+;; Under the flag the plan prints one `regalloc-home|` line per scalar value it
+;; homes, naming the CLAUSE that decided (the greedy pool order, a P3/P7 class
+;; verdict, an eviction, an ineligibility) together with the two numbers the
+;; cost model actually compares -- the value's weighted reference count and its
+;; weighted call crossings -- and the loop depth of its hottest reference.
+;;
+;; The reason journal is one i64 per var, written by the deciding clause itself.
+;; Every writer tests the flag first, so an untraced compile pays one boolean
+;; test per decision and allocates nothing: the journal array stays empty
+;; (reset! is a no-op) and the bounds test in note! then rejects every write.
+(define compiler-reg-debug-trace-homes : bool
+  false)
+
+(define (compiler-reg-debug-set-trace-homes! [on : bool]) : unit
+  (set! compiler-reg-debug-trace-homes on))
+
+(define (compiler-reg-debug-trace-homes?) : bool
+  compiler-reg-debug-trace-homes)
+
+;; Set while the inliner's checked tier prices a body by running the allocator
+;; STANDALONE from inside the optimizer (opt-inline-checked-alloc-cost). Those
+;; runs are measurements, not pipeline stages: the plan is thrown away and only
+;; an integer escapes, so the tracer must not report homes for a function the
+;; pipeline never planned -- exactly the argument that silences the optimizer's
+;; own pass tracer there. The measurement additionally suppresses the image's
+;; program maps, so the function symbol it plans has no text to print.
+(define compiler-reg-trace-suppressed? : bool
+  false)
+
+(define (compiler-reg-trace-set-suppressed! [on : bool]) : unit
+  (set! compiler-reg-trace-suppressed? on))
+
+;; The reason vocabulary. Codes are dense so the journal is one array read;
+;; `compiler-reg-trace-reason-name` is the only place the spelling lives.
+(define (compiler-reg-trace-reason-none) : i64
+  0)
+
+(define (compiler-reg-trace-reason-arg-abi-pref) : i64
+  1)
+
+(define (compiler-reg-trace-reason-copy-hint) : i64
+  2)
+
+(define (compiler-reg-trace-reason-pool-free) : i64
+  3)
+
+(define (compiler-reg-trace-reason-csr-pool-free) : i64
+  4)
+
+(define (compiler-reg-trace-reason-evict-lower) : i64
+  5)
+
+(define (compiler-reg-trace-reason-csr-evict-lower) : i64
+  6)
+
+(define (compiler-reg-trace-reason-spill-split-eligible) : i64
+  7)
+
+(define (compiler-reg-trace-reason-spill-whole) : i64
+  8)
+
+(define (compiler-reg-trace-reason-scratch-unassigned) : i64
+  9)
+
+(define (compiler-reg-trace-reason-param-abi-pin) : i64
+  10)
+
+(define (compiler-reg-trace-reason-preassigned) : i64
+  11)
+
+(define (compiler-reg-trace-reason-coalesced-member) : i64
+  12)
+
+(define (compiler-reg-trace-reason-group-pair) : i64
+  13)
+
+(define (compiler-reg-trace-reason-memory-rule) : i64
+  14)
+
+(define (compiler-reg-trace-reason-blocked) : i64
+  15)
+
+(define (compiler-reg-trace-reason-forced-carrier) : i64
+  16)
+
+(define (compiler-reg-trace-reason-call-save-carrier) : i64
+  17)
+
+(define (compiler-reg-trace-reason-remat) : i64
+  18)
+
+(define (compiler-reg-trace-reason-name [reason : i64]) : String
+  (cond
+    [(= reason (compiler-reg-trace-reason-arg-abi-pref)) "arg-abi-pref"]
+    [(= reason (compiler-reg-trace-reason-copy-hint)) "copy-hint"]
+    [(= reason (compiler-reg-trace-reason-pool-free)) "pool-free"]
+    [(= reason (compiler-reg-trace-reason-csr-pool-free)) "csr-pool-free"]
+    [(= reason (compiler-reg-trace-reason-evict-lower)) "evict-lower"]
+    [(= reason (compiler-reg-trace-reason-csr-evict-lower)) "csr-evict-lower"]
+    [(= reason (compiler-reg-trace-reason-spill-split-eligible))
+      "spill-split-eligible"]
+    [(= reason (compiler-reg-trace-reason-spill-whole)) "spill-whole"]
+    [(= reason (compiler-reg-trace-reason-scratch-unassigned))
+      "scratch-unassigned"]
+    [(= reason (compiler-reg-trace-reason-param-abi-pin)) "param-abi-pin"]
+    [(= reason (compiler-reg-trace-reason-preassigned)) "preassigned"]
+    [(= reason (compiler-reg-trace-reason-coalesced-member)) "coalesced-member"]
+    [(= reason (compiler-reg-trace-reason-group-pair)) "group-pair"]
+    [(= reason (compiler-reg-trace-reason-memory-rule)) "memory-rule"]
+    [(= reason (compiler-reg-trace-reason-blocked)) "blocked"]
+    [(= reason (compiler-reg-trace-reason-forced-carrier)) "forced-carrier"]
+    [(= reason (compiler-reg-trace-reason-call-save-carrier))
+      "call-save-carrier"]
+    [(= reason (compiler-reg-trace-reason-remat)) "remat"]
+    [else "none"]))
+
+;; One i64 per var of the function being planned. Empty whenever the flag is
+;; off, which is what makes `note!` free there.
+(define compiler-reg-trace-reasons : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+
+;; The journal's length as a plain integer. Reading it borrows nothing, which
+;; keeps `note!` a pair of integer compares on the allocation path and keeps
+;; every access inside the lexical-scope rules the published seed enforces.
+(define compiler-reg-trace-reason-count : i64
+  0)
+
+(define (compiler-reg-trace-reasons-reset! [vars : i64]) : unit
+  (if compiler-reg-debug-trace-homes
+    (begin
+      (set! compiler-reg-trace-reasons (__tl_make-array i64 (+ vars 1)))
+      (set! compiler-reg-trace-reason-count (+ vars 1)))
+    unit))
+
+(define (compiler-reg-trace-note! [var : i64] [reason : i64]) : unit
+  (if (and
+    compiler-reg-debug-trace-homes
+    (>= var 0)
+    (< var compiler-reg-trace-reason-count))
+    (set! (array-ref compiler-reg-trace-reasons var) reason)
+    unit))
+
+(define (compiler-reg-trace-reason-at [var : i64]) : i64
+  (if (and (>= var 0) (< var compiler-reg-trace-reason-count))
+    (compiler-reg-global-array-element-shared-view
+      compiler-reg-trace-reasons
+      var)
+    (compiler-reg-trace-reason-none)))
+
 (define (compiler-reg-sysv-integer-registers-with-rbp) : CompilerRegIdSeq
   (let
     [out : CompilerRegIdSeq (compiler-reg-id-seq-with-capacity 6)]
@@ -13769,6 +13923,9 @@
                 (match loc
                   [(CompilerRegLocation.Spill _)
                     (begin
+                      (compiler-reg-trace-note!
+                        v
+                        (compiler-reg-trace-reason-remat))
                       (compiler-reg-assignment-table-insert
                         (compiler-reg-global-shared-view assignments)
                         v
@@ -33576,6 +33733,56 @@
             (+ word-index 1)
             best))))))
 
+;; ---------------------------------------------------------------------------
+;; MEASURED AND REFUTED (RG-1): a SECOND chance at the callee-saved pool.
+;;
+;; The obvious next idea at this gate is that a call-spanning value the
+;; worklist left in memory should be revisited once the landscape has settled:
+;; the greedy gives such a value one attempt, and a value that loses it is
+;; spilled for its whole interval and never reconsidered, while the values that
+;; beat it can be evicted and requeued and land elsewhere. Counting functions
+;; from the `--trace-passes` home tracer makes that look like a large class --
+;; 43 of the 28 benchmarks' functions and 1,153 of the opt2 self-compile's
+;; 18,642 hold a call-crossing value in memory while SOME callee-saved register
+;; holds a value of strictly lower weighted reference count (cg-scc-compute! 16
+;; against %r14's 5; sccp-process-instr-seq-from 8 against %r13's 6;
+;; ssa-materialize 20 against %rbx's 10).
+;;
+;; It was built (both clauses: evict a strictly-lower occupant; or RELOCATE a
+;; non-crossing occupant to a free caller-saved register, which costs it
+;; nothing) and measured: every one of the 28 rows moved +0.000000%, and the
+;; self-compile paid 0.045% for it. The census counts the wrong pairs. It pairs
+;; the hottest memory-homed crosser with the COLDEST occupant of a register
+;; ANYWHERE in the function, and those two usually never interfere. At the only
+;; level where a register can change hands -- the residents whose live ranges
+;; actually overlap the candidate's -- the answer over 41,691 blocked attempts
+;; in one opt2 self-compile is:
+;;
+;;     heaviest interfering resident of the cheapest register, vs the candidate
+;;       strictly lighter (would already have been evicted here) ....       0
+;;       exactly equal (this strict `<` refuses, and must) ......... 12,493 (30%)
+;;       1.0-1.5x heavier ...........................................  5,976 (14%)
+;;       1.5-2x heavier .............................................  7,097 (17%)
+;;       2-4x heavier ............................................... 12,082 (29%)
+;;       >=4x heavier ...............................................  4,043 (10%)
+;;
+;; The callee-saved registers are held by values the cost model prices ABOVE
+;; the ones in memory, and the occupants that could be relocated are themselves
+;; call-crossing. cg-census-blocks, the packet case, is the same story read from
+;; the other end: `position`'s seven references per iteration are three FOLDED
+;; memory operands (`addq $1,0x68(%rsp)`, two `cmp`s), one store and two real
+;; loads, so the foldable-operand rebate scores it 9 while %rbx's and %r15's
+;; depth-3 occupants score 16 and %r12's score 34 -- and registerising it can
+;; only remove the two loads (~3.2M Ir, 0.47% of the row). The model declines
+;; correctly.
+;;
+;; So the class is real but it is not reachable from here. What it needs is a
+;; RANKING change -- the 2^depth ladder (compiler-reg-loop-depth-weight) against
+;; real trip counts, since these inner loops run less often than the depth
+;; implies -- or per-range splitting so a register can be handed over for part
+;; of an interval instead of all of it. Re-deriving the numbers above costs one
+;; traced compile; do that before building the second chance again.
+;; ---------------------------------------------------------------------------
 ;; First pool register all of whose interferers are STRICTLY lower weight than
 ;; `weight` (so clearing it costs less than spilling `var`) AND none of which is
 ;; over the cascade cap; "" if none.
@@ -33950,6 +34157,11 @@
           hint)]
       (if (>= chosen 0)
         (begin
+          (compiler-reg-trace-note!
+            var
+            (if (>= pref 0)
+              (compiler-reg-trace-reason-arg-abi-pref)
+              (compiler-reg-trace-reason-copy-hint)))
           (compiler-reg-greedy-assignment-register!
             assignments
             occupancy
@@ -33970,6 +34182,11 @@
               (compiler-reg-global-shared-view forbidden))]
           (if (>= free 0)
             (begin
+              (compiler-reg-trace-note!
+                var
+                (if csr-only
+                  (compiler-reg-trace-reason-csr-pool-free)
+                  (compiler-reg-trace-reason-pool-free)))
               (compiler-reg-greedy-assignment-register!
                 assignments
                 occupancy
@@ -33998,6 +34215,11 @@
                   (compiler-reg-global-shared-view forbidden))]
               (if (>= ev 0)
                 (begin
+                  (compiler-reg-trace-note!
+                    var
+                    (if csr-only
+                      (compiler-reg-trace-reason-csr-evict-lower)
+                      (compiler-reg-trace-reason-evict-lower)))
                   (compiler-reg-greedy-evict-requeue!
                     (compiler-reg-global-shared-view assignments)
                     (compiler-reg-global-shared-view occupancy)
@@ -34021,7 +34243,11 @@
                 ;; post-pass/scavenger fallback. Real values keep the ordinary
                 ;; whole-interval spill path.
                 (if (and (>= unspillable-from 0) (>= var unspillable-from))
-                  (compiler-reg-greedy-stage-rs-new)
+                  (begin
+                    (compiler-reg-trace-note!
+                      var
+                      (compiler-reg-trace-reason-scratch-unassigned))
+                    (compiler-reg-greedy-stage-rs-new))
                   (begin
                     (compiler-reg-greedy-assignment-spill!
                       assignments
@@ -34030,8 +34256,16 @@
                     (if (compiler-reg-interval-index-var-has-segments?
                       interval-index
                       var)
-                      (compiler-reg-greedy-stage-rs-split)
-                      (compiler-reg-greedy-stage-rs-spill))))))))))))
+                      (begin
+                        (compiler-reg-trace-note!
+                          var
+                          (compiler-reg-trace-reason-spill-split-eligible))
+                        (compiler-reg-greedy-stage-rs-split))
+                      (begin
+                        (compiler-reg-trace-note!
+                          var
+                          (compiler-reg-trace-reason-spill-whole))
+                        (compiler-reg-greedy-stage-rs-spill)))))))))))))
 
 (define (compiler-reg-greedy-collect-vars
   [candidates : CompilerRegIntervalSeq]
@@ -37059,10 +37293,14 @@
                   (while (< m count)
                     (let
                       [_ins : CompilerRegAssignmentTable
-                        (compiler-reg-assignment-table-insert
-                          (compiler-reg-global-shared-view assignments)
-                          (array-ref members m)
-                          (compiler-reg-global-shared-view pair))]
+                        (begin
+                          (compiler-reg-trace-note!
+                            (array-ref members m)
+                            (compiler-reg-trace-reason-group-pair))
+                          (compiler-reg-assignment-table-insert
+                            (compiler-reg-global-shared-view assignments)
+                            (array-ref members m)
+                            (compiler-reg-global-shared-view pair)))]
                       (set! m (+ m 1))))))
               unit)))
         unit))))
@@ -37150,6 +37388,456 @@
         shift-points
         low-xmm-points)]))
 
+;; ---------------------------------------------------------------------------
+;; RG-1 tracer: rendering one `regalloc-home|` line per homed scalar value.
+;;
+;; Everything below runs only under `compiler-reg-debug-trace-homes`. The two
+;; per-function tables (max reference depth per var, weighted-crossing prefix
+;; per instruction point) are each one linear walk of the function, so a traced
+;; compile pays O(instructions) per plan and an untraced one pays the single
+;; boolean test at the call site.
+;; Max loop depth over the mentions carried by one liveness set.
+(define (compiler-reg-trace-depth-set!
+  [out : (__tl_dyn-array i64)]
+  [set : live.CompilerLiveI64Set]
+  [depth : i64]) : unit
+  (let
+    [words : i64
+      (live.compiler-live-set-word-count (compiler-reg-global-shared-view set))]
+    [word-index : i64 0]
+    (while (< word-index words)
+      (begin
+        (let
+          [bits : i64
+            (live.compiler-live-set-word-at-bounded
+              (compiler-reg-global-shared-view set)
+              word-index)]
+          [base : i64 (* word-index (live.compiler-live-set-word-bits))]
+          (while (not (= bits 0))
+            (let
+              [var : i64 (+ base (compiler-reg-low-bit-index32 bits))]
+              (begin
+                (if (and
+                  (>= var 0)
+                  (< var (array-length out))
+                  (> depth (array-ref out var)))
+                  (set! (array-ref out var) depth)
+                  unit)
+                (set! bits (bit-and bits (- bits 1)))))))
+        (set! word-index (+ word-index 1))))))
+
+;; The mention enumeration is the liveness walker's own (uses + def), so
+;; "reference" here means exactly what the spill weight counts.
+(define (compiler-reg-trace-depth-instr!
+  [out : (__tl_dyn-array i64)]
+  [instr : ir.CompilerIrInstr]
+  [depth : i64]) : unit
+  (let
+    [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
+    [id-count : i64
+      (live.compiler-live-instr-use-ids!
+        (compiler-reg-global-shared-view instr))]
+    (if (< id-count 0)
+      (begin
+        (compiler-reg-trace-depth-set!
+          (compiler-reg-global-shared-view out)
+          (live.compiler-live-instr-uses
+            (compiler-reg-global-shared-view instr))
+          depth)
+        (compiler-reg-trace-depth-set!
+          (compiler-reg-global-shared-view out)
+          (live.compiler-live-instr-defs instr)
+          depth))
+      (let
+        [index : i64 0]
+        (begin
+          (while (< index id-count)
+            (begin
+              (let
+                [var : i64 (array-ref ids index)]
+                (if (and
+                  (>= var 0)
+                  (< var (array-length out))
+                  (> depth (array-ref out var)))
+                  (set! (array-ref out var) depth)
+                  unit))
+              (set! index (+ index 1))))
+          (let
+            [def-var : i64 (live.compiler-live-instr-def-var instr)]
+            (if (and
+              (>= def-var 0)
+              (< def-var (array-length out))
+              (> depth (array-ref out def-var)))
+              (set! (array-ref out def-var) depth)
+              unit)))))))
+
+(define (compiler-reg-trace-depths
+  [blocks : ir.CompilerIrBlockList]
+  [depths : (__tl_dyn-array i64)]
+  [vars : i64]) : (__tl_dyn-array i64)
+  (let
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 (+ vars 1))]
+    [seq : ir.CompilerIrBlockSeq
+      (live.compiler-live-ir-block-list-to-seq blocks)]
+    [count : i64
+      (ir.compiler-ir-block-seq-count (compiler-reg-global-shared-view seq))]
+    [b : i64 0]
+    (begin
+      (while (< b count)
+        (begin
+          (match (ir.compiler-ir-block-seq-ref
+            (compiler-reg-global-shared-view seq)
+            b)
+            [(ir.CompilerIrBlock.Block _ instrs)
+              (let
+                [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+                [n : i64 instrs.len]
+                [i : i64 0]
+                [depth : i64
+                  (if (< b (array-length depths))
+                    (array-ref depths b)
+                    0)]
+                (while (< i n)
+                  (begin
+                    (compiler-reg-trace-depth-instr!
+                      (compiler-reg-global-shared-view out)
+                      (compiler-reg-global-array-element-shared-view slots i)
+                      depth)
+                    (set! i (+ i 1)))))])
+          (set! b (+ b 1))))
+      out)))
+
+;; prefix[p] = the summed block weight of every clobber point strictly below
+;; `p`, in the interval point space (two points per instruction, blocks
+;; consecutive -- the space compiler-reg-clobber-kind-points writes and
+;; compiler-reg-block-start-points measures). A value's weighted crossings are
+;; then one subtraction per live segment instead of a scan of its whole hull.
+;; The per-point weight is the P3/P7 selection weight
+;; (compiler-reg-call-hole-block-weight), which is what the push/pop-per-call
+;; side of the trade is priced in.
+(define (compiler-reg-trace-crossing-prefix
+  [blocks : ir.CompilerIrBlockList]
+  [call-points : live.CompilerLiveI64Set]
+  [depths : (__tl_dyn-array i64)]) : (__tl_dyn-array i64)
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (live.compiler-live-ir-block-list-to-seq blocks)]
+    [count : i64
+      (ir.compiler-ir-block-seq-count (compiler-reg-global-shared-view seq))]
+    [total : i64 0]
+    [b : i64 0]
+    (begin
+      (while (< b count)
+        (begin
+          (match (ir.compiler-ir-block-seq-ref
+            (compiler-reg-global-shared-view seq)
+            b)
+            [(ir.CompilerIrBlock.Block _ instrs)
+              (set! total (+ total (* 2 instrs.len)))])
+          (set! b (+ b 1))))
+      (let
+        [prefix : (__tl_dyn-array i64) (__tl_make-array i64 (+ total 2))]
+        [point : i64 0]
+        [acc : i64 0]
+        [bi : i64 0]
+        (begin
+          (while (< bi count)
+            (begin
+              (match (ir.compiler-ir-block-seq-ref
+                (compiler-reg-global-shared-view seq)
+                bi)
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (let
+                    [n : i64 instrs.len]
+                    [i : i64 0]
+                    [weight : i64
+                      (compiler-reg-call-hole-block-weight
+                        (if (< bi (array-length depths))
+                          (array-ref depths bi)
+                          0))]
+                    (while (< i n)
+                      (begin
+                        (set! (array-ref prefix point) acc)
+                        (set! (array-ref prefix (+ point 1)) acc)
+                        (if (live.compiler-live-set-contains?
+                          (compiler-reg-global-shared-view call-points)
+                          point)
+                          (set! acc (+ acc weight))
+                          unit)
+                        (set! point (+ point 2))
+                        (set! i (+ i 1)))))])
+              (set! bi (+ bi 1))))
+          (while (< point (array-length prefix))
+            (begin
+              (set! (array-ref prefix point) acc)
+              (set! point (+ point 1))))
+          prefix)))))
+
+(define (compiler-reg-trace-prefix-at
+  [prefix : (__tl_dyn-array i64)]
+  [point : i64]) : i64
+  (if (< point 0)
+    0
+    (if (>= point (array-length prefix))
+      (if (= (array-length prefix) 0)
+        0
+        (array-ref prefix (- (array-length prefix) 1)))
+      (array-ref prefix point))))
+
+;; Weighted crossings of one value: the clobber points its live SEGMENTS run
+;; through, mirroring compiler-reg-segments-span-clobber?'s `start < c < end`
+;; (a point at a segment start is the value's own definition point, not a
+;; crossing).
+(define (compiler-reg-trace-var-crossings
+  [interval-index : CompilerRegIntervalIndex]
+  [prefix : (__tl_dyn-array i64)]
+  [var : i64]) : i64
+  (let
+    [starts : (__tl_dyn-array i64) interval-index.starts]
+    [ends : (__tl_dyn-array i64) interval-index.ends]
+    (if (or (< var 0) (>= var (array-length starts)))
+      0
+      (if (compiler-reg-interval-index-var-has-segments?
+        (compiler-reg-global-shared-view interval-index)
+        var)
+        (let
+          [segments : CompilerRegIntervalSeq
+            (compiler-reg-global-array-element-shared-view
+              interval-index.segments
+              var)]
+          [n : i64
+            (compiler-reg-interval-seq-count
+              (compiler-reg-global-shared-view segments))]
+          [i : i64 0]
+          [acc : i64 0]
+          (begin
+            (while (< i n)
+              (begin
+                (let
+                  [segment : CompilerRegInterval
+                    (compiler-reg-interval-seq-ref
+                      (compiler-reg-global-shared-view segments)
+                      i)]
+                  (set!
+                    acc
+                    (+
+                      acc
+                      (-
+                        (compiler-reg-trace-prefix-at
+                          (compiler-reg-global-shared-view prefix)
+                          segment.end)
+                        (compiler-reg-trace-prefix-at
+                          (compiler-reg-global-shared-view prefix)
+                          (+ segment.start 1))))))
+                (set! i (+ i 1))))
+            acc))
+        (-
+          (compiler-reg-trace-prefix-at
+            (compiler-reg-global-shared-view prefix)
+            (compiler-reg-global-array-element-shared-view ends var))
+          (compiler-reg-trace-prefix-at
+            (compiler-reg-global-shared-view prefix)
+            (+ (compiler-reg-global-array-element-shared-view starts var) 1)))))))
+
+;; How the line spells a home: a physical register, the two registers of a
+;; homed group pair, `stack` for a frame slot, `remat` for a value recomputed
+;; at each use, and `memory+carrier:<reg>` for the P3 memory class -- a value
+;; whose canonical home is the frame slot but which the call-save rescue keeps
+;; in a caller-saved carrier between calls.
+(define (compiler-reg-trace-home-text
+  [assignments : CompilerRegAssignmentTable]
+  [call-split : CompilerRegCallSplit]
+  [var : i64]) : String
+  (let
+    [carrier : i64
+      (let
+        [regs : (__tl_dyn-array i64) (compiler-reg-call-split-regs call-split)]
+        (if (and (>= var 0) (< var (array-length regs)))
+          (array-ref regs var)
+          (- 0 1)))]
+    (match (compiler-reg-assignment-table-lookup assignments var)
+      [(CompilerRegMaybeLocation.No)
+        (if (>= carrier 0)
+          (str_cat.str-cat
+            "memory+carrier:"
+            (cabi.compiler-abi-register-spelling carrier))
+          "stack")]
+      [(CompilerRegMaybeLocation.Some location)
+        (match location
+          [(CompilerRegLocation.Register reg)
+            (cabi.compiler-abi-register-spelling reg)]
+          [(CompilerRegLocation.RegisterPair low high)
+            (str_cat.str-cat
+              (cabi.compiler-abi-register-spelling low)
+              "+"
+              (cabi.compiler-abi-register-spelling high))]
+          [(CompilerRegLocation.Remat _) "remat"]
+          [_
+            (if (>= carrier 0)
+              (str_cat.str-cat
+                "memory+carrier:"
+                (cabi.compiler-abi-register-spelling carrier))
+              "stack")])])))
+
+;; The reason a var carries when no allocation clause wrote one: the static
+;; verdicts that kept it out of the greedy at all, and the class expansion that
+;; gave a coalesced member its root's home.
+(define (compiler-reg-trace-static-reason
+  [ineligible : live.CompilerLiveI64Set]
+  [blocked : live.CompilerLiveI64Set]
+  [params : live.CompilerLiveI64Set]
+  [parents : (__tl_dyn-array i64)]
+  [forced-spill-from : i64]
+  [register-home? : bool]
+  [var : i64]) : i64
+  (cond
+    [(and (>= forced-spill-from 0) (>= var forced-spill-from))
+      (compiler-reg-trace-reason-forced-carrier)]
+    [(live.compiler-live-set-contains?
+        (compiler-reg-global-shared-view ineligible)
+        var)
+      (compiler-reg-trace-reason-memory-rule)]
+    [(live.compiler-live-set-contains?
+        (compiler-reg-global-shared-view blocked)
+        var)
+      (compiler-reg-trace-reason-blocked)]
+    ;; A parameter with a register home that no allocation clause claimed was
+    ;; preassigned by the ABI pin walk, which runs BEFORE the plan (see
+    ;; compiler-reg-param-assign-plan) and so writes no journal entry: the
+    ;; journal belongs to the plan whose reset opens it, and a writer outside
+    ;; that extent would be writing into the previous function's.
+    [(and
+        register-home?
+        (live.compiler-live-set-contains?
+          (compiler-reg-global-shared-view params)
+          var))
+      (compiler-reg-trace-reason-param-abi-pin)]
+    [(and
+        (< var (array-length parents))
+        (>= (array-ref parents var) 0)
+        (not (= (array-ref parents var) var)))
+      (compiler-reg-trace-reason-coalesced-member)]
+    [else (compiler-reg-trace-reason-none)]))
+
+;; One `regalloc-home|` line per scalar value the plan homes, plus the reason
+;; the deciding clause recorded. Called at the end of the scalar plan; the P3/P7
+;; and loop-park rounds replan, so a function that takes one of those rounds
+;; prints its group once per plan and the LAST group is the plan the round kept
+;; or the plan it fell back to.
+(define (compiler-reg-trace-plan-homes!
+  [func : ir.CompilerIrFunction]
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [ref-counts : (__tl_dyn-array i64)]
+  [parents : (__tl_dyn-array i64)]
+  [ineligible : live.CompilerLiveI64Set]
+  [blocked : live.CompilerLiveI64Set]
+  [call-points : live.CompilerLiveI64Set]
+  [call-split : CompilerRegCallSplit]
+  [forced-spill-from : i64]) : unit
+  (match (compiler-reg-global-shared-view func)
+    [(ir.CompilerIrFunction.Function name _ _ vars blocks)
+      (let
+        [text : String (ir.compiler-ir-symbol-text name)]
+        [param-vars : live.CompilerLiveI64Set
+          (match (compiler-reg-global-shared-view func)
+            [(ir.CompilerIrFunction.Function _ params _ _ _)
+              (compiler-reg-ineligible-params
+                (compiler-reg-global-shared-view params)
+                (live.compiler-live-set-empty))])]
+        [depths : (__tl_dyn-array i64)
+          (compiler-reg-function-loop-depths
+            (compiler-reg-global-shared-view blocks))]
+        [ref-depths : (__tl_dyn-array i64)
+          (compiler-reg-trace-depths
+            (compiler-reg-global-shared-view blocks)
+            (compiler-reg-global-shared-view depths)
+            vars)]
+        [prefix : (__tl_dyn-array i64)
+          (compiler-reg-trace-crossing-prefix
+            (compiler-reg-global-shared-view blocks)
+            (compiler-reg-global-shared-view call-points)
+            (compiler-reg-global-shared-view depths))]
+        [starts : (__tl_dyn-array i64) interval-index.starts]
+        [var : i64 0]
+        (while (< var vars)
+          (begin
+            (let
+              [has-interval? : bool
+                (and
+                  (< var (array-length starts))
+                  (>=
+                    (compiler-reg-global-array-element-shared-view starts var)
+                    0))]
+              [journal : i64 (compiler-reg-trace-reason-at var)]
+              [assigned? : bool
+                (match (compiler-reg-assignment-table-lookup assignments var)
+                  [(CompilerRegMaybeLocation.Some _) true]
+                  [(CompilerRegMaybeLocation.No) false])]
+              (if (or has-interval? assigned?)
+                (let
+                  [root : i64
+                    (if (and
+                      (< var (array-length parents))
+                      (>= (array-ref parents var) 0))
+                      (array-ref parents var)
+                      var)]
+                  [key : i64
+                    (if (< root (array-length ref-counts))
+                      (array-ref ref-counts root)
+                      0)]
+                  [reason : i64
+                    (if (= journal (compiler-reg-trace-reason-none))
+                      (compiler-reg-trace-static-reason
+                        (compiler-reg-global-shared-view ineligible)
+                        (compiler-reg-global-shared-view blocked)
+                        (compiler-reg-global-shared-view param-vars)
+                        (compiler-reg-global-shared-view parents)
+                        forced-spill-from
+                        (match (compiler-reg-assignment-table-lookup
+                          assignments
+                          var)
+                          [(CompilerRegMaybeLocation.Some location)
+                            (match location
+                              [(CompilerRegLocation.Register _) true]
+                              [(CompilerRegLocation.RegisterPair _ _) true]
+                              [_ false])]
+                          [(CompilerRegMaybeLocation.No) false])
+                        var)
+                      journal)]
+                  (io.print-error
+                    (str_cat.str-cat
+                      "regalloc-home|"
+                      (compiler-reg-global-shared-view text)
+                      "|v"
+                      (string.int->string var)
+                      "|"
+                      (compiler-reg-trace-home-text
+                        (compiler-reg-global-shared-view assignments)
+                        (compiler-reg-global-shared-view call-split)
+                        var)
+                      "|"
+                      (compiler-reg-trace-reason-name reason)
+                      "|refs="
+                      (string.int->string
+                        (/
+                          (compiler-reg-priority-key-weight key)
+                          (compiler-reg-greedy-combine-tie-span)))
+                      "|crossings="
+                      (string.int->string
+                        (compiler-reg-trace-var-crossings
+                          (compiler-reg-global-shared-view interval-index)
+                          (compiler-reg-global-shared-view prefix)
+                          var))
+                      "|depth="
+                      (string.int->string
+                        (if (< var (array-length ref-depths))
+                          (array-ref ref-depths var)
+                          0))
+                      "\n")))
+                unit))
+            (set! var (+ var 1)))))]))
+
 (define (compiler-reg-plan-from
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
@@ -37166,6 +37854,12 @@
   [ignore-single-cold-call? : bool]
   [forced-spill-from : i64]) : CompilerRegPlan
   (let
+    ;; RG-1: one reason slot per var of THIS function. A no-op (and no
+    ;; allocation) whenever the tracer is off.
+    [_trace-reset : unit
+      (compiler-reg-trace-reasons-reset!
+        (match (compiler-reg-global-shared-view func)
+          [(ir.CompilerIrFunction.Function _ _ _ fn-vars _) fn-vars]))]
     [storage-identity-vars : live.CompilerLiveI64Set
       (let
         [base : live.CompilerLiveI64Set
@@ -38086,6 +38780,28 @@
           [(cabi.CompilerRegTargetAbi.Windows)
             (compiler-reg-global-shared-view final-assignments)])
         (compiler-reg-global-shared-view final-assignments))]
+    ;; RG-1: the home tracer. Placed at the end of the scalar plan, where the
+    ;; final assignment table, the coalesce parents, the interval index, the
+    ;; priority keys the eviction gate reads and the call-clobber point set are
+    ;; all the objects the decisions were actually made against. Guarded so an
+    ;; untraced compile pays one boolean test per planned function.
+    [_trace-homes : unit
+      (if (and
+        compiler-reg-debug-trace-homes
+        (not compiler-reg-trace-suppressed?)
+        allow-caller-saved-zero-call)
+        (compiler-reg-trace-plan-homes!
+          (compiler-reg-global-shared-view func)
+          (compiler-reg-global-shared-view pair-assignments)
+          (compiler-reg-global-shared-view eff-index)
+          (compiler-reg-global-shared-view base-eviction-ref-counts)
+          (compiler-reg-global-shared-view coalesce.parents)
+          (compiler-reg-global-shared-view ineligible)
+          (compiler-reg-global-shared-view blocked)
+          (compiler-reg-global-shared-view call-points)
+          (compiler-reg-global-shared-view call-save-split)
+          forced-spill-from)
+        unit)]
     (CompilerRegPlan.Plan
       (compiler-reg-global-shared-view pair-assignments)
       (compiler-reg-global-shared-view ineligible)

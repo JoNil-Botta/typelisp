@@ -630,6 +630,84 @@
               [(http_types.HttpHeaderDebugRedacted) unit]
               [_ (fail "sensitive debug disposition")])))])))
 
+(define (assert-response-trailer-declarations) : unit
+  (begin
+    (let
+      [wire : String
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nTrailer: X-Sum\r\nTrailer: x-meta, x-sum\r\n\r\nbody"]
+      [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
+      [parser : http_head_codec.HttpResponseParser
+        (http_head_codec.response-parser-default
+          (http_types.HttpResponseToOther)
+          (http_types.HttpConnectDenied))]
+      (match (http_head_codec.response-parser-feed parser view)
+        [(http_head_codec.HttpResponseFeedComplete head consumed)
+          (begin
+            (test.assert-i64-eq
+              consumed
+              (- (string.string-length (& wire)) 4)
+              "response declaration exact head consumption")
+            (test.assert-i64-eq
+              (http_types.header-name-set-len (& head.trailer-names))
+              2
+              "duplicate response declarations normalize")
+            (let
+              [first : String
+                (byte_buf.bytes-to-string
+                  (http_types.header-name-set-ref (& head.trailer-names) 0))]
+              [second : String
+                (byte_buf.bytes-to-string
+                  (http_types.header-name-set-ref (& head.trailer-names) 1))]
+              [expected-first : String "x-sum"]
+              [expected-second : String "x-meta"]
+              (begin
+                (test.assert-string-eq
+                  (& first)
+                  (& expected-first)
+                  "first response trailer declaration")
+                (test.assert-string-eq
+                  (& second)
+                  (& expected-second)
+                  "second response trailer declaration"))))]
+        [_ (fail "response trailer declarations rejected")]))
+    (let
+      [wire : String
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nTrailer: Content-Length\r\n\r\n"]
+      [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
+      [parser : http_head_codec.HttpResponseParser
+        (http_head_codec.response-parser-default
+          (http_types.HttpResponseToOther)
+          (http_types.HttpConnectDenied))]
+      (match (http_head_codec.response-parser-feed parser view)
+        [(http_head_codec.HttpResponseFeedErr error _)
+          (match error.kind
+            [(http_types.HttpForbiddenTrailerName) unit]
+            [_ (fail "forbidden response declaration kind")])]
+        [_ (fail "forbidden response trailer declaration accepted")]))
+    (let
+      [wire : String "HTTP/1.1 200 OK\r\nTrailer: x, abcdefgh\r\n\r\n"]
+      [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
+      [limits : http_types.HttpHeadLimits
+        (http_types.HttpHeadLimits 256 128 8 7 64)]
+      (match (http_head_codec.response-parser-new
+        limits
+        (http_types.HttpResponseToOther)
+        (http_types.HttpConnectDenied))
+        [(http_head_codec.HttpResponseParserNewErr _)
+          (fail "response declaration offset parser construction")]
+        [(http_head_codec.HttpResponseParserNewOk parser)
+          (match (http_head_codec.response-parser-feed parser view)
+            [(http_head_codec.HttpResponseFeedErr error _)
+              (begin
+                (test.assert-i64-eq
+                  error.offset
+                  36
+                  "response declaration long-name offset")
+                (match error.kind
+                  [(http_types.HttpNameTooLong) unit]
+                  [_ (fail "long response declaration kind")]))]
+            [_ (fail "long response trailer declaration accepted")])]))))
+
 (define (main) : i64
   (begin
     (assert-request-basic)
@@ -643,4 +721,5 @@
     (assert-response-rejections)
     (assert-parser-limits-and-eof)
     (assert-field-validator)
+    (assert-response-trailer-declarations)
     42))

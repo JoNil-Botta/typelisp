@@ -46,6 +46,7 @@
   (HttpTrailerForbiddenName)
   (HttpTrailerDuplicatePolicyName)
   (HttpTrailerInvalidFieldCollection)
+  (HttpTrailerInvalidDeclaredNames)
   (HttpTrailerTooManyFields)
   (HttpTrailerFieldBytesExceeded)
   (HttpTrailerInvalidField http_types.HttpHeadErrorKind)
@@ -75,6 +76,12 @@
 (defenum HttpTrailerValidationResult
   (HttpTrailerValidationOk)
   (HttpTrailerValidationErr HttpTrailerError))
+
+;: Shared eligibility, sensitivity, and multiplicity result for one field in
+;: an ordered trailer collection.
+(defenum HttpTrailerFieldDispositionResult
+  (HttpTrailerFieldDispositionOk http_types.HttpHeaderSensitivity)
+  (HttpTrailerFieldDispositionErr HttpTrailerError))
 
 ;: Conservative construction bounds for an ordinary explicit extension list.
 (define (default-trailer-policy-limits) : HttpTrailerPolicyLimits
@@ -445,6 +452,67 @@
             (set! index (+ index 1)))))
       seen)))
 
+;: Classify one syntactically checked trailer name through the shared closed
+;: policy. `field-index` is the insertion position in `fields`, so only the
+;: already accepted prefix is inspected for at-most-once multiplicity.
+(define (trailer-field-disposition
+  [policy : (& policy HttpTrailerPolicy)]
+  [fields : (& fields http_types.HttpHeaders)]
+  [field-index : i64]
+  [name : (& name bytes)]
+  [declared : (& declared http_types.HttpHeaderNameSet)]
+  [require-declared : bool]
+  [offset : i64]) : HttpTrailerFieldDispositionResult
+  (cond
+    [(not (trailer-policy-valid? policy))
+      (HttpTrailerFieldDispositionErr
+        (HttpTrailerError (HttpTrailerCorruptPolicy) field-index offset))]
+    [(or
+        (< fields.len 0)
+        (> fields.len (array-length fields.slots))
+        (< field-index 0)
+        (> field-index fields.len))
+      (HttpTrailerFieldDispositionErr
+        (HttpTrailerError
+          (HttpTrailerInvalidFieldCollection)
+          field-index
+          offset))]
+    [(and require-declared (not (http_types.header-name-set-valid? declared)))
+      (HttpTrailerFieldDispositionErr
+        (HttpTrailerError (HttpTrailerInvalidDeclaredNames) field-index offset))]
+    [(trailer-name-forbidden-bytes? name)
+      (HttpTrailerFieldDispositionErr
+        (HttpTrailerError (HttpTrailerForbiddenName) field-index offset))]
+    [else
+      (let
+        [policy-index : i64 (trailer-policy-find-unchecked policy name)]
+        (cond
+          [(< policy-index 0)
+            (HttpTrailerFieldDispositionErr
+              (HttpTrailerError (HttpTrailerUnapprovedName) field-index offset))]
+          [(and
+              require-declared
+              (not (http_types.header-name-set-contains? declared name)))
+            (HttpTrailerFieldDispositionErr
+              (HttpTrailerError (HttpTrailerUndeclaredName) field-index offset))]
+          [else
+            (let
+              [entry : (& policy HttpTrailerPolicyEntry)
+                (& (array-ref policy.slots policy-index))]
+              (match entry.multiplicity
+                [(HttpTrailerAtMostOnce)
+                  (if (trailer-name-seen-before? fields field-index name)
+                    (HttpTrailerFieldDispositionErr
+                      (HttpTrailerError
+                        (HttpTrailerDuplicateField)
+                        field-index
+                        offset))
+                    (HttpTrailerFieldDispositionOk (clone entry.sensitivity)))]
+                [(HttpTrailerRepeatableList)
+                  (HttpTrailerFieldDispositionOk (clone entry.sensitivity))]
+                [(HttpTrailerRepeatableSeparate)
+                  (HttpTrailerFieldDispositionOk (clone entry.sensitivity))]))]))]))
+
 ;: Validate typed trailers in original order. When `require-declared` is true,
 ;: every approved field must independently occur in `declared`; declaration
 ;: membership never grants policy approval. The helper allocates no storage.
@@ -507,82 +575,41 @@
                         error.offset))
                     (set! failed true))]
                 [(http_types.HttpTypedFieldOk)
-                  (let
-                    [policy-index : i64
-                      (trailer-policy-find-unchecked policy name)]
-                    (cond
-                      [(< next-total 0)
+                  (if (< next-total 0)
+                    (begin
+                      (set!
+                        failure
+                        (HttpTrailerError
+                          (HttpTrailerFieldBytesExceeded)
+                          index
+                          limits.max-total-bytes))
+                      (set! failed true))
+                    (match (trailer-field-disposition
+                      policy
+                      fields
+                      index
+                      name
+                      declared
+                      require-declared
+                      total)
+                      [(HttpTrailerFieldDispositionErr error)
                         (begin
-                          (set!
-                            failure
-                            (HttpTrailerError
-                              (HttpTrailerFieldBytesExceeded)
-                              index
-                              limits.max-total-bytes))
+                          (set! failure error)
                           (set! failed true))]
-                      [(trailer-name-forbidden-bytes? name)
-                        (begin
-                          (set!
-                            failure
-                            (HttpTrailerError
-                              (HttpTrailerForbiddenName)
-                              index
-                              total))
-                          (set! failed true))]
-                      [(< policy-index 0)
-                        (begin
-                          (set!
-                            failure
-                            (HttpTrailerError
-                              (HttpTrailerUnapprovedName)
-                              index
-                              total))
-                          (set! failed true))]
-                      [(and
-                          require-declared
-                          (not
-                            (http_types.header-name-set-contains? declared name)))
-                        (begin
-                          (set!
-                            failure
-                            (HttpTrailerError
-                              (HttpTrailerUndeclaredName)
-                              index
-                              total))
-                          (set! failed true))]
-                      [else
-                        (let
-                          [entry : (& policy HttpTrailerPolicyEntry)
-                            (& (array-ref policy.slots policy-index))]
-                          (if (not
-                            (trailer-sensitivity-eq?
-                              (clone entry.sensitivity)
-                              (clone field.sensitivity)))
-                            (begin
-                              (set!
-                                failure
-                                (HttpTrailerError
-                                  (HttpTrailerSensitivityMismatch)
-                                  index
-                                  total))
-                              (set! failed true))
-                            (match entry.multiplicity
-                              [(HttpTrailerAtMostOnce)
-                                (if (trailer-name-seen-before?
-                                  fields
-                                  index
-                                  name)
-                                  (begin
-                                    (set!
-                                      failure
-                                      (HttpTrailerError
-                                        (HttpTrailerDuplicateField)
-                                        index
-                                        total))
-                                    (set! failed true))
-                                  unit)]
-                              [(HttpTrailerRepeatableList) unit]
-                              [(HttpTrailerRepeatableSeparate) unit])))]))])
+                      [(HttpTrailerFieldDispositionOk sensitivity)
+                        (if (not
+                          (trailer-sensitivity-eq?
+                            sensitivity
+                            (clone field.sensitivity)))
+                          (begin
+                            (set!
+                              failure
+                              (HttpTrailerError
+                                (HttpTrailerSensitivityMismatch)
+                                index
+                                total))
+                            (set! failed true))
+                          unit)]))])
               (if (not failed)
                 (set! total next-total)
                 unit)

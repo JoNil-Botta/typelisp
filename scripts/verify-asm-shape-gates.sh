@@ -1609,9 +1609,16 @@ check_sccp_rewrite_phi_import() {
         # two of headroom it always carried; what the gate is about --
         # `sccp-rewrite-phi` staying OUT of line and reached by exactly one call
         # -- is unchanged, and so is the row, which INL-9 moves -17,525,408.
-        _bound=24
+        # SUM-6 moved both bounds by three more: the driver's loop calls
+        # `sccp-rewrite-instr`, whose summary writes named cells beside its
+        # element stores, and the new header-clean bit lets LICM hoist the
+        # tape descriptor's length and data words out of the loop. The hoisted
+        # words take three frame slots (25 references on linux, 36 on win64,
+        # from 22 and 33); the row is -86,592 for it and the import decision
+        # is what it was.
+        _bound=27
         if [ "$_target" = windows-x86_64 ]; then
-            _bound=35
+            _bound=38
         fi
         _asm=$(compile_gate "sccp_rewrite_phi_import_$_suffix" \
             benchmarks/sccp_lattice/bench.tl "$_target")

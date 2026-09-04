@@ -131540,12 +131540,15 @@
 ;; both measured on the corpus after LP-1 landed edge-precise intervals:
 ;;
 ;;   1. the callee's body is ACYCLIC, and
-;;   2. the site is not inside a natural loop of the caller.
+;;   2. the site is not inside a natural loop of the caller -- or, since
+;;      INL-13, it is inside one at control-dependence depth <= 2, a site the
+;;      loop runs on (nearly) every iteration; see
+;;      opt-inline-sole-call-loop-site-shallow? for the measure and the rows.
 ;;
 ;; Together they say: the merged body gains no loop the caller did not already
-;; have, and gains nothing inside a loop the caller already has. Everything the
-;; corpus measured as a loss violates one of the two, and everything it
-;; measured as a win satisfies both.
+;; have, and gains nothing inside a loop the caller already has unless the
+;; loop's work IS the callee. Everything the corpus measured as a loss violates
+;; one of the two, and everything it measured as a win satisfies both.
 ;;
 ;; What clause 1 refuses, with the per-absorption numbers (callgrind, per
 ;; function, against tl-i3base):
@@ -131633,9 +131636,293 @@
 ;; before the scan over the callee's blocks is worth paying for. The acyclic
 ;; scan runs in the inliner's scratch arena and rewinds it, so a refused
 ;; candidate leaves no allocation behind.
+;; INL-13. Clause 2 as it ships: an in-loop site is admitted when the site runs
+;; on (nearly) every iteration of its innermost loop, and refused when it is a
+;; conditional arm the loop takes now and then.
+;;
+;; The clause as first measured -- "the site is not inside a natural loop of
+;; the caller" -- refuses the one site shape where a sole call is most worth
+;; retiring: a loop whose body IS the call. `asm-render-line` is the whole body
+;; of `asm-render-chunk`'s per-line loop, `pl-pair-action` sits one branch
+;; below `pl-run-chunk`'s per-line loop test; both are single-reference,
+;; acyclic callees the flat clause kept out of line, and their boundaries
+;; retire per iteration. Dropping the clause outright is the other wrong
+;; answer: it re-admits `ls-apostrophe-char-end` into `ls-tokenize` -- a
+;; 164-instruction body at the sixth arm of the lexer's dispatch, inside its
+;; one hot loop -- and lex_source pays +7.2M (+1.5%) for a boundary the loop
+;; retires on a handful of iterations. So the question is not "is the site in a
+;; loop" but "does the loop run the site": the drivers' sites are the loop body
+;; itself (or one branch below the loop's own test), the lexer's arm is six
+;; branches below it.
+;;
+;; The measure is the site's CONTROL-DEPENDENCE DEPTH within its innermost
+;; loop: the number of conditional blocks on the dominator chain from the site
+;; up to and including the loop header whose branch actually decides whether
+;; the site runs this iteration -- a branch one of whose successors cannot
+;; reach the site without going round the header again. A diamond that
+;; reconverges before the site (`(if (< end stop) (+ end 1) end)` computed
+;; ahead of the call in pl-run-chunk) is on the chain but both its arms reach
+;; the site, so it is not counted. Depth 1 is the loop body; 2 is one branch
+;; below it (`(if has-pending ...)` in pl-run-chunk); the lexer's arm reads 7.
+;;
+;; The chain is walked over the caller's idom array, the reachability is one
+;; DFS per counted branch over the CFG index, both built in the inliner's
+;; scratch arena and rewound; the whole thing is asked only of a class-1 site
+;; the loop-label test has already placed inside a loop.
+;;
+;; A self-tail-recursive caller still reads as loop-free here, because the
+;; tailrec rewrite runs one pass later (see opt-inline-caller-loop-free? for
+;; that reading); its sites keep the straight-line verdict they had.
+;;
+;; MEASURED (23 rows + the heavy rows, one cachegrind run each, against the
+;; tree before): asm_render 782,060,344 -> 764,666,274 (-2.22%, asm-render-line
+;; into asm-render-chunk's loop), peephole_lines 429,714,007 -> 425,768,373
+;; (-0.92%, pl-pair-action into pl-run-chunk); lex_source flat; every other
+;; row byte-identical.
+(define (opt-inline-sole-call-max-loop-depth) : i64
+  2)
+
+;; Does `target` have a path from `from` that avoids `skip`? The marks array is
+;; the caller's; it is cleared by the walk that owns it.
+(define (opt-inline-reach-avoiding?
+  [index : OptCfgIndex]
+  [marks : (__tl_dyn-array bool)]
+  [stack : (__tl_dyn-array i64)]
+  [from : i64]
+  [target : i64]
+  [skip : i64]) : bool
+  (let
+    [count : i64
+      (opt-cfg-index-block-count (compiler-opt-global-shared-view index))]
+    [top : i64 0]
+    [found : bool false]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (set! (array-ref marks i) false)
+          (set! i (+ i 1))))
+      (if (not (= from skip))
+        (begin
+          (set! (array-ref marks from) true)
+          (set! (array-ref stack 0) from)
+          (set! top 1))
+        unit)
+      (while (and (not found) (> top 0))
+        (let
+          [current : i64 (array-ref stack (- top 1))]
+          (begin
+            (set! top (- top 1))
+            (if (= current target)
+              (set! found true)
+              (let
+                [edge : i64 (array-ref index.succs.offsets current)]
+                [end : i64 (array-ref index.succs.offsets (+ current 1))]
+                (while (< edge end)
+                  (let
+                    [next : i64 (array-ref index.succs.edges edge)]
+                    (begin
+                      (if (and (not (= next skip)) (not (array-ref marks next)))
+                        (begin
+                          (set! (array-ref marks next) true)
+                          (set! (array-ref stack top) next)
+                          (set! top (+ top 1)))
+                        unit)
+                      (set! edge (+ edge 1))))))))))
+      found)))
+
+;; The successors of a conditional terminator, or none: a two-way branch with
+;; distinct arms, or a switch.
+(define (opt-inline-block-conditional? [index : OptCfgIndex] [id : i64]) : bool
+  (match (opt-cfg-index-find-block
+    (compiler-opt-global-shared-view index)
+    (opt-cfg-index-label (compiler-opt-global-shared-view index) id))
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64
+              (ir.compiler-ir-instr-seq-count
+                (compiler-opt-global-shared-view instrs))]
+            (if (<= count 0)
+              false
+              (match (ir.compiler-ir-instr-seq-ref
+                (compiler-opt-global-shared-view instrs)
+                (- count 1))
+                [(ir.CompilerIrInstr.Branch _ on-true on-false)
+                  (not (= on-true on-false))]
+                [(ir.CompilerIrInstr.Switch _ _ _ _) true]
+                [_ false])))])]))
+
+;; The header label of the smallest natural loop whose body holds `label`, or
+;; none.
+(define (opt-inline-innermost-loop-header
+  [loops : OptNaturalLoopList]
+  [label : i64]
+  [best-header : i64]
+  [best-size : i64]) : i64
+  (match (compiler-opt-global-shared-view loops)
+    [(OptNaturalLoopList.Nil) best-header]
+    [(OptNaturalLoopList.Cons loop rest)
+      (let
+        [body : OptLabelSet
+          (opt-natural-loop-body (compiler-opt-global-shared-view loop))]
+        [size : i64 (opt-label-count (compiler-opt-global-shared-view body))]
+        (if (and
+          (opt-label-contains (compiler-opt-global-shared-view body) label)
+          (or (< best-header 0) (< size best-size)))
+          (opt-inline-innermost-loop-header
+            (compiler-opt-box-shared-view rest)
+            label
+            (opt-natural-loop-header (compiler-opt-global-shared-view loop))
+            size)
+          (opt-inline-innermost-loop-header
+            (compiler-opt-box-shared-view rest)
+            label
+            best-header
+            best-size)))]))
+
+;; Count the deciding branches on the idom chain from `site` (exclusive) up to
+;; `header` (inclusive); -1 when the chain does not reach the header.
+(define (opt-inline-loop-site-depth-walk
+  [index : OptCfgIndex]
+  [idom : (__tl_dyn-array i64)]
+  [marks : (__tl_dyn-array bool)]
+  [stack : (__tl_dyn-array i64)]
+  [site : i64]
+  [header : i64]
+  [current : i64]
+  [depth : i64]
+  [fuel : i64]) : i64
+  (cond
+    [(or (< current 0) (<= fuel 0)) (- 0 1)]
+    [else
+      (let
+        [counted : i64
+          (if (opt-inline-block-conditional?
+            (compiler-opt-global-shared-view index)
+            current)
+            (let
+              [edge : i64 (array-ref index.succs.offsets current)]
+              [end : i64 (array-ref index.succs.offsets (+ current 1))]
+              [deciding? : bool false]
+              (begin
+                (while (and (not deciding?) (< edge end))
+                  (begin
+                    (if (not
+                      (opt-inline-reach-avoiding?
+                        (compiler-opt-global-shared-view index)
+                        (compiler-opt-global-shared-view marks)
+                        (compiler-opt-global-shared-view stack)
+                        (array-ref index.succs.edges edge)
+                        site
+                        header))
+                      (set! deciding? true)
+                      unit)
+                    (set! edge (+ edge 1))))
+                (if deciding?
+                  1
+                  0)))
+            0)]
+        (if (= current header)
+          (+ depth counted)
+          (opt-inline-loop-site-depth-walk
+            (compiler-opt-global-shared-view index)
+            (compiler-opt-global-shared-view idom)
+            (compiler-opt-global-shared-view marks)
+            (compiler-opt-global-shared-view stack)
+            site
+            header
+            (if (= (array-ref idom current) current)
+              (- 0 1)
+              (array-ref idom current))
+            (+ depth counted)
+            (- fuel 1))))]))
+
+;; The site block's control-dependence depth within its innermost loop, or -1
+;; when the caller is too wide to ask, the site is in no loop, or the walk
+;; does not reach the header.
+(define (opt-inline-sole-call-loop-site-depth) : i64
+  (let
+    [blocks : ir.CompilerIrBlockList
+      (opt-inline-caller-facts-blocks-shared-view)]
+    [site-label : i64 opt-inline-current-block-label]
+    [header-label : i64
+      (opt-inline-innermost-loop-header
+        (opt-cfg-natural-loops (compiler-opt-global-shared-view blocks))
+        site-label
+        (- 0 1)
+        0)]
+    (if (< header-label 0)
+      (- 0 1)
+      (let
+        [index : OptCfgIndex
+          (opt-cfg-index-build (compiler-opt-global-shared-view blocks))]
+        [count : i64
+          (opt-cfg-index-block-count (compiler-opt-global-shared-view index))]
+        [doms : OptDomInfo
+          (opt-cfg-dominators-with
+            (compiler-opt-global-shared-view index)
+            (opt-cfg-entry-label (compiler-opt-global-shared-view blocks)))]
+        [site : i64
+          (match (opt-cfg-index-id
+            (compiler-opt-global-shared-view index)
+            site-label)
+            [(option_i64.Some id) id]
+            [(option_i64.None) (- 0 1)])]
+        [header : i64
+          (match (opt-cfg-index-id
+            (compiler-opt-global-shared-view index)
+            header-label)
+            [(option_i64.Some id) id]
+            [(option_i64.None) (- 0 1)])]
+        (if (or (< site 0) (< header 0))
+          (- 0 1)
+          (if (= site header)
+            0
+            (opt-inline-loop-site-depth-walk
+              (compiler-opt-global-shared-view index)
+              (compiler-opt-global-shared-view doms.idom)
+              (__tl_make-array bool count)
+              (__tl_make-array i64 (+ count 1))
+              site
+              header
+              (array-ref doms.idom site)
+              0
+              count)))))))
+
+(define (opt-inline-sole-call-loop-site-shallow?) : bool
+  (let
+    [depth : i64 (opt-inline-sole-call-loop-site-depth)]
+    (and (>= depth 0) (<= depth (opt-inline-sole-call-max-loop-depth)))))
+
+(define (opt-inline-sole-call-loop-site-shallow-reclaiming?) : bool
+  (let
+    [scratch : arena.Arena
+      (__tl-project-field
+        (__tl-project-field (compiler-opt-owned-state-shared-view) inline-state)
+        verify-scratch)]
+    (if (= (arena.raw-handle scratch) 0)
+      (opt-inline-sole-call-loop-site-shallow?)
+      (let
+        [enclosing : arena.Arena (arena.current)]
+        [_switch : unit
+          (unsafe
+            (arena.set! scratch))]
+        [mark : arena.ArenaMark (arena.mark)]
+        [ok : bool (opt-inline-sole-call-loop-site-shallow?)]
+        (begin
+          (unsafe
+            (arena.rewind mark)
+            (arena.set! enclosing))
+          ok)))))
+
 (define (opt-inline-sole-call-pressure-ok? [blocks : ir.CompilerIrBlockList]) : bool
   (and
-    (not (opt-inline-bounds-loop-site-in-loop?))
+    (or
+      (not (opt-inline-bounds-loop-site-in-loop?))
+      (opt-inline-sole-call-loop-site-shallow-reclaiming?))
     (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)))
 
 ;; Class 1 is exactly the LLVM predicate: one static reference (a self-call

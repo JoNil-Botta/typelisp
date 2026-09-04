@@ -64,6 +64,7 @@ instead, which the sweep does not require to be reachable.
 | Check ISPC corpus contracts | `verify-ispc-perfbench-loads.sh`, `verify-ispc-perfbench-stores.sh`, `verify-ispc-perfbench-gathers.sh`, `verify-ispc-mandelbrot.sh`, `verify-ispc-point-transform.sh` |
 | Check gate wiring | `check-gate-reachability.sh`, `check-cli-gate-coverage.sh` |
 | Check docs and stdlib | `verify-doc-site.sh`, `verify-docs-workflow-policy.sh`, `verify-doc-tests.sh`, `verify-stdlib.sh` (owns `check-stdlib-concat-lint.sh`), `verify-stdlib-selfhost.sh`, `verify-stdlib-docs.sh` |
+| Check handwritten x86-64 template ownership | `check-x64-executable-template-registry.sh` pins every runtime/startup composition gate, all target-owned opaque byte helpers, structured contribution boundaries, and Windows data-only unwind relations. |
 | Check performance policy | `check-instruction-counts.sh`, `check-opt2-cli-regression.sh`, `check-build-invariance.sh`, `check-tlci-native-route-size.sh`, `analyze-ci-timing-trends.sh`, `bench.sh`, `run-optimization-benchmarks.sh` |
 
 The complete and current invocation order remains in `ci-verify.sh`; this table

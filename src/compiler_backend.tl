@@ -21,6 +21,8 @@
 (import compiler_backend_runtime_common as runtime_common)
 (import compiler_backend_runtime_linux as runtime_linux)
 (import compiler_backend_runtime_windows as runtime_windows)
+(import compiler_x64_executable_template as x64_template)
+(import compiler_x64_executable_template_catalog as x64_catalog)
 (import compiler_backend_object_target as object_target)
 (import compiler_backend_object_target_linux as object_linux)
 (import compiler_backend_object_target_windows as object_windows)
@@ -87694,8 +87696,13 @@
 ;; failed reservation and exit 134 so a runner constraint cannot masquerade as
 ;; an unrelated compiler SIGSEGV.
 (define (compiler-backend-entry-call-main) : String
-  (str_cat.str-cat
-    "    movq $0x40000000, %rsi
+  (x64_catalog.compiler-x64-template-render-assembly
+    (if (compiler_ir_types.compiler-debug-info-enabled?)
+      (x64_template.CompilerX64ExecutableTemplateId.LinuxStartupTailBacktrace)
+      (x64_template.CompilerX64ExecutableTemplateId.LinuxStartupTail))
+    (x64_template.CompilerX64TemplateTarget.LinuxX64)
+    (str_cat.str-cat
+      "    movq $0x40000000, %rsi
     xorq %rdi, %rdi
     movq $3, %rdx
     movq $0x22, %r10
@@ -87706,31 +87713,31 @@
     testq %rax, %rax
     js .L_tl_main_stack_abort
 "
-    (if (compiler_ir_types.compiler-debug-info-enabled?)
-      "    movq %rax, %fs:tl_backtrace_stack_low@tpoff
+      (if (compiler_ir_types.compiler-debug-info-enabled?)
+        "    movq %rax, %fs:tl_backtrace_stack_low@tpoff
 "
-      "")
-    "    addq $0x40000000, %rax
+        "")
+      "    addq $0x40000000, %rax
     andq $-16, %rax
 "
-    (if (compiler_ir_types.compiler-debug-info-enabled?)
-      "    movq %rax, %fs:tl_backtrace_stack_high@tpoff
+      (if (compiler_ir_types.compiler-debug-info-enabled?)
+        "    movq %rax, %fs:tl_backtrace_stack_high@tpoff
 "
-      "")
-    "    movq %rax, %rsp
+        "")
+      "    movq %rax, %rsp
 "
-    (if (compiler_ir_types.compiler-debug-info-enabled?)
-      "    xorl %ebp, %ebp
+      (if (compiler_ir_types.compiler-debug-info-enabled?)
+        "    xorl %ebp, %ebp
 "
-      "")
-    "    call main
+        "")
+      "    call main
     movq %rax, %rdi
     movq $60, %rax
     syscall
 "
-    (compiler-backend-string-shared-view
-      (& compiler-backend-entry-size-directive))
-    "    .section .rodata
+      (compiler-backend-string-shared-view
+        (& compiler-backend-entry-size-directive))
+      "    .section .rodata
 .L_tl_main_stack_mmap_error:
     .ascii \"typelisp runtime: 1 GiB main-stack mmap failed\\n\"
     .text
@@ -87743,7 +87750,7 @@
     movq $60, %rax
     movq $134, %rdi
     syscall
-"))
+")))
 
 (define (compiler-backend-entry
   [capture-argv : bool]
@@ -87768,35 +87775,47 @@
         "")]
     (if (or capture-argv capture-env)
       (str_cat.str-cat
-        (compiler-backend-string-shared-view
-          (& compiler-backend-entry-type-directive))
-        "_tl_start:\n"
-        startup-profile-asm
-        "    movq (%rsp), %rax\n"
-        (if capture-argv
-          "    movq %rax, .L_tl_argc(%rip)
+        (x64_catalog.compiler-x64-template-render-assembly
+          (if startup-profile
+            (x64_template.CompilerX64ExecutableTemplateId.LinuxStartupPrefixStartupProfile)
+            (x64_template.CompilerX64ExecutableTemplateId.LinuxStartupPrefix))
+          (x64_template.CompilerX64TemplateTarget.LinuxX64)
+          (str_cat.str-cat
+            (compiler-backend-string-shared-view
+              (& compiler-backend-entry-type-directive))
+            "_tl_start:\n"
+            startup-profile-asm
+            "    movq (%rsp), %rax\n"
+            (if capture-argv
+              "    movq %rax, .L_tl_argc(%rip)
     leaq 8(%rsp), %rax
     movq %rax, .L_tl_argv(%rip)
 "
-          "")
-        (if capture-env
-          (str_cat.str-cat
-            (if capture-argv
-              "    movq (%rsp), %rax\n"
               "")
-            "    leaq 16(%rsp,%rax,8), %rax
+            (if capture-env
+              (str_cat.str-cat
+                (if capture-argv
+                  "    movq (%rsp), %rax\n"
+                  "")
+                "    leaq 16(%rsp,%rax,8), %rax
     movq %rax, .L_tl_envp(%rip)
 ")
-          "")
-        "    call tl_thread_init\n"
+              "")
+            "    call tl_thread_init\n"))
         global-inits
         (compiler-backend-entry-call-main))
       (str_cat.str-cat
-        (compiler-backend-string-shared-view
-          (& compiler-backend-entry-type-directive))
-        "_tl_start:\n"
-        startup-profile-asm
-        "    call tl_thread_init\n"
+        (x64_catalog.compiler-x64-template-render-assembly
+          (if startup-profile
+            (x64_template.CompilerX64ExecutableTemplateId.LinuxStartupPrefixStartupProfile)
+            (x64_template.CompilerX64ExecutableTemplateId.LinuxStartupPrefix))
+          (x64_template.CompilerX64TemplateTarget.LinuxX64)
+          (str_cat.str-cat
+            (compiler-backend-string-shared-view
+              (& compiler-backend-entry-type-directive))
+            "_tl_start:\n"
+            startup-profile-asm
+            "    call tl_thread_init\n"))
         global-inits
         (compiler-backend-entry-call-main)))))
 

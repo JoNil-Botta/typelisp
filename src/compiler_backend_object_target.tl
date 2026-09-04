@@ -7,6 +7,8 @@
 (import stdlib.byte_buf_core)
 (import stdlib.string)
 (import compiler_object as cobj)
+(import compiler_x64_executable_template as x64_template)
+(import compiler_x64_executable_template_catalog as x64_catalog)
 
 (defstruct CompilerBackendObjectTargetParts
   (text cobj.CompilerObjectX64InstrBuilder)
@@ -300,21 +302,31 @@
   [parts : CompilerBackendObjectTargetParts]
   [entry-bytes : String]
   [macro-entry-bytes : String]
-  [macro-entry : bool]) : CompilerBackendObjectTargetParts
-  (let
-    [with-image-entry : CompilerBackendObjectTargetParts
-      (compiler-backend-object-add-text-bytes
-        (compiler-backend-object-add-text
-          parts
-          (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_image_entry"))
-        entry-bytes)]
-    (if macro-entry
-      (compiler-backend-object-add-text-bytes
-        (compiler-backend-object-add-text
-          with-image-entry
-          (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_macro_entry"))
-        macro-entry-bytes)
-      with-image-entry)))
+  [macro-entry : bool]
+  [target : x64_template.CompilerX64TemplateTarget]
+  [entry-template : x64_template.CompilerX64ExecutableTemplateId]
+  [macro-template : x64_template.CompilerX64ExecutableTemplateId]) : CompilerBackendObjectTargetParts
+  (begin
+    (x64_catalog.compiler-x64-template-assert-structured! entry-template target)
+    (when
+      macro-entry
+      (x64_catalog.compiler-x64-template-assert-structured!
+        macro-template
+        target))
+    (let
+      [with-image-entry : CompilerBackendObjectTargetParts
+        (compiler-backend-object-add-text-bytes
+          (compiler-backend-object-add-text
+            parts
+            (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_image_entry"))
+          entry-bytes)]
+      (if macro-entry
+        (compiler-backend-object-add-text-bytes
+          (compiler-backend-object-add-text
+            with-image-entry
+            (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_macro_entry"))
+          macro-entry-bytes)
+        with-image-entry))))
 
 (define (compiler-backend-object-empty-data-records) : cobj.CompilerObjectDataRecordList
   (cobj.compiler-object-data-record-builder-finish

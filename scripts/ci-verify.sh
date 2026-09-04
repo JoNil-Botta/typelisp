@@ -188,6 +188,7 @@ required_gate_unavailable() {
 # expensive owners. --self-test exercises fail-closed diagnostics, then checks
 # production annotations, counts, duplicates, and delegated fixture counts.
 run_gate "CLI gate inventory and ownership" scripts/check-cli-gate-coverage.sh --self-test
+run_gate "x64 executable template registry coverage" scripts/check-x64-executable-template-registry.sh
 
 # Harness-only checks run before the expensive bootstrap. Source-owned payload
 # verification uses the branch-built compiler because compression is part of

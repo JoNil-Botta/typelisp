@@ -3,6 +3,8 @@
 (import stdlib.byte_buf_core)
 (import compiler_backend_object_target as object_target)
 (import compiler_object as cobj)
+(import compiler_x64_executable_template as x64_template)
+(import compiler_x64_executable_template_catalog as x64_catalog)
 
 (defmacro (compiler-backend-object-global-shared-view [place : Expr]) : Expr
   (cfg
@@ -11,83 +13,118 @@
     `(unsafe
       (ptr-read (ptr-addr-of ,place)))))
 
+(define (compiler-backend-object-registered-bytes
+  [id : x64_template.CompilerX64ExecutableTemplateId]
+  [hex : String]) : String
+  (x64_catalog.compiler-x64-template-render-bytes
+    id
+    (x64_template.CompilerX64TemplateTarget.WindowsX64)
+    (object_target.compiler-backend-object-bytes-from-hex hex)))
+
 (define (compiler-backend-object-chkstk-bytes) : String
-  (object_target.compiler-backend-object-bytes-from-hex
+  (compiler-backend-object-registered-bytes
+    (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectChkstkBytes)
     "51504889c1488d4424104881f9001000007212482d00100000c600004881e900100000ebe54829c8c600005859c3"))
 
 (define (compiler-backend-object-setup-pre-getcmd-bytes) : String
-  (object_target.compiler-backend-object-bytes-from-hex
+  (compiler-backend-object-registered-bytes
+    (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectSetupPreGetcmdBytes)
     "554889e55341544155415641574883ec28"))
 
 (define (compiler-backend-object-setup-after-getcmd-bytes) : String
-  (object_target.compiler-backend-object-bytes-from-hex
+  (compiler-backend-object-registered-bytes
+    (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectSetupAfterGetcmdBytes)
     "4889c34d31e442803c2300740549ffc4ebf4498d4c24014883ec20"))
 
 (define (compiler-backend-object-setup-after-boot1-bytes) : String
-  (object_target.compiler-backend-object-bytes-from-hex
+  (compiler-backend-object-registered-bytes
+    (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectSetupAfterBoot1Bytes)
     "4883c4204989c54831c94c39e17d0d8a040b4188440d0048ffc1ebee43c64425000048c7c1080800004883ec20"))
 
 (define (compiler-backend-object-setup-after-boot2-pre-store-bytes) : String
-  (object_target.compiler-backend-object-bytes-from-hex
+  (compiler-backend-object-registered-bytes
+    (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectSetupAfterBoot2Bytes)
     "4883c4204989c64d31ff4c89eb8a033c0074513c20750548ffc3ebf14981ffff0000007d3f4b891cfe49ffc74531c98a033c00742f3c2275154183f1014889d98a4101880148ffc13c0075f4ebe13c20750d4585c97508c6030048ffc3ebae48ffc3ebcb4bc704fe00000000"))
 
 (define (compiler-backend-object-setup-epilogue-bytes) : String
-  (object_target.compiler-backend-object-bytes-from-hex
+  (compiler-backend-object-registered-bytes
+    (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectSetupEpilogueBytes)
     "4883c428415f415e415d415c5b5dc3"))
 
 (define (compiler-backend-object-add-rdx-rax-bytes) : String
-  (object_target.compiler-backend-object-bytes-from-hex "4801d0"))
+  (compiler-backend-object-registered-bytes
+    (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectAddRdxRaxBytes)
+    "4801d0"))
 
 (define (compiler-backend-object-ret-bytes) : String
-  (object_target.compiler-backend-object-bytes-from-hex "c3"))
+  (compiler-backend-object-registered-bytes
+    (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectRetBytes)
+    "c3"))
 
 (define (compiler-backend-object-tlci-entry-bytes) : String
-  (object_target.compiler-backend-object-bytes-from-hex
+  (compiler-backend-object-registered-bytes
+    (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectTlciImageBytes)
     "4889c84889d14c89c24883ec28ffd04883c428c3"))
 
 (define (compiler-backend-object-tlci-macro-entry-bytes) : String
-  (object_target.compiler-backend-object-bytes-from-hex
+  (compiler-backend-object-registered-bytes
+    (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectTlciMacroBytes)
     "4889c84889d14c89c24d89c84c8b4c24284c8b5424304c8b5c24384883ec384c895424204c895c2428ffd04883c438c3"))
 
 (define (compiler-backend-object-entry-gs-clear-bytes) : String
-  (object_target.compiler-backend-object-bytes-from-hex
+  (compiler-backend-object-registered-bytes
+    (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectEntryGsClearBytes)
     "6548c704252800000000000000"))
 
 (define (compiler-backend-object-entry-convert-fiber-args-bytes) : String
-  (object_target.compiler-backend-object-bytes-from-hex "31c9"))
+  (compiler-backend-object-registered-bytes
+    (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectConvertFiberArgsBytes)
+    "31c9"))
 
 (define (compiler-backend-object-entry-create-fiber-args-bytes) : String
-  (object_target.compiler-backend-object-bytes-from-hex
+  (compiler-backend-object-registered-bytes
+    (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectCreateFiberArgsBytes)
     "b900000100ba0000004041b801000000"))
 
 (define (compiler-backend-object-entry-create-fiber-tail-bytes) : String
-  (object_target.compiler-backend-object-bytes-from-hex
+  (compiler-backend-object-registered-bytes
+    (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectCreateFiberTailBytes)
     "4d89d948c744242000000000"))
 
 (define (compiler-backend-object-entry-stack-guarantee-args-bytes) : String
-  (object_target.compiler-backend-object-bytes-from-hex
+  (compiler-backend-object-registered-bytes
+    (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectStackGuaranteeArgsBytes)
     "c744242000000100488d4c2420"))
 
 (define (compiler-backend-object-entry-stderr-handle-args-bytes) : String
-  (object_target.compiler-backend-object-bytes-from-hex "b9f4ffffff"))
+  (compiler-backend-object-registered-bytes
+    (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectStderrHandleArgsBytes)
+    "b9f4ffffff"))
 
 (define (compiler-backend-object-entry-write-failure-tail-bytes) : String
-  (object_target.compiler-backend-object-bytes-from-hex
+  (compiler-backend-object-registered-bytes
+    (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectWriteFailureTailBytes)
     "41b8360000004d89d948c744242000000000"))
 
 (define (compiler-backend-object-entry-write-overflow-tail-bytes) : String
-  (object_target.compiler-backend-object-bytes-from-hex
+  (compiler-backend-object-registered-bytes
+    (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectWriteOverflowTailBytes)
     "41b8210000004d89d948c744242000000000"))
 
 (define (compiler-backend-object-entry-exit-134-args-bytes) : String
-  (object_target.compiler-backend-object-bytes-from-hex "b986000000"))
+  (compiler-backend-object-registered-bytes
+    (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectExit134ArgsBytes)
+    "b986000000"))
 
 (define (compiler-backend-object-overflow-filter-test-bytes) : String
-  (object_target.compiler-backend-object-bytes-from-hex
+  (compiler-backend-object-registered-bytes
+    (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectOverflowFilterTestBytes)
     "488b018b0831c081f9fd0000c00f94c0"))
 
 (define (compiler-backend-object-overflow-filter-return-bytes) : String
-  (object_target.compiler-backend-object-bytes-from-hex "31c04883c428c3"))
+  (compiler-backend-object-registered-bytes
+    (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectOverflowFilterReturnBytes)
+    "31c04883c428c3"))
 
 (define (compiler-backend-object-add-rax-branch
   [parts : object_target.CompilerBackendObjectTargetParts]
@@ -284,6 +321,10 @@
 (define (compiler-backend-object-add-runtime-text
   [parts : object_target.CompilerBackendObjectTargetParts]) : object_target.CompilerBackendObjectTargetParts
   (let
+    [_registered : unit
+      (x64_catalog.compiler-x64-template-assert-structured!
+        (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectRuntimeSupportContribution)
+        (x64_template.CompilerX64TemplateTarget.WindowsX64))]
     [with-symbols : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-symbol-extern-once
         (object_target.compiler-backend-object-symbol-local-section
@@ -402,6 +443,18 @@
 (define (compiler-backend-object-add-entry-text
   [parts : object_target.CompilerBackendObjectTargetParts]) : object_target.CompilerBackendObjectTargetParts
   (let
+    [_start-registered : unit
+      (x64_catalog.compiler-x64-template-assert-structured!
+        (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectStartContribution)
+        (x64_template.CompilerX64TemplateTarget.WindowsX64))]
+    [_fiber-registered : unit
+      (x64_catalog.compiler-x64-template-assert-structured!
+        (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectMainFiberContribution)
+        (x64_template.CompilerX64TemplateTarget.WindowsX64))]
+    [_filter-registered : unit
+      (x64_catalog.compiler-x64-template-assert-structured!
+        (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectOverflowFilterContribution)
+        (x64_template.CompilerX64TemplateTarget.WindowsX64))]
     [entry : String "_tl_start"]
     [entry-end : String ".L_tl_start_end"]
     [fiber : String ".L_tl_main_fiber"]
@@ -1007,7 +1060,10 @@
         parts
         (compiler-backend-object-tlci-entry-bytes)
         (compiler-backend-object-tlci-macro-entry-bytes)
-        macro-entry)]
+        macro-entry
+        (x64_template.CompilerX64TemplateTarget.WindowsX64)
+        (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectTlciImageContribution)
+        (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectTlciMacroContribution))]
     [emit-native-entry : bool (and emit-entry (not crt-entry))]
     [with-entry : object_target.CompilerBackendObjectTargetParts
       (if emit-native-entry

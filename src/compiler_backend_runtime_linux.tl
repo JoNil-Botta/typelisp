@@ -1,5 +1,7 @@
 ;; compiler_backend_runtime_linux.tl - Linux backend runtime leaf emitter.
 (import compiler_backend_runtime_common as runtime_common)
+(import compiler_x64_executable_template as x64_template)
+(import compiler_x64_executable_template_catalog as x64_catalog)
 (cfg (any compiler-arena-debug test) (import stdlib.string))
 (import stdlib.str_cat_runtime as str_cat)
 
@@ -1174,41 +1176,105 @@ tl_backtrace_stack_set:
       (runtime_common.compiler-backend-runtime-features-arena-debug? features)]
     [alloc-asm : String
       (if (runtime_common.compiler-backend-runtime-features-alloc? features)
-        (compiler-backend-runtime-linux-alloc-functions profile arena-debug)
+        (x64_catalog.compiler-x64-template-render-assembly
+          (x64_catalog.compiler-x64-template-select-four
+            (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeAlloc)
+            (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeAllocDebug)
+            (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeAllocProfile)
+            (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeAllocProfileDebug)
+            profile
+            arena-debug)
+          (x64_template.CompilerX64TemplateTarget.LinuxX64)
+          (compiler-backend-runtime-linux-alloc-functions profile arena-debug))
         "")]
     [region-mark-asm : String
       (if (runtime_common.compiler-backend-runtime-features-region-mark?
         features)
-        (compiler-backend-runtime-region-mark-functions)
+        (x64_catalog.compiler-x64-template-render-assembly
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionMark)
+          (x64_template.CompilerX64TemplateTarget.LinuxX64)
+          (compiler-backend-runtime-region-mark-functions))
         "")]
     [region-reset-asm : String
       (if (runtime_common.compiler-backend-runtime-features-region-reset?
         features)
-        (compiler-backend-runtime-region-reset-functions profile arena-debug)
+        (x64_catalog.compiler-x64-template-render-assembly
+          (x64_catalog.compiler-x64-template-select-four
+            (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionReset)
+            (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionResetDebug)
+            (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionResetProfile)
+            (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionResetProfileDebug)
+            profile
+            arena-debug)
+          (x64_template.CompilerX64TemplateTarget.LinuxX64)
+          (compiler-backend-runtime-region-reset-functions profile arena-debug))
         "")]
     [arena-asm : String
-      (compiler-backend-runtime-linux-arena-functions profile arena-debug)]
+      (x64_catalog.compiler-x64-template-render-assembly
+        (x64_catalog.compiler-x64-template-select-four
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeArena)
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeArenaDebug)
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeArenaProfile)
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeArenaProfileDebug)
+          profile
+          arena-debug)
+        (x64_template.CompilerX64TemplateTarget.LinuxX64)
+        (compiler-backend-runtime-linux-arena-functions profile arena-debug))]
     [profile-asm : String
       (if profile
-        (runtime_common.compiler-backend-runtime-profile-functions)
+        (x64_catalog.compiler-x64-template-render-assembly
+          (x64_template.CompilerX64ExecutableTemplateId.CommonProfile)
+          (x64_template.CompilerX64TemplateTarget.LinuxX64)
+          (runtime_common.compiler-backend-runtime-profile-functions))
         "")]
     [startup-profile-asm : String
-      (runtime_common.compiler-backend-runtime-startup-profile-functions
-        (runtime_common.compiler-backend-runtime-features-startup-profile?
-          features))]
-    [memcpy-asm : String (compiler-backend-runtime-memcpy-functions)]
-    [memchr-asm : String (compiler-backend-runtime-memchr-functions)]
-    [array-zero-asm : String (compiler-backend-runtime-array-zero-functions)]
-    [mem-fill8-asm : String (compiler-backend-runtime-mem-fill8-functions)]
-    [tlci-entry-asm : String (compiler-backend-runtime-tlci-entry-functions)]
+      (if (runtime_common.compiler-backend-runtime-features-startup-profile?
+        features)
+        (x64_catalog.compiler-x64-template-render-assembly
+          (x64_template.CompilerX64ExecutableTemplateId.CommonStartupProfile)
+          (x64_template.CompilerX64TemplateTarget.LinuxX64)
+          (runtime_common.compiler-backend-runtime-startup-profile-functions
+            true))
+        "")]
+    [memcpy-asm : String
+      (x64_catalog.compiler-x64-template-render-assembly
+        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeMemcpy)
+        (x64_template.CompilerX64TemplateTarget.LinuxX64)
+        (compiler-backend-runtime-memcpy-functions))]
+    [memchr-asm : String
+      (x64_catalog.compiler-x64-template-render-assembly
+        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeMemchr)
+        (x64_template.CompilerX64TemplateTarget.LinuxX64)
+        (compiler-backend-runtime-memchr-functions))]
+    [array-zero-asm : String
+      (x64_catalog.compiler-x64-template-render-assembly
+        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeArrayZero)
+        (x64_template.CompilerX64TemplateTarget.LinuxX64)
+        (compiler-backend-runtime-array-zero-functions))]
+    [mem-fill8-asm : String
+      (x64_catalog.compiler-x64-template-render-assembly
+        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeMemFill8)
+        (x64_template.CompilerX64TemplateTarget.LinuxX64)
+        (compiler-backend-runtime-mem-fill8-functions))]
+    [tlci-entry-asm : String
+      (x64_catalog.compiler-x64-template-render-assembly
+        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeTlciImage)
+        (x64_template.CompilerX64TemplateTarget.LinuxX64)
+        (compiler-backend-runtime-tlci-entry-functions))]
     [tlci-macro-entry-asm : String
       (if (runtime_common.compiler-backend-runtime-features-tlci-macro-entry?
         features)
-        (compiler-backend-runtime-tlci-macro-entry-functions)
+        (x64_catalog.compiler-x64-template-render-assembly
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeTlciMacro)
+          (x64_template.CompilerX64TemplateTarget.LinuxX64)
+          (compiler-backend-runtime-tlci-macro-entry-functions))
         "")]
     [backtrace-asm : String
       (if (runtime_common.compiler-backend-runtime-features-backtrace? features)
-        (compiler-backend-runtime-backtrace-functions)
+        (x64_catalog.compiler-x64-template-render-assembly
+          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeBacktrace)
+          (x64_template.CompilerX64TemplateTarget.LinuxX64)
+          (compiler-backend-runtime-backtrace-functions))
         "")]
     [runtime-front-asm : String
       (str_cat.str-cat

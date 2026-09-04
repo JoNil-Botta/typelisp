@@ -4196,6 +4196,18 @@
     ast.AstDeclPathList)
   (Err (Box cdiag.CompilerDiagnosticList)))
 
+;; Summary clients preserve diagnostic order and treat recovered partial checks
+;; as errors. Both API layers share this projection of the canonical result.
+(define (tc-typecheck-checked-result-summary
+  [result : ResultCompilerTypecheckChecked]) : ResultCompilerTypecheck
+  (match result
+    [(ResultCompilerTypecheckChecked.Ok summary _ _ _)
+      (ResultCompilerTypecheck.Ok summary)]
+    [(ResultCompilerTypecheckChecked.Partial diagnostics _ _ _)
+      (ResultCompilerTypecheck.Err diagnostics)]
+    [(ResultCompilerTypecheckChecked.Err diagnostics)
+      (ResultCompilerTypecheck.Err diagnostics)]))
+
 (defenum TcPrefixSnapshotLookup
   (Miss)
   (Hit i64 String i64 CompilerTypecheckSummary))
@@ -134089,23 +134101,18 @@
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]
   [intern-state : ci.InternCompatState]) : ResultCompilerTypecheck
-  (match (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state-and-intern-state
-    load-state
-    prefix-cache
-    job-state
-    program
-    paths
-    stdlib-roots
-    cache-scope
-    pools
-    source-names
-    intern-state)
-    [(ResultCompilerTypecheckChecked.Ok summary _ _ _)
-      (ResultCompilerTypecheck.Ok summary)]
-    [(ResultCompilerTypecheckChecked.Partial diag _ _ _)
-      (ResultCompilerTypecheck.Err diag)]
-    [(ResultCompilerTypecheckChecked.Err diag)
-      (ResultCompilerTypecheck.Err diag)]))
+  (tc-typecheck-checked-result-summary
+    (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state-and-intern-state
+      load-state
+      prefix-cache
+      job-state
+      program
+      paths
+      stdlib-roots
+      cache-scope
+      pools
+      source-names
+      intern-state)))
 
 (define (compiler-typecheck-clear-macro-expanded-source-caches-for-job!
   [job-state : TcJobState]) : unit

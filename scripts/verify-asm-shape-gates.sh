@@ -314,6 +314,43 @@ assert_regex_count_eq() {
     fi
 }
 
+# ABT-1: the located abort tail's SECOND staging push is taken after %rsp has
+# already moved, so its operand must not be a memory read -- that is the exact
+# condition under which compiler-backend-text-max-rsp-dip may ignore the tail's
+# dip, and it is what keeps a red-zone slot the FIRST push clobbers harmless.
+# The bounds tail's index is a register or an imm32, the shift tail's width is
+# an immediate, and the div tail's saves are registers (normalized through
+# %r11), so no tail may spell that push against memory. The first push may:
+# it happens while %rsp is still the body's own.
+assert_abort_tail_staging_push_not_memory() {
+    _file=$1
+    _label=$2
+    _bad=$(awk '
+        /^[[:space:]]+leaq \.L_tl_abort_site_/ {
+            if (prev ~ /^[[:space:]]+pushq [-0-9]*\(%/) print prev
+        }
+        { prev = $0 }
+    ' "$_file")
+    if [ -n "$_bad" ]; then
+        fail "$_label staging push before the descriptor reads memory: $_bad"
+    fi
+}
+
+# INL-7: an upper bound rather than an exact count, for a claim about a whole
+# benchmark function's frame traffic. The number the gate cares about is the one
+# the refused import would add; pinning the exact count would make every
+# unrelated allocator change land on this gate instead of on its own.
+assert_regex_count_at_most() {
+    _file=$1
+    _regex=$2
+    _want=$3
+    _label=$4
+    _got=$(count_regex "$_file" "$_regex")
+    if [ "$_got" -gt "$_want" ]; then
+        fail "$_label expected at most $_want match(es) for /$_regex/, got $_got"
+    fi
+}
+
 assert_regex_count_at_least() {
     _file=$1
     _regex=$2
@@ -322,6 +359,107 @@ assert_regex_count_at_least() {
     _got=$(count_regex "$_file" "$_regex")
     if [ "$_got" -lt "$_want" ]; then
         fail "$_label expected at least $_want match(es) for /$_regex/, got $_got"
+    fi
+}
+
+# DCE-2 shapes. Two things the level-2 pipeline's final slot exists to keep out
+# of the emitted body, both read off a normalized register name so a 32-bit
+# materialization (`movl $1, %esi`) and its 64-bit test (`testq %rsi, %rsi`)
+# are seen as the same register.
+#
+#   count_literal_then_test  -- a register loaded with a literal and TESTED on
+#                               the next line: a branch on a constant that
+#                               reached the backend.
+#   count_literal_then_redef -- a register loaded with a literal and REDEFINED
+#                               on the next line: the literal Mov was dead when
+#                               it was emitted.
+asm_shape_reg_norm_awk() {
+    cat <<'AWK'
+function norm(r,   n) {
+    n = r
+    sub(/^%/, "", n)
+    if (n ~ /^e[a-z][a-z]$/) { sub(/^e/, "r", n); return n }
+    if (n ~ /^r[0-9]+[bwd]$/) { sub(/[bwd]$/, "", n); return n }
+    if (n ~ /^[a-z][a-z]l$/ && n != "rsl") { sub(/l$/, "x", n); sub(/^/, "r", n); return n }
+    return n
+}
+function literal_dst(line,   parts) {
+    if (line ~ /^mov[lq][ \t]+\$-?[0-9]+,[ \t]*%[a-z0-9]+$/) {
+        split(line, parts, /,[ \t]*/)
+        return norm(parts[2])
+    }
+    if (line ~ /^xor[lq][ \t]+%[a-z0-9]+,[ \t]*%[a-z0-9]+$/) {
+        split(line, parts, /[ \t,]+/)
+        if (norm(parts[2]) == norm(parts[3])) return norm(parts[2])
+    }
+    return ""
+}
+function redef_dst(line,   parts) {
+    if (line ~ /^mov[lq][ \t]+\$-?[0-9]+,[ \t]*%[a-z0-9]+$/) {
+        split(line, parts, /,[ \t]*/)
+        return norm(parts[2])
+    }
+    if (line ~ /^xor[lq][ \t]+%[a-z0-9]+,[ \t]*%[a-z0-9]+$/) {
+        split(line, parts, /[ \t,]+/)
+        if (norm(parts[2]) == norm(parts[3])) return norm(parts[2])
+    }
+    return ""
+}
+function test_reg(line,   parts) {
+    if (line ~ /^test[bwlq][ \t]+%[a-z0-9]+,[ \t]*%[a-z0-9]+$/) {
+        split(line, parts, /[ \t,]+/)
+        if (norm(parts[2]) == norm(parts[3])) return norm(parts[2])
+    }
+    return ""
+}
+AWK
+}
+
+count_literal_then_test() {
+    {
+        asm_shape_reg_norm_awk
+        cat <<'AWK'
+{
+    line = $0
+    sub(/^[ \t]+/, "", line)
+    sub(/[ \t]+$/, "", line)
+    if (pending != "" && test_reg(line) == pending) count++
+    pending = literal_dst(line)
+}
+END { print count + 0 }
+AWK
+    } > "$WORKDIR/asm-shape-literal-then-test.awk"
+    awk -f "$WORKDIR/asm-shape-literal-then-test.awk" "$1"
+}
+
+count_literal_then_redef() {
+    {
+        asm_shape_reg_norm_awk
+        cat <<'AWK'
+{
+    line = $0
+    sub(/^[ \t]+/, "", line)
+    sub(/[ \t]+$/, "", line)
+    if (pending != "" && redef_dst(line) == pending) count++
+    pending = literal_dst(line)
+}
+END { print count + 0 }
+AWK
+    } > "$WORKDIR/asm-shape-literal-then-redef.awk"
+    awk -f "$WORKDIR/asm-shape-literal-then-redef.awk" "$1"
+}
+
+assert_no_literal_then_test() {
+    _got=$(count_literal_then_test "$1")
+    if [ "$_got" -ne 0 ]; then
+        fail "$2 tests a register that was just loaded with a literal ($_got time(s))"
+    fi
+}
+
+assert_no_literal_then_redef() {
+    _got=$(count_literal_then_redef "$1")
+    if [ "$_got" -ne 0 ]; then
+        fail "$2 redefines a register that was just loaded with a literal ($_got time(s))"
     fi
 }
 
@@ -373,6 +511,62 @@ function_body() {
     _body="$WORKDIR/$(basename "$_asm" .s).$(printf '%s' "$_label" | tr -c 'A-Za-z0-9_' '_').body"
     extract_function "$_asm" "$_label" "$_body"
     printf '%s\n' "$_body"
+}
+
+# SROA-2. The lattice-join fixture is the shape the aggregate word split exists
+# for: a clone of a four-word enum out of a dense array, a join that rebuilds it
+# per match arm, and an equality that reads both back. Before the split every
+# one of those temporaries was a frame buffer, so the join function moved 32
+# bytes with `movups` and every comparison read a `(%rsp)` slot back. After it
+# the whole value lives in registers: the function reserves no stack at all, the
+# tag test is a register test, and the equality's payload compares are
+# register-to-register.
+# UNR-1. The word-then-tail piece copy, all three claims in one body: the
+# helper is inlined into `copy-fill!`, its length comes from a String
+# descriptor and its two loops are the word loop and the byte remainder.
+check_short_trip_copy() {
+    _asm=$(compile_gate short_trip_copy tests/integration/short_trip_copy.tl)
+    _fill=$(function_body "$_asm" _tl_short_trip_copy_copy_fill_bang)
+    # The piece length is a container length, so the lattice signs it and the
+    # `/ 8` is ONE logical shift. The give-away of the five-instruction signed
+    # form is the `sarq $63` sign broadcast; the fixture's other arithmetic is
+    # MASKED rather than divided, so no other divide may put one here either.
+    assert_matches "$_fill" '^[[:space:]]+shrq \$3, %r' short-trip-copy-divide
+    assert_not_matches "$_fill" '^[[:space:]]+sarq \$63, %r' short-trip-copy-divide
+    # The word loop's bound is that `n / 8`, non-negative for the same reason,
+    # so its unroll guard drops the `bound - K <= bound` wrap compare and its
+    # literal-zero seed reads as `ngroup > 0`: `lea; test; jg`, not
+    # `lea; cmp; jle; test; jg`.
+    # (assert_next_line_matches hands its patterns to awk -v, which eats a
+    # single backslash: bracket the metacharacters instead of escaping.)
+    assert_next_line_matches "$_fill" '^[[:space:]]+leaq -4[(]%r[a-z0-9]+[)], %r' \
+        '^[[:space:]]+testq %r[a-z0-9]+, %r' short-trip-copy-guard
+    assert_not_matches "$_fill" '^[[:space:]]+leaq -2\(%r[a-z0-9]+\), %r' \
+        short-trip-copy-guard
+    # ...and the byte tail runs `n mod 8` times, so it is not versioned at all:
+    # ONE guard in the whole body (the word loop's) and ONE byte copy, the
+    # remainder loop's own.
+    assert_regex_count_eq "$_fill" '__unroll_guard:$' 1 short-trip-copy-tail
+    assert_regex_count_eq "$_fill" '^[[:space:]]+movzbq ' 1 short-trip-copy-tail
+}
+
+check_lattice_join_split() {
+    _asm=$(compile_gate lattice_join_split tests/integration/lattice_join_split.tl)
+    _bind=$(function_body "$_asm" _tl_lattice_join_split_lat_bind)
+    # No stack temporary for the enum: no frame, no wide copy, no word store or
+    # compare against a frame slot anywhere between the tag test and the
+    # compare.
+    assert_not_matches "$_bind" '^[[:space:]]+subq \$[0-9]+, %rsp$' lattice-join-split
+    assert_not_contains "$_bind" 'movups' lattice-join-split
+    assert_not_matches "$_bind" '^[[:space:]]+movq %[a-z0-9]+, -?[0-9]+\(%rsp\)$' \
+        lattice-join-split
+    assert_not_matches "$_bind" '^[[:space:]]+cmpq -?[0-9]+\(%rsp\), %' \
+        lattice-join-split
+    # The equality's match is ONE tag compare against a register, and its three
+    # payload comparisons are register-to-register.
+    assert_matches "$_bind" '^[[:space:]]+cmpq \$1, %[a-z0-9]+$' lattice-join-split
+    assert_regex_count_at_least "$_bind" \
+        '^[[:space:]]+cmpq %r[a-z0-9]+, %r[a-z0-9]+$' 3 lattice-join-split
 }
 
 check_divmagic_hoist() {
@@ -612,6 +806,92 @@ assert_dead_slot_region() {
         assert_regex_count_eq "$_body" '^[[:space:]]+subq \$8, %rsp$' 1 "$_label"
         assert_regex_count_eq "$_body" '^[[:space:]]+subq \$[0-9]+, %rsp$' 1 "$_label"
     fi
+}
+
+# RG-1 fix B: every callee-saved register the prologue pushes must be NAMED by
+# the body. A register that is pushed and popped and appears nowhere between is
+# two instructions on every call of the function for nothing -- cg-map-probe
+# pays 2.63M Ir per callgraph_scc run that way, and the probe fixture below is
+# its shape.
+#
+# The check reads the pushes out of the prologue and then asks whether the
+# register occurs anywhere else in the body, at ANY width: a `%rbx` a function
+# only ever names as `%ebx` is used, and trimming its save would clobber the
+# caller's. A frame reference `K(%rbp)` is not a use of %rbp, which is why the
+# %rbp scan drops the occurrences that follow a '('.
+#
+# Pre-change both `insert!` and `lookup` push %r15 and name it nowhere, so the
+# assertion is proven forcing.
+# The callee-saved registers a function's PROLOGUE pushes: the pushq run
+# before the first inner label. An abort site marshals its arguments with its
+# own pushq/popq pair, so counting pushes over the whole body would read one of
+# those as a second prologue save.
+prologue_pushed_csrs() {
+    awk '
+        NR == 1 { next }
+        /:[[:space:]]*$/ { exit }
+        /^[[:space:]]+pushq %(r1[2-5]|rbx|rbp)$/ {
+            sub(/^[[:space:]]+pushq %/, "")
+            print
+        }
+    ' "$1"
+}
+
+assert_pushed_csrs_named() {
+    _body=$1
+    _label=$2
+    for _reg in $(prologue_pushed_csrs "$_body"); do
+        case $_reg in
+            rbx) _pat='%rbx|%ebx|%bx|%bl' ;;
+            rbp) _pat='%rbp|%ebp|%bp|%bpl' ;;
+            *) _pat="%$_reg" ;;
+        esac
+        # Every line naming the register at any width, with the frame operands
+        # blanked (a `K(%rbp)` base is not a use of the value register) and the
+        # restores dropped, less the one prologue push.
+        _mentions=$(sed 's/[-0-9]*(%r[bs]p[^)]*)/FRAME/g' "$_body" \
+            | grep -E "$_pat" \
+            | grep -v -c -E "^[[:space:]]+popq %$_reg\$" || true)
+        if [ "$_mentions" -le 1 ]; then
+            fail "$_label pushes %$_reg and never names it"
+        fi
+    done
+}
+
+check_csr_unused_save() {
+    _asm=$(compile_gate csr_unused_save tests/integration/csr_unused_save.tl)
+    for _fn in _tl_csr_unused_save_insert_bang _tl_csr_unused_save_lookup; do
+        _body=$(function_body "$_asm" "$_fn")
+        _saved=$(prologue_pushed_csrs "$_body" | wc -l | tr -d '[:space:]')
+        if [ "$_saved" -lt 1 ]; then
+            fail "csr-unused-save $_fn expected at least one pushed CSR home, got $_saved"
+        fi
+        assert_pushed_csrs_named "$_body" "csr-unused-save-$_fn"
+    done
+}
+
+# RG-1 fix B on a CALL-CARRYING loop: the census-shaped walk. Both arms of the
+# inner scan call, so the loop's carried values are callee-saved-only
+# candidates and the function runs with a full callee-saved run pushed -- the
+# shape where an unnamed save costs two instructions on every one of the
+# function's calls. The gate pins that the run is there, that every register in
+# it is named by the body, and that the prologue's total displacement still
+# leaves the body's calls 16-byte aligned after the trim has had its say.
+check_csr_census_loop() {
+    _asm=$(compile_gate csr_census_loop tests/integration/csr_census_loop.tl)
+    _body=$(function_body "$_asm" _tl_csr_census_loop_ccl_census_blocks)
+    _saved=$(prologue_pushed_csrs "$_body" | wc -l | tr -d '[:space:]')
+    if [ "$_saved" -lt 4 ]; then
+        fail "csr-census-loop expected at least 4 pushed CSR homes, got $_saved"
+    fi
+    assert_pushed_csrs_named "$_body" csr-census-loop
+    assert_call_alignment "$_body" "$_saved" csr-census-loop
+    # The inner scan's two arms both call, so the loop is genuinely
+    # call-carrying: without a call in the body the shape proves nothing. The
+    # arms' own `ccl-bump` is inlined into the walk (as cg-census-blocks inlines
+    # cg-census-bump-map), and what survives is its probe -- the same call the
+    # benchmark's loop carries.
+    assert_contains "$_body" 'call _tl_csr_census_loop_ccl_probe' csr-census-loop
 }
 
 check_csr_push_prologue() {
@@ -860,29 +1140,76 @@ check_global_cmp_mem_fold() {
     done
 }
 
+# INL-6. The read-modify-write fold, asserted at the folded instruction rather
+# than over a whole function body: the line before it must not load the cell and
+# the line after must not store it, which is what "the triple collapsed to one
+# memory-operand instruction" means locally. Reads of the same cell elsewhere in
+# the file -- `main` printing it -- are not the claim and must not fail it.
+assert_fold_triple_collapsed() {
+    _file=$1
+    _cell=$2
+    _label=$3
+    _bad=$(awk -v cell="_tl_rmw_mem_operand_fold_rmw_$_cell" '
+        $0 ~ ("^[[:space:]]+(addq|subq|orq|andq|xorq) ([$][0-9-]+|%r[a-z0-9]+), " cell "\\(%rip\\)$") {
+            if (prev ~ ("^[[:space:]]+movq " cell "\\(%rip\\), %r")) n++
+            pending = 1
+            prev = $0
+            next
+        }
+        pending == 1 {
+            if ($0 ~ ("^[[:space:]]+movq %r[a-z0-9]+, " cell "\\(%rip\\)$")) n++
+            pending = 0
+        }
+        { prev = $0 }
+        END { print n+0 }
+    ' "$_file")
+    if [ "$_bad" -ne 0 ]; then
+        fail "$_label rmw_$_cell fold kept $_bad staging instruction(s) around it"
+    fi
+}
+
 check_rmw_mem_operand_fold() {
     for _target in linux-x86_64 windows-x86_64; do
         _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
         _asm=$(compile_gate "rmw_mem_operand_fold_$_suffix" \
             tests/integration/rmw_mem_operand_fold.tl "$_target")
-        _bump=$(function_body "$_asm" _tl_rmw_mem_operand_fold_rmw_bump)
-        _read=$(function_body "$_asm" _tl_rmw_mem_operand_fold_rmw_bump_and_read)
+        # INL-5 for `rmw-bump-and-read`, INL-6 for `rmw-bump`: both are short
+        # bodies whose only unwhitelisted instruction was the global-cell
+        # `Store`, and both whitelists carry it now -- the single-block one
+        # since INL-5 and the multiblock one since INL-6 -- so each is taken at
+        # its single site and no out-of-line body survives to extract. The
+        # claims below are about the FOLD, not about a function boundary: each
+        # of the five cells is updated in exactly one place in the program and
+        # `rmw-hits` in one more, so asserting them over the whole assembly
+        # pins the same thing wherever the copies land.
+        _bump=$_asm
+        _read=$_asm
 
         # RMW-2: five `g = g op k` updates, five different ops, both operand
         # forms -- two immediates and three registers. Each was
         # `movq g(%rip),%rX ; op src,%rX ; movq %rX,g(%rip)` before the fold and
         # is ONE memory-operand instruction after it.
-        assert_regex_count_eq "$_bump" \
-            '^[[:space:]]+(addq|subq|orq|andq|xorq) (\$[0-9-]+|%r[a-z0-9]+), _tl_rmw_mem_operand_fold_rmw_[a-z]+\(%rip\)$' 5 \
-            "rmw-mem-operand-fold-$_target"
-        # Nothing stages a cell into a register first: the loads the fold
-        # consumed are gone, and so are the stores that closed each triple.
-        assert_not_matches "$_bump" \
-            '^[[:space:]]+movq _tl_rmw_mem_operand_fold_rmw_[a-z]+\(%rip\), %r' \
-            "rmw-mem-operand-fold-$_target"
-        assert_not_matches "$_bump" \
-            '^[[:space:]]+movq %r[a-z0-9]+, _tl_rmw_mem_operand_fold_rmw_[a-z]+\(%rip\)$' \
-            "rmw-mem-operand-fold-$_target"
+        # INL-6: named cell by cell rather than by prefix. With the bodies
+        # absorbed the scan is over the whole assembly, where the prefix would
+        # also match `rmw-hits` -- the read-after-write neighbour the block
+        # below owns -- so each of the five updates is asserted on its own cell,
+        # which is a stricter claim than the count ever was.
+        for _cell in add sub or and xor; do
+            assert_regex_count_eq "$_bump" \
+                "^[[:space:]]+(addq|subq|orq|andq|xorq) ([$][0-9-]+|%r[a-z0-9]+), _tl_rmw_mem_operand_fold_rmw_$_cell\\(%rip\\)$" 1 \
+                "rmw-mem-operand-fold-$_target"
+        done
+        # Nothing stages a cell into a register first: the load the fold
+        # consumed is gone and so is the store that closed the triple. INL-6:
+        # asserted AROUND the folded instruction rather than over the file,
+        # because the body now lives in `main`, which legitimately reads all
+        # five cells once at the end to print them. Neighbour lines are the
+        # local reading of the same claim -- an unfolded triple is a load, the
+        # op, and a store in three adjacent lines.
+        for _cell in add sub or and xor; do
+            assert_fold_triple_collapsed "$_bump" "$_cell" \
+                "rmw-mem-operand-fold-$_target"
+        done
 
         # The read-after-write neighbour. The update still folds -- the emitter
         # answers the read with a RELOAD rather than by keeping the register, so
@@ -1071,6 +1398,627 @@ check_checked_cheap_tier_claim() {
     done
 }
 
+# INL-5. The inliner's instruction whitelist admits `Store` -- the write to a
+# module global cell -- so a helper that advances a global CURSOR is inlinable.
+# `gc-next` is `benchmarks/asm_render/bench.tl`'s `asm-tok-next` shape: one
+# block that reads `tokens[cursor]` and bumps `cursor`, called from five sites,
+# three of them inside `gc-run`'s loop.
+check_global_cursor_helper() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "global_cursor_helper_$_suffix" \
+            tests/integration/global_cursor_helper.tl "$_target")
+
+        # No site keeps the boundary, and with every site inlined the helper
+        # keeps no out-of-line body at all.
+        assert_regex_count_eq "$_asm" \
+            '^[[:space:]]+call _tl_global_cursor_helper_gc_next$' 0 \
+            "global-cursor-helper-$_target"
+        assert_not_matches "$_asm" '^_tl_global_cursor_helper_gc_next:$' \
+            "global-cursor-helper-$_target"
+
+        # INL-6: read out of `main`, not out of `gc-run`. With the MULTIBLOCK
+        # whitelist carrying `Store` as well, the two callers that hold the
+        # helper's copies -- `gc-run` and `gc-peek-pair` -- are themselves
+        # inlinable and are absorbed into `main`, so all five copies live here.
+        # The claims are the same claims, counted over the caller that now
+        # holds them.
+        _run=$(function_body "$_asm" main)
+
+        # Five copies, one per site, each with its own freshened bounds
+        # ok-label: the three in the loop and the two in the straight-line
+        # pair.
+        assert_regex_count_eq "$_run" \
+            '^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok[A-Za-z0-9_.]*:$' 5 \
+            "global-cursor-helper-$_target"
+
+        # What the splice buys beyond the boundary: the token array's
+        # descriptor -- the two global-cell words each site used to reload -- is
+        # loop-invariant and is read ONCE per absorbed caller region, in the
+        # loop's preheader and once more for the straight-line pair, with the
+        # loop body addressing elements out of registers. Two, not five.
+        assert_regex_count_eq "$_run" \
+            '^[[:space:]]+movq _tl_global_cursor_helper_gc_tokens\(%rip\), %r' 2 \
+            "global-cursor-helper-$_target"
+
+        # The cursor write survived the clone at every site -- five stores to
+        # the cell, one per copy, each writing a register rather than leaving
+        # the cell to a call. A clone that dropped the store would leave fewer
+        # here and every site would read position zero; a clone that duplicated
+        # it would leave more and the run would skip tokens. The read side is
+        # five matching reads plus `main`'s own read of the cursor for the last
+        # printed line.
+        assert_regex_count_eq "$_run" \
+            '^[[:space:]]+movq %r[a-z0-9]+, _tl_global_cursor_helper_gc_cursor\(%rip\)$' 5 \
+            "global-cursor-helper-$_target"
+        assert_regex_count_eq "$_run" \
+            '^[[:space:]]+movq _tl_global_cursor_helper_gc_cursor\(%rip\), %r' 6 \
+            "global-cursor-helper-$_target"
+    done
+}
+
+# INL-6. The inliner's instruction whitelists both carry `Store` now, and what
+# had blocked the multiblock one was a cascade in the measured tier's RESCAN
+# generation: `asm-bench` keeps `asm-round`, which moves `asm-round`'s
+# straight-line call of `asm-fold-text` into `asm-bench`'s loop, and the bands
+# then absorbed that 29-instruction BYTE LOOP into the merged caller. The
+# accumulator lost its register there: the unrolled fold wrote it back to its
+# home slot after every `xor` and every `imul` -- twenty times in the unrolled
+# body -- `asm-bench` went from 9 frame-slot references to 74, and the row paid
+# +33.5M. opt-inline-checked-rescan-loop-import? refuses that absorption.
+#
+# The claim pinned here is the REGISTER, not the inline decision, and it is
+# spelled as the exact four-instruction signature of an accumulator that has no
+# register at all:
+#
+#     xorq  %rN, %rACC
+#     movq  %rACC, K(%rsp)
+#     imulq %rM, %rACC
+#     movq  %rACC, K(%rsp)
+#
+# A fold whose accumulator lives in a register produces neither store; a fold
+# spilled ACROSS A CALL produces one store and no `xor`/`imul` pair around it,
+# which is an ordinary and correct thing for the outer loop of `asm-bench` to
+# do and is why the signature is four instructions rather than two. On the base
+# compiler and on this one the whole asm_render assembly matches it zero times;
+# with the absorption admitted it matches twenty.
+#
+# The benchmark itself is the fixture: the shape only exists at this size, and
+# a mirror of it in tests/integration would pin a copy of the cascade rather
+# than the cascade. Both targets are checked -- the register allocator's
+# callee-saved set differs between them, so "the accumulator gets a register"
+# is a separate fact on each.
+assert_no_frame_homed_fold() {
+    _asm=$1
+    _label=$2
+    _got=$(awk '
+        /^[[:space:]]+xorq %r[a-z0-9]+, %r[a-z0-9]+$/ { acc=$3; state=1; next }
+        state==1 && $0 ~ ("^[[:space:]]+movq " acc ", [0-9]+\\(%rsp\\)$") { state=2; next }
+        state==2 && $0 ~ ("^[[:space:]]+imulq %r[a-z0-9]+, " acc "$") { state=3; next }
+        state==3 && $0 ~ ("^[[:space:]]+movq " acc ", [0-9]+\\(%rsp\\)$") { n++; state=0; next }
+        { state=0 }
+        END { print n+0 }
+    ' "$_asm")
+    if [ "$_got" -ne 0 ]; then
+        fail "$_label expected no frame-homed fold accumulator, got $_got"
+    fi
+}
+
+check_asm_render_fold_accumulator() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "asm_render_fold_$_suffix" \
+            benchmarks/asm_render/bench.tl "$_target")
+        assert_no_frame_homed_fold "$_asm" "asm-render-fold-$_target"
+    done
+}
+
+# INL-6. The multiblock companion of check_global_cursor_helper. `gcg-step` is
+# `gc-next` with a guard in front of it -- a bounds ARM that returns a sentinel,
+# then the read and the global cursor store -- so it is two blocks and its
+# `Store` was refused by the MULTIBLOCK whitelist until this packet. Five sites
+# across three functions, so the body is COPIED and every copy has to carry its
+# own store.
+#
+# The three IN-LOOP sites take it and the two straight-line ones do not, which
+# is the loop-bearing bounds band's own clause made visible: a bounds-carrying
+# callee is absorbed where the boundary is repaid per iteration and left behind
+# where it is repaid once. So `gcg-step` keeps an out-of-line body for the pair
+# and `gcg-run` holds three copies with no call left in it.
+check_global_cursor_guarded() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "global_cursor_guarded_$_suffix" \
+            tests/integration/global_cursor_guarded.tl "$_target")
+
+        _run=$(function_body "$_asm" _tl_global_cursor_guarded_gcg_run)
+
+        # No boundary left in the loop.
+        assert_regex_count_eq "$_run" \
+            '^[[:space:]]+call _tl_global_cursor_guarded_gcg_step$' 0 \
+            "global-cursor-guarded-$_target"
+
+        # ...and the straight-line pair still calls it, so a body survives.
+        assert_matches "$_asm" '^_tl_global_cursor_guarded_gcg_step:$' \
+            "global-cursor-guarded-$_target"
+
+        # Three copies landed in the loop, one per site, each with its own
+        # freshened bounds ok-label -- the check that lives INSIDE the callee's
+        # non-guard arm, which is what makes the abort twin a claim about a
+        # spliced check rather than about the caller's own.
+        assert_regex_count_eq "$_run" \
+            '^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok[A-Za-z0-9_.]*:$' 3 \
+            "global-cursor-guarded-$_target"
+
+        # The cursor write survived the clone at every site: three stores to the
+        # cell, one per copy, and the three matching reads that are the read
+        # side of the same read-modify-write. A clone that dropped one would
+        # leave every later site reading the same position and the printed fold
+        # would change; a clone that duplicated one would skip a token.
+        assert_regex_count_eq "$_run" \
+            '^[[:space:]]+movq %r[a-z0-9]+, _tl_global_cursor_guarded_gcg_cursor\(%rip\)$' 3 \
+            "global-cursor-guarded-$_target"
+        assert_regex_count_eq "$_run" \
+            '^[[:space:]]+movq _tl_global_cursor_guarded_gcg_cursor\(%rip\), %r' 3 \
+            "global-cursor-guarded-$_target"
+
+        # And the descriptor the three calls used to reload is read once, in
+        # the preheader, exactly as in the single-block fixture.
+        assert_regex_count_eq "$_run" \
+            '^[[:space:]]+movq _tl_global_cursor_guarded_gcg_tokens\(%rip\), %r' 1 \
+            "global-cursor-guarded-$_target"
+    done
+}
+
+# INL-7. The hot-loop-leaf band's third site tier admits a cyclic, call-free
+# body at a STRAIGHT-LINE site when the caller has no natural loop, on the
+# argument that "the imported loop becomes the caller's only one". The inliner
+# runs before the per-function pipeline, whose first pass (opt-tailrec-function)
+# turns a SELF TAIL-CALL into a back edge -- so a self-tail-recursive caller
+# reads as loop-free here and leaves the pipeline with a loop around its whole
+# body, with the import inside it. opt-inline-caller-loop-free? refuses that.
+#
+# `sccp-rewrite-rows` is the measured case: the tail-recursive per-instruction
+# rewrite driver of benchmarks/sccp_lattice, into which INL-6's multiblock
+# `Store` admission let `sccp-rewrite-phi` (102 instructions, 26 blocks, one
+# static reference, its own phi loop) be imported. Callgrind split the trade
+# exactly -- `sccp_rewrite_rows` 32,885,952 -> 39,790,784 against
+# `sccp_rewrite_phi` retiring 4,558,608 -- so the copy inside the loop ran
+# 2,346,224 instructions more than the boundary it removed.
+#
+# Two claims, and the second is the one the row is about. The DECISION: the
+# boundary survives and a body is still emitted for it. The FRAME: the merged
+# driver went from ten frame-slot references to seventeen on linux and from 21
+# to 28 on win64 -- the loop-carried accumulator, the row cursor and the tape
+# base stopped holding registers across the imported loop. The bound is an
+# upper one, set above what the driver spends without the import and below what
+# it spends with it, so an unrelated allocator change does not land here.
+#
+# The benchmark itself is the fixture because the shape only exists at this
+# size; tests/integration/recursive_loop_import.tl is the miniature, and
+# check_recursive_loop_import below is its gate.
+check_sccp_rewrite_phi_import() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        # INL-9 moved both bounds by twelve. `sccp-rewrite-rows` absorbs
+        # `sccp-rewritten-i64`, and the dispatch reading gives that helper an
+        # `sccp-env-tag-in` of its own at one arm of its tag `cond` -- a keep
+        # worth -1,427,200 in `sccp_env_tag_in` against +948,048 in
+        # `sccp_rewrite_rows`, whose extra frame traffic is exactly these twelve
+        # references. The bound is what it was plus that import, with the same
+        # two of headroom it always carried; what the gate is about --
+        # `sccp-rewrite-phi` staying OUT of line and reached by exactly one call
+        # -- is unchanged, and so is the row, which INL-9 moves -17,525,408.
+        _bound=24
+        if [ "$_target" = windows-x86_64 ]; then
+            _bound=35
+        fi
+        _asm=$(compile_gate "sccp_rewrite_phi_import_$_suffix" \
+            benchmarks/sccp_lattice/bench.tl "$_target")
+
+        # The body is still emitted, and the driver still reaches it by call.
+        assert_matches "$_asm" '^_tl_bench_sccp_rewrite_phi:$' \
+            "sccp-rewrite-phi-import-$_target"
+        _rows=$(function_body "$_asm" _tl_bench_sccp_rewrite_rows)
+        assert_regex_count_eq "$_rows" \
+            '^[[:space:]]+call _tl_bench_sccp_rewrite_phi$' 1 \
+            "sccp-rewrite-phi-import-$_target"
+
+        # ...and the driver's own loop-carried values keep their registers.
+        assert_regex_count_at_most "$_rows" '[-0-9]+\(%rsp\)' "$_bound" \
+            "sccp-rewrite-phi-import-$_target"
+    done
+}
+
+# INL-7. The miniature of the pair above, with both answers over ONE callee so
+# the only thing that differs between them is the caller's own recursion.
+# `rli-scan` is cyclic, call-free, 42 instructions in 8 blocks and writes a
+# module global; `rli-rows` walks the tape by self tail-call and `rli-peek`
+# does not call itself. Both callers carry a bounds check of their own, so the
+# cascade clause is out of the comparison and only the recursion is in it.
+check_recursive_loop_import() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "recursive_loop_import_$_suffix" \
+            tests/integration/recursive_loop_import.tl "$_target")
+
+        # The callee keeps a body, because one of its two sites keeps its call.
+        assert_matches "$_asm" '^_tl_recursive_loop_import_rli_scan:$' \
+            "recursive-loop-import-$_target"
+
+        # The self-tail-recursive driver keeps its boundary...
+        _rows=$(function_body "$_asm" _tl_recursive_loop_import_rli_rows)
+        assert_regex_count_eq "$_rows" \
+            '^[[:space:]]+call _tl_recursive_loop_import_rli_scan$' 1 \
+            "recursive-loop-import-$_target"
+        # ...and no copy of the scan's fold landed in it. The FNV multiplier is
+        # the callee's own constant and appears nowhere else in the program.
+        assert_regex_count_eq "$_rows" '1099511628211' 0 \
+            "recursive-loop-import-$_target"
+
+        # The non-recursive caller at the same kind of site takes the copy: no
+        # call left, and the imported loop's multiplier is in its body.
+        _peek=$(function_body "$_asm" _tl_recursive_loop_import_rli_peek)
+        assert_regex_count_eq "$_peek" \
+            '^[[:space:]]+call _tl_recursive_loop_import_rli_scan$' 0 \
+            "recursive-loop-import-$_target"
+        assert_regex_count_at_least "$_peek" '1099511628211' 1 \
+            "recursive-loop-import-$_target"
+    done
+}
+
+check_synth_wrapped_probe() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "synth_wrapped_probe_$_suffix" \
+            tests/integration/synth_wrapped_probe.tl "$_target")
+        _get_or=$(function_body "$_asm" _tl_synth_wrapped_probe_sp_get_or)
+
+        # INL-1: the accessor's site is at the ENTRY block of a wrapper two
+        # straight-line call levels below a nested loop. On the census's own
+        # one-level reference count that site reads as composite frequency one
+        # and the measured tier refuses it; on the counts propagated over the
+        # call graph it reads as the loop's own weight and the verdict keeps it.
+        assert_not_matches "$_get_or" \
+            '^[[:space:]]+call _tl_synth_wrapped_probe_sp_probe$' \
+            "synth-wrapped-probe-$_target"
+        # ...and the probe's own loop is what landed there: the wrap-around mask
+        # and the Knuth multiplier of its first block.
+        assert_matches "$_get_or" '2654435761' "synth-wrapped-probe-$_target"
+
+        # The accessor is COPIED, not absorbed: the cold second reference in
+        # `sp-contains?` still calls the out-of-line body, so the keep is a real
+        # one and no single-site band could have taken it first.
+        assert_matches "$_asm" '^_tl_synth_wrapped_probe_sp_probe:$' \
+            "synth-wrapped-probe-$_target"
+        assert_regex_count_eq "$_asm" \
+            '^[[:space:]]+call _tl_synth_wrapped_probe_sp_probe$' 1 \
+            "synth-wrapped-probe-$_target"
+
+        # The inline retires no bounds check. Every load the accessor makes is
+        # still checked inside the merged body, which is what the abort twin
+        # (tests/integration/synth_wrapped_probe_abort.tl) then runs into.
+        assert_regex_count_at_least "$_get_or" \
+            '^[[:space:]]+call tl_oob_abort' 1 "synth-wrapped-probe-$_target"
+
+        _abort_asm=$(compile_gate "synth_wrapped_probe_abort_$_suffix" \
+            tests/integration/synth_wrapped_probe_abort.tl "$_target")
+        _abort_get_or=$(function_body "$_abort_asm" \
+            _tl_synth_wrapped_probe_abort_sp_get_or)
+        assert_not_matches "$_abort_get_or" \
+            '^[[:space:]]+call _tl_synth_wrapped_probe_abort_sp_probe$' \
+            "synth-wrapped-probe-abort-$_target"
+        assert_regex_count_at_least "$_abort_get_or" \
+            '^[[:space:]]+call tl_oob_abort' 1 \
+            "synth-wrapped-probe-abort-$_target"
+
+        # ABT-1: every check in the merged body -- the caller's own and the two
+        # the copied accessor brought with it -- reaches the LOCATED handler
+        # with a site descriptor, and none of them the bare one. A clone that
+        # lost its callee's span answers `call tl_oob_abort` here, which is what
+        # `tl: array index out of bounds` at --opt-level 2 was.
+        assert_regex_count_eq "$_abort_get_or" \
+            '^[[:space:]]+call tl_oob_abort_at$' 3 \
+            "synth-wrapped-probe-abort-$_target"
+        assert_regex_count_eq "$_abort_get_or" \
+            '^[[:space:]]+call tl_oob_abort$' 0 \
+            "synth-wrapped-probe-abort-$_target"
+        assert_regex_count_at_least "$_abort_asm" \
+            '^\.L_tl_abort_site_[0-9]+_bounds:$' 3 \
+            "synth-wrapped-probe-abort-$_target"
+        # ...and the descriptor is cold data reached only past the check's own
+        # fast branch: the merged body's compare/branch shape is what it was
+        # before the site was armed, to the instruction.
+        assert_regex_count_eq "$_abort_get_or" \
+            '^[[:space:]]+cmpq ' 9 "synth-wrapped-probe-abort-$_target"
+        assert_regex_count_eq "$_abort_get_or" \
+            '^[[:space:]]+jb ' 3 "synth-wrapped-probe-abort-$_target"
+        # ...and the folded checks' tails re-read the LENGTH through the first
+        # staging push, never the index through the second one.
+        assert_abort_tail_staging_push_not_memory "$_abort_get_or" \
+            "synth-wrapped-probe-abort-$_target"
+    done
+}
+
+check_synth_tail_wrapper() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "synth_tail_wrapper_$_suffix" \
+            tests/integration/synth_tail_wrapper.tl "$_target")
+        _slot_id=$(function_body "$_asm" _tl_synth_tail_wrapper_sp_slot_id)
+
+        # INL-2: `sp-slot-id`'s whole body is `return sp-get-or(...)`, which
+        # lowers to a direct tail call. The checked tier's multiblock path now
+        # offers that site a verdict, and the verdict keeps it -- so the
+        # wrapper neither calls nor jumps to the accessor it used to forward
+        # to.
+        assert_not_matches "$_slot_id" \
+            '^[[:space:]]+call _tl_synth_tail_wrapper_sp_get_or$' \
+            "synth-tail-wrapper-$_target"
+        assert_not_matches "$_slot_id" \
+            '^[[:space:]]+jmp _tl_synth_tail_wrapper_sp_get_or$' \
+            "synth-tail-wrapper-$_target"
+        # ...and what landed there is the accessor's own body, through the
+        # wrapper the tail site copied: the probe's Knuth multiplier.
+        assert_matches "$_slot_id" '2654435761' "synth-tail-wrapper-$_target"
+        # The probe is not reached out of line from the merged body either.
+        assert_not_matches "$_slot_id" \
+            '^[[:space:]]+call _tl_synth_tail_wrapper_sp_probe$' \
+            "synth-tail-wrapper-$_target"
+
+        # The copied wrapper is COPIED, not absorbed: the cold second reference
+        # in `main` still calls the out-of-line body, so the keep is a real one
+        # and no single-site band could have taken it first.
+        assert_matches "$_asm" '^_tl_synth_tail_wrapper_sp_get_or:$' \
+            "synth-tail-wrapper-$_target"
+        assert_regex_count_eq "$_asm" \
+            '^[[:space:]]+call _tl_synth_tail_wrapper_sp_get_or$' 1 \
+            "synth-tail-wrapper-$_target"
+
+        # The splice retires no bounds check: every load the accessor makes is
+        # still checked inside the merged body, which is what the abort twin
+        # (tests/integration/synth_tail_wrapper_abort.tl) then runs into.
+        assert_regex_count_at_least "$_slot_id" \
+            '^[[:space:]]+call tl_oob_abort' 1 "synth-tail-wrapper-$_target"
+
+        _abort_asm=$(compile_gate "synth_tail_wrapper_abort_$_suffix" \
+            tests/integration/synth_tail_wrapper_abort.tl "$_target")
+        _abort_slot_id=$(function_body "$_abort_asm" \
+            _tl_synth_tail_wrapper_abort_sp_slot_id)
+        assert_not_matches "$_abort_slot_id" \
+            '^[[:space:]]+call _tl_synth_tail_wrapper_abort_sp_get_or$' \
+            "synth-tail-wrapper-abort-$_target"
+        assert_not_matches "$_abort_slot_id" \
+            '^[[:space:]]+jmp _tl_synth_tail_wrapper_abort_sp_get_or$' \
+            "synth-tail-wrapper-abort-$_target"
+        assert_regex_count_at_least "$_abort_slot_id" \
+            '^[[:space:]]+call tl_oob_abort' 1 \
+            "synth-tail-wrapper-abort-$_target"
+
+        # ABT-1, through the tail site's copy: same claim, same reason.
+        assert_regex_count_eq "$_abort_slot_id" \
+            '^[[:space:]]+call tl_oob_abort_at$' 3 \
+            "synth-tail-wrapper-abort-$_target"
+        assert_regex_count_eq "$_abort_slot_id" \
+            '^[[:space:]]+call tl_oob_abort$' 0 \
+            "synth-tail-wrapper-abort-$_target"
+        assert_regex_count_at_least "$_abort_asm" \
+            '^\.L_tl_abort_site_[0-9]+_bounds:$' 3 \
+            "synth-tail-wrapper-abort-$_target"
+        assert_regex_count_eq "$_abort_slot_id" \
+            '^[[:space:]]+cmpq ' 9 "synth-tail-wrapper-abort-$_target"
+        assert_regex_count_eq "$_abort_slot_id" \
+            '^[[:space:]]+jb ' 3 "synth-tail-wrapper-abort-$_target"
+        assert_abort_tail_staging_push_not_memory "$_abort_slot_id" \
+            "synth-tail-wrapper-abort-$_target"
+    done
+}
+
+check_synth_struct_accessor() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "synth_struct_accessor_$_suffix" \
+            tests/integration/synth_struct_accessor.tl "$_target")
+        _value=$(function_body "$_asm" _tl_synth_struct_accessor_sa_value)
+
+        # INL-3: `sa-lookup-in` BUILDS a four-word value -- an `alloc` run, its
+        # closing `addr_of`, the arms' stores and a `copy_bytes` into the
+        # caller's sret buffer. The multiblock gate's whitelist refused `Alloc`
+        # and `AddrOf`, so no site of it was ever priced. It is priced now, and
+        # the verdict keeps it: the wrapper no longer calls the accessor.
+        assert_not_matches "$_value" \
+            '^[[:space:]]+call _tl_synth_struct_accessor_sa_lookup_in$' \
+            "synth-struct-accessor-$_target"
+        # ...and what landed there is the accessor's own body: `sa-value` makes
+        # no table read of its own, so the only bounds check that can be inside
+        # it is the one the spliced body brought with it.
+        assert_regex_count_at_least "$_value" \
+            '^[[:space:]]+call tl_oob_abort' 1 "synth-struct-accessor-$_target"
+
+        # The accessor is COPIED, not absorbed: the cold second reference in
+        # `sa-peek` still calls the out-of-line body, so the keep is a real one
+        # and no single-site band could have taken it first.
+        assert_matches "$_asm" '^_tl_synth_struct_accessor_sa_lookup_in:$' \
+            "synth-struct-accessor-$_target"
+        assert_regex_count_eq "$_asm" \
+            '^[[:space:]]+call _tl_synth_struct_accessor_sa_lookup_in$' 1 \
+            "synth-struct-accessor-$_target"
+
+        _abort_asm=$(compile_gate "synth_struct_accessor_abort_$_suffix" \
+            tests/integration/synth_struct_accessor_abort.tl "$_target")
+        _abort_value=$(function_body "$_abort_asm" \
+            _tl_synth_struct_accessor_abort_sa_value)
+        assert_not_matches "$_abort_value" \
+            '^[[:space:]]+call _tl_synth_struct_accessor_abort_sa_lookup_in$' \
+            "synth-struct-accessor-abort-$_target"
+        assert_regex_count_at_least "$_abort_value" \
+            '^[[:space:]]+call tl_oob_abort' 1 \
+            "synth-struct-accessor-abort-$_target"
+    done
+}
+
+check_checked_arm_wrapper() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "checked_arm_wrapper_$_suffix" \
+            tests/integration/checked_arm_wrapper.tl "$_target")
+        _slot_id=$(function_body "$_asm" _tl_checked_arm_wrapper_aw_slot_id)
+
+        # INL-4: `aw-slot-id` is `(if (< id 0) -1 (aw-get-or ...))`, so the
+        # accessor call sits in an ARM of the entry branch whose sibling arm
+        # returns a literal. The depth floor used to refuse that site for not
+        # being the entry block; it now reads as entry-equivalent in this
+        # wrapper-shaped caller, and the verdict keeps it -- so the arm neither
+        # calls nor jumps to the wrapper it used to forward to.
+        assert_not_matches "$_slot_id" \
+            '^[[:space:]]+call _tl_checked_arm_wrapper_aw_get_or$' \
+            "checked-arm-wrapper-$_target"
+        assert_not_matches "$_slot_id" \
+            '^[[:space:]]+jmp _tl_checked_arm_wrapper_aw_get_or$' \
+            "checked-arm-wrapper-$_target"
+        # ...and what landed there is the accessor's own body, through the
+        # wrapper the arm site copied: the probe's Knuth multiplier.
+        assert_matches "$_slot_id" '2654435761' "checked-arm-wrapper-$_target"
+        # The probe is not reached out of line from the merged body either.
+        assert_not_matches "$_slot_id" \
+            '^[[:space:]]+call _tl_checked_arm_wrapper_aw_probe$' \
+            "checked-arm-wrapper-$_target"
+
+        # The copied wrapper is COPIED, not absorbed: the cold second reference
+        # in `main` still calls the out-of-line body, so the keep is a real one
+        # and no single-site band could have taken it first.
+        assert_matches "$_asm" '^_tl_checked_arm_wrapper_aw_get_or:$' \
+            "checked-arm-wrapper-$_target"
+        assert_regex_count_eq "$_asm" \
+            '^[[:space:]]+call _tl_checked_arm_wrapper_aw_get_or$' 1 \
+            "checked-arm-wrapper-$_target"
+
+        # The splice retires no bounds check: every load the accessor makes is
+        # still checked inside the merged body, which is what the abort twin
+        # (tests/integration/checked_arm_wrapper_abort.tl) then runs into.
+        assert_regex_count_at_least "$_slot_id" \
+            '^[[:space:]]+call tl_oob_abort' 1 "checked-arm-wrapper-$_target"
+
+        _abort_asm=$(compile_gate "checked_arm_wrapper_abort_$_suffix" \
+            tests/integration/checked_arm_wrapper_abort.tl "$_target")
+        _abort_slot_id=$(function_body "$_abort_asm" \
+            _tl_checked_arm_wrapper_abort_aw_slot_id)
+        assert_not_matches "$_abort_slot_id" \
+            '^[[:space:]]+call _tl_checked_arm_wrapper_abort_aw_get_or$' \
+            "checked-arm-wrapper-abort-$_target"
+        assert_not_matches "$_abort_slot_id" \
+            '^[[:space:]]+jmp _tl_checked_arm_wrapper_abort_aw_get_or$' \
+            "checked-arm-wrapper-abort-$_target"
+        assert_regex_count_at_least "$_abort_slot_id" \
+            '^[[:space:]]+call tl_oob_abort' 1 \
+            "checked-arm-wrapper-abort-$_target"
+    done
+}
+
+check_checked_post_multi_call() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "checked_post_multi_call_$_suffix" \
+            tests/integration/checked_post_multi_call.tl "$_target")
+        _lookup=$(function_body "$_asm" _tl_checked_post_multi_call_pm_lookup)
+
+        # INL-8: the accessor's site is the merge below `pm-lookup`'s guard,
+        # which POST-DOMINATES the entry, in a caller that is straight-line but
+        # carries `pm-crowded?` and `pm-penalty` of its own. The caller clause
+        # used to refuse that reading on the call COUNT -- the census line ended
+        # `site-depth` with `pos` reading `none` and no verdict was priced --
+        # and now asks the caller's LOOPS instead, which a straight-line caller
+        # has none of. The verdict keeps the site, so the merge holds no call to
+        # the accessor at all. This is callgraph_scc's `cg-map-probe` into
+        # `cg-map-insert-ref!`, mirrored: the row's largest single gap to C.
+        assert_matches "$_asm" '^_tl_checked_post_multi_call_pm_lookup:$' \
+            "checked-post-multi-call-$_target"
+        assert_not_matches "$_lookup" \
+            '^[[:space:]]+call _tl_checked_post_multi_call_pm_probe$' \
+            "checked-post-multi-call-$_target"
+        assert_not_matches "$_lookup" \
+            '^[[:space:]]+jmp _tl_checked_post_multi_call_pm_probe$' \
+            "checked-post-multi-call-$_target"
+        # ...and what landed there is the accessor's own LOOP: the probe's Knuth
+        # multiplier, inside the caller's body.
+        assert_matches "$_lookup" '2654435761' "checked-post-multi-call-$_target"
+
+        # The accessor is COPIED, not absorbed: the cold second reference still
+        # calls the out-of-line body, so the keep is a real one and no
+        # single-site band could have taken it first.
+        assert_matches "$_asm" '^_tl_checked_post_multi_call_pm_probe:$' \
+            "checked-post-multi-call-$_target"
+
+        # The splice retires no bounds check: every load the accessor makes is
+        # still checked inside the merged body, which is what the abort twin
+        # (tests/integration/checked_post_multi_call_abort.tl) then runs into.
+        assert_regex_count_at_least "$_lookup" \
+            '^[[:space:]]+call tl_oob_abort' 1 \
+            "checked-post-multi-call-$_target"
+
+        _abort_asm=$(compile_gate "checked_post_multi_call_abort_$_suffix" \
+            tests/integration/checked_post_multi_call_abort.tl "$_target")
+        _abort_lookup=$(function_body "$_abort_asm" \
+            _tl_checked_post_multi_call_abort_pm_lookup)
+        assert_not_matches "$_abort_lookup" \
+            '^[[:space:]]+call _tl_checked_post_multi_call_abort_pm_probe$' \
+            "checked-post-multi-call-abort-$_target"
+        assert_regex_count_at_least "$_abort_lookup" \
+            '^[[:space:]]+call tl_oob_abort' 1 \
+            "checked-post-multi-call-abort-$_target"
+    done
+}
+
+check_checked_dispatch_arm() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "checked_dispatch_arm_$_suffix" \
+            tests/integration/checked_dispatch_arm.tl "$_target")
+        _dispatch=$(function_body "$_asm" _tl_checked_dispatch_arm_da_dispatch)
+
+        # INL-9: `da-dispatch` is a five-case `cond` whose spine -- the entry
+        # block and the else-blocks under it -- only compares and branches, and
+        # four of whose arms call `da-fold`. Only the FIRST arm is a successor
+        # of the entry branch, so the arm reading covered one of the four and
+        # the other three read `pos=none` for want of a reading rather than for
+        # a clause; the caller clause the arm reading carries is hopeless here
+        # anyway, since a dispatch holds one call per arm. The dispatch reading
+        # takes all four, and the verdict keeps all four, so no arm of this
+        # function holds a call to the helper at all.
+        assert_matches "$_asm" '^_tl_checked_dispatch_arm_da_dispatch:$' \
+            "checked-dispatch-arm-$_target"
+        assert_not_matches "$_dispatch" \
+            '^[[:space:]]+call _tl_checked_dispatch_arm_da_fold$' \
+            "checked-dispatch-arm-$_target"
+        assert_not_matches "$_dispatch" \
+            '^[[:space:]]+jmp _tl_checked_dispatch_arm_da_fold$' \
+            "checked-dispatch-arm-$_target"
+
+        # ...and what landed in the arms is the helper's own arithmetic: its
+        # two bounds-checked table reads, once per arm, all four arms.
+        assert_regex_count_at_least "$_dispatch" \
+            '^[[:space:]]+call tl_oob_abort_at' 8 \
+            "checked-dispatch-arm-$_target"
+
+        # The helper is COPIED, not absorbed: the cold second reference still
+        # calls the out-of-line body, so the keep is a real one and no
+        # single-site band could have taken it first.
+        assert_matches "$_asm" '^_tl_checked_dispatch_arm_da_fold:$' \
+            "checked-dispatch-arm-$_target"
+
+        _abort_asm=$(compile_gate "checked_dispatch_arm_abort_$_suffix" \
+            tests/integration/checked_dispatch_arm_abort.tl "$_target")
+        _abort_dispatch=$(function_body "$_abort_asm" \
+            _tl_checked_dispatch_arm_abort_da_dispatch)
+        assert_not_matches "$_abort_dispatch" \
+            '^[[:space:]]+call _tl_checked_dispatch_arm_abort_da_fold$' \
+            "checked-dispatch-arm-abort-$_target"
+        assert_regex_count_at_least "$_abort_dispatch" \
+            '^[[:space:]]+call tl_oob_abort_at' 8 \
+            "checked-dispatch-arm-abort-$_target"
+    done
+}
+
 check_const_index_bounds() {
     _asm=$(compile_gate const_index_bounds tests/integration/const_index_bounds.tl)
     _body=$(function_body "$_asm" _tl_const_index_bounds_get2)
@@ -1140,8 +2088,22 @@ check_licm_memclean_promote() {
     assert_contains "$_pressured" "call ${_sym}_mix" licm-memclean-promote
     # REFUSED on the proof: the callee set!s the cell, so it is not invariant at
     # any pressure. This is also the wrong-answer guard the fixture runs.
-    assert_fixed_count_eq "$_writer" "${_sym}_gcell_c(%rip)" 2 licm-memclean-promote
-    assert_contains "$_writer" "call ${_sym}_mix_writing" licm-memclean-promote
+    #
+    # INL-6: `mix-writing`'s only unwhitelisted instruction was that `set!` --
+    # the global-cell `Store` the MULTIBLOCK whitelist refused until this
+    # packet -- so the callee is now absorbed into this scan and the boundary
+    # is gone. The claim is unchanged and the shape says it more directly than
+    # before: the cell is WRITTEN inside the loop, so nothing about it is
+    # invariant, and every read stays a read. Four occurrences, not two,
+    # because the absorbed body's own read and write are now spelled here
+    # beside the loop's; the promoted form would be one preheader load and no
+    # per-iteration reference at all.
+    assert_fixed_count_eq "$_writer" "${_sym}_gcell_c(%rip)" 4 licm-memclean-promote
+    assert_regex_count_eq "$_writer" \
+        "^[[:space:]]+movq %r[a-z0-9]+, ${_sym}_gcell_c\\(%rip\\)$" 1 \
+        licm-memclean-promote
+    assert_not_matches "$_writer" "^[[:space:]]+call ${_sym}_mix_writing$" \
+        licm-memclean-promote
 }
 
 check_group_copy_direct() {
@@ -1558,6 +2520,75 @@ check_mem_dest_rmw_fold() {
     assert_matches "$_bytes" '^[[:space:]]+orb ' mem-dest-rmw-merge-bytes-still-emitted
 }
 
+# The block that starts at the labelled line whose text contains $2 and runs to
+# the next label definition.
+labeled_block() {
+    _file=$1
+    _suffix=$2
+    _out="$WORKDIR/$(basename "$_file").$(printf '%s' "$_suffix" | tr -c 'A-Za-z0-9' '_')"
+    awk -v suffix="$_suffix" '
+        started && /^[^[:blank:]]*:$/ { exit }
+        started { print }
+        !started && /:$/ && index($0, suffix) { started = 1 }
+    ' "$_file" > "$_out"
+    printf '%s\n' "$_out"
+}
+
+# The block's indexed 8-byte memory traffic as one string, in emission order:
+# `L` for a load out of an indexed slot, `S` for a store into one. It is the
+# ORDER, not the counts, that an overlapping copy depends on.
+memory_order_signature() {
+    awk '
+        /^[[:space:]]+movq -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$/ {
+            printf "L"; next
+        }
+        /^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$/ {
+            printf "S"; next
+        }
+        END { printf "\n" }
+    ' "$1"
+}
+
+# UNR-2: the DESCENDING counted loop the unroller now admits. `ud-shift-words!`
+# is an overlapping shift -- it reads slot `c` and writes slot `c + 3` walking
+# downward -- and every access in its body is a 64-bit word through a
+# 64-bit-element gep, so it takes the word-merge tier's K=4 exactly as the
+# ascending merge does. What is pinned:
+#
+#   * the unrolled group holds FOUR shifted moves per `add`/`cmp`/`jge`, and
+#     its counter steps by -4;
+#   * the group's memory traffic is LSLSLSLS -- copy j's store never precedes a
+#     load of a copy emitted before it, which is what makes an overlapping copy
+#     come out right (the group's fourth copy stores into the slot its first
+#     copy read);
+#   * the guard computes `floor + 4` with a `leaq 4(...)`, the mirror of the
+#     ascending guard's `bound - K`, and not a subtraction;
+#   * the one-at-a-time remainder loop is still there, stepping by -1.
+check_descending_shift_unroll() {
+    _asm=$(compile_gate descending_shift_unroll \
+        tests/integration/unroll_descending_shift.tl)
+    _fn=$(function_body "$_asm" _tl_unroll_descending_shift_ud_shift_words_bang)
+    _group=$(unroll_body_block "$_fn")
+    assert_regex_count_eq "$_group" \
+        '^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$' 4 \
+        descending-shift-unroll-k4-stores
+    assert_regex_count_eq "$_group" \
+        '^[[:space:]]+movq -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' 4 \
+        descending-shift-unroll-k4-loads
+    assert_contains "$_group" 'addq $-4,' descending-shift-unroll-k4-step
+    assert_regex_count_eq "$_group" '^[[:space:]]+jge ' 1 \
+        descending-shift-unroll-one-latch
+    _order=$(memory_order_signature "$_group")
+    if [ "$_order" != LSLSLSLS ]; then
+        fail "descending-shift-unroll group memory order is $_order, want LSLSLSLS"
+    fi
+    _guard=$(labeled_block "$_fn" '__unroll_guard:')
+    assert_matches "$_guard" 'leaq 4\(%r' descending-shift-unroll-guard-adds
+    assert_not_matches "$_guard" 'subq \$4,' descending-shift-unroll-guard-not-sub
+    # The remainder loop stays exactly as it was: one shifted move per step.
+    assert_contains "$_fn" 'subq $1,' descending-shift-unroll-remainder
+}
+
 check_word_merge_unroll() {
     _asm=$(compile_gate word_merge_unroll tests/integration/mem_dest_rmw_fold.tl)
     # The word-merge unroll tier: a load-and-store body whose every access is a
@@ -1668,6 +2699,259 @@ check_copy_call_word() {
 #
 # Pre-change both functions carry `testq %rX, %rX` + a signed `jl` in front of a
 # signed length compare; the sign test is what goes.
+# DCE-2: the call-free flag loop. Its exit join is a phi of bool literals over
+# a phi of i64 literals, decided on every edge; the final slot below `cmp_dup`
+# is what retires it. If either the sweep or the threading above it stops
+# running, `main` grows back the dead `movq $-1` it never reads and the
+# `movl $1 ; testq ; je` that branches on a constant.
+# On windows-x86_64 the last emitted function carries no `.size` directive and
+# the hand-written runtime prelude that follows it opens with an INDENTED
+# `.globl`, so `extract_function` runs on past the body. Cut it at the SEH
+# epilogue marker, which is where the function proper ends.
+truncate_at_seh_endproc() {
+    _seh_body=$1
+    _seh_out="$_seh_body.seh"
+    awk '{ print } /^[[:space:]]*\.seh_endproc$/ { exit }' "$_seh_body" \
+        > "$_seh_out"
+    printf '%s\n' "$_seh_out"
+}
+
+# ALIAS-1: the descending shift loop over a MODULE-GLOBAL vector.
+#
+# `a[i + 3] = a[i]` walked downward is `rg-union-insert-segment!`'s shift, and
+# three separate verdicts have to hold for it to reach its five-instruction
+# form. The loop's only write is a scalar element store through the data
+# pointer the global's descriptor holds, so LICM lifts the cell load, the
+# length and the data pointer into the preheader BEFORE `bce_version` runs
+# (opt-licm-header-slot-gep?'s `Global` arm); the versioner then reads an
+# invariant length off a descending counter and mints a fast clone with
+# neither bounds check; and `gep_offset` folds the loop-invariant base into the
+# clone's own preheader so the two accesses share one index register, the write
+# reaching its slot as a +24 displacement.
+#
+# The block extracted here is the self-looping `__bce_fast` body that carries
+# that displacement -- the only loop in the fixture that writes one -- and what
+# is pinned is what each verdict buys: no rip-relative reload of the cell, no
+# check, one load and one displaced store off the same base and index.
+extract_fast_self_loop_with() {
+    _body=$1
+    _needle=$2
+    _out="$_body.fastloop"
+    awk -v needle="$_needle" '
+        /__bce_fast:$/ {
+            label = $0
+            sub(/:$/, "", label)
+            inblk = 1
+            buf = ""
+            hit = 0
+            next
+        }
+        inblk {
+            buf = buf $0 "\n"
+            if (index($0, needle) > 0) { hit = 1 }
+            if (index($0, label) > 0) {
+                if (hit) { printf "%s", buf }
+                inblk = 0
+            } else if ($0 ~ /^\.L/) {
+                inblk = 0
+            }
+        }
+    ' "$_body" > "$_out"
+    printf '%s\n' "$_out"
+}
+
+# ALIAS-2: the descriptor chain of a global whose program overflows the packed
+# per-global rows. `aro-scan` reads two global cells and calls a store-free leaf
+# every trip; before the overflow bit both rows were declined for the whole
+# program and both cells were re-read inside the loop.
+check_alias_row_overflow() {
+    _asm=$(compile_gate alias_row_overflow tests/integration/alias_row_overflow.tl)
+    _sym=_tl_alias_row_overflow
+    _body=$(function_body "$_asm" "${_sym}_aro_scan")
+    # One read per cell in the whole function...
+    assert_fixed_count_eq "$_body" "${_sym}_aro_edge(%rip)" 1 alias-row-overflow
+    assert_fixed_count_eq "$_body" "${_sym}_aro_mark(%rip)" 1 alias-row-overflow
+    # ...and it is in the PREHEADER: nothing rip-relative for either cell
+    # survives from the loop's first block onward.
+    _loop="$WORKDIR/alias_row_overflow.loop"
+    awk '
+        inblk { print }
+        /^\.L[A-Za-z0-9_.]*while_body\.1[A-Za-z0-9_.]*:$/ { inblk = 1 }
+    ' "$_body" > "$_loop"
+    [ -s "$_loop" ] || fail "alias-row-overflow found no loop body"
+    assert_not_contains "$_loop" "${_sym}_aro_edge(%rip)" alias-row-overflow
+    assert_not_contains "$_loop" "${_sym}_aro_mark(%rip)" alias-row-overflow
+    # The call the chain has to survive is still inside the loop: this is a
+    # claim about invariance across a call, not about a call-free loop.
+    assert_contains "$_loop" "call ${_sym}_aro_marked_question" alias-row-overflow
+}
+
+# ALIAS-3: the `*-scan-ints` tokenizer. Its loop reads three words of the
+# object the `(&mut Vec)` parameter designates on every trip -- the `slots`
+# handle at `*out + 0`, that descriptor's length word and its data pointer --
+# and its only write is an element store through the buffer they name. The
+# element store writes an `i64`; the `slots` read is a descriptor-handle word,
+# a different alias class, so no store in the loop can reach it and the whole
+# chain leaves. Before the rule all three reloaded every trip.
+check_alias_typed_word() {
+    _asm=$(compile_gate alias_typed_word tests/integration/alias_typed_word.tl)
+    _body=$(function_body "$_asm" _tl_alias_typed_word_atw_scan_ints)
+    # The three reads are in the loop's PREHEADER...
+    _pre="$WORKDIR/alias_typed_word.pre"
+    awk '
+        /^\.L[A-Za-z0-9_.]*:$/ { inblk = 0 }
+        /^\.L[A-Za-z0-9_.]*while_header\.0__rotate_land:$/ { inblk = 1; next }
+        inblk { print }
+    ' "$_body" > "$_pre"
+    [ -s "$_pre" ] || fail "alias-typed-word found no loop preheader"
+    assert_regex_count_eq "$_pre" \
+        '^[[:space:]]+movq (8)?\(%r[a-z0-9]+\), %r[a-z0-9]+$' 3 alias-typed-word
+    # ...and nothing from the loop's first block onward reloads a descriptor
+    # word of either parameter.
+    _loop="$WORKDIR/alias_typed_word.loop"
+    awk '
+        inblk { print }
+        /^\.L[A-Za-z0-9_.]*while_body\.1:$/ { inblk = 1 }
+    ' "$_body" > "$_loop"
+    [ -s "$_loop" ] || fail "alias-typed-word found no loop body"
+    assert_regex_count_eq "$_loop" \
+        '^[[:space:]]+movq (8)?\(%r[a-z0-9]+\), %r[a-z0-9]+$' 0 alias-typed-word
+    # The element store itself is still in the loop, with its bounds check: this
+    # is a claim about the loads that survive a store, not about a store-free
+    # loop.
+    assert_regex_count_eq "$_loop" \
+        '^[[:space:]]+movq %r[a-z0-9]+, \(%r[a-z0-9]+,%r[a-z0-9]+,8\)$' 1 \
+        alias-typed-word
+    assert_contains "$_loop" 'call tl_oob_abort_at' alias-typed-word
+}
+
+check_alias_global_shift() {
+    _asm=$(compile_gate alias_global_shift tests/integration/alias_global_shift.tl)
+    _body=$(function_body "$_asm" main)
+    _fast=$(extract_fast_self_loop_with "$_body" ', 24(')
+    if [ ! -s "$_fast" ]; then
+        fail "alias-global-shift found no versioned shift loop with a folded +24 store"
+    fi
+    # The global's cell is read once, in the preheader: nothing rip-relative
+    # survives in the loop body.
+    assert_not_contains "$_fast" '_tl_alias_global_shift_al_vec(%rip)' \
+        alias-global-shift
+    # Both checks left with the clone.
+    assert_not_contains "$_fast" 'call tl_oob_abort' alias-global-shift
+    assert_regex_count_eq "$_fast" '^[[:space:]]+j(ae|b) ' 0 alias-global-shift
+    # One load and one store, sharing one base and one index register, the
+    # element offset folded into the store's displacement.
+    assert_regex_count_eq "$_fast" \
+        '^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' 1 \
+        alias-global-shift
+    assert_regex_count_eq "$_fast" \
+        '^[[:space:]]+movq %r[a-z0-9]+, 24\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$' 1 \
+        alias-global-shift
+    # ...and the descending latch, with no address arithmetic left over.
+    assert_regex_count_eq "$_fast" '^[[:space:]]+leaq ' 0 alias-global-shift
+    assert_matches "$_fast" '^[[:space:]]+subq \$1, %r[a-z0-9]+$' \
+        alias-global-shift
+}
+
+# VT-1: the two multi-block recoveries the refusal census turned up, pinned on
+# the shapes they exist for.
+#
+# `extract_fast_region_with` takes the RUN of consecutive `__bce_fast` blocks
+# the multi-block versioner mints -- its clone is a region, not a self-loop, so
+# ALIAS-1's single-block extractor above does not see it -- and stops at the
+# first block that is not part of the clone.
+extract_fast_region_with() {
+    _body=$1
+    _needle=$2
+    _out="$_body.fastregion"
+    awk -v needle="$_needle" '
+        /__bce_fast[^:]*:$/ {
+            if (!inblk) { inblk = 1; buf = ""; hit = 0 }
+            next
+        }
+        inblk && /^\.L/ {
+            if (index($0, "__bce_fast") > 0) { next }
+            if (hit) { printf "%s", buf; inblk = 0; exit }
+            inblk = 0
+            next
+        }
+        inblk {
+            buf = buf $0 "\n"
+            if (index($0, needle) > 0) { hit = 1 }
+        }
+        END { if (inblk && hit) printf "%s", buf }
+    ' "$_body" > "$_out"
+    printf '%s\n' "$_out"
+}
+
+# The copy loop whose TEST reads `src + i`. Without the offset recovery no
+# counter is found at all (`--trace-passes` says `shape:not-a-counter`) and both
+# checks run every trip; with it the counter's limit is `stop - src`, computed
+# once in the guard, and the clone is a load, an add and a store off one base.
+check_vt_offset_copy() {
+    _asm=$(compile_gate vt_offset_copy tests/integration/vt_offset_copy.tl)
+    _body=$(function_body "$_asm" main)
+    _fast=$(extract_fast_region_with "$_body" ',8), %r')
+    if [ ! -s "$_fast" ]; then
+        fail "vt-offset-copy found no versioned copy loop"
+    fi
+    # Neither check survives in the clone.
+    assert_not_contains "$_fast" 'call tl_oob_abort' vt-offset-copy
+    assert_regex_count_eq "$_fast" '^[[:space:]]+j(ae|b) ' 0 vt-offset-copy
+    # One indexed load and one indexed store, off the same data pointer.
+    assert_regex_count_eq "$_fast" \
+        '^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' 1 \
+        vt-offset-copy
+    assert_regex_count_eq "$_fast" \
+        '^[[:space:]]+movq %r[a-z0-9]+, \(%r[a-z0-9]+,%r[a-z0-9]+,8\)$' 1 \
+        vt-offset-copy
+    # ...and the guard names the subtracted limit.
+    assert_matches "$_body" '^[[:space:]]+subq %r[a-z0-9]+, %r[a-z0-9]+$' \
+        vt-offset-copy
+}
+
+# The strided scan whose index is strength-reduced into a step-3 cursor phi.
+# Without the derived-induction arm the variable-base recovery sees a Phi and
+# derives nothing (`--trace-passes` says `guard:derived-zero`); with it the two
+# accesses are one derived family and reach their slots as +8 and +16
+# displacements off one base and one index.
+check_vt_derived_stride() {
+    _asm=$(compile_gate vt_derived_stride tests/integration/vt_derived_stride.tl)
+    _body=$(function_body "$_asm" main)
+    _fast=$(extract_fast_region_with "$_body" 'movq 8(%r')
+    if [ ! -s "$_fast" ]; then
+        fail "vt-derived-stride found no versioned strided scan"
+    fi
+    assert_not_contains "$_fast" 'call tl_oob_abort' vt-derived-stride
+    assert_regex_count_eq "$_fast" '^[[:space:]]+j(ae|b) ' 0 vt-derived-stride
+    assert_regex_count_eq "$_fast" \
+        '^[[:space:]]+movq 8\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' 1 \
+        vt-derived-stride
+    assert_regex_count_eq "$_fast" \
+        '^[[:space:]]+movq %r[a-z0-9]+, 16\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$' 1 \
+        vt-derived-stride
+    # The cursor keeps its own literal step; the counter keeps its unit one.
+    assert_matches "$_fast" '^[[:space:]]+addq \$3, %r[a-z0-9]+$' \
+        vt-derived-stride
+    assert_matches "$_fast" '^[[:space:]]+addq \$1, %r[a-z0-9]+$' \
+        vt-derived-stride
+}
+
+check_dce_late_flag_loop() {
+    _asm=$(compile_gate dce_late_flag_loop tests/integration/dce_late_flag_loop.tl)
+    _body=$(function_body "$_asm" main)
+    assert_no_literal_then_test "$_body" dce-late-flag-loop
+    assert_no_literal_then_redef "$_body" dce-late-flag-loop
+    assert_not_matches "$_body" '^[[:space:]]+movq \$-1, %[a-z0-9]+$' dce-late-flag-loop
+    _win_asm=$(compile_gate dce_late_flag_loop_win64 \
+        tests/integration/dce_late_flag_loop.tl windows-x86_64)
+    _win_body=$(truncate_at_seh_endproc "$(function_body "$_win_asm" main)")
+    assert_no_literal_then_test "$_win_body" dce-late-flag-loop-win64
+    assert_no_literal_then_redef "$_win_body" dce-late-flag-loop-win64
+    assert_not_matches "$_win_body" '^[[:space:]]+movq \$-1, %[a-z0-9]+$' \
+        dce-late-flag-loop-win64
+}
+
 check_range_merge_unsigned() {
     _asm=$(compile_gate range_merge_unsigned tests/integration/range_merge_unsigned.tl)
     _lit=$(function_body "$_asm" _tl_range_merge_unsigned_literal_window)
@@ -1778,11 +3062,15 @@ check_jump_only_forward() {
 # keep its adjust, the call-bearing function that must keep its adjust, and the
 # abort-site leaf, whose located `tl_oob_abort_at` splitter stages its two
 # reported values with `pushq`/`popq` BELOW %rsp. That last one is the whole
-# soundness question: the slot region is anchored below the deepest transient
-# dip, so the two staging pushes (16 bytes) land strictly above every live
-# slot -- which is why `rzl-abort` has no slot at -8 or -16 while the
-# push-free `rzl-slots` starts at -8. The runtime halves are the
-# red_zone_leaf / red_zone_abort_ok / red_zone_abort_trap manifest cases.
+# soundness question, and ABT-1 answers it differently than the anchor did: the
+# staging pushes are on an edge that ends in a call which never returns to this
+# function, so the slots they overwrite are dead and the slot region is no
+# longer pushed below them -- `rzl-abort` starts at -8 exactly like the
+# push-free `rzl-slots`. What the overlap needs instead is that nothing is READ
+# from that window afterwards: the pops read only the tail's own two words, and
+# the one operand read after %rsp has moved -- the second push's -- is never
+# memory. The runtime halves are the red_zone_leaf / red_zone_abort_ok /
+# red_zone_abort_trap manifest cases; the trap case runs the abort edge itself.
 # SS-P5 (T2-4): the flags-driven select and the staged gep's direct index.
 # tests/integration/select_flags_lea.tl carries both shapes; its runtime half
 # is the select_flags_lea manifest case, which checks every answer.
@@ -1907,7 +3195,7 @@ check_red_zone_leaf() {
     assert_regex_count_eq "$_call" '^[[:space:]]+subq \$[0-9]+, %rsp$' 1 red-zone-call
     assert_not_matches "$_call" '[-][0-9]+\(%rsp\)' red-zone-call
 
-    # (d) abort-site leaf: red zone used, and the staging pushes are guarded.
+    # (d) abort-site leaf: red zone used, and the staging pushes cost it nothing.
     _abort=$(function_body "$_asm" tl_rzl_abort)
     assert_contains "$_abort" 'call tl_oob_abort_at' red-zone-abort
     assert_regex_count_eq "$_abort" '^[[:space:]]+call ' 1 red-zone-abort
@@ -1917,9 +3205,14 @@ check_red_zone_leaf() {
     if [ "$_abort_neg" -lt 1 ]; then
         fail "red-zone-abort expected live negative %rsp slots, got $_abort_neg"
     fi
-    # The 16 bytes the two staging pushes occupy hold no slot.
-    assert_not_matches "$_abort" '[-]8\(%rsp\)' red-zone-abort-guard
-    assert_not_matches "$_abort" '[-]16\(%rsp\)' red-zone-abort-guard
+    # ABT-1: the two staging pushes are on the never-returning edge, so the
+    # slot region is NOT anchored below them any more -- this leaf starts its
+    # slots at -8 exactly like the push-free rzl-slots, instead of spending 16
+    # bytes of its 128 to arm a diagnostic that cannot return. What makes the
+    # overlap sound is that the only operand read after the first push is the
+    # second one, and that one is never memory.
+    assert_matches "$_abort" '[-]8\(%rsp\)' red-zone-abort-guard
+    assert_abort_tail_staging_push_not_memory "$_abort" red-zone-abort-guard
     assert_not_matches "$_abort" '[-](1[3-9][0-9]|[2-9][0-9][0-9])\(%rsp\)' red-zone-abort
 }
 
@@ -1936,9 +3229,12 @@ check_red_zone_leaf_win64() {
     done
 }
 
+check_lattice_join_split
+check_short_trip_copy
 check_select_flags_lea
 check_mem_dest_rmw_fold
 check_word_merge_unroll
+check_descending_shift_unroll
 check_copy_call_word
 check_divmagic_hoist
 check_hoist_priority
@@ -1950,6 +3246,8 @@ check_wide_const_hoist
 check_group_pair_home
 check_group_pair_phi_home
 check_csr_push_prologue
+check_csr_unused_save
+check_csr_census_loop
 check_dead_frame_boundary
 check_dead_frame_abort_only_trap
 check_dead_frame_boundary_win64
@@ -1967,6 +3265,17 @@ check_alu_mem_operand_sink
 check_checked_depth0_site
 check_checked_setup_helper
 check_checked_cheap_tier_claim
+check_global_cursor_helper
+check_global_cursor_guarded
+check_asm_render_fold_accumulator
+check_sccp_rewrite_phi_import
+check_recursive_loop_import
+check_synth_wrapped_probe
+check_synth_tail_wrapper
+check_synth_struct_accessor
+check_checked_arm_wrapper
+check_checked_post_multi_call
+check_checked_dispatch_arm
 check_const_index_bounds
 check_const_global_mask_unroll
 check_rbp_sixth_csr
@@ -1990,5 +3299,11 @@ check_stdlib_math_sqrt
 check_inline_alloc_unique_labels_link
 check_gep_load_cmp_spilled_stage
 check_range_merge_unsigned
+check_dce_late_flag_loop
+check_alias_global_shift
+check_alias_row_overflow
+check_alias_typed_word
+check_vt_offset_copy
+check_vt_derived_stride
 
 echo "Assembly shape gates passed."

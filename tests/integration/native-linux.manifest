@@ -4,6 +4,10 @@
 # extra may be expected-stderr:<printf escapes>, stage-stdlib,
 # stage-stdlib+expected-stderr:<printf escapes>, or
 # suite-members:<space-separated smoke drivers> uses the eighth field.
+# extra may also carry an opt-level:<0|1|2>+ PREFIX in front of any of those:
+# the row then compiles standalone at that level instead of the default one the
+# batched pre-pass uses, so a claim that only holds at a particular level can be
+# pinned beside the default-level row for the same source.
 aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|stdlib/string.tl
 inline_aggregate_global|tests/integration/inline_aggregate_global.tl|42|98\n|-|stdlib/io.tl stdlib/string.tl
 inline_aggregate_global_escape|tests/integration/inline_aggregate_global_escape.tl|42|4\n|-|stdlib/io.tl stdlib/string.tl
@@ -28,6 +32,8 @@ ck_local_len_eq_abort|tests/integration/ck_local_len_eq_abort.tl|134|-|8 1|stdli
 guard_dedup_bypass_descriptor|tests/integration/guard_dedup_bypass_descriptor.tl|42|-5915004525821994045\n|24|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 guard_dedup_mutated_slice|tests/integration/guard_dedup_mutated_slice.tl|42|172085089044\n|20 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 guard_dedup_mutated_slice_abort|tests/integration/guard_dedup_mutated_slice.tl|134|-|20 17|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/guard_dedup_mutated_slice_abort/guard_dedup_mutated_slice_abort.tl:62:57: array index out of bounds: index=17 length=17\n
+guard_imply_dominated|tests/integration/guard_imply_dominated.tl|42|-3741803676297662851\n|20 5 3|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+guard_imply_dominated_abort|tests/integration/guard_imply_dominated.tl|134|-|20 5 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/guard_imply_dominated_abort/guard_imply_dominated_abort.tl:75:52: array index out of bounds: index=20 length=20\n
 guard_hoist_predication|tests/integration/guard_hoist_predication.tl|42|-7026568991372851604\n|8 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 guard_hoist_predication_abort|tests/integration/guard_hoist_predication.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/guard_hoist_predication_abort/guard_hoist_predication_abort.tl:45:49: array index out of bounds: index=8 length=8\n
 guard_tighten_predication|tests/integration/guard_tighten_predication.tl|42|-4662016400569783832\n|8 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
@@ -157,6 +163,10 @@ jump_only_forward|tests/integration/jump_only_forward.tl|42|-|-|-
 wide_const_hoist|tests/integration/wide_const_hoist.tl|42|-|-|stdlib/io.tl
 target_asm_loop_divmod_parity|tests/integration/target_asm_loop_divmod_parity.tl|42|-|-|stdlib/io.tl
 csr_push_prologue|tests/integration/csr_push_prologue.tl|42|-|-|stdlib/io.tl
+csr_unused_save|tests/integration/csr_unused_save.tl|42|900\n|-|stdlib/io.tl
+csr_census_loop|tests/integration/csr_census_loop.tl|42|24 24\n|3 0|stdlib/io.tl stdlib/string.tl
+csr_census_loop_abort|tests/integration/csr_census_loop.tl|134|-|3 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/csr_census_loop_abort/csr_census_loop_abort.tl:77:53: array index out of bounds: index=8 length=8\n
+csr_census_loop_abort_opt2|tests/integration/csr_census_loop.tl|134|-|3 1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/csr_census_loop_abort_opt2/csr_census_loop_abort_opt2.tl:77:53: array index out of bounds: index=8 length=8\n
 dead_frame_boundary|tests/integration/dead_frame_boundary.tl|42|-|-|stdlib/io.tl
 red_zone_leaf|tests/integration/red_zone_leaf.tl|42|-|-|stdlib/io.tl
 select_flags_lea|tests/integration/select_flags_lea.tl|42|-|-|stdlib/io.tl
@@ -193,6 +203,35 @@ alu_mem_operand_tie|tests/integration/alu_mem_operand_tie.tl|42|-|-|-
 checked_depth0_site|tests/integration/checked_depth0_site.tl|42|-|-|-
 checked_setup_helper|tests/integration/checked_setup_helper.tl|42|-|-|-
 checked_cheap_tier_claim|tests/integration/checked_cheap_tier_claim.tl|42|-|-|-
+checked_cheap_tier_claim_abort|tests/integration/checked_cheap_tier_claim_abort.tl|134|-|8 0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/checked_cheap_tier_claim_abort/checked_cheap_tier_claim_abort.tl:45:46: array index out of bounds: index=8 length=8\n
+checked_cheap_tier_claim_abort_opt2|tests/integration/checked_cheap_tier_claim_abort.tl|134|-|8 0|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/checked_cheap_tier_claim_abort_opt2/checked_cheap_tier_claim_abort_opt2.tl:45:46: array index out of bounds: index=8 length=8\n
+global_cursor_helper|tests/integration/global_cursor_helper.tl|42|6749155\n81323579\n26\n|32 8|stdlib/io.tl stdlib/string.tl
+global_cursor_helper_abort|tests/integration/global_cursor_helper.tl|134|-|20 8|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/global_cursor_helper_abort/global_cursor_helper_abort.tl:36:39: array index out of bounds: index=20 length=20\n
+global_cursor_helper_abort_opt2|tests/integration/global_cursor_helper.tl|134|-|20 8|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/global_cursor_helper_abort_opt2/global_cursor_helper_abort_opt2.tl:36:39: array index out of bounds: index=20 length=20\n
+global_cursor_guarded|tests/integration/global_cursor_guarded.tl|42|107629787\n139493707\n26\n|32 8 32|stdlib/io.tl stdlib/string.tl
+global_cursor_guarded_abort|tests/integration/global_cursor_guarded.tl|134|-|20 8 64|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/global_cursor_guarded_abort/global_cursor_guarded_abort.tl:44:42: array index out of bounds: index=20 length=20\n
+global_cursor_guarded_abort_opt2|tests/integration/global_cursor_guarded.tl|134|-|20 8 64|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/global_cursor_guarded_abort_opt2/global_cursor_guarded_abort_opt2.tl:44:42: array index out of bounds: index=20 length=20\n
+recursive_loop_import|tests/integration/recursive_loop_import.tl|42|90189121\n216608050\n15\n|32 8 3|stdlib/io.tl stdlib/string.tl
+recursive_loop_import_abort|tests/integration/recursive_loop_import.tl|134|-|8 8 4|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/recursive_loop_import_abort/recursive_loop_import_abort.tl:51:42: array index out of bounds: index=8 length=8\n
+recursive_loop_import_abort_opt2|tests/integration/recursive_loop_import.tl|134|-|8 8 4|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/recursive_loop_import_abort_opt2/recursive_loop_import_abort_opt2.tl:51:42: array index out of bounds: index=8 length=8\n
+checked_cheap_tier_claim_leaf_abort|tests/integration/checked_cheap_tier_claim_abort.tl|134|-|32 20|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/checked_cheap_tier_claim_leaf_abort/checked_cheap_tier_claim_leaf_abort.tl:32:19: array index out of bounds: index=32 length=32\n
+checked_cheap_tier_claim_leaf_abort_opt2|tests/integration/checked_cheap_tier_claim_abort.tl|134|-|32 20|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/checked_cheap_tier_claim_leaf_abort_opt2/checked_cheap_tier_claim_leaf_abort_opt2.tl:32:19: array index out of bounds: index=32 length=32\n
+synth_wrapped_probe|tests/integration/synth_wrapped_probe.tl|42|-|-|-
+synth_wrapped_probe_abort|tests/integration/synth_wrapped_probe_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/synth_wrapped_probe_abort/synth_wrapped_probe_abort.tl:37:36: array index out of bounds: index=64 length=64\n
+synth_wrapped_probe_abort_opt2|tests/integration/synth_wrapped_probe_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/synth_wrapped_probe_abort_opt2/synth_wrapped_probe_abort_opt2.tl:37:36: array index out of bounds: index=64 length=64\n
+synth_tail_wrapper|tests/integration/synth_tail_wrapper.tl|42|-|-|-
+synth_tail_wrapper_abort|tests/integration/synth_tail_wrapper_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/synth_tail_wrapper_abort/synth_tail_wrapper_abort.tl:37:36: array index out of bounds: index=64 length=64\n
+synth_struct_accessor|tests/integration/synth_struct_accessor.tl|42|-|-|-
+synth_struct_accessor_abort|tests/integration/synth_struct_accessor_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/synth_struct_accessor_abort/synth_struct_accessor_abort.tl:38:32: array index out of bounds: index=71 length=64\n
+checked_arm_wrapper|tests/integration/checked_arm_wrapper.tl|42|-|-|-
+checked_arm_wrapper_abort|tests/integration/checked_arm_wrapper_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/checked_arm_wrapper_abort/checked_arm_wrapper_abort.tl:37:36: array index out of bounds: index=64 length=64\n
+checked_post_multi_call|tests/integration/checked_post_multi_call.tl|42|-|-|-
+checked_post_multi_call_abort|tests/integration/checked_post_multi_call_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/checked_post_multi_call_abort/checked_post_multi_call_abort.tl:38:36: array index out of bounds: index=64 length=64\n
+checked_post_multi_call_abort_opt2|tests/integration/checked_post_multi_call_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/checked_post_multi_call_abort_opt2/checked_post_multi_call_abort_opt2.tl:38:36: array index out of bounds: index=64 length=64\n
+checked_dispatch_arm|tests/integration/checked_dispatch_arm.tl|42|-|-|-
+checked_dispatch_arm_abort|tests/integration/checked_dispatch_arm_abort.tl|134|-|8 64|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/checked_dispatch_arm_abort/checked_dispatch_arm_abort.tl:31:29: array index out of bounds: index=15 length=8\n
+checked_dispatch_arm_abort_opt2|tests/integration/checked_dispatch_arm_abort.tl|134|-|8 64|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/checked_dispatch_arm_abort_opt2/checked_dispatch_arm_abort_opt2.tl:31:29: array index out of bounds: index=15 length=8\n
+synth_tail_wrapper_abort_opt2|tests/integration/synth_tail_wrapper_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/synth_tail_wrapper_abort_opt2/synth_tail_wrapper_abort_opt2.tl:37:36: array index out of bounds: index=64 length=64\n
 rmw_mem_operand_fold|tests/integration/rmw_mem_operand_fold.tl|42|8 -24\n7 1024 0\n24 108\n36 24\n6 3\n|8 3|stdlib/io.tl stdlib/string.tl
 mem_dest_rmw_fold|tests/integration/mem_dest_rmw_fold.tl|42|-|-|-
 copy_call_word|tests/integration/copy_call_word.tl|42|-|-|-
@@ -538,3 +577,25 @@ tlci_native_wildcard_arms|tests/integration/tlci_native_wildcard_arms.tl|42|-|-|
 tlci_native_format_scanner|tests/integration/tlci_native_format_scanner.tl|42|sca: 0x1 {} 10\ndo\n|-|stdlib/format.tl stdlib/io.tl stdlib/string.tl
 inline_multiblock_call_carrying_clone|tests/integration/inline_multiblock_call_carrying_clone.tl|42|-|-|-
 inline_tail_call_boundary|tests/integration/inline_tail_call_boundary.tl|42|-|-|-
+dce_late_flag_loop|tests/integration/dce_late_flag_loop.tl|42|-|-|-
+alias_global_shift|tests/integration/alias_global_shift.tl|42|-2158726342577467478\n|5 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+alias_global_shift_abort|tests/integration/alias_global_shift.tl|134|-|5 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/alias_global_shift_abort/alias_global_shift_abort.tl:35:53: array index out of bounds: index=18 length=18\n
+alias_row_overflow|tests/integration/alias_row_overflow.tl|42|-6331339880869039956\n|40 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+alias_row_overflow_abort|tests/integration/alias_row_overflow.tl|134|-|40 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/alias_row_overflow_abort/alias_row_overflow_abort.tl:38:35: array index out of bounds: index=40 length=40\n
+alias_row_overflow_abort_opt2|tests/integration/alias_row_overflow.tl|134|-|40 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/alias_row_overflow_abort_opt2/alias_row_overflow_abort_opt2.tl:38:35: array index out of bounds: index=40 length=40\n
+alias_typed_word|tests/integration/alias_typed_word.tl|42|8 301585711923\n|0 12,-34,56,7,-8,9,10,11|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+alias_typed_word_abort|tests/integration/alias_typed_word.tl|134|-|1 12,-34,56,7,-8,9,10,11|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/alias_typed_word_abort/alias_typed_word_abort.tl:72:55: array index out of bounds: index=8 length=8\n
+alias_typed_word_abort_opt2|tests/integration/alias_typed_word.tl|134|-|1 12,-34,56,7,-8,9,10,11|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/alias_typed_word_abort_opt2/alias_typed_word_abort_opt2.tl:72:55: array index out of bounds: index=8 length=8\n
+unroll_descending_shift|tests/integration/unroll_descending_shift.tl|42|1097881888941945712\n-7018435674265511601\n|40 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+unroll_descending_shift_abort|tests/integration/unroll_descending_shift.tl|134|-|40 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/unroll_descending_shift_abort/unroll_descending_shift_abort.tl:47:55: array index out of bounds: index=120 length=120\n
+unroll_descending_shift_abort_opt2|tests/integration/unroll_descending_shift.tl|134|-|40 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/unroll_descending_shift_abort_opt2/unroll_descending_shift_abort_opt2.tl:47:55: array index out of bounds: index=120 length=120\n
+vt_offset_copy|tests/integration/vt_offset_copy.tl|42|32381659002105604\n|5 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+vt_offset_copy_abort|tests/integration/vt_offset_copy.tl|134|-|5 2|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/vt_offset_copy_abort/vt_offset_copy_abort.tl:32:53: array index out of bounds: index=12 length=12\n
+vt_derived_stride|tests/integration/vt_derived_stride.tl|42|-7657205854612712702\n|5 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
+vt_derived_stride_abort|tests/integration/vt_derived_stride.tl|134|-|5 2|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/vt_derived_stride_abort/vt_derived_stride_abort.tl:32:40: array index out of bounds: index=19 length=18\n
+lattice_join_split|tests/integration/lattice_join_split.tl|42|1908610000 10\n|5 0|stdlib/io.tl stdlib/string.tl
+lattice_join_split_abort|tests/integration/lattice_join_split.tl|134|-|5 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/lattice_join_split_abort/lattice_join_split_abort.tl:48:30: array index out of bounds: index=5 length=5\n
+lattice_join_split_abort_opt2|tests/integration/lattice_join_split.tl|134|-|5 1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/lattice_join_split_abort_opt2/lattice_join_split_abort_opt2.tl:48:30: array index out of bounds: index=5 length=5\n
+short_trip_copy|tests/integration/short_trip_copy.tl|42|7757762194516093604 39\n|5 0|stdlib/io.tl stdlib/string.tl
+short_trip_copy_abort|tests/integration/short_trip_copy.tl|134|-|5 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/short_trip_copy_abort/short_trip_copy_abort.tl:115:50: array index out of bounds: index=39 length=39\n
+short_trip_copy_abort_opt2|tests/integration/short_trip_copy.tl|134|-|5 1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/short_trip_copy_abort_opt2/short_trip_copy_abort_opt2.tl:115:50: array index out of bounds: index=39 length=39\n

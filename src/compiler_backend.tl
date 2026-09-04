@@ -15732,6 +15732,274 @@
         compiler-backend-function-bool-emit-plan-reg-mask-active
         true))))
 
+;; ---------------------------------------------------------------------------
+;; RG-1: the registers the FINAL body can actually name.
+;;
+;; `compiler-backend-plan-reg-mask-of` answers "does the PLAN home a value
+;; here", which is not the same question as "does an instruction of this
+;; function mention that register". A value can lose every reference after it
+;; was homed -- the loop-split rewrite remaps a whole region's mentions onto a
+;; freshly minted var, remat replaces a use with its recompute, a coalesced
+;; member is folded away -- and the assignment survives in the table, so the
+;; prologue pushes a callee-saved register the body never reads and the
+;; epilogue pops it back. That pair is pure cost: cg-map-probe pays 2.63M Ir
+;; per callgraph_scc run for %r13 on 1,316,260 calls.
+;;
+;; The body mask is the union of the homes of every var some instruction of the
+;; FINAL emitted IR mentions (the liveness walker's own use/def enumeration --
+;; the same notion of "reference" the spill weight counts) plus the homes of
+;; the PARAMETERS, whose entry copies the prologue emits from the parameter
+;; list rather than from any instruction.
+;; RG-1: the per-function `regalloc-csr|` line -- the callee-saved set the
+;; prologue really saves against the set the body really names. The two differ
+;; exactly where fix B applies.
+(define (compiler-backend-trace-csr-name-at
+  [backend-state : CompilerBackendState]
+  [idx : i64]) : i64
+  (cond
+    [(= idx 0) compiler_abi.compiler-reg-id-r12]
+    [(= idx 1) compiler_abi.compiler-reg-id-r13]
+    [(= idx 2) compiler_abi.compiler-reg-id-r14]
+    [(= idx 3) compiler_abi.compiler-reg-id-r15]
+    [(= idx 4) compiler_abi.compiler-reg-id-rbx]
+    [(= idx 5)
+      (if (compiler-backend-current-fn-win64? backend-state)
+        compiler_abi.compiler-reg-id-rsi
+        compiler_abi.compiler-reg-id-rbp)]
+    [(= idx 6)
+      (if (compiler-backend-current-fn-win64? backend-state)
+        compiler_abi.compiler-reg-id-rdi
+        compiler_abi.compiler-reg-id-invalid)]
+    [(= idx 7)
+      (if (compiler-backend-current-fn-win64? backend-state)
+        compiler_abi.compiler-reg-id-rbp
+        compiler_abi.compiler-reg-id-invalid)]
+    [else compiler_abi.compiler-reg-id-invalid]))
+
+(define (compiler-backend-trace-csr-set-text
+  [backend-state : CompilerBackendState]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [body-mask : i64]
+  [saved? : bool]) : String
+  (let
+    [out : String ""]
+    [idx : i64 0]
+    (begin
+      (while (< idx 8)
+        (begin
+          (let
+            [reg-id : i64
+              (compiler-backend-trace-csr-name-at backend-state idx)]
+            (if (and
+              (not (= reg-id compiler_abi.compiler-reg-id-invalid))
+              (if saved?
+                (compiler-backend-callee-needs-save?
+                  backend-state
+                  (compiler-backend-global-shared-view assignments)
+                  reg-id)
+                (not
+                  (=
+                    (bit-and
+                      body-mask
+                      (compiler-backend-plan-reg-id-bit reg-id))
+                    0))))
+              (set!
+                out
+                (str_cat.str-cat
+                  (compiler-backend-global-shared-view out)
+                  (if (string.eq out "")
+                    ""
+                    ",")
+                  (compiler_abi.compiler-abi-register-spelling reg-id)))
+              unit))
+          (set! idx (+ idx 1))))
+      out)))
+
+(define (compiler-backend-trace-csr-line!
+  [backend-state : CompilerBackendState]
+  [name : String]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [body-mask : i64]
+  [pushes : i64]) : unit
+  (io.print-error
+    (str_cat.str-cat
+      "regalloc-csr|"
+      name
+      "|saved="
+      (compiler-backend-trace-csr-set-text
+        backend-state
+        (compiler-backend-global-shared-view assignments)
+        body-mask
+        true)
+      "|used="
+      (compiler-backend-trace-csr-set-text
+        backend-state
+        (compiler-backend-global-shared-view assignments)
+        body-mask
+        false)
+      "|pushes="
+      (string.int->string pushes)
+      "\n")))
+
+(define (compiler-backend-plan-body-reg-mask-var
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [var : i64]
+  [mask : i64]) : i64
+  (if (< var 0)
+    mask
+    (match (compiler_regalloc.compiler-reg-assignment-table-lookup
+      assignments
+      var)
+      [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
+        (bit-or mask (compiler-backend-plan-location-reg-mask location))]
+      [(compiler_regalloc.CompilerRegMaybeLocation.No) mask])))
+
+(define (compiler-backend-plan-body-reg-mask-set
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [set : compiler_liveness.CompilerLiveI64Set]
+  [mask : i64]) : i64
+  (let
+    [words : i64
+      (compiler_liveness.compiler-live-set-word-count
+        (compiler-backend-global-shared-view set))]
+    [word-index : i64 0]
+    [out : i64 mask]
+    (begin
+      (while (< word-index words)
+        (begin
+          (let
+            [bits : i64
+              (compiler_liveness.compiler-live-set-word-at-bounded
+                (compiler-backend-global-shared-view set)
+                word-index)]
+            [base : i64
+              (* word-index (compiler_liveness.compiler-live-set-word-bits))]
+            (while (not (= bits 0))
+              (begin
+                (set!
+                  out
+                  (compiler-backend-plan-body-reg-mask-var
+                    (compiler-backend-global-shared-view assignments)
+                    (+
+                      base
+                      (compiler_regalloc.compiler-reg-low-bit-index32 bits))
+                    out))
+                (set! bits (bit-and bits (- bits 1))))))
+          (set! word-index (+ word-index 1))))
+      out)))
+
+(define (compiler-backend-plan-body-reg-mask-instr
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [mask : i64]) : i64
+  (let
+    [ids : (__tl_dyn-array i64) (compiler_liveness.compiler-live-instr-ids)]
+    [id-count : i64
+      (compiler_liveness.compiler-live-instr-use-ids!
+        (compiler-backend-global-shared-view instr))]
+    [out : i64 mask]
+    (if (< id-count 0)
+      (compiler-backend-plan-body-reg-mask-set
+        (compiler-backend-global-shared-view assignments)
+        (compiler_liveness.compiler-live-instr-defs
+          (compiler-backend-global-shared-view instr))
+        (compiler-backend-plan-body-reg-mask-set
+          (compiler-backend-global-shared-view assignments)
+          (compiler_liveness.compiler-live-instr-uses
+            (compiler-backend-global-shared-view instr))
+          out))
+      (let
+        [index : i64 0]
+        (begin
+          (while (< index id-count)
+            (begin
+              (set!
+                out
+                (compiler-backend-plan-body-reg-mask-var
+                  (compiler-backend-global-shared-view assignments)
+                  (array-ref ids index)
+                  out))
+              (set! index (+ index 1))))
+          (compiler-backend-plan-body-reg-mask-var
+            (compiler-backend-global-shared-view assignments)
+            (compiler_liveness.compiler-live-instr-def-var instr)
+            out))))))
+
+(define (compiler-backend-plan-body-reg-mask
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [params : compiler_ir_types.CompilerIrParamSeq]) : i64
+  (let
+    [seq : compiler_ir_types.CompilerIrBlockSeq
+      (compiler_liveness.compiler-live-ir-block-list-to-seq blocks)]
+    [count : i64
+      (compiler_ir_types.compiler-ir-block-seq-count
+        (compiler-backend-global-shared-view seq))]
+    [out : i64 0]
+    [b : i64 0]
+    [position : i64 0]
+    (begin
+      (while (< position params.len)
+        (begin
+          (match (compiler_ir_types.compiler-ir-param-seq-ref
+            (compiler-backend-global-shared-view params)
+            position)
+            [(compiler_ir_types.CompilerIrParam.Param _ _ var-id)
+              (set!
+                out
+                (compiler-backend-plan-body-reg-mask-var
+                  (compiler-backend-global-shared-view assignments)
+                  var-id
+                  out))])
+          (set! position (+ position 1))))
+      (while (< b count)
+        (begin
+          (match (compiler_ir_types.compiler-ir-block-seq-ref
+            (compiler-backend-global-shared-view seq)
+            b)
+            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+              (let
+                [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
+                  instrs.slots]
+                [n : i64 instrs.len]
+                [i : i64 0]
+                (while (< i n)
+                  (begin
+                    (set!
+                      out
+                      (compiler-backend-plan-body-reg-mask-instr
+                        (compiler-backend-global-shared-view assignments)
+                        (compiler-backend-global-array-element-shared-view
+                          slots
+                          i)
+                        out))
+                    (set! i (+ i 1)))))])
+          (set! b (+ b 1))))
+      out)))
+
+;; The GP callee-saved registers, as a mask. These are the only bits fix B
+;; trims: a caller-saved home costs no prologue traffic, and the XMM callee
+;; save path reads the assignment table directly rather than this mask.
+(define (compiler-backend-callee-saved-reg-mask) : i64
+  (bit-or
+    (compiler-backend-plan-reg-id-bit compiler_abi.compiler-reg-id-r12)
+    (bit-or
+      (compiler-backend-plan-reg-id-bit compiler_abi.compiler-reg-id-r13)
+      (bit-or
+        (compiler-backend-plan-reg-id-bit compiler_abi.compiler-reg-id-r14)
+        (bit-or
+          (compiler-backend-plan-reg-id-bit compiler_abi.compiler-reg-id-r15)
+          (bit-or
+            (compiler-backend-plan-reg-id-bit compiler_abi.compiler-reg-id-rbx)
+            (bit-or
+              (compiler-backend-plan-reg-id-bit
+                compiler_abi.compiler-reg-id-rbp)
+              (bit-or
+                (compiler-backend-plan-reg-id-bit
+                  compiler_abi.compiler-reg-id-rsi)
+                (compiler-backend-plan-reg-id-bit
+                  compiler_abi.compiler-reg-id-rdi)))))))))
+
 (define (compiler-backend-plan-uses-reg?
   [backend-state : CompilerBackendState]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -54313,15 +54581,30 @@
       (if (and need-index-scratch (not (string.eq index-home "")))
         1
         0)]
+    ;; Both planned homes are CONSUMED through planned-or-scavenge-reg-here,
+    ;; never read raw. The planner may hand the dispatch a register it
+    ;; deliberately BORROWED from a live-through value (CompilerRegScratch-
+    ;; Assignment.preserve): the Win64 self-host reaches that in a function
+    ;; whose first plan homed the table register in %rbp, whose FPO audit then
+    ;; demoted it, and whose re-plan without %rbp had no free register left for
+    ;; the table -- it borrowed the `expr` parameter's %rsi. Reading the
+    ;; spelling raw skipped compiler-backend-preserve-planned-register!, so the
+    ;; emergency wrap was never armed, `emergency-pending` stayed false, and the
+    ;; plain `leaq table,%rsi; jmp *(%rsi,idx,8)` form went out with no restore:
+    ;; the parameter was destroyed on every arm (the scratch-vreg + TLCI twin
+    ;; on Windows failed typechecking its own macro expansions). Consuming
+    ;; through the helper arms the borrow, which selects the slot-indirect
+    ;; emergency form below (GAP2b-v2) that restores the occupant BEFORE the
+    ;; transfer; it also fails closed under scratch-vreg when a modeled scratch
+    ;; is missing, and is byte-identical for a non-planned (scavenged) home.
     [index-reg : String
       (if need-index-scratch
-        (if (string.eq planned-index-reg "")
-          (compiler-backend-scavenge-reg-here
-            index-exclude
-            index-exclude-n
-            "%r8"
-            backend-state)
-          planned-index-reg)
+        (compiler-backend-planned-or-scavenge-reg-here
+          planned-index-reg
+          index-exclude
+          index-exclude-n
+          "%r8"
+          backend-state)
         index-home)]
     [table-exclude : (__tl_dyn-array String)
       (compiler-backend-one-exclude
@@ -54329,13 +54612,12 @@
     [table-reg : String
       (if (compiler-backend-state-absolute-switch-ok? backend-state)
         ""
-        (if (string.eq planned-table-reg "")
-          (compiler-backend-scavenge-reg-here
-            table-exclude
-            1
-            "%r9"
-            backend-state)
-          planned-table-reg))]
+        (compiler-backend-planned-or-scavenge-reg-here
+          planned-table-reg
+          table-exclude
+          1
+          "%r9"
+          backend-state))]
     [index-load : ResultCompilerBackend
       (if need-index-scratch
         (compiler-backend-emit-load-value-with-plan
@@ -59720,29 +60002,6 @@
         saved-reserved)]
     (compiler-backend-address-base-filter reg)))
 
-;; True when the instruction would emit the LOCATED runtime-abort tail
-;; (`tl_oob_abort_at`), which re-reads both compare operands through `pushq`
-;; after %rsp has already moved. M6-A keeps that tail on the register form it
-;; was validated with and declines instead. Pure: it mirrors the predicate
-;; compiler-backend-runtime-abort-site-install! uses without mutating the
-;; function state the dispatch seam installs for the instruction it is really
-;; emitting.
-(define (compiler-backend-abort-site-would-activate?
-  [ctx : CompilerBackendEmissionContext]
-  [instr : compiler_ir_types.CompilerIrInstr]) : bool
-  (and
-    (compiler-backend-runtime-abort-site-instr?
-      (compiler-backend-global-shared-view ctx.backend-state)
-      (compiler-backend-global-shared-view instr))
-    (match (compiler_ir_types.compiler-source-spans-lookup-instr-location
-      (compiler-backend-global-shared-view ctx.spans)
-      (compiler_ir_types.compiler-ir-symbol-typed-id
-        (compiler-backend-global-shared-view ctx.source-function))
-      instr)
-      [(compiler_ir_types.CompilerMaybeSourceLocation.No) false]
-      [(compiler_ir_types.CompilerMaybeSourceLocation.Some location)
-        (> location.path-id 0)])))
-
 ;; Follow the fused load's value forward to the instruction that consumes it,
 ;; stepping over the width-preserving casts TL's typed surface leaves between a
 ;; `.len` load and the bounds check that uses it (`%17 = cast %15 : i64 to u64`
@@ -59885,18 +60144,23 @@
                 ;; occupies the compare's memory operand and `cmp mem, mem` is
                 ;; illegal, so a spilled or constant index declines to the
                 ;; ordinary path (which owns its own index staging and its
-                ;; GAP6d const form).
+                ;; GAP6d const form). That same requirement is what lets the
+                ;; LOCATED tail keep the fold (ABT-1): the tail re-reads the
+                ;; length through `pushq <memory operand>` FIRST, while %rsp is
+                ;; still the compare's own, and the only operand it reads after
+                ;; that push is the index -- a register here by construction.
+                ;; The address itself can never be %rsp- or %rbp-relative:
+                ;; compiler-backend-gep-load-cmp-address excludes %rbp from the
+                ;; base slot on both arms for exactly this re-read (and for the
+                ;; FPO rsp-rebase pass), and a non-register base home stages
+                ;; instead of folding.
                 (if (and
                   (compiler-backend-branch-uses-var? bc-length length-var)
                   (not
                     (compiler-backend-branch-uses-var?
                       (compiler-backend-global-shared-view bc-index)
                       length-var))
-                  (not (string.eq index-reg ""))
-                  (not
-                    (compiler-backend-abort-site-would-activate?
-                      (compiler-backend-global-shared-view ctx)
-                      (compiler-backend-global-shared-view next))))
+                  (not (string.eq index-reg "")))
                   (CompilerBackendGepLoadBoundsFold.Some
                     addr
                     index-reg
@@ -59941,28 +60205,41 @@
     [(CompilerBackendGepLoadBoundsFold.Some _ _ _ _) true]
     [(CompilerBackendGepLoadBoundsFold.No) false]))
 
+;; ABT-1: the fused compare is emitted while the dispatch seam is on the
+;; GEP/LOAD, so compiler-backend-emit-instr installed the abort site for THAT
+;; instruction -- which carries none, and which therefore left the site
+;; inactive. The check's own site has to be installed here, or the fold would
+;; answer a located check with the bare `tl_oob_abort` the unfused form does
+;; not: the same descriptor, on the same trap, for a compare that happens to
+;; have folded.
 (define (compiler-backend-emit-gep-load-bounds-fold
   [ctx : CompilerBackendEmissionContext]
   [length-operand : String]
   [index-operand : String]
-  [ok-label : i64]) : ResultCompilerBackend
-  (ResultCompilerBackend.Ok
-    (compiler-backend-bounds-check-asm
-      ""
-      ""
-      length-operand
-      index-operand
-      (compiler-backend-call-arg-space
-        (compiler-backend-global-shared-view ctx.target-policy.target)
-        (compiler_ir_types.CompilerIrCallArgs.Nil)
-        (compiler_ast_types.ast-type-list-new)
-        false
-        (compiler-backend-global-shared-view ctx.program-index))
-      (compiler-backend-asm-label
-        (compiler-backend-global-shared-view ctx.function)
-        ok-label)
-      (compiler-backend-global-shared-view ctx.plan)
-      (compiler-backend-global-shared-view ctx.program-index))))
+  [ok-label : i64]
+  [bounds-instr : compiler_ir_types.CompilerIrInstr]) : ResultCompilerBackend
+  (let
+    [_abort-site : unit
+      (compiler-backend-runtime-abort-site-install!
+        (compiler-backend-global-shared-view ctx)
+        (compiler-backend-global-shared-view bounds-instr))]
+    (ResultCompilerBackend.Ok
+      (compiler-backend-bounds-check-asm
+        ""
+        ""
+        length-operand
+        index-operand
+        (compiler-backend-call-arg-space
+          (compiler-backend-global-shared-view ctx.target-policy.target)
+          (compiler_ir_types.CompilerIrCallArgs.Nil)
+          (compiler_ast_types.ast-type-list-new)
+          false
+          (compiler-backend-global-shared-view ctx.program-index))
+        (compiler-backend-asm-label
+          (compiler-backend-global-shared-view ctx.function)
+          ok-label)
+        (compiler-backend-global-shared-view ctx.plan)
+        (compiler-backend-global-shared-view ctx.program-index)))))
 
 ;; `cmp`/`test` with one memory operand, at an explicit width. `src` is the
 ;; AT&T source operand and `dst` the destination one: exactly one of them is
@@ -60731,7 +61008,10 @@
               (compiler-backend-global-shared-view ctx)
               length-operand
               index-operand
-              ok-label)
+              ok-label
+              (compiler_ir_types.compiler-ir-instr-seq-ref
+                (compiler-backend-global-shared-view instrs)
+                (- after-bounds 1)))
             (compiler-backend-global-shared-view instrs)
             after-bounds
             out))]
@@ -65686,6 +65966,22 @@
         [(CompilerBackendGepLoadCmpBranchFold.No)
           (CompilerBackendMaybeGepLoadCmpEmission.No)]))))
 
+;; The source kinds the dead-Mov skip is allowed to swallow: a var-to-var copy
+;; and the integer-family immediates. Everything else -- an f64 immediate above
+;; all -- is a value the emitter DIAGNOSES rather than emits, and a skip must
+;; never take a diagnostic with it: `backend: f64 values are not supported yet`
+;; is raised from the immediate load, so a `Mov` carrying one has to reach it
+;; whether or not anything reads the destination.
+(define (compiler-backend-mov-skip-source?
+  [src : compiler_ir_types.CompilerIrValue]) : bool
+  (match (compiler-backend-global-shared-view src)
+    [(compiler_ir_types.CompilerIrValue.Var _) true]
+    [(compiler_ir_types.CompilerIrValue.I64 _) true]
+    [(compiler_ir_types.CompilerIrValue.Bool _) true]
+    [(compiler_ir_types.CompilerIrValue.Char _) true]
+    [(compiler_ir_types.CompilerIrValue.Unit) true]
+    [_ false]))
+
 (define (compiler-backend-emit-mov-step
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -65696,27 +65992,51 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [index : i64]
   [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
-  (match (compiler-backend-emit-mov-global-cmp-step
-    (compiler-backend-global-shared-view ctx)
-    (compiler-backend-global-shared-view fallthrough)
-    dst
-    (compiler-backend-global-shared-view src)
-    (compiler-backend-global-shared-view ty)
-    (compiler-backend-global-shared-view instrs)
-    index
-    out)
-    [(CompilerBackendMaybeGepLoadCmpEmission.Some result) result]
-    [(CompilerBackendMaybeGepLoadCmpEmission.No)
-      (compiler-backend-emit-mov-step-tail
-        ctx
-        fallthrough
-        instr
+  ;; DCE-LATE belt-and-braces: a `Mov` whose destination is read by NO
+  ;; instruction of the final IR computes nothing observable. The value is a
+  ;; register or slot write nothing reloads, nothing aliases (an AddrOf of the
+  ;; var counts as a use) and no runtime walk inspects, so the whole
+  ;; instruction may be dropped. The optimizer's own late sweep normally
+  ;; retires these first; this keeps a Mov minted after it, or by a pass the
+  ;; sweep does not run under, from reaching the assembler. Group (aggregate)
+  ;; copies are excluded: their destination spans more vars than the one this
+  ;; use count answers for. None of the fusion lookaheads below can fire on a
+  ;; never-used destination -- every one of them requires a SINGLE use.
+  (if (and
+    (compiler-backend-var-never-used?
+      (compiler-backend-global-shared-view ctx.backend-state)
+      dst)
+    (compiler-backend-mov-skip-source?
+      (compiler-backend-global-shared-view src))
+    (not
+      (compiler-backend-copy-group?
+        (compiler-backend-global-shared-view ctx.type-segment-bases)
+        (compiler-backend-global-shared-view ctx.program-index)
+        (compiler-backend-global-shared-view ty)
         dst
-        src
-        ty
-        instrs
-        index
-        out)]))
+        (compiler-backend-global-shared-view src))))
+    (compiler-backend-emit-instrs ctx fallthrough instrs index out)
+    (match (compiler-backend-emit-mov-global-cmp-step
+      (compiler-backend-global-shared-view ctx)
+      (compiler-backend-global-shared-view fallthrough)
+      dst
+      (compiler-backend-global-shared-view src)
+      (compiler-backend-global-shared-view ty)
+      (compiler-backend-global-shared-view instrs)
+      index
+      out)
+      [(CompilerBackendMaybeGepLoadCmpEmission.Some result) result]
+      [(CompilerBackendMaybeGepLoadCmpEmission.No)
+        (compiler-backend-emit-mov-step-tail
+          ctx
+          fallthrough
+          instr
+          dst
+          src
+          ty
+          instrs
+          index
+          out)])))
 
 (define (compiler-backend-emit-mov-step-tail
   [ctx : CompilerBackendEmissionContext]
@@ -72642,7 +72962,12 @@
 ;; carries over 1:1.
 (defstruct CompilerBackendRspRebaseResult
   (text String)
-  (ok bool))
+  (ok bool)
+  ;; RG-1: the callee-saved registers some instruction of the body NAMES --
+  ;; every line the pass did not classify as a CSR save/restore or as one of
+  ;; the epilogue's own CSR pops. Zero on a failed audit and on the non-push
+  ;; path, where nothing consumes it.
+  (csr-ref-mask i64))
 
 ;; Packed control-mnemonic classification shared by the RSP rebase audit and
 ;; the dead-frame-store sweep. Both passes used to ask the generic byte-range
@@ -72977,6 +73302,33 @@
 ;; no slot is live any more and a write below %rsp can hurt nothing. A `pushq`
 ;; taken while untracked is not boundable and refuses the red zone outright, as
 ;; does a delta that would go negative outside an epilogue.
+;;
+;; ABT-1: a dip taken ONLY on a never-returning path is not a dip this guard has
+;; to pay for. The located runtime-abort tails (`tl_oob_abort_at`,
+;; `tl_div_abort_at`, `tl_shift_abort_at`) save their two operands with `pushq`
+;; before loading the descriptor pointer, and those pushes land exactly where a
+;; red-zone body's local slots live -- but the path they are on ends in a call
+;; that never returns to this function's own code, so no later read of a local
+;; slot can observe the clobber. The pushed words themselves are read back only
+;; by the tail's own two `popq`s, and the operands the pushes READ are safe by
+;; construction: the first push happens while %rsp is still the body's own, and
+;; the second one's operand is never memory (the bounds tail's index is a
+;; register or an imm32, the shift tail's width is an immediate, and the div
+;; tail's saves are registers, normalized through %r11 when narrow). Charging
+;; the guard for them costs a body whose frame sits near the 128-byte limit its
+;; red zone -- a real prologue and epilogue on every call -- to arm a
+;; diagnostic on a path that cannot come back.
+;;
+;; So a push (or an `%rsp`-lowering `subq`) does not commit its depth at once:
+;; it enters a two-slot pending window, and the third one displaces the oldest
+;; into `deepest`. The `leaq .L_tl_abort_site_...` that only a located abort
+;; tail emits HOLDS the window's entries -- its own two pushes, and never more,
+;; since nothing else is enqueued between them and it -- and the noreturn abort
+;; call that follows DISCARDS them, which is the continuation that proves the
+;; path never returns. Anything else -- a label, another push, the end of the
+;; text -- commits the held entries instead, so a shape that is not an abort
+;; tail is still counted in full. Every other dip (a c-ABI window, a phi
+;; cycle-break push, a real `subq`) reaches `deepest` exactly as before.
 (define (compiler-backend-text-max-rsp-dip [text : String]) : i64
   (let
     [n : i64 (string.string-length text)]
@@ -72988,6 +73340,13 @@
     [valid : bool true]
     [deepest : i64 0]
     [ok : bool true]
+    ;; The pending window and the entries an abort-site marker is holding.
+    [pend-count : i64 0]
+    [pend0 : i64 0]
+    [pend1 : i64 0]
+    [held-count : i64 0]
+    [held0 : i64 0]
+    [held1 : i64 0]
     (begin
       (while (and ok (< i n))
         (let
@@ -73002,6 +73361,31 @@
               unit
               (if (= (compiler-backend-peephole-byte-at data (- end 1)) 58)
                 (begin
+                  ;; A label ends the straight-line window: nothing after it can
+                  ;; be the continuation an abort tail's pushes were held for.
+                  (begin
+                    (if (>= held-count 1)
+                      (if (> held0 deepest)
+                        (set! deepest held0)
+                        unit)
+                      unit)
+                    (if (>= held-count 2)
+                      (if (> held1 deepest)
+                        (set! deepest held1)
+                        unit)
+                      unit)
+                    (set! held-count 0))
+                  (if (>= pend-count 1)
+                    (if (> pend0 deepest)
+                      (set! deepest pend0)
+                      unit)
+                    unit)
+                  (if (>= pend-count 2)
+                    (if (> pend1 deepest)
+                      (set! deepest pend1)
+                      unit)
+                    unit)
+                  (set! pend-count 0)
                   (set! delta 0)
                   (set! valid true))
                 (let
@@ -73022,13 +73406,75 @@
                       (= (compiler-backend-peephole-byte-at data (- end 3)) 114)
                       (= (compiler-backend-peephole-byte-at data (- end 2)) 115))]
                   (cond
+                    ;; The located abort tail's descriptor load: hold the two
+                    ;; pushes in front of it until the continuation says whether
+                    ;; the path returns. Only reachable while something is
+                    ;; pending, so an ordinary line pays one integer compare.
+                    [(and
+                        (> pend-count 0)
+                        (<= (+ m 22) end)
+                        (compiler-backend-peephole-range-eq?
+                          data
+                          m
+                          (+ m 22)
+                          "leaq .L_tl_abort_site_"))
+                      (begin
+                        (begin
+                          (if (>= held-count 1)
+                            (if (> held0 deepest)
+                              (set! deepest held0)
+                              unit)
+                            unit)
+                          (if (>= held-count 2)
+                            (if (> held1 deepest)
+                              (set! deepest held1)
+                              unit)
+                            unit)
+                          (set! held-count 0))
+                        (set! held0 pend0)
+                        (set! held1 pend1)
+                        (set! held-count pend-count)
+                        (set! pend-count 0))]
+                    ;; ...and the noreturn abort call is that continuation: the
+                    ;; held dip is on a path that never comes back, so no local
+                    ;; slot it reached can be read again.
+                    [(and
+                        (> held-count 0)
+                        (compiler-backend-peephole-line-noreturn-abort?
+                          data
+                          m
+                          end))
+                      (set! held-count 0)]
                     [(= kind compiler-backend-control-mnemonic-push)
                       (if valid
                         (begin
                           (set! delta (+ delta 8))
-                          (if (> delta deepest)
-                            (set! deepest delta)
-                            unit))
+                          (begin
+                            (if (>= held-count 1)
+                              (if (> held0 deepest)
+                                (set! deepest held0)
+                                unit)
+                              unit)
+                            (if (>= held-count 2)
+                              (if (> held1 deepest)
+                                (set! deepest held1)
+                                unit)
+                              unit)
+                            (set! held-count 0))
+                          (if (>= pend-count 2)
+                            (begin
+                              (if (> pend0 deepest)
+                                (set! deepest pend0)
+                                unit)
+                              (set! pend0 pend1)
+                              (set! pend1 delta))
+                            (if (= pend-count 1)
+                              (begin
+                                (set! pend1 delta)
+                                (set! pend-count 2))
+                              (begin
+                                (set! pend0 delta)
+                                (set! pend-count 1)))))
                         (set! ok false))]
                     [(= kind compiler-backend-control-mnemonic-pop)
                       (if valid
@@ -73055,9 +73501,32 @@
                                 data
                                 (+ te 2)
                                 (- end 6))))
-                          (if (> delta deepest)
-                            (set! deepest delta)
-                            unit))
+                          (begin
+                            (if (>= held-count 1)
+                              (if (> held0 deepest)
+                                (set! deepest held0)
+                                unit)
+                              unit)
+                            (if (>= held-count 2)
+                              (if (> held1 deepest)
+                                (set! deepest held1)
+                                unit)
+                              unit)
+                            (set! held-count 0))
+                          (if (>= pend-count 2)
+                            (begin
+                              (if (> pend0 deepest)
+                                (set! deepest pend0)
+                                unit)
+                              (set! pend0 pend1)
+                              (set! pend1 delta))
+                            (if (= pend-count 1)
+                              (begin
+                                (set! pend1 delta)
+                                (set! pend-count 2))
+                              (begin
+                                (set! pend0 delta)
+                                (set! pend-count 1)))))
                         (if (and
                           valid
                           (= kind compiler-backend-control-mnemonic-addq)
@@ -73084,6 +73553,30 @@
               (if (< end n)
                 (+ end 1)
                 end)))))
+      ;; The text ran out before any continuation: count everything still owed.
+      (begin
+        (if (>= held-count 1)
+          (if (> held0 deepest)
+            (set! deepest held0)
+            unit)
+          unit)
+        (if (>= held-count 2)
+          (if (> held1 deepest)
+            (set! deepest held1)
+            unit)
+          unit)
+        (set! held-count 0))
+      (if (>= pend-count 1)
+        (if (> pend0 deepest)
+          (set! deepest pend0)
+          unit)
+        unit)
+      (if (>= pend-count 2)
+        (if (> pend1 deepest)
+          (set! deepest pend1)
+          unit)
+        unit)
+      (set! pend-count 0)
       (if ok
         deepest
         -1))))
@@ -73200,6 +73693,230 @@
 ;; the slot region is dead (or, in push mode, holds only callee-save slots the
 ;; rebase deletes) -- and the positive (incoming stack argument) bias
 ;; `S + 8n - 8` is computed from S and therefore follows it exactly.
+;; ---------------------------------------------------------------------------
+;; RG-1 fix B: a callee-saved register the BODY never names.
+;;
+;; The prologue saves exactly the callee-saved registers the allocator plan
+;; homes a value in (compiler-backend-callee-needs-save?). That set is a
+;; property of the PLAN, and emission can leave it behind: a value can lose its
+;; last materialized reference between the plan and the text -- its defining
+;; copy becomes a self-move inside a coalesce class and the peephole drops it,
+;; its use folds into a memory operand, a rewrite remaps the region that
+;; mentioned it. The register is then pushed in the prologue and popped in the
+;; epilogue with nothing in between: two instructions per CALL of the function,
+;; paid on the hot path for nothing. cg-map-probe pays 2.63M Ir per
+;; callgraph_scc run this way (%r13, 1,316,260 calls); cg-census-blocks,
+;; cg-census-bump-map and cg-map-get-value-or each pay for %rbp.
+;;
+;; The question "does an instruction of this function name %r13" can only be
+;; answered on the final text, and the rsp-rebase pass is where that text is
+;; walked line by line WITH the save/restore lines already classified
+;; (compiler-backend-rsp-rebase-csr-classify). So the mask is collected there,
+;; and the trim is applied by re-running that same pass with a smaller push
+;; set: the classification set stays the full one, so every save/restore movq
+;; is still deleted, and the pushes and pops the pass synthesizes come from the
+;; trimmed set. The frame adjustment follows automatically --
+;; compiler-backend-rsp-rebase-push-sub derives the `subq` from the push count
+;; and its parity, so a function that loses a push gains the 8-byte pad that
+;; keeps `%rsp % 16 == 8` at every call, and the Windows `.seh_pushreg`
+;; program is generated from the same trimmed array as the pushes.
+;;
+;; A trimmed run that fails the audit falls back to the untrimmed text, so the
+;; trim can never cost a function its FPO frame.
+;; The callee-saved register named at `pos` (which must be the '%' of a
+;; register spelling), or `compiler_abi.compiler-reg-id-invalid`.
+;;
+;; `%rbp` immediately after '(' is a FRAME BASE, not a value reference: at this
+;; seam every local is still spelled `-K(%rbp)` and the pass rewrites it to
+;; %rsp, so counting it would report %rbp used by every framed function. The
+;; converse -- a value homed in %rbp and dereferenced as `(%rbp)` -- cannot
+;; occur, because this pass rewrites every `(%rbp)` as a frame reference and a
+;; body that contained one would already be mis-rebased.
+;;
+;; EVERY width counts. A register named only through a narrow spelling --
+;; `%ebx` for an i32 compare, `%bpl` for a bool store, `%r12d` for a widened
+;; load -- is used exactly as much as one named through `%rbx`, and reading
+;; only the 64-bit spellings makes the body look empty and trims a save the
+;; function needs. (Measured: it clobbers the caller's %rbx and segfaults the
+;; self-compile in compiler-reg-loop-nest-header-members!.)
+(define (compiler-backend-csr-spelling-reg
+  [data : (Ptr u8)]
+  [pos : i64]
+  [prev : i64]
+  [end : i64]) : i64
+  (if (> (+ pos 2) end)
+    compiler_abi.compiler-reg-id-invalid
+    (let
+      [b1 : i64 (compiler-backend-peephole-byte-at data (+ pos 1))]
+      [b2 : i64 (compiler-backend-peephole-byte-at data (+ pos 2))]
+      [b3 : i64
+        (if (> (+ pos 3) end)
+          0
+          (compiler-backend-peephole-byte-at data (+ pos 3)))]
+      (cond
+        ;; 64-bit spellings. %rbp is the one that has to be told apart from a
+        ;; frame base, which is always written `K(%rbp)`.
+        [(and (= b1 114) (= b2 98) (= b3 120)) compiler_abi.compiler-reg-id-rbx]
+        [(and (= b1 114) (= b2 98) (= b3 112))
+          (if (= prev 40)
+            compiler_abi.compiler-reg-id-invalid
+            compiler_abi.compiler-reg-id-rbp)]
+        ;; %r12 .. %r15 and their d/w/b suffixes share this prefix.
+        [(and (= b1 114) (= b2 49) (= b3 50)) compiler_abi.compiler-reg-id-r12]
+        [(and (= b1 114) (= b2 49) (= b3 51)) compiler_abi.compiler-reg-id-r13]
+        [(and (= b1 114) (= b2 49) (= b3 52)) compiler_abi.compiler-reg-id-r14]
+        [(and (= b1 114) (= b2 49) (= b3 53)) compiler_abi.compiler-reg-id-r15]
+        [(and (= b1 114) (= b2 115) (= b3 105))
+          compiler_abi.compiler-reg-id-rsi]
+        [(and (= b1 114) (= b2 100) (= b3 105))
+          compiler_abi.compiler-reg-id-rdi]
+        ;; 32-bit spellings: %ebx, %ebp, %esi, %edi.
+        [(and (= b1 101) (= b2 98) (= b3 120)) compiler_abi.compiler-reg-id-rbx]
+        [(and (= b1 101) (= b2 98) (= b3 112)) compiler_abi.compiler-reg-id-rbp]
+        [(and (= b1 101) (= b2 115) (= b3 105))
+          compiler_abi.compiler-reg-id-rsi]
+        [(and (= b1 101) (= b2 100) (= b3 105))
+          compiler_abi.compiler-reg-id-rdi]
+        ;; 16- and 8-bit spellings: %bx/%bl/%bh, %bp/%bpl, %si/%sil, %di/%dil.
+        ;; Two bytes are enough to name the register: the third, when there is
+        ;; one, only narrows the width.
+        [(and (= b1 98) (or (= b2 120) (= b2 108) (= b2 104)))
+          compiler_abi.compiler-reg-id-rbx]
+        [(and (= b1 98) (= b2 112)) compiler_abi.compiler-reg-id-rbp]
+        [(and (= b1 115) (= b2 105)) compiler_abi.compiler-reg-id-rsi]
+        [(and (= b1 100) (= b2 105)) compiler_abi.compiler-reg-id-rdi]
+        [else compiler_abi.compiler-reg-id-invalid]))))
+
+(define (compiler-backend-csr-line-mask
+  [data : (Ptr u8)]
+  [from : i64]
+  [to : i64]
+  [mask : i64]) : i64
+  (let
+    [i : i64 from]
+    [out : i64 mask]
+    (begin
+      (while (< i to)
+        (begin
+          (if (= (compiler-backend-peephole-byte-at data i) 37)
+            (let
+              [reg : i64
+                (compiler-backend-csr-spelling-reg
+                  data
+                  i
+                  (if (> i from)
+                    (compiler-backend-peephole-byte-at data (- i 1))
+                    0)
+                  to)]
+              (if (= reg compiler_abi.compiler-reg-id-invalid)
+                unit
+                (set! out (bit-or out (compiler-backend-plan-reg-id-bit reg)))))
+            unit)
+          (set! i (+ i 1))))
+      out)))
+
+;; A copy of `push-regs` with every entry the body never names cleared. The
+;; entries are register SPELLINGS in callee-save slot order, so the copy keeps
+;; the slot indexing the pop run and the SEH program read.
+(define (compiler-backend-csr-trimmed-push-regs
+  [push-regs : (__tl_dyn-array String)]
+  [ref-mask : i64]
+  [backend-state : CompilerBackendState]) : (__tl_dyn-array String)
+  (let
+    [out : (__tl_dyn-array String) (compiler-backend-rsp-rebase-make-push-regs)]
+    [idx : i64 0]
+    (begin
+      (while (< idx (array-length out))
+        (begin
+          (let
+            [name : String
+              (compiler-backend-global-array-element-shared-view push-regs idx)]
+            [reg-id : i64
+              (compiler-backend-trace-csr-name-at backend-state idx)]
+            (set!
+              (array-ref out idx)
+              (if (string.eq name "")
+                ""
+                (if (=
+                  (bit-and ref-mask (compiler-backend-plan-reg-id-bit reg-id))
+                  0)
+                  ""
+                  (string.copy (& name))))))
+          (set! idx (+ idx 1))))
+      out)))
+
+(define (compiler-backend-csr-drop-mask
+  [push-regs : (__tl_dyn-array String)]
+  [save-regs : (__tl_dyn-array String)]
+  [backend-state : CompilerBackendState]) : i64
+  (let
+    [idx : i64 0]
+    [out : i64 0]
+    (begin
+      (while (< idx (array-length save-regs))
+        (begin
+          (if (and
+            (not
+              (string.eq
+                (compiler-backend-global-array-element-shared-view
+                  save-regs
+                  idx)
+                ""))
+            (or
+              (>= idx (array-length push-regs))
+              (string.eq
+                (compiler-backend-global-array-element-shared-view
+                  push-regs
+                  idx)
+                "")))
+            (set!
+              out
+              (bit-or
+                out
+                (compiler-backend-plan-reg-id-bit
+                  (compiler-backend-trace-csr-name-at backend-state idx))))
+            unit)
+          (set! idx (+ idx 1))))
+      out)))
+
+(define (compiler-backend-csr-push-reg-mask
+  [push-regs : (__tl_dyn-array String)]
+  [backend-state : CompilerBackendState]) : i64
+  (let
+    [idx : i64 0]
+    [out : i64 0]
+    (begin
+      (while (< idx (array-length push-regs))
+        (begin
+          (if (string.eq
+            (compiler-backend-global-array-element-shared-view push-regs idx)
+            "")
+            unit
+            (set!
+              out
+              (bit-or
+                out
+                (compiler-backend-plan-reg-id-bit
+                  (compiler-backend-trace-csr-name-at backend-state idx)))))
+          (set! idx (+ idx 1))))
+      out)))
+
+(define (compiler-backend-csr-push-reg-count
+  [push-regs : (__tl_dyn-array String)]) : i64
+  (let
+    [idx : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< idx (array-length push-regs))
+        (begin
+          (if (string.eq
+            (compiler-backend-global-array-element-shared-view push-regs idx)
+            "")
+            unit
+            (set! count (+ count 1)))
+          (set! idx (+ idx 1))))
+      count)))
+
 (define (compiler-backend-rsp-rebase-push-sub
   [backend-state : CompilerBackendState]
   [frame : i64]
@@ -73466,6 +74183,34 @@
   [push-count : i64]
   [slot-vars : i64]
   [backend-state : CompilerBackendState]) : CompilerBackendRspRebaseResult
+  (compiler-backend-rsp-rebase-full-result-with-saves
+    text
+    frame
+    fpo
+    (compiler-backend-global-shared-view push-regs)
+    push-count
+    push-regs
+    push-count
+    slot-vars
+    backend-state))
+
+;; RG-1 fix B. `save-regs` is the set the PROLOGUE ORIGINALLY SAVED and is what
+;; classifies (and so deletes) the save/restore movq lines and the pop-run
+;; entry; `push-regs` is the set the pass EMITS pushes and pops for. They are
+;; the same array on the ordinary call above. When fix B trims one, a register
+;; in `save-regs` but not in `push-regs` has its save/restore deleted like any
+;; other and its epilogue `popq` dropped with it, so the pass emits neither
+;; half of a pair the body had no use for.
+(define (compiler-backend-rsp-rebase-full-result-with-saves
+  [text : String]
+  [frame : i64]
+  [fpo : bool]
+  [push-regs : (__tl_dyn-array String)]
+  [push-count : i64]
+  [save-regs : (__tl_dyn-array String)]
+  [save-count : i64]
+  [slot-vars : i64]
+  [backend-state : CompilerBackendState]) : CompilerBackendRspRebaseResult
   (let
     [n : i64 (string.string-length text)]
     [data : (Ptr u8)
@@ -73480,9 +74225,31 @@
     [tail : bool false]
     [last-noff : i64 -1]
     [ref-count : i64 0]
+    ;; RG-1: the callee-saved registers the body NAMES, and the ones fix B
+    ;; trimmed away (present in the save set, absent from the push set) whose
+    ;; epilogue pops must be dropped with their pushes.
+    [csr-mask : i64 0]
+    ;; The scan below only has to find the registers the PUSH set carries: once
+    ;; every one of them is named, no line can change the answer, so the rest of
+    ;; the function costs one bit test per line instead of a byte scan. Most
+    ;; functions name their callee-saved homes within a few instructions of the
+    ;; prologue.
+    [push-mask : i64
+      (compiler-backend-csr-push-reg-mask
+        (compiler-backend-global-shared-view push-regs)
+        backend-state)]
+    [drop-mask : i64
+      (compiler-backend-csr-drop-mask
+        (compiler-backend-global-shared-view push-regs)
+        (compiler-backend-global-shared-view save-regs)
+        backend-state)]
     ;; GAP1 push mode: prologue = pushes + subq $sub-s; disp = the total
     ;; prologue rsp displacement (plays frame+8's role in the leave fold).
-    [pm : bool (and fpo (> push-count 0))]
+    ;; Keyed on the SAVE count: a function whose every push fix B trimmed still
+    ;; has save/restore movq lines in its text, and push mode is what deletes
+    ;; them. `push-count` (0 there) still drives the pushes, the pops and the
+    ;; frame adjustment.
+    [pm : bool (and fpo (> save-count 0))]
     ;; Win64 unwind codes describe one fixed post-prologue %rsp. Unlike SysV
     ;; FPO, a Win64 FPO body cannot contain a transient stack dip: any ordinary
     ;; push/pop/sub/add/mov-to-rsp fails the audit. The recognized terminal
@@ -73595,9 +74362,33 @@
                         te
                         end
                         mnemonic-kind
-                        (compiler-backend-global-shared-view push-regs)
+                        (compiler-backend-global-shared-view save-regs)
                         slot-vars)
                       0)]
+                  ;; A `popq %rXX` of a trimmed register inside the epilogue
+                  ;; tail: the pop run in the text was built for the untrimmed
+                  ;; save set, and the pass has already replaced its `leaq`
+                  ;; anchor with an `addq` sized by the TRIMMED push count, so
+                  ;; this pop has to go with the push it restores. Dropping it
+                  ;; leaves `disp + delta` at exactly 0 after the remaining
+                  ;; pops, which is what the `leave` fold below checks.
+                  [drop-pop? : bool
+                    (and
+                      pm
+                      pop?
+                      tail
+                      (not (= drop-mask 0))
+                      (not
+                        (=
+                          (bit-and
+                            drop-mask
+                            (compiler-backend-plan-reg-id-bit
+                              (compiler-backend-csr-spelling-reg
+                                data
+                                (+ te 1)
+                                0
+                                end)))
+                          0)))]
                   (begin
                     (set! last-noff -1)
                     (set! ref-count 0)
@@ -73618,9 +74409,23 @@
                         (and rsp-dst? (not (= csr-kind 2)))))
                       (set! ok false)
                       unit)
+                    ;; RG-1: every line that is not a CSR save/restore, not
+                    ;; the pop-run anchor and not one of the epilogue's own CSR
+                    ;; pops is a real instruction of the body: what it names,
+                    ;; the function uses.
+                    (if (and
+                      pm
+                      (= csr-kind 0)
+                      (not (and pop? tail))
+                      (not (= (bit-and csr-mask push-mask) push-mask)))
+                      (set!
+                        csr-mask
+                        (compiler-backend-csr-line-mask data i end csr-mask))
+                      unit)
                     ;; lint-allow: nested-if-ladder
-                    (if (= csr-kind 1)
-                      ;; CSR save/restore movq: drop the line.
+                    (if (or (= csr-kind 1) drop-pop?)
+                      ;; CSR save/restore movq, or a trimmed register's pop:
+                      ;; drop the line.
                       unit
                       (if (= csr-kind 2)
                         ;; pop-run entry: point rsp at the pushed area
@@ -74034,7 +74839,10 @@
                 compiler-backend-rsp-rebase-ok-metric
                 1))
             unit)
-          (CompilerBackendRspRebaseResult (text_buf_borrowed.render buf) true))
+          (CompilerBackendRspRebaseResult
+            (text_buf_borrowed.render buf)
+            true
+            csr-mask))
         (begin
           (cfg
             (any regalloc-census test)
@@ -74048,7 +74856,7 @@
                 compiler-backend-rsp-rebase-keep-metric
                 1))
             unit)
-          (CompilerBackendRspRebaseResult text false))))))
+          (CompilerBackendRspRebaseResult text false 0))))))
 
 (define (compiler-backend-rsp-rebase-full
   [text : String]
@@ -80999,6 +81807,18 @@
               (compiler_regalloc.compiler-reg-remap-params
                 remap
                 (compiler-backend-global-shared-view params))])]
+        ;; RG-1: the registers the FINAL body can name (see
+        ;; compiler-backend-plan-body-reg-mask). Computed on the emitted IR and
+        ;; the emitted parameter list, in the same var-id domain as
+        ;; `assignments`, so it is comparable with the plan mask installed
+        ;; above.
+        [csr-body-mask : i64
+          (if (compiler_regalloc.compiler-reg-debug-trace-homes?)
+            (compiler-backend-plan-body-reg-mask
+              (compiler-backend-global-shared-view assignments)
+              (compiler-backend-global-shared-view emit-blocks-list)
+              (compiler-backend-global-shared-view emit-params))
+            0)]
         [slot-vars : i64
           (match (compiler-backend-global-shared-view coloring)
             ;; Synthetic scratch ids are register-only and are not referenced
@@ -81838,6 +82658,23 @@
                                 (compiler-backend-global-shared-view push-regs)
                                 program-index.backend-state)
                               0)]
+                          ;; RG-1: the callee-saved summary line, emitted where
+                          ;; the save set is final (the const-hoist and planned
+                          ;; scratch reservations that also force a save are
+                          ;; settled by body emission, which has run).
+                          [_trace-csr : unit
+                            (if (compiler_regalloc.compiler-reg-debug-trace-homes?)
+                              (compiler-backend-trace-csr-line!
+                                program-index.backend-state
+                                (compiler-backend-symbol-text-index
+                                  (compiler-backend-global-shared-view
+                                    program-index)
+                                  (compiler-backend-global-shared-view name))
+                                (compiler-backend-global-shared-view
+                                  assignments)
+                                csr-body-mask
+                                push-count)
+                              unit)]
                           ;; Win64 UWOP_SAVE_XMM128 encodes its stack offset in
                           ;; 16-byte units. An even GP-push count leaves the
                           ;; canonical frame slots at rsp+8 (mod 16), so retain
@@ -81954,7 +82791,73 @@
                               push-count
                               slot-vars
                               program-index.backend-state)]
-                          [rebased : String rebase-result.text]
+                          ;; RG-1 fix B. The first pass reported which
+                          ;; callee-saved registers the body actually names;
+                          ;; anything it saves but never names is a push and a
+                          ;; pop paid on every call for nothing. Re-run the pass
+                          ;; with those registers out of the PUSH set (the save
+                          ;; set is unchanged, so their save/restore movqs are
+                          ;; still deleted and their epilogue pops go with
+                          ;; them). Held back on a Win64 function that also
+                          ;; saves XMM callee registers: `fpo-attempt` admitted
+                          ;; it on the PARITY of the push count, and the
+                          ;; UWOP_SAVE_XMM128 offsets it implies are already
+                          ;; baked into the emitted body.
+                          [csr-trim-ok? : bool
+                            (and
+                              rebase-result.ok
+                              fpo-attempt
+                              (> push-count 0)
+                              (not
+                                (and
+                                  target-policy.windows
+                                  (compiler-backend-plan-uses-win64-xmm-callee-regs?
+                                    (compiler-backend-global-shared-view
+                                      assignments)
+                                    program-index.backend-state))))]
+                          [trim-regs : (__tl_dyn-array String)
+                            (if csr-trim-ok?
+                              (compiler-backend-csr-trimmed-push-regs
+                                (compiler-backend-global-shared-view push-regs)
+                                rebase-result.csr-ref-mask
+                                program-index.backend-state)
+                              (compiler-backend-rsp-rebase-make-push-regs))]
+                          [trim-count : i64
+                            (if csr-trim-ok?
+                              (compiler-backend-csr-push-reg-count
+                                (compiler-backend-global-shared-view trim-regs))
+                              push-count)]
+                          [trim-attempt? : bool (< trim-count push-count)]
+                          [trim-result : CompilerBackendRspRebaseResult
+                            (if trim-attempt?
+                              (compiler-backend-rsp-rebase-full-result-with-saves
+                                (compiler-backend-global-shared-view
+                                  post-prologue)
+                                fpo-frame
+                                fpo-attempt
+                                (compiler-backend-global-shared-view trim-regs)
+                                trim-count
+                                (compiler-backend-global-shared-view push-regs)
+                                push-count
+                                slot-vars
+                                program-index.backend-state)
+                              (CompilerBackendRspRebaseResult "" false 0))]
+                          ;; A trimmed run that fails the audit changes nothing:
+                          ;; the untrimmed text is used and the function keeps
+                          ;; the frame it had.
+                          [use-trim? : bool (and trim-attempt? trim-result.ok)]
+                          [final-push-regs : (__tl_dyn-array String)
+                            (if use-trim?
+                              (compiler-backend-global-shared-view trim-regs)
+                              (compiler-backend-global-shared-view push-regs))]
+                          [final-push-count : i64
+                            (if use-trim?
+                              trim-count
+                              push-count)]
+                          [rebased : String
+                            (if use-trim?
+                              trim-result.text
+                              rebase-result.text)]
                           [rebase-ok : bool rebase-result.ok]
                           [fpo-ok : bool (and fpo-attempt rebase-ok)]
                           ;; A failed audit falls back to the rbp frame, whose
@@ -82054,7 +82957,7 @@
                                       function-state
                                       compiler-backend-function-bool-red-zone))
                                   (or
-                                    (> push-count 0)
+                                    (> final-push-count 0)
                                     (>
                                       (if fpo-ok
                                         fpo-frame
@@ -82137,15 +83040,15 @@
                                         assignments)
                                       slot-vars
                                       (compiler-backend-global-shared-view
-                                        push-regs)
-                                      push-count)
-                                    (if (> push-count 0)
+                                        final-push-regs)
+                                      final-push-count)
+                                    (if (> final-push-count 0)
                                       (compiler-backend-emit-function-entry-fpo-push
                                         backend-state
                                         entry-symbol
                                         fpo-frame
-                                        push-regs
-                                        push-count)
+                                        final-push-regs
+                                        final-push-count)
                                       (compiler-backend-emit-function-entry-fpo
                                         backend-state
                                         entry-symbol
@@ -82313,7 +83216,7 @@
                                       (compiler-backend-global-shared-view
                                         symbol)
                                       frame
-                                      push-count
+                                      final-push-count
                                       slot-vars
                                       outgoing-frame-space
                                       fpo-ok

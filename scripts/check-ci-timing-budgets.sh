@@ -33,6 +33,18 @@ set -eu
 # the branch at 22572ms against main at 22781/22991ms, so the wall increase was
 # runner throughput rather than added compiler work. The revised opt2 caps keep
 # about 17% headroom above the larger hosted measurements.
+#
+# The lint cap moves the same way and for the same kind of reason. Two
+# consecutive Linux runs of #6248 on the current main measured the gate at
+# 89750/89050ms; the compile rows in those same runs stayed inside their caps
+# (19570/19590, 38910/39490, 50720/51140, 100370/100880ms), so the gate that
+# broke is the one that walks every source file. The branch's own share of that
+# is small and was measured on one host: the lint gate over the branch's tree
+# with the branch's compiler ran 46659/46834ms against 45072/45123ms for its
+# merge base, +3.6%. The same branch measured 72680ms in CI one main earlier,
+# so the step is in the base -- the per-file policy resolution added by #7277 --
+# and the branch rides on top of it. The revised cap keeps about 17% headroom
+# above the larger hosted measurement, matching the opt2 rows above.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -124,7 +136,7 @@ check_budget() {
         -v opt1_opt1_cap=45000 \
         -v opt2_opt2_cap=65000 \
         -v opt1_opt2_cap=115000 \
-        -v lint_cap=85000 \
+        -v lint_cap=105000 \
         -v host_action_cap=36000 \
         -v ratio_limit=2.5 '
         function is_required(key) {
@@ -412,9 +424,11 @@ self-test denylisted gate without cap"
         "$workdir/denylist-cap.out" >/dev/null
 
     # Preserve the larger measurements from the two accepted ownership-branch
-    # artifacts as an executable lower bound on every adjusted cap.
+    # artifacts as an executable lower bound on every adjusted cap. The lint row
+    # carries the larger of the two #6248 measurements that moved the lint cap,
+    # so the accepted level is asserted rather than described.
     write_fixture \
-        "$workdir/pass.tsv" 21040 37900 49100 85500 72120 29980
+        "$workdir/pass.tsv" 21040 37900 49100 85500 89750 29980
     expect_fixture pass pass "$workdir/pass.tsv" "$workdir/pass.out"
 
     write_fixture "$workdir/ratio.tsv" 12000 18000 48000 50000
@@ -446,16 +460,16 @@ self-test denylisted gate without cap"
     grep -F 'opt1-built:selfhost_main_opt2 exceeds its 115000ms cap' \
         "$workdir/opt1-opt2-absolute.out" >/dev/null
 
-    write_fixture "$workdir/lint-absolute.tsv" 12800 18700 30300 50500 85001
+    write_fixture "$workdir/lint-absolute.tsv" 12800 18700 30300 50500 105001
     expect_fixture lint-absolute-breach fail \
         "$workdir/lint-absolute.tsv" "$workdir/lint-absolute.out"
-    grep -F 'lint-gate exceeds its 85000ms cap' \
+    grep -F 'lint-gate exceeds its 105000ms cap' \
         "$workdir/lint-absolute.out" >/dev/null
 
     write_fixture "$workdir/lint-missing.tsv" 12800 18700 30300 50500 ''
     expect_fixture lint-missing fail \
         "$workdir/lint-missing.tsv" "$workdir/lint-missing.out"
-    grep -F 'lint-gate=<missing> cap=85000ms' \
+    grep -F 'lint-gate=<missing> cap=105000ms' \
         "$workdir/lint-missing.out" >/dev/null
 
     write_fixture "$workdir/lint-duplicate.tsv" 12800 18700 30300 50500

@@ -16960,36 +16960,6 @@
 
 ;; Relabel a header's phi inputs that came from `pred-label` to `ph-label`
 ;; (the value is unchanged -- the preheader is a pass-through).
-(define (compiler-reg-preheader-relabel-phi-inputs
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [pred-label : i64]
-  [ph-label : i64]) : ir.CompilerIrPhiInputSeq
-  (let
-    [phi-inputs-at-16129-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-16129-3.len 0)
-      (ir.compiler-ir-phi-input-seq-empty)
-      (let
-        [phi-input-at-16129-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-16129-3)
-            0)]
-        [value : ir.CompilerIrValue phi-input-at-16129-3.value]
-        [label : i64 phi-input-at-16129-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            (ir.compiler-ir-global-shared-view phi-inputs-at-16129-3.slots)
-            (+ phi-inputs-at-16129-3.start 1)
-            (- phi-inputs-at-16129-3.len 1))]
-        (ir.compiler-ir-phi-input-seq-prepend
-          value
-          (if (= label pred-label)
-            ph-label
-            label)
-          (compiler-reg-preheader-relabel-phi-inputs
-            (compiler-reg-global-shared-view rest)
-            pred-label
-            ph-label))))))
-
 (define (compiler-reg-preheader-relabel-instr
   [instr : ir.CompilerIrInstr]
   [pred-label : i64]
@@ -16998,7 +16968,7 @@
     [(ir.CompilerIrInstr.Phi dst inputs ty)
       (ir.CompilerIrInstr.Phi
         dst
-        (compiler-reg-preheader-relabel-phi-inputs inputs pred-label ph-label)
+        (ir.compiler-ir-phi-input-seq-relabel inputs pred-label ph-label)
         ty)]
     [_ instr]))
 

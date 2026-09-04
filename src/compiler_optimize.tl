@@ -83527,38 +83527,6 @@
 
 ;; The slow loop keeps the original body verbatim; only the phis' entry-edge
 ;; input labels move from the original predecessor to the guard block.
-;; The slow loop keeps the original body verbatim; only the phis' entry-edge
-;; input labels move from the original predecessor to the guard block.
-(define (opt-unroll-const-guard-relabel-inputs
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [from-label : i64]
-  [to-label : i64]) : ir.CompilerIrPhiInputSeq
-  (let
-    [phi-inputs-at-72799-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-72799-3.len 0)
-      (ir.compiler-ir-phi-input-seq-empty)
-      (let
-        [phi-input-at-72799-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-72799-3)
-            0)]
-        [value : ir.CompilerIrValue phi-input-at-72799-3.value]
-        [label : i64 phi-input-at-72799-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            (ir.compiler-ir-global-shared-view phi-inputs-at-72799-3.slots)
-            (+ phi-inputs-at-72799-3.start 1)
-            (- phi-inputs-at-72799-3.len 1))]
-        (ir.compiler-ir-phi-input-seq-prepend
-          value
-          (if (= label from-label)
-            to-label
-            label)
-          (opt-unroll-const-guard-relabel-inputs
-            (compiler-opt-global-shared-view rest)
-            from-label
-            to-label))))))
-
 (define (opt-unroll-const-guard-relabel-phis
   [instrs : ir.CompilerIrInstrSeq]
   [from-label : i64]
@@ -83583,7 +83551,7 @@
                 [(ir.CompilerIrInstr.Phi dst inputs ty)
                   (ir.CompilerIrInstr.Phi
                     dst
-                    (opt-unroll-const-guard-relabel-inputs
+                    (ir.compiler-ir-phi-input-seq-relabel
                       inputs
                       from-label
                       to-label)
@@ -91720,36 +91688,6 @@
                 builder)))]))))
 
 ;; Relabel the loop phis' outside-pred inputs to the guard block.
-(define (opt-relabel-phi-inputs
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [pred-label : i64]
-  [guard-label : i64]) : ir.CompilerIrPhiInputSeq
-  (let
-    [phi-inputs-at-79907-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-79907-3.len 0)
-      (ir.compiler-ir-phi-input-seq-empty)
-      (let
-        [phi-input-at-79907-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-79907-3)
-            0)]
-        [value : ir.CompilerIrValue phi-input-at-79907-3.value]
-        [label : i64 phi-input-at-79907-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            (ir.compiler-ir-global-shared-view phi-inputs-at-79907-3.slots)
-            (+ phi-inputs-at-79907-3.start 1)
-            (- phi-inputs-at-79907-3.len 1))]
-        (ir.compiler-ir-phi-input-seq-prepend
-          value
-          (if (= label pred-label)
-            guard-label
-            label)
-          (opt-relabel-phi-inputs
-            (compiler-opt-global-shared-view rest)
-            pred-label
-            guard-label))))))
-
 (define (opt-relabel-phi-instrs
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
@@ -91775,7 +91713,10 @@
                 [(ir.CompilerIrInstr.Phi dst inputs ty)
                   (ir.CompilerIrInstr.Phi
                     dst
-                    (opt-relabel-phi-inputs inputs pred-label guard-label)
+                    (ir.compiler-ir-phi-input-seq-relabel
+                      inputs
+                      pred-label
+                      guard-label)
                     ty)]
                 [_ instr]))
             (set! next (+ next 1)))))
@@ -118527,38 +118468,6 @@
         tail-count)
       (ir.compiler-ir-instr-builder-to-seq builder))))
 
-;; Move a phi's incoming edge (the header's preheader edge now arrives from the
-;; join block).
-(define (opt-ubound-relabel-inputs
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [from-label : i64]
-  [to-label : i64]) : ir.CompilerIrPhiInputSeq
-  (let
-    [phi-inputs-at-101157-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-101157-3.len 0)
-      (ir.compiler-ir-phi-input-seq-empty)
-      (let
-        [phi-input-at-101157-3 : ir.CompilerIrPhiInput
-          (ir.compiler-ir-phi-input-seq-ref
-            (ir.compiler-ir-global-shared-view phi-inputs-at-101157-3)
-            0)]
-        [value : ir.CompilerIrValue phi-input-at-101157-3.value]
-        [label : i64 phi-input-at-101157-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            (ir.compiler-ir-global-shared-view phi-inputs-at-101157-3.slots)
-            (+ phi-inputs-at-101157-3.start 1)
-            (- phi-inputs-at-101157-3.len 1))]
-        (ir.compiler-ir-phi-input-seq-prepend
-          value
-          (if (= label from-label)
-            to-label
-            label)
-          (opt-ubound-relabel-inputs
-            (compiler-opt-global-shared-view rest)
-            from-label
-            to-label))))))
-
 ;; Split a phi's latch edge into the two blocks that now sit on it. The value
 ;; is the same on both: the trap block is dominated by the check block, which
 ;; is dominated by the latch, so everything the old edge carried is still in
@@ -118635,7 +118544,7 @@
                           from-label
                           first-label
                           second-label)
-                        (opt-ubound-relabel-inputs
+                        (ir.compiler-ir-phi-input-seq-relabel
                           inputs
                           from-label
                           first-label))

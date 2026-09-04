@@ -167,49 +167,48 @@
     [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
     [wire-len : i64 (string.string-length (& wire))]
     [split : i64 0]
-    (begin
-      (while (<= split 2)
-        (let
-          [left : (& wire bytes) (byte_buf.bytes-slice-view view 0 split)]
-          [right : (& wire bytes)
-            (byte_buf.bytes-slice-view view split (- wire-len split))]
-          (begin
-            (match (trailer.response-trailer-parser-feed (new-parser) left)
-              [(trailer.HttpResponseTrailerFeedNeedInput next first-consumed)
-                (begin
-                  (test.assert-i64-eq
-                    first-consumed
-                    split
-                    "empty trailer split prefix")
-                  (match (trailer.response-trailer-parser-feed next right)
-                    [(trailer.HttpResponseTrailerFeedComplete
-                        terminal
-                        second-consumed)
-                      (begin
-                        (test.assert-i64-eq
-                          second-consumed
-                          (- 2 split)
-                          "empty trailer split suffix")
-                        (match (trailer.response-trailer-parser-into-fields
-                          terminal)
-                          [(trailer.HttpResponseTrailerFieldsOk fields)
-                            (test.assert-i64-eq
-                              fields.len
-                              0
-                              "empty trailer fields")]
-                          [_ (fail "empty trailer extraction")]))]
-                    [_ (fail "empty response trailer did not complete")]))]
-              [(trailer.HttpResponseTrailerFeedComplete terminal consumed)
-                (begin
-                  (test.assert-i64-eq split 2 "empty trailer early completion")
-                  (test.assert-i64-eq consumed 2 "empty trailer terminator")
-                  (match (trailer.response-trailer-parser-into-fields terminal)
-                    [(trailer.HttpResponseTrailerFieldsOk fields)
-                      (test.assert-i64-eq fields.len 0 "empty trailer fields")]
-                    [_ (fail "empty trailer extraction")]))]
-              [_ (fail "empty response trailers rejected")])
-            (set! split (+ split 1))))
-        unit))))
+    (while (<= split 2)
+      (let
+        [left : (& wire bytes) (byte_buf.bytes-slice-view view 0 split)]
+        [right : (& wire bytes)
+          (byte_buf.bytes-slice-view view split (- wire-len split))]
+        (begin
+          (match (trailer.response-trailer-parser-feed (new-parser) left)
+            [(trailer.HttpResponseTrailerFeedNeedInput next first-consumed)
+              (begin
+                (test.assert-i64-eq
+                  first-consumed
+                  split
+                  "empty trailer split prefix")
+                (match (trailer.response-trailer-parser-feed next right)
+                  [(trailer.HttpResponseTrailerFeedComplete
+                      terminal
+                      second-consumed)
+                    (begin
+                      (test.assert-i64-eq
+                        second-consumed
+                        (- 2 split)
+                        "empty trailer split suffix")
+                      (match (trailer.response-trailer-parser-into-fields
+                        terminal)
+                        [(trailer.HttpResponseTrailerFieldsOk fields)
+                          (test.assert-i64-eq
+                            fields.len
+                            0
+                            "empty trailer fields")]
+                        [_ (fail "empty trailer extraction")]))]
+                  [_ (fail "empty response trailer did not complete")]))]
+            [(trailer.HttpResponseTrailerFeedComplete terminal consumed)
+              (begin
+                (test.assert-i64-eq split 2 "empty trailer early completion")
+                (test.assert-i64-eq consumed 2 "empty trailer terminator")
+                (match (trailer.response-trailer-parser-into-fields terminal)
+                  [(trailer.HttpResponseTrailerFieldsOk fields)
+                    (test.assert-i64-eq fields.len 0 "empty trailer fields")]
+                  [_ (fail "empty trailer extraction")]))]
+            [_ (fail "empty response trailers rejected")])
+          (set! split (+ split 1))))
+      unit)))
 
 (define (assert-valid-every-split) : unit
   (let
@@ -219,49 +218,48 @@
     [prefix-len : i64 (string.string-length (& prefix))]
     [wire-len : i64 (string.string-length (& wire))]
     [split : i64 0]
-    (begin
-      (while (<= split prefix-len)
-        (let
-          [left : (& wire bytes) (byte_buf.bytes-slice-view view 0 split)]
-          [right : (& wire bytes)
-            (byte_buf.bytes-slice-view view split (- wire-len split))]
-          (begin
-            (match (trailer.response-trailer-parser-feed (new-parser) left)
-              [(trailer.HttpResponseTrailerFeedNeedInput next first-consumed)
-                (begin
-                  (test.assert-i64-eq
-                    first-consumed
-                    split
-                    "trailer split first consumed")
-                  (match (trailer.response-trailer-parser-feed next right)
-                    [(trailer.HttpResponseTrailerFeedComplete
-                        terminal
-                        second-consumed)
-                      (begin
-                        (test.assert-i64-eq
-                          second-consumed
-                          (- prefix-len split)
-                          "trailer split second consumed")
-                        (match (trailer.response-trailer-parser-into-fields
-                          terminal)
-                          [(trailer.HttpResponseTrailerFieldsOk fields)
-                            (test.assert-i64-eq
-                              fields.len
-                              2
-                              "trailer split fields")]
-                          [_ (fail "split trailer extraction")]))]
-                    [_ (fail "split trailer did not complete")]))]
-              [(trailer.HttpResponseTrailerFeedComplete terminal consumed)
-                (begin
-                  (test.assert-i64-eq split prefix-len "early split completion")
-                  (test.assert-i64-eq consumed prefix-len "full split consumed")
-                  (match (trailer.response-trailer-parser-into-fields terminal)
-                    [(trailer.HttpResponseTrailerFieldsOk fields)
-                      (test.assert-i64-eq fields.len 2 "full split fields")]
-                    [_ (fail "full split extraction")]))]
-              [_ (fail "split trailer rejected")])
-            (set! split (+ split 1))))
-        unit))))
+    (while (<= split prefix-len)
+      (let
+        [left : (& wire bytes) (byte_buf.bytes-slice-view view 0 split)]
+        [right : (& wire bytes)
+          (byte_buf.bytes-slice-view view split (- wire-len split))]
+        (begin
+          (match (trailer.response-trailer-parser-feed (new-parser) left)
+            [(trailer.HttpResponseTrailerFeedNeedInput next first-consumed)
+              (begin
+                (test.assert-i64-eq
+                  first-consumed
+                  split
+                  "trailer split first consumed")
+                (match (trailer.response-trailer-parser-feed next right)
+                  [(trailer.HttpResponseTrailerFeedComplete
+                      terminal
+                      second-consumed)
+                    (begin
+                      (test.assert-i64-eq
+                        second-consumed
+                        (- prefix-len split)
+                        "trailer split second consumed")
+                      (match (trailer.response-trailer-parser-into-fields
+                        terminal)
+                        [(trailer.HttpResponseTrailerFieldsOk fields)
+                          (test.assert-i64-eq
+                            fields.len
+                            2
+                            "trailer split fields")]
+                        [_ (fail "split trailer extraction")]))]
+                  [_ (fail "split trailer did not complete")]))]
+            [(trailer.HttpResponseTrailerFeedComplete terminal consumed)
+              (begin
+                (test.assert-i64-eq split prefix-len "early split completion")
+                (test.assert-i64-eq consumed prefix-len "full split consumed")
+                (match (trailer.response-trailer-parser-into-fields terminal)
+                  [(trailer.HttpResponseTrailerFieldsOk fields)
+                    (test.assert-i64-eq fields.len 2 "full split fields")]
+                  [_ (fail "full split extraction")]))]
+            [_ (fail "split trailer rejected")])
+          (set! split (+ split 1))))
+      unit)))
 
 (define (trailer-error-code
   [error : (& error trailer.HttpResponseTrailerError)]) : i64
@@ -293,57 +291,51 @@
     [view : (& wire bytes) (byte_buf.str-as-bytes (& wire))]
     [n : i64 (string.string-length (& wire))]
     [split : i64 0]
-    (begin
-      (while (<= split n)
-        (let
-          [left : (& wire bytes) (byte_buf.bytes-slice-view view 0 split)]
-          [right : (& wire bytes)
-            (byte_buf.bytes-slice-view view split (- n split))]
-          (begin
-            (match (trailer.response-trailer-parser-feed
-              (new-parser-with
-                (clone limits)
-                (http_types.header-name-set-empty))
-              left)
-              [(trailer.HttpResponseTrailerFeedNeedInput next first-consumed)
-                (begin
-                  (test.assert-i64-eq first-consumed split "error split prefix")
-                  (match (trailer.response-trailer-parser-feed next right)
-                    [(trailer.HttpResponseTrailerFeedErr
-                        _
-                        error
-                        second-consumed)
-                      (begin
-                        (test.assert-i64-eq
-                          (+ first-consumed second-consumed)
-                          expected-total-consumed
-                          "partitioned error consumed")
-                        (test.assert-i64-eq
-                          (trailer-error-code (& error))
-                          expected-code
-                          "partitioned error kind")
-                        (test.assert-i64-eq
-                          error.offset
-                          expected-offset
-                          "partitioned error offset"))]
-                    [_ (fail "partitioned invalid trailer did not fail")]))]
-              [(trailer.HttpResponseTrailerFeedErr _ error consumed)
-                (begin
-                  (test.assert-i64-eq
-                    consumed
-                    expected-total-consumed
-                    "single-feed error consumed")
-                  (test.assert-i64-eq
-                    (trailer-error-code (& error))
-                    expected-code
-                    "single-feed error kind")
-                  (test.assert-i64-eq
-                    error.offset
-                    expected-offset
-                    "single-feed error offset"))]
-              [_ (fail "invalid trailer completed")])
-            (set! split (+ split 1))))
-        unit))))
+    (while (<= split n)
+      (let
+        [left : (& wire bytes) (byte_buf.bytes-slice-view view 0 split)]
+        [right : (& wire bytes)
+          (byte_buf.bytes-slice-view view split (- n split))]
+        (begin
+          (match (trailer.response-trailer-parser-feed
+            (new-parser-with (clone limits) (http_types.header-name-set-empty))
+            left)
+            [(trailer.HttpResponseTrailerFeedNeedInput next first-consumed)
+              (begin
+                (test.assert-i64-eq first-consumed split "error split prefix")
+                (match (trailer.response-trailer-parser-feed next right)
+                  [(trailer.HttpResponseTrailerFeedErr _ error second-consumed)
+                    (begin
+                      (test.assert-i64-eq
+                        (+ first-consumed second-consumed)
+                        expected-total-consumed
+                        "partitioned error consumed")
+                      (test.assert-i64-eq
+                        (trailer-error-code (& error))
+                        expected-code
+                        "partitioned error kind")
+                      (test.assert-i64-eq
+                        error.offset
+                        expected-offset
+                        "partitioned error offset"))]
+                  [_ (fail "partitioned invalid trailer did not fail")]))]
+            [(trailer.HttpResponseTrailerFeedErr _ error consumed)
+              (begin
+                (test.assert-i64-eq
+                  consumed
+                  expected-total-consumed
+                  "single-feed error consumed")
+                (test.assert-i64-eq
+                  (trailer-error-code (& error))
+                  expected-code
+                  "single-feed error kind")
+                (test.assert-i64-eq
+                  error.offset
+                  expected-offset
+                  "single-feed error offset"))]
+            [_ (fail "invalid trailer completed")])
+          (set! split (+ split 1))))
+      unit)))
 
 (define (assert-error-partitions) : unit
   (begin

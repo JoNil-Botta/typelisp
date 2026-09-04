@@ -4889,7 +4889,7 @@
         bound.env
         value-id))))
 
-(define (compiler-semantic-walk-spmd-scan!
+(define (compiler-semantic-walk-spmd-state!
   [state : CompilerSemanticWalkState]
   [scope : CompilerSemanticBindingSnapshot]
   [env : tc.TcTypeEnv]
@@ -4897,10 +4897,10 @@
   [index-ty : ast.AstType]
   [start-id : i64]
   [end-id : i64]
-  [prefix-name : i64]
-  [prefix-ty : ast.AstType]
+  [state-name : i64]
+  [state-ty : ast.AstType]
   [init-id : i64]
-  [value-id : i64]
+  [element-id : i64]
   [body-id : i64]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
   (let
@@ -4934,17 +4934,17 @@
         (owned_view.compiler-owned-shared-view state)
         init-id
         (string.string-length state.source))]
-    [prefix-bound : CompilerSemanticBindResult
+    [state-bound : CompilerSemanticBindResult
       (compiler-semantic-bind-local!
         (owned_view.compiler-owned-shared-view state)
         index-bound.scope
         index-bound.env
-        prefix-name
+        state-name
         CompilerSemanticSymbolKind.Local
         (ast.AstMaybeType.Some
           (tc.tc-resolve-type
             (owned_view.compiler-owned-shared-view state.ctx)
-            (owned_view.compiler-owned-shared-view prefix-ty)))
+            (owned_view.compiler-owned-shared-view state-ty)))
         (compiler-semantic-expr-end-offset
           (owned_view.compiler-owned-shared-view state)
           end-id
@@ -4956,7 +4956,7 @@
         (owned_view.compiler-owned-shared-view index-ty))
       (compiler-semantic-walk-type!
         (owned_view.compiler-owned-shared-view state)
-        (owned_view.compiler-owned-shared-view prefix-ty))
+        (owned_view.compiler-owned-shared-view state-ty))
       (compiler-semantic-walk-node!
         (owned_view.compiler-owned-shared-view state)
         scope
@@ -4972,8 +4972,8 @@
         scope
         env
         init-id)
-      ;; The index remains active through both the scan value and body. The
-      ;; prefix is a nested body-only extension, so its exit restores the
+      ;; The index remains active through both the element and body. The
+      ;; state is a nested body-only extension, so its exit restores the
       ;; index before the enclosing index region restores the outer scope.
       (compiler-semantic-scope-region-add!
         (owned_view.compiler-owned-shared-view state)
@@ -4981,7 +4981,7 @@
         index-bound.scope
         (compiler-semantic-expr-start-offset
           (owned_view.compiler-owned-shared-view state)
-          value-id
+          element-id
           -1)
         (compiler-semantic-expr-end-offset
           (owned_view.compiler-owned-shared-view state)
@@ -4991,17 +4991,46 @@
         (owned_view.compiler-owned-shared-view state)
         index-bound.scope
         index-bound.env
-        value-id)
+        element-id)
       (compiler-semantic-scope-node-region-add!
         (owned_view.compiler-owned-shared-view state)
         index-bound.scope
-        prefix-bound.scope
+        state-bound.scope
         body-id)
       (compiler-semantic-walk-node!
         (owned_view.compiler-owned-shared-view state)
-        prefix-bound.scope
-        prefix-bound.env
+        state-bound.scope
+        state-bound.env
         body-id))))
+
+(define (compiler-semantic-walk-spmd-scan!
+  [state : CompilerSemanticWalkState]
+  [scope : CompilerSemanticBindingSnapshot]
+  [env : tc.TcTypeEnv]
+  [index-name : i64]
+  [index-ty : ast.AstType]
+  [start-id : i64]
+  [end-id : i64]
+  [prefix-name : i64]
+  [prefix-ty : ast.AstType]
+  [init-id : i64]
+  [value-id : i64]
+  [body-id : i64]
+  [maybe-span : CompilerSemanticMaybeSpan]) : unit
+  (compiler-semantic-walk-spmd-state!
+    state
+    scope
+    env
+    index-name
+    index-ty
+    start-id
+    end-id
+    prefix-name
+    prefix-ty
+    init-id
+    value-id
+    body-id
+    maybe-span))
 
 (define (compiler-semantic-walk-spmd-compact!
   [state : CompilerSemanticWalkState]
@@ -5017,102 +5046,20 @@
   [keep-id : i64]
   [body-id : i64]
   [maybe-span : CompilerSemanticMaybeSpan]) : unit
-  (let
-    [form-start : i64
-      (compiler-semantic-maybe-span-start
-        (owned_view.compiler-owned-shared-view state)
-        maybe-span
-        0)]
-    [start-offset : i64
-      (compiler-semantic-expr-start-offset
-        (owned_view.compiler-owned-shared-view state)
-        start-id
-        (string.string-length state.source))]
-    [index-bound : CompilerSemanticBindResult
-      (compiler-semantic-bind-local!
-        (owned_view.compiler-owned-shared-view state)
-        scope
-        env
-        index-name
-        CompilerSemanticSymbolKind.Local
-        (ast.AstMaybeType.Some
-          (tc.tc-resolve-type
-            (owned_view.compiler-owned-shared-view state.ctx)
-            (owned_view.compiler-owned-shared-view index-ty)))
-        (compiler-semantic-form-head-end
-          (owned_view.compiler-owned-shared-view state.source)
-          form-start)
-        start-offset)]
-    [init-offset : i64
-      (compiler-semantic-expr-start-offset
-        (owned_view.compiler-owned-shared-view state)
-        init-id
-        (string.string-length state.source))]
-    [slot-bound : CompilerSemanticBindResult
-      (compiler-semantic-bind-local!
-        (owned_view.compiler-owned-shared-view state)
-        index-bound.scope
-        index-bound.env
-        slot-name
-        CompilerSemanticSymbolKind.Local
-        (ast.AstMaybeType.Some
-          (tc.tc-resolve-type
-            (owned_view.compiler-owned-shared-view state.ctx)
-            (owned_view.compiler-owned-shared-view slot-ty)))
-        (compiler-semantic-expr-end-offset
-          (owned_view.compiler-owned-shared-view state)
-          end-id
-          index-bound.next-search)
-        init-offset)]
-    (begin
-      (compiler-semantic-walk-type!
-        (owned_view.compiler-owned-shared-view state)
-        (owned_view.compiler-owned-shared-view index-ty))
-      (compiler-semantic-walk-type!
-        (owned_view.compiler-owned-shared-view state)
-        (owned_view.compiler-owned-shared-view slot-ty))
-      (compiler-semantic-walk-node!
-        (owned_view.compiler-owned-shared-view state)
-        scope
-        env
-        start-id)
-      (compiler-semantic-walk-node!
-        (owned_view.compiler-owned-shared-view state)
-        scope
-        env
-        end-id)
-      (compiler-semantic-walk-node!
-        (owned_view.compiler-owned-shared-view state)
-        scope
-        env
-        init-id)
-      (compiler-semantic-scope-region-add!
-        (owned_view.compiler-owned-shared-view state)
-        scope
-        index-bound.scope
-        (compiler-semantic-expr-start-offset
-          (owned_view.compiler-owned-shared-view state)
-          keep-id
-          -1)
-        (compiler-semantic-expr-end-offset
-          (owned_view.compiler-owned-shared-view state)
-          body-id
-          (string.string-length state.source)))
-      (compiler-semantic-walk-node!
-        (owned_view.compiler-owned-shared-view state)
-        index-bound.scope
-        index-bound.env
-        keep-id)
-      (compiler-semantic-scope-node-region-add!
-        (owned_view.compiler-owned-shared-view state)
-        index-bound.scope
-        slot-bound.scope
-        body-id)
-      (compiler-semantic-walk-node!
-        (owned_view.compiler-owned-shared-view state)
-        slot-bound.scope
-        slot-bound.env
-        body-id))))
+  (compiler-semantic-walk-spmd-state!
+    state
+    scope
+    env
+    index-name
+    index-ty
+    start-id
+    end-id
+    slot-name
+    slot-ty
+    init-id
+    keep-id
+    body-id
+    maybe-span))
 
 (define (compiler-semantic-walk-set!
   [state : CompilerSemanticWalkState]
@@ -11871,6 +11818,96 @@
               "shadow")
             1))))))
 
+;; Paired scan/compact fixtures pin the shared two-level scope protocol.
+;; Range/init references see parameters; the element sees only the inner index;
+;; the body sees both inner names, and the following expression restores both.
+(define (compiler-check-semantic-index-spmd-state-scopes-ok? [source : String]) : bool
+  (let
+    [path : String "src/tests/semantic_spmd_state.tl"]
+    (match (compiler-check-source-index-with-roots
+      (owned_view.compiler-owned-shared-view path)
+      source
+      (svec.new))
+      [(ResultCompilerCheckWithSemanticIndex.Ok _ index)
+        (let
+          [ok : bool
+            (and
+              (compiler-semantic-source-index-name-symbol-match?
+                (& index)
+                (owned_view.compiler-owned-shared-view path)
+                "i"
+                0
+                0)
+              (compiler-semantic-source-index-name-symbol-match?
+                (& index)
+                (owned_view.compiler-owned-shared-view path)
+                "i"
+                0
+                1)
+              (compiler-semantic-source-index-name-symbol-match?
+                (& index)
+                (owned_view.compiler-owned-shared-view path)
+                "i"
+                1
+                2)
+              (compiler-semantic-source-index-name-symbol-match?
+                (& index)
+                (owned_view.compiler-owned-shared-view path)
+                "i"
+                1
+                3)
+              (compiler-semantic-source-index-name-symbol-match?
+                (& index)
+                (owned_view.compiler-owned-shared-view path)
+                "i"
+                0
+                4)
+              (compiler-semantic-source-index-name-symbol-match?
+                (& index)
+                (owned_view.compiler-owned-shared-view path)
+                "state"
+                0
+                0)
+              (compiler-semantic-source-index-name-symbol-match?
+                (& index)
+                (owned_view.compiler-owned-shared-view path)
+                "state"
+                0
+                1)
+              (compiler-semantic-source-index-name-symbol-match?
+                (& index)
+                (owned_view.compiler-owned-shared-view path)
+                "state"
+                1
+                2)
+              (compiler-semantic-source-index-name-symbol-match?
+                (& index)
+                (owned_view.compiler-owned-shared-view path)
+                "state"
+                0
+                3))]
+          (begin
+            (compiler-semantic-source-index-release! (&mut index))
+            ok))]
+      [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+        (begin
+          (compiler-semantic-source-index-release! (&mut partial))
+          false)]
+      [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
+(define (compiler-check-semantic-index-spmd-paired-scopes-ok?) : bool
+  (and
+    (compiler-check-semantic-index-spmd-state-scopes-ok?
+      "(define (scan [i : i64] [state : i64]) : i64
+  (begin (spmd-scan sum ([i : i64 i (+ i 2)] [state : i64 state])
+       (+ i state) (let [_seen : i64 (+ i state)] unit))
+     (+ i state)))")
+    (compiler-check-semantic-index-spmd-state-scopes-ok?
+      "(define (compact [i : i64] [state : i64]) : i64
+  (begin (spmd-compact ([i : i64 i (+ i 2)] [state : i64 state])
+       (> (+ i state) 0) (let [_seen : i64 (+ i state)] unit))
+     (+ i state)))")))
+
 (define (compiler-check-semantic-index-dense-scopes-ok?) : bool
   (let
     [path : String "src/tests/semantic_index_dense_scopes.tl"]
@@ -13674,7 +13711,10 @@
           0
           1))]
     [scopes-start : i64 (compiler-semantic-index-smoke-timing-start)]
-    [scopes-ok : bool (compiler-check-semantic-index-dense-scopes-ok?)]
+    [scopes-ok : bool
+      (and
+        (compiler-check-semantic-index-dense-scopes-ok?)
+        (compiler-check-semantic-index-spmd-paired-scopes-ok?))]
     [scopes-timing-ok : bool
       (compiler-semantic-index-smoke-timing-record
         "semantic-dense-scopes"

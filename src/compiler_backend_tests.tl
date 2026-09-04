@@ -7436,6 +7436,204 @@
 ;; The paired neighbour is the SAME text with a live slot region (frame = 16):
 ;; both the prologue subq and the pop-run addq must come back, which is what
 ;; keeps the drop keyed on the amount being zero rather than on the shape.
+;; ---------------------------------------------------------------------------
+;; RG-1 fix B: a callee-saved register the body never names is not pushed.
+;;
+;; The body below saves r12/r13/r14 (slot-vars = 3, so the saved-CSR slots are
+;; -32/-40/-48) and then names %r12 and %r14 and nothing else. %r13's push and
+;; pop are pure cost: two instructions on every call of the function. The first
+;; rebase reports what the body names; re-running it with %r13 out of the PUSH
+;; set -- and the full set still classifying, so its save/restore movqs are
+;; deleted exactly as before -- must drop its `popq` with its `pushq`.
+(define (compiler-backend-csr-unused-save-body) : String
+  "    movq %r12, -32(%rbp)
+    movq %r13, -40(%rbp)
+    movq %r14, -48(%rbp)
+    movq -8(%rbp), %r12
+    addq %r14, %r12
+    movq %r12, %rax
+    leaq -48(%rbp), %rsp
+    popq %r14
+    popq %r13
+    popq %r12
+    leave
+    ret
+")
+
+;; The same body with %r13 named through its 32-bit spelling. A register named
+;; at ANY width is used; reading only the 64-bit spellings makes this body look
+;; empty of %r13 and trims a save the function needs.
+(define (compiler-backend-csr-narrow-spelling-body) : String
+  "    movq %r12, -32(%rbp)
+    movq %r13, -40(%rbp)
+    movq %r14, -48(%rbp)
+    movq -8(%rbp), %r12
+    addl %r13d, %r12d
+    addq %r14, %r12
+    movq %r12, %rax
+    leaq -48(%rbp), %rsp
+    popq %r14
+    popq %r13
+    popq %r12
+    leave
+    ret
+")
+
+(define (compiler-backend-csr-trim-mask-of [body : String]) : i64
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [_abi : unit
+      (compiler_backend.compiler-backend-set-current-fn-linux! backend-state)]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler-backend-callee-save-assignments3)]
+    [push-regs : (__tl_dyn-array String)
+      (compiler_backend.compiler-backend-rsp-rebase-make-push-regs)]
+    [push-count : i64
+      (compiler_backend.compiler-backend-fill-push-csr-regs!
+        assignments
+        (owned_view.compiler-owned-shared-view push-regs)
+        backend-state)]
+    [result : compiler_backend.CompilerBackendRspRebaseResult
+      (compiler_backend.compiler-backend-rsp-rebase-full-result
+        (owned_view.compiler-owned-shared-view body)
+        64
+        true
+        (owned_view.compiler-owned-shared-view push-regs)
+        push-count
+        3
+        backend-state)]
+    (if result.ok
+      result.csr-ref-mask
+      0)))
+
+(define (compiler-backend-csr-unused-save-trim-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [_abi : unit
+      (compiler_backend.compiler-backend-set-current-fn-linux! backend-state)]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler-backend-callee-save-assignments3)]
+    [push-regs : (__tl_dyn-array String)
+      (compiler_backend.compiler-backend-rsp-rebase-make-push-regs)]
+    [push-count : i64
+      (compiler_backend.compiler-backend-fill-push-csr-regs!
+        assignments
+        (owned_view.compiler-owned-shared-view push-regs)
+        backend-state)]
+    [body : String (compiler-backend-csr-unused-save-body)]
+    [untrimmed : compiler_backend.CompilerBackendRspRebaseResult
+      (compiler_backend.compiler-backend-rsp-rebase-full-result
+        (owned_view.compiler-owned-shared-view body)
+        64
+        true
+        (owned_view.compiler-owned-shared-view push-regs)
+        push-count
+        3
+        backend-state)]
+    [trim-regs : (__tl_dyn-array String)
+      (compiler_backend.compiler-backend-csr-trimmed-push-regs
+        (owned_view.compiler-owned-shared-view push-regs)
+        untrimmed.csr-ref-mask
+        backend-state)]
+    [trim-count : i64
+      (compiler_backend.compiler-backend-csr-push-reg-count
+        (owned_view.compiler-owned-shared-view trim-regs))]
+    [trimmed : compiler_backend.CompilerBackendRspRebaseResult
+      (compiler_backend.compiler-backend-rsp-rebase-full-result-with-saves
+        (owned_view.compiler-owned-shared-view body)
+        64
+        true
+        (owned_view.compiler-owned-shared-view trim-regs)
+        trim-count
+        (owned_view.compiler-owned-shared-view push-regs)
+        push-count
+        3
+        backend-state)]
+    [prologue : String
+      (compiler_backend.compiler-backend-emit-function-entry-fpo-push
+        backend-state
+        "_tl_rg1_trim_unit"
+        64
+        (owned_view.compiler-owned-shared-view trim-regs)
+        trim-count)]
+    [untrimmed-text : String untrimmed.text]
+    [trimmed-text : String trimmed.text]
+    [trimmed-slot1 : String
+      (compiler_backend.compiler-backend-global-array-element-shared-view
+        trim-regs
+        1)]
+    (and
+      ;; The control: before the trim the pop run restores all three.
+      (= push-count 3)
+      untrimmed.ok
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view untrimmed-text)
+        "    popq %r13\n")
+      ;; The body names %r12 and %r14 and not %r13.
+      (= trim-count 2)
+      (string.eq trimmed-slot1 "")
+      trimmed.ok
+      ;; Neither half of the pair survives, and the register is named nowhere.
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view trimmed-text)
+          "%r13"))
+      ;; The saves the classification set still deleted.
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view trimmed-text)
+          "(%rbp)"))
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view trimmed-text)
+        "    popq %r14\n")
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view trimmed-text)
+        "    popq %r12\n")
+      ;; ALIGNMENT. The frame adjustment follows the push count: two pushes are
+      ;; an even run, so the 8-byte pad comes back and the prologue's total
+      ;; displacement D = 8*pushes + sub stays at D % 16 == 8 -- the offset a
+      ;; returning call needs. (Three pushes paid the same 88 with sub = 64.)
+      (string.eq
+        prologue
+        "_tl_rg1_trim_unit:
+    pushq %r12
+    pushq %r14
+    subq $72, %rsp
+")
+      (= (bit-and (+ (* 8 trim-count) 72) 15) 8)
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view trimmed-text)
+        "    addq $72, %rsp\n"))))
+
+;; The negative: a register named only through a narrow spelling is USED, and
+;; nothing is trimmed.
+(define (compiler-backend-csr-narrow-spelling-keeps-save-ok?) : bool
+  (let
+    [wide : i64
+      (compiler-backend-csr-trim-mask-of
+        (compiler-backend-csr-unused-save-body))]
+    [narrow : i64
+      (compiler-backend-csr-trim-mask-of
+        (compiler-backend-csr-narrow-spelling-body))]
+    [r13-bit : i64
+      (compiler_backend.compiler-backend-plan-reg-id-bit
+        compiler_abi.compiler-reg-id-r13)]
+    [r12-bit : i64
+      (compiler_backend.compiler-backend-plan-reg-id-bit
+        compiler_abi.compiler-reg-id-r12)]
+    [r14-bit : i64
+      (compiler_backend.compiler-backend-plan-reg-id-bit
+        compiler_abi.compiler-reg-id-r14)]
+    (and
+      (not (= (bit-and wide r12-bit) 0))
+      (not (= (bit-and wide r14-bit) 0))
+      (= (bit-and wide r13-bit) 0)
+      (not (= (bit-and narrow r13-bit) 0)))))
+
 (define (compiler-backend-dead-slot-region-push-body) : String
   "    movq %r12, -8(%rbp)
     movq %r13, -16(%rbp)
@@ -19227,6 +19425,47 @@ g:
         (compiler_ir_types.compiler-ir-label "two")))
     (compiler_ir_types.compiler-ir-label "other")))
 
+(define (compiler-backend-switch-test-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler-backend-test-instr-seq-prepend
+        (compiler-backend-switch-test-instr)
+        (compiler_ir_types.compiler-ir-instr-seq-empty)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "zero")
+        (compiler-backend-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.I64 0)))
+          (compiler_ir_types.compiler-ir-instr-seq-empty)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "one")
+          (compiler-backend-test-instr-seq-prepend
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.I64 1)))
+            (compiler_ir_types.compiler-ir-instr-seq-empty)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "two")
+            (compiler-backend-test-instr-seq-prepend
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 2)))
+              (compiler_ir_types.compiler-ir-instr-seq-empty)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "other")
+              (compiler-backend-test-instr-seq-prepend
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.I64 42)))
+                (compiler_ir_types.compiler-ir-instr-seq-empty)))
+            compiler_ir_types.CompilerIrBlockList.Nil))))))
+
 (define (compiler-backend-switch-test-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
@@ -19236,45 +19475,7 @@ g:
         (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         1
-        (compiler_ir_types.compiler-ir-block-cons
-          (compiler_ir_types.CompilerIrBlock.Block
-            (compiler_ir_types.compiler-ir-label "entry")
-            (compiler-backend-test-instr-seq-prepend
-              (compiler-backend-switch-test-instr)
-              (compiler_ir_types.compiler-ir-instr-seq-empty)))
-          (compiler_ir_types.compiler-ir-block-cons
-            (compiler_ir_types.CompilerIrBlock.Block
-              (compiler_ir_types.compiler-ir-label "zero")
-              (compiler-backend-test-instr-seq-prepend
-                (compiler_ir_types.CompilerIrInstr.Return
-                  (compiler_ir_types.CompilerIrMaybeValue.Some
-                    (compiler_ir_types.CompilerIrValue.I64 0)))
-                (compiler_ir_types.compiler-ir-instr-seq-empty)))
-            (compiler_ir_types.compiler-ir-block-cons
-              (compiler_ir_types.CompilerIrBlock.Block
-                (compiler_ir_types.compiler-ir-label "one")
-                (compiler-backend-test-instr-seq-prepend
-                  (compiler_ir_types.CompilerIrInstr.Return
-                    (compiler_ir_types.CompilerIrMaybeValue.Some
-                      (compiler_ir_types.CompilerIrValue.I64 1)))
-                  (compiler_ir_types.compiler-ir-instr-seq-empty)))
-              (compiler_ir_types.compiler-ir-block-cons
-                (compiler_ir_types.CompilerIrBlock.Block
-                  (compiler_ir_types.compiler-ir-label "two")
-                  (compiler-backend-test-instr-seq-prepend
-                    (compiler_ir_types.CompilerIrInstr.Return
-                      (compiler_ir_types.CompilerIrMaybeValue.Some
-                        (compiler_ir_types.CompilerIrValue.I64 2)))
-                    (compiler_ir_types.compiler-ir-instr-seq-empty)))
-                (compiler_ir_types.compiler-ir-block-cons
-                  (compiler_ir_types.CompilerIrBlock.Block
-                    (compiler_ir_types.compiler-ir-label "other")
-                    (compiler-backend-test-instr-seq-prepend
-                      (compiler_ir_types.CompilerIrInstr.Return
-                        (compiler_ir_types.CompilerIrMaybeValue.Some
-                          (compiler_ir_types.CompilerIrValue.I64 42)))
-                      (compiler_ir_types.compiler-ir-instr-seq-empty)))
-                  compiler_ir_types.CompilerIrBlockList.Nil))))))
+        (compiler-backend-switch-test-blocks))
       (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
@@ -19973,6 +20174,92 @@ g:
       (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
+(define (compiler-backend-switch-dispatch-planned-table-asm [borrowed : bool]) : compiler_backend.ResultCompilerBackend
+  (let
+    [program-index : compiler_backend.CompilerBackendProgramIndex
+      (compiler_backend.compiler-backend-program-index-build
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-function-seq-empty)
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
+    [backend-state : compiler_backend.CompilerBackendState
+      program-index.backend-state]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-rax))
+        (compiler_regalloc.compiler-reg-assignment-table-empty))]
+    (begin
+      (compiler-backend-test-scavenge-install-ctx!
+        "switch_planned_table"
+        (compiler_ir_types.compiler-ir-param-seq-empty)
+        (compiler_ast_types.AstType.I64)
+        1
+        (compiler-backend-switch-test-blocks)
+        (owned_view.compiler-owned-shared-view assignments)
+        backend-state)
+      ;; The PIC/Win64 form: the dispatch needs a table register.
+      (compiler_backend.compiler-backend-state-set-absolute-switch-ok!
+        backend-state
+        false)
+      ;; What the plan lookup records when the allocator BORROWED %rsi from a
+      ;; live-through value for this step (CompilerRegScratchAssignment.preserve).
+      (if borrowed
+        (compiler_backend.compiler-backend-current-planned-preserve-add!
+          (compiler_backend.compiler-backend-state-function-state backend-state)
+          compiler_abi.compiler-reg-id-rsi)
+        unit)
+      (compiler_backend.compiler-backend-emit-switch-dispatch
+        backend-state
+        "switch_planned_table"
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        0
+        3
+        (compiler_ir_types.compiler-ir-label "other")
+        false
+        assignments
+        ""
+        "%rsi"))))
+
+;; A planned table register the allocator BORROWED from a live-through value
+;; must reach the dispatch through the arming helper: the emitted form is then
+;; the slot-indirect one (target stashed, occupant restored BEFORE the
+;; transfer), never `jmp *(%rsi,idx,8)` with the occupant destroyed. The Win64
+;; scratch-vreg self-host reached exactly this in ctfe-quote-expr: the first
+;; plan homed the table register in %rbp, the FPO audit demoted the function,
+;; and the re-plan without %rbp borrowed the `expr` parameter's %rsi; the raw
+;; spelling went out unarmed and every arm read a destroyed parameter. The
+;; control keeps the plain form for a planned register that overlaps nothing.
+(define (compiler-backend-switch-dispatch-borrowed-table-reg-ok?) : bool
+  (and
+    (match (compiler-backend-switch-dispatch-planned-table-asm true)
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "_disp_j:\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    jmp *(%rsi"))
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            ", %rsi\n    jmp *"))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])
+    (match (compiler-backend-switch-dispatch-planned-table-asm false)
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    jmp *(%rsi,%rax,8)\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "_disp_j")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
 (define (compiler-backend-switch-negative-case-label-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-program-linux
     (compiler-backend-switch-negative-case-program))
@@ -20154,6 +20441,7 @@ g:
     (compiler-backend-switch-base-asm-ok?)
     (compiler-backend-switch-shape-diagnostic-ok?)
     (compiler-backend-switch-phi-edge-copy-ok?)
+    (compiler-backend-switch-dispatch-borrowed-table-reg-ok?)
     (compiler-backend-switch-negative-case-label-ok?)
     (compiler-backend-switch-object-image-ok?)
     (compiler-backend-switch-base-object-image-ok?)
@@ -37530,9 +37818,10 @@ g:
               (owned_view.compiler-owned-shared-view backend-state))]
           (compiler_backend.CompilerBackendRspRebaseResult
             (compiler_backend.compiler-backend-peephole-asm result.text)
-            result.ok))]
+            result.ok
+            result.csr-ref-mask))]
       [(compiler_backend.ResultCompilerBackend.Err _)
-        (compiler_backend.CompilerBackendRspRebaseResult "" false)])))
+        (compiler_backend.CompilerBackendRspRebaseResult "" false 0)])))
 
 (define (compiler-backend-rbp-immediate-add-final-ok?) : bool
   (let
@@ -54971,6 +55260,154 @@ b_keep:
 
 ;; A reusable backend owner may be retargeted between emissions, while two
 ;; independently prepared owners retain isolated ABI and mode decisions.
+;; ABT-1: the located runtime-abort tail's two `pushq`es are a dip on a path
+;; that ends in a call which never returns to this function, so the local slots
+;; they reach are dead there and compiler-backend-red-zone-decide! must not
+;; charge the guard for them. Every OTHER dip -- a c-ABI window, a phi
+;; cycle-break push, a real `subq` -- still counts in full, and so does a
+;; descriptor load whose continuation turns out to return.
+(define (compiler-backend-abort-tail-dip-body [tail : String]) : String
+  (str_cat.str-cat
+    "    cmpq %rsi, %rax\n"
+    "    jb .Lprobe_ok.0\n"
+    tail
+    ".Lprobe_ok.0:\n"
+    "    movq -8(%rsp), %rax\n"
+    "    ret\n"))
+
+(define (compiler-backend-abort-tail-dip-located-tail [call-line : String]) : String
+  (str_cat.str-cat
+    "    pushq %rsi\n"
+    "    pushq %rax\n"
+    "    leaq .L_tl_abort_site_1_bounds(%rip), %rdi\n"
+    "    popq %rsi\n"
+    "    popq %rdx\n"
+    call-line
+    "    jmp .L_tl_abort_site_1_bounds_end\n"
+    "    .balign 8\n"
+    ".L_tl_abort_site_1_bounds:\n"
+    "    .quad .L_tl_str_data_probe\n"
+    "    .quad 22\n"
+    "    .quad 34\n"
+    "    .quad 56\n"
+    ".L_tl_abort_site_1_bounds_end:\n"))
+
+(define (compiler-backend-abort-tail-dip-red-zone?
+  [text : String]
+  [frame : i64]) : bool
+  (let
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new intern-state)]
+    [linux : compiler_backend.CompilerBackendTargetPolicy
+      (compiler_backend.compiler-backend-target-policy-new
+        compiler_backend.CompilerBackendTarget.Linux)]
+    [_install : unit
+      (begin
+        (compiler_backend.compiler-backend-state-set-emission-target-policy!
+          state
+          linux)
+        (compiler_backend.compiler-backend-set-current-fn-abi! state linux.abi)
+        (compiler_backend.compiler-backend-red-zone-decide!
+          state
+          text
+          true
+          frame
+          0
+          false))]
+    (compiler_backend.compiler-backend-red-zone? state)))
+
+(define (compiler-backend-red-zone-abort-tail-dip-ok?) : bool
+  (let
+    ;; The whole body's only stack motion is one located bounds abort tail.
+    [abort-only : String
+      (compiler-backend-abort-tail-dip-body
+        (compiler-backend-abort-tail-dip-located-tail
+          "    call tl_oob_abort_at\n"))]
+    ;; The same shape whose continuation RETURNS: not a never-returning path,
+    ;; so its dip is owed in full.
+    [returning : String
+      (compiler-backend-abort-tail-dip-body
+        (compiler-backend-abort-tail-dip-located-tail
+          "    call _tl_probe_helper\n"))]
+    ;; An ordinary c-ABI dip window: two pushes around a call that returns.
+    [window : String
+      (compiler-backend-abort-tail-dip-body
+        (str_cat.str-cat
+          "    pushq %rsi\n"
+          "    pushq %rax\n"
+          "    call _tl_probe_helper\n"
+          "    popq %rax\n"
+          "    popq %rsi\n"))]
+    ;; A real 8-byte window that CLOSES before the abort tail opens: the tail's
+    ;; own 16 bytes drop out, the window's 8 do not.
+    [window-then-abort : String
+      (compiler-backend-abort-tail-dip-body
+        (str_cat.str-cat
+          "    pushq %rcx\n"
+          "    call _tl_probe_helper\n"
+          "    popq %rcx\n"
+          (compiler-backend-abort-tail-dip-located-tail
+            "    call tl_oob_abort_at\n")))]
+    ;; ...and one that is still OPEN when the tail opens: the third push
+    ;; displaces it out of the pending window before the marker can hold it.
+    [open-window-then-abort : String
+      (compiler-backend-abort-tail-dip-body
+        (str_cat.str-cat
+          "    pushq %rcx\n"
+          (compiler-backend-abort-tail-dip-located-tail
+            "    call tl_oob_abort_at\n")))]
+    ;; A bare (unlocated) abort pushes nothing, so an unrelated open window in
+    ;; front of it must still be counted: no descriptor load, nothing held.
+    [bare-abort : String
+      (compiler-backend-abort-tail-dip-body
+        (str_cat.str-cat
+          "    pushq %rcx\n"
+          "    pushq %rdx\n"
+          "    call tl_oob_abort\n"))]
+    (and
+      ;; The dips themselves.
+      (=
+        (compiler_backend.compiler-backend-text-max-rsp-dip
+          (owned_view.compiler-owned-shared-view abort-only))
+        0)
+      (=
+        (compiler_backend.compiler-backend-text-max-rsp-dip
+          (owned_view.compiler-owned-shared-view returning))
+        16)
+      (=
+        (compiler_backend.compiler-backend-text-max-rsp-dip
+          (owned_view.compiler-owned-shared-view window))
+        16)
+      (=
+        (compiler_backend.compiler-backend-text-max-rsp-dip
+          (owned_view.compiler-owned-shared-view window-then-abort))
+        8)
+      (=
+        (compiler_backend.compiler-backend-text-max-rsp-dip
+          open-window-then-abort)
+        8)
+      (=
+        (compiler_backend.compiler-backend-text-max-rsp-dip
+          (owned_view.compiler-owned-shared-view bare-abort))
+        16)
+      ;; ...and the decision they feed, at a frame that fits the 128-byte red
+      ;; zone on its own and cannot afford a 16-byte guard on top.
+      (compiler-backend-abort-tail-dip-red-zone?
+        (owned_view.compiler-owned-shared-view abort-only)
+        120)
+      (compiler-backend-abort-tail-dip-red-zone? abort-only 128)
+      (not (compiler-backend-abort-tail-dip-red-zone? returning 120))
+      (not
+        (compiler-backend-abort-tail-dip-red-zone?
+          (owned_view.compiler-owned-shared-view window)
+          120))
+      (not (compiler-backend-abort-tail-dip-red-zone? window-then-abort 120))
+      (not (compiler-backend-abort-tail-dip-red-zone? bare-abort 120))
+      ;; A body with no stack motion at all is unaffected either way.
+      (compiler-backend-abort-tail-dip-red-zone? window 96))))
+
 (define (compiler-backend-target-policy-isolation-ok?) : bool
   (let
     [intern-state : ci.InternCompatState
@@ -56657,6 +57094,7 @@ b_keep:
         (compiler-backend-explicit-state-routes-serial-parity-ok?)
         (compiler-backend-explicit-state-target-pic-policy-ok?)
         (compiler-backend-target-policy-isolation-ok?)
+        (compiler-backend-red-zone-abort-tail-dip-ok?)
         (compiler-backend-function-state-isolation-ok?)
         (compiler-backend-abort-counter-failure-reset-ok?))
       (compiler-backend-string-ok?)
@@ -56799,6 +57237,8 @@ b_keep:
         (compiler-backend-fusion-pin-store-fusion-ok?)
         (compiler-backend-callee-save-pop-epilogue-ok?)
         (compiler-backend-callee-save-push-prologue-rebase-ok?)
+        (compiler-backend-csr-unused-save-trim-ok?)
+        (compiler-backend-csr-narrow-spelling-keeps-save-ok?)
         (compiler-backend-dead-slot-region-push-ok?)
         (compiler-backend-win64-callee-save-homes-ok?)
         (compiler-backend-win64-fpo-seh-prologue-ok?)

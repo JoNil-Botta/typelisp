@@ -11,3 +11,7 @@ tests/tlci/corpus/*.stderr text eol=lf
 tests/tlci/corpus/SHA256SUMS text eol=lf
 tests/tlci/corpus/*.tlci binary
 tests/integration/include_str_comptime_payload.txt text eol=lf
+
+# The TLCI boundary verifier byte-compares its generated TSV output.
+docs/tlci-native-boundary-manifest.tsv text eol=lf
+tools/tlci-boundary-manifest/admission-stages.tsv text eol=lf

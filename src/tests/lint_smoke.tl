@@ -3,6 +3,7 @@
 (import compiler_builtin_ids as cbi)
 (import lint_core)
 (import lint_core_tests)
+(import lint_policy_core_tests)
 (import compiler_ast_types as ast)
 (import stdlib.io)
 
@@ -168,8 +169,10 @@
         (ast.ast-node-pool-context-capture-active)]
       [_install : unit
         (ast.ast-node-pool-context-install! (ast.ast-global-shared-view pools))]
+      [policy-result : i64
+        (lint_policy_core_tests.compiler-lint-policy-self-test)]
       [core-result : i64 (lint_core_tests.compiler-lint-self-test)]
-      (if (= core-result 42)
+      (if (and (= policy-result 42) (= core-result 42))
         (if (= (lint-smoke-deprecated-string-concat-self-test) 42)
           (lint-smoke-nested-str-cat-self-test)
           1)

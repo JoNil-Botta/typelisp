@@ -12,6 +12,7 @@ required_native_identities() {
     printf '%s\n' \
         stdlib.clone/gen-clone \
         stdlib.clone/synthesize-helpers \
+        stdlib.dense_list/compiler-dense-list-operations \
         stdlib.serialize/serialize \
         stdlib.sort/vec \
         stdlib.text_buf/append! \

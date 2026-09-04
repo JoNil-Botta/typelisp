@@ -15,9 +15,14 @@
 ;;                 `tl_oob_abort_at` edge, WITH live red-zone slots. The
 ;;                 located abort splitter stages its two reported values with
 ;;                 `pushq`/`popq`, i.e. it writes below %rsp -- exactly where
-;;                 the red-zone slots live. The slot region is anchored below
-;;                 that transient depth, so the pushes land above every slot
-;;                 and the function still needs no stack adjustment.
+;;                 the red-zone slots live. Those writes are on an edge that
+;;                 ends in a call which never returns here, so the slots they
+;;                 overwrite are dead and the slot region is NOT anchored below
+;;                 them (ABT-1): this leaf starts its slots at -8 like
+;;                 rzl-slots, and still needs no stack adjustment. Nothing is
+;;                 read back out of that window either -- the pops take only
+;;                 the tail's own two words, and the one operand read after
+;;                 %rsp moves, the second push's, is never memory.
 ;;
 ;; Pre-change all four emitted `subq $N, %rsp` / `addq $N, %rsp`, so the first
 ;; and the last assertion are proven forcing. main exercises every path at

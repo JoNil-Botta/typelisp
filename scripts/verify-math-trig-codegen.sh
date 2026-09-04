@@ -61,9 +61,17 @@ verify_assembly() {
         --stdlib-root "$ROOT/src" \
         -o "$assembly"
 
-    for symbol in f64_sin f64_cos f64_tan f32_sin f32_cos f32_tan; do
-        grep -F "$symbol" "$assembly" >/dev/null ||
+    # The public wrappers (`math.f64-sin` and friends) are wrapper-shaped
+    # depth-0 sites and inline into `main` at opt2, so the emitted program
+    # names the trig KERNELS directly and the wrapper symbols need not exist.
+    # "Trig codegen present" therefore means: every kernel is both defined in
+    # this assembly and reached from it (a call or a tail jump), on each target.
+    for kernel in sin_f64 cos_f64 tan_f64 sin_f32 cos_f32 tan_f32; do
+        symbol="math_trig_kernel_$kernel"
+        grep -E "^_?tl_.*${symbol}:" "$assembly" >/dev/null ||
             fail "$target omitted $symbol"
+        grep -E "(call|jmp)[[:space:]]+_?tl_.*${symbol}([[:space:]]|\$)" "$assembly" >/dev/null ||
+            fail "$target never reaches $symbol"
     done
 
     if grep -E 'global_init.*math_trig|call[[:space:]]+.*tl_alloc' "$assembly" >/dev/null; then

@@ -103,6 +103,19 @@ FILENAME == catalog {
     if (want == "" || want !~ /^[0-9]+$/) {
         fail("manifest line " FNR " has invalid exit code for " name ": " want)
     }
+    # A row may pin its own optimization level with an `opt-level:N+` prefix;
+    # the runner leaves such a row out of the batched pre-pass and compiles it
+    # standalone at that level. Everything after the prefix is the extra field
+    # every other row spells.
+    if (extra ~ /^opt-level:/) {
+        opt_level_spec = extra
+        sub(/^opt-level:/, "", opt_level_spec)
+        if (opt_level_spec !~ /^[012]\+.+/) {
+            fail("manifest line " FNR " has invalid opt-level prefix for " name ": " extra)
+        }
+        sub(/^[012]\+/, "", opt_level_spec)
+        extra = opt_level_spec
+    }
     if (extra == "expected-stderr:" || extra == "stage-stdlib+expected-stderr:") {
         fail("manifest line " FNR " has empty expected stderr for " name)
     }

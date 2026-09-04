@@ -209,6 +209,7 @@ comptime.tl
 core_macros.tl
 crypto_random.tl
 crypto_sha512.tl
+dense_list.tl
 io_core.tl
 io.tl
 io_caller_result.tl

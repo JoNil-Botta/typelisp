@@ -289,13 +289,93 @@
 (define (lint-rule-type-name-case-suggestion) : String
   "rename the type declaration to UpperCamelCase")
 
+;: Stable lint severity ordered from disabled to non-overridable error.
+(defenum LintLevel
+  (Allow)
+  (Warn)
+  (Deny)
+  (Forbid))
+
+(define (lint-level-rank [level : (& level LintLevel)]) : i64
+  (match level
+    [(LintLevel.Allow) 0]
+    [(LintLevel.Warn) 1]
+    [(LintLevel.Deny) 2]
+    [(LintLevel.Forbid) 3]))
+
+(define (lint-level-eq?
+  [left : (& left LintLevel)]
+  [right : (& right LintLevel)]) : bool
+  (= (lint-level-rank left) (lint-level-rank right)))
+
+(define (lint-level-name [level : LintLevel]) : String
+  (match level
+    [(LintLevel.Allow) "allow"]
+    [(LintLevel.Warn) "warn"]
+    [(LintLevel.Deny) "deny"]
+    [(LintLevel.Forbid) "forbid"]))
+
+(define lint-group-correctness-mask : i64
+  1)
+(define lint-group-style-mask : i64
+  2)
+(define lint-group-complexity-mask : i64
+  4)
+(define lint-group-performance-mask : i64
+  8)
+(define lint-group-unsafe-mask : i64
+  16)
+(define lint-group-compatibility-mask : i64
+  32)
+(define lint-group-future-incompatibility-mask : i64
+  64)
+
+(define (lint-group-correctness-name) : String
+  "correctness")
+
+(define (lint-group-style-name) : String
+  "style")
+
+(define (lint-group-complexity-name) : String
+  "complexity")
+
+(define (lint-group-performance-name) : String
+  "performance")
+
+(define (lint-group-unsafe-name) : String
+  "unsafe")
+
+(define (lint-group-compatibility-name) : String
+  "compatibility")
+
+(define (lint-group-future-incompatibility-name) : String
+  "future-incompatibility")
+
+;: Return the stable built-in group bit, or zero for a custom/unknown group.
+(define (lint-built-in-group-mask [name : (& name str)]) : i64
+  (cond
+    [(string.eq name (lint-group-correctness-name)) lint-group-correctness-mask]
+    [(string.eq name (lint-group-style-name)) lint-group-style-mask]
+    [(string.eq name (lint-group-complexity-name)) lint-group-complexity-mask]
+    [(string.eq name (lint-group-performance-name)) lint-group-performance-mask]
+    [(string.eq name (lint-group-unsafe-name)) lint-group-unsafe-mask]
+    [(string.eq name (lint-group-compatibility-name))
+      lint-group-compatibility-mask]
+    [(string.eq name (lint-group-future-incompatibility-name))
+      lint-group-future-incompatibility-mask]
+    [else 0]))
+
 ;: Metadata for one lint rule. Rule id is stable public API for suppressions;
 ;: message is the rendered finding text; suggestion is structured helper text
-;: that drivers or tooling can render separately from the message.
+;: that drivers or tooling can render separately from the message. Defaults
+;: preserve the pre-policy CLI, while `group-mask` declares deterministic
+;: membership in the initial public rule groups.
 (defstruct LintRule
   (rule-id String)
   (message String)
-  (suggestion String))
+  (suggestion String)
+  (default-level LintLevel)
+  (group-mask i64))
 
 ;: Immutable contiguous registry of registered rules.
 (defstruct LintRuleList
@@ -310,163 +390,221 @@
   (LintRule
     (lint-rule-nested-if-ladder-id)
     (lint-rule-nested-if-ladder-message)
-    (lint-rule-nested-if-ladder-suggestion)))
+    (lint-rule-nested-if-ladder-suggestion)
+    LintLevel.Warn
+    (bit-or lint-group-style-mask lint-group-complexity-mask)))
 
 (define (lint-rule-nested-let) : LintRule
   (LintRule
     (lint-rule-nested-let-id)
     (lint-rule-nested-let-message)
-    (lint-rule-nested-let-suggestion)))
+    (lint-rule-nested-let-suggestion)
+    LintLevel.Warn
+    (bit-or lint-group-style-mask lint-group-complexity-mask)))
 
 (define (lint-rule-single-begin) : LintRule
   (LintRule
     (lint-rule-single-begin-id)
     (lint-rule-single-begin-message)
-    (lint-rule-single-begin-suggestion)))
+    (lint-rule-single-begin-suggestion)
+    LintLevel.Warn
+    lint-group-style-mask))
 
 (define (lint-rule-return-path-chain) : LintRule
   (LintRule
     (lint-rule-return-path-chain-id)
     (lint-rule-return-path-chain-message)
-    (lint-rule-return-path-chain-suggestion)))
+    (lint-rule-return-path-chain-suggestion)
+    LintLevel.Warn
+    (bit-or lint-group-style-mask lint-group-complexity-mask)))
 
 (define (lint-rule-unit-if-guard) : LintRule
   (LintRule
     (lint-rule-unit-if-guard-id)
     (lint-rule-unit-if-guard-message)
-    (lint-rule-unit-if-guard-suggestion)))
+    (lint-rule-unit-if-guard-suggestion)
+    LintLevel.Warn
+    lint-group-style-mask))
 
 (define (lint-rule-no-effect) : LintRule
   (LintRule
     (lint-rule-no-effect-id)
     (lint-rule-no-effect-message)
-    (lint-rule-no-effect-suggestion)))
+    (lint-rule-no-effect-suggestion)
+    LintLevel.Warn
+    lint-group-correctness-mask))
 
 (define (lint-rule-unreachable-code) : LintRule
   (LintRule
     (lint-rule-unreachable-code-id)
     (lint-rule-unreachable-code-message)
-    (lint-rule-unreachable-code-suggestion)))
+    (lint-rule-unreachable-code-suggestion)
+    LintLevel.Warn
+    lint-group-correctness-mask))
 
 (define (lint-rule-redundant-divergence-padding) : LintRule
   (LintRule
     (lint-rule-redundant-divergence-padding-id)
     (lint-rule-redundant-divergence-padding-message)
-    (lint-rule-redundant-divergence-padding-suggestion)))
+    (lint-rule-redundant-divergence-padding-suggestion)
+    LintLevel.Warn
+    lint-group-correctness-mask))
 
 (define (lint-rule-deprecated-string-concat) : LintRule
   (LintRule
     (lint-rule-deprecated-string-concat-id)
     (lint-rule-deprecated-string-concat-message)
-    (lint-rule-deprecated-string-concat-suggestion)))
+    (lint-rule-deprecated-string-concat-suggestion)
+    LintLevel.Allow
+    (bit-or
+      lint-group-compatibility-mask
+      lint-group-future-incompatibility-mask)))
 
 (define (lint-rule-nested-str-cat) : LintRule
   (LintRule
     (lint-rule-nested-str-cat-id)
     (lint-rule-nested-str-cat-message)
-    (lint-rule-nested-str-cat-suggestion)))
+    (lint-rule-nested-str-cat-suggestion)
+    LintLevel.Warn
+    (bit-or lint-group-style-mask lint-group-performance-mask)))
 
 (define (lint-rule-cascading-and-or) : LintRule
   (LintRule
     (lint-rule-cascading-and-or-id)
     (lint-rule-cascading-and-or-message)
-    (lint-rule-cascading-and-or-suggestion)))
+    (lint-rule-cascading-and-or-suggestion)
+    LintLevel.Warn
+    (bit-or lint-group-style-mask lint-group-complexity-mask)))
 
 (define (lint-rule-transitional-core-macro-qualifier) : LintRule
   (LintRule
     (lint-rule-transitional-core-macro-qualifier-id)
     (lint-rule-transitional-core-macro-qualifier-message)
-    (lint-rule-transitional-core-macro-qualifier-suggestion)))
+    (lint-rule-transitional-core-macro-qualifier-suggestion)
+    LintLevel.Warn
+    (bit-or
+      lint-group-compatibility-mask
+      lint-group-future-incompatibility-mask)))
 
 (define (lint-rule-unused-import) : LintRule
   (LintRule
     (lint-rule-unused-import-id)
     (lint-rule-unused-import-message)
-    (lint-rule-unused-import-suggestion)))
+    (lint-rule-unused-import-suggestion)
+    LintLevel.Warn
+    (bit-or lint-group-correctness-mask lint-group-style-mask)))
 
 (define (lint-rule-redundant-import-alias) : LintRule
   (LintRule
     (lint-rule-redundant-import-alias-id)
     (lint-rule-redundant-import-alias-message)
-    (lint-rule-redundant-import-alias-suggestion)))
+    (lint-rule-redundant-import-alias-suggestion)
+    LintLevel.Warn
+    lint-group-style-mask))
 
 (define (lint-rule-redundant-function-name) : LintRule
   (LintRule
     (lint-rule-redundant-function-name-id)
     (lint-rule-redundant-function-name-message)
-    (lint-rule-redundant-function-name-suggestion)))
+    (lint-rule-redundant-function-name-suggestion)
+    LintLevel.Allow
+    lint-group-style-mask))
 
 (define (lint-rule-dead-code) : LintRule
   (LintRule
     (lint-rule-dead-code-id)
     (lint-rule-dead-code-message)
-    (lint-rule-dead-code-suggestion)))
+    (lint-rule-dead-code-suggestion)
+    LintLevel.Warn
+    lint-group-correctness-mask))
 
 (define (lint-rule-unused-assignment) : LintRule
   (LintRule
     (lint-rule-unused-assignment-id)
     (lint-rule-unused-assignment-message)
-    (lint-rule-unused-assignment-suggestion)))
+    (lint-rule-unused-assignment-suggestion)
+    LintLevel.Warn
+    (bit-or lint-group-correctness-mask lint-group-performance-mask)))
 
 (define (lint-rule-copy-on-update-struct) : LintRule
   (LintRule
     (lint-rule-copy-on-update-struct-id)
     (lint-rule-copy-on-update-struct-message)
-    (lint-rule-copy-on-update-struct-suggestion)))
+    (lint-rule-copy-on-update-struct-suggestion)
+    LintLevel.Warn
+    lint-group-performance-mask))
 
 (define (lint-rule-prefer-dynamic-array-literal) : LintRule
   (LintRule
     (lint-rule-prefer-dynamic-array-literal-id)
     (lint-rule-prefer-dynamic-array-literal-message)
-    (lint-rule-prefer-dynamic-array-literal-suggestion)))
+    (lint-rule-prefer-dynamic-array-literal-suggestion)
+    LintLevel.Warn
+    (bit-or lint-group-style-mask lint-group-performance-mask)))
 
 (define (lint-rule-single-element-array-cell) : LintRule
   (LintRule
     (lint-rule-single-element-array-cell-id)
     (lint-rule-single-element-array-cell-message)
-    (lint-rule-single-element-array-cell-suggestion)))
+    (lint-rule-single-element-array-cell-suggestion)
+    LintLevel.Warn
+    (bit-or lint-group-style-mask lint-group-performance-mask)))
 
 (define (lint-rule-unused-variable) : LintRule
   (LintRule
     (lint-rule-unused-variable-id)
     (lint-rule-unused-variable-message)
-    (lint-rule-unused-variable-suggestion)))
+    (lint-rule-unused-variable-suggestion)
+    LintLevel.Warn
+    (bit-or lint-group-correctness-mask lint-group-style-mask)))
 
 (define (lint-rule-unused-unsafe) : LintRule
   (LintRule
     (lint-rule-unused-unsafe-id)
     (lint-rule-unused-unsafe-message)
-    (lint-rule-unused-unsafe-suggestion)))
+    (lint-rule-unused-unsafe-suggestion)
+    LintLevel.Warn
+    lint-group-unsafe-mask))
 
 (define (lint-rule-raw-arena-op) : LintRule
   (LintRule
     (lint-rule-raw-arena-op-id)
     (lint-rule-raw-arena-op-message)
-    (lint-rule-raw-arena-op-suggestion)))
+    (lint-rule-raw-arena-op-suggestion)
+    LintLevel.Warn
+    (bit-or lint-group-correctness-mask lint-group-unsafe-mask)))
 
 (define (lint-rule-global-name-case) : LintRule
   (LintRule
     (lint-rule-global-name-case-id)
     (lint-rule-global-name-case-message)
-    (lint-rule-global-name-case-suggestion)))
+    (lint-rule-global-name-case-suggestion)
+    LintLevel.Allow
+    lint-group-style-mask))
 
 (define (lint-rule-function-name-case) : LintRule
   (LintRule
     (lint-rule-function-name-case-id)
     (lint-rule-function-name-case-message)
-    (lint-rule-function-name-case-suggestion)))
+    (lint-rule-function-name-case-suggestion)
+    LintLevel.Allow
+    lint-group-style-mask))
 
 (define (lint-rule-local-name-case) : LintRule
   (LintRule
     (lint-rule-local-name-case-id)
     (lint-rule-local-name-case-message)
-    (lint-rule-local-name-case-suggestion)))
+    (lint-rule-local-name-case-suggestion)
+    LintLevel.Allow
+    lint-group-style-mask))
 
 (define (lint-rule-type-name-case) : LintRule
   (LintRule
     (lint-rule-type-name-case-id)
     (lint-rule-type-name-case-message)
-    (lint-rule-type-name-case-suggestion)))
+    (lint-rule-type-name-case-suggestion)
+    LintLevel.Allow
+    lint-group-style-mask))
 
 ;: Small registry for lint metadata. New rules plug into this table and the
 ;: shared lookup helpers without requiring public driver edits.
@@ -520,6 +658,28 @@
 
 (define (lint-rule-find [rule-id : String]) : LintMaybeRule
   (lint-rule-find-in (lint-rule-registry) rule-id))
+
+(define (lint-rule-list-count [rules : (& rules LintRuleList)]) : i64
+  rules.len)
+
+(define (lint-rule-list-ref [rules : (& rules LintRuleList)] [index : i64]) : LintRule
+  (owned_view.compiler-owned-array-element-shared-view rules.slots index))
+
+;: True when `rule` belongs to the named initial built-in group. Unknown and
+;: custom group names return false; policy resolution owns custom expansion.
+(define (lint-rule-in-built-in-group?
+  [rule : (& rule LintRule)]
+  [group : (& group str)]) : bool
+  (let
+    [mask : i64 (lint-built-in-group-mask group)]
+    (and (> mask 0) (not (= (bit-and rule.group-mask mask) 0)))))
+
+;: Registry default for one rule. Unknown ids fail closed to `allow`; callers
+;: that accept user policy must also report the unknown id structurally.
+(define (lint-rule-default-level [rule-id : String]) : LintLevel
+  (match (lint-rule-find rule-id)
+    [(LintMaybeRule.Found rule) rule.default-level]
+    [(LintMaybeRule.NotFound) LintLevel.Allow]))
 
 ;: Rule registry message lookup. Unknown ids return the empty string.
 (define (lint-rule-message [rule-id : String]) : String

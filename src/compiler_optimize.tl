@@ -26989,6 +26989,23 @@
       (opt-direct-call-clean-memory-bit)
       (opt-direct-call-clean-unconditional-global-bit))))
 
+;; SUM-6. Cannot change a descriptor header word or a frame word: the
+;; element-only fact above, or the header bit, which is that fact for a callee
+;; that also writes named cells (opt-direct-call-clean-header-bit). This is the
+;; test the descriptor-header proofs read; the element-only test keeps its
+;; other readers, which ask about cells too.
+(define (opt-direct-call-header-clean?
+  [direct-call-clean : opt_i64_i64_map.Map]
+  [name : i64]) : bool
+  (opt-direct-call-clean-has-bit?
+    direct-call-clean
+    name
+    (bit-or
+      (opt-direct-call-clean-memory-bit)
+      (bit-or
+        (opt-direct-call-clean-unconditional-global-bit)
+        (opt-direct-call-clean-header-bit)))))
+
 ;; Direct callees that DO return. opt-licm-store-state-direct-call filters the
 ;; non-returning trap helpers out ahead of this, so a ControlFlow effect never
 ;; reaches the match below and the `_` arm keeps its old meaning: an ordinary
@@ -27020,7 +27037,7 @@
     (compiler-opt-global-shared-view direct-call-clean)
     name)
     (opt-licm-store-summary-empty)
-    (if (opt-direct-call-element-clean? direct-call-clean name)
+    (if (opt-direct-call-header-clean? direct-call-clean name)
       (opt-licm-store-summary-element-only-call)
       (match (ir.compiler-ir-direct-call-effect-id name)
         [(ir.CompilerIrEffect.MemoryRead) (opt-licm-store-summary-empty)]
@@ -98055,12 +98072,7 @@
   (match descriptor
     [(OptBceMbDescriptor.No) false]
     [(OptBceMbDescriptor.Some _ _ direct-call-clean _ _)
-      (opt-direct-call-clean-has-bit?
-        direct-call-clean
-        name
-        (bit-or
-          (opt-direct-call-clean-memory-bit)
-          (opt-direct-call-clean-unconditional-global-bit)))]))
+      (opt-direct-call-header-clean? direct-call-clean name)]))
 
 (define (opt-bce-mb-stable-instr?
   [descriptor : OptBceMbDescriptor]
@@ -145447,6 +145459,29 @@
 (define (opt-direct-call-clean-unconditional-global-bit) : i64
   4)
 
+;; SUM-6. Bit 3: the callee writes no DESCRIPTOR HEADER word and no FRAME
+;; object, whatever the caller passed it -- the descriptor-safety fact bit 2
+;; carries, minus bit 2's refusal of named global CELL writes. A callee's
+;; summary sets exactly one of four things per write: a parameter bit (the
+;; object an argument names), the element bit (a data buffer), the global bit
+;; (`Store g`, a symbol's own cell), or `unknown` (a pointer the walk could not
+;; root -- which is where a store to a header word through a loaded handle
+;; lands, see opt-call-memory-summary-add-write). So a summary with neither
+;; `unknown` nor a parameter bit writes only cells and elements, and neither a
+;; cell nor an element is a descriptor header word or a frame word: the cell is
+;; the symbol's own storage in the data segment, the element is the heap buffer
+;; a data slot names, and the descriptor and the frame are other allocations
+;; again. What such a callee CAN do -- change a cell -- is P18's per-global
+;; row and `global-write?`, asked separately by every reader of this bit.
+;;
+;; Measured need: `cg-slot-list-add` writes `cg-node-len` (a cell) and the two
+;; node arrays' elements, and every descriptor word of `cg-tokens` in the loop
+;; that calls it reloaded per iteration -- the call fell to `call-or-unknown?`
+;; on the cell write alone. Same shape for every counter-bumping helper
+;; called from a scan.
+(define (opt-direct-call-clean-header-bit) : i64
+  8)
+
 (define (opt-direct-call-clean-has-bit?
   [direct-call-clean : opt_i64_i64_map.Map]
   [name : i64]
@@ -145474,16 +145509,29 @@
       (opt-direct-call-clean-memory-bit)
       (bit-or
         (opt-direct-call-clean-global-bit)
-        (opt-direct-call-clean-unconditional-global-bit)))
-    (if (or
-      (opt-call-memory-summary-global? summary)
-      (opt-call-memory-summary-unknown? summary))
-      0
-      (bit-or
-        (opt-direct-call-clean-global-bit)
-        (if (opt-call-memory-summary-has-param-writes? summary)
+        (bit-or
+          (opt-direct-call-clean-unconditional-global-bit)
+          (opt-direct-call-clean-header-bit))))
+    (let
+      ;; SUM-6: no unknown write and no parameter write -- cells and elements
+      ;; only -- is the header fact, whether or not a cell is written.
+      [header : i64
+        (if (or
+          (opt-call-memory-summary-unknown? summary)
+          (opt-call-memory-summary-has-param-writes? summary))
           0
-          (opt-direct-call-clean-unconditional-global-bit))))))
+          (opt-direct-call-clean-header-bit))]
+      (if (or
+        (opt-call-memory-summary-global? summary)
+        (opt-call-memory-summary-unknown? summary))
+        header
+        (bit-or
+          header
+          (bit-or
+            (opt-direct-call-clean-global-bit)
+            (if (opt-call-memory-summary-has-param-writes? summary)
+              0
+              (opt-direct-call-clean-unconditional-global-bit))))))))
 
 (define (opt-loop-bce-direct-call-clean-add-memory-clean
   [functions : ir.CompilerIrFunctionSeq]

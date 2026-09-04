@@ -61077,14 +61077,55 @@
               (compiler_optimize.opt-direct-call-clean-global-bit))
             (compiler_optimize.opt-direct-call-clean-global-bit)))
         24]
-      ;; ... and a global-writing callee earns nothing.
+      ;; ... and a global-writing callee earns neither global bit -- only the
+      ;; header bit (SUM-6): its writes land in named cells and elements, which
+      ;; cannot move a descriptor word.
       [(not
           (=
             (compiler_optimize.opt-loop-bce-direct-call-clean-bits
               (compiler_optimize.opt-call-memory-summary-add-global
                 (compiler_optimize.opt-call-memory-summary-add-element 0)))
-            0))
+            (compiler_optimize.opt-direct-call-clean-header-bit)))
         25]
+      ;; SUM-6: the header bit. Cells and elements only -- with or without a
+      ;; named cell write -- earn it; an unknown write or a parameter write
+      ;; does not. A cell-writing callee earns it WITHOUT the global bits.
+      [(not
+          (=
+            (bit-and
+              (compiler_optimize.opt-loop-bce-direct-call-clean-bits
+                (compiler_optimize.opt-call-memory-summary-add-global
+                  (compiler_optimize.opt-call-memory-summary-add-element 0)))
+              (bit-or
+                (compiler_optimize.opt-direct-call-clean-header-bit)
+                (bit-or
+                  (compiler_optimize.opt-direct-call-clean-global-bit)
+                  (compiler_optimize.opt-direct-call-clean-unconditional-global-bit))))
+            (compiler_optimize.opt-direct-call-clean-header-bit)))
+        26]
+      [(not
+          (=
+            (bit-and
+              (compiler_optimize.opt-loop-bce-direct-call-clean-bits
+                (compiler_optimize.opt-call-memory-summary-add-element 0))
+              (compiler_optimize.opt-direct-call-clean-header-bit))
+            (compiler_optimize.opt-direct-call-clean-header-bit)))
+        27]
+      [(not
+          (=
+            (bit-and
+              (compiler_optimize.opt-loop-bce-direct-call-clean-bits
+                (compiler_optimize.opt-call-memory-summary-add-unknown 0))
+              (compiler_optimize.opt-direct-call-clean-header-bit))
+            0))
+        28]
+      [(not
+          (=
+            (bit-and
+              (compiler_optimize.opt-loop-bce-direct-call-clean-bits 1)
+              (compiler_optimize.opt-direct-call-clean-header-bit))
+            0))
+        29]
       [else 42])))
 
 ;; Does this guard block rebuild a module global's descriptor chain?
@@ -81225,12 +81266,14 @@
             (opt-gc-test-functions1 (opt-licm-test-function addr-blocks)))
           symbols.callee)
         22]
-      ;; a callee whose summary sets the global-write bit earns neither bit
+      ;; a callee whose summary sets the global-write bit earns neither global
+      ;; bit -- only the header bit (SUM-6), since a named-cell write cannot move
+      ;; a descriptor word
       [(not
           (=
             (compiler_optimize.opt-loop-bce-direct-call-clean-bits
               (compiler_optimize.opt-call-memory-summary-add-global 0))
-            0))
+            (compiler_optimize.opt-direct-call-clean-header-bit)))
         12]
       [(not
           (=
@@ -81244,6 +81287,8 @@
             (compiler_optimize.opt-loop-bce-direct-call-clean-bits 1)
             global-bit))
         14]
+      ;; ...and a memory-clean one earns every bit, the header bit (SUM-6)
+      ;; included
       [(not
           (=
             (compiler_optimize.opt-loop-bce-direct-call-clean-bits 0)
@@ -81251,7 +81296,9 @@
               memory-bit
               (bit-or
                 global-bit
-                (compiler_optimize.opt-direct-call-clean-unconditional-global-bit)))))
+                (bit-or
+                  (compiler_optimize.opt-direct-call-clean-unconditional-global-bit)
+                  (compiler_optimize.opt-direct-call-clean-header-bit))))))
         15]
       [else 42])))
 
@@ -87581,11 +87628,16 @@
       ;; It earns the global-clean bit and never the memory-clean one -- and,
       ;; because the element bit stands ALONE here, the sharper descriptor bit
       ;; too (opt-direct-call-clean-unconditional-global-bit): a callee whose every write
-      ;; lands in element storage cannot move a descriptor word either.
+      ;; lands in element storage cannot move a descriptor word either. SUM-6
+      ;; says the same of the header directly (opt-direct-call-clean-header-bit).
       [(not
           (=
             (compiler_optimize.opt-loop-bce-direct-call-clean-bits element-bit)
-            (bit-or global-bit unconditional-bit)))
+            (bit-or
+              global-bit
+              (bit-or
+                unconditional-bit
+                (compiler_optimize.opt-direct-call-clean-header-bit)))))
         9]
       ;; The same summary with a PARAMETER write added keeps global-clean and
       ;; loses the descriptor bit: that write may be the caller's own
@@ -87602,13 +87654,15 @@
               (bit-or element-bit unknown-bit))
             0))
         10]
+      ;; ...with a named-cell write beside it, neither global bit and the header
+      ;; bit alone (SUM-6)
       [(not
           (=
             (compiler_optimize.opt-loop-bce-direct-call-clean-bits
               (bit-or
                 element-bit
                 (compiler_optimize.opt-call-memory-global-bit)))
-            0))
+            (compiler_optimize.opt-direct-call-clean-header-bit)))
         11]
       ;; (b) end to end: both cells promote across a call to the accessor
       ;; writer, through the clean map the pipeline actually builds

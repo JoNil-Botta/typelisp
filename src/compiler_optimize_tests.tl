@@ -72709,6 +72709,54 @@
     [(opt_i64_i64_map.LookupFound summary) (not (= (bit-and summary flag) 0))]
     [(opt_i64_i64_map.LookupMissing) false]))
 
+;; SUM-3 fixtures: one function that writes an element of a global array
+;; through the global's own data slot, and the global table that types the
+;; array as a descriptor handle beside a scalar the builder must leave out.
+(define (opt-call-memory-global-element-functions [writer : i64] [array : i64]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-call-memory-test-function
+      writer
+      (compiler_ir_types.compiler-ir-param-seq-empty)
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Gep
+          0
+          (compiler_ir_types.CompilerIrValue.Global array)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.U64))
+        (compiler_ir_types.CompilerIrInstr.Load
+          1
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.U64))
+        (compiler_ir_types.CompilerIrInstr.Gep
+          2
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.I64 4)
+          (compiler_ast_types.AstType.U64))
+        (compiler_ir_types.CompilerIrInstr.StorePtr
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ast_types.AstType.U64))
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.No))))
+    (compiler_ir_types.compiler-ir-function-seq-empty)))
+
+(define (opt-call-memory-global-element-globals [array : i64] [scalar : i64]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 2)]
+    (begin
+      (opt-test-global-builder-push!
+        (&mut builder)
+        array
+        (compiler_ast_types.AstType.DynArray 0)
+        (compiler_ir_types.CompilerIrValue.Unit))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        scalar
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 7))
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+
 (define (compiler-optimize-load-cse-self-test) : i64
   (let
     [positive : compiler_ir_types.CompilerIrInstrSeq
@@ -72816,6 +72864,37 @@
       (opt-call-memory-cycle-optimistic cycle-a cycle-b cycle-cell 4)]
     [cycle-clean : opt_i64_i64_map.Map
       (opt-call-memory-cycle-clean-bits cycle-a cycle-b cycle-cell)]
+    ;; SUM-3: an element store through a descriptor-typed GLOBAL's data slot
+    ;; (`gep @g, 0` -> load -> gep -> store_ptr) is an element write, and the
+    ;; same store with the global unknown to the builder stays `unknown`.
+    [global-element-writer : i64
+      (opt-test-symbol "call_memory_global_element_writer")]
+    [global-element-array : i64 (opt-test-symbol "call_memory_global_array")]
+    [global-element-scalar : i64 (opt-test-symbol "call_memory_global_scalar")]
+    [global-element-functions : compiler_ir_types.CompilerIrFunctionSeq
+      (opt-call-memory-global-element-functions
+        global-element-writer
+        global-element-array)]
+    [global-element-descriptors : opt_i64_i64_map.Map
+      (compiler_optimize.opt-call-memory-descriptor-globals
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-call-memory-global-element-globals
+          global-element-array
+          global-element-scalar)
+        (opt_i64_i64_map.with-capacity 8))]
+    [global-element-summaries : opt_i64_i64_map.Map
+      (compiler_optimize.opt-call-memory-build-with-descriptor-globals
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.compiler-opt-global-shared-view
+          global-element-descriptors)
+        (compiler_optimize.compiler-opt-global-shared-view
+          global-element-functions)
+        8)]
+    [global-element-blind : opt_i64_i64_map.Map
+      (compiler_optimize.opt-call-memory-build
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        global-element-functions
+        8)]
     ;; The whole summary of an element-only member of the cycle. Its one write
     ;; is `store_ptr <buffer>, 7 : u64`, so besides the element bit the summary
     ;; carries the ALIAS CLASS that write stores (packet T2-2 / MF-4 ii,
@@ -73557,6 +73636,34 @@
             cycle-a
             (compiler_optimize.opt-direct-call-clean-unconditional-global-bit)))
         217]
+      ;; SUM-3: the descriptor table holds the array global and not the
+      ;; scalar beside it...
+      [(not
+          (opt_i64_i64_map.contains?
+            (& global-element-descriptors)
+            (compiler_ir_types.compiler-ir-symbol-id global-element-array)))
+        236]
+      [(opt_i64_i64_map.contains?
+          (& global-element-descriptors)
+          (compiler_ir_types.compiler-ir-symbol-id global-element-scalar))
+        237]
+      ;; ...so a store through the array's own data slot is an element write of
+      ;; its class (u64 -> class 1) and nothing else...
+      [(not
+          (opt-call-memory-summary-is?
+            (compiler_optimize.compiler-opt-global-shared-view
+              global-element-summaries)
+            global-element-writer
+            (compiler_optimize.opt-call-memory-summary-add-element-class 0 1)))
+        238]
+      ;; ...while the descriptor-global-free builder keeps the old `unknown`.
+      [(not
+          (opt-call-memory-summary-has?
+            (compiler_optimize.compiler-opt-global-shared-view
+              global-element-blind)
+            global-element-writer
+            (compiler_optimize.opt-call-memory-unknown-bit)))
+        239]
       [(not
           (opt-call-memory-summary-is?
             (compiler_optimize.compiler-opt-global-shared-view call-summaries)

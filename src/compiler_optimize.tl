@@ -142389,6 +142389,42 @@
         (opt-licm-array-header-var? type-segment-bases types var))]
     [_ false]))
 
+;; SUM-3. The global CELLS whose declared type is a descriptor handle
+;; (opt-licm-array-header-type?), keyed by symbol id. `Gep <that global>, 0`
+;; names its data slot exactly as `Gep <descriptor-typed var>, 0` does in
+;; opt-call-memory-element-kind-for-instr. The call-memory builder runs on the
+;; pre-optimization IR, where a global array's data pointer is loaded straight
+;; off the `Global` operand (only the per-function global_cell pass later routes
+;; it through a typed `Mov`), so without this table an element write into a
+;; global array's buffer had no element kind at all and fell to `unknown` --
+;; and every loop calling such a helper reloaded every descriptor header on
+;; every trip (`header-load-safe:call` was the whole census of the corpus's
+;; compiler-derived rows). Built once per program from the declared types, so
+;; a struct global whose first word happens to be a pointer keeps its `unknown`
+;; verdict: only a handle's own word 0 is a data slot.
+(define (opt-call-memory-descriptor-globals
+  [type-segment-bases : i64]
+  [globals : ir.CompilerIrGlobalSeq]
+  [out : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  (let
+    [index : i64 0]
+    [next : opt_i64_i64_map.Map (compiler-opt-global-shared-view out)]
+    (begin
+      (while (< index globals.len)
+        (begin
+          (match (ir.compiler-ir-global-seq-ref
+            (compiler-opt-global-shared-view globals)
+            index)
+            [(ir.CompilerIrGlobal.Global name ty _)
+              (if (opt-licm-array-header-type? type-segment-bases ty)
+                (opt_i64_i64_map.insert-ref!
+                  (&mut next)
+                  (ir.compiler-ir-symbol-id name)
+                  1)
+                unit)])
+          (set! index (+ index 1))))
+      next)))
+
 (define (opt-call-memory-element-bind!
   [elements : (&mut elements opt_i64_i64_map.Map)]
   [var : i64]
@@ -142401,6 +142437,7 @@
 
 (define (opt-call-memory-element-kind-for-instr
   [type-segment-bases : i64]
+  [descriptor-globals : opt_i64_i64_map.Map]
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [elements : (& elements opt_i64_i64_map.Map)]
@@ -142410,19 +142447,31 @@
     ;; zero slot of a descriptor-typed base names the data pointer (the length
     ;; slot and every other offset do not).
     [(ir.CompilerIrInstr.Gep _ base offset ty)
-      (if (opt-call-memory-element-ptr?
-        elements
-        (compiler-opt-global-shared-view base))
-        (opt-call-memory-element-kind-buffer)
-        (if (and
-          (opt-call-memory-element-header-base?
-            type-segment-bases
-            sources
-            types
-            base)
-          (opt-licm-data-slot? offset ty))
-          (opt-call-memory-element-kind-data-slot)
-          0))]
+      (match (compiler-opt-global-shared-view base)
+        ;; SUM-3: a descriptor-typed GLOBAL's word 0 is its data slot; see
+        ;; opt-call-memory-descriptor-globals.
+        [(ir.CompilerIrValue.Global name)
+          (if (and
+            (opt_i64_i64_map.contains?
+              (& descriptor-globals)
+              (ir.compiler-ir-symbol-id name))
+            (opt-licm-data-slot? offset ty))
+            (opt-call-memory-element-kind-data-slot)
+            0)]
+        [_
+          (if (opt-call-memory-element-ptr?
+            elements
+            (compiler-opt-global-shared-view base))
+            (opt-call-memory-element-kind-buffer)
+            (if (and
+              (opt-call-memory-element-header-base?
+                type-segment-bases
+                sources
+                types
+                base)
+              (opt-licm-data-slot? offset ty))
+              (opt-call-memory-element-kind-data-slot)
+              0))])]
     ;; The data pointer read out of a slot address, or out of a
     ;; descriptor-typed var directly (offset 0 is the same word).
     [(ir.CompilerIrInstr.Load _ src _)
@@ -142459,6 +142508,7 @@
 
 (define (opt-call-memory-element-update-instr!
   [type-segment-bases : i64]
+  [descriptor-globals : opt_i64_i64_map.Map]
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [elements : (&mut elements opt_i64_i64_map.Map)]
@@ -142473,6 +142523,7 @@
             0
             (opt-call-memory-element-kind-for-instr
               type-segment-bases
+              (compiler-opt-global-shared-view descriptor-globals)
               (compiler-opt-global-shared-view sources)
               (compiler-opt-global-shared-view types)
               elements
@@ -142481,6 +142532,7 @@
 
 (define (opt-call-memory-element-scan-instrs!
   [type-segment-bases : i64]
+  [descriptor-globals : opt_i64_i64_map.Map]
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [elements : (&mut elements opt_i64_i64_map.Map)]
@@ -142493,6 +142545,7 @@
     (begin
       (opt-call-memory-element-update-instr!
         type-segment-bases
+        (compiler-opt-global-shared-view descriptor-globals)
         (compiler-opt-global-shared-view sources)
         (compiler-opt-global-shared-view types)
         elements
@@ -142501,6 +142554,7 @@
           index))
       (opt-call-memory-element-scan-instrs!
         type-segment-bases
+        (compiler-opt-global-shared-view descriptor-globals)
         (compiler-opt-global-shared-view sources)
         (compiler-opt-global-shared-view types)
         elements
@@ -142509,6 +142563,7 @@
 
 (define (opt-call-memory-element-scan-blocks!
   [type-segment-bases : i64]
+  [descriptor-globals : opt_i64_i64_map.Map]
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [elements : (&mut elements opt_i64_i64_map.Map)]
@@ -142521,6 +142576,7 @@
           [(ir.CompilerIrBlock.Block _ instrs)
             (opt-call-memory-element-scan-instrs!
               type-segment-bases
+              (compiler-opt-global-shared-view descriptor-globals)
               (compiler-opt-global-shared-view sources)
               (compiler-opt-global-shared-view types)
               elements
@@ -142528,6 +142584,7 @@
               0)])
         (opt-call-memory-element-scan-blocks!
           type-segment-bases
+          (compiler-opt-global-shared-view descriptor-globals)
           (compiler-opt-global-shared-view sources)
           (compiler-opt-global-shared-view types)
           elements
@@ -142535,6 +142592,7 @@
     [(ir.CompilerIrBlockList.Array seq)
       (opt-call-memory-element-scan-blocks!
         type-segment-bases
+        descriptor-globals
         sources
         types
         elements
@@ -142542,6 +142600,7 @@
 
 (define (opt-call-memory-element-ptrs
   [type-segment-bases : i64]
+  [descriptor-globals : opt_i64_i64_map.Map]
   [sources : opt_i64_i64_map.Map]
   [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]) : opt_i64_i64_map.Map
@@ -142554,6 +142613,7 @@
     (begin
       (opt-call-memory-element-scan-blocks!
         type-segment-bases
+        (compiler-opt-global-shared-view descriptor-globals)
         (compiler-opt-global-shared-view sources)
         (compiler-opt-global-shared-view types)
         (&mut elements)
@@ -142931,6 +142991,7 @@
 
 (define (opt-call-memory-function-candidate
   [type-segment-bases : i64]
+  [descriptor-globals : opt_i64_i64_map.Map]
   [summaries : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
   [func : ir.CompilerIrFunction]) : OptCallMemoryCandidate
@@ -142969,6 +143030,7 @@
               (compiler-opt-global-shared-view blocks))
               (opt-call-memory-element-ptrs
                 type-segment-bases
+                (compiler-opt-global-shared-view descriptor-globals)
                 (compiler-opt-global-shared-view sources)
                 (compiler-opt-global-shared-view params)
                 (compiler-opt-global-shared-view blocks))
@@ -142980,6 +143042,7 @@
 
 (define (opt-call-memory-build-pass-from
   [type-segment-bases : i64]
+  [descriptor-globals : opt_i64_i64_map.Map]
   [functions : ir.CompilerIrFunctionSeq]
   [current : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
@@ -143002,6 +143065,7 @@
                   (opt_i64_i64_map.insert-ref! (&mut next) name-id summary)
                   (opt-call-memory-build-pass-from
                     type-segment-bases
+                    (compiler-opt-global-shared-view descriptor-globals)
                     functions
                     (compiler-opt-global-shared-view current)
                     (compiler-opt-global-shared-view function-set)
@@ -143011,12 +143075,14 @@
               [(opt_i64_i64_map.LookupMissing)
                 (match (opt-call-memory-function-candidate
                   type-segment-bases
+                  (compiler-opt-global-shared-view descriptor-globals)
                   (compiler-opt-global-shared-view current)
                   (compiler-opt-global-shared-view function-set)
                   func)
                   [(OptCallMemoryCandidate.Unresolved)
                     (opt-call-memory-build-pass-from
                       type-segment-bases
+                      descriptor-globals
                       functions
                       current
                       function-set
@@ -143028,6 +143094,7 @@
                       (opt_i64_i64_map.insert-ref! (&mut next) name-id summary)
                       (opt-call-memory-build-pass-from
                         type-segment-bases
+                        descriptor-globals
                         functions
                         current
                         function-set
@@ -143037,6 +143104,7 @@
 
 (define (opt-call-memory-build-pass
   [type-segment-bases : i64]
+  [descriptor-globals : opt_i64_i64_map.Map]
   [functions : ir.CompilerIrFunctionSeq]
   [current : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
@@ -143044,6 +143112,7 @@
   [changed : bool]) : OptCallMemoryBuildPass
   (opt-call-memory-build-pass-from
     type-segment-bases
+    descriptor-globals
     functions
     current
     function-set
@@ -143101,6 +143170,7 @@
 
 (define (opt-call-memory-build-fixed
   [type-segment-bases : i64]
+  [descriptor-globals : opt_i64_i64_map.Map]
   [functions : ir.CompilerIrFunctionSeq]
   [function-set : opt_i64_i64_map.Map]
   [current : opt_i64_i64_map.Map]
@@ -143113,6 +143183,7 @@
     ;; otherwise they would vanish after round one.
     (match (opt-call-memory-build-pass
       type-segment-bases
+      (compiler-opt-global-shared-view descriptor-globals)
       (compiler-opt-global-shared-view functions)
       (compiler-opt-global-shared-view current)
       (compiler-opt-global-shared-view function-set)
@@ -143122,6 +143193,7 @@
         (if changed
           (opt-call-memory-build-fixed
             type-segment-bases
+            descriptor-globals
             (compiler-opt-global-shared-view functions)
             (compiler-opt-global-shared-view function-set)
             next
@@ -143236,6 +143308,7 @@
 
 (define (opt-call-memory-optimistic-pass-from
   [type-segment-bases : i64]
+  [descriptor-globals : opt_i64_i64_map.Map]
   [functions : ir.CompilerIrFunctionSeq]
   [resolved : opt_i64_i64_map.Map]
   [current : opt_i64_i64_map.Map]
@@ -143263,6 +143336,7 @@
                   (opt_i64_i64_map.insert-ref! (&mut next) name-id summary)
                   (opt-call-memory-optimistic-pass-from
                     type-segment-bases
+                    (compiler-opt-global-shared-view descriptor-globals)
                     functions
                     resolved
                     (compiler-opt-global-shared-view current)
@@ -143279,6 +143353,7 @@
                       [(opt_i64_i64_map.LookupMissing) 0])]
                   (match (opt-call-memory-function-candidate
                     type-segment-bases
+                    (compiler-opt-global-shared-view descriptor-globals)
                     (compiler-opt-global-shared-view current)
                     (compiler-opt-global-shared-view function-set)
                     func)
@@ -143293,6 +143368,7 @@
                           summary)
                         (opt-call-memory-optimistic-pass-from
                           type-segment-bases
+                          descriptor-globals
                           functions
                           resolved
                           current
@@ -143304,6 +143380,7 @@
 
 (define (opt-call-memory-optimistic-pass
   [type-segment-bases : i64]
+  [descriptor-globals : opt_i64_i64_map.Map]
   [functions : ir.CompilerIrFunctionSeq]
   [resolved : opt_i64_i64_map.Map]
   [current : opt_i64_i64_map.Map]
@@ -143313,6 +143390,7 @@
   [usable? : bool]) : OptCallMemoryOptimisticPass
   (opt-call-memory-optimistic-pass-from
     type-segment-bases
+    descriptor-globals
     functions
     resolved
     current
@@ -143322,8 +143400,9 @@
     usable?
     0))
 
-(define (opt-call-memory-optimistic-fixed
+(define (opt-call-memory-optimistic-fixed-with-descriptor-globals
   [type-segment-bases : i64]
+  [descriptor-globals : opt_i64_i64_map.Map]
   [functions : ir.CompilerIrFunctionSeq]
   [resolved : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
@@ -143334,6 +143413,7 @@
     resolved
     (match (opt-call-memory-optimistic-pass
       type-segment-bases
+      (compiler-opt-global-shared-view descriptor-globals)
       (compiler-opt-global-shared-view functions)
       (compiler-opt-global-shared-view resolved)
       (compiler-opt-global-shared-view current)
@@ -143345,8 +143425,9 @@
         (if (not usable?)
           resolved
           (if changed
-            (opt-call-memory-optimistic-fixed
+            (opt-call-memory-optimistic-fixed-with-descriptor-globals
               type-segment-bases
+              descriptor-globals
               functions
               resolved
               function-set
@@ -143356,8 +143437,29 @@
             ;; The transfer reproduced this map: it is a fixed point, commit it.
             next))])))
 
-(define (opt-call-memory-build
+;; The descriptor-global-free form: every `Gep <global>, 0` keeps its `unknown`
+;; verdict, which is the summary this builder produced before SUM-3.
+(define (opt-call-memory-optimistic-fixed
   [type-segment-bases : i64]
+  [functions : ir.CompilerIrFunctionSeq]
+  [resolved : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [current : opt_i64_i64_map.Map]
+  [capacity : i64]
+  [remaining : i64]) : opt_i64_i64_map.Map
+  (opt-call-memory-optimistic-fixed-with-descriptor-globals
+    type-segment-bases
+    (opt_i64_i64_map.with-capacity 1)
+    functions
+    resolved
+    function-set
+    current
+    capacity
+    remaining))
+
+(define (opt-call-memory-build-with-descriptor-globals
+  [type-segment-bases : i64]
+  [descriptor-globals : opt_i64_i64_map.Map]
   [functions : ir.CompilerIrFunctionSeq]
   [capacity : i64]) : opt_i64_i64_map.Map
   (let
@@ -143368,6 +143470,7 @@
     [resolved : opt_i64_i64_map.Map
       (opt-call-memory-build-fixed
         type-segment-bases
+        (compiler-opt-global-shared-view descriptor-globals)
         (compiler-opt-global-shared-view functions)
         (compiler-opt-global-shared-view function-set)
         (opt-call-memory-seed-builtins (opt_i64_i64_map.with-capacity capacity))
@@ -143382,8 +143485,9 @@
         0)
       0)
       resolved
-      (opt-call-memory-optimistic-fixed
+      (opt-call-memory-optimistic-fixed-with-descriptor-globals
         type-segment-bases
+        (compiler-opt-global-shared-view descriptor-globals)
         (compiler-opt-global-shared-view functions)
         (compiler-opt-global-shared-view resolved)
         (compiler-opt-global-shared-view function-set)
@@ -143394,6 +143498,17 @@
             (opt_i64_i64_map.with-capacity capacity)))
         capacity
         (opt-call-memory-optimistic-rounds)))))
+
+;; The descriptor-global-free form (see opt-call-memory-optimistic-fixed).
+(define (opt-call-memory-build
+  [type-segment-bases : i64]
+  [functions : ir.CompilerIrFunctionSeq]
+  [capacity : i64]) : opt_i64_i64_map.Map
+  (opt-call-memory-build-with-descriptor-globals
+    type-segment-bases
+    (opt_i64_i64_map.with-capacity 1)
+    functions
+    capacity))
 
 ;; Prove which globals are compile-time constants so their value can be
 ;; substituted for the global at its uses. The win is twofold: (a) every global
@@ -144107,6 +144222,7 @@
 
 (define (opt-loop-bce-build-summaries-with-direct-call-clean
   [type-segment-bases : i64]
+  [globals : ir.CompilerIrGlobalSeq]
   [functions : ir.CompilerIrFunctionSeq]
   [build-direct-call-clean : bool]
   [build-call-memory : bool]) : OptLoopBceSummaries
@@ -144114,6 +144230,16 @@
     [capacity : i64
       (opt-function-index-capacity
         (opt-function-seq-count (compiler-opt-global-shared-view functions)))]
+    ;; SUM-3: the descriptor-typed globals, so the call-memory builder reads a
+    ;; global array's data slot as the element-storage root it is.
+    [descriptor-globals : opt_i64_i64_map.Map
+      (opt-call-memory-descriptor-globals
+        type-segment-bases
+        (compiler-opt-global-shared-view globals)
+        (opt_i64_i64_map.with-capacity
+          (opt-function-index-capacity
+            (ir.compiler-ir-global-seq-count
+              (compiler-opt-global-shared-view globals)))))]
     [argc-return : opt_i64_i64_map.Map
       (opt-loop-bce-argc-return-map
         type-segment-bases
@@ -144127,8 +144253,9 @@
         [(OptLoopBceCleanPass.Pass clean _) clean])]
     [call-memory : opt_i64_i64_map.Map
       (if build-call-memory
-        (opt-call-memory-build
+        (opt-call-memory-build-with-descriptor-globals
           type-segment-bases
+          (compiler-opt-global-shared-view descriptor-globals)
           (compiler-opt-global-shared-view functions)
           capacity)
         (opt_i64_i64_map.with-capacity 1))]
@@ -144269,6 +144396,7 @@
           (opt-loop-bce-summary-function-limit))
           (opt-loop-bce-build-summaries-with-direct-call-clean
             type-segment-bases
+            (compiler-opt-global-shared-view globals)
             (compiler-opt-global-shared-view reachable-functions)
             (>= level 2)
             (>= level 1))

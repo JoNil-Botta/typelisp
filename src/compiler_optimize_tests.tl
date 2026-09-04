@@ -12874,7 +12874,9 @@
       (opt_i64_i64_map.with-capacity 8)
       (opt_i64_i64_map.with-capacity 8)
       (compiler_optimize.opt-global-cell-summary-empty)
-      (compiler_ir_types.compiler-ir-representation-index-empty))))
+      (compiler_ir_types.compiler-ir-representation-index-empty)
+      (opt_i64_i64_map.with-capacity 8)
+      (opt_i64_i64_map.with-capacity 8))))
 
 (define (opt-loop-bce-test-entry-tail [init : i64]) : compiler_ir_types.CompilerIrInstrSeq
   (opt-test-instrs
@@ -72757,6 +72759,185 @@
         (compiler_ir_types.CompilerIrValue.I64 7))
       (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
 
+;; CL-1 fixtures. An initializer in the `__tl_make-array` shape: the buffer
+;; allocation, the 16-byte descriptor that is the only returned value, its data
+;; and length slots stored once each.
+(define (opt-cl-test-init-function [name : i64] [length : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-call-memory-test-function
+    name
+    (compiler_ir_types.compiler-ir-param-seq-empty)
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.Call
+        5
+        cbi.compiler-builtin-id-tl-alloc
+        (compiler_ir_types.CompilerIrCallArgs.One
+          (compiler_ir_types.CompilerIrValue.I64 (* length 8)))
+        (compiler_ast_types.AstType.U64))
+      (compiler_ir_types.CompilerIrInstr.Call
+        7
+        cbi.compiler-builtin-id-tl-alloc
+        (compiler_ir_types.CompilerIrCallArgs.One
+          (compiler_ir_types.CompilerIrValue.I64 16))
+        (compiler_ast_types.AstType.DynArray 0))
+      (compiler_ir_types.CompilerIrInstr.Gep
+        8
+        (compiler_ir_types.CompilerIrValue.Var 7)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.U8))
+      (compiler_ir_types.CompilerIrInstr.StorePtr
+        (compiler_ir_types.CompilerIrValue.Var 8)
+        (compiler_ir_types.CompilerIrValue.Var 5)
+        (compiler_ast_types.AstType.U64))
+      (compiler_ir_types.CompilerIrInstr.Gep
+        9
+        (compiler_ir_types.CompilerIrValue.Var 7)
+        (compiler_ir_types.CompilerIrValue.I64 8)
+        (compiler_ast_types.AstType.U8))
+      (compiler_ir_types.CompilerIrInstr.StorePtr
+        (compiler_ir_types.CompilerIrValue.Var 9)
+        (compiler_ir_types.CompilerIrValue.I64 length)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.Some
+          (compiler_ir_types.CompilerIrValue.Var 7))))))
+
+(define (opt-cl-test-length-gep [dst : i64] [global : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Gep
+    dst
+    (compiler_ir_types.CompilerIrValue.Global global)
+    (compiler_ir_types.CompilerIrValue.I64 1)
+    (compiler_ast_types.AstType.I64)))
+
+;; One reader: the four globals' lengths read the same way, and then the
+;; three refusals -- the second global's cell is stored, the third's handle is
+;; handed to a call, the fourth's length slot is written.
+(define (opt-cl-test-reader
+  [name : i64]
+  [array : i64]
+  [stored : i64]
+  [escaped : i64]
+  [header : i64]
+  [sink : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-call-memory-test-function
+    name
+    (compiler_ir_types.compiler-ir-param-seq-empty)
+    (opt-test-instrs
+      (opt-cl-test-length-gep 0 array)
+      (compiler_ir_types.CompilerIrInstr.Load
+        1
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.I64))
+      (opt-cl-test-length-gep 2 stored)
+      (compiler_ir_types.CompilerIrInstr.Load
+        3
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.Store
+        stored
+        (compiler_ir_types.CompilerIrValue.Global stored)
+        (compiler_ast_types.AstType.DynArray 0))
+      (opt-cl-test-length-gep 4 escaped)
+      (compiler_ir_types.CompilerIrInstr.Load
+        5
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.Call
+        6
+        sink
+        (compiler_ir_types.CompilerIrCallArgs.Two
+          (compiler_ir_types.CompilerIrValue.Global escaped)
+          (compiler_ir_types.CompilerIrValue.Global escaped))
+        (compiler_ast_types.AstType.Unit))
+      (compiler_ir_types.CompilerIrInstr.Gep
+        7
+        (compiler_ir_types.CompilerIrValue.Global header)
+        (compiler_ir_types.CompilerIrValue.I64 8)
+        (compiler_ast_types.AstType.U8))
+      (compiler_ir_types.CompilerIrInstr.StorePtr
+        (compiler_ir_types.CompilerIrValue.Var 7)
+        (compiler_ir_types.CompilerIrValue.I64 3)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.No)))))
+
+(defstruct OptClTestSymbols
+  (array i64)
+  (stored i64)
+  (escaped i64)
+  (header i64)
+  (init-array i64)
+  (init-stored i64)
+  (init-escaped i64)
+  (init-header i64)
+  (reader i64)
+  (sink i64))
+
+(define (opt-cl-test-symbols) : OptClTestSymbols
+  (OptClTestSymbols
+    (opt-test-symbol "cl_array")
+    (opt-test-symbol "cl_stored")
+    (opt-test-symbol "cl_escaped")
+    (opt-test-symbol "cl_header")
+    (opt-test-symbol "__global_init_cl_array")
+    (opt-test-symbol "__global_init_cl_stored")
+    (opt-test-symbol "__global_init_cl_escaped")
+    (opt-test-symbol "__global_init_cl_header")
+    (opt-test-symbol "cl_reader")
+    (opt-test-symbol "cl_sink")))
+
+(define (opt-cl-test-globals [symbols : OptClTestSymbols]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 4)]
+    (begin
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.array
+        (compiler_ast_types.AstType.DynArray 0)
+        (compiler_ir_types.CompilerIrValue.RuntimeGlobal symbols.init-array))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.stored
+        (compiler_ast_types.AstType.DynArray 0)
+        (compiler_ir_types.CompilerIrValue.RuntimeGlobal symbols.init-stored))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.escaped
+        (compiler_ast_types.AstType.DynArray 0)
+        (compiler_ir_types.CompilerIrValue.RuntimeGlobal symbols.init-escaped))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.header
+        (compiler_ast_types.AstType.DynArray 0)
+        (compiler_ir_types.CompilerIrValue.RuntimeGlobal symbols.init-header))
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+
+(define (opt-cl-test-functions [symbols : OptClTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-cl-test-init-function symbols.init-array 16)
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-cl-test-init-function symbols.init-stored 32)
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-cl-test-init-function symbols.init-escaped 48)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-cl-test-init-function symbols.init-header 64)
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-cl-test-reader
+              symbols.reader
+              symbols.array
+              symbols.stored
+              symbols.escaped
+              symbols.header
+              symbols.sink)
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (opt-call-memory-test-function
+                symbols.sink
+                (opt-load-cse-descriptor-params)
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.No))))
+              (compiler_ir_types.compiler-ir-function-seq-empty))))))))
+
 (define (compiler-optimize-load-cse-self-test) : i64
   (let
     [positive : compiler_ir_types.CompilerIrInstrSeq
@@ -72894,6 +73075,16 @@
       (compiler_optimize.opt-call-memory-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         global-element-functions
+        8)]
+    ;; CL-1: the compile-time length table over four literal-sized array
+    ;; globals, of which only the first is never stored, escaped or
+    ;; header-written.
+    [cl-symbols : OptClTestSymbols (opt-cl-test-symbols)]
+    [cl-lengths : compiler_optimize.OptConstLengths
+      (compiler_optimize.opt-cl-build
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-cl-test-globals cl-symbols)
+        (opt-cl-test-functions cl-symbols)
         8)]
     ;; The whole summary of an element-only member of the cycle. Its one write
     ;; is `store_ptr <buffer>, 7 : u64`, so besides the element bit the summary
@@ -73664,6 +73855,36 @@
             global-element-writer
             (compiler_optimize.opt-call-memory-unknown-bit)))
         239]
+      ;; CL-1: the never-touched global's length is its initializer's literal...
+      [(not
+          (=
+            (match (opt_i64_i64_map.get
+              (& cl-lengths.lengths)
+              (compiler_ir_types.compiler-ir-symbol-id cl-symbols.array))
+              [(opt_i64_i64_map.LookupFound n) n]
+              [(opt_i64_i64_map.LookupMissing) (- 0 1)])
+            16))
+        240]
+      ;; ...and a stored cell, an escaping handle and a written length slot
+      ;; each refuse their global...
+      [(opt_i64_i64_map.contains?
+          (& cl-lengths.lengths)
+          (compiler_ir_types.compiler-ir-symbol-id cl-symbols.stored))
+        241]
+      [(opt_i64_i64_map.contains?
+          (& cl-lengths.lengths)
+          (compiler_ir_types.compiler-ir-symbol-id cl-symbols.escaped))
+        242]
+      [(opt_i64_i64_map.contains?
+          (& cl-lengths.lengths)
+          (compiler_ir_types.compiler-ir-symbol-id cl-symbols.header))
+        243]
+      ;; ...while every initializer is recorded, whatever its global's verdict.
+      [(not
+          (opt_i64_i64_map.contains?
+            (& cl-lengths.inits)
+            (compiler_ir_types.compiler-ir-symbol-id cl-symbols.init-header)))
+        244]
       [(not
           (opt-call-memory-summary-is?
             (compiler_optimize.compiler-opt-global-shared-view call-summaries)
@@ -99843,7 +100064,9 @@
         (opt_i64_i64_map.with-capacity 8)
         (opt_i64_i64_map.with-capacity 8)
         (compiler_optimize.opt-global-cell-summary-empty)
-        (compiler_ir_types.compiler-ir-representation-index-empty)))))
+        (compiler_ir_types.compiler-ir-representation-index-empty)
+        (opt_i64_i64_map.with-capacity 8)
+        (opt_i64_i64_map.with-capacity 8)))))
 
 (define (opt-guard-dedup-run
   [summaries : compiler_optimize.OptLoopBceSummaries]

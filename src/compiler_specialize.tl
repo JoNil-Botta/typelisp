@@ -6567,12 +6567,7 @@
     [(ast.AstExpr.WithResource wr-box)
       (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
-          (ResultSpecExpr.Ok
-            (spec-owner-expr-push
-              (spec-state-owner state)
-              (ast.AstExpr.WithResource
-                (box (ast.AstWithResource.WithResource bindings body))))
-            state)])]
+          (spec-rewrite-resource bindings body templates state)])]
     [(ast.AstExpr.Box inner-box)
       (let
         [inner : ast.AstExpr (spec-state-expr-get state inner-box)]
@@ -7049,6 +7044,161 @@
           (spec-owner-expr-get owner array-box)
           subs)]
       [_ (SpecMaybeId.None)])))
+
+;; Resource scopes are sequential: the current name is absent from its own
+;; initializer and cleanup, and shadows templates only in later bindings/body.
+(define (spec-rewrite-resource
+  [bindings : ast.AstResourceBindingList]
+  [body : ast.AstExprList]
+  [templates : (& templates SpecTemplateEnv)]
+  [state : SpecState]) : ResultSpecExpr
+  (let
+    [out : ast.AstResourceBindingList
+      (ast.ast-resource-binding-list-with-capacity bindings.len)]
+    [scope : SpecTemplateEnv (spec-template-env-shared-view templates)]
+    [index : i64 0]
+    (begin
+      (while (< index bindings.len)
+        (match (ast.ast-resource-binding-list-get
+          (& bindings)
+          index
+          (ast.ast-resource-binding-fallback))
+          [(ast.AstResourceBinding.Binding name init cleanup move-aware?)
+            (match (spec-rewrite-expr
+              (spec-state-expr-get (& state) init)
+              (& scope)
+              (spec-place-shared-view state))
+              [(ResultSpecExpr.Err diag) (return (ResultSpecExpr.Err diag))]
+              [(ResultSpecExpr.Ok next-init init-state)
+                (match (spec-rewrite-expr
+                  (spec-state-expr-get (& init-state) cleanup)
+                  (& scope)
+                  init-state)
+                  [(ResultSpecExpr.Err diag) (return (ResultSpecExpr.Err diag))]
+                  [(ResultSpecExpr.Ok next-cleanup cleanup-state)
+                    (begin
+                      (ast.ast-resource-binding-list-push
+                        (&mut out)
+                        (ast.AstResourceBinding.Binding
+                          name
+                          next-init
+                          next-cleanup
+                          move-aware?))
+                      (set! state cleanup-state)
+                      (set! scope (spec-template-env-shadow-name scope name))
+                      (set! index (+ index 1)))])])]))
+      (match (spec-rewrite-expr-list
+        body
+        (& scope)
+        (spec-place-shared-view state))
+        [(ResultSpecExprList.Err diag) (ResultSpecExpr.Err diag)]
+        [(ResultSpecExprList.Ok next-body body-state)
+          (ResultSpecExpr.Ok
+            (spec-owner-expr-push
+              (spec-state-owner (& body-state))
+              (ast.AstExpr.WithResource
+                (box (ast.AstWithResource.WithResource out next-body))))
+            body-state)]))))
+
+(define (spec-substitute-values-resource-with-owner
+  [owner : (& owner SpecOwnerContext)]
+  [bindings : ast.AstResourceBindingList]
+  [body : ast.AstExprList]
+  [subs : (& subs SpecValueSubst)]) : ResultSpecSubExpr
+  (let
+    [out : ast.AstResourceBindingList
+      (ast.ast-resource-binding-list-with-capacity bindings.len)]
+    [scope : SpecValueSubst (spec-value-subst-shared-view subs)]
+    [index : i64 0]
+    (begin
+      (while (< index bindings.len)
+        (match (ast.ast-resource-binding-list-get
+          (& bindings)
+          index
+          (ast.ast-resource-binding-fallback))
+          [(ast.AstResourceBinding.Binding name init cleanup move-aware?)
+            (match (spec-substitute-values-expr-with-owner
+              owner
+              (spec-owner-expr-get owner init)
+              (& scope))
+              [(ResultSpecSubExpr.Err diag)
+                (return (ResultSpecSubExpr.Err diag))]
+              [(ResultSpecSubExpr.Ok next-init)
+                (match (spec-substitute-values-expr-with-owner
+                  owner
+                  (spec-owner-expr-get owner cleanup)
+                  (& scope))
+                  [(ResultSpecSubExpr.Err diag)
+                    (return (ResultSpecSubExpr.Err diag))]
+                  [(ResultSpecSubExpr.Ok next-cleanup)
+                    (begin
+                      (ast.ast-resource-binding-list-push
+                        (&mut out)
+                        (ast.AstResourceBinding.Binding
+                          name
+                          next-init
+                          next-cleanup
+                          move-aware?))
+                      (set! scope (spec-value-subst-remove-name (& scope) name))
+                      (set! index (+ index 1)))])])]))
+      (match (spec-substitute-values-expr-list-with-owner owner body (& scope))
+        [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)]
+        [(ResultSpecSubExprList.Ok next-body)
+          (ResultSpecSubExpr.Ok
+            (spec-owner-expr-push
+              owner
+              (ast.AstExpr.WithResource
+                (box (ast.AstWithResource.WithResource out next-body)))))]))))
+
+(define (spec-substitute-types-resource-with-owner
+  [owner : (& owner SpecOwnerContext)]
+  [bindings : ast.AstResourceBindingList]
+  [body : ast.AstExprList]
+  [subs : (& subs SpecTypeSubst)]) : ResultSpecSubExpr
+  (let
+    [out : ast.AstResourceBindingList
+      (ast.ast-resource-binding-list-with-capacity bindings.len)]
+    [scope : SpecTypeSubst (spec-type-subst-shared-view subs)]
+    [index : i64 0]
+    (begin
+      (while (< index bindings.len)
+        (match (ast.ast-resource-binding-list-get
+          (& bindings)
+          index
+          (ast.ast-resource-binding-fallback))
+          [(ast.AstResourceBinding.Binding name init cleanup move-aware?)
+            (match (spec-substitute-types-expr-with-owner
+              owner
+              (spec-owner-expr-get owner init)
+              (& scope))
+              [(ResultSpecSubExpr.Err diag)
+                (return (ResultSpecSubExpr.Err diag))]
+              [(ResultSpecSubExpr.Ok next-init)
+                (match (spec-substitute-types-expr-with-owner
+                  owner
+                  (spec-owner-expr-get owner cleanup)
+                  (& scope))
+                  [(ResultSpecSubExpr.Err diag)
+                    (return (ResultSpecSubExpr.Err diag))]
+                  [(ResultSpecSubExpr.Ok next-cleanup)
+                    (begin
+                      (ast.ast-resource-binding-list-push
+                        (&mut out)
+                        (ast.AstResourceBinding.Binding
+                          name
+                          next-init
+                          next-cleanup
+                          move-aware?))
+                      (set! scope (spec-type-subst-remove-name (& scope) name))
+                      (set! index (+ index 1)))])])]))
+      (match (spec-substitute-types-expr-list-with-owner owner body (& scope))
+        [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)]
+        [(ResultSpecSubExprList.Ok next-body)
+          (ResultSpecSubExpr.Ok
+            (spec-owner-expr-push
+              owner
+              (ast.AstExpr.WithResource
+                (box (ast.AstWithResource.WithResource out next-body)))))]))))
 
 (define (spec-substitute-values-expr-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -7856,11 +8006,7 @@
     [(ast.AstExpr.WithResource wr-box)
       (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
-          (ResultSpecSubExpr.Ok
-            (spec-owner-expr-push
-              owner
-              (ast.AstExpr.WithResource
-                (box (ast.AstWithResource.WithResource bindings body)))))])]
+          (spec-substitute-values-resource-with-owner owner bindings body subs)])]
     [(ast.AstExpr.Box inner-box)
       (let
         [inner : ast.AstExpr (spec-owner-expr-get owner inner-box)]
@@ -9207,11 +9353,7 @@
     [(ast.AstExpr.WithResource wr-box)
       (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
-          (ResultSpecSubExpr.Ok
-            (spec-owner-expr-push
-              owner
-              (ast.AstExpr.WithResource
-                (box (ast.AstWithResource.WithResource bindings body)))))])]
+          (spec-substitute-types-resource-with-owner owner bindings body subs)])]
     [(ast.AstExpr.Box inner-box)
       (let
         [inner : ast.AstExpr (spec-owner-expr-get owner inner-box)]
@@ -11434,6 +11576,121 @@
           (__tl-project-field (array-ref owner.generated-symbol-records 0) len)
           0)))))
 
+;; Resource cleanup expressions are constrained further by the typechecker;
+;; these source-local tests isolate the specialization traversal itself.
+(define (compiler-specialize-resource-error? [body : String]) : bool
+  (match (parser.parse-ast-source
+    (str_cat.str-cat
+      "(define (bad [comptime T : type]) : i64 "
+      body
+      ") (define (main) : i64 (bad (type i64)))"))
+    [(parser.ResultAstProgram.Ok program)
+      (match (compiler-specialize-program program)
+        [(ResultSpecProgram.Err _) true]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-specialize-resource-literal? [id : i64]) : bool
+  (match (ast.ast-node-get id)
+    [(ast.AstExpr.Literal literal)
+      (match literal
+        [(ast.AstLiteral.Int value _) (= value 5)]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-specialize-resource-var? [id : i64]) : bool
+  (match (ast.ast-node-get id)
+    [(ast.AstExpr.Var name) (= name cbi.compiler-builtin-id-fix-x)]
+    [_ false]))
+
+(define (compiler-specialize-resource-subst-ok?) : bool
+  (let
+    [name : i64 cbi.compiler-builtin-id-fix-x]
+    [var : i64 (ast.ast-node-push (ast.AstExpr.Var name))]
+    [bindings : ast.AstResourceBindingList (ast.ast-resource-binding-list-new)]
+    [body : ast.AstExprList (ast.ast-expr-list-new)]
+    [subs : SpecValueSubst
+      (spec-value-subst-cons
+        name
+        (ctfe.CompilerCtfeValue.I64 5)
+        (spec-value-subst-new))]
+    (begin
+      (ast.ast-resource-binding-list-push
+        (&mut bindings)
+        (ast.AstResourceBinding.Binding name var var true))
+      (ast.ast-resource-binding-list-push
+        (&mut bindings)
+        (ast.AstResourceBinding.Binding
+          cbi.compiler-builtin-id-fix-y
+          var
+          var
+          false))
+      (ast.ast-expr-list-push (&mut body) var)
+      (match (spec-substitute-values-expr
+        (ast.AstExpr.WithResource
+          (box (ast.AstWithResource.WithResource bindings body)))
+        subs)
+        [(ResultSpecSubExpr.Ok rewritten)
+          (match (ast.ast-node-get rewritten)
+            [(ast.AstExpr.WithResource resource)
+              (match (ast.ast-with-resource-box-shared-view resource)
+                [(ast.AstWithResource.WithResource bindings body)
+                  (and
+                    (= bindings.len 2)
+                    (= body.len 1)
+                    (match (ast.ast-resource-binding-list-get
+                      (& bindings)
+                      0
+                      (ast.ast-resource-binding-fallback))
+                      [(ast.AstResourceBinding.Binding
+                          actual
+                          init
+                          cleanup
+                          move-aware?)
+                        (and
+                          (= actual name)
+                          move-aware?
+                          (compiler-specialize-resource-literal? init)
+                          (compiler-specialize-resource-literal? cleanup))])
+                    (match (ast.ast-resource-binding-list-get
+                      (& bindings)
+                      1
+                      (ast.ast-resource-binding-fallback))
+                      [(ast.AstResourceBinding.Binding
+                          actual
+                          init
+                          cleanup
+                          move-aware?)
+                        (and
+                          (= actual cbi.compiler-builtin-id-fix-y)
+                          (not move-aware?)
+                          (compiler-specialize-resource-var? init)
+                          (compiler-specialize-resource-var? cleanup))])
+                    (compiler-specialize-resource-var?
+                      (ast.ast-expr-list-get (& body) 0 0)))])]
+            [_ false])]
+        [_ false]))))
+
+(define (compiler-specialize-resource-ok?) : bool
+  (and
+    (compiler-specialize-resource-subst-ok?)
+    (compiler-specialize-resource-error? "(with ([r T drop]) 0)")
+    (compiler-specialize-resource-error? "(with ([r 0 T]) 0)")
+    (compiler-specialize-resource-error? "(with ([r 0 drop]) T)")
+    (match (parser.parse-ast-source
+      "(define (pick [comptime n : i64]) : i64 n)
+       (define (main) : i64 (with ([r 0 (pick 7)]) 0))")
+      [(parser.ResultAstProgram.Ok program)
+        (match (compiler-specialize-program program)
+          [(ResultSpecProgram.Ok specialized)
+            (match specialized
+              [(ast.AstProgram.Program decls)
+                (compiler-specialize-decl-list-defines?
+                  (ast.ast-decl-list-box-shared-view decls)
+                  "__tl_specialized_pick_i64_7_none")])]
+          [_ false])]
+      [_ false])))
+
 (define (compiler-specialize-self-test) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
@@ -11450,6 +11707,7 @@
     (unless (compiler-specialize-reuse-ok?) (return 0))
     (unless (compiler-specialize-subst-ok?) (return 0))
     (unless (compiler-specialize-value-subst-ok?) (return 0))
+    (unless (compiler-specialize-resource-ok?) (return 0))
     (unless (compiler-specialize-boxed-tails-ok?) (return 0))
     (unless (compiler-specialize-reflection-string-param-ok?) (return 0))
     (unless (compiler-generated-decl-reuse-ok?) (return 0))
@@ -11465,3 +11723,13 @@
       (compiler-specialize-generated-symbol-records-growth-ok?)
       (return 0))
     1))
+
+(cfg
+  test
+  (test
+    specialize-resource-scopes
+    (begin
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (test.assert-true
+        (compiler-specialize-resource-ok?)
+        "resource traversal, sequential substitution, and metadata"))))

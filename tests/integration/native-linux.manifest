@@ -599,3 +599,4 @@ lattice_join_split_abort_opt2|tests/integration/lattice_join_split.tl|134|-|5 1|
 short_trip_copy|tests/integration/short_trip_copy.tl|42|7757762194516093604 39\n|5 0|stdlib/io.tl stdlib/string.tl
 short_trip_copy_abort|tests/integration/short_trip_copy.tl|134|-|5 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/linux/short_trip_copy_abort/short_trip_copy_abort.tl:115:50: array index out of bounds: index=39 length=39\n
 short_trip_copy_abort_opt2|tests/integration/short_trip_copy.tl|134|-|5 1|stdlib/io.tl stdlib/string.tl|opt-level:2+expected-stderr:tl: target/integration-verify/linux/short_trip_copy_abort_opt2/short_trip_copy_abort_opt2.tl:115:50: array index out of bounds: index=39 length=39\n
+specialize_resource_scope|tests/integration/specialize_resource_scope.tl|42|-|-|-

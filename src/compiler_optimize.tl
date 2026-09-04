@@ -79867,7 +79867,7 @@
 ;; the unroller's recognizer accept) is not an option either: by then the
 ;; unroller is racing this pass for the same block, and it runs in the same
 ;; iteration immediately after.
-(defstruct OptFillCallShape
+(defstruct OptLoopCallShape
   (pred-label i64)
   (exit-label i64)
   (phi-count i64)
@@ -79877,12 +79877,12 @@
   (ity ast.AstType)
   (bound ir.CompilerIrValue))
 
-(defenum OptFillCallMaybeShape
+(defenum OptLoopCallMaybeShape
   (No)
-  (Some OptFillCallShape))
+  (Some OptLoopCallShape))
 
 ;; A rotated counted self-loop: `B: phis...; body...; branch c B EXIT`.
-(define (opt-fill-call-shape [entry-label : i64] [block : ir.CompilerIrBlock]) : OptFillCallMaybeShape
+(define (opt-loop-call-shape [entry-label : i64] [block : ir.CompilerIrBlock]) : OptLoopCallMaybeShape
   (match block
     [(ir.CompilerIrBlock.Block label instrs)
       (let
@@ -79891,7 +79891,7 @@
             (compiler-opt-global-shared-view instrs))]
         ;; counter phi + gep + store + add + compare + branch
         (if (or (< count 6) (= label entry-label))
-          (OptFillCallMaybeShape.No)
+          (OptLoopCallMaybeShape.No)
           (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
             [(ir.CompilerIrInstr.Branch cond then-label else-label)
               (match cond
@@ -79899,23 +79899,23 @@
                   (if (and
                     (= then-label label)
                     (not (= else-label label))
-                    (opt-fill-call-fast-clone-label? label))
-                    (opt-fill-call-shape-scan
+                    (opt-loop-call-fast-clone-label? label))
+                    (opt-loop-call-shape-scan
                       label
                       (compiler-opt-global-shared-view instrs)
                       count
                       cond-var
                       else-label)
-                    (OptFillCallMaybeShape.No))]
-                [_ (OptFillCallMaybeShape.No)])]
-            [_ (OptFillCallMaybeShape.No)])))]))
+                    (OptLoopCallMaybeShape.No))]
+                [_ (OptLoopCallMaybeShape.No)])]
+            [_ (OptLoopCallMaybeShape.No)])))]))
 
 ;; Only the versioner's fast clones are candidates, and testing that BEFORE the
 ;; counter/bound analysis is what keeps this stage off every other rotated
 ;; self-loop. It matters most at opt1, where the versioner does not run at all:
 ;; without this gate the pass paid a defs scan and a map allocation per loop for
 ;; a rewrite that can never fire (measured +0.021% on the opt1 self-compile).
-(define (opt-fill-call-fast-clone-label? [label : i64]) : bool
+(define (opt-loop-call-fast-clone-label? [label : i64]) : bool
   (let
     [text : String (ir.compiler-ir-label-text label)]
     [suffix : String "__bce_fast"]
@@ -79923,12 +79923,12 @@
     [m : i64 (string.string-length (& suffix))]
     (and (> n m) (string.eq (string.substring (& text) (- n m) m) suffix))))
 
-(define (opt-fill-call-shape-scan
+(define (opt-loop-call-shape-scan
   [label : i64]
   [instrs : ir.CompilerIrInstrSeq]
   [count : i64]
   [cond-var : i64]
-  [exit-label : i64]) : OptFillCallMaybeShape
+  [exit-label : i64]) : OptLoopCallMaybeShape
   (let
     [last : i64 (- count 1)]
     [phi-count : i64
@@ -79943,18 +79943,18 @@
         (opt-unroll-no-phi-from?
           (compiler-opt-global-shared-view instrs)
           phi-count)))
-      (OptFillCallMaybeShape.No)
-      (opt-fill-call-shape-cond label instrs phi-count last cond-var exit-label))))
+      (OptLoopCallMaybeShape.No)
+      (opt-loop-call-shape-cond label instrs phi-count last cond-var exit-label))))
 
 ;; `c = <counter-ish> < <bound>` with a loop-invariant bound. The bound becomes
 ;; the fill's end index, so a block-local bound would make the count wrong.
-(define (opt-fill-call-shape-cond
+(define (opt-loop-call-shape-cond
   [label : i64]
   [instrs : ir.CompilerIrInstrSeq]
   [phi-count : i64]
   [last : i64]
   [cond-var : i64]
-  [exit-label : i64]) : OptFillCallMaybeShape
+  [exit-label : i64]) : OptLoopCallMaybeShape
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (compiler-opt-global-shared-view instrs.slots)]
@@ -79965,7 +79965,7 @@
         last
         cond-var)]
     (if (< cond-index 0)
-      (OptFillCallMaybeShape.No)
+      (OptLoopCallMaybeShape.No)
       (match (ir.compiler-ir-instr-seq-ref instrs cond-index)
         [(ir.CompilerIrInstr.BinOp _ cmp-op cmp-lhs cmp-rhs _)
           (match cmp-op
@@ -79981,7 +79981,7 @@
                       (+ last 1)
                       (opt_i64_i64_map.with-capacity 32))
                     (compiler-opt-global-shared-view cmp-rhs))
-                    (opt-fill-call-shape-step
+                    (opt-loop-call-shape-step
                       label
                       (compiler-opt-global-shared-view instrs)
                       phi-count
@@ -79990,14 +79990,14 @@
                       exit-label
                       (opt-unroll-resolve-copy instrs phi-count last cmp-src 16)
                       cmp-rhs)
-                    (OptFillCallMaybeShape.No))]
-                [_ (OptFillCallMaybeShape.No)])]
-            [_ (OptFillCallMaybeShape.No)])]
-        [_ (OptFillCallMaybeShape.No)]))))
+                    (OptLoopCallMaybeShape.No))]
+                [_ (OptLoopCallMaybeShape.No)])]
+            [_ (OptLoopCallMaybeShape.No)])]
+        [_ (OptLoopCallMaybeShape.No)]))))
 
 ;; `inext = iphi + 1`. Step 1 is what makes the visited index set exactly
 ;; [seed, bound) -- the contiguous run `rep stosq` writes.
-(define (opt-fill-call-shape-step
+(define (opt-loop-call-shape-step
   [label : i64]
   [instrs : ir.CompilerIrInstrSeq]
   [phi-count : i64]
@@ -80005,13 +80005,13 @@
   [cond-var : i64]
   [exit-label : i64]
   [inext : i64]
-  [bound : ir.CompilerIrValue]) : OptFillCallMaybeShape
+  [bound : ir.CompilerIrValue]) : OptLoopCallMaybeShape
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (compiler-opt-global-shared-view instrs.slots)]
     [inext-index : i64 (opt-unroll-def-index slots phi-count last inext)]
     (if (< inext-index 0)
-      (OptFillCallMaybeShape.No)
+      (OptLoopCallMaybeShape.No)
       (match (ir.compiler-ir-instr-seq-ref instrs inext-index)
         [(ir.CompilerIrInstr.BinOp _ add-op add-lhs add-rhs ity)
           (match add-op
@@ -80024,7 +80024,7 @@
                         (= step 1)
                         (opt-integer-type?
                           (compiler-opt-global-shared-view ity)))
-                        (opt-fill-call-shape-phi
+                        (opt-loop-call-shape-phi
                           label
                           (compiler-opt-global-shared-view instrs)
                           phi-count
@@ -80040,11 +80040,11 @@
                           inext
                           ity
                           bound)
-                        (OptFillCallMaybeShape.No))]
-                    [_ (OptFillCallMaybeShape.No)])]
-                [_ (OptFillCallMaybeShape.No)])]
-            [_ (OptFillCallMaybeShape.No)])]
-        [_ (OptFillCallMaybeShape.No)]))))
+                        (OptLoopCallMaybeShape.No))]
+                    [_ (OptLoopCallMaybeShape.No)])]
+                [_ (OptLoopCallMaybeShape.No)])]
+            [_ (OptLoopCallMaybeShape.No)])]
+        [_ (OptLoopCallMaybeShape.No)]))))
 
 ;; The counter phi: exactly two inputs, the back edge carrying `inext` and the
 ;; single other edge seeding LITERAL 0.
@@ -80055,7 +80055,7 @@
 ;; exactly that expression -- so the trip count is >= 1 independently of the
 ;; version guard's own `seed < bound` condition. Both facts point the same way;
 ;; requiring the literal keeps the second one available.
-(define (opt-fill-call-shape-phi
+(define (opt-loop-call-shape-phi
   [label : i64]
   [instrs : ir.CompilerIrInstrSeq]
   [phi-count : i64]
@@ -80065,35 +80065,35 @@
   [iphi : i64]
   [inext : i64]
   [ity : ast.AstType]
-  [bound : ir.CompilerIrValue]) : OptFillCallMaybeShape
+  [bound : ir.CompilerIrValue]) : OptLoopCallMaybeShape
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (compiler-opt-global-shared-view instrs.slots)]
     [iphi-index : i64 (opt-unroll-def-index slots 0 phi-count iphi)]
     (if (< iphi-index 0)
-      (OptFillCallMaybeShape.No)
+      (OptLoopCallMaybeShape.No)
       (match (ir.compiler-ir-instr-seq-ref instrs iphi-index)
         [(ir.CompilerIrInstr.Phi _ inputs _)
           (match (opt-unroll-split-phi-inputs inputs label)
             [(OptUnrollPhiSplit.Split seed back pred-label)
               (if (and
                 (not (= pred-label label))
-                (opt-fill-call-zero-seed? seed)
+                (opt-loop-call-zero-seed? seed)
                 (opt-unroll-back-resolves-to?
                   (compiler-opt-global-shared-view instrs)
                   phi-count
                   last
                   back
                   inext)
-                (opt-fill-call-other-phis-ok?
+                (opt-loop-call-other-phis-ok?
                   instrs
                   0
                   phi-count
                   label
                   pred-label
                   iphi))
-                (OptFillCallMaybeShape.Some
-                  (OptFillCallShape
+                (OptLoopCallMaybeShape.Some
+                  (OptLoopCallShape
                     pred-label
                     exit-label
                     phi-count
@@ -80102,11 +80102,11 @@
                     cond-var
                     ity
                     bound))
-                (OptFillCallMaybeShape.No))]
-            [(OptUnrollPhiSplit.No) (OptFillCallMaybeShape.No)])]
-        [_ (OptFillCallMaybeShape.No)]))))
+                (OptLoopCallMaybeShape.No))]
+            [(OptUnrollPhiSplit.No) (OptLoopCallMaybeShape.No)])]
+        [_ (OptLoopCallMaybeShape.No)]))))
 
-(define (opt-fill-call-zero-seed? [seed : ir.CompilerIrValue]) : bool
+(define (opt-loop-call-zero-seed? [seed : ir.CompilerIrValue]) : bool
   (match seed
     [(ir.CompilerIrValue.I64 k) (= k 0)]
     [_ false]))
@@ -80115,7 +80115,7 @@
 ;; behind -- must split over the SAME two edges. A phi naming a third
 ;; predecessor would mean the block has an entry that does not come through the
 ;; version guard, and the seed/bound facts would not hold on it.
-(define (opt-fill-call-other-phis-ok?
+(define (opt-loop-call-other-phis-ok?
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [phi-count : i64]
@@ -80127,7 +80127,7 @@
     (match (ir.compiler-ir-instr-seq-ref instrs index)
       [(ir.CompilerIrInstr.Phi dst inputs _)
         (if (= dst iphi)
-          (opt-fill-call-other-phis-ok?
+          (opt-loop-call-other-phis-ok?
             instrs
             (+ index 1)
             phi-count
@@ -80138,7 +80138,7 @@
             [(OptUnrollPhiSplit.Split _ _ split-pred)
               (and
                 (= split-pred pred-label)
-                (opt-fill-call-other-phis-ok?
+                (opt-loop-call-other-phis-ok?
                   instrs
                   (+ index 1)
                   phi-count
@@ -80157,7 +80157,7 @@
     [(ast.AstType.U64) true]
     [_ false]))
 
-(define (opt-fill-call-versioned-prefix [loop-label : i64]) : String
+(define (opt-loop-call-versioned-prefix [loop-label : i64]) : String
   (let
     [text : String (ir.compiler-ir-label-text loop-label)]
     [suffix : String "__bce_fast"]
@@ -80179,7 +80179,7 @@
 ;; -- still pins the clone to exactly one entry, the guard's true edge. A change
 ;; to the versioner's naming makes this stop matching, which is the safe
 ;; direction.
-(define (opt-fill-call-pred-in-version-namespace?
+(define (opt-loop-call-pred-in-version-namespace?
   [blocks : ir.CompilerIrBlockList]
   [prefix : String]
   [pred-label : i64]) : bool
@@ -80249,7 +80249,7 @@
       [(ir.CompilerIrInstr.Gep _ _ _ _)
         (opt-fill-call-scan-body instrs (+ index 1) last iphi found)]
       [(ir.CompilerIrInstr.BinOp _ op _ _ _)
-        (if (opt-fill-call-binop-ok? op)
+        (if (opt-loop-call-binop-ok? op)
           (opt-fill-call-scan-body instrs (+ index 1) last iphi found)
           (OptFillCallMaybeSite.No))]
       [_ (OptFillCallMaybeSite.No)])))
@@ -80258,7 +80258,7 @@
 ;; operation that can fault must not appear in it: a division whose divisor
 ;; only reaches zero on a later index would fault in the loop and not in the
 ;; call. Every other BinOp is total.
-(define (opt-fill-call-binop-ok? [op : ir.CompilerIrBinOp]) : bool
+(define (opt-loop-call-binop-ok? [op : ir.CompilerIrBinOp]) : bool
   (match (compiler-opt-global-shared-view op)
     [(ir.CompilerIrBinOp.Div) false]
     [(ir.CompilerIrBinOp.Mod) false]
@@ -80291,7 +80291,7 @@
                       0
                       last
                       (opt_i64_i64_map.with-capacity 32))
-                    (opt-fill-call-value-var
+                    (opt-loop-call-value-var
                       (compiler-opt-global-shared-view base)))))
                 (OptFillCallMaybeSite.Some
                   (OptFillCallSite index index base 0 (ast.AstType.I64)))
@@ -80300,7 +80300,7 @@
       [_ (opt-fill-call-gep-of instrs (+ index 1) last ptr-var iphi)])))
 
 ;; -1 for a non-Var value: never a block-local definition, so always invariant.
-(define (opt-fill-call-value-var [value : ir.CompilerIrValue]) : i64
+(define (opt-loop-call-value-var [value : ir.CompilerIrValue]) : i64
   (match value
     [(ir.CompilerIrValue.Var id) id]
     [_ (- 0 1)]))
@@ -80351,7 +80351,7 @@
           inext
           cond-var)))))
 
-(define (opt-fill-call-outside-uses
+(define (opt-loop-call-outside-uses
   [blocks : ir.CompilerIrBlockList]
   [skip-label : i64]
   [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
@@ -80360,20 +80360,20 @@
     [(ir.CompilerIrBlockList.Cons block rest)
       (match (compiler-opt-global-shared-view block)
         [(ir.CompilerIrBlock.Block label instrs)
-          (opt-fill-call-outside-uses
+          (opt-loop-call-outside-uses
             (compiler-opt-box-shared-view rest)
             skip-label
             (if (= label skip-label)
               set
               (opt-collect-instr-seq-uses set instrs)))])]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-fill-call-outside-uses
+      (opt-loop-call-outside-uses
         (ir.compiler-ir-block-seq-to-list seq)
         skip-label
         set)]))
 
 ;; Rebuild one phi without its self-edge input.
-(define (opt-fill-call-phi-drop-self
+(define (opt-loop-call-phi-drop-self
   [inputs : ir.CompilerIrPhiInputSeq]
   [self-label : i64]) : ir.CompilerIrPhiInputSeq
   (let
@@ -80393,13 +80393,13 @@
             (+ phi-inputs-at-69645-3.start 1)
             (- phi-inputs-at-69645-3.len 1))]
         (if (= label self-label)
-          (opt-fill-call-phi-drop-self
+          (opt-loop-call-phi-drop-self
             (compiler-opt-global-shared-view rest)
             self-label)
           (ir.compiler-ir-phi-input-seq-prepend
             value
             label
-            (opt-fill-call-phi-drop-self
+            (opt-loop-call-phi-drop-self
               (compiler-opt-global-shared-view rest)
               self-label)))))))
 
@@ -80408,11 +80408,15 @@
     (cbi.compiler-builtin-refresh!)
     cbi.compiler-builtin-id-tl-mem-fill8))
 
-(define (opt-fill-call-alloc-var [cell : (__tl_dyn-array i64)]) : i64
+(defstruct OptLoopCallRewriteState
+  (next-frame i64)
+  (changed? bool))
+
+(define (opt-loop-call-alloc-var [state : (&mut state OptLoopCallRewriteState)]) : i64
   (let
-    [next : i64 (array-ref cell 0)]
+    [next : i64 state.next-frame]
     (begin
-      (set! (array-ref cell 0) (+ next 1))
+      (set! state.next-frame (+ next 1))
       next)))
 
 (define (opt-fill-call-emit-body!
@@ -80421,9 +80425,9 @@
   [index : i64]
   [phi-count : i64]
   [last : i64]
-  [shape : OptFillCallShape]
+  [shape : OptLoopCallShape]
   [site : OptFillCallSite]
-  [frame-cell : (__tl_dyn-array i64)]) : unit
+  [state : (&mut state OptLoopCallRewriteState)]) : unit
   (if (>= index last)
     unit
     (begin
@@ -80432,9 +80436,7 @@
         ;; and the recognizer pinned the seed to literal 0, so it is exactly
         ;; `bound` -- no subtract is emitted.
         (let
-          [call-var : i64
-            (opt-fill-call-alloc-var
-              (compiler-opt-global-shared-view frame-cell))]
+          [call-var : i64 (opt-loop-call-alloc-var state)]
           [ptr : ir.CompilerIrValue
             (match (ir.compiler-ir-instr-seq-ref instrs site.store-index)
               [(ir.CompilerIrInstr.StorePtr p _ _) p]
@@ -80451,7 +80453,7 @@
                   (ir.CompilerIrValue.I64 site.value)))
               (ast.AstType.Unit))))
         ;; the counter's `next` is redefined as its exit value, `bound`
-        (if (opt-fill-call-defines-inext?
+        (if (opt-loop-call-defines-inext?
           (compiler-opt-global-shared-view instrs)
           index
           shape.inext)
@@ -80469,9 +80471,9 @@
         last
         (compiler-opt-global-shared-view shape)
         site
-        frame-cell))))
+        state))))
 
-(define (opt-fill-call-defines-inext?
+(define (opt-loop-call-defines-inext?
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [inext : i64]) : bool
@@ -80479,7 +80481,7 @@
     [(ir.CompilerIrInstr.BinOp dst _ _ _ _) (= dst inext)]
     [_ false]))
 
-(define (opt-fill-call-emit-phis!
+(define (opt-loop-call-emit-phis!
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
@@ -80494,13 +80496,13 @@
             (&mut builder)
             (ir.CompilerIrInstr.Phi
               dst
-              (opt-fill-call-phi-drop-self inputs self-label)
+              (opt-loop-call-phi-drop-self inputs self-label)
               ty))]
         [_
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
             (ir.compiler-ir-instr-seq-ref instrs index))])
-      (opt-fill-call-emit-phis!
+      (opt-loop-call-emit-phis!
         (&mut builder)
         instrs
         (+ index 1)
@@ -80509,9 +80511,9 @@
 
 (define (opt-fill-call-rewrite-block
   [block : ir.CompilerIrBlock]
-  [shape : OptFillCallShape]
+  [shape : OptLoopCallShape]
   [site : OptFillCallSite]
-  [frame-cell : (__tl_dyn-array i64)]) : ir.CompilerIrBlock
+  [state : (&mut state OptLoopCallRewriteState)]) : ir.CompilerIrBlock
   (match block
     [(ir.CompilerIrBlock.Block label instrs)
       (let
@@ -80522,7 +80524,7 @@
         [builder : ir.CompilerIrInstrBuilder
           (ir.compiler-ir-instr-builder-with-capacity (+ count 2))]
         (begin
-          (opt-fill-call-emit-phis!
+          (opt-loop-call-emit-phis!
             (&mut builder)
             (compiler-opt-global-shared-view instrs)
             0
@@ -80536,7 +80538,7 @@
             (- count 1)
             (compiler-opt-global-shared-view shape)
             site
-            frame-cell)
+            state)
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
             (ir.CompilerIrInstr.Jump shape.exit-label))
@@ -80546,7 +80548,7 @@
 
 (defenum OptFillCallMaybeShapeSite
   (No)
-  (Some OptFillCallShape OptFillCallSite))
+  (Some OptLoopCallShape OptFillCallSite))
 
 ;; `outside` is only built once the cheap structural checks have passed, so the
 ;; whole-function use scan is paid per CANDIDATE block, not per block.
@@ -80556,19 +80558,19 @@
   [block : ir.CompilerIrBlock]) : OptFillCallMaybeShapeSite
   (match (compiler-opt-global-shared-view block)
     [(ir.CompilerIrBlock.Block label instrs)
-      (match (opt-fill-call-shape
+      (match (opt-loop-call-shape
         entry-label
         (compiler-opt-global-shared-view block))
-        [(OptFillCallMaybeShape.No) (OptFillCallMaybeShapeSite.No)]
-        [(OptFillCallMaybeShape.Some shape)
+        [(OptLoopCallMaybeShape.No) (OptFillCallMaybeShapeSite.No)]
+        [(OptLoopCallMaybeShape.Some shape)
           (let
             [count : i64
               (ir.compiler-ir-instr-seq-count
                 (compiler-opt-global-shared-view instrs))]
             [last : i64 (- count 1)]
-            [prefix : String (opt-fill-call-versioned-prefix label)]
+            [prefix : String (opt-loop-call-versioned-prefix label)]
             (if (not
-              (opt-fill-call-pred-in-version-namespace?
+              (opt-loop-call-pred-in-version-namespace?
                 (compiler-opt-global-shared-view blocks)
                 prefix
                 shape.pred-label))
@@ -80586,7 +80588,7 @@
                     0
                     shape.phi-count
                     last
-                    (opt-fill-call-outside-uses
+                    (opt-loop-call-outside-uses
                       blocks
                       label
                       (opt_i64_i64_map.with-capacity 64))
@@ -80595,44 +80597,63 @@
                     (OptFillCallMaybeShapeSite.Some shape site)
                     (OptFillCallMaybeShapeSite.No))])))])]))
 
-(define (opt-fill-call-rewrite-blocks
+;; Shared transaction for counted-loop call rewrites. The callback owns only
+;; pass-specific recognition/emission. It is a noncapturing function value;
+;; traversal, frame tracking and verified commit/rollback have one authority.
+(define (opt-loop-call-rewrite-blocks
+  [try-rewrite
+    : (->
+      ir.CompilerIrBlockList
+      i64
+      ir.CompilerIrBlock
+      (&mut state OptLoopCallRewriteState)
+      ir.CompilerIrBlock)]
   [all-blocks : ir.CompilerIrBlockList]
   [blocks : ir.CompilerIrBlockList]
   [entry-label : i64]
-  [frame-cell : (__tl_dyn-array i64)]
-  [changed-cell : (__tl_dyn-array i64)]) : ir.CompilerIrBlockList
+  [state : (&mut state OptLoopCallRewriteState)]) : ir.CompilerIrBlockList
   (match blocks
     [(ir.CompilerIrBlockList.Nil) ir.CompilerIrBlockList.Nil]
     [(ir.CompilerIrBlockList.Cons block rest)
       (ir.compiler-ir-block-cons
-        (match (opt-fill-call-block-match
+        (try-rewrite
           (compiler-opt-global-shared-view all-blocks)
           entry-label
-          (compiler-opt-global-shared-view block))
-          [(OptFillCallMaybeShapeSite.No) block]
-          [(OptFillCallMaybeShapeSite.Some shape site)
-            (begin
-              (set! (array-ref changed-cell 0) 1)
-              (opt-fill-call-rewrite-block
-                block
-                shape
-                site
-                (compiler-opt-global-shared-view frame-cell)))])
-        (opt-fill-call-rewrite-blocks
+          block
+          state)
+        (opt-loop-call-rewrite-blocks
+          try-rewrite
           (compiler-opt-global-shared-view all-blocks)
           (compiler-opt-box-shared-view rest)
           entry-label
-          frame-cell
-          (compiler-opt-global-shared-view changed-cell)))]
+          state))]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-fill-call-rewrite-blocks
-        all-blocks
-        (ir.compiler-ir-block-seq-to-list seq)
-        entry-label
-        frame-cell
-        changed-cell)]))
+      (let
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        [out : ir.CompilerIrBlockBuilder
+          (ir.compiler-ir-block-builder-with-capacity count)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (ir.compiler-ir-block-builder-push!
+                (&mut out)
+                (try-rewrite
+                  (compiler-opt-global-shared-view all-blocks)
+                  entry-label
+                  (ir.compiler-ir-block-seq-ref seq index)
+                  state))
+              (set! index (+ index 1))))
+          (ir.compiler-ir-block-builder-to-list out)))]))
 
-(define (opt-fill-call-function-with-context-result
+(define (opt-loop-call-function-with-context-result
+  [try-rewrite
+    : (->
+      ir.CompilerIrBlockList
+      i64
+      ir.CompilerIrBlock
+      (&mut state OptLoopCallRewriteState)
+      ir.CompilerIrBlock)]
   [context : OptCfgContext]
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
@@ -80644,18 +80665,16 @@
       (match (compiler-opt-global-shared-view func)
         [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
           (let
-            [frame-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-            [changed-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-            [_seed : unit (set! (array-ref frame-cell 0) frame)]
-            [_seed2 : unit (set! (array-ref changed-cell 0) 0)]
+            [state : OptLoopCallRewriteState
+              (OptLoopCallRewriteState frame false)]
             [rewritten : ir.CompilerIrBlockList
-              (opt-fill-call-rewrite-blocks
+              (opt-loop-call-rewrite-blocks
+                try-rewrite
                 (compiler-opt-global-shared-view blocks)
                 (compiler-opt-global-shared-view blocks)
                 (opt-cfg-entry-label (compiler-opt-global-shared-view blocks))
-                (compiler-opt-global-shared-view frame-cell)
-                (compiler-opt-global-shared-view changed-cell))]
-            (if (= (array-ref changed-cell 0) 0)
+                (&mut state))]
+            (if (not state.changed?)
               (OptFunctionCtxResult.Result func context)
               (let
                 [next : ir.CompilerIrFunction
@@ -80663,7 +80682,7 @@
                     name
                     params
                     ret-ty
-                    (array-ref frame-cell 0)
+                    state.next-frame
                     rewritten)]
                 [next-context : OptCfgContext
                   (opt-cfg-context-build
@@ -80679,13 +80698,50 @@
       (OptFunctionCtxResult.Result func context)]))
 
 ;; Standalone driver for tests and ad-hoc runs.
-(define (opt-fill-call-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (match (opt-fill-call-function-with-context-result
+(define (opt-loop-call-function
+  [try-rewrite
+    : (->
+      ir.CompilerIrBlockList
+      i64
+      ir.CompilerIrBlock
+      (&mut state OptLoopCallRewriteState)
+      ir.CompilerIrBlock)]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match (opt-loop-call-function-with-context-result
+    try-rewrite
     (opt-cfg-context-build
       (opt-function-blocks (compiler-opt-global-shared-view func)))
     false
     func)
     [(OptFunctionCtxResult.Result out _) out]))
+
+(define (opt-fill-call-try-rewrite
+  [blocks : ir.CompilerIrBlockList]
+  [entry-label : i64]
+  [block : ir.CompilerIrBlock]
+  [state : (&mut state OptLoopCallRewriteState)]) : ir.CompilerIrBlock
+  (match (opt-fill-call-block-match
+    blocks
+    entry-label
+    (compiler-opt-global-shared-view block))
+    [(OptFillCallMaybeShapeSite.No) block]
+    [(OptFillCallMaybeShapeSite.Some shape site)
+      (begin
+        (set! state.changed? true)
+        (opt-fill-call-rewrite-block block shape site state))]))
+
+(define (opt-fill-call-function-with-context-result
+  [context : OptCfgContext]
+  [verified? : bool]
+  [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
+  (opt-loop-call-function-with-context-result
+    opt-fill-call-try-rewrite
+    context
+    verified?
+    func))
+
+(define (opt-fill-call-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (opt-loop-call-function opt-fill-call-try-rewrite func))
 
 ;; --- element copy -> tl_mem_copy_fwd / tl_mem_copy8_fwd (copy_call) ----------
 ;;
@@ -80937,7 +80993,7 @@
           width
           found)]
       [(ir.CompilerIrInstr.BinOp _ op _ _ _)
-        (if (opt-fill-call-binop-ok? op)
+        (if (opt-loop-call-binop-ok? op)
           (opt-copy-call-scan-body
             (compiler-opt-global-shared-view instrs)
             (+ index 1)
@@ -81013,7 +81069,7 @@
               (not
                 (opt-used-contains
                   (compiler-opt-global-shared-view defs)
-                  (opt-fill-call-value-var base)))
+                  (opt-loop-call-value-var base)))
               (opt-copy-call-index-tracks?
                 (compiler-opt-global-shared-view instrs)
                 0
@@ -81105,7 +81161,7 @@
     [(ir.CompilerIrValue.Var v)
       (and
         (= v iphi)
-        (not (opt-used-contains defs (opt-fill-call-value-var other-side))))]
+        (not (opt-used-contains defs (opt-loop-call-value-var other-side))))]
     [_ false]))
 
 ;; Same rule as `opt-fill-call-escape-ok?` -- only `inext` (materialised as
@@ -81172,9 +81228,9 @@
   [index : i64]
   [phi-count : i64]
   [last : i64]
-  [shape : OptFillCallShape]
+  [shape : OptLoopCallShape]
   [site : OptCopyCallSite]
-  [frame-cell : (__tl_dyn-array i64)]) : unit
+  [state : (&mut state OptLoopCallRewriteState)]) : unit
   (if (>= index last)
     unit
     (begin
@@ -81185,9 +81241,7 @@
         ;; pinned the seed to literal 0, so it is exactly `bound` and no
         ;; subtract (and no scaling) is emitted.
         (let
-          [call-var : i64
-            (opt-fill-call-alloc-var
-              (compiler-opt-global-shared-view frame-cell))]
+          [call-var : i64 (opt-loop-call-alloc-var state)]
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
             (ir.CompilerIrInstr.Call
@@ -81200,7 +81254,7 @@
                   shape.bound))
               (ast.AstType.Unit))))
         ;; the counter's `next` is redefined as its exit value, `bound`
-        (if (opt-fill-call-defines-inext?
+        (if (opt-loop-call-defines-inext?
           (compiler-opt-global-shared-view instrs)
           index
           shape.inext)
@@ -81218,13 +81272,13 @@
         last
         (compiler-opt-global-shared-view shape)
         (compiler-opt-global-shared-view site)
-        (compiler-opt-global-shared-view frame-cell)))))
+        state))))
 
 (define (opt-copy-call-rewrite-block
   [block : ir.CompilerIrBlock]
-  [shape : OptFillCallShape]
+  [shape : OptLoopCallShape]
   [site : OptCopyCallSite]
-  [frame-cell : (__tl_dyn-array i64)]) : ir.CompilerIrBlock
+  [state : (&mut state OptLoopCallRewriteState)]) : ir.CompilerIrBlock
   (match block
     [(ir.CompilerIrBlock.Block label instrs)
       (let
@@ -81233,7 +81287,7 @@
         [builder : ir.CompilerIrInstrBuilder
           (ir.compiler-ir-instr-builder-with-capacity (+ count 2))]
         (begin
-          (opt-fill-call-emit-phis!
+          (opt-loop-call-emit-phis!
             (&mut builder)
             (compiler-opt-global-shared-view instrs)
             0
@@ -81247,7 +81301,7 @@
             (- count 1)
             (compiler-opt-global-shared-view shape)
             (compiler-opt-global-shared-view site)
-            (compiler-opt-global-shared-view frame-cell))
+            state)
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
             (ir.CompilerIrInstr.Jump shape.exit-label))
@@ -81257,9 +81311,9 @@
 
 (defenum OptCopyCallMaybeShapeSite
   (No)
-  (Some OptFillCallShape OptCopyCallSite))
+  (Some OptLoopCallShape OptCopyCallSite))
 
-;; The counted-loop recognizer is fill_call's -- seed 0, step 1, invariant
+;; The counted-loop recognizer is shared -- seed 0, step 1, invariant
 ;; bound, `__bce_fast` clone entered only from its own `__bce_guard` namespace --
 ;; because both rewrites need exactly those facts and sharing it means they
 ;; cannot drift apart. Only the BODY recognizer differs.
@@ -81269,15 +81323,15 @@
   [block : ir.CompilerIrBlock]) : OptCopyCallMaybeShapeSite
   (match (compiler-opt-global-shared-view block)
     [(ir.CompilerIrBlock.Block label instrs)
-      (match (opt-fill-call-shape
+      (match (opt-loop-call-shape
         entry-label
         (compiler-opt-global-shared-view block))
-        [(OptFillCallMaybeShape.No) (OptCopyCallMaybeShapeSite.No)]
-        [(OptFillCallMaybeShape.Some shape)
+        [(OptLoopCallMaybeShape.No) (OptCopyCallMaybeShapeSite.No)]
+        [(OptLoopCallMaybeShape.Some shape)
           (let
             [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
             [last : i64 (- count 1)]
-            [prefix : String (opt-fill-call-versioned-prefix label)]
+            [prefix : String (opt-loop-call-versioned-prefix label)]
             ;; Read the width first: 0 means the body's store has no helper,
             ;; and admitting it would let every OTHER width test in the scan
             ;; compare 0 against 0 and pass.
@@ -81289,7 +81343,7 @@
             (if (or
               (< width 1)
               (not
-                (opt-fill-call-pred-in-version-namespace?
+                (opt-loop-call-pred-in-version-namespace?
                   (compiler-opt-global-shared-view blocks)
                   (compiler-opt-global-shared-view prefix)
                   shape.pred-label)))
@@ -81312,7 +81366,7 @@
                       0
                       shape.phi-count
                       last
-                      (opt-fill-call-outside-uses
+                      (opt-loop-call-outside-uses
                         blocks
                         label
                         (opt_i64_i64_map.with-capacity 64))
@@ -81321,97 +81375,33 @@
                     (OptCopyCallMaybeShapeSite.Some shape site)
                     (OptCopyCallMaybeShapeSite.No))])))])]))
 
-(define (opt-copy-call-rewrite-blocks
-  [all-blocks : ir.CompilerIrBlockList]
+(define (opt-copy-call-try-rewrite
   [blocks : ir.CompilerIrBlockList]
   [entry-label : i64]
-  [frame-cell : (__tl_dyn-array i64)]
-  [changed-cell : (__tl_dyn-array i64)]) : ir.CompilerIrBlockList
-  (match (compiler-opt-global-shared-view blocks)
-    [(ir.CompilerIrBlockList.Nil) ir.CompilerIrBlockList.Nil]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (ir.compiler-ir-block-cons
-        (match (opt-copy-call-block-match
-          (compiler-opt-global-shared-view all-blocks)
-          entry-label
-          (compiler-opt-global-shared-view block))
-          [(OptCopyCallMaybeShapeSite.No) block]
-          [(OptCopyCallMaybeShapeSite.Some shape site)
-            (begin
-              (set! (array-ref changed-cell 0) 1)
-              (opt-copy-call-rewrite-block
-                block
-                shape
-                site
-                (compiler-opt-global-shared-view frame-cell)))])
-        (opt-copy-call-rewrite-blocks
-          all-blocks
-          (compiler-opt-box-shared-view rest)
-          entry-label
-          frame-cell
-          changed-cell))]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-copy-call-rewrite-blocks
-        all-blocks
-        (ir.compiler-ir-block-seq-to-list seq)
-        entry-label
-        frame-cell
-        changed-cell)]))
+  [block : ir.CompilerIrBlock]
+  [state : (&mut state OptLoopCallRewriteState)]) : ir.CompilerIrBlock
+  (match (opt-copy-call-block-match
+    blocks
+    entry-label
+    (compiler-opt-global-shared-view block))
+    [(OptCopyCallMaybeShapeSite.No) block]
+    [(OptCopyCallMaybeShapeSite.Some shape site)
+      (begin
+        (set! state.changed? true)
+        (opt-copy-call-rewrite-block block shape site state))]))
 
 (define (opt-copy-call-function-with-context-result
   [context : OptCfgContext]
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
-  (match (opt-verify-gate
+  (opt-loop-call-function-with-context-result
+    opt-copy-call-try-rewrite
+    context
     verified?
-    (compiler-opt-global-shared-view func)
-    (compiler-opt-global-shared-view context))
-    [(ResultCompilerOptimizeVerify.Ok)
-      (match (compiler-opt-global-shared-view func)
-        [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
-          (let
-            [frame-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-            [changed-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-            [_seed : unit (set! (array-ref frame-cell 0) frame)]
-            [_seed2 : unit (set! (array-ref changed-cell 0) 0)]
-            [rewritten : ir.CompilerIrBlockList
-              (opt-copy-call-rewrite-blocks
-                (compiler-opt-global-shared-view blocks)
-                (compiler-opt-global-shared-view blocks)
-                (opt-cfg-entry-label (compiler-opt-global-shared-view blocks))
-                (compiler-opt-global-shared-view frame-cell)
-                (compiler-opt-global-shared-view changed-cell))]
-            (if (= (array-ref changed-cell 0) 0)
-              (OptFunctionCtxResult.Result func context)
-              (let
-                [next : ir.CompilerIrFunction
-                  (ir.CompilerIrFunction.Function
-                    name
-                    params
-                    ret-ty
-                    (array-ref frame-cell 0)
-                    rewritten)]
-                [next-context : OptCfgContext
-                  (opt-cfg-context-build
-                    (opt-function-blocks (compiler-opt-global-shared-view next)))]
-                (match (opt-verify-function-with-context
-                  (compiler-opt-global-shared-view next)
-                  (compiler-opt-global-shared-view next-context))
-                  [(ResultCompilerOptimizeVerify.Ok)
-                    (OptFunctionCtxResult.Result next next-context)]
-                  [(ResultCompilerOptimizeVerify.Err _)
-                    (OptFunctionCtxResult.Result func context)]))))])]
-    [(ResultCompilerOptimizeVerify.Err _)
-      (OptFunctionCtxResult.Result func context)]))
+    func))
 
-;; Standalone driver for tests and ad-hoc runs.
 (define (opt-copy-call-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (match (opt-copy-call-function-with-context-result
-    (opt-cfg-context-build
-      (opt-function-blocks (compiler-opt-global-shared-view func)))
-    false
-    func)
-    [(OptFunctionCtxResult.Result out _) out]))
+  (opt-loop-call-function opt-copy-call-try-rewrite func))
 
 ;; --- constant-trip full unrolling ---------------------------------------------
 ;;

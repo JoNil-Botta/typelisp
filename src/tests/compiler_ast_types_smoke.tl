@@ -7,6 +7,7 @@
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
 (import stdlib.string)
+(cfg test (import stdlib.test as tl_test))
 
 (define (compiler-ast-test-fresh-local-id
   [ordinal : i64]
@@ -1963,6 +1964,92 @@
       (compiler-ast-expr-binding-clause-syntax-id-round-trip? hygiene)
       (compiler-ast-expr-binding-clause-syntax-id-round-trip? structural))))
 
+;; These three generated families cover the important storage shapes: a small
+;; enum with shared zero-capacity backing, an inline aggregate, and an enum with
+;; String payload ownership. Grow each through several capacities and verify
+;; that both source and appended values retain their logical contents.
+(define (compiler-ast-generated-dense-list-operations-smoke?) : bool
+  (let
+    [cleanups : ast.AstVariantPayloadCleanupList
+      (ast.ast-variant-payload-cleanup-list-new)]
+    [cleanup-copy : ast.AstVariantPayloadCleanupList
+      (ast.ast-variant-payload-cleanup-list-new)]
+    [clauses : ast.AstExprClauseList (ast.ast-expr-clause-list-new)]
+    [links : ast.AstExternLinkInputList (ast.ast-extern-link-input-list-new)]
+    [zero-params : ast.AstParamList (ast.ast-param-list-with-capacity -1)]
+    [minimum-field-defs : ast.AstFieldDefList
+      (ast.ast-field-def-list-with-capacity -1)]
+    [index : i64 0]
+    (begin
+      (while (< index 17)
+        (begin
+          (ast.ast-variant-payload-cleanup-list-push
+            (&mut cleanups)
+            (if (= (bit-and index 1) 0)
+              ast.AstVariantPayloadCleanup.No
+              ast.AstVariantPayloadCleanup.Owned))
+          (ast.ast-expr-clause-list-push
+            (&mut clauses)
+            (ast.ast-expr-clause index (* index 3)))
+          (ast.ast-extern-link-input-list-push
+            (&mut links)
+            (if (= (bit-and index 1) 0)
+              (ast.AstExternLinkInput.Lib "m")
+              (ast.AstExternLinkInput.Search "native")))
+          (set! index (+ index 1))))
+      (ast.ast-variant-payload-cleanup-list-append-from
+        (&mut cleanup-copy)
+        (& cleanups)
+        0)
+      (and
+        (= (array-length zero-params.slots) 0)
+        (= (array-length minimum-field-defs.slots) 1)
+        (= (array-length cleanups.slots) 32)
+        (= (array-length cleanup-copy.slots) 32)
+        (= (array-length clauses.slots) 32)
+        (= (array-length links.slots) 32)
+        (= (ast.ast-variant-payload-cleanup-list-len (& cleanups)) 17)
+        (= (ast.ast-variant-payload-cleanup-list-len (& cleanup-copy)) 17)
+        (= clauses.len 17)
+        (= (ast.ast-extern-link-input-list-len (& links)) 17)
+        (match (ast.ast-variant-payload-cleanup-list-get
+          (& cleanups)
+          1
+          ast.AstVariantPayloadCleanup.No)
+          [(ast.AstVariantPayloadCleanup.Owned) true]
+          [_ false])
+        (match (ast.ast-variant-payload-cleanup-list-get
+          (& cleanup-copy)
+          16
+          ast.AstVariantPayloadCleanup.Owned)
+          [(ast.AstVariantPayloadCleanup.No) true]
+          [_ false])
+        (let
+          [clause : ast.AstExprClause
+            (ast.ast-expr-clause-list-get
+              (& clauses)
+              16
+              (ast.ast-expr-clause-fallback))]
+          (and (= clause.first 16) (= clause.second 48)))
+        (match (ast.ast-extern-link-input-list-get
+          (& links)
+          0
+          (ast.AstExternLinkInput.Arg "fallback"))
+          [(ast.AstExternLinkInput.Lib value) (string.eq value "m")]
+          [_ false])
+        (match (ast.ast-extern-link-input-list-get
+          (& links)
+          17
+          (ast.AstExternLinkInput.Arg "fallback"))
+          [(ast.AstExternLinkInput.Arg value) (string.eq value "fallback")]
+          [_ false])))))
+
+(test
+  compiler-ast-generated-dense-list-operations
+  (tl_test.assert-true
+    (compiler-ast-generated-dense-list-operations-smoke?)
+    "generated AST dense lists preserve capacity, order, and fallbacks"))
+
 (define (main) : i64
   (begin
     (unless (= (ast.compiler-ast-smoke) 23) (return 2))
@@ -1994,4 +2081,5 @@
     (unless
       (compiler-ast-expr-binding-clause-syntax-identity-smoke?)
       (return 23))
+    (unless (compiler-ast-generated-dense-list-operations-smoke?) (return 25))
     42))

@@ -77665,12 +77665,12 @@
 ;; confirming THIS test is what fails:
 ;;   * `opt-fill-call-scan-body`'s literal-store arm widened to accept a Var
 ;;     store value -> code 20 (F3 wrongly rewrites).
-;;   * `opt-fill-call-pred-in-version-namespace?` forced true -> code 30 (F4
+;;   * `opt-loop-call-pred-in-version-namespace?` forced true -> code 30 (F4
 ;;     wrongly rewrites).
-;;   * `opt-fill-call-shape-step`'s `(= step 1)` dropped -> code 50 (F6).
-;;   * `opt-fill-call-shape-cond`'s `opt-unroll-invariant-bound?` forced true
+;;   * `opt-loop-call-shape-step`'s `(= step 1)` dropped -> code 50 (F6).
+;;   * `opt-loop-call-shape-cond`'s `opt-unroll-invariant-bound?` forced true
 ;;     -> code 60 (F7).
-;;   * `opt-fill-call-shape-scan` given the unroller's extra "the compare's only
+;;   * `opt-loop-call-shape-scan` given the unroller's extra "the compare's only
 ;;     in-block use is the terminator" gate -> code 41 (F5 stops rewriting)
 ;;     while F1 still passes: that gate, and nothing else, is what made
 ;;     `opt-unroll-block-shape` reject the real clone.
@@ -101732,3 +101732,187 @@
   (test.assert-true
     (compiler-optimize-inline-global-store-shape-ok?)
     "the single-block shape tracer names its clause for a store body and each refusing neighbour, both whitelists admit the store, and the tiny-predicate band keeps its refusal"))
+
+;; The transaction tests use small callbacks so rollback is exercised even when
+;; the real recognizers correctly refuse every invalid candidate.
+(define (opt-loop-call-test-keep
+  [_blocks : compiler_ir_types.CompilerIrBlockList]
+  [_entry : i64]
+  [block : compiler_ir_types.CompilerIrBlock]
+  [_state : (&mut state compiler_optimize.OptLoopCallRewriteState)]) : compiler_ir_types.CompilerIrBlock
+  block)
+
+(define (opt-loop-call-test-rewrite
+  [_blocks : compiler_ir_types.CompilerIrBlockList]
+  [_entry : i64]
+  [block : compiler_ir_types.CompilerIrBlock]
+  [state : (&mut state compiler_optimize.OptLoopCallRewriteState)]) : compiler_ir_types.CompilerIrBlock
+  (match block
+    [(compiler_ir_types.CompilerIrBlock.Block label instrs)
+      (let
+        [next : i64 (compiler_optimize.opt-loop-call-alloc-var state)]
+        (begin
+          (set! state.changed? true)
+          (compiler_ir_types.CompilerIrBlock.Block
+            label
+            (opt-test-instrs-with-tail
+              instrs
+              (compiler_ir_types.CompilerIrInstr.Mov
+                next
+                (compiler_ir_types.CompilerIrValue.I64 next)
+                (compiler_ast_types.AstType.I64))))))]))
+
+(define (opt-loop-call-test-reject
+  [_blocks : compiler_ir_types.CompilerIrBlockList]
+  [_entry : i64]
+  [block : compiler_ir_types.CompilerIrBlock]
+  [state : (&mut state compiler_optimize.OptLoopCallRewriteState)]) : compiler_ir_types.CompilerIrBlock
+  (match block
+    [(compiler_ir_types.CompilerIrBlock.Block label _)
+      (begin
+        (set! state.changed? true)
+        (set! state.next-frame (+ state.next-frame 1))
+        (compiler_ir_types.CompilerIrBlock.Block
+          label
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (opt-fc-test-label "loop-call.missing")))))]))
+
+(define (opt-loop-call-test-fixture [dense? : bool]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [last : compiler_ir_types.CompilerIrBlock
+      (opt-fc-test-exit-block (opt-fc-test-label "loop-call.last"))]
+    [middle : compiler_ir_types.CompilerIrBlock
+      (compiler_ir_types.CompilerIrBlock.Block
+        (opt-fc-test-label "loop-call.middle")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (opt-fc-test-label "loop-call.last"))))]
+    [first : compiler_ir_types.CompilerIrBlock
+      (compiler_ir_types.CompilerIrBlock.Block
+        (opt-fc-test-label "loop-call.first")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (opt-fc-test-label "loop-call.middle"))))]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-cons
+        first
+        (compiler_ir_types.compiler-ir-block-cons
+          middle
+          (compiler_ir_types.compiler-ir-block-cons
+            last
+            compiler_ir_types.CompilerIrBlockList.Nil)))]
+    (compiler_ir_types.CompilerIrFunction.Function
+      (opt-test-symbol "loop-call-test")
+      (compiler_ir_types.compiler-ir-param-seq-empty)
+      (compiler_ast_types.AstType.I64)
+      0
+      (if dense?
+        (compiler_ir_types.CompilerIrBlockList.Array
+          (compiler_ir_types.compiler-ir-block-seq-from-list blocks))
+        blocks))))
+
+(define (opt-loop-call-test-transaction [dense? : bool]) : unit
+  (let
+    [func : compiler_ir_types.CompilerIrFunction
+      (opt-loop-call-test-fixture dense?)]
+    [context : compiler_optimize.OptCfgContext
+      (compiler_optimize.opt-cfg-context-build
+        (compiler_optimize.opt-function-blocks
+          (owned_view.compiler-owned-shared-view func)))]
+    [original-labels : u64
+      (unsafe
+        (ptr->int (__tl_array-data context.index.labels)))]
+    (begin
+      (match (compiler_optimize.opt-loop-call-function-with-context-result
+        opt-loop-call-test-keep
+        (owned_view.compiler-owned-shared-view context)
+        false
+        (owned_view.compiler-owned-shared-view func))
+        [(compiler_optimize.OptFunctionCtxResult.Result kept kept-context)
+          (begin
+            (test.assert-i64-eq
+              (compiler_optimize.opt-function-frame kept)
+              0
+              "no candidate preserves frame")
+            (test.assert-true
+              (=
+                original-labels
+                (unsafe
+                  (ptr->int (__tl_array-data kept-context.index.labels))))
+              "no candidate preserves context identity"))])
+      (match (compiler_optimize.opt-loop-call-function-with-context-result
+        opt-loop-call-test-reject
+        (owned_view.compiler-owned-shared-view context)
+        false
+        (owned_view.compiler-owned-shared-view func))
+        [(compiler_optimize.OptFunctionCtxResult.Result rolled-back old-context)
+          (begin
+            (test.assert-i64-eq
+              (compiler_optimize.opt-function-frame
+                (owned_view.compiler-owned-shared-view rolled-back))
+              0
+              "rejection rolls back frame")
+            (test.assert-true
+              (=
+                original-labels
+                (unsafe
+                  (ptr->int (__tl_array-data old-context.index.labels))))
+              "rejection rolls back the original context")
+            (test.assert-true
+              (match (compiler_optimize.opt-verify-function-with-context
+                rolled-back
+                old-context)
+                [(compiler_optimize.ResultCompilerOptimizeVerify.Ok) true]
+                [_ false])
+              "rollback restores valid original blocks"))])
+      (match (compiler_optimize.opt-loop-call-function-with-context-result
+        opt-loop-call-test-rewrite
+        context
+        false
+        func)
+        [(compiler_optimize.OptFunctionCtxResult.Result rewritten next-context)
+          (let
+            [blocks : compiler_ir_types.CompilerIrBlockSeq
+              (compiler_ir_types.compiler-ir-block-seq-from-list
+                (compiler_optimize.opt-function-blocks
+                  (owned_view.compiler-owned-shared-view rewritten)))]
+            [index : i64 0]
+            (begin
+              (test.assert-i64-eq
+                (compiler_optimize.opt-function-frame rewritten)
+                3
+                "all three candidates advance frame")
+              (test.assert-true
+                (not
+                  (=
+                    original-labels
+                    (unsafe
+                      (ptr->int (__tl_array-data next-context.index.labels)))))
+                "commit builds a new context")
+              (while (< index 3)
+                (begin
+                  (match (compiler_ir_types.compiler-ir-block-seq-ref
+                    blocks
+                    index)
+                    [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+                      (test.assert-true
+                        (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                          instrs
+                          0)
+                          [(compiler_ir_types.CompilerIrInstr.Mov dst value _)
+                            (and
+                              (= dst index)
+                              (match value
+                                [(compiler_ir_types.CompilerIrValue.I64 n)
+                                  (= n index)]
+                                [_ false]))]
+                          [_ false])
+                        "callback order and fresh IDs follow block order")])
+                  (set! index (+ index 1))))))]))))
+
+(test
+  loop-call-driver-transaction
+  (begin
+    (opt-loop-call-test-transaction false)
+    (opt-loop-call-test-transaction true)))

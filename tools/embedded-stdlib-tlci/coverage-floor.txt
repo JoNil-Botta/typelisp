@@ -39,8 +39,9 @@
 # adds seven explicit clone-generator entries; all 161 remain native. Issue
 # #7596 replaces two exported unchecked process array-view macros with checked,
 # element-specific functions, shrinking the catalog to 159 without introducing
-# a fallback route.
-native-entries-min 159
+# a fallback route. Issue #7526 adds the compiler dense-list declaration
+# generator; all 160 remain native.
+native-entries-min 160
 shell-entries-max 0
 partial-entries-max 0
 interpreted-arms-max 0

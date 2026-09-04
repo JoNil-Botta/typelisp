@@ -8,6 +8,7 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_intern as ci)
 (import compiler_builtin_ids as cbi)
+(import stdlib.dense_list)
 (cfg test (import stdlib.io))
 
 ;; Arena access for the node-pool grow paths -- a regrown pool array must
@@ -5581,74 +5582,15 @@
 (define (ast-param-fallback) : AstParam
   (AstParam.Param 0 (AstType.Unit) false))
 
-(define (ast-param-list-with-capacity [capacity : i64]) : AstParamList
-  (let
-    [cap : i64
-      (if (< capacity 0)
-        0
-        capacity)]
-    (AstParamList (__tl_make-array AstParam cap) 0)))
-
-(define (ast-param-list-new) : AstParamList
-  (ast-param-list-with-capacity 0))
-
-(define (ast-param-list-len [v : (& v AstParamList)]) : i64
-  v.len)
-
-(define (ast-param-list-get
-  [v : (& v AstParamList)]
-  [index : i64]
-  [fallback : AstParam]) : AstParam
-  (if (and (>= index 0) (< index (ast-param-list-len v)))
-    (array-ref v.slots index)
-    fallback))
-
-(define (ast-param-list-copy-range
-  [dst : (&mut dst (__tl_dyn-array AstParam))]
-  [src : (& src (__tl_dyn-array AstParam))]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (ast-param-list-copy-range dst src (+ index 1) count))))
-
-(define (ast-param-list-grow [v : (&mut v AstParamList)]) : unit
-  (let
-    [n : i64 v.len]
-    [old-cap : i64 (array-length v.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array AstParam) (__tl_make-array AstParam new-cap)]
-    (begin
-      (ast-param-list-copy-range (&mut bigger) (& v.slots) 0 n)
-      (set! v.slots bigger))))
-
-(define (ast-param-list-push [v : (&mut v AstParamList)] [value : AstParam]) : unit
-  (begin
-    (if (< v.len (array-length v.slots))
-      unit
-      (ast-param-list-grow v))
-    (let
-      [index : i64 v.len]
-      (begin
-        (set! (array-ref v.slots index) value)
-        (set! v.len (+ index 1))))))
-
-(define (ast-param-list-append-from
-  [out : (&mut out AstParamList)]
-  [items : (& items AstParamList)]
-  [index : i64]) : unit
-  (if (>= index (ast-param-list-len items))
-    unit
-    (begin
-      (ast-param-list-push
-        out
-        (ast-param-list-get items index (ast-param-fallback)))
-      (ast-param-list-append-from out items (+ index 1)))))
+(dense_list.compiler-dense-list-operations
+  AstParam
+  AstParamList
+  ast-param-list
+  caller-provided-fallback
+  zero-capacity
+  compiler-dense-list-unused-shared-zero-storage
+  len
+  append-from)
 
 (define (ast-param-cons [head : AstParam] [rest : AstParamList]) : AstParamList
   (let
@@ -5755,65 +5697,14 @@
 (define (ast-macro-param-fallback) : AstMacroParam
   (AstMacroParam.Param 0 (AstType.Unit) false (ast-macro-type-kind-list-empty)))
 
-(define (ast-macro-param-list-with-capacity [capacity : i64]) : AstMacroParamList
-  (let
-    [cap : i64
-      (if (< capacity 0)
-        0
-        capacity)]
-    (AstMacroParamList (__tl_make-array AstMacroParam cap) 0)))
-
-(define (ast-macro-param-list-new) : AstMacroParamList
-  (ast-macro-param-list-with-capacity 0))
-
-(define (ast-macro-param-list-len [v : (& v AstMacroParamList)]) : i64
-  v.len)
-
-(define (ast-macro-param-list-get
-  [v : (& v AstMacroParamList)]
-  [index : i64]
-  [fallback : AstMacroParam]) : AstMacroParam
-  (if (and (>= index 0) (< index (ast-macro-param-list-len v)))
-    (array-ref v.slots index)
-    fallback))
-
-(define (ast-macro-param-list-copy-range
-  [dst : (&mut dst (__tl_dyn-array AstMacroParam))]
-  [src : (& src (__tl_dyn-array AstMacroParam))]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (ast-macro-param-list-copy-range dst src (+ index 1) count))))
-
-(define (ast-macro-param-list-grow [v : (&mut v AstMacroParamList)]) : unit
-  (let
-    [n : i64 v.len]
-    [old-cap : i64 (array-length v.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array AstMacroParam)
-      (__tl_make-array AstMacroParam new-cap)]
-    (begin
-      (ast-macro-param-list-copy-range (&mut bigger) (& v.slots) 0 n)
-      (set! v.slots bigger))))
-
-(define (ast-macro-param-list-push
-  [v : (&mut v AstMacroParamList)]
-  [value : AstMacroParam]) : unit
-  (begin
-    (if (< v.len (array-length v.slots))
-      unit
-      (ast-macro-param-list-grow v))
-    (let
-      [index : i64 v.len]
-      (begin
-        (set! (array-ref v.slots index) value)
-        (set! v.len (+ index 1))))))
+(dense_list.compiler-dense-list-operations
+  AstMacroParam
+  AstMacroParamList
+  ast-macro-param-list
+  caller-provided-fallback
+  zero-capacity
+  compiler-dense-list-unused-shared-zero-storage
+  len)
 
 (define (ast-field-cleanup-fn-id [name : ci.InternSyntaxId]) : AstFieldCleanup
   (AstFieldCleanup.Fn name))
@@ -5830,80 +5721,16 @@
     (AstType.Unit)
     AstFieldCleanup.No))
 
-(define (ast-field-def-list-with-capacity [capacity : i64]) : AstFieldDefList
-  (let
-    [cap : i64
-      (if (< capacity 1)
-        1
-        capacity)]
-    (AstFieldDefList (__tl_make-array AstFieldDef cap) 0)))
-
-(define (ast-field-def-list-new) : AstFieldDefList
-  (ast-field-def-list-with-capacity 4))
-
-(define (ast-field-def-list-len [v : (& v AstFieldDefList)]) : i64
-  v.len)
-
-(define (ast-field-def-list-empty? [v : (& v AstFieldDefList)]) : bool
-  (= v.len 0))
-
-(define (ast-field-def-list-get
-  [v : (& v AstFieldDefList)]
-  [index : i64]
-  [fallback : AstFieldDef]) : AstFieldDef
-  (if (and (>= index 0) (< index v.len))
-    (array-ref v.slots index)
-    fallback))
-
-(define (ast-field-def-list-copy-range
-  [dst : (&mut dst (__tl_dyn-array AstFieldDef))]
-  [src : (& src (__tl_dyn-array AstFieldDef))]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (ast-field-def-list-copy-range dst src (+ index 1) count))))
-
-(define (ast-field-def-list-grow [v : (&mut v AstFieldDefList)]) : unit
-  (let
-    [n : i64 v.len]
-    [old-cap : i64 (array-length v.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array AstFieldDef)
-      (__tl_make-array AstFieldDef new-cap)]
-    (begin
-      (ast-field-def-list-copy-range (&mut bigger) (& v.slots) 0 n)
-      (set! v.slots bigger))))
-
-(define (ast-field-def-list-push
-  [v : (&mut v AstFieldDefList)]
-  [value : AstFieldDef]) : unit
-  (begin
-    (if (< v.len (array-length v.slots))
-      unit
-      (ast-field-def-list-grow v))
-    (let
-      [index : i64 v.len]
-      (begin
-        (set! (array-ref v.slots index) value)
-        (set! v.len (+ index 1))))))
-
-(define (ast-field-def-list-append-from
-  [out : (&mut out AstFieldDefList)]
-  [items : (& items AstFieldDefList)]
-  [index : i64]) : unit
-  (if (>= index items.len)
-    unit
-    (begin
-      (ast-field-def-list-push
-        out
-        (ast-field-def-list-get items index (ast-field-def-fallback)))
-      (ast-field-def-list-append-from out items (+ index 1)))))
+(dense_list.compiler-dense-list-operations
+  AstFieldDef
+  AstFieldDefList
+  ast-field-def-list
+  caller-provided-fallback
+  minimum-one
+  compiler-dense-list-unused-shared-zero-storage
+  len
+  empty?
+  append-from)
 
 (define (ast-field-def-cons [head : AstFieldDef] [rest : AstFieldDefList]) : AstFieldDefList
   (let
@@ -5916,65 +5743,14 @@
 (define (ast-extern-link-input-fallback) : AstExternLinkInput
   (AstExternLinkInput.Arg ""))
 
-(define (ast-extern-link-input-list-with-capacity [capacity : i64]) : AstExternLinkInputList
-  (let
-    [cap : i64
-      (if (< capacity 1)
-        1
-        capacity)]
-    (AstExternLinkInputList (__tl_make-array AstExternLinkInput cap) 0)))
-
-(define (ast-extern-link-input-list-new) : AstExternLinkInputList
-  (ast-extern-link-input-list-with-capacity 4))
-
-(define (ast-extern-link-input-list-len [v : (& v AstExternLinkInputList)]) : i64
-  v.len)
-
-(define (ast-extern-link-input-list-get
-  [v : (& v AstExternLinkInputList)]
-  [index : i64]
-  [fallback : AstExternLinkInput]) : AstExternLinkInput
-  (if (and (>= index 0) (< index (ast-extern-link-input-list-len v)))
-    (array-ref v.slots index)
-    fallback))
-
-(define (ast-extern-link-input-list-copy-range
-  [dst : (&mut dst (__tl_dyn-array AstExternLinkInput))]
-  [src : (& src (__tl_dyn-array AstExternLinkInput))]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (ast-extern-link-input-list-copy-range dst src (+ index 1) count))))
-
-(define (ast-extern-link-input-list-grow [v : (&mut v AstExternLinkInputList)]) : unit
-  (let
-    [n : i64 v.len]
-    [old-cap : i64 (array-length v.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array AstExternLinkInput)
-      (__tl_make-array AstExternLinkInput new-cap)]
-    (begin
-      (ast-extern-link-input-list-copy-range (&mut bigger) (& v.slots) 0 n)
-      (set! v.slots bigger))))
-
-(define (ast-extern-link-input-list-push
-  [v : (&mut v AstExternLinkInputList)]
-  [value : AstExternLinkInput]) : unit
-  (begin
-    (if (< v.len (array-length v.slots))
-      unit
-      (ast-extern-link-input-list-grow v))
-    (let
-      [index : i64 v.len]
-      (begin
-        (set! (array-ref v.slots index) value)
-        (set! v.len (+ index 1))))))
+(dense_list.compiler-dense-list-operations
+  AstExternLinkInput
+  AstExternLinkInputList
+  ast-extern-link-input-list
+  caller-provided-fallback
+  minimum-one
+  compiler-dense-list-unused-shared-zero-storage
+  len)
 
 (define (ast-fn-export-id [name : ci.InternId]) : AstFnExport
   (AstFnExport.Export name))
@@ -6416,96 +6192,15 @@
 (define (ast-variant-payload-cleanup-fallback) : AstVariantPayloadCleanup
   AstVariantPayloadCleanup.No)
 
-;; Zero-length shared backing, same discipline as `ast-empty-i64-slots`.
-(define ast-empty-variant-payload-cleanup-slots : (__tl_dyn-array
-    AstVariantPayloadCleanup)
-  (__tl_make-array AstVariantPayloadCleanup 0))
-
-(define (ast-variant-payload-cleanup-list-with-capacity [capacity : i64]) : AstVariantPayloadCleanupList
-  (if (<= capacity 0)
-    (AstVariantPayloadCleanupList
-      (ast-global-shared-view ast-empty-variant-payload-cleanup-slots)
-      0)
-    (AstVariantPayloadCleanupList
-      (__tl_make-array AstVariantPayloadCleanup capacity)
-      0)))
-
-;; Starts empty rather than at capacity 4: a self-compile builds 1.71M of these
-;; lists and pushes onto ~7.5K of them, so the eager four-slot buffer was
-;; allocated and zeroed almost entirely for lists that stay empty. `push` grows
-;; 0 -> 1 -> 2 -> 4 for the rare list that does fill.
-(define (ast-variant-payload-cleanup-list-new) : AstVariantPayloadCleanupList
-  (ast-variant-payload-cleanup-list-with-capacity 0))
-
-(define (ast-variant-payload-cleanup-list-len
-  [v : (& v AstVariantPayloadCleanupList)]) : i64
-  v.len)
-
-(define (ast-variant-payload-cleanup-list-get
-  [v : (& v AstVariantPayloadCleanupList)]
-  [index : i64]
-  [fallback : AstVariantPayloadCleanup]) : AstVariantPayloadCleanup
-  (if (and (>= index 0) (< index v.len))
-    (array-ref v.slots index)
-    fallback))
-
-(define (ast-variant-payload-cleanup-list-copy-range
-  [dst : (&mut dst (__tl_dyn-array AstVariantPayloadCleanup))]
-  [src : (& src (__tl_dyn-array AstVariantPayloadCleanup))]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (ast-variant-payload-cleanup-list-copy-range dst src (+ index 1) count))))
-
-(define (ast-variant-payload-cleanup-list-grow
-  [v : (&mut v AstVariantPayloadCleanupList)]) : unit
-  (let
-    [n : i64 v.len]
-    [old-cap : i64 (array-length v.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array AstVariantPayloadCleanup)
-      (__tl_make-array AstVariantPayloadCleanup new-cap)]
-    (begin
-      (ast-variant-payload-cleanup-list-copy-range
-        (&mut bigger)
-        (& v.slots)
-        0
-        n)
-      (set! v.slots bigger))))
-
-(define (ast-variant-payload-cleanup-list-push
-  [v : (&mut v AstVariantPayloadCleanupList)]
-  [value : AstVariantPayloadCleanup]) : unit
-  (begin
-    (if (< v.len (array-length v.slots))
-      unit
-      (ast-variant-payload-cleanup-list-grow v))
-    (let
-      [index : i64 v.len]
-      (begin
-        (set! (array-ref v.slots index) value)
-        (set! v.len (+ index 1))))))
-
-(define (ast-variant-payload-cleanup-list-append-from
-  [out : (&mut out AstVariantPayloadCleanupList)]
-  [items : (& items AstVariantPayloadCleanupList)]
-  [index : i64]) : unit
-  (if (>= index items.len)
-    unit
-    (begin
-      (ast-variant-payload-cleanup-list-push
-        out
-        (ast-variant-payload-cleanup-list-get
-          items
-          index
-          (ast-variant-payload-cleanup-fallback)))
-      (ast-variant-payload-cleanup-list-append-from out items (+ index 1)))))
+(dense_list.compiler-dense-list-operations
+  AstVariantPayloadCleanup
+  AstVariantPayloadCleanupList
+  ast-variant-payload-cleanup-list
+  caller-provided-fallback
+  shared-zero-capacity
+  ast-empty-variant-payload-cleanup-slots
+  len
+  append-from)
 
 (define (ast-variant-def-id
   [name : i64]
@@ -6536,80 +6231,16 @@
 (define (ast-variant-def-fallback) : AstVariantDef
   (ast-global-shared-view ast-variant-def-fallback-value))
 
-(define (ast-variant-def-list-with-capacity [capacity : i64]) : AstVariantDefList
-  (let
-    [cap : i64
-      (if (< capacity 1)
-        1
-        capacity)]
-    (AstVariantDefList (__tl_make-array AstVariantDef cap) 0)))
-
-(define (ast-variant-def-list-new) : AstVariantDefList
-  (ast-variant-def-list-with-capacity 4))
-
-(define (ast-variant-def-list-len [v : (& v AstVariantDefList)]) : i64
-  v.len)
-
-(define (ast-variant-def-list-empty? [v : (& v AstVariantDefList)]) : bool
-  (= v.len 0))
-
-(define (ast-variant-def-list-get
-  [v : (& v AstVariantDefList)]
-  [index : i64]
-  [fallback : AstVariantDef]) : AstVariantDef
-  (if (and (>= index 0) (< index v.len))
-    (array-ref v.slots index)
-    fallback))
-
-(define (ast-variant-def-list-copy-range
-  [dst : (&mut dst (__tl_dyn-array AstVariantDef))]
-  [src : (& src (__tl_dyn-array AstVariantDef))]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (ast-variant-def-list-copy-range dst src (+ index 1) count))))
-
-(define (ast-variant-def-list-grow [v : (&mut v AstVariantDefList)]) : unit
-  (let
-    [n : i64 v.len]
-    [old-cap : i64 (array-length v.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array AstVariantDef)
-      (__tl_make-array AstVariantDef new-cap)]
-    (begin
-      (ast-variant-def-list-copy-range (&mut bigger) (& v.slots) 0 n)
-      (set! v.slots bigger))))
-
-(define (ast-variant-def-list-push
-  [v : (&mut v AstVariantDefList)]
-  [value : AstVariantDef]) : unit
-  (begin
-    (if (< v.len (array-length v.slots))
-      unit
-      (ast-variant-def-list-grow v))
-    (let
-      [index : i64 v.len]
-      (begin
-        (set! (array-ref v.slots index) value)
-        (set! v.len (+ index 1))))))
-
-(define (ast-variant-def-list-append-from
-  [out : (&mut out AstVariantDefList)]
-  [items : (& items AstVariantDefList)]
-  [index : i64]) : unit
-  (if (>= index items.len)
-    unit
-    (begin
-      (ast-variant-def-list-push
-        out
-        (ast-variant-def-list-get items index (ast-variant-def-fallback)))
-      (ast-variant-def-list-append-from out items (+ index 1)))))
+(dense_list.compiler-dense-list-operations
+  AstVariantDef
+  AstVariantDefList
+  ast-variant-def-list
+  caller-provided-fallback
+  minimum-one
+  compiler-dense-list-unused-shared-zero-storage
+  len
+  empty?
+  append-from)
 
 (define (ast-variant-def-cons [head : AstVariantDef] [rest : AstVariantDefList]) : AstVariantDefList
   (let
@@ -6634,79 +6265,16 @@
 (define (ast-pattern-fallback) : AstPattern
   AstPattern.Wildcard)
 
-(define (ast-pattern-list-with-capacity [capacity : i64]) : AstPatternList
-  (let
-    [cap : i64
-      (if (< capacity 1)
-        1
-        capacity)]
-    (AstPatternList (__tl_make-array AstPattern cap) 0)))
-
-(define (ast-pattern-list-new) : AstPatternList
-  (ast-pattern-list-with-capacity 4))
-
-(define (ast-pattern-list-len [v : (& v AstPatternList)]) : i64
-  v.len)
-
-(define (ast-pattern-list-empty? [v : (& v AstPatternList)]) : bool
-  (= v.len 0))
-
-(define (ast-pattern-list-get
-  [v : (& v AstPatternList)]
-  [index : i64]
-  [fallback : AstPattern]) : AstPattern
-  (if (and (>= index 0) (< index v.len))
-    (array-ref v.slots index)
-    fallback))
-
-(define (ast-pattern-list-copy-range
-  [dst : (&mut dst (__tl_dyn-array AstPattern))]
-  [src : (& src (__tl_dyn-array AstPattern))]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (ast-pattern-list-copy-range dst src (+ index 1) count))))
-
-(define (ast-pattern-list-grow [v : (&mut v AstPatternList)]) : unit
-  (let
-    [n : i64 v.len]
-    [old-cap : i64 (array-length v.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array AstPattern) (__tl_make-array AstPattern new-cap)]
-    (begin
-      (ast-pattern-list-copy-range (&mut bigger) (& v.slots) 0 n)
-      (set! v.slots bigger))))
-
-(define (ast-pattern-list-push
-  [v : (&mut v AstPatternList)]
-  [value : AstPattern]) : unit
-  (begin
-    (if (< v.len (array-length v.slots))
-      unit
-      (ast-pattern-list-grow v))
-    (let
-      [index : i64 v.len]
-      (begin
-        (set! (array-ref v.slots index) value)
-        (set! v.len (+ index 1))))))
-
-(define (ast-pattern-list-append-from
-  [out : (&mut out AstPatternList)]
-  [items : (& items AstPatternList)]
-  [index : i64]) : unit
-  (if (>= index items.len)
-    unit
-    (begin
-      (ast-pattern-list-push
-        out
-        (ast-pattern-list-get items index (ast-pattern-fallback)))
-      (ast-pattern-list-append-from out items (+ index 1)))))
+(dense_list.compiler-dense-list-operations
+  AstPattern
+  AstPatternList
+  ast-pattern-list
+  caller-provided-fallback
+  minimum-one
+  compiler-dense-list-unused-shared-zero-storage
+  len
+  empty?
+  append-from)
 
 (define (ast-pattern-list-tail [items : AstPatternList]) : AstPatternList
   (let
@@ -6744,77 +6312,15 @@
 (define (ast-let-binding-fallback) : AstLetBinding
   (AstLetBinding.Binding 0 (AstMaybeType.No) 0))
 
-(define (ast-let-binding-list-with-capacity [capacity : i64]) : AstLetBindingList
-  (let
-    [cap : i64
-      (if (< capacity 0)
-        0
-        capacity)]
-    (AstLetBindingList (__tl_make-array AstLetBinding cap) 0)))
-
-(define (ast-let-binding-list-new) : AstLetBindingList
-  (ast-let-binding-list-with-capacity 0))
-
-(define (ast-let-binding-list-len [v : (& v AstLetBindingList)]) : i64
-  v.len)
-
-(define (ast-let-binding-list-get
-  [v : (& v AstLetBindingList)]
-  [index : i64]
-  [fallback : AstLetBinding]) : AstLetBinding
-  (if (and (>= index 0) (< index (ast-let-binding-list-len v)))
-    (array-ref v.slots index)
-    fallback))
-
-(define (ast-let-binding-list-copy-range
-  [dst : (&mut dst (__tl_dyn-array AstLetBinding))]
-  [src : (& src (__tl_dyn-array AstLetBinding))]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (ast-let-binding-list-copy-range dst src (+ index 1) count))))
-
-(define (ast-let-binding-list-grow [v : (&mut v AstLetBindingList)]) : unit
-  (let
-    [n : i64 v.len]
-    [old-cap : i64 (array-length v.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array AstLetBinding)
-      (__tl_make-array AstLetBinding new-cap)]
-    (begin
-      (ast-let-binding-list-copy-range (&mut bigger) (& v.slots) 0 n)
-      (set! v.slots bigger))))
-
-(define (ast-let-binding-list-push
-  [v : (&mut v AstLetBindingList)]
-  [value : AstLetBinding]) : unit
-  (begin
-    (if (< v.len (array-length v.slots))
-      unit
-      (ast-let-binding-list-grow v))
-    (let
-      [index : i64 v.len]
-      (begin
-        (set! (array-ref v.slots index) value)
-        (set! v.len (+ index 1))))))
-
-(define (ast-let-binding-list-append-from
-  [out : (&mut out AstLetBindingList)]
-  [items : (& items AstLetBindingList)]
-  [index : i64]) : unit
-  (if (>= index (ast-let-binding-list-len items))
-    unit
-    (begin
-      (ast-let-binding-list-push
-        out
-        (ast-let-binding-list-get items index (ast-let-binding-fallback)))
-      (ast-let-binding-list-append-from out items (+ index 1)))))
+(dense_list.compiler-dense-list-operations
+  AstLetBinding
+  AstLetBindingList
+  ast-let-binding-list
+  caller-provided-fallback
+  zero-capacity
+  compiler-dense-list-unused-shared-zero-storage
+  len
+  append-from)
 
 (define (ast-let-binding-cons [head : AstLetBinding] [rest : AstLetBindingList]) : AstLetBindingList
   (let
@@ -6832,80 +6338,15 @@
 (define (ast-resource-binding-fallback) : AstResourceBinding
   (AstResourceBinding.Binding 0 0 0 false))
 
-(define (ast-resource-binding-list-with-capacity [capacity : i64]) : AstResourceBindingList
-  (let
-    [cap : i64
-      (if (< capacity 0)
-        0
-        capacity)]
-    (AstResourceBindingList (__tl_make-array AstResourceBinding cap) 0)))
-
-(define (ast-resource-binding-list-new) : AstResourceBindingList
-  (ast-resource-binding-list-with-capacity 0))
-
-(define (ast-resource-binding-list-len [v : (& v AstResourceBindingList)]) : i64
-  v.len)
-
-(define (ast-resource-binding-list-get
-  [v : (& v AstResourceBindingList)]
-  [index : i64]
-  [fallback : AstResourceBinding]) : AstResourceBinding
-  (if (and (>= index 0) (< index (ast-resource-binding-list-len v)))
-    (array-ref v.slots index)
-    fallback))
-
-(define (ast-resource-binding-list-copy-range
-  [dst : (&mut dst (__tl_dyn-array AstResourceBinding))]
-  [src : (& src (__tl_dyn-array AstResourceBinding))]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (ast-resource-binding-list-copy-range dst src (+ index 1) count))))
-
-(define (ast-resource-binding-list-grow [v : (&mut v AstResourceBindingList)]) : unit
-  (let
-    [n : i64 v.len]
-    [old-cap : i64 (array-length v.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array AstResourceBinding)
-      (__tl_make-array AstResourceBinding new-cap)]
-    (begin
-      (ast-resource-binding-list-copy-range (&mut bigger) (& v.slots) 0 n)
-      (set! v.slots bigger))))
-
-(define (ast-resource-binding-list-push
-  [v : (&mut v AstResourceBindingList)]
-  [value : AstResourceBinding]) : unit
-  (begin
-    (if (< v.len (array-length v.slots))
-      unit
-      (ast-resource-binding-list-grow v))
-    (let
-      [index : i64 v.len]
-      (begin
-        (set! (array-ref v.slots index) value)
-        (set! v.len (+ index 1))))))
-
-(define (ast-resource-binding-list-append-from
-  [out : (&mut out AstResourceBindingList)]
-  [items : (& items AstResourceBindingList)]
-  [index : i64]) : unit
-  (if (>= index (ast-resource-binding-list-len items))
-    unit
-    (begin
-      (ast-resource-binding-list-push
-        out
-        (ast-resource-binding-list-get
-          items
-          index
-          (ast-resource-binding-fallback)))
-      (ast-resource-binding-list-append-from out items (+ index 1)))))
+(dense_list.compiler-dense-list-operations
+  AstResourceBinding
+  AstResourceBindingList
+  ast-resource-binding-list
+  caller-provided-fallback
+  zero-capacity
+  compiler-dense-list-unused-shared-zero-storage
+  len
+  append-from)
 
 (define (ast-resource-binding-cons
   [head : AstResourceBinding]
@@ -6925,80 +6366,16 @@
 (define (ast-match-arm-fallback) : AstMatchArm
   (AstMatchArm.Arm AstPattern.Wildcard 0))
 
-(define (ast-match-arm-list-with-capacity [capacity : i64]) : AstMatchArmList
-  (let
-    [cap : i64
-      (if (< capacity 1)
-        1
-        capacity)]
-    (AstMatchArmList (__tl_make-array AstMatchArm cap) 0)))
-
-(define (ast-match-arm-list-new) : AstMatchArmList
-  (ast-match-arm-list-with-capacity 4))
-
-(define (ast-match-arm-list-len [v : (& v AstMatchArmList)]) : i64
-  v.len)
-
-(define (ast-match-arm-list-empty? [v : (& v AstMatchArmList)]) : bool
-  (= v.len 0))
-
-(define (ast-match-arm-list-get
-  [v : (& v AstMatchArmList)]
-  [index : i64]
-  [fallback : AstMatchArm]) : AstMatchArm
-  (if (and (>= index 0) (< index v.len))
-    (array-ref v.slots index)
-    fallback))
-
-(define (ast-match-arm-list-copy-range
-  [dst : (&mut dst (__tl_dyn-array AstMatchArm))]
-  [src : (& src (__tl_dyn-array AstMatchArm))]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (ast-match-arm-list-copy-range dst src (+ index 1) count))))
-
-(define (ast-match-arm-list-grow [v : (&mut v AstMatchArmList)]) : unit
-  (let
-    [n : i64 v.len]
-    [old-cap : i64 (array-length v.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array AstMatchArm)
-      (__tl_make-array AstMatchArm new-cap)]
-    (begin
-      (ast-match-arm-list-copy-range (&mut bigger) (& v.slots) 0 n)
-      (set! v.slots bigger))))
-
-(define (ast-match-arm-list-push
-  [v : (&mut v AstMatchArmList)]
-  [value : AstMatchArm]) : unit
-  (begin
-    (if (< v.len (array-length v.slots))
-      unit
-      (ast-match-arm-list-grow v))
-    (let
-      [index : i64 v.len]
-      (begin
-        (set! (array-ref v.slots index) value)
-        (set! v.len (+ index 1))))))
-
-(define (ast-match-arm-list-append-from
-  [out : (&mut out AstMatchArmList)]
-  [items : (& items AstMatchArmList)]
-  [index : i64]) : unit
-  (if (>= index items.len)
-    unit
-    (begin
-      (ast-match-arm-list-push
-        out
-        (ast-match-arm-list-get items index (ast-match-arm-fallback)))
-      (ast-match-arm-list-append-from out items (+ index 1)))))
+(dense_list.compiler-dense-list-operations
+  AstMatchArm
+  AstMatchArmList
+  ast-match-arm-list
+  caller-provided-fallback
+  minimum-one
+  compiler-dense-list-unused-shared-zero-storage
+  len
+  empty?
+  append-from)
 
 (define (ast-match-arm-list-tail [items : AstMatchArmList]) : AstMatchArmList
   (let
@@ -7115,62 +6492,13 @@
 (define (ast-expr-clause-fallback) : AstExprClause
   (AstExprClause 0 0))
 
-(define (ast-expr-clause-list-with-capacity [capacity : i64]) : AstExprClauseList
-  (let
-    [cap : i64
-      (if (< capacity 1)
-        1
-        capacity)]
-    (AstExprClauseList (__tl_make-array AstExprClause cap) 0)))
-
-(define (ast-expr-clause-list-new) : AstExprClauseList
-  (ast-expr-clause-list-with-capacity 4))
-
-(define (ast-expr-clause-list-get
-  [v : (& v AstExprClauseList)]
-  [index : i64]
-  [fallback : AstExprClause]) : AstExprClause
-  (if (and (>= index 0) (< index v.len))
-    (array-ref v.slots index)
-    fallback))
-
-(define (ast-expr-clause-list-copy-range
-  [dst : (&mut dst (__tl_dyn-array AstExprClause))]
-  [src : (& src (__tl_dyn-array AstExprClause))]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (ast-expr-clause-list-copy-range dst src (+ index 1) count))))
-
-(define (ast-expr-clause-list-grow [v : (&mut v AstExprClauseList)]) : unit
-  (let
-    [n : i64 v.len]
-    [old-cap : i64 (array-length v.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array AstExprClause)
-      (__tl_make-array AstExprClause new-cap)]
-    (begin
-      (ast-expr-clause-list-copy-range (&mut bigger) (& v.slots) 0 n)
-      (set! v.slots bigger))))
-
-(define (ast-expr-clause-list-push
-  [v : (&mut v AstExprClauseList)]
-  [value : AstExprClause]) : unit
-  (begin
-    (if (< v.len (array-length v.slots))
-      unit
-      (ast-expr-clause-list-grow v))
-    (let
-      [index : i64 v.len]
-      (begin
-        (set! (array-ref v.slots index) value)
-        (set! v.len (+ index 1))))))
+(dense_list.compiler-dense-list-operations
+  AstExprClause
+  AstExprClauseList
+  ast-expr-clause-list
+  caller-provided-fallback
+  minimum-one
+  compiler-dense-list-unused-shared-zero-storage)
 
 (define (ast-expr-clause-list-tail [items : AstExprClauseList]) : AstExprClauseList
   (let
@@ -7207,63 +6535,13 @@
     (AstType.Var -3)
     (ast-source-span 0 0 0 0)))
 
-(define (ast-expr-binding-clause-list-with-capacity [capacity : i64]) : AstExprBindingClauseList
-  (let
-    [cap : i64
-      (if (< capacity 1)
-        1
-        capacity)]
-    (AstExprBindingClauseList (__tl_make-array AstExprBindingClause cap) 0)))
-
-(define (ast-expr-binding-clause-list-new) : AstExprBindingClauseList
-  (ast-expr-binding-clause-list-with-capacity 4))
-
-(define (ast-expr-binding-clause-list-get
-  [v : (& v AstExprBindingClauseList)]
-  [index : i64]
-  [fallback : AstExprBindingClause]) : AstExprBindingClause
-  (if (and (>= index 0) (< index v.len))
-    (array-ref v.slots index)
-    fallback))
-
-(define (ast-expr-binding-clause-list-copy-range
-  [dst : (&mut dst (__tl_dyn-array AstExprBindingClause))]
-  [src : (& src (__tl_dyn-array AstExprBindingClause))]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (ast-expr-binding-clause-list-copy-range dst src (+ index 1) count))))
-
-(define (ast-expr-binding-clause-list-grow
-  [v : (&mut v AstExprBindingClauseList)]) : unit
-  (let
-    [n : i64 v.len]
-    [old-cap : i64 (array-length v.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array AstExprBindingClause)
-      (__tl_make-array AstExprBindingClause new-cap)]
-    (begin
-      (ast-expr-binding-clause-list-copy-range (&mut bigger) (& v.slots) 0 n)
-      (set! v.slots bigger))))
-
-(define (ast-expr-binding-clause-list-push
-  [v : (&mut v AstExprBindingClauseList)]
-  [value : AstExprBindingClause]) : unit
-  (begin
-    (if (< v.len (array-length v.slots))
-      unit
-      (ast-expr-binding-clause-list-grow v))
-    (let
-      [index : i64 v.len]
-      (begin
-        (set! (array-ref v.slots index) value)
-        (set! v.len (+ index 1))))))
+(dense_list.compiler-dense-list-operations
+  AstExprBindingClause
+  AstExprBindingClauseList
+  ast-expr-binding-clause-list
+  caller-provided-fallback
+  minimum-one
+  compiler-dense-list-unused-shared-zero-storage)
 
 (define (ast-expr-binding-clause-list-tail [items : AstExprBindingClauseList]) : AstExprBindingClauseList
   (let
@@ -8152,68 +7430,15 @@
 (define (ast-dispatch-variant-fallback) : AstDispatchVariant
   (AstDispatchVariant.Variant (AstDispatchIsa.Scalar) 0))
 
-(define (ast-dispatch-variant-list-with-capacity [capacity : i64]) : AstDispatchVariantList
-  (let
-    [cap : i64
-      (if (< capacity 1)
-        1
-        capacity)]
-    (AstDispatchVariantList (__tl_make-array AstDispatchVariant cap) 0)))
-
-(define (ast-dispatch-variant-list-new) : AstDispatchVariantList
-  (ast-dispatch-variant-list-with-capacity 4))
-
-(define (ast-dispatch-variant-list-len [v : (& v AstDispatchVariantList)]) : i64
-  v.len)
-
-(define (ast-dispatch-variant-list-empty? [v : (& v AstDispatchVariantList)]) : bool
-  (= v.len 0))
-
-(define (ast-dispatch-variant-list-get
-  [v : (& v AstDispatchVariantList)]
-  [index : i64]
-  [fallback : AstDispatchVariant]) : AstDispatchVariant
-  (if (and (>= index 0) (< index v.len))
-    (array-ref v.slots index)
-    fallback))
-
-(define (ast-dispatch-variant-list-copy-range
-  [dst : (&mut dst (__tl_dyn-array AstDispatchVariant))]
-  [src : (& src (__tl_dyn-array AstDispatchVariant))]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (ast-dispatch-variant-list-copy-range dst src (+ index 1) count))))
-
-(define (ast-dispatch-variant-list-grow [v : (&mut v AstDispatchVariantList)]) : unit
-  (let
-    [n : i64 v.len]
-    [old-cap : i64 (array-length v.slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (__tl_dyn-array AstDispatchVariant)
-      (__tl_make-array AstDispatchVariant new-cap)]
-    (begin
-      (ast-dispatch-variant-list-copy-range (&mut bigger) (& v.slots) 0 n)
-      (set! v.slots bigger))))
-
-(define (ast-dispatch-variant-list-push
-  [v : (&mut v AstDispatchVariantList)]
-  [value : AstDispatchVariant]) : unit
-  (begin
-    (if (< v.len (array-length v.slots))
-      unit
-      (ast-dispatch-variant-list-grow v))
-    (let
-      [index : i64 v.len]
-      (begin
-        (set! (array-ref v.slots index) value)
-        (set! v.len (+ index 1))))))
+(dense_list.compiler-dense-list-operations
+  AstDispatchVariant
+  AstDispatchVariantList
+  ast-dispatch-variant-list
+  caller-provided-fallback
+  minimum-one
+  compiler-dense-list-unused-shared-zero-storage
+  len
+  empty?)
 
 (define (ast-decl-fallback) : AstDecl
   (AstDecl.Module cbi.compiler-builtin-id-fix-lt_ast_decl_list_fallback_gt))

@@ -36294,15 +36294,23 @@
           ;; the SIB/add slot and the `movq %rX, %r8` staging copy disappears.
           ;; The non-SIB scales are excluded because their composition
           ;; (`shlq $c, idx` / `imulq $c, idx`) scales the index IN PLACE and
-          ;; would destroy the live home; a spilled index has no home to use;
-          ;; and %rbp is refused for the same reason GAP7 refuses it as a base,
-          ;; keeping every staged address off the frame register. `avoid1` and
-          ;; `avoid2` need no test: they name registers this emitter must not
-          ;; WRITE, and the index is only ever read.
+          ;; would destroy the live home, and a spilled index has no home to
+          ;; use. `avoid1` and `avoid2` need no test: they name registers this
+          ;; emitter must not WRITE, and the index is only ever read.
+          ;;
+          ;; BE-1: a %rbp-homed index is read directly too. It was refused here
+          ;; "for the same reason GAP7 refuses it as a base", and that reason
+          ;; is the BASE spelling alone: `off(%rbp)` and `(%rbp,idx,s)` are what
+          ;; the FPO rsp-rebase pass and the peephole read as frame references,
+          ;; and the index slot `(base,%rbp,s)` / `addq %rbp, base` is neither
+          ;; -- the one-`leaq` path above (GAP6b) already composes off a %rbp
+          ;; index. The refusal only showed once the allocator's block weights
+          ;; (FREQ-1) homed a scan's index in %rbp: `sfl-scales` inlined into
+          ;; `main` staged all three of its SIB indexes through %r8, which is
+          ;; exactly the copy the select-flags-gep gate exists to refuse.
           [direct-index? : bool
             (and
               (not (string.eq offset-home ""))
-              (not (string.eq offset-home "%rbp"))
               (compiler-backend-gep-sib-scale? scale))]
           [use-dst-home? : bool
             (and

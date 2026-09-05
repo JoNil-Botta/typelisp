@@ -14968,6 +14968,24 @@ g:
             compiler_abi.compiler-reg-id-r12))
         (compiler_regalloc.compiler-reg-assignment-table-empty)))))
 
+;; BE-1: the same gep with the index homed in %rbp.
+(define (compiler-backend-gep-rbp-index-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
+    (compiler_regalloc.CompilerRegAssignment
+      1
+      (compiler_regalloc.CompilerRegLocation.Spill 40))
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        2
+        (compiler_regalloc.CompilerRegLocation.Register
+          compiler_abi.compiler-reg-id-rbp))
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          3
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r12))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
+
 (define (compiler-backend-gep-spilled-index-assignments) : compiler_regalloc.CompilerRegAssignmentTable
   (compiler_regalloc.compiler-reg-assignments-prepend
     (compiler_regalloc.CompilerRegAssignment
@@ -15050,6 +15068,36 @@ g:
         (compiler_backend.compiler-backend-string-contains?
           asm
           "    leaq (%r12,%r13,2), %r12\n")]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])
+    ;; BE-1: an index homed in %rbp is read from the SIB index slot and the
+    ;; add operand like any other register -- `(base,%rbp,s)` is not the frame
+    ;; spelling `off(%rbp)` the rebase pass and the peephole recognise -- so it
+    ;; stages no copy either.
+    (match (compiler-backend-gep-staged-asm
+      (compiler-backend-gep-rbp-index-assignments)
+      (compiler_ast_types.AstType.I64))
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            (compiler_backend.compiler-backend-global-shared-view asm)
+            "    leaq (%r12,%rbp,8), %r12\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (compiler_backend.compiler-backend-global-shared-view asm)
+              "    movq %rbp, ")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])
+    (match (compiler-backend-gep-staged-asm
+      (compiler-backend-gep-rbp-index-assignments)
+      (compiler_ast_types.AstType.U8))
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            (compiler_backend.compiler-backend-global-shared-view asm)
+            "    addq %rbp, %r12\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (compiler_backend.compiler-backend-global-shared-view asm)
+              "    movq %rbp, ")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
     ;; A spilled index still stages: the slot is reloaded, and the composing
     ;; instruction reads the staging register rather than a home.

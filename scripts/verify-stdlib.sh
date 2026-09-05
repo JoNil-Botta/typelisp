@@ -208,6 +208,7 @@ clone.tl
 comptime.tl
 core_macros.tl
 crypto_random.tl
+crypto_sha512.tl
 dense_list.tl
 io_core.tl
 io.tl
@@ -323,6 +324,8 @@ stdlib/tests/comptime_api.tl|pass|-
 stdlib/tests/comptime_string_literal_reject.tl|fail|expr-string-value expects a string literal Expr
 stdlib/tests/args_api.tl|pass|-
 stdlib/tests/core_macros_api.tl|pass|-
+stdlib/tests/crypto_sha512_inline.tl|pass|-
+stdlib/tests/crypto_sha512_unsafe_adapter_reject.tl|fail|requires unsafe context
 stdlib/tests/env_api.tl|pass|-
 stdlib/tests/format_nonliteral_template_reject.tl|fail|format: template must be a string literal
 stdlib/tests/format_bare_capture_reject.tl|fail|format: bare '_' is not a captured identifier

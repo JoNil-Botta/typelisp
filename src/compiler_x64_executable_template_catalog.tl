@@ -21,15 +21,15 @@
     (unsafe
       (ptr-read (ptr-addr-of compiler-x64-template-catalog-data)))))
 
-;; SPEC 3.5.1 assigns each enum variant its 0-based declaration-order tag,
-;; and a nullary enum occupies exactly that 8-byte tag word. Keep the checked-in
-;; data in the same order and bounds-check both representation adapters.
+;; Keep the checked-in data in declaration order. Use an exhaustive semantic
+;; match here because taking the address of a by-value enum parameter is not
+;; portable across the System V and Win64 lowering ABIs.
 (define (compiler-x64-template-id-index
   [id : x64.CompilerX64ExecutableTemplateId]) : i64
+  ;; Materialize a local before reading the SPEC 3.5.1 nullary-enum tag. Taking
+  ;; the address of a by-value parameter directly is not portable to Win64.
   (let
-    [index : i64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of id) : (Ptr i64))))]
+    [index : i64 (x64.compiler-x64-template-enum-tag id)]
     (if (or (< index 0) (>= index 82))
       (io.panic "x64 executable template: id tag is out of range")
       index)))

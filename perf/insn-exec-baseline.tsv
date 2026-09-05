@@ -31,11 +31,11 @@ benchmark/typelisp/lex_source	475237542
 benchmark/c-scalar/lex_source	549230985
 benchmark/typelisp/liveness_scan	393425562
 benchmark/c-scalar/liveness_scan	433426169
-benchmark/typelisp/peephole_lines	429714007
+benchmark/typelisp/peephole_lines	425768373
 benchmark/c-scalar/peephole_lines	442194744
 benchmark/typelisp/read_sexpr	734966723
 benchmark/c-scalar/read_sexpr	598159391
-benchmark/typelisp/callgraph_scc	612283495
+benchmark/typelisp/callgraph_scc	587705866
 benchmark/c-scalar/callgraph_scc	341685484
 benchmark/typelisp/ssa_construct	791785437
 benchmark/c-scalar/ssa_construct	448154599
@@ -43,6 +43,6 @@ benchmark/typelisp/sccp_lattice	688500323
 benchmark/c-scalar/sccp_lattice	400603744
 benchmark/typelisp/regalloc_greedy	730769784
 benchmark/c-scalar/regalloc_greedy	404020977
-benchmark/typelisp/asm_render	782060344
+benchmark/typelisp/asm_render	764666274
 benchmark/c-scalar/asm_render	644231943
-self_compile/compile_cli_opt1	95133030635
+self_compile/compile_cli_opt1	95675662257

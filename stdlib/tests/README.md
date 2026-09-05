@@ -152,7 +152,11 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   nonzero status, failed spawn, and async start/wait on Linux, plus the
   structured unsupported async result on Windows. `process_runtime_stderr.tl`
   separately covers runtime-backed stderr extraction through the public
-  one-pass result helper.
+  one-pass result helper. The Linux-only
+  `tests/integration/process_runtime_linux_failures.tl` native gate injects
+  deterministic setup, vfork, child wiring, exec-status channel, stdin, wait,
+  capture, signal, and close failures; each failure is followed by a successful
+  command plus exact descriptor and child-reaping checks.
 - `thread_api.tl` keeps the standalone native thread runtime coverage: two
   native worker threads, semaphore signaling, join return values, and the
   checked `String`/array/box join wrappers. A zero-count semaphore also holds a

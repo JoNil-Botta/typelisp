@@ -188,6 +188,7 @@ required_gate_unavailable() {
 # expensive owners. --self-test exercises fail-closed diagnostics, then checks
 # production annotations, counts, duplicates, and delegated fixture counts.
 run_gate "CLI gate inventory and ownership" scripts/check-cli-gate-coverage.sh --self-test
+run_gate "x64 executable template registry coverage" scripts/check-x64-executable-template-registry.sh
 
 # Harness-only checks run before the expensive bootstrap. Source-owned payload
 # verification uses the branch-built compiler because compression is part of
@@ -797,6 +798,7 @@ if [ "$HOST_OS" = linux ]; then
         --output target/instruction-count-heavy
     run_with_compiler "$STAGE2_BIN" "stage2 native link generated programs" scripts/verify-native-link-linux.sh
     run_with_compiler "$STAGE2_BIN" "stage2 rooted Linux filesystem boundary" scripts/verify-fs-rooted-linux.sh
+    run_with_compiler "$STAGE2_BIN" "stage2 Linux process failure boundary" scripts/verify-process-runtime-linux.sh
 else
     run_with_compiler "$STAGE2_BIN" "windows native link build/run" scripts/verify-native-link-windows.sh
     echo
@@ -804,7 +806,7 @@ else
     echo "[ci-verify]   opt1/opt2 build-invariance, host-action smoke (as/ld),"
     echo "[ci-verify]   stdlib documentation (doc target selection), instruction"
     echo "[ci-verify]   counts (valgrind), native link generated programs,"
-    echo "[ci-verify]   rooted Linux filesystem boundary (Linux syscalls/linker inputs)"
+    echo "[ci-verify]   rooted Linux filesystem and process failure boundaries"
 fi
 
 if [ -n "${TYPELISP_CI_COMPILER_ARTIFACT_TRACE:-}" ]; then

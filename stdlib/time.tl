@@ -49,9 +49,89 @@
 (define (sleep-unavailable [message : String]) : ResultTimeUnit
   (ErrTimeUnit (TimeUnavailable message)))
 
-;: Convert private `timespec {sec,nsec}` storage to milliseconds.
-(define (timespec-ms [timespec : (& timespec (__tl_dyn-array i64))]) : i64
-  (+ (* (array-ref timespec 0) 1000) (/ (array-ref timespec 1) 1000000)))
+;; Validate one native timestamp response without allocating. Nonnegative
+;; values are milliseconds; -1 is malformed native output, -2 is arithmetic
+;; range failure, and -3 is a failed host call. Kind 0 is Linux timespec, kind
+;; 1 is Windows QPC, and kind 2 is Windows FILETIME.
+(define (timespec-ms
+  [kind : i64]
+  [status : i64]
+  [status2 : i64]
+  [left : i64]
+  [right : i64]) : i64
+  (cond
+    [(= kind 0)
+      (if (< status 0)
+        -3
+        (if (or (< left 0) (< right 0) (>= right 1000000000))
+          -1
+          (let
+            [fraction : i64 (/ right 1000000)]
+            [limit : i64 (/ 9223372036854775807 1000)]
+            (if (> left limit)
+              -2
+              (let
+                [whole : i64 (* left 1000)]
+                (if (> fraction (- 9223372036854775807 whole))
+                  -2
+                  (+ whole fraction)))))))]
+    [(= kind 1)
+      (if (or (= status 0) (= status2 0))
+        -3
+        (if (or (< left 0) (<= right 0))
+          -1
+          (let
+            [seconds : i64 (/ left right)]
+            [remainder : i64 (% left right)]
+            [fraction : i64
+              (if (<= remainder (/ 9223372036854775807 1000))
+                (/ (* remainder 1000) right)
+                (let
+                  [bit : i64 512]
+                  [quotient : i64 0]
+                  [rest : i64 0]
+                  (begin
+                    (while (> bit 0)
+                      (begin
+                        (if (>= rest (- right rest))
+                          (begin
+                            (set! rest (- rest (- right rest)))
+                            (set! quotient (+ (* quotient 2) 1)))
+                          (begin
+                            (set! rest (+ rest rest))
+                            (set! quotient (* quotient 2))))
+                        (if (not (= (bit-and 1000 bit) 0))
+                          (if (>= rest (- right remainder))
+                            (begin
+                              (set! rest (- rest (- right remainder)))
+                              (set! quotient (+ quotient 1)))
+                            (set! rest (+ rest remainder)))
+                          unit)
+                        (set! bit (/ bit 2))))
+                    quotient)))]
+            [limit : i64 (/ 9223372036854775807 1000)]
+            (if (> seconds limit)
+              -2
+              (let
+                [whole : i64 (* seconds 1000)]
+                (if (> fraction (- 9223372036854775807 whole))
+                  -2
+                  (+ whole fraction)))))))]
+    [(= kind 2)
+      (if (or (< left 0) (> left 4294967295) (< right 0) (> right 4294967295))
+        -1
+        (let
+          [ticks : u64 (bit-or (cast left : u64) (shl (cast right : u64) 32))]
+          [milliseconds : u64 (/ ticks (cast 10000 : u64))]
+          [offset : u64 (cast 11644473600000 : u64)]
+          (if (< milliseconds offset)
+            -1
+            (let
+              [unix-ms : u64 (- milliseconds offset)]
+              (if (> unix-ms (cast 9223372036854775807 : u64))
+                -2
+                (cast unix-ms : i64))))))]
+    [else -3]))
 
 ;: Fill a Linux `timespec {sec,nsec}` without overflowing for any nonnegative i64 milliseconds.
 (define (timespec-from-ms!
@@ -61,39 +141,34 @@
     (set! (array-ref timespec 0) (/ milliseconds 1000))
     (set! (array-ref timespec 1) (* (% milliseconds 1000) 1000000))))
 
-;: Return the raw data address of private `i64` storage for Linux syscalls.
-(cfg
-  (not windows)
-  (define (array-addr [items : (& items (__tl_dyn-array i64))]) : i64
-    (unsafe
-      (cast
-        (ptr->int
-          (ptr-cast
-            (__tl_array-data
-              (__tl-compiler-owned-shared-view-dyn-ref-as
-                items
-                (__tl_dyn-array i64)))
-            : (Ptr u8)))
-        : i64))))
-
 ;: Linux `clock_gettime(clock_id)` via raw syscall 228.
 (cfg
   (not windows)
   (define (linux-clock-ms [clock-id : i64]) : ResultTimeMs
     (let
-      [timespec : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+      [timespec : (Array i64 2) (array 0 0)]
       [status : i64
         (unsafe
-          (syscall 228 clock-id (stdlib.time.array-addr (& timespec))))]
-      (if (< status 0)
-        (stdlib.time.unavailable "time: clock_gettime unavailable")
-        (OkTimeMs (stdlib.time.timespec-ms (& timespec)))))))
-
-;: True when a raw Linux syscall result requests a nanosleep restart.
-(cfg
-  (not windows)
-  (define (linux-sleep-interrupted? [status : i64]) : bool
-    (= status -4)))
+          (syscall
+            228
+            clock-id
+            (cast (ptr->int (ptr-cast (ptr-addr-of timespec) : (Ptr u8))) : i64)))]
+      [milliseconds : i64
+        (stdlib.time.timespec-ms
+          0
+          status
+          1
+          (array-ref timespec 0)
+          (array-ref timespec 1))]
+      (cond
+        [(= milliseconds -3)
+          (stdlib.time.unavailable "time: clock_gettime unavailable")]
+        [(= milliseconds -1)
+          (stdlib.time.unavailable
+            "time: clock_gettime returned invalid timestamp")]
+        [(= milliseconds -2)
+          (stdlib.time.unavailable "time: clock_gettime timestamp out of range")]
+        [else (OkTimeMs milliseconds)]))))
 
 ;: Linux blocking sleep via raw `nanosleep` syscall 35.
 (cfg
@@ -112,13 +187,20 @@
               (unsafe
                 (syscall
                   35
-                  (stdlib.time.array-addr (& request))
-                  (stdlib.time.array-addr (& remaining))))]
+                  (unsafe
+                    (cast
+                      (ptr->int (ptr-cast (__tl_array-data request) : (Ptr u8)))
+                      : i64))
+                  (unsafe
+                    (cast
+                      (ptr->int
+                        (ptr-cast (__tl_array-data remaining) : (Ptr u8)))
+                      : i64))))]
             (if (= status 0)
               (begin
                 (set! ok true)
                 (set! done true))
-              (if (stdlib.time.linux-sleep-interrupted? status)
+              (if (= status -4)
                 (begin
                   (set! (array-ref request 0) (array-ref remaining 0))
                   (set! (array-ref request 1) (array-ref remaining 1)))
@@ -130,7 +212,7 @@
 ;: Windows kernel32 `GetSystemTimeAsFileTime` binding.
 (cfg
   windows
-  (extern (windows-get-system-time-as-file-time [arg0 : (MutPtr i64)]) : unit (:symbol "GetSystemTimeAsFileTime")))
+  (extern (windows-get-system-time-as-file-time [arg0 : (MutPtr u32)]) : unit (:symbol "GetSystemTimeAsFileTime")))
 
 ;: Windows kernel32 high-resolution performance counter bindings.
 (cfg
@@ -145,66 +227,70 @@
   windows
   (extern (windows-sleep [milliseconds : u32]) : unit (:symbol "Sleep")))
 
-;: Windows FILETIME milliseconds between 1601-01-01 UTC and Unix epoch.
-(cfg
-  windows
-  (define (windows-filetime-unix-epoch-ms) : i64
-    11644473600000))
-
 ;: Windows wall-clock Unix milliseconds via `GetSystemTimeAsFileTime`.
 (cfg
   windows
   (define (windows-unix-ms) : ResultTimeMs
     (let
-      [file-time : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+      [file-time : (Array u32 2) (array (cast 0 : u32) (cast 0 : u32))]
       [_ok : unit
         (stdlib.time.windows-get-system-time-as-file-time
           (unsafe
-            (__tl_array-data file-time)))]
-      [unix-ms : i64
-        (-
-          (/ (array-ref file-time 0) 10000)
-          (stdlib.time.windows-filetime-unix-epoch-ms))]
-      (if (< unix-ms 0)
-        (stdlib.time.unavailable "time: system time before Unix epoch")
-        (OkTimeMs unix-ms)))))
+            (ptr-cast (ptr-addr-of file-time) : (MutPtr u32))))]
+      [milliseconds : i64
+        (stdlib.time.timespec-ms
+          2
+          1
+          1
+          (cast (array-ref file-time 0) : i64)
+          (cast (array-ref file-time 1) : i64))]
+      (cond
+        [(= milliseconds -1)
+          (stdlib.time.unavailable "time: system time before Unix epoch")]
+        [(= milliseconds -2)
+          (stdlib.time.unavailable "time: system time timestamp out of range")]
+        [else (OkTimeMs milliseconds)]))))
 
 ;: Windows monotonic milliseconds via `QueryPerformanceCounter/Frequency`.
 (cfg
   windows
   (define (windows-monotonic-ms) : ResultTimeMs
     (let
-      [counter : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-      [freq : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+      [counter : i64 0]
+      [frequency : i64 0]
       [counter-ok : i32
         (stdlib.time.windows-query-performance-counter
           (unsafe
-            (__tl_array-data counter)))]
+            (ptr-addr-of counter)))]
       [freq-ok : i32
         (stdlib.time.windows-query-performance-frequency
           (unsafe
-            (__tl_array-data freq)))]
-      [freq-value : i64 (array-ref freq 0)]
-      (if (or (= counter-ok (cast 0 : i32)) (= freq-ok (cast 0 : i32)))
-        (stdlib.time.unavailable "time: performance counter unavailable")
-        (if (= freq-value 0)
+            (ptr-addr-of frequency)))]
+      [milliseconds : i64
+        (stdlib.time.timespec-ms
+          1
+          (cast counter-ok : i64)
+          (cast freq-ok : i64)
+          counter
+          frequency)]
+      (cond
+        [(= milliseconds -3)
+          (stdlib.time.unavailable "time: performance counter unavailable")]
+        [(= milliseconds -1)
           (stdlib.time.unavailable
-            "time: performance counter frequency is zero")
-          (OkTimeMs (/ (* (array-ref counter 0) 1000) freq-value)))))))
-
-;: Largest finite duration accepted by one Windows `Sleep` call.
-(cfg
-  windows
-  (define (windows-sleep-max-chunk-ms) : i64
-    4294967294))
+            "time: performance counter returned invalid timestamp")]
+        [(= milliseconds -2)
+          (stdlib.time.unavailable
+            "time: performance counter timestamp out of range")]
+        [else (OkTimeMs milliseconds)]))))
 
 ;: Select one finite Windows sleep chunk, never the `0xffffffff` INFINITE sentinel.
 (cfg
   windows
   (define (windows-sleep-chunk-ms [remaining : i64]) : u32
     (cast
-      (if (> remaining (stdlib.time.windows-sleep-max-chunk-ms))
-        (stdlib.time.windows-sleep-max-chunk-ms)
+      (if (> remaining (cast 4294967294 : i64))
+        (cast 4294967294 : i64)
         remaining)
       : u32)))
 
@@ -388,6 +474,16 @@
 (test
   time-api
   (begin
+    (stdlib.time.test-assert-i64-eq
+      (comptime (size-of (type (Array i64 2))))
+      16)
+    (stdlib.time.test-assert-i64-eq
+      (comptime (align-of (type (Array i64 2))))
+      8)
+    (stdlib.time.test-assert-i64-eq (comptime (size-of (type (Array u32 2)))) 8)
+    (stdlib.time.test-assert-i64-eq
+      (comptime (align-of (type (Array u32 2))))
+      4)
     (stdlib.time.test-assert-result-error-shape)
     (stdlib.time.test-assert-unit-error
       (stdlib.time.sleep-ms -1)
@@ -424,9 +520,7 @@
         (stdlib.time.test-assert
           (stdlib.time.windows-sleep-complete? 190000 10000000 19)))
       (begin
-        (stdlib.time.test-assert (stdlib.time.linux-sleep-interrupted? -4))
-        (stdlib.time.test-assert
-          (not (stdlib.time.linux-sleep-interrupted? -1)))))
+        unit))
     (stdlib.time.test-assert-unix-range (stdlib.time.unix-ms))
     (let
       [first : i64

@@ -135,6 +135,40 @@ cat > "$ALLOWED_EXTERN_SOURCE" <<'EOF'
     (win-get-std-handle -11)
     42))
 EOF
+TIME_EXTERNAL_SOURCE="$WORKDIR/time_externals.tl"
+cat > "$TIME_EXTERNAL_SOURCE" <<'EOF'
+(extern (win-get-system-time-as-file-time [out : i64]) : unit
+  (:symbol "GetSystemTimeAsFileTime"))
+(extern (win-query-performance-counter [out : i64]) : i32
+  (:symbol "QueryPerformanceCounter"))
+(extern (win-query-performance-frequency [out : i64]) : i32
+  (:symbol "QueryPerformanceFrequency"))
+(extern (win-sleep [milliseconds : i64]) : unit (:symbol "Sleep"))
+
+(define (main) : i64
+  (begin
+    (win-get-system-time-as-file-time 0)
+    (win-query-performance-counter 0)
+    (win-query-performance-frequency 0)
+    (win-sleep 0)
+    42))
+EOF
+TIME_NEIGHBOR_SOURCE="$WORKDIR/time_neighbor_externals.tl"
+cat > "$TIME_NEIGHBOR_SOURCE" <<'EOF'
+(extern (win-get-system-time-precise-as-file-time [out : i64]) : unit
+  (:symbol "GetSystemTimePreciseAsFileTime"))
+(extern (win-query-thread-cycle-time [thread : i64] [out : i64]) : i32
+  (:symbol "QueryThreadCycleTime"))
+(extern (win-sleep-ex [milliseconds : i64] [alertable : i64]) : i64
+  (:symbol "SleepEx"))
+
+(define (main) : i64
+  (begin
+    (win-get-system-time-precise-as-file-time 0)
+    (win-query-thread-cycle-time 0 0)
+    (win-sleep-ex 0 0)
+    42))
+EOF
 NT_CREATE_FILE_SOURCE="$WORKDIR/nt_create_file.tl"
 cat > "$NT_CREATE_FILE_SOURCE" <<'EOF'
 (extern (win-nt-create-file
@@ -185,6 +219,8 @@ write_differential_rows ordinary tests/integration/hello.tl
 write_differential_rows string_data tests/integration/string_length.tl
 write_differential_rows string_record_extent tests/integration/string_record_extent.tl
 write_differential_rows allowed_external "$ALLOWED_EXTERN_SOURCE"
+write_differential_rows time_external "$TIME_EXTERNAL_SOURCE"
+write_differential_rows time_neighbor "$TIME_NEIGHBOR_SOURCE"
 write_differential_rows nt_create_file "$NT_CREATE_FILE_SOURCE"
 write_differential_rows nt_open_file "$NT_OPEN_FILE_SOURCE"
 write_differential_rows runtime_trap tests/integration/div_zero_trap.tl
@@ -225,6 +261,11 @@ write_differential_expected ordinary tests/integration/hello.tl
 write_differential_expected string_data tests/integration/string_length.tl
 write_differential_expected string_record_extent tests/integration/string_record_extent.tl
 write_differential_expected allowed_external "$ALLOWED_EXTERN_SOURCE"
+write_differential_expected time_external "$TIME_EXTERNAL_SOURCE"
+printf '%s|assembly|%s/%s.direct.s|unsupported-external-relocation\n' \
+    "$TIME_NEIGHBOR_SOURCE" "$WORKDIR" time_neighbor >> "$DIFFERENTIAL_EXPECTED"
+printf '%s|assembly|%s/%s.forced.s|forced-assembly\n' \
+    "$TIME_NEIGHBOR_SOURCE" "$WORKDIR" time_neighbor >> "$DIFFERENTIAL_EXPECTED"
 write_differential_expected nt_create_file "$NT_CREATE_FILE_SOURCE"
 write_fallback_differential_expected() {
     _name=$1
@@ -251,7 +292,7 @@ cmp "$DIFFERENTIAL_EXPECTED" "$DIFFERENTIAL_PLAN" ||
     fail "Windows COFF differential plan changed classification"
 
 for differential_case in ordinary string_data string_record_extent \
-    allowed_external nt_create_file; do
+    allowed_external time_external nt_create_file; do
     [ -s "$WORKDIR/$differential_case.direct.obj" ] ||
         fail "differential direct object missing: $differential_case"
     [ ! -e "$WORKDIR/$differential_case.direct.s" ] ||
@@ -261,7 +302,7 @@ for differential_case in ordinary string_data string_record_extent \
     [ ! -e "$WORKDIR/$differential_case.forced-unused.obj" ] ||
         fail "differential forced row wrote an object: $differential_case"
 done
-for differential_case in nt_open_file runtime_trap wide_immediate branch_phi_switch \
+for differential_case in time_neighbor nt_open_file runtime_trap wide_immediate branch_phi_switch \
     tail_call register_group pointer_copy bounds_check string_match \
     u64_float_casts; do
     [ -s "$WORKDIR/$differential_case.direct.s" ] ||

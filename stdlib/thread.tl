@@ -513,7 +513,7 @@
         (syscall 228 1 (array-i64-addr timespec)))]
     (if (< status 0)
       -1
-      (time.timespec-ms timespec))))
+      (+ (* (array-ref timespec 0) 1000) (/ (array-ref timespec 1) 1000000)))))
 
 ;: Linux futex wake operation.
 (define (linux-futex-wake [addr : i64]) : i64

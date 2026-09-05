@@ -582,9 +582,11 @@ Vec bang place macros as available yet.
 - `time.tl`: portable millisecond timestamp helpers separate from profiling
   counters. `unix-ms` returns wall-clock Unix epoch milliseconds and
   `monotonic-ms` returns monotonic elapsed milliseconds, both as
-  `ResultTimeMs`; `sleep-ms` performs a portable blocking relative wait and
-  returns `ResultTimeUnit`. Calendar conversion, formatting, time zones,
-  locale, timers, and scheduling remain out of scope. Import it with
+  `ResultTimeMs`. Timestamp reads use stack-local native output storage,
+  allocate no arena memory, and return `TimeUnavailable` for failed, malformed,
+  or out-of-range host values. `sleep-ms` performs a portable blocking relative
+  wait and returns `ResultTimeUnit`. Calendar conversion, formatting, time
+  zones, locale, timers, and scheduling remain out of scope. Import it with
   `(import stdlib.time)`.
 - `text_buf.tl`: arena-aware text buffer helpers for incremental String
   construction with owned `TextBuf` chunks and the shared ordered-chunk render

@@ -640,6 +640,22 @@
               [_ (fail "corrupt field collection kind")])]
           [_ (fail "corrupt field collection accepted")]))
       (let
+        [approved : http_types.HttpHeaders
+          (headers-push (http_types.headers-empty) (public-field "X-One" "ok"))]
+        [corrupt-declared : http_types.HttpHeaderNameSet
+          (http_types.HttpHeaderNameSet (__tl_make-array byte_buf.ByteBuf 0) 1)]
+        [limits : http_types.HttpHeadLimits (http_types.default-head-limits)]
+        (match (trailer_policy.validate-request-trailer-fields
+          (& policy)
+          (& approved)
+          (& corrupt-declared)
+          (& limits))
+          [(trailer_policy.HttpTrailerValidationErr error)
+            (match error.kind
+              [(trailer_policy.HttpTrailerInvalidDeclaredNames) unit]
+              [_ (fail "corrupt declared-name set kind")])]
+          [_ (fail "corrupt declared-name set accepted")]))
+      (let
         [corrupt-policy : trailer_policy.HttpTrailerPolicy
           (trailer_policy.HttpTrailerPolicy
             (__tl_make-array trailer_policy.HttpTrailerPolicyEntry 0)

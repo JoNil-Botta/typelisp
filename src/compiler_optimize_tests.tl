@@ -22433,6 +22433,234 @@
       (+ (* 10000 spent) (+ (* 1000 relaxed-spent) code))
       (- 0 1))))
 
+;; --- INL-19: the rescan after a BAND absorb --------------------------------
+;;
+;; The single-reference absorb band moves a whole body into its caller, calls
+;; and all, and the walk that moved it does not re-enter the moved blocks: the
+;; sites inside were scanned once in the absorbed body's own text, where the
+;; depth floor refused every one of them, and in the caller nothing offered a
+;; verdict on them at all. So a caller whose first walk absorbed a body is
+;; rescanned exactly as a caller whose rounds kept one is
+;; (opt-inline-checked-absorb-exposed-sites?).
+;;
+;; The absorbed body is the wide single-site callee of the absorb fixtures --
+;; ten parameters, 220 instructions, a loop -- padded past the cost band's
+;; block fuel so that the single-reference absorb band is what moves it, and
+;; with one call to the rescan chain's second link in its `zero` block, OUTSIDE
+;; its own loop: in the body's own text that site is depth 0 and refused on the
+;; floor (a call inside the loop would be priced right there, with no rescan
+;; needed), and `main` is the in-loop caller the absorb fixtures move the body
+;; into (compiler-optimize-inline-single-site-loop-site-call-bearing-absorb-ok?
+;; is the same admission). The second and third links are the rescan
+;; fixture's, with the cold caller referencing exactly those two so each keeps
+;; its second reference: bodies no band takes and the tier prices.
+;;
+;; The encoding is the rescan fixture's: core verdicts spent, relaxed ones,
+;; then `main`'s surviving calls to the three links, one digit apiece. 10001
+;; is: no verdict in generation one (the band took the first link, and the
+;; tier is not asked about a site a band takes), one CORE verdict in the
+;; generation the absorb opened -- the second link is the caller's first body
+;; -- and kept, no call left to the first two links, one call left to the
+;; third, which the copy the keep made exposed and the generation bound leaves
+;; where it is. Without the absorb rescan the same program reads 10: no verdict
+;; anywhere and the second link's call sits inside `main`'s loop unpriced.
+;; The wide single-site body with the chain call in its `zero` block: outside
+;; the body's own loop, so in the body's own text the site is depth 0 and the
+;; depth floor refuses it there (exactly the chain fixture's reading), and
+;; inside `main`'s loop once the band has moved the body in.
+;; A chain of `remaining` single-jump blocks from `entry` to `loop`, so the
+;; body holds more blocks than the cost band's fuel
+;; (opt-inline-cost-block-fuel) and the single-reference absorb band is the one
+;; admitter left -- the sccp_lattice shape, where `sccp-process-instr`'s sixty
+;; blocks are what leave the move to that band.
+(define (opt-inline-absorb-rescan-pad-label [index : i64]) : i64
+  (compiler_ir_types.compiler-ir-label
+    (str_cat.str-cat "pad_" (string.int->string index))))
+
+(define (opt-inline-absorb-rescan-pad-count) : i64
+  (+ (compiler_optimize.opt-inline-cost-block-fuel) 4))
+
+(define (opt-inline-absorb-rescan-pad-blocks
+  [remaining : i64]
+  [index : i64]
+  [tail : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (if (<= remaining 0)
+    tail
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (opt-inline-absorb-rescan-pad-label index)
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (if (<= remaining 1)
+              (compiler_ir_types.compiler-ir-label "loop")
+              (opt-inline-absorb-rescan-pad-label (+ index 1))))))
+      (opt-inline-absorb-rescan-pad-blocks (- remaining 1) (+ index 1) tail))))
+
+(define (opt-inline-absorb-rescan-first-link-blocks
+  [params : i64]
+  [zero-instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (opt-inline-absorb-rescan-pad-label 0))))
+    (opt-inline-absorb-rescan-pad-blocks
+      (opt-inline-absorb-rescan-pad-count)
+      0
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "loop")
+          (opt-test-instrs-with-tail
+            (opt-inline-wide-pad-instrs
+              (opt-inline-wide-pad-count)
+              params
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Switch
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  0
+                  (opt-inline-switch-cases
+                    (compiler_ir_types.compiler-ir-label "zero")
+                    (compiler_ir_types.compiler-ir-label "one"))
+                  (compiler_ir_types.compiler-ir-label "loop"))))
+            (opt-inline-switch-loop-bounds-instr
+              (compiler_ir_types.compiler-ir-label "switch_bounds_ok"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "zero")
+            zero-instrs)
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "one")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "join"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "join")
+                (opt-test-instrs
+                  (opt-inline-wide-loop-phi-instr params)
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var
+                        (opt-inline-wide-phi-var params))))))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-inline-absorb-rescan-first-link [name : i64] [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [params : i64 (opt-inline-wide-param-count)]
+    [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (__tl_make-array compiler_ir_types.CompilerIrValue 3)]
+    (begin
+      (set! (array-ref args 0) (compiler_ir_types.CompilerIrValue.Var 0))
+      (set! (array-ref args 1) (compiler_ir_types.CompilerIrValue.Var 1))
+      (set! (array-ref args 2) (compiler_ir_types.CompilerIrValue.Var 2))
+      (compiler_ir_types.CompilerIrFunction.Function
+        name
+        (opt-inline-wide-params params)
+        (compiler_ast_types.AstType.I64)
+        (+ (opt-inline-wide-phi-var params) 2)
+        (opt-inline-absorb-rescan-first-link-blocks
+          params
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Call
+              (+ (opt-inline-wide-phi-var params) 1)
+              callee-name
+              (compiler_ir_types.CompilerIrCallArgs.Array args)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "join"))))))))
+
+(define (opt-inline-absorb-rescan-cold-caller
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.inline-branch
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    7
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (opt-inline-rescan-chain-cold-call symbols.inline-nonleaf 4)
+          (opt-inline-rescan-chain-cold-call symbols.inline-switch 5)
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 5)))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-inline-absorb-rescan-functions
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-inline-wide-loop-caller symbols.main symbols.inline-loop)
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-inline-absorb-rescan-cold-caller symbols)
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-inline-absorb-rescan-first-link
+          symbols.inline-loop
+          symbols.inline-nonleaf)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-inline-rescan-chain-leaf
+            symbols.inline-nonleaf
+            symbols.inline-switch)
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-inline-rescan-chain-leaf
+              symbols.inline-switch
+              symbols.external-helper)
+            (compiler_ir_types.compiler-ir-function-seq-empty)))))))
+
+(define (compiler-optimize-inline-checked-absorb-rescan-self-test) : i64
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [_arm : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-set-active! true)
+        (compiler_optimize.opt-inline-checked-program-begin!))]
+    [armed : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-absorb-rescan-functions symbols)
+        2)]
+    [code : i64
+      (+
+        (*
+          100
+          (opt-count-direct-call-name-function-seq
+            (compiler_optimize.compiler-opt-global-shared-view armed)
+            "main"
+            "inline_loop"))
+        (+
+          (*
+            10
+            (opt-count-direct-call-name-function-seq
+              (compiler_optimize.compiler-opt-global-shared-view armed)
+              "main"
+              "inline_nonleaf"))
+          (opt-count-direct-call-name-function-seq
+            (compiler_optimize.compiler-opt-global-shared-view armed)
+            "main"
+            "inline_switch")))]
+    [spent : i64
+      (-
+        (compiler_optimize.opt-inline-checked-program-budget)
+        (compiler_optimize.opt-inline-checked-budget-current))]
+    [relaxed-spent : i64
+      (-
+        (compiler_optimize.opt-inline-checked-relaxed-program-budget)
+        (compiler_optimize.opt-inline-checked-relaxed-budget-current))]
+    [verified? : bool
+      (and
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view armed)
+          "main")
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view armed)
+          "inline_nonleaf"))]
+    [_disarm : unit (compiler_optimize.opt-inline-checked-set-active! false)]
+    (if verified?
+      (+ (* 10000 spent) (+ (* 1000 relaxed-spent) code))
+      (- 0 1))))
+
 ;; --- INL-6: the shape a rescan generation's BAND walk may not absorb -------
 ;;
 ;; A caller keeps a site; the copy carries the callee's own straight-line call

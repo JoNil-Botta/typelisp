@@ -4831,6 +4831,13 @@
     "a keep exposes its copy's own sites, the rescan generation prices them, and the third level stays out of line"))
 
 (test
+  inline-checked-absorb-rescan
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-inline-checked-absorb-rescan-self-test)
+    10001
+    "a body the absorb band moved in is rescanned: the site it exposes inside the caller's loop gets a core verdict and is kept, and the level below stays out of line"))
+
+(test
   inline-checked-generation-carry
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-checked-generation-carry-ok?)

@@ -140009,6 +140009,34 @@
               kept-now)
             state))))))
 
+;; INL-19. A generation prices the sites a KEEP exposes (above), and the
+;; single-reference absorb band exposes sites the same way: it moves a whole
+;; body into its caller -- "at any size", calls and all, the one band that
+;; imports a body carrying call sites -- and the walk that moved it does not
+;; re-enter the moved blocks. The sites inside were scanned once, in the
+;; absorbed callee's OWN text, where every one of them read as depth 0 and was
+;; refused on the depth floor; in the caller they sit inside the loop that
+;; absorbed them, and nothing has offered a verdict on them there.
+;;
+;; sccp_lattice is the measurement. `sccp-process-instr` (390 instructions, 60
+;; blocks, one reference) is absorbed into the loop of
+;; `sccp-process-instr-seq-from`, and its dispatch arms call `sccp-state-bind`
+;; six times, `sccp-value` four times, and `sccp-phi-value` and the three
+;; `mark-*` helpers once each -- 3.9M iterations by callgrind's count, every
+;; arm site at depth 1 in the absorbed loop, and not one `inline-checked` line
+;; for any of them in `--trace-passes`. Forcing the depth floor down by name
+;; instead (the probe recorded in the packet) prices them in the wrong text:
+;; the keeps grow `sccp-process-instr` past the absorb band's size clause, the
+;; body stays out of line, and the row pays +50.2M for the boundary it just
+;; lost. The rescan prices them where they will run.
+;;
+;; The signal is the absorb band's own accumulator, read after the caller's
+;; first walk: a caller whose bands moved no body in has no exposed sites, and
+;; the other bands' bodies are call-free by their own clauses. A rescan over a
+;; moved body that carries no call finds no candidate and costs one walk.
+(define (opt-inline-checked-absorb-exposed-sites?) : bool
+  (> opt-inline-caller-absorb-blocks 0))
+
 (define (opt-inline-function
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
@@ -140026,8 +140054,23 @@
         (compiler-opt-global-shared-view census)
         (compiler-opt-global-shared-view scc-result)
         caller-scc)]
+    ;; INL-19: a body the absorb band moved in is scanned as a generation of
+    ;; its own, keep or no keep (opt-inline-checked-absorb-exposed-sites?).
+    [kept-before : i64
+      (if (opt-inline-checked-absorb-exposed-sites?)
+        (- 0 1)
+        0)]
     (if (= opt-inline-checked-scan-count 0)
-      banked
+      (if (< kept-before 0)
+        (opt-inline-checked-generations
+          type-segment-bases
+          banked
+          index
+          census
+          scc-result
+          caller-scc
+          kept-before)
+        banked)
       (opt-inline-checked-generations
         type-segment-bases
         (opt-inline-checked-rounds
@@ -140043,7 +140086,7 @@
         census
         scc-result
         caller-scc
-        0))))
+        kept-before))))
 
 (define (opt-inline-function-with-spans-walk
   [type-segment-bases : i64]
@@ -140324,8 +140367,24 @@
         caller-scc
         (compiler-opt-global-shared-view source-spans)
         (compiler-opt-global-shared-view out-spans))]
+    ;; INL-19, as in opt-inline-function.
+    [kept-before : i64
+      (if (opt-inline-checked-absorb-exposed-sites?)
+        (- 0 1)
+        0)]
     (if (= opt-inline-checked-scan-count 0)
-      banked
+      (if (< kept-before 0)
+        (opt-inline-checked-span-generations
+          type-segment-bases
+          (compiler-opt-global-shared-view func)
+          banked
+          index
+          census
+          scc-result
+          caller-scc
+          source-spans
+          kept-before)
+        banked)
       (opt-inline-checked-span-generations
         type-segment-bases
         (compiler-opt-global-shared-view func)
@@ -140345,7 +140404,7 @@
         scc-result
         caller-scc
         source-spans
-        0))))
+        kept-before))))
 
 (define (opt-function-index-to-seq [index : OptFunctionIndex]) : ir.CompilerIrFunctionSeq
   (let

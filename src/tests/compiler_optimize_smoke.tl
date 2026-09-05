@@ -4731,6 +4731,12 @@
     "a versioned loop prices as one loop: the slow copy is the guard's failure path and is priced cold"))
 
 (test
+  inline-checked-sret-copy
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-sret-copy-ok?)
+    "an sret callee's boundary adds the result copy a free inline retires: a word per 8 bytes of the widest store through __sret, nothing without one"))
+
+(test
   inline-checked-window
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-checked-window-ok?)

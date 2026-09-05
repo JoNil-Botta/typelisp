@@ -136506,6 +136506,102 @@
 ;; optimized to read the same integer back is a third of the check's cost for
 ;; nothing. Negative means "not known". Whichever cost the verdict settles on
 ;; for the state it leaves behind is published for the next round.
+;; INL-22. The bytes an sret callee writes through its `__sret` parameter: the
+;; widest store the body makes through it, read off the geps from the param
+;; (offset plus the word) and the copy_bytes into it. Zero for a callee with
+;; no sret parameter.
+(define (opt-inline-checked-sret-var [params : ir.CompilerIrParamSeq]) : i64
+  (let
+    [position : i64 0]
+    [found : i64 (- 0 1)]
+    (begin
+      (while (and (< found 0) (< position params.len))
+        (begin
+          (match (ir.compiler-ir-param-seq-ref
+            (compiler-opt-global-shared-view params)
+            position)
+            [(ir.CompilerIrParam.Param name _ var)
+              (if (string.eq name "__sret")
+                (set! found var)
+                unit)])
+          (set! position (+ position 1))))
+      found)))
+
+(define (opt-inline-checked-sret-bytes-seq
+  [instrs : ir.CompilerIrInstrSeq]
+  [sret : i64]
+  [acc : i64]) : i64
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [i : i64 0]
+    [bytes : i64 acc]
+    (begin
+      (while (< i count)
+        (begin
+          (match (array-ref slots i)
+            [(ir.CompilerIrInstr.Gep
+                _
+                (ir.CompilerIrValue.Var base)
+                (ir.CompilerIrValue.I64 k)
+                _)
+              (if (and (= base sret) (> (+ k 8) bytes))
+                (set! bytes (+ k 8))
+                unit)]
+            [(ir.CompilerIrInstr.StorePtr (ir.CompilerIrValue.Var dst) _ _)
+              (if (and (= dst sret) (> 8 bytes))
+                (set! bytes 8)
+                unit)]
+            [(ir.CompilerIrInstr.CopyBytes (ir.CompilerIrValue.Var dst) _ n)
+              (if (and (= dst sret) (> n bytes))
+                (set! bytes n)
+                unit)]
+            [_ unit])
+          (set! i (+ i 1))))
+      bytes)))
+
+(define (opt-inline-checked-sret-bytes [callee : ir.CompilerIrFunction]) : i64
+  (match (compiler-opt-global-shared-view callee)
+    [(ir.CompilerIrFunction.Function _ params _ _ blocks)
+      (let
+        [sret : i64
+          (opt-inline-checked-sret-var (compiler-opt-global-shared-view params))]
+        (if (< sret 0)
+          0
+          (let
+            [seq : ir.CompilerIrBlockSeq
+              (ir.compiler-ir-block-seq-from-list
+                (compiler-opt-global-shared-view blocks))]
+            [count : i64
+              (ir.compiler-ir-block-seq-count
+                (compiler-opt-global-shared-view seq))]
+            [i : i64 0]
+            [bytes : i64 0]
+            (begin
+              (while (< i count)
+                (begin
+                  (match (ir.compiler-ir-block-seq-ref
+                    (compiler-opt-global-shared-view seq)
+                    i)
+                    [(ir.CompilerIrBlock.Block _ instrs)
+                      (set!
+                        bytes
+                        (opt-inline-checked-sret-bytes-seq
+                          (compiler-opt-global-shared-view instrs)
+                          sret
+                          bytes))])
+                  (set! i (+ i 1))))
+              bytes))))]))
+
+;; INL-22. What a free inline of an sret callee retires besides the call: the
+;; caller's copy of the result out of the callee's sret temp -- one load and
+;; one store per word, `movups` pairs on the emitted side -- which the merge
+;; folds away when the callee writes the caller's slot directly. Priced at a
+;; word per 8 bytes, the size of the widest store the callee makes through
+;; `__sret`.
+(define (opt-inline-checked-sret-copy-cost [callee : ir.CompilerIrFunction]) : i64
+  (/ (opt-inline-checked-sret-bytes callee) 8))
+
 (define (opt-inline-checked-verdict
   [type-segment-bases : i64]
   [checked : ir.CompilerIrFunction]
@@ -136552,7 +136648,14 @@
           site-depth
           site-weight)
         0)]
-    [boundary : i64 (* site-weight (opt-inline-checked-boundary-cost np))]
+    ;; INL-22: an sret callee's boundary is the call and the result copy.
+    [boundary : i64
+      (*
+        site-weight
+        (+
+          (opt-inline-checked-boundary-cost np)
+          (opt-inline-checked-sret-copy-cost
+            (compiler-opt-global-shared-view callee))))]
     [before : i64 (+ banked-cost (+ boundary callee-cost))]
     ;; A TWO-SIDED window, not a threshold. A free inline -- the copy exactly as
     ;; good as the callee, the boundary gone -- predicts a saving of exactly

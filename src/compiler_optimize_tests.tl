@@ -21164,6 +21164,107 @@
 ;; sides were not measured in the same currency. The cap is measured at its
 ;; edge on both sides (cg-map-probe into cg-map-insert-ref! sits exactly on
 ;; it at 20 against 8; one rung up costs intern_table +6.9%).
+;; INL-22: the bytes an sret callee writes through `__sret`, which is what the
+;; verdict's boundary adds for the result copy a free inline retires. Read
+;; off the widest store the body makes through the parameter: word geps at
+;; 0/8/16/24 read 32, a copy_bytes reads its own length, and a callee with no
+;; `__sret` parameter reads 0 (and adds nothing to its boundary).
+(define (opt-inline-sret-params) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "kind"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "__sret"
+        (compiler_ast_types.AstType.U64)
+        1)
+      (compiler_ir_types.compiler-ir-param-seq-empty))))
+
+(define (opt-inline-sret-gep-store [dst : i64] [offset : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (compiler_ir_types.CompilerIrInstr.Gep
+      dst
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ir_types.CompilerIrValue.I64 offset)
+      (compiler_ast_types.AstType.U8))
+    (compiler_ir_types.CompilerIrInstr.StorePtr
+      (compiler_ir_types.CompilerIrValue.Var dst)
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ast_types.AstType.I64))))
+
+(define (opt-inline-sret-callee
+  [params : compiler_ir_types.CompilerIrParamSeq]
+  [body : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "sret_callee")
+    params
+    (compiler_ast_types.AstType.Unit)
+    8
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instr-seq-append
+          body
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Return
+              compiler_ir_types.CompilerIrMaybeValue.No))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (compiler-optimize-inline-checked-sret-copy-ok?) : bool
+  (and
+    ;; four words through the parameter: 32 bytes, four words of copy
+    (=
+      (compiler_optimize.opt-inline-checked-sret-bytes
+        (opt-inline-sret-callee
+          (opt-inline-sret-params)
+          (opt-test-instr-seq-append
+            (opt-inline-sret-gep-store 2 0)
+            (opt-test-instr-seq-append
+              (opt-inline-sret-gep-store 3 8)
+              (opt-test-instr-seq-append
+                (opt-inline-sret-gep-store 4 16)
+                (opt-inline-sret-gep-store 5 24))))))
+      32)
+    (=
+      (compiler_optimize.opt-inline-checked-sret-copy-cost
+        (opt-inline-sret-callee
+          (opt-inline-sret-params)
+          (opt-test-instr-seq-append
+            (opt-inline-sret-gep-store 2 0)
+            (opt-inline-sret-gep-store 3 24))))
+      4)
+    ;; a copy into the parameter reads its own length
+    (=
+      (compiler_optimize.opt-inline-checked-sret-bytes
+        (opt-inline-sret-callee
+          (opt-inline-sret-params)
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.CopyBytes
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              16))))
+      16)
+    ;; a store straight through the parameter is one word
+    (=
+      (compiler_optimize.opt-inline-checked-sret-bytes
+        (opt-inline-sret-callee
+          (opt-inline-sret-params)
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.StorePtr
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ast_types.AstType.I64)))))
+      8)
+    ;; no sret parameter: nothing to copy, nothing added
+    (=
+      (compiler_optimize.opt-inline-checked-sret-bytes
+        (opt-inline-sret-callee
+          (opt-inline-switch-params)
+          (opt-inline-sret-gep-store 2 0)))
+      0)))
+
 (define (compiler-optimize-inline-checked-window-ok?) : bool
   (and
     ;; exactly what a free inline predicts

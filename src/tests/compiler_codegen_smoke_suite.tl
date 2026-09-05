@@ -8,6 +8,7 @@
 (import compiler_lower_package_tests)
 (import compiler_backend_tests)
 (import compiler_backend_object_target_tests as object_target_tests)
+(import compiler_x64_executable_template_tests as x64_template_tests)
 (import compiler_driver_smoke_tests)
 (import compiler_builtin_ids as cbi)
 
@@ -61,6 +62,8 @@
         (compiler_backend_tests.compiler-backend-configured-self-test))]
     [(string.eq name "backend-object-target")
       (object_target_tests.compiler-backend-object-target-tests-main)]
+    [(string.eq name "x64-template-registry")
+      (x64_template_tests.compiler-x64-template-tests-main)]
     [(string.eq name "lower-symbol-identity")
       (compiler_driver_smoke_tests.compiler-lower-symbol-identity-smoke-main)]
     [(string.eq name "driver-pic")
@@ -111,6 +114,9 @@
       (compiler-smoke-suite-require-child
         "backend-object-target"
         "compiler smoke suite: compiler_backend_object_target_smoke failed")
+      (compiler-smoke-suite-require-child
+        "x64-template-registry"
+        "compiler smoke suite: compiler_x64_template_registry failed")
       (compiler-smoke-suite-require-child
         "lower-symbol-identity"
         "compiler smoke suite: compiler_lower_symbol_identity_smoke failed")

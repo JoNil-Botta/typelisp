@@ -21,6 +21,11 @@ Compilation is one whole program per executable with import-graph dedup
 codegen'd once into archives; an in-process session cache warms compiler
 pools across compiles within one process (batch and LSP paths).
 
+Handwritten runtime, startup, and direct-object x86-64 code is covered by the
+closed [compiler-owned executable template registry](compiler-x64-executable-templates.md).
+It records mutation-sensitive source identities and typed control/frame events
+for later native-code certification.
+
 ## Performance gates
 
 Generated code is compared with `clang -O2` using paired cases under

@@ -22,6 +22,7 @@
 (import compiler_backend_runtime_common as runtime_common)
 (import compiler_backend_runtime_linux as runtime_linux)
 (import compiler_backend_runtime_windows as runtime_windows)
+(import compiler_x64_executable_template as x64_template)
 (import compiler_parallel_move as pmove)
 (import compiler_builtin_ids as cbi)
 (import compiler_float)
@@ -1947,7 +1948,10 @@
         (object_target.compiler-backend-object-parts-empty)
         (object_linux.compiler-backend-object-tlci-entry-bytes)
         (owned_view.compiler-owned-shared-view expected)
-        true)]
+        true
+        (x64_template.CompilerX64TemplateTarget.LinuxX64)
+        (x64_template.CompilerX64ExecutableTemplateId.LinuxObjectTlciImageContribution)
+        (x64_template.CompilerX64ExecutableTemplateId.LinuxObjectTlciMacroContribution))]
     [enabled : cobj.CompilerObjectX64InstrList
       (cobj.compiler-object-instr-builder-finish
         (owned_view.compiler-owned-shared-view enabled-parts.text))]
@@ -1956,7 +1960,10 @@
         (object_target.compiler-backend-object-parts-empty)
         (object_linux.compiler-backend-object-tlci-entry-bytes)
         (owned_view.compiler-owned-shared-view expected)
-        false)]
+        false
+        (x64_template.CompilerX64TemplateTarget.LinuxX64)
+        (x64_template.CompilerX64ExecutableTemplateId.LinuxObjectTlciImageContribution)
+        (x64_template.CompilerX64ExecutableTemplateId.LinuxObjectTlciMacroContribution))]
     [disabled : cobj.CompilerObjectX64InstrList
       (cobj.compiler-object-instr-builder-finish
         (owned_view.compiler-owned-shared-view disabled-parts.text))]

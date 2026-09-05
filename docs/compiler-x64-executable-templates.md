@@ -5,11 +5,20 @@ adds outside ordinary function lowering. The registry is evidence for later
 native-code policy. It does not report that a template is CET-compatible and
 does not assign final linked ranges.
 
-`compiler_x64_executable_template.tl` defines the closed IDs, targets, ABIs,
-feature predicates, contribution kinds, terminal behavior, and typed
-control/frame events. `compiler_x64_executable_template_catalog.tl` is the
-reviewed catalog. Runtime and direct-object owners must pass through the
-catalog render gates before their code is emitted.
+`compiler_x64_executable_template.tl` defines the closed IDs, targets, and
+render kinds. `compiler_x64_executable_template_catalog.tsv` holds the reviewed
+rows. The production decoder in `compiler_x64_executable_template_catalog.tl`
+reads only the target, render kind, size, and payload hash needed by an emission
+gate. Runtime and direct-object owners must pass through that gate before their
+code is emitted.
+
+The richer ABI, feature, anchor, terminal, and event evidence is decoded by
+`compiler_x64_executable_template_evidence.tl`; selection, event parsing, and
+canonical identity live in their corresponding modules. Those modules support
+focused validation without entering every compiler build's import graph. The
+TSV keeps one physical line per row, with `\\n` and `\\\\` as its only field
+escapes. Embedding this compact payload avoids spending the compiler's fixed
+renderable-name budget on thousands of repetitive catalog AST nodes.
 
 The checked inventory has these bounds:
 

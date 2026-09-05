@@ -26237,7 +26237,9 @@
 ;; depth (see opt-inline-sole-call-loop-site-depth): the site reads 3, one past
 ;; opt-inline-sole-call-max-loop-depth. The guards test the two parameters the
 ;; header does not, so no pass can fold them into the header's own branch.
-(define (opt-inline-sole-call-deep-loop-caller [func-name : i64] [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+(define (opt-inline-sole-call-deep-loop-caller
+  [func-name : i64]
+  [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
     func-name
     (opt-inline-switch-params)
@@ -26285,7 +26287,10 @@
               (compiler_ir_types.CompilerIrBlock.Block
                 (compiler_ir_types.compiler-ir-label "body")
                 (opt-test-instrs
-                  (opt-inline-wide-call callee-name (opt-inline-sole-call-params) 5)
+                  (opt-inline-wide-call
+                    callee-name
+                    (opt-inline-sole-call-params)
+                    5)
                   (compiler_ir_types.CompilerIrInstr.Jump
                     (compiler_ir_types.compiler-ir-label "latch"))))
               (compiler_ir_types.compiler-ir-block-cons

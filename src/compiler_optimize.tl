@@ -134036,6 +134036,143 @@
       (compiler-opt-global-shared-view blocks)
       pos)))
 
+;; INL-20b. The block a site's block hangs off: the ONE predecessor edge of
+;; `label`, when it is the arm of a two-way branch, or -1 when `label` has any
+;; other predecessor (a jump, a switch case, a second branch) or none. Every
+;; terminator kind counts toward the edge total, so a merge block never reads
+;; as an arm.
+(define (opt-inline-checked-branch-pred-edges!
+  [instrs : ir.CompilerIrInstrSeq]
+  [label : i64]) : i64
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    (if (<= count 0)
+      0
+      (match (array-ref slots (- count 1))
+        [(ir.CompilerIrInstr.Jump target)
+          (if (= target label)
+            1
+            0)]
+        [(ir.CompilerIrInstr.Branch _ true-label false-label)
+          (+
+            (if (= true-label label)
+              1
+              0)
+            (if (= false-label label)
+              1
+              0))]
+        [(ir.CompilerIrInstr.TotalEnumBranch _ true-label false-label)
+          (+
+            (if (= true-label label)
+              1
+              0)
+            (if (= false-label label)
+              1
+              0))]
+        [(ir.CompilerIrInstr.Switch _ _ cases default-label)
+          (+
+            (if (= default-label label)
+              1
+              0)
+            (opt-inline-checked-switch-case-edges cases label))]
+        [(ir.CompilerIrInstr.TotalEnumSwitch _ _ cases default-label _)
+          (+
+            (if (= default-label label)
+              1
+              0)
+            (opt-inline-checked-switch-case-edges cases label))]
+        [_ 0]))))
+
+(define (opt-inline-checked-switch-case-edges
+  [cases : ir.CompilerIrSwitchCaseSeq]
+  [label : i64]) : i64
+  (let
+    [i : i64 0]
+    [edges : i64 0]
+    (begin
+      (while (< i cases.len)
+        (begin
+          (match (ir.compiler-ir-switch-case-seq-ref cases i)
+            [(ir.CompilerIrSwitchCase.Case _ target)
+              (if (= target label)
+                (set! edges (+ edges 1))
+                unit)])
+          (set! i (+ i 1))))
+      edges)))
+
+(define (opt-inline-checked-branch-pred-of
+  [blocks : ir.CompilerIrBlockList]
+  [label : i64]) : i64
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (ir.compiler-ir-block-seq-from-list
+        (compiler-opt-global-shared-view blocks))]
+    [count : i64
+      (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+    [i : i64 0]
+    [edges : i64 0]
+    [branch : i64 (- 0 1)]
+    (begin
+      (while (< i count)
+        (begin
+          (match (ir.compiler-ir-block-seq-ref
+            (compiler-opt-global-shared-view seq)
+            i)
+            [(ir.CompilerIrBlock.Block block-label instrs)
+              (let
+                [here : i64
+                  (opt-inline-checked-branch-pred-edges!
+                    (compiler-opt-global-shared-view instrs)
+                    label)]
+                (begin
+                  (set! edges (+ edges here))
+                  (if (and
+                    (= here 1)
+                    (=
+                      (opt-inline-checked-term-class-of
+                        (compiler-opt-global-shared-view instrs))
+                      (opt-inline-checked-term-branch)))
+                    (set! branch block-label)
+                    unit)))])
+          (set! i (+ i 1))))
+      (if (= edges 1)
+        branch
+        (- 0 1)))))
+
+;; INL-20b. ARM, read off the branch the site's block hangs from rather than
+;; off the entry alone. The entry reading (opt-inline-checked-arm-site?) asked
+;; that the branch BE the entry block, which is the shape the fixtures were
+;; written in; a caller whose first sites the tier has already kept -- the
+;; rescan generation -- reaches the same two-arm branch only after the kept
+;; bodies, so the branch post-dominates the entry without being it. The
+;; reading is the same two statements: the branch runs once per invocation
+;; (it post-dominates the entry) and the sibling arm does no work. sccp's
+;; `sccp-state-bind` is the measurement: after `sccp-env-lookup-in` and
+;; `sccp-join` are kept in generation one, `sccp-env-set-in!` sits in the
+;; else arm of the value-equality branch below their bodies -- the one call
+;; left in the caller -- and read `pos=none|rawpos=none` in generation two.
+(define (opt-inline-checked-post-arm-site?
+  [blocks : ir.CompilerIrBlockList]
+  [entry-label : i64]
+  [label : i64]) : bool
+  (let
+    [branch : i64
+      (opt-inline-checked-branch-pred-of
+        (compiler-opt-global-shared-view blocks)
+        label)]
+    (and
+      (>= branch 0)
+      (not (= branch entry-label))
+      (opt-inline-checked-post-dominates-entry?
+        (compiler-opt-global-shared-view blocks)
+        entry-label
+        branch)
+      (opt-inline-checked-arm-site?
+        (compiler-opt-global-shared-view blocks)
+        branch
+        label))))
+
 ;; The two new readings, tried post first. Answers `none` for a caller too wide
 ;; to walk, for a caller whose entry block cannot be found, and for the entry
 ;; block itself -- which never reaches here, because position zero is answered
@@ -134059,6 +134196,13 @@
           label)
         (opt-inline-checked-pos-post)]
       [(opt-inline-checked-arm-site?
+          (compiler-opt-global-shared-view blocks)
+          entry-label
+          label)
+        (opt-inline-checked-pos-arm)]
+      ;; INL-20b: the same reading off a branch below the entry that
+      ;; post-dominates it.
+      [(opt-inline-checked-post-arm-site?
           (compiler-opt-global-shared-view blocks)
           entry-label
           label)

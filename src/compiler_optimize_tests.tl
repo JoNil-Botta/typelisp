@@ -23333,6 +23333,38 @@
         (compiler_ir_types.CompilerIrBlock.Block sibling sibling-instrs)
         tail-blocks))))
 
+(define (opt-inline-pos-post-arm-blocks
+  [tail-blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs (opt-inline-pos-branch "pm_a" "pm_b")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "pm_a")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "pm_check"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "pm_b")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "pm_check"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "pm_check")
+            (opt-test-instrs (opt-inline-pos-branch "arm_work" "arm_bail")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "arm_work")
+              (opt-inline-pos-arm-work-instrs))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "arm_bail")
+                (opt-test-instrs (opt-inline-pos-return-literal)))
+              tail-blocks)))))))
+
 (define (opt-inline-pos-arm-work-instrs) : compiler_ir_types.CompilerIrInstrSeq
   (opt-test-instrs
     (opt-inline-pos-call (opt-inline-pos-callee) 1)
@@ -23523,6 +23555,50 @@
     [(= mode 11)
       (opt-inline-pos-dispatch-blocks
         (opt-inline-pos-dispatch-working-spine-instrs))]
+    ;; INL-20b: the site's arm hangs off a branch BELOW the entry that post-dominates
+    ;; it -- entry -> {pm_a, pm_b} -> pm_check -> {arm_work, arm_bail}. The entry
+    ;; reading sees no arm (the entry's arms are pm_a and pm_b), the post reading
+    ;; sees no post-dominator (arm_bail leaves without arm_work), and the spine
+    ;; reading ends at the merge; the branch pm_check post-dominates the entry
+    ;; and its sibling arm returns a literal, which is the arm reading stated
+    ;; off pm_check instead of the entry. This is `sccp-state-bind` after its
+    ;; first two keeps: `sccp-env-set-in!` in the else arm of the value-equality
+    ;; branch below the inlined lookup and join.
+    [(= mode 12)
+      (opt-inline-pos-post-arm-blocks compiler_ir_types.CompilerIrBlockList.Nil)]
+    ;; 13: the same shape with a second way into the site's arm -- pm_a jumps
+    ;; straight to arm_work -- so arm_work is a merge, no arm of anything, and
+    ;; the reading refuses it.
+    [(= mode 13)
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (opt-test-instrs (opt-inline-pos-branch "pm_a" "pm_b")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "pm_a")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "arm_work"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "pm_b")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "pm_check"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "pm_check")
+                (opt-test-instrs (opt-inline-pos-branch "arm_work" "arm_bail")))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "arm_work")
+                  (opt-inline-pos-arm-work-instrs))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.CompilerIrBlock.Block
+                    (compiler_ir_types.compiler-ir-label "arm_bail")
+                    (opt-test-instrs (opt-inline-pos-return-literal)))
+                  compiler_ir_types.CompilerIrBlockList.Nil))))))]
     ;; 8: NEITHER. One arm returns, so the merge below the other does not
     ;; post-dominate the entry, and the merge is no arm of the entry branch.
     [else
@@ -23713,6 +23789,33 @@
     (=
       (opt-inline-pos-site 6 1 "arm_work")
       (compiler_optimize.opt-inline-checked-pos-arm))
+    ;; INL-20b: the arm of a branch BELOW the entry that post-dominates it.
+    ;; The entry's own arms are the two jumps into the merge, so the entry
+    ;; reading has no arm to see; the branch below the merge runs once per
+    ;; invocation and its sibling returns a literal, and the reading is the
+    ;; arm reading stated off that branch. The count clause still holds: the
+    ;; caller's one call is the site's.
+    (=
+      (opt-inline-pos-site 12 4 "arm_work")
+      (compiler_optimize.opt-inline-checked-pos-arm))
+    (compiler_optimize.opt-inline-checked-post-arm-site?
+      (opt-inline-pos-blocks 12)
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-label "arm_work"))
+    ;; ...and the branch itself, or a block with a second way in, is no arm:
+    ;; pm_check post-dominates the entry (it reads POST), and arm_work with a
+    ;; jump from pm_a into it is a merge the reading refuses.
+    (=
+      (opt-inline-pos-site 12 3 "pm_check")
+      (compiler_optimize.opt-inline-checked-pos-post))
+    (not
+      (compiler_optimize.opt-inline-checked-post-arm-site?
+        (opt-inline-pos-blocks 13)
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-label "arm_work")))
+    (=
+      (opt-inline-pos-site 13 4 "arm_work")
+      (compiler_optimize.opt-inline-checked-pos-none))
     ;; NEITHER: a merge below an arm that returns post-dominates nothing and is
     ;; no arm of the entry branch, so the floor stands exactly as it did before
     ;; the widening -- and the caller here is wrapper-shaped, so the refusal is

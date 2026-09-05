@@ -2439,57 +2439,48 @@
   [values : ir.CompilerIrValueSeq]) : opt_i64_i64_map.Map
   (let
     [out : opt_i64_i64_map.Map set]
-    [index : i64 0]
     (begin
-      (while (< index values.len)
-        (begin
-          (set!
-            out
-            (opt-collect-value-uses
-              out
-              (ir.compiler-ir-value-seq-ref
-                (compiler-opt-global-shared-view values)
-                index)))
-          (set! index (+ index 1))))
+      (ir.compiler-ir-value-seq-visit
+        values
+        opt-collect-value-use-into!
+        (&mut out))
       out)))
 
-(define (opt-collect-call-args-array-uses
-  [set : opt_i64_i64_map.Map]
-  [values : (__tl_dyn-array ir.CompilerIrValue)]
-  [index : i64]) : opt_i64_i64_map.Map
-  (if (>= index (array-length values))
-    set
-    (opt-collect-call-args-array-uses
-      (opt-collect-value-uses
-        set
-        (compiler-opt-global-array-element-shared-view values index))
-      values
-      (+ index 1))))
+(define (opt-collect-value-use-into!
+  [set : (&mut set opt_i64_i64_map.Map)]
+  [value : ir.CompilerIrValue]) : unit
+  (match value
+    [(ir.CompilerIrValue.Var id) (opt_i64_i64_map.insert-ref! set id 1)]
+    [_ unit]))
+
+(define (opt-collect-spmd-value-use-into!
+  [set : (&mut set opt_i64_i64_map.Map)]
+  [_class : ir.CompilerIrSpmdValueClass]
+  [value : ir.CompilerIrValue]) : unit
+  (opt-collect-value-use-into! set value))
 
 (define (opt-collect-call-args-uses
   [set : opt_i64_i64_map.Map]
   [args : ir.CompilerIrCallArgs]) : opt_i64_i64_map.Map
-  (match args
-    [(ir.CompilerIrCallArgs.Nil) set]
-    [(ir.CompilerIrCallArgs.One value) (opt-collect-value-uses set value)]
-    [(ir.CompilerIrCallArgs.Two a b)
-      (opt-collect-value-uses (opt-collect-value-uses set a) b)]
-    [(ir.CompilerIrCallArgs.Array values)
-      (opt-collect-call-args-array-uses set values 0)]))
+  (let
+    [out : opt_i64_i64_map.Map set]
+    (begin
+      (ir.compiler-ir-call-args-visit
+        args
+        opt-collect-value-use-into!
+        (&mut out))
+      out)))
 
 (define (opt-collect-spmd-call-args-uses
   [set : opt_i64_i64_map.Map]
   [args : ir.CompilerIrSpmdCallArgSeq]) : opt_i64_i64_map.Map
   (let
     [out : opt_i64_i64_map.Map set]
-    [i : i64 0]
     (begin
-      (while (< i args.len)
-        (begin
-          (match (array-ref args.slots i)
-            [(ir.CompilerIrSpmdCallArg.Arg _ value _)
-              (set! out (opt-collect-value-uses out value))])
-          (set! i (+ i 1))))
+      (ir.compiler-ir-spmd-call-args-visit
+        args
+        opt-collect-spmd-value-use-into!
+        (&mut out))
       out)))
 
 (define (opt-collect-phi-uses
@@ -2968,56 +2959,32 @@
 (define (opt-collect-value-seq-uses-array
   [items : (__tl_dyn-array i64)]
   [values : ir.CompilerIrValueSeq]) : unit
-  (let
-    [index : i64 0]
-    (while (< index values.len)
-      (begin
-        (opt-collect-value-uses-array
-          (compiler-opt-global-shared-view items)
-          (ir.compiler-ir-value-seq-ref
-            (compiler-opt-global-shared-view values)
-            index))
-        (set! index (+ index 1))))))
-
-(define (opt-collect-call-args-array-uses-array
-  [items : (__tl_dyn-array i64)]
-  [values : (__tl_dyn-array ir.CompilerIrValue)]
-  [index : i64]) : unit
-  (if (>= index (array-length values))
-    unit
-    (begin
-      (opt-collect-value-uses-array
-        (compiler-opt-global-shared-view items)
-        (compiler-opt-global-array-element-shared-view values index))
-      (opt-collect-call-args-array-uses-array items values (+ index 1)))))
+  (ir.compiler-ir-value-seq-visit
+    values
+    opt-collect-value-uses-array
+    (compiler-opt-global-shared-view items)))
 
 (define (opt-collect-call-args-uses-array
   [items : (__tl_dyn-array i64)]
   [args : ir.CompilerIrCallArgs]) : unit
-  (match args
-    [(ir.CompilerIrCallArgs.Nil) unit]
-    [(ir.CompilerIrCallArgs.One value)
-      (opt-collect-value-uses-array items value)]
-    [(ir.CompilerIrCallArgs.Two a b)
-      (begin
-        (opt-collect-value-uses-array (compiler-opt-global-shared-view items) a)
-        (opt-collect-value-uses-array items b))]
-    [(ir.CompilerIrCallArgs.Array values)
-      (opt-collect-call-args-array-uses-array items values 0)]))
+  (ir.compiler-ir-call-args-visit
+    args
+    opt-collect-value-uses-array
+    (compiler-opt-global-shared-view items)))
+
+(define (opt-collect-spmd-value-uses-array
+  [items : (__tl_dyn-array i64)]
+  [_class : ir.CompilerIrSpmdValueClass]
+  [value : ir.CompilerIrValue]) : unit
+  (opt-collect-value-uses-array items value))
 
 (define (opt-collect-spmd-call-args-uses-array
   [items : (__tl_dyn-array i64)]
   [args : ir.CompilerIrSpmdCallArgSeq]) : unit
-  (let
-    [i : i64 0]
-    (while (< i args.len)
-      (begin
-        (match (array-ref args.slots i)
-          [(ir.CompilerIrSpmdCallArg.Arg _ value _)
-            (opt-collect-value-uses-array
-              (compiler-opt-global-shared-view items)
-              value)])
-        (set! i (+ i 1))))))
+  (ir.compiler-ir-spmd-call-args-visit
+    args
+    opt-collect-spmd-value-uses-array
+    (compiler-opt-global-shared-view items)))
 
 (define (opt-collect-phi-uses-array
   [items : (__tl_dyn-array i64)]
@@ -7057,30 +7024,10 @@
 (define (opt-aggregate-split-refuse-args!
   [plan : OptSplitPlan]
   [args : ir.CompilerIrCallArgs]) : unit
-  (match args
-    [(ir.CompilerIrCallArgs.Nil) unit]
-    [(ir.CompilerIrCallArgs.One value)
-      (opt-aggregate-split-refuse-arg! plan value)]
-    [(ir.CompilerIrCallArgs.Two a b)
-      (begin
-        (opt-aggregate-split-refuse-arg!
-          (compiler-opt-global-shared-view plan)
-          a)
-        (opt-aggregate-split-refuse-arg! plan b))]
-    [(ir.CompilerIrCallArgs.Array values)
-      (opt-aggregate-split-refuse-args-array! plan values 0)]))
-
-(define (opt-aggregate-split-refuse-args-array!
-  [plan : OptSplitPlan]
-  [values : (__tl_dyn-array ir.CompilerIrValue)]
-  [position : i64]) : unit
-  (if (>= position (array-length values))
-    unit
-    (begin
-      (opt-aggregate-split-refuse-arg!
-        (compiler-opt-global-shared-view plan)
-        (compiler-opt-global-array-element-shared-view values position))
-      (opt-aggregate-split-refuse-args-array! plan values (+ position 1)))))
+  (ir.compiler-ir-call-args-visit
+    args
+    opt-aggregate-split-refuse-arg!
+    (compiler-opt-global-shared-view plan)))
 
 (define (opt-aggregate-split-refuse-arg!
   [plan : OptSplitPlan]
@@ -10553,60 +10500,18 @@
 (define (opt-copy-subst-value-seq
   [env : OptCopyEnv]
   [values : ir.CompilerIrValueSeq]) : ir.CompilerIrValueSeq
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrValue)
-      (__tl_make-array ir.CompilerIrValue values.len)]
-    [index : i64 0]
-    (begin
-      (while (< index values.len)
-        (begin
-          (set!
-            (array-ref slots index)
-            (opt-copy-resolve
-              (compiler-opt-global-shared-view env)
-              (ir.compiler-ir-value-seq-ref
-                (compiler-opt-global-shared-view values)
-                index)))
-          (set! index (+ index 1))))
-      (ir.CompilerIrValueSeq slots values.len))))
-
-(define (opt-copy-subst-call-args-array
-  [env : OptCopyEnv]
-  [src : (__tl_dyn-array ir.CompilerIrValue)]
-  [dst : (__tl_dyn-array ir.CompilerIrValue)]
-  [index : i64]) : unit
-  (if (>= index (array-length src))
-    unit
-    (begin
-      (set!
-        (array-ref dst index)
-        (opt-copy-resolve
-          (compiler-opt-global-shared-view env)
-          (compiler-opt-global-array-element-shared-view src index)))
-      (opt-copy-subst-call-args-array env src dst (+ index 1)))))
+  (ir.compiler-ir-value-seq-map
+    values
+    opt-copy-resolve
+    (compiler-opt-global-shared-view env)))
 
 (define (opt-copy-subst-call-args
   [env : OptCopyEnv]
   [args : ir.CompilerIrCallArgs]) : ir.CompilerIrCallArgs
-  (match args
-    [(ir.CompilerIrCallArgs.Nil) (ir.CompilerIrCallArgs.Nil)]
-    [(ir.CompilerIrCallArgs.One value)
-      (ir.CompilerIrCallArgs.One (opt-copy-resolve env value))]
-    [(ir.CompilerIrCallArgs.Two a b)
-      (ir.CompilerIrCallArgs.Two
-        (opt-copy-resolve (compiler-opt-global-shared-view env) a)
-        (opt-copy-resolve env b))]
-    [(ir.CompilerIrCallArgs.Array values)
-      (let
-        [out : (__tl_dyn-array ir.CompilerIrValue)
-          (__tl_make-array ir.CompilerIrValue (array-length values))]
-        (begin
-          (opt-copy-subst-call-args-array
-            env
-            values
-            (compiler-opt-global-shared-view out)
-            0)
-          (ir.CompilerIrCallArgs.Array out)))]))
+  (ir.compiler-ir-call-args-map
+    args
+    opt-copy-resolve
+    (compiler-opt-global-shared-view env)))
 
 (define (opt-copy-resolve-spmd-value
   [env : OptCopyEnv]
@@ -10617,44 +10522,13 @@
     [(ir.CompilerIrSpmdValueClass.Varying) (opt-copy-resolve-mask env value)]
     [(ir.CompilerIrSpmdValueClass.Mask) (opt-copy-resolve-mask env value)]))
 
-(define (opt-copy-subst-spmd-call-arg
-  [env : OptCopyEnv]
-  [arg : ir.CompilerIrSpmdCallArg]) : ir.CompilerIrSpmdCallArg
-  (match arg
-    [(ir.CompilerIrSpmdCallArg.Arg class value ty)
-      (ir.CompilerIrSpmdCallArg.Arg
-        class
-        (opt-copy-resolve-spmd-value env class value)
-        ty)]))
-
-(define (opt-copy-subst-spmd-call-args-array
-  [env : OptCopyEnv]
-  [src : (__tl_dyn-array ir.CompilerIrSpmdCallArg)]
-  [dst : (__tl_dyn-array ir.CompilerIrSpmdCallArg)]
-  [index : i64]) : unit
-  (if (>= index (array-length src))
-    unit
-    (begin
-      (set!
-        (array-ref dst index)
-        (opt-copy-subst-spmd-call-arg
-          (compiler-opt-global-shared-view env)
-          (compiler-opt-global-array-element-shared-view src index)))
-      (opt-copy-subst-spmd-call-args-array env src dst (+ index 1)))))
-
 (define (opt-copy-subst-spmd-call-args
   [env : OptCopyEnv]
   [args : ir.CompilerIrSpmdCallArgSeq]) : ir.CompilerIrSpmdCallArgSeq
-  (let
-    [out : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
-      (__tl_make-array ir.CompilerIrSpmdCallArg args.len)]
-    (begin
-      (opt-copy-subst-spmd-call-args-array
-        env
-        args.slots
-        (compiler-opt-global-shared-view out)
-        0)
-      (ir.CompilerIrSpmdCallArgSeq out args.len))))
+  (ir.compiler-ir-spmd-call-args-map
+    args
+    opt-copy-resolve-spmd-value
+    (compiler-opt-global-shared-view env)))
 
 ;; Rewrite the value-use operands of an instruction through the copy env. Phi
 ;; inputs and the raw var id of `CompilerIrInstr.AddrOf` are intentionally not rewritten.
@@ -18000,96 +17874,32 @@
 (define (opt-ssa-rewrite-value-seq
   [env : OptSsaRenameEnv]
   [values : ir.CompilerIrValueSeq]) : ir.CompilerIrValueSeq
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrValue)
-      (__tl_make-array ir.CompilerIrValue values.len)]
-    [index : i64 0]
-    (begin
-      (while (< index values.len)
-        (begin
-          (set!
-            (array-ref slots index)
-            (opt-ssa-rewrite-value
-              (compiler-opt-global-shared-view env)
-              (ir.compiler-ir-value-seq-ref
-                (compiler-opt-global-shared-view values)
-                index)))
-          (set! index (+ index 1))))
-      (ir.CompilerIrValueSeq slots values.len))))
-
-(define (opt-ssa-rewrite-call-args-array
-  [env : OptSsaRenameEnv]
-  [src : (__tl_dyn-array ir.CompilerIrValue)]
-  [dst : (__tl_dyn-array ir.CompilerIrValue)]
-  [index : i64]) : unit
-  (if (>= index (array-length src))
-    unit
-    (begin
-      (set!
-        (array-ref dst index)
-        (opt-ssa-rewrite-value
-          (compiler-opt-global-shared-view env)
-          (compiler-opt-global-array-element-shared-view src index)))
-      (opt-ssa-rewrite-call-args-array env src dst (+ index 1)))))
+  (ir.compiler-ir-value-seq-map
+    values
+    opt-ssa-rewrite-value
+    (compiler-opt-global-shared-view env)))
 
 (define (opt-ssa-rewrite-call-args
   [env : OptSsaRenameEnv]
   [args : ir.CompilerIrCallArgs]) : ir.CompilerIrCallArgs
-  (match args
-    [(ir.CompilerIrCallArgs.Nil) (ir.CompilerIrCallArgs.Nil)]
-    [(ir.CompilerIrCallArgs.One value)
-      (ir.CompilerIrCallArgs.One (opt-ssa-rewrite-value env value))]
-    [(ir.CompilerIrCallArgs.Two a b)
-      (ir.CompilerIrCallArgs.Two
-        (opt-ssa-rewrite-value (compiler-opt-global-shared-view env) a)
-        (opt-ssa-rewrite-value env b))]
-    [(ir.CompilerIrCallArgs.Array values)
-      (let
-        [out : (__tl_dyn-array ir.CompilerIrValue)
-          (__tl_make-array ir.CompilerIrValue (array-length values))]
-        (begin
-          (opt-ssa-rewrite-call-args-array
-            env
-            values
-            (compiler-opt-global-shared-view out)
-            0)
-          (ir.CompilerIrCallArgs.Array out)))]))
+  (ir.compiler-ir-call-args-map
+    args
+    opt-ssa-rewrite-value
+    (compiler-opt-global-shared-view env)))
 
-(define (opt-ssa-rewrite-spmd-call-arg
+(define (opt-ssa-rewrite-spmd-value
   [env : OptSsaRenameEnv]
-  [arg : ir.CompilerIrSpmdCallArg]) : ir.CompilerIrSpmdCallArg
-  (match arg
-    [(ir.CompilerIrSpmdCallArg.Arg class value ty)
-      (ir.CompilerIrSpmdCallArg.Arg class (opt-ssa-rewrite-value env value) ty)]))
-
-(define (opt-ssa-rewrite-spmd-call-args-array
-  [env : OptSsaRenameEnv]
-  [src : (__tl_dyn-array ir.CompilerIrSpmdCallArg)]
-  [dst : (__tl_dyn-array ir.CompilerIrSpmdCallArg)]
-  [index : i64]) : unit
-  (if (>= index (array-length src))
-    unit
-    (begin
-      (set!
-        (array-ref dst index)
-        (opt-ssa-rewrite-spmd-call-arg
-          (compiler-opt-global-shared-view env)
-          (compiler-opt-global-array-element-shared-view src index)))
-      (opt-ssa-rewrite-spmd-call-args-array env src dst (+ index 1)))))
+  [_class : ir.CompilerIrSpmdValueClass]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (opt-ssa-rewrite-value env value))
 
 (define (opt-ssa-rewrite-spmd-call-args
   [env : OptSsaRenameEnv]
   [args : ir.CompilerIrSpmdCallArgSeq]) : ir.CompilerIrSpmdCallArgSeq
-  (let
-    [out : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
-      (__tl_make-array ir.CompilerIrSpmdCallArg args.len)]
-    (begin
-      (opt-ssa-rewrite-spmd-call-args-array
-        env
-        args.slots
-        (compiler-opt-global-shared-view out)
-        0)
-      (ir.CompilerIrSpmdCallArgSeq out args.len))))
+  (ir.compiler-ir-spmd-call-args-map
+    args
+    opt-ssa-rewrite-spmd-value
+    (compiler-opt-global-shared-view env)))
 
 (define (opt-ssa-rename-dst
   [facts : OptSsaFacts]
@@ -20602,68 +20412,19 @@
     original
     resolved))
 
-(define (opt-global-copy-subst-call-args-array
-  [facts : OptGlobalCopyFactTable]
-  [doms : OptDomInfo]
-  [use-block-id : i64]
-  [use-pos : i64]
-  [src : (__tl_dyn-array ir.CompilerIrValue)]
-  [dst : (__tl_dyn-array ir.CompilerIrValue)]
-  [index : i64]) : unit
-  (if (>= index (array-length src))
-    unit
-    (begin
-      (set!
-        (array-ref dst index)
-        (opt-global-copy-resolve
-          (compiler-opt-global-shared-view facts)
-          (compiler-opt-global-shared-view doms)
-          use-block-id
-          use-pos
-          (compiler-opt-global-array-element-shared-view src index)))
-      (opt-global-copy-subst-call-args-array
-        facts
-        doms
-        use-block-id
-        use-pos
-        src
-        dst
-        (+ index 1)))))
-
 (define (opt-global-copy-subst-call-args
   [facts : OptGlobalCopyFactTable]
   [doms : OptDomInfo]
   [use-block-id : i64]
   [use-pos : i64]
   [args : ir.CompilerIrCallArgs]) : ir.CompilerIrCallArgs
-  (match args
-    [(ir.CompilerIrCallArgs.Nil) (ir.CompilerIrCallArgs.Nil)]
-    [(ir.CompilerIrCallArgs.One value)
-      (ir.CompilerIrCallArgs.One
-        (opt-global-copy-resolve facts doms use-block-id use-pos value))]
-    [(ir.CompilerIrCallArgs.Two a b)
-      (ir.CompilerIrCallArgs.Two
-        (opt-global-copy-resolve
-          (compiler-opt-global-shared-view facts)
-          (compiler-opt-global-shared-view doms)
-          use-block-id
-          use-pos
-          a)
-        (opt-global-copy-resolve facts doms use-block-id use-pos b))]
-    [(ir.CompilerIrCallArgs.Array values)
-      (let
-        [out : (__tl_dyn-array ir.CompilerIrValue)
-          (__tl_make-array ir.CompilerIrValue (array-length values))]
-        (begin
-          (opt-global-copy-subst-call-args-array
-            (compiler-opt-global-shared-view facts)
-            (compiler-opt-global-shared-view doms)
-            use-block-id
-            use-pos
-            values
-            (compiler-opt-global-shared-view out)
-            0)
-          (ir.CompilerIrCallArgs.Array out)))]))
+  (ir.compiler-ir-call-args-map
+    args
+    opt-global-copy-resolve
+    (compiler-opt-global-shared-view facts)
+    (compiler-opt-global-shared-view doms)
+    use-block-id
+    use-pos))
 
 (define (opt-global-copy-resolve-spmd-value
   [facts : OptGlobalCopyFactTable]
@@ -20680,72 +20441,19 @@
     [(ir.CompilerIrSpmdValueClass.Mask)
       (opt-global-copy-resolve-mask facts doms use-block-id use-pos value)]))
 
-(define (opt-global-copy-subst-spmd-call-arg
-  [facts : OptGlobalCopyFactTable]
-  [doms : OptDomInfo]
-  [use-block-id : i64]
-  [use-pos : i64]
-  [arg : ir.CompilerIrSpmdCallArg]) : ir.CompilerIrSpmdCallArg
-  (match arg
-    [(ir.CompilerIrSpmdCallArg.Arg class value ty)
-      (ir.CompilerIrSpmdCallArg.Arg
-        class
-        (opt-global-copy-resolve-spmd-value
-          (compiler-opt-global-shared-view facts)
-          doms
-          use-block-id
-          use-pos
-          class
-          value)
-        ty)]))
-
-(define (opt-global-copy-subst-spmd-call-args-array
-  [facts : OptGlobalCopyFactTable]
-  [doms : OptDomInfo]
-  [use-block-id : i64]
-  [use-pos : i64]
-  [src : (__tl_dyn-array ir.CompilerIrSpmdCallArg)]
-  [dst : (__tl_dyn-array ir.CompilerIrSpmdCallArg)]
-  [index : i64]) : unit
-  (if (>= index (array-length src))
-    unit
-    (begin
-      (set!
-        (array-ref dst index)
-        (opt-global-copy-subst-spmd-call-arg
-          (compiler-opt-global-shared-view facts)
-          (compiler-opt-global-shared-view doms)
-          use-block-id
-          use-pos
-          (compiler-opt-global-array-element-shared-view src index)))
-      (opt-global-copy-subst-spmd-call-args-array
-        facts
-        doms
-        use-block-id
-        use-pos
-        src
-        dst
-        (+ index 1)))))
-
 (define (opt-global-copy-subst-spmd-call-args
   [facts : OptGlobalCopyFactTable]
   [doms : OptDomInfo]
   [use-block-id : i64]
   [use-pos : i64]
   [args : ir.CompilerIrSpmdCallArgSeq]) : ir.CompilerIrSpmdCallArgSeq
-  (let
-    [out : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
-      (__tl_make-array ir.CompilerIrSpmdCallArg args.len)]
-    (begin
-      (opt-global-copy-subst-spmd-call-args-array
-        facts
-        doms
-        use-block-id
-        use-pos
-        args.slots
-        (compiler-opt-global-shared-view out)
-        0)
-      (ir.CompilerIrSpmdCallArgSeq out args.len))))
+  (ir.compiler-ir-spmd-call-args-map
+    args
+    opt-global-copy-resolve-spmd-value
+    (compiler-opt-global-shared-view facts)
+    (compiler-opt-global-shared-view doms)
+    use-block-id
+    use-pos))
 
 ;; A phi input is read on its named predecessor edge. Resolve a copy using the
 ;; predecessor as the use block and a position after its final instruction.
@@ -53105,79 +52813,27 @@
     [(ir.CompilerIrMaybeValue.Some inner)
       (ir.CompilerIrMaybeValue.Some (opt-sccp-rewrite-value env inner))]))
 
-(define (opt-sccp-rewrite-call-args-array
-  [env : OptSccpEnv]
-  [src : (__tl_dyn-array ir.CompilerIrValue)]
-  [dst : (__tl_dyn-array ir.CompilerIrValue)]
-  [index : i64]) : unit
-  (if (>= index (array-length src))
-    unit
-    (begin
-      (set!
-        (array-ref dst index)
-        (opt-sccp-rewrite-value
-          (compiler-opt-global-shared-view env)
-          (compiler-opt-global-array-element-shared-view src index)))
-      (opt-sccp-rewrite-call-args-array env src dst (+ index 1)))))
-
 (define (opt-sccp-rewrite-call-args
   [env : OptSccpEnv]
   [args : ir.CompilerIrCallArgs]) : ir.CompilerIrCallArgs
-  (match args
-    [(ir.CompilerIrCallArgs.Nil) (ir.CompilerIrCallArgs.Nil)]
-    [(ir.CompilerIrCallArgs.One value)
-      (ir.CompilerIrCallArgs.One (opt-sccp-rewrite-value env value))]
-    [(ir.CompilerIrCallArgs.Two a b)
-      (ir.CompilerIrCallArgs.Two
-        (opt-sccp-rewrite-value (compiler-opt-global-shared-view env) a)
-        (opt-sccp-rewrite-value env b))]
-    [(ir.CompilerIrCallArgs.Array values)
-      (let
-        [out : (__tl_dyn-array ir.CompilerIrValue)
-          (__tl_make-array ir.CompilerIrValue (array-length values))]
-        (begin
-          (opt-sccp-rewrite-call-args-array
-            env
-            values
-            (compiler-opt-global-shared-view out)
-            0)
-          (ir.CompilerIrCallArgs.Array out)))]))
+  (ir.compiler-ir-call-args-map
+    args
+    opt-sccp-rewrite-value
+    (compiler-opt-global-shared-view env)))
 
-(define (opt-sccp-rewrite-spmd-call-arg
+(define (opt-sccp-rewrite-spmd-value
   [env : OptSccpEnv]
-  [arg : ir.CompilerIrSpmdCallArg]) : ir.CompilerIrSpmdCallArg
-  (match arg
-    [(ir.CompilerIrSpmdCallArg.Arg class value ty)
-      (ir.CompilerIrSpmdCallArg.Arg class (opt-sccp-rewrite-value env value) ty)]))
-
-(define (opt-sccp-rewrite-spmd-call-args-array
-  [env : OptSccpEnv]
-  [src : (__tl_dyn-array ir.CompilerIrSpmdCallArg)]
-  [dst : (__tl_dyn-array ir.CompilerIrSpmdCallArg)]
-  [index : i64]) : unit
-  (if (>= index (array-length src))
-    unit
-    (begin
-      (set!
-        (array-ref dst index)
-        (opt-sccp-rewrite-spmd-call-arg
-          (compiler-opt-global-shared-view env)
-          (compiler-opt-global-array-element-shared-view src index)))
-      (opt-sccp-rewrite-spmd-call-args-array env src dst (+ index 1)))))
+  [_class : ir.CompilerIrSpmdValueClass]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (opt-sccp-rewrite-value env value))
 
 (define (opt-sccp-rewrite-spmd-call-args
   [env : OptSccpEnv]
   [args : ir.CompilerIrSpmdCallArgSeq]) : ir.CompilerIrSpmdCallArgSeq
-  (let
-    [out : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
-      (__tl_make-array ir.CompilerIrSpmdCallArg args.len)]
-    (begin
-      (opt-sccp-rewrite-spmd-call-args-array
-        env
-        args.slots
-        (compiler-opt-global-shared-view out)
-        0)
-      (ir.CompilerIrSpmdCallArgSeq out args.len))))
+  (ir.compiler-ir-spmd-call-args-map
+    args
+    opt-sccp-rewrite-spmd-value
+    (compiler-opt-global-shared-view env)))
 
 (define (opt-sccp-rewrite-phi-inputs
   [env : OptSccpEnv]
@@ -74171,83 +73827,38 @@
   [items : (__tl_dyn-array i64)]
   [generation : i64]
   [values : ir.CompilerIrValueSeq]) : unit
-  (opt-scan-note-value-seq-uses-from items generation values 0))
-
-(define (opt-scan-note-value-seq-uses-from
-  [items : (__tl_dyn-array i64)]
-  [generation : i64]
-  [seq : ir.CompilerIrValueSeq]
-  [index : i64]) : unit
-  (if (>= index seq.len)
-    unit
-    (begin
-      (opt-scan-note-value-uses
-        (compiler-opt-global-shared-view items)
-        generation
-        (compiler-opt-global-array-element-shared-view seq.slots index))
-      (opt-scan-note-value-seq-uses-from
-        (compiler-opt-global-shared-view items)
-        generation
-        (compiler-opt-global-shared-view seq)
-        (+ index 1)))))
+  (ir.compiler-ir-value-seq-visit
+    values
+    opt-scan-note-value-uses
+    (compiler-opt-global-shared-view items)
+    generation))
 
 (define (opt-scan-note-call-args-uses
   [items : (__tl_dyn-array i64)]
   [generation : i64]
   [args : ir.CompilerIrCallArgs]) : unit
-  (match args
-    [(ir.CompilerIrCallArgs.Nil) unit]
-    [(ir.CompilerIrCallArgs.One value)
-      (opt-scan-note-value-uses items generation value)]
-    [(ir.CompilerIrCallArgs.Two a b)
-      (begin
-        (opt-scan-note-value-uses
-          (compiler-opt-global-shared-view items)
-          generation
-          a)
-        (opt-scan-note-value-uses items generation b))]
-    [(ir.CompilerIrCallArgs.Array values)
-      (opt-scan-note-value-array-uses items generation values 0)]))
+  (ir.compiler-ir-call-args-visit
+    args
+    opt-scan-note-value-uses
+    (compiler-opt-global-shared-view items)
+    generation))
 
-(define (opt-scan-note-value-array-uses
+(define (opt-scan-note-spmd-value-uses
   [items : (__tl_dyn-array i64)]
   [generation : i64]
-  [values : (__tl_dyn-array ir.CompilerIrValue)]
-  [index : i64]) : unit
-  (if (>= index (array-length values))
-    unit
-    (begin
-      (opt-scan-note-value-uses
-        (compiler-opt-global-shared-view items)
-        generation
-        (compiler-opt-global-array-element-shared-view values index))
-      (opt-scan-note-value-array-uses items generation values (+ index 1)))))
+  [_class : ir.CompilerIrSpmdValueClass]
+  [value : ir.CompilerIrValue]) : unit
+  (opt-scan-note-value-uses items generation value))
 
 (define (opt-scan-note-spmd-call-args-uses
   [items : (__tl_dyn-array i64)]
   [generation : i64]
   [args : ir.CompilerIrSpmdCallArgSeq]) : unit
-  (opt-scan-note-spmd-call-arg-seq-uses items generation args 0))
-
-(define (opt-scan-note-spmd-call-arg-seq-uses
-  [items : (__tl_dyn-array i64)]
-  [generation : i64]
-  [seq : ir.CompilerIrSpmdCallArgSeq]
-  [index : i64]) : unit
-  (if (>= index seq.len)
-    unit
-    (match (array-ref seq.slots index)
-      [(ir.CompilerIrSpmdCallArg.Arg _ value _)
-        (begin
-          (opt-scan-note-value-uses
-            (compiler-opt-global-shared-view items)
-            generation
-            value)
-          (opt-scan-note-spmd-call-arg-seq-uses
-            items
-            generation
-            seq
-            (+ index 1)))])))
+  (ir.compiler-ir-spmd-call-args-visit
+    args
+    opt-scan-note-spmd-value-uses
+    (compiler-opt-global-shared-view items)
+    generation))
 
 ;; Mark every var the instruction mentions in a position fold/strength can
 ;; resolve or copy propagation can rewrite; phi inputs and AddrOf sources are
@@ -102085,47 +101696,13 @@
 ;; `opt-unroll-subst-value` everywhere else in this cloner. An `Array` argument
 ;; list is copied into a fresh array rather than mutated, because the original
 ;; instruction stays live in the SLOW loop and shares that storage.
-(define (opt-bce-mb-subst-call-args-array
-  [remap : (__tl_dyn-array ir.CompilerIrValue)]
-  [src : (__tl_dyn-array ir.CompilerIrValue)]
-  [out : (__tl_dyn-array ir.CompilerIrValue)]
-  [index : i64]) : unit
-  (if (>= index (array-length src))
-    unit
-    (begin
-      (set!
-        (array-ref out index)
-        (opt-unroll-subst-value
-          (compiler-opt-global-shared-view remap)
-          (compiler-opt-global-array-element-shared-view src index)))
-      (opt-bce-mb-subst-call-args-array
-        (compiler-opt-global-shared-view remap)
-        (compiler-opt-global-shared-view src)
-        (compiler-opt-global-shared-view out)
-        (+ index 1)))))
-
 (define (opt-bce-mb-subst-call-args
   [remap : (__tl_dyn-array ir.CompilerIrValue)]
   [args : ir.CompilerIrCallArgs]) : ir.CompilerIrCallArgs
-  (match args
-    [(ir.CompilerIrCallArgs.Nil) (ir.CompilerIrCallArgs.Nil)]
-    [(ir.CompilerIrCallArgs.One value)
-      (ir.CompilerIrCallArgs.One (opt-unroll-subst-value remap value))]
-    [(ir.CompilerIrCallArgs.Two a b)
-      (ir.CompilerIrCallArgs.Two
-        (opt-unroll-subst-value (compiler-opt-global-shared-view remap) a)
-        (opt-unroll-subst-value remap b))]
-    [(ir.CompilerIrCallArgs.Array values)
-      (let
-        [out : (__tl_dyn-array ir.CompilerIrValue)
-          (__tl_make-array ir.CompilerIrValue (array-length values))]
-        (begin
-          (opt-bce-mb-subst-call-args-array
-            (compiler-opt-global-shared-view remap)
-            (compiler-opt-global-shared-view values)
-            (compiler-opt-global-shared-view out)
-            0)
-          (ir.CompilerIrCallArgs.Array out)))]))
+  (ir.compiler-ir-call-args-map
+    args
+    opt-unroll-subst-value
+    (compiler-opt-global-shared-view remap)))
 
 (define (opt-bce-mb-clone-switch-cases
   [cases : ir.CompilerIrSwitchCaseSeq]
@@ -129292,61 +128869,36 @@
       (ir.CompilerIrValue.RuntimeGlobal (ir.compiler-ir-symbol-clone init))]
     [(ir.CompilerIrValue.Unit) (ir.CompilerIrValue.Unit)]))
 
+(define (opt-inline-remap-container-value
+  [sa : ir.CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (opt-inline-remap-value value sa np base))
+
 (define (opt-inline-remap-args
   [a : ir.CompilerIrCallArgs]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]) : ir.CompilerIrCallArgs
-  (match a
-    [(ir.CompilerIrCallArgs.Nil) (ir.CompilerIrCallArgs.Nil)]
-    [(ir.CompilerIrCallArgs.One x)
-      (ir.CompilerIrCallArgs.One (opt-inline-remap-value x sa np base))]
-    [(ir.CompilerIrCallArgs.Two x y)
-      (ir.CompilerIrCallArgs.Two
-        (opt-inline-remap-value x (compiler-opt-global-shared-view sa) np base)
-        (opt-inline-remap-value y sa np base))]
-    [(ir.CompilerIrCallArgs.Array arr)
-      (let
-        [n : i64 (array-length arr)]
-        [out : (__tl_dyn-array ir.CompilerIrValue)
-          (__tl_make-array ir.CompilerIrValue n)]
-        [i : i64 0]
-        (begin
-          (while (< i n)
-            (begin
-              (set!
-                (array-ref out i)
-                (opt-inline-remap-value
-                  (compiler-opt-global-array-element-shared-view arr i)
-                  (compiler-opt-global-shared-view sa)
-                  np
-                  base))
-              (set! i (+ i 1))))
-          (ir.CompilerIrCallArgs.Array out)))]))
+  (ir.compiler-ir-call-args-map
+    a
+    opt-inline-remap-container-value
+    (compiler-opt-global-shared-view sa)
+    np
+    base))
 
 (define (opt-inline-remap-value-seq
   [values : ir.CompilerIrValueSeq]
   [sa : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]) : ir.CompilerIrValueSeq
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrValue)
-      (__tl_make-array ir.CompilerIrValue values.len)]
-    [index : i64 0]
-    (begin
-      (while (< index values.len)
-        (begin
-          (set!
-            (array-ref slots index)
-            (opt-inline-remap-value
-              (ir.compiler-ir-value-seq-ref
-                (compiler-opt-global-shared-view values)
-                index)
-              (compiler-opt-global-shared-view sa)
-              (compiler-opt-global-shared-view np)
-              base))
-          (set! index (+ index 1))))
-      (ir.CompilerIrValueSeq slots values.len))))
+  (ir.compiler-ir-value-seq-map
+    values
+    opt-inline-remap-container-value
+    (compiler-opt-global-shared-view sa)
+    np
+    base))
 
 ;; Inlining renames a callee's blocks by prefixing the caller-site tag onto the
 ;; original spelling, so the derived name is re-interned into a fresh id.
@@ -143748,44 +143300,34 @@
       (opt_i64_i64_map.insert-ref! disq (ir.compiler-ir-symbol-id name) 1)]
     [_ unit]))
 
-(define (opt-const-globals-disq-args-array
-  [disq : opt_i64_i64_map.Map]
-  [values : (__tl_dyn-array ir.CompilerIrValue)]
-  [index : i64]) : opt_i64_i64_map.Map
-  (if (>= index (array-length values))
-    disq
-    (opt-const-globals-disq-args-array
-      (opt-const-globals-disq-value
-        disq
-        (compiler-opt-global-array-element-shared-view values index))
-      values
-      (+ index 1))))
-
 (define (opt-const-globals-disq-args
   [disq : opt_i64_i64_map.Map]
   [args : ir.CompilerIrCallArgs]) : opt_i64_i64_map.Map
-  (match args
-    [(ir.CompilerIrCallArgs.Nil) disq]
-    [(ir.CompilerIrCallArgs.One value)
-      (opt-const-globals-disq-value disq value)]
-    [(ir.CompilerIrCallArgs.Two a b)
-      (opt-const-globals-disq-value (opt-const-globals-disq-value disq a) b)]
-    [(ir.CompilerIrCallArgs.Array values)
-      (opt-const-globals-disq-args-array disq values 0)]))
+  (let
+    [out : opt_i64_i64_map.Map (compiler-opt-global-shared-view disq)]
+    (begin
+      (ir.compiler-ir-call-args-visit
+        args
+        opt-const-globals-disq-value!
+        (&mut out))
+      out)))
+
+(define (opt-const-globals-disq-spmd-value!
+  [disq : (&mut disq opt_i64_i64_map.Map)]
+  [_class : ir.CompilerIrSpmdValueClass]
+  [value : ir.CompilerIrValue]) : unit
+  (opt-const-globals-disq-value! disq value))
 
 (define (opt-const-globals-disq-spmd-args
   [disq : opt_i64_i64_map.Map]
   [args : ir.CompilerIrSpmdCallArgSeq]) : opt_i64_i64_map.Map
   (let
     [out : opt_i64_i64_map.Map (compiler-opt-global-shared-view disq)]
-    [i : i64 0]
     (begin
-      (while (< i args.len)
-        (begin
-          (match (array-ref args.slots i)
-            [(ir.CompilerIrSpmdCallArg.Arg _ value _)
-              (opt-const-globals-disq-value! (&mut out) value)])
-          (set! i (+ i 1))))
+      (ir.compiler-ir-spmd-call-args-visit
+        args
+        opt-const-globals-disq-spmd-value!
+        (&mut out))
       out)))
 
 (define (opt-const-globals-disq-maybe
@@ -150720,22 +150262,10 @@
 (define (opt-len-eq-defs-record-args!
   [tables : OptLenEqDefs]
   [args : ir.CompilerIrCallArgs]) : unit
-  (match args
-    [(ir.CompilerIrCallArgs.Nil) unit]
-    [(ir.CompilerIrCallArgs.One a) (opt-len-eq-defs-mark-arg! tables a)]
-    [(ir.CompilerIrCallArgs.Two a b)
-      (begin
-        (opt-len-eq-defs-mark-arg! (compiler-opt-global-shared-view tables) a)
-        (opt-len-eq-defs-mark-arg! tables b))]
-    [(ir.CompilerIrCallArgs.Array values)
-      (let
-        [index : i64 0]
-        (while (< index (array-length values))
-          (begin
-            (opt-len-eq-defs-mark-arg!
-              (compiler-opt-global-shared-view tables)
-              (compiler-opt-global-array-element-shared-view values index))
-            (set! index (+ index 1)))))]))
+  (ir.compiler-ir-call-args-visit
+    args
+    opt-len-eq-defs-mark-arg!
+    (compiler-opt-global-shared-view tables)))
 
 (define (opt-len-eq-defs-mark-arg!
   [tables : OptLenEqDefs]
@@ -159368,30 +158898,10 @@
 (define (opt-lga-subst-args
   [removed : (__tl_dyn-array i64)]
   [args : ir.CompilerIrCallArgs]) : ir.CompilerIrCallArgs
-  (match (compiler-opt-global-shared-view args)
-    [(ir.CompilerIrCallArgs.Nil) (ir.CompilerIrCallArgs.Nil)]
-    [(ir.CompilerIrCallArgs.One a)
-      (ir.CompilerIrCallArgs.One (opt-lga-subst-value removed a))]
-    [(ir.CompilerIrCallArgs.Two a b)
-      (ir.CompilerIrCallArgs.Two
-        (opt-lga-subst-value (compiler-opt-global-shared-view removed) a)
-        (opt-lga-subst-value removed b))]
-    [(ir.CompilerIrCallArgs.Array values)
-      (let
-        [count : i64 (array-length (compiler-opt-global-shared-view values))]
-        [slots : (__tl_dyn-array ir.CompilerIrValue)
-          (__tl_make-array ir.CompilerIrValue count)]
-        [index : i64 0]
-        (begin
-          (while (< index count)
-            (begin
-              (set!
-                (array-ref slots index)
-                (opt-lga-subst-value
-                  (compiler-opt-global-shared-view removed)
-                  (compiler-opt-global-array-element-shared-view values index)))
-              (set! index (+ index 1))))
-          (ir.CompilerIrCallArgs.Array slots)))]))
+  (ir.compiler-ir-call-args-map
+    args
+    opt-lga-subst-value
+    (compiler-opt-global-shared-view removed)))
 
 ;; How many of this callee's arguments this pass drops at a site.
 (define (opt-lga-drop-count
@@ -161475,55 +160985,24 @@
 (define (opt-global-cell-subst-args
   [plan : opt_i64_i64_map.Map]
   [args : ir.CompilerIrCallArgs]) : ir.CompilerIrCallArgs
-  (match (compiler-opt-global-shared-view args)
-    [(ir.CompilerIrCallArgs.Nil) args]
-    [(ir.CompilerIrCallArgs.One value)
-      (ir.CompilerIrCallArgs.One (opt-global-cell-subst-value plan value))]
-    [(ir.CompilerIrCallArgs.Two a b)
-      (ir.CompilerIrCallArgs.Two
-        (opt-global-cell-subst-value (compiler-opt-global-shared-view plan) a)
-        (opt-global-cell-subst-value plan b))]
-    [(ir.CompilerIrCallArgs.Array values)
-      (let
-        [count : i64 (array-length values)]
-        [slots : (__tl_dyn-array ir.CompilerIrValue)
-          (__tl_make-array ir.CompilerIrValue count)]
-        [index : i64 0]
-        (begin
-          (while (< index count)
-            (begin
-              (set!
-                (array-ref slots index)
-                (opt-global-cell-subst-value
-                  (compiler-opt-global-shared-view plan)
-                  (compiler-opt-global-array-element-shared-view values index)))
-              (set! index (+ index 1))))
-          (ir.CompilerIrCallArgs.Array slots)))]))
+  (ir.compiler-ir-call-args-map
+    args
+    opt-global-cell-subst-value
+    (compiler-opt-global-shared-view plan)))
+
+(define (opt-global-cell-subst-spmd-value
+  [plan : opt_i64_i64_map.Map]
+  [_class : ir.CompilerIrSpmdValueClass]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (opt-global-cell-subst-value plan value))
 
 (define (opt-global-cell-subst-spmd-args
   [plan : opt_i64_i64_map.Map]
   [args : ir.CompilerIrSpmdCallArgSeq]) : ir.CompilerIrSpmdCallArgSeq
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
-      (__tl_make-array ir.CompilerIrSpmdCallArg args.len)]
-    [index : i64 0]
-    (begin
-      (while (< index args.len)
-        (begin
-          (match (compiler-opt-global-array-element-shared-view
-            args.slots
-            index)
-            [(ir.CompilerIrSpmdCallArg.Arg vclass value ty)
-              (set!
-                (array-ref slots index)
-                (ir.CompilerIrSpmdCallArg.Arg
-                  vclass
-                  (opt-global-cell-subst-value
-                    (compiler-opt-global-shared-view plan)
-                    value)
-                  ty))])
-          (set! index (+ index 1))))
-      (ir.CompilerIrSpmdCallArgSeq slots args.len))))
+  (ir.compiler-ir-spmd-call-args-map
+    args
+    opt-global-cell-subst-spmd-value
+    (compiler-opt-global-shared-view plan)))
 
 (define (opt-global-cell-subst-maybe
   [plan : opt_i64_i64_map.Map]

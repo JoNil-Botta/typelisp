@@ -605,6 +605,310 @@
         2
         "first-func"))))
 
+(define (compiler-ir-smoke-map-value
+  [delta : i64]
+  [value : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrValue
+  (match (compiler_ir_types.compiler-ir-global-shared-view value)
+    [(compiler_ir_types.CompilerIrValue.Var id)
+      (compiler_ir_types.CompilerIrValue.Var (+ id delta))]
+    [_ value]))
+
+(define (compiler-ir-smoke-spmd-map-value
+  [delta : i64]
+  [class : compiler_ir_types.CompilerIrSpmdValueClass]
+  [value : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrValue
+  (compiler-ir-smoke-map-value
+    (+
+      delta
+      (match class
+        [(compiler_ir_types.CompilerIrSpmdValueClass.Uniform) 0]
+        [(compiler_ir_types.CompilerIrSpmdValueClass.Varying) 100]
+        [(compiler_ir_types.CompilerIrSpmdValueClass.Mask) 200]))
+    value))
+
+(define (compiler-ir-smoke-value-code
+  [value : compiler_ir_types.CompilerIrValue]) : i64
+  (match value
+    [(compiler_ir_types.CompilerIrValue.Var id) id]
+    [(compiler_ir_types.CompilerIrValue.I64 n) (+ 1000 n)]
+    [(compiler_ir_types.CompilerIrValue.Bool b)
+      (if b
+        2001
+        2000)]
+    [_ (- 0 1)]))
+
+(define (compiler-ir-smoke-record-value!
+  [seen : (__tl_dyn-array i64)]
+  [value : compiler_ir_types.CompilerIrValue]) : unit
+  (let
+    [count : i64 (array-ref seen 0)]
+    (begin
+      (set! (array-ref seen (+ count 1)) (compiler-ir-smoke-value-code value))
+      (set! (array-ref seen 0) (+ count 1)))))
+
+(define (compiler-ir-smoke-spmd-class-code
+  [class : compiler_ir_types.CompilerIrSpmdValueClass]) : i64
+  (match class
+    [(compiler_ir_types.CompilerIrSpmdValueClass.Uniform) 10000]
+    [(compiler_ir_types.CompilerIrSpmdValueClass.Varying) 20000]
+    [(compiler_ir_types.CompilerIrSpmdValueClass.Mask) 30000]))
+
+(define (compiler-ir-smoke-record-spmd-value!
+  [seen : (__tl_dyn-array i64)]
+  [class : compiler_ir_types.CompilerIrSpmdValueClass]
+  [value : compiler_ir_types.CompilerIrValue]) : unit
+  (let
+    [count : i64 (array-ref seen 0)]
+    (begin
+      (set!
+        (array-ref seen (+ count 1))
+        (+
+          (compiler-ir-smoke-spmd-class-code class)
+          (compiler-ir-smoke-value-code value)))
+      (set! (array-ref seen 0) (+ count 1)))))
+
+(define (compiler-ir-smoke-call-arg-map-visit-ok?) : bool
+  (let
+    [many-values : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (__tl_make-array compiler_ir_types.CompilerIrValue 4)]
+    [_many-init : unit
+      (begin
+        (set!
+          (array-ref many-values 0)
+          (compiler_ir_types.CompilerIrValue.Var 3))
+        (set!
+          (array-ref many-values 1)
+          (compiler_ir_types.CompilerIrValue.I64 9))
+        (set!
+          (array-ref many-values 2)
+          (compiler_ir_types.CompilerIrValue.Var 4))
+        (set!
+          (array-ref many-values 3)
+          (compiler_ir_types.CompilerIrValue.Bool true)))]
+    [nil-mapped : compiler_ir_types.CompilerIrCallArgs
+      (compiler_ir_types.compiler-ir-call-args-map
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        compiler-ir-smoke-map-value
+        10)]
+    [one-mapped : compiler_ir_types.CompilerIrCallArgs
+      (compiler_ir_types.compiler-ir-call-args-map
+        (compiler_ir_types.CompilerIrCallArgs.One
+          (compiler_ir_types.CompilerIrValue.Var 1))
+        compiler-ir-smoke-map-value
+        10)]
+    [two-mapped : compiler_ir_types.CompilerIrCallArgs
+      (compiler_ir_types.compiler-ir-call-args-map
+        (compiler_ir_types.CompilerIrCallArgs.Two
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ir_types.CompilerIrValue.Var 2))
+        compiler-ir-smoke-map-value
+        10)]
+    [many : compiler_ir_types.CompilerIrCallArgs
+      (compiler_ir_types.CompilerIrCallArgs.Array many-values)]
+    [many-mapped : compiler_ir_types.CompilerIrCallArgs
+      (compiler_ir_types.compiler-ir-call-args-map
+        (compiler_ir_types.compiler-ir-global-shared-view many)
+        compiler-ir-smoke-map-value
+        10)]
+    [seen : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+    [_visited : unit
+      (begin
+        (compiler_ir_types.compiler-ir-call-args-visit
+          compiler_ir_types.CompilerIrCallArgs.Nil
+          compiler-ir-smoke-record-value!
+          (compiler_ir_types.compiler-ir-global-shared-view seen))
+        (compiler_ir_types.compiler-ir-call-args-visit
+          (compiler_ir_types.CompilerIrCallArgs.One
+            (compiler_ir_types.CompilerIrValue.Var 1))
+          compiler-ir-smoke-record-value!
+          (compiler_ir_types.compiler-ir-global-shared-view seen))
+        (compiler_ir_types.compiler-ir-call-args-visit
+          (compiler_ir_types.CompilerIrCallArgs.Two
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.I64 7))
+          compiler-ir-smoke-record-value!
+          (compiler_ir_types.compiler-ir-global-shared-view seen))
+        (compiler_ir_types.compiler-ir-call-args-visit
+          (compiler_ir_types.compiler-ir-global-shared-view many)
+          compiler-ir-smoke-record-value!
+          (compiler_ir_types.compiler-ir-global-shared-view seen)))]
+    (and
+      (match nil-mapped
+        [(compiler_ir_types.CompilerIrCallArgs.Nil) true]
+        [_ false])
+      (match one-mapped
+        [(compiler_ir_types.CompilerIrCallArgs.One
+            (compiler_ir_types.CompilerIrValue.Var id))
+          (= id 11)]
+        [_ false])
+      (match two-mapped
+        [(compiler_ir_types.CompilerIrCallArgs.Two
+            (compiler_ir_types.CompilerIrValue.I64 literal)
+            (compiler_ir_types.CompilerIrValue.Var id))
+          (and (= literal 7) (= id 12))]
+        [_ false])
+      (match many-mapped
+        [(compiler_ir_types.CompilerIrCallArgs.Array values)
+          (and
+            (= (array-length values) 4)
+            (=
+              (compiler-ir-smoke-value-code
+                (compiler_ir_types.compiler-ir-array-shared-view values 0))
+              13)
+            (=
+              (compiler-ir-smoke-value-code
+                (compiler_ir_types.compiler-ir-array-shared-view values 1))
+              1009)
+            (=
+              (compiler-ir-smoke-value-code
+                (compiler_ir_types.compiler-ir-array-shared-view values 2))
+              14)
+            (=
+              (compiler-ir-smoke-value-code
+                (compiler_ir_types.compiler-ir-array-shared-view values 3))
+              2001))]
+        [_ false])
+      (= (array-ref seen 0) 7)
+      (= (array-ref seen 1) 1)
+      (= (array-ref seen 2) 2)
+      (= (array-ref seen 3) 1007)
+      (= (array-ref seen 4) 3)
+      (= (array-ref seen 5) 1009)
+      (= (array-ref seen 6) 4)
+      (= (array-ref seen 7) 2001))))
+
+(define (compiler-ir-smoke-value-seq-map-visit-ok?) : bool
+  (let
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (__tl_make-array compiler_ir_types.CompilerIrValue 4)]
+    [_slots-init : unit
+      (begin
+        (set! (array-ref slots 0) (compiler_ir_types.CompilerIrValue.Var 5))
+        (set! (array-ref slots 1) (compiler_ir_types.CompilerIrValue.I64 11))
+        (set! (array-ref slots 2) (compiler_ir_types.CompilerIrValue.Var 99))
+        (set! (array-ref slots 3) (compiler_ir_types.CompilerIrValue.Var 100)))]
+    [values : compiler_ir_types.CompilerIrValueSeq
+      (compiler_ir_types.CompilerIrValueSeq slots 2)]
+    [mapped : compiler_ir_types.CompilerIrValueSeq
+      (compiler_ir_types.compiler-ir-value-seq-map
+        (compiler_ir_types.compiler-ir-global-shared-view values)
+        compiler-ir-smoke-map-value
+        10)]
+    [seen : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+    [_visited : unit
+      (compiler_ir_types.compiler-ir-value-seq-visit
+        values
+        compiler-ir-smoke-record-value!
+        (compiler_ir_types.compiler-ir-global-shared-view seen))]
+    (and
+      (= mapped.len 2)
+      (= (array-length mapped.slots) 2)
+      (=
+        (compiler-ir-smoke-value-code
+          (compiler_ir_types.compiler-ir-array-shared-view mapped.slots 0))
+        15)
+      (=
+        (compiler-ir-smoke-value-code
+          (compiler_ir_types.compiler-ir-array-shared-view mapped.slots 1))
+        1011)
+      (= (array-ref seen 0) 2)
+      (= (array-ref seen 1) 5)
+      (= (array-ref seen 2) 1011))))
+
+(define (compiler-ir-smoke-spmd-map-visit-ok?) : bool
+  (let
+    ;; Six physical slots and four logical arguments make an accidental
+    ;; capacity walk observable through both result size and visit count.
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrSpmdCallArg)
+      (__tl_make-array compiler_ir_types.CompilerIrSpmdCallArg 6)]
+    [_slots-init : unit
+      (begin
+        (set!
+          (array-ref slots 0)
+          (compiler_ir_types.CompilerIrSpmdCallArg.Arg
+            compiler_ir_types.CompilerIrSpmdValueClass.Uniform
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (ast.AstType.I64)))
+        (set!
+          (array-ref slots 1)
+          (compiler_ir_types.CompilerIrSpmdCallArg.Arg
+            compiler_ir_types.CompilerIrSpmdValueClass.Varying
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (ast.AstType.Bool)))
+        (set!
+          (array-ref slots 2)
+          (compiler_ir_types.CompilerIrSpmdCallArg.Arg
+            compiler_ir_types.CompilerIrSpmdValueClass.Mask
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (ast.AstType.Char)))
+        (set!
+          (array-ref slots 3)
+          (compiler_ir_types.CompilerIrSpmdCallArg.Arg
+            compiler_ir_types.CompilerIrSpmdValueClass.Mask
+            (compiler_ir_types.CompilerIrValue.I64 7)
+            (ast.AstType.String)))
+        (set!
+          (array-ref slots 4)
+          (compiler_ir_types.CompilerIrSpmdCallArg.Arg
+            compiler_ir_types.CompilerIrSpmdValueClass.Uniform
+            (compiler_ir_types.CompilerIrValue.Var 99)
+            (ast.AstType.Unit)))
+        (set!
+          (array-ref slots 5)
+          (compiler_ir_types.CompilerIrSpmdCallArg.Arg
+            compiler_ir_types.CompilerIrSpmdValueClass.Uniform
+            (compiler_ir_types.CompilerIrValue.Var 100)
+            (ast.AstType.Unit))))]
+    [args : compiler_ir_types.CompilerIrSpmdCallArgSeq
+      (compiler_ir_types.CompilerIrSpmdCallArgSeq slots 4)]
+    [mapped : compiler_ir_types.CompilerIrSpmdCallArgSeq
+      (compiler_ir_types.compiler-ir-spmd-call-args-map
+        (compiler_ir_types.compiler-ir-global-shared-view args)
+        compiler-ir-smoke-spmd-map-value
+        10)]
+    [seen : (__tl_dyn-array i64) (__tl_make-array i64 5)]
+    [_visited : unit
+      (compiler_ir_types.compiler-ir-spmd-call-args-visit
+        args
+        compiler-ir-smoke-record-spmd-value!
+        (compiler_ir_types.compiler-ir-global-shared-view seen))]
+    (and
+      (= mapped.len 4)
+      (= (array-length mapped.slots) 4)
+      (match (compiler_ir_types.compiler-ir-array-shared-view mapped.slots 0)
+        [(compiler_ir_types.CompilerIrSpmdCallArg.Arg
+            (compiler_ir_types.CompilerIrSpmdValueClass.Uniform)
+            (compiler_ir_types.CompilerIrValue.Var id)
+            (ast.AstType.I64))
+          (= id 11)]
+        [_ false])
+      (match (compiler_ir_types.compiler-ir-array-shared-view mapped.slots 1)
+        [(compiler_ir_types.CompilerIrSpmdCallArg.Arg
+            (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
+            (compiler_ir_types.CompilerIrValue.Var id)
+            (ast.AstType.Bool))
+          (= id 112)]
+        [_ false])
+      (match (compiler_ir_types.compiler-ir-array-shared-view mapped.slots 2)
+        [(compiler_ir_types.CompilerIrSpmdCallArg.Arg
+            (compiler_ir_types.CompilerIrSpmdValueClass.Mask)
+            (compiler_ir_types.CompilerIrValue.Var id)
+            (ast.AstType.Char))
+          (= id 213)]
+        [_ false])
+      (match (compiler_ir_types.compiler-ir-array-shared-view mapped.slots 3)
+        [(compiler_ir_types.CompilerIrSpmdCallArg.Arg
+            (compiler_ir_types.CompilerIrSpmdValueClass.Mask)
+            (compiler_ir_types.CompilerIrValue.I64 literal)
+            (ast.AstType.String))
+          (= literal 7)]
+        [_ false])
+      (= (array-ref seen 0) 4)
+      (= (array-ref seen 1) 10001)
+      (= (array-ref seen 2) 20002)
+      (= (array-ref seen 3) 30003)
+      (= (array-ref seen 4) 31007))))
+
 (define (compiler-ir-smoke-spmd-call-args) : compiler_ir_types.CompilerIrSpmdCallArgSeq
   (let
     [builder : compiler_ir_types.CompilerIrSpmdCallArgBuilder
@@ -1549,4 +1853,7 @@
         (= representation-failure 0)
         (return (+ 11 representation-failure))))
     (unless (compiler-ir-smoke-owned-capability-ok?) (return 21))
+    (unless (compiler-ir-smoke-call-arg-map-visit-ok?) (return 22))
+    (unless (compiler-ir-smoke-spmd-map-visit-ok?) (return 23))
+    (unless (compiler-ir-smoke-value-seq-map-visit-ok?) (return 24))
     (compiler_ir_types.compiler-ir-effect-self-test)))

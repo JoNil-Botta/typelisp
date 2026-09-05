@@ -56339,69 +56339,35 @@
       (compiler-backend-use-count-inc counts id)]
     [_ unit]))
 
-(define (compiler-backend-count-value-seq-uses-from
-  [counts : (__tl_dyn-array i64)]
-  [values : compiler_ir_types.CompilerIrValueSeq]
-  [index : i64]) : unit
-  (if (>= index values.len)
-    unit
-    (begin
-      (compiler-backend-count-value-use
-        (compiler-backend-global-shared-view counts)
-        (compiler_ir_types.compiler-ir-value-seq-ref
-          (compiler-backend-global-shared-view values)
-          index))
-      (compiler-backend-count-value-seq-uses-from
-        counts
-        (compiler-backend-global-shared-view values)
-        (+ index 1)))))
-
 (define (compiler-backend-count-value-seq-uses
   [counts : (__tl_dyn-array i64)]
   [values : compiler_ir_types.CompilerIrValueSeq]) : unit
-  (compiler-backend-count-value-seq-uses-from counts values 0))
-
-(define (compiler-backend-count-call-args-array-uses
-  [counts : (__tl_dyn-array i64)]
-  [values : (__tl_dyn-array compiler_ir_types.CompilerIrValue)]
-  [index : i64]) : unit
-  (if (>= index (array-length values))
-    unit
-    (begin
-      (compiler-backend-count-value-use
-        (compiler-backend-global-shared-view counts)
-        (compiler-backend-global-array-element-shared-view values index))
-      (compiler-backend-count-call-args-array-uses counts values (+ index 1)))))
+  (compiler_ir_types.compiler-ir-value-seq-visit
+    values
+    compiler-backend-count-value-use
+    (compiler-backend-global-shared-view counts)))
 
 (define (compiler-backend-count-call-args-uses
   [counts : (__tl_dyn-array i64)]
   [args : compiler_ir_types.CompilerIrCallArgs]) : unit
-  (match args
-    [(compiler_ir_types.CompilerIrCallArgs.Nil) unit]
-    [(compiler_ir_types.CompilerIrCallArgs.One value)
-      (compiler-backend-count-value-use counts value)]
-    [(compiler_ir_types.CompilerIrCallArgs.Two a b)
-      (begin
-        (compiler-backend-count-value-use
-          (compiler-backend-global-shared-view counts)
-          a)
-        (compiler-backend-count-value-use counts b))]
-    [(compiler_ir_types.CompilerIrCallArgs.Array values)
-      (compiler-backend-count-call-args-array-uses counts values 0)]))
+  (compiler_ir_types.compiler-ir-call-args-visit
+    args
+    compiler-backend-count-value-use
+    (compiler-backend-global-shared-view counts)))
+
+(define (compiler-backend-count-spmd-value-use
+  [counts : (__tl_dyn-array i64)]
+  [_class : compiler_ir_types.CompilerIrSpmdValueClass]
+  [value : compiler_ir_types.CompilerIrValue]) : unit
+  (compiler-backend-count-value-use counts value))
 
 (define (compiler-backend-count-spmd-call-args-uses
   [counts : (__tl_dyn-array i64)]
   [args : compiler_ir_types.CompilerIrSpmdCallArgSeq]) : unit
-  (let
-    [i : i64 0]
-    (while (< i args.len)
-      (begin
-        (match (array-ref args.slots i)
-          [(compiler_ir_types.CompilerIrSpmdCallArg.Arg _ value _)
-            (compiler-backend-count-value-use
-              (compiler-backend-global-shared-view counts)
-              value)])
-        (set! i (+ i 1))))))
+  (compiler_ir_types.compiler-ir-spmd-call-args-visit
+    args
+    compiler-backend-count-spmd-value-use
+    (compiler-backend-global-shared-view counts)))
 
 (define (compiler-backend-count-phi-input-uses
   [counts : (__tl_dyn-array i64)]

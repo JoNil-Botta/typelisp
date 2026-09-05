@@ -110,13 +110,15 @@
   (HttpResponsePlanUnsupportedTransferCoding HttpWireFraming)
   (HttpResponsePlanTunnel))
 
-;: Fully checked response head. `consumed` counts bytes through the terminating
-;: empty line and excludes every coalesced body byte.
+;: Fully checked response head. Normalized `trailer-names` retain advisory
+;: declaration provenance without authorizing fields. `consumed` counts bytes
+;: through the terminating empty line and excludes every coalesced body byte.
 (defstruct HttpResponseHead
   (version HttpVersion)
   (status HttpStatus)
   (reason HttpReason)
   (headers HttpHeaders)
+  (trailer-names HttpHeaderNameSet)
   (body-plan HttpResponseBodyPlan)
   (consumed i64))
 
@@ -187,6 +189,18 @@
 (defenum HttpFieldLineResult
   (HttpFieldLineOk HttpHeaderField)
   (HttpFieldLineErr HttpHeadError))
+
+;: Checked borrowed ranges for one field line. The name is `[0, name-len)`;
+;: the trimmed value is `[value-start, value-start + value-len)`.
+(defstruct HttpFieldLineParts
+  (name-len i64)
+  (value-start i64)
+  (value-len i64))
+
+;: Allocation-free validation result for a borrowed field line.
+(defenum HttpFieldLinePartsResult
+  (HttpFieldLinePartsOk HttpFieldLineParts)
+  (HttpFieldLinePartsErr HttpHeadError))
 
 ;: Result of validating one already-typed field without copying its bytes.
 (defenum HttpTypedFieldResult
@@ -465,6 +479,44 @@
       (= code 124)
       (= code 126))))
 
+;: Validate the representation, lowercase token spelling, and uniqueness of a
+;: normalized trailer-name set before indexed access is trusted.
+(define (header-name-set-valid? [set : (& set HttpHeaderNameSet)]) : bool
+  (let
+    [valid : bool (and (>= set.len 0) (<= set.len (array-length set.slots)))]
+    [index : i64 0]
+    (begin
+      (while (and valid (< index set.len))
+        (let
+          [stored : (& set byte_buf.ByteBuf) (& (array-ref set.slots index))]
+          [stored-len : i64 stored.len]
+          (if (or (<= stored-len 0) (> stored-len (array-length stored.slots)))
+            (set! valid false)
+            (let
+              [name : (& set bytes) (byte_buf.as-bytes stored)]
+              [byte-index : i64 0]
+              [prior : i64 0]
+              (begin
+                (while (and valid (< byte-index stored-len))
+                  (let
+                    [byte : u8 (byte_buf.bytes-ref name byte-index)]
+                    (begin
+                      (if (and (token-byte? byte) (= byte (ascii-lower byte)))
+                        unit
+                        (set! valid false))
+                      (set! byte-index (+ byte-index 1)))))
+                (while (and valid (< prior index))
+                  (let
+                    [other : (& set bytes)
+                      (byte_buf.as-bytes (& (array-ref set.slots prior)))]
+                    (begin
+                      (if (bytes-eq-ascii-case other name)
+                        (set! valid false)
+                        unit)
+                      (set! prior (+ prior 1))))))))
+          (set! index (+ index 1))))
+      valid)))
+
 ;: True for optional-whitespace bytes permitted inside a field value.
 (define (field-ows-byte? [byte : u8]) : bool
   (let
@@ -649,14 +701,12 @@
       true
       false)))
 
-;: Validate and copy one header field line without its CRLF. The result stores
-;: trimmed field-value bytes, preserves their remaining octets, and reports
-;: offsets relative to the enclosing input using `base-offset`.
-(define (validate-field-line
+;: Validate one borrowed header field line without its CRLF and return checked
+;: name/value ranges without allocating or copying peer bytes.
+(define (validate-field-line-parts
   [line : (& line bytes)]
   [base-offset : i64]
-  [limits : (& limits HttpHeadLimits)]
-  [sensitivity : HttpHeaderSensitivity]) : HttpFieldLineResult
+  [limits : (& limits HttpHeadLimits)]) : HttpFieldLinePartsResult
   (let
     [line-len : i64 (byte_buf.bytes-length line)]
     [index : i64 0]
@@ -664,18 +714,18 @@
     [bad-offset : i64 -1]
     (cond
       [(not (head-limits-valid? limits))
-        (HttpFieldLineErr (peer-error (HttpInvalidLimits) base-offset))]
+        (HttpFieldLinePartsErr (peer-error (HttpInvalidLimits) base-offset))]
       [(> line-len limits.max-line-bytes)
-        (HttpFieldLineErr
+        (HttpFieldLinePartsErr
           (peer-error
             (HttpLineTooLong)
             (field-offset-add base-offset limits.max-line-bytes)))]
       [(= line-len 0)
-        (HttpFieldLineErr (peer-error (HttpMissingFieldColon) base-offset))]
+        (HttpFieldLinePartsErr (peer-error (HttpMissingFieldColon) base-offset))]
       [(let
           [first : i64 (cast (byte_buf.bytes-ref line 0) : i64)]
           (or (= first 32) (= first 9)))
-        (HttpFieldLineErr (peer-error (HttpObsoleteLineFold) base-offset))]
+        (HttpFieldLinePartsErr (peer-error (HttpObsoleteLineFold) base-offset))]
       [else
         (begin
           (while (and (< index line-len) (< colon 0) (< bad-offset 0))
@@ -689,21 +739,22 @@
                 [else (set! index (+ index 1))])))
           (cond
             [(>= bad-offset 0)
-              (HttpFieldLineErr
+              (HttpFieldLinePartsErr
                 (peer-error
                   (if (= (cast (byte_buf.bytes-ref line bad-offset) : i64) 0)
                     (HttpNulByte)
                     (HttpInvalidFieldName))
                   (field-offset-add base-offset bad-offset)))]
             [(< colon 0)
-              (HttpFieldLineErr
+              (HttpFieldLinePartsErr
                 (peer-error
                   (HttpMissingFieldColon)
                   (field-offset-add base-offset line-len)))]
             [(= colon 0)
-              (HttpFieldLineErr (peer-error (HttpInvalidFieldName) base-offset))]
+              (HttpFieldLinePartsErr
+                (peer-error (HttpInvalidFieldName) base-offset))]
             [(> colon limits.max-name-bytes)
-              (HttpFieldLineErr
+              (HttpFieldLinePartsErr
                 (peer-error
                   (HttpNameTooLong)
                   (field-offset-add base-offset limits.max-name-bytes)))]
@@ -734,7 +785,7 @@
                     [value-view : (& line bytes)
                       (byte_buf.bytes-slice-view line value-start value-len)]
                     (if (> (- line-len raw-value-start) limits.max-value-bytes)
-                      (HttpFieldLineErr
+                      (HttpFieldLinePartsErr
                         (peer-error
                           (HttpValueTooLong)
                           (field-offset-add
@@ -749,14 +800,35 @@
                         (field-offset-add base-offset value-start)
                         line-len
                         limits
-                        sensitivity
+                        (HttpHeaderPublic)
                         false
                         true)
-                        [(HttpTypedFieldErr error) (HttpFieldLineErr error)]
+                        [(HttpTypedFieldErr error)
+                          (HttpFieldLinePartsErr error)]
                         [(HttpTypedFieldOk)
-                          (HttpFieldLineOk
-                            (HttpHeaderField
-                              (HttpHeaderName (copy-byte-range line 0 colon))
-                              (HttpHeaderValue
-                                (copy-byte-range line value-start value-len))
-                              sensitivity))])))))]))])))
+                          (HttpFieldLinePartsOk
+                            (HttpFieldLineParts colon value-start value-len))])))))]))])))
+
+;: Copy checked field-line ranges into one owned field. Callers obtain `parts`
+;: from `validate-field-line-parts` for this exact `line`.
+(define (copy-field-line-parts
+  [line : (& line bytes)]
+  [parts : HttpFieldLineParts]
+  [sensitivity : HttpHeaderSensitivity]) : HttpHeaderField
+  (HttpHeaderField
+    (HttpHeaderName (copy-byte-range line 0 parts.name-len))
+    (HttpHeaderValue (copy-byte-range line parts.value-start parts.value-len))
+    sensitivity))
+
+;: Validate and copy one header field line without its CRLF. The result stores
+;: trimmed field-value bytes, preserves their remaining octets, and reports
+;: offsets relative to the enclosing input using `base-offset`.
+(define (validate-field-line
+  [line : (& line bytes)]
+  [base-offset : i64]
+  [limits : (& limits HttpHeadLimits)]
+  [sensitivity : HttpHeaderSensitivity]) : HttpFieldLineResult
+  (match (validate-field-line-parts line base-offset limits)
+    [(HttpFieldLinePartsErr error) (HttpFieldLineErr error)]
+    [(HttpFieldLinePartsOk parts)
+      (HttpFieldLineOk (copy-field-line-parts line parts sensitivity))]))

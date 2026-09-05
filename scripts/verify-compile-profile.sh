@@ -293,7 +293,7 @@ assert_intern_storage_schema_in() {
             source_map_live = value["intern.source_map.live"]
             canonical_map_live = value["intern.canonical_map.live"]
             if (source_live <= 0 || generated_live < canonical_map_live || source_live != source_map_live) exit 1
-            if (value["intern.records.source_capacity"] != 131072 || value["intern.records.generated_capacity"] != 131072 || value["intern.source_map.capacity"] != 131072 || value["intern.canonical_map.capacity"] != 131072) exit 1
+            if (value["intern.records.source_capacity"] != 262144 || value["intern.records.generated_capacity"] != 262144 || value["intern.source_map.capacity"] != 262144 || value["intern.canonical_map.capacity"] != 262144) exit 1
             if (value["intern.records.source_resizes"] != 0 || value["intern.records.generated_resizes"] != 0 || value["intern.source_map.resizes"] != 0 || value["intern.canonical_map.resizes"] != 0) exit 1
             if (value["intern.records.reserved_bytes"] <= 0 || value["intern.source_map.reserved_bytes"] <= 0 || value["intern.canonical_map.reserved_bytes"] <= 0) exit 1
             if (value["intern.source_map.probes_total"] < value["intern.source_map.probe_max"] || value["intern.canonical_map.probes_total"] < value["intern.canonical_map.probe_max"]) exit 1

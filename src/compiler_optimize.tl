@@ -50101,25 +50101,32 @@
               false-label
               next)])))))
 
-;; Only an ordering comparison is threaded. The row this widening targets is
-;; "a constant is materialised on an early-exit edge and re-tested at the
-;; merge": the sentinel is out of band (`-1`, `0`) and the re-test is a validity
-;; test -- `ge x, 0`, `gt x, 0` -- which is the shape gvn_table's `cont` merges
-;; hold. An equality against a data literal is a different thing: the sentinel
-;; edge is one value among many in a byte-comparison chain, and the merge sits
-;; on the hot path rather than off it. Threading those measured +15,585,433 Ir
-;; on peephole_lines, whose foldable merges are all `eq`/`ne` against character
-;; literals, against -6,224,688 on gvn_table, so the fold is restricted to the
-;; ordering forms. LLVM needs no such rail because it clones the block into a
-;; freshly split edge instead of retargeting the predecessor
-;; (`SimplifyCFG.cpp:3619`), which leaves the original merge, and everything the
-;; later passes see in it, exactly where it was.
+;; Every comparison the branch can decide per edge is threaded. The ordering
+;; forms came first, for "a constant is materialised on an early-exit edge and
+;; re-tested at the merge": the sentinel is out of band (`-1`, `0`) and the
+;; re-test is a validity test -- `ge x, 0`, `gt x, 0` -- which is the shape
+;; gvn_table's `cont` merges hold. The equalities were held back while
+;; threading them measured +15,585,433 Ir on peephole_lines, whose foldable
+;; merges are all `eq`/`ne` against character literals: the sentinel edge there
+;; is one value among many in a byte-comparison chain, and the merge sits on
+;; the hot path. That reading is stale -- with the later passes as they now
+;; stand (T2-5's Mov tail, the D3 live-out rule, bool_branch_late, cmp_dup)
+;; the same admission measures -2,839,286 on peephole_lines and -11,493,328 on
+;; sccp_lattice (JT-1), whose tag scans are the row: `(= (sccp-env-tag i) 1)`
+;; is a `match` over the slot's tag word whose arms merge `0`, `1` and `2` into
+;; one phi and compare it with 1, so every iteration re-tested a verdict each
+;; arm already knew. No other row moved. LLVM has no such split because it
+;; clones the block into a freshly split edge instead of retargeting the
+;; predecessor (`SimplifyCFG.cpp:3619`), which leaves the original merge, and
+;; everything the later passes see in it, exactly where it was.
 (define (opt-thread-compare-threadable-op? [op : ir.CompilerIrBinOp]) : bool
   (match op
     [(ir.CompilerIrBinOp.Lt) true]
     [(ir.CompilerIrBinOp.Le) true]
     [(ir.CompilerIrBinOp.Gt) true]
     [(ir.CompilerIrBinOp.Ge) true]
+    [(ir.CompilerIrBinOp.Eq) true]
+    [(ir.CompilerIrBinOp.Ne) true]
     [_ false]))
 
 ;; D2 operand classification: 0 is a literal the compare can fold against, 1 is

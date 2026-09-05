@@ -3851,6 +3851,11 @@
           caller)]
       [(opt.OptMaybeFunction.No) false])))
 
+;; The nonleaf callee's one site sits in the latch of `main`'s loop, one
+;; deciding branch below the header: the sole-call tier absorbs it (INL-13,
+;; opt-inline-sole-call-loop-site-shallow?), so `main` loses the call and
+;; gains the callee's own call to `external_helper`. The cost band still
+;; refuses the body; the tier moves it because nothing else references it.
 (define (smoke-inline-phi-nonleaf-cost?) : bool
   (let
     [symbols : compiler_optimize_tests.OptInlineMultiTestSymbols
@@ -3874,10 +3879,20 @@
         2)]
     (match (opt.opt-function-seq-find optimized "main")
       [(opt.OptMaybeFunction.Some main)
-        (opt.opt-function-eq
-          (ast.ast-node-pool-reader-type-segment-bases)
-          main
-          caller)]
+        (let
+          [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks main)]
+          (and
+            (=
+              (compiler_optimize_tests.opt-count-direct-call-name-blocks
+                (ir.compiler-ir-global-shared-view blocks)
+                "inline_nonleaf")
+              0)
+            (=
+              (compiler_optimize_tests.opt-count-direct-call-name-blocks
+                (ir.compiler-ir-global-shared-view blocks)
+                "external_helper")
+              1)
+            (opt.opt-inline-structure-ok? blocks)))]
       [(opt.OptMaybeFunction.No) false])))
 
 (define (smoke-inline-phi-predecessor-self-test) : i64
@@ -5035,10 +5050,16 @@
     "the identical body with one back edge stays out: a loop-carrying body compounds the caller's pressure"))
 
 (test
+  inline-sole-call-loop-site-absorb
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-sole-call-loop-site-absorb-ok?)
+    "the same acyclic body absorbs at an in-loop site the loop runs every iteration: the boundary it retires is paid per iteration"))
+
+(test
   inline-sole-call-loop-site-refusal
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-sole-call-loop-site-refusal-ok?)
-    "the same acyclic body stays out at an in-loop site: the import lands inside a region already priced"))
+    "the same body stays out at an in-loop site two deciding branches below the header: the import lands inside a region already priced, for a boundary the loop rarely retires"))
 
 (test
   inline-sole-call-staged-args-refusal

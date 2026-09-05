@@ -13215,6 +13215,436 @@
           (compiler-reg-global-shared-view depths))
         depths))))
 
+;; --- FREQ-1: block weights = the depth ladder times a static path share --
+;;
+;; The ladder above weighs every block of a loop alike, so a value referenced
+;; once in each of nine dispatch arms outranks the loop counter referenced
+;; three times per iteration, and the counter is what ends up on the stack:
+;; sccp_lattice's `sccp-process-instr-seq-from` keeps `row` and `last` in
+;; memory across 3.9M iterations (`addq $1, 496(%rsp)`, `cmpq %r8, 496(%rsp)`)
+;; while `dst`, `ty`, `ty2` and `b` -- each read in a fraction of the arms --
+;; hold four of the six callee-saved registers. The ranking note at
+;; compiler-reg-greedy-first-evictable names the cure: a RANKING change
+;; against how often a block actually runs.
+;;
+;; This is LLVM's static block frequency reduced to the one heuristic that
+;; matters here: within a loop body, a block runs its predecessor's share
+;; divided among the predecessor's successors that stay in the loop. Loop
+;; EXITS are not in that divisor and take the same share as their siblings --
+;; an exit block runs once per loop entry, the same currency as the block
+;; that entered the loop, and the depth ladder already stands one step lower
+;; there -- so a plain `while` header does not halve its own body. Back edges
+;; are excluded (the ladder carries the trip count); a loop entered from a
+;; conditional arm inherits that arm's share, so an inner loop's blocks weigh
+;; the ladder's 2x times how often the loop is reached, not 2x flat.
+;;
+;; The share is a fixed-point fraction of compiler-reg-block-frequency-scale,
+;; propagated in reverse postorder from the entry, so it is exact for a DAG
+;; and deterministic for anything else; a block the entry cannot reach keeps
+;; the floor of 1. Every function with no conditional control flow weighs
+;; exactly as before, scaled by a constant, so its allocation is unchanged;
+;; what moves is the ranking inside bodies with arms.
+(define (compiler-reg-block-frequency-scale) : i64
+  1024)
+
+;; The share is a property of the EMITTED allocation, not of the checked
+;; inline tier's measurements. That tier prices a candidate by running this
+;; allocator on a standalone plan of each side and reading the plan in its own
+;; depth-weighted currency (opt-inline-checked-alloc-cost), and its accept
+;; window and cap were calibrated against plans ranked by the ladder alone;
+;; ranking those plans by share moves the verdicts it was measured on --
+;; `it-slice-eq?` out of `it-bench` for intern_table +57.1M, `ssa-candidate?`
+;; and `ssa-instr-next` left standing for ssa_construct +67.2M -- while the
+;; allocation itself is what this ranking exists to improve. So the tier
+;; switches the share off around its plans and every other plan reads it.
+(define compiler-reg-block-weights-frequency? : bool
+  true)
+
+(define (compiler-reg-block-weights-set-frequency! [on : bool]) : unit
+  (set! compiler-reg-block-weights-frequency? on))
+
+(define (compiler-reg-block-weights-frequency-current?) : bool
+  compiler-reg-block-weights-frequency?)
+
+;; Iterative DFS from block 0 over the successor CSR: `post` receives the
+;; postorder, `edge-back` marks (1) every edge that closed on a block still on
+;; the stack. Returns the number of blocks visited.
+(define (compiler-reg-block-frequency-dfs!
+  [count : i64]
+  [succ-offsets : (__tl_dyn-array i64)]
+  [succ-targets : (__tl_dyn-array i64)]
+  [state : (__tl_dyn-array i64)]
+  [stack-node : (__tl_dyn-array i64)]
+  [stack-edge : (__tl_dyn-array i64)]
+  [edge-back : (__tl_dyn-array i64)]
+  [post : (__tl_dyn-array i64)]) : i64
+  (let
+    [visited : i64 0]
+    [depth : i64 1]
+    (begin
+      (if (< count 1)
+        unit
+        (begin
+          (set! (array-ref state 0) 1)
+          (set! (array-ref stack-node 0) 0)
+          (set! (array-ref stack-edge 0) (array-ref succ-offsets 0))
+          (while (> depth 0)
+            (let
+              [top : i64 (- depth 1)]
+              [block : i64 (array-ref stack-node top)]
+              [edge : i64 (array-ref stack-edge top)]
+              (if (< edge (array-ref succ-offsets (+ block 1)))
+                (begin
+                  (set! (array-ref stack-edge top) (+ edge 1))
+                  (let
+                    [target : i64 (array-ref succ-targets edge)]
+                    (if (>= target 0)
+                      (cond
+                        [(= (array-ref state target) 0)
+                          (begin
+                            (set! (array-ref state target) 1)
+                            (set! (array-ref stack-node depth) target)
+                            (set!
+                              (array-ref stack-edge depth)
+                              (array-ref succ-offsets target))
+                            (set! depth (+ depth 1)))]
+                        [(= (array-ref state target) 1)
+                          (set! (array-ref edge-back edge) 1)]
+                        [else unit])
+                      unit)))
+                (begin
+                  (set! (array-ref state block) 2)
+                  (set! (array-ref post visited) block)
+                  (set! visited (+ visited 1))
+                  (set! depth (- depth 1))))))))
+      visited)))
+
+;; The forward successors of `block` that stay at its loop depth or enter a
+;; deeper loop: the divisor of its share.
+(define (compiler-reg-block-frequency-fanout
+  [block : i64]
+  [succ-offsets : (__tl_dyn-array i64)]
+  [succ-targets : (__tl_dyn-array i64)]
+  [edge-back : (__tl_dyn-array i64)]
+  [depths : (__tl_dyn-array i64)]) : i64
+  (let
+    [edge : i64 (array-ref succ-offsets block)]
+    [end : i64 (array-ref succ-offsets (+ block 1))]
+    [fanout : i64 0]
+    (begin
+      (while (< edge end)
+        (begin
+          (let
+            [target : i64 (array-ref succ-targets edge)]
+            (if (and
+              (>= target 0)
+              (= (array-ref edge-back edge) 0)
+              (>= (array-ref depths target) (array-ref depths block)))
+              (set! fanout (+ fanout 1))
+              unit))
+          (set! edge (+ edge 1))))
+      fanout)))
+
+(define (compiler-reg-block-frequencies!
+  [visited : i64]
+  [post : (__tl_dyn-array i64)]
+  [succ-offsets : (__tl_dyn-array i64)]
+  [succ-targets : (__tl_dyn-array i64)]
+  [edge-back : (__tl_dyn-array i64)]
+  [depths : (__tl_dyn-array i64)]
+  [splits : (__tl_dyn-array i64)]
+  [inner-header : (__tl_dyn-array i64)]
+  [sum-in : (__tl_dyn-array i64)]
+  [max-in : (__tl_dyn-array i64)]
+  [share : (__tl_dyn-array i64)]) : unit
+  (let
+    [index : i64 visited]
+    (begin
+      (if (> visited 0)
+        (set! (array-ref max-in 0) (compiler-reg-block-frequency-scale))
+        unit)
+      (while (> index 0)
+        (begin
+          (set! index (- index 1))
+          (let
+            [block : i64 (array-ref post index)]
+            [reached : i64
+              (if (> (array-ref sum-in block) (array-ref max-in block))
+                (array-ref sum-in block)
+                (array-ref max-in block))]
+            ;; FREQ-3: no block runs more often per iteration than the header
+            ;; of its innermost loop (the entry, at depth 0), so what the
+            ;; arms add back up to is capped there.
+            [ceiling : i64
+              (let
+                [header : i64 (array-ref inner-header block)]
+                (if (and (>= header 0) (not (= header block)))
+                  (array-ref share header)
+                  (compiler-reg-block-frequency-scale)))]
+            [have : i64
+              (if (> reached ceiling)
+                ceiling
+                reached)]
+            [_own : unit (set! (array-ref share block) have)]
+            (if (<= have 0)
+              unit
+              (let
+                [split? : bool (= (array-ref splits block) 1)]
+                [fanout : i64
+                  (if split?
+                    (compiler-reg-block-frequency-fanout
+                      block
+                      (compiler-reg-global-shared-view succ-offsets)
+                      (compiler-reg-global-shared-view succ-targets)
+                      (compiler-reg-global-shared-view edge-back)
+                      (compiler-reg-global-shared-view depths))
+                    1)]
+                [part : i64
+                  (/
+                    have
+                    (if (< fanout 1)
+                      1
+                      fanout))]
+                [edge : i64 (array-ref succ-offsets block)]
+                [end : i64 (array-ref succ-offsets (+ block 1))]
+                (while (< edge end)
+                  (begin
+                    (let
+                      [target : i64 (array-ref succ-targets edge)]
+                      (if (and (>= target 0) (= (array-ref edge-back edge) 0))
+                        ;; FREQ-3: an edge INTO a deeper loop carries the whole
+                        ;; share whatever the arm it leaves from took -- a loop
+                        ;; reached from a dispatch arm iterates once entered,
+                        ;; and the ladder prices its iterations against the
+                        ;; arm's one visit. A split edge that stays at the
+                        ;; arm's depth takes its part.
+                        (if (and
+                          split?
+                          (<=
+                            (array-ref depths target)
+                            (array-ref depths block)))
+                          (set!
+                            (array-ref sum-in target)
+                            (+ (array-ref sum-in target) part))
+                          (let
+                            [carry : i64
+                              (if split?
+                                have
+                                part)]
+                            (if (> carry (array-ref max-in target))
+                              (set! (array-ref max-in target) carry)
+                              unit)))
+                        unit))
+                    (set! edge (+ edge 1))))))))))))
+
+;; FREQ-3: the innermost loop header of every block, -1 outside every loop.
+;; Read off the nest's member lists: a block inside several loops takes the
+;; deepest header's.
+(define (compiler-reg-block-frequency-inner-headers!
+  [nest : CompilerRegLoopNest]
+  [depths : (__tl_dyn-array i64)]
+  [inner-header : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64 (array-length inner-header)]
+    [members : (__tl_dyn-array i64)
+      (compiler-reg-global-shared-view nest.members)]
+    [headers : i64 nest.header-count]
+    [index : i64 0]
+    [generation : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set! (array-ref inner-header index) (- 0 1))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index headers)
+        (begin
+          (let
+            [header : i64 (array-ref nest.headers index)]
+            [total : i64 0]
+            [member : i64 0]
+            (begin
+              (set! generation (+ generation 1))
+              (set!
+                total
+                (compiler-reg-loop-nest-header-members!
+                  (compiler-reg-global-shared-view nest)
+                  header
+                  generation))
+              (set! (array-ref inner-header header) header)
+              (while (< member total)
+                (begin
+                  (let
+                    [block : i64 (array-ref members member)]
+                    [current : i64 (array-ref inner-header block)]
+                    (if (or
+                      (< current 0)
+                      (> (array-ref depths header) (array-ref depths current)))
+                      (set! (array-ref inner-header block) header)
+                      unit))
+                  (set! member (+ member 1))))))
+          (set! index (+ index 1)))))))
+
+;; FREQ-2: which blocks SPLIT their share. A Switch (and a total enum switch)
+;; dispatches to one of N arms, so each arm takes 1/N and the arms add back up
+;; at their join; a two-way Branch does not split -- both arms carry the whole
+;; share and their join takes the larger of what reaches it. The first model
+;; halved every `if` arm too, and that is measured wrong across the corpus
+;; (+150M net over 23 rows, ssa_construct +51.7M, opt_bytecode_vm +48.0M,
+;; regalloc_greedy +43.0M): the `if` arms of a hot loop body are where the
+;; body's work is and run on most iterations, while a nine-way dispatch's arm
+;; really does run about one iteration in nine.
+;; FREQ-3: a function with no dispatch block weighs the ladder alone, exactly
+;; as before. The shares would scale every one of its weights by the same
+;; constant, and the greedy's tie key (compiler-reg-greedy-combine-spill-
+;; weights: `r * span / (max + 1)`) is not scale-invariant, so the constant
+;; alone re-decided ties in switch-free loops for cfg_domloops +12.6M and
+;; ssa_construct +14.7M with nothing in the ranking changed.
+(define (compiler-reg-block-frequency-any-split?
+  [splits : (__tl_dyn-array i64)]) : bool
+  (let
+    [index : i64 0]
+    [found? : bool false]
+    (begin
+      (while (and (not found?) (< index (array-length splits)))
+        (begin
+          (if (= (array-ref splits index) 1)
+            (set! found? true)
+            unit)
+          (set! index (+ index 1))))
+      found?)))
+
+(define (compiler-reg-block-frequency-splits!
+  [seq : ir.CompilerIrBlockSeq]
+  [splits : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64
+      (ir.compiler-ir-block-seq-count (compiler-reg-global-shared-view seq))]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (match (ir.compiler-ir-block-seq-ref
+          (compiler-reg-global-shared-view seq)
+          index)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (let
+              [len : i64
+                (ir.compiler-ir-instr-seq-count
+                  (compiler-reg-global-shared-view instrs))]
+              (if (<= len 0)
+                unit
+                (match (ir.compiler-ir-instr-seq-ref instrs (- len 1))
+                  [(ir.CompilerIrInstr.Switch _ _ _ _)
+                    (set! (array-ref splits index) 1)]
+                  [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _)
+                    (set! (array-ref splits index) 1)]
+                  [_ unit])))])
+        (set! index (+ index 1))))))
+
+;; One weight per block: the depth ladder times the block's share, floored at
+;; the ladder's own value so no reference weighs less than it did.
+(define (compiler-reg-function-block-weights [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array
+    i64)
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (live.compiler-live-ir-block-list-to-seq blocks)]
+    [count : i64
+      (ir.compiler-ir-block-seq-count (compiler-reg-global-shared-view seq))]
+    [weights : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    (if (< count 1)
+      weights
+      (let
+        [depths : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [inner-header : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [nest : CompilerRegLoopNest
+          (compiler-reg-loop-nest-build-seq
+            (compiler-reg-global-shared-view seq))]
+        [_depths : unit
+          (compiler-reg-loop-nest-depths!
+            (compiler-reg-global-shared-view nest)
+            (compiler-reg-global-shared-view depths))]
+        [_inner : unit
+          (compiler-reg-block-frequency-inner-headers!
+            (compiler-reg-global-shared-view nest)
+            (compiler-reg-global-shared-view depths)
+            (compiler-reg-global-shared-view inner-header))]
+        [ids : reg_label_i64_map.Map
+          (compiler-reg-loop-depth-block-ids-seq
+            (compiler-reg-global-shared-view seq)
+            (reg_label_i64_map.with-capacity
+              (compiler-reg-bits-map-capacity count))
+            0)]
+        [succ-bound : i64
+          (compiler-reg-loop-nest-succ-bound
+            (compiler-reg-global-shared-view seq))]
+        [succ-offsets : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+        [succ-targets : (__tl_dyn-array i64)
+          (__tl_make-array i64 (+ succ-bound 1))]
+        [edge-back : (__tl_dyn-array i64)
+          (__tl_make-array i64 (+ succ-bound 1))]
+        [state : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [stack-node : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+        [stack-edge : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+        [post : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [share : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [splits : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [sum-in : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [max-in : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [_splits : unit
+          (compiler-reg-block-frequency-splits!
+            (compiler-reg-global-shared-view seq)
+            (compiler-reg-global-shared-view splits))]
+        [ladder-only? : bool
+          (or
+            (not compiler-reg-block-weights-frequency?)
+            (not
+              (compiler-reg-block-frequency-any-split?
+                (compiler-reg-global-shared-view splits))))]
+        [_succ : bool
+          (compiler-reg-loop-nest-fill-succ!
+            (compiler-reg-global-shared-view seq)
+            ids
+            (compiler-reg-global-shared-view succ-offsets)
+            (compiler-reg-global-shared-view succ-targets))]
+        [visited : i64
+          (compiler-reg-block-frequency-dfs!
+            count
+            (compiler-reg-global-shared-view succ-offsets)
+            (compiler-reg-global-shared-view succ-targets)
+            (compiler-reg-global-shared-view state)
+            (compiler-reg-global-shared-view stack-node)
+            (compiler-reg-global-shared-view stack-edge)
+            (compiler-reg-global-shared-view edge-back)
+            (compiler-reg-global-shared-view post))]
+        [_shares : unit
+          (compiler-reg-block-frequencies!
+            visited
+            (compiler-reg-global-shared-view post)
+            (compiler-reg-global-shared-view succ-offsets)
+            (compiler-reg-global-shared-view succ-targets)
+            (compiler-reg-global-shared-view edge-back)
+            (compiler-reg-global-shared-view depths)
+            (compiler-reg-global-shared-view splits)
+            (compiler-reg-global-shared-view inner-header)
+            (compiler-reg-global-shared-view sum-in)
+            (compiler-reg-global-shared-view max-in)
+            (compiler-reg-global-shared-view share))]
+        [block : i64 0]
+        (begin
+          (while (< block count)
+            (begin
+              (set!
+                (array-ref weights block)
+                (if ladder-only?
+                  (compiler-reg-loop-depth-weight (array-ref depths block))
+                  (*
+                    (compiler-reg-loop-depth-weight (array-ref depths block))
+                    (if (< (array-ref share block) 1)
+                      1
+                      (array-ref share block)))))
+              (set! block (+ block 1))))
+          weights)))))
+
 (define (compiler-reg-ref-counts-add-var-weighted!
   [counts : (__tl_dyn-array i64)]
   [var : i64]
@@ -13538,7 +13968,7 @@
 (define (compiler-reg-ref-counts-blocks-weighted!
   [counts : (__tl_dyn-array i64)]
   [blocks : ir.CompilerIrBlockList]
-  [depths : (__tl_dyn-array i64)]
+  [weights : (__tl_dyn-array i64)]
   [block-index : i64]) : unit
   (match blocks
     [(ir.CompilerIrBlockList.Nil) unit]
@@ -13549,11 +13979,11 @@
             (compiler-reg-ref-counts-seq-weighted!
               (compiler-reg-global-shared-view counts)
               instrs
-              (compiler-reg-loop-depth-weight (array-ref depths block-index)))])
+              (array-ref weights block-index))])
         (compiler-reg-ref-counts-blocks-weighted!
           counts
           (compiler-reg-box-shared-view rest)
-          depths
+          weights
           (+ block-index 1)))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
@@ -13570,7 +14000,7 @@
                 (compiler-reg-ref-counts-seq-weighted!
                   (compiler-reg-global-shared-view counts)
                   instrs
-                  (compiler-reg-loop-depth-weight (array-ref depths index)))])
+                  (array-ref weights index))])
             (set! index (+ index 1))
             (set! i (+ i 1)))))]))
 
@@ -14868,7 +15298,7 @@
   [def-status : (__tl_dyn-array i64)]
   [rebates : (__tl_dyn-array i64)]
   [blocks : ir.CompilerIrBlockList]
-  [depths : (__tl_dyn-array i64)]
+  [weights : (__tl_dyn-array i64)]
   [block-index : i64]
   [allow-invariant-loads : bool]) : unit
   (match blocks
@@ -14882,14 +15312,14 @@
               (compiler-reg-global-shared-view def-status)
               (compiler-reg-global-shared-view rebates)
               instrs
-              (compiler-reg-loop-depth-weight (array-ref depths block-index))
+              (array-ref weights block-index)
               allow-invariant-loads)])
         (compiler-reg-ref-counts-blocks-weighted-remat!
           counts
           def-status
           rebates
           (compiler-reg-box-shared-view rest)
-          depths
+          weights
           (+ block-index 1)
           allow-invariant-loads))]
     [(ir.CompilerIrBlockList.Array seq)
@@ -14909,7 +15339,7 @@
                   (compiler-reg-global-shared-view def-status)
                   (compiler-reg-global-shared-view rebates)
                   instrs
-                  (compiler-reg-loop-depth-weight (array-ref depths index))
+                  (array-ref weights index)
                   allow-invariant-loads)])
             (set! index (+ index 1))
             (set! i (+ i 1)))))]))
@@ -15198,7 +15628,7 @@
 (define (compiler-reg-foldable-rebate-blocks!
   [rebates : (__tl_dyn-array i64)]
   [blocks : ir.CompilerIrBlockList]
-  [depths : (__tl_dyn-array i64)]
+  [weights : (__tl_dyn-array i64)]
   [block-index : i64]) : unit
   (match blocks
     [(ir.CompilerIrBlockList.Nil) unit]
@@ -15209,11 +15639,11 @@
             (compiler-reg-foldable-rebate-seq!
               (compiler-reg-global-shared-view rebates)
               instrs
-              (compiler-reg-loop-depth-weight (array-ref depths block-index)))])
+              (array-ref weights block-index))])
         (compiler-reg-foldable-rebate-blocks!
           (compiler-reg-global-shared-view rebates)
           (compiler-reg-box-shared-view rest)
-          depths
+          weights
           (+ block-index 1)))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
@@ -15227,7 +15657,7 @@
                 (compiler-reg-foldable-rebate-seq!
                   (compiler-reg-global-shared-view rebates)
                   instrs
-                  (compiler-reg-loop-depth-weight (array-ref depths index)))])
+                  (array-ref weights index))])
             (set! index (+ index 1))
             (set! i (+ i 1)))))]))
 
@@ -15254,7 +15684,7 @@
 
 (define (compiler-reg-function-foldable-rebates
   [blocks : ir.CompilerIrBlockList]
-  [depths : (__tl_dyn-array i64)]
+  [weights : (__tl_dyn-array i64)]
   [vars : i64]) : (__tl_dyn-array i64)
   (let
     [rebates : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
@@ -15262,7 +15692,7 @@
       (compiler-reg-foldable-rebate-blocks!
         (compiler-reg-global-shared-view rebates)
         blocks
-        depths
+        weights
         0)
       rebates)))
 
@@ -15272,14 +15702,14 @@
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
       (let
         [counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-        [depths : (__tl_dyn-array i64)
-          (compiler-reg-function-loop-depths
+        [weights : (__tl_dyn-array i64)
+          (compiler-reg-function-block-weights
             (compiler-reg-global-shared-view blocks))]
         (begin
           (compiler-reg-ref-counts-blocks-weighted!
             (compiler-reg-global-shared-view counts)
             blocks
-            depths
+            weights
             0)
           counts))]))
 
@@ -15293,8 +15723,8 @@
         [raw : (__tl_dyn-array i64) (__tl_make-array i64 fn-vars)]
         [def-status : (__tl_dyn-array i64) (__tl_make-array i64 fn-vars)]
         [rebates : (__tl_dyn-array i64) (__tl_make-array i64 fn-vars)]
-        [depths : (__tl_dyn-array i64)
-          (compiler-reg-function-loop-depths
+        [weights : (__tl_dyn-array i64)
+          (compiler-reg-function-block-weights
             (compiler-reg-global-shared-view blocks))]
         [allow-invariant-loads : bool
           (compiler-reg-remat-invariant-loads-ok? func)]
@@ -15304,7 +15734,7 @@
             (compiler-reg-global-shared-view def-status)
             (compiler-reg-global-shared-view rebates)
             blocks
-            depths
+            weights
             0
             allow-invariant-loads)
           (let

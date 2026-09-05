@@ -174,8 +174,8 @@
         [counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [def-status : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [rebates : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-        [depths : (__tl_dyn-array i64)
-          (reg.compiler-reg-function-loop-depths
+        [weights : (__tl_dyn-array i64)
+          (reg.compiler-reg-function-block-weights
             (reg.compiler-reg-global-shared-view blocks))]
         [allow-invariant-loads : bool
           (reg.compiler-reg-remat-invariant-loads-ok?
@@ -195,7 +195,7 @@
             (reg.compiler-reg-global-shared-view def-status)
             (reg.compiler-reg-global-shared-view rebates)
             blocks
-            depths
+            weights
             0
             allow-invariant-loads)
           (reg.compiler-reg-remat-discount-single-def-spill-weights!
@@ -765,6 +765,141 @@
             ;; the exit-only arm, laid out inside the loop
             (= (array-ref weights 4) 4)
             (= (array-ref weights 5) 4)))])))
+
+;; --- FREQ-2 block weights ---------------------------------------------------
+;; The spill-weight ladder times a static path share
+;; (compiler-reg-function-block-weights). A loop body that branches two ways
+;; carries the whole share down both arms; a four-way Switch splits it, a
+;; quarter to each arm, and the arms add back up at the join. The exit lies
+;; outside the loop and out of the header's in-loop fan-out, so it weighs what
+;; the entry weighs, and a body with no dispatch weighs the bare ladder.
+(cfg
+  test
+  (define (compiler-reg-block-weights-jump-block
+    [label : String]
+    [target : String]) : ir.CompilerIrBlock
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label label)
+      (compiler-reg-test-instr-seq-prepend
+        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label target))
+        (ir.compiler-ir-instr-seq-empty)))))
+
+(cfg
+  test
+  (define (compiler-reg-block-weights-branch-block
+    [label : String]
+    [then-target : String]
+    [else-target : String]) : ir.CompilerIrBlock
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label label)
+      (compiler-reg-test-instr-seq-prepend
+        (ir.CompilerIrInstr.Branch
+          (ir.CompilerIrValue.Bool false)
+          (ir.compiler-ir-label then-target)
+          (ir.compiler-ir-label else-target))
+        (ir.compiler-ir-instr-seq-empty)))))
+
+(cfg
+  test
+  (define (compiler-reg-block-weights-switch-block [label : String]) : ir.CompilerIrBlock
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label label)
+      (compiler-reg-test-instr-seq-prepend
+        (ir.CompilerIrInstr.Switch
+          (ir.CompilerIrValue.Var 0)
+          3
+          (ir.compiler-ir-switch-case-seq3
+            (ir.CompilerIrSwitchCase.Case 0 (ir.compiler-ir-label "s0"))
+            (ir.CompilerIrSwitchCase.Case 1 (ir.compiler-ir-label "s1"))
+            (ir.CompilerIrSwitchCase.Case 2 (ir.compiler-ir-label "s2")))
+          (ir.compiler-ir-label "s3"))
+        (ir.compiler-ir-instr-seq-empty)))))
+
+(cfg
+  test
+  (define (compiler-reg-block-weights-return-block [label : String]) : ir.CompilerIrBlock
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label label)
+      (compiler-reg-test-instr-seq-prepend
+        (ir.CompilerIrInstr.Return
+          (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 0)))
+        (ir.compiler-ir-instr-seq-empty)))))
+
+;; entry -> header -> body -> {left, right}; left -> join; right dispatches to
+;; s0..s3 -> join; join -> header; header -> exit.
+(cfg
+  test
+  (define (compiler-reg-block-weights-dispatch-loop-blocks) : ir.CompilerIrBlockList
+    (ir.compiler-ir-block-cons
+      (compiler-reg-block-weights-jump-block "entry" "header")
+      (ir.compiler-ir-block-cons
+        (compiler-reg-block-weights-branch-block "header" "body" "exit")
+        (ir.compiler-ir-block-cons
+          (compiler-reg-block-weights-branch-block "body" "left" "right")
+          (ir.compiler-ir-block-cons
+            (compiler-reg-block-weights-jump-block "left" "join")
+            (ir.compiler-ir-block-cons
+              (compiler-reg-block-weights-switch-block "right")
+              (ir.compiler-ir-block-cons
+                (compiler-reg-block-weights-jump-block "s0" "join")
+                (ir.compiler-ir-block-cons
+                  (compiler-reg-block-weights-jump-block "s1" "join")
+                  (ir.compiler-ir-block-cons
+                    (compiler-reg-block-weights-jump-block "s2" "join")
+                    (ir.compiler-ir-block-cons
+                      (compiler-reg-block-weights-jump-block "s3" "join")
+                      (ir.compiler-ir-block-cons
+                        (compiler-reg-block-weights-jump-block "join" "header")
+                        (ir.compiler-ir-block-cons
+                          (compiler-reg-block-weights-return-block "exit")
+                          ir.CompilerIrBlockList.Nil)))))))))))))
+
+(cfg
+  test
+  (define (compiler-reg-block-weights-straight-blocks) : ir.CompilerIrBlockList
+    (ir.compiler-ir-block-cons
+      (compiler-reg-block-weights-jump-block "entry" "next")
+      (ir.compiler-ir-block-cons
+        (compiler-reg-block-weights-jump-block "next" "last")
+        (ir.compiler-ir-block-cons
+          (compiler-reg-block-weights-return-block "last")
+          ir.CompilerIrBlockList.Nil)))))
+
+(cfg
+  test
+  (define (compiler-reg-block-weights-ok?) : bool
+    (let
+      [scale : i64 (reg.compiler-reg-block-frequency-scale)]
+      [weights : (__tl_dyn-array i64)
+        (reg.compiler-reg-function-block-weights
+          (compiler-reg-block-weights-dispatch-loop-blocks))]
+      [straight : (__tl_dyn-array i64)
+        (reg.compiler-reg-function-block-weights
+          (compiler-reg-block-weights-straight-blocks))]
+      (and
+        (= (array-length weights) 11)
+        ;; entry: depth 0, the whole share
+        (= (array-ref weights 0) scale)
+        ;; header, body: one ladder step, the whole share
+        (= (array-ref weights 1) (* 2 scale))
+        (= (array-ref weights 2) (* 2 scale))
+        ;; a two-way branch carries the whole share down both arms
+        (= (array-ref weights 3) (* 2 scale))
+        (= (array-ref weights 4) (* 2 scale))
+        ;; the four-way dispatch splits it
+        (= (array-ref weights 5) (/ scale 2))
+        (= (array-ref weights 6) (/ scale 2))
+        (= (array-ref weights 7) (/ scale 2))
+        (= (array-ref weights 8) (/ scale 2))
+        ;; the join: the arms add back up to the whole share
+        (= (array-ref weights 9) (* 2 scale))
+        ;; exit: outside the loop, and not in the header's in-loop fan-out
+        (= (array-ref weights 10) scale)
+        ;; a function with no dispatch weighs the ladder alone, everywhere
+        (= (array-length straight) 3)
+        (= (array-ref straight 0) 1)
+        (= (array-ref straight 1) 1)
+        (= (array-ref straight 2) 1)))))
 
 ;; --- P7 cold-arm discount ---------------------------------------------------
 ;; The PRED_CALL discount and the two things that bound it. `cold` is a depth-0
@@ -7927,7 +8062,7 @@
       [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
         (reg.compiler-reg-function-foldable-rebates
           (reg.compiler-reg-global-shared-view blocks)
-          (reg.compiler-reg-function-loop-depths blocks)
+          (reg.compiler-reg-function-block-weights blocks)
           vars)])))
 
 (cfg
@@ -22452,6 +22587,9 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-call-hole-weights-ok?"
       (cfg test (compiler-reg-call-hole-weights-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-block-weights-ok?"
+      (cfg test (compiler-reg-block-weights-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-call-hole-select-ok?"
       (cfg test (compiler-reg-call-hole-select-ok?) true))

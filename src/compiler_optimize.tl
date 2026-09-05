@@ -136166,6 +136166,11 @@
     ;; RG-1: and the allocator's home tracer, for the same reason the pass
     ;; tracer is silenced around a measured plan.
     [_suppress-reg-trace : unit (reg.compiler-reg-trace-set-suppressed! true)]
+    ;; FREQ-1: the plan this tier prices is ranked by the depth ladder alone,
+    ;; the currency its window was calibrated in
+    ;; (compiler-reg-block-weights-frequency?).
+    [_ladder-weights : unit
+      (reg.compiler-reg-block-weights-set-frequency! false)]
     [plan : reg.CompilerRegPlan
       (reg.compiler-reg-plan-function-scalar
         (compiler-opt-global-shared-view func))]
@@ -136200,6 +136205,8 @@
                 (compiler-opt-global-shared-view weights))))])]
     [_restore-image-maps : unit (reg.compiler-reg-suppress-program-maps! false)]
     [_restore-reg-trace : unit (reg.compiler-reg-trace-set-suppressed! false)]
+    [_restore-weights : unit
+      (reg.compiler-reg-block-weights-set-frequency! true)]
     cost))
 
 ;; INL-15: the block weights of the tier's currency, for the allocator's cost

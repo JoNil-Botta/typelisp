@@ -103,6 +103,18 @@
     [unpinned-structured : i64 0]
     [events-valid : bool true]
     (begin
+      (test.assert-i64-eq
+        (catalog.compiler-x64-template-catalog-int-range "811039507" 0 9)
+        811039507
+        "catalog integer parser respects an exact positive field bound")
+      (test.assert-i64-eq
+        (catalog.compiler-x64-template-catalog-int-range "-1" 0 2)
+        -1
+        "catalog integer parser accepts the dynamic-payload sentinel")
+      (test.assert-i64-eq
+        (catalog.compiler-x64-template-catalog-int-range "18:NativeEntry" 0 2)
+        18
+        "catalog integer parser stops at the explicit enum-tag bound")
       (while (and events-valid (< at ids.len))
         (let
           [id : x64.CompilerX64ExecutableTemplateId

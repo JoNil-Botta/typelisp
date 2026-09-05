@@ -285,9 +285,18 @@
       end-anchor
       (compiler-x64-template-terminal-from-catalog (& terminal))
       events
-      (string.>int (& event-count))
-      (string.>int (& expected-rendered-size))
-      (string.>int (& expected-rendered-hash)))))
+      (catalog.compiler-x64-template-catalog-int-range
+        (& event-count)
+        0
+        (string.string-length (& event-count)))
+      (catalog.compiler-x64-template-catalog-int-range
+        (& expected-rendered-size)
+        0
+        (string.string-length (& expected-rendered-size)))
+      (catalog.compiler-x64-template-catalog-int-range
+        (& expected-rendered-hash)
+        0
+        (string.string-length (& expected-rendered-hash))))))
 
 (define (compiler-x64-template-rendered-payload-valid?
   [row : CompilerX64ExecutableTemplate]

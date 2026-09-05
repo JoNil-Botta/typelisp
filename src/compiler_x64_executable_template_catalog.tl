@@ -25,8 +25,8 @@
 ;; Keep the checked-in data in that order and bounds-check the representation.
 (define (compiler-x64-template-id-index
   [id : x64.CompilerX64ExecutableTemplateId]) : i64
-  ;; Materialize a local before reading the SPEC 3.5.1 nullary-enum tag. Taking
-  ;; the address of a by-value parameter directly is not portable to Win64.
+  ;; Use the shared tag helper so every closed-enum adapter follows one layout
+  ;; contract.
   (let
     [index : i64 (x64.compiler-x64-template-enum-tag id)]
     (if (or (< index 0) (>= index 82))
@@ -93,7 +93,46 @@
     [separator : i64 (string.index-of-byte value 0 (cast ':' : u8))]
     (if (<= separator 0)
       (io.panic "x64 executable template: malformed catalog enum tag")
-      (string.>int (string.substring value 0 separator)))))
+      (compiler-x64-template-catalog-int-range value 0 separator))))
+
+;; Parse only bytes inside the explicit field bounds. The legacy `string.>int`
+;; primitive did not preserve the final-field bound in a self-hosted Win64
+;; compiler, changing a hash value while leaving the String length intact.
+(define (compiler-x64-template-catalog-int-range
+  [text : (& text str)]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [length : i64 (string.string-length text)]
+    [negative : bool
+      (and
+        (>= start 0)
+        (< start end)
+        (<= end length)
+        (= (string.string-ref text start) '-'))]
+    [at : i64
+      (if negative
+        (+ start 1)
+        start)]
+    [digits : i64 0]
+    [value : i64 0]
+    (begin
+      (when
+        (or (< start 0) (> end length) (>= at end))
+        (io.panic "x64 executable template: malformed catalog integer"))
+      (while (< at end)
+        (let
+          [byte : i64 (cast (string.string-ref text at) : i64)]
+          (begin
+            (when
+              (or (< byte 48) (> byte 57) (>= digits 10))
+              (io.panic "x64 executable template: malformed catalog integer"))
+            (set! value (+ (* value 10) (- byte 48)))
+            (set! digits (+ digits 1))
+            (set! at (+ at 1)))))
+      (if negative
+        (- 0 value)
+        value))))
 
 (define (compiler-x64-template-target-from-catalog [value : (& value str)]) : x64.CompilerX64TemplateTarget
   (let
@@ -134,8 +173,14 @@
       id
       (compiler-x64-template-target-from-catalog (& target))
       (compiler-x64-template-render-kind-from-catalog (& render-kind))
-      (string.>int (& expected-rendered-size))
-      (string.>int (& expected-rendered-hash)))))
+      (compiler-x64-template-catalog-int-range
+        (& expected-rendered-size)
+        0
+        (string.string-length (& expected-rendered-size)))
+      (compiler-x64-template-catalog-int-range
+        (& expected-rendered-hash)
+        0
+        (string.string-length (& expected-rendered-hash))))))
 
 (define (compiler-x64-template-render-kind-matches?
   [expected : x64.CompilerX64TemplateRenderKind]
@@ -174,18 +219,7 @@
   [rendered : (& rendered str)]) : unit
   (unless
     (compiler-x64-template-rendered-payload-valid? row rendered)
-    (match row.id
-      [(x64.CompilerX64ExecutableTemplateId.WindowsRuntimeArena)
-        (let
-          [expected : String (string.int->string row.expected-rendered-hash)]
-          [actual : String (string.int->string (hash.string-key rendered))]
-          (begin
-            (io.print-error
-              "x64 executable template: WindowsRuntimeArena expected-hash=")
-            (io.print-error (& expected))
-            (io.print-error " actual-hash=")
-            (io.panic (& actual))))]
-      [_ (io.panic "x64 executable template: non-arena payload mismatch")])))
+    (io.panic "x64 executable template: rendered payload identity mismatch")))
 
 (define (compiler-x64-template-render-assembly
   [id : x64.CompilerX64ExecutableTemplateId]

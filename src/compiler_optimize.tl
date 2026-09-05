@@ -127081,6 +127081,73 @@
     (opt-devirt-known-function-function! (compiler-opt-global-shared-view func))
     func))
 
+;; INL-11. The self-tail-call rewrite, applied to every function before the
+;; program-level inline stage. Per-function tailrec runs AFTER inlining, so a
+;; self tail-recursive helper (a list `contains?`, a `next-child-from` scan, a
+;; heap's `sift-down!`) reached the inliner as a recursive body -- never
+;; call-free, refused at every site-depth reading, and a caller whose sites
+;; all read as straight-line -- although one pass later it is a plain loop.
+;; Running the rewrite first lets the inliner read the loop it will see anyway.
+;; The rewrite is a no-op on a function without a convertible self tail call,
+;; and the per-function run that follows is a no-op on a rewritten one.
+;;
+;; The functions it rewrote are recorded by slot (opt-inline-tailrec-converted)
+;; for ONE refusal: a converted callee is not inlined at a site outside every
+;; natural loop of its caller. Written as recursion, such a body was never
+;; inlinable, and a corpus of fixtures relies on exactly that ("never-taken
+;; self-recursion blocks inlining so the named bodies survive"); more to the
+;; point, the bands' loop-free tier -- "the imported loop becomes the caller's
+;; only one" -- was calibrated on `while` bodies, and the one thing the
+;; recursion spelling changes is the caller it lands in. At a site INSIDE a
+;; loop nothing is new: the callee is a loop leaf and the hot-loop-leaf band
+;; prices it as every other one. Measured with INL-13: regalloc_greedy
+;; -12.9M and sccp_lattice -2.2M come from converted CALLERS (a driver's site
+;; reads in-loop once its own recursion is a loop), and those are untouched
+;; by this refusal.
+(define opt-inline-tailrec-converted : (__tl_dyn-array bool)
+  (__tl_make-array bool 0))
+
+(define (opt-inline-tailrec-converted-slot?
+  [index : OptFunctionIndex]
+  [name : i64]) : bool
+  (match (opt-function-index-slot (compiler-opt-global-shared-view index) name)
+    [(option_i64.Some slot)
+      (and
+        (>= slot 0)
+        (< slot (array-length opt-inline-tailrec-converted))
+        (array-ref opt-inline-tailrec-converted slot))]
+    [(option_i64.None) false]))
+
+(define (opt-tailrec-function-seq! [functions : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
+  (let
+    [index : i64 0]
+    (begin
+      (set! opt-inline-tailrec-converted (__tl_make-array bool functions.len))
+      (while (< index functions.len)
+        (begin
+          (match (compiler-opt-global-array-element-shared-view
+            functions.slots
+            index)
+            [(ir.CompilerIrFunction.Function name params _ _ blocks)
+              (if (and
+                (opt-tailrec-blocks-have-convertible?
+                  (compiler-opt-global-shared-view blocks)
+                  name
+                  (opt-tailrec-param-count
+                    (compiler-opt-global-shared-view params)))
+                (opt-ssa-explicit-entry-available?
+                  (compiler-opt-global-shared-view blocks)))
+                (set! (array-ref opt-inline-tailrec-converted index) true)
+                unit)])
+          (set!
+            (array-ref functions.slots index)
+            (opt-tailrec-function
+              (compiler-opt-global-array-element-shared-view
+                functions.slots
+                index)))
+          (set! index (+ index 1))))
+      functions)))
+
 (define (opt-devirt-known-function-seq [functions : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
   (let
     [index : i64 0]
@@ -136969,9 +137036,16 @@
             ;; site both admit belongs to the band, which is cheaper (no
             ;; re-optimize, no re-plan) and already carries its own
             ;; measured argument.
+            ;; INL-11: a converted self-tail-recursive callee keeps its frame at
+            ;; a straight-line site (see opt-inline-tailrec-converted).
+            [converted-straight? : bool
+              (opt-inline-tailrec-converted-slot?
+                (compiler-opt-global-shared-view index)
+                callee-name)]
             [checked? : bool
               (and
                 (not band-admits?)
+                (not converted-straight?)
                 (opt-inline-checked-ok?
                   (compiler-opt-global-shared-view index)
                   (compiler-opt-global-shared-view census)
@@ -136985,7 +137059,8 @@
                   added-so-far
                   site-pos
                   tail-site?))]
-            [inline? : bool (or band-admits? checked?)]
+            [inline? : bool
+              (and (not converted-straight?) (or band-admits? checked?))]
             ;; True only when the hot-loop-leaf gate is what admits this
             ;; site: its blocks spend the gate's own fuel, not the shared
             ;; accumulator the caller's banked absorptions draw on.
@@ -138174,9 +138249,16 @@
                   branch-chain?
                   single-site-absorb?))]
             ;; Same measured tier as the non-span path.
+            ;; INL-11: a converted self-tail-recursive callee keeps its frame at
+            ;; a straight-line site (see opt-inline-tailrec-converted).
+            [converted-straight? : bool
+              (opt-inline-tailrec-converted-slot?
+                (compiler-opt-global-shared-view index)
+                callee-name)]
             [checked? : bool
               (and
                 (not band-admits?)
+                (not converted-straight?)
                 (opt-inline-checked-ok?
                   (compiler-opt-global-shared-view index)
                   (compiler-opt-global-shared-view census)
@@ -138190,7 +138272,8 @@
                   added-so-far
                   site-pos
                   tail-site?))]
-            [inline? : bool (or band-admits? checked?)]
+            [inline? : bool
+              (and (not converted-straight?) (or band-admits? checked?))]
             ;; Same hot-import accounting as the non-span path.
             [hot-import? : bool
               (and (not tail-site?) hot-loop-leaf? (not legacy-cost-ok?))]
@@ -140571,7 +140654,7 @@
       functions)
     (let
       [devirt : ir.CompilerIrFunctionSeq
-        (opt-devirt-known-function-seq functions)]
+        (opt-tailrec-function-seq! (opt-devirt-known-function-seq functions))]
       [index : OptFunctionIndex
         (opt-function-index-build (compiler-opt-global-shared-view devirt))]
       [graph : OptCallGraph
@@ -140613,7 +140696,7 @@
       (OptInlineSpanProgram.Program functions spans))
     (let
       [devirt : ir.CompilerIrFunctionSeq
-        (opt-devirt-known-function-seq functions)]
+        (opt-tailrec-function-seq! (opt-devirt-known-function-seq functions))]
       [index : OptFunctionIndex
         (opt-function-index-build (compiler-opt-global-shared-view devirt))]
       [graph : OptCallGraph

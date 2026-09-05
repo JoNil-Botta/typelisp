@@ -5205,7 +5205,7 @@
   inline-hot-loop-leaf-recursive-caller-refusal
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-hot-loop-leaf-recursive-caller-refusal-ok?)
-    "the same leaf at the same straight-line sites of SELF-RECURSIVE callers stays out of line: the caller's loop is the one tailrec is about to build"))
+    "the same leaf at the same sites of SELF-RECURSIVE callers is taken at every site: the tailrec rewrite runs before the inliner, so the caller's loop is there and the in-loop tier admits the leaf into it"))
 
 (test
   inline-recursive-caller-loop-free

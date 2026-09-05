@@ -27883,12 +27883,20 @@
           tail))]))
 
 ;; The same big-tier cyclic leaf as the loop-free positive directly above, at
-;; the same three straight-line sites, in callers that call themselves: every
-;; site keeps its boundary. Nothing else about the program changed -- the leaf,
-;; the reference count, the site's block and every budget are identical -- so
-;; this pair is the clause and only the clause. (sccp_lattice's
-;; `sccp-rewrite-phi` into `sccp-rewrite-rows` is this shape at benchmark size:
-;; -2,346,224 on the row.)
+;; the same three sites, in callers that call themselves. INL-7 refused these
+;; on a prediction: the caller's self tail-call was about to become a back edge
+;; one pass later, so the loop-free reading was wrong. INL-11 moved that
+;; rewrite ahead of the inline stage, so the prediction is now an observation:
+;; each caller presents its loop, the site reads in-loop, and the in-loop tier
+;; admits the leaf under its own gates (the caller is three blocks, well inside
+;; opt-inline-hot-loop-leaf-in-loop-small-caller-ok?'s size class), so every
+;; site takes the copy. Nothing else about the program changed -- the leaf, the
+;; reference count, the site's block and every budget are identical to the
+;; positive above -- so this pair is the rewrite's ordering and only that.
+;; (sccp_lattice's `sccp-rewrite-phi` into `sccp-rewrite-rows` is the shape at
+;; benchmark size, and it stays out there on SIZE: the in-loop tier's own
+;; gates refuse it, see check_recursive_loop_import in
+;; scripts/verify-asm-shape-gates.sh.)
 (define (compiler-optimize-inline-hot-loop-leaf-recursive-caller-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
@@ -27903,7 +27911,7 @@
             (opt-inline-dup-leaf-plain callee-name)
             (compiler_ir_types.compiler-ir-function-seq-empty)))
         2)]
-    (= (opt-inline-shared-remaining-calls optimized 3) 3)))
+    (= (opt-inline-shared-remaining-calls optimized 3) 0)))
 
 ;; ...and the clause itself, on the three caller shapes it has to tell apart,
 ;; with the value `--trace-passes` prints as the band line's `caller-rec=` field
@@ -29415,11 +29423,12 @@
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
 ;; A one-block body whose tail call names the callee itself: the self-recursion
-;; the tail-recursion-to-loop pass owns, and which it only sees because the
-;; inliner leaves it alone. `opt-tailrec-function` runs per function AFTER the
-;; whole-program inline stage (optimize-function-once-with-summaries), so the
-;; inliner is what must refuse it, and it does -- by name in
-;; opt-inline-callee-ok? and by SCC in opt-inline-lookup-inlinable.
+;; the tail-recursion-to-loop pass owns. INL-11 runs that pass over every
+;; function BEFORE the whole-program inline stage (opt-tailrec-function-seq!),
+;; so the inliner meets this body as the loop it becomes -- a jump back to its
+;; own entry, no tail call left -- and refuses it by shape (an exitless loop
+;; has no return to splice). The per-function tailrec that follows finds
+;; nothing left to rewrite.
 (define (opt-inline-single-block-self-tail-call-callee
   [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
@@ -29593,8 +29602,9 @@
       [(compiler_optimize.OptMaybeFunction.No) false])))
 
 ;; Self-recursion and mutual recursion through the tail call both keep their
-;; call sites, and the recursive callee keeps its own body for the
-;; tail-recursion pass to find.
+;; call sites. The self-recursive callee reaches the inliner already rewritten
+;; into a loop (INL-11): its self tail call is gone and a jump to its own entry
+;; stands in its place.
 (define (compiler-optimize-inline-single-block-self-tail-call-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
@@ -29626,7 +29636,23 @@
                   (opt-count-tail-call-blocks
                     (compiler_ir_types.compiler-ir-global-shared-view blocks))
                   0)
-                (= (opt-count-tail-call-blocks callee-blocks) 1)
+                (=
+                  (opt-count-tail-call-blocks
+                    (compiler_ir_types.compiler-ir-global-shared-view
+                      callee-blocks))
+                  0)
+                ;; the rewrite's preheader and the back edge both jump to
+                ;; the entry
+                (opt-block-list-has-label?
+                  (compiler_ir_types.compiler-ir-global-shared-view
+                    callee-blocks)
+                  (compiler_ir_types.compiler-ir-label "entry__ssa_entry"))
+                (=
+                  (opt-count-jump-to-blocks
+                    (compiler_ir_types.compiler-ir-global-shared-view
+                      callee-blocks)
+                    (compiler_ir_types.compiler-ir-label "entry"))
+                  2)
                 (compiler_optimize.opt-inline-structure-ok? blocks)))]
           [(compiler_optimize.OptMaybeFunction.No) false])]
       [(compiler_optimize.OptMaybeFunction.No) false])))
@@ -29969,10 +29995,11 @@
             (compiler_optimize.opt-inline-structure-ok? blocks)))]
       [(compiler_optimize.OptMaybeFunction.No) false])))
 
-;; (d) The self-recursive tail site stays put. The callee keeps its two
-;; instructions and its one tail call to itself: had the site been taken, the
-;; body would hold a second copy of the `Mov` and the whole-program walk would
-;; be free to do it again.
+;; (d) The self-recursive tail site is a back edge before the inliner runs
+;; (INL-11: opt-tailrec-function-seq! precedes the whole-program walk). The
+;; callee keeps its `Mov`, its tail call to itself has become a jump to its own
+;; entry behind the rewrite's preheader, and no site was taken: had one been,
+;; the body would hold a second copy of the `Mov`.
 (define (compiler-optimize-inline-tail-site-self-recursion-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
@@ -29993,15 +30020,24 @@
               (opt-count-tail-call-name-blocks
                 (compiler_ir_types.compiler-ir-global-shared-view callee-blocks)
                 "inline_nonleaf")
-              1)
+              0)
+            ;; preheader jump, the `Mov`, the back-edge jump
             (=
               (opt-count-instrs-blocks
                 (compiler_ir_types.compiler-ir-global-shared-view callee-blocks))
-              2)
+              3)
             (=
               (compiler_ir_types.compiler-ir-block-list-count
                 (compiler_ir_types.compiler-ir-global-shared-view callee-blocks))
-              1)
+              2)
+            (opt-block-list-has-label?
+              (compiler_ir_types.compiler-ir-global-shared-view callee-blocks)
+              (compiler_ir_types.compiler-ir-label "entry__ssa_entry"))
+            (=
+              (opt-count-jump-to-blocks
+                (compiler_ir_types.compiler-ir-global-shared-view callee-blocks)
+                (compiler_ir_types.compiler-ir-label "entry"))
+              2)
             (compiler_optimize.opt-inline-structure-ok? callee-blocks)))]
       [(compiler_optimize.OptMaybeFunction.No) false])))
 

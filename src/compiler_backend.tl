@@ -75501,7 +75501,8 @@
       hit)))
 
 ;; If line [m,end) (mnemonic token ending at te) is exactly
-;; `movq SRC, N(%rsp)` with SRC a single %reg (not %rsp) or $imm token and a
+;; `movq SRC, N(%rsp)` with SRC a single 64-bit GP %r* register (not %rsp) or
+;; $imm token and a
 ;; digits-only offset, return the store's canonical offset N-delta; else the
 ;; no-candidate sentinel.
 (define (compiler-backend-sweep-candidate-c
@@ -75531,7 +75532,13 @@
           (let
             [s0 : i64 (+ te 1)]
             [b0 : i64 (compiler-backend-peephole-byte-at data s0)]
-            (if (not (or (= b0 37) (= b0 36)))
+            (if (not
+              (or
+                (= b0 36)
+                (and
+                  (= b0 37)
+                  (< (+ s0 1) end)
+                  (= (compiler-backend-peephole-byte-at data (+ s0 1)) 114))))
               none
               (let
                 [c

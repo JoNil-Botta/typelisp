@@ -1,5 +1,4 @@
 ;; Closed parser for reviewed x86-64 template control/frame events.
-(import compiler_x64_executable_template as x64)
 (import stdlib.string)
 
 (defenum CompilerX64TemplateEventKind

@@ -203,14 +203,17 @@
           (ResultCompilerWindowsBatchArtifact.Err
             (compiler-windows-batch-backend-diagnostic input-path diag)))])))
 
-(define (compiler-windows-coff-object-program-supported?
+(define (compiler-windows-coff-object-program-eligibility
   [backend-state : compiler_backend.CompilerBackendState]
-  [program : compiler_ir_types.CompilerIrProgram]) : bool
-  (match (compiler_backend.compiler-backend-object-program-eligibility
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [program : compiler_ir_types.CompilerIrProgram]
+  [profile-state : profile_state.CompilerProfileState]) : compiler_backend.CompilerBackendObjectEligibility
+  (compiler_backend.compiler-backend-object-program-eligibility-with-pools-and-profile-state
     backend-state
-    program)
-    [(compiler_backend.CompilerBackendObjectEligibility.Eligible) true]
-    [(compiler_backend.CompilerBackendObjectEligibility.Unsupported _) false]))
+    pools
+    program
+    (compiler_backend.CompilerBackendTarget.Windows)
+    profile-state))
 
 (define (compiler-windows-batch-emit-optimized
   [backend-state : compiler_backend.CompilerBackendState]
@@ -234,126 +237,130 @@
       "forced-assembly"
       profile-state
       typecheck-state)
-    (if (not
-      (compiler-windows-coff-object-program-supported?
-        (owned_view.compiler-owned-shared-view backend-state)
-        (owned_view.compiler-owned-shared-view program)))
-      (compiler-windows-batch-emit-assembly
-        backend-state
-        pools
-        input-path
-        program
-        spans
-        mode
-        (compiler_backend.compiler-backend-object-unsupported-semantics-category)
-        profile-state
-        typecheck-state)
-      (begin
-        (cfg
-          compile-profile
-          (compiler_driver_core.compiler-driver-profile-start-phase
-            (profile_state.compiler-profile-state-shared-view profile-state)))
-        (match (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+    (match (compiler-windows-coff-object-program-eligibility
+      (owned_view.compiler-owned-shared-view backend-state)
+      (owned_view.compiler-owned-shared-view pools)
+      (owned_view.compiler-owned-shared-view program)
+      (profile_state.compiler-profile-state-shared-view profile-state))
+      [(compiler_backend.CompilerBackendObjectEligibility.Unsupported category)
+        (compiler-windows-batch-emit-assembly
           backend-state
-          (owned_view.compiler-owned-shared-view pools)
-          (owned_view.compiler-owned-shared-view program)
-          (compiler_backend.CompilerBackendTarget.Windows)
+          pools
+          input-path
+          program
+          spans
           mode
-          (owned_view.compiler-owned-shared-view spans)
-          true
-          false
-          (profile_state.compiler-profile-state-shared-view profile-state))
-          [(compiler_backend.ResultCompilerBackendObject.Ok image)
-            (begin
-              (cfg
-                compile-profile
-                (compiler_driver_core.compiler-driver-profile-finish-phase
-                  (profile_state.compiler-profile-state-shared-view
-                    profile-state)
-                  "backend.object-image"))
-              (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
-                typecheck-state
-                "backend.object-image")
-              (match (compiler-windows-coff-linkability
-                (owned_view.compiler-owned-shared-view image))
-                [(CompilerWindowsCoffLinkability.Linkable)
-                  (begin
-                    (cfg
-                      compile-profile
-                      (compiler_driver_core.compiler-driver-profile-start-phase
-                        (profile_state.compiler-profile-state-shared-view
-                          profile-state)))
-                    (match (compiler_object_coff.compiler-object-coff-render
-                      (owned_view.compiler-owned-shared-view image))
-                      [(compiler_object_coff.ResultCompilerObjectCoff.Ok object)
-                        (begin
-                          (cfg
-                            compile-profile
-                            (compiler_driver_core.compiler-driver-profile-finish-phase
-                              (profile_state.compiler-profile-state-shared-view
-                                profile-state)
-                              "render.coff-object"))
-                          (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
-                            typecheck-state
-                            "render.coff-object")
-                          (if emit-side-assembly
-                            (match (compiler_object_asm.compiler-object-asm-render
-                              image)
-                              [(compiler_object_asm.ResultCompilerObjectAsm.Ok
-                                  asm)
-                                (ResultCompilerWindowsBatchArtifact.CoffObject
-                                  object
-                                  (CompilerWindowsBatchSideAssembly.Some asm))]
-                              [(compiler_object_asm.ResultCompilerObjectAsm.Err
-                                  message)
-                                (ResultCompilerWindowsBatchArtifact.Err
-                                  (compiler-windows-batch-diagnostic
-                                    input-path
-                                    (str_cat.str-cat
-                                      "assembly side artifact rendering failed: "
-                                      message)))])
-                            (ResultCompilerWindowsBatchArtifact.CoffObject
-                              object
-                              CompilerWindowsBatchSideAssembly.None)))]
-                      [(compiler_object_coff.ResultCompilerObjectCoff.Err
-                          message)
-                        (begin
-                          (cfg
-                            compile-profile
-                            (compiler_driver_core.compiler-driver-profile-finish-phase
-                              (profile_state.compiler-profile-state-shared-view
-                                profile-state)
-                              "render.coff-object"))
-                          (ResultCompilerWindowsBatchArtifact.Err
-                            (compiler-windows-batch-diagnostic
-                              input-path
-                              (str_cat.str-cat
-                                "COFF serialization failed: "
-                                message))))]))]
-                [(CompilerWindowsCoffLinkability.Unavailable category)
-                  (compiler-windows-batch-emit-assembly
-                    backend-state
-                    pools
-                    input-path
-                    program
-                    spans
-                    mode
-                    category
-                    profile-state
-                    typecheck-state)]))]
-          [(compiler_backend.ResultCompilerBackendObject.Err diag)
-            (begin
-              (cfg
-                compile-profile
-                (compiler_driver_core.compiler-driver-profile-finish-phase
-                  (profile_state.compiler-profile-state-shared-view
-                    profile-state)
-                  "backend.object-image"))
-              (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
-                typecheck-state
-                "backend.object-image-error")
-              (ResultCompilerWindowsBatchArtifact.Err
-                (compiler-windows-batch-backend-diagnostic input-path diag)))])))))
+          category
+          profile-state
+          typecheck-state)]
+      [(compiler_backend.CompilerBackendObjectEligibility.Eligible)
+        (begin
+          (cfg
+            compile-profile
+            (compiler_driver_core.compiler-driver-profile-start-phase
+              (profile_state.compiler-profile-state-shared-view profile-state)))
+          (match (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+            backend-state
+            (owned_view.compiler-owned-shared-view pools)
+            (owned_view.compiler-owned-shared-view program)
+            (compiler_backend.CompilerBackendTarget.Windows)
+            mode
+            (owned_view.compiler-owned-shared-view spans)
+            true
+            false
+            (profile_state.compiler-profile-state-shared-view profile-state))
+            [(compiler_backend.ResultCompilerBackendObject.Ok image)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler_driver_core.compiler-driver-profile-finish-phase
+                    (profile_state.compiler-profile-state-shared-view
+                      profile-state)
+                    "backend.object-image"))
+                (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
+                  typecheck-state
+                  "backend.object-image")
+                (match (compiler-windows-coff-linkability
+                  (owned_view.compiler-owned-shared-view image))
+                  [(CompilerWindowsCoffLinkability.Linkable)
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler_driver_core.compiler-driver-profile-start-phase
+                          (profile_state.compiler-profile-state-shared-view
+                            profile-state)))
+                      (match (compiler_object_coff.compiler-object-coff-render
+                        (owned_view.compiler-owned-shared-view image))
+                        [(compiler_object_coff.ResultCompilerObjectCoff.Ok
+                            object)
+                          (begin
+                            (cfg
+                              compile-profile
+                              (compiler_driver_core.compiler-driver-profile-finish-phase
+                                (profile_state.compiler-profile-state-shared-view
+                                  profile-state)
+                                "render.coff-object"))
+                            (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
+                              typecheck-state
+                              "render.coff-object")
+                            (if emit-side-assembly
+                              (match (compiler_object_asm.compiler-object-asm-render
+                                image)
+                                [(compiler_object_asm.ResultCompilerObjectAsm.Ok
+                                    asm)
+                                  (ResultCompilerWindowsBatchArtifact.CoffObject
+                                    object
+                                    (CompilerWindowsBatchSideAssembly.Some asm))]
+                                [(compiler_object_asm.ResultCompilerObjectAsm.Err
+                                    message)
+                                  (ResultCompilerWindowsBatchArtifact.Err
+                                    (compiler-windows-batch-diagnostic
+                                      input-path
+                                      (str_cat.str-cat
+                                        "assembly side artifact rendering failed: "
+                                        message)))])
+                              (ResultCompilerWindowsBatchArtifact.CoffObject
+                                object
+                                CompilerWindowsBatchSideAssembly.None)))]
+                        [(compiler_object_coff.ResultCompilerObjectCoff.Err
+                            message)
+                          (begin
+                            (cfg
+                              compile-profile
+                              (compiler_driver_core.compiler-driver-profile-finish-phase
+                                (profile_state.compiler-profile-state-shared-view
+                                  profile-state)
+                                "render.coff-object"))
+                            (ResultCompilerWindowsBatchArtifact.Err
+                              (compiler-windows-batch-diagnostic
+                                input-path
+                                (str_cat.str-cat
+                                  "COFF serialization failed: "
+                                  message))))]))]
+                  [(CompilerWindowsCoffLinkability.Unavailable category)
+                    (compiler-windows-batch-emit-assembly
+                      backend-state
+                      pools
+                      input-path
+                      program
+                      spans
+                      mode
+                      category
+                      profile-state
+                      typecheck-state)]))]
+            [(compiler_backend.ResultCompilerBackendObject.Err diag)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler_driver_core.compiler-driver-profile-finish-phase
+                    (profile_state.compiler-profile-state-shared-view
+                      profile-state)
+                    "backend.object-image"))
+                (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
+                  typecheck-state
+                  "backend.object-image-error")
+                (ResultCompilerWindowsBatchArtifact.Err
+                  (compiler-windows-batch-backend-diagnostic input-path diag)))]))])))
 
 (define (compiler-windows-batch-emit-lowered
   [backend-state : compiler_backend.CompilerBackendState]

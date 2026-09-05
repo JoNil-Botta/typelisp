@@ -92616,19 +92616,668 @@
           (set! index (+ index 1))))
       true)))
 
+(defenum CompilerBackendObjectAbiContext
+  (Call)
+  (FunctionEntry)
+  (FunctionReturn))
+
+(defenum CompilerBackendObjectAbiReason
+  (UnknownTarget)
+  (UnknownSignature)
+  (ParameterCapacity)
+  (ParameterType)
+  (ArgumentCountMismatch)
+  (ArgumentTypeMismatch)
+  (ResultType)
+  (ResultTypeMismatch)
+  (ResultHomeMismatch)
+  (ReturnType)
+  (ReturnTypeMismatch)
+  (MissingValue)
+  (ValueTypeMismatch))
+
+;; Object-only ordinary-call lowering predates the shared ABI planner. Keep its
+;; diagnostic vocabulary fixed and bounded: no user-controlled symbol text is
+;; copied into a fallback category consumed by batch manifests and drivers.
+(define (compiler-backend-object-unsupported-abi-category
+  [target : CompilerBackendTarget]
+  [context : CompilerBackendObjectAbiContext]
+  [reason : CompilerBackendObjectAbiReason]) : String
+  (match target
+    [(CompilerBackendTarget.Linux)
+      (match context
+        [(CompilerBackendObjectAbiContext.Call)
+          (match reason
+            [(CompilerBackendObjectAbiReason.UnknownTarget)
+              "unsupported-object-abi:linux-x86_64:call:unknown-target"]
+            [(CompilerBackendObjectAbiReason.ParameterCapacity)
+              "unsupported-object-abi:linux-x86_64:call:parameter-capacity"]
+            [(CompilerBackendObjectAbiReason.ParameterType)
+              "unsupported-object-abi:linux-x86_64:call:parameter-type"]
+            [(CompilerBackendObjectAbiReason.ArgumentCountMismatch)
+              "unsupported-object-abi:linux-x86_64:call:argument-count-mismatch"]
+            [(CompilerBackendObjectAbiReason.ArgumentTypeMismatch)
+              "unsupported-object-abi:linux-x86_64:call:argument-type-mismatch"]
+            [(CompilerBackendObjectAbiReason.ResultType)
+              "unsupported-object-abi:linux-x86_64:call:result-type"]
+            [(CompilerBackendObjectAbiReason.ResultTypeMismatch)
+              "unsupported-object-abi:linux-x86_64:call:result-type-mismatch"]
+            [(CompilerBackendObjectAbiReason.ResultHomeMismatch)
+              "unsupported-object-abi:linux-x86_64:call:result-home-mismatch"]
+            [_ "unsupported-object-abi:linux-x86_64:call:unclassified"])]
+        [(CompilerBackendObjectAbiContext.FunctionEntry)
+          (match reason
+            [(CompilerBackendObjectAbiReason.UnknownSignature)
+              "unsupported-object-abi:linux-x86_64:function-entry:unknown-signature"]
+            [(CompilerBackendObjectAbiReason.ParameterCapacity)
+              "unsupported-object-abi:linux-x86_64:function-entry:parameter-capacity"]
+            [(CompilerBackendObjectAbiReason.ParameterType)
+              "unsupported-object-abi:linux-x86_64:function-entry:parameter-type"]
+            [(CompilerBackendObjectAbiReason.ReturnType)
+              "unsupported-object-abi:linux-x86_64:function-entry:return-type"]
+            [(CompilerBackendObjectAbiReason.ReturnTypeMismatch)
+              "unsupported-object-abi:linux-x86_64:function-entry:return-type-mismatch"]
+            [_
+              "unsupported-object-abi:linux-x86_64:function-entry:unclassified"])]
+        [(CompilerBackendObjectAbiContext.FunctionReturn)
+          (match reason
+            [(CompilerBackendObjectAbiReason.MissingValue)
+              "unsupported-object-abi:linux-x86_64:function-return:missing-value"]
+            [(CompilerBackendObjectAbiReason.ValueTypeMismatch)
+              "unsupported-object-abi:linux-x86_64:function-return:value-type-mismatch"]
+            [_
+              "unsupported-object-abi:linux-x86_64:function-return:unclassified"])])]
+    [(CompilerBackendTarget.Windows)
+      (match context
+        [(CompilerBackendObjectAbiContext.Call)
+          (match reason
+            [(CompilerBackendObjectAbiReason.UnknownTarget)
+              "unsupported-object-abi:windows-x86_64:call:unknown-target"]
+            [(CompilerBackendObjectAbiReason.ParameterCapacity)
+              "unsupported-object-abi:windows-x86_64:call:parameter-capacity"]
+            [(CompilerBackendObjectAbiReason.ParameterType)
+              "unsupported-object-abi:windows-x86_64:call:parameter-type"]
+            [(CompilerBackendObjectAbiReason.ArgumentCountMismatch)
+              "unsupported-object-abi:windows-x86_64:call:argument-count-mismatch"]
+            [(CompilerBackendObjectAbiReason.ArgumentTypeMismatch)
+              "unsupported-object-abi:windows-x86_64:call:argument-type-mismatch"]
+            [(CompilerBackendObjectAbiReason.ResultType)
+              "unsupported-object-abi:windows-x86_64:call:result-type"]
+            [(CompilerBackendObjectAbiReason.ResultTypeMismatch)
+              "unsupported-object-abi:windows-x86_64:call:result-type-mismatch"]
+            [(CompilerBackendObjectAbiReason.ResultHomeMismatch)
+              "unsupported-object-abi:windows-x86_64:call:result-home-mismatch"]
+            [_ "unsupported-object-abi:windows-x86_64:call:unclassified"])]
+        [(CompilerBackendObjectAbiContext.FunctionEntry)
+          (match reason
+            [(CompilerBackendObjectAbiReason.UnknownSignature)
+              "unsupported-object-abi:windows-x86_64:function-entry:unknown-signature"]
+            [(CompilerBackendObjectAbiReason.ParameterCapacity)
+              "unsupported-object-abi:windows-x86_64:function-entry:parameter-capacity"]
+            [(CompilerBackendObjectAbiReason.ParameterType)
+              "unsupported-object-abi:windows-x86_64:function-entry:parameter-type"]
+            [(CompilerBackendObjectAbiReason.ReturnType)
+              "unsupported-object-abi:windows-x86_64:function-entry:return-type"]
+            [(CompilerBackendObjectAbiReason.ReturnTypeMismatch)
+              "unsupported-object-abi:windows-x86_64:function-entry:return-type-mismatch"]
+            [_
+              "unsupported-object-abi:windows-x86_64:function-entry:unclassified"])]
+        [(CompilerBackendObjectAbiContext.FunctionReturn)
+          (match reason
+            [(CompilerBackendObjectAbiReason.MissingValue)
+              "unsupported-object-abi:windows-x86_64:function-return:missing-value"]
+            [(CompilerBackendObjectAbiReason.ValueTypeMismatch)
+              "unsupported-object-abi:windows-x86_64:function-return:value-type-mismatch"]
+            [_
+              "unsupported-object-abi:windows-x86_64:function-return:unclassified"])])]))
+
+(define (compiler-backend-object-abi-capacity [target : CompilerBackendTarget]) : i64
+  (match target
+    ;; The legacy ELF object path has no incoming or outgoing stack-argument
+    ;; implementation. Six integer registers are its complete proven subset.
+    [(CompilerBackendTarget.Linux) 6]
+    ;; COFF has a tested positional GP stack path through the eleven-argument
+    ;; NtCreateFile fixture. Do not silently widen that legacy subset here.
+    [(CompilerBackendTarget.Windows) 11]))
+
+(define (compiler-backend-object-abi-type-supported?
+  [ty : compiler_ast_types.AstType]) : bool
+  (compiler-backend-intlike-scalar-type? ty))
+
+(define (compiler-backend-object-abi-integer-type?
+  [ty : compiler_ast_types.AstType]) : bool
+  (match ty
+    [(compiler_ast_types.AstType.I64) true]
+    [(compiler_ast_types.AstType.U64) true]
+    [(compiler_ast_types.AstType.I32) true]
+    [(compiler_ast_types.AstType.U32) true]
+    [(compiler_ast_types.AstType.I16) true]
+    [(compiler_ast_types.AstType.U16) true]
+    [(compiler_ast_types.AstType.I8) true]
+    [(compiler_ast_types.AstType.U8) true]
+    [_ false]))
+
+(define (compiler-backend-object-abi-types-supported?
+  [type-segment-bases : i64]
+  [types : compiler_ast_types.AstTypeList]) : bool
+  (let
+    [index : i64 0]
+    [count : i64 (compiler_ast_types.ast-type-list-len (& types))]
+    (begin
+      (while (< index count)
+        (begin
+          (when
+            (not
+              (compiler-backend-object-abi-type-supported?
+                (compiler_ast_types.ast-type-segment-bases-get
+                  type-segment-bases
+                  (compiler_ast_types.ast-type-list-get
+                    (& types)
+                    index
+                    (compiler_ast_types.ast-type-id-fallback)))))
+            (return false))
+          (set! index (+ index 1))))
+      true)))
+
+(define (compiler-backend-object-abi-param-signature-matches?
+  [type-segment-bases : i64]
+  [params : compiler_ir_types.CompilerIrParamSeq]
+  [types : compiler_ast_types.AstTypeList]) : bool
+  (let
+    [index : i64 0]
+    [count : i64
+      (compiler_ir_types.compiler-ir-param-seq-count
+        (compiler-backend-global-shared-view params))]
+    (if (not (= count (compiler_ast_types.ast-type-list-len (& types))))
+      false
+      (begin
+        (while (< index count)
+          (match (compiler_ir_types.compiler-ir-param-seq-ref
+            (compiler-backend-global-shared-view params)
+            index)
+            [(compiler_ir_types.CompilerIrParam.Param _ ty _)
+              (let
+                [indexed-ty : compiler_ast_types.AstType
+                  (compiler_ast_types.ast-type-segment-bases-get
+                    type-segment-bases
+                    (compiler_ast_types.ast-type-list-get
+                      (& types)
+                      index
+                      (compiler_ast_types.ast-type-id-fallback)))]
+                (when
+                  (or
+                    (not
+                      (compiler-backend-object-abi-type-supported?
+                        (compiler-backend-global-shared-view ty)))
+                    (not
+                      (compiler_optimize.opt-type-eq
+                        type-segment-bases
+                        (compiler-backend-global-shared-view ty)
+                        indexed-ty)))
+                  (return false)))])
+          (set! index (+ index 1)))
+        true))))
+
+(define (compiler-backend-object-abi-value-matches-type?
+  [type-segment-bases : i64]
+  [types : compiler_regalloc.CompilerRegVarTypes]
+  [global-types : CompilerBackendGlobalTypeTable]
+  [value : compiler_ir_types.CompilerIrValue]
+  [expected : compiler_ast_types.AstType]) : bool
+  (match (compiler-backend-global-shared-view value)
+    ;; Integer constants retain one raw IR variant after contextual checking.
+    ;; Their declared integer width is recovered from the callee signature.
+    [(compiler_ir_types.CompilerIrValue.I64 _)
+      (compiler-backend-object-abi-integer-type? expected)]
+    [(compiler_ir_types.CompilerIrValue.Bool _)
+      (match expected
+        [(compiler_ast_types.AstType.Bool) true]
+        [_ false])]
+    [(compiler_ir_types.CompilerIrValue.Char _)
+      (match expected
+        [(compiler_ast_types.AstType.Char) true]
+        [_ false])]
+    [_
+      (match (compiler-backend-value-type types global-types value)
+        [(compiler_regalloc.CompilerRegMaybeType.Some actual)
+          (compiler_optimize.opt-type-eq type-segment-bases actual expected)]
+        [(compiler_regalloc.CompilerRegMaybeType.No) false])]))
+
+(define (compiler-backend-object-call-abi-args-match?
+  [type-segment-bases : i64]
+  [types : compiler_regalloc.CompilerRegVarTypes]
+  [global-types : CompilerBackendGlobalTypeTable]
+  [args : compiler_ir_types.CompilerIrCallArgs]
+  [expected-types : compiler_ast_types.AstTypeList]) : bool
+  (let
+    [index : i64 0]
+    [count : i64
+      (compiler-backend-call-args-count
+        (compiler-backend-global-shared-view args))]
+    (if (not
+      (= count (compiler_ast_types.ast-type-list-len (& expected-types))))
+      false
+      (begin
+        (while (< index count)
+          (let
+            [expected : compiler_ast_types.AstType
+              (compiler_ast_types.ast-type-segment-bases-get
+                type-segment-bases
+                (compiler_ast_types.ast-type-list-get
+                  (& expected-types)
+                  index
+                  (compiler_ast_types.ast-type-id-fallback)))]
+            (when
+              (or
+                (not
+                  (compiler-backend-object-abi-type-supported?
+                    (compiler-backend-global-shared-view expected)))
+                (not
+                  (compiler-backend-object-abi-value-matches-type?
+                    type-segment-bases
+                    (compiler-backend-global-shared-view types)
+                    (compiler-backend-global-shared-view global-types)
+                    (compiler-backend-call-arg-at
+                      (compiler-backend-global-shared-view args)
+                      index)
+                    (compiler-backend-global-shared-view expected))))
+              (return false)))
+          (set! index (+ index 1)))
+        true))))
+
+(define (compiler-backend-object-call-abi-eligibility
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [program-index : CompilerBackendProgramIndex]
+  [types : compiler_regalloc.CompilerRegVarTypes]
+  [global-types : CompilerBackendGlobalTypeTable]
+  [dst : i64]
+  [name : i64]
+  [args : compiler_ir_types.CompilerIrCallArgs]
+  [ret-ty : compiler_ast_types.AstType]) : CompilerBackendObjectEligibility
+  (match (compiler-backend-index-signature program-index name)
+    [(CompilerBackendMaybeSignature.No)
+      (CompilerBackendObjectEligibility.Unsupported
+        (compiler-backend-object-unsupported-abi-category
+          target
+          CompilerBackendObjectAbiContext.Call
+          CompilerBackendObjectAbiReason.UnknownTarget))]
+    [(CompilerBackendMaybeSignature.Some expected-types expected-ret)
+      (let
+        [count : i64
+          (compiler-backend-call-args-count
+            (compiler-backend-global-shared-view args))]
+        [dst-matches : bool
+          (match (compiler_regalloc.compiler-reg-var-types-lookup
+            (compiler-backend-global-shared-view types)
+            dst)
+            [(compiler_regalloc.CompilerRegMaybeType.Some dst-ty)
+              (compiler_optimize.opt-type-eq
+                type-segment-bases
+                dst-ty
+                (compiler-backend-global-shared-view ret-ty))]
+            [(compiler_regalloc.CompilerRegMaybeType.No) false])]
+        (cond
+          [(> count (compiler-backend-object-abi-capacity target))
+            (CompilerBackendObjectEligibility.Unsupported
+              (compiler-backend-object-unsupported-abi-category
+                target
+                CompilerBackendObjectAbiContext.Call
+                CompilerBackendObjectAbiReason.ParameterCapacity))]
+          [(not
+              (=
+                count
+                (compiler_ast_types.ast-type-list-len (& expected-types))))
+            (CompilerBackendObjectEligibility.Unsupported
+              (compiler-backend-object-unsupported-abi-category
+                target
+                CompilerBackendObjectAbiContext.Call
+                CompilerBackendObjectAbiReason.ArgumentCountMismatch))]
+          [(or
+              (not
+                (compiler-backend-object-abi-type-supported?
+                  (compiler-backend-global-shared-view expected-ret)))
+              (not
+                (compiler-backend-object-abi-type-supported?
+                  (compiler-backend-global-shared-view ret-ty))))
+            (CompilerBackendObjectEligibility.Unsupported
+              (compiler-backend-object-unsupported-abi-category
+                target
+                CompilerBackendObjectAbiContext.Call
+                CompilerBackendObjectAbiReason.ResultType))]
+          [(not
+              (compiler_optimize.opt-type-eq
+                type-segment-bases
+                (compiler-backend-global-shared-view expected-ret)
+                (compiler-backend-global-shared-view ret-ty)))
+            (CompilerBackendObjectEligibility.Unsupported
+              (compiler-backend-object-unsupported-abi-category
+                target
+                CompilerBackendObjectAbiContext.Call
+                CompilerBackendObjectAbiReason.ResultTypeMismatch))]
+          [(not dst-matches)
+            (CompilerBackendObjectEligibility.Unsupported
+              (compiler-backend-object-unsupported-abi-category
+                target
+                CompilerBackendObjectAbiContext.Call
+                CompilerBackendObjectAbiReason.ResultHomeMismatch))]
+          [(not
+              (compiler-backend-object-abi-types-supported?
+                type-segment-bases
+                (compiler-backend-global-shared-view expected-types)))
+            (CompilerBackendObjectEligibility.Unsupported
+              (compiler-backend-object-unsupported-abi-category
+                target
+                CompilerBackendObjectAbiContext.Call
+                CompilerBackendObjectAbiReason.ParameterType))]
+          [(not
+              (compiler-backend-object-call-abi-args-match?
+                type-segment-bases
+                (compiler-backend-global-shared-view types)
+                (compiler-backend-global-shared-view global-types)
+                (compiler-backend-global-shared-view args)
+                (compiler-backend-global-shared-view expected-types)))
+            (CompilerBackendObjectEligibility.Unsupported
+              (compiler-backend-object-unsupported-abi-category
+                target
+                CompilerBackendObjectAbiContext.Call
+                CompilerBackendObjectAbiReason.ArgumentTypeMismatch))]
+          [else CompilerBackendObjectEligibility.Eligible]))]))
+
+(define (compiler-backend-object-instr-abi-eligibility
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [program-index : CompilerBackendProgramIndex]
+  [types : compiler_regalloc.CompilerRegVarTypes]
+  [global-types : CompilerBackendGlobalTypeTable]
+  [function-ret : compiler_ast_types.AstType]
+  [instr : compiler_ir_types.CompilerIrInstr]) : CompilerBackendObjectEligibility
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Call dst name args ret-ty)
+      (compiler-backend-object-call-abi-eligibility
+        type-segment-bases
+        target
+        program-index
+        types
+        global-types
+        dst
+        name
+        args
+        ret-ty)]
+    [(compiler_ir_types.CompilerIrInstr.Return maybe)
+      (match maybe
+        [(compiler_ir_types.CompilerIrMaybeValue.No)
+          (CompilerBackendObjectEligibility.Unsupported
+            (compiler-backend-object-unsupported-abi-category
+              target
+              CompilerBackendObjectAbiContext.FunctionReturn
+              CompilerBackendObjectAbiReason.MissingValue))]
+        [(compiler_ir_types.CompilerIrMaybeValue.Some value)
+          (if (compiler-backend-object-abi-value-matches-type?
+            type-segment-bases
+            types
+            global-types
+            value
+            function-ret)
+            CompilerBackendObjectEligibility.Eligible
+            (CompilerBackendObjectEligibility.Unsupported
+              (compiler-backend-object-unsupported-abi-category
+                target
+                CompilerBackendObjectAbiContext.FunctionReturn
+                CompilerBackendObjectAbiReason.ValueTypeMismatch)))])]
+    [_ CompilerBackendObjectEligibility.Eligible]))
+
+(define (compiler-backend-object-instrs-abi-eligibility
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [program-index : CompilerBackendProgramIndex]
+  [types : compiler_regalloc.CompilerRegVarTypes]
+  [global-types : CompilerBackendGlobalTypeTable]
+  [function-ret : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : CompilerBackendObjectEligibility
+  (let
+    [index : i64 0]
+    [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+    (begin
+      (while (< index count)
+        (match (compiler-backend-object-instr-abi-eligibility
+          type-segment-bases
+          target
+          (compiler-backend-global-shared-view program-index)
+          (compiler-backend-global-shared-view types)
+          (compiler-backend-global-shared-view global-types)
+          (compiler-backend-global-shared-view function-ret)
+          (compiler_ir_types.compiler-ir-instr-seq-ref
+            (compiler-backend-global-shared-view instrs)
+            index))
+          [(CompilerBackendObjectEligibility.Eligible) (set! index (+ index 1))]
+          [(CompilerBackendObjectEligibility.Unsupported category)
+            (return (CompilerBackendObjectEligibility.Unsupported category))]))
+      CompilerBackendObjectEligibility.Eligible)))
+
+(define (compiler-backend-object-blocks-abi-eligibility
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [program-index : CompilerBackendProgramIndex]
+  [types : compiler_regalloc.CompilerRegVarTypes]
+  [global-types : CompilerBackendGlobalTypeTable]
+  [function-ret : compiler_ast_types.AstType]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : CompilerBackendObjectEligibility
+  (let
+    [cursor : compiler_ir_types.CompilerIrBlockList blocks]
+    (begin
+      (while true
+        (match cursor
+          [(compiler_ir_types.CompilerIrBlockList.Nil)
+            (return CompilerBackendObjectEligibility.Eligible)]
+          [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+            (match block
+              [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+                (match (compiler-backend-object-instrs-abi-eligibility
+                  type-segment-bases
+                  target
+                  (compiler-backend-global-shared-view program-index)
+                  (compiler-backend-global-shared-view types)
+                  (compiler-backend-global-shared-view global-types)
+                  (compiler-backend-global-shared-view function-ret)
+                  instrs)
+                  [(CompilerBackendObjectEligibility.Eligible)
+                    (set!
+                      cursor
+                      (compiler_ir_types.compiler-ir-box-shared-view rest))]
+                  [(CompilerBackendObjectEligibility.Unsupported category)
+                    (return
+                      (CompilerBackendObjectEligibility.Unsupported category))])])]
+          [(compiler_ir_types.CompilerIrBlockList.Array seq)
+            (let
+              [index : i64 0]
+              [count : i64
+                (compiler_ir_types.compiler-ir-block-seq-count
+                  (compiler-backend-global-shared-view seq))]
+              (begin
+                (while (< index count)
+                  (match (compiler_ir_types.compiler-ir-block-seq-ref
+                    (compiler-backend-global-shared-view seq)
+                    index)
+                    [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+                      (match (compiler-backend-object-instrs-abi-eligibility
+                        type-segment-bases
+                        target
+                        (compiler-backend-global-shared-view program-index)
+                        (compiler-backend-global-shared-view types)
+                        (compiler-backend-global-shared-view global-types)
+                        (compiler-backend-global-shared-view function-ret)
+                        instrs)
+                        [(CompilerBackendObjectEligibility.Eligible)
+                          (set! index (+ index 1))]
+                        [(CompilerBackendObjectEligibility.Unsupported category)
+                          (return
+                            (CompilerBackendObjectEligibility.Unsupported
+                              category))])]))
+                (return CompilerBackendObjectEligibility.Eligible)))]))
+      CompilerBackendObjectEligibility.Eligible)))
+
+(define (compiler-backend-object-function-abi-eligibility
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [program-index : CompilerBackendProgramIndex]
+  [global-types : CompilerBackendGlobalTypeTable]
+  [func : compiler_ir_types.CompilerIrFunction]) : CompilerBackendObjectEligibility
+  (match (compiler-backend-global-shared-view func)
+    [(compiler_ir_types.CompilerIrFunction.Function name params ret-ty _ blocks)
+      (if (compiler-backend-stdlib-runtime-function-name?
+        (compiler-backend-symbol-text-index
+          (compiler-backend-global-shared-view program-index)
+          name))
+        CompilerBackendObjectEligibility.Eligible
+        (match (compiler-backend-index-function-signature
+          (compiler-backend-global-shared-view program-index)
+          name)
+          [(CompilerBackendMaybeSignature.No)
+            (CompilerBackendObjectEligibility.Unsupported
+              (compiler-backend-object-unsupported-abi-category
+                target
+                CompilerBackendObjectAbiContext.FunctionEntry
+                CompilerBackendObjectAbiReason.UnknownSignature))]
+          [(CompilerBackendMaybeSignature.Some indexed-params indexed-ret)
+            (cond
+              [(> params.len (compiler-backend-object-abi-capacity target))
+                (CompilerBackendObjectEligibility.Unsupported
+                  (compiler-backend-object-unsupported-abi-category
+                    target
+                    CompilerBackendObjectAbiContext.FunctionEntry
+                    CompilerBackendObjectAbiReason.ParameterCapacity))]
+              [(not
+                  (compiler-backend-object-abi-param-signature-matches?
+                    type-segment-bases
+                    (compiler-backend-global-shared-view params)
+                    indexed-params))
+                (CompilerBackendObjectEligibility.Unsupported
+                  (compiler-backend-object-unsupported-abi-category
+                    target
+                    CompilerBackendObjectAbiContext.FunctionEntry
+                    CompilerBackendObjectAbiReason.ParameterType))]
+              [(or
+                  (not
+                    (compiler-backend-object-abi-type-supported?
+                      (compiler-backend-global-shared-view ret-ty)))
+                  (not
+                    (compiler-backend-object-abi-type-supported?
+                      (compiler-backend-global-shared-view indexed-ret))))
+                (CompilerBackendObjectEligibility.Unsupported
+                  (compiler-backend-object-unsupported-abi-category
+                    target
+                    CompilerBackendObjectAbiContext.FunctionEntry
+                    CompilerBackendObjectAbiReason.ReturnType))]
+              [(not
+                  (compiler_optimize.opt-type-eq
+                    type-segment-bases
+                    (compiler-backend-global-shared-view ret-ty)
+                    (compiler-backend-global-shared-view indexed-ret)))
+                (CompilerBackendObjectEligibility.Unsupported
+                  (compiler-backend-object-unsupported-abi-category
+                    target
+                    CompilerBackendObjectAbiContext.FunctionEntry
+                    CompilerBackendObjectAbiReason.ReturnTypeMismatch))]
+              [else
+                (let
+                  [types : compiler_regalloc.CompilerRegVarTypes
+                    (compiler_regalloc.compiler-reg-function-var-types-with-representations-and-metrics
+                      (compiler-backend-global-shared-view func)
+                      (compiler-backend-global-shared-view
+                        program-index.representations)
+                      (compiler-backend-state-metrics
+                        program-index.backend-state))]
+                  (compiler-backend-object-blocks-abi-eligibility
+                    type-segment-bases
+                    target
+                    (compiler-backend-global-shared-view program-index)
+                    types
+                    global-types
+                    (compiler-backend-global-shared-view ret-ty)
+                    blocks))])]))]))
+
+(define (compiler-backend-object-functions-abi-eligibility
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [program-index : CompilerBackendProgramIndex]
+  [global-types : CompilerBackendGlobalTypeTable]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : CompilerBackendObjectEligibility
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index functions.len)
+        (match (compiler-backend-object-function-abi-eligibility
+          type-segment-bases
+          target
+          (compiler-backend-global-shared-view program-index)
+          (compiler-backend-global-shared-view global-types)
+          (compiler-backend-global-array-element-shared-view
+            functions.slots
+            index))
+          [(CompilerBackendObjectEligibility.Eligible) (set! index (+ index 1))]
+          [(CompilerBackendObjectEligibility.Unsupported category)
+            (return (CompilerBackendObjectEligibility.Unsupported category))]))
+      CompilerBackendObjectEligibility.Eligible)))
+
 (define (compiler-backend-object-program-eligibility
   [backend-state : CompilerBackendState]
+  [target : CompilerBackendTarget]
+  [program-index : CompilerBackendProgramIndex]
   [program : compiler_ir_types.CompilerIrProgram]) : CompilerBackendObjectEligibility
   (match program
     [(compiler_ir_types.CompilerIrProgram.Program globals functions _)
-      (if (and
-        (compiler-backend-object-globals-semantically-supported? globals)
-        (compiler-backend-object-functions-semantically-supported?
-          backend-state
-          functions))
-        CompilerBackendObjectEligibility.Eligible
+      (if (not
+        (and
+          (compiler-backend-object-globals-semantically-supported?
+            (compiler-backend-global-shared-view globals))
+          (compiler-backend-object-functions-semantically-supported?
+            backend-state
+            (compiler-backend-global-shared-view functions))))
         (CompilerBackendObjectEligibility.Unsupported
-          (compiler-backend-object-unsupported-semantics-category)))]))
+          (compiler-backend-object-unsupported-semantics-category))
+        (compiler-backend-object-functions-abi-eligibility
+          program-index.type-segment-bases
+          target
+          (compiler-backend-global-shared-view program-index)
+          (compiler-backend-global-types
+            (compiler-backend-global-shared-view globals))
+          (compiler-backend-global-shared-view functions)))]))
+
+(define (compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+  [backend-state : CompilerBackendState]
+  [type-segment-bases : i64]
+  [program : compiler_ir_types.CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [profile-state : profile_state.CompilerProfileState]) : CompilerBackendObjectEligibility
+  (match (compiler-backend-global-shared-view program)
+    [(compiler_ir_types.CompilerIrProgram.Program _ functions externs)
+      (let
+        [program-index : CompilerBackendProgramIndex
+          (compiler-backend-program-index-build-with-backend-state-and-profile-state
+            backend-state
+            type-segment-bases
+            functions
+            externs
+            profile-state)]
+        (compiler-backend-object-program-eligibility
+          backend-state
+          target
+          program-index
+          (compiler-backend-global-shared-view program)))]))
+
+(define (compiler-backend-object-program-eligibility-with-pools-and-profile-state
+  [backend-state : CompilerBackendState]
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [program : compiler_ir_types.CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [profile-state : profile_state.CompilerProfileState]) : CompilerBackendObjectEligibility
+  (compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+    backend-state
+    (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)
+    program
+    target
+    profile-state))
 
 (define (compiler-backend-emit-program-object-image-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-prepared-backend-state
   [backend-state : CompilerBackendState]

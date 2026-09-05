@@ -1660,15 +1660,21 @@
         (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     (and
-      (match (compiler_backend.compiler-backend-object-program-eligibility
+      (match (compiler_backend.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
         backend-state
-        empty-program)
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        empty-program
+        (compiler_backend.CompilerBackendTarget.Linux)
+        (profile_state.compiler-profile-state-new))
         [(compiler_backend.CompilerBackendObjectEligibility.Eligible) true]
         [(compiler_backend.CompilerBackendObjectEligibility.Unsupported _)
           false])
-      (match (compiler_backend.compiler-backend-object-program-eligibility
+      (match (compiler_backend.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
         backend-state
-        runtime-global-program)
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        runtime-global-program
+        (compiler_backend.CompilerBackendTarget.Linux)
+        (profile_state.compiler-profile-state-new))
         [(compiler_backend.CompilerBackendObjectEligibility.Eligible) false]
         [(compiler_backend.CompilerBackendObjectEligibility.Unsupported
             category)
@@ -1719,6 +1725,287 @@
               (compiler_ir_types.CompilerIrValue.I64 1)
               0))))
       (compiler-backend-object-scalar-unop-eligibility-ok? backend-state))))
+
+(define (compiler-backend-object-source-eligibility
+  [source : String]
+  [target : compiler_backend.CompilerBackendTarget]) : compiler_backend.CompilerBackendObjectEligibility
+  (match (compiler_lower.lower-compiler-source source)
+    [(compiler_lower.ResultCompilerLower.Err _)
+      (compiler_backend.CompilerBackendObjectEligibility.Unsupported
+        "test-lowering-failed")]
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (let
+        [backend-state : compiler_backend.CompilerBackendState
+          (compiler_backend.compiler-backend-state-new
+            (ci.intern-compat-state-capture-active))]
+        (compiler_backend.compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
+          backend-state
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          program
+          target
+          (profile_state.compiler-profile-state-new)))]))
+
+(define (compiler-backend-object-source-category?
+  [source : String]
+  [target : compiler_backend.CompilerBackendTarget]
+  [expected : String]) : bool
+  (match (compiler-backend-object-source-eligibility source target)
+    [(compiler_backend.CompilerBackendObjectEligibility.Eligible) false]
+    [(compiler_backend.CompilerBackendObjectEligibility.Unsupported category)
+      (string.eq category expected)]))
+
+(define (compiler-backend-object-source-eligible?
+  [source : String]
+  [target : compiler_backend.CompilerBackendTarget]) : bool
+  (match (compiler-backend-object-source-eligibility source target)
+    [(compiler_backend.CompilerBackendObjectEligibility.Eligible) true]
+    [(compiler_backend.CompilerBackendObjectEligibility.Unsupported _) false]))
+
+(define (compiler-backend-object-test-call-owner
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (ci.intern "object_abi_test_caller")
+    (compiler_ir_types.compiler-ir-param-seq-empty)
+    (compiler_ast_types.AstType.I64)
+    1
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        instrs)
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (compiler-backend-object-test-call-category?
+  [index : compiler_backend.CompilerBackendProgramIndex]
+  [owner : compiler_ir_types.CompilerIrFunction]
+  [name : i64]
+  [args : compiler_ir_types.CompilerIrCallArgs]
+  [ret-ty : compiler_ast_types.AstType]
+  [expected : String]) : bool
+  (match (compiler_backend.compiler-backend-object-call-abi-eligibility
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_backend.CompilerBackendTarget.Linux)
+    index
+    (compiler_regalloc.compiler-reg-function-var-types owner)
+    compiler_backend.CompilerBackendGlobalTypeTable.Empty
+    0
+    name
+    args
+    ret-ty)
+    [(compiler_backend.CompilerBackendObjectEligibility.Eligible) false]
+    [(compiler_backend.CompilerBackendObjectEligibility.Unsupported category)
+      (string.eq category expected)]))
+
+(define (compiler-backend-object-corrupt-call-abi-eligibility-ok?) : bool
+  (let
+    [bool-param-name : i64 (ci.intern "object_abi_bool_param")]
+    [bool-result-name : i64 (ci.intern "object_abi_bool_result")]
+    [missing-name : i64 (ci.intern "object_abi_missing")]
+    [bool-param-function : compiler_ir_types.CompilerIrFunction
+      (compiler_ir_types.CompilerIrFunction.Function
+        bool-param-name
+        (compiler_ir_types.compiler-ir-param-seq-prepend
+          (compiler_ir_types.CompilerIrParam.Param
+            "value"
+            (compiler_ast_types.AstType.Bool)
+            0)
+          (compiler_ir_types.compiler-ir-param-seq-empty))
+        (compiler_ast_types.AstType.I64)
+        1
+        compiler_ir_types.CompilerIrBlockList.Nil)]
+    [bool-result-function : compiler_ir_types.CompilerIrFunction
+      (compiler_ir_types.CompilerIrFunction.Function
+        bool-result-name
+        (compiler_ir_types.compiler-ir-param-seq-empty)
+        (compiler_ast_types.AstType.Bool)
+        0
+        compiler_ir_types.CompilerIrBlockList.Nil)]
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        bool-param-function
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          bool-result-function
+          (compiler_ir_types.compiler-ir-function-seq-empty)))]
+    [index : compiler_backend.CompilerBackendProgramIndex
+      (compiler_backend.compiler-backend-program-index-build
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        functions
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
+    [unknown-owner : compiler_ir_types.CompilerIrFunction
+      (compiler-backend-object-test-call-owner
+        (compiler-backend-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Call
+            0
+            missing-name
+            compiler_ir_types.CompilerIrCallArgs.Nil
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-seq-empty)))]
+    [argument-owner : compiler_ir_types.CompilerIrFunction
+      (compiler-backend-object-test-call-owner
+        (compiler-backend-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Call
+            0
+            bool-param-name
+            (compiler_ir_types.CompilerIrCallArgs.One
+              (compiler_ir_types.CompilerIrValue.I64 1))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-seq-empty)))]
+    [count-owner : compiler_ir_types.CompilerIrFunction
+      (compiler-backend-object-test-call-owner
+        (compiler-backend-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Call
+            0
+            bool-param-name
+            compiler_ir_types.CompilerIrCallArgs.Nil
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-seq-empty)))]
+    [result-owner : compiler_ir_types.CompilerIrFunction
+      (compiler-backend-object-test-call-owner
+        (compiler-backend-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Call
+            0
+            bool-param-name
+            (compiler_ir_types.CompilerIrCallArgs.One
+              (compiler_ir_types.CompilerIrValue.Bool true))
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.compiler-ir-instr-seq-empty)))]
+    [home-owner : compiler_ir_types.CompilerIrFunction
+      (compiler-backend-object-test-call-owner
+        (compiler-backend-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Call
+            0
+            bool-result-name
+            compiler_ir_types.CompilerIrCallArgs.Nil
+            (compiler_ast_types.AstType.Bool))
+          (compiler-backend-test-instr-seq-prepend
+            (compiler_ir_types.CompilerIrInstr.Mov
+              0
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-seq-empty))))]
+    (and
+      (compiler-backend-object-test-call-category?
+        (owned_view.compiler-owned-shared-view index)
+        unknown-owner
+        missing-name
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        (compiler_ast_types.AstType.I64)
+        "unsupported-object-abi:linux-x86_64:call:unknown-target")
+      (compiler-backend-object-test-call-category?
+        (owned_view.compiler-owned-shared-view index)
+        argument-owner
+        bool-param-name
+        (compiler_ir_types.CompilerIrCallArgs.One
+          (compiler_ir_types.CompilerIrValue.I64 1))
+        (compiler_ast_types.AstType.I64)
+        "unsupported-object-abi:linux-x86_64:call:argument-type-mismatch")
+      (compiler-backend-object-test-call-category?
+        (owned_view.compiler-owned-shared-view index)
+        count-owner
+        bool-param-name
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        (compiler_ast_types.AstType.I64)
+        "unsupported-object-abi:linux-x86_64:call:argument-count-mismatch")
+      (compiler-backend-object-test-call-category?
+        (owned_view.compiler-owned-shared-view index)
+        result-owner
+        bool-param-name
+        (compiler_ir_types.CompilerIrCallArgs.One
+          (compiler_ir_types.CompilerIrValue.Bool true))
+        (compiler_ast_types.AstType.Bool)
+        "unsupported-object-abi:linux-x86_64:call:result-type-mismatch")
+      (compiler-backend-object-test-call-category?
+        (owned_view.compiler-owned-shared-view index)
+        home-owner
+        bool-result-name
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        (compiler_ast_types.AstType.Bool)
+        "unsupported-object-abi:linux-x86_64:call:result-home-mismatch"))))
+
+(define (compiler-backend-object-ordinary-abi-eligibility-ok?) : bool
+  (let
+    [linux : compiler_backend.CompilerBackendTarget
+      (compiler_backend.CompilerBackendTarget.Linux)]
+    [windows : compiler_backend.CompilerBackendTarget
+      (compiler_backend.CompilerBackendTarget.Windows)]
+    [seven-parameter-source : String
+      "(define (seven [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64] [g : i64]) : i64 g)
+(define (main) : i64 (seven 1 2 3 4 5 6 42))"]
+    [seven-argument-extern-source : String
+      "(extern (wide [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64] [g : i64]) : i64 (:symbol \"wide\"))
+(define (main) : i64 (wide 1 2 3 4 5 6 42))"]
+    [float-argument-source : String
+      "(extern (take-float [value : f64]) : i64 (:symbol \"take_float\"))
+(define (main) : i64 (take-float 1.0))"]
+    [mixed-argument-source : String
+      "(extern (take-mixed [left : i64] [middle : f64] [right : i64]) : i64 (:symbol \"take_mixed\"))
+(define (main) : i64 (take-mixed 1 2.0 3))"]
+    [float-result-source : String
+      "(extern (give-float) : f64 (:symbol \"give_float\"))
+(define (main) : i64 (let [ignored : f64 (give-float)] 42))"]
+    [float-return-source : String
+      "(define (give-float) : f64 1.0)
+(define (main) : i64 42)"]
+    [unit-return-source : String
+      "(define (do-nothing) : unit unit)
+(define (main) : i64 42)"]
+    [six-gp-source : String
+      "(extern (six [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64]) : i64 (:symbol \"six\"))
+(define (main) : i64 (six 1 2 3 4 5 42))"]
+    [eleven-gp-source : String
+      "(extern (eleven [a0 : i64] [a1 : i64] [a2 : i64] [a3 : i64] [a4 : i64] [a5 : i64] [a6 : i64] [a7 : i64] [a8 : i64] [a9 : i64] [a10 : i64]) : i64 (:symbol \"eleven\"))
+(define (main) : i64 (eleven 0 1 2 3 4 5 6 7 8 9 42))"]
+    (and
+      (compiler-backend-object-source-category?
+        seven-parameter-source
+        linux
+        "unsupported-object-abi:linux-x86_64:function-entry:parameter-capacity")
+      (compiler-backend-object-source-category?
+        seven-argument-extern-source
+        linux
+        "unsupported-object-abi:linux-x86_64:call:parameter-capacity")
+      (compiler-backend-object-source-category?
+        (owned_view.compiler-owned-shared-view float-argument-source)
+        linux
+        "unsupported-object-abi:linux-x86_64:call:parameter-type")
+      (compiler-backend-object-source-category?
+        mixed-argument-source
+        linux
+        "unsupported-object-abi:linux-x86_64:call:parameter-type")
+      (compiler-backend-object-source-category?
+        (owned_view.compiler-owned-shared-view float-argument-source)
+        windows
+        "unsupported-object-abi:windows-x86_64:call:parameter-type")
+      (compiler-backend-object-source-category?
+        float-result-source
+        linux
+        "unsupported-object-abi:linux-x86_64:call:result-type")
+      (compiler-backend-object-source-category?
+        float-return-source
+        linux
+        "unsupported-object-abi:linux-x86_64:function-entry:return-type")
+      (compiler-backend-object-source-category?
+        unit-return-source
+        linux
+        "unsupported-object-abi:linux-x86_64:function-entry:return-type")
+      (compiler-backend-object-source-eligible? six-gp-source linux)
+      ;; This pins both the four register positions and the seven already
+      ;; proven Win64 GP stack positions used by the direct COFF path.
+      (compiler-backend-object-source-eligible? eleven-gp-source windows)
+      (compiler-backend-object-corrupt-call-abi-eligibility-ok?)
+      (compiler_backend.backend-and4
+        (not
+          (compiler_backend.compiler-backend-object-abi-type-supported?
+            (compiler_ast_types.AstType.F64)))
+        (not
+          (compiler_backend.compiler-backend-object-abi-type-supported?
+            (compiler_ast_types.AstType.Unit)))
+        (not
+          (compiler_backend.compiler-backend-object-abi-type-supported?
+            (compiler_ast_types.AstType.String)))
+        (not
+          (compiler_backend.compiler-backend-object-abi-type-supported?
+            (compiler_ast_types.AstType.Struct
+              (ci.intern "object_abi_aggregate"))))))))
 
 (define (compiler-backend-object-image-source) : String
   "(extern (foreign-call [arg0 : i64]) : i64 (:abi c) (:symbol \"foreign_exact\"))
@@ -57487,7 +57774,9 @@ b_keep:
         (compiler-backend-runtime-leaf-user-symbol-ok?)
         (compiler-backend-program-index-id-maps-ok?)
         (compiler-backend-program-index-explicit-extern-ids-ok?)))
-    (compiler-backend-object-semantic-eligibility-ok?)
+    (and
+      (compiler-backend-object-semantic-eligibility-ok?)
+      (compiler-backend-object-ordinary-abi-eligibility-ok?))
     (compiler-backend-placement-ok?))
     42
     (io.panic "backend: smoke output mismatch")))

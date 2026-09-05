@@ -52992,75 +52992,78 @@ g:
         [(compiler_backend.ResultCompilerBackend.Err _) false]))
     true))
 
-;; A dynamic GEP store with a spilled base stages even a register-homed index.
-;; If the plan borrows a live-through home for that index copy, consuming the
-;; index plan must arm preservation before the address is composed.
-(define (compiler-backend-gep-store-arms-planned-index-preserve-ok?) : bool
-  (cfg
-    scratch-vreg
-    (let
-      [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
-        (__tl_make-array compiler_regalloc.CompilerRegScratchAssignment 1)]
-      [firsts : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-      [slots : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-      [_plan-init : unit
-        (begin
-          (set!
-            (array-ref items 0)
-            (compiler_regalloc.CompilerRegScratchAssignment
-              (compiler_regalloc.CompilerRegScratchRequirement
-                0
-                0
-                (compiler_regalloc.CompilerRegScratchRole.MemoryIndex)
-                (compiler_regalloc.CompilerRegScratchConstraint
-                  (compiler_regalloc.CompilerRegScratchClass.Gp)
-                  (compiler_regalloc.compiler-reg-id-seq-empty)
-                  (compiler_regalloc.compiler-reg-id-seq-empty)
-                  compiler_abi.compiler-reg-id-invalid)
-                0
-                1
-                2)
-              true
-              false
-              compiler_abi.compiler-reg-id-rdi))
-          (set! (array-ref firsts 0) 0)
-          (set! (array-ref slots 0) 1))]
-      [plan : compiler_regalloc.CompilerRegScratchPlan
-        (compiler_regalloc.CompilerRegScratchPlan items firsts slots)]
-      [index : compiler_backend.CompilerBackendProgramIndex
-        (compiler_backend.compiler-backend-program-index-build
-          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          (compiler_ir_types.compiler-ir-function-seq-empty)
-          (compiler_ir_types.compiler-ir-extern-seq-empty))]
-      [backend-state : compiler_backend.CompilerBackendState
-        index.backend-state]
-      [assignments : compiler_regalloc.CompilerRegAssignmentTable
+;; A dynamic GEP store with a spilled base. SCR-1: a register-homed index at
+;; a SIB-encodable scale is read straight from its home -- the store reads the
+;; index and writes only memory -- so the planned index register is never
+;; consumed, no live-through home is borrowed for it and nothing is armed for
+;; preservation: `movq %rsi, (%r10,%rax,8)` with no copy of %rax into %rdi and
+;; no XMM park around the store. A SPILLED index still stages through the
+;; planned register, and that is where the fixture's original claim holds: if
+;; the plan borrows a live-through home for the index copy, consuming the index
+;; plan must arm preservation before the address is composed.
+(define (compiler-backend-gep-store-planned-index-emit
+  [index-location : compiler_regalloc.CompilerRegLocation]) : String
+  (let
+    [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
+      (__tl_make-array compiler_regalloc.CompilerRegScratchAssignment 1)]
+    [firsts : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [slots : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [_plan-init : unit
+      (begin
+        (set!
+          (array-ref items 0)
+          (compiler_regalloc.CompilerRegScratchAssignment
+            (compiler_regalloc.CompilerRegScratchRequirement
+              0
+              0
+              (compiler_regalloc.CompilerRegScratchRole.MemoryIndex)
+              (compiler_regalloc.CompilerRegScratchConstraint
+                (compiler_regalloc.CompilerRegScratchClass.Gp)
+                (compiler_regalloc.compiler-reg-id-seq-empty)
+                (compiler_regalloc.compiler-reg-id-seq-empty)
+                compiler_abi.compiler-reg-id-invalid)
+              0
+              1
+              2)
+            true
+            false
+            compiler_abi.compiler-reg-id-rdi))
+        (set! (array-ref firsts 0) 0)
+        (set! (array-ref slots 0) 1))]
+    [plan : compiler_regalloc.CompilerRegScratchPlan
+      (compiler_regalloc.CompilerRegScratchPlan items firsts slots)]
+    [index : compiler_backend.CompilerBackendProgramIndex
+      (compiler_backend.compiler-backend-program-index-build
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-function-seq-empty)
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
+    [backend-state : compiler_backend.CompilerBackendState index.backend-state]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Spill 0))
         (compiler_regalloc.compiler-reg-assignments-prepend
-          (compiler_regalloc.CompilerRegAssignment
-            0
-            (compiler_regalloc.CompilerRegLocation.Spill 0))
+          (compiler_regalloc.CompilerRegAssignment 1 index-location)
           (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
-              1
+              2
               (compiler_regalloc.CompilerRegLocation.Register
-                compiler_abi.compiler-reg-id-rax))
-            (compiler_regalloc.compiler-reg-assignments-prepend
-              (compiler_regalloc.CompilerRegAssignment
-                2
-                (compiler_regalloc.CompilerRegLocation.Register
-                  compiler_abi.compiler-reg-id-rsi))
-              (compiler_regalloc.compiler-reg-assignment-table-empty))))]
-      [function-state : compiler_backend.CompilerBackendFunctionState
-        (compiler_backend.compiler-backend-state-function-state backend-state)]
-      [_slot : unit
-        (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
-          function-state
-          -64)]
-      [planned : String
-        (compiler_backend.compiler-backend-scratch-plan-register-here
-          plan
-          0
-          backend-state)]
+                compiler_abi.compiler-reg-id-rsi))
+            (compiler_regalloc.compiler-reg-assignment-table-empty))))]
+    [function-state : compiler_backend.CompilerBackendFunctionState
+      (compiler_backend.compiler-backend-state-function-state backend-state)]
+    [_slot : unit
+      (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+        function-state
+        -64)]
+    [planned : String
+      (compiler_backend.compiler-backend-scratch-plan-register-here
+        plan
+        0
+        backend-state)]
+    (if (not (string.eq (owned_view.compiler-owned-shared-view planned) "%rdi"))
+      ""
       (match (compiler_backend.compiler-backend-emit-store-to-gep
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         assignments
@@ -53076,26 +53079,49 @@ g:
         ""
         backend-state)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
-          (let
-            [wrapped : String
-              (compiler_backend.compiler-backend-emergency-wrap
-                asm
-                backend-state)]
-            (and
-              (string.eq (owned_view.compiler-owned-shared-view planned) "%rdi")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view wrapped)
-                "    movq %rdi, %xmm4\n")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view wrapped)
-                "    movq %rax, %rdi\n")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view wrapped)
-                "    movq %rsi, (%r10,%rdi,8)\n")
-              (compiler_backend.compiler-backend-string-contains?
-                (owned_view.compiler-owned-shared-view wrapped)
-                "    movq %xmm4, %rdi\n")))]
-        [(compiler_backend.ResultCompilerBackend.Err _) false]))
+          (compiler_backend.compiler-backend-emergency-wrap asm backend-state)]
+        [(compiler_backend.ResultCompilerBackend.Err _) ""]))))
+
+(define (compiler-backend-gep-store-arms-planned-index-preserve-ok?) : bool
+  (cfg
+    scratch-vreg
+    (and
+      ;; SCR-1: the resident index is read in place; the planned register is
+      ;; untouched and nothing is parked.
+      (let
+        [wrapped : String
+          (compiler-backend-gep-store-planned-index-emit
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-rax))]
+        (and
+          (not (string.eq (owned_view.compiler-owned-shared-view wrapped) ""))
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view wrapped)
+            "    movq %rsi, (%r10,%rax,8)\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view wrapped)
+              "    movq %rax, %rdi\n"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view wrapped)
+              "%xmm4"))))
+      ;; A spilled index stages through the planned register, and consuming
+      ;; that plan arms the preservation of the live-through home it borrowed.
+      (let
+        [wrapped : String
+          (compiler-backend-gep-store-planned-index-emit
+            (compiler_regalloc.CompilerRegLocation.Spill 8))]
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view wrapped)
+            "    movq %rdi, %xmm4\n")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view wrapped)
+            "    movq %rsi, (%r10,%rdi,8)\n")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view wrapped)
+            "    movq %xmm4, %rdi\n"))))
     true))
 
 ;; BoundsCheck is unusual among scalar emitters: it stages only operands that

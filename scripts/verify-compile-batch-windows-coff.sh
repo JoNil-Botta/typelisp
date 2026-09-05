@@ -170,6 +170,13 @@ cat > "$NT_OPEN_FILE_SOURCE" <<'EOF'
     (win-nt-open-file 0 0 0 0 0 0)
     42))
 EOF
+FLOAT_POSITION_SOURCE="$WORKDIR/float_position.tl"
+cat > "$FLOAT_POSITION_SOURCE" <<'EOF'
+(extern (win-take-float [value : f64]) : i64 (:symbol "TakeFloat"))
+
+(define (main) : i64
+  (win-take-float 42.0))
+EOF
 
 write_differential_rows() {
     _name=$1
@@ -187,6 +194,7 @@ write_differential_rows string_record_extent tests/integration/string_record_ext
 write_differential_rows allowed_external "$ALLOWED_EXTERN_SOURCE"
 write_differential_rows nt_create_file "$NT_CREATE_FILE_SOURCE"
 write_differential_rows nt_open_file "$NT_OPEN_FILE_SOURCE"
+write_differential_rows float_position "$FLOAT_POSITION_SOURCE"
 write_differential_rows runtime_trap tests/integration/div_zero_trap.tl
 write_differential_rows wide_immediate tests/integration/integer_literal_boundary_matrix.tl
 write_differential_rows branch_phi_switch tests/integration/enum_match.tl
@@ -238,6 +246,10 @@ printf '%s|assembly|%s/%s.direct.s|unsupported-external-relocation\n' \
     "$NT_OPEN_FILE_SOURCE" "$WORKDIR" nt_open_file >> "$DIFFERENTIAL_EXPECTED"
 printf '%s|assembly|%s/%s.forced.s|forced-assembly\n' \
     "$NT_OPEN_FILE_SOURCE" "$WORKDIR" nt_open_file >> "$DIFFERENTIAL_EXPECTED"
+printf '%s|assembly|%s/%s.direct.s|unsupported-object-abi:windows-x86_64:call\n' \
+    "$FLOAT_POSITION_SOURCE" "$WORKDIR" float_position >> "$DIFFERENTIAL_EXPECTED"
+printf '%s|assembly|%s/%s.forced.s|forced-assembly\n' \
+    "$FLOAT_POSITION_SOURCE" "$WORKDIR" float_position >> "$DIFFERENTIAL_EXPECTED"
 write_fallback_differential_expected runtime_trap tests/integration/div_zero_trap.tl
 write_fallback_differential_expected wide_immediate tests/integration/integer_literal_boundary_matrix.tl
 write_fallback_differential_expected branch_phi_switch tests/integration/enum_match.tl
@@ -261,7 +273,7 @@ for differential_case in ordinary string_data string_record_extent \
     [ ! -e "$WORKDIR/$differential_case.forced-unused.obj" ] ||
         fail "differential forced row wrote an object: $differential_case"
 done
-for differential_case in nt_open_file runtime_trap wide_immediate branch_phi_switch \
+for differential_case in nt_open_file float_position runtime_trap wide_immediate branch_phi_switch \
     tail_call register_group pointer_copy bounds_check string_match \
     u64_float_casts; do
     [ -s "$WORKDIR/$differential_case.direct.s" ] ||

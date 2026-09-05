@@ -203,6 +203,10 @@ Inline stdlib coverage:
   MINSTD sequences, bounded draws, invalid bounds, list/array/vector
   weighted-index edge cases, zero-weight skipping, storage parity, stable picks
   for fixed seeds, and system-seed result payloads.
+- `crypto_rsa_core_api.tl` covers checked signed/unsigned public-key inputs,
+  exact-width representative boundaries, all four bounded limb classes,
+  maximal carry chains, and independently generated modular-exponentiation
+  fixtures for 2048-, 3072-, 4096-, and 8192-bit public moduli.
 - `crypto_random.tl` owns inline tests for zero-length no-call behavior,
   bounded chunk completion, partial writes, interruption retry/exhaustion,
   impossible partial results, injected missing-library/missing-symbol/exact

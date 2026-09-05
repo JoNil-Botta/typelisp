@@ -1292,6 +1292,36 @@
   [index : i64]) : CompilerIrPhiInput
   (compiler-ir-array-shared-view inputs.slots (+ inputs.start index)))
 
+;; Copy the visible inputs, preserving values and order while moving one edge.
+;; A single allocation avoids the quadratic copying of recursive prepend.
+(define (compiler-ir-phi-input-seq-relabel
+  [inputs : CompilerIrPhiInputSeq]
+  [from-label : i64]
+  [to-label : i64]) : CompilerIrPhiInputSeq
+  (if (<= inputs.len 0)
+    (compiler-ir-phi-input-seq-empty)
+    (let
+      [slots : (__tl_dyn-array CompilerIrPhiInput)
+        (__tl_make-array CompilerIrPhiInput inputs.len)]
+      [index : i64 0]
+      (begin
+        (while (< index inputs.len)
+          (let
+            [input : CompilerIrPhiInput
+              (compiler-ir-phi-input-seq-ref
+                (compiler-ir-global-shared-view inputs)
+                index)]
+            (begin
+              (set!
+                (array-ref slots index)
+                (CompilerIrPhiInput
+                  input.value
+                  (if (= input.label from-label)
+                    to-label
+                    input.label)))
+              (set! index (+ index 1)))))
+        (CompilerIrPhiInputSeq slots 0 inputs.len)))))
+
 (define (compiler-ir-switch-case-seq-empty) : CompilerIrSwitchCaseSeq
   (CompilerIrSwitchCaseSeq (__tl_make-array CompilerIrSwitchCase 0) 0))
 

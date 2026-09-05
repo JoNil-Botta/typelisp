@@ -1164,6 +1164,28 @@
 (define (compiler-reg-set-rbp-pool-enabled! [on : bool]) : unit
   (set! compiler-reg-rbp-pool-enabled on))
 
+;; SCR-1: keep one volatile register out of the GREEDY pool so the late scratch
+;; planner always finds it free. A memory operand whose base the greedy left in
+;; a frame slot needs a scratch to reload through; when every pool register is
+;; live at that point the planner BORROWS one and the backend brackets the
+;; group with a save and a restore (compiler-reg-scratch-assign-preserved-items!,
+;; the backend's park), which turns a one-instruction reload into three to five
+;; -- in a loop whose residents were hoisted there precisely because they are
+;; hot. Reserving %r11 costs at most one more spilled value, which is one
+;; reload per use. The flag is per function, decided by
+;; compiler-reg-scratch-reserve-rewrite-function on the measured plan and reset
+;; by the backend before every function, so every other planning path keeps the
+;; full pool; the scratch pools themselves (compiler-reg-scratch-default-pool)
+;; read the unreserved pool, which is the whole point.
+(define compiler-reg-scratch-reserve-enabled : bool
+  false)
+
+(define (compiler-reg-set-scratch-reserve-enabled! [on : bool]) : unit
+  (set! compiler-reg-scratch-reserve-enabled on))
+
+(define (compiler-reg-scratch-reserve-register) : i64
+  cabi.compiler-reg-id-r11)
+
 ;; ---------------------------------------------------------------------------
 ;; RG-1: the allocator's home tracer (`--trace-passes`).
 ;;
@@ -1999,6 +2021,22 @@
       (compiler-reg-var-type-array-set! present types dst ty)]
     [(ir.CompilerIrInstr.Word dst _ _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
+    ;; SEL-1. A SCALAR select (`lanes` 0, the if-conversion result) defines a
+    ;; plain typed value like the Mov/BinOp it replaced, and it was the one
+    ;; scalar def this table did not record. Without a type the value is not
+    ;; register-eligible and cannot coalesce with the phi it feeds, so every
+    ;; if-converted loop carry -- `running = max(running, end)` spelled as
+    ;; `cmov` -- was homed on the stack: `cmovg %rsi, %r12; movq %r12, -40(%rsp)`
+    ;; and `movq -40(%rsp), %r11` on the back edge, four instructions where the
+    ;; cmov alone would do. Vector selects keep their own (vector) tables.
+    [(ir.CompilerIrInstr.Select payload-box)
+      (let
+        [dst (compiler-reg-box-field-shared-view payload-box dst)]
+        [lanes (compiler-reg-box-field-shared-view payload-box lanes)]
+        [ty (compiler-reg-box-field-shared-view payload-box ty)]
+        (if (= lanes 0)
+          (compiler-reg-var-type-array-set! present types dst ty)
+          unit))]
     [_ unit]))
 
 (define (compiler-reg-instr-seq-types-array!
@@ -13177,6 +13215,436 @@
           (compiler-reg-global-shared-view depths))
         depths))))
 
+;; --- FREQ-1: block weights = the depth ladder times a static path share --
+;;
+;; The ladder above weighs every block of a loop alike, so a value referenced
+;; once in each of nine dispatch arms outranks the loop counter referenced
+;; three times per iteration, and the counter is what ends up on the stack:
+;; sccp_lattice's `sccp-process-instr-seq-from` keeps `row` and `last` in
+;; memory across 3.9M iterations (`addq $1, 496(%rsp)`, `cmpq %r8, 496(%rsp)`)
+;; while `dst`, `ty`, `ty2` and `b` -- each read in a fraction of the arms --
+;; hold four of the six callee-saved registers. The ranking note at
+;; compiler-reg-greedy-first-evictable names the cure: a RANKING change
+;; against how often a block actually runs.
+;;
+;; This is LLVM's static block frequency reduced to the one heuristic that
+;; matters here: within a loop body, a block runs its predecessor's share
+;; divided among the predecessor's successors that stay in the loop. Loop
+;; EXITS are not in that divisor and take the same share as their siblings --
+;; an exit block runs once per loop entry, the same currency as the block
+;; that entered the loop, and the depth ladder already stands one step lower
+;; there -- so a plain `while` header does not halve its own body. Back edges
+;; are excluded (the ladder carries the trip count); a loop entered from a
+;; conditional arm inherits that arm's share, so an inner loop's blocks weigh
+;; the ladder's 2x times how often the loop is reached, not 2x flat.
+;;
+;; The share is a fixed-point fraction of compiler-reg-block-frequency-scale,
+;; propagated in reverse postorder from the entry, so it is exact for a DAG
+;; and deterministic for anything else; a block the entry cannot reach keeps
+;; the floor of 1. Every function with no conditional control flow weighs
+;; exactly as before, scaled by a constant, so its allocation is unchanged;
+;; what moves is the ranking inside bodies with arms.
+(define (compiler-reg-block-frequency-scale) : i64
+  1024)
+
+;; The share is a property of the EMITTED allocation, not of the checked
+;; inline tier's measurements. That tier prices a candidate by running this
+;; allocator on a standalone plan of each side and reading the plan in its own
+;; depth-weighted currency (opt-inline-checked-alloc-cost), and its accept
+;; window and cap were calibrated against plans ranked by the ladder alone;
+;; ranking those plans by share moves the verdicts it was measured on --
+;; `it-slice-eq?` out of `it-bench` for intern_table +57.1M, `ssa-candidate?`
+;; and `ssa-instr-next` left standing for ssa_construct +67.2M -- while the
+;; allocation itself is what this ranking exists to improve. So the tier
+;; switches the share off around its plans and every other plan reads it.
+(define compiler-reg-block-weights-frequency? : bool
+  true)
+
+(define (compiler-reg-block-weights-set-frequency! [on : bool]) : unit
+  (set! compiler-reg-block-weights-frequency? on))
+
+(define (compiler-reg-block-weights-frequency-current?) : bool
+  compiler-reg-block-weights-frequency?)
+
+;; Iterative DFS from block 0 over the successor CSR: `post` receives the
+;; postorder, `edge-back` marks (1) every edge that closed on a block still on
+;; the stack. Returns the number of blocks visited.
+(define (compiler-reg-block-frequency-dfs!
+  [count : i64]
+  [succ-offsets : (__tl_dyn-array i64)]
+  [succ-targets : (__tl_dyn-array i64)]
+  [state : (__tl_dyn-array i64)]
+  [stack-node : (__tl_dyn-array i64)]
+  [stack-edge : (__tl_dyn-array i64)]
+  [edge-back : (__tl_dyn-array i64)]
+  [post : (__tl_dyn-array i64)]) : i64
+  (let
+    [visited : i64 0]
+    [depth : i64 1]
+    (begin
+      (if (< count 1)
+        unit
+        (begin
+          (set! (array-ref state 0) 1)
+          (set! (array-ref stack-node 0) 0)
+          (set! (array-ref stack-edge 0) (array-ref succ-offsets 0))
+          (while (> depth 0)
+            (let
+              [top : i64 (- depth 1)]
+              [block : i64 (array-ref stack-node top)]
+              [edge : i64 (array-ref stack-edge top)]
+              (if (< edge (array-ref succ-offsets (+ block 1)))
+                (begin
+                  (set! (array-ref stack-edge top) (+ edge 1))
+                  (let
+                    [target : i64 (array-ref succ-targets edge)]
+                    (if (>= target 0)
+                      (cond
+                        [(= (array-ref state target) 0)
+                          (begin
+                            (set! (array-ref state target) 1)
+                            (set! (array-ref stack-node depth) target)
+                            (set!
+                              (array-ref stack-edge depth)
+                              (array-ref succ-offsets target))
+                            (set! depth (+ depth 1)))]
+                        [(= (array-ref state target) 1)
+                          (set! (array-ref edge-back edge) 1)]
+                        [else unit])
+                      unit)))
+                (begin
+                  (set! (array-ref state block) 2)
+                  (set! (array-ref post visited) block)
+                  (set! visited (+ visited 1))
+                  (set! depth (- depth 1))))))))
+      visited)))
+
+;; The forward successors of `block` that stay at its loop depth or enter a
+;; deeper loop: the divisor of its share.
+(define (compiler-reg-block-frequency-fanout
+  [block : i64]
+  [succ-offsets : (__tl_dyn-array i64)]
+  [succ-targets : (__tl_dyn-array i64)]
+  [edge-back : (__tl_dyn-array i64)]
+  [depths : (__tl_dyn-array i64)]) : i64
+  (let
+    [edge : i64 (array-ref succ-offsets block)]
+    [end : i64 (array-ref succ-offsets (+ block 1))]
+    [fanout : i64 0]
+    (begin
+      (while (< edge end)
+        (begin
+          (let
+            [target : i64 (array-ref succ-targets edge)]
+            (if (and
+              (>= target 0)
+              (= (array-ref edge-back edge) 0)
+              (>= (array-ref depths target) (array-ref depths block)))
+              (set! fanout (+ fanout 1))
+              unit))
+          (set! edge (+ edge 1))))
+      fanout)))
+
+(define (compiler-reg-block-frequencies!
+  [visited : i64]
+  [post : (__tl_dyn-array i64)]
+  [succ-offsets : (__tl_dyn-array i64)]
+  [succ-targets : (__tl_dyn-array i64)]
+  [edge-back : (__tl_dyn-array i64)]
+  [depths : (__tl_dyn-array i64)]
+  [splits : (__tl_dyn-array i64)]
+  [inner-header : (__tl_dyn-array i64)]
+  [sum-in : (__tl_dyn-array i64)]
+  [max-in : (__tl_dyn-array i64)]
+  [share : (__tl_dyn-array i64)]) : unit
+  (let
+    [index : i64 visited]
+    (begin
+      (if (> visited 0)
+        (set! (array-ref max-in 0) (compiler-reg-block-frequency-scale))
+        unit)
+      (while (> index 0)
+        (begin
+          (set! index (- index 1))
+          (let
+            [block : i64 (array-ref post index)]
+            [reached : i64
+              (if (> (array-ref sum-in block) (array-ref max-in block))
+                (array-ref sum-in block)
+                (array-ref max-in block))]
+            ;; FREQ-3: no block runs more often per iteration than the header
+            ;; of its innermost loop (the entry, at depth 0), so what the
+            ;; arms add back up to is capped there.
+            [ceiling : i64
+              (let
+                [header : i64 (array-ref inner-header block)]
+                (if (and (>= header 0) (not (= header block)))
+                  (array-ref share header)
+                  (compiler-reg-block-frequency-scale)))]
+            [have : i64
+              (if (> reached ceiling)
+                ceiling
+                reached)]
+            [_own : unit (set! (array-ref share block) have)]
+            (if (<= have 0)
+              unit
+              (let
+                [split? : bool (= (array-ref splits block) 1)]
+                [fanout : i64
+                  (if split?
+                    (compiler-reg-block-frequency-fanout
+                      block
+                      (compiler-reg-global-shared-view succ-offsets)
+                      (compiler-reg-global-shared-view succ-targets)
+                      (compiler-reg-global-shared-view edge-back)
+                      (compiler-reg-global-shared-view depths))
+                    1)]
+                [part : i64
+                  (/
+                    have
+                    (if (< fanout 1)
+                      1
+                      fanout))]
+                [edge : i64 (array-ref succ-offsets block)]
+                [end : i64 (array-ref succ-offsets (+ block 1))]
+                (while (< edge end)
+                  (begin
+                    (let
+                      [target : i64 (array-ref succ-targets edge)]
+                      (if (and (>= target 0) (= (array-ref edge-back edge) 0))
+                        ;; FREQ-3: an edge INTO a deeper loop carries the whole
+                        ;; share whatever the arm it leaves from took -- a loop
+                        ;; reached from a dispatch arm iterates once entered,
+                        ;; and the ladder prices its iterations against the
+                        ;; arm's one visit. A split edge that stays at the
+                        ;; arm's depth takes its part.
+                        (if (and
+                          split?
+                          (<=
+                            (array-ref depths target)
+                            (array-ref depths block)))
+                          (set!
+                            (array-ref sum-in target)
+                            (+ (array-ref sum-in target) part))
+                          (let
+                            [carry : i64
+                              (if split?
+                                have
+                                part)]
+                            (if (> carry (array-ref max-in target))
+                              (set! (array-ref max-in target) carry)
+                              unit)))
+                        unit))
+                    (set! edge (+ edge 1))))))))))))
+
+;; FREQ-3: the innermost loop header of every block, -1 outside every loop.
+;; Read off the nest's member lists: a block inside several loops takes the
+;; deepest header's.
+(define (compiler-reg-block-frequency-inner-headers!
+  [nest : CompilerRegLoopNest]
+  [depths : (__tl_dyn-array i64)]
+  [inner-header : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64 (array-length inner-header)]
+    [members : (__tl_dyn-array i64)
+      (compiler-reg-global-shared-view nest.members)]
+    [headers : i64 nest.header-count]
+    [index : i64 0]
+    [generation : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set! (array-ref inner-header index) (- 0 1))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index headers)
+        (begin
+          (let
+            [header : i64 (array-ref nest.headers index)]
+            [total : i64 0]
+            [member : i64 0]
+            (begin
+              (set! generation (+ generation 1))
+              (set!
+                total
+                (compiler-reg-loop-nest-header-members!
+                  (compiler-reg-global-shared-view nest)
+                  header
+                  generation))
+              (set! (array-ref inner-header header) header)
+              (while (< member total)
+                (begin
+                  (let
+                    [block : i64 (array-ref members member)]
+                    [current : i64 (array-ref inner-header block)]
+                    (if (or
+                      (< current 0)
+                      (> (array-ref depths header) (array-ref depths current)))
+                      (set! (array-ref inner-header block) header)
+                      unit))
+                  (set! member (+ member 1))))))
+          (set! index (+ index 1)))))))
+
+;; FREQ-2: which blocks SPLIT their share. A Switch (and a total enum switch)
+;; dispatches to one of N arms, so each arm takes 1/N and the arms add back up
+;; at their join; a two-way Branch does not split -- both arms carry the whole
+;; share and their join takes the larger of what reaches it. The first model
+;; halved every `if` arm too, and that is measured wrong across the corpus
+;; (+150M net over 23 rows, ssa_construct +51.7M, opt_bytecode_vm +48.0M,
+;; regalloc_greedy +43.0M): the `if` arms of a hot loop body are where the
+;; body's work is and run on most iterations, while a nine-way dispatch's arm
+;; really does run about one iteration in nine.
+;; FREQ-3: a function with no dispatch block weighs the ladder alone, exactly
+;; as before. The shares would scale every one of its weights by the same
+;; constant, and the greedy's tie key (compiler-reg-greedy-combine-spill-
+;; weights: `r * span / (max + 1)`) is not scale-invariant, so the constant
+;; alone re-decided ties in switch-free loops for cfg_domloops +12.6M and
+;; ssa_construct +14.7M with nothing in the ranking changed.
+(define (compiler-reg-block-frequency-any-split?
+  [splits : (__tl_dyn-array i64)]) : bool
+  (let
+    [index : i64 0]
+    [found? : bool false]
+    (begin
+      (while (and (not found?) (< index (array-length splits)))
+        (begin
+          (if (= (array-ref splits index) 1)
+            (set! found? true)
+            unit)
+          (set! index (+ index 1))))
+      found?)))
+
+(define (compiler-reg-block-frequency-splits!
+  [seq : ir.CompilerIrBlockSeq]
+  [splits : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64
+      (ir.compiler-ir-block-seq-count (compiler-reg-global-shared-view seq))]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (match (ir.compiler-ir-block-seq-ref
+          (compiler-reg-global-shared-view seq)
+          index)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (let
+              [len : i64
+                (ir.compiler-ir-instr-seq-count
+                  (compiler-reg-global-shared-view instrs))]
+              (if (<= len 0)
+                unit
+                (match (ir.compiler-ir-instr-seq-ref instrs (- len 1))
+                  [(ir.CompilerIrInstr.Switch _ _ _ _)
+                    (set! (array-ref splits index) 1)]
+                  [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _)
+                    (set! (array-ref splits index) 1)]
+                  [_ unit])))])
+        (set! index (+ index 1))))))
+
+;; One weight per block: the depth ladder times the block's share, floored at
+;; the ladder's own value so no reference weighs less than it did.
+(define (compiler-reg-function-block-weights [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array
+    i64)
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (live.compiler-live-ir-block-list-to-seq blocks)]
+    [count : i64
+      (ir.compiler-ir-block-seq-count (compiler-reg-global-shared-view seq))]
+    [weights : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    (if (< count 1)
+      weights
+      (let
+        [depths : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [inner-header : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [nest : CompilerRegLoopNest
+          (compiler-reg-loop-nest-build-seq
+            (compiler-reg-global-shared-view seq))]
+        [_depths : unit
+          (compiler-reg-loop-nest-depths!
+            (compiler-reg-global-shared-view nest)
+            (compiler-reg-global-shared-view depths))]
+        [_inner : unit
+          (compiler-reg-block-frequency-inner-headers!
+            (compiler-reg-global-shared-view nest)
+            (compiler-reg-global-shared-view depths)
+            (compiler-reg-global-shared-view inner-header))]
+        [ids : reg_label_i64_map.Map
+          (compiler-reg-loop-depth-block-ids-seq
+            (compiler-reg-global-shared-view seq)
+            (reg_label_i64_map.with-capacity
+              (compiler-reg-bits-map-capacity count))
+            0)]
+        [succ-bound : i64
+          (compiler-reg-loop-nest-succ-bound
+            (compiler-reg-global-shared-view seq))]
+        [succ-offsets : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+        [succ-targets : (__tl_dyn-array i64)
+          (__tl_make-array i64 (+ succ-bound 1))]
+        [edge-back : (__tl_dyn-array i64)
+          (__tl_make-array i64 (+ succ-bound 1))]
+        [state : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [stack-node : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+        [stack-edge : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+        [post : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [share : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [splits : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [sum-in : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [max-in : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [_splits : unit
+          (compiler-reg-block-frequency-splits!
+            (compiler-reg-global-shared-view seq)
+            (compiler-reg-global-shared-view splits))]
+        [ladder-only? : bool
+          (or
+            (not compiler-reg-block-weights-frequency?)
+            (not
+              (compiler-reg-block-frequency-any-split?
+                (compiler-reg-global-shared-view splits))))]
+        [_succ : bool
+          (compiler-reg-loop-nest-fill-succ!
+            (compiler-reg-global-shared-view seq)
+            ids
+            (compiler-reg-global-shared-view succ-offsets)
+            (compiler-reg-global-shared-view succ-targets))]
+        [visited : i64
+          (compiler-reg-block-frequency-dfs!
+            count
+            (compiler-reg-global-shared-view succ-offsets)
+            (compiler-reg-global-shared-view succ-targets)
+            (compiler-reg-global-shared-view state)
+            (compiler-reg-global-shared-view stack-node)
+            (compiler-reg-global-shared-view stack-edge)
+            (compiler-reg-global-shared-view edge-back)
+            (compiler-reg-global-shared-view post))]
+        [_shares : unit
+          (compiler-reg-block-frequencies!
+            visited
+            (compiler-reg-global-shared-view post)
+            (compiler-reg-global-shared-view succ-offsets)
+            (compiler-reg-global-shared-view succ-targets)
+            (compiler-reg-global-shared-view edge-back)
+            (compiler-reg-global-shared-view depths)
+            (compiler-reg-global-shared-view splits)
+            (compiler-reg-global-shared-view inner-header)
+            (compiler-reg-global-shared-view sum-in)
+            (compiler-reg-global-shared-view max-in)
+            (compiler-reg-global-shared-view share))]
+        [block : i64 0]
+        (begin
+          (while (< block count)
+            (begin
+              (set!
+                (array-ref weights block)
+                (if ladder-only?
+                  (compiler-reg-loop-depth-weight (array-ref depths block))
+                  (*
+                    (compiler-reg-loop-depth-weight (array-ref depths block))
+                    (if (< (array-ref share block) 1)
+                      1
+                      (array-ref share block)))))
+              (set! block (+ block 1))))
+          weights)))))
+
 (define (compiler-reg-ref-counts-add-var-weighted!
   [counts : (__tl_dyn-array i64)]
   [var : i64]
@@ -13500,7 +13968,7 @@
 (define (compiler-reg-ref-counts-blocks-weighted!
   [counts : (__tl_dyn-array i64)]
   [blocks : ir.CompilerIrBlockList]
-  [depths : (__tl_dyn-array i64)]
+  [weights : (__tl_dyn-array i64)]
   [block-index : i64]) : unit
   (match blocks
     [(ir.CompilerIrBlockList.Nil) unit]
@@ -13511,11 +13979,11 @@
             (compiler-reg-ref-counts-seq-weighted!
               (compiler-reg-global-shared-view counts)
               instrs
-              (compiler-reg-loop-depth-weight (array-ref depths block-index)))])
+              (array-ref weights block-index))])
         (compiler-reg-ref-counts-blocks-weighted!
           counts
           (compiler-reg-box-shared-view rest)
-          depths
+          weights
           (+ block-index 1)))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
@@ -13532,7 +14000,7 @@
                 (compiler-reg-ref-counts-seq-weighted!
                   (compiler-reg-global-shared-view counts)
                   instrs
-                  (compiler-reg-loop-depth-weight (array-ref depths index)))])
+                  (array-ref weights index))])
             (set! index (+ index 1))
             (set! i (+ i 1)))))]))
 
@@ -14830,7 +15298,7 @@
   [def-status : (__tl_dyn-array i64)]
   [rebates : (__tl_dyn-array i64)]
   [blocks : ir.CompilerIrBlockList]
-  [depths : (__tl_dyn-array i64)]
+  [weights : (__tl_dyn-array i64)]
   [block-index : i64]
   [allow-invariant-loads : bool]) : unit
   (match blocks
@@ -14844,14 +15312,14 @@
               (compiler-reg-global-shared-view def-status)
               (compiler-reg-global-shared-view rebates)
               instrs
-              (compiler-reg-loop-depth-weight (array-ref depths block-index))
+              (array-ref weights block-index)
               allow-invariant-loads)])
         (compiler-reg-ref-counts-blocks-weighted-remat!
           counts
           def-status
           rebates
           (compiler-reg-box-shared-view rest)
-          depths
+          weights
           (+ block-index 1)
           allow-invariant-loads))]
     [(ir.CompilerIrBlockList.Array seq)
@@ -14871,7 +15339,7 @@
                   (compiler-reg-global-shared-view def-status)
                   (compiler-reg-global-shared-view rebates)
                   instrs
-                  (compiler-reg-loop-depth-weight (array-ref depths index))
+                  (array-ref weights index)
                   allow-invariant-loads)])
             (set! index (+ index 1))
             (set! i (+ i 1)))))]))
@@ -15160,7 +15628,7 @@
 (define (compiler-reg-foldable-rebate-blocks!
   [rebates : (__tl_dyn-array i64)]
   [blocks : ir.CompilerIrBlockList]
-  [depths : (__tl_dyn-array i64)]
+  [weights : (__tl_dyn-array i64)]
   [block-index : i64]) : unit
   (match blocks
     [(ir.CompilerIrBlockList.Nil) unit]
@@ -15171,11 +15639,11 @@
             (compiler-reg-foldable-rebate-seq!
               (compiler-reg-global-shared-view rebates)
               instrs
-              (compiler-reg-loop-depth-weight (array-ref depths block-index)))])
+              (array-ref weights block-index))])
         (compiler-reg-foldable-rebate-blocks!
           (compiler-reg-global-shared-view rebates)
           (compiler-reg-box-shared-view rest)
-          depths
+          weights
           (+ block-index 1)))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
@@ -15189,7 +15657,7 @@
                 (compiler-reg-foldable-rebate-seq!
                   (compiler-reg-global-shared-view rebates)
                   instrs
-                  (compiler-reg-loop-depth-weight (array-ref depths index)))])
+                  (array-ref weights index))])
             (set! index (+ index 1))
             (set! i (+ i 1)))))]))
 
@@ -15216,7 +15684,7 @@
 
 (define (compiler-reg-function-foldable-rebates
   [blocks : ir.CompilerIrBlockList]
-  [depths : (__tl_dyn-array i64)]
+  [weights : (__tl_dyn-array i64)]
   [vars : i64]) : (__tl_dyn-array i64)
   (let
     [rebates : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
@@ -15224,7 +15692,7 @@
       (compiler-reg-foldable-rebate-blocks!
         (compiler-reg-global-shared-view rebates)
         blocks
-        depths
+        weights
         0)
       rebates)))
 
@@ -15234,14 +15702,14 @@
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
       (let
         [counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-        [depths : (__tl_dyn-array i64)
-          (compiler-reg-function-loop-depths
+        [weights : (__tl_dyn-array i64)
+          (compiler-reg-function-block-weights
             (compiler-reg-global-shared-view blocks))]
         (begin
           (compiler-reg-ref-counts-blocks-weighted!
             (compiler-reg-global-shared-view counts)
             blocks
-            depths
+            weights
             0)
           counts))]))
 
@@ -15255,8 +15723,8 @@
         [raw : (__tl_dyn-array i64) (__tl_make-array i64 fn-vars)]
         [def-status : (__tl_dyn-array i64) (__tl_make-array i64 fn-vars)]
         [rebates : (__tl_dyn-array i64) (__tl_make-array i64 fn-vars)]
-        [depths : (__tl_dyn-array i64)
-          (compiler-reg-function-loop-depths
+        [weights : (__tl_dyn-array i64)
+          (compiler-reg-function-block-weights
             (compiler-reg-global-shared-view blocks))]
         [allow-invariant-loads : bool
           (compiler-reg-remat-invariant-loads-ok? func)]
@@ -15266,7 +15734,7 @@
             (compiler-reg-global-shared-view def-status)
             (compiler-reg-global-shared-view rebates)
             blocks
-            depths
+            weights
             0
             allow-invariant-loads)
           (let
@@ -35030,12 +35498,32 @@
 
 (define (compiler-reg-greedy-caller-saved-count-for-abi
   [target-abi : cabi.CompilerRegTargetAbi]) : i64
-  (match target-abi
-    [(cabi.CompilerRegTargetAbi.Linux) (compiler-reg-greedy-caller-saved-count)]
-    [(cabi.CompilerRegTargetAbi.Windows)
-      ;; The optional %rbp is appended to the nonvolatile suffix and must not
-      ;; move this boundary.
-      (cabi.compiler-abi-caller-saved-gp-register-count target-abi)]))
+  (-
+    (match target-abi
+      [(cabi.CompilerRegTargetAbi.Linux)
+        (compiler-reg-greedy-caller-saved-count)]
+      [(cabi.CompilerRegTargetAbi.Windows)
+        ;; The optional %rbp is appended to the nonvolatile suffix and must not
+        ;; move this boundary.
+        (cabi.compiler-abi-caller-saved-gp-register-count target-abi)])
+    ;; SCR-1: the reserved register is volatile on both ABIs, so reserving it
+    ;; shortens the caller-saved prefix by one.
+    (if compiler-reg-scratch-reserve-enabled
+      1
+      0)))
+
+;; SCR-1: the pool the greedy COLORS with. The same as the ABI pool unless the
+;; function reserved its scratch register, which then leaves the pool; every
+;; scratch pool keeps reading compiler-reg-greedy-integer-pool-for-abi.
+(define (compiler-reg-greedy-coloring-pool-for-abi
+  [target-abi : cabi.CompilerRegTargetAbi]) : CompilerRegIdSeq
+  (if compiler-reg-scratch-reserve-enabled
+    (compiler-reg-id-seq-without
+      (compiler-reg-greedy-integer-pool-for-abi target-abi)
+      (compiler-reg-id-seq-prepend
+        (compiler-reg-scratch-reserve-register)
+        (compiler-reg-id-seq-empty)))
+    (compiler-reg-greedy-integer-pool-for-abi target-abi)))
 
 ;; Clobber-span test: must var's value SURVIVE any clobber-point?
 ;; (The clobber-span half of the old per-register zero-call gate, sans the
@@ -35485,7 +35973,7 @@
     [prefs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [parents : (__tl_dyn-array i64) coalesce.parents]
     [pool : CompilerRegIdSeq
-      (compiler-reg-greedy-integer-pool-for-abi target-abi)]
+      (compiler-reg-greedy-coloring-pool-for-abi target-abi)]
     (begin
       (compiler-reg-fill-i64-array (compiler-reg-global-shared-view prefs) -1)
       (match func
@@ -38415,7 +38903,7 @@
       (if allow-caller-saved-zero-call
         (compiler-reg-greedy-state
           (compiler-reg-global-shared-view integer-candidates)
-          (compiler-reg-greedy-integer-pool-for-abi target-abi)
+          (compiler-reg-greedy-coloring-pool-for-abi target-abi)
           (compiler-reg-global-shared-view prepass-assignments)
           (compiler-reg-global-shared-view eff-index)
           (compiler-reg-global-shared-view group-vars)
@@ -38490,7 +38978,7 @@
           (compiler-reg-global-shared-view scratch-input-assignments))
         (compiler-reg-greedy-state-with-scratch-exclusions
           (compiler-reg-global-shared-view scratch-candidates)
-          (compiler-reg-greedy-integer-pool-for-abi target-abi)
+          (compiler-reg-greedy-coloring-pool-for-abi target-abi)
           (compiler-reg-global-shared-view scratch-input-assignments)
           (compiler-reg-global-shared-view allocation-index)
           (compiler-reg-global-shared-view group-vars)
@@ -51292,6 +51780,433 @@
       (compiler-reg-plan-types (compiler-reg-global-shared-view plan)))
     plan
     vars))
+
+;; ---------------------------------------------------------------------------
+;; SCR-1: the scratch-reserve round.
+;;
+;; What the backend BORROWS, priced. An instruction that must stage a spilled
+;; operand -- a memory operation whose address or value the plan left in a frame
+;; slot -- asks the scavenger (compiler-backend-scavenge-reg) for a register free
+;; over the window [point, point + 16]: one no register-homed value's interval
+;; covers, and a callee-saved one only when the plan already saves it. When
+;; nothing is free the backend takes one anyway and brackets the group with a
+;; save and a restore (compiler-backend-emergency-wrap): two instructions per
+;; staged operand, per execution, priced here at the block's loop weight like
+;; every other term the replan rounds compare. The occupancy is read off the
+;; plan's own hull intervals, which is what the backend builds its masks from
+;; (compiler-backend-scavenge-occupancy-build; it also respects the greedy's
+;; segment holes, so this reading can only over-count).
+;; ---------------------------------------------------------------------------
+(define (compiler-reg-scratch-borrow-window) : i64
+  16)
+
+(define (compiler-reg-scratch-reg-bit [reg : i64]) : i64
+  (if (and (>= reg 0) (< reg 62))
+    (shl 1 reg)
+    0))
+
+;; The scavenger's volatile candidates (compiler-backend-scavenge-candidates,
+;; minus its callee-saved members) ...
+(define (compiler-reg-scratch-borrow-volatile-mask) : i64
+  (bit-or
+    (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r9)
+    (bit-or
+      (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rcx)
+      (bit-or
+        (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rdx)
+        (bit-or
+          (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r10)
+          (bit-or
+            (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r11)
+            (bit-or
+              (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r8)
+              (bit-or
+                (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rsi)
+                (bit-or
+                  (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rdi)
+                  (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rax))))))))))
+
+;; ...and its callee-saved ones, usable only when the plan saves them.
+(define (compiler-reg-scratch-borrow-csr-mask) : i64
+  (bit-or
+    (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r12)
+    (bit-or
+      (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r13)
+      (bit-or
+        (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r14)
+        (bit-or
+          (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r15)
+          (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rbx))))))
+
+(define (compiler-reg-scratch-location-mask [location : CompilerRegLocation]) : i64
+  (match location
+    [(CompilerRegLocation.Register reg) (compiler-reg-scratch-reg-bit reg)]
+    [(CompilerRegLocation.RegisterPair first second)
+      (bit-or
+        (compiler-reg-scratch-reg-bit first)
+        (compiler-reg-scratch-reg-bit second))]
+    [_ 0]))
+
+;; A value the plan homed in a frame slot. An absent assignment is a forwarded
+;; address (a gep folded into its consumer), which stages nothing of its own.
+(define (compiler-reg-scratch-value-spilled?
+  [assignments : CompilerRegAssignmentTable]
+  [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (match (compiler-reg-assignment-lookup
+        (compiler-reg-global-shared-view assignments)
+        var)
+        [(CompilerRegMaybeLocation.Some location)
+          (match location
+            [(CompilerRegLocation.Spill _) true]
+            [_ false])]
+        [(CompilerRegMaybeLocation.No) false])]
+    [_ false]))
+
+(define (compiler-reg-scratch-var-spilled?
+  [assignments : CompilerRegAssignmentTable]
+  [var : i64]) : bool
+  (compiler-reg-scratch-value-spilled?
+    (compiler-reg-global-shared-view assignments)
+    (ir.CompilerIrValue.Var var)))
+
+;; How many registers the backend stages for `instr`: one per spilled operand a
+;; memory operation reads through or writes from. A gep with a register home
+;; stages through that home, so it asks for one fewer.
+(define (compiler-reg-scratch-borrow-demand
+  [assignments : CompilerRegAssignmentTable]
+  [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.Gep dst base offset _)
+      (let
+        [operands : i64
+          (+
+            (if (compiler-reg-scratch-value-spilled?
+              (compiler-reg-global-shared-view assignments)
+              base)
+              1
+              0)
+            (if (compiler-reg-scratch-value-spilled?
+              (compiler-reg-global-shared-view assignments)
+              offset)
+              1
+              0))]
+        (if (compiler-reg-scratch-var-register-homed?
+          (compiler-reg-global-shared-view assignments)
+          dst)
+          (if (> operands 0)
+            (- operands 1)
+            0)
+          operands))]
+    [(ir.CompilerIrInstr.Load dst src _)
+      (+
+        (if (compiler-reg-scratch-value-spilled?
+          (compiler-reg-global-shared-view assignments)
+          src)
+          1
+          0)
+        (if (compiler-reg-scratch-var-spilled?
+          (compiler-reg-global-shared-view assignments)
+          dst)
+          1
+          0))]
+    [(ir.CompilerIrInstr.LoadOwned dst src _ _)
+      (+
+        (if (compiler-reg-scratch-value-spilled?
+          (compiler-reg-global-shared-view assignments)
+          src)
+          1
+          0)
+        (if (compiler-reg-scratch-var-spilled?
+          (compiler-reg-global-shared-view assignments)
+          dst)
+          1
+          0))]
+    [(ir.CompilerIrInstr.StorePtr address value _)
+      (+
+        (if (compiler-reg-scratch-value-spilled?
+          (compiler-reg-global-shared-view assignments)
+          address)
+          1
+          0)
+        (if (compiler-reg-scratch-value-spilled?
+          (compiler-reg-global-shared-view assignments)
+          value)
+          1
+          0))]
+    [(ir.CompilerIrInstr.StoreOwned address value _)
+      (+
+        (if (compiler-reg-scratch-value-spilled?
+          (compiler-reg-global-shared-view assignments)
+          address)
+          1
+          0)
+        (if (compiler-reg-scratch-value-spilled?
+          (compiler-reg-global-shared-view assignments)
+          value)
+          1
+          0))]
+    [(ir.CompilerIrInstr.Store _ value _)
+      (if (compiler-reg-scratch-value-spilled?
+        (compiler-reg-global-shared-view assignments)
+        value)
+        1
+        0)]
+    [(ir.CompilerIrInstr.Mov dst src _)
+      (if (and
+        (compiler-reg-scratch-var-spilled?
+          (compiler-reg-global-shared-view assignments)
+          dst)
+        (compiler-reg-scratch-value-spilled?
+          (compiler-reg-global-shared-view assignments)
+          src))
+        1
+        0)]
+    [_ 0]))
+
+;; The registers some register-homed value occupies anywhere in the instruction
+;; window [lo, hi] (instruction indices, inclusive), read off hull intervals.
+(define (compiler-reg-scratch-occupied-mask
+  [assignments : CompilerRegAssignmentTable]
+  [index : CompilerRegIntervalIndex]
+  [vars : i64]
+  [lo : i64]
+  [hi : i64]) : i64
+  (let
+    [present : (__tl_dyn-array i64) assignments.present]
+    [items : (__tl_dyn-array CompilerRegLocation) assignments.items]
+    [starts : (__tl_dyn-array i64) index.starts]
+    [ends : (__tl_dyn-array i64) index.ends]
+    [limit : i64
+      (if (< (array-length present) vars)
+        (array-length present)
+        vars)]
+    [var : i64 0]
+    [mask : i64 0]
+    (begin
+      (while (< var limit)
+        (begin
+          (if (and
+            (not (= (array-ref present var) 0))
+            (< var (array-length starts))
+            (>= (array-ref starts var) 0)
+            (<= (/ (array-ref starts var) 2) hi)
+            (>= (/ (array-ref ends var) 2) lo))
+            (set!
+              mask
+              (bit-or
+                mask
+                (compiler-reg-scratch-location-mask
+                  (compiler-reg-global-array-element-shared-view items var))))
+            unit)
+          (set! var (+ var 1))))
+      mask)))
+
+;; Every register the plan homes anything in: the callee-saved members of this
+;; mask are the ones the prologue saves, so the scavenger may use them.
+(define (compiler-reg-scratch-plan-home-mask
+  [assignments : CompilerRegAssignmentTable]
+  [vars : i64]) : i64
+  (let
+    [present : (__tl_dyn-array i64) assignments.present]
+    [items : (__tl_dyn-array CompilerRegLocation) assignments.items]
+    [limit : i64
+      (if (< (array-length present) vars)
+        (array-length present)
+        vars)]
+    [var : i64 0]
+    [mask : i64 0]
+    (begin
+      (while (< var limit)
+        (begin
+          (if (= (array-ref present var) 0)
+            unit
+            (set!
+              mask
+              (bit-or
+                mask
+                (compiler-reg-scratch-location-mask
+                  (compiler-reg-global-array-element-shared-view items var)))))
+          (set! var (+ var 1))))
+      mask)))
+
+(define (compiler-reg-scratch-borrow-cost
+  [plan : CompilerRegPlan]
+  [vars : i64]
+  [seq : ir.CompilerIrBlockSeq]
+  [weights : (__tl_dyn-array i64)]) : i64
+  (let
+    [assignments : CompilerRegAssignmentTable
+      (compiler-reg-plan-assignments (compiler-reg-global-shared-view plan))]
+    [index : CompilerRegIntervalIndex
+      (compiler-reg-interval-index-build
+        (compiler-reg-plan-intervals (compiler-reg-global-shared-view plan))
+        vars)]
+    [candidates : i64
+      (bit-or
+        (compiler-reg-scratch-borrow-volatile-mask)
+        (bit-and
+          (compiler-reg-scratch-borrow-csr-mask)
+          (compiler-reg-scratch-plan-home-mask
+            (compiler-reg-global-shared-view assignments)
+            vars)))]
+    [window : i64 (/ (compiler-reg-scratch-borrow-window) 2)]
+    [count : i64
+      (ir.compiler-ir-block-seq-count (compiler-reg-global-shared-view seq))]
+    [block : i64 0]
+    [instruction : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< block count)
+        (begin
+          (match (ir.compiler-ir-block-seq-ref
+            (compiler-reg-global-shared-view seq)
+            block)
+            [(ir.CompilerIrBlock.Block _ instrs)
+              (let
+                [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+                [len : i64 instrs.len]
+                [weight : i64
+                  (if (< block (array-length weights))
+                    (array-ref weights block)
+                    1)]
+                [i : i64 0]
+                (begin
+                  (while (< i len)
+                    (let
+                      [demand : i64
+                        (compiler-reg-scratch-borrow-demand
+                          (compiler-reg-global-shared-view assignments)
+                          (compiler-reg-global-array-element-shared-view
+                            slots
+                            i))]
+                      (begin
+                        (if (> demand 0)
+                          (if (=
+                            (bit-and
+                              candidates
+                              (bit-xor
+                                (compiler-reg-scratch-occupied-mask
+                                  (compiler-reg-global-shared-view assignments)
+                                  (compiler-reg-global-shared-view index)
+                                  vars
+                                  instruction
+                                  (+ instruction window))
+                                -1))
+                            0)
+                            (set! total (+ total (* 2 (* demand weight))))
+                            unit)
+                          unit)
+                        (set! instruction (+ instruction 1))
+                        (set! i (+ i 1)))))
+                  unit))])
+          (set! block (+ block 1))))
+      total)))
+
+;; The round: a plan the backend would borrow a scratch for is replanned with
+;; the scratch register reserved (compiler-reg-scratch-reserve-enabled), and the
+;; reserved plan is kept only when its estimated cost -- the ordinary plan cost
+;; (compiler-reg-call-hole-plan-cost: weighted memory references, prologue) plus
+;; the borrowed-scratch cost above -- comes out strictly lower. Declines to its
+;; input, flag cleared, otherwise; when it keeps, the flag stays set so every
+;; later replan of this function colors with the same pool. Only a plan with a
+;; spilled value is asked: a staged operand is a spilled one.
+(define (compiler-reg-scratch-reserve-rewrite-function
+  [type-segment-bases : i64]
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [func : ir.CompilerIrFunction]
+  [type-info : CompilerRegVarTypes]
+  [plan : CompilerRegPlan]
+  [temp-start : i64]
+  [cold-split : bool]) : CompilerRegCallHoleSplit
+  (match (compiler-reg-global-shared-view func)
+    [(ir.CompilerIrFunction.Function _ params _ vars blocks)
+      (let
+        [none : CompilerRegCallHoleSplit
+          (compiler-reg-call-hole-split-none
+            (compiler-reg-global-shared-view func)
+            vars
+            (compiler-reg-global-shared-view plan)
+            (compiler-reg-global-shared-view type-info)
+            temp-start)]
+        (if (not
+          (compiler-reg-assignment-table-has-spill?
+            (compiler-reg-plan-assignments
+              (compiler-reg-global-shared-view plan))))
+          none
+          (let
+            [seq : ir.CompilerIrBlockSeq
+              (live.compiler-live-ir-block-list-to-seq
+                (compiler-reg-global-shared-view blocks))]
+            [weights : (__tl_dyn-array i64)
+              (compiler-reg-loop-park-block-weights
+                (compiler-reg-function-loop-depths
+                  (compiler-reg-global-shared-view blocks)))]
+            [base-preserve : i64
+              (compiler-reg-scratch-borrow-cost
+                (compiler-reg-global-shared-view plan)
+                vars
+                (compiler-reg-global-shared-view seq)
+                (compiler-reg-global-shared-view weights))]
+            (if (= base-preserve 0)
+              none
+              (let
+                [threshold : i64
+                  (if (>= temp-start 0)
+                    temp-start
+                    vars)]
+                [base-cost : i64
+                  (+
+                    base-preserve
+                    (compiler-reg-call-hole-plan-cost
+                      type-segment-bases
+                      target-abi
+                      (compiler-reg-global-shared-view params)
+                      (compiler-reg-global-shared-view
+                        type-info.representations)
+                      (compiler-reg-global-shared-view seq)
+                      (compiler-reg-global-shared-view weights)
+                      vars
+                      (compiler-reg-global-shared-view plan)))]
+                [_reserve : unit
+                  (compiler-reg-set-scratch-reserve-enabled! true)]
+                [reserved-plan : CompilerRegPlan
+                  (compiler-reg-plan-function-scalar-forced-spill-with-types
+                    type-segment-bases
+                    target-abi
+                    (compiler-reg-global-shared-view func)
+                    threshold
+                    cold-split
+                    (compiler-reg-global-shared-view type-info)
+                    (compiler-reg-assignment-table-empty))]
+                [reserved-cost : i64
+                  (+
+                    (compiler-reg-scratch-borrow-cost
+                      (compiler-reg-global-shared-view reserved-plan)
+                      vars
+                      (compiler-reg-global-shared-view seq)
+                      (compiler-reg-global-shared-view weights))
+                    (compiler-reg-call-hole-plan-cost
+                      type-segment-bases
+                      target-abi
+                      (compiler-reg-global-shared-view params)
+                      (compiler-reg-global-shared-view
+                        type-info.representations)
+                      (compiler-reg-global-shared-view seq)
+                      (compiler-reg-global-shared-view weights)
+                      vars
+                      (compiler-reg-global-shared-view reserved-plan)))]
+                (if (< reserved-cost base-cost)
+                  (CompilerRegCallHoleSplit.Split
+                    (compiler-reg-global-shared-view func)
+                    vars
+                    reserved-plan
+                    (compiler-reg-global-shared-view type-info)
+                    temp-start)
+                  (begin
+                    (compiler-reg-set-scratch-reserve-enabled! false)
+                    none)))))))]))
 
 (define (compiler-reg-caller-save-remap-fill!
   [remap : (__tl_dyn-array i64)]

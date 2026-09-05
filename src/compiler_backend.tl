@@ -36007,20 +36007,45 @@
           (compiler-backend-global-shared-view index-reg))
         tail))))
 
+;; BE-2: a %rbp base at scale 1 is spelled with the two SIB slots SWAPPED,
+;; `(index,%rbp,1)`: base+index*1 is symmetric, and the index slot is the one
+;; place the frame register may stand -- no recognizer reads it there. The
+;; rsp-rebase pass finds frame references by the five bytes `(%rbp`, the
+;; peephole's slot recognizers by the trailing `(%rbp)` and the base classifier
+;; by the operand's last six bytes, and `(%r12,%rbp,1)` shows none of them
+;; what they look for, exactly as BE-1's `leaq (base,%rbp,s)` does not. At any
+;; other scale a %rbp base cannot be spelled and the caller's staged path
+;; copies it, as before.
 (define (compiler-backend-gep-index-address
   [base-reg : String]
   [scale : i64]
   [index-reg : String]) : String
-  (if (compiler-backend-gep-sib-scale? scale)
-    (str_cat.str-cat
-      "("
-      base-reg
-      ","
-      index-reg
-      ","
-      (string.int->string scale)
-      ")")
-    ""))
+  (cond
+    [(not (compiler-backend-gep-sib-scale? scale)) ""]
+    [(not (string.eq base-reg "%rbp"))
+      (str_cat.str-cat
+        "("
+        base-reg
+        ","
+        index-reg
+        ","
+        (string.int->string scale)
+        ")")]
+    [(and
+        (= scale 1)
+        (not (string.eq index-reg ""))
+        (not (string.eq index-reg "%rbp")))
+      (str_cat.str-cat "(" index-reg ",%rbp,1)")]
+    [else ""]))
+
+;; BE-2: the dynamic-index base filter for a site that spells its address
+;; through compiler-backend-gep-index-address: a %rbp home is admitted at
+;; scale 1, where that formatter can spell it, and filtered as before at every
+;; other scale.
+(define (compiler-backend-address-base-filter-sib [home : String] [scale : i64]) : String
+  (if (and (string.eq home "%rbp") (= scale 1))
+    home
+    (compiler-backend-address-base-filter home)))
 
 ;; Fold a constant displacement into base-reg in place, so a scavenged base works
 ;; like the old fixed scratch did.
@@ -36132,8 +36157,12 @@
                 (compiler-backend-gep-sib-scale? scale)
                 ;; GAP7 #rbp-base: a %rbp base cannot occupy the SIB BASE slot
                 ;; alongside the gep index (`(%rbp,idx,s)` would read as a frame
-                ;; ref); route it to the staged path instead.
-                (not (string.eq base-reg "%rbp")))
+                ;; ref); route it to the staged path instead -- except at scale
+                ;; 1, where compiler-backend-gep-index-address swaps it into
+                ;; the index slot (BE-2): `leaq (idx,%rbp,1), dst` is the whole
+                ;; gep, where the staged path copied %rbp first, and the
+                ;; peephole then folds the lea into the load it feeds.
+                (or (= scale 1) (not (string.eq base-reg "%rbp"))))
                 (ResultCompilerBackend.Ok
                   (str_cat.str-cat
                     "    leaq "
@@ -36294,15 +36323,23 @@
           ;; the SIB/add slot and the `movq %rX, %r8` staging copy disappears.
           ;; The non-SIB scales are excluded because their composition
           ;; (`shlq $c, idx` / `imulq $c, idx`) scales the index IN PLACE and
-          ;; would destroy the live home; a spilled index has no home to use;
-          ;; and %rbp is refused for the same reason GAP7 refuses it as a base,
-          ;; keeping every staged address off the frame register. `avoid1` and
-          ;; `avoid2` need no test: they name registers this emitter must not
-          ;; WRITE, and the index is only ever read.
+          ;; would destroy the live home, and a spilled index has no home to
+          ;; use. `avoid1` and `avoid2` need no test: they name registers this
+          ;; emitter must not WRITE, and the index is only ever read.
+          ;;
+          ;; BE-1: a %rbp-homed index is read directly too. It was refused here
+          ;; "for the same reason GAP7 refuses it as a base", and that reason
+          ;; is the BASE spelling alone: `off(%rbp)` and `(%rbp,idx,s)` are what
+          ;; the FPO rsp-rebase pass and the peephole read as frame references,
+          ;; and the index slot `(base,%rbp,s)` / `addq %rbp, base` is neither
+          ;; -- the one-`leaq` path above (GAP6b) already composes off a %rbp
+          ;; index. The refusal only showed once the allocator's block weights
+          ;; (FREQ-1) homed a scan's index in %rbp: `sfl-scales` inlined into
+          ;; `main` staged all three of its SIB indexes through %r8, which is
+          ;; exactly the copy the select-flags-gep gate exists to refuse.
           [direct-index? : bool
             (and
               (not (string.eq offset-home ""))
-              (not (string.eq offset-home "%rbp"))
               (compiler-backend-gep-sib-scale? scale))]
           [use-dst-home? : bool
             (and
@@ -38467,12 +38504,15 @@
             type-segment-bases
             (compiler-backend-global-shared-view elem-ty))]
         [sib-scale? : bool (compiler-backend-gep-sib-scale? scale)]
+        ;; BE-2: a %rbp base at scale 1 reads directly, swapped into the SIB
+        ;; index slot (compiler-backend-gep-index-address).
         [base-home : String
-          (compiler-backend-address-base-filter
+          (compiler-backend-address-base-filter-sib
             (compiler-backend-value-scalar-register
               (compiler-backend-global-shared-view backend-state)
               (compiler-backend-global-shared-view assignments)
-              (compiler-backend-global-shared-view base)))]
+              (compiler-backend-global-shared-view base))
+            scale)]
         [offset-home : String
           (compiler-backend-value-scalar-register
             backend-state
@@ -39218,12 +39258,15 @@
             backend-state
             (compiler-backend-global-shared-view assignments)
             (compiler-backend-global-shared-view value))]
+        ;; BE-2: a %rbp base at scale 1 spells directly, swapped into the SIB
+        ;; index slot (compiler-backend-gep-index-address).
         [base-home : String
-          (compiler-backend-address-base-filter
+          (compiler-backend-address-base-filter-sib
             (compiler-backend-value-scalar-register
               backend-state
               (compiler-backend-global-shared-view assignments)
-              (compiler-backend-global-shared-view base)))]
+              (compiler-backend-global-shared-view base))
+            scale)]
         [offset-home : String
           (compiler-backend-value-scalar-register
             backend-state
@@ -39303,17 +39346,31 @@
   [planned-value : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
+    ;; SCR-1 (B1): an index that already has a register home and a SIB-encodable
+    ;; scale is read straight from that home. Staging it through a scratch cost
+    ;; a copy per store and, under full occupancy, a second borrowed register
+    ;; with its save/restore wrap around every store of a hoisted loop (the
+    ;; zero-fill loop of regalloc_greedy's rg-load-function: seven instructions
+    ;; per store for a resident index and a spilled base). The store reads the
+    ;; index and writes only memory, so the home is safe to read in place --
+    ;; the direct (base AND index resident) path above proved that shape.
+    [direct-index? : bool
+      (and
+        (not (string.eq offset-home ""))
+        (compiler-backend-gep-sib-scale? scale))]
     [scav-idx : String
-      (compiler-backend-planned-or-scavenge-reg-here
-        planned-index
-        (compiler-backend-scavenge-exclude-ops2
-          backend-state
-          (compiler-backend-global-shared-view assignments)
-          (compiler-backend-global-shared-view base)
-          (compiler-backend-global-shared-view value))
-        7
-        "%r8"
-        backend-state)]
+      (if direct-index?
+        offset-home
+        (compiler-backend-planned-or-scavenge-reg-here
+          planned-index
+          (compiler-backend-scavenge-exclude-ops2
+            backend-state
+            (compiler-backend-global-shared-view assignments)
+            (compiler-backend-global-shared-view base)
+            (compiler-backend-global-shared-view value))
+          7
+          "%r8"
+          backend-state))]
     ;; Fold-base scratch. For non-SIB scales the scaled index is folded into a
     ;; register, which must not clobber the base/value homes; it also serves as
     ;; the load fallback when the base is spilled. If that fallback aliases the
@@ -39341,11 +39398,13 @@
       false
       backend-state)
       [(ResultCompilerBackendAddressBase.Ok base-plan)
-        (match (compiler-backend-emit-load-value-with-plan
-          (compiler-backend-global-shared-view assignments)
-          offset
-          (compiler-backend-global-shared-view scav-idx)
-          backend-state)
+        (match (if direct-index?
+          (ResultCompilerBackend.Ok "")
+          (compiler-backend-emit-load-value-with-plan
+            (compiler-backend-global-shared-view assignments)
+            offset
+            (compiler-backend-global-shared-view scav-idx)
+            backend-state))
           [(ResultCompilerBackend.Ok offset-asm)
             (let
               [base-reg : String
@@ -59623,21 +59682,23 @@
         (compiler-backend-global-shared-view offset)
         (compiler-backend-global-shared-view elem-ty)
         gep-disp)]
-    [base-home : String
+    [raw-home : String
       (if (string.eq rip "")
-        (compiler-backend-address-base-filter
-          (compiler-backend-value-scalar-register
-            backend-state
-            (compiler-backend-global-shared-view assignments)
-            base))
+        (compiler-backend-value-scalar-register
+          backend-state
+          (compiler-backend-global-shared-view assignments)
+          base)
         "")]
+    [base-home : String
+      (compiler-backend-address-base-filter
+        (compiler-backend-global-shared-view raw-home))]
     (if (not (string.eq rip ""))
       rip
-      (if (string.eq base-home "")
-        ""
-        (match (compiler-backend-value-as-i64
-          (compiler-backend-global-shared-view offset))
-          [(option_i64.Some n)
+      (match (compiler-backend-value-as-i64
+        (compiler-backend-global-shared-view offset))
+        [(option_i64.Some n)
+          (if (string.eq base-home "")
+            ""
             (let
               [disp : i64
                 (+
@@ -59645,27 +59706,35 @@
                   gep-disp)]
               (if (compiler-backend-imm32? disp)
                 (compiler-backend-base-address disp base-home)
-                ""))]
-          [(option_i64.None)
-            (let
-              [scale : i64
-                (compiler-backend-type-size type-segment-bases elem-ty)]
-              [index-home : String
-                (compiler-backend-value-scalar-register
-                  backend-state
-                  assignments
-                  offset)]
-              (if (and
-                (compiler-backend-gep-sib-scale? scale)
-                (not (string.eq index-home ""))
-                (not (string.eq index-home "%rbp"))
-                (compiler-backend-imm32? gep-disp))
-                (compiler-backend-gep-index-address-disp
-                  gep-disp
-                  base-home
-                  scale
-                  index-home)
-                ""))])))))
+                "")))]
+        [(option_i64.None)
+          (let
+            [scale : i64
+              (compiler-backend-type-size type-segment-bases elem-ty)]
+            ;; BE-2: the dynamic arm reads a %rbp base at scale 1, swapped
+            ;; into the SIB index slot by compiler-backend-gep-index-address;
+            ;; the const arm keeps the exclusion above.
+            [dyn-base-home : String
+              (compiler-backend-address-base-filter-sib
+                (compiler-backend-global-shared-view raw-home)
+                scale)]
+            [index-home : String
+              (compiler-backend-value-scalar-register
+                backend-state
+                assignments
+                offset)]
+            (if (and
+              (not (string.eq dyn-base-home ""))
+              (compiler-backend-gep-sib-scale? scale)
+              (not (string.eq index-home ""))
+              (not (string.eq index-home "%rbp"))
+              (compiler-backend-imm32? gep-disp))
+              (compiler-backend-gep-index-address-disp
+                gep-disp
+                dyn-base-home
+                scale
+                index-home)
+              ""))]))))
 
 ;; M6-D. Every address above is spelled straight out of the homes the allocator
 ;; chose, so a gep whose BASE was spilled (or homed in %rbp, which the dynamic
@@ -81154,6 +81223,10 @@
               (or target-policy.linux target-policy.windows)
               (compiler-backend-mode-scalar? mode)
               scalar-registers-enabled))]
+        ;; SCR-1: the scratch-reserve flag is per function; the round below
+        ;; sets it only when its replan won.
+        [_scratch-reserve-flag : unit
+          (compiler_regalloc.compiler-reg-set-scratch-reserve-enabled! false)]
         [fn-abi : compiler_abi.CompilerRegTargetAbi target-policy.abi]
         [_fn-abi : unit
           (compiler-backend-set-current-fn-abi!
@@ -81286,28 +81359,48 @@
               (compiler-backend-global-shared-view hole-reg-plan)
               (compiler-backend-global-shared-view hole-types)
               hole-temp-start))]
+        ;; SCR-1: a plan whose scratch planner would BORROW a live register is
+        ;; replanned with %r11 reserved for scratch, and the reserved plan is
+        ;; kept only when the estimated cost (memory references, prologue, and
+        ;; the save/restore each borrowed scratch costs per execution) is
+        ;; strictly lower. Declines to its input like the two rounds above.
+        [scratch-reserve-split : compiler_regalloc.CompilerRegCallHoleSplit
+          (if scalar-plan?
+            (compiler_regalloc.compiler-reg-scratch-reserve-rewrite-function
+              type-segment-bases
+              fn-abi
+              (compiler_regalloc.compiler-reg-call-hole-split-function
+                (compiler-backend-global-shared-view loop-park-split))
+              (compiler_regalloc.compiler-reg-call-hole-split-types
+                (compiler-backend-global-shared-view loop-park-split))
+              (compiler_regalloc.compiler-reg-call-hole-split-plan
+                (compiler-backend-global-shared-view loop-park-split))
+              (compiler_regalloc.compiler-reg-call-hole-split-temp-start
+                (compiler-backend-global-shared-view loop-park-split))
+              cold-call-split?)
+            (compiler-backend-global-shared-view loop-park-split))]
         ;; Everything downstream of the initial plan consumes the SPLIT view:
         ;; the leaf-CSR round, its replan, the carrier self-check, the
         ;; caller-save/loop-split/remat rewrites, storage coloring and emission.
-        ;; When both rounds decline, these are the pre-split values unchanged.
+        ;; When every round declines, these are the pre-split values unchanged.
         [split-func : compiler_ir_types.CompilerIrFunction
           (compiler_regalloc.compiler-reg-call-hole-split-function
-            (compiler-backend-global-shared-view loop-park-split))]
+            (compiler-backend-global-shared-view scratch-reserve-split))]
         [split-blocks : compiler_ir_types.CompilerIrBlockList
           (compiler_regalloc.compiler-reg-call-hole-split-blocks
-            (compiler-backend-global-shared-view loop-park-split))]
+            (compiler-backend-global-shared-view scratch-reserve-split))]
         [split-vars : i64
           (compiler_regalloc.compiler-reg-call-hole-split-vars
-            (compiler-backend-global-shared-view loop-park-split))]
+            (compiler-backend-global-shared-view scratch-reserve-split))]
         [split-types : compiler_regalloc.CompilerRegVarTypes
           (compiler_regalloc.compiler-reg-call-hole-split-types
-            (compiler-backend-global-shared-view loop-park-split))]
+            (compiler-backend-global-shared-view scratch-reserve-split))]
         [split-reg-plan : compiler_regalloc.CompilerRegPlan
           (compiler_regalloc.compiler-reg-call-hole-split-plan
-            (compiler-backend-global-shared-view loop-park-split))]
+            (compiler-backend-global-shared-view scratch-reserve-split))]
         [split-temp-start : i64
           (compiler_regalloc.compiler-reg-call-hole-split-temp-start
-            (compiler-backend-global-shared-view loop-park-split))]
+            (compiler-backend-global-shared-view scratch-reserve-split))]
         ;; A call-free natural loop can leave one volatile register dead before
         ;; the loop and another dead inside it while the whole-range greedy pays
         ;; for a callee-saved home. Detect that shape against the initial plan,

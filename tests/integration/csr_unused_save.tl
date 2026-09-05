@@ -86,15 +86,21 @@
   (let
     [i : i64 0]
     [total : i64 0]
+    ;; The map's base and capacity are computed from `rounds` rather than
+    ;; spelled as literals: a literal-argument site specializes its callee
+    ;; (INL-18), and the measured tier would take `insert!` into this loop and
+    ;; leave the gate no prologue to read.
+    [base : i64 (- rounds 40)]
+    [cap : i64 (+ base 64)]
     (begin
       (while (< i rounds)
         (begin
-          (insert! 0 64 (+ (* i 7) 1) (+ i 3))
+          (insert! base cap (+ (* i 7) 1) (+ i 3))
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i rounds)
         (begin
-          (set! total (+ total (lookup 0 64 (+ (* i 7) 1) 0)))
+          (set! total (+ total (lookup base cap (+ (* i 7) 1) 0)))
           (set! i (+ i 1))))
       total)))
 

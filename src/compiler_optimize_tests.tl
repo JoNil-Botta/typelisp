@@ -72974,6 +72974,10 @@
     name
     (compiler_ir_types.compiler-ir-param-seq-empty)
     (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.Mov
+        0
+        (compiler_ir_types.CompilerIrValue.I64 length)
+        (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.Call
         5
         cbi.compiler-builtin-id-tl-alloc
@@ -73002,7 +73006,98 @@
         (compiler_ast_types.AstType.U8))
       (compiler_ir_types.CompilerIrInstr.StorePtr
         (compiler_ir_types.CompilerIrValue.Var 9)
-        (compiler_ir_types.CompilerIrValue.I64 length)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.Some
+          (compiler_ir_types.CompilerIrValue.Var 7))))))
+
+;; The canonical constructor followed by a call that receives its fresh
+;; descriptor. The call may write the length slot, so CL-1 must reject it even
+;; though the local instruction stream still contains exactly two stores.
+(define (opt-cl-test-init-call-function [name : i64] [callee : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-call-memory-test-function
+    name
+    (compiler_ir_types.compiler-ir-param-seq-empty)
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.Call
+        5
+        cbi.compiler-builtin-id-tl-alloc
+        (compiler_ir_types.CompilerIrCallArgs.One
+          (compiler_ir_types.CompilerIrValue.I64 128))
+        (compiler_ast_types.AstType.U64))
+      (compiler_ir_types.CompilerIrInstr.Call
+        7
+        cbi.compiler-builtin-id-tl-alloc
+        (compiler_ir_types.CompilerIrCallArgs.One
+          (compiler_ir_types.CompilerIrValue.I64 16))
+        (compiler_ast_types.AstType.DynArray 0))
+      (compiler_ir_types.CompilerIrInstr.Gep
+        8
+        (compiler_ir_types.CompilerIrValue.Var 7)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.U8))
+      (compiler_ir_types.CompilerIrInstr.StorePtr
+        (compiler_ir_types.CompilerIrValue.Var 8)
+        (compiler_ir_types.CompilerIrValue.Var 5)
+        (compiler_ast_types.AstType.U64))
+      (compiler_ir_types.CompilerIrInstr.Gep
+        9
+        (compiler_ir_types.CompilerIrValue.Var 7)
+        (compiler_ir_types.CompilerIrValue.I64 8)
+        (compiler_ast_types.AstType.U8))
+      (compiler_ir_types.CompilerIrInstr.StorePtr
+        (compiler_ir_types.CompilerIrValue.Var 9)
+        (compiler_ir_types.CompilerIrValue.I64 16)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.Call
+        10
+        callee
+        (compiler_ir_types.CompilerIrCallArgs.One
+          (compiler_ir_types.CompilerIrValue.Var 7))
+        (compiler_ast_types.AstType.Unit))
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.Some
+          (compiler_ir_types.CompilerIrValue.Var 7))))))
+
+;; The data slot points back at the descriptor instead of at the distinct fresh
+;; buffer. A later ordinary data-slot load would then expose the length word to
+;; mutation without another `Global` occurrence, invalidating CL-1's use-count
+;; proof. The initializer recognizer must pin the exact fresh buffer value.
+(define (opt-cl-test-init-self-data-function [name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-call-memory-test-function
+    name
+    (compiler_ir_types.compiler-ir-param-seq-empty)
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.Call
+        5
+        cbi.compiler-builtin-id-tl-alloc
+        (compiler_ir_types.CompilerIrCallArgs.One
+          (compiler_ir_types.CompilerIrValue.I64 128))
+        (compiler_ast_types.AstType.U64))
+      (compiler_ir_types.CompilerIrInstr.Call
+        7
+        cbi.compiler-builtin-id-tl-alloc
+        (compiler_ir_types.CompilerIrCallArgs.One
+          (compiler_ir_types.CompilerIrValue.I64 16))
+        (compiler_ast_types.AstType.DynArray 0))
+      (compiler_ir_types.CompilerIrInstr.Gep
+        8
+        (compiler_ir_types.CompilerIrValue.Var 7)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.U8))
+      (compiler_ir_types.CompilerIrInstr.StorePtr
+        (compiler_ir_types.CompilerIrValue.Var 8)
+        (compiler_ir_types.CompilerIrValue.Var 7)
+        (compiler_ast_types.AstType.U64))
+      (compiler_ir_types.CompilerIrInstr.Gep
+        9
+        (compiler_ir_types.CompilerIrValue.Var 7)
+        (compiler_ir_types.CompilerIrValue.I64 8)
+        (compiler_ast_types.AstType.U8))
+      (compiler_ir_types.CompilerIrInstr.StorePtr
+        (compiler_ir_types.CompilerIrValue.Var 9)
+        (compiler_ir_types.CompilerIrValue.I64 16)
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.Return
         (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -73293,6 +73388,17 @@
         (opt-cl-test-globals cl-symbols)
         (opt-cl-test-functions cl-symbols)
         8)]
+    [cl-call-length : i64
+      (compiler_optimize.opt-cl-init-length
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-cl-test-init-call-function
+          (opt-test-symbol "__global_init_cl_called")
+          (opt-test-symbol "cl_mutate_descriptor")))]
+    [cl-self-data-length : i64
+      (compiler_optimize.opt-cl-init-length
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-cl-test-init-self-data-function
+          (opt-test-symbol "__global_init_cl_self_data")))]
     ;; The whole summary of an element-only member of the cycle. Its one write
     ;; is `store_ptr <buffer>, 7 : u64`, so besides the element bit the summary
     ;; carries the ALIAS CLASS that write stores (packet T2-2 / MF-4 ii,
@@ -74092,6 +74198,12 @@
             (& cl-lengths.inits)
             (compiler_ir_types.compiler-ir-symbol-id cl-symbols.init-header)))
         244]
+      ;; The initializer proof also owns the period before publication: an
+      ;; opaque call cannot receive the fresh descriptor, and the data slot
+      ;; must contain the distinct buffer allocation rather than the descriptor
+      ;; itself.
+      [(not (= cl-call-length (- 0 1))) 245]
+      [(not (= cl-self-data-length (- 0 1))) 246]
       [(not
           (opt-call-memory-summary-is?
             (compiler_optimize.compiler-opt-global-shared-view call-summaries)

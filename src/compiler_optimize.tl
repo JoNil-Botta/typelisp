@@ -144836,7 +144836,167 @@
         (opt-cl-escape-blocks! (compiler-opt-box-shared-view rest) gep-vars bad))]
     [(ir.CompilerIrBlockList.Array _) unit]))
 
-;; `Mov var, <literal>` anywhere in the function, or -1.
+;; The initializer's shape, as `__tl_make-array` lowers it: one `tl_alloc(16)`
+;; descriptor that is the function's only returned value, one distinct fresh
+;; buffer allocation stored into its data slot, and one literal stored into its
+;; length slot. The descriptor allocation, geps, stores, and return must occur
+;; in that order in one block. A second walk below refuses any other use of the
+;; four pointer values, so neither an opaque call nor a pointer alias can mutate
+;; a header after the literal store or make the data pointer alias the header.
+;;
+;; State words: 0 return descriptor, 1 buffer allocation, 2 descriptor
+;; allocation, 3 data-slot gep, 4 length-slot gep, 5 stores, 6 length literal,
+;; 7 returns, 8 bad, 9 construction block, 10 construction phase, 11 length
+;; value var.
+(define (opt-cl-init-scan-instrs!
+  [type-segment-bases : i64]
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [state : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (match (ir.compiler-ir-instr-seq-ref
+          (compiler-opt-global-shared-view instrs)
+          index)
+          [(ir.CompilerIrInstr.Return maybe)
+            (begin
+              (set! (array-ref state 7) (+ (array-ref state 7) 1))
+              (match maybe
+                [(ir.CompilerIrMaybeValue.Some value)
+                  (match value
+                    [(ir.CompilerIrValue.Var r)
+                      (if (and
+                        (= label (array-ref state 9))
+                        (= r (array-ref state 2))
+                        (= (array-ref state 10) 5))
+                        (begin
+                          (set! (array-ref state 0) r)
+                          (set! (array-ref state 10) 6))
+                        (set! (array-ref state 8) 1))]
+                    [_ (set! (array-ref state 8) 1)])]
+                [(ir.CompilerIrMaybeValue.No) (set! (array-ref state 8) 1)]))]
+          [(ir.CompilerIrInstr.Call dst name args ty)
+            (if (and
+              (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
+              (opt-licm-array-header-type? type-segment-bases (clone ty)))
+              (match args
+                [(ir.CompilerIrCallArgs.One arg)
+                  (match arg
+                    [(ir.CompilerIrValue.I64 16)
+                      (if (= (array-ref state 10) 0)
+                        (begin
+                          (set! (array-ref state 2) dst)
+                          (set! (array-ref state 9) label)
+                          (set! (array-ref state 10) 1))
+                        (set! (array-ref state 8) 1))]
+                    [_ (set! (array-ref state 8) 1)])]
+                [_ (set! (array-ref state 8) 1)])
+              (if (and
+                (ir.compiler-ir-symbol-eq?
+                  name
+                  cbi.compiler-builtin-id-tl-alloc)
+                (match ty
+                  [(ast.AstType.U64) true]
+                  [_ false]))
+                (if (< (array-ref state 1) 0)
+                  (set! (array-ref state 1) dst)
+                  (set! (array-ref state 8) 1))
+                unit))]
+          [(ir.CompilerIrInstr.Gep dst base offset ty)
+            (match base
+              [(ir.CompilerIrValue.Var b)
+                (if (= b (array-ref state 2))
+                  (cond
+                    [(and
+                        (= label (array-ref state 9))
+                        (= (array-ref state 10) 1)
+                        (opt-licm-data-slot? (clone offset) (clone ty)))
+                      (begin
+                        (set! (array-ref state 3) dst)
+                        (set! (array-ref state 10) 2))]
+                    [(and
+                        (= label (array-ref state 9))
+                        (= (array-ref state 10) 3)
+                        (opt-bounds-object-length-slot?
+                          type-segment-bases
+                          offset
+                          ty))
+                      (begin
+                        (set! (array-ref state 4) dst)
+                        (set! (array-ref state 10) 4))]
+                    [else (set! (array-ref state 8) 1)])
+                  unit)]
+              [_ unit])]
+          [(ir.CompilerIrInstr.StorePtr ptr value _)
+            (begin
+              (set! (array-ref state 5) (+ (array-ref state 5) 1))
+              (match ptr
+                [(ir.CompilerIrValue.Var pv)
+                  (cond
+                    [(and
+                        (= label (array-ref state 9))
+                        (= (array-ref state 10) 2)
+                        (= pv (array-ref state 3)))
+                      (match value
+                        [(ir.CompilerIrValue.Var v)
+                          (if (= v (array-ref state 1))
+                            (set! (array-ref state 10) 3)
+                            (set! (array-ref state 8) 1))]
+                        [_ (set! (array-ref state 8) 1)])]
+                    [(and
+                        (= label (array-ref state 9))
+                        (= (array-ref state 10) 4)
+                        (= pv (array-ref state 4)))
+                      (match value
+                        [(ir.CompilerIrValue.I64 n)
+                          (if (>= n 0)
+                            (begin
+                              (set! (array-ref state 6) n)
+                              (set! (array-ref state 10) 5))
+                            (set! (array-ref state 8) 1))]
+                        [(ir.CompilerIrValue.Var v)
+                          (begin
+                            (set! (array-ref state 11) v)
+                            (set! (array-ref state 10) 5))]
+                        [_ (set! (array-ref state 8) 1)])]
+                    [else (set! (array-ref state 8) 1)])]
+                [_ (set! (array-ref state 8) 1)]))]
+          [(ir.CompilerIrInstr.StoreOwned _ _ _) (set! (array-ref state 8) 1)]
+          [(ir.CompilerIrInstr.CopyBytes _ _ _) (set! (array-ref state 8) 1)]
+          [(ir.CompilerIrInstr.Store _ _ _) (set! (array-ref state 8) 1)]
+          [(ir.CompilerIrInstr.VectorStore _) (set! (array-ref state 8) 1)]
+          [(ir.CompilerIrInstr.PredicatedStore _) (set! (array-ref state 8) 1)]
+          [_ unit])
+        (set! index (+ index 1))))))
+
+(define (opt-cl-init-scan-blocks!
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [state : (__tl_dyn-array i64)]) : unit
+  (match (opt-cl-blocks-to-list (compiler-opt-global-shared-view blocks))
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match (compiler-opt-global-shared-view block)
+          [(ir.CompilerIrBlock.Block label instrs)
+            (opt-cl-init-scan-instrs!
+              type-segment-bases
+              label
+              instrs
+              (compiler-opt-global-shared-view state))])
+        (opt-cl-init-scan-blocks!
+          type-segment-bases
+          (compiler-opt-box-shared-view rest)
+          (compiler-opt-global-shared-view state)))]
+    [(ir.CompilerIrBlockList.Array _) unit]))
+
+;; The literal source of a unique `Mov var, <literal>`, or -1. SSA validation
+;; guarantees that the sole definition dominates the store; the definition
+;; count checked by `opt-cl-init-length` prevents a scan-order false match.
 (define (opt-cl-mov-literal-instrs
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
@@ -144870,13 +145030,80 @@
           (opt-cl-mov-literal (compiler-opt-box-shared-view rest) var)))]
     [(ir.CompilerIrBlockList.Array _) (- 0 1)]))
 
-;; The initializer's shape, as `__tl_make-array` lowers it: one `tl_alloc(16)`
-;; descriptor that is the function's only returned value, one store into its
-;; length slot, one into its data slot, and no other memory write. State
-;; words: 0 return var, 1 the returned descriptor's tl_alloc var, 2 the
-;; length-slot gep var (-2 when more than one), 3 stores, 4 the length value
-;; literal, 5 the length value var, 6 returns, 7 other memory writes.
-(define (opt-cl-init-scan-instrs!
+(define (opt-cl-init-root-used?
+  [uses : opt_i64_i64_map.Map]
+  [state : (__tl_dyn-array i64)]) : bool
+  (or
+    (opt-used-contains
+      (compiler-opt-global-shared-view uses)
+      (array-ref state 1))
+    (opt-used-contains
+      (compiler-opt-global-shared-view uses)
+      (array-ref state 2))
+    (opt-used-contains
+      (compiler-opt-global-shared-view uses)
+      (array-ref state 3))
+    (opt-used-contains uses (array-ref state 4))))
+
+;; The four construction values may occur only in the canonical operations
+;; that consume them. In particular, passing the descriptor or either header
+;; pointer to a call, copying it to an alias, or storing the descriptor into its
+;; own data slot would invalidate the disjoint immutable-header proof.
+(define (opt-cl-init-canonical-use?
+  [type-segment-bases : i64]
+  [state : (__tl_dyn-array i64)]
+  [instr : ir.CompilerIrInstr]) : bool
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Call _ name args _)
+      (and
+        (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-array-zero)
+        (match args
+          [(ir.CompilerIrCallArgs.Two buffer _)
+            (match buffer
+              [(ir.CompilerIrValue.Var v) (= v (array-ref state 1))]
+              [_ false])]
+          [_ false]))]
+    [(ir.CompilerIrInstr.Gep dst base offset ty)
+      (match base
+        [(ir.CompilerIrValue.Var v)
+          (and
+            (= v (array-ref state 2))
+            (or
+              (and
+                (= dst (array-ref state 3))
+                (opt-licm-data-slot? (clone offset) (clone ty)))
+              (and
+                (= dst (array-ref state 4))
+                (opt-bounds-object-length-slot? type-segment-bases offset ty))))]
+        [_ false])]
+    [(ir.CompilerIrInstr.StorePtr ptr value _)
+      (match ptr
+        [(ir.CompilerIrValue.Var p)
+          (or
+            (and
+              (= p (array-ref state 3))
+              (match (clone value)
+                [(ir.CompilerIrValue.Var v) (= v (array-ref state 1))]
+                [_ false]))
+            (and
+              (= p (array-ref state 4))
+              (match value
+                [(ir.CompilerIrValue.I64 n)
+                  (and (< (array-ref state 11) 0) (= n (array-ref state 6)))]
+                [(ir.CompilerIrValue.Var v)
+                  (and (>= (array-ref state 11) 0) (= v (array-ref state 11)))]
+                [_ false])))]
+        [_ false])]
+    [(ir.CompilerIrInstr.Return maybe)
+      (match maybe
+        [(ir.CompilerIrMaybeValue.Some value)
+          (match value
+            [(ir.CompilerIrValue.Var v) (= v (array-ref state 2))]
+            [_ false])]
+        [(ir.CompilerIrMaybeValue.No) false])]
+    [_ false]))
+
+(define (opt-cl-init-escape-instrs!
   [type-segment-bases : i64]
   [instrs : ir.CompilerIrInstrSeq]
   [state : (__tl_dyn-array i64)]) : unit
@@ -144885,68 +145112,27 @@
       (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
     [index : i64 0]
     (while (< index count)
-      (begin
-        (match (ir.compiler-ir-instr-seq-ref
-          (compiler-opt-global-shared-view instrs)
-          index)
-          [(ir.CompilerIrInstr.Return maybe)
-            (begin
-              (set! (array-ref state 6) (+ (array-ref state 6) 1))
-              (match maybe
-                [(ir.CompilerIrMaybeValue.Some value)
-                  (match value
-                    [(ir.CompilerIrValue.Var r) (set! (array-ref state 0) r)]
-                    [_ unit])]
-                [(ir.CompilerIrMaybeValue.No) unit]))]
-          [(ir.CompilerIrInstr.Call dst name args _)
-            (if (ir.compiler-ir-symbol-eq?
-              name
-              cbi.compiler-builtin-id-tl-alloc)
-              (match args
-                [(ir.CompilerIrCallArgs.One arg)
-                  (match arg
-                    [(ir.CompilerIrValue.I64 16)
-                      (if (< (array-ref state 1) 0)
-                        (set! (array-ref state 1) dst)
-                        (set! (array-ref state 1) (- 0 2)))]
-                    [_ unit])]
-                [_ unit])
-              unit)]
-          [(ir.CompilerIrInstr.Gep dst base offset ty)
-            (match base
-              [(ir.CompilerIrValue.Var b)
-                (if (and
-                  (>= (array-ref state 1) 0)
-                  (= b (array-ref state 1))
-                  (opt-bounds-object-length-slot? type-segment-bases offset ty))
-                  (if (< (array-ref state 2) 0)
-                    (set! (array-ref state 2) dst)
-                    (set! (array-ref state 2) (- 0 2)))
-                  unit)]
-              [_ unit])]
-          [(ir.CompilerIrInstr.StorePtr ptr value _)
-            (begin
-              (set! (array-ref state 3) (+ (array-ref state 3) 1))
-              (match ptr
-                [(ir.CompilerIrValue.Var pv)
-                  (if (and
-                    (>= (array-ref state 2) 0)
-                    (= pv (array-ref state 2)))
-                    (match value
-                      [(ir.CompilerIrValue.I64 n) (set! (array-ref state 4) n)]
-                      [(ir.CompilerIrValue.Var v) (set! (array-ref state 5) v)]
-                      [_ (set! (array-ref state 7) 1)])
-                    unit)]
-                [_ (set! (array-ref state 7) 1)]))]
-          [(ir.CompilerIrInstr.StoreOwned _ _ _) (set! (array-ref state 7) 1)]
-          [(ir.CompilerIrInstr.CopyBytes _ _ _) (set! (array-ref state 7) 1)]
-          [(ir.CompilerIrInstr.Store _ _ _) (set! (array-ref state 7) 1)]
-          [(ir.CompilerIrInstr.VectorStore _) (set! (array-ref state 7) 1)]
-          [(ir.CompilerIrInstr.PredicatedStore _) (set! (array-ref state 7) 1)]
-          [_ unit])
-        (set! index (+ index 1))))))
+      (let
+        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+        (begin
+          (if (opt-cl-init-canonical-use?
+            type-segment-bases
+            (compiler-opt-global-shared-view state)
+            (compiler-opt-global-shared-view instr))
+            unit
+            (let
+              [uses : opt_i64_i64_map.Map
+                (opt-collect-instr-uses
+                  (opt_i64_i64_map.with-capacity 8)
+                  (compiler-opt-global-shared-view instr))]
+              (if (opt-cl-init-root-used?
+                (compiler-opt-global-shared-view uses)
+                (compiler-opt-global-shared-view state))
+                (set! (array-ref state 8) 1)
+                unit)))
+          (set! index (+ index 1)))))))
 
-(define (opt-cl-init-scan-blocks!
+(define (opt-cl-init-escape-blocks!
   [type-segment-bases : i64]
   [blocks : ir.CompilerIrBlockList]
   [state : (__tl_dyn-array i64)]) : unit
@@ -144956,11 +145142,11 @@
       (begin
         (match (compiler-opt-global-shared-view block)
           [(ir.CompilerIrBlock.Block _ instrs)
-            (opt-cl-init-scan-instrs!
+            (opt-cl-init-escape-instrs!
               type-segment-bases
               instrs
               (compiler-opt-global-shared-view state))])
-        (opt-cl-init-scan-blocks!
+        (opt-cl-init-escape-blocks!
           type-segment-bases
           (compiler-opt-box-shared-view rest)
           (compiler-opt-global-shared-view state)))]
@@ -144974,37 +145160,73 @@
   (match (compiler-opt-global-shared-view func)
     [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
       (let
-        [state : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+        [state : (__tl_dyn-array i64) (__tl_make-array i64 12)]
         (begin
           (set! (array-ref state 0) (- 0 1))
           (set! (array-ref state 1) (- 0 1))
           (set! (array-ref state 2) (- 0 1))
+          (set! (array-ref state 3) (- 0 1))
           (set! (array-ref state 4) (- 0 1))
-          (set! (array-ref state 5) (- 0 1))
+          (set! (array-ref state 6) (- 0 1))
+          (set! (array-ref state 9) (- 0 1))
+          (set! (array-ref state 11) (- 0 1))
           (opt-cl-init-scan-blocks!
             type-segment-bases
             (compiler-opt-global-shared-view blocks)
             (compiler-opt-global-shared-view state))
-          (let
-            [length : i64
-              (if (>= (array-ref state 4) 0)
-                (array-ref state 4)
-                (if (>= (array-ref state 5) 0)
-                  (opt-cl-mov-literal
-                    (compiler-opt-global-shared-view blocks)
-                    (array-ref state 5))
-                  (- 0 1)))]
-            (if (and
-              (>= (array-ref state 0) 0)
-              (>= (array-ref state 1) 0)
-              (= (array-ref state 0) (array-ref state 1))
-              (>= (array-ref state 2) 0)
-              (= (array-ref state 3) 2)
-              (= (array-ref state 6) 1)
-              (= (array-ref state 7) 0)
-              (>= length 0))
-              length
-              (- 0 1)))))]))
+          (if (and
+            (>= (array-ref state 0) 0)
+            (>= (array-ref state 1) 0)
+            (>= (array-ref state 2) 0)
+            (= (array-ref state 0) (array-ref state 2))
+            (>= (array-ref state 3) 0)
+            (>= (array-ref state 4) 0)
+            (= (array-ref state 5) 2)
+            (or (>= (array-ref state 6) 0) (>= (array-ref state 11) 0))
+            (= (array-ref state 7) 1)
+            (= (array-ref state 8) 0)
+            (= (array-ref state 10) 6))
+            (let
+              [sources : opt_i64_i64_map.Map
+                (opt-gvn-sources-blocks
+                  (compiler-opt-global-shared-view blocks)
+                  (opt_i64_i64_map.with-capacity 16))]
+              [length : i64
+                (if (>= (array-ref state 6) 0)
+                  (array-ref state 6)
+                  (if (opt-gvn-stable-var?
+                    (compiler-opt-global-shared-view sources)
+                    (array-ref state 11))
+                    (opt-cl-mov-literal
+                      (compiler-opt-global-shared-view blocks)
+                      (array-ref state 11))
+                    (- 0 1)))]
+              (begin
+                (if (and
+                  (>= length 0)
+                  (opt-gvn-stable-var?
+                    (compiler-opt-global-shared-view sources)
+                    (array-ref state 1))
+                  (opt-gvn-stable-var?
+                    (compiler-opt-global-shared-view sources)
+                    (array-ref state 2))
+                  (opt-gvn-stable-var?
+                    (compiler-opt-global-shared-view sources)
+                    (array-ref state 3))
+                  (opt-gvn-stable-var?
+                    (compiler-opt-global-shared-view sources)
+                    (array-ref state 4)))
+                  (begin
+                    (set! (array-ref state 6) length)
+                    (opt-cl-init-escape-blocks!
+                      type-segment-bases
+                      (compiler-opt-global-shared-view blocks)
+                      (compiler-opt-global-shared-view state)))
+                  (set! (array-ref state 8) 1))
+                (if (= (array-ref state 8) 0)
+                  (array-ref state 6)
+                  (- 0 1))))
+            (- 0 1))))]))
 
 (define (opt-cl-function-by-symbol
   [functions : ir.CompilerIrFunctionSeq]

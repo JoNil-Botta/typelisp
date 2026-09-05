@@ -4397,17 +4397,11 @@
     [(ast.AstImportKind.MacroDecls _ _) true]
     [_ false]))
 
-(define (compiler-load-include-str-def [name : i64] [contents : String]) : ast.AstDecl
-  (let
-    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [decl : ast.AstDecl
-      (compiler-load-include-str-def-with-pools
-        (ast.ast-place-shared-view pools)
-        name
-        contents)]
-    (begin
-      (ast.ast-node-pool-context-install! pools)
-      decl)))
+(defenum CompilerLoadIncludeKind
+  (RuntimeString)
+  (ComptimeString)
+  (LzssString)
+  (Binary))
 
 (define (compiler-load-include-str-def-with-pools
   [pools : ast.AstNodePoolContext]
@@ -4420,9 +4414,7 @@
       pools
       (ast.AstExpr.Literal (ast.ast-lit-generated-string contents)))))
 
-;; A comptime include becomes a zero-argument macro whose expansion is a string
-;; literal. The file bytes therefore exist only while the transformer runs;
-;; unlike `include-str`, no runtime definition or static string is emitted.
+;; Comptime includes retain their macro declaration and transformer-only bytes.
 (define (compiler-load-include-str-comptime-def-with-pools
   [pools : ast.AstNodePoolContext]
   [name : i64]
@@ -4447,34 +4439,6 @@
               (ast.AstExpr.Var (cbi.compiler-builtin-ctfe-ref 29)))
             args))))))
 
-(define (compiler-load-include-str-lzss-def-with-pools
-  [pools : ast.AstNodePoolContext]
-  [name : i64]
-  [contents : String]) : ast.AstDecl
-  (let
-    [compressed : String (ctfe.ctfe-embedded-stdlib-binary-data-bytes contents)]
-    (ast.ast-decl-def-id
-      name
-      (ast.AstMaybeType.Some
-        (ast.ast-ty-dyn-array-with-pools
-          (ast.ast-place-shared-view pools)
-          (ast.AstType.U8)))
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.BinaryData compressed)))))
-
-(define (compiler-load-include-bin-def [name : i64] [contents : String]) : ast.AstDecl
-  (let
-    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [decl : ast.AstDecl
-      (compiler-load-include-bin-def-with-pools
-        (ast.ast-place-shared-view pools)
-        name
-        contents)]
-    (begin
-      (ast.ast-node-pool-context-install! pools)
-      decl)))
-
 (define (compiler-load-include-bin-def-with-pools
   [pools : ast.AstNodePoolContext]
   [name : i64]
@@ -4489,14 +4453,43 @@
       pools
       (ast.AstExpr.BinaryData contents))))
 
-(define (compiler-load-include-str-read-error
+(define (compiler-load-include-str-lzss-def-with-pools
+  [pools : ast.AstNodePoolContext]
+  [name : i64]
+  [contents : String]) : ast.AstDecl
+  (compiler-load-include-bin-def-with-pools
+    pools
+    name
+    (ctfe.ctfe-embedded-stdlib-binary-data-bytes contents)))
+
+(define (compiler-load-include-def-with-pools
+  [kind : CompilerLoadIncludeKind]
+  [pools : ast.AstNodePoolContext]
+  [name : i64]
+  [contents : String]) : ast.AstDecl
+  (match kind
+    [(CompilerLoadIncludeKind.RuntimeString)
+      (compiler-load-include-str-def-with-pools pools name contents)]
+    [(CompilerLoadIncludeKind.ComptimeString)
+      (compiler-load-include-str-comptime-def-with-pools pools name contents)]
+    [(CompilerLoadIncludeKind.LzssString)
+      (compiler-load-include-str-lzss-def-with-pools pools name contents)]
+    [(CompilerLoadIncludeKind.Binary)
+      (compiler-load-include-bin-def-with-pools pools name contents)]))
+
+(define (compiler-load-include-read-error
+  [kind : CompilerLoadIncludeKind]
   [importer-path : String]
   [include-path : String]
   [resolved : String]) : cdiag.CompilerDiagnostic
   (cdiag.compiler-diagnostic-at-start
     (string.copy importer-path)
     (str_cat.str-cat
-      "compiler-load: cannot read include-str "
+      "compiler-load: cannot read "
+      (match kind
+        [(CompilerLoadIncludeKind.Binary) "include-bin"]
+        [_ "include-str"])
+      " "
       include-path
       " from "
       importer-path
@@ -4504,31 +4497,8 @@
       resolved
       ")")))
 
-(define (compiler-load-include-str-from-resolved
-  [importer-path : String]
-  [include-path : String]
-  [resolved : String]
-  [name : i64]) : ResultCompilerLoadInclude
-  (if (io.file-exists? (string.copy resolved))
-    (ResultCompilerLoadInclude.Ok
-      (compiler-load-include-str-def
-        name
-        (compiler-load-read-file-text resolved)))
-    (match (compiler-load-embedded-stdlib-source-for-path
-      (string.copy resolved))
-      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
-          source)
-        (ResultCompilerLoadInclude.Ok
-          (compiler-load-include-str-def name source))]
-      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
-        (ResultCompilerLoadInclude.Err
-          (box
-            (compiler-load-include-str-read-error
-              importer-path
-              include-path
-              resolved)))])))
-
-(define (compiler-load-include-str-from-resolved-with-pools
+(define (compiler-load-include-from-resolved-with-pools
+  [kind : CompilerLoadIncludeKind]
   [importer-path : String]
   [include-path : String]
   [resolved : String]
@@ -4536,7 +4506,8 @@
   [pools : ast.AstNodePoolContext]) : ResultCompilerLoadInclude
   (if (io.file-exists? (string.copy resolved))
     (ResultCompilerLoadInclude.Ok
-      (compiler-load-include-str-def-with-pools
+      (compiler-load-include-def-with-pools
+        kind
         pools
         name
         (compiler-load-read-file-text resolved)))
@@ -4545,68 +4516,18 @@
       [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
           source)
         (ResultCompilerLoadInclude.Ok
-          (compiler-load-include-str-def-with-pools pools name source))]
+          (compiler-load-include-def-with-pools kind pools name source))]
       [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
         (ResultCompilerLoadInclude.Err
           (box
-            (compiler-load-include-str-read-error
+            (compiler-load-include-read-error
+              kind
               importer-path
               include-path
               resolved)))])))
 
-(define (compiler-load-include-str-comptime-from-resolved-with-pools
-  [importer-path : String]
-  [include-path : String]
-  [resolved : String]
-  [name : i64]
-  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadInclude
-  (if (io.file-exists? (string.copy resolved))
-    (ResultCompilerLoadInclude.Ok
-      (compiler-load-include-str-comptime-def-with-pools
-        pools
-        name
-        (compiler-load-read-file-text resolved)))
-    (match (compiler-load-embedded-stdlib-source-for-path
-      (string.copy resolved))
-      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
-          source)
-        (ResultCompilerLoadInclude.Ok
-          (compiler-load-include-str-comptime-def-with-pools pools name source))]
-      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
-        (ResultCompilerLoadInclude.Err
-          (box
-            (compiler-load-include-str-read-error
-              importer-path
-              include-path
-              resolved)))])))
-
-(define (compiler-load-include-str-lzss-from-resolved-with-pools
-  [importer-path : String]
-  [include-path : String]
-  [resolved : String]
-  [name : i64]
-  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadInclude
-  (if (io.file-exists? (string.copy resolved))
-    (ResultCompilerLoadInclude.Ok
-      (compiler-load-include-str-lzss-def-with-pools
-        pools
-        name
-        (compiler-load-read-file-text resolved)))
-    (match (compiler-load-embedded-stdlib-source-for-path
-      (string.copy resolved))
-      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
-          source)
-        (ResultCompilerLoadInclude.Ok
-          (compiler-load-include-str-lzss-def-with-pools pools name source))]
-      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
-        (ResultCompilerLoadInclude.Err
-          (box
-            (compiler-load-include-str-read-error
-              importer-path
-              include-path
-              resolved)))])))
-
-(define (compiler-load-include-str-lzss-from-resolved
+(define (compiler-load-include-from-resolved
+  [kind : CompilerLoadIncludeKind]
   [importer-path : String]
   [include-path : String]
   [resolved : String]
@@ -4614,7 +4535,8 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultCompilerLoadInclude
-      (compiler-load-include-str-lzss-from-resolved-with-pools
+      (compiler-load-include-from-resolved-with-pools
+        kind
         importer-path
         include-path
         resolved
@@ -4624,72 +4546,8 @@
       (ast.ast-node-pool-context-install! pools)
       result)))
 
-(define (compiler-load-include-bin-read-error
-  [importer-path : String]
-  [include-path : String]
-  [resolved : String]) : cdiag.CompilerDiagnostic
-  (cdiag.compiler-diagnostic-at-start
-    (string.copy importer-path)
-    (str_cat.str-cat
-      "compiler-load: cannot read include-bin "
-      include-path
-      " from "
-      importer-path
-      " (resolved "
-      resolved
-      ")")))
-
-(define (compiler-load-include-bin-from-resolved
-  [importer-path : String]
-  [include-path : String]
-  [resolved : String]
-  [name : i64]) : ResultCompilerLoadInclude
-  (if (io.file-exists? (string.copy resolved))
-    (ResultCompilerLoadInclude.Ok
-      (compiler-load-include-bin-def
-        name
-        (compiler-load-read-file-text resolved)))
-    (match (compiler-load-embedded-stdlib-source-for-path
-      (string.copy resolved))
-      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
-          source)
-        (ResultCompilerLoadInclude.Ok
-          (compiler-load-include-bin-def name source))]
-      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
-        (ResultCompilerLoadInclude.Err
-          (box
-            (compiler-load-include-bin-read-error
-              importer-path
-              include-path
-              resolved)))])))
-
-(define (compiler-load-include-bin-from-resolved-with-pools
-  [importer-path : String]
-  [include-path : String]
-  [resolved : String]
-  [name : i64]
-  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadInclude
-  (if (io.file-exists? (string.copy resolved))
-    (ResultCompilerLoadInclude.Ok
-      (compiler-load-include-bin-def-with-pools
-        pools
-        name
-        (compiler-load-read-file-text resolved)))
-    (match (compiler-load-embedded-stdlib-source-for-path
-      (string.copy resolved))
-      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
-          source)
-        (ResultCompilerLoadInclude.Ok
-          (compiler-load-include-bin-def-with-pools pools name source))]
-      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
-        (ResultCompilerLoadInclude.Err
-          (box
-            (compiler-load-include-bin-read-error
-              importer-path
-              include-path
-              resolved)))])))
-
-(define (compiler-load-expand-include-str-with-pools
+(define (compiler-load-expand-include-with-pools
+  [kind : CompilerLoadIncludeKind]
   [importer-path : String]
   [include-path : String]
   [name : i64]
@@ -4700,70 +4558,8 @@
     (string.copy include-path)
     stdlib-roots)
     [(ResultPkgResolve.Ok resolved)
-      (compiler-load-include-str-from-resolved-with-pools
-        importer-path
-        include-path
-        resolved
-        name
-        (ast.ast-place-shared-view pools))]
-    [(ResultPkgResolve.Err message)
-      (ResultCompilerLoadInclude.Err
-        (box (cdiag.compiler-diagnostic-at-start importer-path message)))]))
-
-(define (compiler-load-expand-include-str-comptime-with-pools
-  [importer-path : String]
-  [include-path : String]
-  [name : i64]
-  [stdlib-roots : svec.Vec]
-  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadInclude
-  (match (compiler-load-resolve-import-result-with-roots
-    (string.copy importer-path)
-    (string.copy include-path)
-    stdlib-roots)
-    [(ResultPkgResolve.Ok resolved)
-      (compiler-load-include-str-comptime-from-resolved-with-pools
-        importer-path
-        include-path
-        resolved
-        name
-        pools)]
-    [(ResultPkgResolve.Err message)
-      (ResultCompilerLoadInclude.Err
-        (box (cdiag.compiler-diagnostic-at-start importer-path message)))]))
-
-(define (compiler-load-expand-include-str-lzss-with-pools
-  [importer-path : String]
-  [include-path : String]
-  [name : i64]
-  [stdlib-roots : svec.Vec]
-  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadInclude
-  (match (compiler-load-resolve-import-result-with-roots
-    (string.copy importer-path)
-    (string.copy include-path)
-    stdlib-roots)
-    [(ResultPkgResolve.Ok resolved)
-      (compiler-load-include-str-lzss-from-resolved-with-pools
-        importer-path
-        include-path
-        resolved
-        name
-        pools)]
-    [(ResultPkgResolve.Err message)
-      (ResultCompilerLoadInclude.Err
-        (box (cdiag.compiler-diagnostic-at-start importer-path message)))]))
-
-(define (compiler-load-expand-include-bin-with-pools
-  [importer-path : String]
-  [include-path : String]
-  [name : i64]
-  [stdlib-roots : svec.Vec]
-  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadInclude
-  (match (compiler-load-resolve-import-result-with-roots
-    (string.copy importer-path)
-    (string.copy include-path)
-    stdlib-roots)
-    [(ResultPkgResolve.Ok resolved)
-      (compiler-load-include-bin-from-resolved-with-pools
+      (compiler-load-include-from-resolved-with-pools
+        kind
         importer-path
         include-path
         resolved
@@ -4794,6 +4590,36 @@
           1
           rest)
         out))))
+
+;; Include expansion precedes the recursive tail load. Only its successful
+;; result reaches this shared declaration/path/module publication boundary.
+(define (compiler-load-prepend-include
+  [kind : CompilerLoadIncludeKind]
+  [expanded : ast.AstDecl]
+  [source : ast.AstDeclList]
+  [importer-path : String]
+  [owner-id : i64]
+  [provenance-id : i64]
+  [module-id : i64]
+  [rest : ResultCompilerLoadWithPaths]) : ResultCompilerLoadWithPaths
+  (match rest
+    [(ResultCompilerLoadWithPaths.Ok decls paths modules seen)
+      (ResultCompilerLoadWithPaths.Ok
+        (match kind
+          ;; Preserve the existing LZSS declaration-origin policy.
+          [(CompilerLoadIncludeKind.LzssString)
+            (ast.ast-decl-list-prepend-builder expanded decls)]
+          [_
+            (compiler-load-decl-list-prepend-from-source expanded source decls)])
+        (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
+          importer-path
+          owner-id
+          provenance-id
+          paths)
+        (ast.ast-decl-module-list-prepend-builder-id module-id modules)
+        seen)]
+    [(ResultCompilerLoadWithPaths.Err diagnostic)
+      (ResultCompilerLoadWithPaths.Err diagnostic)]))
 
 (define (compiler-load-decl-list-prepend-from-source
   [head : ast.AstDecl]
@@ -10771,176 +10597,131 @@
                         (__tl-box-place span)
                         message)))]))]
           [(ast.AstDecl.IncludeStr name include-path)
-            (match (compiler-load-expand-include-str-with-pools
+            (match (compiler-load-expand-include-with-pools
+              CompilerLoadIncludeKind.RuntimeString
               (string.copy importer-path)
               include-path
               name
               (ast.ast-place-shared-view stdlib-roots)
               (ast.ast-place-shared-view pools))
               [(ResultCompilerLoadInclude.Ok expanded)
-                (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-                  (ast.ast-place-shared-view traversal)
-                  rest
+                (compiler-load-prepend-include
+                  CompilerLoadIncludeKind.RuntimeString
+                  expanded
+                  (ast.ast-place-shared-view decls)
                   (string.copy importer-path)
-                  importer-module
-                  importer-module-id
-                  (string.copy importer-source-module)
+                  traversal.importer-decl-owner-id
+                  traversal.importer-path-id
                   importer-source-module-id
-                  (sym_i64_env.sym-i64-shared-view (& seen))
-                  (ast.ast-place-shared-view stdlib-roots)
-                  (string.copy import-root)
-                  (sym_i64_env.sym-i64-shared-view (& cfgs))
-                  (ast.ast-place-shared-view pools))
-                  [(ResultCompilerLoadWithPaths.Ok
-                      rest-decls
-                      rest-paths
-                      rest-modules
-                      rest-seen)
-                    (ResultCompilerLoadWithPaths.Ok
-                      (compiler-load-decl-list-prepend-from-source
-                        expanded
-                        (ast.ast-place-shared-view decls)
-                        rest-decls)
-                      (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
-                        (string.copy importer-path)
-                        traversal.importer-decl-owner-id
-                        traversal.importer-path-id
-                        rest-paths)
-                      (ast.ast-decl-module-list-prepend-builder-id
-                        importer-source-module-id
-                        rest-modules)
-                      rest-seen)]
-                  [(ResultCompilerLoadWithPaths.Err diag)
-                    (ResultCompilerLoadWithPaths.Err diag)])]
+                  (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                    (ast.ast-place-shared-view traversal)
+                    rest
+                    (string.copy importer-path)
+                    importer-module
+                    importer-module-id
+                    (string.copy importer-source-module)
+                    importer-source-module-id
+                    (sym_i64_env.sym-i64-shared-view (& seen))
+                    (ast.ast-place-shared-view stdlib-roots)
+                    (string.copy import-root)
+                    (sym_i64_env.sym-i64-shared-view (& cfgs))
+                    (ast.ast-place-shared-view pools)))]
               [(ResultCompilerLoadInclude.Err diag)
                 (ResultCompilerLoadWithPaths.Err diag)])]
           [(ast.AstDecl.IncludeStrComptime name include-path)
-            (match (compiler-load-expand-include-str-comptime-with-pools
+            (match (compiler-load-expand-include-with-pools
+              CompilerLoadIncludeKind.ComptimeString
               (string.copy importer-path)
               include-path
               name
               (ast.ast-place-shared-view stdlib-roots)
               (ast.ast-place-shared-view pools))
               [(ResultCompilerLoadInclude.Ok expanded)
-                (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-                  (ast.ast-place-shared-view traversal)
-                  rest
+                (compiler-load-prepend-include
+                  CompilerLoadIncludeKind.ComptimeString
+                  expanded
+                  (ast.ast-place-shared-view decls)
                   (string.copy importer-path)
-                  importer-module
-                  importer-module-id
-                  (string.copy importer-source-module)
+                  traversal.importer-decl-owner-id
+                  traversal.importer-path-id
                   importer-source-module-id
-                  (sym_i64_env.sym-i64-shared-view (& seen))
-                  (ast.ast-place-shared-view stdlib-roots)
-                  (string.copy import-root)
-                  (sym_i64_env.sym-i64-shared-view (& cfgs))
-                  (ast.ast-place-shared-view pools))
-                  [(ResultCompilerLoadWithPaths.Ok
-                      rest-decls
-                      rest-paths
-                      rest-modules
-                      rest-seen)
-                    (ResultCompilerLoadWithPaths.Ok
-                      (compiler-load-decl-list-prepend-from-source
-                        expanded
-                        decls
-                        rest-decls)
-                      (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
-                        (string.copy importer-path)
-                        traversal.importer-decl-owner-id
-                        traversal.importer-path-id
-                        rest-paths)
-                      (ast.ast-decl-module-list-prepend-builder-id
-                        importer-source-module-id
-                        rest-modules)
-                      rest-seen)]
-                  [(ResultCompilerLoadWithPaths.Err diag)
-                    (ResultCompilerLoadWithPaths.Err diag)])]
+                  (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                    (ast.ast-place-shared-view traversal)
+                    rest
+                    (string.copy importer-path)
+                    importer-module
+                    importer-module-id
+                    (string.copy importer-source-module)
+                    importer-source-module-id
+                    (sym_i64_env.sym-i64-shared-view (& seen))
+                    (ast.ast-place-shared-view stdlib-roots)
+                    (string.copy import-root)
+                    (sym_i64_env.sym-i64-shared-view (& cfgs))
+                    (ast.ast-place-shared-view pools)))]
               [(ResultCompilerLoadInclude.Err diag)
                 (ResultCompilerLoadWithPaths.Err diag)])]
           [(ast.AstDecl.IncludeStrLzss name include-path)
-            (match (compiler-load-expand-include-str-lzss-with-pools
+            (match (compiler-load-expand-include-with-pools
+              CompilerLoadIncludeKind.LzssString
               (string.copy importer-path)
               include-path
               name
               (ast.ast-place-shared-view stdlib-roots)
               (ast.ast-place-shared-view pools))
               [(ResultCompilerLoadInclude.Ok expanded)
-                (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-                  (ast.ast-place-shared-view traversal)
-                  rest
+                (compiler-load-prepend-include
+                  CompilerLoadIncludeKind.LzssString
+                  expanded
+                  (ast.ast-place-shared-view decls)
                   (string.copy importer-path)
-                  importer-module
-                  importer-module-id
-                  (string.copy importer-source-module)
+                  traversal.importer-decl-owner-id
+                  traversal.importer-path-id
                   importer-source-module-id
-                  (sym_i64_env.sym-i64-shared-view (& seen))
-                  (ast.ast-place-shared-view stdlib-roots)
-                  (string.copy import-root)
-                  (sym_i64_env.sym-i64-shared-view (& cfgs))
-                  (ast.ast-place-shared-view pools))
-                  [(ResultCompilerLoadWithPaths.Ok
-                      rest-decls
-                      rest-paths
-                      rest-modules
-                      rest-seen)
-                    (ResultCompilerLoadWithPaths.Ok
-                      (ast.ast-decl-list-prepend-builder expanded rest-decls)
-                      (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
-                        (string.copy importer-path)
-                        traversal.importer-decl-owner-id
-                        traversal.importer-path-id
-                        rest-paths)
-                      (ast.ast-decl-module-list-prepend-builder-id
-                        importer-source-module-id
-                        rest-modules)
-                      rest-seen)]
-                  [(ResultCompilerLoadWithPaths.Err diag)
-                    (ResultCompilerLoadWithPaths.Err diag)])]
+                  (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                    (ast.ast-place-shared-view traversal)
+                    rest
+                    (string.copy importer-path)
+                    importer-module
+                    importer-module-id
+                    (string.copy importer-source-module)
+                    importer-source-module-id
+                    (sym_i64_env.sym-i64-shared-view (& seen))
+                    (ast.ast-place-shared-view stdlib-roots)
+                    (string.copy import-root)
+                    (sym_i64_env.sym-i64-shared-view (& cfgs))
+                    (ast.ast-place-shared-view pools)))]
               [(ResultCompilerLoadInclude.Err diag)
                 (ResultCompilerLoadWithPaths.Err diag)])]
           [(ast.AstDecl.IncludeBin name include-path)
-            (match (compiler-load-expand-include-bin-with-pools
+            (match (compiler-load-expand-include-with-pools
+              CompilerLoadIncludeKind.Binary
               (string.copy importer-path)
               include-path
               name
               (ast.ast-place-shared-view stdlib-roots)
               (ast.ast-place-shared-view pools))
               [(ResultCompilerLoadInclude.Ok expanded)
-                (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-                  (ast.ast-place-shared-view traversal)
-                  rest
+                (compiler-load-prepend-include
+                  CompilerLoadIncludeKind.Binary
+                  expanded
+                  (ast.ast-place-shared-view decls)
                   (string.copy importer-path)
-                  importer-module
-                  importer-module-id
-                  (string.copy importer-source-module)
+                  traversal.importer-decl-owner-id
+                  traversal.importer-path-id
                   importer-source-module-id
-                  (sym_i64_env.sym-i64-shared-view (& seen))
-                  (ast.ast-place-shared-view stdlib-roots)
-                  (string.copy import-root)
-                  (sym_i64_env.sym-i64-shared-view (& cfgs))
-                  (ast.ast-place-shared-view pools))
-                  [(ResultCompilerLoadWithPaths.Ok
-                      rest-decls
-                      rest-paths
-                      rest-modules
-                      rest-seen)
-                    (ResultCompilerLoadWithPaths.Ok
-                      (compiler-load-decl-list-prepend-from-source
-                        expanded
-                        decls
-                        rest-decls)
-                      (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
-                        (string.copy importer-path)
-                        traversal.importer-decl-owner-id
-                        traversal.importer-path-id
-                        rest-paths)
-                      (ast.ast-decl-module-list-prepend-builder-id
-                        importer-source-module-id
-                        rest-modules)
-                      rest-seen)]
-                  [(ResultCompilerLoadWithPaths.Err diag)
-                    (ResultCompilerLoadWithPaths.Err diag)])]
+                  (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                    (ast.ast-place-shared-view traversal)
+                    rest
+                    (string.copy importer-path)
+                    importer-module
+                    importer-module-id
+                    (string.copy importer-source-module)
+                    importer-source-module-id
+                    (sym_i64_env.sym-i64-shared-view (& seen))
+                    (ast.ast-place-shared-view stdlib-roots)
+                    (string.copy import-root)
+                    (sym_i64_env.sym-i64-shared-view (& cfgs))
+                    (ast.ast-place-shared-view pools)))]
               [(ResultCompilerLoadInclude.Err diag)
                 (ResultCompilerLoadWithPaths.Err diag)])]
           [_
@@ -13863,7 +13644,8 @@
                 [(ResultCompilerLoadWithPaths.Err diag)
                   (ResultCompilerLoadWithPaths.Err diag)])])])]))
 
-(define (compiler-load-package-expand-include-str
+(define (compiler-load-package-expand-include
+  [kind : CompilerLoadIncludeKind]
   [importer-path : String]
   [include-path : String]
   [name : i64]
@@ -13880,86 +13662,8 @@
       (string.copy include-path)
       stdlib-roots))
     [(ResultPkgResolve.Ok resolved)
-      (compiler-load-include-str-from-resolved
-        importer-path
-        include-path
-        resolved
-        name)]
-    [(ResultPkgResolve.Err message)
-      (ResultCompilerLoadInclude.Err
-        (box (cdiag.compiler-diagnostic-at-start importer-path message)))]))
-
-(define (compiler-load-package-expand-include-str-comptime
-  [importer-path : String]
-  [include-path : String]
-  [name : i64]
-  [stdlib-roots : svec.Vec]
-  [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : ResultCompilerLoadInclude
-  (match (if (compiler-load-pkg-import? include-path)
-    (compiler-load-resolve-pkg-import
-      (string.copy include-path)
-      manifest-dir
-      deps)
-    (compiler-load-resolve-import-result-with-roots
-      (string.copy importer-path)
-      (string.copy include-path)
-      stdlib-roots))
-    [(ResultPkgResolve.Ok resolved)
-      (compiler-load-include-str-comptime-from-resolved-with-pools
-        importer-path
-        include-path
-        resolved
-        name
-        (ast.ast-node-pool-context-capture-active))]
-    [(ResultPkgResolve.Err message)
-      (ResultCompilerLoadInclude.Err
-        (box (cdiag.compiler-diagnostic-at-start importer-path message)))]))
-
-(define (compiler-load-package-expand-include-str-lzss
-  [importer-path : String]
-  [include-path : String]
-  [name : i64]
-  [stdlib-roots : svec.Vec]
-  [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : ResultCompilerLoadInclude
-  (match (if (compiler-load-pkg-import? include-path)
-    (compiler-load-resolve-pkg-import
-      (string.copy include-path)
-      manifest-dir
-      deps)
-    (compiler-load-resolve-import-result-with-roots
-      (string.copy importer-path)
-      (string.copy include-path)
-      stdlib-roots))
-    [(ResultPkgResolve.Ok resolved)
-      (compiler-load-include-str-lzss-from-resolved
-        importer-path
-        include-path
-        resolved
-        name)]
-    [(ResultPkgResolve.Err message)
-      (ResultCompilerLoadInclude.Err
-        (box (cdiag.compiler-diagnostic-at-start importer-path message)))]))
-
-(define (compiler-load-package-expand-include-bin
-  [importer-path : String]
-  [include-path : String]
-  [name : i64]
-  [stdlib-roots : svec.Vec]
-  [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : ResultCompilerLoadInclude
-  (match (if (compiler-load-pkg-import? include-path)
-    (compiler-load-resolve-pkg-import
-      (string.copy include-path)
-      manifest-dir
-      deps)
-    (compiler-load-resolve-import-result-with-roots
-      (string.copy importer-path)
-      (string.copy include-path)
-      stdlib-roots))
-    [(ResultPkgResolve.Ok resolved)
-      (compiler-load-include-bin-from-resolved
+      (compiler-load-include-from-resolved
+        kind
         importer-path
         include-path
         resolved
@@ -14313,7 +14017,8 @@
                         (__tl-box-place span)
                         message)))]))]
           [(ast.AstDecl.IncludeStr name include-path)
-            (match (compiler-load-package-expand-include-str
+            (match (compiler-load-package-expand-include
+              CompilerLoadIncludeKind.RuntimeString
               (string.copy importer-path)
               include-path
               name
@@ -14321,43 +14026,32 @@
               (string.copy manifest-dir)
               (ast.ast-place-shared-view deps))
               [(ResultCompilerLoadInclude.Ok expanded)
-                (match (compiler-load-package-decls-with-module-and-roots
-                  (ast.ast-place-shared-view rest)
+                (compiler-load-prepend-include
+                  CompilerLoadIncludeKind.RuntimeString
+                  expanded
+                  (ast.ast-place-shared-view decls)
                   (string.copy importer-path)
                   importer-path-id
-                  importer-module
+                  importer-path-id
                   importer-module-id
-                  (string.copy importer-source-module)
-                  importer-source-module-id
-                  (sym_i64_env.sym-i64-shared-view (& seen))
-                  (ast.ast-place-shared-view stdlib-roots)
-                  (string.copy manifest-dir)
-                  (ast.ast-place-shared-view deps)
-                  (sym_i64_env.sym-i64-shared-view (& cfgs)))
-                  [(ResultCompilerLoadWithPaths.Ok
-                      rest-decls
-                      rest-paths
-                      rest-modules
-                      rest-seen)
-                    (ResultCompilerLoadWithPaths.Ok
-                      (compiler-load-decl-list-prepend-from-source
-                        expanded
-                        (ast.ast-place-shared-view decls)
-                        rest-decls)
-                      (ast.ast-decl-path-list-prepend-builder-with-owner-id
-                        (string.copy importer-path)
-                        importer-path-id
-                        rest-paths)
-                      (ast.ast-decl-module-list-prepend-builder-id
-                        importer-module-id
-                        rest-modules)
-                      rest-seen)]
-                  [(ResultCompilerLoadWithPaths.Err diag)
-                    (ResultCompilerLoadWithPaths.Err diag)])]
+                  (compiler-load-package-decls-with-module-and-roots
+                    (ast.ast-place-shared-view rest)
+                    (string.copy importer-path)
+                    importer-path-id
+                    importer-module
+                    importer-module-id
+                    (string.copy importer-source-module)
+                    importer-source-module-id
+                    (sym_i64_env.sym-i64-shared-view (& seen))
+                    (ast.ast-place-shared-view stdlib-roots)
+                    (string.copy manifest-dir)
+                    (ast.ast-place-shared-view deps)
+                    (sym_i64_env.sym-i64-shared-view (& cfgs))))]
               [(ResultCompilerLoadInclude.Err diag)
                 (ResultCompilerLoadWithPaths.Err diag)])]
           [(ast.AstDecl.IncludeStrComptime name include-path)
-            (match (compiler-load-package-expand-include-str-comptime
+            (match (compiler-load-package-expand-include
+              CompilerLoadIncludeKind.ComptimeString
               (string.copy importer-path)
               include-path
               name
@@ -14365,43 +14059,32 @@
               (string.copy manifest-dir)
               (ast.ast-place-shared-view deps))
               [(ResultCompilerLoadInclude.Ok expanded)
-                (match (compiler-load-package-decls-with-module-and-roots
-                  (ast.ast-place-shared-view rest)
+                (compiler-load-prepend-include
+                  CompilerLoadIncludeKind.ComptimeString
+                  expanded
+                  (ast.ast-place-shared-view decls)
                   (string.copy importer-path)
                   importer-path-id
-                  importer-module
+                  importer-path-id
                   importer-module-id
-                  (string.copy importer-source-module)
-                  importer-source-module-id
-                  (sym_i64_env.sym-i64-shared-view (& seen))
-                  (ast.ast-place-shared-view stdlib-roots)
-                  (string.copy manifest-dir)
-                  (ast.ast-place-shared-view deps)
-                  (sym_i64_env.sym-i64-shared-view (& cfgs)))
-                  [(ResultCompilerLoadWithPaths.Ok
-                      rest-decls
-                      rest-paths
-                      rest-modules
-                      rest-seen)
-                    (ResultCompilerLoadWithPaths.Ok
-                      (compiler-load-decl-list-prepend-from-source
-                        expanded
-                        (ast.ast-place-shared-view decls)
-                        rest-decls)
-                      (ast.ast-decl-path-list-prepend-builder-with-owner-id
-                        (string.copy importer-path)
-                        importer-path-id
-                        rest-paths)
-                      (ast.ast-decl-module-list-prepend-builder-id
-                        importer-module-id
-                        rest-modules)
-                      rest-seen)]
-                  [(ResultCompilerLoadWithPaths.Err diag)
-                    (ResultCompilerLoadWithPaths.Err diag)])]
+                  (compiler-load-package-decls-with-module-and-roots
+                    (ast.ast-place-shared-view rest)
+                    (string.copy importer-path)
+                    importer-path-id
+                    importer-module
+                    importer-module-id
+                    (string.copy importer-source-module)
+                    importer-source-module-id
+                    (sym_i64_env.sym-i64-shared-view (& seen))
+                    (ast.ast-place-shared-view stdlib-roots)
+                    (string.copy manifest-dir)
+                    (ast.ast-place-shared-view deps)
+                    (sym_i64_env.sym-i64-shared-view (& cfgs))))]
               [(ResultCompilerLoadInclude.Err diag)
                 (ResultCompilerLoadWithPaths.Err diag)])]
           [(ast.AstDecl.IncludeStrLzss name include-path)
-            (match (compiler-load-package-expand-include-str-lzss
+            (match (compiler-load-package-expand-include
+              CompilerLoadIncludeKind.LzssString
               (string.copy importer-path)
               include-path
               name
@@ -14409,40 +14092,32 @@
               (string.copy manifest-dir)
               (ast.ast-place-shared-view deps))
               [(ResultCompilerLoadInclude.Ok expanded)
-                (match (compiler-load-package-decls-with-module-and-roots
-                  (ast.ast-place-shared-view rest)
+                (compiler-load-prepend-include
+                  CompilerLoadIncludeKind.LzssString
+                  expanded
+                  (ast.ast-place-shared-view decls)
                   (string.copy importer-path)
                   importer-path-id
-                  importer-module
+                  importer-path-id
                   importer-module-id
-                  (string.copy importer-source-module)
-                  importer-source-module-id
-                  (sym_i64_env.sym-i64-shared-view (& seen))
-                  (ast.ast-place-shared-view stdlib-roots)
-                  (string.copy manifest-dir)
-                  (ast.ast-place-shared-view deps)
-                  (sym_i64_env.sym-i64-shared-view (& cfgs)))
-                  [(ResultCompilerLoadWithPaths.Ok
-                      rest-decls
-                      rest-paths
-                      rest-modules
-                      rest-seen)
-                    (ResultCompilerLoadWithPaths.Ok
-                      (ast.ast-decl-list-prepend-builder expanded rest-decls)
-                      (ast.ast-decl-path-list-prepend-builder-with-owner-id
-                        (string.copy importer-path)
-                        importer-path-id
-                        rest-paths)
-                      (ast.ast-decl-module-list-prepend-builder-id
-                        importer-module-id
-                        rest-modules)
-                      rest-seen)]
-                  [(ResultCompilerLoadWithPaths.Err diag)
-                    (ResultCompilerLoadWithPaths.Err diag)])]
+                  (compiler-load-package-decls-with-module-and-roots
+                    (ast.ast-place-shared-view rest)
+                    (string.copy importer-path)
+                    importer-path-id
+                    importer-module
+                    importer-module-id
+                    (string.copy importer-source-module)
+                    importer-source-module-id
+                    (sym_i64_env.sym-i64-shared-view (& seen))
+                    (ast.ast-place-shared-view stdlib-roots)
+                    (string.copy manifest-dir)
+                    (ast.ast-place-shared-view deps)
+                    (sym_i64_env.sym-i64-shared-view (& cfgs))))]
               [(ResultCompilerLoadInclude.Err diag)
                 (ResultCompilerLoadWithPaths.Err diag)])]
           [(ast.AstDecl.IncludeBin name include-path)
-            (match (compiler-load-package-expand-include-bin
+            (match (compiler-load-package-expand-include
+              CompilerLoadIncludeKind.Binary
               (string.copy importer-path)
               include-path
               name
@@ -14450,39 +14125,27 @@
               (string.copy manifest-dir)
               (ast.ast-place-shared-view deps))
               [(ResultCompilerLoadInclude.Ok expanded)
-                (match (compiler-load-package-decls-with-module-and-roots
-                  (ast.ast-place-shared-view rest)
+                (compiler-load-prepend-include
+                  CompilerLoadIncludeKind.Binary
+                  expanded
+                  (ast.ast-place-shared-view decls)
                   (string.copy importer-path)
                   importer-path-id
-                  importer-module
+                  importer-path-id
                   importer-module-id
-                  (string.copy importer-source-module)
-                  importer-source-module-id
-                  (sym_i64_env.sym-i64-shared-view (& seen))
-                  (ast.ast-place-shared-view stdlib-roots)
-                  (string.copy manifest-dir)
-                  (ast.ast-place-shared-view deps)
-                  (sym_i64_env.sym-i64-shared-view (& cfgs)))
-                  [(ResultCompilerLoadWithPaths.Ok
-                      rest-decls
-                      rest-paths
-                      rest-modules
-                      rest-seen)
-                    (ResultCompilerLoadWithPaths.Ok
-                      (compiler-load-decl-list-prepend-from-source
-                        expanded
-                        decls
-                        rest-decls)
-                      (ast.ast-decl-path-list-prepend-builder-with-owner-id
-                        (string.copy importer-path)
-                        importer-path-id
-                        rest-paths)
-                      (ast.ast-decl-module-list-prepend-builder-id
-                        importer-module-id
-                        rest-modules)
-                      rest-seen)]
-                  [(ResultCompilerLoadWithPaths.Err diag)
-                    (ResultCompilerLoadWithPaths.Err diag)])]
+                  (compiler-load-package-decls-with-module-and-roots
+                    (ast.ast-place-shared-view rest)
+                    (string.copy importer-path)
+                    importer-path-id
+                    importer-module
+                    importer-module-id
+                    (string.copy importer-source-module)
+                    importer-source-module-id
+                    (sym_i64_env.sym-i64-shared-view (& seen))
+                    (ast.ast-place-shared-view stdlib-roots)
+                    (string.copy manifest-dir)
+                    (ast.ast-place-shared-view deps)
+                    (sym_i64_env.sym-i64-shared-view (& cfgs))))]
               [(ResultCompilerLoadInclude.Err diag)
                 (ResultCompilerLoadWithPaths.Err diag)])]
           [_

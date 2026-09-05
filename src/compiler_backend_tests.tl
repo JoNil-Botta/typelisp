@@ -29148,17 +29148,28 @@ g:
       assignments
       4)
       [(compiler_backend.ResultCompilerBackend.Ok asm)
+        ;; SCR-1: a register-homed index with a SIB-encodable scale is read
+        ;; from its home; only the spilled base is staged. The base scratch is
+        ;; whichever register the scavenger finds free -- that depends on the
+        ;; occupancy the preceding fixtures left behind, so the shape is
+        ;; asserted without naming it: a base reload into some register, the
+        ;; store indexed by %r9 itself, no staging copy out of %r9, and the
+        ;; base never reloaded over the index home.
         (and
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            (cfg
-              scratch-vreg
-              "    movq -8(%rbp), %rax\n    movq %r9, %rsi\n    movq $0, (%rax,%rsi,8)\n"
-              "    movq -8(%rbp), %r10\n    movq %r9, %r8\n    movq $0, (%r10,%r8,8)\n"))
+            "    movq -8(%rbp), %r")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            ",%r9,8)\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
               (owned_view.compiler-owned-shared-view asm)
-              "    movq -8(%rbp), %r9\n    movq %r9, %r8\n    movq $0, (%r9,%r8,8)\n")))]
+              "    movq %r9, %r"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    movq -8(%rbp), %r9\n")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-store-address-source-home-preserved-ok?) : bool

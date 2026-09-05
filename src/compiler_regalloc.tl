@@ -1164,6 +1164,28 @@
 (define (compiler-reg-set-rbp-pool-enabled! [on : bool]) : unit
   (set! compiler-reg-rbp-pool-enabled on))
 
+;; SCR-1: keep one volatile register out of the GREEDY pool so the late scratch
+;; planner always finds it free. A memory operand whose base the greedy left in
+;; a frame slot needs a scratch to reload through; when every pool register is
+;; live at that point the planner BORROWS one and the backend brackets the
+;; group with a save and a restore (compiler-reg-scratch-assign-preserved-items!,
+;; the backend's park), which turns a one-instruction reload into three to five
+;; -- in a loop whose residents were hoisted there precisely because they are
+;; hot. Reserving %r11 costs at most one more spilled value, which is one
+;; reload per use. The flag is per function, decided by
+;; compiler-reg-scratch-reserve-rewrite-function on the measured plan and reset
+;; by the backend before every function, so every other planning path keeps the
+;; full pool; the scratch pools themselves (compiler-reg-scratch-default-pool)
+;; read the unreserved pool, which is the whole point.
+(define compiler-reg-scratch-reserve-enabled : bool
+  false)
+
+(define (compiler-reg-set-scratch-reserve-enabled! [on : bool]) : unit
+  (set! compiler-reg-scratch-reserve-enabled on))
+
+(define (compiler-reg-scratch-reserve-register) : i64
+  cabi.compiler-reg-id-r11)
+
 ;; ---------------------------------------------------------------------------
 ;; RG-1: the allocator's home tracer (`--trace-passes`).
 ;;
@@ -35046,12 +35068,32 @@
 
 (define (compiler-reg-greedy-caller-saved-count-for-abi
   [target-abi : cabi.CompilerRegTargetAbi]) : i64
-  (match target-abi
-    [(cabi.CompilerRegTargetAbi.Linux) (compiler-reg-greedy-caller-saved-count)]
-    [(cabi.CompilerRegTargetAbi.Windows)
-      ;; The optional %rbp is appended to the nonvolatile suffix and must not
-      ;; move this boundary.
-      (cabi.compiler-abi-caller-saved-gp-register-count target-abi)]))
+  (-
+    (match target-abi
+      [(cabi.CompilerRegTargetAbi.Linux)
+        (compiler-reg-greedy-caller-saved-count)]
+      [(cabi.CompilerRegTargetAbi.Windows)
+        ;; The optional %rbp is appended to the nonvolatile suffix and must not
+        ;; move this boundary.
+        (cabi.compiler-abi-caller-saved-gp-register-count target-abi)])
+    ;; SCR-1: the reserved register is volatile on both ABIs, so reserving it
+    ;; shortens the caller-saved prefix by one.
+    (if compiler-reg-scratch-reserve-enabled
+      1
+      0)))
+
+;; SCR-1: the pool the greedy COLORS with. The same as the ABI pool unless the
+;; function reserved its scratch register, which then leaves the pool; every
+;; scratch pool keeps reading compiler-reg-greedy-integer-pool-for-abi.
+(define (compiler-reg-greedy-coloring-pool-for-abi
+  [target-abi : cabi.CompilerRegTargetAbi]) : CompilerRegIdSeq
+  (if compiler-reg-scratch-reserve-enabled
+    (compiler-reg-id-seq-without
+      (compiler-reg-greedy-integer-pool-for-abi target-abi)
+      (compiler-reg-id-seq-prepend
+        (compiler-reg-scratch-reserve-register)
+        (compiler-reg-id-seq-empty)))
+    (compiler-reg-greedy-integer-pool-for-abi target-abi)))
 
 ;; Clobber-span test: must var's value SURVIVE any clobber-point?
 ;; (The clobber-span half of the old per-register zero-call gate, sans the
@@ -35501,7 +35543,7 @@
     [prefs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [parents : (__tl_dyn-array i64) coalesce.parents]
     [pool : CompilerRegIdSeq
-      (compiler-reg-greedy-integer-pool-for-abi target-abi)]
+      (compiler-reg-greedy-coloring-pool-for-abi target-abi)]
     (begin
       (compiler-reg-fill-i64-array (compiler-reg-global-shared-view prefs) -1)
       (match func
@@ -38431,7 +38473,7 @@
       (if allow-caller-saved-zero-call
         (compiler-reg-greedy-state
           (compiler-reg-global-shared-view integer-candidates)
-          (compiler-reg-greedy-integer-pool-for-abi target-abi)
+          (compiler-reg-greedy-coloring-pool-for-abi target-abi)
           (compiler-reg-global-shared-view prepass-assignments)
           (compiler-reg-global-shared-view eff-index)
           (compiler-reg-global-shared-view group-vars)
@@ -38506,7 +38548,7 @@
           (compiler-reg-global-shared-view scratch-input-assignments))
         (compiler-reg-greedy-state-with-scratch-exclusions
           (compiler-reg-global-shared-view scratch-candidates)
-          (compiler-reg-greedy-integer-pool-for-abi target-abi)
+          (compiler-reg-greedy-coloring-pool-for-abi target-abi)
           (compiler-reg-global-shared-view scratch-input-assignments)
           (compiler-reg-global-shared-view allocation-index)
           (compiler-reg-global-shared-view group-vars)
@@ -51308,6 +51350,433 @@
       (compiler-reg-plan-types (compiler-reg-global-shared-view plan)))
     plan
     vars))
+
+;; ---------------------------------------------------------------------------
+;; SCR-1: the scratch-reserve round.
+;;
+;; What the backend BORROWS, priced. An instruction that must stage a spilled
+;; operand -- a memory operation whose address or value the plan left in a frame
+;; slot -- asks the scavenger (compiler-backend-scavenge-reg) for a register free
+;; over the window [point, point + 16]: one no register-homed value's interval
+;; covers, and a callee-saved one only when the plan already saves it. When
+;; nothing is free the backend takes one anyway and brackets the group with a
+;; save and a restore (compiler-backend-emergency-wrap): two instructions per
+;; staged operand, per execution, priced here at the block's loop weight like
+;; every other term the replan rounds compare. The occupancy is read off the
+;; plan's own hull intervals, which is what the backend builds its masks from
+;; (compiler-backend-scavenge-occupancy-build; it also respects the greedy's
+;; segment holes, so this reading can only over-count).
+;; ---------------------------------------------------------------------------
+(define (compiler-reg-scratch-borrow-window) : i64
+  16)
+
+(define (compiler-reg-scratch-reg-bit [reg : i64]) : i64
+  (if (and (>= reg 0) (< reg 62))
+    (shl 1 reg)
+    0))
+
+;; The scavenger's volatile candidates (compiler-backend-scavenge-candidates,
+;; minus its callee-saved members) ...
+(define (compiler-reg-scratch-borrow-volatile-mask) : i64
+  (bit-or
+    (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r9)
+    (bit-or
+      (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rcx)
+      (bit-or
+        (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rdx)
+        (bit-or
+          (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r10)
+          (bit-or
+            (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r11)
+            (bit-or
+              (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r8)
+              (bit-or
+                (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rsi)
+                (bit-or
+                  (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rdi)
+                  (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rax))))))))))
+
+;; ...and its callee-saved ones, usable only when the plan saves them.
+(define (compiler-reg-scratch-borrow-csr-mask) : i64
+  (bit-or
+    (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r12)
+    (bit-or
+      (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r13)
+      (bit-or
+        (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r14)
+        (bit-or
+          (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r15)
+          (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rbx))))))
+
+(define (compiler-reg-scratch-location-mask [location : CompilerRegLocation]) : i64
+  (match location
+    [(CompilerRegLocation.Register reg) (compiler-reg-scratch-reg-bit reg)]
+    [(CompilerRegLocation.RegisterPair first second)
+      (bit-or
+        (compiler-reg-scratch-reg-bit first)
+        (compiler-reg-scratch-reg-bit second))]
+    [_ 0]))
+
+;; A value the plan homed in a frame slot. An absent assignment is a forwarded
+;; address (a gep folded into its consumer), which stages nothing of its own.
+(define (compiler-reg-scratch-value-spilled?
+  [assignments : CompilerRegAssignmentTable]
+  [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (match (compiler-reg-assignment-lookup
+        (compiler-reg-global-shared-view assignments)
+        var)
+        [(CompilerRegMaybeLocation.Some location)
+          (match location
+            [(CompilerRegLocation.Spill _) true]
+            [_ false])]
+        [(CompilerRegMaybeLocation.No) false])]
+    [_ false]))
+
+(define (compiler-reg-scratch-var-spilled?
+  [assignments : CompilerRegAssignmentTable]
+  [var : i64]) : bool
+  (compiler-reg-scratch-value-spilled?
+    (compiler-reg-global-shared-view assignments)
+    (ir.CompilerIrValue.Var var)))
+
+;; How many registers the backend stages for `instr`: one per spilled operand a
+;; memory operation reads through or writes from. A gep with a register home
+;; stages through that home, so it asks for one fewer.
+(define (compiler-reg-scratch-borrow-demand
+  [assignments : CompilerRegAssignmentTable]
+  [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(ir.CompilerIrInstr.Gep dst base offset _)
+      (let
+        [operands : i64
+          (+
+            (if (compiler-reg-scratch-value-spilled?
+              (compiler-reg-global-shared-view assignments)
+              base)
+              1
+              0)
+            (if (compiler-reg-scratch-value-spilled?
+              (compiler-reg-global-shared-view assignments)
+              offset)
+              1
+              0))]
+        (if (compiler-reg-scratch-var-register-homed?
+          (compiler-reg-global-shared-view assignments)
+          dst)
+          (if (> operands 0)
+            (- operands 1)
+            0)
+          operands))]
+    [(ir.CompilerIrInstr.Load dst src _)
+      (+
+        (if (compiler-reg-scratch-value-spilled?
+          (compiler-reg-global-shared-view assignments)
+          src)
+          1
+          0)
+        (if (compiler-reg-scratch-var-spilled?
+          (compiler-reg-global-shared-view assignments)
+          dst)
+          1
+          0))]
+    [(ir.CompilerIrInstr.LoadOwned dst src _ _)
+      (+
+        (if (compiler-reg-scratch-value-spilled?
+          (compiler-reg-global-shared-view assignments)
+          src)
+          1
+          0)
+        (if (compiler-reg-scratch-var-spilled?
+          (compiler-reg-global-shared-view assignments)
+          dst)
+          1
+          0))]
+    [(ir.CompilerIrInstr.StorePtr address value _)
+      (+
+        (if (compiler-reg-scratch-value-spilled?
+          (compiler-reg-global-shared-view assignments)
+          address)
+          1
+          0)
+        (if (compiler-reg-scratch-value-spilled?
+          (compiler-reg-global-shared-view assignments)
+          value)
+          1
+          0))]
+    [(ir.CompilerIrInstr.StoreOwned address value _)
+      (+
+        (if (compiler-reg-scratch-value-spilled?
+          (compiler-reg-global-shared-view assignments)
+          address)
+          1
+          0)
+        (if (compiler-reg-scratch-value-spilled?
+          (compiler-reg-global-shared-view assignments)
+          value)
+          1
+          0))]
+    [(ir.CompilerIrInstr.Store _ value _)
+      (if (compiler-reg-scratch-value-spilled?
+        (compiler-reg-global-shared-view assignments)
+        value)
+        1
+        0)]
+    [(ir.CompilerIrInstr.Mov dst src _)
+      (if (and
+        (compiler-reg-scratch-var-spilled?
+          (compiler-reg-global-shared-view assignments)
+          dst)
+        (compiler-reg-scratch-value-spilled?
+          (compiler-reg-global-shared-view assignments)
+          src))
+        1
+        0)]
+    [_ 0]))
+
+;; The registers some register-homed value occupies anywhere in the instruction
+;; window [lo, hi] (instruction indices, inclusive), read off hull intervals.
+(define (compiler-reg-scratch-occupied-mask
+  [assignments : CompilerRegAssignmentTable]
+  [index : CompilerRegIntervalIndex]
+  [vars : i64]
+  [lo : i64]
+  [hi : i64]) : i64
+  (let
+    [present : (__tl_dyn-array i64) assignments.present]
+    [items : (__tl_dyn-array CompilerRegLocation) assignments.items]
+    [starts : (__tl_dyn-array i64) index.starts]
+    [ends : (__tl_dyn-array i64) index.ends]
+    [limit : i64
+      (if (< (array-length present) vars)
+        (array-length present)
+        vars)]
+    [var : i64 0]
+    [mask : i64 0]
+    (begin
+      (while (< var limit)
+        (begin
+          (if (and
+            (not (= (array-ref present var) 0))
+            (< var (array-length starts))
+            (>= (array-ref starts var) 0)
+            (<= (/ (array-ref starts var) 2) hi)
+            (>= (/ (array-ref ends var) 2) lo))
+            (set!
+              mask
+              (bit-or
+                mask
+                (compiler-reg-scratch-location-mask
+                  (compiler-reg-global-array-element-shared-view items var))))
+            unit)
+          (set! var (+ var 1))))
+      mask)))
+
+;; Every register the plan homes anything in: the callee-saved members of this
+;; mask are the ones the prologue saves, so the scavenger may use them.
+(define (compiler-reg-scratch-plan-home-mask
+  [assignments : CompilerRegAssignmentTable]
+  [vars : i64]) : i64
+  (let
+    [present : (__tl_dyn-array i64) assignments.present]
+    [items : (__tl_dyn-array CompilerRegLocation) assignments.items]
+    [limit : i64
+      (if (< (array-length present) vars)
+        (array-length present)
+        vars)]
+    [var : i64 0]
+    [mask : i64 0]
+    (begin
+      (while (< var limit)
+        (begin
+          (if (= (array-ref present var) 0)
+            unit
+            (set!
+              mask
+              (bit-or
+                mask
+                (compiler-reg-scratch-location-mask
+                  (compiler-reg-global-array-element-shared-view items var)))))
+          (set! var (+ var 1))))
+      mask)))
+
+(define (compiler-reg-scratch-borrow-cost
+  [plan : CompilerRegPlan]
+  [vars : i64]
+  [seq : ir.CompilerIrBlockSeq]
+  [weights : (__tl_dyn-array i64)]) : i64
+  (let
+    [assignments : CompilerRegAssignmentTable
+      (compiler-reg-plan-assignments (compiler-reg-global-shared-view plan))]
+    [index : CompilerRegIntervalIndex
+      (compiler-reg-interval-index-build
+        (compiler-reg-plan-intervals (compiler-reg-global-shared-view plan))
+        vars)]
+    [candidates : i64
+      (bit-or
+        (compiler-reg-scratch-borrow-volatile-mask)
+        (bit-and
+          (compiler-reg-scratch-borrow-csr-mask)
+          (compiler-reg-scratch-plan-home-mask
+            (compiler-reg-global-shared-view assignments)
+            vars)))]
+    [window : i64 (/ (compiler-reg-scratch-borrow-window) 2)]
+    [count : i64
+      (ir.compiler-ir-block-seq-count (compiler-reg-global-shared-view seq))]
+    [block : i64 0]
+    [instruction : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< block count)
+        (begin
+          (match (ir.compiler-ir-block-seq-ref
+            (compiler-reg-global-shared-view seq)
+            block)
+            [(ir.CompilerIrBlock.Block _ instrs)
+              (let
+                [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+                [len : i64 instrs.len]
+                [weight : i64
+                  (if (< block (array-length weights))
+                    (array-ref weights block)
+                    1)]
+                [i : i64 0]
+                (begin
+                  (while (< i len)
+                    (let
+                      [demand : i64
+                        (compiler-reg-scratch-borrow-demand
+                          (compiler-reg-global-shared-view assignments)
+                          (compiler-reg-global-array-element-shared-view
+                            slots
+                            i))]
+                      (begin
+                        (if (> demand 0)
+                          (if (=
+                            (bit-and
+                              candidates
+                              (bit-xor
+                                (compiler-reg-scratch-occupied-mask
+                                  (compiler-reg-global-shared-view assignments)
+                                  (compiler-reg-global-shared-view index)
+                                  vars
+                                  instruction
+                                  (+ instruction window))
+                                -1))
+                            0)
+                            (set! total (+ total (* 2 (* demand weight))))
+                            unit)
+                          unit)
+                        (set! instruction (+ instruction 1))
+                        (set! i (+ i 1)))))
+                  unit))])
+          (set! block (+ block 1))))
+      total)))
+
+;; The round: a plan the backend would borrow a scratch for is replanned with
+;; the scratch register reserved (compiler-reg-scratch-reserve-enabled), and the
+;; reserved plan is kept only when its estimated cost -- the ordinary plan cost
+;; (compiler-reg-call-hole-plan-cost: weighted memory references, prologue) plus
+;; the borrowed-scratch cost above -- comes out strictly lower. Declines to its
+;; input, flag cleared, otherwise; when it keeps, the flag stays set so every
+;; later replan of this function colors with the same pool. Only a plan with a
+;; spilled value is asked: a staged operand is a spilled one.
+(define (compiler-reg-scratch-reserve-rewrite-function
+  [type-segment-bases : i64]
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [func : ir.CompilerIrFunction]
+  [type-info : CompilerRegVarTypes]
+  [plan : CompilerRegPlan]
+  [temp-start : i64]
+  [cold-split : bool]) : CompilerRegCallHoleSplit
+  (match (compiler-reg-global-shared-view func)
+    [(ir.CompilerIrFunction.Function _ params _ vars blocks)
+      (let
+        [none : CompilerRegCallHoleSplit
+          (compiler-reg-call-hole-split-none
+            (compiler-reg-global-shared-view func)
+            vars
+            (compiler-reg-global-shared-view plan)
+            (compiler-reg-global-shared-view type-info)
+            temp-start)]
+        (if (not
+          (compiler-reg-assignment-table-has-spill?
+            (compiler-reg-plan-assignments
+              (compiler-reg-global-shared-view plan))))
+          none
+          (let
+            [seq : ir.CompilerIrBlockSeq
+              (live.compiler-live-ir-block-list-to-seq
+                (compiler-reg-global-shared-view blocks))]
+            [weights : (__tl_dyn-array i64)
+              (compiler-reg-loop-park-block-weights
+                (compiler-reg-function-loop-depths
+                  (compiler-reg-global-shared-view blocks)))]
+            [base-preserve : i64
+              (compiler-reg-scratch-borrow-cost
+                (compiler-reg-global-shared-view plan)
+                vars
+                (compiler-reg-global-shared-view seq)
+                (compiler-reg-global-shared-view weights))]
+            (if (= base-preserve 0)
+              none
+              (let
+                [threshold : i64
+                  (if (>= temp-start 0)
+                    temp-start
+                    vars)]
+                [base-cost : i64
+                  (+
+                    base-preserve
+                    (compiler-reg-call-hole-plan-cost
+                      type-segment-bases
+                      target-abi
+                      (compiler-reg-global-shared-view params)
+                      (compiler-reg-global-shared-view
+                        type-info.representations)
+                      (compiler-reg-global-shared-view seq)
+                      (compiler-reg-global-shared-view weights)
+                      vars
+                      (compiler-reg-global-shared-view plan)))]
+                [_reserve : unit
+                  (compiler-reg-set-scratch-reserve-enabled! true)]
+                [reserved-plan : CompilerRegPlan
+                  (compiler-reg-plan-function-scalar-forced-spill-with-types
+                    type-segment-bases
+                    target-abi
+                    (compiler-reg-global-shared-view func)
+                    threshold
+                    cold-split
+                    (compiler-reg-global-shared-view type-info)
+                    (compiler-reg-assignment-table-empty))]
+                [reserved-cost : i64
+                  (+
+                    (compiler-reg-scratch-borrow-cost
+                      (compiler-reg-global-shared-view reserved-plan)
+                      vars
+                      (compiler-reg-global-shared-view seq)
+                      (compiler-reg-global-shared-view weights))
+                    (compiler-reg-call-hole-plan-cost
+                      type-segment-bases
+                      target-abi
+                      (compiler-reg-global-shared-view params)
+                      (compiler-reg-global-shared-view
+                        type-info.representations)
+                      (compiler-reg-global-shared-view seq)
+                      (compiler-reg-global-shared-view weights)
+                      vars
+                      (compiler-reg-global-shared-view reserved-plan)))]
+                (if (< reserved-cost base-cost)
+                  (CompilerRegCallHoleSplit.Split
+                    (compiler-reg-global-shared-view func)
+                    vars
+                    reserved-plan
+                    (compiler-reg-global-shared-view type-info)
+                    temp-start)
+                  (begin
+                    (compiler-reg-set-scratch-reserve-enabled! false)
+                    none)))))))]))
 
 (define (compiler-reg-caller-save-remap-fill!
   [remap : (__tl_dyn-array i64)]

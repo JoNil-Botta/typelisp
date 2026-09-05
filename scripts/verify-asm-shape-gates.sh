@@ -3248,6 +3248,23 @@ check_red_zone_leaf_win64() {
     done
 }
 
+# SCR-1. Sixteen hoisted data pointers exceed the pool, the greedy spills the
+# rest, and every store through a spilled pointer must reload it into a scratch
+# register. With every pool register live across the loop the scavenger used to
+# BORROW one per store and bracket it with a save and a restore (the XMM park),
+# and the staged store copied the resident index into a second borrowed
+# register: seven instructions per store. The scratch-reserve round prices the
+# parks off the plan and replans with %r11 reserved, and the staged store reads
+# the index home in place. The body must carry no park, and the spilled
+# pointers must be reloaded through %r11 straight into a store.
+check_scratch_reserve_zero_fill() {
+    _asm=$(compile_gate scratch_reserve_zero_fill tests/integration/scratch_reserve_zero_fill.tl)
+    _reset=$(function_body "$_asm" _tl_scratch_reserve_zero_fill_reset_arrays_bang)
+    assert_regex_count_eq "$_reset" '^[[:space:]]+movq %r[a-z0-9]+, %xmm[0-9]+$' 0 scratch-reserve-zero-fill
+    assert_regex_count_at_least "$_reset" '^[[:space:]]+movq [0-9]+\(%rsp\), %r11$' 4 scratch-reserve-zero-fill
+    assert_regex_count_at_least "$_reset" '^[[:space:]]+movq \$(0|-1), \(%r11,%r[a-z0-9]+,8\)$' 4 scratch-reserve-zero-fill
+}
+
 check_lattice_join_split
 check_short_trip_copy
 check_select_flags_lea
@@ -3324,5 +3341,6 @@ check_alias_row_overflow
 check_alias_typed_word
 check_vt_offset_copy
 check_vt_derived_stride
+check_scratch_reserve_zero_fill
 
 echo "Assembly shape gates passed."

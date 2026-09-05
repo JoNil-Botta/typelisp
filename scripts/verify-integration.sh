@@ -731,6 +731,17 @@ fs_rooted_linux_publication
 EOF
 }
 
+# Linux process fault-injection fixtures are owned by
+# verify-process-runtime-linux.sh. That gate supplies the current-tree
+# `process-linux-test-hooks` cfg and checks the exact syscall failure matrix;
+# on Windows the Linux syscall boundary is intentionally not applicable.
+process_runtime_linux_gate_cases() {
+    cat <<'EOF'
+process_runtime_linux_failures
+process_runtime_linux_hooks
+EOF
+}
+
 # Cases covered by the selfhost-native generated-program gate rather than the
 # seed-backed integration manifests.
 # Immutable-reference native smoke fixtures are covered by
@@ -876,6 +887,7 @@ validate_manifest() {
         linux_integration_non_applicable_cases >> "$_known"
     fi
     fs_rooted_linux_gate_cases >> "$_known"
+    process_runtime_linux_gate_cases >> "$_known"
     selfhost_native_manifest_cases >> "$_known"
     spmd_simd_manifest_cases >> "$_known"
     compiler_cfg_native_fixture_cases >> "$_known"

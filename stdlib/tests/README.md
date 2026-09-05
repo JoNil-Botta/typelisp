@@ -207,6 +207,10 @@ Inline stdlib coverage:
   MINSTD sequences, bounded draws, invalid bounds, list/array/vector
   weighted-index edge cases, zero-weight skipping, storage parity, stable picks
   for fixed seeds, and system-seed result payloads.
+- `crypto_rsa_core_api.tl` covers checked signed/unsigned public-key inputs,
+  exact-width representative boundaries, all four bounded limb classes,
+  maximal carry chains, and independently generated modular-exponentiation
+  fixtures for 2048-, 3072-, 4096-, and 8192-bit public moduli.
 - `crypto_random.tl` owns inline tests for zero-length no-call behavior,
   bounded chunk completion, partial writes, interruption retry/exhaustion,
   impossible partial results, injected missing-library/missing-symbol/exact
@@ -363,6 +367,10 @@ Inline stdlib coverage:
   remains in `thread_api.tl`.
 - `cpu.tl` owns inline tests for host-independent CPUID/XGETBV SIMD detection
   relationships.
+- `crypto_sha512_inline.tl` owns FIPS vectors, streaming/counter/lifecycle
+  coverage, and public-equivalence tests for the SHA-512 scoped raw
+  source/exact sink seam. `crypto_sha512_unsafe_adapter_reject.tl` pins that
+  the raw seam cannot be called outside an explicit unsafe context.
 - `profile.tl` owns inline tests for monotonic timestamp shape and allocator
   counter monotonicity around an observable allocation.
 - `time.tl` owns inline tests for Unix wall-clock range, monotonic timestamp

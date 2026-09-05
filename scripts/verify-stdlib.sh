@@ -207,7 +207,9 @@ byte_buf_core.tl
 clone.tl
 comptime.tl
 core_macros.tl
+crypto_rsa_core.tl
 crypto_random.tl
+crypto_sha512.tl
 dense_list.tl
 io_core.tl
 io.tl
@@ -274,6 +276,7 @@ stdlib/tests/arena_atomic_api.tl|42|-|-|-
 stdlib/tests/arena_patterns.tl|42|-|-|-
 stdlib/tests/byte_buf_api.tl|42|-|-
 stdlib/tests/byte_buf_core_api.tl|42|-|-
+stdlib/tests/crypto_rsa_core_api.tl|42|-|-|-
 stdlib/tests/format_api.tl|42|-|-|-
 stdlib/tests/format_debug_bytes.tl|42|-|-|-
 stdlib/tests/format_debug_length_overflow.tl|134|-|literal:format: Debug output length overflow|-
@@ -323,6 +326,8 @@ stdlib/tests/comptime_api.tl|pass|-
 stdlib/tests/comptime_string_literal_reject.tl|fail|expr-string-value expects a string literal Expr
 stdlib/tests/args_api.tl|pass|-
 stdlib/tests/core_macros_api.tl|pass|-
+stdlib/tests/crypto_sha512_inline.tl|pass|-
+stdlib/tests/crypto_sha512_unsafe_adapter_reject.tl|fail|requires unsafe context
 stdlib/tests/env_api.tl|pass|-
 stdlib/tests/format_nonliteral_template_reject.tl|fail|format: template must be a string literal
 stdlib/tests/format_bare_capture_reject.tl|fail|format: bare '_' is not a captured identifier

@@ -79,6 +79,7 @@
   (status-code i64)
   (reason http_types.HttpReason)
   (headers http_types.HttpHeaders)
+  (trailer-names http_types.HttpHeaderNameSet)
   (framing HttpFramingState)
   (limits http_types.HttpHeadLimits)
   (request-method http_types.HttpResponseRequestMethod)
@@ -729,7 +730,7 @@
                   (begin
                     (set! failed true)
                     (set! name-too-long true)
-                    (set! error-offset (+ base-offset max-name-bytes)))
+                    (set! error-offset (+ base-offset (+ start max-name-bytes))))
                   unit)
                 (if (and
                   (not failed)
@@ -897,6 +898,7 @@
         0
         (http_types.HttpReason (byte_buf.new))
         (http_types.headers-empty)
+        (http_types.header-name-set-empty)
         (framing-empty)
         limits
         request-method
@@ -920,6 +922,7 @@
         0
         (http_types.HttpReason (byte_buf.new))
         (http_types.headers-empty)
+        (http_types.header-name-set-empty)
         (framing-empty)
         (http_types.default-head-limits)
         request-method
@@ -983,11 +986,31 @@
                     value-offset)
                     [(HttpResponseFieldErr error) (HttpParserLineErr error)]
                     [(HttpResponseFieldOk next-framing)
-                      (begin
-                        (set! parser.framing next-framing)
-                        (http_types.headers-push! (&mut parser.headers) field)
-                        (set! parser.line-start head-len)
-                        (HttpParserLineContinue))]))])))))))
+                      (if (name-eq-string (& field.name) "trailer")
+                        (let
+                          [value : (& field bytes)
+                            (http_types.header-value-bytes (& field.value))]
+                          (match (apply-trailer-names
+                            (clone parser.trailer-names)
+                            value
+                            value-offset
+                            parser.limits.max-name-bytes)
+                            [(HttpTrailerNamesErr error)
+                              (HttpParserLineErr error)]
+                            [(HttpTrailerNamesOk next-names)
+                              (begin
+                                (set! parser.framing next-framing)
+                                (set! parser.trailer-names next-names)
+                                (http_types.headers-push!
+                                  (&mut parser.headers)
+                                  field)
+                                (set! parser.line-start head-len)
+                                (HttpParserLineContinue))]))
+                        (begin
+                          (set! parser.framing next-framing)
+                          (http_types.headers-push! (&mut parser.headers) field)
+                          (set! parser.line-start head-len)
+                          (HttpParserLineContinue)))]))])))))))
 
 ;: Feed one borrowed byte slice. The parser stops at the exact final CRLF and
 ;: reports only bytes consumed from this call, leaving any suffix untouched.
@@ -1009,6 +1032,7 @@
           (http_types.HttpStatus 100)
           (http_types.HttpReason (byte_buf.new))
           (http_types.headers-empty)
+          (http_types.header-name-set-empty)
           (http_types.HttpResponsePlanNone)
           0)]
       [failure : http_types.HttpHeadError
@@ -1056,6 +1080,7 @@
                                 (http_types.HttpStatus parser.status-code)
                                 (clone parser.reason)
                                 headers
+                                (clone parser.trailer-names)
                                 plan
                                 (byte_buf.len parser.buffer)))
                             (set! result-kind 1)

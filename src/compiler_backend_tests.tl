@@ -12064,6 +12064,31 @@
         (owned_view.compiler-owned-shared-view input))]
     (string.eq got input)))
 
+;; #7645: movq also transfers eight bytes between XMM and memory. Such stores
+;; are ABI payload writes, not scalar spill candidates; the frame-store sweep
+;; must never discard one merely because no later assembly line reads the slot.
+(define (compiler-backend-deadstore-sweep-xmm-store-stays-ok?) : bool
+  (let
+    [input : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $48, %rsp
+    movq %xmm2, 40(%rsp)
+    leave
+    ret
+"]
+    [got : String
+      (compiler-backend-peephole-test-win64-asm
+        "main"
+        48
+        1
+        0
+        0
+        0
+        (owned_view.compiler-owned-shared-view input))]
+    (string.eq got input)))
+
 (define (compiler-backend-deadstore-sweep-metadata-consumed-ok?) : bool
   (let
     [first : String
@@ -12561,6 +12586,7 @@
     (compiler-backend-deadstore-sweep-win64-address-stays-ok?)
     (compiler-backend-deadstore-sweep-win64-pop-tail-ok?)
     (compiler-backend-deadstore-sweep-linux-leave-poisons-ok?)
+    (compiler-backend-deadstore-sweep-xmm-store-stays-ok?)
     (compiler-backend-deadstore-sweep-metadata-consumed-ok?)
     (compiler-backend-deadstore-sweep-coverage-many-reads-ok?)
     (compiler-backend-deadstore-sweep-coverage-unaligned-ok?)

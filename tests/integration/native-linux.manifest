@@ -115,6 +115,7 @@ c_abi_int8_struct|tests/integration/c_abi_int8_struct.tl|42|-|-|benchmarks/c_abi
 c_abi_sysv_register_aggregate_args|tests/integration/c_abi_sysv_register_aggregate_args.tl|42|-|-|benchmarks/c_abi_sysv_register_aggregate_args/baseline.c
 c_abi_sysv_two_register_return|tests/integration/c_abi_sysv_two_register_return.tl|42|-|-|benchmarks/c_abi_sysv_two_register_return/baseline.c
 c_abi_sysv_memory_aggregate|tests/integration/c_abi_sysv_memory_aggregate.tl|42|-|-|benchmarks/c_abi_sysv_memory_aggregate/baseline.c
+c_abi_sysv_memory_tail|tests/integration/c_abi_sysv_memory_tail.tl|42|-|-|benchmarks/c_abi_sysv_memory_tail/baseline.c|opt-level:0+stage-stdlib
 c_abi_sysv_tag_only_enum|tests/integration/c_abi_sysv_tag_only_enum.tl|42|-|-|benchmarks/c_abi_sysv_tag_only_enum/baseline.c
 c_abi_sysv_enum_aggregate|tests/integration/c_abi_sysv_enum_aggregate.tl|42|-|-|benchmarks/c_abi_sysv_enum_aggregate/baseline.c
 c_abi_slice_ptr_len|tests/integration/c_abi_slice_ptr_len.tl|42|-|-|benchmarks/c_abi_slice_ptr_len/baseline.c

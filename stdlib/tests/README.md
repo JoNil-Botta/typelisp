@@ -359,6 +359,10 @@ Inline stdlib coverage:
   remains in `thread_api.tl`.
 - `cpu.tl` owns inline tests for host-independent CPUID/XGETBV SIMD detection
   relationships.
+- `crypto_sha512_inline.tl` owns FIPS vectors, streaming/counter/lifecycle
+  coverage, and public-equivalence tests for the SHA-512 scoped raw
+  source/exact sink seam. `crypto_sha512_unsafe_adapter_reject.tl` pins that
+  the raw seam cannot be called outside an explicit unsafe context.
 - `profile.tl` owns inline tests for monotonic timestamp shape and allocator
   counter monotonicity around an observable allocation.
 - `time.tl` owns inline tests for Unix wall-clock range, monotonic timestamp

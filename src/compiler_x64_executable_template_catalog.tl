@@ -174,7 +174,17 @@
   [rendered : (& rendered str)]) : unit
   (unless
     (compiler-x64-template-rendered-payload-valid? row rendered)
-    (io.panic "x64 executable template: rendered payload identity mismatch")))
+    (match row.id
+      [(x64.CompilerX64ExecutableTemplateId.WindowsRuntimeArena)
+        (if (= (string.string-length rendered) row.expected-rendered-size)
+          (io.panic
+            "x64 executable template: WindowsRuntimeArena hash mismatch")
+          (io.panic
+            "x64 executable template: WindowsRuntimeArena size mismatch"))]
+      [_
+        (if (= (string.string-length rendered) row.expected-rendered-size)
+          (io.panic "x64 executable template: non-arena hash mismatch")
+          (io.panic "x64 executable template: non-arena size mismatch"))])))
 
 (define (compiler-x64-template-render-assembly
   [id : x64.CompilerX64ExecutableTemplateId]

@@ -4801,6 +4801,29 @@
     "a tail site that is its loop's only exit post-dominates the entry: the hot caller's site clears the relaxed floor, is priced, and takes the call-free leaf, the callee's returns become the caller's, and the cold caller's site is refused on frequency and keeps its tail call"))
 
 (test
+  inline-checked-specialization
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-inline-checked-specialization-self-test)
+    42
+    "a literal argument widens the cap's prediction by what it folds, never the floor; a forwarder is tail-only; the specialized copy pins exactly the literal parameters"))
+
+(test
+  inline-checked-tail-only-literal-site
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-inline-checked-tail-only-self-test
+      true)
+    100
+    "a forwarder -- every exit a tail call, no Return -- reaches a verdict at a hot site whose first argument is the temp a literal was materialized into, and the verdict takes it: no call to the forwarder survives"))
+
+(test
+  inline-checked-tail-only-unspecialized-site
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-inline-checked-tail-only-self-test
+      false)
+    1
+    "the same forwarder at the same site with a parameter passed through is refused by the tail-only clause before pricing: no verdict, the call survives"))
+
+(test
   inline-checked-rescan-generations
   (test.assert-i64-eq
     (compiler_optimize_tests.compiler-optimize-inline-checked-rescan-self-test)

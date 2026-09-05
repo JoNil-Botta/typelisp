@@ -1,4 +1,4 @@
-;; REGRESSION TEST for CB-2(b): the recorded loser must stay refused.
+;; MEASURED-TIER TEST for CB-2(b)'s recorded loser, priced.
 ;;
 ;; `build-csr` is the shape the measured tier's site-depth clause was written
 ;; for and the shape its own autopsy names: a SEVEN-parameter builder with a
@@ -10,15 +10,23 @@
 ;; register pressure the merged body raises, and the plan prices an allocation
 ;; once per invocation".
 ;;
-;; The clause that refused this site never priced it. It is now offered to the
+;; The clause that refused this site never priced it. It is offered to the
 ;; verdict -- the site is the caller's ENTRY block, so it runs exactly once per
 ;; invocation, which is the currency the plan prices in; the builder is
 ;; call-free, so the caller's leaf frame is the one thing the inline could still
-;; win; and `main` reaches the caller through a loop -- and the verdict, a real
-;; re-plan of the merged body, refuses it. `scripts/verify-asm-shape-gates.sh`
-;; pins that the call survives; a fixture whose exit code alone was checked
-;; could not tell the two apart, because absorbing the builder is CORRECT and
-;; only slower.
+;; win; and `main` reaches the caller through a loop. The verdict is a real
+;; re-plan of the merged body: under the spill-weight proxy it refused the
+;; builder by cost, and under the allocator's own estimator (INL-15) with the
+;; site's three literal setup arguments priced as the fold they are (INL-18)
+;; it keeps it, exactly as the smoke self-tests of this shape record.
+;; `scripts/verify-asm-shape-gates.sh` pins that the builder is absorbed at
+;; this site and that its cold second reference still calls it; a fixture
+;; whose exit code alone was checked could not tell the two apart, because
+;; either shape is CORRECT.
+;;
+;; `run` itself is priced at `main`'s loop and kept, so the shape the gate
+;; reads is inside `main`: the loop, the builder's body at what was `run`'s
+;; entry, and no call to either.
 (define (build-csr
   [rows : (& r (__tl_dyn-array i64))]
   [cols : (& c (__tl_dyn-array i64))]

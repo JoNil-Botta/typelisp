@@ -128722,10 +128722,14 @@
             (compiler-opt-global-shared-view cblocks))
           1)
         (opt-inline-shape-structure)]
-      [(<=
-          (opt-inline-return-count-blocks
-            (compiler-opt-global-shared-view cblocks))
-          0)
+      [(and
+          (<=
+            (opt-inline-return-count-blocks
+              (compiler-opt-global-shared-view cblocks))
+            0)
+          (not
+            (opt-inline-blocks-have-tail-call?
+              (compiler-opt-global-shared-view cblocks))))
         (opt-inline-shape-structure)]
       [(not
           (opt-inline-structure-ok-reclaiming?
@@ -134381,6 +134385,9 @@
 (define (opt-inline-checked-clause-converted-caller) : i64
   18)
 
+(define (opt-inline-checked-clause-tail-only) : i64
+  19)
+
 ;; Ranked as a RELAXED candidate -- one only a relaxed clause admits -- with the
 ;; relaxations' reserve already spent. Reported by the ranking, like the lock,
 ;; because a row refused there never reaches the admission test.
@@ -134416,6 +134423,7 @@
     [(= clause (opt-inline-checked-clause-relaxed-budget)) "relaxed-budget"]
     [(= clause (opt-inline-checked-clause-site-depth)) "site-depth"]
     [(= clause (opt-inline-checked-clause-converted-caller)) "converted-caller"]
+    [(= clause (opt-inline-checked-clause-tail-only)) "tail-only"]
     [else "unknown"]))
 
 (define opt-inline-checked-active? : bool
@@ -134585,6 +134593,311 @@
 ;; depth-0 site has to answer.
 (define opt-inline-checked-site-position : i64
   (- 0 1))
+
+;; --- INL-18: literal-argument specialization --------------------------------
+;;
+;; A site that passes a literal specializes the body it takes: the parameter
+;; folds, and with it every branch, bounds check and address computation that
+;; read it. The tier prices that fold on the callee alone -- a copy with the
+;; literal parameters pinned by a `Mov` at its entry, planned exactly as the
+;; callee is (opt-inline-checked-spec-gain) -- and reads it in three places:
+;;
+;;   * the CAP: a free inline of such a site saves the boundary AND the fold,
+;;     so the window's upper bound is read against both
+;;     (opt-inline-checked-window-ok-at?). The measured case is
+;;     `cg-census-bump-map` into `cg-census-blocks`, whose second copy models
+;;     1,472 against a boundary of 576 (2.56x) with a fold of 448, and
+;;     `cg-map-insert-ref!` into the same caller at 2,049 (3.6x) with a fold
+;;     of 768; refusing them costs callgraph_scc +7.9M;
+;;   * the CEILING: a literal-argument site may grow its caller past the base
+;;     ceiling (opt-inline-checked-max-blocks-for), and past it the verdict
+;;     keeps only a site whose fold covers half the boundary
+;;     (`fold-carries?` in the verdict): sccp-rewritten-i64 into
+;;     sccp-rewrite-rows folds 16 against 72 and costs sccp_lattice +6.8M when
+;;     the ceiling alone stands down;
+;;   * a TAIL-ONLY body -- every exit a direct tail call, no `Return` -- is a
+;;     candidate only at a literal-argument site (the tail-only clause): the
+;;     splice converts each tail call into a call plus a continuation, so the
+;;     body retires only its own boundary and its worth is the fold. `cfg-
+;;     function` (no parameters at all) into `cfg-bench` costs cfg_domloops
+;;     +61.4M when the class is admitted unconditionally. The bands never take
+;;     the class: they do not price.
+;;
+;; The frontend materializes a literal argument as a temp (`t = 1`, then
+;; `f(t, ...)`), so a var argument the caller defines exactly once by a `Mov`
+;; of an `I64` counts as that literal (opt-inline-checked-literal-note!).
+(define (opt-inline-checked-literal-max) : i64
+  32)
+
+(define opt-inline-checked-current-literals : (__tl_dyn-array i64)
+  (__tl_make-array i64 64))
+(define opt-inline-checked-current-literal-count : i64
+  0)
+(define opt-inline-checked-target-literals : (__tl_dyn-array i64)
+  (__tl_make-array i64 64))
+(define opt-inline-checked-target-literal-count : i64
+  0)
+(define opt-inline-checked-target-over-ceiling? : bool
+  false)
+(define opt-inline-checked-literal-scan : (__tl_dyn-array i64)
+  (__tl_make-array i64 3))
+
+(define (opt-inline-checked-literal-scan-instrs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [var : i64]) : unit
+  (if (>=
+    index
+    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
+    unit
+    (begin
+      (if (=
+        (opt-bce-mb-instr-seq-dst-or
+          (compiler-opt-global-shared-view instrs)
+          index
+          (- 0 1))
+        var)
+        (begin
+          (set!
+            (array-ref opt-inline-checked-literal-scan 0)
+            (+ (array-ref opt-inline-checked-literal-scan 0) 1))
+          (match (ir.compiler-ir-instr-seq-ref
+            (compiler-opt-global-shared-view instrs)
+            index)
+            [(ir.CompilerIrInstr.Mov _ value _)
+              (match value
+                [(ir.CompilerIrValue.I64 k)
+                  (begin
+                    (set! (array-ref opt-inline-checked-literal-scan 1) 1)
+                    (set! (array-ref opt-inline-checked-literal-scan 2) k))]
+                [_ unit])]
+            [_ unit]))
+        unit)
+      (opt-inline-checked-literal-scan-instrs! instrs (+ index 1) var))))
+
+(define (opt-inline-checked-literal-scan-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [var : i64]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-inline-checked-literal-scan-blocks!
+        (ir.compiler-ir-block-seq-to-list seq)
+        var)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match (compiler-opt-global-shared-view block)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-inline-checked-literal-scan-instrs! instrs 0 var)])
+        (opt-inline-checked-literal-scan-blocks!
+          (compiler-opt-box-shared-view rest)
+          var))]))
+
+;; The literal a site argument carries: an `I64` in the argument itself, or a
+;; var the caller defines exactly once, by a `Mov` of an `I64` -- the temp the
+;; frontend materializes a literal argument into.
+(define (opt-inline-checked-literal-set! [slot : i64] [k : i64]) : i64
+  (begin
+    (set! (array-ref opt-inline-checked-current-literals (* 2 slot)) 1)
+    (set! (array-ref opt-inline-checked-current-literals (+ (* 2 slot) 1)) k)
+    1))
+
+(define (opt-inline-checked-literal-note!
+  [slot : i64]
+  [value : ir.CompilerIrValue]) : i64
+  (begin
+    (if (< slot (opt-inline-checked-literal-max))
+      (set! (array-ref opt-inline-checked-current-literals (* 2 slot)) 0)
+      unit)
+    (if (>= slot (opt-inline-checked-literal-max))
+      0
+      (match value
+        [(ir.CompilerIrValue.I64 k) (opt-inline-checked-literal-set! slot k)]
+        [(ir.CompilerIrValue.Var var)
+          (begin
+            (set! (array-ref opt-inline-checked-literal-scan 0) 0)
+            (set! (array-ref opt-inline-checked-literal-scan 1) 0)
+            (set! (array-ref opt-inline-checked-literal-scan 2) 0)
+            (opt-inline-checked-literal-scan-blocks!
+              (opt-inline-caller-facts-blocks-shared-view)
+              var)
+            (if (and
+              (= (array-ref opt-inline-checked-literal-scan 0) 1)
+              (= (array-ref opt-inline-checked-literal-scan 1) 1))
+              (opt-inline-checked-literal-set!
+                slot
+                (array-ref opt-inline-checked-literal-scan 2))
+              0))]
+        [_ 0]))))
+
+(define (opt-inline-checked-literal-note-array!
+  [values : (__tl_dyn-array ir.CompilerIrValue)]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (array-length (compiler-opt-global-shared-view values)))
+    acc
+    (opt-inline-checked-literal-note-array!
+      (compiler-opt-global-shared-view values)
+      (+ index 1)
+      (+
+        acc
+        (opt-inline-checked-literal-note!
+          index
+          (compiler-opt-global-array-element-shared-view values index))))))
+
+(define (opt-inline-checked-clear-literals-from! [index : i64]) : unit
+  (if (>= index 64)
+    unit
+    (begin
+      (set! (array-ref opt-inline-checked-current-literals index) 0)
+      (opt-inline-checked-clear-literals-from! (+ index 1)))))
+
+(define (opt-inline-checked-record-literals! [args : ir.CompilerIrCallArgs]) : unit
+  (begin
+    (opt-inline-checked-clear-literals-from! 0)
+    (set!
+      opt-inline-checked-current-literal-count
+      (match args
+        [(ir.CompilerIrCallArgs.Nil) 0]
+        [(ir.CompilerIrCallArgs.One value)
+          (opt-inline-checked-literal-note! 0 value)]
+        [(ir.CompilerIrCallArgs.Two a b)
+          (+
+            (opt-inline-checked-literal-note! 0 a)
+            (opt-inline-checked-literal-note! 1 b))]
+        [(ir.CompilerIrCallArgs.Array values)
+          (opt-inline-checked-literal-note-array! values 0 0)]))))
+
+(define (opt-inline-checked-copy-literals-from! [index : i64]) : unit
+  (if (>= index 64)
+    unit
+    (begin
+      (set!
+        (array-ref opt-inline-checked-target-literals index)
+        (array-ref opt-inline-checked-current-literals index))
+      (opt-inline-checked-copy-literals-from! (+ index 1)))))
+
+;; The admitted site's literals become the target's: the verdict prices the
+;; specialization off the target copy, so a scan that visits other sites before
+;; the round's rewrite does not disturb it.
+(define (opt-inline-checked-adopt-literals!) : unit
+  (begin
+    (opt-inline-checked-copy-literals-from! 0)
+    (set!
+      opt-inline-checked-target-literal-count
+      opt-inline-checked-current-literal-count)))
+
+(define (opt-inline-checked-literal-count-now) : i64
+  opt-inline-checked-current-literal-count)
+
+(define (opt-inline-checked-tail-only-body? [blocks : ir.CompilerIrBlockList]) : bool
+  (and
+    (<=
+      (opt-inline-return-count-blocks (compiler-opt-global-shared-view blocks))
+      0)
+    (opt-inline-blocks-have-tail-call? (compiler-opt-global-shared-view blocks))))
+
+(define (opt-inline-checked-specializing-max-blocks) : i64
+  256)
+
+(define (opt-inline-checked-max-blocks-for [specializing? : bool]) : i64
+  (if specializing?
+    (opt-inline-checked-specializing-max-blocks)
+    (opt-inline-checked-max-blocks)))
+
+(define (opt-inline-checked-literal-movs
+  [params : ir.CompilerIrParamSeq]
+  [index : i64]
+  [np : i64]
+  [acc : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (if (or (>= index np) (>= index (opt-inline-checked-literal-max)))
+    acc
+    (opt-inline-checked-literal-movs
+      (compiler-opt-global-shared-view params)
+      (+ index 1)
+      np
+      (if (= (array-ref opt-inline-checked-target-literals (* 2 index)) 1)
+        (match (ir.compiler-ir-param-seq-ref
+          (compiler-opt-global-shared-view params)
+          index)
+          [(ir.CompilerIrParam.Param _ ty var)
+            (opt-inline-append
+              acc
+              (ir.compiler-ir-instr-seq1
+                (ir.CompilerIrInstr.Mov
+                  var
+                  (ir.CompilerIrValue.I64
+                    (array-ref
+                      opt-inline-checked-target-literals
+                      (+ (* 2 index) 1)))
+                  (clone ty))))])
+        acc))))
+
+(define (opt-inline-checked-prefix-entry
+  [blocks : ir.CompilerIrBlockList]
+  [prefix : ir.CompilerIrInstrSeq]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-inline-checked-prefix-entry
+        (ir.compiler-ir-block-seq-to-list seq)
+        prefix)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (ir.compiler-ir-block-cons
+            (ir.CompilerIrBlock.Block label (opt-inline-append prefix instrs))
+            (compiler-opt-box-shared-view rest))])]))
+
+(define (opt-inline-checked-specialized [callee : ir.CompilerIrFunction]) : OptMaybeFunction
+  (match callee
+    [(ir.CompilerIrFunction.Function name params ret vars blocks)
+      (let
+        [np : i64
+          (opt-inline-param-count (compiler-opt-global-shared-view params))]
+        [prefix : ir.CompilerIrInstrSeq
+          (opt-inline-checked-literal-movs
+            (compiler-opt-global-shared-view params)
+            0
+            np
+            (ir.compiler-ir-instr-seq-empty))]
+        (if (=
+          (ir.compiler-ir-instr-seq-count
+            (compiler-opt-global-shared-view prefix))
+          0)
+          (OptMaybeFunction.No)
+          (OptMaybeFunction.Some
+            (ir.CompilerIrFunction.Function
+              name
+              params
+              ret
+              vars
+              (opt-inline-checked-prefix-entry
+                (compiler-opt-global-shared-view blocks)
+                prefix)))))]))
+
+(define (opt-inline-checked-spec-gain
+  [pools : ast.AstNodePoolContext]
+  [type-segment-bases : i64]
+  [callee : ir.CompilerIrFunction]
+  [callee-cost : i64]
+  [site-depth : i64]
+  [site-weight : i64]) : i64
+  (match (opt-inline-checked-specialized callee)
+    [(OptMaybeFunction.Some special)
+      (let
+        [special-cost : i64
+          (opt-inline-checked-plan-cost-at
+            pools
+            type-segment-bases
+            special
+            site-depth
+            site-weight)]
+        (if (> callee-cost special-cost)
+          (- callee-cost special-cost)
+          0))]
+    [(OptMaybeFunction.No) 0]))
+
 (define opt-inline-checked-callee-slot : i64
   (- 0 1))
 (define opt-inline-checked-callee-params : i64
@@ -134756,7 +135069,8 @@
   [after : i64]
   [boundary : i64]
   [keep? : bool]
-  [margin-clear? : bool]) : unit
+  [margin-clear? : bool]
+  [spec-gain : i64]) : unit
   (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
     (io.print-error
       (str_cat.str-cat
@@ -134804,6 +135118,8 @@
           "call")
         "|gen="
         (string.int->string opt-inline-checked-generation)
+        "|spec="
+        (string.int->string spec-gain)
         "\n"))
     unit))
 
@@ -135585,6 +135901,15 @@
           (compiler-opt-global-shared-view census)
           callee-name)
         (opt-inline-checked-clause-address-taken)]
+      ;; INL-18: a body whose every exit is a tail call retires nothing of its
+      ;; own when spliced -- each tail call becomes a call plus a continuation
+      ;; -- so its worth is what the site's literal arguments fold. Without one
+      ;; there is nothing to price.
+      [(and
+          (opt-inline-checked-tail-only-body?
+            (compiler-opt-global-shared-view blocks))
+          (<= opt-inline-checked-current-literal-count 0))
+        (opt-inline-checked-clause-tail-only)]
       ;; INL-17c. INL-7 refused a loop-carrying leaf into a caller whose loop
       ;; was about to be built from its own self tail call (opt-tailrec ran
       ;; one pass later, so the site read as straight-line and the import
@@ -135621,7 +135946,8 @@
           (+
             opt-inline-checked-prior-blocks
             (+ opt-inline-caller-checked-blocks added-blocks))
-          (opt-inline-checked-max-blocks))
+          (opt-inline-checked-max-blocks-for
+            (> opt-inline-checked-current-literal-count 0)))
         (opt-inline-checked-clause-block-ceiling)]
       [else
         (let
@@ -135710,6 +136036,14 @@
                 (set! opt-inline-checked-site-depth site-depth)
                 (set! opt-inline-checked-site-weight site-weight)
                 (set! opt-inline-checked-callee-params np)
+                (opt-inline-checked-adopt-literals!)
+                (set!
+                  opt-inline-checked-target-over-ceiling?
+                  (>
+                    (+
+                      opt-inline-checked-prior-blocks
+                      (+ opt-inline-caller-checked-blocks added-blocks))
+                    (opt-inline-checked-max-blocks)))
                 (set! opt-inline-checked-target-blocks added-blocks)
                 (set!
                   opt-inline-checked-callee-slot
@@ -135953,7 +136287,17 @@
 ;; see opt-inline-checked-verdict for why the window is two-sided and for the
 ;; measurements that put the cap where it is.
 (define (opt-inline-checked-window-ok? [saving : i64] [boundary : i64]) : bool
-  (and (>= (* 2 saving) boundary) (<= (* 2 saving) (* 5 boundary))))
+  (opt-inline-checked-window-ok-at? saving boundary 0))
+
+;; The same window with the site's specialization gain (INL-18) added to the
+;; prediction the cap is read against.
+(define (opt-inline-checked-window-ok-at?
+  [saving : i64]
+  [boundary : i64]
+  [spec-gain : i64]) : bool
+  (and
+    (>= (* 2 saving) boundary)
+    (<= (* 2 saving) (* 5 (+ boundary spec-gain)))))
 
 ;; ...and WHICH SIDE of it a verdict fell on, for the trace. A `revert` line
 ;; used to report only that the window refused, and the window is two-sided:
@@ -136039,11 +136383,24 @@
     ;; execution.
     [callee-cost : i64
       (opt-inline-checked-plan-cost-at
-        pools
+        (compiler-opt-global-shared-view pools)
         type-segment-bases
-        callee
+        (compiler-opt-global-shared-view callee)
         site-depth
         site-weight)]
+    ;; INL-18: what the site's literal arguments fold out of the callee, priced
+    ;; on the callee alone with those parameters pinned. A free inline of such
+    ;; a site saves the boundary AND this, so the cap is read against both.
+    [spec-gain : i64
+      (if (> opt-inline-checked-target-literal-count 0)
+        (opt-inline-checked-spec-gain
+          (compiler-opt-global-shared-view pools)
+          type-segment-bases
+          (compiler-opt-global-shared-view callee)
+          callee-cost
+          site-depth
+          site-weight)
+        0)]
     [boundary : i64 (* site-weight (opt-inline-checked-boundary-cost np))]
     [before : i64 (+ banked-cost (+ boundary callee-cost))]
     ;; A TWO-SIDED window, not a threshold. A free inline -- the copy exactly as
@@ -136100,10 +136457,18 @@
     ;; cfg loop walkers 184 to 1376). A small body past the cap keeps on the
     ;; floor alone.
     [small-body? : bool (<= callee-cost (* 64 site-weight))]
+    ;; INL-18: past the base ceiling the caller is large and the plan's growth
+    ;; accounting is what the ceiling stopped trusting; a site is priced there
+    ;; only on what it folds, and the fold must cover half the boundary.
+    [fold-carries? : bool
+      (or
+        (not opt-inline-checked-target-over-ceiling?)
+        (>= (* 2 spec-gain) boundary))]
     [keep? : bool
       (and
+        fold-carries?
         (or
-          (opt-inline-checked-window-ok? saving boundary)
+          (opt-inline-checked-window-ok-at? saving boundary spec-gain)
           (and small-body? (>= (* 2 saving) boundary)))
         (or (not (opt-inline-checked-second-body?)) clear?))]
     [margin-clear? : bool (and keep? clear?)]
@@ -136126,7 +136491,8 @@
         after
         boundary
         keep?
-        margin-clear?)]
+        margin-clear?
+        spec-gain)]
     keep?))
 
 ;; The check allocates three optimizer generations and three allocation plans
@@ -137191,6 +137557,9 @@
             [band-admits? : bool
               (and
                 (not tail-site?)
+                (not
+                  (opt-inline-checked-tail-only-body?
+                    (compiler-opt-global-shared-view cblocks)))
                 bounds-ok?
                 bounds-loop-ok?
                 ;; INL-6: not a loop into a loop of a caller this tier merged.
@@ -137213,6 +137582,9 @@
               (opt-inline-tailrec-converted-slot?
                 (compiler-opt-global-shared-view index)
                 callee-name)]
+            [_literals : unit
+              (opt-inline-checked-record-literals!
+                (compiler-opt-global-shared-view cargs))]
             [checked? : bool
               (and
                 (not band-admits?)
@@ -138407,6 +138779,9 @@
             [band-admits? : bool
               (and
                 (not tail-site?)
+                (not
+                  (opt-inline-checked-tail-only-body?
+                    (compiler-opt-global-shared-view cblocks)))
                 bounds-ok?
                 bounds-loop-ok?
                 ;; INL-6: not a loop into a loop of a caller this tier merged.
@@ -138426,6 +138801,9 @@
               (opt-inline-tailrec-converted-slot?
                 (compiler-opt-global-shared-view index)
                 callee-name)]
+            [_literals : unit
+              (opt-inline-checked-record-literals!
+                (compiler-opt-global-shared-view cargs))]
             [checked? : bool
               (and
                 (not band-admits?)

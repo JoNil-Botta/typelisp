@@ -136,12 +136,16 @@
 
 ;; The nested loop the chain hangs from: two levels, so the site below it
 ;; carries the composite frequency the depth floor's own rung asks for.
+;; The lookup's fallback comes in as a parameter rather than a literal: a
+;; literal-argument site specializes its callee (INL-18), and `pm-lookup`
+;; would be taken into this nest and leave the gate nothing to read.
 (define (pm-walk
   [keys : (& k (__tl_dyn-array i64))]
   [marks : (& m (__tl_dyn-array i64))]
   [cap : i64]
   [rows : i64]
-  [cols : i64]) : i64
+  [cols : i64]
+  [fallback : i64]) : i64
   (let
     [acc : i64 0]
     [r : i64 0]
@@ -152,7 +156,9 @@
           (begin
             (while (< c cols)
               (begin
-                (set! acc (+ acc (pm-lookup keys marks cap (+ (* r 7) c) 5)))
+                (set!
+                  acc
+                  (+ acc (pm-lookup keys marks cap (+ (* r 7) c) fallback)))
                 (set! c (+ c 1))))
             (set! r (+ r 1)))))
       acc)))
@@ -178,7 +184,9 @@
       ;; walks one past the end on its first pass through the loop -- inside the
       ;; body the measured tier copied into `pm-lookup` at its post-dominating
       ;; site.
-      (set! total (pm-walk (& keys) (& marks) cap rows 4))
+      (set!
+        total
+        (pm-walk (& keys) (& marks) cap rows 4 (+ (array-ref vals 1) 2)))
       ;; Never reached, and there for the same reason as in the positive twin.
       (set!
         cold

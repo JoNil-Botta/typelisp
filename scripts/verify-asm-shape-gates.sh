@@ -1339,21 +1339,30 @@ check_checked_setup_helper() {
         _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
         _asm=$(compile_gate "checked_setup_helper_$_suffix" \
             tests/integration/checked_setup_helper.tl "$_target")
-        _run=$(function_body "$_asm" _tl_checked_setup_helper_run)
+        _main=$(function_body "$_asm" main)
 
         # The recorded loser's shape: a seven-parameter setup builder at the
         # ENTRY block of a caller that holds a hot loop, reached through a loop
         # of its own caller. The site-depth clause used to refuse it without
-        # pricing it; it is now offered to the verdict and the verdict refuses
-        # it BY COST, and the difference is visible only here -- absorbing the
-        # builder is correct, just slower, so an exit code cannot tell the two
-        # apart. `--trace-passes` reports the numbers.
-        assert_regex_count_eq "$_run" \
-            '^[[:space:]]+call _tl_checked_setup_helper_build_csr$' 1 \
+        # pricing it; it is offered to the verdict, and the verdict -- the
+        # allocator's own estimator (INL-15) with the site's three literal
+        # setup arguments priced as the fold they are (INL-18) -- keeps it, as
+        # the smoke self-tests of this shape record; the loop-holding caller
+        # is itself kept at `main`'s loop. The difference is visible only
+        # here: absorbing the builder is correct, and an exit code cannot tell
+        # the two apart. `--trace-passes` reports the numbers.
+        assert_not_matches "$_asm" '^_tl_checked_setup_helper_run:$' \
             "checked-setup-helper-$_target"
-        # ...and nothing else was absorbed into the loop-holding caller either:
-        # an imported body carries the inline label prefix.
-        assert_not_matches "$_run" '^\.L[A-Za-z0-9_]+_inl\.' \
+        assert_matches "$_main" '^\.L[A-Za-z0-9_]+_inl\.' \
+            "checked-setup-helper-$_target"
+        # The tier COPIES the builder into the site and leaves it reachable
+        # from its cold second reference, which still calls it: `rebuild` is
+        # absorbed into `main` by the single-reference band, so that one call
+        # is the only one the program makes.
+        assert_matches "$_asm" '^_tl_checked_setup_helper_build_csr:$' \
+            "checked-setup-helper-$_target"
+        assert_regex_count_eq "$_asm" \
+            '^[[:space:]]+call _tl_checked_setup_helper_build_csr$' 1 \
             "checked-setup-helper-$_target"
     done
 }

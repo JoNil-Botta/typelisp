@@ -21988,6 +21988,278 @@
       (+ (* 100 spent) code)
       (- 0 1))))
 
+;; --- INL-18: literal-argument specialization --------------------------------
+;;
+;; A FORWARDER: a body whose every exit is a direct tail call and which carries
+;; no `Return` of its own. Spliced at a call site, each tail call becomes a call
+;; plus the continuation, so the body retires only its own boundary; its worth
+;; is what the site's literal arguments fold. The frontend materializes a
+;; literal argument as a temp (`t = 1`, then `f(t, ...)`), which is what the
+;; hot caller below spells at its site; its cold twin passes a parameter
+;; through instead, and the tier has nothing to price there.
+(define (opt-inline-tail-only-forwarder [callee-name : i64] [helper-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [args-a : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (__tl_make-array compiler_ir_types.CompilerIrValue 1)]
+    [args-b : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (__tl_make-array compiler_ir_types.CompilerIrValue 1)]
+    (begin
+      (set! (array-ref args-a 0) (compiler_ir_types.CompilerIrValue.Var 1))
+      (set! (array-ref args-b 0) (compiler_ir_types.CompilerIrValue.Var 2))
+      (compiler_ir_types.CompilerIrFunction.Function
+        callee-name
+        (opt-inline-switch-params)
+        (compiler_ast_types.AstType.I64)
+        3
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "entry")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.compiler-ir-label "arm_a")
+                (compiler_ir_types.compiler-ir-label "arm_b"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "arm_a")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.TailCall
+                  helper-name
+                  (compiler_ir_types.CompilerIrCallArgs.Array args-a)
+                  (compiler_ast_types.AstType.I64))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "arm_b")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.TailCall
+                    helper-name
+                    (compiler_ir_types.CompilerIrCallArgs.Array args-b)
+                    (compiler_ast_types.AstType.I64))))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-inline-tail-only-site-call
+  [callee-name : i64]
+  [tag : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrInstr
+  (let
+    [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (__tl_make-array compiler_ir_types.CompilerIrValue 3)]
+    (begin
+      (set! (array-ref args 0) tag)
+      (set! (array-ref args 1) (compiler_ir_types.CompilerIrValue.Var 1))
+      (set! (array-ref args 2) (compiler_ir_types.CompilerIrValue.Var 2))
+      (compiler_ir_types.CompilerIrInstr.Call
+        5
+        callee-name
+        (compiler_ir_types.CompilerIrCallArgs.Array args)
+        (compiler_ast_types.AstType.I64)))))
+
+;; The loop-site caller's shape, with the site's first argument either the
+;; temp a literal `1` was materialized into or the caller's own parameter.
+(define (opt-inline-tail-only-site-body [callee-name : i64] [literal? : bool]) : compiler_ir_types.CompilerIrInstrSeq
+  (if literal?
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.Mov
+        6
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (opt-inline-tail-only-site-call
+        callee-name
+        (compiler_ir_types.CompilerIrValue.Var 6))
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "latch")))
+    (opt-test-instrs
+      (opt-inline-tail-only-site-call
+        callee-name
+        (compiler_ir_types.CompilerIrValue.Var 0))
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "latch")))))
+
+(define (opt-inline-tail-only-site-function
+  [func-name : i64]
+  [callee-name : i64]
+  [literal? : bool]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    7
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-inline-loop-site-entry-instrs))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "header")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Phi
+              4
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.compiler-ir-label "entry")
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var 5)
+                  (compiler_ir_types.compiler-ir-label "latch")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.compiler-ir-label "body")
+              (compiler_ir_types.compiler-ir-label "exit"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "body")
+            (opt-inline-tail-only-site-body callee-name literal?))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "latch")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "header"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "exit")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 4)))))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+;; The encoding is `spent` then the calls to the forwarder left in `main`. With
+;; the literal the site reaches a verdict; without it the tail-only clause
+;; refuses before pricing and the call survives.
+(define (compiler-optimize-inline-checked-tail-only-self-test [literal? : bool]) : i64
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    [_arm : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-set-active! true)
+        (compiler_optimize.opt-inline-checked-program-begin!))]
+    [armed : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-inline-tail-only-site-function symbols.main callee-name literal?)
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-inline-tail-only-forwarder callee-name symbols.external-helper)
+            (compiler_ir_types.compiler-ir-function-seq-empty)))
+        2)]
+    [spent : i64
+      (-
+        (compiler_optimize.opt-inline-checked-program-budget)
+        (compiler_optimize.opt-inline-checked-budget-current))]
+    [calls : i64
+      (opt-count-direct-call-name-function-seq
+        (compiler_optimize.compiler-opt-global-shared-view armed)
+        "main"
+        "inline_switch")]
+    [verified? : bool
+      (opt-inline-mb2-main-verified?
+        (compiler_optimize.compiler-opt-global-shared-view armed)
+        "main")]
+    [_disarm : unit (compiler_optimize.opt-inline-checked-set-active! false)]
+    (if verified?
+      (+ (* 100 spent) calls)
+      (- 0 1))))
+
+;; The leading `Mov`s of a literal into a block, which is how the specialized
+;; copy pins a parameter.
+(define (opt-inline-entry-literal-movs-from
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : i64
+  (if (>=
+    index
+    (compiler_ir_types.compiler-ir-instr-seq-count
+      (compiler_ir_types.compiler-ir-global-shared-view instrs)))
+    index
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref
+      (compiler_ir_types.compiler-ir-global-shared-view instrs)
+      index)
+      [(compiler_ir_types.CompilerIrInstr.Mov _ value _)
+        (match value
+          [(compiler_ir_types.CompilerIrValue.I64 _)
+            (opt-inline-entry-literal-movs-from instrs (+ index 1))]
+          [_ index])]
+      [_ index])))
+
+(define (opt-inline-entry-literal-movs
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Cons block _)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-inline-entry-literal-movs-from instrs 0)])]
+    [_ (- 0 1)]))
+
+(define (opt-inline-specialization-args) : (__tl_dyn-array
+    compiler_ir_types.CompilerIrValue)
+  (__tl_make-array
+    (compiler_ir_types.CompilerIrValue.I64 5)
+    (compiler_ir_types.CompilerIrValue.Bool true)
+    (compiler_ir_types.CompilerIrValue.I64 7)))
+
+(define (compiler-optimize-inline-checked-specialization-self-test) : i64
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [forwarder : compiler_ir_types.CompilerIrFunction
+      (opt-inline-tail-only-forwarder
+        symbols.inline-switch
+        symbols.external-helper)]
+    [_record : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-record-literals!
+          (compiler_ir_types.CompilerIrCallArgs.Array
+            (opt-inline-specialization-args)))
+        (compiler_optimize.opt-inline-checked-adopt-literals!))]
+    [recorded : i64 (compiler_optimize.opt-inline-checked-literal-count-now)]
+    [pinned : i64
+      (match (compiler_optimize.opt-inline-checked-specialized
+        (compiler_optimize.compiler-opt-global-shared-view forwarder))
+        [(compiler_optimize.OptMaybeFunction.Some special)
+          (opt-inline-entry-literal-movs
+            (compiler_optimize.opt-function-blocks
+              (compiler_optimize.compiler-opt-global-shared-view special)))]
+        [(compiler_optimize.OptMaybeFunction.No) (- 0 1)])]
+    [_clear : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-record-literals!
+          compiler_ir_types.CompilerIrCallArgs.Nil)
+        (compiler_optimize.opt-inline-checked-adopt-literals!))]
+    [unpinned? : bool
+      (match (compiler_optimize.opt-inline-checked-specialized
+        (compiler_optimize.compiler-opt-global-shared-view forwarder))
+        [(compiler_optimize.OptMaybeFunction.No) true]
+        [(compiler_optimize.OptMaybeFunction.Some _) false])]
+    (cond
+      ;; the window's cap reads the fold as part of a free inline's prediction;
+      ;; the floor does not
+      [(not (compiler_optimize.opt-inline-checked-window-ok-at? 20 8 0)) 1]
+      [(compiler_optimize.opt-inline-checked-window-ok-at? 21 8 0) 2]
+      [(not (compiler_optimize.opt-inline-checked-window-ok-at? 21 8 1)) 3]
+      [(compiler_optimize.opt-inline-checked-window-ok-at? 3 8 100) 4]
+      ;; cg-map-insert-ref! into cg-census-blocks: 2,049 against 576 with a
+      ;; fold of 768
+      [(not (compiler_optimize.opt-inline-checked-window-ok-at? 2049 576 768))
+        5]
+      [(compiler_optimize.opt-inline-checked-window-ok-at? 2049 576 0) 6]
+      ;; a forwarder is tail-only; a body with a `Return` is not
+      [(not
+          (compiler_optimize.opt-inline-checked-tail-only-body?
+            (compiler_optimize.opt-function-blocks
+              (compiler_optimize.compiler-opt-global-shared-view forwarder))))
+        7]
+      [(compiler_optimize.opt-inline-checked-tail-only-body?
+          (compiler_optimize.opt-function-blocks
+            (opt-inline-switch-callee-named symbols.inline-switch)))
+        8]
+      ;; two `I64` arguments of three are literals, and the specialized copy
+      ;; pins exactly those two at its entry
+      [(not (= recorded 2)) 9]
+      [(not (= pinned 2)) 10]
+      ;; nothing to pin, no copy
+      [(not unpinned?) 11]
+      [else 42])))
+
 ;; --- INL-2: the post-keep rescan -------------------------------------------
 ;;
 ;; A kept site puts a COPY of the callee's body into the caller, and the copy

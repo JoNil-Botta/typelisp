@@ -115,6 +115,10 @@
         (catalog.compiler-x64-template-catalog-int-range "18:NativeEntry" 0 2)
         18
         "catalog integer parser stops at the explicit enum-tag bound")
+      (test.assert-i64-eq
+        (catalog.compiler-x64-template-catalog-row-end "811039507\r\nnext" 0)
+        9
+        "catalog row end excludes a Windows checkout carriage return")
       (while (and events-valid (< at ids.len))
         (let
           [id : x64.CompilerX64ExecutableTemplateId

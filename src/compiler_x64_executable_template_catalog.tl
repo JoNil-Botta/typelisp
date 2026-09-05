@@ -55,9 +55,16 @@
   [data : (& data str)]
   [start : i64]) : i64
   (let
-    [end : i64 (string.index-of-byte data start (cast '\n' : u8))]
-    (if (< end 0)
-      (string.string-length data)
+    [newline : i64 (string.index-of-byte data start (cast '\n' : u8))]
+    [end : i64
+      (if (< newline 0)
+        (string.string-length data)
+        newline)]
+    ;; `include-str` sees the checkout's physical bytes. Windows may supply
+    ;; CRLF even though the checked-in catalog is LF, so keep CR outside the
+    ;; final field just as LF already is.
+    (if (and (> end start) (= (string.string-ref data (- end 1)) '\r'))
+      (- end 1)
       end)))
 
 (define (compiler-x64-template-catalog-field
@@ -95,9 +102,8 @@
       (io.panic "x64 executable template: malformed catalog enum tag")
       (compiler-x64-template-catalog-int-range value 0 separator))))
 
-;; Parse only bytes inside the explicit field bounds. The legacy `string.>int`
-;; primitive did not preserve the final-field bound in a self-hosted Win64
-;; compiler, changing a hash value while leaving the String length intact.
+;; Parse only decimal bytes inside the explicit field bounds. Unlike the legacy
+;; `string.>int` compatibility primitive, reject non-digit arithmetic.
 (define (compiler-x64-template-catalog-int-range
   [text : (& text str)]
   [start : i64]

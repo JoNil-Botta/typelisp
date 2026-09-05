@@ -1889,7 +1889,7 @@
         missing-name
         compiler_ir_types.CompilerIrCallArgs.Nil
         (compiler_ast_types.AstType.I64)
-        "unsupported-object-abi:linux-x86_64:call:unknown-target")
+        "unsupported-object-abi:linux-x86_64:call")
       (compiler-backend-object-test-call-category?
         (owned_view.compiler-owned-shared-view index)
         argument-owner
@@ -1897,14 +1897,14 @@
         (compiler_ir_types.CompilerIrCallArgs.One
           (compiler_ir_types.CompilerIrValue.I64 1))
         (compiler_ast_types.AstType.I64)
-        "unsupported-object-abi:linux-x86_64:call:argument-type-mismatch")
+        "unsupported-object-abi:linux-x86_64:call")
       (compiler-backend-object-test-call-category?
         (owned_view.compiler-owned-shared-view index)
         count-owner
         bool-param-name
         compiler_ir_types.CompilerIrCallArgs.Nil
         (compiler_ast_types.AstType.I64)
-        "unsupported-object-abi:linux-x86_64:call:argument-count-mismatch")
+        "unsupported-object-abi:linux-x86_64:call")
       (compiler-backend-object-test-call-category?
         (owned_view.compiler-owned-shared-view index)
         result-owner
@@ -1912,14 +1912,14 @@
         (compiler_ir_types.CompilerIrCallArgs.One
           (compiler_ir_types.CompilerIrValue.Bool true))
         (compiler_ast_types.AstType.Bool)
-        "unsupported-object-abi:linux-x86_64:call:result-type-mismatch")
+        "unsupported-object-abi:linux-x86_64:call")
       (compiler-backend-object-test-call-category?
         (owned_view.compiler-owned-shared-view index)
         home-owner
         bool-result-name
         compiler_ir_types.CompilerIrCallArgs.Nil
         (compiler_ast_types.AstType.Bool)
-        "unsupported-object-abi:linux-x86_64:call:result-home-mismatch"))))
+        "unsupported-object-abi:linux-x86_64:call"))))
 
 (define (compiler-backend-object-ordinary-abi-eligibility-ok?) : bool
   (let
@@ -1929,10 +1929,14 @@
       (compiler_backend.CompilerBackendTarget.Windows)]
     [seven-parameter-source : String
       "(define (seven [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64] [g : i64]) : i64 g)
-(define (main) : i64 (seven 1 2 3 4 5 6 42))"]
+(define (main) : i64
+  (let [result : i64 (seven 1 2 3 4 5 6 42)]
+    (+ result 0)))"]
     [seven-argument-extern-source : String
       "(extern (wide [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64] [g : i64]) : i64 (:symbol \"wide\"))
-(define (main) : i64 (wide 1 2 3 4 5 6 42))"]
+(define (main) : i64
+  (let [result : i64 (wide 1 2 3 4 5 6 42)]
+    (+ result 0)))"]
     [float-argument-source : String
       "(extern (take-float [value : f64]) : i64 (:symbol \"take_float\"))
 (define (main) : i64 (take-float 1.0))"]
@@ -1958,35 +1962,35 @@
       (compiler-backend-object-source-category?
         seven-parameter-source
         linux
-        "unsupported-object-abi:linux-x86_64:function-entry:parameter-capacity")
+        "unsupported-object-abi:linux-x86_64:function-entry")
       (compiler-backend-object-source-category?
         seven-argument-extern-source
         linux
-        "unsupported-object-abi:linux-x86_64:call:parameter-capacity")
+        "unsupported-object-abi:linux-x86_64:call")
       (compiler-backend-object-source-category?
         (owned_view.compiler-owned-shared-view float-argument-source)
         linux
-        "unsupported-object-abi:linux-x86_64:call:parameter-type")
+        "unsupported-object-abi:linux-x86_64:call")
       (compiler-backend-object-source-category?
         mixed-argument-source
         linux
-        "unsupported-object-abi:linux-x86_64:call:parameter-type")
+        "unsupported-object-abi:linux-x86_64:call")
       (compiler-backend-object-source-category?
         (owned_view.compiler-owned-shared-view float-argument-source)
         windows
-        "unsupported-object-abi:windows-x86_64:call:parameter-type")
+        "unsupported-object-abi:windows-x86_64:call")
       (compiler-backend-object-source-category?
         float-result-source
         linux
-        "unsupported-object-abi:linux-x86_64:call:result-type")
+        "unsupported-object-abi:linux-x86_64:call")
       (compiler-backend-object-source-category?
         float-return-source
         linux
-        "unsupported-object-abi:linux-x86_64:function-entry:return-type")
+        "unsupported-object-abi:linux-x86_64:function-entry")
       (compiler-backend-object-source-category?
         unit-return-source
         linux
-        "unsupported-object-abi:linux-x86_64:function-entry:return-type")
+        "unsupported-object-abi:linux-x86_64:function-entry")
       (compiler-backend-object-source-eligible? six-gp-source linux)
       ;; This pins both the four register positions and the seven already
       ;; proven Win64 GP stack positions used by the direct COFF path.

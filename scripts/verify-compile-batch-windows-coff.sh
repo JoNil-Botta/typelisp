@@ -246,7 +246,7 @@ printf '%s|assembly|%s/%s.direct.s|unsupported-external-relocation\n' \
     "$NT_OPEN_FILE_SOURCE" "$WORKDIR" nt_open_file >> "$DIFFERENTIAL_EXPECTED"
 printf '%s|assembly|%s/%s.forced.s|forced-assembly\n' \
     "$NT_OPEN_FILE_SOURCE" "$WORKDIR" nt_open_file >> "$DIFFERENTIAL_EXPECTED"
-printf '%s|assembly|%s/%s.direct.s|unsupported-object-abi:windows-x86_64:call:parameter-type\n' \
+printf '%s|assembly|%s/%s.direct.s|unsupported-object-abi:windows-x86_64:call\n' \
     "$FLOAT_POSITION_SOURCE" "$WORKDIR" float_position >> "$DIFFERENTIAL_EXPECTED"
 printf '%s|assembly|%s/%s.forced.s|forced-assembly\n' \
     "$FLOAT_POSITION_SOURCE" "$WORKDIR" float_position >> "$DIFFERENTIAL_EXPECTED"

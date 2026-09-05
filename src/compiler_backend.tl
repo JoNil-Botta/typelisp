@@ -92621,115 +92621,29 @@
   (FunctionEntry)
   (FunctionReturn))
 
-(defenum CompilerBackendObjectAbiReason
-  (UnknownTarget)
-  (UnknownSignature)
-  (ParameterCapacity)
-  (ParameterType)
-  (ArgumentCountMismatch)
-  (ArgumentTypeMismatch)
-  (ResultType)
-  (ResultTypeMismatch)
-  (ResultHomeMismatch)
-  (ReturnType)
-  (ReturnTypeMismatch)
-  (MissingValue)
-  (ValueTypeMismatch))
-
 ;; Object-only ordinary-call lowering predates the shared ABI planner. Keep its
 ;; diagnostic vocabulary fixed and bounded: no user-controlled symbol text is
 ;; copied into a fallback category consumed by batch manifests and drivers.
 (define (compiler-backend-object-unsupported-abi-category
   [target : CompilerBackendTarget]
-  [context : CompilerBackendObjectAbiContext]
-  [reason : CompilerBackendObjectAbiReason]) : String
+  [context : CompilerBackendObjectAbiContext]) : String
   (match target
     [(CompilerBackendTarget.Linux)
       (match context
         [(CompilerBackendObjectAbiContext.Call)
-          (match reason
-            [(CompilerBackendObjectAbiReason.UnknownTarget)
-              "unsupported-object-abi:linux-x86_64:call:unknown-target"]
-            [(CompilerBackendObjectAbiReason.ParameterCapacity)
-              "unsupported-object-abi:linux-x86_64:call:parameter-capacity"]
-            [(CompilerBackendObjectAbiReason.ParameterType)
-              "unsupported-object-abi:linux-x86_64:call:parameter-type"]
-            [(CompilerBackendObjectAbiReason.ArgumentCountMismatch)
-              "unsupported-object-abi:linux-x86_64:call:argument-count-mismatch"]
-            [(CompilerBackendObjectAbiReason.ArgumentTypeMismatch)
-              "unsupported-object-abi:linux-x86_64:call:argument-type-mismatch"]
-            [(CompilerBackendObjectAbiReason.ResultType)
-              "unsupported-object-abi:linux-x86_64:call:result-type"]
-            [(CompilerBackendObjectAbiReason.ResultTypeMismatch)
-              "unsupported-object-abi:linux-x86_64:call:result-type-mismatch"]
-            [(CompilerBackendObjectAbiReason.ResultHomeMismatch)
-              "unsupported-object-abi:linux-x86_64:call:result-home-mismatch"]
-            [_ "unsupported-object-abi:linux-x86_64:call:unclassified"])]
+          "unsupported-object-abi:linux-x86_64:call"]
         [(CompilerBackendObjectAbiContext.FunctionEntry)
-          (match reason
-            [(CompilerBackendObjectAbiReason.UnknownSignature)
-              "unsupported-object-abi:linux-x86_64:function-entry:unknown-signature"]
-            [(CompilerBackendObjectAbiReason.ParameterCapacity)
-              "unsupported-object-abi:linux-x86_64:function-entry:parameter-capacity"]
-            [(CompilerBackendObjectAbiReason.ParameterType)
-              "unsupported-object-abi:linux-x86_64:function-entry:parameter-type"]
-            [(CompilerBackendObjectAbiReason.ReturnType)
-              "unsupported-object-abi:linux-x86_64:function-entry:return-type"]
-            [(CompilerBackendObjectAbiReason.ReturnTypeMismatch)
-              "unsupported-object-abi:linux-x86_64:function-entry:return-type-mismatch"]
-            [_
-              "unsupported-object-abi:linux-x86_64:function-entry:unclassified"])]
+          "unsupported-object-abi:linux-x86_64:function-entry"]
         [(CompilerBackendObjectAbiContext.FunctionReturn)
-          (match reason
-            [(CompilerBackendObjectAbiReason.MissingValue)
-              "unsupported-object-abi:linux-x86_64:function-return:missing-value"]
-            [(CompilerBackendObjectAbiReason.ValueTypeMismatch)
-              "unsupported-object-abi:linux-x86_64:function-return:value-type-mismatch"]
-            [_
-              "unsupported-object-abi:linux-x86_64:function-return:unclassified"])])]
+          "unsupported-object-abi:linux-x86_64:function-return"])]
     [(CompilerBackendTarget.Windows)
       (match context
         [(CompilerBackendObjectAbiContext.Call)
-          (match reason
-            [(CompilerBackendObjectAbiReason.UnknownTarget)
-              "unsupported-object-abi:windows-x86_64:call:unknown-target"]
-            [(CompilerBackendObjectAbiReason.ParameterCapacity)
-              "unsupported-object-abi:windows-x86_64:call:parameter-capacity"]
-            [(CompilerBackendObjectAbiReason.ParameterType)
-              "unsupported-object-abi:windows-x86_64:call:parameter-type"]
-            [(CompilerBackendObjectAbiReason.ArgumentCountMismatch)
-              "unsupported-object-abi:windows-x86_64:call:argument-count-mismatch"]
-            [(CompilerBackendObjectAbiReason.ArgumentTypeMismatch)
-              "unsupported-object-abi:windows-x86_64:call:argument-type-mismatch"]
-            [(CompilerBackendObjectAbiReason.ResultType)
-              "unsupported-object-abi:windows-x86_64:call:result-type"]
-            [(CompilerBackendObjectAbiReason.ResultTypeMismatch)
-              "unsupported-object-abi:windows-x86_64:call:result-type-mismatch"]
-            [(CompilerBackendObjectAbiReason.ResultHomeMismatch)
-              "unsupported-object-abi:windows-x86_64:call:result-home-mismatch"]
-            [_ "unsupported-object-abi:windows-x86_64:call:unclassified"])]
+          "unsupported-object-abi:windows-x86_64:call"]
         [(CompilerBackendObjectAbiContext.FunctionEntry)
-          (match reason
-            [(CompilerBackendObjectAbiReason.UnknownSignature)
-              "unsupported-object-abi:windows-x86_64:function-entry:unknown-signature"]
-            [(CompilerBackendObjectAbiReason.ParameterCapacity)
-              "unsupported-object-abi:windows-x86_64:function-entry:parameter-capacity"]
-            [(CompilerBackendObjectAbiReason.ParameterType)
-              "unsupported-object-abi:windows-x86_64:function-entry:parameter-type"]
-            [(CompilerBackendObjectAbiReason.ReturnType)
-              "unsupported-object-abi:windows-x86_64:function-entry:return-type"]
-            [(CompilerBackendObjectAbiReason.ReturnTypeMismatch)
-              "unsupported-object-abi:windows-x86_64:function-entry:return-type-mismatch"]
-            [_
-              "unsupported-object-abi:windows-x86_64:function-entry:unclassified"])]
+          "unsupported-object-abi:windows-x86_64:function-entry"]
         [(CompilerBackendObjectAbiContext.FunctionReturn)
-          (match reason
-            [(CompilerBackendObjectAbiReason.MissingValue)
-              "unsupported-object-abi:windows-x86_64:function-return:missing-value"]
-            [(CompilerBackendObjectAbiReason.ValueTypeMismatch)
-              "unsupported-object-abi:windows-x86_64:function-return:value-type-mismatch"]
-            [_
-              "unsupported-object-abi:windows-x86_64:function-return:unclassified"])])]))
+          "unsupported-object-abi:windows-x86_64:function-return"])]))
 
 (define (compiler-backend-object-abi-capacity [target : CompilerBackendTarget]) : i64
   (match target
@@ -92900,8 +92814,7 @@
       (CompilerBackendObjectEligibility.Unsupported
         (compiler-backend-object-unsupported-abi-category
           target
-          CompilerBackendObjectAbiContext.Call
-          CompilerBackendObjectAbiReason.UnknownTarget))]
+          CompilerBackendObjectAbiContext.Call))]
     [(CompilerBackendMaybeSignature.Some expected-types expected-ret)
       (let
         [count : i64
@@ -92922,8 +92835,7 @@
             (CompilerBackendObjectEligibility.Unsupported
               (compiler-backend-object-unsupported-abi-category
                 target
-                CompilerBackendObjectAbiContext.Call
-                CompilerBackendObjectAbiReason.ParameterCapacity))]
+                CompilerBackendObjectAbiContext.Call))]
           [(not
               (=
                 count
@@ -92931,8 +92843,7 @@
             (CompilerBackendObjectEligibility.Unsupported
               (compiler-backend-object-unsupported-abi-category
                 target
-                CompilerBackendObjectAbiContext.Call
-                CompilerBackendObjectAbiReason.ArgumentCountMismatch))]
+                CompilerBackendObjectAbiContext.Call))]
           [(or
               (not
                 (compiler-backend-object-abi-type-supported?
@@ -92943,8 +92854,7 @@
             (CompilerBackendObjectEligibility.Unsupported
               (compiler-backend-object-unsupported-abi-category
                 target
-                CompilerBackendObjectAbiContext.Call
-                CompilerBackendObjectAbiReason.ResultType))]
+                CompilerBackendObjectAbiContext.Call))]
           [(not
               (compiler_optimize.opt-type-eq
                 type-segment-bases
@@ -92953,14 +92863,12 @@
             (CompilerBackendObjectEligibility.Unsupported
               (compiler-backend-object-unsupported-abi-category
                 target
-                CompilerBackendObjectAbiContext.Call
-                CompilerBackendObjectAbiReason.ResultTypeMismatch))]
+                CompilerBackendObjectAbiContext.Call))]
           [(not dst-matches)
             (CompilerBackendObjectEligibility.Unsupported
               (compiler-backend-object-unsupported-abi-category
                 target
-                CompilerBackendObjectAbiContext.Call
-                CompilerBackendObjectAbiReason.ResultHomeMismatch))]
+                CompilerBackendObjectAbiContext.Call))]
           [(not
               (compiler-backend-object-abi-types-supported?
                 type-segment-bases
@@ -92968,8 +92876,7 @@
             (CompilerBackendObjectEligibility.Unsupported
               (compiler-backend-object-unsupported-abi-category
                 target
-                CompilerBackendObjectAbiContext.Call
-                CompilerBackendObjectAbiReason.ParameterType))]
+                CompilerBackendObjectAbiContext.Call))]
           [(not
               (compiler-backend-object-call-abi-args-match?
                 type-segment-bases
@@ -92980,8 +92887,7 @@
             (CompilerBackendObjectEligibility.Unsupported
               (compiler-backend-object-unsupported-abi-category
                 target
-                CompilerBackendObjectAbiContext.Call
-                CompilerBackendObjectAbiReason.ArgumentTypeMismatch))]
+                CompilerBackendObjectAbiContext.Call))]
           [else CompilerBackendObjectEligibility.Eligible]))]))
 
 (define (compiler-backend-object-instr-abi-eligibility
@@ -93010,8 +92916,7 @@
           (CompilerBackendObjectEligibility.Unsupported
             (compiler-backend-object-unsupported-abi-category
               target
-              CompilerBackendObjectAbiContext.FunctionReturn
-              CompilerBackendObjectAbiReason.MissingValue))]
+              CompilerBackendObjectAbiContext.FunctionReturn))]
         [(compiler_ir_types.CompilerIrMaybeValue.Some value)
           (if (compiler-backend-object-abi-value-matches-type?
             type-segment-bases
@@ -93023,8 +92928,7 @@
             (CompilerBackendObjectEligibility.Unsupported
               (compiler-backend-object-unsupported-abi-category
                 target
-                CompilerBackendObjectAbiContext.FunctionReturn
-                CompilerBackendObjectAbiReason.ValueTypeMismatch)))])]
+                CompilerBackendObjectAbiContext.FunctionReturn)))])]
     [_ CompilerBackendObjectEligibility.Eligible]))
 
 (define (compiler-backend-object-instrs-abi-eligibility
@@ -93137,16 +93041,14 @@
             (CompilerBackendObjectEligibility.Unsupported
               (compiler-backend-object-unsupported-abi-category
                 target
-                CompilerBackendObjectAbiContext.FunctionEntry
-                CompilerBackendObjectAbiReason.UnknownSignature))]
+                CompilerBackendObjectAbiContext.FunctionEntry))]
           [(CompilerBackendMaybeSignature.Some indexed-params indexed-ret)
             (cond
               [(> params.len (compiler-backend-object-abi-capacity target))
                 (CompilerBackendObjectEligibility.Unsupported
                   (compiler-backend-object-unsupported-abi-category
                     target
-                    CompilerBackendObjectAbiContext.FunctionEntry
-                    CompilerBackendObjectAbiReason.ParameterCapacity))]
+                    CompilerBackendObjectAbiContext.FunctionEntry))]
               [(not
                   (compiler-backend-object-abi-param-signature-matches?
                     type-segment-bases
@@ -93155,8 +93057,7 @@
                 (CompilerBackendObjectEligibility.Unsupported
                   (compiler-backend-object-unsupported-abi-category
                     target
-                    CompilerBackendObjectAbiContext.FunctionEntry
-                    CompilerBackendObjectAbiReason.ParameterType))]
+                    CompilerBackendObjectAbiContext.FunctionEntry))]
               [(or
                   (not
                     (compiler-backend-object-abi-type-supported?
@@ -93167,8 +93068,7 @@
                 (CompilerBackendObjectEligibility.Unsupported
                   (compiler-backend-object-unsupported-abi-category
                     target
-                    CompilerBackendObjectAbiContext.FunctionEntry
-                    CompilerBackendObjectAbiReason.ReturnType))]
+                    CompilerBackendObjectAbiContext.FunctionEntry))]
               [(not
                   (compiler_optimize.opt-type-eq
                     type-segment-bases
@@ -93177,8 +93077,7 @@
                 (CompilerBackendObjectEligibility.Unsupported
                   (compiler-backend-object-unsupported-abi-category
                     target
-                    CompilerBackendObjectAbiContext.FunctionEntry
-                    CompilerBackendObjectAbiReason.ReturnTypeMismatch))]
+                    CompilerBackendObjectAbiContext.FunctionEntry))]
               [else
                 (let
                   [types : compiler_regalloc.CompilerRegVarTypes

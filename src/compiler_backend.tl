@@ -36007,20 +36007,45 @@
           (compiler-backend-global-shared-view index-reg))
         tail))))
 
+;; BE-2: a %rbp base at scale 1 is spelled with the two SIB slots SWAPPED,
+;; `(index,%rbp,1)`: base+index*1 is symmetric, and the index slot is the one
+;; place the frame register may stand -- no recognizer reads it there. The
+;; rsp-rebase pass finds frame references by the five bytes `(%rbp`, the
+;; peephole's slot recognizers by the trailing `(%rbp)` and the base classifier
+;; by the operand's last six bytes, and `(%r12,%rbp,1)` shows none of them
+;; what they look for, exactly as BE-1's `leaq (base,%rbp,s)` does not. At any
+;; other scale a %rbp base cannot be spelled and the caller's staged path
+;; copies it, as before.
 (define (compiler-backend-gep-index-address
   [base-reg : String]
   [scale : i64]
   [index-reg : String]) : String
-  (if (compiler-backend-gep-sib-scale? scale)
-    (str_cat.str-cat
-      "("
-      base-reg
-      ","
-      index-reg
-      ","
-      (string.int->string scale)
-      ")")
-    ""))
+  (cond
+    [(not (compiler-backend-gep-sib-scale? scale)) ""]
+    [(not (string.eq base-reg "%rbp"))
+      (str_cat.str-cat
+        "("
+        base-reg
+        ","
+        index-reg
+        ","
+        (string.int->string scale)
+        ")")]
+    [(and
+        (= scale 1)
+        (not (string.eq index-reg ""))
+        (not (string.eq index-reg "%rbp")))
+      (str_cat.str-cat "(" index-reg ",%rbp,1)")]
+    [else ""]))
+
+;; BE-2: the dynamic-index base filter for a site that spells its address
+;; through compiler-backend-gep-index-address: a %rbp home is admitted at
+;; scale 1, where that formatter can spell it, and filtered as before at every
+;; other scale.
+(define (compiler-backend-address-base-filter-sib [home : String] [scale : i64]) : String
+  (if (and (string.eq home "%rbp") (= scale 1))
+    home
+    (compiler-backend-address-base-filter home)))
 
 ;; Fold a constant displacement into base-reg in place, so a scavenged base works
 ;; like the old fixed scratch did.
@@ -36132,8 +36157,12 @@
                 (compiler-backend-gep-sib-scale? scale)
                 ;; GAP7 #rbp-base: a %rbp base cannot occupy the SIB BASE slot
                 ;; alongside the gep index (`(%rbp,idx,s)` would read as a frame
-                ;; ref); route it to the staged path instead.
-                (not (string.eq base-reg "%rbp")))
+                ;; ref); route it to the staged path instead -- except at scale
+                ;; 1, where compiler-backend-gep-index-address swaps it into
+                ;; the index slot (BE-2): `leaq (idx,%rbp,1), dst` is the whole
+                ;; gep, where the staged path copied %rbp first, and the
+                ;; peephole then folds the lea into the load it feeds.
+                (or (= scale 1) (not (string.eq base-reg "%rbp"))))
                 (ResultCompilerBackend.Ok
                   (str_cat.str-cat
                     "    leaq "
@@ -38475,12 +38504,15 @@
             type-segment-bases
             (compiler-backend-global-shared-view elem-ty))]
         [sib-scale? : bool (compiler-backend-gep-sib-scale? scale)]
+        ;; BE-2: a %rbp base at scale 1 reads directly, swapped into the SIB
+        ;; index slot (compiler-backend-gep-index-address).
         [base-home : String
-          (compiler-backend-address-base-filter
+          (compiler-backend-address-base-filter-sib
             (compiler-backend-value-scalar-register
               (compiler-backend-global-shared-view backend-state)
               (compiler-backend-global-shared-view assignments)
-              (compiler-backend-global-shared-view base)))]
+              (compiler-backend-global-shared-view base))
+            scale)]
         [offset-home : String
           (compiler-backend-value-scalar-register
             backend-state
@@ -39226,12 +39258,15 @@
             backend-state
             (compiler-backend-global-shared-view assignments)
             (compiler-backend-global-shared-view value))]
+        ;; BE-2: a %rbp base at scale 1 spells directly, swapped into the SIB
+        ;; index slot (compiler-backend-gep-index-address).
         [base-home : String
-          (compiler-backend-address-base-filter
+          (compiler-backend-address-base-filter-sib
             (compiler-backend-value-scalar-register
               backend-state
               (compiler-backend-global-shared-view assignments)
-              (compiler-backend-global-shared-view base)))]
+              (compiler-backend-global-shared-view base))
+            scale)]
         [offset-home : String
           (compiler-backend-value-scalar-register
             backend-state
@@ -59647,21 +59682,23 @@
         (compiler-backend-global-shared-view offset)
         (compiler-backend-global-shared-view elem-ty)
         gep-disp)]
-    [base-home : String
+    [raw-home : String
       (if (string.eq rip "")
-        (compiler-backend-address-base-filter
-          (compiler-backend-value-scalar-register
-            backend-state
-            (compiler-backend-global-shared-view assignments)
-            base))
+        (compiler-backend-value-scalar-register
+          backend-state
+          (compiler-backend-global-shared-view assignments)
+          base)
         "")]
+    [base-home : String
+      (compiler-backend-address-base-filter
+        (compiler-backend-global-shared-view raw-home))]
     (if (not (string.eq rip ""))
       rip
-      (if (string.eq base-home "")
-        ""
-        (match (compiler-backend-value-as-i64
-          (compiler-backend-global-shared-view offset))
-          [(option_i64.Some n)
+      (match (compiler-backend-value-as-i64
+        (compiler-backend-global-shared-view offset))
+        [(option_i64.Some n)
+          (if (string.eq base-home "")
+            ""
             (let
               [disp : i64
                 (+
@@ -59669,27 +59706,35 @@
                   gep-disp)]
               (if (compiler-backend-imm32? disp)
                 (compiler-backend-base-address disp base-home)
-                ""))]
-          [(option_i64.None)
-            (let
-              [scale : i64
-                (compiler-backend-type-size type-segment-bases elem-ty)]
-              [index-home : String
-                (compiler-backend-value-scalar-register
-                  backend-state
-                  assignments
-                  offset)]
-              (if (and
-                (compiler-backend-gep-sib-scale? scale)
-                (not (string.eq index-home ""))
-                (not (string.eq index-home "%rbp"))
-                (compiler-backend-imm32? gep-disp))
-                (compiler-backend-gep-index-address-disp
-                  gep-disp
-                  base-home
-                  scale
-                  index-home)
-                ""))])))))
+                "")))]
+        [(option_i64.None)
+          (let
+            [scale : i64
+              (compiler-backend-type-size type-segment-bases elem-ty)]
+            ;; BE-2: the dynamic arm reads a %rbp base at scale 1, swapped
+            ;; into the SIB index slot by compiler-backend-gep-index-address;
+            ;; the const arm keeps the exclusion above.
+            [dyn-base-home : String
+              (compiler-backend-address-base-filter-sib
+                (compiler-backend-global-shared-view raw-home)
+                scale)]
+            [index-home : String
+              (compiler-backend-value-scalar-register
+                backend-state
+                assignments
+                offset)]
+            (if (and
+              (not (string.eq dyn-base-home ""))
+              (compiler-backend-gep-sib-scale? scale)
+              (not (string.eq index-home ""))
+              (not (string.eq index-home "%rbp"))
+              (compiler-backend-imm32? gep-disp))
+              (compiler-backend-gep-index-address-disp
+                gep-disp
+                dyn-base-home
+                scale
+                index-home)
+              ""))]))))
 
 ;; M6-D. Every address above is spelled straight out of the homes the allocator
 ;; chose, so a gep whose BASE was spilled (or homed in %rbp, which the dynamic

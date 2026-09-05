@@ -14725,6 +14725,7 @@ g:
     (compiler-backend-select-on-flags-ok?)
     (compiler-backend-select-false-home-result-ok?)
     (compiler-backend-gep-direct-index-ok?)
+    (compiler-backend-gep-rbp-base-scale-one-ok?)
     (compiler-backend-call-return-ok?)
     (compiler-backend-global-immediate-store-ok?)
     (compiler-backend-scratch-staging-direct-shapes-ok?)))
@@ -15015,6 +15016,113 @@ g:
       (compiler_ir_types.compiler-ir-instr-seq-empty))
     assignments
     4))
+
+;; BE-2. A %rbp-homed BASE at scale 1 is spelled with the SIB slots swapped,
+;; `(index,%rbp,1)`, and read straight from its home; at any other scale it
+;; cannot be spelled and the emitters stage it as before. The pins are the
+;; formatter, the scale-aware filter, and a fused byte load end to end: base in
+;; %rbp, index in %r13, gep result in %rax, load destination %rsi.
+(define (compiler-backend-gep-rbp-base-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
+    (compiler_regalloc.CompilerRegAssignment
+      1
+      (compiler_regalloc.CompilerRegLocation.Register
+        compiler_abi.compiler-reg-id-rbp))
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        2
+        (compiler_regalloc.CompilerRegLocation.Register
+          compiler_abi.compiler-reg-id-r13))
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          3
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-rax))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            4
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-rsi))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))))))
+
+(define (compiler-backend-gep-rbp-base-load-asm
+  [elem-ty : compiler_ast_types.AstType]) : compiler_backend.ResultCompilerBackend
+  (compiler-backend-emit-test-instrs
+    (compiler-backend-test-instr-seq-prepend
+      (compiler_ir_types.CompilerIrInstr.Gep
+        3
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_backend.compiler-backend-global-shared-view elem-ty))
+      (compiler-backend-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.Load
+          4
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_backend.compiler-backend-global-shared-view elem-ty))
+        (compiler_ir_types.compiler-ir-instr-seq-empty)))
+    (compiler-backend-gep-rbp-base-assignments)
+    5))
+
+(define (compiler-backend-gep-rbp-base-scale-one-ok?) : bool
+  (and
+    ;; the formatter: swapped at scale 1, declined at every other scale, and
+    ;; a %rbp INDEX (BE-1) unchanged
+    (string.eq
+      (compiler_backend.compiler-backend-gep-index-address "%rbp" 1 "%r13")
+      "(%r13,%rbp,1)")
+    (string.eq
+      (compiler_backend.compiler-backend-gep-index-address "%rbp" 8 "%r13")
+      "")
+    (string.eq
+      (compiler_backend.compiler-backend-gep-index-address "%rbp" 1 "%rbp")
+      "")
+    (string.eq
+      (compiler_backend.compiler-backend-gep-index-address "%r12" 1 "%rbp")
+      "(%r12,%rbp,1)")
+    (string.eq
+      (compiler_backend.compiler-backend-gep-index-address-disp
+        16
+        "%rbp"
+        1
+        "%r13")
+      "16(%r13,%rbp,1)")
+    ;; the filter: %rbp admitted at scale 1 only
+    (string.eq
+      (compiler_backend.compiler-backend-address-base-filter-sib "%rbp" 1)
+      "%rbp")
+    (string.eq
+      (compiler_backend.compiler-backend-address-base-filter-sib "%rbp" 8)
+      "")
+    (string.eq
+      (compiler_backend.compiler-backend-address-base-filter-sib "%r12" 8)
+      "%r12")
+    ;; end to end: a byte load off a %rbp base reads its home in place
+    (match (compiler-backend-gep-rbp-base-load-asm
+      (compiler_ast_types.AstType.U8))
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            (compiler_backend.compiler-backend-global-shared-view asm)
+            "(%r13,%rbp,1)")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (compiler_backend.compiler-backend-global-shared-view asm)
+              "    movq %rbp, ")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])
+    ;; ...and a word load still stages the base, since `(%rbp,idx,8)` is the
+    ;; frame spelling the rebase pass rewrites
+    (match (compiler-backend-gep-rbp-base-load-asm
+      (compiler_ast_types.AstType.I64))
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            (compiler_backend.compiler-backend-global-shared-view asm)
+            "    movq %rbp, ")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (compiler_backend.compiler-backend-global-shared-view asm)
+              "(%rbp,")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
 ;; SS-P5(a). A register-homed index is READ by the composing instruction --
 ;; `addq idx, base` at scale 1, `leaq (base,idx,s), base` at 2/4/8 -- so the

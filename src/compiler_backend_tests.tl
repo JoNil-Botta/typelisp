@@ -57774,9 +57774,8 @@ b_keep:
         (compiler-backend-runtime-leaf-user-symbol-ok?)
         (compiler-backend-program-index-id-maps-ok?)
         (compiler-backend-program-index-explicit-extern-ids-ok?)))
-    (and
-      (compiler-backend-object-semantic-eligibility-ok?)
-      (compiler-backend-object-ordinary-abi-eligibility-ok?))
+    (compiler-backend-object-semantic-eligibility-ok?)
+    (compiler-backend-object-ordinary-abi-eligibility-ok?)
     (compiler-backend-placement-ok?))
     42
     (io.panic "backend: smoke output mismatch")))

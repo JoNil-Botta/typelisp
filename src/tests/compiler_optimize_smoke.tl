@@ -5050,10 +5050,16 @@
     "the identical body with one back edge stays out: a loop-carrying body compounds the caller's pressure"))
 
 (test
+  inline-sole-call-loop-site-absorb
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-sole-call-loop-site-absorb-ok?)
+    "the same acyclic body absorbs at an in-loop site the loop runs every iteration: the boundary it retires is paid per iteration"))
+
+(test
   inline-sole-call-loop-site-refusal
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-sole-call-loop-site-refusal-ok?)
-    "the same acyclic body stays out at an in-loop site: the import lands inside a region already priced"))
+    "the same body stays out at an in-loop site two deciding branches below the header: the import lands inside a region already priced, for a boundary the loop rarely retires"))
 
 (test
   inline-sole-call-staged-args-refusal

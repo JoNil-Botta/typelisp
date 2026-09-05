@@ -26230,6 +26230,79 @@
                       (compiler_ir_types.CompilerIrValue.Var 4)))))
               compiler_ir_types.CompilerIrBlockList.Nil)))))))
 
+;; The same loop with the call TWO deciding branches below the header: header
+;; -> {guard_a, exit}, guard_a -> {guard_b, exit}, guard_b -> {body, exit}, the
+;; call in `body`. Each guard's exit arm cannot reach the site without leaving
+;; the loop, so every one of them counts toward the site's control-dependence
+;; depth (see opt-inline-sole-call-loop-site-depth): the site reads 3, one past
+;; opt-inline-sole-call-max-loop-depth. The guards test the two parameters the
+;; header does not, so no pass can fold them into the header's own branch.
+(define (opt-inline-sole-call-deep-loop-caller [func-name : i64] [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    6
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-inline-loop-site-entry-instrs))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "header")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Phi
+              4
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.compiler-ir-label "entry")
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var 5)
+                  (compiler_ir_types.compiler-ir-label "latch")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.compiler-ir-label "guard_a")
+              (compiler_ir_types.compiler-ir-label "exit"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "guard_a")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.compiler-ir-label "guard_b")
+                (compiler_ir_types.compiler-ir-label "exit"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "guard_b")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 2)
+                  (compiler_ir_types.compiler-ir-label "body")
+                  (compiler_ir_types.compiler-ir-label "exit"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "body")
+                (opt-test-instrs
+                  (opt-inline-wide-call callee-name (opt-inline-sole-call-params) 5)
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "latch"))))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "latch")
+                  (opt-test-instrs
+                    (compiler_ir_types.CompilerIrInstr.Jump
+                      (compiler_ir_types.compiler-ir-label "header"))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.CompilerIrBlock.Block
+                    (compiler_ir_types.compiler-ir-label "exit")
+                    (opt-test-instrs
+                      (compiler_ir_types.CompilerIrInstr.Return
+                        (compiler_ir_types.CompilerIrMaybeValue.Some
+                          (compiler_ir_types.CompilerIrValue.Var 4)))))
+                  compiler_ir_types.CompilerIrBlockList.Nil)))))))))
+
 ;; The headline case: three parameters, forty blocks, one straight-line site.
 ;; The arity floor refuses it, the cost model's block fuel refuses it, and the
 ;; sole-call tier takes it anyway -- the body MOVES, so there is no growth to
@@ -26278,12 +26351,12 @@
           (opt-inline-sole-call-cyclic-leaf callee-name)))
       1)))
 
-;; The same acyclic leaf at an IN-LOOP site stays out too. An absorption there
-;; lands the whole body inside a region the caller's allocator already prices,
-;; which is the half of the measurement the acyclic clause does not cover:
-;; ls-tokenize's in-loop imports cost lex_source +5.7M with the acyclic clause
-;; alone, and nothing with this one.
-(define (compiler-optimize-inline-sole-call-loop-site-refusal-ok?) : bool
+;; The same acyclic leaf at an IN-LOOP site the loop runs every iteration
+;; absorbs too: the site is the loop body itself, depth 1 under
+;; opt-inline-sole-call-loop-site-depth, and the boundary it retires is paid per
+;; iteration (asm-render-line into asm-render-chunk's per-line loop is this
+;; shape at benchmark size: -17.4M on the row).
+(define (compiler-optimize-inline-sole-call-loop-site-absorb-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
@@ -26291,6 +26364,23 @@
       (opt-inline-wide-remaining-calls
         (opt-inline-wide-two-function-optimized
           (opt-inline-sole-call-loop-caller symbols.main callee-name)
+          (opt-inline-sole-call-leaf callee-name)))
+      0)))
+
+;; ...and the same leaf at an in-loop site the loop takes now and then stays
+;; out. Two deciding branches below the header put the site at depth 3, past
+;; opt-inline-sole-call-max-loop-depth: an absorption there lands the whole body
+;; inside a region the caller's allocator already prices, for a boundary the
+;; loop retires on a handful of iterations (ls-apostrophe-char-end at the sixth
+;; arm of ls-tokenize's dispatch: lex_source +7.2M when it is admitted).
+(define (compiler-optimize-inline-sole-call-loop-site-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    (=
+      (opt-inline-wide-remaining-calls
+        (opt-inline-wide-two-function-optimized
+          (opt-inline-sole-call-deep-loop-caller symbols.main callee-name)
           (opt-inline-sole-call-leaf callee-name)))
       1)))
 

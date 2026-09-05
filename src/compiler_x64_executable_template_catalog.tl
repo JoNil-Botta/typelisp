@@ -176,15 +176,16 @@
     (compiler-x64-template-rendered-payload-valid? row rendered)
     (match row.id
       [(x64.CompilerX64ExecutableTemplateId.WindowsRuntimeArena)
-        (if (= (string.string-length rendered) row.expected-rendered-size)
-          (io.panic
-            "x64 executable template: WindowsRuntimeArena hash mismatch")
-          (io.panic
-            "x64 executable template: WindowsRuntimeArena size mismatch"))]
-      [_
-        (if (= (string.string-length rendered) row.expected-rendered-size)
-          (io.panic "x64 executable template: non-arena hash mismatch")
-          (io.panic "x64 executable template: non-arena size mismatch"))])))
+        (let
+          [expected : String (string.int->string row.expected-rendered-hash)]
+          [actual : String (string.int->string (hash.string-key rendered))]
+          (begin
+            (io.print-error
+              "x64 executable template: WindowsRuntimeArena expected-hash=")
+            (io.print-error (& expected))
+            (io.print-error " actual-hash=")
+            (io.panic (& actual))))]
+      [_ (io.panic "x64 executable template: non-arena payload mismatch")])))
 
 (define (compiler-x64-template-render-assembly
   [id : x64.CompilerX64ExecutableTemplateId]

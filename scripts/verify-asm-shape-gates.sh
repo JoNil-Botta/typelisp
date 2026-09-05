@@ -1643,28 +1643,40 @@ check_sccp_rewrite_phi_import() {
 # module global; `rli-rows` walks the tape by self tail-call and `rli-peek`
 # does not call itself. Both callers carry a bounds check of their own, so the
 # cascade clause is out of the comparison and only the recursion is in it.
+#
+# INL-11 rewrites the self tail call into a back edge BEFORE the inliner runs,
+# so the recursion no longer differs: `rli-rows` presents its loop, the site
+# reads in-loop, and the hot-loop-leaf band's in-loop tier prices the import
+# there exactly as it does for a `while`-written driver -- and takes it, for
+# the same 42-instruction leaf `rli-peek` takes. So both callers carry the
+# copy, no call is left, and the callee -- referenced by nothing -- is not
+# emitted at all. What the pair above still pins is the size half of the same
+# question: `sccp-rewrite-phi` (102 instructions, 26 blocks) stays out of
+# `sccp-rewrite-rows` under the in-loop tier's own gates, and that gate is
+# unchanged.
 check_recursive_loop_import() {
     for _target in linux-x86_64 windows-x86_64; do
         _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
         _asm=$(compile_gate "recursive_loop_import_$_suffix" \
             tests/integration/recursive_loop_import.tl "$_target")
 
-        # The callee keeps a body, because one of its two sites keeps its call.
-        assert_matches "$_asm" '^_tl_recursive_loop_import_rli_scan:$' \
+        # No caller keeps a call, so no body is emitted for the callee.
+        assert_not_matches "$_asm" '^_tl_recursive_loop_import_rli_scan:$' \
             "recursive-loop-import-$_target"
 
-        # The self-tail-recursive driver keeps its boundary...
+        # The driver, a loop once its self tail call is a back edge, takes the
+        # copy: no call left, and the scan's fold landed in it. The FNV
+        # multiplier is the callee's own constant and appears nowhere else in
+        # the program.
         _rows=$(function_body "$_asm" _tl_recursive_loop_import_rli_rows)
         assert_regex_count_eq "$_rows" \
-            '^[[:space:]]+call _tl_recursive_loop_import_rli_scan$' 1 \
+            '^[[:space:]]+call _tl_recursive_loop_import_rli_scan$' 0 \
             "recursive-loop-import-$_target"
-        # ...and no copy of the scan's fold landed in it. The FNV multiplier is
-        # the callee's own constant and appears nowhere else in the program.
-        assert_regex_count_eq "$_rows" '1099511628211' 0 \
+        assert_regex_count_at_least "$_rows" '1099511628211' 1 \
             "recursive-loop-import-$_target"
 
-        # The non-recursive caller at the same kind of site takes the copy: no
-        # call left, and the imported loop's multiplier is in its body.
+        # The non-recursive caller at the same kind of site takes the copy as
+        # it always did.
         _peek=$(function_body "$_asm" _tl_recursive_loop_import_rli_peek)
         assert_regex_count_eq "$_peek" \
             '^[[:space:]]+call _tl_recursive_loop_import_rli_scan$' 0 \

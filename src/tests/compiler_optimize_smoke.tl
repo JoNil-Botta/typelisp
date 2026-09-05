@@ -4725,6 +4725,12 @@
     "the measured tier prices a body at the depth an inline would put it, and the weight ladder saturates"))
 
 (test
+  inline-checked-slow-copy-weighting
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-checked-slow-copy-weighting-ok?)
+    "a versioned loop prices as one loop: the slow copy is the guard's failure path and is priced cold"))
+
+(test
   inline-checked-window
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-checked-window-ok?)
@@ -4784,8 +4790,15 @@
   inline-checked-tail-site-verdicts
   (test.assert-i64-eq
     (compiler_optimize_tests.compiler-optimize-inline-checked-tail-site-self-test)
-    200
-    "the measured tier prices a tail-call site and keeps it, the caller inherits the callee's exits, and neither caller keeps a call or a tail call to the leaf"))
+    11
+    "a tail call ends the function, so a tail site inside a loop is that loop's EXIT and runs once per invocation: at depth zero with the caller count as its whole frequency the frequency clause refuses both callers' sites before pricing, and both tail calls survive"))
+
+(test
+  inline-checked-tail-post-site-verdict
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-inline-checked-tail-post-self-test)
+    110
+    "a tail site that is its loop's only exit post-dominates the entry: the hot caller's site clears the relaxed floor, is priced, and takes the call-free leaf, the callee's returns become the caller's, and the cold caller's site is refused on frequency and keeps its tail call"))
 
 (test
   inline-checked-rescan-generations
@@ -4876,8 +4889,8 @@
   inline-checked-depth0-hot-site
   (test.assert-i64-eq
     (compiler_optimize_tests.opt-inline-checked-depth0-self-test 1)
-    201
-    "the recorded seven-parameter builder shape at a depth-0 entry site of a hot loop-holding caller is priced and refused by cost"))
+    100
+    "the recorded seven-parameter builder shape at a depth-0 entry site of a hot loop-holding caller is priced and taken: one verdict, no call left to the builder"))
 
 (test
   inline-checked-depth0-cold-site
@@ -4890,8 +4903,8 @@
   inline-checked-depth0-threaded-site
   (test.assert-i64-eq
     (compiler_optimize_tests.opt-inline-checked-depth0-self-test 2)
-    201
-    "moving the same site one unconditional jump off the entry block leaves it POST-DOMINATING the entry, so INL-4 reads it as entry-equivalent in this wrapper-shaped caller: the same two verdicts as the entry spelling, and the verdict still refuses it by cost"))
+    100
+    "moving the same site one unconditional jump off the entry block leaves it POST-DOMINATING the entry, so INL-4 reads it as entry-equivalent in this wrapper-shaped caller: the same verdict as the entry spelling, and it takes the body"))
 
 (test
   inline-checked-depth0-guarded-site

@@ -2108,21 +2108,24 @@ check_licm_memclean_promote() {
     # REFUSED on the proof: the callee set!s the cell, so it is not invariant at
     # any pressure. This is also the wrong-answer guard the fixture runs.
     #
-    # INL-6: `mix-writing`'s only unwhitelisted instruction was that `set!` --
-    # the global-cell `Store` the MULTIBLOCK whitelist refused until this
-    # packet -- so the callee is now absorbed into this scan and the boundary
-    # is gone. The claim is unchanged and the shape says it more directly than
-    # before: the cell is WRITTEN inside the loop, so nothing about it is
-    # invariant, and every read stays a read. Four occurrences, not two,
-    # because the absorbed body's own read and write are now spelled here
-    # beside the loop's; the promoted form would be one preheader load and no
-    # per-iteration reference at all.
-    assert_fixed_count_eq "$_writer" "${_sym}_gcell_c(%rip)" 4 licm-memclean-promote
+    # INL-6 absorbed `mix-writing` into this scan (its only unwhitelisted
+    # instruction was that `set!`, the global-cell `Store` the MULTIBLOCK
+    # whitelist refused until then) and the gate read four occurrences: the
+    # absorbed body's own read and write beside the loop's two. INL-17c puts
+    # the boundary back: `writer-scan` is a self-tail-recursive caller whose
+    # loop opt-tailrec builds from that call, and the checked tier refuses a
+    # loop-carrying callee at every site of such a caller
+    # (opt-inline-checked-clause-converted-caller; the measured case is
+    # `sccp-rewrite-phi` into `sccp-rewrite-rows`, check_sccp_rewrite_phi_import).
+    # The claim is unchanged: the cell is WRITTEN inside the loop, so nothing
+    # about it is invariant, and every read stays a read -- two per iteration
+    # around the surviving call, never one preheader load -- while the write
+    # stays inside the callee.
+    assert_fixed_count_eq "$_writer" "${_sym}_gcell_c(%rip)" 2 licm-memclean-promote
     assert_regex_count_eq "$_writer" \
-        "^[[:space:]]+movq %r[a-z0-9]+, ${_sym}_gcell_c\\(%rip\\)$" 1 \
+        "^[[:space:]]+movq %r[a-z0-9]+, ${_sym}_gcell_c\\(%rip\\)$" 0 \
         licm-memclean-promote
-    assert_not_matches "$_writer" "^[[:space:]]+call ${_sym}_mix_writing$" \
-        licm-memclean-promote
+    assert_contains "$_writer" "call ${_sym}_mix_writing" licm-memclean-promote
 }
 
 check_group_copy_direct() {

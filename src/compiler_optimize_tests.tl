@@ -21067,25 +21067,121 @@
       (= at2 at3)
       (= at2 (compiler_optimize.opt-inline-checked-weighted-instrs-at func 9)))))
 
+;; INL-14. A self-loop block under `label`, `remaining` instructions long.
+(define (opt-inline-checked-self-loop-instrs [label : i64] [remaining : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (if (<= remaining 1)
+    (opt-test-instrs (compiler_ir_types.CompilerIrInstr.Jump label))
+    (opt-test-instrs-with-tail
+      (opt-inline-checked-self-loop-instrs label (- remaining 1))
+      (compiler_ir_types.CompilerIrInstr.Mov
+        0
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64)))))
+
+;; The versioner's shape: an entry that jumps to `loop`, the original loop
+;; body, and its `loop__bce_fast` clone, each a self-loop of `loop-instrs`
+;; instructions. Either copy can be left out.
+(define (opt-inline-checked-versioned-fixture
+  [name : i64]
+  [loop-instrs : i64]
+  [slow? : bool]
+  [fast? : bool]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [slow-label : i64 (compiler_ir_types.compiler-ir-label "loop")]
+    [fast-label : i64 (compiler_ir_types.compiler-ir-label "loop__bce_fast")]
+    [tail : compiler_ir_types.CompilerIrBlockList
+      (if fast?
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            fast-label
+            (opt-inline-checked-self-loop-instrs fast-label loop-instrs))
+          compiler_ir_types.CompilerIrBlockList.Nil)
+        compiler_ir_types.CompilerIrBlockList.Nil)]
+    [body : compiler_ir_types.CompilerIrBlockList
+      (if slow?
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            slow-label
+            (opt-inline-checked-self-loop-instrs slow-label loop-instrs))
+          tail)
+        tail)]
+    (compiler_ir_types.CompilerIrFunction.Function
+      name
+      (compiler_ir_types.compiler-ir-param-seq-empty)
+      (compiler_ast_types.AstType.I64)
+      1
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (if slow?
+                slow-label
+                fast-label))))
+        body))))
+
+;; INL-14: a versioned loop prices as ONE loop. The slow copy is the guard's
+;; failure path and is priced cold, so the pair costs exactly what either copy
+;; costs alone; a clone with no original beside it, or an original with no
+;; clone, is an ordinary loop.
+(define (compiler-optimize-inline-checked-slow-copy-weighting-ok?) : bool
+  (let
+    [base : i64 (compiler_optimize.opt-inline-census-depth-base)]
+    [pair : i64
+      (compiler_optimize.opt-inline-checked-weighted-instrs-at
+        (opt-inline-checked-versioned-fixture
+          (opt-test-symbol "checked_versioned_pair")
+          4
+          true
+          true)
+        0)]
+    [fast-only : i64
+      (compiler_optimize.opt-inline-checked-weighted-instrs-at
+        (opt-inline-checked-versioned-fixture
+          (opt-test-symbol "checked_versioned_fast")
+          4
+          false
+          true)
+        0)]
+    [slow-only : i64
+      (compiler_optimize.opt-inline-checked-weighted-instrs-at
+        (opt-inline-checked-versioned-fixture
+          (opt-test-symbol "checked_versioned_slow")
+          4
+          true
+          false)
+        0)]
+    (and
+      ;; one entry instruction at depth 0 plus four loop instructions at depth 1
+      (= fast-only (+ 1 (* base 4)))
+      (= slow-only (+ 1 (* base 4)))
+      ;; and the pair prices the clone alone: the original is cold
+      (= pair fast-only))))
+
 ;; The accept window. A free inline saves exactly `boundary`; the tier keeps a
-;; site only when the model lands within a factor of two of that in BOTH
-;; directions -- too little and the inline did not repay, too much and the two
-;; sides were not measured in the same currency.
+;; site only when the model lands between half of that and two and a half
+;; times it -- too little and the inline did not repay, too much and the two
+;; sides were not measured in the same currency. The cap is measured at its
+;; edge on both sides (cg-map-probe into cg-map-insert-ref! sits exactly on
+;; it at 20 against 8; one rung up costs intern_table +6.9%).
 (define (compiler-optimize-inline-checked-window-ok?) : bool
   (and
     ;; exactly what a free inline predicts
     (compiler_optimize.opt-inline-checked-window-ok? 64 64)
     ;; the two edges of the window
     (compiler_optimize.opt-inline-checked-window-ok? 32 64)
-    (compiler_optimize.opt-inline-checked-window-ok? 128 64)
+    (compiler_optimize.opt-inline-checked-window-ok? 160 64)
+    (compiler_optimize.opt-inline-checked-window-ok? 20 8)
     ;; below it: the boundary was retired and the merged body ate the saving
     (not (compiler_optimize.opt-inline-checked-window-ok? 31 64))
     (not (compiler_optimize.opt-inline-checked-window-ok? 0 64))
     (not (compiler_optimize.opt-inline-checked-window-ok? (- 0 400) 64))
     ;; above it: the model claims more than an inline can produce, which is what
     ;; every documented loser looks like here (pl-line-end models 1,193 against
-    ;; a boundary of 64)
-    (not (compiler_optimize.opt-inline-checked-window-ok? 129 64))
+    ;; a boundary of 64; it-hash-words 89 against 9)
+    (not (compiler_optimize.opt-inline-checked-window-ok? 161 64))
+    (not (compiler_optimize.opt-inline-checked-window-ok? 21 8))
+    (not (compiler_optimize.opt-inline-checked-window-ok? 89 9))
     (not (compiler_optimize.opt-inline-checked-window-ok? 1193 64))
     ;; the boundary itself scales with arity, which is the part of a call
     ;; sequence that does
@@ -21598,9 +21694,9 @@
         (compiler_ast_types.AstType.I64)))))
 
 ;; entry -> header -> {body -> {tail_site, latch}, exit}, latch -> header. The
-;; tail call sits in `tail_site`, which lies inside the back edge's range, so
-;; the site carries the census ladder's first rung exactly as the call-site
-;; fixture's `body` does.
+;; tail call sits in `tail_site`, a block that LIES BETWEEN the loop's header
+;; and latch in block order and is a member of no natural loop: a tail call
+;; ends the function, so the block reaches no back edge.
 (define (opt-inline-tail-site-loop-blocks [callee-name : i64]) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
     (compiler_ir_types.CompilerIrBlock.Block
@@ -21669,8 +21765,17 @@
 
 ;; The encoding is `spent`, then the two callers' surviving references to the
 ;; leaf -- counted as tail calls AND as calls, so a site "taken" by converting
-;; it into an ordinary call in tail position would fail this test rather than
-;; pass it.
+;; it into an ordinary call in tail position would read differently from one
+;; left alone.
+;;
+;; A tail call ends the function, so the block holding one reaches no back
+;; edge and belongs to no natural loop: the depths the census reads (INL-16)
+;; put `tail_site` at depth zero, however deep the loop it leaves. That is the
+;; dynamic truth -- the site runs at most once per invocation -- and it is
+;; what the block-order scan the census used to read got wrong here. Neither
+;; caller is called from a loop, so each site's composite frequency is one and
+;; the frequency clause refuses both before pricing: no verdict is spent and
+;; both tail calls survive. The tail site the tier prices is the one below.
 (define (compiler-optimize-inline-checked-tail-site-self-test) : i64
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
@@ -21693,64 +21798,188 @@
               (compiler_ir_types.compiler-ir-function-seq-empty))))
         2)]
     [code : i64
-      (+
-        (*
-          10
-          (+
-            (opt-count-direct-call-name-function-seq
-              (compiler_optimize.compiler-opt-global-shared-view armed)
-              "main"
-              "inline_switch")
-            (opt-count-tail-call-name-function-seq
-              (compiler_optimize.compiler-opt-global-shared-view armed)
-              "main"
-              "inline_switch")))
-        (+
-          (opt-count-direct-call-name-function-seq
-            (compiler_optimize.compiler-opt-global-shared-view armed)
-            "inline_nonleaf"
-            "inline_switch")
-          (opt-count-tail-call-name-function-seq
-            (compiler_optimize.compiler-opt-global-shared-view armed)
-            "inline_nonleaf"
-            "inline_switch")))]
+      (opt-inline-tail-site-reference-code
+        (compiler_optimize.compiler-opt-global-shared-view armed))]
     [spent : i64
       (-
         (compiler_optimize.opt-inline-checked-program-budget)
         (compiler_optimize.opt-inline-checked-budget-current))]
-    ;; The exits the splice inherited, read off the merged caller: the leaf's
-    ;; `zero` arm was `return helper(...)` and it still is -- a TAIL call, not
-    ;; a call in tail position -- and its `join` arm's `Return` is the
-    ;; caller's, which is what leaves the merged caller verifying at all.
-    [exits-ok? : bool
-      (and
-        (=
-          (opt-count-tail-call-name-function-seq
-            (compiler_optimize.compiler-opt-global-shared-view armed)
-            "main"
-            "external_helper")
-          1)
-        (=
-          (opt-count-direct-call-name-function-seq
-            (compiler_optimize.compiler-opt-global-shared-view armed)
-            "main"
-            "external_helper")
-          0)
-        (=
-          (opt-count-tail-call-name-function-seq
-            (compiler_optimize.compiler-opt-global-shared-view armed)
-            "inline_nonleaf"
-            "external_helper")
-          1))]
     [verified? : bool
       (and
-        exits-ok?
         (opt-inline-mb2-main-verified?
           (compiler_optimize.compiler-opt-global-shared-view armed)
           "main")
         (opt-inline-mb2-main-verified?
           (compiler_optimize.compiler-opt-global-shared-view armed)
           "inline_nonleaf")
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view armed)
+          "inline_switch"))]
+    [_disarm : unit (compiler_optimize.opt-inline-checked-set-active! false)]
+    (if verified?
+      (+ (* 100 spent) code)
+      (- 0 1))))
+
+;; `main`'s surviving references to the leaf in the tens, `inline_nonleaf`'s in
+;; the units, each counted as tail calls AND as calls.
+(define (opt-inline-tail-site-reference-code
+  [armed : compiler_ir_types.CompilerIrFunctionSeq]) : i64
+  (+
+    (*
+      10
+      (+
+        (opt-count-direct-call-name-function-seq
+          (compiler_optimize.compiler-opt-global-shared-view armed)
+          "main"
+          "inline_switch")
+        (opt-count-tail-call-name-function-seq
+          (compiler_optimize.compiler-opt-global-shared-view armed)
+          "main"
+          "inline_switch")))
+    (+
+      (opt-count-direct-call-name-function-seq
+        (compiler_optimize.compiler-opt-global-shared-view armed)
+        "inline_nonleaf"
+        "inline_switch")
+      (opt-count-tail-call-name-function-seq
+        (compiler_optimize.compiler-opt-global-shared-view armed)
+        "inline_nonleaf"
+        "inline_switch"))))
+
+;; --- the measured tier at a tail site it prices ----------------------------
+;;
+;; The loop below has ONE exit, the tail site, so that block post-dominates the
+;; entry (opt-inline-checked-pos-post); the leaf is opt-inline-switch-callee-
+;; named -- cyclic, bounds-carrying, call-free, behind every static band's
+;; acyclic gate -- so the relaxed floor can stand down for it. `inline_nonleaf`
+;; is called from the driver's loop, which is the caller count its composite
+;; frequency reads; `main` carries the same site with no loop calling it, so
+;; its frequency is one and the frequency clause refuses it before pricing.
+;; Both callers name the leaf, so no single-site or duplicating band can claim
+;; it, and the loop's counter is what the tail call forwards, so the loop
+;; stays live through every re-plan the verdict runs.
+(define (opt-inline-tail-post-site-call [callee-name : i64]) : compiler_ir_types.CompilerIrInstr
+  (let
+    [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (__tl_make-array compiler_ir_types.CompilerIrValue 3)]
+    (begin
+      (set! (array-ref args 0) (compiler_ir_types.CompilerIrValue.Var 4))
+      (set! (array-ref args 1) (compiler_ir_types.CompilerIrValue.Var 0))
+      (set! (array-ref args 2) (compiler_ir_types.CompilerIrValue.Var 2))
+      (compiler_ir_types.CompilerIrInstr.TailCall
+        callee-name
+        (compiler_ir_types.CompilerIrCallArgs.Array args)
+        (compiler_ast_types.AstType.I64)))))
+
+;; entry -> header -> {body -> latch -> header, tail_site}.
+(define (opt-inline-tail-post-site-blocks [callee-name : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-inline-loop-site-entry-instrs))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "header")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Phi
+            4
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.compiler-ir-label "latch")
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-label "tail_site"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "body")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              5
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "latch"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "latch")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "header"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "tail_site")
+              (opt-test-instrs (opt-inline-tail-post-site-call callee-name)))
+            compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-inline-tail-post-site-function
+  [func-name : i64]
+  [callee-name : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    func-name
+    (opt-inline-switch-params)
+    (compiler_ast_types.AstType.I64)
+    6
+    (opt-inline-tail-post-site-blocks callee-name)))
+
+;; The encoding is `spent` -- both budgets, since the admitted site is a
+;; relaxed candidate and spends the relaxations' reserve -- then the two
+;; callers' surviving references to the leaf as the loop fixture above counts
+;; them.
+(define (compiler-optimize-inline-checked-tail-post-self-test) : i64
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 symbols.inline-switch]
+    [_arm : unit
+      (begin
+        (compiler_optimize.opt-inline-checked-set-active! true)
+        (compiler_optimize.opt-inline-checked-program-begin!))]
+    [armed : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-inline-checked-hot-driver-function
+            symbols.inline-loop
+            symbols.inline-nonleaf)
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-inline-tail-post-site-function symbols.main callee-name)
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (opt-inline-tail-post-site-function
+                symbols.inline-nonleaf
+                callee-name)
+              (compiler_ir_types.compiler-ir-function-seq-prepend
+                (opt-inline-switch-callee-named callee-name)
+                (compiler_ir_types.compiler-ir-function-seq-empty)))))
+        2)]
+    [code : i64
+      (opt-inline-tail-site-reference-code
+        (compiler_optimize.compiler-opt-global-shared-view armed))]
+    [spent : i64
+      (+
+        (-
+          (compiler_optimize.opt-inline-checked-program-budget)
+          (compiler_optimize.opt-inline-checked-budget-current))
+        (-
+          (compiler_optimize.opt-inline-checked-relaxed-program-budget)
+          (compiler_optimize.opt-inline-checked-relaxed-budget-current)))]
+    [verified? : bool
+      (and
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view armed)
+          "main")
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view armed)
+          "inline_nonleaf")
+        (opt-inline-mb2-main-verified?
+          (compiler_optimize.compiler-opt-global-shared-view armed)
+          "inline_loop")
         (opt-inline-mb2-main-verified?
           (compiler_optimize.compiler-opt-global-shared-view armed)
           "inline_switch"))]
@@ -22135,16 +22364,17 @@
       gen1-row-still-counted?
       (= (compiler_optimize.opt-inline-checked-accepted-current) 0))))
 
-;; ...and the other side of the same check, on the same call-carrying body.
+;; ...and the other side of the same check, on a body the window prices.
 ;;
 ;; The verdict is priced here against a plan that did NOT change: the same
 ;; caller stands in for both sides of the rollback, so nothing was saved and
 ;; `before - after` is exactly the boundary the site would retire plus the
 ;; callee's own body, priced where the inline would put it. A body that costs
 ;; more than the boundary it retires is over-credit rather than saving, which
-;; is precisely what the window's upper bound refuses -- and the callee here is
-;; the call-carrying leaf the accept fixtures use, so what separates the two
-;; outcomes is the measured plan and nothing about the callee's calls.
+;; is precisely what the window's upper bound refuses. INL-17 waives that bound
+;; for a body of at most sixty-four instructions per execution, so the callee
+;; here is the eighty-block acyclic sole-call leaf, well past the waiver; what
+;; separates the two outcomes is the measured plan and nothing about the body.
 (define (compiler-optimize-inline-checked-call-carrying-revert-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
@@ -22155,7 +22385,7 @@
         callee-name
         (opt-inline-loop-site-entry-instrs))]
     [leaf : compiler_ir_types.CompilerIrFunction
-      (opt-inline-dup-leaf-calling callee-name symbols.external-helper)]
+      (opt-inline-sole-call-leaf callee-name)]
     [keep? : bool
       (compiler_optimize.opt-inline-checked-verdict
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -23053,10 +23283,12 @@
       "dispatch")
     ;; the verdict line names the SIDE of the two-sided window it fell on, which
     ;; is what INL-9's first question turned on: `ssa-dominates?` into
-    ;; `ssa-dominance-frontier` is `cap`, a modelled saving of 1034 against a
-    ;; boundary of 512.
+    ;; `ssa-dominance-frontier`, a modelled saving of 1034 against a boundary
+    ;; of 512, was `cap` under the 2x bound and is `in` under the 2.5x one
+    ;; (INL-17d); one past two and a half boundaries is `cap`.
+    (string.eq (compiler_optimize.opt-inline-checked-window-text 1034 512) "in")
     (string.eq
-      (compiler_optimize.opt-inline-checked-window-text 1034 512)
+      (compiler_optimize.opt-inline-checked-window-text 1281 512)
       "cap")
     (string.eq (compiler_optimize.opt-inline-checked-window-text 104 64) "in")
     (string.eq
@@ -23113,8 +23345,14 @@
           (opt-inline-checked-builder-param index))
         (compiler_ast_types.AstType.I64)))))
 
+;; The chain's last definition: it starts at `arity + 1` and defines one var per
+;; padding add, so the value the latch carries back is `arity + 1 + pad`. (It
+;; read `arity + 2 + pad` -- one past the chain -- for as long as the tier
+;; refused every site of this body: a phi input nothing defines is a use before
+;; definition, which the self-tests only verify on the holder once the body is
+;; cloned into it.)
 (define (opt-inline-checked-builder-latch-var) : i64
-  (+ (opt-inline-checked-builder-arity) (+ 2 (opt-inline-checked-builder-pad))))
+  (+ (opt-inline-checked-builder-arity) (+ 1 (opt-inline-checked-builder-pad))))
 
 (define (opt-inline-checked-builder-function [name : i64]) : compiler_ir_types.CompilerIrFunction
   (let
@@ -24060,14 +24298,17 @@
 ;; The encoding is `spent` then the builder calls left in the holder, so a change
 ;; in either reads directly off the number: 100 * verdicts + surviving calls.
 ;;
-;; The hot program spends TWO verdicts -- the holder's depth-0 builder site,
-;; which the relaxed floor now lets through, and the holder's own site inside
-;; `main`'s loop -- and keeps its builder call: the site reaches the verdict and
-;; the verdict, not a static clause, refuses it. The cold twin spends NONE: with
-;; the driver's call out of its loop the composite frequency is one, and the
-;; frequency clause refuses before any pricing. That pair is the whole of change
-;; (c) -- what the depth floor used to refuse outright is now refused, or kept,
-;; on the priced numbers.
+;; The hot program spends ONE verdict -- the holder's depth-0 builder site,
+;; which the relaxed floor lets through -- and TAKES the builder: the site
+;; reaches the verdict and the verdict, not a static clause, decides it. (Under
+;; the spill-weight proxy the verdict refused the body by cost and the holder's
+;; own site inside `main`'s loop then reached a second verdict: 201. INL-15
+;; prices the plan with the allocator's own estimator and keeps it, and the
+;; holder that absorbed a loop is no longer offered inside `main`'s loop.) The
+;; cold twin spends NONE: with the driver's call out of its loop the composite
+;; frequency is one, and the frequency clause refuses before any pricing. That
+;; pair is the whole of change (c) -- what the depth floor used to refuse
+;; outright is now refused, or kept, on the priced numbers.
 (define (opt-inline-checked-depth0-self-test [mode : i64]) : i64
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]

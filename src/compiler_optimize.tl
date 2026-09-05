@@ -125382,15 +125382,46 @@
               (compiler-opt-global-shared-view blocks)
               generation
               0)
-            (match (opt-inline-census-depth-mark! blocks generation 0 false)
-              [(OptInlineDepthMark.Mark _ found)
+            ;; INL-14: the slow-copy marks read the stamped label table, so
+            ;; they are taken here, before the back-edge walk below consumes
+            ;; the list; they are read only while the estimate is active.
+            (opt-inline-census-slow-reserve! (+ count 1))
+            (opt-inline-census-slow-clear! (+ count 1))
+            (opt-inline-census-slow-mark!
+              (compiler-opt-global-shared-view blocks)
+              generation)
+            ;; INL-16: the depths are the natural-loop nesting the allocator's
+            ;; own rounds read (compiler-reg-function-loop-depths: dominators
+            ;; and back edges), not a scan of back edges in BLOCK ORDER. The
+            ;; scan mis-nested a body whenever a rewrite reordered its blocks,
+            ;; which an inline does to every caller it lands in, and the
+            ;; measured tier's two sides were then priced in different
+            ;; currencies exactly when the merged body's shape changed most.
+            (let
+              [depths : (__tl_dyn-array i64)
+                (reg.compiler-reg-function-loop-depths
+                  (compiler-opt-global-shared-view blocks))]
+              [limit : i64
+                (if (< (array-length depths) count)
+                  (array-length depths)
+                  count)]
+              [found : bool false]
+              [i : i64 0]
+              (begin
+                (while (< i limit)
+                  (begin
+                    (if (> (array-ref depths i) 0)
+                      (set! found true)
+                      unit)
+                    (set!
+                      (array-ref opt-inline-census-depth-slots i)
+                      (array-ref depths i))
+                    (set! i (+ i 1))))
                 (if found
                   (begin
-                    (opt-inline-census-depth-ranges! count)
-                    (opt-inline-census-depth-prefix! count)
                     (set! opt-inline-census-depth-count count)
                     (set! opt-inline-census-depth-active? true))
-                  unit)])))))))
+                  unit)))))))))
 
 (define (opt-inline-census-depth-at [position : i64]) : i64
   (if (and
@@ -125398,6 +125429,90 @@
     (< position opt-inline-census-depth-count))
     (array-ref opt-inline-census-depth-slots position)
     0))
+
+;; INL-14: the versioner's SLOW copies. A loop the bounds-check versioner
+;; split leaves its original body in place as the guard's failure path and
+;; runs the `__bce_fast` clone; the guard passes on every iteration the row
+;; measures, so the slow copy executes at most on a cold entry. Priced at its
+;; loop weight it doubles a versioned body, and the checked tier's two sides
+;; are then measured in different currencies exactly when only one of them
+;; versions: `pl-line-end` standalone priced 2,288 with 1,152 of that in the
+;; slow copy, inlined into `pl-drop-fallthrough` the merged loop no longer
+;; versioned and priced 1,674, and the model read that as a saving of 1,065
+;; where the truth was a loss of 87 (peephole_lines +18% when the cap that
+;; guards the model let it through). One bool per block position, marked
+;; beside the depths: a block whose label with `__bce_fast` appended is
+;; another block of the same body is a slow copy.
+(define opt-inline-census-slow-slots : (__tl_dyn-array bool)
+  (__tl_make-array bool 64))
+
+(define (opt-inline-census-slow-reserve! [count : i64]) : unit
+  (if (<= count (array-length opt-inline-census-slow-slots))
+    unit
+    (let
+      [size : i64 (array-length opt-inline-census-slow-slots)]
+      (begin
+        (while (< size count)
+          (set! size (* size 2)))
+        (in-arena
+          (arena.Arena (ir.compiler-ir-label-arena))
+          (set! opt-inline-census-slow-slots (__tl_make-array bool size)))))))
+
+(define (opt-inline-census-slow-clear! [count : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i count)
+      (begin
+        (set! (array-ref opt-inline-census-slow-slots i) false)
+        (set! i (+ i 1))))))
+
+(define (opt-inline-census-slow-mark-label! [label : i64] [generation : i64]) : unit
+  (let
+    [prefix : String (opt-loop-call-versioned-prefix label)]
+    (if (= (string.string-length (& prefix)) 0)
+      unit
+      (let
+        [slow : i64
+          (opt-cfg-label-table-get (ir.compiler-ir-label prefix) generation)]
+        (if (and
+          (>= slow 0)
+          (< slow (array-length opt-inline-census-slow-slots)))
+          (set! (array-ref opt-inline-census-slow-slots slow) true)
+          unit)))))
+
+(define (opt-inline-census-slow-mark!
+  [blocks : ir.CompilerIrBlockList]
+  [generation : i64]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label _)
+          (begin
+            (opt-inline-census-slow-mark-label! label generation)
+            (opt-inline-census-slow-mark!
+              (compiler-opt-box-shared-view rest)
+              generation))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64
+          (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+        [i : i64 0]
+        (while (< i count)
+          (begin
+            (match (ir.compiler-ir-block-seq-ref
+              (compiler-opt-global-shared-view seq)
+              i)
+              [(ir.CompilerIrBlock.Block label _)
+                (opt-inline-census-slow-mark-label! label generation)])
+            (set! i (+ i 1)))))]))
+
+(define (opt-inline-census-slow-at [position : i64]) : bool
+  (if (and
+    opt-inline-census-depth-active?
+    (< position opt-inline-census-depth-count))
+    (array-ref opt-inline-census-slow-slots position)
+    false))
 
 (define (opt-inline-census-bump-map
   [map : opt_i64_i64_map.Map]
@@ -134261,6 +134376,11 @@
 (define (opt-inline-checked-clause-site-depth) : i64
   16)
 
+;; INL-17c: a loop-carrying callee at a site of a caller whose loop is its own
+;; rewritten self tail call.
+(define (opt-inline-checked-clause-converted-caller) : i64
+  18)
+
 ;; Ranked as a RELAXED candidate -- one only a relaxed clause admits -- with the
 ;; relaxations' reserve already spent. Reported by the ranking, like the lock,
 ;; because a row refused there never reaches the admission test.
@@ -134295,6 +134415,7 @@
     [(= clause (opt-inline-checked-clause-frequency)) "frequency"]
     [(= clause (opt-inline-checked-clause-relaxed-budget)) "relaxed-budget"]
     [(= clause (opt-inline-checked-clause-site-depth)) "site-depth"]
+    [(= clause (opt-inline-checked-clause-converted-caller)) "converted-caller"]
     [else "unknown"]))
 
 (define opt-inline-checked-active? : bool
@@ -135464,6 +135585,26 @@
           (compiler-opt-global-shared-view census)
           callee-name)
         (opt-inline-checked-clause-address-taken)]
+      ;; INL-17c. INL-7 refused a loop-carrying leaf into a caller whose loop
+      ;; was about to be built from its own self tail call (opt-tailrec ran
+      ;; one pass later, so the site read as straight-line and the import
+      ;; landed inside the loop it could not see). INL-11 runs the rewrite
+      ;; first and the loop is now in view, where the window prices the merge
+      ;; -- and prices it at its edge: sccp-rewrite-phi into sccp-rewrite-rows
+      ;; reads 80 against a boundary of 64 and costs the row 1.93M when kept,
+      ;; the same merge INL-7 measured at +2.35M. The converted caller's loop
+      ;; is its WHOLE body, so a loop imported into it nests under every value
+      ;; the body carries; refuse the class here, as INL-7 did. Measured on
+      ;; the corpus: regalloc_greedy -6.26M and sccp_lattice -1.93M against
+      ;; the window alone, every other row byte-identical.
+      [(and
+          (opt-inline-tailrec-converted-slot?
+            (compiler-opt-global-shared-view index)
+            opt-inline-caller-name)
+          (not
+            (opt-inline-tiny-predicate-acyclic-reclaiming?
+              (compiler-opt-global-shared-view blocks))))
+        (opt-inline-checked-clause-converted-caller)]
       ;; The heavy gate is asked about TOTAL caller growth, this tier's blocks
       ;; included; the block ceiling below is also this tier's own fuel, so a
       ;; checked import never spends the fuel the caller's banked absorptions
@@ -135632,10 +135773,14 @@
             (+ position 1)
             (+
               acc
-              (*
-                (opt-inline-census-depth-weight
-                  (+ offset (opt-inline-census-depth-at position)))
-                (ir.compiler-ir-instr-seq-count instrs))))])]
+              ;; INL-14: a versioned loop's slow copy is cold, see
+              ;; opt-inline-census-slow-at.
+              (if (opt-inline-census-slow-at position)
+                0
+                (*
+                  (opt-inline-census-depth-weight
+                    (+ offset (opt-inline-census-depth-at position)))
+                  (ir.compiler-ir-instr-seq-count instrs)))))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-inline-checked-weighted-instrs-from
         (ir.compiler-ir-block-seq-to-list seq)
@@ -135661,52 +135806,6 @@
 ;; the assignment table against the ABI's own callee-saved list, so no backend
 ;; emission state is involved. The ABI is fixed to Linux on purpose: an
 ;; admission verdict feeds codegen, and codegen must not depend on the target.
-(define (opt-inline-checked-csr-count-from
-  [assignments : reg.CompilerRegAssignmentTable]
-  [index : i64]
-  [count : i64]
-  [acc : i64]) : i64
-  (if (>= index count)
-    acc
-    (opt-inline-checked-csr-count-from
-      (compiler-opt-global-shared-view assignments)
-      (+ index 1)
-      count
-      (+
-        acc
-        (if (reg.compiler-reg-assignments-use-register?
-          assignments
-          (cabi.compiler-abi-callee-saved-gp-register-id
-            (cabi.CompilerRegTargetAbi.Linux)
-            index))
-          1
-          0)))))
-
-(define (opt-inline-checked-spill-cost-from
-  [assignments : reg.CompilerRegAssignmentTable]
-  [weights : (__tl_dyn-array i64)]
-  [var : i64]
-  [count : i64]
-  [acc : i64]) : i64
-  (if (>= var count)
-    acc
-    (opt-inline-checked-spill-cost-from
-      (compiler-opt-global-shared-view assignments)
-      (compiler-opt-global-shared-view weights)
-      (+ var 1)
-      count
-      (+
-        acc
-        (match (reg.compiler-reg-assignment-lookup assignments var)
-          [(reg.CompilerRegMaybeLocation.Some location)
-            (match location
-              [(reg.CompilerRegLocation.Spill _)
-                (if (< var (array-length weights))
-                  (array-ref weights var)
-                  0)]
-              [_ 0])]
-          [(reg.CompilerRegMaybeLocation.No) 0])))))
-
 ;; The plan is read STANDALONE: this tier runs the allocator on one IR function
 ;; from inside the optimizer, and the backend of this compile has not run yet.
 ;; Nominal representation facts now arrive as an explicit job-owned capability,
@@ -135724,7 +135823,10 @@
 ;; opt2 chunk. Suppressing the table for the duration of the measurement gives
 ;; every entry the answers the first
 ;; entry already gets, so the verdict stops depending on batch position as well.
-(define (opt-inline-checked-alloc-cost [func : ir.CompilerIrFunction]) : i64
+(define (opt-inline-checked-alloc-cost
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]
+  [offset : i64]) : i64
   (let
     [_suppress-image-maps : unit (reg.compiler-reg-suppress-program-maps! true)]
     ;; RG-1: and the allocator's home tracer, for the same reason the pass
@@ -135733,28 +135835,62 @@
     [plan : reg.CompilerRegPlan
       (reg.compiler-reg-plan-function-scalar
         (compiler-opt-global-shared-view func))]
-    [assignments : reg.CompilerRegAssignmentTable
-      (reg.compiler-reg-plan-assignments plan)]
-    [weights : (__tl_dyn-array i64)
-      (reg.compiler-reg-function-spill-weights
-        (compiler-opt-global-shared-view func))]
-    [vars : i64
-      (match (compiler-opt-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ function-vars _) function-vars])]
     [cost : i64
-      (+
-        (*
-          2
-          (opt-inline-checked-csr-count-from
-            (compiler-opt-global-shared-view assignments)
-            0
-            (cabi.compiler-abi-callee-saved-gp-register-count
-              (cabi.CompilerRegTargetAbi.Linux))
-            0))
-        (opt-inline-checked-spill-cost-from assignments weights 0 vars 0))]
+      (match (compiler-opt-global-shared-view func)
+        [(ir.CompilerIrFunction.Function _ params _ vars blocks)
+          (let
+            [seq : ir.CompilerIrBlockSeq
+              (ir.compiler-ir-block-seq-from-list
+                (compiler-opt-global-shared-view blocks))]
+            [weights : (__tl_dyn-array i64)
+              (opt-inline-checked-census-weights
+                (compiler-opt-global-shared-view blocks)
+                offset)]
+            [types : reg.CompilerRegVarTypes
+              (reg.compiler-reg-plan-types
+                (compiler-opt-global-shared-view plan))]
+            (+
+              (reg.compiler-reg-call-hole-plan-cost
+                type-segment-bases
+                (cabi.CompilerRegTargetAbi.Linux)
+                (compiler-opt-global-shared-view params)
+                (compiler-opt-global-shared-view types.representations)
+                (compiler-opt-global-shared-view seq)
+                (compiler-opt-global-shared-view weights)
+                vars
+                (compiler-opt-global-shared-view plan))
+              (reg.compiler-reg-scratch-borrow-cost
+                (compiler-opt-global-shared-view plan)
+                vars
+                (compiler-opt-global-shared-view seq)
+                (compiler-opt-global-shared-view weights))))])]
     [_restore-image-maps : unit (reg.compiler-reg-suppress-program-maps! false)]
     [_restore-reg-trace : unit (reg.compiler-reg-trace-set-suppressed! false)]
     cost))
+
+;; INL-15: the block weights of the tier's currency, for the allocator's cost
+;; model. Position `p` weighs opt-inline-census-depth-weight at the depth the
+;; body would sit at plus the block's own, and a versioned loop's slow copy
+;; weighs nothing (INL-14). The census must have been built for these blocks.
+(define (opt-inline-checked-census-weights
+  [blocks : ir.CompilerIrBlockList]
+  [offset : i64]) : (__tl_dyn-array i64)
+  (let
+    [count : i64
+      (ir.compiler-ir-block-list-count (compiler-opt-global-shared-view blocks))]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [p : i64 0]
+    (begin
+      (while (< p count)
+        (begin
+          (set!
+            (array-ref out p)
+            (if (opt-inline-census-slow-at p)
+              0
+              (opt-inline-census-depth-weight
+                (+ offset (opt-inline-census-depth-at p)))))
+          (set! p (+ p 1))))
+      out)))
 
 ;; `offset` and `entry-weight` place the body: `offset` is the loop depth its
 ;; instructions would sit at, and `entry-weight` is how often the body is
@@ -135770,7 +135906,7 @@
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
   [offset : i64]
-  [entry-weight : i64]) : i64
+  [_entry-weight : i64]) : i64
   (let
     [saved-verify : bool compiler-opt-debug-verify-ir]
     [_silence : unit
@@ -135788,11 +135924,22 @@
         (compiler-opt-debug-set-suppressed! false)
         (compiler-opt-late-sweep-suppress-leave!)
         (set! compiler-opt-debug-verify-ir saved-verify))]
-    (+
+    ;; INL-15: the plan is priced by the allocator's own estimator in the
+    ;; tier's currency (opt-inline-checked-alloc-cost): weighted memory
+    ;; references, prologue at the entry weight -- which is `entry-weight`
+    ;; when `offset` is the site depth -- and the scratches the backend
+    ;; would borrow. The instruction walk builds the census the weights
+    ;; read, so it runs first.
+    [instrs : i64
       (opt-inline-checked-weighted-instrs-at
         (compiler-opt-global-shared-view optimized)
-        offset)
-      (* entry-weight (opt-inline-checked-alloc-cost optimized)))))
+        offset)]
+    (+
+      instrs
+      (opt-inline-checked-alloc-cost
+        type-segment-bases
+        (compiler-opt-global-shared-view optimized)
+        offset))))
 
 (define (opt-inline-checked-plan-cost
   [pools : ast.AstNodePoolContext]
@@ -135802,9 +135949,11 @@
 
 ;; The accept window, named so it can be pinned on its own. `saving` is the
 ;; modelled cost the inline removes; `boundary` is what a free inline would
-;; remove. See opt-inline-checked-verdict for why the window is two-sided.
+;; remove. The floor is half the boundary and the cap two and a half times it;
+;; see opt-inline-checked-verdict for why the window is two-sided and for the
+;; measurements that put the cap where it is.
 (define (opt-inline-checked-window-ok? [saving : i64] [boundary : i64]) : bool
-  (and (>= (* 2 saving) boundary) (<= saving (* 2 boundary))))
+  (and (>= (* 2 saving) boundary) (<= (* 2 saving) (* 5 boundary))))
 
 ;; ...and WHICH SIDE of it a verdict fell on, for the trace. A `revert` line
 ;; used to report only that the window refused, and the window is two-sided:
@@ -135816,7 +135965,7 @@
 (define (opt-inline-checked-window-text [saving : i64] [boundary : i64]) : String
   (cond
     [(< (* 2 saving) boundary) "floor"]
-    [(> saving (* 2 boundary)) "cap"]
+    [(> (* 2 saving) (* 5 boundary)) "cap"]
     [else "in"]))
 
 ;; The verdict. Both sides priced per invocation of the caller; see the tier
@@ -135902,38 +136051,60 @@
     ;; `boundary`. The lower bound is the ordinary demand that at least half
     ;; that saving survives re-optimization. The UPPER bound is what the
     ;; measured corpus forced, and it is a statement about the model rather than
-    ;; about inlining: both sides are priced through a loop-depth estimate that
-    ;; reads back edges in BLOCK ORDER, and inlining is precisely the rewrite
-    ;; that reorders a caller's blocks, so the two sides stop being measured in
-    ;; the same currency exactly when the merged body's shape changes most. A
-    ;; modelled saving many times what a free inline can produce is evidence of
-    ;; that, not evidence of a brilliant merge -- and every site the upper bound
+    ;; about inlining: both sides are priced on a STANDALONE plan of each
+    ;; function (INL-15), and a merge that lets a hoist or a fold run also
+    ;; changes what the merged body's loops keep live -- the values the hoist
+    ;; lifts out of an inner loop are live across the outer one, and the inner
+    ;; loops spill -- which no standalone plan of the caller prices. A modelled
+    ;; saving many times what a free inline can produce is evidence of that,
+    ;; not evidence of a brilliant merge -- and every site the upper bound
     ;; still refuses on the corpus presents that way. `pl-line-end` into
     ;; `pl-drop-fallthrough`, `pl-run-chunk` and `pl-bench` models 1,065, 1,096
     ;; and 1,088 against a boundary of 64 -- about 16.6x what a free inline can
     ;; produce -- and admitting them costs peephole_lines +16.5%; `qs-sort` into
     ;; `qs-bench` models 6,173 against 72 (86x) and costs opt_quicksort +5.9%;
-    ;; `cfg-loop-body` into `cfg-natural-loops` models 2,955 against 832 (3.6x)
-    ;; and costs cfg_domloops +6.8%. The bound is measured at its own edge, not
-    ;; merely far from what it refuses: the cheapest refusal the ablation priced
-    ;; is `cfg-loop-preheader` into `cfg-natural-loops` at 2,041 against 832 --
-    ;; 2.45x, a hair over the bound -- and admitting that one alone costs
-    ;; cfg_domloops +2.96%.
+    ;; `it-hash-words` into `it-intern-slice` models 89 against 9 (10x) and
+    ;; `sccp-exec-clear-in!` into `sccp-function` 418 against 8 (52x), and
+    ;; with the bound gone intern_table costs +17%.
+    ;;
+    ;; The bound is two and a half times the prediction, and it is measured at
+    ;; its own edge on BOTH sides. One rung down, at 2x, it refuses
+    ;; `cg-map-probe` into `cg-map-insert-ref!` -- 20 against a boundary of 8,
+    ;; exactly 2.5x, twelve instructions past a free inline at a depth-0 site
+    ;; -- and that one refusal costs callgraph_scc +5.3%, hashmap_insert +20%
+    ;; and regalloc_greedy +0.75%. One rung up, at 3x, it admits the next
+    ;; sites in line and costs intern_table +6.9% and lex_source +1.5%. The
+    ;; window is wide at the top because the prediction is small where the
+    ;; corpus's best depth-0 merges are: a boundary of 6 + np is a handful of
+    ;; instructions, and a merge that folds one branch or retires one reload
+    ;; clears 2x on its own.
     ;;
     ;; So the tier keeps a site only when the model AGREES with the free-inline
-    ;; prediction to within a factor of two in both directions. Where it does
-    ;; not, the model is not trusted in either direction and the site reverts.
-    ;; This is the clear-margin discipline read as a confidence interval, which
-    ;; is the only honest reading of a two-sided estimate.
+    ;; prediction: no less than half of it, no more than two and a half times
+    ;; it. Where it does not, the model is not trusted in either direction and
+    ;; the site reverts. This is the clear-margin discipline read as a
+    ;; confidence interval, which is the only honest reading of a two-sided
+    ;; estimate.
     [saving : i64 (- before after)]
     ;; The whole modelled saving survived, not merely the half the window's
     ;; floor demands. Every body past the caller's first is held to it: the
     ;; relaxation is for the case both sides of the model agree on, not for the
     ;; case the window's floor barely admits.
     [clear? : bool (>= saving boundary)]
+    ;; INL-17: the cap is a statement about the MODEL, and a body of at most
+    ;; sixty-four instructions per execution is one the model prices well --
+    ;; every cap-refused site the corpus gains from is such a leaf
+    ;; (seq-overlaps? 58, heap-better? 36, ssa-instr-next 35, ssa-dominates?
+    ;; 54, the sccp type predicates 16 to 27), and every site it loses on is a
+    ;; loop-carrying body of hundreds (it-hash-words 523, it-grow! 624, the
+    ;; cfg loop walkers 184 to 1376). A small body past the cap keeps on the
+    ;; floor alone.
+    [small-body? : bool (<= callee-cost (* 64 site-weight))]
     [keep? : bool
       (and
-        (opt-inline-checked-window-ok? saving boundary)
+        (or
+          (opt-inline-checked-window-ok? saving boundary)
+          (and small-body? (>= (* 2 saving) boundary)))
         (or (not (opt-inline-checked-second-body?)) clear?))]
     [margin-clear? : bool (and keep? clear?)]
     [_publish : unit

@@ -1486,6 +1486,30 @@
             (cobj.CompilerObjectRelocationKind.Call)
             "NtOpenFile")))]
     (and
+      (compiler_windows_coff_core.compiler-windows-coff-extern-linkable?
+        "GetSystemTimeAsFileTime"
+        (cobj.CompilerObjectSymbolKind.Function))
+      (compiler_windows_coff_core.compiler-windows-coff-extern-linkable?
+        "QueryPerformanceCounter"
+        (cobj.CompilerObjectSymbolKind.Function))
+      (compiler_windows_coff_core.compiler-windows-coff-extern-linkable?
+        "QueryPerformanceFrequency"
+        (cobj.CompilerObjectSymbolKind.Function))
+      (compiler_windows_coff_core.compiler-windows-coff-extern-linkable?
+        "Sleep"
+        (cobj.CompilerObjectSymbolKind.Function))
+      (not
+        (compiler_windows_coff_core.compiler-windows-coff-extern-linkable?
+          "GetSystemTimePreciseAsFileTime"
+          (cobj.CompilerObjectSymbolKind.Function)))
+      (not
+        (compiler_windows_coff_core.compiler-windows-coff-extern-linkable?
+          "QueryThreadCycleTime"
+          (cobj.CompilerObjectSymbolKind.Function)))
+      (not
+        (compiler_windows_coff_core.compiler-windows-coff-extern-linkable?
+          "SleepEx"
+          (cobj.CompilerObjectSymbolKind.Function)))
       (source-tool-windows-direct-object-relocations-linkable?
         (owned_view.compiler-owned-shared-view symbols)
         empty-relocs)

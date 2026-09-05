@@ -25,6 +25,9 @@
 (import stdlib.comptime)
 (import stdlib.io)
 (import stdlib.string)
+(cfg
+  process-linux-test-hooks
+  (import tests.integration.process_runtime_linux_hooks as process_linux_test_hooks))
 
 ;; Runtime command storage is arena-backed and immutable after construction.
 ;; Explicit shallow reads preserve those shared buffers across owner accessors.
@@ -1081,238 +1084,37 @@
 (define process-linux-no-injection : i64
   -9223372036854775808)
 
-; Fault injection is compiled only into the dedicated native Linux gate.
-(cfg
-  process-linux-test-hooks
-  (define process-linux-test-counts : (__tl_dyn-array i64)
-    (__tl_make-array i64 16)))
-(cfg
-  process-linux-test-hooks
-  (define process-linux-test-fail-kind-a : i64
-    0))
-(cfg
-  process-linux-test-hooks
-  (define process-linux-test-fail-call-a : i64
-    0))
-(cfg
-  process-linux-test-hooks
-  (define process-linux-test-fail-errno-a : i64
-    0))
-(cfg
-  process-linux-test-hooks
-  (define process-linux-test-fail-kind-b : i64
-    0))
-(cfg
-  process-linux-test-hooks
-  (define process-linux-test-fail-call-b : i64
-    0))
-(cfg
-  process-linux-test-hooks
-  (define process-linux-test-fail-errno-b : i64
-    0))
-(cfg
-  process-linux-test-hooks
-  (define process-linux-test-write-max : i64
-    0))
-(cfg
-  process-linux-test-hooks
-  (define process-linux-test-read-max : i64
-    0))
-(cfg
-  process-linux-test-hooks
-  (define process-linux-test-child-fail-kind : i64
-    0))
-(cfg
-  process-linux-test-hooks
-  (define process-linux-test-child-fail-errno : i64
-    0))
-(cfg
-  process-linux-test-hooks
-  (define process-linux-test-marker-mode : i64
-    0))
-
-;: Reset all Linux process fault hooks and parent-side call counters.
-(cfg
-  process-linux-test-hooks
-  (define (linux-test-reset!) : unit
-    (let
-      [index : i64 0]
-      (begin
-        (while (< index (array-length process-linux-test-counts))
-          (begin
-            (set! (array-ref process-linux-test-counts index) 0)
-            (set! index (+ index 1))))
-        (set! process-linux-test-fail-kind-a 0)
-        (set! process-linux-test-fail-call-a 0)
-        (set! process-linux-test-fail-errno-a 0)
-        (set! process-linux-test-fail-kind-b 0)
-        (set! process-linux-test-fail-call-b 0)
-        (set! process-linux-test-fail-errno-b 0)
-        (set! process-linux-test-write-max 0)
-        (set! process-linux-test-read-max 0)
-        (set! process-linux-test-child-fail-kind 0)
-        (set! process-linux-test-child-fail-errno 0)
-        (set! process-linux-test-marker-mode 0)))))
-
-;: Inject one raw negative errno on a numbered parent-side syscall attempt.
-(cfg
-  process-linux-test-hooks
-  (define (linux-test-fail-on! [kind : i64] [call : i64] [errno-code : i64]) : unit
-    (begin
-      (set! process-linux-test-fail-kind-a kind)
-      (set! process-linux-test-fail-call-a call)
-      (set! process-linux-test-fail-errno-a errno-code))))
-
-;: Configure an independent second injected parent-side failure.
-(cfg
-  process-linux-test-hooks
-  (define (linux-test-fail-second-on!
-    [kind : i64]
-    [call : i64]
-    [errno-code : i64]) : unit
-    (begin
-      (set! process-linux-test-fail-kind-b kind)
-      (set! process-linux-test-fail-call-b call)
-      (set! process-linux-test-fail-errno-b errno-code))))
-
-;: Inject one child-side setup/exec failure without mutating parent storage.
-(cfg
-  process-linux-test-hooks
-  (define (linux-test-child-fail-on! [kind : i64] [errno-code : i64]) : unit
-    (begin
-      (set! process-linux-test-child-fail-kind kind)
-      (set! process-linux-test-child-fail-errno errno-code))))
-
-;: Bound real stdin writes to force partial-progress coverage.
-(cfg
-  process-linux-test-hooks
-  (define (linux-test-set-write-max! [count : i64]) : unit
-    (set! process-linux-test-write-max count)))
-
-;: Bound real exec/capture reads to force partial-progress coverage.
-(cfg
-  process-linux-test-hooks
-  (define (linux-test-set-read-max! [count : i64]) : unit
-    (set! process-linux-test-read-max count)))
-
-;: Select malformed child failure-record modes for the exec-channel gate.
-(cfg
-  process-linux-test-hooks
-  (define (linux-test-set-marker-mode! [mode : i64]) : unit
-    (set! process-linux-test-marker-mode mode)))
-
-;: Return one parent-side syscall call count.
-(cfg
-  process-linux-test-hooks
-  (define (linux-test-call-count [kind : i64]) : i64
-    (if (and (>= kind 0) (< kind (array-length process-linux-test-counts)))
-      (array-ref process-linux-test-counts kind)
-      0)))
-
-;: Count open descriptors below `limit` without going through an injected
-;: process syscall. The native fault gate compares this stable count after each
-;: failed operation and its successful follow-up.
-(cfg
-  process-linux-test-hooks
-  (define (linux-test-open-fd-count [limit : i64]) : i64
-    (let
-      [fd : i64 0]
-      [count : i64 0]
-      (begin
-        (while (< fd limit)
-          (begin
-            (if (>=
-              (unsafe
-                (syscall 72 fd 1))
-              0)
-              (set! count (+ count 1))
-              unit)
-            (set! fd (+ fd 1))))
-        count))))
-
-;: Prove that the caller owns no running or waitable child. A leaked zombie is
-;: reaped while returning false so one failed assertion cannot poison the rest
-;: of the deterministic gate.
-(cfg
-  process-linux-test-hooks
-  (define (linux-test-no-children?) : bool
-    (let
-      [status : (__tl_dyn-array i32) (__tl_make-array i32 1)]
-      [result : i64 -4]
-      (begin
-        (while (= result -4)
-          (set!
-            result
-            (unsafe
-              (syscall
-                61
-                -1
-                (stdlib.process_runtime.array-i32-addr
-                  (process-runtime-place-shared-view status))
-                1
-                0))))
-        (= result -10)))))
-
-;: Record a parent-side syscall and select either configured failure.
-(cfg
-  process-linux-test-hooks
-  (define (linux-test-injected-result [kind : i64]) : i64
-    (let
-      [call : i64 (+ (array-ref process-linux-test-counts kind) 1)]
-      (begin
-        (set! (array-ref process-linux-test-counts kind) call)
-        (cond
-          [(and
-              (= kind process-linux-test-fail-kind-a)
-              (= call process-linux-test-fail-call-a))
-            (- 0 process-linux-test-fail-errno-a)]
-          [(and
-              (= kind process-linux-test-fail-kind-b)
-              (= call process-linux-test-fail-call-b))
-            (- 0 process-linux-test-fail-errno-b)]
-          [else process-linux-no-injection])))))
-
 ;: Production-erased bridge to the optional parent-side injection state.
 (define (linux-injected-result [_kind : i64]) : i64
   (cfg
     process-linux-test-hooks
-    (linux-test-injected-result _kind)
+    (process_linux_test_hooks.injected-result _kind)
     process-linux-no-injection))
 
 ;: Production-erased bound for deterministic short writes.
 (define (linux-write-request-count [count : i64]) : i64
   (cfg
     process-linux-test-hooks
-    (if (and
-      (> process-linux-test-write-max 0)
-      (> count process-linux-test-write-max))
-      process-linux-test-write-max
-      count)
+    (process_linux_test_hooks.write-request-count count)
     count))
 
 ;: Production-erased bound for deterministic short reads.
 (define (linux-read-request-count [count : i64]) : i64
   (cfg
     process-linux-test-hooks
-    (if (and
-      (> process-linux-test-read-max 0)
-      (> count process-linux-test-read-max))
-      process-linux-test-read-max
-      count)
+    (process_linux_test_hooks.read-request-count count)
     count))
 
 ;: Read-only child injection bridge. It performs no test counter mutation.
 (define (linux-child-injected-result [_kind : i64]) : i64
   (cfg
     process-linux-test-hooks
-    (if (= _kind process-linux-test-child-fail-kind)
-      (- 0 process-linux-test-child-fail-errno)
-      process-linux-no-injection)
+    (process_linux_test_hooks.child-injected-result _kind)
     process-linux-no-injection))
 
 ;: Current child failure-record test mode, erased from production artifacts.
 (define (linux-marker-mode) : i64
-  (cfg process-linux-test-hooks process-linux-test-marker-mode 0))
+  (cfg process-linux-test-hooks (process_linux_test_hooks.marker-mode) 0))
 
 ;: Construct an empty first/secondary Linux failure record.
 (define (linux-failure-none) : ProcessLinuxFailure

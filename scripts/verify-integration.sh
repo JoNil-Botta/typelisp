@@ -737,6 +737,7 @@ EOF
 process_runtime_linux_gate_cases() {
     cat <<'EOF'
 process_runtime_linux_failures
+process_runtime_linux_hooks
 EOF
 }
 

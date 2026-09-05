@@ -57,7 +57,7 @@ BIN="$WORKDIR/process-runtime-linux"
 echo "[process-runtime-linux] compile assembly fallback with fault hooks"
 "$COMPILER" compile "$SOURCE" -o "$ASM" \
     --target linux-x86_64 --backend-mode scalar \
-    --cfg process-linux-test-hooks --stdlib-root "$ROOT/stdlib" \
+    --cfg process-linux-test-hooks --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT" \
     > "$WORKDIR/compile.stdout" 2> "$WORKDIR/compile.stderr" || {
         [ ! -s "$WORKDIR/compile.stdout" ] || cat "$WORKDIR/compile.stdout" >&2
         [ ! -s "$WORKDIR/compile.stderr" ] || cat "$WORKDIR/compile.stderr" >&2

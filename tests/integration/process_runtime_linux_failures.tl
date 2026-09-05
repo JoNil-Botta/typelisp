@@ -4,9 +4,44 @@
 (import stdlib.process_runtime)
 (import stdlib.profile)
 (import stdlib.test)
+(import tests.integration.process_runtime_linux_hooks as process_linux_test_hooks)
 
 (define process-fd-scan-limit : i64
   4096)
+
+(define (linux-test-open-fd-count [limit : i64]) : i64
+  (let
+    [fd : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< fd limit)
+        (begin
+          (if (>=
+            (unsafe
+              (syscall 72 fd 1))
+            0)
+            (set! count (+ count 1))
+            unit)
+          (set! fd (+ fd 1))))
+      count)))
+
+(define (linux-test-no-children?) : bool
+  (let
+    [status : (__tl_dyn-array i32) (__tl_make-array i32 1)]
+    [result : i64 -4]
+    (begin
+      (while (= result -4)
+        (set!
+          result
+          (unsafe
+            (syscall
+              61
+              -1
+              (process_runtime.array-i32-addr
+                (process_runtime.process-runtime-place-shared-view status))
+              1
+              0))))
+      (= result -10))))
 
 (define (true-command) : process.ProcessCommand
   (process.command "/usr/bin/true" (process.args-empty)))
@@ -156,15 +191,15 @@
 (define (assert-no-resource-growth [baseline-fds : i64] [label : String]) : unit
   (begin
     (test.assert-i64-eq
-      (process_runtime.linux-test-open-fd-count process-fd-scan-limit)
+      (linux-test-open-fd-count process-fd-scan-limit)
       baseline-fds
       (clone label))
-    (test.assert-true (process_runtime.linux-test-no-children?) label)))
+    (test.assert-true (linux-test-no-children?) label)))
 
 ;: Every injected failure is followed by a clean success and resource proof.
 (define (assert-clean-follow-up [baseline-fds : i64] [label : String]) : unit
   (begin
-    (process_runtime.linux-test-reset!)
+    (process_linux_test_hooks.reset!)
     (assert-output-ok (process.output (true-command)) 0 "" "" (clone label))
     (assert-no-resource-growth baseline-fds label)))
 
@@ -197,8 +232,8 @@
 
 (define (run-parent-faults [baseline-fds : i64]) : unit
   (begin
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-pipe
       1
       24)
@@ -207,8 +242,8 @@
       "process: spawn failed"
       baseline-fds
       "stdin pipe failure")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-pipe
       2
       24)
@@ -217,8 +252,8 @@
       "process: spawn failed"
       baseline-fds
       "exec pipe failure")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-memfd
       1
       24)
@@ -227,8 +262,8 @@
       "process: spawn failed"
       baseline-fds
       "stdout memfd failure")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-memfd
       2
       24)
@@ -237,12 +272,12 @@
       "process: spawn failed"
       baseline-fds
       "stderr memfd failure")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-memfd
       2
       24)
-    (process_runtime.linux-test-fail-second-on!
+    (process_linux_test_hooks.fail-second-on!
       process_runtime.process-linux-syscall-close
       1
       9)
@@ -251,8 +286,8 @@
       "process: spawn failed; cleanup: close failed (-9)"
       baseline-fds
       "pre-spawn primary and close cleanup failure")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-vfork
       1
       11)
@@ -261,8 +296,8 @@
       "process: spawn failed"
       baseline-fds
       "vfork failure")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-close
       1
       9)
@@ -271,8 +306,8 @@
       "process: close failed (-9)"
       baseline-fds
       "parent close failure")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-sigaction
       1
       22)
@@ -281,8 +316,8 @@
       "process: stdin failed (-22)"
       baseline-fds
       "sigaction install failure")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-sigaction
       2
       22)
@@ -291,8 +326,8 @@
       "process: stdin failed (-22)"
       baseline-fds
       "sigaction restore failure")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-stdin-write
       1
       4)
@@ -303,8 +338,8 @@
       ""
       "stdin EINTR retry")
     (assert-no-resource-growth baseline-fds "stdin EINTR resources")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-set-write-max! 2)
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.set-write-max! 2)
     (assert-output-ok
       (process.output (stdin-command))
       0
@@ -313,13 +348,13 @@
       "stdin partial writes")
     (test.assert-true
       (>
-        (process_runtime.linux-test-call-count
+        (process_linux_test_hooks.call-count
           process_runtime.process-linux-syscall-stdin-write)
         1)
       "stdin partial write count")
     (assert-no-resource-growth baseline-fds "stdin partial resources")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-stdin-write
       1
       5)
@@ -328,8 +363,8 @@
       "process: stdin failed (-5)"
       baseline-fds
       "stdin write failure")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-stdin-write
       1
       32)
@@ -341,8 +376,8 @@
       ""
       "stdin EPIPE tolerated")
     (assert-no-resource-growth baseline-fds "stdin EPIPE resources")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-wait
       1
       4)
@@ -353,13 +388,13 @@
       ""
       "wait EINTR retry")
     (test.assert-i64-eq
-      (process_runtime.linux-test-call-count
+      (process_linux_test_hooks.call-count
         process_runtime.process-linux-syscall-wait)
       2
       "wait EINTR call count")
     (assert-no-resource-growth baseline-fds "wait EINTR resources")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-wait
       1
       10)
@@ -368,12 +403,12 @@
       "process: wait failed"
       baseline-fds
       "wait failure cleanup")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-stdin-write
       1
       5)
-    (process_runtime.linux-test-fail-second-on!
+    (process_linux_test_hooks.fail-second-on!
       process_runtime.process-linux-syscall-wait
       1
       10)
@@ -382,12 +417,12 @@
       "process: stdin failed (-5); cleanup: wait failed (-10)"
       baseline-fds
       "primary stdin and secondary wait failure")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-close
       1
       9)
-    (process_runtime.linux-test-fail-second-on!
+    (process_linux_test_hooks.fail-second-on!
       process_runtime.process-linux-syscall-stdin-write
       1
       5)
@@ -399,7 +434,7 @@
 
 (define (run-standard-fd-collisions [baseline-fds : i64]) : unit
   (begin
-    (process_runtime.linux-test-reset!)
+    (process_linux_test_hooks.reset!)
     (assert-output-ok
       (output-with-closed-standard-fds (printf-command "closed-stdout") 2)
       0
@@ -407,7 +442,7 @@
       ""
       "closed caller stdout capture")
     (assert-no-resource-growth baseline-fds "closed caller stdout resources")
-    (process_runtime.linux-test-reset!)
+    (process_linux_test_hooks.reset!)
     (assert-output-ok
       (output-with-closed-standard-fds (stdout-stderr-command) 4)
       0
@@ -415,7 +450,7 @@
       "closed-stderr"
       "closed caller stderr capture")
     (assert-no-resource-growth baseline-fds "closed caller stderr resources")
-    (process_runtime.linux-test-reset!)
+    (process_linux_test_hooks.reset!)
     (assert-output-ok
       (output-with-closed-standard-fds (stdout-stderr-command) 3)
       0
@@ -423,7 +458,7 @@
       "closed-stderr"
       "capture descriptor cross-wiring")
     (assert-no-resource-growth baseline-fds "capture cross-wiring resources")
-    (process_runtime.linux-test-reset!)
+    (process_linux_test_hooks.reset!)
     (assert-output-ok
       (output-with-closed-standard-fds (stdin-command) 7)
       0
@@ -439,8 +474,8 @@
   [baseline-fds : i64]
   [label : String]) : unit
   (begin
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-child-fail-on! kind 5)
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.child-fail-on! kind 5)
     (assert-output-failure-followed-by-success
       command
       expected
@@ -512,8 +547,8 @@
 
 (define (run-exec-channel-faults [baseline-fds : i64]) : unit
   (begin
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-exec-read
       1
       4)
@@ -522,15 +557,15 @@
       "process: spawn failed"
       baseline-fds
       "exec read EINTR")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-set-read-max! 1)
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.set-read-max! 1)
     (assert-output-failure-followed-by-success
       (missing-command)
       "process: spawn failed"
       baseline-fds
       "exec partial reads")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-exec-read
       1
       5)
@@ -539,36 +574,36 @@
       "process: exec status failed (-5)"
       baseline-fds
       "exec read failure")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-set-marker-mode! 1)
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.set-marker-mode! 1)
     (assert-output-failure-followed-by-success
       (missing-command)
       "process: exec status failed (-71)"
       baseline-fds
       "partial exec record")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-set-marker-mode! 2)
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.set-marker-mode! 2)
     (assert-output-failure-followed-by-success
       (missing-command)
       "process: exec status failed (-71)"
       baseline-fds
       "malformed exec record")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-set-marker-mode! 3)
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.set-marker-mode! 3)
     (assert-output-failure-followed-by-success
       (missing-command)
       "process: exec status failed (-71)"
       baseline-fds
       "oversized exec record")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-set-marker-mode! 4)
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.set-marker-mode! 4)
     (assert-output-failure-followed-by-success
       (missing-command)
       "process: spawn failed"
       baseline-fds
       "partial exec record writes")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-set-marker-mode! 5)
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.set-marker-mode! 5)
     (assert-output-failure-followed-by-success
       (missing-command)
       "process: spawn failed"
@@ -577,8 +612,8 @@
 
 (define (run-capture-faults [baseline-fds : i64]) : unit
   (begin
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-capture-seek
       1
       4)
@@ -589,8 +624,8 @@
       ""
       "capture seek EINTR")
     (assert-no-resource-growth baseline-fds "capture seek EINTR resources")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-capture-seek
       1
       5)
@@ -599,8 +634,8 @@
       "process: stdout capture failed (-5)"
       baseline-fds
       "stdout seek failure")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-capture-seek
       3
       5)
@@ -609,8 +644,8 @@
       "process: stderr capture failed (-5)"
       baseline-fds
       "stderr seek failure")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-set-read-max! 1)
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.set-read-max! 1)
     (assert-output-ok
       (process.output (printf-command "partial-read"))
       0
@@ -619,13 +654,13 @@
       "capture partial reads")
     (test.assert-true
       (>
-        (process_runtime.linux-test-call-count
+        (process_linux_test_hooks.call-count
           process_runtime.process-linux-syscall-capture-read)
         1)
       "capture partial read count")
     (assert-no-resource-growth baseline-fds "capture partial resources")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-capture-read
       1
       4)
@@ -636,8 +671,8 @@
       ""
       "capture read EINTR")
     (assert-no-resource-growth baseline-fds "capture read EINTR resources")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-capture-read
       1
       5)
@@ -646,8 +681,8 @@
       "process: stdout capture failed (-5)"
       baseline-fds
       "capture read failure")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-capture-read
       1
       0)
@@ -656,12 +691,12 @@
       "process: stdout capture failed (-71)"
       baseline-fds
       "capture zero progress")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-capture-read
       1
       5)
-    (process_runtime.linux-test-fail-second-on!
+    (process_linux_test_hooks.fail-second-on!
       process_runtime.process-linux-syscall-close
       3
       9)
@@ -673,8 +708,8 @@
 
 (define (run-async-and-inherited-faults [baseline-fds : i64]) : unit
   (begin
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-exec-read
       1
       5)
@@ -683,21 +718,21 @@
       "process: exec status failed (-5)"
       baseline-fds
       "async exec read failure")
-    (process_runtime.linux-test-reset!)
+    (process_linux_test_hooks.reset!)
     (assert-start-failure-followed-by-success
       (missing-command)
       "process: spawn failed"
       baseline-fds
       "async exec failure")
-    (process_runtime.linux-test-reset!)
+    (process_linux_test_hooks.reset!)
     (let
       [child : process.ProcessChild
         (child-or-panic
           (process.start (printf-command "async-capture"))
           "async start failed")]
       (begin
-        (process_runtime.linux-test-set-read-max! 1)
-        (process_runtime.linux-test-fail-on!
+        (process_linux_test_hooks.set-read-max! 1)
+        (process_linux_test_hooks.fail-on!
           process_runtime.process-linux-syscall-capture-read
           1
           4)
@@ -708,14 +743,14 @@
           ""
           "async wait short read and EINTR")
         (assert-no-resource-growth baseline-fds "async wait resources")))
-    (process_runtime.linux-test-reset!)
+    (process_linux_test_hooks.reset!)
     (let
       [child : process.ProcessChild
         (child-or-panic
           (process.start (true-command))
           "async wait failure start failed")]
       (begin
-        (process_runtime.linux-test-fail-on!
+        (process_linux_test_hooks.fail-on!
           process_runtime.process-linux-syscall-wait
           1
           10)
@@ -724,8 +759,8 @@
           "process: wait failed"
           "async wait failure")
         (assert-clean-follow-up baseline-fds "async wait failure cleanup")))
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-wait
       1
       4)
@@ -736,15 +771,15 @@
       ""
       "inherited wait EINTR")
     (assert-no-resource-growth baseline-fds "inherited wait EINTR resources")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-set-marker-mode! 1)
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.set-marker-mode! 1)
     (assert-inherit-failure-followed-by-success
       (missing-command)
       "process: exec status failed (-71)"
       baseline-fds
       "inherited malformed exec channel")
-    (process_runtime.linux-test-reset!)
-    (process_runtime.linux-test-fail-on!
+    (process_linux_test_hooks.reset!)
+    (process_linux_test_hooks.fail-on!
       process_runtime.process-linux-syscall-stdin-write
       1
       5)
@@ -758,8 +793,8 @@
   (if (= remaining 0)
     unit
     (begin
-      (process_runtime.linux-test-reset!)
-      (process_runtime.linux-test-set-marker-mode! 1)
+      (process_linux_test_hooks.reset!)
+      (process_linux_test_hooks.set-marker-mode! 1)
       (assert-output-error
         (process.output (missing-command))
         "process: exec status failed (-71)"
@@ -769,7 +804,7 @@
 
 (define (run-metrics [baseline-fds : i64]) : unit
   (begin
-    (process_runtime.linux-test-reset!)
+    (process_linux_test_hooks.reset!)
     (let
       [before-ticks : i64 (profile.now-ticks)]
       [before-alloc : i64 (profile.alloc-total)]
@@ -781,42 +816,42 @@
         (assert-output-ok result 0 "metrics" "" "metrics output")
         (assert-no-resource-growth baseline-fds "metrics resources")
         (test.assert-i64-eq
-          (process_runtime.linux-test-call-count
+          (process_linux_test_hooks.call-count
             process_runtime.process-linux-syscall-pipe)
           1
           "metrics pipe syscalls")
         (test.assert-i64-eq
-          (process_runtime.linux-test-call-count
+          (process_linux_test_hooks.call-count
             process_runtime.process-linux-syscall-memfd)
           2
           "metrics memfd syscalls")
         (test.assert-i64-eq
-          (process_runtime.linux-test-call-count
+          (process_linux_test_hooks.call-count
             process_runtime.process-linux-syscall-vfork)
           1
           "metrics vfork syscalls")
         (test.assert-i64-eq
-          (process_runtime.linux-test-call-count
+          (process_linux_test_hooks.call-count
             process_runtime.process-linux-syscall-wait)
           1
           "metrics wait syscalls")
         (test.assert-i64-eq
-          (process_runtime.linux-test-call-count
+          (process_linux_test_hooks.call-count
             process_runtime.process-linux-syscall-exec-read)
           1
           "metrics exec read syscalls")
         (test.assert-i64-eq
-          (process_runtime.linux-test-call-count
+          (process_linux_test_hooks.call-count
             process_runtime.process-linux-syscall-capture-seek)
           4
           "metrics capture seek syscalls")
         (test.assert-i64-eq
-          (process_runtime.linux-test-call-count
+          (process_linux_test_hooks.call-count
             process_runtime.process-linux-syscall-capture-read)
           1
           "metrics capture read syscalls")
         (test.assert-i64-eq
-          (process_runtime.linux-test-call-count
+          (process_linux_test_hooks.call-count
             process_runtime.process-linux-syscall-close)
           4
           "metrics close syscalls")
@@ -830,12 +865,9 @@
 
 (define (main) : i64
   (let
-    [baseline-fds : i64
-      (process_runtime.linux-test-open-fd-count process-fd-scan-limit)]
+    [baseline-fds : i64 (linux-test-open-fd-count process-fd-scan-limit)]
     (begin
-      (test.assert-true
-        (process_runtime.linux-test-no-children?)
-        "initial child state")
+      (test.assert-true (linux-test-no-children?) "initial child state")
       (run-parent-faults baseline-fds)
       (run-standard-fd-collisions baseline-fds)
       (run-child-faults baseline-fds)

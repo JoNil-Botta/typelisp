@@ -568,7 +568,8 @@
 ;; Representation-sensitive operations intentionally stay explicit: positional
 ;; lookup/ABI indexing, lockstep comparison, first-error or first-hit traversal,
 ;; shape conversion, and folds that thread persistent owners. Using this visit
-;; boundary for those would discard an index/early exit or require a heap cell.
+;; boundary for those would discard an index/early exit or need a separate
+;; contract for transferring the accumulator owner between callbacks.
 (defmacro (compiler-ir-value-seq-map
   [values : Expr]
   [mapper : Expr]

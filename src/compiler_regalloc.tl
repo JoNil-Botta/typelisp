@@ -41249,34 +41249,10 @@
   [roots : (__tl_dyn-array i64)]
   [invalid : (__tl_dyn-array bool)]
   [args : ir.CompilerIrCallArgs]) : unit
-  (match args
-    [(ir.CompilerIrCallArgs.Nil) unit]
-    [(ir.CompilerIrCallArgs.One a)
-      (compiler-reg-color-invalidate-value!
-        (compiler-reg-global-shared-view roots)
-        (compiler-reg-global-shared-view invalid)
-        a)]
-    [(ir.CompilerIrCallArgs.Two a b)
-      (begin
-        (compiler-reg-color-invalidate-value!
-          (compiler-reg-global-shared-view roots)
-          (compiler-reg-global-shared-view invalid)
-          a)
-        (compiler-reg-color-invalidate-value!
-          (compiler-reg-global-shared-view roots)
-          (compiler-reg-global-shared-view invalid)
-          b))]
-    [(ir.CompilerIrCallArgs.Array items)
-      (let
-        [i : i64 0]
-        [len : i64 (array-length items)]
-        (while (< i len)
-          (begin
-            (compiler-reg-color-invalidate-value!
-              (compiler-reg-global-shared-view roots)
-              (compiler-reg-global-shared-view invalid)
-              (compiler-reg-global-array-element-shared-view items i))
-            (set! i (+ i 1)))))]
+  ;; Hidden return storage remains colourable at its defining call. This
+  ;; position-sensitive exception skips only that argument; ordinary shapes
+  ;; use the shared value visitor.
+  (match (compiler-reg-global-shared-view args)
     [(ir.CompilerIrCallArgs.Sret items sret-index)
       (let
         [i : i64 0]
@@ -41289,7 +41265,13 @@
                 (compiler-reg-global-shared-view invalid)
                 (compiler-reg-global-array-element-shared-view items i))
               unit)
-            (set! i (+ i 1)))))]))
+            (set! i (+ i 1)))))]
+    [_
+      (ir.compiler-ir-call-args-visit
+        args
+        compiler-reg-color-invalidate-value!
+        (compiler-reg-global-shared-view roots)
+        (compiler-reg-global-shared-view invalid))]))
 
 (define (compiler-reg-color-invalidate-spmd-call-args!
   [roots : (__tl_dyn-array i64)]

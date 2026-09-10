@@ -1493,14 +1493,17 @@ check_global_cursor_helper() {
         # the cell, one per copy, each writing a register rather than leaving
         # the cell to a call. A clone that dropped the store would leave fewer
         # here and every site would read position zero; a clone that duplicated
-        # it would leave more and the run would skip tokens. The read side is
-        # five matching reads plus `main`'s own read of the cursor for the last
-        # printed line.
+        # it would leave more and the run would skip tokens. The read side:
+        # GSF-1 answers a read of the cell right behind its own store with the
+        # register that was stored, so of the five copies only the FIRST in
+        # each region reads the cell -- the loop body's first site and the
+        # straight-line pair's first -- plus `main`'s own read of the cursor
+        # for the last printed line. Three, where every copy once reloaded.
         assert_regex_count_eq "$_run" \
             '^[[:space:]]+movq %r[a-z0-9]+, _tl_global_cursor_helper_gc_cursor\(%rip\)$' 5 \
             "global-cursor-helper-$_target"
         assert_regex_count_eq "$_run" \
-            '^[[:space:]]+movq _tl_global_cursor_helper_gc_cursor\(%rip\), %r' 6 \
+            '^[[:space:]]+movq _tl_global_cursor_helper_gc_cursor\(%rip\), %r' 3 \
             "global-cursor-helper-$_target"
     done
 }

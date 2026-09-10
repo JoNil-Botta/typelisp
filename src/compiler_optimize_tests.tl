@@ -35112,6 +35112,174 @@
     (opt-gvn-pointer-cond-params)
     blocks))
 
+;; --- GSF-1: a global cell read right behind its own store ---------------------
+;;
+;; The probe stores `%1` into `gsf_cell` and reads the cell twice right behind
+;; the store. The reads are word-cell promotion candidates (two reads of a
+;; scalar, never address-taken global), so the walk materialises one `Mov`
+;; for them -- and with the cell's contents known from the store, that `Mov`
+;; reads `%1` instead of the cell: no `Mov dst @gsf_cell` and no `@gsf_cell`
+;; operand survives in the block. A call to the program's writer between the
+;; store and the reads may rewrite the cell, and the materialised `Mov` then
+;; still reads it.
+(defstruct OptGsfSymbols
+  (cell i64)
+  (writer i64)
+  (probe i64))
+
+(define (opt-gsf-symbols) : OptGsfSymbols
+  (OptGsfSymbols
+    (opt-test-symbol "gsf_cell")
+    (opt-test-symbol "gsf_writer")
+    (opt-test-symbol "gsf_probe")))
+
+(define (opt-gsf-globals [symbols : OptGsfSymbols]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 1)]
+    (begin
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.cell
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 7))
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+
+;; The writer `set!`s the cell, which keeps it out of the proven-constant
+;; substitution and gives the negative twin a callee that may write it.
+(define (opt-gsf-writer-function [symbols : OptGsfSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.writer
+    (compiler_ir_types.compiler-ir-param-seq-empty)
+    (compiler_ast_types.AstType.I64)
+    4
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Store
+            symbols.cell
+            (compiler_ir_types.CompilerIrValue.I64 3)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.I64 0)))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-gsf-read-twice-tail [symbols : OptGsfSymbols]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      6
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Global symbols.cell)
+      (compiler_ir_types.CompilerIrValue.Global symbols.cell)
+      (compiler_ast_types.AstType.I64))
+    (opt-load-subst-return 6)))
+
+(define (opt-gsf-blocks [symbols : OptGsfSymbols] [call? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instr-seq-append
+        (if call?
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Store
+              symbols.cell
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Call
+              5
+              symbols.writer
+              (compiler_ir_types.CompilerIrCallArgs.Nil)
+              (compiler_ast_types.AstType.I64)))
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Store
+              symbols.cell
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ast_types.AstType.I64))))
+        (opt-gsf-read-twice-tail symbols)))
+    (compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-gsf-probe-function [symbols : OptGsfSymbols] [call? : bool]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.probe
+    (opt-gvn-pointer-cond-params)
+    (compiler_ast_types.AstType.I64)
+    16
+    (opt-gsf-blocks symbols call?)))
+
+(define (opt-gsf-run [call? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [symbols : OptGsfSymbols (opt-gsf-symbols)]
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-gsf-writer-function symbols)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-gsf-probe-function symbols call?)
+          (compiler_ir_types.compiler-ir-function-seq-empty)))]
+    [cells : compiler_optimize.OptGlobalCellSummary
+      (compiler_optimize.opt-global-cell-summary-build
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-gsf-globals symbols)
+        (compiler_ir_types.compiler-ir-global-shared-view functions))]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-gsf-blocks symbols call?)]
+    (compiler_optimize.opt-gvn-blocks-with-context-and-call-memory
+      (profile_state.compiler-profile-state-metrics
+        (profile_state.compiler-profile-state-new))
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler_optimize.opt-cfg-context-build
+        (compiler_ir_types.compiler-ir-global-shared-view blocks))
+      (opt-gvn-pointer-cond-params)
+      (opt_i64_i64_map.with-capacity 1)
+      cells
+      blocks)))
+
+(define (compiler-optimize-global-store-forward-self-test) : i64
+  (let
+    [entry : i64 (compiler_ir_types.compiler-ir-label "entry")]
+    [forwarded : compiler_ir_types.CompilerIrBlockList (opt-gsf-run false)]
+    [kept : compiler_ir_types.CompilerIrBlockList (opt-gsf-run true)]
+    (cond
+      ;; the promoted read is a copy of %1: no cell load, no cell operand
+      [(not
+          (=
+            (opt-lp-count-label
+              (compiler_ir_types.compiler-ir-global-shared-view forwarded)
+              entry
+              true)
+            0))
+        1]
+      [(not
+          (=
+            (opt-lp-count-label
+              (compiler_ir_types.compiler-ir-global-shared-view forwarded)
+              entry
+              false)
+            0))
+        2]
+      ;; the writer between store and reads: the cell is read
+      [(=
+          (+
+            (opt-lp-count-label
+              (compiler_ir_types.compiler-ir-global-shared-view kept)
+              entry
+              true)
+            (opt-lp-count-label
+              (compiler_ir_types.compiler-ir-global-shared-view kept)
+              entry
+              false))
+          0)
+        3]
+      [else 42])))
+
+(test
+  global-store-forward
+  (test.assert-i64-eq
+    (compiler-optimize-global-store-forward-self-test)
+    42
+    "a global cell read right behind its own store reads the stored value, and a call that may write the cell in between keeps the cell read"))
+
 ;; --- MF-2 join phis and MF-3 bypass-edge load PRE -----------------------------
 ;;
 ;; `cond` is var 0 and `arr` var 1, a descriptor handle -- the dereferenceable
@@ -97663,13 +97831,14 @@
             1))
         4]
       ;; a `Store g` between them ends the region -- and the price test sees it,
-      ;; so nothing is materialized either.
+      ;; so nothing is materialized either. GSF-1: the read behind the store
+      ;; reads the literal the store wrote, so only the first read is left.
       [(not
           (=
             (opt-t22-count-cell-reads
               (compiler_optimize.compiler-opt-global-shared-view stored)
               cells.g)
-            2))
+            1))
         5]
       [(not
           (=

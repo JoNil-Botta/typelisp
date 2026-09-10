@@ -10540,7 +10540,18 @@
       (match (opt-copy-lookup env id)
         [(ir.CompilerIrMaybeValue.Some v) v]
         [(ir.CompilerIrMaybeValue.No) value])]
+    ;; GSF-1: a global cell read resolves through the cell's key, the negated
+    ;; symbol id (symbol ids and var ids are both non-negative, so the two key
+    ;; spaces never meet). Only the load-CSE walk binds such a key, for the one
+    ;; cell whose contents it knows.
+    [(ir.CompilerIrValue.Global g)
+      (match (opt-copy-lookup env (opt-copy-global-key g))
+        [(ir.CompilerIrMaybeValue.Some v) v]
+        [(ir.CompilerIrMaybeValue.No) value])]
     [_ value]))
+
+(define (opt-copy-global-key [symbol : i64]) : i64
+  (- (- 0 1) symbol))
 
 (define (opt-copy-resolve-mask [env : OptCopyEnv] [value : ir.CompilerIrValue]) : ir.CompilerIrValue
   (let
@@ -169081,7 +169092,18 @@
 
 (defstruct OptLoadGlobalBases
   (slots (__tl_dyn-array OptLoadGlobalBaseEntry))
-  (len i64))
+  (len i64)
+  ;; GSF-1: the one global cell whose CONTENTS the walk knows -- the value the
+  ;; most recent `Store G, v` wrote, while nothing since could have written
+  ;; memory. It rides this map because it has exactly the map's lifetime: a
+  ;; binding here says "var v addresses [G]+k", the cell says "[G] holds v",
+  ;; and both stop being true at the same instructions (every write arm, a
+  ;; call, an unprocessed back edge, a join whose sides disagree). A read of
+  ;; the cell right behind its own store -- `(set! g w)` followed by a use of
+  ;; `g` in the same block, cg-census-blocks' site weight -- then reads `w`
+  ;; instead of the cell. -1 / Unit when no cell is known.
+  (cell i64)
+  (cell-value ir.CompilerIrValue))
 
 (defenum OptMaybeGlobalBase
   (No)
@@ -169111,10 +169133,42 @@
   4)
 
 (define (opt-load-global-bases-empty) : OptLoadGlobalBases
-  (OptLoadGlobalBases (__tl_make-array OptLoadGlobalBaseEntry 0) 0))
+  (OptLoadGlobalBases
+    (__tl_make-array OptLoadGlobalBaseEntry 0)
+    0
+    (- 0 1)
+    (ir.CompilerIrValue.Unit)))
 
 (define (opt-load-global-bases-clear [bases : OptLoadGlobalBases]) : OptLoadGlobalBases
-  (OptLoadGlobalBases (compiler-opt-global-shared-view bases.slots) 0))
+  (OptLoadGlobalBases
+    (compiler-opt-global-shared-view bases.slots)
+    0
+    (- 0 1)
+    (ir.CompilerIrValue.Unit)))
+
+;; GSF-1: the map with cell `global` known to hold `value`.
+(define (opt-load-global-bases-with-cell
+  [bases : OptLoadGlobalBases]
+  [global : i64]
+  [value : ir.CompilerIrValue]) : OptLoadGlobalBases
+  (OptLoadGlobalBases
+    (compiler-opt-global-shared-view bases.slots)
+    bases.len
+    global
+    value))
+
+;; GSF-1: the known contents of the cell `value` reads, when `value` is
+;; `Global g` and g is the cell the map knows.
+(define (opt-load-global-bases-cell-read
+  [bases : OptLoadGlobalBases]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrMaybeValue
+  (match (compiler-opt-global-shared-view value)
+    [(ir.CompilerIrValue.Global g)
+      (if (and (>= bases.cell 0) (= bases.cell (ir.compiler-ir-symbol-id g)))
+        (ir.CompilerIrMaybeValue.Some
+          (compiler-opt-global-shared-view bases.cell-value))
+        (ir.CompilerIrMaybeValue.No))]
+    [_ (ir.CompilerIrMaybeValue.No)]))
 
 (define (opt-load-global-bases-copy-slots
   [slots : (__tl_dyn-array OptLoadGlobalBaseEntry)]
@@ -169136,7 +169190,7 @@
 (define (opt-load-global-bases-clone [bases : OptLoadGlobalBases]) : OptLoadGlobalBases
   (let
     [len : i64 bases.len]
-    (if (= len 0)
+    (if (and (= len 0) (< bases.cell 0))
       (opt-load-global-bases-empty)
       (let
         [slots : (__tl_dyn-array OptLoadGlobalBaseEntry)
@@ -169146,7 +169200,9 @@
             (compiler-opt-global-shared-view slots)
             len
             (array-length slots))
-          len)))))
+          len
+          bases.cell
+          (compiler-opt-global-shared-view bases.cell-value))))))
 
 (define (opt-load-global-bases-lookup-from
   [slots : (__tl_dyn-array OptLoadGlobalBaseEntry)]
@@ -169196,7 +169252,15 @@
                       unit)
                     (set! write (+ write 1))))])
             (set! read (+ read 1)))))
-      (OptLoadGlobalBases slots write))))
+      (if (opt-value-is-var?
+        (compiler-opt-global-shared-view bases.cell-value)
+        var)
+        (OptLoadGlobalBases slots write (- 0 1) (ir.CompilerIrValue.Unit))
+        (OptLoadGlobalBases
+          slots
+          write
+          bases.cell
+          (compiler-opt-global-shared-view bases.cell-value))))))
 
 (define (opt-load-global-bases-next-capacity [current : i64]) : i64
   (let
@@ -169233,7 +169297,11 @@
           (set!
             (array-ref slots len)
             (OptLoadGlobalBaseEntry.Entry var global off value-base?))
-          (OptLoadGlobalBases slots (+ len 1)))))))
+          (OptLoadGlobalBases
+            slots
+            (+ len 1)
+            dropped.cell
+            (compiler-opt-global-shared-view dropped.cell-value)))))))
 
 (define (opt-load-global-base-fields-eq?
   [global : i64]
@@ -169288,7 +169356,18 @@
                     (set! write (+ write 1)))
                   unit)])
             (set! read (+ read 1)))))
-      (OptLoadGlobalBases out-slots write))))
+      (if (and
+        (>= a.cell 0)
+        (= a.cell b.cell)
+        (opt-value-eq
+          (compiler-opt-global-shared-view a.cell-value)
+          (compiler-opt-global-shared-view b.cell-value)))
+        (OptLoadGlobalBases
+          out-slots
+          write
+          a.cell
+          (compiler-opt-global-shared-view a.cell-value))
+        (OptLoadGlobalBases out-slots write (- 0 1) (ir.CompilerIrValue.Unit))))))
 
 ;; The global operand a gep base names, if any: `Global g` addresses the pointer
 ;; stored in g, `GlobalAddr g` addresses g itself. Everything else (vars,
@@ -169357,7 +169436,7 @@
           (opt-load-global-bases-bind bases dst global off value-base?)]
         [(OptMaybeGlobalBase.No) (opt-load-global-bases-drop-var bases dst)])]
     [_
-      (if (= bases.len 0)
+      (if (and (= bases.len 0) (< bases.cell 0))
         bases
         (match (opt-instr-def-var instr)
           [(option_i64.Some dst) (opt-load-global-bases-drop-var bases dst)]
@@ -170594,6 +170673,43 @@
 ;; later re-derivation rebuilds its own `GlobalField` key from a fresh
 ;; `Global`/`GlobalAddr` operand, so a kept entry is only ever consulted under a
 ;; key the walk re-proved, exactly as before this arm existed.
+;; GSF-1: the known cell as a copy environment, so the whole-instruction
+;; substitution rewrites every `Global g` operand the instruction reads.
+(define (opt-load-cse-state-cell-env [state : OptLoadCseState]) : OptCopyEnv
+  (match state
+    [(OptLoadCseState.State _ _ _ _ _ bases _)
+      (if (< bases.cell 0)
+        (OptCopyEnv.Nil)
+        (OptCopyEnv.Cons
+          (opt-copy-global-key bases.cell)
+          (compiler-opt-global-shared-view bases.cell-value)
+          (box (OptCopyEnv.Nil))))]))
+
+;; The instruction with every read of the known cell replaced by its contents.
+;; A phi is left alone: its inputs are the predecessors' values, not this
+;; block's.
+(define (opt-load-cse-forward-cell
+  [state : OptLoadCseState]
+  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
+  (let
+    [env : OptCopyEnv
+      (opt-load-cse-state-cell-env (compiler-opt-global-shared-view state))]
+    (match (compiler-opt-global-shared-view env)
+      [(OptCopyEnv.Nil) instr]
+      [_
+        (match (compiler-opt-global-shared-view instr)
+          [(ir.CompilerIrInstr.Phi _ _ _) instr]
+          [_ (opt-copy-subst-instr env instr)])])))
+
+(define (opt-load-cse-state-cell-read
+  [state : OptLoadCseState]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrMaybeValue
+  (match state
+    [(OptLoadCseState.State _ _ _ _ _ bases _)
+      (opt-load-global-bases-cell-read
+        (compiler-opt-global-shared-view bases)
+        (compiler-opt-global-shared-view value))]))
+
 (define (opt-load-cse-state-global-store
   [type-segment-bases : i64]
   [canon : (__tl_dyn-array i64)]
@@ -170637,7 +170753,24 @@
             (compiler-opt-global-shared-view instr))
           table-cap
           next-epoch
-          (opt-load-global-bases-clear (compiler-opt-global-shared-view bases))
+          (match (compiler-opt-global-shared-view instr)
+            [(ir.CompilerIrInstr.Store _ value _)
+              (if (match (compiler-opt-global-shared-view value)
+                [(ir.CompilerIrValue.Var _) true]
+                [(ir.CompilerIrValue.I64 _) true]
+                [(ir.CompilerIrValue.Bool _) true]
+                [(ir.CompilerIrValue.Char _) true]
+                [_ false])
+                (opt-load-global-bases-with-cell
+                  (opt-load-global-bases-clear
+                    (compiler-opt-global-shared-view bases))
+                  global
+                  (compiler-opt-global-shared-view value))
+                (opt-load-global-bases-clear
+                  (compiler-opt-global-shared-view bases)))]
+            [_
+              (opt-load-global-bases-clear
+                (compiler-opt-global-shared-view bases))])
           (compiler-opt-global-shared-view profile-state)))]))
 
 ;; Apply one callee parameter-write bit to the cached load table. The callee
@@ -170904,7 +171037,19 @@
                     (set! (array-ref out-slots write) entry)
                     (set! write (+ write 1))))])
             (set! read (+ read 1)))))
-      (OptLoadGlobalBases out-slots write))))
+      (if (and
+        (>= bases.cell 0)
+        (not
+          (opt-global-mod-ref-mask-may-write?
+            (compiler-opt-global-shared-view index)
+            row
+            bases.cell)))
+        (OptLoadGlobalBases
+          out-slots
+          write
+          bases.cell
+          (compiler-opt-global-shared-view bases.cell-value))
+        (OptLoadGlobalBases out-slots write (- 0 1) (ir.CompilerIrValue.Unit))))))
 
 ;; The table a direct call leaves behind, before the parameter-rooted filter
 ;; runs over it. The element LAYER goes first -- an element-only callee's every
@@ -171603,6 +171748,21 @@
           (ir.compiler-ir-symbol-id name)
           (compiler-opt-global-shared-view instr))
         instr)]
+    ;; GSF-1: a read of a global cell whose contents the walk knows reads
+    ;; that value; the state steps as for the read it replaces, so `dst` keeps
+    ;; its binding as a base addressing [g].
+    [(ir.CompilerIrInstr.Mov dst src ty)
+      (OptLoadCseResult.Result
+        (opt-load-cse-state-step-other
+          type-segment-bases
+          (compiler-opt-global-shared-view canon)
+          (compiler-opt-global-shared-view sources)
+          (compiler-opt-global-shared-view hs)
+          (compiler-opt-global-shared-view state)
+          (compiler-opt-global-shared-view instr))
+        (opt-load-cse-forward-cell
+          (compiler-opt-global-shared-view state)
+          (compiler-opt-global-shared-view instr)))]
     [_
       (if (opt-alias-instr-clears-all? (compiler-opt-global-shared-view instr))
         (OptLoadCseResult.Result
@@ -171622,7 +171782,9 @@
             (compiler-opt-global-shared-view hs)
             (compiler-opt-global-shared-view state)
             (compiler-opt-global-shared-view instr))
-          instr))]))
+          (opt-load-cse-forward-cell
+            (compiler-opt-global-shared-view state)
+            (compiler-opt-global-shared-view instr))))]))
 
 (define (opt-load-cse-instrs-from
   [type-segment-bases : i64]

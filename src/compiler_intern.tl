@@ -193,8 +193,20 @@
 ;: Structural identities no longer constrain this value: they are canonical
 ;: session records. Raising it still requires auditing pool storage, generated
 ;: lanes, and the fixed-size lookup maps. Refs #6258, #6469.
+;:
+;: 131072 -> 262144 (INTERN-CAP): the root package build (`build --opt-level 0`
+;: over the compiler's own closure, one process for every entry) met the two
+;: lanes at the old bound once the optimizer and allocator sources of #6248's
+;: packets were in the closure -- `tl: intern pool capacity exhausted: source
+;: and generated lanes met` in the stage2 cli gate, and byte-identical on a
+;: local bootstrap. The audit the note above asks for: every pool array is
+;: sized from this constant; the generated-id map is sized with it below
+;: (intern-generated-map-capacity); the structural pair cache, the AST node
+;: pool and the type dedup table carry their own 131072 and are not pool ids;
+;: the compact identity domains sit at 2^32 and above. Doubling costs the pool
+;: about eight megabytes more of fixed storage.
 (define (intern-capacity) : i64
-  131072)
+  262144)
 
 ;; Raw compiler identities that share i64-keyed environments use fixed,
 ;; capacity-independent domains. The low 32-bit domain is reserved in full for
@@ -1130,9 +1142,10 @@
 
 ;; Sized with the pool: every generated id is a pool id, so a compile that fills
 ;; the generated lane must still find a free bucket here rather than exhaust the
-;; probe budget in `intern-generated-canonical-name-at`.
+;; probe budget in `intern-generated-canonical-name-at`. Moves with
+;; intern-capacity (INTERN-CAP).
 (define intern-generated-map-capacity : i64
-  131072)
+  262144)
 (define intern-generated-map-id-slots : (__tl_dyn-array InternSlotId)
   (__tl_make-array InternSlotId intern-generated-map-capacity))
 (define intern-generated-map-hash-slots : (__tl_dyn-array i64)

@@ -887,6 +887,22 @@
               "\n"))
           unit)))))
 
+;; Keep timing boundaries explicit in the pass drivers. Arguments stay inside
+;; the cfg branch so non-profile builds do not evaluate the state expression.
+(defmacro (compiler-opt-profile-pass-note
+  [_state : Expr]
+  [_pass : Expr]
+  [_name : Expr]
+  [_start-ms : Expr]) : unit
+  `(cfg
+    compile-profile
+    (compiler-opt-profile-pass-finish
+      (profile_state.compiler-profile-state-shared-view ,_state)
+      ,_pass
+      ,_name
+      ,_start-ms)
+    unit))
+
 (cfg
   compile-profile
   (define (compiler-opt-profile-pass-finish
@@ -126395,15 +126411,11 @@
         ;; CFG and eliminate dead pure assignments.
         (let
           [_p-tailrec : unit
-            (cfg
-              compile-profile
-              (compiler-opt-profile-pass-finish
-                (profile_state.compiler-profile-state-shared-view
-                  summaries.profile-state)
-                "tailrec"
-                name
-                _t-tailrec)
-              unit)]
+            (compiler-opt-profile-pass-note
+              summaries.profile-state
+              "tailrec"
+              name
+              _t-tailrec)]
           ;; Substitute proven constant-global operands up front so the local
           ;; folds below see literals: a mask global otherwise keeps its `and`
           ;; alive into the loop cluster, pushing an otherwise-unrollable body
@@ -126449,15 +126461,11 @@
             (match fold-result
               [(OptBlockListPassResult.Result _ changed) changed])]
           [_p-fold : unit
-            (cfg
-              compile-profile
-              (compiler-opt-profile-pass-finish
-                (profile_state.compiler-profile-state-shared-view
-                  summaries.profile-state)
-                "fold"
-                name
-                _t-fold)
-              unit)]
+            (compiler-opt-profile-pass-note
+              summaries.profile-state
+              "fold"
+              name
+              _t-fold)]
           [_t-affine : i64 (cfg compile-profile (profile.now-ms) 0)]
           [affine-candidate? : bool
             (opt-affine-blocks-have-candidate?
@@ -126480,15 +126488,11 @@
                 (opt-affine-fold-blocks frame affine-input)
                 folded))]
           [_p-affine : unit
-            (cfg
-              compile-profile
-              (compiler-opt-profile-pass-finish
-                (profile_state.compiler-profile-state-shared-view
-                  summaries.profile-state)
-                "affine"
-                name
-                _t-affine)
-              unit)]
+            (compiler-opt-profile-pass-note
+              summaries.profile-state
+              "affine"
+              name
+              _t-affine)]
           [loop-bce : ir.CompilerIrBlockList
             (if summaries.enabled
               (opt-loop-bce-blocks
@@ -126508,15 +126512,11 @@
               frame
               (opt-ctor-fwd-function-blocks frame loop-bce))]
           [_p-ctor-fwd : unit
-            (cfg
-              compile-profile
-              (compiler-opt-profile-pass-finish
-                (profile_state.compiler-profile-state-shared-view
-                  summaries.profile-state)
-                "ctor_fwd"
-                name
-                _t-ctor-fwd)
-              unit)]
+            (compiler-opt-profile-pass-note
+              summaries.profile-state
+              "ctor_fwd"
+              name
+              _t-ctor-fwd)]
           [_t-promote : i64 (cfg compile-profile (profile.now-ms) 0)]
           [promoted : ir.CompilerIrFunction
             (compiler-opt-debug-observe-function
@@ -126531,15 +126531,11 @@
                   frame
                   ctor-fwd)))]
           [_p-promote : unit
-            (cfg
-              compile-profile
-              (compiler-opt-profile-pass-finish
-                (profile_state.compiler-profile-state-shared-view
-                  summaries.profile-state)
-                "stack_promote"
-                name
-                _t-promote)
-              unit)]
+            (compiler-opt-profile-pass-note
+              summaries.profile-state
+              "stack_promote"
+              name
+              _t-promote)]
           (match promoted
             [(ir.CompilerIrFunction.Function _ _ _ promote-frame promote-blocks)
               ;; Aggregate field-load SROA runs on the post-promotion
@@ -126560,15 +126556,11 @@
                         promote-frame
                         promote-blocks)))]
                 [_p-sroa : unit
-                  (cfg
-                    compile-profile
-                    (compiler-opt-profile-pass-finish
-                      (profile_state.compiler-profile-state-shared-view
-                        summaries.profile-state)
-                      "sroa"
-                      name
-                      _t-sroa)
-                    unit)]
+                  (compiler-opt-profile-pass-note
+                    summaries.profile-state
+                    "sroa"
+                    name
+                    _t-sroa)]
                 [_t-split : i64 (cfg compile-profile (profile.now-ms) 0)]
                 ;; SROA-2: the word split runs on the post-SROA blocks and
                 ;; before rotation/`ssa`, so the scalar mem2reg below builds the
@@ -126582,15 +126574,11 @@
                       type-segment-bases
                       (compiler-opt-global-shared-view sroa)))]
                 [_p-split : unit
-                  (cfg
-                    compile-profile
-                    (compiler-opt-profile-pass-finish
-                      (profile_state.compiler-profile-state-shared-view
-                        summaries.profile-state)
-                      "aggregate_split"
-                      name
-                      _t-split)
-                    unit)]
+                  (compiler-opt-profile-pass-note
+                    summaries.profile-state
+                    "aggregate_split"
+                    name
+                    _t-split)]
                 (match split
                   [(ir.CompilerIrFunction.Function
                       _
@@ -126697,15 +126685,11 @@
                           (match rotation-result
                             [(OptBlockCtxResult.Result _ _ valid) valid]))]
                       [_p-rotation : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "rotation"
-                            name
-                            _t-rotation)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "rotation"
+                          name
+                          _t-rotation)]
                       ;; Register-value SSA construction feeds the verifier-gated
                       ;; dominator passes below. Unsupported cases fall back to the
                       ;; original function, so the optimization path remains safe.
@@ -126728,15 +126712,11 @@
                         (match ssa-result
                           [(OptFunctionCtxResult.Result _ ctx) ctx])]
                       [_p-ssa : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "ssa"
-                            name
-                            _t-ssa)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "ssa"
+                          name
+                          _t-ssa)]
                       ;; Global-cell invariance runs on the SSA form so its
                       ;; entry-loaded vars are single-def and the rewritten
                       ;; descriptor geps/loads become ordinary SSA-fed
@@ -126758,15 +126738,11 @@
                                 (__tl-project-field summaries call-memory))
                               (compiler-opt-global-shared-view ssa))))]
                       [_p-global-cell : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "global_cell"
-                            name
-                            _t-global-cell)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "global_cell"
+                          name
+                          _t-global-cell)]
                       ;; REF-GEP respells a borrowed global's field geps onto
                       ;; the direct form, so GVN below sees one address for
                       ;; the field whichever accessor was inlined to read it.
@@ -126780,15 +126756,11 @@
                           (opt-ref-gep-function
                             (compiler-opt-global-shared-view global-cell)))]
                       [_p-ref-gep : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "ref_gep"
-                            name
-                            _t-ref-gep)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "ref_gep"
+                          name
+                          _t-ref-gep)]
                       [ssa-frame : i64
                         (opt-function-frame
                           (compiler-opt-global-shared-view ref-gep))]
@@ -126827,15 +126799,11 @@
                           (match (compiler-opt-global-shared-view gvn-result)
                             [(OptLoadGvnResult.Result b _) b]))]
                       [_p-gvn : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "gvn"
-                            name
-                            _t-gvn)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "gvn"
+                          name
+                          _t-gvn)]
                       ;; Dominated bounds-check dedup rides the same context:
                       ;; it only deletes mid-block BoundsCheck instructions and
                       ;; REORDERS a constant-offset run's checks (plus the index
@@ -126904,15 +126872,11 @@
                           (match bounds-dom-result
                             [(OptBoundsDomResult.Result b _) b]))]
                       [_p-bounds-dom : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "bounds_dom"
-                            (compiler-opt-global-shared-view name)
-                            _t-bounds-dom)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "bounds_dom"
+                          (compiler-opt-global-shared-view name)
+                          _t-bounds-dom)]
                       [_t-sccp : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [sccp-result : OptBlockCtxResult
                         (opt-sccp-blocks-with-context-result-raw
@@ -126938,15 +126902,11 @@
                         (match (compiler-opt-global-shared-view sccp-result)
                           [(OptBlockCtxResult.Result _ _ valid) valid])]
                       [_p-sccp : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "sccp"
-                            (compiler-opt-global-shared-view name)
-                            _t-sccp)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "sccp"
+                          (compiler-opt-global-shared-view name)
+                          _t-sccp)]
                       ;; Ahead of the bool-branch fuser on purpose: this pass
                       ;; turns a `[sentinel phi, compare, branch]` merge into
                       ;; the `[bool phi, branch]` shape the fuser was written
@@ -126996,14 +126956,11 @@
                           [(OptFunctionRewriteResult.Result _ _ changed)
                             changed])]
                       [_p-phi-cmp-fold : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            summaries.profile-state
-                            "phi_cmp_fold"
-                            name
-                            _t-phi-cmp-fold)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "phi_cmp_fold"
+                          name
+                          _t-phi-cmp-fold)]
                       [_t-bool-branch : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [bool-branch-input : ir.CompilerIrFunction
@@ -127048,15 +127005,11 @@
                           [(OptFunctionRewriteResult.Result _ _ changed)
                             changed])]
                       [_p-bool-branch : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "bool_branch"
-                            (compiler-opt-global-shared-view name)
-                            _t-bool-branch)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "bool_branch"
+                          (compiler-opt-global-shared-view name)
+                          _t-bool-branch)]
                       ;; Jump threading runs directly after the bool-branch
                       ;; fuser, which keeps first refusal on the shapes it
                       ;; already rewrites (all-constant merge phis, the
@@ -127121,15 +127074,11 @@
                           [(OptFunctionRewriteResult.Result _ _ changed)
                             changed])]
                       [_p-thread-branch : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "thread_branch"
-                            (compiler-opt-global-shared-view name)
-                            _t-thread-branch)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "thread_branch"
+                          (compiler-opt-global-shared-view name)
+                          _t-thread-branch)]
                       [_t-cfg2 : i64 (cfg compile-profile (profile.now-ms) 0)]
                       ;; The block merge closes the same stage: `phi_cmp_fold`
                       ;; and the fuser above leave a merge holding one input and
@@ -127168,15 +127117,11 @@
                         (match (compiler-opt-global-shared-view cfg-result)
                           [(OptBlockCtxResult.Result _ ctx _) ctx])]
                       [_p-cfg2 : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "cfg"
-                            (compiler-opt-global-shared-view name)
-                            _t-cfg2)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "cfg"
+                          (compiler-opt-global-shared-view name)
+                          _t-cfg2)]
                       ;; Ahead of switch formation on purpose: a classifier
                       ;; chain reaches here canonicalized (SCCP folded its
                       ;; constant conditions, value numbering unified repeated
@@ -127218,15 +127163,11 @@
                             (compiler-opt-global-shared-view bit-test-blocks))
                           cfg-context)]
                       [_p-bit-test : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "bit_test"
-                            name
-                            _t-bit-test)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "bit_test"
+                          name
+                          _t-bit-test)]
                       [_t-switch : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [switch-input : ir.CompilerIrFunction
                         (ir.CompilerIrFunction.Function
@@ -127256,15 +127197,11 @@
                             (compiler-opt-global-shared-view switch-blocks))
                           bit-test-context)]
                       [_p-switch : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "switch"
-                            name
-                            _t-switch)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "switch"
+                          name
+                          _t-switch)]
                       [_t-preheaders : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       ;; Thread one OptCfgContext per block-state through
@@ -127317,15 +127254,11 @@
                         (match preheaders-result
                           [(OptFunctionCtxResult.Result _ ctx) ctx])]
                       [_p-preheaders : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "preheaders"
-                            name
-                            _t-preheaders)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "preheaders"
+                          name
+                          _t-preheaders)]
                       [_t-rotate-ssa : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [rotate-ssa-result : OptFunctionCtxResult
@@ -127344,15 +127277,11 @@
                         (match rotate-ssa-result
                           [(OptFunctionCtxResult.Result _ ctx) ctx])]
                       [_p-rotate-ssa : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "rotate_ssa"
-                            name
-                            _t-rotate-ssa)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "rotate_ssa"
+                          name
+                          _t-rotate-ssa)]
                       [_t-scratch-reset : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [scratch-reset-result : OptFunctionCtxResult
@@ -127372,15 +127301,11 @@
                         (match scratch-reset-result
                           [(OptFunctionCtxResult.Result _ ctx) ctx])]
                       [_p-scratch-reset : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "scratch_reset"
-                            name
-                            _t-scratch-reset)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "scratch_reset"
+                          name
+                          _t-scratch-reset)]
                       ;; Retire dead phi webs before the loop passes read them:
                       ;; a dead phi cycle reads its loop-defined input like any
                       ;; other reader, and both `flag_exit` and `bce_version`
@@ -127407,15 +127332,11 @@
                             (compiler-opt-global-shared-view dead-phi)))]
                       [dead-phi-context : OptCfgContext scratch-reset-context]
                       [_p-dead-phi : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "dead_phi"
-                            name
-                            _t-dead-phi)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "dead_phi"
+                          name
+                          _t-dead-phi)]
                       ;; Materialize checked owning-handle loads only for the
                       ;; narrow LICM window. General folding/GVN never sees the
                       ;; capability, and the observer makes the complete proof
@@ -127489,15 +127410,11 @@
                           (opt-function-blocks
                             (compiler-opt-global-shared-view licm)))]
                       [_p-licm : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "licm"
-                            name
-                            _t-licm)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "licm"
+                          name
+                          _t-licm)]
                       ;; Run successor sinking while block-local address recipes
                       ;; are still explicit. Induction strength reduction below
                       ;; may replace the retained header address with a pointer
@@ -127537,15 +127454,11 @@
                         (match induction-result
                           [(OptFunctionCtxResult.Result _ ctx) ctx])]
                       [_p-induction : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "induction"
-                            name
-                            _t-induction)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "induction"
+                          name
+                          _t-induction)]
                       ;; Monotone-flag loop-exit conversion runs on induction's
                       ;; output and ahead of versioning: the loop it hands the
                       ;; versioner has lost its flag test and its clearing arm,
@@ -127569,15 +127482,11 @@
                         (match flag-exit-result
                           [(OptFunctionCtxResult.Result _ ctx) ctx])]
                       [_p-flag-exit : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "flag_exit"
-                            name
-                            _t-flag-exit)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "flag_exit"
+                          name
+                          _t-flag-exit)]
                       ;; Bounds-check loop versioning runs on induction's
                       ;; output so its check-free fast clone reaches the
                       ;; unroller INSIDE the same pipeline iteration (a
@@ -127633,15 +127542,11 @@
                               bce-version-context)
                             (compiler-opt-global-shared-view bce-version)))]
                       [_p-bce-version : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "bce_version"
-                            name
-                            _t-bce-version)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "bce_version"
+                          name
+                          _t-bce-version)]
                       ;; Constant fills become one tl_mem_fill8 call BEFORE the
                       ;; unroller sees them: unrolling a fill spends an 11-
                       ;; instruction version guard and a 4-per-slot remainder to
@@ -127668,15 +127573,11 @@
                         (match fill-call-result
                           [(OptFunctionCtxResult.Result _ ctx) ctx])]
                       [_p-fill-call : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "fill_call"
-                            name
-                            _t-fill-call)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "fill_call"
+                          name
+                          _t-fill-call)]
                       ;; Element copies become one tl_mem_copy_fwd (bytes) or
                       ;; tl_mem_copy8_fwd (i64/u64 slots) call, and for the same
                       ;; reason fills do: it has to happen BEFORE the unroller,
@@ -127703,15 +127604,11 @@
                         (match copy-call-result
                           [(OptFunctionCtxResult.Result _ ctx) ctx])]
                       [_p-copy-call : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "copy_call"
-                            name
-                            _t-copy-call)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "copy_call"
+                          name
+                          _t-copy-call)]
                       ;; Canonical counted-loop unrolling (x4) runs on
                       ;; the versioned blocks. A successful rewrite
                       ;; versions at most one loop per pipeline iteration and
@@ -127734,15 +127631,11 @@
                         (match unroll-result
                           [(OptFunctionCtxResult.Result _ ctx) ctx])]
                       [_p-unroll : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "unroll"
-                            name
-                            _t-unroll)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "unroll"
+                          name
+                          _t-unroll)]
                       ;; Byte-compose load combining runs immediately after the
                       ;; unroller: a constant-trip loop unrolled THIS iteration
                       ;; exposes its straight-line compose here, and the round's
@@ -127771,15 +127664,11 @@
                                   unrolled-frame
                                   unrolled-blocks))]))]
                       [_p-load-combine : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "load_combine"
-                            name
-                            _t-load-combine)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "load_combine"
+                          name
+                          _t-load-combine)]
                       ;; Linear-function test replacement runs here, after
                       ;; bce_version and unroll: both key their rewrites on the
                       ;; counter phi this pass retires, so it has to see their
@@ -127802,15 +127691,11 @@
                         (match lftr-result
                           [(OptFunctionCtxResult.Result _ ctx) ctx])]
                       [_p-lftr : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "lftr"
-                            name
-                            _t-lftr)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "lftr"
+                          name
+                          _t-lftr)]
                       ;; LFTR materializes an end pointer in an inner loop's
                       ;; preheader after the ordinary LICM run. Give that fresh
                       ;; invariant (and any induction-created address recipe)
@@ -127841,15 +127726,11 @@
                         (match post-lftr-licm-result
                           [(OptFunctionCtxResult.Result _ ctx) ctx])]
                       [_p-post-lftr-licm : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "post_lftr_licm"
-                            name
-                            _t-post-lftr-licm)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "post_lftr_licm"
+                          name
+                          _t-post-lftr-licm)]
                       ;; Invariant-offset Gep splitting. Two orderings pin it
                       ;; here. It has to follow bce_version, because only the
                       ;; fast clone drops the BoundsCheck that keeps the
@@ -127879,15 +127760,11 @@
                         (match gep-offset-result
                           [(OptFunctionCtxResult.Result _ ctx) ctx])]
                       [_p-gep-offset : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "gep_offset"
-                            name
-                            _t-gep-offset)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "gep_offset"
+                          name
+                          _t-gep-offset)]
                       [unroll-frame : i64
                         (opt-function-frame
                           (compiler-opt-global-shared-view gep-offset))]
@@ -127938,15 +127815,11 @@
                               unroll-frame
                               unroll-blocks)))]
                       [_p-global : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "global_gvn"
-                            name
-                            _t-global)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "global_gvn"
+                          name
+                          _t-global)]
                       [global-blocks : ir.CompilerIrBlockList
                         (opt-function-blocks global)]
                       ;; Substitute proven constant-global divisors with
@@ -127981,15 +127854,11 @@
                               const-div-blocks)
                             const-div-blocks))]
                       [_p-divrem-safety : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "divrem_safety"
-                            name
-                            _t-divrem-safety)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "divrem_safety"
+                          name
+                          _t-divrem-safety)]
                       ;; Split multi-use Geps into per-use single-use Geps so
                       ;; the backend's indexed-memory fusion fires on every
                       ;; Load/StorePtr (the quicksort swap shape). DCE then
@@ -128013,15 +127882,11 @@
                             unroll-frame
                             divrem-safe))]
                       [_p-gep-split : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "gep_split"
-                            name
-                            _t-gep-split)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "gep_split"
+                          name
+                          _t-gep-split)]
                       ;; Second rotation round. `flag_exit` is what makes a
                       ;; guarded compare loop rotatable at all: it retires the
                       ;; monotone flag's re-test and folds every outside reader
@@ -128095,15 +127960,11 @@
                             (opt-uniform-phi-rotate-gated gep-split)
                             gep-split))]
                       [_p-rotate-ssa-late : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "rotate_ssa"
-                            name
-                            _t-rotate-ssa-late)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "rotate_ssa"
+                          name
+                          _t-rotate-ssa-late)]
                       [gep-split-frame : i64
                         (opt-function-frame
                           (compiler-opt-global-shared-view rotate-ssa-late))]
@@ -128118,15 +127979,11 @@
                       [cmp-sink : ir.CompilerIrBlockList
                         (opt-cmp-sink-blocks gep-split-blocks)]
                       [_p-cmp-sink : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "cmp_sink"
-                            name
-                            _t-cmp-sink)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "cmp_sink"
+                          name
+                          _t-cmp-sink)]
                       [_t-successor-sink : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       ;; The context this returns is valid for its OWN output
@@ -128176,15 +128033,11 @@
                       [successor-sink-frame : i64
                         (opt-function-frame successor-sink-function)]
                       [_p-successor-sink : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "successor_sink"
-                            name
-                            _t-successor-sink)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "successor_sink"
+                          name
+                          _t-successor-sink)]
                       ;; GS-1's guard-first dominator sink. Its slot is pinned
                       ;; between here and `bool_branch_late`, for four reasons.
                       ;; It has to be BELOW every pass that reshapes the CFG in
@@ -128240,15 +128093,11 @@
                       [guard-sink-frame : i64
                         (opt-function-frame guard-sink-function)]
                       [_p-guard-sink : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "guard_sink"
-                            name
-                            _t-guard-sink)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "guard_sink"
+                          name
+                          _t-guard-sink)]
                       ;; BCE versioning runs after the early bool-branch pass
                       ;; and may be the final CFG rewrite at the two-iteration
                       ;; fixpoint cap. Lower its materialized And guards here,
@@ -128292,15 +128141,11 @@
                       [bool-branch-late-frame : i64
                         (opt-function-frame bool-branch-late-function)]
                       [_p-bool-branch-late : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "bool_branch_late"
-                            name
-                            _t-bool-branch-late)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "bool_branch_late"
+                          name
+                          _t-bool-branch-late)]
                       ;; Below every loop pass on purpose: it consumes a loop
                       ;; the versioner and the dominating-comparison fold have
                       ;; both already refused, and it reads the ROTATED shape
@@ -128335,15 +128180,11 @@
                             (compiler-opt-global-shared-view ubound-function)))]
                       [ubound-frame : i64 (opt-function-frame ubound-function)]
                       [_p-ubound : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "ubound"
-                            name
-                            _t-ubound)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "ubound"
+                          name
+                          _t-ubound)]
                       ;; The compare/branch fusion pass that used to sit here
                       ;; now runs BELOW the whole pipeline fixpoint
                       ;; (`opt-cmp-dup-final-pass`). Its copies exist only to be
@@ -128369,15 +128210,11 @@
                             ubound
                             8))]
                       [_p-dce : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "dce"
-                            name
-                            _t-dce)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "dce"
+                          name
+                          _t-dce)]
                       ;; Pure scheduling, and last on purpose: it exists only
                       ;; to satisfy the backend's ADJACENCY requirement for the
                       ;; gep-load memory-operand folds, so nothing may run
@@ -128399,15 +128236,11 @@
                             ubound-frame
                             (compiler-opt-global-shared-view dced)))]
                       [_p-load-sink : unit
-                        (cfg
-                          compile-profile
-                          (compiler-opt-profile-pass-finish
-                            (profile_state.compiler-profile-state-shared-view
-                              summaries.profile-state)
-                            "load_sink"
-                            name
-                            _t-load-sink)
-                          unit)]
+                        (compiler-opt-profile-pass-note
+                          summaries.profile-state
+                          "load_sink"
+                          name
+                          _t-load-sink)]
                       (ir.CompilerIrFunction.Function
                         name
                         params
@@ -128460,15 +128293,11 @@
               (compiler-opt-global-shared-view params)
               blocks))]
         [_p-fold : unit
-          (cfg
-            compile-profile
-            (compiler-opt-profile-pass-finish
-              (profile_state.compiler-profile-state-shared-view
-                summaries.profile-state)
-              "fold"
-              name
-              _t-fold)
-            unit)]
+          (compiler-opt-profile-pass-note
+            summaries.profile-state
+            "fold"
+            name
+            _t-fold)]
         [loop-bce : ir.CompilerIrBlockList
           (if summaries.enabled
             (opt-loop-bce-blocks
@@ -128490,15 +128319,11 @@
               frame
               (compiler-opt-global-shared-view loop-bce)))]
         [_p-ctor-fwd : unit
-          (cfg
-            compile-profile
-            (compiler-opt-profile-pass-finish
-              (profile_state.compiler-profile-state-shared-view
-                summaries.profile-state)
-              "ctor_fwd"
-              name
-              _t-ctor-fwd)
-            unit)]
+          (compiler-opt-profile-pass-note
+            summaries.profile-state
+            "ctor_fwd"
+            name
+            _t-ctor-fwd)]
         [_t-promote : i64 (cfg compile-profile (profile.now-ms) 0)]
         [promoted : ir.CompilerIrFunction
           (compiler-opt-debug-observe-function
@@ -128513,15 +128338,11 @@
                 frame
                 ctor-fwd)))]
         [_p-promote : unit
-          (cfg
-            compile-profile
-            (compiler-opt-profile-pass-finish
-              (profile_state.compiler-profile-state-shared-view
-                summaries.profile-state)
-              "stack_promote"
-              name
-              _t-promote)
-            unit)]
+          (compiler-opt-profile-pass-note
+            summaries.profile-state
+            "stack_promote"
+            name
+            _t-promote)]
         (match promoted
           [(ir.CompilerIrFunction.Function _ _ _ promoted-frame promoted-blocks)
             (let
@@ -128539,15 +128360,11 @@
                     promoted-blocks
                     (compiler-opt-global-shared-view used)))]
               [_p-cfg : unit
-                (cfg
-                  compile-profile
-                  (compiler-opt-profile-pass-finish
-                    (profile_state.compiler-profile-state-shared-view
-                      summaries.profile-state)
-                    "cfg"
-                    name
-                    _t-cfg)
-                  unit)]
+                (compiler-opt-profile-pass-note
+                  summaries.profile-state
+                  "cfg"
+                  name
+                  _t-cfg)]
               (OptLevel1PreDceResult.Result
                 (ir.CompilerIrFunction.Function
                   name
@@ -128584,15 +128401,11 @@
                   (compiler-opt-global-shared-view used)
                   blocks))]
             [_p-dce : unit
-              (cfg
-                compile-profile
-                (compiler-opt-profile-pass-finish
-                  (profile_state.compiler-profile-state-shared-view
-                    summaries.profile-state)
-                  "dce"
-                  name
-                  _t-dce)
-                unit)]
+              (compiler-opt-profile-pass-note
+                summaries.profile-state
+                "dce"
+                name
+                _t-dce)]
             (ir.CompilerIrFunction.Function name params ret-ty frame dced))])]))
 
 (define (optimize-function-pass-with-summaries

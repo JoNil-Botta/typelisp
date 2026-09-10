@@ -1,6 +1,6 @@
 (import stdlib.byte_buf)
 (import stdlib.ssh_known_hosts_parse as known_hosts)
-(import stdlib.string)
+(import stdlib.str_cat)
 (import stdlib.test)
 
 (define (fail [message : String]) : unit
@@ -56,7 +56,7 @@
   [limits : known_hosts.KnownHostsLimits]) : bool
   (let
     [policy : String
-      (string.concat3 selector " ssh-ed25519 " "QUJD trailing bytes")]
+      (str_cat.str-cat selector " ssh-ed25519 " "QUJD trailing bytes")]
     (match (scan-text policy identity limits)
       [(known_hosts.KnownHostsScanErr _) false]
       [(known_hosts.KnownHostsScanOk records)
@@ -285,7 +285,7 @@
 
 (define (assert-selector-error [selector : String] [expected : i64]) : unit
   (let
-    [policy : String (string.concat3 selector " ssh-ed25519 " "QUJD")]
+    [policy : String (str_cat.str-cat selector " ssh-ed25519 " "QUJD")]
     [limits : known_hosts.KnownHostsLimits (known_hosts.default-limits)]
     (match (scan-text policy (name-identity "example.test" 22) limits)
       [(known_hosts.KnownHostsScanErr _) (fail "selector error escaped record")]

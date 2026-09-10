@@ -7,6 +7,7 @@
 ;#
 ;# Usage: `(import stdlib.ssh_known_hosts_parse)`.
 (import stdlib.byte_buf)
+(import stdlib.str_cat)
 (import stdlib.string)
 
 ;: Host syntax already normalized by a deterministic endpoint parser.
@@ -453,7 +454,12 @@
       (let
         [port-text : String (string.int->string identity.port)]
         [token : String
-          (string.concat5 "[" (string.copy (& identity.host)) "]" ":" port-text)]
+          (str_cat.str-cat
+            "["
+            (string.copy (& identity.host))
+            "]"
+            ":"
+            port-text)]
         (KnownHostsLookupOk token)))))
 
 ;: Number of checked records.

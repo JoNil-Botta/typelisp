@@ -60283,6 +60283,146 @@
 ;; answer a located check with the bare `tl_oob_abort` the unfused form does
 ;; not: the same descriptor, on the same trap, for a compare that happens to
 ;; have folded.
+;; BE-3: the bounds fold on a staged address, in M6-D's order -- the handle
+;; goes to its staging register FIRST, then the compare reads the length word
+;; through it. `staged-base` is "" whenever the fold spelled a direct address,
+;; and then this is the direct emission.
+(define (compiler-backend-emit-gep-load-bounds-fold-staged
+  [ctx : CompilerBackendEmissionContext]
+  [staged-value : compiler_ir_types.CompilerIrValue]
+  [staged-base : String]
+  [length-operand : String]
+  [index-operand : String]
+  [ok-label : i64]
+  [bounds-instr : compiler_ir_types.CompilerIrInstr]) : ResultCompilerBackend
+  (if (string.eq (compiler-backend-global-shared-view staged-base) "")
+    (compiler-backend-emit-gep-load-bounds-fold
+      ctx
+      length-operand
+      index-operand
+      ok-label
+      bounds-instr)
+    (match (compiler-backend-emit-load-value-with-plan
+      (compiler-backend-global-shared-view ctx.assignments)
+      staged-value
+      staged-base
+      (compiler-backend-global-shared-view ctx.backend-state))
+      [(ResultCompilerBackend.Ok stage-asm)
+        (match (compiler-backend-emit-gep-load-bounds-fold
+          ctx
+          length-operand
+          index-operand
+          ok-label
+          bounds-instr)
+          [(ResultCompilerBackend.Ok body-asm)
+            (ResultCompilerBackend.Ok (str_cat.str-cat stage-asm body-asm))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+
+;; BE-3: the sibling word of a staged bounds fold (see the fold site): the
+;; load's assembly, read through the fold's staging register, when the two
+;; instructions at `at` are that shape.
+(defenum CompilerBackendBoundsSibling
+  (No)
+  (Some String))
+
+(define (compiler-backend-bounds-fold-same-base?
+  [a : compiler_ir_types.CompilerIrValue]
+  [b : compiler_ir_types.CompilerIrValue]) : bool
+  (match (compiler-backend-global-shared-view a)
+    [(compiler_ir_types.CompilerIrValue.Global x)
+      (match (compiler-backend-global-shared-view b)
+        [(compiler_ir_types.CompilerIrValue.Global y) (= x y)]
+        [_ false])]
+    [(compiler_ir_types.CompilerIrValue.Var x)
+      (match (compiler-backend-global-shared-view b)
+        [(compiler_ir_types.CompilerIrValue.Var y) (= x y)]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-backend-bounds-fold-sibling
+  [ctx : CompilerBackendEmissionContext]
+  [base : compiler_ir_types.CompilerIrValue]
+  [base-reg : String]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [at : i64]) : CompilerBackendBoundsSibling
+  (if (or (string.eq base-reg "") (>= (+ at 1) instrs.len))
+    (CompilerBackendBoundsSibling.No)
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref
+      (compiler-backend-global-shared-view instrs)
+      at)
+      [(compiler_ir_types.CompilerIrInstr.Gep
+          gep-dst
+          gep-base
+          gep-offset
+          elem-ty)
+        (match (compiler_ir_types.compiler-ir-instr-seq-ref
+          (compiler-backend-global-shared-view instrs)
+          (+ at 1))
+          [(compiler_ir_types.CompilerIrInstr.Load load-dst load-src load-ty)
+            (match (compiler-backend-value-as-i64
+              (compiler-backend-global-shared-view gep-offset))
+              [(option_i64.Some n)
+                (let
+                  [dst-home : String
+                    (compiler-backend-var-register-home
+                      (compiler-backend-global-shared-view ctx.backend-state)
+                      (compiler-backend-global-shared-view ctx.assignments)
+                      load-dst)]
+                  [disp : i64
+                    (*
+                      n
+                      (compiler-backend-type-size
+                        (compiler-backend-global-shared-view
+                          ctx.type-segment-bases)
+                        (compiler-backend-global-shared-view elem-ty)))]
+                  (if (and
+                    (compiler-backend-branch-uses-var?
+                      (compiler-backend-global-shared-view load-src)
+                      gep-dst)
+                    (compiler-backend-bounds-fold-same-base?
+                      (compiler-backend-global-shared-view base)
+                      (compiler-backend-global-shared-view gep-base))
+                    (compiler-backend-var-single-use?
+                      (compiler-backend-global-shared-view ctx.use-counts)
+                      gep-dst)
+                    (not (string.eq dst-home ""))
+                    (not
+                      (compiler-backend-float-type?
+                        (compiler-backend-global-shared-view load-ty)))
+                    (=
+                      (compiler-backend-type-size
+                        (compiler-backend-global-shared-view
+                          ctx.type-segment-bases)
+                        (compiler-backend-global-shared-view load-ty))
+                      8)
+                    (compiler-backend-imm32? disp))
+                    (let
+                      ;; The walker would have dispatched this gep: consume its
+                      ;; ordinal exactly as it would have.
+                      [fold-disp : i64
+                        (compiler-backend-gep-fold-next!
+                          (compiler-backend-global-shared-view
+                            ctx.function-state)
+                          (compiler-backend-global-shared-view
+                            ctx.type-segment-bases)
+                          (compiler-backend-global-shared-view gep-offset)
+                          (compiler-backend-global-shared-view elem-ty))]
+                      (CompilerBackendBoundsSibling.Some
+                        (str_cat.str-cat
+                          "    movq "
+                          (compiler-backend-base-address
+                            (+ disp fold-disp)
+                            (compiler-backend-global-shared-view base-reg))
+                          ", "
+                          dst-home
+                          "\n")))
+                    (CompilerBackendBoundsSibling.No)))]
+              [(option_i64.None) (CompilerBackendBoundsSibling.No)])]
+          [_ (CompilerBackendBoundsSibling.No)])]
+      [_ (CompilerBackendBoundsSibling.No)])))
+
 (define (compiler-backend-emit-gep-load-bounds-fold
   [ctx : CompilerBackendEmissionContext]
   [length-operand : String]
@@ -61059,9 +61199,36 @@
         load-dst))
     (>= index instrs.len))
     (CompilerBackendMaybeGepLoadCmpEmission.No)
+    ;; BE-3: the bounds fold takes the M6-D staged address too. A length read
+    ;; through a descriptor HANDLE the allocator keeps out of a register --
+    ;; `%l = load (gep @g, 1) ; bounds_check %i, %l`, the shape of every checked
+    ;; global array read inside a loop that also calls -- has no register-homed
+    ;; base, so the direct address is "" and the fold declined: `movq g(%rip),
+    ;; %r10 ; movq 8(%r10), %rax ; cmpq %rax, %r15`. The staged address puts the
+    ;; handle in the length's own (single-use, never otherwise written) home and
+    ;; reads the word from there: `movq g(%rip), %rax ; cmpq 8(%rax), %r15 ; jb
+    ;; ok`. The abort tail's discipline holds as it did: the staging register
+    ;; is a general register (M6-D's staged base excludes %rbp, and %rsp is
+    ;; never a home), the tail's first act is the `pushq 8(%rax)` re-read of
+    ;; the length while %rax is still the staged handle, and the index it reads
+    ;; after that is a register by the probe's own rule.
+    ;;
+    ;; The SIBLING word. The check is followed, in every such read, by the data
+    ;; word of the same handle -- `gep @g, 0 ; load` -- which the ordinary path
+    ;; had read off the register it staged the handle into for the length
+    ;; (`movq (%r10), %rax`). With the length folded that staging is gone, and
+    ;; the sibling would re-materialise the handle (`movq g(%rip), %r10`) and
+    ;; give the fold's instruction straight back: measured as exactly zero
+    ;; change on callgraph_scc. So the fold reads the sibling word through its
+    ;; own staged register when it stands right behind the check -- a
+    ;; single-use gep of the same base at a literal offset feeding a full-word
+    ;; scalar load into a register home -- and resumes past both. The gep's
+    ;; fold ordinal is consumed as the walker would have consumed it.
     (match (compiler-backend-gep-load-bounds-probe
       (compiler-backend-global-shared-view ctx)
-      (compiler-backend-global-shared-view addr)
+      (if (string.eq (compiler-backend-global-shared-view addr) "")
+        (compiler-backend-global-shared-view staged-addr)
+        (compiler-backend-global-shared-view addr))
       load-dst
       (compiler-backend-global-shared-view load-ty)
       (compiler-backend-global-shared-view instrs)
@@ -61071,26 +61238,59 @@
           index-operand
           ok-label
           after-bounds)
-        (CompilerBackendMaybeGepLoadCmpEmission.Some
-          (compiler-backend-emit-fused-result-rest
-            (compiler-backend-global-shared-view ctx)
-            fallthrough
-            (compiler-backend-emit-gep-load-bounds-fold
-              (compiler-backend-global-shared-view ctx)
-              length-operand
-              index-operand
-              ok-label
-              (compiler_ir_types.compiler-ir-instr-seq-ref
+        (let
+          [staged? : bool
+            (string.eq (compiler-backend-global-shared-view addr) "")]
+          [base-reg : String
+            (if staged?
+              (if staged-scavenged?
+                (compiler-backend-gep-load-cmp-scavenged-staging-base
+                  (compiler-backend-global-shared-view ctx)
+                  (compiler-backend-global-shared-view instrs)
+                  index
+                  true)
+                (compiler-backend-global-shared-view staged-base))
+              "")]
+          [sibling : CompilerBackendBoundsSibling
+            (if staged?
+              (compiler-backend-bounds-fold-sibling
+                (compiler-backend-global-shared-view ctx)
+                (compiler-backend-global-shared-view staged-value)
+                (compiler-backend-global-shared-view base-reg)
                 (compiler-backend-global-shared-view instrs)
-                (- after-bounds 1)))
-            (compiler-backend-global-shared-view instrs)
-            after-bounds
-            out))]
+                after-bounds)
+              (CompilerBackendBoundsSibling.No))]
+          [resume : i64
+            (match (compiler-backend-global-shared-view sibling)
+              [(CompilerBackendBoundsSibling.Some _) (+ after-bounds 2)]
+              [(CompilerBackendBoundsSibling.No) after-bounds])]
+          (CompilerBackendMaybeGepLoadCmpEmission.Some
+            (compiler-backend-emit-fused-result-rest
+              (compiler-backend-global-shared-view ctx)
+              fallthrough
+              (match (compiler-backend-emit-gep-load-bounds-fold-staged
+                (compiler-backend-global-shared-view ctx)
+                (compiler-backend-global-shared-view staged-value)
+                (compiler-backend-global-shared-view base-reg)
+                length-operand
+                index-operand
+                ok-label
+                (compiler_ir_types.compiler-ir-instr-seq-ref
+                  (compiler-backend-global-shared-view instrs)
+                  (- after-bounds 1)))
+                [(ResultCompilerBackend.Ok fold-asm)
+                  (ResultCompilerBackend.Ok
+                    (str_cat.str-cat
+                      fold-asm
+                      (match sibling
+                        [(CompilerBackendBoundsSibling.Some load-asm) load-asm]
+                        [(CompilerBackendBoundsSibling.No) ""])))]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])
+              (compiler-backend-global-shared-view instrs)
+              resume
+              out)))]
       [(CompilerBackendGepLoadBoundsFold.No)
-        ;; The bounds fold above stays on the DIRECT address: its abort tail
-        ;; re-reads both operands and owns its own operand discipline, so M6-D
-        ;; leaves it exactly as validated. Only the compare+branch shapes take
-        ;; the staged address.
         (match (compiler-backend-gep-load-cmp-branch-probe
           (compiler-backend-global-shared-view ctx)
           (if (string.eq (compiler-backend-global-shared-view addr) "")

@@ -1087,6 +1087,45 @@ check_cmp_fold_load() {
     assert_not_contains "$_body" 'call tl_oob_abort' cmp-fold-load
 }
 
+# BE-3: the bounds-check length of a global array read whose handle the loop
+# re-reads per iteration is compared THROUGH the handle's staging register --
+# the length's own single-use home -- and the data word behind the check is
+# read through the same register: `movq g(%rip), %rax ; cmpq 8(%rax), %rdi ;
+# jb ok ; movq (%rax), %rax`. Pre-BE-3 the body carried `movq g(%rip), %r10 ;
+# movq 8(%r10), %rax ; cmpq %rax, %rdi ; jb ok ; movq (%r10), %rax`: the
+# length loaded into a register, the check compared from it, the data word
+# read off the scavenged handle. The spelling is target-independent.
+check_global_len_fold() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "global_len_fold_$_suffix" \
+            tests/integration/global_len_fold.tl "$_target")
+        _body=$(function_body "$_asm" _tl_global_len_fold_probe_sum)
+        # The items check compares the length word through the handle register
+        # the line before loaded, and no instruction loads that word into a
+        # register.
+        assert_regex_count_eq "$_body" \
+            '^[[:space:]]+cmpq 8\(%r[a-z0-9]+\), %r[a-z0-9]+$' 1 \
+            "global-len-fold-$_target"
+        assert_next_line_matches "$_body" \
+            'movq _tl_global_len_fold_glf_items[(]%rip[)], %r[a-z0-9]+$' \
+            '^[[:space:]]+cmpq 8[(]%r[a-z0-9]+[)], %r[a-z0-9]+$' \
+            "global-len-fold-$_target"
+        # The data word is read through the SAME register the check used. (The
+        # slots read before the loop hoists its own handle and loads its length
+        # once, so a bare `movq 8(%r..)` is not forbidden; the items read is
+        # pinned by the next-line rule above and the single folded compare.)
+        _handle=$(grep -E '^[[:space:]]+cmpq 8\(%r[a-z0-9]+\), %r' "$_body" \
+            | sed -E 's/^[[:space:]]+cmpq 8\((%r[a-z0-9]+)\).*/\1/' | head -n 1)
+        [ -n "$_handle" ] || fail "global-len-fold-$_target: no handle register"
+        assert_matches "$_body" \
+            "^[[:space:]]+movq \\($_handle\\), %r" \
+            "global-len-fold-$_target"
+        # The check still traps: the located abort tail is present once for it.
+        assert_matches "$_body" '^[[:space:]]+pushq 8\(%r[a-z0-9]+\)$' \
+            "global-len-fold-$_target"
+    done
+}
 # M6-I: a scalar global read folds into the compare's rip-relative memory
 # operand. The read is `movq g(%rip), %rN` on both targets, so the fold and its
 # spelling are target-independent and both are checked on both targets.
@@ -3307,6 +3346,7 @@ check_loadcse_forward
 check_switch_dispatch_scavenge
 check_cmp_fold_load
 check_global_cmp_mem_fold
+check_global_len_fold
 check_rmw_mem_operand_fold
 check_alu_mem_operand_tie
 check_alu_mem_operand_sink

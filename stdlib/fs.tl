@@ -72,50 +72,63 @@
   (:export-symbol "_tl_fs_stdlib_fs_fs_string_vector_contains_question") : bool
   (svec.contains? (& items.items) needle))
 
+;: Raw host-boundary contract: path pointers must be live NUL-terminated byte
+;: strings; buffers must be live, initialized or writable as the host operation
+;: requires, and large enough for every supplied count/target structure; field
+;: offsets must match the selected target ABI; integer descriptors and handles
+;: must name live resources valid for the requested operation. The declarations
+;: carrying these obligations are unsafe. Public wrappers below remain safe by
+;: owning their storage, validating extents, and checking host results before
+;: interpreting output.
 ;: Linux `mkdir` via the `mkdir` syscall (number 83).
-(define (linux-syscall-mkdir [path : (Ptr u8)] [mode : i64]) : i64
-  (cfg
-    windows
-    -1
-    (io.linux-syscall-status
-      (unsafe
-        (syscall 83 (io.linux-ptr-arg path) mode)))))
+(unsafe
+  (define (linux-syscall-mkdir [path : (Ptr u8)] [mode : i64]) : i64
+    (cfg
+      windows
+      -1
+      (io.linux-syscall-status
+        (unsafe
+          (syscall 83 (io.linux-ptr-arg path) mode))))))
 
 ;: Linux `unlink` via the `unlink` syscall (number 87).
-(define (linux-syscall-unlink [path : (Ptr u8)]) : i64
-  (cfg
-    windows
-    -1
-    (io.linux-syscall-status
-      (unsafe
-        (syscall 87 (io.linux-ptr-arg path))))))
+(unsafe
+  (define (linux-syscall-unlink [path : (Ptr u8)]) : i64
+    (cfg
+      windows
+      -1
+      (io.linux-syscall-status
+        (unsafe
+          (syscall 87 (io.linux-ptr-arg path)))))))
 
 ;: Linux `rmdir` via the `rmdir` syscall (number 84).
-(define (linux-syscall-rmdir [path : (Ptr u8)]) : i64
-  (cfg
-    windows
-    -1
-    (io.linux-syscall-status
-      (unsafe
-        (syscall 84 (io.linux-ptr-arg path))))))
+(unsafe
+  (define (linux-syscall-rmdir [path : (Ptr u8)]) : i64
+    (cfg
+      windows
+      -1
+      (io.linux-syscall-status
+        (unsafe
+          (syscall 84 (io.linux-ptr-arg path)))))))
 
 ;: Linux `rename` via the `rename` syscall (number 82).
-(define (linux-syscall-rename [source : (Ptr u8)] [destination : (Ptr u8)]) : i64
-  (cfg
-    windows
-    -1
-    (io.linux-syscall-status
-      (unsafe
-        (syscall 82 (io.linux-ptr-arg source) (io.linux-ptr-arg destination))))))
+(unsafe
+  (define (linux-syscall-rename [source : (Ptr u8)] [destination : (Ptr u8)]) : i64
+    (cfg
+      windows
+      -1
+      (io.linux-syscall-status
+        (unsafe
+          (syscall 82 (io.linux-ptr-arg source) (io.linux-ptr-arg destination)))))))
 
 ;: Linux advisory whole-file lock via the `flock` syscall (number 73).
-(define (linux-syscall-flock [fd : i64] [operation : i64]) : i64
-  (cfg
-    windows
-    -1
-    (io.linux-syscall-status
-      (unsafe
-        (syscall 73 fd operation)))))
+(unsafe
+  (define (linux-syscall-flock [fd : i64] [operation : i64]) : i64
+    (cfg
+      windows
+      -1
+      (io.linux-syscall-status
+        (unsafe
+          (syscall 73 fd operation))))))
 
 ;: Linux `getpid` via the `getpid` syscall (number 39); never fails.
 (define (linux-syscall-getpid) : i64
@@ -128,160 +141,204 @@
 ;: Linux `getcwd` via the `getcwd` syscall (number 79).
 ;: Returns the buffer pointer on success or a null pointer on error, matching
 ;: the C `getcwd` contract the callers expect.
-(define (linux-syscall-getcwd [buf : (MutPtr u8)] [size : i64]) : (Ptr u8)
-  (cfg
-    windows
-    (unsafe
-      (int->ptr (cast 0 : u64) : (Ptr u8)))
-    (let
-      [ptr : i64
-        (io.linux-ptr-arg
-          (unsafe
-            (ptr-cast buf : (Ptr u8))))]
-      [result : i64
-        (io.linux-syscall-status
-          (unsafe
-            (syscall 79 ptr size)))]
-      (if (< result 0)
-        (unsafe
-          (int->ptr (cast 0 : u64) : (Ptr u8)))
-        (unsafe
-          (int->ptr (cast ptr : u64) : (Ptr u8)))))))
-
-;: Linux `openat` syscall (number 257), used for directory enumeration.
-(define (linux-syscall-openat
-  [dirfd : i64]
-  [path : (Ptr u8)]
-  [flags : i64]
-  [mode : i64]) : i64
-  (cfg
-    windows
-    -1
-    (io.linux-syscall-status
+(unsafe
+  (define (linux-syscall-getcwd [buf : (MutPtr u8)] [size : i64]) : (Ptr u8)
+    (cfg
+      windows
       (unsafe
-        (syscall 257 dirfd (io.linux-ptr-arg path) flags mode)))))
-
-;: Linux `getdents64` syscall (number 217), returning bytes read or -1.
-(define (linux-syscall-getdents64 [fd : i64] [buf : (MutPtr u8)] [count : i64]) : i64
-  (cfg
-    windows
-    -1
-    (io.linux-syscall-status
-      (unsafe
-        (syscall
-          217
-          fd
+        (int->ptr (cast 0 : u64) : (Ptr u8)))
+      (let
+        [ptr : i64
           (io.linux-ptr-arg
             (unsafe
-              (ptr-cast buf : (Ptr u8))))
-          count)))))
+              (ptr-cast buf : (Ptr u8))))]
+        [result : i64
+          (io.linux-syscall-status
+            (unsafe
+              (syscall 79 ptr size)))]
+        (if (< result 0)
+          (unsafe
+            (int->ptr (cast 0 : u64) : (Ptr u8)))
+          (unsafe
+            (int->ptr (cast ptr : u64) : (Ptr u8))))))))
+
+;: Linux `openat` syscall (number 257), used for directory enumeration.
+(unsafe
+  (define (linux-syscall-openat
+    [dirfd : i64]
+    [path : (Ptr u8)]
+    [flags : i64]
+    [mode : i64]) : i64
+    (cfg
+      windows
+      -1
+      (io.linux-syscall-status
+        (unsafe
+          (syscall 257 dirfd (io.linux-ptr-arg path) flags mode))))))
+
+;: Linux `getdents64` syscall (number 217), returning bytes read or -1.
+(unsafe
+  (define (linux-syscall-getdents64
+    [fd : i64]
+    [buf : (MutPtr u8)]
+    [count : i64]) : i64
+    (cfg
+      windows
+      -1
+      (io.linux-syscall-status
+        (unsafe
+          (syscall
+            217
+            fd
+            (io.linux-ptr-arg
+              (unsafe
+                (ptr-cast buf : (Ptr u8))))
+            count))))))
 
 ;: Windows kernel32 bindings backing the directory/file primitives, replacing
 ;: the former `_mkdir`/`_unlink`/`_rmdir` CRT-ABI shims.
 (cfg
   windows
-  (extern (fs-win-create-directory [arg0 : (Ptr u8)] [arg1 : i64]) : i32 (:symbol "CreateDirectoryA")))
+  (unsafe
+    (extern (fs-win-create-directory [arg0 : (Ptr u8)] [arg1 : i64]) : i32 (:symbol "CreateDirectoryA"))))
+
 (cfg
   windows
-  (extern (fs-win-remove-directory [arg0 : (Ptr u8)]) : i32 (:symbol "RemoveDirectoryA")))
+  (unsafe
+    (extern (fs-win-remove-directory [arg0 : (Ptr u8)]) : i32 (:symbol "RemoveDirectoryA"))))
+
 (cfg
   windows
-  (extern (fs-win-delete-file [arg0 : (Ptr u8)]) : i32 (:symbol "DeleteFileA")))
+  (unsafe
+    (extern (fs-win-delete-file [arg0 : (Ptr u8)]) : i32 (:symbol "DeleteFileA"))))
+
 (cfg windows (extern (fs-win-get-last-error) : i32 (:symbol "GetLastError")))
+
 (cfg
   windows
-  (extern (fs-win-get-file-attributes-ex
-    [arg0 : (Ptr u8)]
-    [arg1 : i32]
-    [arg2 : (MutPtr u8)]) : i32 (:symbol "GetFileAttributesExA")))
+  (unsafe
+    (extern (fs-win-get-file-attributes-ex
+      [arg0 : (Ptr u8)]
+      [arg1 : i32]
+      [arg2 : (MutPtr u8)]) : i32 (:symbol "GetFileAttributesExA"))))
+
 (cfg
   windows
-  (extern (fs-win-find-first-file [arg0 : (Ptr u8)] [arg1 : (MutPtr u8)]) : i64 (:symbol "FindFirstFileA")))
+  (unsafe
+    (extern (fs-win-find-first-file [arg0 : (Ptr u8)] [arg1 : (MutPtr u8)]) : i64 (:symbol "FindFirstFileA"))))
+
 (cfg
   windows
-  (extern (fs-win-find-next-file [arg0 : i64] [arg1 : (MutPtr u8)]) : i32 (:symbol "FindNextFileA")))
+  (unsafe
+    (extern (fs-win-find-next-file [arg0 : i64] [arg1 : (MutPtr u8)]) : i32 (:symbol "FindNextFileA"))))
+
 (cfg
   windows
-  (extern (fs-win-find-close [arg0 : i64]) : i32 (:symbol "FindClose")))
+  (unsafe
+    (extern (fs-win-find-close [arg0 : i64]) : i32 (:symbol "FindClose"))))
 
 ;: Windows `_mkdir` replacement via CreateDirectoryA; ERROR_ALREADY_EXISTS
 ;: (183) maps to EEXIST (17) so building over an existing directory keeps the
 ;: prior behavior (see the freestanding errno-mapping fix).
 (cfg
   windows
-  (define (fs-windows-mkdir [path : (Ptr u8)]) : i32
-    (if (= (fs-win-create-directory path 0) (cast 0 : i32))
-      (begin
-        (io.set-error-code
-          (if (= (fs-win-get-last-error) (cast 183 : i32))
-            17
-            2))
-        (cast -1 : i32))
-      (cast 0 : i32))))
+  (unsafe
+    (define (fs-windows-mkdir [path : (Ptr u8)]) : i32
+      (if (=
+        (unsafe
+          (fs-win-create-directory path 0))
+        (cast 0 : i32))
+        (begin
+          (io.set-error-code
+            (if (= (fs-win-get-last-error) (cast 183 : i32))
+              17
+              2))
+          (cast -1 : i32))
+        (cast 0 : i32)))))
 
 ;: Windows `_unlink` replacement via DeleteFileA.
 (cfg
   windows
-  (define (fs-windows-unlink [path : (Ptr u8)]) : i32
-    (if (= (fs-win-delete-file path) (cast 0 : i32))
-      (begin
-        (io.set-error-code 2)
-        (cast -1 : i32))
-      (cast 0 : i32))))
+  (unsafe
+    (define (fs-windows-unlink [path : (Ptr u8)]) : i32
+      (if (=
+        (unsafe
+          (fs-win-delete-file path))
+        (cast 0 : i32))
+        (begin
+          (io.set-error-code 2)
+          (cast -1 : i32))
+        (cast 0 : i32)))))
 
 ;: Windows `_rmdir` replacement via RemoveDirectoryA.
 (cfg
   windows
-  (define (fs-windows-rmdir [path : (Ptr u8)]) : i32
-    (if (= (fs-win-remove-directory path) (cast 0 : i32))
-      (begin
-        (io.set-error-code 2)
-        (cast -1 : i32))
-      (cast 0 : i32))))
+  (unsafe
+    (define (fs-windows-rmdir [path : (Ptr u8)]) : i32
+      (if (=
+        (unsafe
+          (fs-win-remove-directory path))
+        (cast 0 : i32))
+        (begin
+          (io.set-error-code 2)
+          (cast -1 : i32))
+        (cast 0 : i32)))))
 
 ;: Windows `GetCurrentProcessId` binding for process ids.
 (extern (fs-windows-get-current-process-id) : u32 (:symbol "GetCurrentProcessId"))
 
 ;: Windows `GetCurrentDirectoryA` binding for current-directory lookup.
-(extern (fs-windows-get-current-directory [arg0 : u32] [arg1 : (MutPtr u8)]) : u32 (:symbol "GetCurrentDirectoryA"))
+(unsafe
+  (extern (fs-windows-get-current-directory [arg0 : u32] [arg1 : (MutPtr u8)]) : u32 (:symbol "GetCurrentDirectoryA")))
 
 ;: Windows kernel32 binding for path moves, replacing the former `rename`
 ;: CRT-ABI shim.
 (cfg
   windows
-  (extern (fs-win-move-file-ex [arg0 : (Ptr u8)] [arg1 : (Ptr u8)] [arg2 : i32]) : i32 (:symbol "MoveFileExA")))
+  (unsafe
+    (extern (fs-win-move-file-ex
+      [arg0 : (Ptr u8)]
+      [arg1 : (Ptr u8)]
+      [arg2 : i32]) : i32 (:symbol "MoveFileExA"))))
 
 ;: Windows kernel32 bindings for a crash-released advisory byte-range lock.
 (cfg
   windows
-  (extern (fs-win-create-file
-    [arg0 : (Ptr u8)]
-    [arg1 : i64]
-    [arg2 : i64]
-    [arg3 : i64]
-    [arg4 : i64]
-    [arg5 : i64]
-    [arg6 : i64]) : i64 (:symbol "CreateFileA")))
+  (unsafe
+    (extern (fs-win-create-file
+      [arg0 : (Ptr u8)]
+      [arg1 : i64]
+      [arg2 : i64]
+      [arg3 : i64]
+      [arg4 : i64]
+      [arg5 : i64]
+      [arg6 : i64]) : i64 (:symbol "CreateFileA"))))
+
 (cfg
   windows
-  (extern (fs-win-lock-file-ex
-    [arg0 : i64]
-    [arg1 : i32]
-    [arg2 : i32]
-    [arg3 : i32]
-    [arg4 : i32]
-    [arg5 : (MutPtr u8)]) : i32 (:symbol "LockFileEx")))
+  (unsafe
+    (extern (fs-win-lock-file-ex
+      [arg0 : i64]
+      [arg1 : i32]
+      [arg2 : i32]
+      [arg3 : i32]
+      [arg4 : i32]
+      [arg5 : (MutPtr u8)]) : i32 (:symbol "LockFileEx"))))
+
 (cfg
   windows
-  (extern (fs-win-unlock-file-ex
-    [arg0 : i64]
-    [arg1 : i32]
-    [arg2 : i32]
-    [arg3 : i32]
-    [arg4 : (MutPtr u8)]) : i32 (:symbol "UnlockFileEx")))
+  (unsafe
+    (extern (fs-win-unlock-file-ex
+      [arg0 : i64]
+      [arg1 : i32]
+      [arg2 : i32]
+      [arg3 : i32]
+      [arg4 : (MutPtr u8)]) : i32 (:symbol "UnlockFileEx"))))
+
 (cfg
   windows
-  (extern (fs-win-close-handle [arg0 : i64]) : i32 (:symbol "CloseHandle")))
+  (unsafe
+    (extern (fs-win-close-handle [arg0 : i64]) : i32 (:symbol "CloseHandle"))))
 
 ;: Audited x64 `winternl.h` ABI for the one native NT boundary used by rooted
 ;: filesystem operations. Keep the pointer-shaped fields as integer words so
@@ -382,18 +439,19 @@
 
 (cfg
   windows
-  (extern (fs-win-nt-create-file
-    [file-handle : (MutPtr i64)]
-    [desired-access : u32]
-    [object-attributes : (MutPtr FsWindowsObjectAttributes)]
-    [io-status-block : (MutPtr FsWindowsIoStatusBlock)]
-    [allocation-size : i64]
-    [file-attributes : u32]
-    [share-access : u32]
-    [create-disposition : u32]
-    [create-options : u32]
-    [ea-buffer : i64]
-    [ea-length : u32]) : i32 (:symbol "NtCreateFile")))
+  (unsafe
+    (extern (fs-win-nt-create-file
+      [file-handle : (MutPtr i64)]
+      [desired-access : u32]
+      [object-attributes : (MutPtr FsWindowsObjectAttributes)]
+      [io-status-block : (MutPtr FsWindowsIoStatusBlock)]
+      [allocation-size : i64]
+      [file-attributes : u32]
+      [share-access : u32]
+      [create-disposition : u32]
+      [create-options : u32]
+      [ea-buffer : i64]
+      [ea-length : u32]) : i32 (:symbol "NtCreateFile"))))
 
 ;: Return `result` through the aggregate return path for imported callers.
 (define (windows-nt-create-result-normalize [result : FsWindowsNtCreateResult]) : FsWindowsNtCreateResult
@@ -461,80 +519,89 @@
 ;: traversal is always disabled at both the object-manager and file-open layers.
 (cfg
   windows
-  (define (windows-nt-create-file-relative
-    [root-handle : i64]
-    [name-buffer : (MutPtr u16)]
-    [name-byte-length : u16]
-    [desired-access : u32]
-    [share-access : u32]
-    [create-disposition : u32]
-    [create-options : u32]) : FsWindowsNtCreateResult
-    (let
-      [name-address : i64
-        (cast
-          (unsafe
-            (ptr->int (ptr-cast name-buffer : (Ptr u16))))
-          : i64)]
-      [name : FsWindowsUnicodeString
-        (FsWindowsUnicodeString name-byte-length name-byte-length name-address)]
-      [attributes : FsWindowsObjectAttributes
-        (FsWindowsObjectAttributes
-          (cast 48 : u32)
-          root-handle
+  (unsafe
+    (define (windows-nt-create-file-relative
+      [root-handle : i64]
+      [name-buffer : (MutPtr u16)]
+      [name-byte-length : u16]
+      [desired-access : u32]
+      [share-access : u32]
+      [create-disposition : u32]
+      [create-options : u32]) : FsWindowsNtCreateResult
+      (let
+        [name-address : i64
           (cast
             (unsafe
-              (ptr->int (ptr-cast (ptr-addr-of name) : (Ptr u8))))
-            : i64)
-          (bit-or fs-windows-obj-case-insensitive fs-windows-obj-dont-reparse)
-          0
-          0)]
-      [io-status : FsWindowsIoStatusBlock (FsWindowsIoStatusBlock 0 0)]
-      [handle : i64 -1]
-      [status : i32
-        (fs-win-nt-create-file
+              (ptr->int (ptr-cast name-buffer : (Ptr u16))))
+            : i64)]
+        [name : FsWindowsUnicodeString
+          (FsWindowsUnicodeString
+            name-byte-length
+            name-byte-length
+            name-address)]
+        [attributes : FsWindowsObjectAttributes
+          (FsWindowsObjectAttributes
+            (cast 48 : u32)
+            root-handle
+            (cast
+              (unsafe
+                (ptr->int (ptr-cast (ptr-addr-of name) : (Ptr u8))))
+              : i64)
+            (bit-or fs-windows-obj-case-insensitive fs-windows-obj-dont-reparse)
+            0
+            0)]
+        [io-status : FsWindowsIoStatusBlock (FsWindowsIoStatusBlock 0 0)]
+        [handle : i64 -1]
+        [status : i32
           (unsafe
-            (ptr-addr-of handle))
-          desired-access
-          (unsafe
-            (ptr-addr-of attributes))
-          (unsafe
-            (ptr-addr-of io-status))
-          0
-          fs-windows-file-attribute-normal
-          share-access
-          create-disposition
-          (bit-or create-options fs-windows-file-open-reparse-point)
-          0
-          (cast 0 : u32))]
-      (fs-windows-nt-create-result-from-status status handle))))
+            (fs-win-nt-create-file
+              (unsafe
+                (ptr-addr-of handle))
+              desired-access
+              (unsafe
+                (ptr-addr-of attributes))
+              (unsafe
+                (ptr-addr-of io-status))
+              0
+              fs-windows-file-attribute-normal
+              share-access
+              create-disposition
+              (bit-or create-options fs-windows-file-open-reparse-point)
+              0
+              (cast 0 : u32)))]
+        (fs-windows-nt-create-result-from-status status handle)))))
 
 ;: Windows `rename` replacement via MoveFileExA with MOVEFILE_REPLACE_EXISTING.
 (cfg
   windows
-  (define (fs-windows-rename [source : (Ptr u8)] [destination : (Ptr u8)]) : i32
-    (if (=
-      (fs-win-move-file-ex source destination (cast 1 : i32))
-      (cast 0 : i32))
-      (begin
-        (io.set-error-code 2)
-        (cast -1 : i32))
-      (cast 0 : i32))))
+  (unsafe
+    (define (fs-windows-rename [source : (Ptr u8)] [destination : (Ptr u8)]) : i32
+      (if (=
+        (unsafe
+          (fs-win-move-file-ex source destination (cast 1 : i32)))
+        (cast 0 : i32))
+        (begin
+          (io.set-error-code 2)
+          (cast -1 : i32))
+        (cast 0 : i32)))))
 
 ;: Windows atomic replacement through MoveFileExA. WRITE_THROUGH requests that
 ;: the move complete before returning; directory-entry durability is still not
 ;: promised by the public transaction contract.
 (cfg
   windows
-  (define (fs-windows-atomic-replace
-    [source : (Ptr u8)]
-    [destination : (Ptr u8)]) : i32
-    (if (=
-      (fs-win-move-file-ex source destination (cast 9 : i32))
-      (cast 0 : i32))
-      (begin
-        (io.set-error-code (fs-windows-last-error-status))
-        (cast -1 : i32))
-      (cast 0 : i32))))
+  (unsafe
+    (define (fs-windows-atomic-replace
+      [source : (Ptr u8)]
+      [destination : (Ptr u8)]) : i32
+      (if (=
+        (unsafe
+          (fs-win-move-file-ex source destination (cast 9 : i32)))
+        (cast 0 : i32))
+        (begin
+          (io.set-error-code (fs-windows-last-error-status))
+          (cast -1 : i32))
+        (cast 0 : i32)))))
 
 ;: Convert a zero-success C result into the current host error code.
 (define (status-from-result [result : i64]) : i64
@@ -550,8 +617,12 @@
     (status-from-result
       (cfg
         windows
-        (cast (fs-windows-mkdir path-ptr) : i64)
-        (linux-syscall-mkdir path-ptr 448)))))
+        (cast
+          (unsafe
+            (fs-windows-mkdir path-ptr))
+          : i64)
+        (unsafe
+          (linux-syscall-mkdir path-ptr 448))))))
 
 ;: Return the host status code for creating a directory.
 (define (mkdir-status [path : (& path str)]) : i64
@@ -567,8 +638,12 @@
     (status-from-result
       (cfg
         windows
-        (cast (fs-windows-unlink path-ptr) : i64)
-        (linux-syscall-unlink path-ptr)))))
+        (cast
+          (unsafe
+            (fs-windows-unlink path-ptr))
+          : i64)
+        (unsafe
+          (linux-syscall-unlink path-ptr))))))
 
 ;: Return the host status code for removing a file.
 (define (remove-file-status [path : (& path str)]) : i64
@@ -584,8 +659,12 @@
     (status-from-result
       (cfg
         windows
-        (cast (fs-windows-rmdir path-ptr) : i64)
-        (linux-syscall-rmdir path-ptr)))))
+        (cast
+          (unsafe
+            (fs-windows-rmdir path-ptr))
+          : i64)
+        (unsafe
+          (linux-syscall-rmdir path-ptr))))))
 
 ;: Return the host status code for removing an empty directory.
 (define (remove-dir-status [path : (& path str)]) : i64
@@ -602,13 +681,15 @@
       (cfg
         windows
         (cast
-          (fs-windows-rename
-            (io.array-const-ptr source-bytes)
-            (io.array-const-ptr destination-bytes))
+          (unsafe
+            (fs-windows-rename
+              (io.array-const-ptr source-bytes)
+              (io.array-const-ptr destination-bytes)))
           : i64)
-        (linux-syscall-rename
-          (io.array-const-ptr source-bytes)
-          (io.array-const-ptr destination-bytes))))))
+        (unsafe
+          (linux-syscall-rename
+            (io.array-const-ptr source-bytes)
+            (io.array-const-ptr destination-bytes)))))))
 
 ;: Return the host status code for renaming a path.
 (define (rename-status
@@ -628,99 +709,113 @@
       (cfg
         windows
         (cast
-          (fs-windows-atomic-replace
-            (io.array-const-ptr source-bytes)
-            (io.array-const-ptr destination-bytes))
+          (unsafe
+            (fs-windows-atomic-replace
+              (io.array-const-ptr source-bytes)
+              (io.array-const-ptr destination-bytes)))
           : i64)
-        (linux-syscall-rename
-          (io.array-const-ptr source-bytes)
-          (io.array-const-ptr destination-bytes))))))
+        (unsafe
+          (linux-syscall-rename
+            (io.array-const-ptr source-bytes)
+            (io.array-const-ptr destination-bytes)))))))
 
 ;: Acquire a blocking crash-released advisory lock on an owned path.
-(define (file-lock-open-owned [path : String]) : i64
-  (cfg
-    windows
-    (let
-      [path-bytes : (__tl_dyn-array u8) (io.c-string path)]
-      [handle : i64
-        (fs-win-create-file
-          (io.array-const-ptr path-bytes)
-          0xc0000000
-          7
-          0
-          4
-          0x80
-          0)]
-      (if (= handle -1)
-        (- 0 (fs-windows-last-error-status))
-        (let
-          [overlapped : (__tl_dyn-array u8) (__tl_make-array u8 32)]
-          [locked : i32
-            (fs-win-lock-file-ex
+(unsafe
+  (define (file-lock-open-owned [path : String]) : i64
+    (cfg
+      windows
+      (let
+        [path-bytes : (__tl_dyn-array u8) (io.c-string path)]
+        [handle : i64
+          (unsafe
+            (fs-win-create-file
+              (io.array-const-ptr path-bytes)
+              0xc0000000
+              7
+              0
+              4
+              0x80
+              0))]
+        (if (= handle -1)
+          (- 0 (fs-windows-last-error-status))
+          (let
+            [overlapped : (__tl_dyn-array u8) (__tl_make-array u8 32)]
+            [locked : i32
+              (unsafe
+                (fs-win-lock-file-ex
+                  handle
+                  (cast 2 : i32)
+                  (cast 0 : i32)
+                  (cast 1 : i32)
+                  (cast 0 : i32)
+                  (io.array-ptr overlapped)))]
+            (if (= locked (cast 0 : i32))
+              (let
+                [status : i64 (fs-windows-last-error-status)]
+                (begin
+                  (unsafe
+                    (fs-win-close-handle handle))
+                  (- 0 status)))
+              handle))))
+      (let
+        [path-bytes : (__tl_dyn-array u8) (io.c-string path)]
+        [fd : i64
+          (io.linux-syscall-open (io.array-const-ptr path-bytes) 524354 384)]
+        (if (< fd 0)
+          (- 0 (io.last-error-code))
+          (let
+            [status : i64
+              (unsafe
+                (linux-syscall-flock fd 2))]
+            (if (< status 0)
+              (let
+                [error-status : i64 (io.last-error-code)]
+                (begin
+                  (io.linux-syscall-close fd)
+                  (- 0 error-status)))
+              fd)))))))
+
+;: Release an advisory file lock and close its host handle.
+(unsafe
+  (define (file-lock-close-status [handle : i64]) : i64
+    (cfg
+      windows
+      (let
+        [overlapped : (__tl_dyn-array u8) (__tl_make-array u8 32)]
+        [unlocked : i32
+          (unsafe
+            (fs-win-unlock-file-ex
               handle
-              (cast 2 : i32)
               (cast 0 : i32)
               (cast 1 : i32)
               (cast 0 : i32)
-              (io.array-ptr overlapped))]
-          (if (= locked (cast 0 : i32))
-            (let
-              [status : i64 (fs-windows-last-error-status)]
-              (begin
-                (fs-win-close-handle handle)
-                (- 0 status)))
-            handle))))
-    (let
-      [path-bytes : (__tl_dyn-array u8) (io.c-string path)]
-      [fd : i64
-        (io.linux-syscall-open (io.array-const-ptr path-bytes) 524354 384)]
-      (if (< fd 0)
-        (- 0 (io.last-error-code))
-        (let
-          [status : i64 (linux-syscall-flock fd 2)]
-          (if (< status 0)
-            (let
-              [error-status : i64 (io.last-error-code)]
-              (begin
-                (io.linux-syscall-close fd)
-                (- 0 error-status)))
-            fd))))))
-
-;: Release an advisory file lock and close its host handle.
-(define (file-lock-close-status [handle : i64]) : i64
-  (cfg
-    windows
-    (let
-      [overlapped : (__tl_dyn-array u8) (__tl_make-array u8 32)]
-      [unlocked : i32
-        (fs-win-unlock-file-ex
-          handle
-          (cast 0 : i32)
-          (cast 1 : i32)
-          (cast 0 : i32)
-          (io.array-ptr overlapped))]
-      [unlock-status : i64
-        (if (= unlocked (cast 0 : i32))
-          (fs-windows-last-error-status)
-          0)]
-      [closed : i32 (fs-win-close-handle handle)]
-      (if (not (= unlock-status 0))
-        unlock-status
-        (if (= closed (cast 0 : i32))
-          (fs-windows-last-error-status)
-          0)))
-    (let
-      [unlock-status : i64 (linux-syscall-flock handle 8)]
-      [unlock-error : i64
-        (if (< unlock-status 0)
-          (io.last-error-code)
-          0)]
-      [close-status : i64 (io.linux-syscall-close handle)]
-      (if (not (= unlock-error 0))
-        unlock-error
-        (if (< close-status 0)
-          (io.last-error-code)
-          0)))))
+              (io.array-ptr overlapped)))]
+        [unlock-status : i64
+          (if (= unlocked (cast 0 : i32))
+            (fs-windows-last-error-status)
+            0)]
+        [closed : i32
+          (unsafe
+            (fs-win-close-handle handle))]
+        (if (not (= unlock-status 0))
+          unlock-status
+          (if (= closed (cast 0 : i32))
+            (fs-windows-last-error-status)
+            0)))
+      (let
+        [unlock-status : i64
+          (unsafe
+            (linux-syscall-flock handle 8))]
+        [unlock-error : i64
+          (if (< unlock-status 0)
+            (io.last-error-code)
+            0)]
+        [close-status : i64 (io.linux-syscall-close handle)]
+        (if (not (= unlock-error 0))
+          unlock-error
+          (if (< close-status 0)
+            (io.last-error-code)
+            0))))))
 
 ;: Return the host process id.
 (define (process-id) : i64
@@ -749,46 +844,131 @@
 (define fs-windows-find-data-name-offset : i64
   44)
 
-;: Read one byte from a C string-like pointer as an integer.
-(define (c-string-byte [ptr : (Ptr u8)] [offset : i64]) : i64
-  (cast
-    (unsafe
-      (ptr-read (ptr-offset ptr offset)))
-    : i64))
+;: Byte capacity of `WIN32_FIND_DATAA.cFileName` including its terminator.
+(define fs-windows-find-data-name-capacity : i64
+  260)
 
-;: Return true when a directory entry name is `.` or `..`.
-(define (read-dir-dot-entry? [name : (Ptr u8)]) : bool
-  (if (!= (stdlib.fs.c-string-byte name 0) 46)
-    false
-    (let
-      [second : i64 (stdlib.fs.c-string-byte name 1)]
-      (if (= second 0)
-        true
-        (if (= second 46)
-          (= (stdlib.fs.c-string-byte name 2) 0)
-          false)))))
+;: Byte offset of `d_name` within a Linux `linux_dirent64` record.
+(define fs-linux-dirent-name-offset : i64
+  19)
 
-;: Append one non-dot entry name plus a newline to `out`.
-(define (read-dir-append-entry!
-  [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [name : (Ptr u8)]) : unit
-  (if (stdlib.fs.read-dir-dot-entry? name)
-    unit
-    (let
-      [i : i64 0]
-      [done : bool false]
-      (begin
-        (while (not done)
-          (let
-            [byte : u8
+;: Smallest `linux_dirent64` record that can contain a NUL-terminated name.
+(define fs-linux-dirent-min-size : i64
+  20)
+
+;: Read one byte from a C string-like pointer as an integer. The caller must
+;: prove that `offset` selects a live initialized byte in the allocation.
+(unsafe
+  (define (c-string-byte [ptr : (Ptr u8)] [offset : i64]) : i64
+    (cast
+      (unsafe
+        (ptr-read (ptr-offset ptr offset)))
+      : i64)))
+
+;: Return true when a directory entry name is `.` or `..`. The caller must
+;: provide at least three readable initialized bytes or an earlier NUL.
+(unsafe
+  (define (read-dir-dot-entry? [name : (Ptr u8)]) : bool
+    (if (!=
+      (unsafe
+        (stdlib.fs.c-string-byte name 0))
+      46)
+      false
+      (let
+        [second : i64
+          (unsafe
+            (stdlib.fs.c-string-byte name 1))]
+        (if (= second 0)
+          true
+          (if (= second 46)
+            (=
               (unsafe
-                (ptr-read (ptr-offset name i)))]
-            (if (= (cast byte : i64) 0)
-              (set! done true)
-              (begin
-                (__tl_array-push! out.slots byte)
-                (set! i (+ i 1))))))
-        (__tl_array-push! out.slots (cast '\n' : u8))))))
+                (stdlib.fs.c-string-byte name 2))
+              0)
+            false))))))
+
+;: Append one non-dot entry name plus a newline to `out`. The caller must
+;: provide a live initialized NUL-terminated byte sequence.
+(unsafe
+  (define (read-dir-append-entry!
+    [out : (&mut out byte_buf_core.ByteBufBuilder)]
+    [name : (Ptr u8)]) : unit
+    (if (unsafe
+      (stdlib.fs.read-dir-dot-entry? name))
+      unit
+      (let
+        [i : i64 0]
+        [done : bool false]
+        (begin
+          (while (not done)
+            (let
+              [byte : u8
+                (unsafe
+                  (ptr-read (ptr-offset name i)))]
+              (if (= (cast byte : i64) 0)
+                (set! done true)
+                (begin
+                  (__tl_array-push! out.slots byte)
+                  (set! i (+ i 1))))))
+          (__tl_array-push! out.slots (cast '\n' : u8)))))))
+
+;: Append a raw entry name only when its terminator occurs within `capacity`.
+;: The caller must prove that `name` addresses that many initialized bytes.
+(unsafe
+  (define (read-dir-append-bounded-entry!
+    [out : (&mut out byte_buf_core.ByteBufBuilder)]
+    [name : (Ptr u8)]
+    [capacity : i64]) : bool
+    (if (<= capacity 0)
+      false
+      (let
+        [len : i64 0]
+        [terminated : bool false]
+        (begin
+          (while (and (< len capacity) (not terminated))
+            (if (=
+              (unsafe
+                (c-string-byte name len))
+              0)
+              (set! terminated true)
+              (set! len (+ len 1))))
+          (if (not terminated)
+            false
+            (let
+              [dot-entry : bool
+                (or
+                  (and
+                    (= len 1)
+                    (=
+                      (unsafe
+                        (c-string-byte name 0))
+                      46))
+                  (and
+                    (= len 2)
+                    (=
+                      (unsafe
+                        (c-string-byte name 0))
+                      46)
+                    (=
+                      (unsafe
+                        (c-string-byte name 1))
+                      46)))]
+              (if dot-entry
+                true
+                (let
+                  [index : i64 0]
+                  (begin
+                    (while (< index len)
+                      (begin
+                        (__tl_array-push!
+                          out.slots
+                          (cast
+                            (unsafe
+                              (c-string-byte name index))
+                            : u8))
+                        (set! index (+ index 1))))
+                    (__tl_array-push! out.slots (cast '\n' : u8))
+                    true))))))))))
 
 ;: Convert the accumulated newline-delimited bytes into a String.
 (define (read-dir-bytes-string [out : (&mut out byte_buf_core.ByteBufBuilder)]) : String
@@ -799,37 +979,47 @@
 ;: Read the Linux `d_reclen` field from a `linux_dirent64` record.
 (cfg
   (not windows)
-  (define (linux-dirent-reclen [base : (Ptr u8)] [offset : i64]) : i64
-    (cast
-      (unsafe
-        (ptr-read (ptr-cast (ptr-offset base (+ offset 16)) : (Ptr u16))))
-      : i64)))
+  (unsafe
+    (define (linux-dirent-reclen [base : (Ptr u8)] [offset : i64]) : i64
+      (let
+        [low : i64
+          (unsafe
+            (c-string-byte base (+ offset 16)))]
+        [high : i64
+          (unsafe
+            (c-string-byte base (+ offset 17)))]
+        (bit-or low (shl high 8))))))
 
 ;: Return the Linux `d_name` pointer from a `linux_dirent64` record.
 (cfg
   (not windows)
-  (define (linux-dirent-name [base : (Ptr u8)] [offset : i64]) : (Ptr u8)
-    (unsafe
-      (ptr-offset base (+ offset 19)))))
+  (unsafe
+    (define (linux-dirent-name [base : (Ptr u8)] [offset : i64]) : (Ptr u8)
+      (unsafe
+        (ptr-offset base (+ offset fs-linux-dirent-name-offset))))))
 
 ;: Open an owned path as a Linux directory.
 (cfg
   (not windows)
-  (define (linux-open-dir-owned [path : String]) : i64
-    (let
-      [path-bytes : (__tl_dyn-array u8) (io.c-string path)]
-      (linux-syscall-openat
-        fs-linux-at-fdcwd
-        (io.array-const-ptr path-bytes)
-        fs-linux-open-directory
-        0))))
+  (unsafe
+    (define (linux-open-dir-owned [path : String]) : i64
+      (let
+        [path-bytes : (__tl_dyn-array u8) (io.c-string path)]
+        (unsafe
+          (linux-syscall-openat
+            fs-linux-at-fdcwd
+            (io.array-const-ptr path-bytes)
+            fs-linux-open-directory
+            0))))))
 
 ;: Return the Linux host status code for opening and closing a directory.
 (cfg
   (not windows)
   (define (linux-read-dir-status [path : String]) : i64
     (let
-      [fd : i64 (linux-open-dir-owned path)]
+      [fd : i64
+        (unsafe
+          (linux-open-dir-owned path))]
       (if (< fd 0)
         (io.last-error-code)
         (status-from-result (io.linux-syscall-close fd))))))
@@ -840,28 +1030,45 @@
   (define (linux-read-dir-append-page!
     [buf : (__tl_dyn-array u8)]
     [read-count : i64]
-    [out : (&mut out byte_buf_core.ByteBufBuilder)]) : unit
+    [out : (&mut out byte_buf_core.ByteBufBuilder)]) : bool
     (let
+      [buffer-len : i64 (array-length buf)]
       [base : (Ptr u8) (io.array-const-ptr buf)]
       [offset : i64 0]
-      [done : bool false]
-      (while (not done)
-        (if (>= offset read-count)
-          (set! done true)
-          (let
-            [reclen : i64 (linux-dirent-reclen base offset)]
-            (if (<= reclen 0)
-              (set! done true)
-              (begin
-                (read-dir-append-entry! out (linux-dirent-name base offset))
-                (set! offset (+ offset reclen))))))))))
+      (if (or (< read-count 0) (> read-count buffer-len))
+        false
+        (begin
+          (while (< offset read-count)
+            (let
+              [remaining : i64 (- read-count offset)]
+              (when (< remaining fs-linux-dirent-min-size) (return false))
+              (let
+                [reclen : i64
+                  (unsafe
+                    (linux-dirent-reclen base offset))]
+                (when
+                  (or (< reclen fs-linux-dirent-min-size) (> reclen remaining))
+                  (return false))
+                (when
+                  (not
+                    (unsafe
+                      (read-dir-append-bounded-entry!
+                        out
+                        (unsafe
+                          (linux-dirent-name base offset))
+                        (- reclen fs-linux-dirent-name-offset))))
+                  (return false))
+                (set! offset (+ offset reclen)))))
+          true)))))
 
 ;: Return the newline-delimited Linux directory listing payload.
 (cfg
   (not windows)
   (define (linux-read-dir [path : String]) : String
     (let
-      [fd : i64 (linux-open-dir-owned path)]
+      [fd : i64
+        (unsafe
+          (linux-open-dir-owned path))]
       (if (< fd 0)
         ""
         (let
@@ -875,20 +1082,26 @@
             (while (not done)
               (let
                 [read-count : i64
-                  (linux-syscall-getdents64
-                    fd
-                    (io.array-ptr buf)
-                    fs-read-dir-buffer-size)]
+                  (unsafe
+                    (linux-syscall-getdents64
+                      fd
+                      (io.array-ptr buf)
+                      fs-read-dir-buffer-size))]
                 (if (< read-count 0)
                   (begin
                     (set! ok false)
                     (set! done true))
                   (if (= read-count 0)
                     (set! done true)
-                    (linux-read-dir-append-page!
-                      (clone buf)
-                      read-count
-                      (&mut out))))))
+                    (when
+                      (not
+                        (linux-read-dir-append-page!
+                          (clone buf)
+                          read-count
+                          (&mut out)))
+                      (begin
+                        (set! ok false)
+                        (set! done true)))))))
             (io.linux-syscall-close fd)
             (if ok
               (read-dir-bytes-string (&mut out))
@@ -935,9 +1148,10 @@
 ;: Return a pointer to `WIN32_FIND_DATAA.cFileName`.
 (cfg
   windows
-  (define (fs-windows-find-data-name [data : (MutPtr u8)]) : (Ptr u8)
-    (unsafe
-      (ptr-cast (ptr-offset data fs-windows-find-data-name-offset) : (Ptr u8)))))
+  (unsafe
+    (define (fs-windows-find-data-name [data : (MutPtr u8)]) : (Ptr u8)
+      (unsafe
+        (ptr-cast (ptr-offset data fs-windows-find-data-name-offset) : (Ptr u8))))))
 
 ;: Return the Windows host status code for opening and closing a directory scan.
 (cfg
@@ -949,12 +1163,16 @@
       [data : (__tl_dyn-array u8)
         (__tl_make-array u8 fs-windows-find-data-size)]
       [handle : i64
-        (fs-win-find-first-file
-          (io.array-const-ptr pattern-bytes)
-          (io.array-ptr data))]
+        (unsafe
+          (fs-win-find-first-file
+            (io.array-const-ptr pattern-bytes)
+            (io.array-ptr data)))]
       (if (= handle -1)
         (fs-windows-nonzero-status (fs-windows-last-error-status))
-        (if (= (fs-win-find-close handle) (cast 0 : i32))
+        (if (=
+          (unsafe
+            (fs-win-find-close handle))
+          (cast 0 : i32))
           (fs-windows-nonzero-status (fs-windows-last-error-status))
           io.io-status-ok)))))
 
@@ -970,26 +1188,37 @@
       [out : byte_buf_core.ByteBufBuilder
         (byte_buf_core.ByteBufBuilder (__tl_make-array u8 0) 0)]
       [handle : i64
-        (fs-win-find-first-file
-          (io.array-const-ptr pattern-bytes)
-          (io.array-ptr data))]
+        (unsafe
+          (fs-win-find-first-file
+            (io.array-const-ptr pattern-bytes)
+            (io.array-ptr data)))]
       (if (= handle -1)
         ""
         (let
           [done : bool false]
+          [ok : bool true]
           (begin
             (while (not done)
-              (begin
-                (read-dir-append-entry!
+              (if (unsafe
+                (read-dir-append-bounded-entry!
                   (&mut out)
-                  (fs-windows-find-data-name (io.array-ptr data)))
+                  (unsafe
+                    (fs-windows-find-data-name (io.array-ptr data)))
+                  fs-windows-find-data-name-capacity))
                 (if (=
-                  (fs-win-find-next-file handle (io.array-ptr data))
+                  (unsafe
+                    (fs-win-find-next-file handle (io.array-ptr data)))
                   (cast 0 : i32))
                   (set! done true)
-                  unit)))
-            (fs-win-find-close handle)
-            (read-dir-bytes-string (&mut out))))))))
+                  unit)
+                (begin
+                  (set! ok false)
+                  (set! done true))))
+            (unsafe
+              (fs-win-find-close handle))
+            (if ok
+              (read-dir-bytes-string (&mut out))
+              "")))))))
 
 ;: Return the host status code for reading a directory listing.
 (define (read-dir-status [path : String]) : i64
@@ -1041,33 +1270,82 @@
 (define fs-windows-file-size-low-offset : i64
   32)
 
-;: Read a `u32` field from a metadata buffer at a byte offset.
-(define (metadata-read-u32-at [base : (MutPtr u8)] [offset : i64]) : u32
-  (unsafe
-    (ptr-read (ptr-cast (ptr-offset base offset) : (Ptr u32)))))
+;: Read a `u32` field from a metadata buffer at a byte offset. The caller must
+;: prove extent, alignment, target layout, initialization, and lifetime.
+(unsafe
+  (define (metadata-read-u32-at [base : (MutPtr u8)] [offset : i64]) : u32
+    (unsafe
+      (ptr-read (ptr-cast (ptr-offset base offset) : (Ptr u32))))))
 
-;: Read an `i64` field from a metadata buffer at a byte offset.
-(define (metadata-read-i64-at [base : (MutPtr u8)] [offset : i64]) : i64
-  (unsafe
-    (ptr-read (ptr-cast (ptr-offset base offset) : (Ptr i64)))))
+;: Read an `i64` field from a metadata buffer at a byte offset. The caller must
+;: prove extent, alignment, target layout, initialization, and lifetime.
+(unsafe
+  (define (metadata-read-i64-at [base : (MutPtr u8)] [offset : i64]) : i64
+    (unsafe
+      (ptr-read (ptr-cast (ptr-offset base offset) : (Ptr i64))))))
+
+;: Decode one little-endian byte field from an owned metadata buffer.
+(define (metadata-byte-at
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [offset : i64]) : u64
+  (cast (array-ref bytes offset) : u64))
+
+;: Decode a little-endian `u32` from an owned metadata buffer. Bounds are
+;: checked by `array-ref`, and byte decoding has no alignment requirement.
+(define (metadata-read-u32-from
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [offset : i64]) : u32
+  (cast
+    (+
+      (metadata-byte-at bytes offset)
+      (+
+        (shl (metadata-byte-at bytes (+ offset 1)) 8)
+        (+
+          (shl (metadata-byte-at bytes (+ offset 2)) 16)
+          (shl (metadata-byte-at bytes (+ offset 3)) 24))))
+    : u32))
+
+;: Decode a little-endian `i64` from an owned metadata buffer. Bounds are
+;: checked by `array-ref`, and byte decoding has no alignment requirement.
+(define (metadata-read-i64-from
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [offset : i64]) : i64
+  (cast
+    (+
+      (metadata-byte-at bytes offset)
+      (+
+        (shl (metadata-byte-at bytes (+ offset 1)) 8)
+        (+
+          (shl (metadata-byte-at bytes (+ offset 2)) 16)
+          (+
+            (shl (metadata-byte-at bytes (+ offset 3)) 24)
+            (+
+              (shl (metadata-byte-at bytes (+ offset 4)) 32)
+              (+
+                (shl (metadata-byte-at bytes (+ offset 5)) 40)
+                (+
+                  (shl (metadata-byte-at bytes (+ offset 6)) 48)
+                  (shl (metadata-byte-at bytes (+ offset 7)) 56))))))))
+    : i64))
 
 ;: Linux `newfstatat(AT_FDCWD, path, statbuf, flags)` syscall.
 (cfg
   (not windows)
-  (define (linux-syscall-newfstatat
-    [path : (Ptr u8)]
-    [statbuf : (MutPtr u8)]
-    [flags : i64]) : i64
-    (io.linux-syscall-status
-      (unsafe
-        (syscall
-          262
-          fs-linux-at-fdcwd
-          (io.linux-ptr-arg path)
-          (io.linux-ptr-arg
-            (unsafe
-              (ptr-cast statbuf : (Ptr u8))))
-          flags)))))
+  (unsafe
+    (define (linux-syscall-newfstatat
+      [path : (Ptr u8)]
+      [statbuf : (MutPtr u8)]
+      [flags : i64]) : i64
+      (io.linux-syscall-status
+        (unsafe
+          (syscall
+            262
+            fs-linux-at-fdcwd
+            (io.linux-ptr-arg path)
+            (io.linux-ptr-arg
+              (unsafe
+                (ptr-cast statbuf : (Ptr u8))))
+            flags))))))
 
 (cfg
   (not windows)
@@ -1111,33 +1389,35 @@
 
 (cfg
   (not windows)
-  (define (linux-file-metadata-probe [path : (Ptr u8)] [no-follow : bool]) : FsFileMetadataProbe
-    (let
-      [statbuf : (__tl_dyn-array u8)
-        (__tl_make-array u8 fs-linux-stat-buffer-size)]
-      [statptr : (MutPtr u8) (io.array-ptr statbuf)]
-      [status : i64
-        (status-from-result
-          (linux-syscall-newfstatat
-            path
-            statptr
-            (if no-follow
-              fs-linux-at-symlink-nofollow
-              0)))]
-      (if (= status io.io-status-ok)
-        (let
-          [kind : i64
-            (linux-file-kind-from-mode
-              (cast
-                (metadata-read-u32-at statptr fs-linux-stat-mode-offset)
-                : i64))]
-          (FsFileMetadataProbe
-            status
-            kind
-            (if (= kind fs-file-kind-regular-code)
-              (metadata-read-i64-at statptr fs-linux-stat-size-offset)
-              0)))
-        (FsFileMetadataProbe status status 0)))))
+  (unsafe
+    (define (linux-file-metadata-probe [path : (Ptr u8)] [no-follow : bool]) : FsFileMetadataProbe
+      (let
+        [statbuf : (__tl_dyn-array u8)
+          (__tl_make-array u8 fs-linux-stat-buffer-size)]
+        [statptr : (MutPtr u8) (io.array-ptr statbuf)]
+        [status : i64
+          (status-from-result
+            (unsafe
+              (linux-syscall-newfstatat
+                path
+                statptr
+                (if no-follow
+                  fs-linux-at-symlink-nofollow
+                  0))))]
+        (if (= status io.io-status-ok)
+          (let
+            [kind : i64
+              (linux-file-kind-from-mode
+                (cast
+                  (metadata-read-u32-from (& statbuf) fs-linux-stat-mode-offset)
+                  : i64))]
+            (FsFileMetadataProbe
+              status
+              kind
+              (if (= kind fs-file-kind-regular-code)
+                (metadata-read-i64-from (& statbuf) fs-linux-stat-size-offset)
+                0)))
+          (FsFileMetadataProbe status status 0))))))
 
 ;: Preserve the former metadata runtime's raw fallback when Windows gives no code.
 (cfg
@@ -1164,41 +1444,65 @@
 
 (cfg
   windows
-  (define (fs-windows-file-size-from-data [data : (MutPtr u8)]) : i64
-    (let
-      [high : u64
-        (cast
-          (metadata-read-u32-at data fs-windows-file-size-high-offset)
-          : u64)]
-      [low : u64
-        (cast (metadata-read-u32-at data fs-windows-file-size-low-offset) : u64)]
-      (cast (bit-or low (shl high 32)) : i64))))
+  (unsafe
+    (define (fs-windows-file-size-from-data [data : (MutPtr u8)]) : i64
+      (let
+        [high : u64
+          (cast
+            (unsafe
+              (metadata-read-u32-at data fs-windows-file-size-high-offset))
+            : u64)]
+        [low : u64
+          (cast
+            (unsafe
+              (metadata-read-u32-at data fs-windows-file-size-low-offset))
+            : u64)]
+        (cast (bit-or low (shl high 32)) : i64)))))
 
 (cfg
   windows
-  (define (fs-windows-file-metadata-probe [path : (Ptr u8)] [no-follow : bool]) : FsFileMetadataProbe
-    (let
-      [data : (__tl_dyn-array u8)
-        (__tl_make-array u8 fs-windows-file-attribute-data-size)]
-      [dataptr : (MutPtr u8) (io.array-ptr data)]
-      [ok : i32 (fs-win-get-file-attributes-ex path (cast 0 : i32) dataptr)]
-      (if (= ok (cast 0 : i32))
-        (let
-          [status : i64 (fs-windows-metadata-error-status)]
-          (FsFileMetadataProbe status status 0))
-        (let
-          [kind : i64
-            (fs-windows-file-kind-from-attributes
+  (unsafe
+    (define (fs-windows-file-metadata-probe
+      [path : (Ptr u8)]
+      [no-follow : bool]) : FsFileMetadataProbe
+      (let
+        [data : (__tl_dyn-array u8)
+          (__tl_make-array u8 fs-windows-file-attribute-data-size)]
+        [dataptr : (MutPtr u8) (io.array-ptr data)]
+        [ok : i32
+          (unsafe
+            (fs-win-get-file-attributes-ex path (cast 0 : i32) dataptr))]
+        (if (= ok (cast 0 : i32))
+          (let
+            [status : i64 (fs-windows-metadata-error-status)]
+            (FsFileMetadataProbe status status 0))
+          (let
+            [kind : i64
+              (fs-windows-file-kind-from-attributes
+                (cast
+                  (metadata-read-u32-from
+                    (& data)
+                    fs-windows-file-attributes-offset)
+                  : i64)
+                no-follow)]
+            [high : u64
               (cast
-                (metadata-read-u32-at dataptr fs-windows-file-attributes-offset)
-                : i64)
-              no-follow)]
-          (FsFileMetadataProbe
-            io.io-status-ok
-            kind
-            (if (= kind fs-file-kind-regular-code)
-              (fs-windows-file-size-from-data dataptr)
-              0)))))))
+                (metadata-read-u32-from
+                  (& data)
+                  fs-windows-file-size-high-offset)
+                : u64)]
+            [low : u64
+              (cast
+                (metadata-read-u32-from
+                  (& data)
+                  fs-windows-file-size-low-offset)
+                : u64)]
+            (FsFileMetadataProbe
+              io.io-status-ok
+              kind
+              (if (= kind fs-file-kind-regular-code)
+                (cast (bit-or low (shl high 32)) : i64)
+                0))))))))
 
 ;: Probe path metadata and return status, kind sentinel, and regular-file size.
 (define (file-metadata-probe-with-links
@@ -1209,8 +1513,10 @@
     [path-ptr : (Ptr u8) (io.array-const-ptr path-bytes)]
     (cfg
       windows
-      (fs-windows-file-metadata-probe path-ptr no-follow)
-      (linux-file-metadata-probe path-ptr no-follow))))
+      (unsafe
+        (fs-windows-file-metadata-probe path-ptr no-follow))
+      (unsafe
+        (linux-file-metadata-probe path-ptr no-follow)))))
 
 ;: Probe path metadata while following symbolic links.
 (define (file-metadata-probe [path : (& path str)]) : FsFileMetadataProbe
@@ -1262,9 +1568,10 @@
         [buf : (__tl_dyn-array u8) (__tl_make-array u8 capacity)]
         [written : i64
           (cast
-            (stdlib.fs.fs-windows-get-current-directory
-              (cast capacity : u32)
-              (io.array-ptr buf))
+            (unsafe
+              (stdlib.fs.fs-windows-get-current-directory
+                (cast capacity : u32)
+                (io.array-ptr buf)))
             : i64)]
         (if (= written 0)
           io.io-status-io-error
@@ -1277,7 +1584,8 @@
       (let
         [buf : (__tl_dyn-array u8) (__tl_make-array u8 capacity)]
         [result : (Ptr u8)
-          (stdlib.fs.linux-syscall-getcwd (io.array-ptr buf) capacity)]
+          (unsafe
+            (stdlib.fs.linux-syscall-getcwd (io.array-ptr buf) capacity))]
         (if (ptr-null? result)
           (let
             [status : i64 (io.last-error-code)]
@@ -1298,9 +1606,10 @@
         [buf : (__tl_dyn-array u8) (__tl_make-array u8 capacity)]
         [written : i64
           (cast
-            (stdlib.fs.fs-windows-get-current-directory
-              (cast capacity : u32)
-              (io.array-ptr buf))
+            (unsafe
+              (stdlib.fs.fs-windows-get-current-directory
+                (cast capacity : u32)
+                (io.array-ptr buf)))
             : i64)]
         (if (= written 0)
           ""
@@ -1313,7 +1622,8 @@
       (let
         [buf : (__tl_dyn-array u8) (__tl_make-array u8 capacity)]
         [result : (Ptr u8)
-          (stdlib.fs.linux-syscall-getcwd (io.array-ptr buf) capacity)]
+          (unsafe
+            (stdlib.fs.linux-syscall-getcwd (io.array-ptr buf) capacity))]
         (if (ptr-null? result)
           (let
             [status : i64 (io.last-error-code)]
@@ -1834,7 +2144,9 @@
     (if (io.empty-path? path)
       (ErrFsFileLock (io.invalid-path-error path))
       (let
-        [handle : i64 (stdlib.fs.file-lock-open-owned path-text)]
+        [handle : i64
+          (unsafe
+            (stdlib.fs.file-lock-open-owned path-text))]
         (if (< handle 0)
           (ErrFsFileLock (io.error-from-status path (- 0 handle)))
           (OkFsFileLock (FsFileLock handle)))))))
@@ -1842,7 +2154,9 @@
 ;: Release a file lock acquired by `file-lock-acquire`.
 (define (file-lock-release [lock : FsFileLock]) : io.ResultIoUnit
   (let
-    [status : i64 (stdlib.fs.file-lock-close-status lock.handle)]
+    [status : i64
+      (unsafe
+        (stdlib.fs.file-lock-close-status lock.handle))]
     (if (= status io.io-status-ok)
       io.OkIoUnit
       (io.ErrIoUnit (io.error-from-label "file-lock-release" status)))))
@@ -2936,6 +3250,133 @@
 
 (cfg
   test
+  (define (fs-test-assert-raw-structure-bounds) : unit
+    (begin
+      (fs-test-assert-true
+        (<=
+          (+
+            fs-windows-find-data-name-offset
+            fs-windows-find-data-name-capacity)
+          fs-windows-find-data-size)
+        "WIN32_FIND_DATAA name field fits allocated storage")
+      (fs-test-assert-true
+        (<=
+          (+ fs-windows-file-attributes-offset 4)
+          fs-windows-file-attribute-data-size)
+        "WIN32_FILE_ATTRIBUTE_DATA attributes fit allocated storage")
+      (fs-test-assert-true
+        (<=
+          (+ fs-windows-file-size-high-offset 4)
+          fs-windows-file-attribute-data-size)
+        "WIN32_FILE_ATTRIBUTE_DATA high size fits allocated storage")
+      (fs-test-assert-true
+        (<=
+          (+ fs-windows-file-size-low-offset 4)
+          fs-windows-file-attribute-data-size)
+        "WIN32_FILE_ATTRIBUTE_DATA low size fits allocated storage")
+      (cfg
+        windows
+        unit
+        (begin
+          (fs-test-assert-true
+            (<= (+ fs-linux-stat-mode-offset 4) fs-linux-stat-buffer-size)
+            "Linux stat mode fits allocated storage")
+          (fs-test-assert-true
+            (<= (+ fs-linux-stat-size-offset 8) fs-linux-stat-buffer-size)
+            "Linux stat size fits allocated storage"))))))
+
+(cfg
+  test
+  (define (fs-test-assert-metadata-byte-decode) : unit
+    (let
+      [bytes : (__tl_dyn-array u8) (__tl_make-array u8 8)]
+      (begin
+        (set! (array-ref bytes 0) (cast 1 : u8))
+        (set! (array-ref bytes 1) (cast 2 : u8))
+        (set! (array-ref bytes 2) (cast 3 : u8))
+        (set! (array-ref bytes 3) (cast 4 : u8))
+        (set! (array-ref bytes 4) (cast 5 : u8))
+        (set! (array-ref bytes 5) (cast 6 : u8))
+        (set! (array-ref bytes 6) (cast 7 : u8))
+        (set! (array-ref bytes 7) (cast 8 : u8))
+        (fs-test-assert-i64-eq
+          (cast (metadata-read-u32-from (& bytes) 0) : i64)
+          0x04030201
+          "owned metadata u32 byte decode")
+        (fs-test-assert-i64-eq
+          (metadata-read-i64-from (& bytes) 0)
+          0x0807060504030201
+          "owned metadata i64 byte decode")))))
+
+(cfg
+  (all test (not windows))
+  (define (fs-test-linux-dirent-page [reclen : i64] [terminated : bool]) : (__tl_dyn-array
+      u8)
+    (let
+      [bytes : (__tl_dyn-array u8) (__tl_make-array u8 24)]
+      (begin
+        (set! (array-ref bytes 16) (cast reclen : u8))
+        (set! (array-ref bytes 17) (cast 0 : u8))
+        (set! (array-ref bytes 19) (cast 'a' : u8))
+        (set!
+          (array-ref bytes 20)
+          (if terminated
+            (cast 0 : u8)
+            (cast 'b' : u8)))
+        (set!
+          (array-ref bytes 21)
+          (if terminated
+            (cast 0 : u8)
+            (cast 'c' : u8)))
+        (set!
+          (array-ref bytes 22)
+          (if terminated
+            (cast 0 : u8)
+            (cast 'd' : u8)))
+        (set!
+          (array-ref bytes 23)
+          (if terminated
+            (cast 0 : u8)
+            (cast 'e' : u8)))
+        bytes))))
+
+(cfg
+  (all test (not windows))
+  (define (fs-test-assert-linux-dirent-bounds) : unit
+    (let
+      [valid : (__tl_dyn-array u8) (fs-test-linux-dirent-page 24 true)]
+      [valid-out : byte_buf_core.ByteBufBuilder
+        (byte_buf_core.ByteBufBuilder (__tl_make-array u8 0) 0)]
+      [valid-result : bool
+        (linux-read-dir-append-page! (clone valid) 24 (&mut valid-out))]
+      [valid-text : String (read-dir-bytes-string (&mut valid-out))]
+      [short : (__tl_dyn-array u8) (fs-test-linux-dirent-page 19 true)]
+      [short-out : byte_buf_core.ByteBufBuilder
+        (byte_buf_core.ByteBufBuilder (__tl_make-array u8 0) 0)]
+      [unterminated : (__tl_dyn-array u8) (fs-test-linux-dirent-page 24 false)]
+      [unterminated-out : byte_buf_core.ByteBufBuilder
+        (byte_buf_core.ByteBufBuilder (__tl_make-array u8 0) 0)]
+      [oversized : (__tl_dyn-array u8) (fs-test-linux-dirent-page 24 true)]
+      [oversized-out : byte_buf_core.ByteBufBuilder
+        (byte_buf_core.ByteBufBuilder (__tl_make-array u8 0) 0)]
+      (begin
+        (fs-test-assert-true valid-result "valid Linux dirent page")
+        (fs-test-assert-owned-string-eq
+          valid-text
+          "a\n"
+          "valid Linux dirent name")
+        (fs-test-assert-false
+          (linux-read-dir-append-page! short 24 (&mut short-out))
+          "short Linux dirent record rejected")
+        (fs-test-assert-false
+          (linux-read-dir-append-page! unterminated 24 (&mut unterminated-out))
+          "unterminated Linux dirent name rejected")
+        (fs-test-assert-false
+          (linux-read-dir-append-page! oversized 25 (&mut oversized-out))
+          "oversized Linux dirent byte count rejected")))))
+
+(cfg
+  test
   (define (fs-test-assert-windows-nt-create-abi) : unit
     (begin
       (fs-test-assert-i64-eq
@@ -3111,6 +3552,9 @@
         (str_cat.str-cat "left path" (stdlib.fs.path-separator) "right file")]
       (begin
         (fs-test-assert-windows-nt-create-abi)
+        (fs-test-assert-raw-structure-bounds)
+        (fs-test-assert-metadata-byte-decode)
+        (cfg windows unit (fs-test-assert-linux-dirent-bounds))
         (fs-test-assert-owned-string-eq
           joined
           (string.copy expected-join)

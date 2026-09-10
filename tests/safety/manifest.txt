@@ -253,6 +253,12 @@ byte_buf_view_mut_after_immut_reject|check-fail|tests/safety/byte_buf_view_mut_a
 byte_buf_view_double_mut_reject|check-fail|tests/safety/byte_buf_view_double_mut_reject.tl|-|cannot read mutably borrowed place `buf`
 byte_buf_view_arena_escape_reject|check-fail|tests/safety/byte_buf_view_arena_escape_reject.tl|-|region-tagged value cannot escape with-arena
 safe_raw_pointer_read_reject|check-fail|tests/safety/safe_raw_pointer_read_reject.tl|-|ptr-read requires unsafe context
+fs_raw_metadata_safe_reject|check-fail|tests/safety/fs_raw_metadata_safe_reject.tl|-|fs/metadata-read-i64-at requires unsafe context
+fs_raw_directory_alias_safe_reject|check-fail|tests/safety/fs_raw_directory_alias_safe_reject.tl|-|disk/c-string-byte requires unsafe context
+fs_raw_resource_integer_safe_reject|check-fail|tests/safety/fs_raw_resource_integer_safe_reject.tl|-|fs/file-lock-close-status requires unsafe context
+fs_raw_helper_callable_launder_reject|check-fail|tests/safety/fs_raw_helper_callable_launder_reject.tl|-|fs/metadata-read-i64-at is an unsafe callable and cannot be used as a plain function value
+fs_raw_helper_unsafe_call_ok|check-ok|tests/safety/fs_raw_helper_unsafe_call_ok.tl|-|-
+fs_owned_wrappers_safe_ok|check-ok|tests/safety/fs_owned_wrappers_safe_ok.tl|-|-
 fs_rooted_linux_state_read_reject|check-fail|tests/safety/fs_rooted_linux_state_read_reject.tl|-|linux-rooted-state-read requires unsafe context
 fs_rooted_linux_raw_close_reject|check-fail|tests/safety/fs_rooted_linux_raw_close_reject.tl|-|linux-rooted-raw-close requires unsafe context
 fs_rooted_linux_capability_copy_reject|check-fail|tests/safety/fs_rooted_linux_capability_copy_reject.tl|-|cleanup-required resource already has a cleanup owner

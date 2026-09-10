@@ -229,6 +229,7 @@ net/http_trailer.tl
 net/http_trailer_policy.tl
 net/http_types.tl
 net/ip.tl
+ssh_known_hosts_parse.tl
 json.tl
 math.tl
 msvc.tl
@@ -295,6 +296,7 @@ stdlib/tests/http_head_codec.tl|42|-|-|-
 stdlib/tests/http_trailer.tl|42|-|-|-
 stdlib/tests/http_trailer_policy.tl|42|-|-|-
 stdlib/tests/net_ip_api.tl|42|-|-|-
+stdlib/tests/ssh_known_hosts_parse_api.tl|42|-|-|-
 stdlib/tests/format_negative_dynamic_precision.tl|134|-|literal:format: precision count must be nonnegative|-
 stdlib/tests/format_negative_dynamic_width.tl|134|-|literal:format: dynamic width argument must be nonnegative|-
 stdlib/tests/io_stdio_lines.tl|42|printf:stdout-line\n|printf:stderr-line\n|printf:alpha\n\nomega

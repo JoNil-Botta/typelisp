@@ -116,6 +116,16 @@ Vec bang place macros as available yet.
   spelling; IPv6 accepts RFC 4291 compression and embedded dotted suffixes and
   emits lowercase RFC 5952 pure hexadecimal. Import it with
   `(import stdlib.net.ip)`.
+- `ssh_known_hosts_parse.tl`: pure bounded OpenSSH `known_hosts` snapshot
+  scanner, canonical host/port lookup identity, and ASCII case-folded plain
+  pattern matcher. It preflights whole-source byte/line/record limits before
+  retained allocation, uses bounded dynamic programming for `*`/`?`, applies
+  line-wide negation precedence, and retains hashed selectors as opaque typed
+  version/salt/digest fields for the separate compatibility matcher. Marker,
+  selector, and key-token validity remain independent so a parent trust policy
+  may ignore a malformed key only after a plain selector is definitely
+  nonmatching. It performs no file I/O, base64 decoding, cryptography, DNS, or
+  trust decision. Import it with `(import stdlib.ssh_known_hosts_parse)`.
 - `clone.tl`: explicit deep-clone generation for nominal owners. Import it and
   invoke `(gen-clone Point)` beside `Point` to emit the ordinary public
   `clone-point : (& Point) -> Point` function. Generated functions reconstruct

@@ -83,7 +83,14 @@
               (set! seen (+ seen 1))
               (set! cursor (+ cursor 3))))
           (set! position (+ position 1))))
-      seen)))
+      ;; NON-TAIL self-recursion, never taken (`blocks` is at least 8 at every
+      ;; call), keeps the walk out of every inline tier -- the measured tier
+      ;; would otherwise take it into `main`'s loop -- so the gate can read its
+      ;; own prologue (divmagic_hoist pattern). It sits after the walk so the
+      ;; abort twin's pinned line does not move.
+      (if (< blocks 0)
+        (+ seen (ccl-census-blocks blocks start refs))
+        seen))))
 
 (define (ccl-fill! [blocks : i64] [refs : i64] [skew : i64]) : unit
   (let

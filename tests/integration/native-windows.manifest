@@ -162,6 +162,7 @@ callregion_writeback|tests/integration/callregion_writeback.tl|42|-|-|stdlib/io.
 divmagic_hoist|tests/integration/divmagic_hoist.tl|42|-|-|stdlib/io.tl
 divmod_live_dividend|tests/integration/divmod_live_dividend.tl|42|-|-|stdlib/io.tl
 hoist_priority|tests/integration/hoist_priority.tl|42|-|-|stdlib/io.tl
+scratch_reserve_zero_fill|tests/integration/scratch_reserve_zero_fill.tl|42|-|-|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 fallthrough_jmp_chain|tests/integration/fallthrough_jmp_chain.tl|42|-|-|-
 block_layout|tests/integration/block_layout.tl|42|-|-|-
 jump_only_forward|tests/integration/jump_only_forward.tl|42|-|-|-

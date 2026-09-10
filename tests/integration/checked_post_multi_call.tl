@@ -156,12 +156,16 @@
 
 ;; The nested loop the chain hangs from: two levels, so the site below it
 ;; carries the composite frequency the depth floor's own rung asks for.
+;; The lookup's fallback comes in as a parameter rather than a literal: a
+;; literal-argument site specializes its callee (INL-18), and `pm-lookup`
+;; would be taken into this nest and leave the gate nothing to read.
 (define (pm-walk
   [keys : (& k (__tl_dyn-array i64))]
   [marks : (& m (__tl_dyn-array i64))]
   [cap : i64]
   [rows : i64]
-  [cols : i64]) : i64
+  [cols : i64]
+  [fallback : i64]) : i64
   (let
     [acc : i64 0]
     [r : i64 0]
@@ -172,7 +176,9 @@
           (begin
             (while (< c cols)
               (begin
-                (set! acc (+ acc (pm-lookup keys marks cap (+ (* r 7) c) 5)))
+                (set!
+                  acc
+                  (+ acc (pm-lookup keys marks cap (+ (* r 7) c) fallback)))
                 (set! c (+ c 1))))
             (set! r (+ r 1)))))
       acc)))
@@ -193,7 +199,9 @@
           (set! (array-ref marks i) 1)
           (set! (array-ref vals i) (* i 3))
           (set! i (+ i 1))))
-      (set! total (pm-walk (& keys) (& marks) cap 16 16))
+      (set!
+        total
+        (pm-walk (& keys) (& marks) cap 16 16 (+ (array-ref vals 1) 2)))
       ;; The cold second references: one apiece for the accessor and for the
       ;; wrapper that takes it at its entry block, so no single-site band can
       ;; claim either and both keep an out-of-line body for the asm-shape gate

@@ -1339,21 +1339,30 @@ check_checked_setup_helper() {
         _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
         _asm=$(compile_gate "checked_setup_helper_$_suffix" \
             tests/integration/checked_setup_helper.tl "$_target")
-        _run=$(function_body "$_asm" _tl_checked_setup_helper_run)
+        _main=$(function_body "$_asm" main)
 
         # The recorded loser's shape: a seven-parameter setup builder at the
         # ENTRY block of a caller that holds a hot loop, reached through a loop
         # of its own caller. The site-depth clause used to refuse it without
-        # pricing it; it is now offered to the verdict and the verdict refuses
-        # it BY COST, and the difference is visible only here -- absorbing the
-        # builder is correct, just slower, so an exit code cannot tell the two
-        # apart. `--trace-passes` reports the numbers.
-        assert_regex_count_eq "$_run" \
-            '^[[:space:]]+call _tl_checked_setup_helper_build_csr$' 1 \
+        # pricing it; it is offered to the verdict, and the verdict -- the
+        # allocator's own estimator (INL-15) with the site's three literal
+        # setup arguments priced as the fold they are (INL-18) -- keeps it, as
+        # the smoke self-tests of this shape record; the loop-holding caller
+        # is itself kept at `main`'s loop. The difference is visible only
+        # here: absorbing the builder is correct, and an exit code cannot tell
+        # the two apart. `--trace-passes` reports the numbers.
+        assert_not_matches "$_asm" '^_tl_checked_setup_helper_run:$' \
             "checked-setup-helper-$_target"
-        # ...and nothing else was absorbed into the loop-holding caller either:
-        # an imported body carries the inline label prefix.
-        assert_not_matches "$_run" '^\.L[A-Za-z0-9_]+_inl\.' \
+        assert_matches "$_main" '^\.L[A-Za-z0-9_]+_inl\.' \
+            "checked-setup-helper-$_target"
+        # The tier COPIES the builder into the site and leaves it reachable
+        # from its cold second reference, which still calls it: `rebuild` is
+        # absorbed into `main` by the single-reference band, so that one call
+        # is the only one the program makes.
+        assert_matches "$_asm" '^_tl_checked_setup_helper_build_csr:$' \
+            "checked-setup-helper-$_target"
+        assert_regex_count_eq "$_asm" \
+            '^[[:space:]]+call _tl_checked_setup_helper_build_csr$' 1 \
             "checked-setup-helper-$_target"
     done
 }
@@ -1609,9 +1618,16 @@ check_sccp_rewrite_phi_import() {
         # two of headroom it always carried; what the gate is about --
         # `sccp-rewrite-phi` staying OUT of line and reached by exactly one call
         # -- is unchanged, and so is the row, which INL-9 moves -17,525,408.
-        _bound=24
+        # SUM-6 moved both bounds by three more: the driver's loop calls
+        # `sccp-rewrite-instr`, whose summary writes named cells beside its
+        # element stores, and the new header-clean bit lets LICM hoist the
+        # tape descriptor's length and data words out of the loop. The hoisted
+        # words take three frame slots (25 references on linux, 36 on win64,
+        # from 22 and 33); the row is -86,592 for it and the import decision
+        # is what it was.
+        _bound=27
         if [ "$_target" = windows-x86_64 ]; then
-            _bound=35
+            _bound=38
         fi
         _asm=$(compile_gate "sccp_rewrite_phi_import_$_suffix" \
             benchmarks/sccp_lattice/bench.tl "$_target")
@@ -1636,28 +1652,40 @@ check_sccp_rewrite_phi_import() {
 # module global; `rli-rows` walks the tape by self tail-call and `rli-peek`
 # does not call itself. Both callers carry a bounds check of their own, so the
 # cascade clause is out of the comparison and only the recursion is in it.
+#
+# INL-11 rewrites the self tail call into a back edge BEFORE the inliner runs,
+# so the recursion no longer differs: `rli-rows` presents its loop, the site
+# reads in-loop, and the hot-loop-leaf band's in-loop tier prices the import
+# there exactly as it does for a `while`-written driver -- and takes it, for
+# the same 42-instruction leaf `rli-peek` takes. So both callers carry the
+# copy, no call is left, and the callee -- referenced by nothing -- is not
+# emitted at all. What the pair above still pins is the size half of the same
+# question: `sccp-rewrite-phi` (102 instructions, 26 blocks) stays out of
+# `sccp-rewrite-rows` under the in-loop tier's own gates, and that gate is
+# unchanged.
 check_recursive_loop_import() {
     for _target in linux-x86_64 windows-x86_64; do
         _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
         _asm=$(compile_gate "recursive_loop_import_$_suffix" \
             tests/integration/recursive_loop_import.tl "$_target")
 
-        # The callee keeps a body, because one of its two sites keeps its call.
-        assert_matches "$_asm" '^_tl_recursive_loop_import_rli_scan:$' \
+        # No caller keeps a call, so no body is emitted for the callee.
+        assert_not_matches "$_asm" '^_tl_recursive_loop_import_rli_scan:$' \
             "recursive-loop-import-$_target"
 
-        # The self-tail-recursive driver keeps its boundary...
+        # The driver, a loop once its self tail call is a back edge, takes the
+        # copy: no call left, and the scan's fold landed in it. The FNV
+        # multiplier is the callee's own constant and appears nowhere else in
+        # the program.
         _rows=$(function_body "$_asm" _tl_recursive_loop_import_rli_rows)
         assert_regex_count_eq "$_rows" \
-            '^[[:space:]]+call _tl_recursive_loop_import_rli_scan$' 1 \
+            '^[[:space:]]+call _tl_recursive_loop_import_rli_scan$' 0 \
             "recursive-loop-import-$_target"
-        # ...and no copy of the scan's fold landed in it. The FNV multiplier is
-        # the callee's own constant and appears nowhere else in the program.
-        assert_regex_count_eq "$_rows" '1099511628211' 0 \
+        assert_regex_count_at_least "$_rows" '1099511628211' 1 \
             "recursive-loop-import-$_target"
 
-        # The non-recursive caller at the same kind of site takes the copy: no
-        # call left, and the imported loop's multiplier is in its body.
+        # The non-recursive caller at the same kind of site takes the copy as
+        # it always did.
         _peek=$(function_body "$_asm" _tl_recursive_loop_import_rli_peek)
         assert_regex_count_eq "$_peek" \
             '^[[:space:]]+call _tl_recursive_loop_import_rli_scan$' 0 \
@@ -2089,21 +2117,24 @@ check_licm_memclean_promote() {
     # REFUSED on the proof: the callee set!s the cell, so it is not invariant at
     # any pressure. This is also the wrong-answer guard the fixture runs.
     #
-    # INL-6: `mix-writing`'s only unwhitelisted instruction was that `set!` --
-    # the global-cell `Store` the MULTIBLOCK whitelist refused until this
-    # packet -- so the callee is now absorbed into this scan and the boundary
-    # is gone. The claim is unchanged and the shape says it more directly than
-    # before: the cell is WRITTEN inside the loop, so nothing about it is
-    # invariant, and every read stays a read. Four occurrences, not two,
-    # because the absorbed body's own read and write are now spelled here
-    # beside the loop's; the promoted form would be one preheader load and no
-    # per-iteration reference at all.
-    assert_fixed_count_eq "$_writer" "${_sym}_gcell_c(%rip)" 4 licm-memclean-promote
+    # INL-6 absorbed `mix-writing` into this scan (its only unwhitelisted
+    # instruction was that `set!`, the global-cell `Store` the MULTIBLOCK
+    # whitelist refused until then) and the gate read four occurrences: the
+    # absorbed body's own read and write beside the loop's two. INL-17c puts
+    # the boundary back: `writer-scan` is a self-tail-recursive caller whose
+    # loop opt-tailrec builds from that call, and the checked tier refuses a
+    # loop-carrying callee at every site of such a caller
+    # (opt-inline-checked-clause-converted-caller; the measured case is
+    # `sccp-rewrite-phi` into `sccp-rewrite-rows`, check_sccp_rewrite_phi_import).
+    # The claim is unchanged: the cell is WRITTEN inside the loop, so nothing
+    # about it is invariant, and every read stays a read -- two per iteration
+    # around the surviving call, never one preheader load -- while the write
+    # stays inside the callee.
+    assert_fixed_count_eq "$_writer" "${_sym}_gcell_c(%rip)" 2 licm-memclean-promote
     assert_regex_count_eq "$_writer" \
-        "^[[:space:]]+movq %r[a-z0-9]+, ${_sym}_gcell_c\\(%rip\\)$" 1 \
+        "^[[:space:]]+movq %r[a-z0-9]+, ${_sym}_gcell_c\\(%rip\\)$" 0 \
         licm-memclean-promote
-    assert_not_matches "$_writer" "^[[:space:]]+call ${_sym}_mix_writing$" \
-        licm-memclean-promote
+    assert_contains "$_writer" "call ${_sym}_mix_writing" licm-memclean-promote
 }
 
 check_group_copy_direct() {
@@ -3229,6 +3260,23 @@ check_red_zone_leaf_win64() {
     done
 }
 
+# SCR-1. Sixteen hoisted data pointers exceed the pool, the greedy spills the
+# rest, and every store through a spilled pointer must reload it into a scratch
+# register. With every pool register live across the loop the scavenger used to
+# BORROW one per store and bracket it with a save and a restore (the XMM park),
+# and the staged store copied the resident index into a second borrowed
+# register: seven instructions per store. The scratch-reserve round prices the
+# parks off the plan and replans with %r11 reserved, and the staged store reads
+# the index home in place. The body must carry no park, and the spilled
+# pointers must be reloaded through %r11 straight into a store.
+check_scratch_reserve_zero_fill() {
+    _asm=$(compile_gate scratch_reserve_zero_fill tests/integration/scratch_reserve_zero_fill.tl)
+    _reset=$(function_body "$_asm" _tl_scratch_reserve_zero_fill_reset_arrays_bang)
+    assert_regex_count_eq "$_reset" '^[[:space:]]+movq %r[a-z0-9]+, %xmm[0-9]+$' 0 scratch-reserve-zero-fill
+    assert_regex_count_at_least "$_reset" '^[[:space:]]+movq [0-9]+\(%rsp\), %r11$' 4 scratch-reserve-zero-fill
+    assert_regex_count_at_least "$_reset" '^[[:space:]]+movq \$(0|-1), \(%r11,%r[a-z0-9]+,8\)$' 4 scratch-reserve-zero-fill
+}
+
 check_lattice_join_split
 check_short_trip_copy
 check_select_flags_lea
@@ -3305,5 +3353,6 @@ check_alias_row_overflow
 check_alias_typed_word
 check_vt_offset_copy
 check_vt_derived_stride
+check_scratch_reserve_zero_fill
 
 echo "Assembly shape gates passed."

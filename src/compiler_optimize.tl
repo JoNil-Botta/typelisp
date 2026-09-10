@@ -14083,6 +14083,69 @@
 (defenum OptBlockPassResult
   (Result ir.CompilerIrBlock bool))
 
+;; A block rewrite explicitly carries its next frame. Rejected/unchanged plans
+;; leave the original function and caller-owned context untouched.
+(defenum OptBlockRewriteResult
+  (Result ir.CompilerIrBlockList i64 bool))
+
+(defenum OptFunctionRewriteResult
+  (Result ir.CompilerIrFunction OptCfgContext bool))
+
+(define (opt-function-rewrite-unchanged
+  [func : ir.CompilerIrFunction]
+  [context : OptCfgContext]) : OptFunctionRewriteResult
+  (OptFunctionRewriteResult.Result func context false))
+
+(define (opt-function-rewrite-commit
+  [func : ir.CompilerIrFunction]
+  [context : OptCfgContext]
+  [plan : OptBlockRewriteResult]) : OptFunctionRewriteResult
+  (match plan
+    [(OptBlockRewriteResult.Result blocks frame changed?)
+      (if (not changed?)
+        (opt-function-rewrite-unchanged func context)
+        (match (compiler-opt-global-shared-view func)
+          [(ir.CompilerIrFunction.Function name params ret-ty _ _)
+            (let
+              [next : ir.CompilerIrFunction
+                (ir.CompilerIrFunction.Function
+                  name
+                  params
+                  ret-ty
+                  frame
+                  (compiler-opt-global-shared-view blocks))]
+              [next-context : OptCfgContext (opt-cfg-context-build blocks)]
+              (match (opt-verify-function-with-context
+                (compiler-opt-global-shared-view next)
+                (compiler-opt-global-shared-view next-context))
+                [(ResultCompilerOptimizeVerify.Ok)
+                  (OptFunctionRewriteResult.Result next next-context true)]
+                [(ResultCompilerOptimizeVerify.Err _)
+                  (opt-function-rewrite-unchanged func context)]))]))]))
+
+;; Static specialization keeps candidate and clone/fuel policy at each pass,
+;; without closures or indirect calls. The rewrite runs only after admission
+;; and verification. Mutable transforms must clone before editing their input.
+(defmacro (opt-branch-function-rewrite
+  [func : Expr]
+  [context : Expr]
+  [verified? : Expr]
+  [candidate? : Expr]
+  [rewrite : Expr]) : Expr
+  `(let
+    [original ,func]
+    [original-context ,context]
+    (if ,candidate?
+      (match (opt-verify-gate
+        ,verified?
+        (compiler-opt-global-shared-view original)
+        (compiler-opt-global-shared-view original-context))
+        [(ResultCompilerOptimizeVerify.Ok)
+          (opt-function-rewrite-commit original original-context ,rewrite)]
+        [(ResultCompilerOptimizeVerify.Err _)
+          (opt-function-rewrite-unchanged original original-context)])
+      (opt-function-rewrite-unchanged original original-context))))
+
 (define (opt-cfg-context-all-blocks-reachable? [context : OptCfgContext]) : bool
   (let
     [index : OptCfgIndex (compiler-opt-global-shared-view context.index)]
@@ -45637,9 +45700,6 @@
   (No)
   (Some ir.CompilerIrBlockList i64))
 
-(defenum OptBoolBranchChainResult
-  (Result ir.CompilerIrBlockList i64 bool))
-
 (defenum OptBoolBranchPhiInputs
   (No)
   (Two ir.CompilerIrValue i64 ir.CompilerIrValue i64))
@@ -46459,9 +46519,9 @@
   [type-segment-bases : i64]
   [blocks : ir.CompilerIrBlockList]
   [frame : i64]
-  [remaining : i64]) : OptBoolBranchChainResult
+  [remaining : i64]) : OptBlockRewriteResult
   (if (<= remaining 0)
-    (OptBoolBranchChainResult.Result blocks frame false)
+    (OptBlockRewriteResult.Result blocks frame false)
     (let
       [defs : (__tl_dyn-array OptBoolBranchDef)
         (opt-bool-branch-defs frame (compiler-opt-global-shared-view blocks))]
@@ -46477,15 +46537,15 @@
         (compiler-opt-global-shared-view uses)
         (compiler-opt-global-shared-view blocks))
         [(OptBoolBranchChainRewrite.No)
-          (OptBoolBranchChainResult.Result blocks frame false)]
+          (OptBlockRewriteResult.Result blocks frame false)]
         [(OptBoolBranchChainRewrite.Some next next-frame)
           (match (opt-bool-branch-chain-blocks-raw
             type-segment-bases
             next
             next-frame
             (- remaining 1))
-            [(OptBoolBranchChainResult.Result final final-frame _)
-              (OptBoolBranchChainResult.Result final final-frame true)])]))))
+            [(OptBlockRewriteResult.Result final final-frame _)
+              (OptBlockRewriteResult.Result final final-frame true)])]))))
 
 (define (opt-bool-branch-phi-inputs [inputs : ir.CompilerIrPhiInputSeq]) : OptBoolBranchPhiInputs
   (let
@@ -47688,49 +47748,23 @@
   [type-segment-bases : i64]
   [context : OptCfgContext]
   [verified? : bool]
-  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
-  ;; The block pass mutates instruction sequences, so it always works on a deep
-  ;; block/instruction clone. A failed post-pass verify can therefore return the
-  ;; byte-for-byte input function instead of retaining a partial edge rewrite.
+  [func : ir.CompilerIrFunction]) : OptFunctionRewriteResult
   (match (compiler-opt-global-shared-view func)
-    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
-      (if (not
+    [(ir.CompilerIrFunction.Function _ _ _ frame blocks)
+      (opt-branch-function-rewrite
+        func
+        context
+        verified?
         (opt-bool-branch-blocks-have-candidate?
           type-segment-bases
-          (compiler-opt-global-shared-view blocks)))
-        (OptFunctionPassResult.Result func false)
-        (match (opt-verify-gate
-          verified?
-          (compiler-opt-global-shared-view func)
-          (compiler-opt-global-shared-view context))
-          [(ResultCompilerOptimizeVerify.Err _)
-            (OptFunctionPassResult.Result func false)]
-          [(ResultCompilerOptimizeVerify.Ok)
-            (match (opt-bool-branch-fuse-blocks
-              type-segment-bases
-              (compiler-opt-global-shared-view blocks)
-              frame
-              16)
-              [(OptBlockListPassResult.Result next-blocks changed)
-                (if changed
-                  (let
-                    [next : ir.CompilerIrFunction
-                      (ir.CompilerIrFunction.Function
-                        name
-                        params
-                        ret-ty
-                        frame
-                        (compiler-opt-global-shared-view next-blocks))]
-                    [next-context : OptCfgContext
-                      (opt-cfg-context-build next-blocks)]
-                    (match (opt-verify-function-with-context
-                      (compiler-opt-global-shared-view next)
-                      next-context)
-                      [(ResultCompilerOptimizeVerify.Ok)
-                        (OptFunctionPassResult.Result next true)]
-                      [(ResultCompilerOptimizeVerify.Err _)
-                        (OptFunctionPassResult.Result func false)]))
-                  (OptFunctionPassResult.Result func false))])]))]))
+          (compiler-opt-global-shared-view blocks))
+        (match (opt-bool-branch-fuse-blocks
+          type-segment-bases
+          (compiler-opt-global-shared-view blocks)
+          frame
+          16)
+          [(OptBlockListPassResult.Result next changed?)
+            (OptBlockRewriteResult.Result next frame changed?)]))]))
 
 ;; --- compare-of-sentinel-phi fold (phi_cmp_fold) ----------------------------
 ;;
@@ -49234,46 +49268,22 @@
   [type-segment-bases : i64]
   [context : OptCfgContext]
   [verified? : bool]
-  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+  [func : ir.CompilerIrFunction]) : OptFunctionRewriteResult
   (match (compiler-opt-global-shared-view func)
-    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
-      (if (not
+    [(ir.CompilerIrFunction.Function _ _ _ frame blocks)
+      (opt-branch-function-rewrite
+        func
+        context
+        verified?
         (opt-phi-cmp-fold-blocks-have-candidate?
-          (compiler-opt-global-shared-view blocks)))
-        (OptFunctionPassResult.Result func false)
-        (match (opt-verify-gate
-          verified?
-          (compiler-opt-global-shared-view func)
-          (compiler-opt-global-shared-view context))
-          [(ResultCompilerOptimizeVerify.Err _)
-            (OptFunctionPassResult.Result func false)]
-          [(ResultCompilerOptimizeVerify.Ok)
-            (match (opt-phi-cmp-fold-blocks
-              type-segment-bases
-              (compiler-opt-global-shared-view blocks)
-              frame
-              (opt-phi-cmp-fold-fuel))
-              [(OptBlockListPassResult.Result next-blocks changed)
-                (if changed
-                  (let
-                    [next : ir.CompilerIrFunction
-                      (ir.CompilerIrFunction.Function
-                        (compiler-opt-global-shared-view name)
-                        (compiler-opt-global-shared-view params)
-                        (compiler-opt-global-shared-view ret-ty)
-                        frame
-                        (compiler-opt-global-shared-view next-blocks))]
-                    [next-context : OptCfgContext
-                      (opt-cfg-context-build
-                        (compiler-opt-global-shared-view next-blocks))]
-                    (match (opt-verify-function-with-context
-                      (compiler-opt-global-shared-view next)
-                      (compiler-opt-global-shared-view next-context))
-                      [(ResultCompilerOptimizeVerify.Ok)
-                        (OptFunctionPassResult.Result next true)]
-                      [(ResultCompilerOptimizeVerify.Err _)
-                        (OptFunctionPassResult.Result func false)]))
-                  (OptFunctionPassResult.Result func false))])]))]))
+          (compiler-opt-global-shared-view blocks))
+        (match (opt-phi-cmp-fold-blocks
+          type-segment-bases
+          (compiler-opt-global-shared-view blocks)
+          frame
+          (opt-phi-cmp-fold-fuel))
+          [(OptBlockListPassResult.Result next changed?)
+            (OptBlockRewriteResult.Result next frame changed?)]))]))
 
 ;; Gate for the bool-branch `and`-chain pass: does any conditional branch test a
 ;; value that an `and` materialized in this function?
@@ -49502,45 +49512,20 @@
   [type-segment-bases : i64]
   [context : OptCfgContext]
   [verified? : bool]
-  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+  [func : ir.CompilerIrFunction]) : OptFunctionRewriteResult
   (match (compiler-opt-global-shared-view func)
-    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
-      (if (not
+    [(ir.CompilerIrFunction.Function _ _ _ frame blocks)
+      (opt-branch-function-rewrite
+        func
+        context
+        verified?
         (opt-bool-branch-chain-blocks-have-candidate?
-          (compiler-opt-global-shared-view blocks)))
-        (OptFunctionPassResult.Result func false)
-        (match (opt-verify-gate
-          verified?
-          (compiler-opt-global-shared-view func)
-          (compiler-opt-global-shared-view context))
-          [(ResultCompilerOptimizeVerify.Err _)
-            (OptFunctionPassResult.Result func false)]
-          [(ResultCompilerOptimizeVerify.Ok)
-            (match (opt-bool-branch-chain-blocks-raw
-              type-segment-bases
-              (opt-bool-branch-clone-blocks blocks)
-              frame
-              64)
-              [(OptBoolBranchChainResult.Result next-blocks next-frame changed)
-                (if changed
-                  (let
-                    [next : ir.CompilerIrFunction
-                      (ir.CompilerIrFunction.Function
-                        name
-                        params
-                        ret-ty
-                        next-frame
-                        (compiler-opt-global-shared-view next-blocks))]
-                    [next-context : OptCfgContext
-                      (opt-cfg-context-build next-blocks)]
-                    (match (opt-verify-function-with-context
-                      (compiler-opt-global-shared-view next)
-                      next-context)
-                      [(ResultCompilerOptimizeVerify.Ok)
-                        (OptFunctionPassResult.Result next true)]
-                      [(ResultCompilerOptimizeVerify.Err _)
-                        (OptFunctionPassResult.Result func false)]))
-                  (OptFunctionPassResult.Result func false))])]))]))
+          (compiler-opt-global-shared-view blocks))
+        (opt-bool-branch-chain-blocks-raw
+          type-segment-bases
+          (opt-bool-branch-clone-blocks blocks)
+          frame
+          64))]))
 
 ;; --- jump threading over constant branch conditions ------------------------
 ;;
@@ -51617,49 +51602,23 @@
   [type-segment-bases : i64]
   [context : OptCfgContext]
   [verified? : bool]
-  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
-  ;; The rewrite mutates instruction sequences, so it always works on a deep
-  ;; block/instruction clone and a rejected post-pass verify hands back the
-  ;; byte-for-byte input function rather than a partial edge rewrite.
+  [func : ir.CompilerIrFunction]) : OptFunctionRewriteResult
   (match (compiler-opt-global-shared-view func)
-    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
-      (if (not
+    [(ir.CompilerIrFunction.Function _ _ _ frame blocks)
+      (opt-branch-function-rewrite
+        func
+        context
+        verified?
         (opt-thread-const-branch-blocks-have-candidate?
           type-segment-bases
-          (compiler-opt-global-shared-view blocks)))
-        (OptFunctionPassResult.Result func false)
-        (match (opt-verify-gate
-          verified?
-          (compiler-opt-global-shared-view func)
-          (compiler-opt-global-shared-view context))
-          [(ResultCompilerOptimizeVerify.Err _)
-            (OptFunctionPassResult.Result func false)]
-          [(ResultCompilerOptimizeVerify.Ok)
-            (match (opt-thread-const-branch-blocks
-              type-segment-bases
-              (compiler-opt-global-shared-view blocks)
-              frame
-              (opt-thread-const-branch-fuel))
-              [(OptBlockListPassResult.Result next-blocks changed)
-                (if changed
-                  (let
-                    [next : ir.CompilerIrFunction
-                      (ir.CompilerIrFunction.Function
-                        name
-                        params
-                        ret-ty
-                        frame
-                        (compiler-opt-global-shared-view next-blocks))]
-                    [next-context : OptCfgContext
-                      (opt-cfg-context-build next-blocks)]
-                    (match (opt-verify-function-with-context
-                      (compiler-opt-global-shared-view next)
-                      next-context)
-                      [(ResultCompilerOptimizeVerify.Ok)
-                        (OptFunctionPassResult.Result next true)]
-                      [(ResultCompilerOptimizeVerify.Err _)
-                        (OptFunctionPassResult.Result func false)]))
-                  (OptFunctionPassResult.Result func false))])]))]))
+          (compiler-opt-global-shared-view blocks))
+        (match (opt-thread-const-branch-blocks
+          type-segment-bases
+          (compiler-opt-global-shared-view blocks)
+          frame
+          (opt-thread-const-branch-fuel))
+          [(OptBlockListPassResult.Result next changed?)
+            (OptBlockRewriteResult.Result next frame changed?)]))]))
 
 ;; --- forwarding-block straightening ----------------------------------------
 ;;
@@ -80694,7 +80653,7 @@
     (compiler-opt-global-shared-view context))
     [(ResultCompilerOptimizeVerify.Ok)
       (match (compiler-opt-global-shared-view func)
-        [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+        [(ir.CompilerIrFunction.Function _ _ _ frame blocks)
           (let
             [state : OptLoopCallRewriteState
               (OptLoopCallRewriteState frame false)]
@@ -80705,26 +80664,15 @@
                 (compiler-opt-global-shared-view blocks)
                 (opt-cfg-entry-label (compiler-opt-global-shared-view blocks))
                 (&mut state))]
-            (if (not state.changed?)
-              (OptFunctionCtxResult.Result func context)
-              (let
-                [next : ir.CompilerIrFunction
-                  (ir.CompilerIrFunction.Function
-                    name
-                    params
-                    ret-ty
-                    state.next-frame
-                    rewritten)]
-                [next-context : OptCfgContext
-                  (opt-cfg-context-build
-                    (opt-function-blocks (compiler-opt-global-shared-view next)))]
-                (match (opt-verify-function-with-context
-                  (compiler-opt-global-shared-view next)
-                  (compiler-opt-global-shared-view next-context))
-                  [(ResultCompilerOptimizeVerify.Ok)
-                    (OptFunctionCtxResult.Result next next-context)]
-                  [(ResultCompilerOptimizeVerify.Err _)
-                    (OptFunctionCtxResult.Result func context)]))))])]
+            (match (opt-function-rewrite-commit
+              func
+              context
+              (OptBlockRewriteResult.Result
+                rewritten
+                state.next-frame
+                state.changed?))
+              [(OptFunctionRewriteResult.Result next next-context _)
+                (OptFunctionCtxResult.Result next next-context)]))])]
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
 
@@ -121760,7 +121708,7 @@
                           (compiler-opt-global-shared-view ret-ty)
                           bd-frame
                           (compiler-opt-global-shared-view sccp))]
-                      [phi-cmp-fold-result : OptFunctionPassResult
+                      [phi-cmp-fold-result : OptFunctionRewriteResult
                         (opt-phi-cmp-fold-function-with-context-result
                           type-segment-bases
                           (if sccp-context-valid
@@ -121782,12 +121730,13 @@
                           bd-frame
                           (match (compiler-opt-global-shared-view
                             phi-cmp-fold-result)
-                            [(OptFunctionPassResult.Result f _)
+                            [(OptFunctionRewriteResult.Result f _ _)
                               (opt-function-blocks f)]))]
                       [phi-cmp-fold-changed : bool
                         (match (compiler-opt-global-shared-view
                           phi-cmp-fold-result)
-                          [(OptFunctionPassResult.Result _ changed) changed])]
+                          [(OptFunctionRewriteResult.Result _ _ changed)
+                            changed])]
                       [_p-phi-cmp-fold : unit
                         (cfg
                           compile-profile
@@ -121807,15 +121756,17 @@
                           bd-frame
                           (compiler-opt-global-shared-view phi-cmp-fold))]
                       [bool-branch-context : OptCfgContext
-                        (if (and sccp-context-valid (not phi-cmp-fold-changed))
-                          (compiler-opt-global-shared-view sccp-context)
+                        (if (or sccp-context-valid phi-cmp-fold-changed)
+                          (match (compiler-opt-global-shared-view
+                            phi-cmp-fold-result)
+                            [(OptFunctionRewriteResult.Result _ ctx _) ctx])
                           (if (opt-bool-branch-blocks-have-candidate?
                             type-segment-bases
                             (compiler-opt-global-shared-view phi-cmp-fold))
                             (opt-cfg-context-build
                               (compiler-opt-global-shared-view phi-cmp-fold))
                             (opt-cfg-context-empty)))]
-                      [bool-branch-result : OptFunctionPassResult
+                      [bool-branch-result : OptFunctionRewriteResult
                         (opt-bool-branch-function-with-context-result
                           type-segment-bases
                           (compiler-opt-global-shared-view bool-branch-context)
@@ -121831,12 +121782,13 @@
                           bd-frame
                           (match (compiler-opt-global-shared-view
                             bool-branch-result)
-                            [(OptFunctionPassResult.Result f _)
+                            [(OptFunctionRewriteResult.Result f _ _)
                               (opt-function-blocks f)]))]
                       [bool-branch-changed : bool
                         (match (compiler-opt-global-shared-view
                           bool-branch-result)
-                          [(OptFunctionPassResult.Result _ changed) changed])]
+                          [(OptFunctionRewriteResult.Result _ _ changed)
+                            changed])]
                       [_p-bool-branch : unit
                         (cfg
                           compile-profile
@@ -121875,14 +121827,16 @@
                           (compiler-opt-global-shared-view ret-ty)
                           bd-frame
                           (compiler-opt-global-shared-view bool-branch))]
-                      [thread-branch-result : OptFunctionPassResult
+                      [thread-branch-result : OptFunctionRewriteResult
                         (opt-thread-const-branch-function-with-context-result
                           type-segment-bases
-                          (if (and
+                          (if (or
                             sccp-context-valid
-                            (not phi-cmp-fold-changed)
-                            (not bool-branch-changed))
-                            (compiler-opt-global-shared-view sccp-context)
+                            phi-cmp-fold-changed
+                            bool-branch-changed)
+                            (match (compiler-opt-global-shared-view
+                              bool-branch-result)
+                              [(OptFunctionRewriteResult.Result _ ctx _) ctx])
                             (if (opt-thread-const-branch-blocks-have-candidate?
                               type-segment-bases
                               (compiler-opt-global-shared-view bool-branch))
@@ -121901,12 +121855,13 @@
                           bd-frame
                           (match (compiler-opt-global-shared-view
                             thread-branch-result)
-                            [(OptFunctionPassResult.Result f _)
+                            [(OptFunctionRewriteResult.Result f _ _)
                               (opt-function-blocks f)]))]
                       [thread-branch-changed : bool
                         (match (compiler-opt-global-shared-view
                           thread-branch-result)
-                          [(OptFunctionPassResult.Result _ changed) changed])]
+                          [(OptFunctionRewriteResult.Result _ _ changed)
+                            changed])]
                       [_p-thread-branch : unit
                         (cfg
                           compile-profile
@@ -121933,12 +121888,14 @@
                           (opt-cfg-simplify-blocks-with-context-result
                             (OptBlockCtxResult.Result
                               thread-branch
-                              sccp-context
-                              (and
+                              (match (compiler-opt-global-shared-view
+                                thread-branch-result)
+                                [(OptFunctionRewriteResult.Result _ ctx _) ctx])
+                              (or
                                 sccp-context-valid
-                                (not phi-cmp-fold-changed)
-                                (not bool-branch-changed)
-                                (not thread-branch-changed)))))]
+                                phi-cmp-fold-changed
+                                bool-branch-changed
+                                thread-branch-changed))))]
                       [cfg : ir.CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
                           type-segment-bases
@@ -123049,9 +123006,9 @@
                           (compiler-opt-global-shared-view ret-ty)
                           guard-sink-frame
                           (compiler-opt-global-shared-view guard-sink))]
-                      [bool-branch-late-result : OptFunctionPassResult
+                      [bool-branch-late-function : ir.CompilerIrFunction
                         (if run-heavy?
-                          (opt-bool-branch-chain-function-with-context-result
+                          (match (opt-bool-branch-chain-function-with-context-result
                             type-segment-bases
                             (if (opt-bool-branch-chain-blocks-have-candidate?
                               (compiler-opt-global-shared-view guard-sink))
@@ -123059,12 +123016,8 @@
                               (opt-cfg-context-empty))
                             false
                             bool-branch-late-input)
-                          (OptFunctionPassResult.Result
-                            bool-branch-late-input
-                            false))]
-                      [bool-branch-late-function : ir.CompilerIrFunction
-                        (match bool-branch-late-result
-                          [(OptFunctionPassResult.Result f _) f])]
+                            [(OptFunctionRewriteResult.Result f _ _) f])
+                          bool-branch-late-input)]
                       [bool-branch-late : ir.CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
                           type-segment-bases
@@ -123622,7 +123575,7 @@
             (opt-cfg-context-empty))
           false
           (compiler-opt-global-shared-view folded))
-          [(OptFunctionPassResult.Result next changed)
+          [(OptFunctionRewriteResult.Result next _ changed)
             (OptFunctionPassResult.Result
               (compiler-opt-debug-observe-function
                 type-segment-bases
@@ -124082,7 +124035,7 @@
                     (opt-cfg-context-empty)
                     true
                     (compiler-opt-global-shared-view forwarded))
-                    [(OptFunctionPassResult.Result threaded _)
+                    [(OptFunctionRewriteResult.Result threaded _ _)
                       (OptFunctionPassResult.Result threaded true)])])))))]))
 
 (define (opt-dce-late-final-pass

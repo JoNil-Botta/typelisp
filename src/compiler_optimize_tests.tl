@@ -38335,11 +38335,13 @@
     [func : compiler_ir_types.CompilerIrFunction
       (opt-bool-branch-chain-test-function
         (compiler_ir_types.compiler-ir-global-shared-view blocks))]
-    (compiler_optimize.opt-bool-branch-chain-function-with-context-result
+    (match (compiler_optimize.opt-bool-branch-chain-function-with-context-result
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler_optimize.opt-cfg-context-build blocks)
       false
-      func)))
+      func)
+      [(compiler_optimize.OptFunctionRewriteResult.Result next _ changed?)
+        (compiler_optimize.OptFunctionPassResult.Result next changed?)])))
 
 (define (opt-bool-branch-chain-compare-branch-block?
   [blocks : compiler_ir_types.CompilerIrBlockList]
@@ -69440,7 +69442,7 @@
     [constant-phi-function : compiler_ir_types.CompilerIrFunction
       (opt-bool-branch-constant-test-function
         (compiler_optimize.compiler-opt-global-shared-view constant-phi-source))]
-    [constant-phi-result : compiler_optimize.OptFunctionPassResult
+    [constant-phi-result : compiler_optimize.OptFunctionRewriteResult
       (compiler_optimize.opt-bool-branch-function-with-context-result
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.opt-cfg-context-build constant-phi-source)
@@ -69449,10 +69451,11 @@
     [constant-phi-optimized : compiler_ir_types.CompilerIrFunction
       (match (compiler_optimize.compiler-opt-global-shared-view
         constant-phi-result)
-        [(compiler_optimize.OptFunctionPassResult.Result func _) func])]
+        [(compiler_optimize.OptFunctionRewriteResult.Result func _ _) func])]
     [constant-phi-changed : bool
       (match constant-phi-result
-        [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed])]
+        [(compiler_optimize.OptFunctionRewriteResult.Result _ _ changed)
+          changed])]
     [constant-phi-blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks
         (compiler_optimize.compiler-opt-global-shared-view
@@ -69463,7 +69466,7 @@
       (opt-bool-branch-constant-test-function
         (compiler_optimize.compiler-opt-global-shared-view
           nonconstant-phi-source))]
-    [nonconstant-phi-result : compiler_optimize.OptFunctionPassResult
+    [nonconstant-phi-result : compiler_optimize.OptFunctionRewriteResult
       (compiler_optimize.opt-bool-branch-function-with-context-result
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.opt-cfg-context-build nonconstant-phi-source)
@@ -69473,16 +69476,17 @@
     [nonconstant-phi-optimized : compiler_ir_types.CompilerIrFunction
       (match (compiler_optimize.compiler-opt-global-shared-view
         nonconstant-phi-result)
-        [(compiler_optimize.OptFunctionPassResult.Result func _) func])]
+        [(compiler_optimize.OptFunctionRewriteResult.Result func _ _) func])]
     [nonconstant-phi-changed : bool
       (match nonconstant-phi-result
-        [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed])]
+        [(compiler_optimize.OptFunctionRewriteResult.Result _ _ changed)
+          changed])]
     [multi-phi-source : compiler_ir_types.CompilerIrBlockList
       (opt-bool-branch-multi-phi-blocks)]
     [multi-phi-function : compiler_ir_types.CompilerIrFunction
       (opt-bool-branch-constant-test-function
         (compiler_optimize.compiler-opt-global-shared-view multi-phi-source))]
-    [multi-phi-result : compiler_optimize.OptFunctionPassResult
+    [multi-phi-result : compiler_optimize.OptFunctionRewriteResult
       (compiler_optimize.opt-bool-branch-function-with-context-result
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.opt-cfg-context-build multi-phi-source)
@@ -69491,16 +69495,17 @@
     [multi-phi-optimized : compiler_ir_types.CompilerIrFunction
       (match (compiler_optimize.compiler-opt-global-shared-view
         multi-phi-result)
-        [(compiler_optimize.OptFunctionPassResult.Result func _) func])]
+        [(compiler_optimize.OptFunctionRewriteResult.Result func _ _) func])]
     [multi-phi-changed : bool
       (match multi-phi-result
-        [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed])]
+        [(compiler_optimize.OptFunctionRewriteResult.Result _ _ changed)
+          changed])]
     [chain-merge-source : compiler_ir_types.CompilerIrBlockList
       (opt-bool-branch-merge-chain-blocks 0)]
     [chain-merge-function : compiler_ir_types.CompilerIrFunction
       (opt-bool-branch-constant-test-function
         (compiler_optimize.compiler-opt-global-shared-view chain-merge-source))]
-    [chain-merge-result : compiler_optimize.OptFunctionPassResult
+    [chain-merge-result : compiler_optimize.OptFunctionRewriteResult
       (compiler_optimize.opt-bool-branch-function-with-context-result
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.opt-cfg-context-build chain-merge-source)
@@ -69509,10 +69514,11 @@
     [chain-merge-optimized : compiler_ir_types.CompilerIrFunction
       (match (compiler_optimize.compiler-opt-global-shared-view
         chain-merge-result)
-        [(compiler_optimize.OptFunctionPassResult.Result func _) func])]
+        [(compiler_optimize.OptFunctionRewriteResult.Result func _ _) func])]
     [chain-merge-changed : bool
       (match chain-merge-result
-        [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed])]
+        [(compiler_optimize.OptFunctionRewriteResult.Result _ _ changed)
+          changed])]
     [chain-merge-blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks
         (compiler_optimize.compiler-opt-global-shared-view
@@ -69522,7 +69528,7 @@
     [chain-busy-function : compiler_ir_types.CompilerIrFunction
       (opt-bool-branch-constant-test-function
         (compiler_optimize.compiler-opt-global-shared-view chain-busy-source))]
-    [chain-busy-result : compiler_optimize.OptFunctionPassResult
+    [chain-busy-result : compiler_optimize.OptFunctionRewriteResult
       (compiler_optimize.opt-bool-branch-function-with-context-result
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.opt-cfg-context-build chain-busy-source)
@@ -69531,10 +69537,11 @@
     [chain-busy-optimized : compiler_ir_types.CompilerIrFunction
       (match (compiler_optimize.compiler-opt-global-shared-view
         chain-busy-result)
-        [(compiler_optimize.OptFunctionPassResult.Result func _) func])]
+        [(compiler_optimize.OptFunctionRewriteResult.Result func _ _) func])]
     [chain-busy-changed : bool
       (match chain-busy-result
-        [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed])]
+        [(compiler_optimize.OptFunctionRewriteResult.Result _ _ changed)
+          changed])]
     ;; The same shape past the admission gate, which rejects it on the
     ;; intermediate block's instruction count before the matcher ever sees it.
     ;; This entry point has no gate, so it is what holds the matcher's own
@@ -69587,7 +69594,7 @@
       (opt-bool-branch-constant-test-function
         (compiler_optimize.compiler-opt-global-shared-view
           sccp-folded-edge-blocks))]
-    [sccp-folded-edge-fused-result : compiler_optimize.OptFunctionPassResult
+    [sccp-folded-edge-fused-result : compiler_optimize.OptFunctionRewriteResult
       (compiler_optimize.opt-bool-branch-function-with-context-result
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.opt-cfg-context-build
@@ -69599,10 +69606,11 @@
     [sccp-folded-edge-fused-function : compiler_ir_types.CompilerIrFunction
       (match (compiler_optimize.compiler-opt-global-shared-view
         sccp-folded-edge-fused-result)
-        [(compiler_optimize.OptFunctionPassResult.Result func _) func])]
+        [(compiler_optimize.OptFunctionRewriteResult.Result func _ _) func])]
     [sccp-folded-edge-fused-changed : bool
       (match sccp-folded-edge-fused-result
-        [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed])]
+        [(compiler_optimize.OptFunctionRewriteResult.Result _ _ changed)
+          changed])]
     [sccp-folded-edge-fused-blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks
         (compiler_optimize.compiler-opt-global-shared-view
@@ -92924,7 +92932,7 @@
 (define (opt-pcf-run
   [name : String]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_optimize.OptFunctionPassResult
-  (compiler_optimize.opt-phi-cmp-fold-function-with-context-result
+  (match (compiler_optimize.opt-phi-cmp-fold-function-with-context-result
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (compiler_optimize.opt-cfg-context-build
       (compiler_optimize.compiler-opt-global-shared-view blocks))
@@ -92934,7 +92942,9 @@
       (opt-pcf-params)
       (compiler_ast_types.AstType.Bool)
       16
-      blocks)))
+      blocks))
+    [(compiler_optimize.OptFunctionRewriteResult.Result next _ changed?)
+      (compiler_optimize.OptFunctionPassResult.Result next changed?)]))
 
 (define (opt-pcf-changed?
   [name : String]
@@ -103647,3 +103657,204 @@
   (begin
     (opt-loop-call-test-transaction false)
     (opt-loop-call-test-transaction true)))
+
+;; Exercise the shared branch transaction with deliberately mutable rewrites.
+;; Snapshot the input independently so a leaked edit cannot compare equal to
+;; another alias of itself after rollback.
+(define (opt-branch-transaction-test-edit
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [reject? : bool]) : unit
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (opt-fc-test-label "loop-call.last"))
+    [(compiler_optimize.OptMaybeBlock.No)
+      (test.assert-true false "missing transaction fixture block")]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (compiler_ir_types.compiler-ir-instr-seq-set!
+            instrs
+            0
+            (if reject?
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (opt-fc-test-label "missing"))
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 7)))))])]))
+
+(define (opt-branch-transaction-test-case
+  [dense? : bool]
+  [candidate? : bool]
+  [invalid? : bool]
+  [change? : bool]
+  [grow? : bool]
+  [reject? : bool]) : unit
+  (let
+    [func : compiler_ir_types.CompilerIrFunction
+      (opt-loop-call-test-fixture dense?)]
+    [_invalidate : unit
+      (if invalid?
+        (opt-branch-transaction-test-edit
+          (compiler_optimize.opt-function-blocks
+            (owned_view.compiler-owned-shared-view func))
+          true)
+        unit)]
+    [snapshot : compiler_ir_types.CompilerIrFunction
+      (match (owned_view.compiler-owned-shared-view func)
+        [(compiler_ir_types.CompilerIrFunction.Function
+            name
+            params
+            ty
+            frame
+            blocks)
+          (compiler_ir_types.CompilerIrFunction.Function
+            name
+            params
+            ty
+            frame
+            (compiler_optimize.opt-bool-branch-clone-blocks blocks))])]
+    [context : compiler_optimize.OptCfgContext
+      (compiler_optimize.opt-cfg-context-build
+        (compiler_optimize.opt-function-blocks
+          (owned_view.compiler-owned-shared-view func)))]
+    [labels : u64
+      (unsafe
+        (ptr->int (__tl_array-data context.index.labels)))]
+    [called? : bool false]
+    [expected? : bool (and candidate? (not invalid?) change? (not reject?))]
+    [result : compiler_optimize.OptFunctionRewriteResult
+      (compiler_optimize.opt-branch-function-rewrite
+        (owned_view.compiler-owned-shared-view func)
+        (owned_view.compiler-owned-shared-view context)
+        false
+        candidate?
+        (let
+          [blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-bool-branch-clone-blocks
+              (compiler_optimize.opt-function-blocks
+                (owned_view.compiler-owned-shared-view func)))]
+          (begin
+            (set! called? true)
+            (opt-branch-transaction-test-edit
+              (owned_view.compiler-owned-shared-view blocks)
+              reject?)
+            (compiler_optimize.OptBlockRewriteResult.Result
+              blocks
+              (if grow?
+                1
+                0)
+              change?))))]
+    (begin
+      (test.assert-true
+        (= called? (and candidate? (not invalid?)))
+        "candidate and pre-verification gate transform execution")
+      (test.assert-true
+        (compiler_optimize.opt-function-eq
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (owned_view.compiler-owned-shared-view func)
+          (owned_view.compiler-owned-shared-view snapshot))
+        "mutable transformation preserves original input")
+      (match result
+        [(compiler_optimize.OptFunctionRewriteResult.Result
+            next
+            next-context
+            changed?)
+          (begin
+            (test.assert-true
+              (= changed? expected?)
+              "only verified changes commit")
+            (test.assert-i64-eq
+              (compiler_optimize.opt-function-frame
+                (owned_view.compiler-owned-shared-view next))
+              (if (and expected? grow?)
+                1
+                0)
+              "frame commits and rolls back with blocks")
+            (test.assert-true
+              (=
+                (=
+                  labels
+                  (unsafe
+                    (ptr->int (__tl_array-data next-context.index.labels))))
+                (not expected?))
+              "rollback retains context identity; commit rebuilds it")
+            (if expected?
+              (begin
+                (test.assert-true
+                  (not
+                    (compiler_optimize.opt-function-eq
+                      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+                      (owned_view.compiler-owned-shared-view next)
+                      snapshot))
+                  "changed blocks are published")
+                (test.assert-true
+                  (compiler_optimize.opt-verify-ok?
+                    (compiler_optimize.opt-verify-function-with-context
+                      next
+                      next-context))
+                  "committed context verifies the committed function"))
+              (test.assert-true
+                (compiler_optimize.opt-function-eq
+                  (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+                  next
+                  snapshot)
+                "refusal restores exact original IR")))]))))
+
+(define (opt-branch-transaction-test-storage [dense? : bool]) : unit
+  (begin
+    (opt-branch-transaction-test-case dense? false false true true false)
+    (opt-branch-transaction-test-case dense? false true true true false)
+    (opt-branch-transaction-test-case dense? true true true true false)
+    (opt-branch-transaction-test-case dense? true false false true false)
+    (opt-branch-transaction-test-case dense? true false true false false)
+    (opt-branch-transaction-test-case dense? true false true true false)
+    (opt-branch-transaction-test-case dense? true false true true true)))
+
+(test
+  branch-rewrite-transaction
+  (begin
+    (opt-branch-transaction-test-storage false)
+    (opt-branch-transaction-test-storage true)))
+
+(define (opt-thread-branch-context-test [verified? : bool]) : unit
+  (let
+    [source : compiler_ir_types.CompilerIrBlockList
+      (opt-thread-chain-blocks false)]
+    [func : compiler_ir_types.CompilerIrFunction
+      (opt-thread-test-function
+        "thread-context"
+        (owned_view.compiler-owned-shared-view source))]
+    [expected : compiler_ir_types.CompilerIrFunction
+      (opt-thread-test-function
+        "thread-context"
+        (opt-thread-pass-blocks
+          (owned_view.compiler-owned-shared-view source)
+          (compiler_optimize.opt-thread-const-branch-fuel)))]
+    (match (compiler_optimize.opt-thread-const-branch-function-with-context-result
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (if verified?
+        (compiler_optimize.opt-cfg-context-empty)
+        (compiler_optimize.opt-cfg-context-build source))
+      verified?
+      func)
+      [(compiler_optimize.OptFunctionRewriteResult.Result next context changed?)
+        (begin
+          (test.assert-true
+            changed?
+            "direct context entry point threads the candidate")
+          (test.assert-true
+            (compiler_optimize.opt-function-eq
+              (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+              (owned_view.compiler-owned-shared-view next)
+              expected)
+            "context driver preserves pass-specific IR")
+          (test.assert-true
+            (compiler_optimize.opt-verify-ok?
+              (compiler_optimize.opt-verify-function-with-context next context))
+            "threaded context matches the output"))])))
+
+(test
+  thread-branch-context-transaction
+  (begin
+    (opt-thread-branch-context-test false)
+    (opt-thread-branch-context-test true)))

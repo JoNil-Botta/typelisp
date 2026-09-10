@@ -99248,52 +99248,86 @@
                               (set! k (+ k 1)))))
                         (set! visited-ready true)))
                     (set! generation (+ generation 1))
-                    (if (compiler-backend-peephole-rmw-reg-dead-after?
-                      (compiler-backend-global-shared-view recs)
-                      (compiler-backend-global-shared-view live)
-                      count
-                      (compiler-backend-global-shared-view visited)
-                      generation
-                      (+ store-at 1)
-                      reg)
-                      (let
-                        [folded : String
-                          (compiler-backend-peephole-rmw-folded-line
-                            (compiler-backend-global-shared-view arec.src)
-                            ams
-                            ame
-                            aops
-                            acomma
+                    (let
+                      [dead? : bool
+                        (compiler-backend-peephole-rmw-reg-dead-after?
+                          (compiler-backend-global-shared-view recs)
+                          (compiler-backend-global-shared-view live)
+                          count
+                          (compiler-backend-global-shared-view visited)
+                          generation
+                          (+ store-at 1)
+                          reg)]
+                      ;; RMW-3: the register still holds the result after the
+                      ;; store (or the bounded scan could not prove otherwise).
+                      ;; The triple folds all the same, and the store's line
+                      ;; becomes the LOAD's line: `op src, M ; movq M, %rX` is
+                      ;; two instructions for the three, reads back exactly the
+                      ;; word the folded op wrote, and leaves %rX and EFLAGS as
+                      ;; the triple did (`movq` writes no flags). The text of
+                      ;; the reload is taken BEFORE the load's record is
+                      ;; overwritten.
+                      [reload-text : String
+                        (if dead?
+                          ""
+                          (string.substring
                             (compiler-backend-global-shared-view lrec.src)
-                            lops
-                            lcomma
-                            (= alu-kind 1))]
-                        [line : CompilerBackendPeepholeLine
-                          (compiler-backend-peephole-owned-line
-                            backend-state
-                            stream
-                            folded
-                            (compiler-backend-peephole-record-newline? srec))]
-                        (begin
-                          (set!
-                            (array-ref recs load-at)
-                            (compiler-backend-peephole-line-record line))
-                          (set! (array-ref live alu-at) 0)
+                            lstart
+                            (- lend lstart)))]
+                      [store-newline? : bool
+                        (compiler-backend-peephole-record-newline?
+                          (compiler-backend-global-shared-view srec))]
+                      [load-newline? : bool
+                        (compiler-backend-peephole-record-newline?
+                          (compiler-backend-global-shared-view lrec))]
+                      [folded : String
+                        (compiler-backend-peephole-rmw-folded-line
+                          (compiler-backend-global-shared-view arec.src)
+                          ams
+                          ame
+                          aops
+                          acomma
+                          (compiler-backend-global-shared-view lrec.src)
+                          lops
+                          lcomma
+                          (= alu-kind 1))]
+                      [line : CompilerBackendPeepholeLine
+                        (compiler-backend-peephole-owned-line
+                          backend-state
+                          stream
+                          folded
+                          (if dead?
+                            store-newline?
+                            load-newline?))]
+                      (begin
+                        (set!
+                          (array-ref recs load-at)
+                          (compiler-backend-peephole-line-record line))
+                        (set! (array-ref live alu-at) 0)
+                        (if dead?
                           (set! (array-ref live store-at) 0)
-                          (cfg
-                            (any regalloc-census test)
+                          (let
+                            [reload : CompilerBackendPeepholeLine
+                              (compiler-backend-peephole-owned-line
+                                backend-state
+                                stream
+                                reload-text
+                                store-newline?)]
+                            (set!
+                              (array-ref recs store-at)
+                              (compiler-backend-peephole-line-record reload))))
+                        (cfg
+                          (any regalloc-census test)
+                          (if dead?
                             (compiler-backend-metric-add!
                               backend-state
                               compiler-backend-peephole-rmw-folded-metric
                               1)
-                            unit)))
-                      (cfg
-                        (any regalloc-census test)
-                        (compiler-backend-metric-add!
-                          backend-state
-                          compiler-backend-peephole-rmw-refused-metric
-                          1)
-                        unit))))))
+                            (compiler-backend-metric-add!
+                              backend-state
+                              compiler-backend-peephole-rmw-refused-metric
+                              1))
+                          unit)))))))
             (set! ci (+ ci 1)))))
       unit)))
 

@@ -1878,8 +1878,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # the composed graph from 79 to 80 segments: the authoritative Windows CI
     # probe measured 5,196,047 used nodes, 5,242,880 capacity, and 167,772,160
     # physical payload bytes.
+    # #7678's optimizer/regalloc/backend packet bank crosses the composed graph
+    # from 80 to 81 segments: the authoritative Windows CI probe measured
+    # 5,246,300 used nodes, 5,308,416 capacity, and 169,869,312 physical payload
+    # bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 80 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 81 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking

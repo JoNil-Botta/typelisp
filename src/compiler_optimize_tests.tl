@@ -35280,6 +35280,143 @@
     42
     "a global cell read right behind its own store reads the stored value, and a call that may write the cell in between keeps the cell read"))
 
+;; --- GDP-1: a global array's handle gep is a header var ------------------------
+;;
+;; `gep @arr 0` is the descriptor's own address, so the u64 loaded through it is
+;; the data pointer and every gep off that is an element address. The header
+;; set is built from declared result types alone and had no opinion about a
+;; gep, so the data pointer got no kind, `gep p, i` keyed Raw (by its own
+;; temp), and two identical element reads of a global array never shared a
+;; key. With the gep's dst marked a header var (only when the global's declared
+;; type is a header type) the second element read is a copy of the first. A
+;; scalar-typed global keeps all three loads.
+(defstruct OptGdpSymbols
+  (arr i64)
+  (probe i64))
+
+(define (opt-gdp-symbols) : OptGdpSymbols
+  (OptGdpSymbols (opt-test-symbol "gdp_arr") (opt-test-symbol "gdp_probe")))
+
+(define (opt-gdp-globals [symbols : OptGdpSymbols] [header? : bool]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 1)]
+    (begin
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.arr
+        (if header?
+          (compiler_ast_types.AstType.DynArray 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+
+;; `%1` is the index parameter; the two element reads are structurally the
+;; same gep of the same data pointer.
+(define (opt-gdp-blocks [symbols : OptGdpSymbols]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Gep
+          10
+          (compiler_ir_types.CompilerIrValue.Global symbols.arr)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Load
+          11
+          (compiler_ir_types.CompilerIrValue.Var 10)
+          (compiler_ast_types.AstType.U64))
+        (compiler_ir_types.CompilerIrInstr.Gep
+          12
+          (compiler_ir_types.CompilerIrValue.Var 11)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Load
+          13
+          (compiler_ir_types.CompilerIrValue.Var 12)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Gep
+          14
+          (compiler_ir_types.CompilerIrValue.Var 11)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Load
+          15
+          (compiler_ir_types.CompilerIrValue.Var 14)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          16
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 13)
+          (compiler_ir_types.CompilerIrValue.Var 15)
+          (compiler_ast_types.AstType.I64))
+        (opt-load-subst-return 16)))
+    (compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-gdp-probe-function [symbols : OptGdpSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.probe
+    (opt-gvn-pointer-cond-params)
+    (compiler_ast_types.AstType.I64)
+    20
+    (opt-gdp-blocks symbols)))
+
+(define (opt-gdp-run [header? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [symbols : OptGdpSymbols (opt-gdp-symbols)]
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-gdp-probe-function symbols)
+        (compiler_ir_types.compiler-ir-function-seq-empty))]
+    [cells : compiler_optimize.OptGlobalCellSummary
+      (compiler_optimize.opt-global-cell-summary-build
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-gdp-globals symbols header?)
+        (compiler_ir_types.compiler-ir-global-shared-view functions))]
+    [blocks : compiler_ir_types.CompilerIrBlockList (opt-gdp-blocks symbols)]
+    (compiler_optimize.opt-gvn-blocks-with-context-and-call-memory
+      (profile_state.compiler-profile-state-metrics
+        (profile_state.compiler-profile-state-new))
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler_optimize.opt-cfg-context-build
+        (compiler_ir_types.compiler-ir-global-shared-view blocks))
+      (opt-gvn-pointer-cond-params)
+      (opt_i64_i64_map.with-capacity 1)
+      cells
+      blocks)))
+
+(define (compiler-optimize-global-handle-gep-header-self-test) : i64
+  (let
+    [entry : i64 (compiler_ir_types.compiler-ir-label "entry")]
+    [header : compiler_ir_types.CompilerIrBlockList (opt-gdp-run true)]
+    [scalar : compiler_ir_types.CompilerIrBlockList (opt-gdp-run false)]
+    (cond
+      ;; the data pointer and ONE element read; the second is a copy
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              (compiler_ir_types.compiler-ir-global-shared-view header)
+              entry)
+            2))
+        1]
+      ;; a scalar global is no handle: nothing keys off it, three loads stay
+      [(not
+          (=
+            (opt-licm-multi-exit-count-loads
+              (compiler_ir_types.compiler-ir-global-shared-view scalar)
+              entry)
+            3))
+        2]
+      [else 42])))
+
+(test
+  global-handle-gep-header
+  (test.assert-i64-eq
+    (compiler-optimize-global-handle-gep-header-self-test)
+    42
+    "a zero gep off a header-typed global's handle is a header var, so two identical element reads through its data pointer share one load; a scalar-typed global keeps every load"))
+
 ;; --- MF-2 join phis and MF-3 bypass-edge load PRE -----------------------------
 ;;
 ;; `cond` is var 0 and `arr` var 1, a descriptor handle -- the dereferenceable

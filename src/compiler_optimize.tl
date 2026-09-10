@@ -57771,10 +57771,15 @@
         (compiler-opt-global-shared-view sources)
         blocks)]
     [hs : OptLoadHeaderSet
-      (opt-load-header-set-from-function
+      (opt-load-header-set-mark-global-handles
         type-segment-bases
-        (compiler-opt-global-shared-view params)
-        (compiler-opt-global-shared-view gvn))]
+        (compiler-opt-global-shared-view cells)
+        (compiler-opt-global-shared-view sources)
+        (compiler-opt-global-shared-view gvn)
+        (opt-load-header-set-from-function
+          type-segment-bases
+          (compiler-opt-global-shared-view params)
+          (compiler-opt-global-shared-view gvn)))]
     (opt-load-gvn-blocks-with-context-result
       profile-state
       type-segment-bases
@@ -167724,6 +167729,152 @@
       type-segment-bases
       params
       (opt-load-header-set-with-size frame))))
+
+;; GDP-1: a gep at offset 0 off a HEADER-TYPED GLOBAL's handle -- `gep (Global g)
+;; 0`, the form every `(array-ref g i)` on a global array takes -- is the
+;; descriptor's own address, so the word loaded through it is the data pointer
+;; and every gep off THAT is an element address. The header set is built from
+;; declared result types alone and sees a gep as "handle-ness unknown", so the
+;; loaded data pointer got no kind, `gep p, i` keyed Raw (by its own temp), and
+;; two structurally identical element reads of a global array never shared a
+;; load key -- nor did a store through one classify as an element store, so it
+;; cleared the whole table. The gep's dst is marked a header var when its global
+;; is header-typed and the var is single-source (a reused id could carry a
+;; second, non-handle definition).
+(define (opt-load-header-set-put-code
+  [set : OptLoadHeaderSet]
+  [var : i64]
+  [code : i64]) : OptLoadHeaderSet
+  (match (compiler-opt-global-shared-view set)
+    [(OptLoadHeaderSet.Sparse map)
+      (let
+        [out : opt_i64_i64_map.Map map]
+        (begin
+          (opt_i64_i64_map.insert-ref! (&mut out) var code)
+          (OptLoadHeaderSet.Sparse out)))]
+    [(OptLoadHeaderSet.Dense items)
+      (if (or (< var 0) (>= var (array-length items)))
+        set
+        (begin
+          (set! (array-ref items var) code)
+          set))]))
+
+(define (opt-load-header-global-handle-gep?
+  [type-segment-bases : i64]
+  [cells : OptGlobalCellSummary]
+  [sources : opt_i64_i64_map.Map]
+  [dst : i64]
+  [base : ir.CompilerIrValue]
+  [offset : ir.CompilerIrValue]) : bool
+  (match (compiler-opt-global-shared-view base)
+    [(ir.CompilerIrValue.Global g)
+      (match (compiler-opt-global-shared-view offset)
+        [(ir.CompilerIrValue.I64 0)
+          (and
+            (opt-gvn-stable-var? (compiler-opt-global-shared-view sources) dst)
+            (match (opt-global-cell-type-lookup
+              (compiler-opt-global-shared-view cells)
+              g)
+              [(OptMaybeAstType.Some ty)
+                (opt-licm-array-header-type?
+                  type-segment-bases
+                  (compiler-opt-global-shared-view ty))]
+              [(OptMaybeAstType.No) false]))]
+        [_ false])]
+    [_ false]))
+
+(define (opt-load-header-set-mark-global-handles-seq-from
+  [type-segment-bases : i64]
+  [cells : OptGlobalCellSummary]
+  [sources : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [set : OptLoadHeaderSet]) : OptLoadHeaderSet
+  (let
+    [cursor : i64 index]
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [work : OptLoadHeaderSet set]
+    (begin
+      (while (< cursor count)
+        (begin
+          (match (ir.compiler-ir-instr-seq-ref
+            (compiler-opt-global-shared-view instrs)
+            cursor)
+            [(ir.CompilerIrInstr.Gep dst base offset _)
+              (if (opt-load-header-global-handle-gep?
+                type-segment-bases
+                (compiler-opt-global-shared-view cells)
+                (compiler-opt-global-shared-view sources)
+                dst
+                base
+                offset)
+                (set! work (opt-load-header-set-put-code work dst 1))
+                unit)]
+            [_ unit])
+          (set! cursor (+ cursor 1))))
+      work)))
+
+(define (opt-load-header-set-mark-global-handles-block-seq
+  [type-segment-bases : i64]
+  [cells : OptGlobalCellSummary]
+  [sources : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockSeq]
+  [set : OptLoadHeaderSet]) : OptLoadHeaderSet
+  (let
+    [index : i64 0]
+    [count : i64
+      (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view blocks))]
+    [work : OptLoadHeaderSet set]
+    (begin
+      (while (< index count)
+        (begin
+          (match (ir.compiler-ir-block-seq-ref
+            (compiler-opt-global-shared-view blocks)
+            index)
+            [(ir.CompilerIrBlock.Block _ instrs)
+              (set!
+                work
+                (opt-load-header-set-mark-global-handles-seq-from
+                  type-segment-bases
+                  (compiler-opt-global-shared-view cells)
+                  (compiler-opt-global-shared-view sources)
+                  instrs
+                  0
+                  work))])
+          (set! index (+ index 1))))
+      work)))
+
+(define (opt-load-header-set-mark-global-handles
+  [type-segment-bases : i64]
+  [cells : OptGlobalCellSummary]
+  [sources : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]
+  [set : OptLoadHeaderSet]) : OptLoadHeaderSet
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) set]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-load-header-set-mark-global-handles
+            type-segment-bases
+            (compiler-opt-global-shared-view cells)
+            (compiler-opt-global-shared-view sources)
+            (compiler-opt-box-shared-view rest)
+            (opt-load-header-set-mark-global-handles-seq-from
+              type-segment-bases
+              (compiler-opt-global-shared-view cells)
+              (compiler-opt-global-shared-view sources)
+              instrs
+              0
+              set))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-load-header-set-mark-global-handles-block-seq
+        type-segment-bases
+        (compiler-opt-global-shared-view cells)
+        (compiler-opt-global-shared-view sources)
+        seq
+        set)]))
 
 (define opt-load-cse-table-cap-floor : i64
   128)

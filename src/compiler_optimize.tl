@@ -61667,7 +61667,7 @@
             (compiler-opt-global-shared-view phi-defs)
             (compiler-opt-global-shared-view copies)
             fact-length)
-          len))
+          (compiler-opt-global-shared-view len)))
         acc
         (let
           [term : OptBoundsDomTerm
@@ -61682,17 +61682,82 @@
                 (compiler-opt-global-shared-view phi-defs)
                 (compiler-opt-global-shared-view copies)
                 fact-index))]
-          (if (not (opt-value-eq term.base base))
+          (if (not
+            (opt-value-eq
+              (compiler-opt-global-shared-view term.base)
+              (compiler-opt-global-shared-view base)))
             acc
-            (bit-or
-              acc
-              (bit-or
-                (if (<= term.offset offset)
-                  1
-                  0)
-                (if (>= term.offset offset)
-                  2
-                  0))))))]))
+            (let
+              [stride : i64
+                (opt-bounds-dom-stride-of
+                  (compiler-opt-global-shared-view defs)
+                  (compiler-opt-global-shared-view base)
+                  (compiler-opt-global-shared-view len))]
+              (if (and
+                (> stride 0)
+                (>= offset 0)
+                (< offset stride)
+                (>= term.offset 0)
+                (< term.offset stride))
+                3
+                (bit-or
+                  acc
+                  (bit-or
+                    (if (<= term.offset offset)
+                      1
+                      0)
+                    (if (>= term.offset offset)
+                      2
+                      0))))))))]))
+
+;; STRIDE RUNS (BDOM-2). A record of c words in a flat array is read as
+;; `x * c + k`, 0 <= k < c, and a callee that receives the record NUMBER `x`
+;; cannot fold the words' checks the way a literal x would: `cg-map-desc[m * 4
+;; + k]` costs one check per word in insert-ref!, get-value-or and contains?,
+;; and the run rule above retires only what two brackets enclose. For a
+;; POWER-OF-TWO stride c and a LITERAL length L that c divides, one passed
+;; word decides every word:
+;;   * `x * c` wraps modulo 2^64 and c divides 2^64, so the wrapped value `b`
+;;     is a multiple of c as an unsigned integer: b <= 2^64 - c.
+;;   * a passed `b + k' <u L` with 0 <= k' < c therefore did not wrap
+;;     (b + k' <= 2^64 - 1) and puts b below L; both are multiples of c, so
+;;     b <= L - c, and every `b + k` with 0 <= k < c is at most L - 1.
+;; A stride that is not a power of two proves nothing here: as a wrapped
+;; `x * 3`, b = 2^64 - 1 is reachable, `b + 1` wraps to 0 and passes while `b`
+;; itself does not. The literal length is what makes `L - c` exact; a length
+;; word would need `L mod c = 0`, which this walk does not have.
+;; The stride of `base` against `len`, or 0 when the argument does not apply.
+(define (opt-bounds-dom-stride-of
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [base : ir.CompilerIrValue]
+  [len : ir.CompilerIrValue]) : i64
+  (match (compiler-opt-global-shared-view len)
+    [(ir.CompilerIrValue.I64 length)
+      (match (compiler-opt-global-shared-view base)
+        [(ir.CompilerIrValue.Var var)
+          (match (opt-bool-branch-def defs var)
+            [(OptBoolBranchDef.No) 0]
+            [(OptBoolBranchDef.Some instr _)
+              (match instr
+                [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+                  (if (not
+                    (and
+                      (opt-affine-64bit-type? ty)
+                      (opt-binop-eq op (ir.CompilerIrBinOp.Mul))))
+                    0
+                    (match (opt-affine-var-const lhs rhs)
+                      [(OptAffineOperands.No) 0]
+                      [(OptAffineOperands.Some _ scale)
+                        (if (and
+                          (> scale 1)
+                          (opt-bounds-dom-positive-power-of-two? scale)
+                          (>= length 0)
+                          (= (bit-and length (- scale 1)) 0))
+                          scale
+                          0)]))]
+                [_ 0])])]
+        [_ 0])]
+    [_ 0]))
 
 ;; The bracket bits the facts in scope supply for `base + offset`: 1 for a passed
 ;; check at or below this offset, 2 for one at or above it.

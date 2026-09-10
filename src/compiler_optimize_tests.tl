@@ -14926,6 +14926,157 @@
     42
     "a constant-offset run against one length keeps only its two bracketing checks with the widest bracket hoisted to the run's front, while a store between the checks blocks the reordering, two lengths bracket nothing, and an offset below the run needs a dominating nonnegative fact"))
 
+;; --- stride runs (BDOM-2) ----------------------------------------------------
+;;
+;; The words of one record, `idx * c + k` for 0 <= k < c, checked in SEPARATE
+;; blocks (so the same-block widening above never acts) against a literal
+;; length. One passed word decides the others exactly when c is a power of two
+;; and c divides the length:
+;;
+;;   0 c = 4, L = 16, words 2, 3, 0: the first check stays, the other two go.
+;;   1 c = 3, L = 15: a wrapped `idx * 3` can be 2^64 - 1, so nothing goes.
+;;   2 c = 4, L = 18: 4 does not divide 18, so nothing goes.
+;;   3 c = 4 against a length WORD: no literal, nothing goes.
+;;   4 c = 4, L = 16, words 2, 5, 0: the +5 word is outside the record and
+;;     stays; the +0 word still goes.
+(define (opt-bounds-stride-check-block
+  [label : String]
+  [ok-label : String]
+  [dst : i64]
+  [offset : i64]
+  [length : compiler_ir_types.CompilerIrValue]
+  [next : String]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.CompilerIrBlock.Block
+    (compiler_ir_types.compiler-ir-label label)
+    (opt-test-instr-seq-prepend
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        dst
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 8)
+        (compiler_ir_types.CompilerIrValue.I64 offset)
+        (compiler_ast_types.AstType.I64))
+      (opt-test-instr-seq-prepend
+        (opt-bounds-run-check
+          (compiler_ir_types.CompilerIrValue.Var dst)
+          length
+          ok-label)
+        (opt-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label next))
+          (compiler_ir_types.compiler-ir-instr-seq-empty))))))
+
+(define (opt-bounds-stride-test-blocks
+  [scale : i64]
+  [length : compiler_ir_types.CompilerIrValue]
+  [second : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          8
+          (compiler_ir_types.CompilerIrBinOp.Mul)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.I64 scale)
+          (compiler_ast_types.AstType.I64))
+        (opt-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "w2"))
+          (compiler_ir_types.compiler-ir-instr-seq-empty))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bounds-stride-check-block
+        "w2"
+        "w2_ok"
+        9
+        2
+        (compiler_ir_types.compiler-ir-global-shared-view length)
+        "w3")
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-bounds-stride-check-block
+          "w3"
+          "w3_ok"
+          10
+          second
+          (compiler_ir_types.compiler-ir-global-shared-view length)
+          "w0")
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "w0")
+            (opt-test-instr-seq-prepend
+              (opt-bounds-run-check
+                (compiler_ir_types.CompilerIrValue.Var 8)
+                length
+                "w0_ok")
+              (opt-bounds-run-return)))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-bounds-stride-checks
+  [scale : i64]
+  [length : compiler_ir_types.CompilerIrValue]
+  [second : i64]) : i64
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-bounds-stride-test-blocks scale length second)]
+    (compiler_optimize.opt-count-bounds-blocks
+      (compiler_optimize.opt-bounds-dom-blocks-with-context
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.opt-cfg-context-build
+          (compiler_ir_types.compiler-ir-global-shared-view blocks))
+        (opt-bounds-dom-test-params)
+        16
+        blocks))))
+
+(define (compiler-optimize-bounds-stride-run-self-test) : i64
+  (cond
+    [(not
+        (=
+          (opt-bounds-stride-checks
+            4
+            (compiler_ir_types.CompilerIrValue.I64 16)
+            3)
+          1))
+      1]
+    [(not
+        (=
+          (opt-bounds-stride-checks
+            3
+            (compiler_ir_types.CompilerIrValue.I64 15)
+            3)
+          3))
+      2]
+    [(not
+        (=
+          (opt-bounds-stride-checks
+            4
+            (compiler_ir_types.CompilerIrValue.I64 18)
+            3)
+          3))
+      3]
+    [(not
+        (=
+          (opt-bounds-stride-checks
+            4
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            3)
+          3))
+      4]
+    [(not
+        (=
+          (opt-bounds-stride-checks
+            4
+            (compiler_ir_types.CompilerIrValue.I64 16)
+            5)
+          2))
+      5]
+    [else 42]))
+
+(test
+  bounds-stride-run
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-stride-run-self-test)
+    42
+    "the words of one record, idx * c + k in separate blocks against a literal length, are decided by the first passed word when c is a power of two dividing the length; a stride of three, a length the stride does not divide, a length word, and a word outside the record keep their checks"))
+
 ;; --- rule (a): a dominating fact decides a dominated compare -----------------
 ;;
 ;; The probes below drive `opt-dom-cmp-lookup` with a single fact in scope and

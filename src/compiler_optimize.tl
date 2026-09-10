@@ -143312,6 +143312,94 @@
               (OptInlineMaybeSitePlan.NoSitePlan)))
           (OptInlineMaybeSitePlan.NoSitePlan)))]))
 
+;; Keep these two emission boundaries separate: prefix rewriting happens
+;; before the site note; label/frame construction happens before import
+;; charging. The checked-new-site flag is read at charge time.
+(define (opt-inline-site-note! [plan : OptInlineSitePlan] [callee-name : i64]) : unit
+  (let
+    [_site-bump : unit
+      (set! opt-inline-caller-site-count (+ opt-inline-caller-site-count 1))]
+    ;; INL-6: one `--trace-passes` line per site a BAND took,
+    ;; naming the band whose fuel it charges. The measured
+    ;; tier's sites are already traced by their own verdict.
+    [_band-trace : unit
+      (if plan.band-admits?
+        (opt-inline-trace-band-admit!
+          callee-name
+          plan.callee-instrs
+          plan.np
+          plan.added-blocks
+          plan.refs
+          plan.absorb-class
+          plan.hot-import?
+          plan.chain-import?
+          plan.absorb-import?
+          plan.accessor-import?)
+        unit)]
+    unit))
+
+(define (opt-inline-site-charge!
+  [plan : OptInlineSitePlan]
+  [prefix-added : i64]) : i64
+  (let
+    [_hot-loop-bump : unit
+      (if plan.hot-import?
+        (set!
+          opt-inline-caller-hot-loop-blocks
+          (+ opt-inline-caller-hot-loop-blocks plan.added-blocks))
+        unit)]
+    [_chain-bump : unit
+      (if plan.chain-import?
+        (set!
+          opt-inline-caller-chain-blocks
+          (+ opt-inline-caller-chain-blocks plan.added-blocks))
+        unit)]
+    [_absorb-bump : unit
+      (if plan.absorb-import?
+        (set!
+          opt-inline-caller-absorb-blocks
+          (+ opt-inline-caller-absorb-blocks plan.added-blocks))
+        unit)]
+    [_accessor-bump : unit
+      (if plan.accessor-import?
+        (set!
+          opt-inline-caller-accessor-blocks
+          (+ opt-inline-caller-accessor-blocks plan.added-blocks))
+        unit)]
+    ;; The measured tier's own accounting: its blocks, and
+    ;; the flag that says THIS walk placed its one new site.
+    ;; A re-admitted accepted site adds its blocks -- a
+    ;; later candidate is budgeted against the caller's
+    ;; whole checked growth -- but does not consume the
+    ;; walk's new-site slot. The program budget is spent by
+    ;; the VERDICT, not here, because a rejected candidate
+    ;; costs the same work an accepted one does.
+    [_checked-bump : unit
+      (if plan.checked?
+        (begin
+          (set!
+            opt-inline-caller-checked-blocks
+            (+ opt-inline-caller-checked-blocks plan.added-blocks))
+          (if opt-inline-checked-new-site?
+            (set! opt-inline-caller-checked-taken? true)
+            unit))
+        unit)]
+    ;; A hot-loop, chain, accessor, absorb or checked
+    ;; import's blocks stay out of the shared accumulator;
+    ;; each gate charged its own above.
+    [added2 : i64
+      (+
+        prefix-added
+        (if (or
+          plan.hot-import?
+          plan.chain-import?
+          plan.absorb-import?
+          plan.accessor-import?
+          plan.checked?)
+          0
+          plan.added-blocks))]
+    added2))
+
 ;; Build the rewrite for ONE multiblock site, at either of the two site classes
 ;; the walk can stand at. Once shared admission accepts the site, `dst` and
 ;; `tail-site?` determine where the spliced body's exits go:
@@ -143382,27 +143470,10 @@
             caller-scc)
             [(OptInlineState.State prefix-instrs prefix-vars prefix-added)
               (let
-                [_site-bump : unit
-                  (set!
-                    opt-inline-caller-site-count
-                    (+ opt-inline-caller-site-count 1))]
-                ;; INL-6: one `--trace-passes` line per site a BAND took,
-                ;; naming the band whose fuel it charges. The measured
-                ;; tier's sites are already traced by their own verdict.
-                [_band-trace : unit
-                  (if plan.band-admits?
-                    (opt-inline-trace-band-admit!
-                      callee-name
-                      plan.callee-instrs
-                      plan.np
-                      plan.added-blocks
-                      plan.refs
-                      plan.absorb-class
-                      plan.hot-import?
-                      plan.chain-import?
-                      plan.absorb-import?
-                      plan.accessor-import?)
-                    unit)]
+                [_site-note : unit
+                  (opt-inline-site-note!
+                    (compiler-opt-global-shared-view plan)
+                    callee-name)]
                 [prefix : String
                   (opt-inline-site-prefix
                     func-name
@@ -143425,62 +143496,10 @@
                         cvars
                         (opt-inline-frame-growth cvars plan.np))
                       plan.tail-slots))]
-                [_hot-loop-bump : unit
-                  (if plan.hot-import?
-                    (set!
-                      opt-inline-caller-hot-loop-blocks
-                      (+ opt-inline-caller-hot-loop-blocks plan.added-blocks))
-                    unit)]
-                [_chain-bump : unit
-                  (if plan.chain-import?
-                    (set!
-                      opt-inline-caller-chain-blocks
-                      (+ opt-inline-caller-chain-blocks plan.added-blocks))
-                    unit)]
-                [_absorb-bump : unit
-                  (if plan.absorb-import?
-                    (set!
-                      opt-inline-caller-absorb-blocks
-                      (+ opt-inline-caller-absorb-blocks plan.added-blocks))
-                    unit)]
-                [_accessor-bump : unit
-                  (if plan.accessor-import?
-                    (set!
-                      opt-inline-caller-accessor-blocks
-                      (+ opt-inline-caller-accessor-blocks plan.added-blocks))
-                    unit)]
-                ;; The measured tier's own accounting: its blocks, and
-                ;; the flag that says THIS walk placed its one new site.
-                ;; A re-admitted accepted site adds its blocks -- a
-                ;; later candidate is budgeted against the caller's
-                ;; whole checked growth -- but does not consume the
-                ;; walk's new-site slot. The program budget is spent by
-                ;; the VERDICT, not here, because a rejected candidate
-                ;; costs the same work an accepted one does.
-                [_checked-bump : unit
-                  (if plan.checked?
-                    (begin
-                      (set!
-                        opt-inline-caller-checked-blocks
-                        (+ opt-inline-caller-checked-blocks plan.added-blocks))
-                      (if opt-inline-checked-new-site?
-                        (set! opt-inline-caller-checked-taken? true)
-                        unit))
-                    unit)]
-                ;; A hot-loop, chain, accessor, absorb or checked
-                ;; import's blocks stay out of the shared accumulator;
-                ;; each gate charged its own above.
                 [added2 : i64
-                  (+
-                    prefix-added
-                    (if (or
-                      plan.hot-import?
-                      plan.chain-import?
-                      plan.absorb-import?
-                      plan.accessor-import?
-                      plan.checked?)
-                      0
-                      plan.added-blocks))]
+                  (opt-inline-site-charge!
+                    (compiler-opt-global-shared-view plan)
+                    prefix-added)]
                 [stage-instrs : ir.CompilerIrInstrSeq
                   (if plan.stage-args?
                     (opt-inline-stage-param-instrs
@@ -144372,27 +144391,10 @@
                 prefix-added
                 spans2)
               (let
-                [_site-bump : unit
-                  (set!
-                    opt-inline-caller-site-count
-                    (+ opt-inline-caller-site-count 1))]
-                ;; INL-6: one `--trace-passes` line per site a BAND took,
-                ;; naming the band whose fuel it charges. The measured
-                ;; tier's sites are already traced by their own verdict.
-                [_band-trace : unit
-                  (if plan.band-admits?
-                    (opt-inline-trace-band-admit!
-                      callee-name
-                      plan.callee-instrs
-                      plan.np
-                      plan.added-blocks
-                      plan.refs
-                      plan.absorb-class
-                      plan.hot-import?
-                      plan.chain-import?
-                      plan.absorb-import?
-                      plan.accessor-import?)
-                    unit)]
+                [_site-note : unit
+                  (opt-inline-site-note!
+                    (compiler-opt-global-shared-view plan)
+                    callee-name)]
                 [prefix : String
                   (opt-inline-site-prefix
                     func-name
@@ -144415,60 +144417,10 @@
                         cvars
                         (opt-inline-frame-growth cvars plan.np))
                       plan.tail-slots))]
-                [_hot-loop-bump : unit
-                  (if plan.hot-import?
-                    (set!
-                      opt-inline-caller-hot-loop-blocks
-                      (+ opt-inline-caller-hot-loop-blocks plan.added-blocks))
-                    unit)]
-                [_chain-bump : unit
-                  (if plan.chain-import?
-                    (set!
-                      opt-inline-caller-chain-blocks
-                      (+ opt-inline-caller-chain-blocks plan.added-blocks))
-                    unit)]
-                [_absorb-bump : unit
-                  (if plan.absorb-import?
-                    (set!
-                      opt-inline-caller-absorb-blocks
-                      (+ opt-inline-caller-absorb-blocks plan.added-blocks))
-                    unit)]
-                [_accessor-bump : unit
-                  (if plan.accessor-import?
-                    (set!
-                      opt-inline-caller-accessor-blocks
-                      (+ opt-inline-caller-accessor-blocks plan.added-blocks))
-                    unit)]
-                ;; The measured tier's own accounting: its blocks, and
-                ;; the flag that says THIS walk placed its one new site.
-                ;; A re-admitted accepted site adds its blocks -- a
-                ;; later candidate is budgeted against the caller's
-                ;; whole checked growth -- but does not consume the
-                ;; walk's new-site slot. The program budget is spent by
-                ;; the VERDICT, not here, because a rejected candidate
-                ;; costs the same work an accepted one does.
-                [_checked-bump : unit
-                  (if plan.checked?
-                    (begin
-                      (set!
-                        opt-inline-caller-checked-blocks
-                        (+ opt-inline-caller-checked-blocks plan.added-blocks))
-                      (if opt-inline-checked-new-site?
-                        (set! opt-inline-caller-checked-taken? true)
-                        unit))
-                    unit)]
-                ;; Same import accounting as the non-span path.
                 [added2 : i64
-                  (+
-                    prefix-added
-                    (if (or
-                      plan.hot-import?
-                      plan.chain-import?
-                      plan.absorb-import?
-                      plan.accessor-import?
-                      plan.checked?)
-                      0
-                      plan.added-blocks))]
+                  (opt-inline-site-charge!
+                    (compiler-opt-global-shared-view plan)
+                    prefix-added)]
                 [stage-instrs : ir.CompilerIrInstrSeq
                   (if plan.stage-args?
                     (opt-inline-stage-param-instrs

@@ -346,6 +346,55 @@ EOF
     [ "$_fallback_run_got" -eq 42 ] ||
         fail "Linux source semantic fallback exited $_fallback_run_got, expected 42"
 
+    _abi_fallback_src="$_dir/ordinary-call-abi-fallback.tl"
+    _abi_fallback_bin="$_dir/ordinary-call-abi-fallback"
+    _abi_fallback_probe_out="$_dir/ordinary-call-abi-fallback-probe.stdout"
+    _abi_fallback_probe_err="$_dir/ordinary-call-abi-fallback-probe.stderr"
+    _abi_fallback_out="$_dir/ordinary-call-abi-fallback.stdout"
+    _abi_fallback_err="$_dir/ordinary-call-abi-fallback.stderr"
+    cat > "$_abi_fallback_src" <<'EOF'
+(define (seventh
+  [a : i64]
+  [b : i64]
+  [c : i64]
+  [d : i64]
+  [e : i64]
+  [f : i64]
+  [g : i64]) : i64
+  g)
+
+(define (main) : i64
+  (seventh 1 2 3 4 5 6 42))
+EOF
+
+    echo "[selfhost-native] Linux unsupported ordinary-call ABI uses assembler fallback"
+    set +e
+    PATH="$_shim:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 \
+        "$_tool" build --direct "$_abi_fallback_src" --target linux-x86_64 \
+        --backend-mode scalar --stdlib-root "$ROOT/stdlib" \
+        -o "$_abi_fallback_bin" \
+        > "$_abi_fallback_probe_out" 2> "$_abi_fallback_probe_err"
+    _got=$?
+    set -e
+    [ "$_got" -ne 0 ] ||
+        fail "unsupported Linux ordinary-call ABI bypassed the assembler"
+    assert_contains "$_abi_fallback_probe_err" "unexpected assembler fallback" \
+        "Linux ordinary-call ABI fallback probe"
+
+    TYPELISP_LINUX_DIRECT_OBJECT=1 \
+        "$_tool" build --direct "$_abi_fallback_src" --target linux-x86_64 \
+        --backend-mode scalar --stdlib-root "$ROOT/stdlib" \
+        -o "$_abi_fallback_bin" \
+        > "$_abi_fallback_out" 2> "$_abi_fallback_err" ||
+        fail "Linux ordinary-call ABI fallback build failed"
+    assert_empty "$_abi_fallback_err" "Linux ordinary-call ABI fallback stderr"
+    set +e
+    "$_abi_fallback_bin"
+    _abi_fallback_run_got=$?
+    set -e
+    [ "$_abi_fallback_run_got" -eq 42 ] ||
+        fail "Linux ordinary-call ABI fallback exited $_abi_fallback_run_got, expected 42"
+
     mkdir -p "$_pkg/src" "$_dep/src"
     cat > "$_pkg/typelisp.pkg" <<'EOF'
 (package

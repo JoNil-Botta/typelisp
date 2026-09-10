@@ -3076,9 +3076,15 @@
                 (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
                   backend-state
                   (>= opt-level 2))
-                (match (compiler_backend.compiler-backend-object-program-eligibility
+                (match (compiler_backend.compiler-backend-object-program-eligibility-with-pools-and-profile-state
                   backend-state
-                  (owned_view.compiler-owned-shared-view optimized))
+                  (owned_view.compiler-owned-shared-view pools)
+                  (owned_view.compiler-owned-shared-view optimized)
+                  (if has-target
+                    target
+                    (compiler_backend.CompilerBackendTarget.Linux))
+                  (profile_state.compiler-profile-state-shared-view
+                    profile-state))
                   [(compiler_backend.CompilerBackendObjectEligibility.Unsupported
                       category)
                     ;; Preserve the original lowered program for the caller's
@@ -3227,9 +3233,13 @@
                 (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
                   backend-state
                   (>= opt-level 2))
-                (match (compiler_backend.compiler-backend-object-program-eligibility
+                (match (compiler_backend.compiler-backend-object-program-eligibility-with-pools-and-profile-state
                   backend-state
-                  (owned_view.compiler-owned-shared-view optimized))
+                  (owned_view.compiler-owned-shared-view pools)
+                  (owned_view.compiler-owned-shared-view optimized)
+                  target
+                  (profile_state.compiler-profile-state-shared-view
+                    profile-state))
                   [(compiler_backend.CompilerBackendObjectEligibility.Unsupported
                       category)
                     (begin

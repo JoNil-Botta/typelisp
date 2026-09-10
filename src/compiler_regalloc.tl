@@ -51806,37 +51806,58 @@
     0))
 
 ;; The scavenger's volatile candidates (compiler-backend-scavenge-candidates,
-;; minus its callee-saved members) ...
-(define (compiler-reg-scratch-borrow-volatile-mask) : i64
-  (bit-or
-    (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r9)
-    (bit-or
-      (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rcx)
+;; minus its callee-saved members). %rsi/%rdi are volatile only on SysV; the
+;; backend treats them as Win64 nonvolatiles and admits them only when the plan
+;; already saves them, so the estimator must make the same distinction.
+(define (compiler-reg-scratch-borrow-volatile-mask
+  [target-abi : cabi.CompilerRegTargetAbi]) : i64
+  (let
+    [base : i64
       (bit-or
-        (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rdx)
+        (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r9)
         (bit-or
-          (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r10)
+          (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rcx)
           (bit-or
-            (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r11)
+            (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rdx)
             (bit-or
-              (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r8)
+              (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r10)
               (bit-or
-                (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rsi)
+                (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r11)
                 (bit-or
-                  (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rdi)
-                  (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rax))))))))))
-
-;; ...and its callee-saved ones, usable only when the plan saves them.
-(define (compiler-reg-scratch-borrow-csr-mask) : i64
-  (bit-or
-    (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r12)
-    (bit-or
-      (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r13)
-      (bit-or
-        (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r14)
+                  (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r8)
+                  (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rax)))))))]
+    (match target-abi
+      [(cabi.CompilerRegTargetAbi.Linux)
         (bit-or
-          (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r15)
-          (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rbx))))))
+          base
+          (bit-or
+            (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rsi)
+            (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rdi)))]
+      [(cabi.CompilerRegTargetAbi.Windows) base])))
+
+;; ...and its callee-saved ones, usable only when the plan saves them. Win64
+;; adds %rsi/%rdi to the common nonvolatile set.
+(define (compiler-reg-scratch-borrow-csr-mask
+  [target-abi : cabi.CompilerRegTargetAbi]) : i64
+  (let
+    [base : i64
+      (bit-or
+        (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r12)
+        (bit-or
+          (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r13)
+          (bit-or
+            (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r14)
+            (bit-or
+              (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r15)
+              (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rbx)))))]
+    (match target-abi
+      [(cabi.CompilerRegTargetAbi.Linux) base]
+      [(cabi.CompilerRegTargetAbi.Windows)
+        (bit-or
+          base
+          (bit-or
+            (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rsi)
+            (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rdi)))])))
 
 (define (compiler-reg-scratch-location-mask [location : CompilerRegLocation]) : i64
   (match location
@@ -52032,6 +52053,7 @@
       mask)))
 
 (define (compiler-reg-scratch-borrow-cost
+  [target-abi : cabi.CompilerRegTargetAbi]
   [plan : CompilerRegPlan]
   [vars : i64]
   [seq : ir.CompilerIrBlockSeq]
@@ -52045,9 +52067,9 @@
         vars)]
     [candidates : i64
       (bit-or
-        (compiler-reg-scratch-borrow-volatile-mask)
+        (compiler-reg-scratch-borrow-volatile-mask target-abi)
         (bit-and
-          (compiler-reg-scratch-borrow-csr-mask)
+          (compiler-reg-scratch-borrow-csr-mask target-abi)
           (compiler-reg-scratch-plan-home-mask
             (compiler-reg-global-shared-view assignments)
             vars)))]
@@ -52145,6 +52167,7 @@
                   (compiler-reg-global-shared-view blocks)))]
             [base-preserve : i64
               (compiler-reg-scratch-borrow-cost
+                target-abi
                 (compiler-reg-global-shared-view plan)
                 vars
                 (compiler-reg-global-shared-view seq)
@@ -52183,6 +52206,7 @@
                 [reserved-cost : i64
                   (+
                     (compiler-reg-scratch-borrow-cost
+                      target-abi
                       (compiler-reg-global-shared-view reserved-plan)
                       vars
                       (compiler-reg-global-shared-view seq)

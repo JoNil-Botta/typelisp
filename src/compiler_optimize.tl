@@ -127214,18 +127214,13 @@
 ;; and the per-function run that follows is a no-op on a rewritten one.
 ;;
 ;; The functions it rewrote are recorded by slot (opt-inline-tailrec-converted)
-;; for ONE refusal: a converted callee is not inlined at a site outside every
-;; natural loop of its caller. Written as recursion, such a body was never
-;; inlinable, and a corpus of fixtures relies on exactly that ("never-taken
-;; self-recursion blocks inlining so the named bodies survive"); more to the
-;; point, the bands' loop-free tier -- "the imported loop becomes the caller's
-;; only one" -- was calibrated on `while` bodies, and the one thing the
-;; recursion spelling changes is the caller it lands in. At a site INSIDE a
-;; loop nothing is new: the callee is a loop leaf and the hot-loop-leaf band
-;; prices it as every other one. Measured with INL-13: regalloc_greedy
-;; -12.9M and sccp_lattice -2.2M come from converted CALLERS (a driver's site
-;; reads in-loop once its own recursion is a loop), and those are untouched
-;; by this refusal.
+;; for one refusal: a converted callee is never inlined. Written as recursion,
+;; such a body was never inlinable, and a corpus of fixtures relies on exactly
+;; that ("never-taken self-recursion blocks inlining so the named bodies
+;; survive"). Admitting the rewritten loop at an in-loop site was measured as a
+;; loss too: every such import adds a loop nest. The wins come from converted
+;; CALLERS whose own sites now read in-loop, and refusing converted callees does
+;; not touch those sites.
 (define opt-inline-tailrec-converted : (__tl_dyn-array bool)
   (__tl_make-array bool 0))
 
@@ -136350,6 +136345,7 @@
                 vars
                 (compiler-opt-global-shared-view plan))
               (reg.compiler-reg-scratch-borrow-cost
+                (cabi.CompilerRegTargetAbi.Linux)
                 (compiler-opt-global-shared-view plan)
                 vars
                 (compiler-opt-global-shared-view seq)
@@ -137837,9 +137833,9 @@
             ;; site both admit belongs to the band, which is cheaper (no
             ;; re-optimize, no re-plan) and already carries its own
             ;; measured argument.
-            ;; INL-11: a converted self-tail-recursive callee keeps its frame at
-            ;; a straight-line site (see opt-inline-tailrec-converted).
-            [converted-straight? : bool
+            ;; INL-11: a converted self-tail-recursive callee keeps its frame
+            ;; (see opt-inline-tailrec-converted).
+            [converted-callee? : bool
               (opt-inline-tailrec-converted-slot?
                 (compiler-opt-global-shared-view index)
                 callee-name)]
@@ -137849,7 +137845,7 @@
             [checked? : bool
               (and
                 (not band-admits?)
-                (not converted-straight?)
+                (not converted-callee?)
                 (opt-inline-checked-ok?
                   (compiler-opt-global-shared-view index)
                   (compiler-opt-global-shared-view census)
@@ -137864,7 +137860,7 @@
                   site-pos
                   tail-site?))]
             [inline? : bool
-              (and (not converted-straight?) (or band-admits? checked?))]
+              (and (not converted-callee?) (or band-admits? checked?))]
             ;; True only when the hot-loop-leaf gate is what admits this
             ;; site: its blocks spend the gate's own fuel, not the shared
             ;; accumulator the caller's banked absorptions draw on.
@@ -139056,9 +139052,9 @@
                   branch-chain?
                   single-site-absorb?))]
             ;; Same measured tier as the non-span path.
-            ;; INL-11: a converted self-tail-recursive callee keeps its frame at
-            ;; a straight-line site (see opt-inline-tailrec-converted).
-            [converted-straight? : bool
+            ;; INL-11: a converted self-tail-recursive callee keeps its frame
+            ;; (see opt-inline-tailrec-converted).
+            [converted-callee? : bool
               (opt-inline-tailrec-converted-slot?
                 (compiler-opt-global-shared-view index)
                 callee-name)]
@@ -139068,7 +139064,7 @@
             [checked? : bool
               (and
                 (not band-admits?)
-                (not converted-straight?)
+                (not converted-callee?)
                 (opt-inline-checked-ok?
                   (compiler-opt-global-shared-view index)
                   (compiler-opt-global-shared-view census)
@@ -139083,7 +139079,7 @@
                   site-pos
                   tail-site?))]
             [inline? : bool
-              (and (not converted-straight?) (or band-admits? checked?))]
+              (and (not converted-callee?) (or band-admits? checked?))]
             ;; Same hot-import accounting as the non-span path.
             [hot-import? : bool
               (and (not tail-site?) hot-loop-leaf? (not legacy-cost-ok?))]
@@ -146381,6 +146377,8 @@
 ;;   bit 1 (opt-direct-call-clean-global-bit) writes no GLOBAL storage directly
 ;;   bit 2 (opt-direct-call-clean-unconditional-global-bit) writes only memory
 ;;         that is disjoint from every global cell (descriptor elements)
+;;   bit 3 (opt-direct-call-clean-header-bit) writes only named global cells
+;;         and descriptor elements, never descriptor headers or frame objects
 ;;
 ;; Bit 0 is the older fact and implies bit 1. Bit 1 alone is the weaker,
 ;; strictly more common one: a callee that writes only through the objects its

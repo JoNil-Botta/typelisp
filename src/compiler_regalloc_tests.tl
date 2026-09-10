@@ -15234,6 +15234,35 @@
 
 (define (compiler-reg-scratch-callee-saved-registers-ok?) : bool
   (and
+    ;; The SCR-1 borrow estimator follows the same ABI split as the backend:
+    ;; %rsi is an unconditional candidate on SysV, but on Win64 it is available
+    ;; only through the plan-saved nonvolatile mask.
+    (not
+      (=
+        (bit-and
+          (reg.compiler-reg-scratch-borrow-volatile-mask
+            (cabi.CompilerRegTargetAbi.Linux))
+          (reg.compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rsi))
+        0))
+    (=
+      (bit-and
+        (reg.compiler-reg-scratch-borrow-csr-mask
+          (cabi.CompilerRegTargetAbi.Linux))
+        (reg.compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rsi))
+      0)
+    (=
+      (bit-and
+        (reg.compiler-reg-scratch-borrow-volatile-mask
+          (cabi.CompilerRegTargetAbi.Windows))
+        (reg.compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rsi))
+      0)
+    (not
+      (=
+        (bit-and
+          (reg.compiler-reg-scratch-borrow-csr-mask
+            (cabi.CompilerRegTargetAbi.Windows))
+          (reg.compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rsi))
+        0))
     (reg.compiler-reg-scratch-callee-saved-register?
       (cabi.CompilerRegTargetAbi.Linux)
       cabi.compiler-reg-id-r12)

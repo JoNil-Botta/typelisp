@@ -22,18 +22,21 @@
           (set! index (+ index 1))))
       out)))
 
-(define (fixture-open-directory [path : (& path str)]) : i64
-  (let
-    [path-bytes : (__tl_dyn-array u8) (io.c-string path)]
-    (unsafe
-      (fs.fs-win-create-file
-        (io.array-const-ptr path-bytes)
-        2147483648
-        7
-        0
-        3
-        33554432
-        0))))
+(define (fixture-open-directory [_path : (& _path str)]) : i64
+  (cfg
+    windows
+    (let
+      [path-bytes : (__tl_dyn-array u8) (io.c-string _path)]
+      (unsafe
+        (fs.fs-win-create-file
+          (io.array-const-ptr path-bytes)
+          2147483648
+          7
+          0
+          3
+          33554432
+          0)))
+    -1))
 
 (define (fixture-create-junction
   [junction : (& junction str)]
@@ -58,30 +61,36 @@
                       (string.copy target)
                       (process.args-empty))))))))))))
 
-(define (fixture-write-handle [handle : i64]) : bool
-  (let
-    [contents : String "ok"]
-    [bytes : (__tl_dyn-array u8) (io.c-string (& contents))]
-    [written : i32 (cast 0 : i32)]
-    (and
-      (not
-        (=
-          (io.io-win-write-file
-            handle
-            (io.array-const-ptr bytes)
-            (cast 2 : i32)
-            (unsafe
-              (ptr-addr-of written))
-            0)
-          (cast 0 : i32)))
-      (= written (cast 2 : i32)))))
+(define (fixture-write-handle [_handle : i64]) : bool
+  (cfg
+    windows
+    (let
+      [contents : String "ok"]
+      [bytes : (__tl_dyn-array u8) (io.c-string (& contents))]
+      [written : i32 (cast 0 : i32)]
+      (and
+        (not
+          (=
+            (io.io-win-write-file
+              _handle
+              (io.array-const-ptr bytes)
+              (cast 2 : i32)
+              (unsafe
+                (ptr-addr-of written))
+              0)
+            (cast 0 : i32)))
+        (= written (cast 2 : i32))))
+    false))
 
-(define (fixture-close [handle : i64]) : bool
-  (not
-    (=
-      (unsafe
-        (fs.fs-win-close-handle handle))
-      (cast 0 : i32))))
+(define (fixture-close [_handle : i64]) : bool
+  (cfg
+    windows
+    (not
+      (=
+        (unsafe
+          (fs.fs-win-close-handle _handle))
+        (cast 0 : i32)))
+    false))
 
 (define (fixture-cleanup
   [created : String]
@@ -140,25 +149,28 @@
                   6
                   (let
                     [create-name : String "created.txt"]
-                    [create-wide : (__tl_dyn-array u16)
+                    [_create-wide : (__tl_dyn-array u16)
                       (fixture-wide-name (& create-name))]
                     [create-result : fs.FsWindowsNtCreateResult
-                      (unsafe
-                        (fs.windows-nt-create-file-relative
-                          root-handle
-                          (unsafe
-                            (__tl_array-data create-wide))
-                          (cast
-                            (* (string.string-length (& create-name)) 2)
-                            : u16)
-                          (bit-or
-                            fs.fs-windows-file-write-data
-                            fs.fs-windows-synchronize)
-                          (cast 0 : u32)
-                          fs.fs-windows-file-create
-                          (bit-or
-                            fs.fs-windows-file-non-directory-file
-                            fs.fs-windows-file-synchronous-io-nonalert)))]
+                      (cfg
+                        windows
+                        (unsafe
+                          (fs.windows-nt-create-file-relative
+                            root-handle
+                            (unsafe
+                              (__tl_array-data _create-wide))
+                            (cast
+                              (* (string.string-length (& create-name)) 2)
+                              : u16)
+                            (bit-or
+                              fs.fs-windows-file-write-data
+                              fs.fs-windows-synchronize)
+                            (cast 0 : u32)
+                            fs.fs-windows-file-create
+                            (bit-or
+                              fs.fs-windows-file-non-directory-file
+                              fs.fs-windows-file-synchronous-io-nonalert)))
+                        (fs.WindowsNtCreateFailed))]
                     (if (not (fs.windows-nt-create-ok? create-result))
                       7
                       (let
@@ -175,56 +187,62 @@
                             9
                             (let
                               [collision-result : fs.FsWindowsNtCreateResult
-                                (unsafe
-                                  (fs.windows-nt-create-file-relative
-                                    root-handle
-                                    (unsafe
-                                      (__tl_array-data create-wide))
-                                    (cast
-                                      (*
-                                        (string.string-length (& create-name))
-                                        2)
-                                      : u16)
-                                    (bit-or
-                                      fs.fs-windows-file-write-data
-                                      fs.fs-windows-synchronize)
-                                    (cast 0 : u32)
-                                    fs.fs-windows-file-create
-                                    (bit-or
-                                      fs.fs-windows-file-non-directory-file
-                                      fs.fs-windows-file-synchronous-io-nonalert)))]
+                                (cfg
+                                  windows
+                                  (unsafe
+                                    (fs.windows-nt-create-file-relative
+                                      root-handle
+                                      (unsafe
+                                        (__tl_array-data _create-wide))
+                                      (cast
+                                        (*
+                                          (string.string-length (& create-name))
+                                          2)
+                                        : u16)
+                                      (bit-or
+                                        fs.fs-windows-file-write-data
+                                        fs.fs-windows-synchronize)
+                                      (cast 0 : u32)
+                                      fs.fs-windows-file-create
+                                      (bit-or
+                                        fs.fs-windows-file-non-directory-file
+                                        fs.fs-windows-file-synchronous-io-nonalert)))
+                                  (fs.WindowsNtCreateFailed))]
                               (if (not
                                 (fs.windows-nt-create-already-exists?
                                   collision-result))
                                 10
                                 (let
                                   [reparse-name : String "link\\sentinel.txt"]
-                                  [reparse-wide : (__tl_dyn-array u16)
+                                  [_reparse-wide : (__tl_dyn-array u16)
                                     (fixture-wide-name (& reparse-name))]
                                   [reparse-result : fs.FsWindowsNtCreateResult
-                                    (unsafe
-                                      (fs.windows-nt-create-file-relative
-                                        root-handle
-                                        (unsafe
-                                          (__tl_array-data reparse-wide))
-                                        (cast
-                                          (*
-                                            (string.string-length
-                                              (& reparse-name))
-                                            2)
-                                          : u16)
-                                        (bit-or
-                                          fs.fs-windows-file-read-data
-                                          fs.fs-windows-synchronize)
-                                        (bit-or
-                                          fs.fs-windows-file-share-read
+                                    (cfg
+                                      windows
+                                      (unsafe
+                                        (fs.windows-nt-create-file-relative
+                                          root-handle
+                                          (unsafe
+                                            (__tl_array-data _reparse-wide))
+                                          (cast
+                                            (*
+                                              (string.string-length
+                                                (& reparse-name))
+                                              2)
+                                            : u16)
                                           (bit-or
-                                            fs.fs-windows-file-share-write
-                                            fs.fs-windows-file-share-delete))
-                                        fs.fs-windows-file-open
-                                        (bit-or
-                                          fs.fs-windows-file-non-directory-file
-                                          fs.fs-windows-file-synchronous-io-nonalert)))]
+                                            fs.fs-windows-file-read-data
+                                            fs.fs-windows-synchronize)
+                                          (bit-or
+                                            fs.fs-windows-file-share-read
+                                            (bit-or
+                                              fs.fs-windows-file-share-write
+                                              fs.fs-windows-file-share-delete))
+                                          fs.fs-windows-file-open
+                                          (bit-or
+                                            fs.fs-windows-file-non-directory-file
+                                            fs.fs-windows-file-synchronous-io-nonalert)))
+                                      (fs.WindowsNtCreateFailed))]
                                   [root-close-ok : bool
                                     (fixture-close root-handle)]
                                   (if (not

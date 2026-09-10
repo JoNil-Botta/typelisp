@@ -48317,67 +48317,115 @@
 ;; One chain link, read out of `instrs` at `slot`: `%c = op %p, K` (or `K, %p`)
 ;; immediately followed by `branch %c, T, F`, with nothing after it and the
 ;; compare read by that branch alone.
+;; T1-2c: DEAD LITERAL COPIES AHEAD OF A LINK. The first pipeline round reaches
+;; this matcher with the inliner's literal-argument copies still standing:
+;; `(cg-digit? (cg-byte-at ...))` lands as `%111 = mov 48 ; %112 = ge %41, 48 ;
+;; branch %112` -- gvn has forwarded the literal into the compare, and the dce
+;; that deletes the copy runs at the end of the round. The two-instruction rail
+;; then refuses the link and the sentinel edge stands through the round; the
+;; next round's phi_cmp_fold + cfg do thread it, but that round's bounds_dom
+;; has already run, so `cg-scan-ints`' digit cursor is never fenced (the guard
+;; `lt i n` does not dominate its `i + 1` across the join) and the byte
+;; scanner's four str_bounds checks survive (callgraph_scc: 7.4M Ir).
+;; A `Mov` of a literal that nothing reads defines no value any exit can be live
+;; in, so skipping it leaves the link's argument -- every value defined in the
+;; run is its own compare, read by its own branch alone -- exactly as it was.
+;; Nothing else is skipped: any other instruction ends the scan and the rail
+;; decides on it as before.
+(define (opt-phi-cmp-fold-link-slot
+  [uses : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [slot : i64]) : i64
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [pos : i64 slot]
+    (begin
+      (while (< (+ pos 2) count)
+        (if (match (ir.compiler-ir-instr-seq-ref instrs pos)
+          [(ir.CompilerIrInstr.Mov dst src _)
+            (and
+              (match (compiler-opt-global-shared-view src)
+                [(ir.CompilerIrValue.I64 _) true]
+                [(ir.CompilerIrValue.Bool _) true]
+                [(ir.CompilerIrValue.Char _) true]
+                [_ false])
+              (=
+                (opt-bool-branch-use-count
+                  (compiler-opt-global-shared-view uses)
+                  dst)
+                0))]
+          [_ false])
+          (set! pos (+ pos 1))
+          (return pos)))
+      pos)))
+
 (define (opt-phi-cmp-fold-link
   [type-segment-bases : i64]
   [uses : (__tl_dyn-array i64)]
   [phi-var : i64]
   [phi-ty : ast.AstType]
   [instrs : ir.CompilerIrInstrSeq]
-  [slot : i64]) : OptPhiCmpFoldLink
-  (if (not (= (ir.compiler-ir-instr-seq-count instrs) (+ slot 2)))
-    (OptPhiCmpFoldLink.No)
-    (match (ir.compiler-ir-instr-seq-ref instrs slot)
-      [(ir.CompilerIrInstr.BinOp cmp-var op lhs rhs cmp-ty)
-        (match (ir.compiler-ir-instr-seq-ref instrs (+ slot 1))
-          [(ir.CompilerIrInstr.Branch
-              (ir.CompilerIrValue.Var cond-var)
-              true-label
-              false-label)
-            (let
-              [phi-left : bool
-                (opt-phi-cmp-fold-value-is-var?
-                  (compiler-opt-global-shared-view lhs)
-                  phi-var)]
-              [literal : ir.CompilerIrValue
-                (if phi-left
-                  (compiler-opt-global-shared-view rhs)
-                  (compiler-opt-global-shared-view lhs))]
-              (if (or
-                (not (= cond-var cmp-var))
-                (not
-                  (opt-bool-branch-compare-op?
-                    (compiler-opt-global-shared-view op)))
-                (not
-                  (=
-                    (opt-bool-branch-use-count
-                      (compiler-opt-global-shared-view uses)
-                      cmp-var)
-                    1))
-                (not
-                  (opt-type-eq
-                    type-segment-bases
-                    (compiler-opt-global-shared-view phi-ty)
-                    (compiler-opt-global-shared-view cmp-ty)))
-                (not
-                  (or
+  [raw-slot : i64]) : OptPhiCmpFoldLink
+  (let
+    [slot : i64
+      (opt-phi-cmp-fold-link-slot
+        (compiler-opt-global-shared-view uses)
+        (compiler-opt-global-shared-view instrs)
+        raw-slot)]
+    (if (not (= (ir.compiler-ir-instr-seq-count instrs) (+ slot 2)))
+      (OptPhiCmpFoldLink.No)
+      (match (ir.compiler-ir-instr-seq-ref instrs slot)
+        [(ir.CompilerIrInstr.BinOp cmp-var op lhs rhs cmp-ty)
+          (match (ir.compiler-ir-instr-seq-ref instrs (+ slot 1))
+            [(ir.CompilerIrInstr.Branch
+                (ir.CompilerIrValue.Var cond-var)
+                true-label
+                false-label)
+              (let
+                [phi-left : bool
+                  (opt-phi-cmp-fold-value-is-var?
+                    (compiler-opt-global-shared-view lhs)
+                    phi-var)]
+                [literal : ir.CompilerIrValue
+                  (if phi-left
+                    (compiler-opt-global-shared-view rhs)
+                    (compiler-opt-global-shared-view lhs))]
+                (if (or
+                  (not (= cond-var cmp-var))
+                  (not
+                    (opt-bool-branch-compare-op?
+                      (compiler-opt-global-shared-view op)))
+                  (not
+                    (=
+                      (opt-bool-branch-use-count
+                        (compiler-opt-global-shared-view uses)
+                        cmp-var)
+                      1))
+                  (not
+                    (opt-type-eq
+                      type-segment-bases
+                      (compiler-opt-global-shared-view phi-ty)
+                      (compiler-opt-global-shared-view cmp-ty)))
+                  (not
+                    (or
+                      phi-left
+                      (opt-phi-cmp-fold-value-is-var?
+                        (compiler-opt-global-shared-view rhs)
+                        phi-var)))
+                  (not
+                    (opt-const-value?
+                      (compiler-opt-global-shared-view literal)
+                      (compiler-opt-global-shared-view cmp-ty))))
+                  (OptPhiCmpFoldLink.No)
+                  (OptPhiCmpFoldLink.Some
+                    op
                     phi-left
-                    (opt-phi-cmp-fold-value-is-var?
-                      (compiler-opt-global-shared-view rhs)
-                      phi-var)))
-                (not
-                  (opt-const-value?
-                    (compiler-opt-global-shared-view literal)
-                    (compiler-opt-global-shared-view cmp-ty))))
-                (OptPhiCmpFoldLink.No)
-                (OptPhiCmpFoldLink.Some
-                  op
-                  phi-left
-                  literal
-                  cmp-ty
-                  true-label
-                  false-label)))]
-          [_ (OptPhiCmpFoldLink.No)])]
-      [_ (OptPhiCmpFoldLink.No)])))
+                    literal
+                    cmp-ty
+                    true-label
+                    false-label)))]
+            [_ (OptPhiCmpFoldLink.No)])]
+        [_ (OptPhiCmpFoldLink.No)]))))
 
 ;; Is `label` the next link of the run that leaves `from-label`? It must be a
 ;; link block of its own, reached only from `from-label`, and forward of it in

@@ -93424,6 +93424,78 @@
     (opt-pcc-compare 6 (compiler_ir_types.CompilerIrBinOp.Le) 57)
     (opt-test-instrs (opt-pcf-return true))))
 
+(define (opt-pcc-mov-literal [dst : i64] [literal : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Mov
+    dst
+    (compiler_ir_types.CompilerIrValue.I64 literal)
+    (compiler_ast_types.AstType.I64)))
+
+;; (g) T1-2c: the same two-link chain as it stands in the FIRST pipeline round,
+;; with the inliner's literal-argument copies still ahead of each compare
+;; (`%7 = mov 48 ; ge %4, 48` and `%8 = mov 57 ; le %4, 57`). Nothing reads the
+;; copies, so the links are the links they were. With `live?` the `yes` exit
+;; reads `%7`, the copy is not dead, and the run must refuse as before.
+(define (opt-pcc-blocks-chain-dead-movs [live? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-pcf-block "entry" (opt-test-instrs (opt-pcf-branch "arm" "pick")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-pcf-block "pick" (opt-test-instrs (opt-pcf-branch "sent" "fifty")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-pcf-block
+          "arm"
+          (opt-test-instrs (opt-pcf-arm-value) (opt-pcf-jump "merge")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-pcf-block "sent" (opt-test-instrs (opt-pcf-jump "merge")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-pcf-block "fifty" (opt-test-instrs (opt-pcf-jump "merge")))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-pcf-block
+                "merge"
+                (opt-test-instrs
+                  (opt-pcf-phi
+                    (opt-pcf-var-input
+                      "arm"
+                      (opt-pcf-sentinel-input
+                        "sent"
+                        (opt-pcc-literal-input
+                          50
+                          "fifty"
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))))
+                  (opt-pcf-jump "c1")))
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-pcf-block
+                  "c1"
+                  (opt-test-instrs
+                    (opt-pcc-mov-literal 7 48)
+                    (opt-pcc-compare
+                      5
+                      (compiler_ir_types.CompilerIrBinOp.Ge)
+                      48)
+                    (opt-pcc-branch 5 "c2" "no")))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (opt-pcf-block
+                    "c2"
+                    (opt-test-instrs
+                      (opt-pcc-mov-literal 8 57)
+                      (opt-pcc-compare
+                        6
+                        (compiler_ir_types.CompilerIrBinOp.Le)
+                        57)
+                      (opt-pcc-branch 6 "yes" "no")))
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (opt-pcf-block
+                      "yes"
+                      (if live?
+                        (opt-test-instrs
+                          (opt-pcc-mov 9 7)
+                          (opt-pcf-return true))
+                        (opt-test-instrs (opt-pcf-return true))))
+                    (compiler_ir_types.compiler-ir-block-cons
+                      (opt-pcf-block
+                        "no"
+                        (opt-test-instrs (opt-pcf-return false)))
+                      (compiler_ir_types.CompilerIrBlockList.Nil))))))))))))
+
 ;; (e) the merge is a loop header: its variable input arrives from the latch, on
 ;; an edge that retreats in reverse postorder.
 (define (opt-pcc-blocks-retreating) : compiler_ir_types.CompilerIrBlockList
@@ -93623,6 +93695,8 @@
       (opt-pcm-result (opt-pcm-blocks-pair))]
     [run : compiler_ir_types.CompilerIrBlockList
       (opt-pcm-result (opt-pcm-blocks-run))]
+    [dead : compiler_ir_types.CompilerIrBlockList
+      (opt-pcf-result "pcc_dead_movs" (opt-pcc-blocks-chain-dead-movs false))]
     (cond
       ;; (a) `[phi; jump]` followed by `[eq %p, 37; branch]`: the sentinel edge
       ;; threads to the false target and the merge keeps its variable input.
@@ -93822,6 +93896,51 @@
       [(opt-pcm-changed? (opt-pcm-blocks-loop-header)) 29]
       ;; (f) a block whose phi still names two predecessors is refused.
       [(opt-pcm-changed? (opt-pcm-blocks-two-input-phi)) 30]
+      ;; (g) T1-2c: a dead literal copy ahead of each link is looked past. The
+      ;; run threads exactly as (b) did and the copies stay where they are for
+      ;; dce; a copy the `yes` exit reads is not dead and refuses the run.
+      [(not
+          (opt-pcf-changed?
+            "pcc_dead_movs_changed"
+            (opt-pcc-blocks-chain-dead-movs false)))
+        31]
+      [(not
+          (opt-pcf-jumps-to?
+            (compiler_ir_types.compiler-ir-global-shared-view dead)
+            "sent"
+            "no"))
+        32]
+      [(not
+          (opt-pcf-jumps-to?
+            (compiler_ir_types.compiler-ir-global-shared-view dead)
+            "fifty"
+            "yes"))
+        33]
+      [(not
+          (=
+            (opt-pcf-input-count
+              (opt-pcf-phi-inputs
+                (compiler_ir_types.compiler-ir-global-shared-view dead)
+                "merge"
+                0))
+            1))
+        34]
+      [(not
+          (=
+            (opt-pcf-count
+              (compiler_ir_types.compiler-ir-global-shared-view dead)
+              "c1")
+            3))
+        35]
+      [(not
+          (=
+            (opt-pcf-count
+              (compiler_ir_types.compiler-ir-global-shared-view dead)
+              "c2")
+            3))
+        36]
+      [(opt-pcf-changed? "pcc_live_mov" (opt-pcc-blocks-chain-dead-movs true))
+        37]
       [else 42])))
 
 (test

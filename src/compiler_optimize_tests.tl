@@ -102776,3 +102776,115 @@
   (begin
     (opt-thread-branch-context-test false)
     (opt-thread-branch-context-test true)))
+
+(define (opt-spmd-map-test-case [mode : i64] [count : i64]) : unit
+  (let
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrSpmdCallArg)
+      (__tl_make-array compiler_ir_types.CompilerIrSpmdCallArg 4)]
+    [index : i64 0]
+    [_init : unit
+      (while (< index 4)
+        (begin
+          (set!
+            (array-ref slots index)
+            (compiler_ir_types.CompilerIrSpmdCallArg.Arg
+              (cond
+                [(= index 0)
+                  (compiler_ir_types.CompilerIrSpmdValueClass.Uniform)]
+                [(= index 1)
+                  (compiler_ir_types.CompilerIrSpmdValueClass.Varying)]
+                [else (compiler_ir_types.CompilerIrSpmdValueClass.Mask)])
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ast_types.AstType.Bool)))
+          (set! index (+ index 1))))]
+    [args : compiler_ir_types.CompilerIrSpmdCallArgSeq
+      (compiler_ir_types.CompilerIrSpmdCallArgSeq slots count)]
+    [out : compiler_ir_types.CompilerIrSpmdCallArgSeq
+      (cond
+        [(= mode 0)
+          (compiler_optimize.opt-copy-subst-spmd-call-args
+            (compiler_optimize.OptCopyEnv.Cons
+              0
+              (compiler_ir_types.CompilerIrValue.Bool true)
+              (box (compiler_optimize.OptCopyEnv.Nil)))
+            (owned_view.compiler-owned-shared-view args))]
+        [(= mode 1)
+          (compiler_optimize.opt-ssa-rewrite-spmd-call-args
+            (compiler_optimize.opt-ssa-env-bind
+              (compiler_optimize.opt-ssa-env-register
+                (compiler_optimize.opt-ssa-env-with-capacity 1 1 1)
+                0)
+              0
+              2)
+            (owned_view.compiler-owned-shared-view args))]
+        [else
+          (compiler_optimize.opt-sccp-rewrite-spmd-call-args
+            (compiler_optimize.opt-sccp-env-make 1)
+            (owned_view.compiler-owned-shared-view args))])]
+    (begin
+      (test.assert-true (= out.len count) "logical count survives mapping")
+      (test.assert-true
+        (= (array-length out.slots) count)
+        "only logical slots are copied")
+      (set! index 0)
+      (while (< index count)
+        (begin
+          (match (array-ref out.slots index)
+            [(compiler_ir_types.CompilerIrSpmdCallArg.Arg class value ty)
+              (begin
+                (test.assert-true
+                  (match class
+                    [(compiler_ir_types.CompilerIrSpmdValueClass.Uniform)
+                      (= index 0)]
+                    [(compiler_ir_types.CompilerIrSpmdValueClass.Varying)
+                      (= index 1)]
+                    [(compiler_ir_types.CompilerIrSpmdValueClass.Mask)
+                      (= index 2)])
+                  "SPMD classes retain their order")
+                (test.assert-true
+                  (match ty
+                    [(compiler_ast_types.AstType.Bool) true]
+                    [_ false])
+                  "SPMD type metadata survives")
+                (test.assert-true
+                  (match value
+                    [(compiler_ir_types.CompilerIrValue.Bool b)
+                      (and (= mode 0) (= index 0) b)]
+                    [(compiler_ir_types.CompilerIrValue.Var id)
+                      (and
+                        (not (and (= mode 0) (= index 0)))
+                        (=
+                          id
+                          (if (= mode 1)
+                            2
+                            0)))]
+                    [_ false])
+                  "copy keeps mask-safe values; SSA renames; unknown SCCP stays unchanged"))])
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index 4)
+        (begin
+          (test.assert-true
+            (match (array-ref args.slots index)
+              [(compiler_ir_types.CompilerIrSpmdCallArg.Arg
+                  _
+                  (compiler_ir_types.CompilerIrValue.Var id)
+                  _)
+                (= id 0)]
+              [_ false])
+            "mapping preserves input and unused capacity")
+          (set! index (+ index 1)))))))
+
+(test
+  spmd-map-logical-length-and-class
+  (let
+    [mode : i64 0]
+    [count : i64 0]
+    (while (< mode 3)
+      (begin
+        (set! count 0)
+        (while (< count 4)
+          (begin
+            (opt-spmd-map-test-case mode count)
+            (set! count (+ count 1))))
+        (set! mode (+ mode 1))))))

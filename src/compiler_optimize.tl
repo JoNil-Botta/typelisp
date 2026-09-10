@@ -56578,8 +56578,138 @@
   (Nil)
   (Cons OptGvnEntry (Box OptGvnBucket)))
 
+;; --- GVN-RA: `a + (v + k)` reads as `(a + v) + k` when `a + v` is available --
+;;
+;; Array-of-records indexing spells the k-th word of a record as
+;; `base + (i * stride + k)`, and the frontend keeps that nesting: every word
+;; of the record recomputes `i * stride + k` and then adds the base -- two
+;; instructions per word -- where the word before it already holds
+;; `base + i * stride`. Under wrapping arithmetic the two spellings are one
+;; value, so a later word reads as `(base + i * stride) + k`, one `lea k(%r)`
+;; off the sibling's index, whenever that sibling is an available value here.
+;; cg-map-probe's key and value words (`slots[base + cursor * 3 + 1]`, `+ 2`)
+;; are the shape.
+;;
+;; The definitions consulted are `Add (Var v) (I64 k)` (either order) and
+;; `Sub (Var v) (I64 k)`, at 64-bit integer type, collected once per function
+;; over single-source vars: SSA puts every such definition above every use, so
+;; the map needs no scope. The sibling lookup is the table's own dominance-
+;; scoped lookup, so the rewrite reads only a value that dominates the
+;; instruction; both operand orders are tried because the key is not
+;; commutative. The rewritten instruction is recorded under its ORIGINAL key
+;; (the record walk reads the input sequence), which is what later exact
+;; matches expect, and the orphaned `v + k` is the pipeline DCE's.
+(defstruct OptGvnAffineDefs
+  (base opt_i64_i64_map.Map)
+  (k opt_i64_i64_map.Map))
+
+(define (opt-gvn-affine-defs-empty) : OptGvnAffineDefs
+  (OptGvnAffineDefs
+    (opt_i64_i64_map.with-capacity 16)
+    (opt_i64_i64_map.with-capacity 16)))
+
+(define (opt-gvn-affine-defs-add!
+  [defs : OptGvnAffineDefs]
+  [sources : opt_i64_i64_map.Map]
+  [dst : i64]
+  [v : i64]
+  [k : i64]) : OptGvnAffineDefs
+  (begin
+    (if (and
+      (opt-gvn-stable-var? (compiler-opt-global-shared-view sources) dst)
+      (opt-gvn-stable-var? (compiler-opt-global-shared-view sources) v))
+      (begin
+        (opt_i64_i64_map.insert-ref! (&mut defs.base) dst v)
+        (opt_i64_i64_map.insert-ref! (&mut defs.k) dst k))
+      unit)
+    defs))
+
+(define (opt-gvn-affine-defs-instr
+  [defs : OptGvnAffineDefs]
+  [sources : opt_i64_i64_map.Map]
+  [instr : ir.CompilerIrInstr]) : OptGvnAffineDefs
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.BinOp dst op l r ty)
+      (if (not (opt-affine-64bit-type? (compiler-opt-global-shared-view ty)))
+        defs
+        (cond
+          [(opt-binop-eq
+              (compiler-opt-global-shared-view op)
+              (ir.CompilerIrBinOp.Add))
+            (match (compiler-opt-global-shared-view l)
+              [(ir.CompilerIrValue.Var v)
+                (match (compiler-opt-global-shared-view r)
+                  [(ir.CompilerIrValue.I64 k)
+                    (opt-gvn-affine-defs-add! defs sources dst v k)]
+                  [_ defs])]
+              [(ir.CompilerIrValue.I64 k)
+                (match (compiler-opt-global-shared-view r)
+                  [(ir.CompilerIrValue.Var v)
+                    (opt-gvn-affine-defs-add! defs sources dst v k)]
+                  [_ defs])]
+              [_ defs])]
+          [(opt-binop-eq
+              (compiler-opt-global-shared-view op)
+              (ir.CompilerIrBinOp.Sub))
+            (match (compiler-opt-global-shared-view l)
+              [(ir.CompilerIrValue.Var v)
+                (match (compiler-opt-global-shared-view r)
+                  [(ir.CompilerIrValue.I64 k)
+                    ;; `v - MIN` has no `v + k` spelling.
+                    (if (= k (- (- 0 9223372036854775807) 1))
+                      defs
+                      (opt-gvn-affine-defs-add! defs sources dst v (- 0 k)))]
+                  [_ defs])]
+              [_ defs])]
+          [else defs]))]
+    [_ defs]))
+
+(define (opt-gvn-affine-defs-instr-seq-from
+  [defs : OptGvnAffineDefs]
+  [sources : opt_i64_i64_map.Map]
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [index : i64]
+  [count : i64]) : OptGvnAffineDefs
+  (if (>= index count)
+    defs
+    (opt-gvn-affine-defs-instr-seq-from
+      (opt-gvn-affine-defs-instr
+        defs
+        (compiler-opt-global-shared-view sources)
+        (compiler-opt-global-array-element-shared-view slots index))
+      sources
+      slots
+      (+ index 1)
+      count)))
+
+(define (opt-gvn-affine-defs-blocks
+  [defs : OptGvnAffineDefs]
+  [sources : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]) : OptGvnAffineDefs
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) defs]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match (compiler-opt-global-shared-view block)
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-gvn-affine-defs-blocks
+            (opt-gvn-affine-defs-instr-seq-from
+              defs
+              (compiler-opt-global-shared-view sources)
+              (compiler-opt-global-shared-view instrs.slots)
+              0
+              (ir.compiler-ir-instr-seq-count
+                (compiler-opt-global-shared-view instrs)))
+            sources
+            (compiler-opt-box-shared-view rest))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-gvn-affine-defs-blocks
+        defs
+        sources
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
 (defstruct OptGvnMap
-  (buckets (__tl_dyn-array OptGvnBucket)))
+  (buckets (__tl_dyn-array OptGvnBucket))
+  (affine OptGvnAffineDefs))
 
 (defstruct OptGvnScopeChanges
   (buckets opt_dense_i64_vec.Vec))
@@ -56866,7 +56996,91 @@
 
 (define (opt-gvn-map-empty [record-count : i64]) : OptGvnMap
   (OptGvnMap
-    (__tl_make-array OptGvnBucket (opt-gvn-bucket-capacity record-count))))
+    (__tl_make-array OptGvnBucket (opt-gvn-bucket-capacity record-count))
+    (opt-gvn-affine-defs-empty)))
+
+(define (opt-gvn-map-with-affine
+  [record-count : i64]
+  [affine : OptGvnAffineDefs]) : OptGvnMap
+  (OptGvnMap
+    (__tl_make-array OptGvnBucket (opt-gvn-bucket-capacity record-count))
+    affine))
+
+;; One side of GVN-RA: `other + sum` where `sum = v + k` and `other + v` is an
+;; available value `sib` (either operand order): `dst = sib + k`.
+(define (opt-gvn-reassociate-side
+  [type-segment-bases : i64]
+  [table : OptGvnMap]
+  [dst : i64]
+  [other : ir.CompilerIrValue]
+  [sum : ir.CompilerIrValue]
+  [ty : ast.AstType]) : OptMaybeInstr
+  (match (compiler-opt-global-shared-view sum)
+    [(ir.CompilerIrValue.Var s)
+      (let
+        [affine : OptGvnAffineDefs
+          (compiler-opt-global-shared-view table.affine)]
+        [v : i64 (opt_i64_i64_map.get-value-or (& affine.base) s (- 0 1))]
+        (if (< v 0)
+          (OptMaybeInstr.No)
+          (let
+            [k : i64 (opt_i64_i64_map.get-value-or (& affine.k) s 0)]
+            [first : i64
+              (opt-gvn-lookup
+                type-segment-bases
+                (compiler-opt-global-shared-view table)
+                (OptExprKey.BinKey
+                  (ir.CompilerIrBinOp.Add)
+                  (compiler-opt-global-shared-view other)
+                  (ir.CompilerIrValue.Var v)
+                  (compiler-opt-global-shared-view ty)))]
+            [sib : i64
+              (if (< first 0)
+                (opt-gvn-lookup
+                  type-segment-bases
+                  (compiler-opt-global-shared-view table)
+                  (OptExprKey.BinKey
+                    (ir.CompilerIrBinOp.Add)
+                    (ir.CompilerIrValue.Var v)
+                    (compiler-opt-global-shared-view other)
+                    (compiler-opt-global-shared-view ty)))
+                first)]
+            (if (or (< sib 0) (= sib dst) (= sib s))
+              (OptMaybeInstr.No)
+              (OptMaybeInstr.Some
+                (ir.CompilerIrInstr.BinOp
+                  dst
+                  (ir.CompilerIrBinOp.Add)
+                  (ir.CompilerIrValue.Var sib)
+                  (ir.CompilerIrValue.I64 k)
+                  (compiler-opt-global-shared-view ty)))))))]
+    [_ (OptMaybeInstr.No)]))
+
+(define (opt-gvn-reassociate-maybe
+  [type-segment-bases : i64]
+  [table : OptGvnMap]
+  [dst : i64]
+  [op : ir.CompilerIrBinOp]
+  [l : ir.CompilerIrValue]
+  [r : ir.CompilerIrValue]
+  [ty : ast.AstType]) : OptMaybeInstr
+  (if (not
+    (and
+      (opt-binop-eq
+        (compiler-opt-global-shared-view op)
+        (ir.CompilerIrBinOp.Add))
+      (opt-affine-64bit-type? (compiler-opt-global-shared-view ty))))
+    (OptMaybeInstr.No)
+    (match (opt-gvn-reassociate-side
+      type-segment-bases
+      (compiler-opt-global-shared-view table)
+      dst
+      (compiler-opt-global-shared-view l)
+      (compiler-opt-global-shared-view r)
+      (compiler-opt-global-shared-view ty))
+      [(OptMaybeInstr.Some instr) (OptMaybeInstr.Some instr)]
+      [(OptMaybeInstr.No)
+        (opt-gvn-reassociate-side type-segment-bases table dst r l ty)])))
 
 (define (opt-gvn-bucket-index
   [type-segment-bases : i64]
@@ -57123,16 +57337,18 @@
         (opt-gvn-value-stable?
           (compiler-opt-global-shared-view sources)
           (compiler-opt-global-shared-view l))
-        (opt-gvn-value-stable? sources (compiler-opt-global-shared-view r)))
+        (opt-gvn-value-stable?
+          (compiler-opt-global-shared-view sources)
+          (compiler-opt-global-shared-view r)))
         (let
           [earlier : i64
             (opt-gvn-lookup
               type-segment-bases
-              table
+              (compiler-opt-global-shared-view table)
               (OptExprKey.BinKey
                 (compiler-opt-global-shared-view op)
-                l
-                r
+                (compiler-opt-global-shared-view l)
+                (compiler-opt-global-shared-view r)
                 (compiler-opt-global-shared-view ty)))]
           (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
             (OptMaybeInstr.Some
@@ -57140,7 +57356,14 @@
                 dst
                 (ir.CompilerIrValue.Var earlier)
                 (ir.compiler-ir-binop-result-type op ty)))
-            (OptMaybeInstr.No)))
+            (opt-gvn-reassociate-maybe
+              type-segment-bases
+              (compiler-opt-global-shared-view table)
+              dst
+              (compiler-opt-global-shared-view op)
+              (compiler-opt-global-shared-view l)
+              (compiler-opt-global-shared-view r)
+              (compiler-opt-global-shared-view ty))))
         (OptMaybeInstr.No))]
     [(ir.CompilerIrInstr.UnOp dst op v ty)
       (if (opt-gvn-value-stable? sources (compiler-opt-global-shared-view v))
@@ -57564,8 +57787,12 @@
           (compiler-opt-global-shared-view params)
           (opt_i64_i64_map.with-capacity 64)))]
     [table : OptGvnMap
-      (opt-gvn-map-empty
-        (opt-gvn-count (compiler-opt-global-shared-view sources) (- 0 1)))]
+      (opt-gvn-map-with-affine
+        (opt-gvn-count (compiler-opt-global-shared-view sources) (- 0 1))
+        (opt-gvn-affine-defs-blocks
+          (opt-gvn-affine-defs-empty)
+          (compiler-opt-global-shared-view sources)
+          (compiler-opt-global-shared-view blocks)))]
     [gvn : ir.CompilerIrBlockList
       (opt-gvn-rewrite-dom
         type-segment-bases
@@ -119932,9 +120159,52 @@
 ;; The group worth rewriting in this block, as its first member's position, or
 ;; `-1`. Bigger groups win; a lone member only counts when the split can carry
 ;; its offset Add along AND freeing that Add actually retires it.
+;; The loop's exit edges: successors of body blocks that leave the body. A
+;; counted scan has one; a search loop -- a hash probe's `found`/`empty` arms,
+;; a list walk's hit -- has more, and runs a trip or two. The single-member
+;; admission below pays one preheader build (a compare, a materialised flag, a
+;; `cmov`, and one more invariant to keep live) to save one `lea` per
+;; execution, which only a loop of many trips repays: measured on
+;; callgraph_scc's probe loops, the same rewrite cost +9 Ir per call at ~1.3
+;; trips (insert-ref! +10.8M, get-value-or +6.0M) against the 5.5M it earns on
+;; cfg_domloops' counted `pred-off[id + 1]` loops. The exit count is the
+;; structural line between the two.
+(define (opt-bg-loop-exit-count [index : OptCfgIndex] [body : OptLoopBody]) : i64
+  (let
+    [labels : OptLabelSet (compiler-opt-global-shared-view body.labels)]
+    [count : i64 (opt-label-count (compiler-opt-global-shared-view labels))]
+    [cursor : i64 0]
+    [exits : i64 0]
+    (begin
+      (while (< cursor count)
+        (let
+          [succs : OptLabelSet
+            (opt-cfg-index-successors
+              (compiler-opt-global-shared-view index)
+              (opt-label-ref (compiler-opt-global-shared-view labels) cursor))]
+          [scount : i64
+            (opt-label-count (compiler-opt-global-shared-view succs))]
+          [scursor : i64 0]
+          (begin
+            (while (< scursor scount)
+              (begin
+                (if (not
+                  (opt-loop-body-label-member?
+                    (compiler-opt-global-shared-view body)
+                    (compiler-opt-global-shared-view index)
+                    (opt-label-ref
+                      (compiler-opt-global-shared-view succs)
+                      scursor)))
+                  (set! exits (+ exits 1))
+                  unit)
+                (set! scursor (+ scursor 1))))
+            (set! cursor (+ cursor 1)))))
+      exits)))
+
 (define (opt-bg-best-start
   [instrs : ir.CompilerIrInstrSeq]
   [body : OptLoopBody]
+  [single-exit? : bool]
   [analysis : OptBgAnalysis]) : i64
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -119967,6 +120237,7 @@
                   (if (>= found 2)
                     true
                     (and
+                      single-exit?
                       (> offset 0)
                       (<
                         (opt-bg-cut-of
@@ -120004,6 +120275,7 @@
   [instrs : ir.CompilerIrInstrSeq]
   [pre : i64]
   [body : OptLoopBody]
+  [single-exit? : bool]
   [analysis : OptBgAnalysis]
   [next-var : i64]) : OptBgPlanResult
   (let
@@ -120015,6 +120287,7 @@
           (opt-bg-best-start
             (compiler-opt-global-shared-view instrs)
             (compiler-opt-global-shared-view body)
+            single-exit?
             (compiler-opt-global-shared-view analysis))]
         (if (< start 0)
           (OptBgPlanResult.No)
@@ -120230,6 +120503,7 @@
   [blocks : ir.CompilerIrBlockList]
   [pre : i64]
   [body : OptLoopBody]
+  [single-exit? : bool]
   [analysis : OptBgAnalysis]
   [state : OptBgPlanState]) : OptBgPlanState
   (match (compiler-opt-global-shared-view state)
@@ -120250,6 +120524,7 @@
               (compiler-opt-global-shared-view instrs)
               pre
               (compiler-opt-global-shared-view body)
+              single-exit?
               (compiler-opt-global-shared-view analysis)
               next-var)
               [(OptBgPlanResult.No) state]
@@ -120265,6 +120540,7 @@
   [blocks : ir.CompilerIrBlockList]
   [pre : i64]
   [body : OptLoopBody]
+  [single-exit? : bool]
   [analysis : OptBgAnalysis]
   [state : OptBgPlanState]) : OptBgPlanState
   (match (compiler-opt-global-shared-view remaining)
@@ -120275,6 +120551,7 @@
         blocks
         pre
         body
+        single-exit?
         analysis
         state)]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -120285,6 +120562,7 @@
             (compiler-opt-global-shared-view blocks)
             pre
             (compiler-opt-global-shared-view body)
+            single-exit?
             (compiler-opt-global-shared-view analysis)
             (compiler-opt-global-shared-view state))]
         (opt-bg-plan-loop-body
@@ -120292,6 +120570,7 @@
           blocks
           pre
           body
+          single-exit?
           analysis
           next-state))]))
 
@@ -120329,7 +120608,14 @@
                     (compiler-opt-global-shared-view blocks))
                   (compiler-opt-global-shared-view blocks)
                   pre
-                  (opt-natural-loop-body-info loop)
+                  (opt-natural-loop-body-info
+                    (compiler-opt-global-shared-view loop))
+                  (=
+                    (opt-bg-loop-exit-count
+                      (compiler-opt-global-shared-view index)
+                      (opt-natural-loop-body-info
+                        (compiler-opt-global-shared-view loop)))
+                    1)
                   (compiler-opt-global-shared-view analysis)
                   (compiler-opt-global-shared-view state)))])]
         (opt-bg-plan-loops
@@ -120961,6 +121247,7 @@
 (define (opt-bg-body-would-plan?
   [remaining : ir.CompilerIrBlockList]
   [body : OptLoopBody]
+  [single-exit? : bool]
   [analysis : OptBgAnalysis]) : bool
   (match (compiler-opt-global-shared-view remaining)
     [(ir.CompilerIrBlockList.Nil) false]
@@ -120968,6 +121255,7 @@
       (opt-bg-body-would-plan?
         (ir.compiler-ir-block-seq-to-list seq)
         body
+        single-exit?
         analysis)]
     [(ir.CompilerIrBlockList.Cons block rest)
       (match (compiler-opt-global-shared-view block)
@@ -120979,11 +121267,13 @@
                 (opt-bg-best-start
                   (compiler-opt-global-shared-view instrs)
                   (compiler-opt-global-shared-view body)
+                  single-exit?
                   (compiler-opt-global-shared-view analysis))
                 0))
             (opt-bg-body-would-plan?
               (compiler-opt-box-shared-view rest)
               body
+              single-exit?
               analysis))])]))
 
 ;; How many loops of the function contain `header` in their body. A synthesized
@@ -121044,6 +121334,12 @@
                 (compiler-opt-global-shared-view blocks))
               (opt-natural-loop-body-info
                 (compiler-opt-global-shared-view loop))
+              (=
+                (opt-bg-loop-exit-count
+                  (compiler-opt-global-shared-view context.index)
+                  (opt-natural-loop-body-info
+                    (compiler-opt-global-shared-view loop)))
+                1)
               (compiler-opt-global-shared-view analysis)))
             (match (opt-loop-preheaders-synthesize-loop
               (compiler-opt-global-shared-view blocks)

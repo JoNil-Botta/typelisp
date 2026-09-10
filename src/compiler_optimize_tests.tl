@@ -34467,7 +34467,8 @@
       (__tl_make-array compiler_optimize.OptGvnBucket 1)]
     [table : compiler_optimize.OptGvnMap
       (compiler_optimize.OptGvnMap
-        (compiler_optimize.compiler-opt-global-shared-view buckets))]
+        (compiler_optimize.compiler-opt-global-shared-view buckets)
+        (compiler_optimize.opt-gvn-affine-defs-empty))]
     (begin
       (set! (array-ref buckets 0) (compiler_optimize.OptGvnBucket.Nil))
       (compiler_optimize.opt-gvn-table-insert!
@@ -94100,6 +94101,203 @@
     (compiler-optimize-phi-cmp-fold-chain-self-test)
     42
     "a sentinel phi whose compare sits one block on, or in a run of compares, threads each literal edge to the target its whole run decides and leaves the compares in place; undecided verdicts, readers outside the run and retreating edges are refused; and the cfg stage concatenates a block into its unique predecessor, re-keying the successors' phis"))
+
+;; --- GVN-RA: reassociation onto an available sibling ------------------------
+;;
+;; `a + (b + 1)` in a block the definition of `a + b` dominates reads as
+;; `(a + b) + 1`; with no `a + b` in scope (the entry adds a literal instead)
+;; the instruction is left as it stands.
+(define (opt-gvn-reassoc-blocks [sibling? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          2
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (if sibling?
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.I64 7))
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "next"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "next")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            3
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            4
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 4)))))
+      (compiler_ir_types.CompilerIrBlockList.Nil))))
+
+;; Is `next`'s second instruction `%4 = add %2, 1`?
+(define (opt-gvn-reassoc-rewritten?
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (match (opt-block-instr-at
+    (opt-bg-block-of
+      (compiler_ir_types.compiler-ir-global-shared-view blocks)
+      (compiler_ir_types.compiler-ir-label "next"))
+    1)
+    [(compiler_ir_types.CompilerIrInstr.BinOp dst op lhs rhs _)
+      (and
+        (= dst 4)
+        (compiler_optimize.opt-binop-eq
+          op
+          (compiler_ir_types.CompilerIrBinOp.Add))
+        (match lhs
+          [(compiler_ir_types.CompilerIrValue.Var v) (= v 2)]
+          [_ false])
+        (match rhs
+          [(compiler_ir_types.CompilerIrValue.I64 k) (= k 1)]
+          [_ false]))]
+    [_ false]))
+
+(define (compiler-optimize-gvn-reassoc-self-test) : i64
+  (cond
+    [(not
+        (opt-gvn-reassoc-rewritten?
+          (compiler_optimize.opt-gvn-blocks
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+            (opt-gvn-test-params)
+            (opt-gvn-reassoc-blocks true))))
+      1]
+    [(opt-gvn-reassoc-rewritten?
+        (compiler_optimize.opt-gvn-blocks
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (opt-gvn-test-params)
+          (opt-gvn-reassoc-blocks false)))
+      2]
+    [else 42]))
+
+(test
+  gvn-reassociate-onto-sibling
+  (test.assert-i64-eq
+    (compiler-optimize-gvn-reassoc-self-test)
+    42
+    "a + (b + 1) below an available a + b is rewritten to (a + b) + 1, and stays as it is when no a + b is in scope"))
+
+;; --- bounds_group: the lone-member admission needs a single-exit loop -------
+;;
+;; One `i + 1` check per iteration, its Add feeding the check and a gep only.
+;; With `exits` = 1 the latch's compare is the loop's only way out (a counted
+;; scan) and the filter is built; with 2 the body also leaves on the loaded
+;; value (a search loop) and the site is refused.
+(define (opt-bg-lone-head-tail [exits : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (if (= exits 1)
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.Jump (opt-bg-label "latch")))
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        4
+        (compiler_ir_types.CompilerIrBinOp.Eq)
+        (compiler_ir_types.CompilerIrValue.Var 8)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.Branch
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (opt-bg-label "exit")
+        (opt-bg-label "latch")))))
+
+(define (opt-bg-lone-blocks [exits : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (opt-bg-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Gep
+          2
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Load
+          3
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Jump (opt-bg-label "pre"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-bg-pre-block)
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (opt-bg-label "head")
+          (opt-test-instrs-with-tail
+            (opt-bg-lone-head-tail exits)
+            (compiler_ir_types.CompilerIrInstr.Phi
+              6
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.I64 0)
+                (opt-bg-label "pre")
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var 9)
+                  (opt-bg-label "latch")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              5
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 6)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.BoundsCheck
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (opt-bg-label "bg_ok_a"))
+            (compiler_ir_types.CompilerIrInstr.Gep
+              7
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Load
+              8
+              (compiler_ir_types.CompilerIrValue.Var 7)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              9
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 6)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (opt-bg-label "latch")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                10
+                (compiler_ir_types.CompilerIrBinOp.Lt)
+                (compiler_ir_types.CompilerIrValue.Var 9)
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 10)
+                (opt-bg-label "head")
+                (opt-bg-label "exit"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-bg-exit-block)
+            (compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (compiler-optimize-bounds-group-lone-self-test) : i64
+  (cond
+    [(not (opt-bg-changed? "bg_lone_scan" (opt-bg-lone-blocks 1))) 1]
+    [(opt-bg-changed? "bg_lone_search" (opt-bg-lone-blocks 2)) 2]
+    [else 42]))
+
+(test
+  bounds-group-lone-member-single-exit
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-group-lone-self-test)
+    42
+    "a lone i + 1 check is filtered in a single-exit counted loop and refused in a loop with a second exit"))
 
 ;; --- T1-3: the non-negativity lattice in bounds_dom -------------------------
 ;;

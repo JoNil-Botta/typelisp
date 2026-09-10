@@ -559,6 +559,194 @@
   (slots (__tl_dyn-array CompilerIrSpmdCallArg))
   (len i64))
 
+;; Shape-preserving call-operand traversal belongs to the IR representation.
+;; These macros emit direct calls to a pass-owned value mapper/visitor, avoiding
+;; a capturing closure or an indirect call per operand. Extra context
+;; expressions are passed before the visited value. Compact call-argument
+;; forms remain compact; Array and Sret allocate only replacement storage.
+;; Sret mapping preserves the call-scoped hidden return argument index.
+;; Representation-sensitive operations intentionally stay explicit: positional
+;; lookup/ABI indexing, lockstep comparison, first-error or first-hit traversal,
+;; shape conversion, and folds that thread persistent owners. Using this visit
+;; boundary for those would discard an index/early exit or require a heap cell.
+(defmacro (compiler-ir-value-seq-map
+  [values : Expr]
+  [mapper : Expr]
+  [contexts : Expr ...]) : CompilerIrValueSeq
+  `(let
+    [value-seq : compiler_ir_types.CompilerIrValueSeq ,values]
+    [count : i64 value-seq.len]
+    [source : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      value-seq.slots]
+    [out : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (__tl_make-array compiler_ir_types.CompilerIrValue count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            (array-ref out index)
+            (,mapper
+              ,@contexts
+              (unsafe
+                (ptr-read (ptr-offset (__tl_array-data source) index)))))
+          (set! index (+ index 1))))
+      (compiler_ir_types.CompilerIrValueSeq out count))))
+
+(defmacro (compiler-ir-value-seq-visit
+  [values : Expr]
+  [visitor : Expr]
+  [contexts : Expr ...]) : unit
+  `(let
+    [value-seq : compiler_ir_types.CompilerIrValueSeq ,values]
+    [count : i64 value-seq.len]
+    [source : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      value-seq.slots]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (,visitor
+          ,@contexts
+          (unsafe
+            (ptr-read (ptr-offset (__tl_array-data source) index))))
+        (set! index (+ index 1))))))
+
+(defmacro (compiler-ir-call-args-map
+  [args : Expr]
+  [mapper : Expr]
+  [contexts : Expr ...]) : CompilerIrCallArgs
+  `(let
+    [call-args : compiler_ir_types.CompilerIrCallArgs ,args]
+    (match call-args
+      [(compiler_ir_types.CompilerIrCallArgs.Nil)
+        (compiler_ir_types.CompilerIrCallArgs.Nil)]
+      [(compiler_ir_types.CompilerIrCallArgs.One value)
+        (compiler_ir_types.CompilerIrCallArgs.One (,mapper ,@contexts value))]
+      [(compiler_ir_types.CompilerIrCallArgs.Two a b)
+        (compiler_ir_types.CompilerIrCallArgs.Two
+          (,mapper ,@contexts a)
+          (,mapper ,@contexts b))]
+      [(compiler_ir_types.CompilerIrCallArgs.Array values)
+        (let
+          [count : i64 (array-length values)]
+          [out : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+            (__tl_make-array compiler_ir_types.CompilerIrValue count)]
+          [index : i64 0]
+          (begin
+            (while (< index count)
+              (begin
+                (set!
+                  (array-ref out index)
+                  (,mapper
+                    ,@contexts
+                    (unsafe
+                      (ptr-read (ptr-offset (__tl_array-data values) index)))))
+                (set! index (+ index 1))))
+            (compiler_ir_types.CompilerIrCallArgs.Array out)))]
+      [(compiler_ir_types.CompilerIrCallArgs.Sret values sret-index)
+        (let
+          [count : i64 (array-length values)]
+          [out : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+            (__tl_make-array compiler_ir_types.CompilerIrValue count)]
+          [index : i64 0]
+          (begin
+            (while (< index count)
+              (begin
+                (set!
+                  (array-ref out index)
+                  (,mapper
+                    ,@contexts
+                    (unsafe
+                      (ptr-read (ptr-offset (__tl_array-data values) index)))))
+                (set! index (+ index 1))))
+            (compiler_ir_types.CompilerIrCallArgs.Sret out sret-index)))])))
+
+(defmacro (compiler-ir-call-args-visit
+  [args : Expr]
+  [visitor : Expr]
+  [contexts : Expr ...]) : unit
+  `(let
+    [call-args : compiler_ir_types.CompilerIrCallArgs ,args]
+    (match call-args
+      [(compiler_ir_types.CompilerIrCallArgs.Nil) unit]
+      [(compiler_ir_types.CompilerIrCallArgs.One value)
+        (,visitor ,@contexts value)]
+      [(compiler_ir_types.CompilerIrCallArgs.Two a b)
+        (begin
+          (,visitor ,@contexts a)
+          (,visitor ,@contexts b))]
+      [(compiler_ir_types.CompilerIrCallArgs.Array values)
+        (let
+          [count : i64 (array-length values)]
+          [index : i64 0]
+          (while (< index count)
+            (begin
+              (,visitor
+                ,@contexts
+                (unsafe
+                  (ptr-read (ptr-offset (__tl_array-data values) index))))
+              (set! index (+ index 1)))))]
+      [(compiler_ir_types.CompilerIrCallArgs.Sret values _)
+        (let
+          [count : i64 (array-length values)]
+          [index : i64 0]
+          (while (< index count)
+            (begin
+              (,visitor
+                ,@contexts
+                (unsafe
+                  (ptr-read (ptr-offset (__tl_array-data values) index))))
+              (set! index (+ index 1)))))])))
+
+;; SPMD mapping changes only each value. The IR-owned mechanics preserve the
+;; value class and type metadata, visit exactly logical [0, len), and allocate
+;; one exact-size result array as the previous pass-local loops did. The mapper
+;; and visitor receive extra contexts followed by class and value.
+(defmacro (compiler-ir-spmd-call-args-map
+  [args : Expr]
+  [mapper : Expr]
+  [contexts : Expr ...]) : CompilerIrSpmdCallArgSeq
+  `(let
+    [spmd-args : compiler_ir_types.CompilerIrSpmdCallArgSeq ,args]
+    [count : i64 spmd-args.len]
+    [source : (__tl_dyn-array compiler_ir_types.CompilerIrSpmdCallArg)
+      spmd-args.slots]
+    [out : (__tl_dyn-array compiler_ir_types.CompilerIrSpmdCallArg)
+      (__tl_make-array compiler_ir_types.CompilerIrSpmdCallArg count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (unsafe
+            (ptr-read (ptr-offset (__tl_array-data source) index)))
+            [(compiler_ir_types.CompilerIrSpmdCallArg.Arg class value ty)
+              (set!
+                (array-ref out index)
+                (compiler_ir_types.CompilerIrSpmdCallArg.Arg
+                  class
+                  (,mapper ,@contexts class value)
+                  ty))])
+          (set! index (+ index 1))))
+      (compiler_ir_types.CompilerIrSpmdCallArgSeq out count))))
+
+(defmacro (compiler-ir-spmd-call-args-visit
+  [args : Expr]
+  [visitor : Expr]
+  [contexts : Expr ...]) : unit
+  `(let
+    [spmd-args : compiler_ir_types.CompilerIrSpmdCallArgSeq ,args]
+    [count : i64 spmd-args.len]
+    [source : (__tl_dyn-array compiler_ir_types.CompilerIrSpmdCallArg)
+      spmd-args.slots]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (match (unsafe
+          (ptr-read (ptr-offset (__tl_array-data source) index)))
+          [(compiler_ir_types.CompilerIrSpmdCallArg.Arg class value _)
+            (,visitor ,@contexts class value)])
+        (set! index (+ index 1))))))
+
 (defenum CompilerIrSpmdCallResult
   (Unit)
   (Value i64 CompilerIrSpmdValueClass ast.AstType))
@@ -2977,6 +3165,9 @@
 (define (compiler-ir-clone-spmd-call-arg-seq
   [pools : ast.AstNodePoolContext]
   [seq : CompilerIrSpmdCallArgSeq]) : CompilerIrSpmdCallArgSeq
+  ;; A full IR clone must also deep-clone AstType. Keep this representation
+  ;; traversal explicit instead of pretending the value-only SPMD mapper can
+  ;; preserve metadata here.
   (let
     [count : i64 seq.len]
     [src : (__tl_dyn-array CompilerIrSpmdCallArg) seq.slots]

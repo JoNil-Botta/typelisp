@@ -33,17 +33,26 @@ expect_failure() {
 cat > "$BATCH" <<'EOF'
 object.tl|object.obj|object.s
 fallback.tl|fallback.obj|fallback.s
+abi-call.tl|abi-call.obj|abi-call.s
+abi-entry.tl|abi-entry.obj|abi-entry.s
+abi-return.tl|abi-return.obj|abi-return.s
 forced.tl|forced.obj|forced.s|force-assembly
 EOF
 cat > "$PLAN" <<'EOF'
 object.tl|coff-object|object.obj|none
 fallback.tl|assembly|fallback.s|unsupported-coff-image
+abi-call.tl|assembly|abi-call.s|unsupported-object-abi:windows-x86_64:call
+abi-entry.tl|assembly|abi-entry.s|unsupported-object-abi:windows-x86_64:function-entry
+abi-return.tl|assembly|abi-return.s|unsupported-object-abi:windows-x86_64:function-return
 forced.tl|assembly|forced.s|forced-assembly
 EOF
 awk -f "$VALIDATOR" "$BATCH" "$PLAN" > "$NORMALIZED"
 cat > "$WORKDIR/expected.plan" <<'EOF'
 object.tl|coff-object|object.obj|none|object.obj|object.s|0
 fallback.tl|assembly|fallback.s|unsupported-coff-image|fallback.obj|fallback.s|0
+abi-call.tl|assembly|abi-call.s|unsupported-object-abi:windows-x86_64:call|abi-call.obj|abi-call.s|0
+abi-entry.tl|assembly|abi-entry.s|unsupported-object-abi:windows-x86_64:function-entry|abi-entry.obj|abi-entry.s|0
+abi-return.tl|assembly|abi-return.s|unsupported-object-abi:windows-x86_64:function-return|abi-return.obj|abi-return.s|0
 forced.tl|assembly|forced.s|forced-assembly|forced.obj|forced.s|1
 EOF
 cmp "$WORKDIR/expected.plan" "$NORMALIZED"

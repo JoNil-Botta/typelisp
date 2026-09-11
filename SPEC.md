@@ -8309,7 +8309,13 @@ After every row succeeds, the compiler writes deterministic
 `forced-assembly`, and automatic fallback uses one of
 `unsupported-object-semantics`, `unsupported-coff-image`,
 `unsupported-external-relocation`,
-`missing-entry-symbol`, `missing-runtime-entry`, or `empty-text-section`.
+`missing-entry-symbol`, `missing-runtime-entry`, `empty-text-section`,
+`unsupported-object-abi:windows-x86_64:call`,
+`unsupported-object-abi:windows-x86_64:function-entry`, or
+`unsupported-object-abi:windows-x86_64:function-return`. The three
+target-scoped ABI reasons identify, respectively, an ordinary call, a function
+entry signature, or a returned value whose ABI shape is outside the temporary
+proven subset accepted by direct Windows object lowering.
 Compile, type, backend, object-serialization, and file-write errors fail the
 batch and do not produce the result plan. Each source is loaded, checked,
 lowered, and optimized once; an automatic assembly fallback renders from that

@@ -30950,6 +30950,33 @@
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])])))
 
+;; BE-6: the memory operand a binop's RIGHT operand may spell -- the frame slot
+;; of a spilled var, the cell a rematerialised frozen read recomputes from
+;; (W3(c)), or the cell of a direct full-word scalar-global read. The last is
+;; M6-I's compare fold applied to arithmetic: `addq g(%rip), %r` is the whole
+;; of `movq g(%rip), %scratch ; addq %scratch, %r`, the cell is read at the
+;; same point either way, and nothing sits between the two. CANON-G puts a
+;; commutative op's cell operand on the right precisely so this form applies.
+(define (compiler-backend-binop-rhs-memory-operand
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]
+  [backend-state : CompilerBackendState]) : String
+  (let
+    [known : String
+      (compiler-backend-value-read-memory-operand
+        (compiler-backend-global-shared-view assignments)
+        (compiler-backend-global-shared-view rhs)
+        (compiler-backend-global-shared-view backend-state))]
+    (if (string.eq known "")
+      (compiler-backend-value-global-memory-operand
+        (compiler-backend-global-shared-view backend-state)
+        type-segment-bases
+        (compiler-backend-global-shared-view rhs)
+        (compiler-backend-global-shared-view ty))
+      known)))
+
 (define (compiler-backend-binop-spill-source-operand
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -30964,7 +30991,12 @@
         (compiler-backend-global-shared-view rhs))]
     (if (not (string.eq rhs-reg ""))
       (compiler-backend-sized-reg type-segment-bases rhs-reg ty)
-      (compiler-backend-value-read-memory-operand assignments rhs backend-state))))
+      (compiler-backend-binop-rhs-memory-operand
+        type-segment-bases
+        assignments
+        rhs
+        (compiler-backend-global-shared-view ty)
+        backend-state))))
 
 (define (compiler-backend-emit-binop-spill-direct-source
   [type-segment-bases : i64]
@@ -32131,11 +32163,16 @@
                                     (ResultCompilerBackend.Err message)]))])]
                         [(CompilerBackendMaybeImmediate.No)
                           (let
+                            ;; BE-6: a direct scalar-global cell is a legal
+                            ;; memory source too (`addq g(%rip), %r`), exactly
+                            ;; as M6-I lets a compare read one.
                             [rhs-address : String
-                              (compiler-backend-value-read-memory-operand
+                              (compiler-backend-binop-rhs-memory-operand
+                                type-segment-bases
                                 (compiler-backend-global-shared-view
                                   assignments)
                                 (compiler-backend-global-shared-view rhs)
+                                (compiler-backend-global-shared-view operand-ty)
                                 (compiler-backend-global-shared-view
                                   backend-state))]
                             (if (not (string.eq rhs-address ""))

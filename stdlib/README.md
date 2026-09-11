@@ -312,7 +312,10 @@ Vec bang place macros as available yet.
   `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS |
   RESOLVE_NO_XDEV`. Directory, exclusive-create file, and verified regular-file
   read capabilities are cleanup-owning and expose stable operation plus
-  independent close outcomes, never raw errno or descriptors. Bounded reads
+  independent close outcomes, never raw errno or descriptors. Existing child
+  directories can be reopened without mutation through the same flags,
+  resolution policy, kind verification, and exact-once close discipline used
+  after directory creation. Bounded reads
   allocate at most one MiB per call, report positive short reads separately
   from zero-byte EOF, and support descriptor metadata/exact-length checks. File
   finish writes an exact promised byte count with partial-write/EINTR handling,

@@ -2,7 +2,7 @@
 set -eu
 
 # verify-fs-rooted-linux.sh - adversarial native checks for the private Linux
-# rooted staging and publication backend. refs #7221, #7409
+# rooted staging and publication backend. refs #7221, #7409, #7550
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -119,6 +119,21 @@ echo "[fs-rooted-linux] compile rooted publication coverage"
 as "$PUBLICATION_ASM" -o "$PUBLICATION_OBJ"
 ld "$PUBLICATION_OBJ" -o "$PUBLICATION_BIN" -e _tl_start
 
+REOPEN_DIRECTORY_SOURCE="$ROOT/tests/integration/fs_rooted_linux_reopen_directory.tl"
+REOPEN_DIRECTORY_ASM="$WORKDIR/reopen-directory.s"
+REOPEN_DIRECTORY_OBJ="$WORKDIR/reopen-directory.o"
+REOPEN_DIRECTORY_BIN="$WORKDIR/reopen-directory"
+
+echo "[fs-rooted-linux] compile rooted directory-reopen coverage"
+"$COMPILER" compile "$REOPEN_DIRECTORY_SOURCE" -o "$REOPEN_DIRECTORY_ASM" \
+    --target linux-x86_64 --backend-mode scalar \
+    --cfg fs-rooted-linux-test-hooks --stdlib-root "$ROOT/stdlib" \
+    > "$WORKDIR/reopen-directory-compile.stdout" \
+    2> "$WORKDIR/reopen-directory-compile.stderr" ||
+    fail "directory-reopen fixture compile failed"
+as "$REOPEN_DIRECTORY_ASM" -o "$REOPEN_DIRECTORY_OBJ"
+ld "$REOPEN_DIRECTORY_OBJ" -o "$REOPEN_DIRECTORY_BIN" -e _tl_start
+
 mkdir -p "$WORKDIR/happy"
 run_expect happy 42 "$NATIVE_BIN" happy "$WORKDIR/happy"
 printf 'rooted payload\n' > "$WORKDIR/happy.expected"
@@ -206,6 +221,65 @@ run_expect fault-injection 42 "$NATIVE_BIN" faults "$WORKDIR/faults"
     fail "failed directory reacquisition deleted the exclusively created node"
 [ ! -e "$WORKDIR/faults/unsupported-file.txt" ] ||
     fail "injected unsupported openat2 unexpectedly created a file"
+
+mkdir -p "$WORKDIR/reopen-retained/generation"
+printf 'original generation\n' > \
+    "$WORKDIR/reopen-retained/generation/payload.txt"
+chmod 711 "$WORKDIR/reopen-retained/generation"
+run_expect reopen-retained 42 \
+    "$REOPEN_DIRECTORY_BIN" retained \
+    "$WORKDIR/reopen-retained" "$WORKDIR/reopen-retained-moved"
+[ ! -e "$WORKDIR/reopen-retained" ] ||
+    fail "old directory-reopen root name survived rename"
+printf 'original generation\n' > "$WORKDIR/reopen-original.expected"
+cmp -s \
+    "$WORKDIR/reopen-original.expected" \
+    "$WORKDIR/reopen-retained-moved/generation-moved/payload.txt" ||
+    fail "reopened child capability did not retain the original directory"
+printf 'replacement generation\n' > "$WORKDIR/reopen-replacement.expected"
+cmp -s \
+    "$WORKDIR/reopen-replacement.expected" \
+    "$WORKDIR/reopen-retained-moved/generation/payload.txt" ||
+    fail "replacement directory payload mismatch"
+assert_mode "$WORKDIR/reopen-retained-moved/generation-moved" 711
+assert_mode "$WORKDIR/reopen-retained-moved/generation" 755
+
+mkdir -p "$WORKDIR/reopen-before/generation"
+printf 'original before acquisition\n' > \
+    "$WORKDIR/reopen-before/generation/payload.txt"
+mv \
+    "$WORKDIR/reopen-before/generation" \
+    "$WORKDIR/reopen-before/generation-before"
+mkdir "$WORKDIR/reopen-before/generation"
+printf 'replacement before acquisition\n' > \
+    "$WORKDIR/reopen-before/generation/payload.txt"
+run_expect reopen-renamed-before 42 \
+    "$REOPEN_DIRECTORY_BIN" renamed-before "$WORKDIR/reopen-before"
+printf 'original before acquisition\n' > "$WORKDIR/reopen-before.expected"
+cmp -s \
+    "$WORKDIR/reopen-before.expected" \
+    "$WORKDIR/reopen-before/generation-before/payload.txt" ||
+    fail "pre-acquisition rename modified the original directory"
+
+mkdir -p "$WORKDIR/reopen-classify" "$WORKDIR/reopen-outside"
+printf 'ordinary\n' > "$WORKDIR/reopen-classify/ordinary"
+mkfifo "$WORKDIR/reopen-classify/special"
+printf 'outside sentinel\n' > "$WORKDIR/reopen-outside/sentinel.txt"
+ln -s "$WORKDIR/reopen-outside" "$WORKDIR/reopen-classify/symlink"
+run_expect reopen-missing 42 \
+    "$REOPEN_DIRECTORY_BIN" missing "$WORKDIR/reopen-classify"
+run_expect reopen-file 42 \
+    "$REOPEN_DIRECTORY_BIN" file "$WORKDIR/reopen-classify"
+run_expect reopen-special 42 \
+    "$REOPEN_DIRECTORY_BIN" special "$WORKDIR/reopen-classify"
+run_expect reopen-symlink 42 \
+    "$REOPEN_DIRECTORY_BIN" symlink "$WORKDIR/reopen-classify"
+cmp -s "$WORKDIR/outside.expected" "$WORKDIR/reopen-outside/sentinel.txt" ||
+    fail "directory reopen followed a symlink outside the root"
+
+mkdir -p "$WORKDIR/reopen-faults/generation"
+run_expect reopen-faults 42 \
+    "$REOPEN_DIRECTORY_BIN" faults "$WORKDIR/reopen-faults"
 
 mkdir -p \
     "$WORKDIR/publication-source/directory-entry" \
@@ -327,6 +401,25 @@ if mount --bind "$WORKDIR/mount-probe-source" "$WORKDIR/mount-probe-target" \
         fail "mount boundary race exited $MOUNT_RACE_STATUS"
     [ ! -s "$WORKDIR/mount-race.stdout" ] || fail "mount race wrote stdout"
     [ ! -s "$WORKDIR/mount-race.stderr" ] || fail "mount race wrote stderr"
+    mkdir -p \
+        "$WORKDIR/reopen-mount-root/mounted" \
+        "$WORKDIR/reopen-mount-outside"
+    printf 'outside mount sentinel\n' > \
+        "$WORKDIR/reopen-mount-outside/sentinel.txt"
+    mount --bind \
+        "$WORKDIR/reopen-mount-outside" \
+        "$WORKDIR/reopen-mount-root/mounted" ||
+        fail "bind mount became unavailable during directory-reopen coverage"
+    MOUNTED_PATH="$WORKDIR/reopen-mount-root/mounted"
+    run_expect reopen-mount 42 \
+        "$REOPEN_DIRECTORY_BIN" mount "$WORKDIR/reopen-mount-root"
+    umount "$WORKDIR/reopen-mount-root/mounted"
+    MOUNTED_PATH=
+    printf 'outside mount sentinel\n' > "$WORKDIR/reopen-mount.expected"
+    cmp -s \
+        "$WORKDIR/reopen-mount.expected" \
+        "$WORKDIR/reopen-mount-outside/sentinel.txt" ||
+        fail "directory reopen modified the bind-mounted outside directory"
     echo "[fs-rooted-linux] bind-mount boundary covered"
 else
     echo "[fs-rooted-linux] bind-mount boundary unavailable; runner lacks mount permission"

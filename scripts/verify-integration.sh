@@ -728,6 +728,7 @@ fs_rooted_linux_gate_cases() {
 fs_rooted_linux_direct
 fs_rooted_linux_native
 fs_rooted_linux_publication
+fs_rooted_linux_reopen_directory
 EOF
 }
 

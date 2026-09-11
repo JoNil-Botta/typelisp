@@ -83945,7 +83945,8 @@
         [(compiler_optimize.OptGlobalModRefIndex.Some index _)
           (compiler_optimize.opt-global-mod-ref-cell-bit
             index
-            (opt-test-symbol (str_cat.str-cat "mr_wide_" (string.int->string at))))]))))
+            (opt-test-symbol
+              (str_cat.str-cat "mr_wide_" (string.int->string at))))]))))
 
 (define (opt-mr-wide-index-built? [count : i64]) : bool
   (match (opt-mr-wide-index-fill count)
@@ -84144,7 +84145,9 @@
         183]
       [(not
           (=
-            (opt-mr-mixed-bit (+ (compiler_optimize.opt-global-mod-ref-limit) 2) 0)
+            (opt-mr-mixed-bit
+              (+ (compiler_optimize.opt-global-mod-ref-limit) 2)
+              0)
             1))
         184]
       ;; --- the decision the table moves ---

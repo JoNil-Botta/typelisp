@@ -150764,8 +150764,12 @@
           scalar?
           (+ at 1)
           (if (and
-            (= scalar? (opt-global-obj-scalar-type? (compiler-opt-global-shared-view ty)))
-            (opt_i64_i64_map.contains? (& stores) (ir.compiler-ir-symbol-id name)))
+            (=
+              scalar?
+              (opt-global-obj-scalar-type? (compiler-opt-global-shared-view ty)))
+            (opt_i64_i64_map.contains?
+              (& stores)
+              (ir.compiler-ir-symbol-id name)))
             (+ count 1)
             count))])))
 
@@ -150788,8 +150792,12 @@
       [(ir.CompilerIrGlobal.Global name ty _)
         (if (not
           (and
-            (= scalar? (opt-global-obj-scalar-type? (compiler-opt-global-shared-view ty)))
-            (opt_i64_i64_map.contains? (& stores) (ir.compiler-ir-symbol-id name))))
+            (=
+              scalar?
+              (opt-global-obj-scalar-type? (compiler-opt-global-shared-view ty)))
+            (opt_i64_i64_map.contains?
+              (& stores)
+              (ir.compiler-ir-symbol-id name))))
           (opt-global-mod-ref-index-fill-pool
             globals
             stores

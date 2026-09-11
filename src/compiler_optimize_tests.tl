@@ -46848,6 +46848,223 @@
         9]
       [else 42])))
 
+;; --- PH-1: a big loop's guard chain hoisted as one predicate -----------------
+;;
+;; A rotated loop whose body is 76 blocks -- past the 64-block clone cap -- so
+;; the unswitch takes the predicate path. `g1` tests `lt lo, hi` computed in
+;; the body (admitted only on this path), `g2` chains `le lo, hi` behind it,
+;; `fast` re-tests `g1`'s condition; all three fail to `slow`, which reaches
+;; the latch through 70 jump stubs (the bulk). The hoist puts the conjunction
+;; in `pre`, branches `g1` on it, and folds `g2` and `fast` to their jumps; no
+;; block is cloned. Inside the priced prefix, and for the same shape under the
+;; clone cap (10 stubs), the loop is left alone: the body-computed condition
+;; is not invariant there.
+(define (opt-ph1-test-params) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "cond"
+      (compiler_ast_types.AstType.Bool)
+      0)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "lo"
+        (compiler_ast_types.AstType.I64)
+        1)
+      (compiler_ir_types.compiler-ir-param-seq-prepend
+        (compiler_ir_types.CompilerIrParam.Param
+          "hi"
+          (compiler_ast_types.AstType.I64)
+          2)
+        (compiler_ir_types.compiler-ir-param-seq-empty)))))
+
+(define (opt-ph1-test-compare
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BinOp
+    dst
+    op
+    (compiler_ir_types.CompilerIrValue.Var 1)
+    (compiler_ir_types.CompilerIrValue.Var 2)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-ph1-stub-name [index : i64]) : String
+  (str_cat.str-cat "t" (string.int->string index)))
+
+;; t<index> .. t<count-1>, each jumping to the next, the last to `latch`.
+(define (opt-ph1-test-stubs
+  [index : i64]
+  [count : i64]
+  [tail : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (if (>= index count)
+    tail
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-pcf-block
+        (opt-ph1-stub-name index)
+        (opt-test-instrs
+          (opt-pcf-jump
+            (if (= index (- count 1))
+              "latch"
+              (opt-ph1-stub-name (+ index 1))))))
+      (opt-ph1-test-stubs (+ index 1) count tail))))
+
+(define (opt-ph1-test-blocks [stubs : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-pcf-block
+      "entry"
+      (opt-test-instrs (opt-lu1-test-branch 0 "pre" "exit")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-pcf-block "pre" (opt-test-instrs (opt-pcf-jump "head")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-pcf-block "head" (opt-test-instrs (opt-pcf-jump "g1")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-pcf-block
+            "g1"
+            (opt-test-instrs
+              (opt-ph1-test-compare 3 (compiler_ir_types.CompilerIrBinOp.Lt))
+              (opt-lu1-test-branch 3 "g2" "slow")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-pcf-block
+              "g2"
+              (opt-test-instrs
+                (opt-ph1-test-compare 4 (compiler_ir_types.CompilerIrBinOp.Le))
+                (opt-lu1-test-branch 4 "fast" "slow")))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-pcf-block
+                "fast"
+                (opt-test-instrs (opt-lu1-test-branch 3 "latch" "slow")))
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-pcf-block "slow" (opt-test-instrs (opt-pcf-jump "t0")))
+                (opt-ph1-test-stubs
+                  0
+                  stubs
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (opt-pcf-block
+                      "latch"
+                      (opt-test-instrs (opt-lu1-test-branch 0 "head" "exit")))
+                    (compiler_ir_types.compiler-ir-block-cons
+                      (opt-pcf-block
+                        "exit"
+                        (opt-test-instrs
+                          (compiler_ir_types.CompilerIrInstr.Return
+                            (compiler_ir_types.CompilerIrMaybeValue.Some
+                              (compiler_ir_types.CompilerIrValue.I64 0)))))
+                      (compiler_ir_types.CompilerIrBlockList.Nil))))))))))))
+
+(define (opt-ph1-test-function [stubs : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "licm_predicate_hoist")
+    (opt-ph1-test-params)
+    (compiler_ast_types.AstType.I64)
+    5
+    (opt-ph1-test-blocks stubs)))
+
+;; The var the block's last instruction branches on, or -1.
+(define (opt-ph1-branch-cond-var
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : i64
+  (let
+    [block : compiler_ir_types.CompilerIrBlock (opt-pcf-block-of blocks label)]
+    [count : i64
+      (opt-block-instr-count
+        (compiler_optimize.compiler-opt-global-shared-view block))]
+    (if (<= count 0)
+      (- 0 1)
+      (match (opt-block-instr-at block (- count 1))
+        [(compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var var)
+            _
+            _)
+          var]
+        [_ (- 0 1)]))))
+
+(define (compiler-optimize-licm-predicate-hoist-self-test) : i64
+  (let
+    [positive : compiler_ir_types.CompilerIrFunction
+      (opt-licm-unswitch-test-run (opt-ph1-test-function 70))]
+    [positive-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view positive))]
+    [small : compiler_ir_types.CompilerIrFunction
+      (opt-licm-unswitch-test-run (opt-ph1-test-function 10))]
+    [small-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view small))]
+    [_enter : unit (compiler_optimize.compiler-opt-late-sweep-suppress-enter!)]
+    [priced : compiler_ir_types.CompilerIrFunction
+      (opt-licm-unswitch-test-run (opt-ph1-test-function 70))]
+    [_leave : unit (compiler_optimize.compiler-opt-late-sweep-suppress-leave!)]
+    [priced-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view priced))]
+    [head-clone : i64 (compiler_ir_types.compiler-ir-label "head__licm_false")]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view positive))))
+        1]
+      ;; no clone
+      [(opt-block-list-has-label?
+          (compiler_optimize.compiler-opt-global-shared-view positive-blocks)
+          head-clone)
+        2]
+      ;; the two materialized compares and their conjunction, before the jump
+      [(not
+          (=
+            (opt-pcf-count
+              (compiler_optimize.compiler-opt-global-shared-view
+                positive-blocks)
+              "pre")
+            4))
+        3]
+      ;; g1 branches on the predicate (a fresh var) ...
+      [(<
+          (opt-ph1-branch-cond-var
+            (compiler_optimize.compiler-opt-global-shared-view positive-blocks)
+            "g1")
+          5)
+        4]
+      [(not
+          (opt-licm-unswitch-one-successor?
+            (compiler_optimize.compiler-opt-global-shared-view positive-blocks)
+            (compiler_ir_types.compiler-ir-label "g2")
+            (compiler_ir_types.compiler-ir-label "fast")))
+        5]
+      ;; ... and g2 and the re-test fold to the edges they always took
+      [(not
+          (opt-pcf-jumps-to?
+            (compiler_optimize.compiler-opt-global-shared-view positive-blocks)
+            "g2"
+            "fast"))
+        6]
+      [(not
+          (opt-pcf-jumps-to?
+            (compiler_optimize.compiler-opt-global-shared-view positive-blocks)
+            "fast"
+            "latch"))
+        7]
+      ;; under the clone cap the body-computed condition is no candidate
+      [(not
+          (=
+            (opt-pcf-count
+              (compiler_optimize.compiler-opt-global-shared-view small-blocks)
+              "pre")
+            1))
+        8]
+      [(opt-block-list-has-label?
+          (compiler_optimize.compiler-opt-global-shared-view small-blocks)
+          head-clone)
+        9]
+      ;; the priced prefix leaves the loop alone
+      [(not
+          (=
+            (opt-pcf-count
+              (compiler_optimize.compiler-opt-global-shared-view priced-blocks)
+              "pre")
+            1))
+        10]
+      [else 42])))
+
 ;; --- the invariant dispatch chain -------------------------------------------
 ;;
 ;; `dispatch-a` and `dispatch-b` are the two-test dispatch an inlined, versioned

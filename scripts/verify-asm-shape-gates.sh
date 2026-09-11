@@ -3075,7 +3075,8 @@ check_gep_load_cmp_spilled_stage() {
     # Nearest refused neighbour: `refused` reads each loaded element a SECOND
     # time to fold it into a sum, so the value is not single-use, the fold
     # cannot retire it, and its home stays load-bearing. No compare in it
-    # addresses an element directly.
+    # addresses a base-relative element as its memory SOURCE (the M6-H shape);
+    # the single-use left element may still fold as a memory destination.
     assert_regex_count_eq "$_refused"         '^[[:space:]]+cmpq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' 0         gep-load-cmp-spilled-stage-refused
     # The elements are still loaded and still compared there -- the refusal is
     # a refusal to fold, not a refusal to emit.

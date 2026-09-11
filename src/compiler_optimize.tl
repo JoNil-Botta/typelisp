@@ -96686,11 +96686,79 @@
           (opt-label-ref (compiler-opt-global-shared-view labels) 0))
         (opt-bce-mb-far-labels-dominated? doms wire (opt-label-tail labels)))]))
 
-(define (opt-bce-mb-far-plan-ok? [doms : OptDomInfo] [plan : OptBceMbFarPlan]) : bool
+(define (opt-bce-mb-header-phi-vars
+  [blocks : ir.CompilerIrBlockList]
+  [header : i64]) : OptBceMbVarList
+  (match (opt-cfg-find-block blocks header)
+    [(OptMaybeBlock.No) (opt-bce-mb-var-list-new)]
+    [(OptMaybeBlock.Some block)
+      (match (compiler-opt-global-shared-view block)
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-bce-mb-header-phi-vars-from
+            (compiler-opt-global-shared-view instrs)
+            0
+            (opt-unroll-phi-prefix-count
+              (compiler-opt-global-shared-view instrs)
+              0)
+            (opt-bce-mb-var-list-new))])]))
+
+(define (opt-bce-mb-header-phi-vars-from
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
+  [acc : OptBceMbVarList]) : OptBceMbVarList
+  (if (>= index count)
+    acc
+    (let
+      [next : OptBceMbVarList
+        (match (ir.compiler-ir-instr-seq-ref
+          (compiler-opt-global-shared-view instrs)
+          index)
+          [(ir.CompilerIrInstr.Phi dst _ _)
+            (opt-bce-mb-var-list-prepend acc dst)]
+          [_ acc])]
+      (opt-bce-mb-header-phi-vars-from instrs (+ index 1) count next))))
+
+(define (opt-bce-mb-far-vars-wireable?
+  [far-vars : OptBceMbVarList]
+  [wire-vars : OptBceMbVarList]
+  [header-phis : OptBceMbVarList]
+  [index : i64]) : bool
+  (or
+    (>=
+      index
+      (opt-bce-mb-var-list-count (compiler-opt-global-shared-view far-vars)))
+    (let
+      [var : i64
+        (opt-bce-mb-var-list-ref
+          (compiler-opt-global-shared-view far-vars)
+          index)]
+      (and
+        (or
+          (opt-bce-mb-var-list-contains?
+            (compiler-opt-global-shared-view wire-vars)
+            var)
+          (opt-bce-mb-var-list-contains?
+            (compiler-opt-global-shared-view header-phis)
+            var))
+        (opt-bce-mb-far-vars-wireable?
+          far-vars
+          wire-vars
+          header-phis
+          (+ index 1))))))
+
+(define (opt-bce-mb-far-plan-ok?
+  [doms : OptDomInfo]
+  [header-phis : OptBceMbVarList]
+  [plan : OptBceMbFarPlan]) : bool
   (and
     (>= plan.wire 0)
     (opt-bce-mb-far-labels-dominated? doms plan.wire plan.far-labels)
-    (opt-bce-mb-var-list-subset? plan.far-vars plan.wire-vars)))
+    (opt-bce-mb-far-vars-wireable?
+      (compiler-opt-global-shared-view plan.far-vars)
+      (compiler-opt-global-shared-view plan.wire-vars)
+      (compiler-opt-global-shared-view header-phis)
+      0)))
 
 ;; One merge phi per far var, materialized in the wire point over its
 ;; predecessor edges, plus the env that rewrites the far uses to them.
@@ -96764,6 +96832,7 @@
   [pred-map : OptPredMap]
   [doms : OptDomInfo]
   [blocks : ir.CompilerIrBlockList]
+  [header : i64]
   [body-labels : OptLabelSet]
   [body-blocks : ir.CompilerIrBlockList]
   [cell : (__tl_dyn-array i64)]) : OptBceMbFarResult
@@ -96787,6 +96856,9 @@
       (if (not
         (opt-bce-mb-far-plan-ok?
           (compiler-opt-global-shared-view doms)
+          (opt-bce-mb-header-phi-vars
+            (compiler-opt-global-shared-view blocks)
+            header)
           (compiler-opt-global-shared-view plan)))
         (OptBceMbFarResult.No)
         (match (opt-bce-mb-far-phis
@@ -104808,6 +104880,7 @@
       (compiler-opt-global-shared-view pred-map)
       (compiler-opt-global-shared-view doms)
       (compiler-opt-global-shared-view blocks)
+      (compiler-opt-global-shared-view (__tl-project-field shape header))
       (compiler-opt-global-shared-view (__tl-project-field shape body-labels))
       (compiler-opt-global-shared-view (__tl-project-field shape body-blocks))
       (compiler-opt-global-shared-view cell))

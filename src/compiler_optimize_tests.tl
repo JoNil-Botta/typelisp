@@ -54242,18 +54242,22 @@
 ;; Variants:
 ;;   0 the shape above;
 ;;   1 adds a FAR direct use of the flag in a block the exit dominates;
-;;   2 makes that far use read the COUNTER instead -- a var the exit block
-;;     itself does not read, which the far repair refuses;
+;;   2 makes that far use read the COUNTER instead -- a header phi the exit
+;;     block itself does not read; a header phi dominates every loop block and
+;;     so every predecessor edge of the wire point, and wires (BCE-WIRE);
 ;;   3 puts a bounds check in `gate`, on the guard chain: the compare does not
 ;;     cover it, so the clone must KEEP it;
 ;;   4 pulls `flagexit` into the loop, so the header branch is an ordinary
 ;;     diamond with two in-loop successors and the chain walk stops;
-;;   5 gives the LATCH a second exit as well (`branch f, lexit, header`).
+;;   5 gives the LATCH a second exit as well (`branch f, lexit, header`);
+;;   6 makes the far use read a header def that is NOT a phi (`i + n`), which
+;;     the wire point does not read either: only header phis are admitted
+;;     without a read at the wire point, so the far repair refuses.
 (define opt-bce-mb2-test-frame : i64
   20)
 
 (define (opt-bce-mb2-test-far-variant? [variant : i64]) : bool
-  (or (= variant 1) (= variant 2)))
+  (or (= variant 1) (= variant 2) (= variant 6)))
 
 (define (opt-bce-mb2-test-entry-block) : compiler_ir_types.CompilerIrBlock
   (compiler_ir_types.CompilerIrBlock.Block
@@ -54262,10 +54266,31 @@
       (compiler_ir_types.CompilerIrInstr.Jump
         (compiler_ir_types.compiler-ir-label "header")))))
 
-(define (opt-bce-mb2-test-header-block) : compiler_ir_types.CompilerIrBlock
+(define (opt-bce-mb2-test-header-tail [variant : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (let
+    [branch : compiler_ir_types.CompilerIrInstrSeq
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          (compiler_ir_types.compiler-ir-label "flagexit")
+          (compiler_ir_types.compiler-ir-label "gate")))]
+    (if (= variant 6)
+      ;; a header def that is not a phi: `i + n`
+      (opt-test-instrs-with-tail
+        branch
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          10
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.I64)))
+      branch)))
+
+(define (opt-bce-mb2-test-header-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
   (compiler_ir_types.CompilerIrBlock.Block
     (compiler_ir_types.compiler-ir-label "header")
-    (opt-test-instrs
+    (opt-test-instrs-with-tail
+      (opt-bce-mb2-test-header-tail variant)
       (compiler_ir_types.CompilerIrInstr.Phi
         3
         (compiler_ir_types.compiler-ir-phi-input-seq-prepend
@@ -54285,11 +54310,7 @@
             (compiler_ir_types.CompilerIrValue.Var 9)
             (compiler_ir_types.compiler-ir-label "merge")
             (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
-        (compiler_ast_types.AstType.Bool))
-      (compiler_ir_types.CompilerIrInstr.Branch
-        (compiler_ir_types.CompilerIrValue.Var 4)
-        (compiler_ir_types.compiler-ir-label "flagexit")
-        (compiler_ir_types.compiler-ir-label "gate")))))
+        (compiler_ast_types.AstType.Bool)))))
 
 (define (opt-bce-mb2-test-flagexit-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
   (compiler_ir_types.CompilerIrBlock.Block
@@ -54384,13 +54405,17 @@
 (define (opt-bce-mb2-test-farjoin-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
   (compiler_ir_types.CompilerIrBlock.Block
     (compiler_ir_types.compiler-ir-label "farjoin")
-    (if (= variant 2)
-      ;; reads the COUNTER, which the wire point does not read
+    (if (or (= variant 2) (= variant 6))
+      ;; reads a var the wire point does not read: the COUNTER (a header phi)
+      ;; or the header's non-phi `i + n`
       (opt-test-instrs
         (compiler_ir_types.CompilerIrInstr.BinOp
           13
           (compiler_ir_types.CompilerIrBinOp.Lt)
-          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.Var
+            (if (= variant 2)
+              3
+              10))
           (compiler_ir_types.CompilerIrValue.Var 0)
           (compiler_ast_types.AstType.Bool))
         (compiler_ir_types.CompilerIrInstr.Branch
@@ -54441,7 +54466,7 @@
   (compiler_ir_types.compiler-ir-block-cons
     (opt-bce-mb2-test-entry-block)
     (compiler_ir_types.compiler-ir-block-cons
-      (opt-bce-mb2-test-header-block)
+      (opt-bce-mb2-test-header-block variant)
       (compiler_ir_types.compiler-ir-block-cons
         (opt-bce-mb2-test-flagexit-block variant)
         (compiler_ir_types.compiler-ir-block-cons
@@ -54521,6 +54546,34 @@
                     [_ (- 0 1)])]
                 [_ (- 0 1)])))])]))
 
+;; The left operand var of the first BinOp in a block, or -1.
+(define (opt-bce-mb2-test-binop-lhs-var-from
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : i64
+  (if (>=
+    index
+    (compiler_ir_types.compiler-ir-instr-seq-count
+      (compiler_ir_types.compiler-ir-global-shared-view instrs)))
+    (- 0 1)
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref
+      (compiler_ir_types.compiler-ir-global-shared-view instrs)
+      index)
+      [(compiler_ir_types.CompilerIrInstr.BinOp _ _ lhs _ _)
+        (match lhs
+          [(compiler_ir_types.CompilerIrValue.Var id) id]
+          [_ (- 0 1)])]
+      [_ (opt-bce-mb2-test-binop-lhs-var-from instrs (+ index 1))])))
+
+(define (opt-bce-mb2-test-binop-lhs-var
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]) : i64
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-bce-mb2-test-binop-lhs-var-from instrs 0)])]))
+
 ;; A loop whose entry test short-circuits through a SECOND exiting branch
 ;; versions: the guard chain walk finds the counter compare one block below the
 ;; header, the whole loop plus its two exit stubs clone, and the exit block's
@@ -54531,6 +54584,8 @@
     [plain : compiler_ir_types.CompilerIrBlockList
       (opt-bce-mb2-test-versioned 0)]
     [far : compiler_ir_types.CompilerIrBlockList (opt-bce-mb2-test-versioned 1)]
+    [counter : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mb2-test-versioned 2)]
     (cond
       [(not (opt-bce-mb2-test-verify-ok? 0)) 1]
       [(not
@@ -54610,13 +54665,34 @@
               far
               (compiler_ir_types.compiler-ir-label "exit"))))
         14]
+      ;; BCE-WIRE: a far use of a HEADER PHI the wire point does not read wires
+      ;; too -- the phi dominates every loop block, so every predecessor edge
+      ;; of the wire point carries it -- through a second merge phi there
+      [(not (opt-bce-mb2-test-verify-ok? 2)) 15]
+      [(not
+          (opt-bce-mb2-test-versioned?
+            (compiler_optimize.compiler-opt-global-shared-view counter)))
+        16]
+      [(not
+          (=
+            (opt-bce-mb2-test-block-phis
+              (compiler_optimize.compiler-opt-global-shared-view counter)
+              (compiler_ir_types.compiler-ir-label "exit"))
+            2))
+        17]
+      [(<
+          (opt-bce-mb2-test-binop-lhs-var
+            counter
+            (compiler_ir_types.compiler-ir-label "farjoin"))
+          opt-bce-mb2-test-frame)
+        18]
       [else 42])))
 
 ;; The boundaries of the same admission.
 (define (compiler-optimize-bce-version-mb-second-exit-refusal-self-test) : i64
   (let
     [far-other : compiler_ir_types.CompilerIrBlockList
-      (opt-bce-mb2-test-versioned 2)]
+      (opt-bce-mb2-test-versioned 6)]
     [chain-check : compiler_ir_types.CompilerIrBlockList
       (opt-bce-mb2-test-versioned 3)]
     [diamond : compiler_ir_types.CompilerIrBlockList
@@ -54625,8 +54701,9 @@
       (opt-bce-mb2-test-versioned 5)]
     (cond
       ;; a far use of a var the wire point itself does not read has no proof
-      ;; that the def dominates the wire point's predecessor edges: refused
-      [(not (opt-bce-mb2-test-verify-ok? 2)) 1]
+      ;; that the def dominates the wire point's predecessor edges -- unless it
+      ;; is a header phi (the positive test); a non-phi header def is refused
+      [(not (opt-bce-mb2-test-verify-ok? 6)) 1]
       [(opt-bce-mb2-test-versioned? far-other) 2]
       ;; a check ON the guard chain runs one time more than the body does, so
       ;; the compare does not cover it and the clone KEEPS it

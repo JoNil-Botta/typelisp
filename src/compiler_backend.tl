@@ -77476,6 +77476,28 @@
         [_ (CompilerBackendMaybeVarImm.No)])]
     [_ (CompilerBackendMaybeVarImm.No)]))
 
+;; The (base, displacement) an offset instruction contributes: an `add` with
+;; the literal on either side, or a `sub` with the literal on the right (the
+;; displacement negated; i64 MIN has no negation and declines).
+(define (compiler-backend-gep-fold-offset-operands
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]) : CompilerBackendMaybeVarImm
+  (match op
+    [(compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler-backend-gep-fold-add-operands lhs rhs)]
+    [(compiler_ir_types.CompilerIrBinOp.Sub)
+      (match lhs
+        [(compiler_ir_types.CompilerIrValue.Var v)
+          (match rhs
+            [(compiler_ir_types.CompilerIrValue.I64 k)
+              (if (= k (- (- 0 9223372036854775807) 1))
+                (CompilerBackendMaybeVarImm.No)
+                (CompilerBackendMaybeVarImm.Some v (- 0 k)))]
+            [_ (CompilerBackendMaybeVarImm.No)])]
+        [_ (CompilerBackendMaybeVarImm.No)])]
+    [_ (CompilerBackendMaybeVarImm.No)]))
+
 (define (compiler-backend-gep-fold-block-instrs
   [block : compiler_ir_types.CompilerIrBlock]) : compiler_ir_types.CompilerIrInstrSeq
   (match block
@@ -77822,29 +77844,35 @@
             (begin
               (match (compiler-backend-global-array-element-shared-view slots j)
                 [(compiler_ir_types.CompilerIrInstr.BinOp dst op lhs rhs ty)
-                  (match op
-                    [(compiler_ir_types.CompilerIrBinOp.Add)
-                      (if (and
-                        (compiler-backend-gep-fold-64bit-int? ty)
-                        (>= dst 0)
-                        (< dst (array-length cand-base))
-                        (= (array-ref defs dst) 1))
-                        (match (compiler-backend-gep-fold-add-operands lhs rhs)
-                          [(CompilerBackendMaybeVarImm.Some base k)
-                            (if (and
-                              (not (= k 0))
-                              (not (= base dst))
-                              (< k (compiler-backend-gep-fold-k-bound))
-                              (> k (- 0 (compiler-backend-gep-fold-k-bound))))
-                              (begin
-                                (set! (array-ref cand-base dst) base)
-                                (set! (array-ref cand-k dst) k)
-                                (set! (array-ref cand-block dst) b)
-                                (set! (array-ref cand-pos dst) j))
-                              unit)]
-                          [(CompilerBackendMaybeVarImm.No) unit])
-                        unit)]
-                    [_ unit])]
+                  ;; GAP9-SUB: `j - k` is `j + (-k)`, the displacement negated
+                  ;; -- the descending walks the unroller leaves spell their
+                  ;; first copy's offset as the source's `sub` and the rest as
+                  ;; adds of negative literals, and only the adds folded. A
+                  ;; zero offset (the unroller's copy-0 `add j, 0`) folds too:
+                  ;; it is the identity, and dropping it removes the register
+                  ;; copy the add cost.
+                  (if (and
+                    (compiler-backend-gep-fold-64bit-int? ty)
+                    (>= dst 0)
+                    (< dst (array-length cand-base))
+                    (= (array-ref defs dst) 1))
+                    (match (compiler-backend-gep-fold-offset-operands
+                      (compiler-backend-global-shared-view op)
+                      lhs
+                      rhs)
+                      [(CompilerBackendMaybeVarImm.Some base k)
+                        (if (and
+                          (not (= base dst))
+                          (< k (compiler-backend-gep-fold-k-bound))
+                          (> k (- 0 (compiler-backend-gep-fold-k-bound))))
+                          (begin
+                            (set! (array-ref cand-base dst) base)
+                            (set! (array-ref cand-k dst) k)
+                            (set! (array-ref cand-block dst) b)
+                            (set! (array-ref cand-pos dst) j))
+                          unit)]
+                      [(CompilerBackendMaybeVarImm.No) unit])
+                    unit)]
                 [_ unit])
               (set! j (+ j 1)))))
         (set! b (+ b 1))))))

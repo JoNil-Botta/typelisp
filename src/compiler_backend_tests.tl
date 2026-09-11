@@ -31624,6 +31624,8 @@ g:
       (compiler-backend-gep-fold-disp-shape-ok?)
       (compiler-backend-gep-fold-multi-use-keeps-add-ok?)
       (compiler-backend-gep-fold-builders-ok?))
+    (compiler-backend-gep-fold-sub-shape-ok?)
+    (compiler-backend-gep-fold-zero-shape-ok?)
     (compiler-backend-gep-fold-drift-detected-ok?)
     (compiler-backend-chained-gep-same-home-ok?)
     (compiler-backend-cmp-mem-fold-shapes-ok?)
@@ -31899,15 +31901,27 @@ g:
 ;; `disp(base,counter,scale)` -- exercised through the pre-pass plus the
 ;; fused load emission (ordinal consumption included).
 (define (compiler-backend-gep-fold-test-blocks [second-use : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler-backend-gep-fold-test-blocks-with
+    second-use
+    (compiler_ir_types.CompilerIrBinOp.Add)
+    1))
+
+;; GAP9-SUB: the same shape with the offset written as `sub j, 1` (folds as
+;; displacement -8) and as `add j, 0` (folds as displacement 0 and retires
+;; the copy the add cost).
+(define (compiler-backend-gep-fold-test-blocks-with
+  [second-use : bool]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [k : i64]) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
     (compiler_ir_types.CompilerIrBlock.Block
       (compiler_ir_types.compiler-ir-label "entry")
       (compiler-backend-test-instr-seq-prepend
         (compiler_ir_types.CompilerIrInstr.BinOp
           2
-          (compiler_ir_types.CompilerIrBinOp.Add)
+          op
           (compiler_ir_types.CompilerIrValue.Var 1)
-          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ir_types.CompilerIrValue.I64 k)
           (compiler_ast_types.AstType.I64))
         (compiler-backend-test-instr-seq-prepend
           (compiler_ir_types.CompilerIrInstr.Gep
@@ -31967,6 +31981,37 @@ g:
           (compiler_regalloc.compiler-reg-assignment-table-empty))))))
 
 (define (compiler-backend-gep-fold-disp-shape-ok?) : bool
+  (compiler-backend-gep-fold-disp-shape-with-ok?
+    (compiler_ir_types.CompilerIrBinOp.Add)
+    1
+    "8(%r12,%r8,8)"
+    "addq $1"
+    "leaq 1("))
+
+;; GAP9-SUB: `sub j, 1` folds as `-8(base,j,8)` and nothing computes j - 1.
+(define (compiler-backend-gep-fold-sub-shape-ok?) : bool
+  (compiler-backend-gep-fold-disp-shape-with-ok?
+    (compiler_ir_types.CompilerIrBinOp.Sub)
+    1
+    "-8(%r12,%r8,8)"
+    "subq $1"
+    "leaq -1("))
+
+;; GAP9-SUB: `add j, 0` folds as `(base,j,8)` and the add's copy is gone.
+(define (compiler-backend-gep-fold-zero-shape-ok?) : bool
+  (compiler-backend-gep-fold-disp-shape-with-ok?
+    (compiler_ir_types.CompilerIrBinOp.Add)
+    0
+    "(%r12,%r8,8)"
+    "addq $0"
+    "movq %r8,"))
+
+(define (compiler-backend-gep-fold-disp-shape-with-ok?
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [k : i64]
+  [want : String]
+  [forbid-a : String]
+  [forbid-b : String]) : bool
   (let
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new
@@ -31976,7 +32021,7 @@ g:
         (compiler_backend.compiler-backend-state-function-state backend-state)
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         8
-        (compiler-backend-gep-fold-test-blocks false))]
+        (compiler-backend-gep-fold-test-blocks-with false op k))]
     [result : bool
       (if (not
         (compiler_backend.compiler-backend-test-get-compiler-backend-gep-fold-ready
@@ -31992,15 +32037,15 @@ g:
             (and
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view asm)
-                "8(%r12,%r8,8)")
+                want)
               (not
                 (compiler_backend.compiler-backend-string-contains?
                   (owned_view.compiler-owned-shared-view asm)
-                  "addq $1"))
+                  forbid-a))
               (not
                 (compiler_backend.compiler-backend-string-contains?
                   (owned_view.compiler-owned-shared-view asm)
-                  "leaq 1("))
+                  forbid-b))
               (not
                 (compiler_backend.compiler-backend-gep-fold-drift?
                   (compiler_backend.compiler-backend-state-function-state

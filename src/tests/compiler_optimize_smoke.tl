@@ -3492,6 +3492,10 @@
       "compiler-optimize-licm-predicate-hoist-self-test"
       (compiler_optimize_tests.compiler-optimize-licm-predicate-hoist-self-test)
       42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-iv-aff-self-test"
+      (compiler_optimize_tests.compiler-optimize-iv-aff-self-test)
+      42)
     (cfg
       test
       (compiler_optimize_tests.compiler-optimize-self-test-require-i64!

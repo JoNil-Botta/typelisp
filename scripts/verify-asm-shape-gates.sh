@@ -3052,10 +3052,12 @@ check_vt_derived_stride() {
     assert_regex_count_eq "$_fast" \
         '^[[:space:]]+movq %r[a-z0-9]+, 16\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$' 1 \
         vt-derived-stride
-    # The cursor keeps its own literal step; the counter keeps its unit one.
+    # The cursor keeps its own literal step. LFTR-SUM retires the unit counter
+    # onto it (the exit test compares the cursor against a preheader end), so
+    # no unit step survives in the fast region.
     assert_matches "$_fast" '^[[:space:]]+addq \$3, %r[a-z0-9]+$' \
         vt-derived-stride
-    assert_matches "$_fast" '^[[:space:]]+addq \$1, %r[a-z0-9]+$' \
+    assert_regex_count_eq "$_fast" '^[[:space:]]+addq \$1, %r[a-z0-9]+$' 0 \
         vt-derived-stride
 }
 

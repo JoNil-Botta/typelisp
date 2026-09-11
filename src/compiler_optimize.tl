@@ -55041,7 +55041,11 @@
   [index : OptCfgIndex]
   [entry-label : i64]
   [label : i64]) : i64
-  (if (= label entry-label)
+  (if (or
+    (= label entry-label)
+    (and
+      opt-cfg-straighten-protect-on?
+      (opt_i64_i64_map.contains? (& opt-cfg-straighten-protected) label)))
     (ir.compiler-ir-label-none)
     (match (opt-cfg-index-find-block
       (compiler-opt-global-shared-view index)
@@ -55486,6 +55490,127 @@
               (OptBlockListPassResult.Result
                 (opt-cfg-simplify-blocks work)
                 true))))))))
+
+;; ST-2. The late threader retargets the jump of a jump-only arm whose phi
+;; inputs decided its tree, so an arm that fell through when the pass above ran
+;; no longer does, and the hot path around it pays the `jmp` the pass exists to
+;; remove (state-bind's `if_else.7`, 2.85M times in sccp_lattice). The pass
+;; runs once more below the threader -- with one guard the first run gets from
+;; lexical adjacency for free: a trampoline on a LOOP BOUNDARY stays. A loop's
+;; dedicated exit block (every predecessor inside the loop, the block outside),
+;; a jump-only latch and a jump-only preheader are shapes the allocator and the
+;; backend rely on (spill placement at the exit, the back edge's phi copies on
+;; the latch, hoisted constants ahead of the header); splicing an inner loop's
+;; exit edges straight onto the outer join cost intern_table +4.05M, and
+;; pointing a probe loop's continue branch straight at its header cost
+;; hashmap_get +3.44M, when the second run lacked the guard.
+(define opt-cfg-straighten-protect-on? : bool
+  false)
+(define opt-cfg-straighten-protected : opt_i64_i64_map.Map
+  (opt_i64_i64_map.with-capacity 1))
+
+(define (opt-cfg-straighten-loop-boundary-fill!
+  [index : OptCfgIndex]
+  [total : i64]
+  [loops : OptNaturalLoopList]
+  [out : (&mut o opt_i64_i64_map.Map)]) : unit
+  (match loops
+    [(OptNaturalLoopList.Nil) unit]
+    [(OptNaturalLoopList.Cons loop rest)
+      (let
+        [body : OptLabelSet
+          (opt-natural-loop-body (compiler-opt-global-shared-view loop))]
+        [header : i64
+          (opt-natural-loop-header (compiler-opt-global-shared-view loop))]
+        [preds : OptCfgCsr (compiler-opt-global-shared-view index.preds)]
+        [id : i64 0]
+        (begin
+          (while (< id total)
+            (let
+              [label : i64
+                (opt-cfg-index-label (compiler-opt-global-shared-view index) id)]
+              [onto-header? : bool
+                (match (opt-cfg-index-block
+                  (compiler-opt-global-shared-view index)
+                  id)
+                  [(OptMaybeBlock.No) false]
+                  [(OptMaybeBlock.Some block)
+                    (= (opt-cfg-straighten-block-forward block) header)])]
+              (begin
+                (cond
+                  ;; a latch or a preheader: jump-only onto the header
+                  [onto-header? (opt_i64_i64_map.insert-ref! out label 1)]
+                  [(opt-label-contains
+                      (compiler-opt-global-shared-view body)
+                      label)
+                    unit]
+                  ;; an exit: a predecessor inside the loop
+                  [else
+                    (let
+                      [edge : i64 (array-ref preds.offsets id)]
+                      [end : i64 (array-ref preds.offsets (+ id 1))]
+                      (while (< edge end)
+                        (begin
+                          (if (opt-label-contains
+                            (compiler-opt-global-shared-view body)
+                            (opt-cfg-index-label
+                              (compiler-opt-global-shared-view index)
+                              (array-ref preds.edges edge)))
+                            (opt_i64_i64_map.insert-ref! out label 1)
+                            unit)
+                          (set! edge (+ edge 1)))))])
+                (set! id (+ id 1)))))
+          (opt-cfg-straighten-loop-boundary-fill!
+            index
+            total
+            (compiler-opt-box-shared-view rest)
+            out)))]))
+
+(define (opt-cfg-straighten-loop-boundary-labels
+  [blocks : ir.CompilerIrBlockList]) : opt_i64_i64_map.Map
+  (let
+    [context : OptCfgContext
+      (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
+    [loops : OptNaturalLoopList
+      (opt-cfg-natural-loops-with-context
+        (compiler-opt-global-shared-view blocks)
+        (compiler-opt-global-shared-view context))]
+    [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
+    (begin
+      (opt-cfg-straighten-loop-boundary-fill!
+        (compiler-opt-global-shared-view context.index)
+        (opt-cfg-index-block-count
+          (compiler-opt-global-shared-view context.index))
+        (compiler-opt-global-shared-view loops)
+        (&mut out))
+      out)))
+
+(define (opt-cfg-straighten-below-threader-pass
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+      (if (not
+        (opt-cfg-straighten-blocks-have-candidate?
+          (compiler-opt-global-shared-view blocks)))
+        (OptFunctionPassResult.Result func false)
+        (let
+          [_protect : unit
+            (begin
+              (set!
+                opt-cfg-straighten-protected
+                (opt-cfg-straighten-loop-boundary-labels
+                  (compiler-opt-global-shared-view blocks)))
+              (set! opt-cfg-straighten-protect-on? true))]
+          [result : OptFunctionPassResult
+            (opt-cfg-straighten-final-pass type-segment-bases func)]
+          [_release : unit
+            (begin
+              (set! opt-cfg-straighten-protect-on? false)
+              (set!
+                opt-cfg-straighten-protected
+                (opt_i64_i64_map.with-capacity 1)))]
+          result))]))
 
 (define (opt-cfg-straighten-final-pass
   [type-segment-bases : i64]
@@ -128466,33 +128591,51 @@
                     (match (opt-thread-const-branch-final-pass
                       type-segment-bases
                       straightened)
-                      [(OptFunctionPassResult.Result threaded thread-changed)
-                        (match (opt-cmp-dup-final-pass
+                      [(OptFunctionPassResult.Result
+                          threaded-raw
+                          thread-raw-changed)
+                        ;; ST-2: the threader retargets a jump-only arm's own
+                        ;; jump (its phi inputs decided the tree), so an arm
+                        ;; that fell through before it no longer does and
+                        ;; costs a taken `jmp` on the path around it. Once
+                        ;; more, below it.
+                        (match (opt-cfg-straighten-below-threader-pass
                           type-segment-bases
-                          threaded)
-                          [(OptFunctionPassResult.Result fused cmp-dup-changed)
-                            ;; DCE-LATE closes the list: the passes above it
-                            ;; are the only ones that run below the pipeline's
-                            ;; own `dce`, and it neither moves an instruction
-                            ;; inside a block nor merges blocks, so the
-                            ;; adjacency `cmp_dup` and `load_sink` established
-                            ;; survives it.
-                            (match (opt-dce-late-final-pass
-                              type-segment-bases
-                              fused)
-                              [(OptFunctionPassResult.Result
-                                  swept
-                                  dce-late-changed)
-                                (OptFunctionPassResult.Result
-                                  swept
-                                  (or
-                                    fixed-changed
-                                    if-convert-changed
-                                    unswitch-changed
-                                    straighten-changed
-                                    thread-changed
-                                    cmp-dup-changed
-                                    dce-late-changed))])])])]))])]))))
+                          threaded-raw)
+                          [(OptFunctionPassResult.Result
+                              threaded
+                              restraighten-changed)
+                            (let
+                              [thread-changed : bool
+                                (or thread-raw-changed restraighten-changed)]
+                              (match (opt-cmp-dup-final-pass
+                                type-segment-bases
+                                threaded)
+                                [(OptFunctionPassResult.Result
+                                    fused
+                                    cmp-dup-changed)
+                                  ;; DCE-LATE closes the list: the passes above it
+                                  ;; are the only ones that run below the pipeline's
+                                  ;; own `dce`, and it neither moves an instruction
+                                  ;; inside a block nor merges blocks, so the
+                                  ;; adjacency `cmp_dup` and `load_sink` established
+                                  ;; survives it.
+                                  (match (opt-dce-late-final-pass
+                                    type-segment-bases
+                                    fused)
+                                    [(OptFunctionPassResult.Result
+                                        swept
+                                        dce-late-changed)
+                                      (OptFunctionPassResult.Result
+                                        swept
+                                        (or
+                                          fixed-changed
+                                          if-convert-changed
+                                          unswitch-changed
+                                          straighten-changed
+                                          thread-changed
+                                          cmp-dup-changed
+                                          dce-late-changed))])]))])])]))])]))))
 
 (define (optimize-function-with-level-and-summaries
   [pools : ast.AstNodePoolContext]

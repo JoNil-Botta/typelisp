@@ -88557,6 +88557,239 @@
       [clobber? 9]
       [else 42])))
 
+;; --- ST-2: straightening below the late threader ----------------------------
+;;
+;; The second run of the forwarding-block pass keeps a trampoline on a loop
+;; boundary: a loop's dedicated exit block and a jump-only preheader. Each
+;; fixture pairs the plain pass (which would straighten it) with the guarded
+;; one (which must not), and the arm case shows the guarded pass still
+;; straightens an ordinary arm.
+;; `entry` branches into `st-arm`, a trampoline onto `st-join` with a block in
+;; between so nothing falls through.
+(define (opt-st2-arm-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "st-then")
+          (compiler_ir_types.compiler-ir-label "st-arm"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "st-then")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.I64 1)))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "st-arm")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "st-join"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "st-other")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.I64 2)))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "st-join")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.I64 0)))))
+            (compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+;; A loop `st-head` / `st-body` whose header exits through `st-exit`, a
+;; trampoline onto `st-out` with a block in between.
+(define (opt-st2-exit-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "st-head"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "st-head")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "st-body")
+            (compiler_ir_types.compiler-ir-label "st-exit"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "st-body")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "st-head"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "st-exit")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "st-out"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "st-other")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.I64 2)))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "st-out")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.I64 0)))))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+;; A loop `st-head` / `st-body` whose continue path `st-latch` is a trampoline
+;; onto the header, with a block in between. The branch that reaches it is in
+;; `st-body`, not the header, so the plain pass has a retarget to make.
+(define (opt-st2-latch-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "st-head"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "st-head")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "st-body"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "st-body")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.compiler-ir-label "st-latch")
+              (compiler_ir_types.compiler-ir-label "st-out"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "st-latch")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "st-head"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "st-other")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.I64 2)))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "st-out")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.I64 0)))))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+;; `st-pre`, a trampoline onto the loop header `st-head`, with a block in
+;; between.
+(define (opt-st2-preheader-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "st-pre")
+          (compiler_ir_types.compiler-ir-label "st-other"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "st-pre")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "st-head"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "st-other")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.I64 2)))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "st-head")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.compiler-ir-label "st-body")
+                (compiler_ir_types.compiler-ir-label "st-out"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "st-body")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "st-head"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "st-out")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.I64 0)))))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+(define (opt-st2-run-below [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_optimize.OptFunctionPassResult
+  (compiler_optimize.opt-cfg-straighten-below-threader-pass
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-cfg-straighten-test-function
+      (compiler_ir_types.compiler-ir-global-shared-view blocks))))
+
+(define (opt-st2-changed? [result : compiler_optimize.OptFunctionPassResult]) : bool
+  (match result
+    [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed]))
+
+(define (opt-st2-blocks-of [result : compiler_optimize.OptFunctionPassResult]) : compiler_ir_types.CompilerIrBlockList
+  (match result
+    [(compiler_optimize.OptFunctionPassResult.Result func _)
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view func))]))
+
+(define (compiler-optimize-cfg-straighten-below-threader-self-test) : i64
+  (let
+    [arm : compiler_optimize.OptFunctionPassResult
+      (opt-st2-run-below (opt-st2-arm-blocks))]
+    [arm-blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-st2-blocks-of
+        (compiler_optimize.compiler-opt-global-shared-view arm))]
+    (cond
+      ;; an ordinary arm still straightens: `entry` reaches `st-join` directly
+      [(not
+          (opt-st2-changed?
+            (compiler_optimize.compiler-opt-global-shared-view arm)))
+        1]
+      [(opt-pcm-has-block?
+          (compiler_ir_types.compiler-ir-global-shared-view arm-blocks)
+          "st-arm")
+        2]
+      ;; the plain pass takes a loop's exit trampoline, the guarded one keeps it
+      [(not (opt-st2-changed? (opt-cfg-straighten-run (opt-st2-exit-blocks))))
+        3]
+      [(opt-st2-changed? (opt-st2-run-below (opt-st2-exit-blocks))) 4]
+      ;; likewise a jump-only preheader
+      [(not
+          (opt-st2-changed? (opt-cfg-straighten-run (opt-st2-preheader-blocks))))
+        5]
+      [(opt-st2-changed? (opt-st2-run-below (opt-st2-preheader-blocks))) 6]
+      ;; and a jump-only latch
+      [(not (opt-st2-changed? (opt-cfg-straighten-run (opt-st2-latch-blocks))))
+        7]
+      [(opt-st2-changed? (opt-st2-run-below (opt-st2-latch-blocks))) 8]
+      [else 42])))
+
 ;; --- GAP-1: call-site global-argument identity facts --------------------------
 ;;
 ;; The class is one question ("does every direct call site of this function pass
@@ -91997,6 +92230,13 @@
     (compiler-optimize-pd-self-test)
     42
     "an i64 global initialized to zero that one function stores and then walks a length-family member checked from 0 to its value is proven at most the family's array length program-wide, and in a function that leaves it alone a member's check guarded by (and (>= x 0) (< x @g)) retires; the same blocks with no seeds, or read as the storing function, keep the check; a walk with no check, a family reset after the cover, and a store that returns uncovered all refuse the pair"))
+
+(test
+  cfg-straighten-below-threader
+  (test.assert-i64-eq
+    (compiler-optimize-cfg-straighten-below-threader-self-test)
+    42
+    "the forwarding-block pass run below the late threader still straightens an ordinary arm trampoline, but keeps a loop's dedicated exit trampoline, a jump-only latch and a jump-only preheader that the plain pass would take"))
 
 (test
   arg-global-call-site-identity-facts

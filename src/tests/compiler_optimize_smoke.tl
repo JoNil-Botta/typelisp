@@ -3481,6 +3481,10 @@
       (compiler_optimize_tests.compiler-optimize-pd-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-cfg-straighten-below-threader-self-test"
+      (compiler_optimize_tests.compiler-optimize-cfg-straighten-below-threader-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-licm-unswitch-self-test"
       (compiler_optimize_tests.compiler-optimize-licm-unswitch-self-test)
       42)

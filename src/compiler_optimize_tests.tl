@@ -49617,6 +49617,196 @@
         dst
         side)]))
 
+;; LFTR-SUM. The partner is an i64 SUM phi, `%9 = phi [%4, entry], [%8, body]`
+;; with `%4 = add %2, 5` in the entry and `%8 = add %9, 3` on the latch (the
+;; IND-BASE strided index), the counter seeds from `counter-seed` (a literal,
+;; or a var: %2), the latch compares `compare-lhs` (the increment %6, or its
+;; copy hop %7) against %1, and `checked?` puts a bounds check on the sum.
+(define (opt-lftr-sum-blocks
+  [counter-seed : compiler_ir_types.CompilerIrValue]
+  [compare-lhs : compiler_ir_types.CompilerIrValue]
+  [checked? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          4
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ir_types.CompilerIrValue.I64 5)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "loop"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Phi
+            9
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 8)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Phi
+            3
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+              counter-seed
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 7)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Gep
+            10
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.Var 9)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "body"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "body")
+          (compiler_optimize.opt-licm-unswitch-instrs-onto
+            (if checked?
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                  (compiler_ir_types.CompilerIrValue.Var 9)
+                  (compiler_ir_types.CompilerIrValue.Var 1)
+                  (compiler_ir_types.compiler-ir-label "bounds_ok.0")))
+              (compiler_ir_types.compiler-ir-instr-seq-empty))
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                6
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Mov
+                7
+                (compiler_ir_types.CompilerIrValue.Var 6)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                8
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 9)
+                (compiler_ir_types.CompilerIrValue.I64 3)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                11
+                (compiler_ir_types.CompilerIrBinOp.Lt)
+                compare-lhs
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 11)
+                (compiler_ir_types.compiler-ir-label "loop")
+                (compiler_ir_types.compiler-ir-label "exit")))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-lftr-exit-block (compiler_ir_types.CompilerIrValue.Var 9))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; LFTR-SUM: the counter retires onto the sum phi's advanced value -- with a
+;; literal seed and the increment in the compare, and with a VAR seed and the
+;; increment's copy hop in the compare; a bounds check reading the sum keeps
+;; the loop as it is.
+(define (compiler-optimize-lftr-sum-self-test) : i64
+  (let
+    [lit-func : compiler_ir_types.CompilerIrFunction
+      (opt-lftr-optimized-function
+        (opt-lftr-sum-blocks
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ir_types.CompilerIrValue.Var 6)
+          false))]
+    [lit-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view lit-func))]
+    [var-func : compiler_ir_types.CompilerIrFunction
+      (opt-lftr-optimized-function
+        (opt-lftr-sum-blocks
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ir_types.CompilerIrValue.Var 7)
+          false))]
+    [var-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view var-func))]
+    [checked-func : compiler_ir_types.CompilerIrFunction
+      (opt-lftr-optimized-function
+        (opt-lftr-sum-blocks
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ir_types.CompilerIrValue.Var 6)
+          true))]
+    [checked-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view checked-func))]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view lit-func))))
+        1]
+      [(not
+          (=
+            (opt-count-phi-blocks
+              (compiler_optimize.compiler-opt-global-shared-view lit-blocks))
+            1))
+        2]
+      [(not
+          (=
+            (opt-lftr-def-count-blocks
+              (compiler_optimize.compiler-opt-global-shared-view lit-blocks)
+              3)
+            0))
+        3]
+      ;; the compare reads the sum's advanced value against the preheader end
+      [(not
+          (=
+            (opt-lftr-binop-operand-blocks
+              (compiler_optimize.compiler-opt-global-shared-view lit-blocks)
+              11
+              0)
+            8))
+        4]
+      [(not
+          (=
+            (opt-lftr-binop-operand-blocks
+              (compiler_optimize.compiler-opt-global-shared-view lit-blocks)
+              11
+              1)
+            34))
+        5]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view var-func))))
+        6]
+      [(not
+          (=
+            (opt-count-phi-blocks
+              (compiler_optimize.compiler-opt-global-shared-view var-blocks))
+            1))
+        7]
+      [(not
+          (=
+            (opt-lftr-binop-operand-blocks
+              (compiler_optimize.compiler-opt-global-shared-view var-blocks)
+              11
+              0)
+            8))
+        8]
+      [(not
+          (=
+            (opt-count-phi-blocks
+              (compiler_optimize.compiler-opt-global-shared-view checked-blocks))
+            2))
+        9]
+      [else 42])))
+
 (define (compiler-optimize-lftr-self-test) : i64
   (let
     [next-func : compiler_ir_types.CompilerIrFunction

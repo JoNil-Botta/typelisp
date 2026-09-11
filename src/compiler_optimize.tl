@@ -45915,9 +45915,11 @@
   (Some ir.CompilerIrInstr))
 
 ;; Counter phi var, `i + 1` destination var, the phi's latch-input var (equal
-;; to the increment when SSA renaming left no copy hop), constant seed.
+;; to the increment when SSA renaming left no copy hop), and the seed: a small
+;; literal, or (LFTR-SUM) the preheader var the phi starts from -- invariant by
+;; construction, and the end value then pays one subtract for it.
 (defenum OptLftrCounter
-  (Counter i64 i64 i64 i64))
+  (Counter i64 i64 i64 ir.CompilerIrValue))
 
 (defenum OptLftrMaybeCounter
   (No)
@@ -45927,7 +45929,32 @@
 ;; var, the gep's element type, the element step K, and that gep's index inside
 ;; the latch block (form B needs the step to precede the compare).
 (defenum OptLftrPointer
-  (Pointer i64 i64 i64 ast.AstType i64 i64))
+  (Pointer i64 i64 i64 ast.AstType i64 i64)
+  ;; LFTR-SUM: an i64 sum phi `q = phi [q0, preheader], [q + K, latch]` --
+  ;; the IND-BASE strided index `c + i*k` -- carries the exit test the same
+  ;; way a pointer phi does: phi var, seed var, next var, step K, the step's
+  ;; latch index.
+  (Sum i64 i64 i64 i64 i64))
+
+(define (opt-lftr-pointer-phi [pointer : OptLftrPointer]) : i64
+  (match pointer
+    [(OptLftrPointer.Pointer phi _ _ _ _ _) phi]
+    [(OptLftrPointer.Sum phi _ _ _ _) phi]))
+
+(define (opt-lftr-pointer-next [pointer : OptLftrPointer]) : i64
+  (match pointer
+    [(OptLftrPointer.Pointer _ _ next _ _ _) next]
+    [(OptLftrPointer.Sum _ _ next _ _) next]))
+
+(define (opt-lftr-pointer-step [pointer : OptLftrPointer]) : i64
+  (match pointer
+    [(OptLftrPointer.Pointer _ _ _ _ step _) step]
+    [(OptLftrPointer.Sum _ _ _ step _) step]))
+
+(define (opt-lftr-pointer-step-index [pointer : OptLftrPointer]) : i64
+  (match pointer
+    [(OptLftrPointer.Pointer _ _ _ _ _ at) at]
+    [(OptLftrPointer.Sum _ _ _ _ at) at]))
 
 (defenum OptLftrMaybePointer
   (No)
@@ -46070,7 +46097,7 @@
 (define (opt-lftr-counter-resolve
   [body-blocks : ir.CompilerIrBlockList]
   [phi-var : i64]
-  [seed : i64]
+  [seed : ir.CompilerIrValue]
   [back : i64]) : OptLftrMaybeCounter
   (match (opt-lftr-def-instr-blocks
     (compiler-opt-global-shared-view body-blocks)
@@ -46091,7 +46118,11 @@
               [(OptLftrMaybeInstr.Some source-instr)
                 (if (opt-lftr-unit-increment? source-instr phi-var)
                   (OptLftrMaybeCounter.Some
-                    (OptLftrCounter.Counter phi-var source back seed))
+                    (OptLftrCounter.Counter
+                      phi-var
+                      source
+                      back
+                      (compiler-opt-global-shared-view seed)))
                   (OptLftrMaybeCounter.No))]))))]))
 
 (define (opt-lftr-counter-from-phi
@@ -46104,11 +46135,13 @@
       (if (opt-induction-i64-type? ty)
         (match (opt-induction-phi-inputs inputs preheader latch)
           [(OptInductionPhiInputs.Some start back)
-            (match start
+            (match (compiler-opt-global-shared-view start)
               [(ir.CompilerIrValue.I64 seed)
                 (if (opt-induction-small-const? seed)
-                  (opt-lftr-counter-resolve body-blocks phi-var seed back)
+                  (opt-lftr-counter-resolve body-blocks phi-var start back)
                   (OptLftrMaybeCounter.No))]
+              [(ir.CompilerIrValue.Var _)
+                (opt-lftr-counter-resolve body-blocks phi-var start back)]
               [_ (OptLftrMaybeCounter.No)])]
           [(OptInductionPhiInputs.No) (OptLftrMaybeCounter.No)])
         (OptLftrMaybeCounter.No))]
@@ -46188,6 +46221,32 @@
                                 (OptLftrMaybePointer.No))]
                             [_ (OptLftrMaybePointer.No)])
                           (OptLftrMaybePointer.No))]
+                      ;; LFTR-SUM: an i64 `add phi, K` step
+                      [(ir.CompilerIrInstr.BinOp
+                          _
+                          (ir.CompilerIrBinOp.Add)
+                          base
+                          offset
+                          bty)
+                        (if (and
+                          (opt-induction-i64-type?
+                            (compiler-opt-global-shared-view bty))
+                          (opt-lftr-value-is-var? base phi-var))
+                          (match offset
+                            [(ir.CompilerIrValue.I64 step)
+                              (if (and
+                                (> step 0)
+                                (opt-induction-small-const? step))
+                                (OptLftrMaybePointer.Some
+                                  (OptLftrPointer.Sum
+                                    phi-var
+                                    seed-var
+                                    next-var
+                                    step
+                                    step-index))
+                                (OptLftrMaybePointer.No))]
+                            [_ (OptLftrMaybePointer.No)])
+                          (OptLftrMaybePointer.No))]
                       [_ (OptLftrMaybePointer.No)])))]
               [_ (OptLftrMaybePointer.No)])]
           [(OptInductionPhiInputs.No) (OptLftrMaybePointer.No)])
@@ -46244,6 +46303,7 @@
   [loop-defs : opt_i64_i64_map.Map]
   [phi-var : i64]
   [next-var : i64]
+  [back-var : i64]
   [instr : ir.CompilerIrInstr]) : OptLftrMaybeTestSite
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
@@ -46258,7 +46318,13 @@
           (compiler-opt-global-shared-view lhs)
           phi-var)
           (OptLftrMaybeTestSite.Some (OptLftrTest.Test dst ty op rhs false) 0 0)
-          (if (opt-lftr-value-is-var? lhs next-var)
+          ;; form B reads the increment, or the copy hop SSA renaming left
+          ;; between the increment and the phi (both retire with the counter)
+          (if (or
+            (opt-lftr-value-is-var?
+              (compiler-opt-global-shared-view lhs)
+              next-var)
+            (opt-lftr-value-is-var? lhs back-var))
             (OptLftrMaybeTestSite.Some
               (OptLftrTest.Test dst ty op rhs true)
               0
@@ -46271,6 +46337,7 @@
   [loop-defs : opt_i64_i64_map.Map]
   [phi-var : i64]
   [next-var : i64]
+  [back-var : i64]
   [label : i64]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]) : OptLftrMaybeTestSite
@@ -46282,6 +46349,7 @@
       (compiler-opt-global-shared-view loop-defs)
       phi-var
       next-var
+      back-var
       (ir.compiler-ir-instr-seq-ref instrs index))
       [(OptLftrMaybeTestSite.Some test _ _)
         (OptLftrMaybeTestSite.Some test label index)]
@@ -46290,6 +46358,7 @@
           loop-defs
           phi-var
           next-var
+          back-var
           label
           instrs
           (+ index 1))])))
@@ -46298,6 +46367,7 @@
   [loop-defs : opt_i64_i64_map.Map]
   [phi-var : i64]
   [next-var : i64]
+  [back-var : i64]
   [blocks : ir.CompilerIrBlockList]) : OptLftrMaybeTestSite
   (match blocks
     [(ir.CompilerIrBlockList.Nil) (OptLftrMaybeTestSite.No)]
@@ -46308,6 +46378,7 @@
             (compiler-opt-global-shared-view loop-defs)
             phi-var
             next-var
+            back-var
             label
             (compiler-opt-global-shared-view instrs)
             0)
@@ -46318,12 +46389,14 @@
                 loop-defs
                 phi-var
                 next-var
+                back-var
                 (compiler-opt-box-shared-view rest))])])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-lftr-find-test-blocks
         loop-defs
         phi-var
         next-var
+        back-var
         (ir.compiler-ir-block-seq-to-list seq))]))
 
 ;; Pure, destination-only instructions whose result is unused: the census may
@@ -46487,80 +46560,127 @@
 ;; `end = p0 + (bound - seed) * K` elements. A literal bound folds to a single
 ;; gep; a variable bound pays the subtract only for a nonzero seed and the
 ;; multiply only for a multi-element step.
+(define (opt-lftr-seed-literal? [seed : ir.CompilerIrValue] [want : i64]) : bool
+  (match seed
+    [(ir.CompilerIrValue.I64 s) (= s want)]
+    [_ false]))
+
+;; The element count the end value lies past the seed: `(bound - seed) * K`,
+;; folded when both are literals, else a subtract (skipped for a literal-zero
+;; seed) and a multiply (skipped for a unit step) pushed on `builder`. Returns
+;; the value the end instruction adds to the seed var.
+(define (opt-lftr-end-scaled-value!
+  [builder : (&mut b ir.CompilerIrInstrBuilder)]
+  [seed : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]
+  [step : i64]
+  [frame : i64]) : ir.CompilerIrValue
+  (let
+    [sub-var : i64 frame]
+    [mul-var : i64 (+ frame 1)]
+    [both-literal? : bool
+      (match (compiler-opt-global-shared-view bound)
+        [(ir.CompilerIrValue.I64 _)
+          (match (compiler-opt-global-shared-view seed)
+            [(ir.CompilerIrValue.I64 _) true]
+            [_ false])]
+        [_ false])]
+    (if both-literal?
+      (ir.CompilerIrValue.I64
+        (*
+          (-
+            (match (compiler-opt-global-shared-view bound)
+              [(ir.CompilerIrValue.I64 limit) limit]
+              [_ 0])
+            (match (compiler-opt-global-shared-view seed)
+              [(ir.CompilerIrValue.I64 s) s]
+              [_ 0]))
+          step))
+      (let
+        [seed-zero? : bool
+          (opt-lftr-seed-literal? (compiler-opt-global-shared-view seed) 0)]
+        [offset-value : ir.CompilerIrValue
+          (if seed-zero?
+            (compiler-opt-global-shared-view bound)
+            (ir.CompilerIrValue.Var sub-var))]
+        (begin
+          (if seed-zero?
+            unit
+            (ir.compiler-ir-instr-builder-push!
+              builder
+              (ir.CompilerIrInstr.BinOp
+                sub-var
+                (ir.CompilerIrBinOp.Sub)
+                (compiler-opt-global-shared-view bound)
+                (compiler-opt-global-shared-view seed)
+                (ast.AstType.I64))))
+          (if (= step 1)
+            offset-value
+            (begin
+              (ir.compiler-ir-instr-builder-push!
+                builder
+                (ir.CompilerIrInstr.BinOp
+                  mul-var
+                  (ir.CompilerIrBinOp.Mul)
+                  (compiler-opt-global-shared-view offset-value)
+                  (ir.CompilerIrValue.I64 step)
+                  (ast.AstType.I64)))
+              (ir.CompilerIrValue.Var mul-var))))))))
+
+;; `end = p0 + (bound - seed) * K` elements for a pointer, the same sum for a
+;; sum phi: a gep off the seed var, or an add onto it.
 (define (opt-lftr-end-instrs
   [pointer : OptLftrPointer]
-  [seed : i64]
+  [seed : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]
   [frame : i64]) : ir.CompilerIrInstrSeq
-  (match pointer
-    [(OptLftrPointer.Pointer _ seed-var _ gep-ty step _)
-      (let
-        [sub-var : i64 frame]
-        [mul-var : i64 (+ frame 1)]
-        [end-var : i64 (+ frame 2)]
-        [builder : ir.CompilerIrInstrBuilder
-          (ir.compiler-ir-instr-builder-with-capacity 3)]
-        (begin
-          (match (compiler-opt-global-shared-view bound)
-            [(ir.CompilerIrValue.I64 limit)
-              (ir.compiler-ir-instr-builder-push!
-                (&mut builder)
-                (ir.CompilerIrInstr.Gep
-                  end-var
-                  (ir.CompilerIrValue.Var seed-var)
-                  (ir.CompilerIrValue.I64 (* (- limit seed) step))
-                  gep-ty))]
-            [_
-              (let
-                [offset-value : ir.CompilerIrValue
-                  (if (= seed 0)
-                    bound
-                    (ir.CompilerIrValue.Var sub-var))]
-                [scaled-value : ir.CompilerIrValue
-                  (if (= step 1)
-                    offset-value
-                    (ir.CompilerIrValue.Var mul-var))]
-                (begin
-                  (if (= seed 0)
-                    unit
-                    (ir.compiler-ir-instr-builder-push!
-                      (&mut builder)
-                      (ir.CompilerIrInstr.BinOp
-                        sub-var
-                        (ir.CompilerIrBinOp.Sub)
-                        bound
-                        (ir.CompilerIrValue.I64 seed)
-                        (ast.AstType.I64))))
-                  (if (= step 1)
-                    unit
-                    (ir.compiler-ir-instr-builder-push!
-                      (&mut builder)
-                      (ir.CompilerIrInstr.BinOp
-                        mul-var
-                        (ir.CompilerIrBinOp.Mul)
-                        (compiler-opt-global-shared-view offset-value)
-                        (ir.CompilerIrValue.I64 step)
-                        (ast.AstType.I64))))
-                  (ir.compiler-ir-instr-builder-push!
-                    (&mut builder)
-                    (ir.CompilerIrInstr.Gep
-                      end-var
-                      (ir.CompilerIrValue.Var seed-var)
-                      scaled-value
-                      gep-ty))))])
-          (ir.compiler-ir-instr-builder-to-seq builder)))]))
+  (let
+    [end-var : i64 (+ frame 2)]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 3)]
+    [scaled : ir.CompilerIrValue
+      (opt-lftr-end-scaled-value!
+        (&mut builder)
+        (compiler-opt-global-shared-view seed)
+        (compiler-opt-global-shared-view bound)
+        (opt-lftr-pointer-step (compiler-opt-global-shared-view pointer))
+        frame)]
+    (begin
+      (match pointer
+        [(OptLftrPointer.Pointer _ seed-var _ gep-ty _ _)
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.Gep
+              end-var
+              (ir.CompilerIrValue.Var seed-var)
+              scaled
+              gep-ty))]
+        [(OptLftrPointer.Sum _ seed-var _ _ _)
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.BinOp
+              end-var
+              (ir.CompilerIrBinOp.Add)
+              (ir.CompilerIrValue.Var seed-var)
+              scaled
+              (ast.AstType.I64)))])
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 ;; A literal bound is materialised as one folded gep displacement, so keep the
 ;; folded product inside the pass's ordinary small-constant window.
 (define (opt-lftr-literal-bound-ok?
-  [seed : i64]
+  [seed : ir.CompilerIrValue]
   [step : i64]
   [bound : ir.CompilerIrValue]) : bool
   (match bound
     [(ir.CompilerIrValue.I64 limit)
-      (and
-        (opt-induction-small-const? limit)
-        (opt-induction-small-const? (* (- limit seed) step)))]
+      (match seed
+        [(ir.CompilerIrValue.I64 seed-literal)
+          (and
+            (opt-induction-small-const? limit)
+            (opt-induction-small-const? (* (- limit seed-literal) step)))]
+        ;; a var seed is subtracted at run time; only the limit folds
+        [_ (opt-induction-small-const? limit)])]
     [_ true]))
 
 ;; The census indexes its use arrays by the retiring vars directly, so a var id
@@ -46579,61 +46699,70 @@
   [test : OptLftrTest]) : OptLftrMaybePlan
   (match counter
     [(OptLftrCounter.Counter phi-var next-var back-var seed)
-      (match (compiler-opt-global-shared-view pointer)
-        [(OptLftrPointer.Pointer pointer-phi _ pointer-next _ step _)
-          (match test
-            [(OptLftrTest.Test compare-dst compare-ty op bound reads-next?)
-              (if (not
-                (and
-                  (opt-lftr-literal-bound-ok?
-                    (compiler-opt-global-shared-view seed)
-                    step
-                    (compiler-opt-global-shared-view bound))
-                  (opt-lftr-frame-var? frame phi-var)
-                  (opt-lftr-frame-var? frame next-var)
-                  (opt-lftr-frame-var? frame back-var)))
-                (OptLftrMaybePlan.No)
-                (let
-                  [kills : (__tl_dyn-array i64)
-                    (__tl_make-array i64 (opt-lftr-kill-cap))]
-                  [count : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-                  [uses : (__tl_dyn-array i64)
-                    (opt-collect-blocks-uses-array
-                      frame
-                      (compiler-opt-global-shared-view blocks))]
-                  [scratch : (__tl_dyn-array i64) (opt-used-array-new frame)]
-                  [_seed-kills : unit
-                    (begin
-                      (set! (array-ref kills 0) phi-var)
-                      (set! (array-ref kills 1) next-var)
-                      (set! (array-ref kills 2) back-var)
-                      (set! (array-ref count 0) (opt-lftr-kill-fixed)))]
-                  (if (not
-                    (opt-lftr-census-blocks
-                      (compiler-opt-global-shared-view uses)
-                      (compiler-opt-global-shared-view scratch)
-                      (compiler-opt-global-shared-view kills)
-                      (compiler-opt-global-shared-view count)
+      (let
+        [pointer-phi : i64
+          (opt-lftr-pointer-phi (compiler-opt-global-shared-view pointer))]
+        [pointer-next : i64
+          (opt-lftr-pointer-next (compiler-opt-global-shared-view pointer))]
+        [step : i64
+          (opt-lftr-pointer-step (compiler-opt-global-shared-view pointer))]
+        (match test
+          [(OptLftrTest.Test compare-dst compare-ty op bound reads-next?)
+            (if (not
+              (and
+                (opt-lftr-literal-bound-ok?
+                  (compiler-opt-global-shared-view seed)
+                  step
+                  (compiler-opt-global-shared-view bound))
+                (opt-lftr-frame-var? frame phi-var)
+                (opt-lftr-frame-var? frame next-var)
+                (opt-lftr-frame-var? frame back-var)))
+              (OptLftrMaybePlan.No)
+              (let
+                [kills : (__tl_dyn-array i64)
+                  (__tl_make-array i64 (opt-lftr-kill-cap))]
+                [count : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+                [uses : (__tl_dyn-array i64)
+                  (opt-collect-blocks-uses-array
+                    frame
+                    (compiler-opt-global-shared-view blocks))]
+                [scratch : (__tl_dyn-array i64) (opt-used-array-new frame)]
+                [_seed-kills : unit
+                  (begin
+                    (set! (array-ref kills 0) phi-var)
+                    (set! (array-ref kills 1) next-var)
+                    (set! (array-ref kills 2) back-var)
+                    (set! (array-ref count 0) (opt-lftr-kill-fixed)))]
+                (if (not
+                  (opt-lftr-census-blocks
+                    (compiler-opt-global-shared-view uses)
+                    (compiler-opt-global-shared-view scratch)
+                    (compiler-opt-global-shared-view kills)
+                    (compiler-opt-global-shared-view count)
+                    compare-dst
+                    (compiler-opt-global-shared-view blocks)))
+                  (OptLftrMaybePlan.No)
+                  (OptLftrMaybePlan.Some
+                    (OptLftrPlan.Plan
+                      (array-ref count 0)
+                      kills
                       compare-dst
-                      (compiler-opt-global-shared-view blocks)))
-                    (OptLftrMaybePlan.No)
-                    (OptLftrMaybePlan.Some
-                      (OptLftrPlan.Plan
-                        (array-ref count 0)
-                        kills
+                      (ir.CompilerIrInstr.BinOp
                         compare-dst
-                        (ir.CompilerIrInstr.BinOp
-                          compare-dst
-                          op
-                          (ir.CompilerIrValue.Var
-                            (if reads-next?
-                              pointer-next
-                              pointer-phi))
-                          (ir.CompilerIrValue.Var (+ frame 2))
-                          compare-ty)
-                        preheader
-                        (opt-lftr-end-instrs pointer seed bound frame)
-                        (+ frame 3))))))])])]))
+                        op
+                        (ir.CompilerIrValue.Var
+                          (if reads-next?
+                            pointer-next
+                            pointer-phi))
+                        (ir.CompilerIrValue.Var (+ frame 2))
+                        compare-ty)
+                      preheader
+                      (opt-lftr-end-instrs
+                        pointer
+                        (compiler-opt-global-shared-view seed)
+                        bound
+                        frame)
+                      (+ frame 3))))))]))]))
 
 ;; Form B compares the incremented counter, so the pointer's advanced value has
 ;; to be the one the compare reads: it must be defined in the same latch block,
@@ -46649,9 +46778,138 @@
     [(OptLftrTest.Test _ _ _ _ reads-next?)
       (if (not reads-next?)
         true
-        (match pointer
-          [(OptLftrPointer.Pointer _ _ _ _ _ step-index)
-            (and (= site-label latch) (< step-index site-index))]))]))
+        (let
+          [step-index : i64 (opt-lftr-pointer-step-index pointer)]
+          (and (= site-label latch) (< step-index site-index))))]))
+
+;; LFTR-SUM's no-wrap gate, the sum's twin of "the counter carries no bounds
+;; check": a `bounds_check` that reads the sum, or a literal offset of it,
+;; is an access the walk has NOT yet proven in range, and then nothing bounds
+;; `bound` by an allocation. A sum every check of which was retired (the
+;; versioner's guard or a dominating fact did it) is in the same position as
+;; a pointer walking one allocation: its exit value is at most one stride
+;; past the last element read.
+(define (opt-lftr-sum-offsets-seq!
+  [phi-var : i64]
+  [offsets : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]) : unit
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [at : i64 0]
+    (while (< at count)
+      (begin
+        (match (ir.compiler-ir-instr-seq-ref
+          (compiler-opt-global-shared-view instrs)
+          at)
+          [(ir.CompilerIrInstr.BinOp dst _ lhs rhs _)
+            (if (and
+              (>= dst 0)
+              (< dst (array-length offsets))
+              (or
+                (opt-lftr-value-is-var?
+                  (compiler-opt-global-shared-view lhs)
+                  phi-var)
+                (opt-lftr-value-is-var?
+                  (compiler-opt-global-shared-view rhs)
+                  phi-var)))
+              (set! (array-ref offsets dst) 1)
+              unit)]
+          [_ unit])
+        (set! at (+ at 1))))))
+
+(define (opt-lftr-sum-checked-seq?
+  [phi-var : i64]
+  [offsets : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]) : bool
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [at : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< at count))
+        (begin
+          (match (ir.compiler-ir-instr-seq-ref
+            (compiler-opt-global-shared-view instrs)
+            at)
+            [(ir.CompilerIrInstr.BoundsCheck idx _ _)
+              (match (compiler-opt-global-shared-view idx)
+                [(ir.CompilerIrValue.Var v)
+                  (if (or
+                    (= v phi-var)
+                    (and
+                      (>= v 0)
+                      (< v (array-length offsets))
+                      (= (array-ref offsets v) 1)))
+                    (set! found true)
+                    unit)]
+                [_ unit])]
+            [_ unit])
+          (set! at (+ at 1))))
+      found)))
+
+(define (opt-lftr-sum-checked-blocks?
+  [phi-var : i64]
+  [offsets : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]
+  [collect? : bool]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match (compiler-opt-global-shared-view block)
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (if collect?
+            (begin
+              (opt-lftr-sum-offsets-seq!
+                phi-var
+                (compiler-opt-global-shared-view offsets)
+                instrs)
+              (opt-lftr-sum-checked-blocks?
+                phi-var
+                offsets
+                (compiler-opt-box-shared-view rest)
+                collect?))
+            (or
+              (opt-lftr-sum-checked-seq?
+                phi-var
+                (compiler-opt-global-shared-view offsets)
+                instrs)
+              (opt-lftr-sum-checked-blocks?
+                phi-var
+                offsets
+                (compiler-opt-box-shared-view rest)
+                collect?)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-lftr-sum-checked-blocks?
+        phi-var
+        offsets
+        (ir.compiler-ir-block-seq-to-list seq)
+        collect?)]))
+
+(define (opt-lftr-sum-checked?
+  [pointer : OptLftrPointer]
+  [body-blocks : ir.CompilerIrBlockList]) : bool
+  (match pointer
+    [(OptLftrPointer.Pointer _ _ _ _ _ _) false]
+    [(OptLftrPointer.Sum phi-var _ _ _ _)
+      (let
+        [offsets : (__tl_dyn-array i64)
+          (__tl_make-array
+            i64
+            (opt-licm-body-map-capacity
+              (compiler-opt-global-shared-view body-blocks)))]
+        (begin
+          (opt-lftr-sum-checked-blocks?
+            phi-var
+            (compiler-opt-global-shared-view offsets)
+            (compiler-opt-global-shared-view body-blocks)
+            true)
+          (opt-lftr-sum-checked-blocks?
+            phi-var
+            (compiler-opt-global-shared-view offsets)
+            (compiler-opt-global-shared-view body-blocks)
+            false)))]))
 
 (define (opt-lftr-plan
   [type-segment-bases : i64]
@@ -46687,8 +46945,8 @@
                       0)
                       [(OptLftrMaybeCounter.No) (OptLftrMaybePlan.No)]
                       [(OptLftrMaybeCounter.Some counter)
-                        (match counter
-                          [(OptLftrCounter.Counter phi-var next-var _ _)
+                        (match (compiler-opt-global-shared-view counter)
+                          [(OptLftrCounter.Counter phi-var next-var back-var _)
                             (match (opt-lftr-find-pointer-seq-from
                               type-segment-bases
                               latch-instrs
@@ -46699,17 +46957,22 @@
                               0)
                               [(OptLftrMaybePointer.No) (OptLftrMaybePlan.No)]
                               [(OptLftrMaybePointer.Some pointer)
-                                (match (opt-lftr-find-test-blocks
-                                  (opt-licm-collect-defs-blocks
-                                    (compiler-opt-global-shared-view
-                                      body-blocks)
-                                    (opt_i64_i64_map.with-capacity
-                                      (opt-licm-body-map-capacity
-                                        (compiler-opt-global-shared-view
-                                          body-blocks))))
-                                  phi-var
-                                  next-var
-                                  body-blocks)
+                                (match (if (opt-lftr-sum-checked?
+                                  (compiler-opt-global-shared-view pointer)
+                                  (compiler-opt-global-shared-view body-blocks))
+                                  (OptLftrMaybeTestSite.No)
+                                  (opt-lftr-find-test-blocks
+                                    (opt-licm-collect-defs-blocks
+                                      (compiler-opt-global-shared-view
+                                        body-blocks)
+                                      (opt_i64_i64_map.with-capacity
+                                        (opt-licm-body-map-capacity
+                                          (compiler-opt-global-shared-view
+                                            body-blocks))))
+                                    phi-var
+                                    next-var
+                                    back-var
+                                    body-blocks))
                                   [(OptLftrMaybeTestSite.No)
                                     (OptLftrMaybePlan.No)]
                                   [(OptLftrMaybeTestSite.Some

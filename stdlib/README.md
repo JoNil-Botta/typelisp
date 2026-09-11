@@ -543,6 +543,15 @@ Vec bang place macros as available yet.
   hashed-known-hosts HMAC adapter. It imports no host crypto provider or
   third-party dependency. Import it only for those compatibility consumers
   with `(import stdlib.crypto_sha1_git)`.
+- `crypto_sha256.tl`: self-hosted FIPS 180-4 SHA-256 over exact borrowed byte
+  views. It provides allocation-free incremental updates, a checked
+  `< 2^64 bits` byte counter, exact 32-byte public digests, lowercase
+  hexadecimal rendering, and explicit consuming state/digest wipe hooks for
+  secret-derived callers. Unsafe raw-source and exact-sink adapters let
+  cleanup-owned crypto modules avoid an ordinary digest intermediate while
+  retaining their own generation, lifetime, ownership, and non-overlap
+  checks. It imports no host crypto provider or third-party dependency.
+  Import it with `(import stdlib.crypto_sha256)`.
 - `crypto_sha512.tl`: self-hosted FIPS 180-4 SHA-512 over exact borrowed byte
   views. It provides allocation-free incremental updates, a checked high/low
   128-bit byte counter, exact 64-byte public digests, lowercase hexadecimal
@@ -847,6 +856,7 @@ borrowed process runtime wrappers likewise copy at their owned boundary.
 | `crypto_rsa_core.tl` | Key parsing rejects negative, noncanonical, undersized, oversized, or even public values before arithmetic allocation. Limb arrays allocate only at a selected 2048/3072/4096/8192-bit public capacity. Setup retains modulus and `R^2 mod n`; each public exponentiation allocates one exact-width result plus bounded 32-bit-limb results and 64-bit `2n+2` REDC scratch in the active arena. `public-exponentiation-retained-bytes-upper-bound` reports a conservative per-call bound from the checked public class, actual modulus limbs, and at-most-32-bit exponent. No routine accepts secret operands or claims constant-time behavior. |
 | `crypto_random.fill-random!` | Fills an exact caller-owned mutable `bytes` view from the operating-system cryptographic source without allocating output storage. Zero-length views succeed without a host call. Linux uses direct x86-64 `getrandom` with flags zero in at most 256-byte requests and checks partial/interrupted results. Windows loads `bcrypt.dll` through kernel32, validates and calls `BCryptGenRandom(NULL, ..., BCRYPT_USE_SYSTEM_PREFERRED_RNG)` through a raw C function pointer while its DLL reference remains live, then unloads it. Every failure is structured and wipes the complete valid view; there is no PRNG, clock, identifier, file, or third-party fallback. `fill-random-with!` is the low-level checked adapter seam for deterministic tests and explicitly injected protocol providers. |
 | `crypto_sha1_git.*` | `new`, `update!`, `finalize!`, `git-digest`, byte access/equality, the raw source seam, and the exact 20-byte consuming sink allocate nothing; a state retains one 64-byte partial block. `to-hex` allocates one exact 40-byte lowercase Git object-ID `String`. The byte counter admits exactly the FIPS SHA-1 domain below 2^64 bits and finalization clears and poisons the state. Compression scratch and explicit state/digest wipe hooks use volatile stores. This allocation behavior does not rehabilitate SHA-1: the API is compatibility-only and forbidden for new security uses. |
+| `crypto_sha256.*` | `new`, `update!`, `finalize!`, `digest`, the unsafe scoped raw-source/exact-sink adapters, digest byte access/equality, and the checked length machinery allocate nothing; a state retains exactly one 64-byte partial block. `to-hex` allocates one exact 64-byte lowercase `String`. The byte counter admits exactly the FIPS SHA-256 domain below 2^64 bits. Compression scratch and explicit consuming state/digest wipe hooks use volatile stores. Digests are ordinary public values; the unsafe adapters preserve caller-owned lifetime, generation, and non-overlap checks, and the wipe hooks are a narrow secret-derived-caller seam rather than a side-channel or whole-machine erasure claim. |
 | `crypto_sha512.*` | `new`, `update!`, `finalize!`, `digest`, the unsafe scoped raw-source/exact-sink adapters, digest byte access/equality, and the checked high/low length machinery allocate nothing; a state retains exactly one 128-byte partial block. `to-hex` allocates one exact 128-byte lowercase `String`. Compression scratch and explicit consuming state/digest wipe hooks use volatile stores. Digests are ordinary public values; the unsafe adapters preserve caller-owned lifetime/generation checks, and the wipe hooks are a narrow secret-derived-caller seam rather than a side-channel or whole-machine erasure claim. |
 | `arena.*` helpers in `arena.tl` | First-class arena control returns typed `Arena` / `ArenaMark` / `ArenaPhase` wrappers around raw runtime handles. `arena.make` creates an independent ordinary arena, `arena.make-atomic` creates an independent atomic arena, `arena.current` observes the active arena, and `arena.mark` observes the current bump mark. `arena.phase` / `arena.rewind-safe!` use checker-proven direct owners; `arena.destroy-safe!` also accepts branded local aggregate owner places and invalidates their same-function brand users. `arena.set!`, `arena.destroy`, and `arena.rewind` can invalidate live heap handles and require `(unsafe ...)`; raw `i64` values do not satisfy those public helper signatures. |
 | `args-*` helpers in `args.tl` | Option specs, parse results, occurrence lists, positional `StringVec` storage, diagnostic payloads, and helper substrings allocate in the active arena. Token classification, option lookup, count/presence checks, and value accessors are non-allocating aside from caller-provided owned strings and existing result storage. |
@@ -910,6 +920,7 @@ Stdlib modules are imported explicitly:
 (import stdlib.clone)
 (import stdlib.crypto_random)
 (import stdlib.crypto_sha1_git)
+(import stdlib.crypto_sha256)
 (import stdlib.crypto_sha512)
 (import stdlib.env)
 (import stdlib.ffi)

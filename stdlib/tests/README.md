@@ -377,6 +377,12 @@ Inline stdlib coverage:
   finalized-state poisoning, and exact 20-byte sink no-write paths.
   `crypto_sha1_git_unsafe_adapter_reject.tl` pins the raw seam behind explicit
   unsafe context; the module remains forbidden for non-compatibility uses.
+- `crypto_sha256_inline.tl` owns FIPS vectors, every padding boundary around a
+  64-byte block, arbitrary streaming splits, the million-byte vector, checked
+  length/lifecycle behavior, state and digest wiping, and public-equivalence
+  plus no-write tests for the scoped raw-source/exact 32-byte sink seam.
+  `crypto_sha256_unsafe_adapter_reject.tl` pins the raw seam behind explicit
+  unsafe context.
 - `profile.tl` owns inline tests for monotonic timestamp shape and allocator
   counter monotonicity around an observable allocation.
 - `time.tl` owns inline tests for Unix wall-clock range, monotonic timestamp

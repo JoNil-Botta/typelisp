@@ -649,10 +649,9 @@ _tl_helper_helper_helper_opaque:
     .type _tl_helper_helper_helper,@function
 _tl_helper_helper_helper:
 .Lf19_entry:
-    movl $38, %r9d
-    movq _tl_shared_shared_shared(%rip), %r8
-    addq %r8, %r9
-    movq %r9, %rdi
+    movl $38, %r8d
+    addq _tl_shared_shared_shared(%rip), %r8
+    movq %r8, %rdi
     movl $1, %esi
     jmp _tl_helper_helper_helper_opaque
     .size _tl_helper_helper_helper, . - _tl_helper_helper_helper

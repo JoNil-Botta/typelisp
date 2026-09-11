@@ -8,7 +8,7 @@
   [take2 : bool]
   [take3 : bool]
   [take4 : bool]) : unit
-  (if (and take0 (and take1 (and take2 (and take3 take4))))
+  (if (and take0 take1 take2 take3 take4)
     (set! (array-ref out i) (+ (+ (+ (+ (+ (+ (+ i 1) 2) 3) 4) 5) 6) 7))
     (set! (array-ref out i) (- (- (- (- (- (- (- i 1) 2) 3) 4) 5) 6) 7))))
 

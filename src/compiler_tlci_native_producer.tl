@@ -6815,132 +6815,27 @@
           [_ ""])])))
 
 ;; The Expr.Var scrutinee may itself be computed (for example an element read
-;; from a variadic ExprList). Stage it in a local, test the local's shape, and
-;; bind the preserved Name value for the matching arm. This is the two-arm
-;; destructuring form `[Expr.Var name => ...] [_ => ...]`.
+;; from a variadic ExprList). Preserve its historical generated names while
+;; routing the two-arm `[Expr.Var name => ...] [_ => ...]` form through the
+;; shared single-payload match generator.
 (define (embedded-native-computed-local-var-match-code
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [scrutinee : i64]
   [arms : (& arms compiler_ast_types.AstMatchArmList)]
   [final : String]) : String
-  (if (not (= arms.len 2))
-    ""
-    (match (owned_view.compiler-owned-array-element-shared-view arms.slots 0)
-      [(compiler_ast_types.AstMatchArm.Arm first-pattern first-body)
-        (match (owned_view.compiler-owned-array-element-shared-view
-          arms.slots
-          1)
-          [(compiler_ast_types.AstMatchArm.Arm second-pattern second-body)
-            (match first-pattern
-              [(compiler_ast_types.AstPattern.Variant name-id args-box)
-                (let
-                  [args : compiler_ast_types.AstPatternList
-                    (compiler_ast_types.ast-pattern-list-box-shared-view
-                      args-box)]
-                  (if (or
-                    (not
-                      (string.eq
-                        (embedded-native-expr-variant-name name-id)
-                        "Var"))
-                    (not (= args.len 1))
-                    (not
-                      (match second-pattern
-                        [(compiler_ast_types.AstPattern.Wildcard) true]
-                        [_ false])))
-                    ""
-                    (match (compiler_ast_types.ast-pattern-list-get
-                      (& args)
-                      0
-                      (compiler_ast_types.ast-pattern-fallback))
-                      [(compiler_ast_types.AstPattern.Binding bind-id)
-                        (let
-                          [saved : i64 (array-ref embedded-native-local-len 0)]
-                          [scrut-slot : i64
-                            (embedded-native-local-push! "__tlci_var_match")]
-                          [arm-saved : i64
-                            (array-ref embedded-native-local-len 0)]
-                          [bind-slot : i64
-                            (embedded-native-local-push!
-                              (ci.intern-str bind-id))]
-                          [then-code : String
-                            (if (or (< scrut-slot 0) (< bind-slot 0))
-                              ""
-                              (embedded-native-computed-expr-code
-                                params
-                                first-body
-                                (owned_view.compiler-owned-shared-view final)))]
-                          [_restore-arm : unit
-                            (set!
-                              (array-ref embedded-native-local-len 0)
-                              arm-saved)]
-                          [else-code : String
-                            (if (< scrut-slot 0)
-                              ""
-                              (embedded-native-computed-expr-code
-                                params
-                                second-body
-                                (owned_view.compiler-owned-shared-view final)))]
-                          [scrut-code : String
-                            (if (< scrut-slot 0)
-                              ""
-                              (embedded-native-computed-expr-code
-                                params
-                                scrutinee
-                                (embedded-native-local-set-final scrut-slot)))]
-                          [_restore : unit
-                            (set! (array-ref embedded-native-local-len 0) saved)]
-                          (if (or
-                            (string.eq scrut-code "")
-                            (string.eq then-code "")
-                            (string.eq else-code ""))
-                            ""
-                            (let
-                              [probe : String (embedded-native-temp-name!)]
-                              (str_cat.str-cat
-                                "  (let [vm"
-                                (string.int->string scrut-slot)
-                                " : i64\n"
-                                scrut-code
-                                "] (if (not (= vm"
-                                (string.int->string scrut-slot)
-                                " 0)) vm"
-                                (string.int->string scrut-slot)
-                                "\n  (let ["
-                                (owned_view.compiler-owned-shared-view probe)
-                                " : i64 (comptime-host-local-expr-var? host session "
-                                (string.int->string scrut-slot)
-                                " 0 0)]\n  (if (< "
-                                (owned_view.compiler-owned-shared-view probe)
-                                " 0)\n  "
-                                (string.int->string
-                                  tlci_core.tlci-host-callback-status-bad-request)
-                                "\n  (if (= "
-                                (owned_view.compiler-owned-shared-view probe)
-                                " 1)\n"
-                                "  (let [vb"
-                                (string.int->string bind-slot)
-                                " : i64\n"
-                                (embedded-native-arm-block-with-final
-                                  (embedded-native-single-op-ops
-                                    (tlci_core.tlci-host-callback-name-shared-view
-                                      tlci_core.tlci-host-callback-name-local-expr-var-name)
-                                    (string.int->string scrut-slot)
-                                    "0"
-                                    "0")
-                                  1
-                                  1
-                                  (embedded-native-local-set-final bind-slot))
-                                "] (if (not (= vb"
-                                (string.int->string bind-slot)
-                                " 0)) vb"
-                                (string.int->string bind-slot)
-                                "\n"
-                                then-code
-                                "))\n"
-                                else-code
-                                ")))))\n"))))]
-                      [_ ""])))]
-              [_ ""])])])))
+  (embedded-native-computed-local-payload-match-code
+    params
+    scrutinee
+    arms
+    "Var"
+    (tlci_core.tlci-host-callback-name-shared-view
+      tlci_core.tlci-host-callback-name-local-expr-var?)
+    (tlci_core.tlci-host-callback-name-shared-view
+      tlci_core.tlci-host-callback-name-local-expr-var-name)
+    "__tlci_var_match"
+    "vm"
+    "vb"
+    final))
 
 ;; Stage a computed Expr and destructure one single-payload variant from a
 ;; two-arm `[Variant payload => ...] [_ => ...]` match. The probe is data-valued;
@@ -6952,6 +6847,9 @@
   [variant : String]
   [probe-op : String]
   [payload-op : String]
+  [local-name : String]
+  [scrutinee-status-prefix : String]
+  [binding-status-prefix : String]
   [final : String]) : String
   (if (not (= arms.len 2))
     ""
@@ -6986,7 +6884,7 @@
                         (let
                           [saved : i64 (array-ref embedded-native-local-len 0)]
                           [scrut-slot : i64
-                            (embedded-native-local-push! "__tlci_payload_match")]
+                            (embedded-native-local-push! local-name)]
                           [arm-saved : i64
                             (array-ref embedded-native-local-len 0)]
                           [bind-slot : i64
@@ -7027,13 +6925,19 @@
                             (let
                               [probe : String (embedded-native-temp-name!)]
                               (str_cat.str-cat
-                                "  (let [pm"
+                                "  (let ["
+                                (owned_view.compiler-owned-shared-view
+                                  scrutinee-status-prefix)
                                 (string.int->string scrut-slot)
                                 " : i64\n"
                                 scrut-code
-                                "] (if (not (= pm"
+                                "] (if (not (= "
+                                (owned_view.compiler-owned-shared-view
+                                  scrutinee-status-prefix)
                                 (string.int->string scrut-slot)
-                                " 0)) pm"
+                                " 0)) "
+                                (owned_view.compiler-owned-shared-view
+                                  scrutinee-status-prefix)
                                 (string.int->string scrut-slot)
                                 "\n  (let ["
                                 (owned_view.compiler-owned-shared-view probe)
@@ -7049,7 +6953,9 @@
                                 "\n  (if (= "
                                 (owned_view.compiler-owned-shared-view probe)
                                 " 1)\n"
-                                "  (let [pb"
+                                "  (let ["
+                                (owned_view.compiler-owned-shared-view
+                                  binding-status-prefix)
                                 (string.int->string bind-slot)
                                 " : i64\n"
                                 (embedded-native-arm-block-with-final
@@ -7061,9 +6967,13 @@
                                   1
                                   1
                                   (embedded-native-local-set-final bind-slot))
-                                "] (if (not (= pb"
+                                "] (if (not (= "
+                                (owned_view.compiler-owned-shared-view
+                                  binding-status-prefix)
                                 (string.int->string bind-slot)
-                                " 0)) pb"
+                                " 0)) "
+                                (owned_view.compiler-owned-shared-view
+                                  binding-status-prefix)
                                 (string.int->string bind-slot)
                                 "\n"
                                 then-code
@@ -7296,6 +7206,9 @@
                   tlci_core.tlci-host-callback-name-local-expr-begin?)
                 (tlci_core.tlci-host-callback-name-shared-view
                   tlci_core.tlci-host-callback-name-local-expr-begin-items)
+                "__tlci_payload_match"
+                "pm"
+                "pb"
                 (owned_view.compiler-owned-shared-view final))]
             (if (not (string.eq payload-text ""))
               payload-text

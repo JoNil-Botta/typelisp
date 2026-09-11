@@ -128,9 +128,15 @@ The adjacent `<runtime-artifact>.runtime-inputs` file binds retained runtime
 outputs to all material codegen, assembler, archiver, linker, compiler, tool,
 and dependency inputs and is managed as package build state. The two freshness
 decisions are independent, but every changed side is staged and committed in
-one transaction. A failed build or commit restores the previous complete
-runtime/image pair. `typelisp clean` removes the sidecar with the runtime
-artifact.
+one transaction. A failure before commit leaves the previous pair untouched;
+a commit failure attempts to restore every previous component in reverse
+order. If a filesystem error prevents a restore, the build still exits nonzero
+with the original commit error first, then reports the rollback error and the
+retained private `.tN` staging directory. Its affected `.previous` files are
+the recovery copies: inspect and restore them to the reported final paths
+before removing that directory. General failure cleanup does not delete those
+copies, including when cleanup is repeated. `typelisp clean` removes the
+runtime sidecar with the runtime artifact.
 
 Self-host bootstrap builds the compiler's exact embedded stdlib source set into
 a source-bound `stdlib.tlci`, embeds it in the next compiler stage, and validates

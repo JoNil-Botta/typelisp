@@ -26253,6 +26253,14 @@
   ;; slot -- element storage is disjoint from it -- so the header-load proofs
   ;; accept it, while a store through it stays a header-or-unknown store.
   (GlobalSlot i64)
+  ;; LICM-GDP: word 0 of the object a HEADER-TYPED global designates -- the
+  ;; data-pointer slot of the descriptor `gep (Global g) 0` addresses, the
+  ;; form every `(array-ref g i)` on a global array takes. The same class of
+  ;; word as `GlobalSlot` (element storage is disjoint from it), told apart
+  ;; only so that the word LOADED through it is known to be the buffer's data
+  ;; pointer: a store through a gep off that pointer is then an element write
+  ;; of that buffer, where it was an unknown write that could reach any cell.
+  (GlobalDataSlot i64)
   ;; P16. `LocalObject o` is the ADDRESS of the object `%o = alloc T` created:
   ;; storage that belongs to THIS activation. It is reached through
   ;; `addr_of %o`, through an SSA copy of that address, or back out of a call
@@ -27795,6 +27803,56 @@
 ;; emits `Gep arr 0 u8` -- the old U8-only match classified array data-slot
 ;; GEPs as Unknown, which turned element stores into header-or-unknown stores
 ;; and blocked descriptor-load hoisting.
+;; LICM-GDP: the globals whose declared type is a header type, filled once per
+;; program by opt-global-cell-summary-build-with-call-memory from the same
+;; declared types the summary records, and read by the gep classifier (which
+;; carries the frozen set and the var types, but no global type oracle).
+(define opt-licm-global-headers : opt_i64_i64_map.Map
+  (opt_i64_i64_map.with-capacity 1))
+
+(define (opt-licm-global-header? [global : i64]) : bool
+  (opt_i64_i64_map.contains? (& opt-licm-global-headers) global))
+
+;; When the GlobalDataSlot kind is handed out at all. The early LICM round runs
+;; BEFORE bounds-check versioning, and a descriptor word that leaves a loop
+;; there hides the shared bound identity the versioner derives its guard from
+;; (the hazard the header-hoist gate's `late?` documents); so the kind is
+;; produced only while the program-wide storage rows are built (a callee's
+;; element stores must classify as such wherever they are read) and in the
+;; late round, after versioning. The LICM entry sets it from `late?`.
+(define opt-licm-global-data-slot-on : bool
+  false)
+
+(define (opt-licm-global-headers-fill
+  [type-segment-bases : i64]
+  [globals : ir.CompilerIrGlobalSeq]
+  [acc : opt_i64_i64_map.Map]
+  [index : i64]) : opt_i64_i64_map.Map
+  (if (>=
+    index
+    (ir.compiler-ir-global-seq-count (compiler-opt-global-shared-view globals)))
+    acc
+    (let
+      [out : opt_i64_i64_map.Map acc]
+      (begin
+        (match (ir.compiler-ir-global-seq-ref
+          (compiler-opt-global-shared-view globals)
+          index)
+          [(ir.CompilerIrGlobal.Global name ty _)
+            (if (opt-licm-array-header-type?
+              type-segment-bases
+              (compiler-opt-global-shared-view ty))
+              (opt_i64_i64_map.insert-ref!
+                (&mut out)
+                (ir.compiler-ir-symbol-id name)
+                1)
+              unit)])
+        (opt-licm-global-headers-fill
+          type-segment-bases
+          (compiler-opt-global-shared-view globals)
+          out
+          (+ index 1))))))
+
 (define (opt-licm-data-slot? [offset : ir.CompilerIrValue] [_ty : ast.AstType]) : bool
   (match (compiler-opt-global-shared-view offset)
     [(ir.CompilerIrValue.I64 value) (= value 0)]
@@ -27811,6 +27869,7 @@
     [(OptLicmPtrKind.HeaderSlot _) true]
     [(OptLicmPtrKind.DataSlot _) true]
     [(OptLicmPtrKind.GlobalSlot _) true]
+    [(OptLicmPtrKind.GlobalDataSlot _) true]
     [(OptLicmPtrKind.LocalObject _) true]
     [(OptLicmPtrKind.LocalSlot _) true]
     [(OptLicmPtrKind.FrozenBoxSlot _) true]
@@ -27928,6 +27987,12 @@
   [kind : OptLicmPtrKind]) : bool
   (match kind
     [(OptLicmPtrKind.GlobalSlot global)
+      (and
+        (opt-licm-global-header-admitted?
+          (compiler-opt-global-shared-view facts)
+          global)
+        (opt-licm-global-storage-invariant? facts global))]
+    [(OptLicmPtrKind.GlobalDataSlot global)
       (and
         (opt-licm-global-header-admitted?
           (compiler-opt-global-shared-view facts)
@@ -28226,12 +28291,19 @@
     ;; the answers it gave before.
     [(ir.CompilerIrValue.Global name)
       (match offset
-        [(ir.CompilerIrValue.I64 _)
+        [(ir.CompilerIrValue.I64 k)
           (if (opt_i64_i64_map.contains?
             (& frozen)
             (ir.compiler-ir-symbol-id name))
             (OptLicmPtrKind.FrozenBoxSlot (ir.compiler-ir-symbol-id name))
-            (OptLicmPtrKind.GlobalSlot name))]
+            ;; LICM-GDP: word 0 of a header-typed global's object is its
+            ;; data-pointer slot.
+            (if (and
+              opt-licm-global-data-slot-on
+              (= k 0)
+              (opt-licm-global-header? (ir.compiler-ir-symbol-id name)))
+              (OptLicmPtrKind.GlobalDataSlot name)
+              (OptLicmPtrKind.GlobalSlot name)))]
         [_ (OptLicmPtrKind.Unknown)])]
     [_ (OptLicmPtrKind.Unknown)]))
 
@@ -28395,6 +28467,8 @@
       [(ir.CompilerIrValue.Var var)
         (match (opt-licm-ptr-lookup ptrs var)
           [(OptLicmPtrKind.GlobalSlot global)
+            (opt-global-obj-id-mask obj.index (ir.compiler-ir-symbol-id global))]
+          [(OptLicmPtrKind.GlobalDataSlot global)
             (opt-global-obj-id-mask obj.index (ir.compiler-ir-symbol-id global))]
           [(OptLicmPtrKind.FrozenBoxSlot global)
             (opt-global-obj-id-mask obj.index global)]
@@ -28628,6 +28702,27 @@
             state
             dst
             (OptLicmPtrKind.DataBuffer object))]
+        ;; LICM-GDP: the word in a header-typed global's data-pointer slot is
+        ;; the buffer's data pointer. Only the element-vs-header CLASS is ever
+        ;; read off `DataBuffer` (its object component is ignored by every
+        ;; store summary), so the loaded var stands as its own object.
+        [(OptLicmPtrKind.GlobalDataSlot _)
+          (if (opt-licm-array-header-type?
+            type-segment-bases
+            (compiler-opt-global-shared-view load-ty))
+            ;; A load DECLARED as a handle is not the data pointer this arm
+            ;; names (a nested handle read the way the frozen-box fixtures
+            ;; spell it); it keeps the type-driven classification below.
+            (if (opt-licm-array-header-var? type-segment-bases types ptr-var)
+              (opt-licm-store-state-bind-ptr
+                state
+                dst
+                (OptLicmPtrKind.DataBuffer ptr-var))
+              state)
+            (opt-licm-store-state-bind-ptr
+              state
+              dst
+              (OptLicmPtrKind.DataBuffer dst)))]
         [_
           (if (opt-licm-array-header-var? type-segment-bases types ptr-var)
             (opt-licm-store-state-bind-ptr
@@ -33035,6 +33130,22 @@
   (match (opt-licm-ptr-lookup
     (compiler-opt-global-shared-view ctx.ptrs)
     ptr-var)
+    [(OptLicmPtrKind.GlobalDataSlot name)
+      (opt-licm-refuse-emit!
+        (compiler-opt-global-shared-view ctx)
+        dst
+        "global-cell"
+        (cond
+          [blocked? "chain-head"]
+          [(opt-licm-refuse-global-invariant?
+              (compiler-opt-global-shared-view ctx)
+              name)
+            (opt-licm-refuse-memory-reason
+              (compiler-opt-global-shared-view ctx))]
+          [else
+            (opt-licm-refuse-global-reason
+              (compiler-opt-global-shared-view ctx)
+              name)]))]
     [(OptLicmPtrKind.GlobalSlot name)
       (opt-licm-refuse-emit!
         (compiler-opt-global-shared-view ctx)
@@ -33794,6 +33905,9 @@
   [late? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
+  ;; LICM-GDP: the data-slot kind follows the round (see
+  ;; opt-licm-global-data-slot-on).
+  (set! opt-licm-global-data-slot-on late?)
   (match (opt-verify-gate
     verified?
     (compiler-opt-global-shared-view func)
@@ -162150,6 +162264,17 @@
             (opt_i64_i64_map.with-capacity capacity)
             (compiler-opt-global-shared-view types)
             0)]
+        ;; LICM-GDP: the header-typed globals, for the gep classifier, and the
+        ;; kind switched on for the storage rows built below.
+        [_headers : unit
+          (set!
+            opt-licm-global-headers
+            (opt-licm-global-headers-fill
+              type-segment-bases
+              (compiler-opt-global-shared-view globals)
+              (opt_i64_i64_map.with-capacity capacity)
+              0))]
+        [_data-slot-on : unit (set! opt-licm-global-data-slot-on true)]
         [disq : opt_i64_i64_map.Map
           (opt-const-globals-disqualified
             (opt_i64_i64_map.with-capacity capacity)

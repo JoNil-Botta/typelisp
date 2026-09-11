@@ -90023,6 +90023,93 @@
     42
     "a loop whose live-ins leave the header-hoist budget room for two of its three global handles takes the two most-referenced ones out and keeps the third's chain inside, where the whole set was refused before; with room for one the most-referenced handle alone leaves, and with room for all three every handle does"))
 
+;; --- LICM-GDP: an element store through a global array's data pointer ---------
+;;
+;; The loop reads og_b's chain (handle, length) and stores through
+;; `gep (load (gep @og_a, 0) : u64), 5` -- the data pointer read out of og_a's
+;; descriptor, then an element of its buffer -- while calling `plain` every trip.
+;; The provenance walk saw the loaded word as a pointer of unknown provenance,
+;; so the store was a write to any global's storage and the loop kept every
+;; handle it read. The word in a header-typed global's slot 0 is its data
+;; pointer (GlobalDataSlot, handed out in the late round), the store is an
+;; element write of og_a's buffer, and og_b's handle leaves the loop; og_a's
+;; data pointer, a descriptor word no element store can reach, leaves with it.
+(define (opt-gdp-loop-blocks [symbols : OptOgTestSymbols]) : compiler_ir_types.CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (opt-fz-chain-instrs
+      (compiler_ir_types.CompilerIrValue.Global symbols.b)
+      6
+      (opt-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.Gep
+          12
+          (compiler_ir_types.CompilerIrValue.Global symbols.a)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (opt-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Load
+            13
+            (compiler_ir_types.CompilerIrValue.Var 12)
+            (compiler_ast_types.AstType.U64))
+          (opt-test-instr-seq-prepend
+            (compiler_ir_types.CompilerIrInstr.Gep
+              14
+              (compiler_ir_types.CompilerIrValue.Var 13)
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ast_types.AstType.I64))
+            (opt-test-instr-seq-prepend
+              (compiler_ir_types.CompilerIrInstr.StorePtr
+                (compiler_ir_types.CompilerIrValue.Var 14)
+                (compiler_ir_types.CompilerIrValue.Var 9)
+                (compiler_ast_types.AstType.I64))
+              (opt-test-instr-seq-prepend
+                (opt-fz-call-instr 10 symbols.plain)
+                (opt-test-instr-seq-prepend
+                  (compiler_ir_types.CompilerIrInstr.BinOp
+                    11
+                    (compiler_ir_types.CompilerIrBinOp.Add)
+                    (compiler_ir_types.CompilerIrValue.Var 4)
+                    (compiler_ir_types.CompilerIrValue.Var 9)
+                    (compiler_ast_types.AstType.I64))
+                  (opt-licm-loop-finish-instrs))))))))
+    11))
+
+(define (compiler-optimize-licm-global-data-slot-self-test) : i64
+  (let
+    [symbols : OptOgTestSymbols (opt-og-test-symbols)]
+    [cells : compiler_optimize.OptGlobalCellSummary
+      (opt-og-cells
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        (opt-og-base-functions
+          (compiler_optimize.compiler-opt-global-shared-view symbols)))]
+    [hoisted : compiler_ir_types.CompilerIrBlockList
+      (opt-og-licm-late
+        (opt-gdp-loop-blocks
+          (compiler_optimize.compiler-opt-global-shared-view symbols))
+        (opt_i64_i64_map.with-capacity 1)
+        (compiler_optimize.compiler-opt-global-shared-view cells))]
+    (cond
+      ;; og_b's handle and og_a's data pointer leave; og_b's length stays
+      [(not
+          (=
+            (opt-fz-preheader-loads
+              (compiler_ir_types.compiler-ir-global-shared-view hoisted))
+            2))
+        1]
+      [(not
+          (=
+            (opt-fz-body-loads
+              (compiler_ir_types.compiler-ir-global-shared-view hoisted))
+            1))
+        2]
+      [else 42])))
+
+(test
+  licm-global-data-slot-element-store
+  (test.assert-i64-eq
+    (compiler-optimize-licm-global-data-slot-self-test)
+    42
+    "a store through an element address derived from the data pointer read out of a header-typed global's descriptor is an element write of that buffer, so the loop that makes it still takes another global's descriptor handle -- and that data pointer -- out in the late round"))
+
 (test
   global-obj-storage-row-overflow
   (test.assert-i64-eq

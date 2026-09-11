@@ -56,17 +56,27 @@
 (define format-writer-registry-states : (MutPtr i64)
   (unsafe
     (format-writer-registry-make-i64-table)))
+
+;: Generation counter for each registry slot, retained as opaque raw storage.
 (define format-writer-registry-generations : (MutPtr i64)
   (unsafe
     (format-writer-registry-make-i64-table)))
+
+;: Borrowed writer-cell address for each active registry slot.
 (define format-writer-registry-addresses : (MutPtr i64)
   (unsafe
     (format-writer-registry-make-i64-table)))
+
+;: Canonical nominal writer key for each active registry slot.
 (define format-writer-registry-keys : (MutPtr String)
   (unsafe
     (format-writer-registry-make-key-table)))
+
+;: Slot at which the next bounded registration scan begins.
 (define format-writer-registry-next : i64
   0)
+
+;: Process-wide spinlock protecting every registry table and scalar.
 (define format-writer-registry-lock : i64
   0)
 

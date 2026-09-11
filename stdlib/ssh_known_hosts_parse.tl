@@ -138,6 +138,7 @@
   (lines i64)
   (records i64))
 
+;: Internal success-or-error wrapper for whole-input preflight.
 (defenum KnownHostsPreflightResult
   (KnownHostsPreflightOk KnownHostsPreflight)
   (KnownHostsPreflightErr KnownHostsError))

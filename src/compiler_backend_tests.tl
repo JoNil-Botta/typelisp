@@ -12005,10 +12005,17 @@
     [store-first-want : String "    movq %r9, 72(%rsp)
     addq $1, %rax
 "]
+    ;; RMW-3 folds this triple with its reload (nothing after the store kills
+    ;; %r9, so the register counts as live); the slot's write survives in the
+    ;; folded op, which is the claim the sweep must respect either way.
     [reg-clobbered-input : String
       "    movq 72(%rsp), %r9
     addq $1, %r9
     movq %r9, 72(%rsp)
+"]
+    [reg-clobbered-want : String
+      "    addq $1, 72(%rsp)
+    movq 72(%rsp), %r9
 "]
     [slot-clobbered-input : String
       "    movq 72(%rsp), %r9
@@ -12050,7 +12057,7 @@
       (string.eq gap-got gap-want)
       (string.eq label-got label-want)
       (string.eq store-first-got store-first-want)
-      (string.eq reg-clobbered-got reg-clobbered-input)
+      (string.eq reg-clobbered-got reg-clobbered-want)
       (string.eq slot-clobbered-got slot-clobbered-input)
       (string.eq unsafe-label-got unsafe-label-input))))
 
@@ -14707,14 +14714,6 @@ g:
 ;; the admission list or one arm of the death scan's default-refuse.
 (define (compiler-backend-peephole-rmw-refuse-ok?) : bool
   (let
-    ;; The stored value is read after the store.
-    [reused : String
-      "    movq _tl_g(%rip), %rcx
-    addq $1, %rcx
-    movq %rcx, _tl_g(%rip)
-    movq %rcx, %rdx
-    ret
-"]
     ;; Load and store name different addresses.
     [other-address : String
       "    movq _tl_g(%rip), %rcx
@@ -14757,22 +14756,6 @@ g:
     movq %rcx, _tl_g(%rip)
     ret
 "]
-    ;; %rax may still carry the function's return value at `ret`.
-    [return-reg : String
-      "    movq _tl_g(%rip), %rax
-    addq $1, %rax
-    movq %rax, _tl_g(%rip)
-    ret
-"]
-    ;; A caller-saved register reaching a call may be one of that call's
-    ;; argument registers, and no text between the store and the call says so.
-    [call-live : String
-      "    movq _tl_g(%rip), %rcx
-    addq $1, %rcx
-    movq %rcx, _tl_g(%rip)
-    call _tl_side
-    ret
-"]
     ;; An indexed memory operand is not one of the two stable-address shapes.
     [indexed : String
       "    movq (%rax,%rcx,8), %rsi
@@ -14780,26 +14763,6 @@ g:
     movq %rsi, (%rax,%rcx,8)
     ret
 "]
-    ;; `cqto` reads %rdx:%rax without naming either, and is not on the
-    ;; transparent-mnemonic allow list, so the scan refuses rather than walking
-    ;; past an instruction whose reads it cannot see.
-    [opaque-mnemonic : String
-      "    movq _tl_g(%rip), %rsi
-    addq $1, %rsi
-    movq %rsi, _tl_g(%rip)
-    cqto
-    ret
-"]
-    ;; A branch whose target is not defined in this group cannot be followed.
-    [unknown-target : String
-      "    movq _tl_g(%rip), %rcx
-    addq $1, %rcx
-    movq %rcx, _tl_g(%rip)
-    jmp .Lf1_elsewhere
-"]
-    [reused-got : String
-      (compiler_backend.compiler-backend-peephole-asm
-        (owned_view.compiler-owned-shared-view reused))]
     [other-address-got : String
       (compiler_backend.compiler-backend-peephole-asm
         (owned_view.compiler-owned-shared-view other-address))]
@@ -14815,33 +14778,121 @@ g:
     [same-reg-got : String
       (compiler_backend.compiler-backend-peephole-asm
         (owned_view.compiler-owned-shared-view same-reg))]
-    [return-reg-got : String
-      (compiler_backend.compiler-backend-peephole-asm
-        (owned_view.compiler-owned-shared-view return-reg))]
-    [call-live-got : String
-      (compiler_backend.compiler-backend-peephole-asm
-        (owned_view.compiler-owned-shared-view call-live))]
     [indexed-got : String
       (compiler_backend.compiler-backend-peephole-asm
         (owned_view.compiler-owned-shared-view indexed))]
-    [opaque-mnemonic-got : String
-      (compiler_backend.compiler-backend-peephole-asm
-        (owned_view.compiler-owned-shared-view opaque-mnemonic))]
-    [unknown-target-got : String
-      (compiler_backend.compiler-backend-peephole-asm
-        (owned_view.compiler-owned-shared-view unknown-target))]
     (and
-      (string.eq reused-got reused)
       (string.eq other-address-got other-address)
       (string.eq label-between-got label-between)
       (string.eq branch-between-got branch-between)
       (string.eq other-op-got other-op)
       (string.eq same-reg-got same-reg)
-      (string.eq return-reg-got return-reg)
-      (string.eq call-live-got call-live)
-      (string.eq indexed-got indexed)
-      (string.eq opaque-mnemonic-got opaque-mnemonic)
-      (string.eq unknown-target-got unknown-target))))
+      (string.eq indexed-got indexed))))
+
+;; RMW-3. A triple whose register is still read after the store -- or whose
+;; death the bounded scan cannot prove -- folds all the same, and the store's
+;; line becomes the load's: `op src, M ; movq M, %rX` is two instructions for
+;; the three, reads back exactly the word the folded op wrote, and leaves %rX
+;; and EFLAGS as the triple did. Each row here was a refusal of RMW-2's death
+;; scan: a later read of the register, %rax at `ret`, a caller-saved register
+;; reaching a call, a mnemonic whose reads the scan cannot see, and a branch
+;; whose target is not in the group.
+(define (compiler-backend-peephole-rmw-live-fold-ok?) : bool
+  (let
+    [reused-input : String
+      "    movq _tl_g(%rip), %rcx
+    addq $1, %rcx
+    movq %rcx, _tl_g(%rip)
+    movq %rcx, %rdx
+    ret
+"]
+    [reused-want : String
+      "    addq $1, _tl_g(%rip)
+    movq _tl_g(%rip), %rcx
+    movq %rcx, %rdx
+    ret
+"]
+    [return-reg-input : String
+      "    movq _tl_g(%rip), %rax
+    addq $1, %rax
+    movq %rax, _tl_g(%rip)
+    ret
+"]
+    [return-reg-want : String
+      "    addq $1, _tl_g(%rip)
+    movq _tl_g(%rip), %rax
+    ret
+"]
+    [call-live-input : String
+      "    movq _tl_g(%rip), %rcx
+    addq $1, %rcx
+    movq %rcx, _tl_g(%rip)
+    call _tl_side
+    ret
+"]
+    [call-live-want : String
+      "    addq $1, _tl_g(%rip)
+    movq _tl_g(%rip), %rcx
+    call _tl_side
+    ret
+"]
+    [opaque-mnemonic-input : String
+      "    movq _tl_g(%rip), %rsi
+    addq $1, %rsi
+    movq %rsi, _tl_g(%rip)
+    cqto
+    ret
+"]
+    [opaque-mnemonic-want : String
+      "    addq $1, _tl_g(%rip)
+    movq _tl_g(%rip), %rsi
+    cqto
+    ret
+"]
+    [unknown-target-input : String
+      "    movq _tl_g(%rip), %rcx
+    addq $1, %rcx
+    movq %rcx, _tl_g(%rip)
+    jmp .Lf1_elsewhere
+"]
+    [unknown-target-want : String
+      "    addq $1, _tl_g(%rip)
+    movq _tl_g(%rip), %rcx
+    jmp .Lf1_elsewhere
+"]
+    ;; A register source and a frame slot, the same way.
+    [slot-reg-input : String
+      "    movq 24(%rsp), %r8
+    subq %r9, %r8
+    movq %r8, 24(%rsp)
+    movq %r8, %rax
+    ret
+"]
+    [slot-reg-want : String
+      "    subq %r9, 24(%rsp)
+    movq 24(%rsp), %r8
+    movq %r8, %rax
+    ret
+"]
+    (and
+      (string.eq
+        (compiler_backend.compiler-backend-peephole-asm reused-input)
+        reused-want)
+      (string.eq
+        (compiler_backend.compiler-backend-peephole-asm return-reg-input)
+        return-reg-want)
+      (string.eq
+        (compiler_backend.compiler-backend-peephole-asm call-live-input)
+        call-live-want)
+      (string.eq
+        (compiler_backend.compiler-backend-peephole-asm opaque-mnemonic-input)
+        opaque-mnemonic-want)
+      (string.eq
+        (compiler_backend.compiler-backend-peephole-asm unknown-target-input)
+        unknown-target-want)
+      (string.eq
+        (compiler_backend.compiler-backend-peephole-asm slot-reg-input)
+        slot-reg-want))))
 
 ;; RMW-2 FLAGS CONSUMER. A `jcc` immediately after the store reads the flags the
 ;; ALU op wrote -- the intervening `movq` writes none -- and the folded
@@ -14872,11 +14923,23 @@ g:
     ret
 "]
     ;; The same shape, but the taken arm READS the register: one live path is
-    ;; enough to refuse.
+    ;; enough to keep it, and RMW-3 then folds the triple with its reload. The
+    ;; reload sits between the op and the `jcc` and writes no flags, so the
+    ;; branch still reads the op's.
     [flags-live-input : String
       "    movq _tl_g(%rip), %rcx
     addq $1, %rcx
     movq %rcx, _tl_g(%rip)
+    je .Lf1_zero
+    movq $0, %rcx
+    ret
+.Lf1_zero:
+    movq %rcx, %rdx
+    ret
+"]
+    [flags-live-want : String
+      "    addq $1, _tl_g(%rip)
+    movq _tl_g(%rip), %rcx
     je .Lf1_zero
     movq $0, %rcx
     ret
@@ -14891,16 +14954,17 @@ g:
       (string.eq
         (compiler_backend.compiler-backend-peephole-asm flags-input)
         flags-want)
-      (string.eq flags-live-got flags-live-input))))
+      (string.eq flags-live-got flags-live-want))))
 
-;; RMW-2 RELOAD REUSE -- the refusal that decides where this pass may run. The
+;; RMW-2 RELOAD REUSE -- the read that decides where this pass may run. The
 ;; walk's owner map rewrites a later reload of the same slot into a copy out of
 ;; the register that mirrors it. That copy is a genuine read of the triple's
 ;; register and exists ONLY in the emitted text, so a fold placed inside the
 ;; walk would delete the register the walk is about to read. Because the fold
-;; runs on the final record stream, the death scan sees the minted read and
-;; refuses: the triple stays, and the reload is still rewritten.
-(define (compiler-backend-peephole-rmw-owner-reload-refuse-ok?) : bool
+;; runs on the final record stream, the death scan sees the minted read: the
+;; register is live, so RMW-3 folds the triple WITH its reload (the copy then
+;; reads the reloaded register), and the rewritten copy is kept.
+(define (compiler-backend-peephole-rmw-owner-reload-live-fold-ok?) : bool
   (let
     [reload-input : String
       "    movq 24(%rsp), %r8
@@ -14909,10 +14973,11 @@ g:
     movq 24(%rsp), %r9
     ret
 "]
+    ;; RMW-3: the owner map's rewrite is a read of %r8 after the store, so the
+    ;; register is live and the triple folds with the reload.
     [reload-want : String
-      "    movq 24(%rsp), %r8
-    addq $1, %r8
-    movq %r8, 24(%rsp)
+      "    addq $1, 24(%rsp)
+    movq 24(%rsp), %r8
     movq %r8, %r9
     ret
 "]
@@ -14990,8 +15055,9 @@ g:
     (compiler-backend-peephole-dead-reg-def-ok?)
     (compiler-backend-peephole-rmw-fold-ok?)
     (compiler-backend-peephole-rmw-refuse-ok?)
+    (compiler-backend-peephole-rmw-live-fold-ok?)
     (compiler-backend-peephole-rmw-flags-consumer-ok?)
-    (compiler-backend-peephole-rmw-owner-reload-refuse-ok?)
+    (compiler-backend-peephole-rmw-owner-reload-live-fold-ok?)
     (compiler-backend-peephole-rmw-no-candidate-ok?)
     (compiler-backend-peephole-detailed-abort-guard-ok?)
     (compiler-backend-peephole-drop-fallthrough-chain-ok?)

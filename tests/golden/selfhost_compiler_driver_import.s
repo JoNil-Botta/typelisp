@@ -585,9 +585,8 @@ tl_array_fill8:
     movq -40(%rsp), %r8
     movq -24(%rsp), %r9
     movq %r9, (%r10,%r8,8)
+    addq $1, -40(%rsp)
     movq -40(%rsp), %rax
-    addq $1, %rax
-    movq %rax, -40(%rsp)
     jmp .Lf15_while_header.0
 .Lf15_while_exit.2:
     ret

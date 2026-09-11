@@ -129,6 +129,22 @@
   (files (__tl_dyn-array BuildPackageCommitFile))
   (len i64))
 
+;; Rollback records every previous artifact it attempted to restore. Retained
+;; entries are cleanup capabilities: their `.previous` path must remain owned
+;; by the recovery stage until the user has restored it.
+(defenum BuildPackageBackupRollback
+  (Restored String String)
+  (Retained String String String))
+
+(defstruct BuildPackageRollbackDisposition
+  (backups (__tl_dyn-array BuildPackageBackupRollback))
+  (len i64)
+  (errors String))
+
+(defenum ResultBuildPackageCommit
+  (Ok)
+  (Err String BuildPackageRollbackDisposition))
+
 (defstruct BuildPackageStagePaths
   (dir String)
   (asm String)
@@ -289,6 +305,8 @@
 
 (define build-package-release-opt-level : i64
   2)
+(define build-package-commit-file-capacity : i64
+  5)
 (define build-status-ok : i64
   0)
 (define build-status-already-exists : i64
@@ -5435,8 +5453,74 @@
       (fs.try-remove-dir-if-exists (& dir)))
     unit))
 
+(define (build-package-rollback-preserves-backup?
+  [rollback : BuildPackageRollbackDisposition]
+  [backup-path : String]) : bool
+  (let
+    [index : i64 0]
+    [preserve : bool false]
+    (begin
+      (while (and (not preserve) (< index rollback.len))
+        (begin
+          (match (owned_view.compiler-owned-array-element-shared-view
+            rollback.backups
+            index)
+            [(BuildPackageBackupRollback.Retained backup _ _)
+              (set! preserve (string.eq backup backup-path))]
+            [_ unit])
+          (set! index (+ index 1))))
+      preserve)))
+
+(define (build-package-remove-staged-file-after-rollback
+  [path : String]
+  [rollback : BuildPackageRollbackDisposition]) : unit
+  (begin
+    (fs.try-remove-file-if-exists (& path))
+    (let
+      [backup : String (str_cat.str-cat path ".previous")]
+      (if (build-package-rollback-preserves-backup?
+        (owned_view.compiler-owned-shared-view rollback)
+        (owned_view.compiler-owned-shared-view backup))
+        unit
+        (let
+          [_ : io.ResultIoUnit (fs.try-remove-file-if-exists (& backup))]
+          unit)))
+    unit))
+
+(define (build-package-clean-stage-after-rollback
+  [paths : BuildPackageStagePaths]
+  [rollback : BuildPackageRollbackDisposition]) : unit
+  ;; Always discard new staged data. Delete only superseded `.previous` files;
+  ;; a retained entry also keeps the containing stage directory recoverable.
+  (begin
+    (build-package-remove-staged-file-after-rollback
+      paths.asm
+      (owned_view.compiler-owned-shared-view rollback))
+    (build-package-remove-staged-file-after-rollback
+      paths.obj
+      (owned_view.compiler-owned-shared-view rollback))
+    (build-package-remove-staged-file-after-rollback
+      paths.artifact
+      (owned_view.compiler-owned-shared-view rollback))
+    (build-package-remove-staged-file-after-rollback
+      paths.fingerprint
+      (owned_view.compiler-owned-shared-view rollback))
+    (build-package-remove-staged-file-after-rollback
+      paths.tlci
+      (owned_view.compiler-owned-shared-view rollback))
+    (let
+      [dir : String paths.dir]
+      (if (build-package-rollback-recovery-required? rollback)
+        unit
+        (let
+          [_ : io.ResultIoUnit (fs.try-remove-dir-if-exists (& dir))]
+          unit)))
+    unit))
+
 (define (build-package-commit-plan-new) : BuildPackageCommitPlan
-  (BuildPackageCommitPlan (__tl_make-array BuildPackageCommitFile 5) 0))
+  (BuildPackageCommitPlan
+    (__tl_make-array BuildPackageCommitFile build-package-commit-file-capacity)
+    0))
 
 (define (build-package-commit-plan-add
   [plan : BuildPackageCommitPlan]
@@ -5469,6 +5553,70 @@
         item.staged-path
         item.backup-path
         true))))
+
+(define (build-package-rollback-disposition-new) : BuildPackageRollbackDisposition
+  (BuildPackageRollbackDisposition
+    (__tl_make-array
+      BuildPackageBackupRollback
+      build-package-commit-file-capacity)
+    0
+    ""))
+
+(define (build-package-rollback-disposition-add-backup
+  [rollback : BuildPackageRollbackDisposition]
+  [backup : BuildPackageBackupRollback]) : BuildPackageRollbackDisposition
+  (let
+    [backups : (__tl_dyn-array BuildPackageBackupRollback) rollback.backups]
+    [index : i64 rollback.len]
+    (begin
+      (set! (array-ref backups index) backup)
+      (BuildPackageRollbackDisposition backups (+ index 1) rollback.errors))))
+
+(define (build-package-rollback-disposition-add-error
+  [rollback : BuildPackageRollbackDisposition]
+  [message : String]) : BuildPackageRollbackDisposition
+  (BuildPackageRollbackDisposition
+    rollback.backups
+    rollback.len
+    (if (= (string.string-length rollback.errors) 0)
+      message
+      (str_cat.str-cat rollback.errors "\n" message))))
+
+(define (build-package-rollback-recovery-required?
+  [rollback : BuildPackageRollbackDisposition]) : bool
+  (let
+    [index : i64 0]
+    [required : bool false]
+    (begin
+      (while (and (not required) (< index rollback.len))
+        (begin
+          (match (owned_view.compiler-owned-array-element-shared-view
+            rollback.backups
+            index)
+            [(BuildPackageBackupRollback.Retained _ _ _) (set! required true)]
+            [_ unit])
+          (set! index (+ index 1))))
+      required)))
+
+(define (build-package-commit-error-message
+  [primary : String]
+  [rollback : BuildPackageRollbackDisposition]
+  [stage-dir : String]) : String
+  (let
+    [with-secondary : String
+      (if (= (string.string-length rollback.errors) 0)
+        primary
+        (str_cat.str-cat
+          primary
+          "\n"
+          (owned_view.compiler-owned-shared-view rollback.errors)))]
+    (if (build-package-rollback-recovery-required? rollback)
+      (str_cat.str-cat
+        with-secondary
+        "\nbuild: retained package artifact recovery stage: "
+        stage-dir
+        "; restore the reported .previous files before removing it")
+      with-secondary)))
 
 (define (build-package-commit-plan-preflight [plan : BuildPackageCommitPlan]) : ResultBuildString
   (let
@@ -5517,9 +5665,11 @@
 (define (build-package-commit-plan-rollback
   [plan : BuildPackageCommitPlan]
   [installed : i64]
-  [backed-up : i64]) : unit
+  [backed-up : i64]) : BuildPackageRollbackDisposition
   (let
     [index : i64 (- installed 1)]
+    [rollback : BuildPackageRollbackDisposition
+      (build-package-rollback-disposition-new)]
     (begin
       (while (>= index 0)
         (let
@@ -5530,7 +5680,18 @@
           (begin
             (let
               [path : String item.final-path]
-              (fs.try-remove-file-if-exists (& path)))
+              (match (fs.try-remove-file-if-exists (& path))
+                [(io.OkIoUnit) unit]
+                [(io.ErrIoUnit io-error)
+                  (set!
+                    rollback
+                    (build-package-rollback-disposition-add-error
+                      rollback
+                      (str_cat.str-cat
+                        "build: rollback failed to remove installed package artifact "
+                        path
+                        ": "
+                        (io.error-message io-error))))]))
             (set! index (- index 1)))))
       (set! index (- backed-up 1))
       (while (>= index 0)
@@ -5544,15 +5705,49 @@
               (let
                 [backup : String item.backup-path]
                 [final-path : String item.final-path]
-                (fs.try-rename (& backup) (& final-path)))
-              io.OkIoUnit)
+                (match (fs.try-rename (& backup) (& final-path))
+                  [(io.OkIoUnit)
+                    (set!
+                      rollback
+                      (build-package-rollback-disposition-add-backup
+                        rollback
+                        (BuildPackageBackupRollback.Restored backup final-path)))]
+                  [(io.ErrIoUnit io-error)
+                    (let
+                      [io-message : String (io.error-message io-error)]
+                      [failure : String
+                        (str_cat.str-cat
+                          "build: rollback failed to restore previous package artifact "
+                          (owned_view.compiler-owned-shared-view backup)
+                          " -> "
+                          (owned_view.compiler-owned-shared-view final-path)
+                          ": "
+                          (owned_view.compiler-owned-shared-view io-message))]
+                      (begin
+                        (set!
+                          rollback
+                          (build-package-rollback-disposition-add-error
+                            rollback
+                            failure))
+                        (set!
+                          rollback
+                          (build-package-rollback-disposition-add-backup
+                            rollback
+                            (BuildPackageBackupRollback.Retained
+                              backup
+                              final-path
+                              io-message)))))]))
+              unit)
             (set! index (- index 1)))))
-      unit)))
+      rollback)))
 
-(define (build-package-commit-plan-run [plan : BuildPackageCommitPlan]) : ResultBuildString
+(define (build-package-commit-plan-run [plan : BuildPackageCommitPlan]) : ResultBuildPackageCommit
   (match (build-package-commit-plan-preflight
     (owned_view.compiler-owned-shared-view plan))
-    [(ResultBuildString.Err message) (ResultBuildString.Err message)]
+    [(ResultBuildString.Err message)
+      (ResultBuildPackageCommit.Err
+        message
+        (build-package-rollback-disposition-new))]
     [(ResultBuildString.Ok _)
       (let
         [index : i64 0]
@@ -5636,10 +5831,480 @@
                         (fs.try-remove-file-if-exists (& backup)))
                       io.OkIoUnit)
                     (set! index (+ index 1)))))
-              (ResultBuildString.Ok ""))
+              (ResultBuildPackageCommit.Ok))
+            (ResultBuildPackageCommit.Err
+              error
+              (build-package-commit-plan-rollback plan installed backed-up)))))]))
+
+(cfg
+  test
+  (define (build-package-rollback-test-expect-ok
+    [result : io.ResultIoUnit]
+    [context : String]) : unit
+    (match result
+      [(io.OkIoUnit) unit]
+      [(io.ErrIoUnit error)
+        (io.panic (str_cat.str-cat context ": " (io.error-message error)))])))
+
+(cfg
+  test
+  (define (build-package-rollback-test-temp [label : String]) : String
+    (match (fs.try-create-temp-dir (& label))
+      [(io.OkIoString path) path]
+      [(io.ErrIoString error)
+        (io.panic
+          (str_cat.str-cat
+            "build package rollback test temp: "
+            (io.error-message error)))])))
+
+(cfg
+  test
+  (define (build-package-rollback-test-path [root : String] [name : String]) : String
+    (fs.path-join (& root) (& name))))
+
+(cfg
+  test
+  (define (build-package-rollback-test-stage [root : String]) : BuildPackageStagePaths
+    (let
+      [name : String "stage"]
+      [dir : String (fs.path-join (& root) (& name))]
+      (begin
+        (build-package-rollback-test-expect-ok
+          (fs.try-mkdir (& dir))
+          "build package rollback test mkdir stage")
+        (BuildPackageStagePaths
+          (owned_view.compiler-owned-shared-view dir)
+          (build-package-rollback-test-path
+            (owned_view.compiler-owned-shared-view dir)
+            "a")
+          (build-package-rollback-test-path
+            (owned_view.compiler-owned-shared-view dir)
+            "o")
+          (build-package-rollback-test-path
+            (owned_view.compiler-owned-shared-view dir)
+            "r")
+          (build-package-rollback-test-path
+            (owned_view.compiler-owned-shared-view dir)
+            "f")
+          (build-package-rollback-test-path dir "t"))))))
+
+(cfg
+  test
+  (define (build-package-rollback-test-write [path : String] [text : String]) : unit
+    (build-package-rollback-test-expect-ok
+      (io.try-write-file (& path) (byte_buf.str-as-bytes (& text)))
+      "build package rollback test write")))
+
+(cfg
+  test
+  (define (build-package-rollback-test-path-exists? [path : String]) : bool
+    (match (io.try-file-exists? (& path))
+      [(io.OkIoBool exists) exists]
+      [(io.ErrIoBool _) false])))
+
+(cfg
+  test
+  (define (build-package-rollback-test-restored-at?
+    [rollback : BuildPackageRollbackDisposition]
+    [index : i64]
+    [backup-path : String]
+    [final-path : String]) : bool
+    (if (>= index rollback.len)
+      false
+      (match (owned_view.compiler-owned-array-element-shared-view
+        rollback.backups
+        index)
+        [(BuildPackageBackupRollback.Restored backup final)
+          (and (string.eq backup backup-path) (string.eq final final-path))]
+        [_ false]))))
+
+(cfg
+  test
+  (define (build-package-rollback-test-retained-at?
+    [rollback : BuildPackageRollbackDisposition]
+    [index : i64]
+    [backup-path : String]
+    [final-path : String]) : bool
+    (if (>= index rollback.len)
+      false
+      (match (owned_view.compiler-owned-array-element-shared-view
+        rollback.backups
+        index)
+        [(BuildPackageBackupRollback.Retained backup final error)
+          (and
+            (string.eq backup backup-path)
+            (string.eq final final-path)
+            (> (string.string-length error) 0))]
+        [_ false]))))
+
+(cfg
+  test
+  (define (build-package-rollback-test-clean
+    [root : String]
+    [stage : BuildPackageStagePaths]
+    [final-a : String]
+    [final-b : String]) : unit
+    (begin
+      (build-package-clean-stage (owned_view.compiler-owned-shared-view stage))
+      (fs.try-remove-file-if-exists (& final-a))
+      (fs.try-remove-file-if-exists (& final-b))
+      (fs.try-remove-dir-if-exists (& final-a))
+      (fs.try-remove-dir-if-exists (& final-b))
+      (let
+        [stage-dir : String stage.dir]
+        (fs.try-remove-dir-if-exists (& stage-dir)))
+      (fs.try-remove-dir-if-exists (& root))
+      unit)))
+
+(cfg
+  test
+  (define (build-package-rollback-partial-restore-test-ok?) : bool
+    (let
+      [root : String
+        (build-package-rollback-test-temp "typelisp build rollback partial")]
+      [stage : BuildPackageStagePaths
+        (build-package-rollback-test-stage
+          (owned_view.compiler-owned-shared-view root))]
+      [final-a : String
+        (build-package-rollback-test-path
+          (owned_view.compiler-owned-shared-view root)
+          "final-a")]
+      [final-b : String
+        (build-package-rollback-test-path
+          (owned_view.compiler-owned-shared-view root)
+          "final-b")]
+      [backup-a : String
+        (str_cat.str-cat
+          (owned_view.compiler-owned-shared-view stage.asm)
+          ".previous")]
+      [backup-b : String
+        (str_cat.str-cat
+          (owned_view.compiler-owned-shared-view stage.obj)
+          ".previous")]
+      [plan : BuildPackageCommitPlan
+        (build-package-commit-plan-add
+          (build-package-commit-plan-add
+            (build-package-commit-plan-new)
+            (owned_view.compiler-owned-shared-view final-a)
+            (owned_view.compiler-owned-shared-view stage.asm))
+          (owned_view.compiler-owned-shared-view final-b)
+          (owned_view.compiler-owned-shared-view stage.obj))]
+      (begin
+        (build-package-rollback-test-write
+          (owned_view.compiler-owned-shared-view backup-a)
+          "old-a")
+        (build-package-rollback-test-write
+          (owned_view.compiler-owned-shared-view backup-b)
+          "old-b")
+        (build-package-rollback-test-expect-ok
+          (fs.try-mkdir (& final-b))
+          "build package rollback test mkdir restore collision")
+        (build-package-commit-plan-set-had-old!
+          (owned_view.compiler-owned-shared-view plan)
+          0)
+        (build-package-commit-plan-set-had-old!
+          (owned_view.compiler-owned-shared-view plan)
+          1)
+        (let
+          [rollback : BuildPackageRollbackDisposition
+            (build-package-commit-plan-rollback plan 0 2)]
+          [diagnostic : String
+            (build-package-commit-error-message
+              "primary commit error"
+              (owned_view.compiler-owned-shared-view rollback)
+              (owned_view.compiler-owned-shared-view stage.dir))]
+          (begin
+            (build-package-clean-stage-after-rollback
+              (owned_view.compiler-owned-shared-view stage)
+              (owned_view.compiler-owned-shared-view rollback))
+            (build-package-clean-stage-after-rollback
+              (owned_view.compiler-owned-shared-view stage)
+              (owned_view.compiler-owned-shared-view rollback))
+            (let
+              [primary-needle : String "primary commit error"]
+              [restore-needle : String
+                "rollback failed to restore previous package artifact"]
+              [stage-needle : String "retained package artifact recovery stage"]
+              [ok : bool
+                (and
+                  (= rollback.len 2)
+                  (build-package-rollback-test-retained-at?
+                    (owned_view.compiler-owned-shared-view rollback)
+                    0
+                    (owned_view.compiler-owned-shared-view backup-b)
+                    (owned_view.compiler-owned-shared-view final-b))
+                  (build-package-rollback-test-restored-at?
+                    (owned_view.compiler-owned-shared-view rollback)
+                    1
+                    (owned_view.compiler-owned-shared-view backup-a)
+                    (owned_view.compiler-owned-shared-view final-a))
+                  (build-package-rollback-recovery-required?
+                    (owned_view.compiler-owned-shared-view rollback))
+                  (build-package-file-text-eq?
+                    (owned_view.compiler-owned-shared-view final-a)
+                    "old-a")
+                  (build-package-file-text-eq?
+                    (owned_view.compiler-owned-shared-view backup-b)
+                    "old-b")
+                  (build-package-rollback-test-path-exists?
+                    (owned_view.compiler-owned-shared-view stage.dir))
+                  (string.eq
+                    (string.substring
+                      (& diagnostic)
+                      0
+                      (string.string-length primary-needle))
+                    primary-needle)
+                  (string.contains (& diagnostic) (& restore-needle))
+                  (string.contains (& diagnostic) (& stage-needle)))]
+              (begin
+                (build-package-rollback-test-clean root stage final-a final-b)
+                ok))))))))
+
+(cfg
+  test
+  (define (build-package-rollback-complete-test-ok?) : bool
+    (let
+      [root : String
+        (build-package-rollback-test-temp "typelisp build rollback complete")]
+      [stage : BuildPackageStagePaths
+        (build-package-rollback-test-stage
+          (owned_view.compiler-owned-shared-view root))]
+      [final : String
+        (build-package-rollback-test-path
+          (owned_view.compiler-owned-shared-view root)
+          "final")]
+      [unused : String
+        (build-package-rollback-test-path
+          (owned_view.compiler-owned-shared-view root)
+          "unused")]
+      [backup : String
+        (str_cat.str-cat
+          (owned_view.compiler-owned-shared-view stage.asm)
+          ".previous")]
+      [plan : BuildPackageCommitPlan
+        (build-package-commit-plan-add
+          (build-package-commit-plan-new)
+          (owned_view.compiler-owned-shared-view final)
+          (owned_view.compiler-owned-shared-view stage.asm))]
+      (begin
+        (build-package-rollback-test-write
+          (owned_view.compiler-owned-shared-view final)
+          "new")
+        (build-package-rollback-test-write
+          (owned_view.compiler-owned-shared-view backup)
+          "old")
+        (build-package-commit-plan-set-had-old!
+          (owned_view.compiler-owned-shared-view plan)
+          0)
+        (let
+          [rollback : BuildPackageRollbackDisposition
+            (build-package-commit-plan-rollback plan 1 1)]
+          (begin
+            (build-package-clean-stage-after-rollback
+              (owned_view.compiler-owned-shared-view stage)
+              (owned_view.compiler-owned-shared-view rollback))
+            (let
+              [ok : bool
+                (and
+                  (= rollback.len 1)
+                  (= (string.string-length rollback.errors) 0)
+                  (not
+                    (build-package-rollback-recovery-required?
+                      (owned_view.compiler-owned-shared-view rollback)))
+                  (build-package-rollback-test-restored-at?
+                    (owned_view.compiler-owned-shared-view rollback)
+                    0
+                    (owned_view.compiler-owned-shared-view backup)
+                    (owned_view.compiler-owned-shared-view final))
+                  (build-package-file-text-eq?
+                    (owned_view.compiler-owned-shared-view final)
+                    "old")
+                  (not
+                    (build-package-rollback-test-path-exists?
+                      (owned_view.compiler-owned-shared-view backup)))
+                  (not
+                    (build-package-rollback-test-path-exists?
+                      (owned_view.compiler-owned-shared-view stage.dir))))]
+              (begin
+                (build-package-rollback-test-clean root stage final unused)
+                ok))))))))
+
+(cfg
+  test
+  (define (build-package-rollback-remove-failure-test-ok?) : bool
+    (let
+      [root : String
+        (build-package-rollback-test-temp "typelisp build rollback remove")]
+      [stage : BuildPackageStagePaths
+        (build-package-rollback-test-stage
+          (owned_view.compiler-owned-shared-view root))]
+      ;; Empty paths are explicitly invalid on both hosts, so this injects a
+      ;; deterministic removal failure without relying on directory unlink
+      ;; differences between Linux and Windows.
+      [final : String ""]
+      [unused : String
+        (build-package-rollback-test-path
+          (owned_view.compiler-owned-shared-view root)
+          "unused")]
+      [plan : BuildPackageCommitPlan
+        (build-package-commit-plan-add
+          (build-package-commit-plan-new)
+          (owned_view.compiler-owned-shared-view final)
+          (owned_view.compiler-owned-shared-view stage.asm))]
+      (let
+        [rollback : BuildPackageRollbackDisposition
+          (build-package-commit-plan-rollback plan 1 0)]
+        (begin
+          (build-package-clean-stage-after-rollback
+            (owned_view.compiler-owned-shared-view stage)
+            (owned_view.compiler-owned-shared-view rollback))
+          (let
+            [needle : String
+              "rollback failed to remove installed package artifact"]
+            [invalid-needle : String "io: invalid path"]
+            [ok : bool
+              (and
+                (= rollback.len 0)
+                (> (string.string-length rollback.errors) 0)
+                (string.contains (& rollback.errors) (& needle))
+                (string.contains (& rollback.errors) (& invalid-needle))
+                (not
+                  (build-package-rollback-recovery-required?
+                    (owned_view.compiler-owned-shared-view rollback)))
+                (not
+                  (build-package-rollback-test-path-exists?
+                    (owned_view.compiler-owned-shared-view stage.dir))))]
             (begin
-              (build-package-commit-plan-rollback plan installed backed-up)
-              (ResultBuildString.Err error)))))]))
+              (build-package-rollback-test-clean root stage final unused)
+              ok)))))))
+
+(cfg
+  test
+  (define (build-package-commit-preflight-test-ok?) : bool
+    (let
+      [root : String
+        (build-package-rollback-test-temp "typelisp build commit preflight")]
+      [stage : BuildPackageStagePaths
+        (build-package-rollback-test-stage
+          (owned_view.compiler-owned-shared-view root))]
+      [final : String
+        (build-package-rollback-test-path
+          (owned_view.compiler-owned-shared-view root)
+          "final")]
+      [unused : String
+        (build-package-rollback-test-path
+          (owned_view.compiler-owned-shared-view root)
+          "unused")]
+      [plan : BuildPackageCommitPlan
+        (build-package-commit-plan-add
+          (build-package-commit-plan-new)
+          (owned_view.compiler-owned-shared-view final)
+          (owned_view.compiler-owned-shared-view stage.asm))]
+      (match (build-package-commit-plan-run plan)
+        [(ResultBuildPackageCommit.Ok)
+          (begin
+            (build-package-rollback-test-clean root stage final unused)
+            false)]
+        [(ResultBuildPackageCommit.Err message rollback)
+          (begin
+            (build-package-clean-stage-after-rollback
+              (owned_view.compiler-owned-shared-view stage)
+              (owned_view.compiler-owned-shared-view rollback))
+            (let
+              [needle : String
+                "staged package artifact is missing or non-regular"]
+              [ok : bool
+                (and
+                  (= rollback.len 0)
+                  (= (string.string-length rollback.errors) 0)
+                  (string.contains (& message) (& needle))
+                  (not
+                    (build-package-rollback-test-path-exists?
+                      (owned_view.compiler-owned-shared-view stage.dir))))]
+              (begin
+                (build-package-rollback-test-clean root stage final unused)
+                ok)))]))))
+
+(cfg
+  test
+  (define (build-package-commit-success-cleanup-test-ok?) : bool
+    (let
+      [root : String
+        (build-package-rollback-test-temp "typelisp build commit success")]
+      [stage : BuildPackageStagePaths
+        (build-package-rollback-test-stage
+          (owned_view.compiler-owned-shared-view root))]
+      [final : String
+        (build-package-rollback-test-path
+          (owned_view.compiler-owned-shared-view root)
+          "final")]
+      [unused : String
+        (build-package-rollback-test-path
+          (owned_view.compiler-owned-shared-view root)
+          "unused")]
+      [backup : String
+        (str_cat.str-cat
+          (owned_view.compiler-owned-shared-view stage.asm)
+          ".previous")]
+      [plan : BuildPackageCommitPlan
+        (build-package-commit-plan-add
+          (build-package-commit-plan-new)
+          (owned_view.compiler-owned-shared-view final)
+          (owned_view.compiler-owned-shared-view stage.asm))]
+      (begin
+        (build-package-rollback-test-write
+          (owned_view.compiler-owned-shared-view final)
+          "old")
+        (build-package-rollback-test-write
+          (owned_view.compiler-owned-shared-view stage.asm)
+          "new")
+        (match (build-package-commit-plan-run plan)
+          [(ResultBuildPackageCommit.Err _ rollback)
+            (begin
+              (build-package-clean-stage-after-rollback
+                (owned_view.compiler-owned-shared-view stage)
+                rollback)
+              (build-package-rollback-test-clean root stage final unused)
+              false)]
+          [(ResultBuildPackageCommit.Ok)
+            (begin
+              (build-package-clean-stage
+                (owned_view.compiler-owned-shared-view stage))
+              (let
+                [ok : bool
+                  (and
+                    (build-package-file-text-eq?
+                      (owned_view.compiler-owned-shared-view final)
+                      "new")
+                    (not
+                      (build-package-rollback-test-path-exists?
+                        (owned_view.compiler-owned-shared-view backup)))
+                    (not
+                      (build-package-rollback-test-path-exists?
+                        (owned_view.compiler-owned-shared-view stage.dir))))]
+                (begin
+                  (build-package-rollback-test-clean root stage final unused)
+                  ok)))])))))
+
+(cfg
+  test
+  (test
+    build-package-commit-rollback-recovery
+    (unless
+      (build-package-rollback-partial-restore-test-ok?)
+      (io.panic "build package rollback partial restore test failed"))
+    (unless
+      (build-package-rollback-complete-test-ok?)
+      (io.panic "build package rollback complete test failed"))
+    (unless
+      (build-package-rollback-remove-failure-test-ok?)
+      (io.panic "build package rollback removal failure test failed"))
+    (unless
+      (build-package-commit-preflight-test-ok?)
+      (io.panic "build package commit preflight test failed"))
+    (unless
+      (build-package-commit-success-cleanup-test-ok?)
+      (io.panic "build package commit success cleanup test failed"))))
 
 (define (build-package-write-tlci [path : String] [text : String]) : build_run_core.SourceToolCommandStatus
   (build_run_core.source-tool-write-file
@@ -5812,12 +6477,15 @@
         unit)
       (if ok
         (match (build-package-commit-plan-run plan)
-          [(ResultBuildString.Err message)
+          [(ResultBuildPackageCommit.Err message rollback)
             (begin
-              (build-package-clean-stage stage)
-              (io.print-error message)
+              (build-package-clean-stage-after-rollback
+                (owned_view.compiler-owned-shared-view stage)
+                (owned_view.compiler-owned-shared-view rollback))
+              (io.print-error
+                (build-package-commit-error-message message rollback stage.dir))
               1)]
-          [(ResultBuildString.Ok _)
+          [(ResultBuildPackageCommit.Ok)
             (begin
               (build-package-clean-stage stage)
               (build-package-announce-freshness

@@ -98335,26 +98335,29 @@
             (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))))
 
 ;; ---------------------------------------------------------------------------
-;; RMW-2: fold an adjacent load / ALU / store of ONE memory location into a
-;; single memory-operand ALU instruction.
+;; RMW-2/RMW-3: fold an adjacent load / ALU / store of ONE memory location into
+;; a memory-operand ALU instruction, with a reload when the result register
+;; remains live.
 ;;
-;;     movq   M, %rX          -->    op {$imm|%rY}, M
+;;     movq   M, %rX          -->    op {$imm|%rY}, M          (%rX dead)
 ;;     op     {$imm|%rY}, %rX
-;;     movq   %rX, M
+;;     movq   %rX, M          -->    op {$imm|%rY}, M          (%rX live)
+;;                                  movq M, %rX
 ;;
-;; x86 executes the folded form as ONE instruction where we emit three, and the
-;; three are TEXTUALLY ADJACENT in our output at every site: the scalar-global
-;; counter bumps (`g += 1`) and the frame-slot accumulator bumps (`slot += k`)
-;; the emitter produces from a load/binop/store IR triple.
+;; x86 executes the dead form as one instruction and the live form as two where
+;; we emit three. The three are TEXTUALLY ADJACENT in our output at every site:
+;; the scalar-global counter bumps (`g += 1`) and the frame-slot accumulator
+;; bumps (`slot += k`) the emitter produces from a load/binop/store IR triple.
 ;;
 ;; ADMISSION -- LLVM's `isFusableLoadOpStorePattern`
 ;; (llvm/lib/Target/X86/X86ISelDAGToDAG.cpp:3732) plus `foldLoadStoreIntoMemOperand`
 ;; (:3863), transposed to text:
 ;;   * the load's value has exactly one use, the op   -- guaranteed here by
 ;;     ADJACENCY: nothing sits between the load and the op, and the op reads %rX;
-;;   * the op's result has exactly one use, the store -- guaranteed by adjacency
-;;     plus the register-death scan below, which is the textual form of LLVM's
-;;     "the store is the only use";
+;;   * adjacency proves the store is the first consumer of the op result. The
+;;     bounded register-death scan chooses RMW-2's one-instruction form when it
+;;     is the only use; otherwise RMW-3 reloads the stored word into %rX before
+;;     any later use;
 ;;   * load and store name the SAME address -- byte-identical operand text, and
 ;;     both shapes are addressed by a register the triple cannot write (`%rip`
 ;;     is not writable; `%rsp`/`%rbp` are outside the allocator's tracked set, so
@@ -98392,11 +98395,11 @@
 ;; `movq %rX, %rY` (reload reuse from the register that mirrors the slot). That
 ;; rewrite is a genuine use of %rX, and it exists only in the emitted text.
 ;; Scanning the post-walk stream is what makes the death scan below see it and
-;; refuse; a rule that folded inside the walk would mint a read of a register
-;; that no longer holds the value. Recognition may run early because it only
-;; NAMES a window and decides nothing: the three records are re-read and
-;; re-checked here, and a candidate whose store the sweep proved dead -- or
-;; whose lines are no longer all live -- is dropped before any rewrite.
+;; choose RMW-3's reload; the later rewritten copy then reads the restored
+;; value. Recognition may run early because it only NAMES a window and decides
+;; nothing: the three records are re-read and re-checked here, and a candidate
+;; whose store the sweep proved dead -- or whose lines are no longer all live --
+;; is dropped before any rewrite.
 ;;
 ;; FOLD ORDER. Candidates are folded in a forward pass, and an earlier fold can
 ;; delete the very `movq M, %rX` a later candidate's death scan used as its kill
@@ -99013,11 +99016,12 @@
 ;; candidate's lines -- and if it somehow did, the liveness re-check below would
 ;; drop the later span rather than fold a rewritten line.
 ;;
-;; Everything the walk could not know is decided HERE, default-refuse: whether
+;; Everything the walk could not know is decided HERE: whether
 ;; the two neighbours are moves at all, whether the dead-frame-store sweep has
 ;; since killed one of the three lines, whether the two memory operands are one
 ;; of the two stable-address shapes and name the same address, whether the ALU
-;; source is admissible, and whether the register is dead after the store.
+;; source is admissible, and whether register death permits the one-instruction
+;; form or the result must be reloaded.
 (define (compiler-backend-peephole-rmw-fold-candidates!
   [backend-state : CompilerBackendState]
   [stream : CompilerBackendStreamState]

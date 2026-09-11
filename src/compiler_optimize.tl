@@ -169097,11 +169097,11 @@
   ;; most recent `Store G, v` wrote, while nothing since could have written
   ;; memory. It rides this map because it has exactly the map's lifetime: a
   ;; binding here says "var v addresses [G]+k", the cell says "[G] holds v",
-  ;; and both stop being true at the same instructions (every write arm, a
-  ;; call, an unprocessed back edge, a join whose sides disagree). A read of
-  ;; the cell right behind its own store -- `(set! g w)` followed by a use of
-  ;; `g` in the same block, cg-census-blocks' site weight -- then reads `w`
-  ;; instead of the cell. -1 / Unit when no cell is known.
+  ;; and both stop being true at the same instructions (every write arm, a call
+  ;; that may write the cell, an unprocessed back edge, or a join whose sides
+  ;; disagree). A read of the cell right behind its own store -- `(set! g w)`
+  ;; followed by a use of `g` in the same block, cg-census-blocks' site weight --
+  ;; then reads `w` instead of the cell. -1 / Unit when no cell is known.
   (cell i64)
   (cell-value ir.CompilerIrValue))
 
@@ -170673,8 +170673,10 @@
 ;; later re-derivation rebuilds its own `GlobalField` key from a fresh
 ;; `Global`/`GlobalAddr` operand, so a kept entry is only ever consulted under a
 ;; key the walk re-proved, exactly as before this arm existed.
-;; GSF-1: the known cell as a copy environment, so the whole-instruction
-;; substitution rewrites every `Global g` operand the instruction reads.
+;; GSF-1: the known cell as a copy environment. The dispatcher applies it to
+;; Mov and the pure/read/control-flow fallback; dedicated memory and direct-call
+;; arms keep their original operands while their specialized state transfers
+;; conservatively clear or filter the cell fact.
 (define (opt-load-cse-state-cell-env [state : OptLoadCseState]) : OptCopyEnv
   (match state
     [(OptLoadCseState.State _ _ _ _ _ bases _)
@@ -170685,9 +170687,9 @@
           (compiler-opt-global-shared-view bases.cell-value)
           (box (OptCopyEnv.Nil))))]))
 
-;; The instruction with every read of the known cell replaced by its contents.
-;; A phi is left alone: its inputs are the predecessors' values, not this
-;; block's.
+;; An eligible scalar/pure instruction with every read of the known cell
+;; replaced by its contents. A phi is left alone: its inputs are the
+;; predecessors' values, not this block's.
 (define (opt-load-cse-forward-cell
   [state : OptLoadCseState]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr

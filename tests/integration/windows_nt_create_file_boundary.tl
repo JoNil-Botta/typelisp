@@ -71,13 +71,13 @@
       (and
         (not
           (=
-            (io.io-win-write-file
-              _handle
-              (io.array-const-ptr bytes)
-              (cast 2 : i32)
-              (unsafe
-                (ptr-addr-of written))
-              0)
+            (unsafe
+              (io.io-win-write-file
+                _handle
+                (io.array-const-ptr bytes)
+                (cast 2 : i32)
+                (ptr-addr-of written)
+                0))
             (cast 0 : i32)))
         (= written (cast 2 : i32))))
     false))

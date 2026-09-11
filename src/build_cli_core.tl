@@ -6137,10 +6137,10 @@
       [stage : BuildPackageStagePaths
         (build-package-rollback-test-stage
           (owned_view.compiler-owned-shared-view root))]
-      [final : String
-        (build-package-rollback-test-path
-          (owned_view.compiler-owned-shared-view root)
-          "final")]
+      ;; Empty paths are explicitly invalid on both hosts, so this injects a
+      ;; deterministic removal failure without relying on directory unlink
+      ;; differences between Linux and Windows.
+      [final : String ""]
       [unused : String
         (build-package-rollback-test-path
           (owned_view.compiler-owned-shared-view root)
@@ -6150,36 +6150,32 @@
           (build-package-commit-plan-new)
           (owned_view.compiler-owned-shared-view final)
           (owned_view.compiler-owned-shared-view stage.asm))]
-      (begin
-        (build-package-rollback-test-expect-ok
-          (fs.try-mkdir (& final))
-          "build package rollback test mkdir removal collision")
-        (let
-          [rollback : BuildPackageRollbackDisposition
-            (build-package-commit-plan-rollback plan 1 0)]
-          (begin
-            (build-package-clean-stage-after-rollback
-              (owned_view.compiler-owned-shared-view stage)
-              (owned_view.compiler-owned-shared-view rollback))
-            (let
-              [needle : String
-                "rollback failed to remove installed package artifact"]
-              [ok : bool
-                (and
-                  (= rollback.len 0)
-                  (> (string.string-length rollback.errors) 0)
-                  (string.contains (& rollback.errors) (& needle))
-                  (not
-                    (build-package-rollback-recovery-required?
-                      (owned_view.compiler-owned-shared-view rollback)))
+      (let
+        [rollback : BuildPackageRollbackDisposition
+          (build-package-commit-plan-rollback plan 1 0)]
+        (begin
+          (build-package-clean-stage-after-rollback
+            (owned_view.compiler-owned-shared-view stage)
+            (owned_view.compiler-owned-shared-view rollback))
+          (let
+            [needle : String
+              "rollback failed to remove installed package artifact"]
+            [invalid-needle : String "io: invalid path"]
+            [ok : bool
+              (and
+                (= rollback.len 0)
+                (> (string.string-length rollback.errors) 0)
+                (string.contains (& rollback.errors) (& needle))
+                (string.contains (& rollback.errors) (& invalid-needle))
+                (not
+                  (build-package-rollback-recovery-required?
+                    (owned_view.compiler-owned-shared-view rollback)))
+                (not
                   (build-package-rollback-test-path-exists?
-                    (owned_view.compiler-owned-shared-view final))
-                  (not
-                    (build-package-rollback-test-path-exists?
-                      (owned_view.compiler-owned-shared-view stage.dir))))]
-              (begin
-                (build-package-rollback-test-clean root stage final unused)
-                ok))))))))
+                    (owned_view.compiler-owned-shared-view stage.dir))))]
+            (begin
+              (build-package-rollback-test-clean root stage final unused)
+              ok)))))))
 
 (cfg
   test

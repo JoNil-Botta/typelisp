@@ -35,6 +35,8 @@
 
 (include-str-lzss payload-format "../stdlib/format.tl")
 
+(include-str-lzss payload-format-writer-core "../stdlib/format_writer_core.tl")
+
 (include-str-lzss payload-hash "../stdlib/hash.tl")
 
 (include-str-lzss payload-hashmap "../stdlib/hashmap.tl")
@@ -169,6 +171,8 @@
       (compiler-embedded-stdlib-payload-copy payload-fs)]
     [(string.eq suffix "format.tl")
       (compiler-embedded-stdlib-payload-copy payload-format)]
+    [(string.eq suffix "format_writer_core.tl")
+      (compiler-embedded-stdlib-payload-copy payload-format-writer-core)]
     [(string.eq suffix "hash.tl")
       (compiler-embedded-stdlib-payload-copy payload-hash)]
     [(string.eq suffix "hashmap.tl")

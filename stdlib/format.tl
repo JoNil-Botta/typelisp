@@ -56,6 +56,7 @@
 ;# an unsafe call-site context. Nominal/aggregate Debug hooks and builders are a
 ;# separate layer over the public `DebugOptions` contract.
 (import stdlib.comptime)
+(import stdlib.format_writer_core)
 (import stdlib.str_cat)
 (import stdlib.string)
 
@@ -326,63 +327,85 @@
   (slots (__tl_dyn-array u8))
   (len i64))
 
-;: Copy bytes into the growable String sink addressed by `context`.
-(define (arguments-string-write-raw [context : i64] [data : String]) : i64
+;: Copy bytes into the growable String sink at raw `address`.
+;: The address must name a live, exclusively leased ArgumentsStringSink cell.
+(unsafe
+  (define (arguments-string-write-raw [address : i64] [data : String]) : i64
+    (let
+      [count : i64 (string.string-length (& data))]
+      (if (<= count 0)
+        0
+        (let
+          [slot : (MutPtr ArgumentsStringSink)
+            (unsafe
+              (int->ptr (cast address : u64) : (MutPtr ArgumentsStringSink)))]
+          [sink : ArgumentsStringSink
+            (unsafe
+              (ptr-read (ptr-cast slot : (Ptr ArgumentsStringSink))))]
+          [required : i64
+            (if (> sink.len (- 9223372036854775807 count))
+              (format-runtime-abort-string
+                "format: Arguments output length overflow")
+              (+ sink.len count))]
+          (begin
+            (if (> required (array-length sink.slots))
+              (let
+                [old-capacity : i64 (array-length sink.slots)]
+                [new-capacity : i64
+                  (if (< old-capacity 1)
+                    64
+                    old-capacity)]
+                (begin
+                  (while (< new-capacity required)
+                    (if (> new-capacity (/ 9223372036854775807 2))
+                      (set! new-capacity required)
+                      (set! new-capacity (* new-capacity 2))))
+                  (let
+                    [larger : (__tl_dyn-array u8)
+                      (__tl_make-array u8 new-capacity)]
+                    (begin
+                      (if (> sink.len 0)
+                        (string.str-copy-bytes-into
+                          (unsafe
+                            (ptr-cast (__tl_array-data sink.slots) : (Ptr u8)))
+                          (unsafe
+                            (__tl_array-data larger))
+                          0
+                          sink.len)
+                        unit)
+                      (set! sink.slots larger)))))
+              unit)
+            (string.str-copy-bytes-into
+              (unsafe
+                (string-data (& data)))
+              (unsafe
+                (__tl_array-data sink.slots))
+              sink.len
+              count)
+            (set! sink.len required)
+            (unsafe
+              (ptr-write! slot sink))
+            0))))))
+
+;: Validate and lease the internal Arguments String sink before raw access.
+;: This ordinary safe function may be retained as a formatter callback.
+(define (arguments-string-write-capability [context : i64] [data : String]) : i64
   (let
-    [count : i64 (string.string-length (& data))]
-    (if (<= count 0)
-      0
+    [address : i64
+      (unsafe
+        (format_writer_core.format-writer-acquire-address
+          context
+          (format_writer_core.format-writer-key ArgumentsStringSink)))]
+    (if (= address 0)
+      format_writer_core.invalid-context-status
       (let
-        [slot : (MutPtr ArgumentsStringSink)
+        [status : i64
           (unsafe
-            (int->ptr (cast context : u64) : (MutPtr ArgumentsStringSink)))]
-        [sink : ArgumentsStringSink
-          (unsafe
-            (ptr-read (ptr-cast slot : (Ptr ArgumentsStringSink))))]
-        [required : i64
-          (if (> sink.len (- 9223372036854775807 count))
-            (format-runtime-abort-string
-              "format: Arguments output length overflow")
-            (+ sink.len count))]
+            (arguments-string-write-raw address data))]
         (begin
-          (if (> required (array-length sink.slots))
-            (let
-              [old-capacity : i64 (array-length sink.slots)]
-              [new-capacity : i64
-                (if (< old-capacity 1)
-                  64
-                  old-capacity)]
-              (begin
-                (while (< new-capacity required)
-                  (if (> new-capacity (/ 9223372036854775807 2))
-                    (set! new-capacity required)
-                    (set! new-capacity (* new-capacity 2))))
-                (let
-                  [larger : (__tl_dyn-array u8)
-                    (__tl_make-array u8 new-capacity)]
-                  (begin
-                    (if (> sink.len 0)
-                      (string.str-copy-bytes-into
-                        (unsafe
-                          (ptr-cast (__tl_array-data sink.slots) : (Ptr u8)))
-                        (unsafe
-                          (__tl_array-data larger))
-                        0
-                        sink.len)
-                      unit)
-                    (set! sink.slots larger)))))
-            unit)
-          (string.str-copy-bytes-into
-            (unsafe
-              (string-data (& data)))
-            (unsafe
-              (__tl_array-data sink.slots))
-            sink.len
-            count)
-          (set! sink.len required)
           (unsafe
-            (ptr-write! slot sink))
-          0)))))
+            (format_writer_core.format-writer-release context))
+          status)))))
 
 ;: Construct a formatter backed by one concrete destination adapter.
 (define (formatter-writer [context : i64] [write-raw : (-> i64 String i64)]) : Formatter
@@ -426,43 +449,46 @@
 ;:
 ;: Writer macros use this opaque scalar address for their synchronous
 ;: caller-owned Formatter cell and recover the updated value afterward.
-(define (formatter-write-string-at! [address : i64] [text : String]) : unit
-  (let
-    [slot : (MutPtr Formatter)
-      (unsafe
-        (int->ptr (cast address : u64) : (MutPtr Formatter)))]
-    [formatter : Formatter
-      (unsafe
-        (ptr-read (ptr-cast slot : (Ptr Formatter))))]
-    (begin
-      (formatter-write-string! (&mut formatter) text)
-      (unsafe
-        (ptr-write! slot formatter)))))
+(unsafe
+  (define (formatter-write-string-at! [address : i64] [text : String]) : unit
+    (let
+      [slot : (MutPtr Formatter)
+        (unsafe
+          (int->ptr (cast address : u64) : (MutPtr Formatter)))]
+      [formatter : Formatter
+        (unsafe
+          (ptr-read (ptr-cast slot : (Ptr Formatter))))]
+      (begin
+        (formatter-write-string! (&mut formatter) text)
+        (unsafe
+          (ptr-write! slot formatter))))))
 
 ;: Read the result of the Formatter stored at `address`.
-(define (formatter-result-at [address : i64]) : FormatResult
-  (let
-    [slot : (Ptr Formatter)
-      (unsafe
-        (int->ptr (cast address : u64) : (Ptr Formatter)))]
-    [formatter : Formatter
-      (unsafe
-        (ptr-read slot))]
-    (formatter-result (& formatter))))
+(unsafe
+  (define (formatter-result-at [address : i64]) : FormatResult
+    (let
+      [slot : (Ptr Formatter)
+        (unsafe
+          (int->ptr (cast address : u64) : (Ptr Formatter)))]
+      [formatter : Formatter
+        (unsafe
+          (ptr-read slot))]
+      (formatter-result (& formatter)))))
 
 ;: Read the raw destination status stored at `address`.
 ;:
 ;: Immediate streaming plans return this scalar status before the public macro
 ;: converts it to `FormatResult`.
-(define (formatter-status-at [address : i64]) : i64
-  (let
-    [slot : (Ptr Formatter)
-      (unsafe
-        (int->ptr (cast address : u64) : (Ptr Formatter)))]
-    [formatter : Formatter
-      (unsafe
-        (ptr-read slot))]
-    formatter.status))
+(unsafe
+  (define (formatter-status-at [address : i64]) : i64
+    (let
+      [slot : (Ptr Formatter)
+        (unsafe
+          (int->ptr (cast address : u64) : (Ptr Formatter)))]
+      [formatter : Formatter
+        (unsafe
+          (ptr-read slot))]
+      formatter.status)))
 
 ;: Validate one runtime-provided width before allocation or arithmetic.
 (define (format-width-count-runtime [count : i64]) : i64
@@ -2248,10 +2274,16 @@
           (ptr->int
             (ptr-cast (__tl_array-data __tl_format_direct_sink_cell) : (Ptr u8)))
           : i64))]
+    [__tl_format_direct_sink_token : i64
+      (unsafe
+        (stdlib.format_writer_core.format-writer-register
+          __tl_format_direct_sink_address
+          (stdlib.format_writer_core.format-writer-key
+            stdlib.format.ArgumentsStringSink)))]
     [__tl_format_direct_formatter
       (stdlib.format.formatter-writer
-        __tl_format_direct_sink_address
-        stdlib.format.arguments-string-write-raw)]
+        __tl_format_direct_sink_token
+        stdlib.format.arguments-string-write-capability)]
     [__tl_format_direct_formatter_cell
       (stdlib.format.formatter-cell __tl_format_direct_formatter)]
     [__tl_format_direct_formatter_address : i64
@@ -2269,7 +2301,12 @@
         ,runtime-value
         ,hook)]
     [__tl_format_direct_status : i64
-      (stdlib.format.formatter-status-at __tl_format_direct_formatter_address)]
+      (unsafe
+        (stdlib.format.formatter-status-at __tl_format_direct_formatter_address))]
+    [__tl_format_direct_unregistered : unit
+      (unsafe
+        (stdlib.format_writer_core.format-writer-unregister
+          __tl_format_direct_sink_token))]
     [__tl_format_direct_finished (array-ref __tl_format_direct_sink_cell 0)]
     (if (!= __tl_format_direct_status 0)
       (stdlib.format.format-runtime-abort-string
@@ -2331,26 +2368,32 @@
             false)
           false)
         false)]
-    [fallback : comptime.Expr
+    [fallback-name : String
+      (comptime.syntax-name-fresh "__tl_format_stream_piece")]
+    [fallback-var : comptime.Expr (comptime.expr-var fallback-name)]
+    [fallback-value : comptime.Expr
+      `(stdlib.format.format-value-resolved
+        ,(comptime.type-expr source-type)
+        ,runtime-value
+        ,fill-expr
+        ,alignment-expr
+        ,sign-expr
+        ,alternate-expr
+        ,zero-expr
+        ,width-kind-expr
+        ,(comptime.type-expr width-source)
+        ,width-value
+        ,precision-kind-expr
+        ,(comptime.type-expr precision-source)
+        ,precision-value
+        ,selector-expr)]
+    [fallback-body : comptime.Expr
       `(begin
-        (stdlib.format.formatter-write-string-at!
-          ,address
-          (stdlib.format.format-value-resolved
-            ,(comptime.type-expr source-type)
-            ,runtime-value
-            ,fill-expr
-            ,alignment-expr
-            ,sign-expr
-            ,alternate-expr
-            ,zero-expr
-            ,width-kind-expr
-            ,(comptime.type-expr width-source)
-            ,width-value
-            ,precision-kind-expr
-            ,(comptime.type-expr precision-source)
-            ,precision-value
-            ,selector-expr))
+        (unsafe
+          (stdlib.format.formatter-write-string-at! ,address ,fallback-var))
         "")]
+    [fallback : comptime.Expr
+      (comptime.expr-let-scope fallback-name fallback-value fallback-body)]
     [direct : comptime.Expr
       `(stdlib.format.format-stream-value-at-default-resolved!
         ,(comptime.type-expr source-type)
@@ -2444,26 +2487,32 @@
         (if qualified-present?
           2
           0))]
-    [fallback : comptime.Expr
-      `(begin
-        (stdlib.format.formatter-write-string-at!
-          ,address
-          (stdlib.format.format-value-resolved
-            ,(comptime.type-expr source-type)
-            ,runtime-value
-            32
-            0
-            0
-            0
-            0
-            0
-            ,(comptime.type-expr source-type)
-            0
-            0
-            ,(comptime.type-expr source-type)
-            0
-            ""))
+    [fallback-name : String
+      (comptime.syntax-name-fresh "__tl_format_direct_piece")]
+    [fallback-var : comptime.Expr (comptime.expr-var fallback-name)]
+    [fallback-value : comptime.Expr
+      `(stdlib.format.format-value-resolved
+        ,(comptime.type-expr source-type)
+        ,runtime-value
+        32
+        0
+        0
+        0
+        0
+        0
+        ,(comptime.type-expr source-type)
+        0
+        0
+        ,(comptime.type-expr source-type)
+        0
         "")]
+    [fallback-body : comptime.Expr
+      `(begin
+        (unsafe
+          (stdlib.format.formatter-write-string-at! ,address ,fallback-var))
+        "")]
+    [fallback : comptime.Expr
+      (comptime.expr-let-scope fallback-name fallback-value fallback-body)]
     (match dispatch
       [3
         (comptime.comptime-error
@@ -2530,26 +2579,32 @@
           "arguments-borrowed"
           "arguments")
         raw-value-kind)]
-    [fallback : comptime.Expr
+    [fallback-name : String
+      (comptime.syntax-name-fresh "__tl_format_default_piece")]
+    [fallback-var : comptime.Expr (comptime.expr-var fallback-name)]
+    [fallback-value : comptime.Expr
+      `(stdlib.format.format-value-resolved
+        ,(comptime.type-expr source-type)
+        ,runtime-value
+        ,fill-expr
+        ,alignment-expr
+        ,sign-expr
+        ,alternate-expr
+        ,zero-expr
+        ,width-kind-expr
+        ,(comptime.type-expr width-source)
+        ,width-value
+        ,precision-kind-expr
+        ,(comptime.type-expr precision-source)
+        ,precision-value
+        ,selector-expr)]
+    [fallback-body : comptime.Expr
       `(begin
-        (stdlib.format.formatter-write-string-at!
-          ,address
-          (stdlib.format.format-value-resolved
-            ,(comptime.type-expr source-type)
-            ,runtime-value
-            ,fill-expr
-            ,alignment-expr
-            ,sign-expr
-            ,alternate-expr
-            ,zero-expr
-            ,width-kind-expr
-            ,(comptime.type-expr width-source)
-            ,width-value
-            ,precision-kind-expr
-            ,(comptime.type-expr precision-source)
-            ,precision-value
-            ,selector-expr))
+        (unsafe
+          (stdlib.format.formatter-write-string-at! ,address ,fallback-var))
         "")]
+    [fallback : comptime.Expr
+      (comptime.expr-let-scope fallback-name fallback-value fallback-body)]
     (match value-kind
       ["arguments"
         `(begin
@@ -5202,25 +5257,41 @@
                                                 1)]
                                             (begin
                                               (while (>= write-index 0)
-                                                (begin
-                                                  (set!
-                                                    write-items
-                                                    (comptime.expr-list-cons
-                                                      `(stdlib.format.formatter-write-string-at!
+                                                (let
+                                                  [write-name : String
+                                                    (comptime.syntax-name-fresh
+                                                      "__tl_format_stream_piece")]
+                                                  [write-var : comptime.Expr
+                                                    (comptime.expr-var
+                                                      write-name)]
+                                                  [write-value : comptime.Expr
+                                                    (comptime.expr-list-nth
+                                                      output
+                                                      write-index)]
+                                                  [write-body : comptime.Expr
+                                                    `(unsafe
+                                                      (stdlib.format.formatter-write-string-at!
                                                         ,stream-address
-                                                        ,(comptime.expr-list-nth
-                                                          output
-                                                          write-index))
-                                                      write-items))
-                                                  (set!
-                                                    write-index
-                                                    (- write-index 1))))
+                                                        ,write-var))]
+                                                  (begin
+                                                    (set!
+                                                      write-items
+                                                      (comptime.expr-list-cons
+                                                        (comptime.expr-let-scope
+                                                          write-name
+                                                          write-value
+                                                          write-body)
+                                                        write-items))
+                                                    (set!
+                                                      write-index
+                                                      (- write-index 1)))))
                                               (set!
                                                 result
                                                 `(begin
                                                   ,@write-items
-                                                  (stdlib.format.formatter-status-at
-                                                    ,stream-address)))
+                                                  (unsafe
+                                                    (stdlib.format.formatter-status-at
+                                                      ,stream-address))))
                                               ;; Captures are reverse template
                                               ;; order; supplied bindings are
                                               ;; forward source order. The letter
@@ -7218,10 +7289,16 @@
                   (__tl_array-data __tl_format_arguments_sink_cell)
                   : (Ptr u8)))
               : i64))]
+        [__tl_format_arguments_sink_token : i64
+          (unsafe
+            (stdlib.format_writer_core.format-writer-register
+              __tl_format_arguments_sink_address
+              (stdlib.format_writer_core.format-writer-key
+                stdlib.format.ArgumentsStringSink)))]
         [__tl_format_arguments_formatter
           (stdlib.format.formatter-writer
-            __tl_format_arguments_sink_address
-            stdlib.format.arguments-string-write-raw)]
+            __tl_format_arguments_sink_token
+            stdlib.format.arguments-string-write-capability)]
         [__tl_format_arguments_formatter_cell
           (stdlib.format.formatter-cell __tl_format_arguments_formatter)]
         [__tl_format_arguments_formatter_address : i64
@@ -7236,6 +7313,10 @@
           (stdlib.format.format-arguments-render-at!
             ,value
             __tl_format_arguments_formatter_address)]
+        [__tl_format_arguments_unregistered : unit
+          (unsafe
+            (stdlib.format_writer_core.format-writer-unregister
+              __tl_format_arguments_sink_token))]
         [__tl_format_arguments_finished
           (array-ref __tl_format_arguments_sink_cell 0)]
         (if (!= __tl_format_arguments_status 0)
@@ -7303,13 +7384,15 @@
                 (begin
                   (if (!= ,newline 0)
                     (if (= __tl_format_stream_status 0)
-                      (stdlib.format.formatter-write-string-at!
-                        __tl_format_stream_formatter_address
-                        "\n")
+                      (unsafe
+                        (stdlib.format.formatter-write-string-at!
+                          __tl_format_stream_formatter_address
+                          "\n"))
                       unit)
                     unit)
-                  (stdlib.format.formatter-result-at
-                    __tl_format_stream_formatter_address)))]
+                  (unsafe
+                    (stdlib.format.formatter-result-at
+                      __tl_format_stream_formatter_address))))]
             (comptime.expr-shared-let-scope name template body))
           `(stdlib.format.format-write-literal-callback
             ,template
@@ -7390,12 +7473,14 @@
     (begin
       (if (!= ,newline 0)
         (if (= __tl_format_stream_status 0)
-          (stdlib.format.formatter-write-string-at!
-            __tl_format_stream_formatter_address
-            "\n")
+          (unsafe
+            (stdlib.format.formatter-write-string-at!
+              __tl_format_stream_formatter_address
+              "\n"))
           unit)
         unit)
-      (stdlib.format.formatter-result-at __tl_format_stream_formatter_address))))
+      (unsafe
+        (stdlib.format.formatter-result-at __tl_format_stream_formatter_address)))))
 
 ;: Resolve one concrete writer's canonical raw Formatter adapter.
 (defmacro (format-write-expand
@@ -7459,6 +7544,23 @@
             (comptime.string-append "format-writer-context-" nominal-name)
             "format-writer-context")]
         [context-present? : bool (comptime.module-value? owner context-name)]
+        [capability-name : String
+          (if (= dispatch 2)
+            (comptime.string-append "format-write-capability-" nominal-name)
+            "format-write-capability")]
+        [capability-present? : bool
+          (comptime.module-value? owner capability-name)]
+        [capability-matches? : bool
+          (if capability-present?
+            (string.eq
+              (type-key (comptime.module-value-type owner capability-name))
+              (type-key expected-signature))
+            false)]
+        [writer-key : String
+          (comptime.string-append
+            (comptime.string-append owner "/")
+            nominal-name)]
+        [writer-key-expr : comptime.Expr (comptime.expr-string writer-key)]
         [hook : comptime.Expr
           (match dispatch
             [1 (comptime.module-value-expr owner plain-name)]
@@ -7499,6 +7601,18 @@
                   (comptime.string-append
                     "format: writer cell adapter is missing from canonical module "
                     owner)))]
+            [capability-hook : comptime.Expr
+              (if capability-matches?
+                (comptime.module-value-expr owner capability-name)
+                (if capability-present?
+                  (comptime.comptime-error
+                    (comptime.string-append
+                      "format: writer capability adapter has wrong signature in canonical module "
+                      owner))
+                  (comptime.comptime-error
+                    (comptime.string-append
+                      "format: writer capability adapter is missing from canonical module "
+                      owner))))]
             `(let
               [__tl_format_writer_cell (,cell-hook ,writer)]
               [__tl_format_writer_address : i64
@@ -7509,13 +7623,22 @@
                         (__tl_array-data __tl_format_writer_cell)
                         : (Ptr u8)))
                     : i64))]
+              [__tl_format_writer_token : i64
+                (unsafe
+                  (stdlib.format_writer_core.format-writer-register
+                    __tl_format_writer_address
+                    ,writer-key-expr))]
               [__tl_format_writer_result
                 (stdlib.format.format-write-callback-dispatch
                   ,template
                   ,argument-carrier
-                  __tl_format_writer_address
-                  ,hook
+                  __tl_format_writer_token
+                  ,capability-hook
                   ,newline)]
+              [__tl_format_writer_unregistered : unit
+                (unsafe
+                  (stdlib.format_writer_core.format-writer-unregister
+                    __tl_format_writer_token))]
               (begin
                 (set! ,writer (array-ref __tl_format_writer_cell 0))
                 __tl_format_writer_result)))))

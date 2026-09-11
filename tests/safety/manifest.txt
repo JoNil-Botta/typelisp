@@ -274,6 +274,18 @@ runtime_atomic_i32_callable_launder_reject|check-fail|tests/safety/runtime_atomi
 runtime_atomic_raw_unsafe_call_ok|check-ok|tests/safety/runtime_atomic_raw_unsafe_call_ok.tl|-|-
 runtime_atomic_safe_owner_ok|check-ok|tests/safety/runtime_atomic_safe_owner_ok.tl|-|-
 sync_atomic_raw_alias_safe_reject|check-fail|tests/safety/sync_atomic_raw_alias_safe_reject.tl|-|sync/atomic-i64-load-ptr requires unsafe context
+format_byte_buf_raw_safe_reject|check-fail|tests/safety/format_byte_buf_raw_safe_reject.tl|-|byte_buf/format-write-raw requires unsafe context
+format_text_buf_raw_safe_reject|check-fail|tests/safety/format_text_buf_raw_safe_reject.tl|-|text_buf/format-write-raw requires unsafe context
+format_arguments_raw_safe_reject|check-fail|tests/safety/format_arguments_raw_safe_reject.tl|-|format/arguments-string-write-raw requires unsafe context
+format_formatter_write_at_safe_reject|check-fail|tests/safety/format_formatter_write_at_safe_reject.tl|-|format/formatter-write-string-at! requires unsafe context
+format_formatter_result_at_safe_reject|check-fail|tests/safety/format_formatter_result_at_safe_reject.tl|-|format/formatter-result-at requires unsafe context
+format_formatter_status_at_safe_reject|check-fail|tests/safety/format_formatter_status_at_safe_reject.tl|-|format/formatter-status-at requires unsafe context
+format_raw_helper_callable_launder_reject|check-fail|tests/safety/format_raw_helper_callable_launder_reject.tl|-|byte_buf/format-write-raw is an unsafe callable and cannot be used as a plain function value
+format_raw_helper_unsafe_call_ok|check-ok|tests/safety/format_raw_helper_unsafe_call_ok.tl|-|-
+format_capability_callback_value_ok|check-ok|tests/safety/format_capability_callback_value_ok.tl|-|-
+format_writer_missing_capability_reject|check-fail|tests/safety/format_writer_missing_capability_reject.tl|-|format: writer capability adapter is missing from canonical module
+format_registry_state_safe_reject|check-fail|tests/safety/format_registry_state_safe_reject.tl|-|ptr-write! requires unsafe context
+format_registry_register_safe_reject|check-fail|tests/safety/format_registry_register_safe_reject.tl|-|format_writer_core/format-writer-register requires unsafe context
 fs_rooted_linux_state_read_reject|check-fail|tests/safety/fs_rooted_linux_state_read_reject.tl|-|linux-rooted-state-read requires unsafe context
 fs_rooted_linux_raw_close_reject|check-fail|tests/safety/fs_rooted_linux_raw_close_reject.tl|-|linux-rooted-raw-close requires unsafe context
 fs_rooted_linux_capability_copy_reject|check-fail|tests/safety/fs_rooted_linux_capability_copy_reject.tl|-|cleanup-required resource already has a cleanup owner

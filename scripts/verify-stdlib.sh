@@ -222,6 +222,7 @@ cpu.tl
 fs.tl
 fs_rooted_linux.tl
 format.tl
+format_writer_core.tl
 ffi.tl
 hash.tl
 hashmap.tl

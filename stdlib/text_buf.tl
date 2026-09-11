@@ -33,6 +33,7 @@
 
 ;; lint-allow: unused-import
 (import stdlib.byte_buf)
+(import stdlib.format_writer_core)
 (import stdlib.comptime)
 
 ;; lint-allow: unused-import
@@ -65,7 +66,7 @@
 (defmacro (reset! [buf : comptime.Expr]) : unit
   `(clear-ref! (&mut ,buf)))
 
-;: Raw Formatter destination adapter for a caller-owned TextBuf cell.
+;: Place one TextBuf in fixed caller-owned storage for formatter registration.
 ;:
 ;: TextBuf retains chunks, so this adapter copies each callback range into the
 ;: active arena. It never constructs the final combined text; `render` remains
@@ -73,34 +74,55 @@
 (define (format-writer-cell [buf : TextBuf]) : (Array TextBuf 1)
   (array buf))
 
-;: Append one bounded callback value to the TextBuf stored at `context`.
+;: Append one bounded callback value to the TextBuf stored at raw `address`.
 ;:
-;: The callback retains the owned value and updates the caller-owned cell.
-(define (format-write-raw [context : i64] [data : String]) : i64
-  (let
-    [count : i64 (string.string-length (& data))]
-    [slot : (MutPtr TextBuf)
-      (unsafe
-        (int->ptr (cast context : u64) : (MutPtr TextBuf)))]
-    [buf : TextBuf
-      (unsafe
-        (ptr-read (ptr-cast slot : (Ptr TextBuf))))]
-    [storage : (MutPtr u8) (string.string-runtime-alloc count)]
-    [chunk : String
-      (begin
-        (string.str-copy-bytes-into
-          (unsafe
-            (string-data (& data)))
-          storage
-          0
-          count)
+;: The address must name a live, exclusively leased TextBuf cell.
+(unsafe
+  (define (format-write-raw [address : i64] [data : String]) : i64
+    (let
+      [count : i64 (string.string-length (& data))]
+      [slot : (MutPtr TextBuf)
         (unsafe
-          (string-from-bytes (ptr-cast storage : (Ptr u8)) count)))]
-    [next : TextBuf (append buf chunk)]
-    (begin
+          (int->ptr (cast address : u64) : (MutPtr TextBuf)))]
+      [buf : TextBuf
+        (unsafe
+          (ptr-read (ptr-cast slot : (Ptr TextBuf))))]
+      [storage : (MutPtr u8) (string.string-runtime-alloc count)]
+      [chunk : String
+        (begin
+          (string.str-copy-bytes-into
+            (unsafe
+              (string-data (& data)))
+            storage
+            0
+            count)
+          (unsafe
+            (string-from-bytes (ptr-cast storage : (Ptr u8)) count)))]
+      [next : TextBuf (append buf chunk)]
+      (begin
+        (unsafe
+          (ptr-write! slot next))
+        0))))
+
+;: Validate and lease one TextBuf writer capability before raw cell access.
+;: This ordinary safe function may be retained as a formatter callback.
+(define (format-write-capability [context : i64] [data : String]) : i64
+  (let
+    [address : i64
       (unsafe
-        (ptr-write! slot next))
-      0)))
+        (format_writer_core.format-writer-acquire-address
+          context
+          (format_writer_core.format-writer-key TextBuf)))]
+    (if (= address 0)
+      format_writer_core.invalid-context-status
+      (let
+        [status : i64
+          (unsafe
+            (format-write-raw address data))]
+        (begin
+          (unsafe
+            (format_writer_core.format-writer-release context))
+          status)))))
 
 (test
   text-buf-scoped-arena-render-policy

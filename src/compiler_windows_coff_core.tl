@@ -28,9 +28,14 @@
   (Some String))
 
 (defenum ResultCompilerWindowsBatchArtifact
-  (CoffObject String CompilerWindowsBatchSideAssembly)
-  (Assembly text_buf.TextBuf String)
-  (Err (Box compiler_diagnostic.CompilerDiagnostic)))
+  (CoffObject
+    String
+    CompilerWindowsBatchSideAssembly
+    compiler_diagnostic.CompilerAdvisoryList)
+  (Assembly text_buf.TextBuf String compiler_diagnostic.CompilerAdvisoryList)
+  (Err
+    (Box compiler_diagnostic.CompilerDiagnostic)
+    compiler_diagnostic.CompilerAdvisoryList))
 
 (define (compiler-windows-coff-extern-linkable?
   [name : String]
@@ -189,7 +194,11 @@
           (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
             typecheck-state
             "backend.assembly")
-          (ResultCompilerWindowsBatchArtifact.Assembly asm category))]
+          (ResultCompilerWindowsBatchArtifact.Assembly
+            asm
+            category
+            (compiler_driver_core.compiler-driver-advisories-for-job
+              typecheck-state)))]
       [(compiler_backend.ResultCompilerBackendBuffer.Err diag)
         (begin
           (cfg
@@ -201,7 +210,9 @@
             typecheck-state
             "backend.assembly-error")
           (ResultCompilerWindowsBatchArtifact.Err
-            (compiler-windows-batch-backend-diagnostic input-path diag)))])))
+            (compiler-windows-batch-backend-diagnostic input-path diag)
+            (compiler_driver_core.compiler-driver-advisories-for-job
+              typecheck-state)))])))
 
 (define (compiler-windows-coff-object-program-eligibility
   [backend-state : compiler_backend.CompilerBackendState]
@@ -310,7 +321,9 @@
                                     asm)
                                   (ResultCompilerWindowsBatchArtifact.CoffObject
                                     object
-                                    (CompilerWindowsBatchSideAssembly.Some asm))]
+                                    (CompilerWindowsBatchSideAssembly.Some asm)
+                                    (compiler_driver_core.compiler-driver-advisories-for-job
+                                      typecheck-state))]
                                 [(compiler_object_asm.ResultCompilerObjectAsm.Err
                                     message)
                                   (ResultCompilerWindowsBatchArtifact.Err
@@ -318,10 +331,14 @@
                                       input-path
                                       (str_cat.str-cat
                                         "assembly side artifact rendering failed: "
-                                        message)))])
+                                        message))
+                                    (compiler_driver_core.compiler-driver-advisories-for-job
+                                      typecheck-state))])
                               (ResultCompilerWindowsBatchArtifact.CoffObject
                                 object
-                                CompilerWindowsBatchSideAssembly.None)))]
+                                CompilerWindowsBatchSideAssembly.None
+                                (compiler_driver_core.compiler-driver-advisories-for-job
+                                  typecheck-state))))]
                         [(compiler_object_coff.ResultCompilerObjectCoff.Err
                             message)
                           (begin
@@ -336,7 +353,9 @@
                                 input-path
                                 (str_cat.str-cat
                                   "COFF serialization failed: "
-                                  message))))]))]
+                                  message))
+                              (compiler_driver_core.compiler-driver-advisories-for-job
+                                typecheck-state)))]))]
                   [(CompilerWindowsCoffLinkability.Unavailable category)
                     (compiler-windows-batch-emit-assembly
                       backend-state
@@ -360,7 +379,9 @@
                   typecheck-state
                   "backend.object-image-error")
                 (ResultCompilerWindowsBatchArtifact.Err
-                  (compiler-windows-batch-backend-diagnostic input-path diag)))]))])))
+                  (compiler-windows-batch-backend-diagnostic input-path diag)
+                  (compiler_driver_core.compiler-driver-advisories-for-job
+                    typecheck-state)))]))])))
 
 (define (compiler-windows-batch-emit-lowered
   [backend-state : compiler_backend.CompilerBackendState]
@@ -378,7 +399,8 @@
     (ResultCompilerWindowsBatchArtifact.Err
       (box
         (compiler_driver_core.compiler-driver-ty-node-pool-exhausted-diagnostic
-          input-path)))
+          input-path))
+      (compiler_driver_core.compiler-driver-advisories-for-job typecheck-state))
     (begin
       (compiler_driver_core.compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
@@ -387,12 +409,13 @@
         compile-profile
         (compiler_driver_core.compiler-driver-profile-start-phase
           (profile_state.compiler-profile-state-shared-view profile-state)))
-      (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state
+      (match (compiler_optimize.optimize-program-with-spans-and-pools-and-level-and-profile-state-and-advisory-sink
         (owned_view.compiler-owned-shared-view pools)
         (owned_view.compiler-owned-shared-view program)
         (owned_view.compiler-owned-shared-view spans)
         opt-level
-        (profile_state.compiler-profile-state-shared-view profile-state))
+        (profile_state.compiler-profile-state-shared-view profile-state)
+        (compiler_typecheck_core.tc-job-state-advisory-sink typecheck-state))
         [(compiler_optimize.CompilerOptimizedProgram.Program
             optimized
             optimized-spans)
@@ -410,7 +433,9 @@
               (ResultCompilerWindowsBatchArtifact.Err
                 (box
                   (compiler_driver_core.compiler-driver-ty-node-pool-exhausted-diagnostic
-                    input-path)))
+                    input-path))
+                (compiler_driver_core.compiler-driver-advisories-for-job
+                  typecheck-state))
               (begin
                 (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
                   backend-state
@@ -481,10 +506,10 @@
           (compiler_ast_types.ast-node-pool-reader-clear!)
           (compiler_driver_core.compiler-driver-restore-frontend-return-arena!)
           out))]
-    [(compiler_driver_core.ResultCompilerDriverLowered.Err diag)
+    [(compiler_driver_core.ResultCompilerDriverLowered.Err diag advisories)
       (begin
         (compiler_driver_core.compiler-driver-restore-frontend-return-arena!)
-        (ResultCompilerWindowsBatchArtifact.Err diag))]))
+        (ResultCompilerWindowsBatchArtifact.Err diag advisories))]))
 
 (define (compiler-windows-batch-state-emit-file
   [state : compiler_driver_core.CompilerDriverState]

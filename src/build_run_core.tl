@@ -852,13 +852,19 @@
         mode
         cfgs
         (source-tool-linux-crt-entry? target link-inputs))
-        [(compiler_driver_core.ResultCompilerDriver.Ok asm)
-          (ResultSourceToolString.Ok
-            (source-tool-augment-assembly-for-target asm target))]
-        [(compiler_driver_core.ResultCompilerDriver.Err diag)
-          (ResultSourceToolString.Err
-            (compiler_driver_core.compiler-driver-render-source-diagnostic
-              (owned_view.compiler-owned-box-shared-view diag)))])]))
+        [(compiler_driver_core.ResultCompilerDriver.Ok asm advisories)
+          (begin
+            (compiler_driver_core.compiler-driver-print-advisories
+              (& advisories))
+            (ResultSourceToolString.Ok
+              (source-tool-augment-assembly-for-target asm target)))]
+        [(compiler_driver_core.ResultCompilerDriver.Err diag advisories)
+          (begin
+            (compiler_driver_core.compiler-driver-print-advisories
+              (& advisories))
+            (ResultSourceToolString.Err
+              (compiler_driver_core.compiler-driver-render-source-diagnostic
+                (owned_view.compiler-owned-box-shared-view diag))))])]))
 
 (define (source-tool-linux-direct-object-env-name) : String
   "TYPELISP_LINUX_DIRECT_OBJECT")
@@ -952,15 +958,26 @@
             mode
             cfgs
             (source-tool-linux-crt-entry? target link-inputs))
-            [(compiler_driver_core.ResultCompilerDriverObject.Ok image)
-              (source-tool-render-linkable-linux-elf-object image)]
+            [(compiler_driver_core.ResultCompilerDriverObject.Ok
+                image
+                advisories)
+              (begin
+                (compiler_driver_core.compiler-driver-print-advisories
+                  (& advisories))
+                (source-tool-render-linkable-linux-elf-object image))]
             [(compiler_driver_core.ResultCompilerDriverObject.Unavailable
-                category)
+                category
+                _)
               (ResultSourceToolString.Err category)]
-            [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
-              (ResultSourceToolString.Err
-                (compiler_driver_core.compiler-driver-render-source-diagnostic
-                  (owned_view.compiler-owned-box-shared-view diag)))])])]
+            [(compiler_driver_core.ResultCompilerDriverObject.Err
+                diag
+                advisories)
+              (begin
+                (compiler_driver_core.compiler-driver-print-advisories
+                  (& advisories))
+                (ResultSourceToolString.Err
+                  (compiler_driver_core.compiler-driver-render-source-diagnostic
+                    (owned_view.compiler-owned-box-shared-view diag))))])])]
     [(backend.CompilerBackendTarget.Windows)
       (ResultSourceToolString.Err
         "direct ELF object emission is only available for linux-x86_64")]))
@@ -985,14 +1002,22 @@
         opt-level
         true
         (source-tool-linux-crt-entry? target link-inputs))
-        [(compiler_driver_core.ResultCompilerDriverObject.Ok image)
-          (source-tool-render-linkable-linux-elf-object image)]
-        [(compiler_driver_core.ResultCompilerDriverObject.Unavailable category)
+        [(compiler_driver_core.ResultCompilerDriverObject.Ok image advisories)
+          (begin
+            (compiler_driver_core.compiler-driver-print-advisories
+              (& advisories))
+            (source-tool-render-linkable-linux-elf-object image))]
+        [(compiler_driver_core.ResultCompilerDriverObject.Unavailable
+            category
+            _)
           (ResultSourceToolString.Err category)]
-        [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
-          (ResultSourceToolString.Err
-            (compiler_driver_core.compiler-driver-render-source-diagnostic
-              (owned_view.compiler-owned-box-shared-view diag)))])]
+        [(compiler_driver_core.ResultCompilerDriverObject.Err diag advisories)
+          (begin
+            (compiler_driver_core.compiler-driver-print-advisories
+              (& advisories))
+            (ResultSourceToolString.Err
+              (compiler_driver_core.compiler-driver-render-source-diagnostic
+                (owned_view.compiler-owned-box-shared-view diag))))])]
     [(backend.CompilerBackendTarget.Windows)
       (ResultSourceToolString.Err
         "direct ELF object emission is only available for linux-x86_64")]))
@@ -1060,15 +1085,26 @@
             mode
             cfgs
             (source-tool-linux-crt-entry? target link-inputs))
-            [(compiler_driver_core.ResultCompilerDriverObject.Ok image)
-              (source-tool-render-linkable-windows-coff-object image)]
+            [(compiler_driver_core.ResultCompilerDriverObject.Ok
+                image
+                advisories)
+              (begin
+                (compiler_driver_core.compiler-driver-print-advisories
+                  (& advisories))
+                (source-tool-render-linkable-windows-coff-object image))]
             [(compiler_driver_core.ResultCompilerDriverObject.Unavailable
-                category)
+                category
+                _)
               (ResultSourceToolString.Err category)]
-            [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
-              (ResultSourceToolString.Err
-                (compiler_driver_core.compiler-driver-render-source-diagnostic
-                  (owned_view.compiler-owned-box-shared-view diag)))])])]))
+            [(compiler_driver_core.ResultCompilerDriverObject.Err
+                diag
+                advisories)
+              (begin
+                (compiler_driver_core.compiler-driver-print-advisories
+                  (& advisories))
+                (ResultSourceToolString.Err
+                  (compiler_driver_core.compiler-driver-render-source-diagnostic
+                    (owned_view.compiler-owned-box-shared-view diag))))])])]))
 
 (define (source-tool-emit-lowered-windows-coff-object
   [source : String]
@@ -1092,14 +1128,22 @@
         opt-level
         true
         false)
-        [(compiler_driver_core.ResultCompilerDriverObject.Ok image)
-          (source-tool-render-linkable-windows-coff-object image)]
-        [(compiler_driver_core.ResultCompilerDriverObject.Unavailable category)
+        [(compiler_driver_core.ResultCompilerDriverObject.Ok image advisories)
+          (begin
+            (compiler_driver_core.compiler-driver-print-advisories
+              (& advisories))
+            (source-tool-render-linkable-windows-coff-object image))]
+        [(compiler_driver_core.ResultCompilerDriverObject.Unavailable
+            category
+            _)
           (ResultSourceToolString.Err category)]
-        [(compiler_driver_core.ResultCompilerDriverObject.Err diag)
-          (ResultSourceToolString.Err
-            (compiler_driver_core.compiler-driver-render-source-diagnostic
-              (owned_view.compiler-owned-box-shared-view diag)))])]))
+        [(compiler_driver_core.ResultCompilerDriverObject.Err diag advisories)
+          (begin
+            (compiler_driver_core.compiler-driver-print-advisories
+              (& advisories))
+            (ResultSourceToolString.Err
+              (compiler_driver_core.compiler-driver-render-source-diagnostic
+                (owned_view.compiler-owned-box-shared-view diag))))])]))
 
 (define (source-tool-noexecstack-note) : String
   "
@@ -2083,19 +2127,25 @@
             target
             true
             opt-level)
-            [(compiler_driver_core.ResultCompilerDriver.Ok asm)
-              (source-tool-write-assembly-and-link
-                target
-                asm-path
-                obj-path
-                bin-path
-                link-inputs
-                (source-tool-augment-assembly-for-target asm target)
-                write-context)]
-            [(compiler_driver_core.ResultCompilerDriver.Err diag)
-              (SourceToolCommandStatus.Err
-                (compiler_driver_core.compiler-driver-render-source-diagnostic
-                  (owned_view.compiler-owned-box-shared-view diag)))])])]))
+            [(compiler_driver_core.ResultCompilerDriver.Ok asm advisories)
+              (begin
+                (compiler_driver_core.compiler-driver-print-advisories
+                  (& advisories))
+                (source-tool-write-assembly-and-link
+                  target
+                  asm-path
+                  obj-path
+                  bin-path
+                  link-inputs
+                  (source-tool-augment-assembly-for-target asm target)
+                  write-context))]
+            [(compiler_driver_core.ResultCompilerDriver.Err diag advisories)
+              (begin
+                (compiler_driver_core.compiler-driver-print-advisories
+                  (& advisories))
+                (SourceToolCommandStatus.Err
+                  (compiler_driver_core.compiler-driver-render-source-diagnostic
+                    (owned_view.compiler-owned-box-shared-view diag))))])])]))
 
 (define (source-tool-build-source-in-temp
   [source : String]

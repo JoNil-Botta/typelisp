@@ -1098,7 +1098,10 @@
   (inline-aggregate-globals backend_i64_i64_map.Map)
   ;; Append-only per-emission capability. Prepared entrypoints replace this
   ;; value before use, so a long-lived backend owner may emit another target.
-  (emission-target-policy CompilerBackendTargetPolicy))
+  (emission-target-policy CompilerBackendTargetPolicy)
+  ;; Shared with semantic/lowering/optimizer work by the owning driver. The
+  ;; diagnostic module gives its payloads an independently resettable arena.
+  (advisory-sink compiler_diagnostic.CompilerAdvisorySink))
 
 (defstruct CompilerBackendState
   (address i64))
@@ -1163,7 +1166,8 @@
           0
           metrics
           (backend_i64_i64_map.with-capacity 1)
-          (compiler-backend-target-policy-new CompilerBackendTarget.Linux)))
+          (compiler-backend-target-policy-new CompilerBackendTarget.Linux)
+          (compiler_diagnostic.compiler-advisory-sink-new)))
       (CompilerBackendState
         (cast
           (unsafe
@@ -1267,6 +1271,27 @@
 
 (define (compiler-backend-state-metrics [state : CompilerBackendState]) : profile_state.CompilerProfileMetrics
   (__tl-project-field (compiler-backend-state-data state) metrics))
+
+(define (compiler-backend-state-advisory-sink [state : CompilerBackendState]) : compiler_diagnostic.CompilerAdvisorySink
+  (__tl-project-field (compiler-backend-state-data state) advisory-sink))
+
+(define (compiler-backend-state-set-advisory-sink!
+  [state : CompilerBackendState]
+  [sink : compiler_diagnostic.CompilerAdvisorySink]) : unit
+  (let
+    [data : CompilerBackendStateData (compiler-backend-state-data state)]
+    (begin
+      (set! data.advisory-sink sink)
+      (compiler-backend-state-data-set! state data))))
+
+(define (compiler-backend-state-add-advisory!
+  [state : CompilerBackendState]
+  [phase : compiler_diagnostic.CompilerAdvisoryPhase]
+  [diagnostic : (& diagnostic compiler_diagnostic.CompilerDiagnostic)]) : bool
+  (compiler_diagnostic.compiler-advisory-sink-push!
+    (compiler-backend-state-advisory-sink state)
+    phase
+    diagnostic))
 
 (define (compiler-backend-state-set-metrics!
   [state : CompilerBackendState]
@@ -81452,32 +81477,40 @@
         [reg-plan : compiler_regalloc.CompilerRegPlan
           (if (compiler-backend-mode-scalar? mode)
             (if scalar-registers-enabled
-              (compiler_regalloc.compiler-reg-plan-function-scalar-cold-with-type-segment-bases-for-abi-with-types
+              (compiler_regalloc.compiler-reg-plan-function-scalar-cold-with-type-segment-bases-for-abi-with-types-and-advisory-sink
                 type-segment-bases
                 fn-abi
                 (compiler-backend-global-shared-view walk-func)
                 cold-call-temp-start
-                (compiler-backend-global-shared-view walk-types))
-              (compiler_regalloc.compiler-reg-plan-function-stack-only-with-representations-and-metrics
+                (compiler-backend-global-shared-view walk-types)
+                (compiler-backend-state-advisory-sink
+                  program-index.backend-state))
+              (compiler_regalloc.compiler-reg-plan-function-stack-only-with-representations-and-metrics-and-advisory-sink
                 (compiler-backend-global-shared-view walk-func)
                 (compiler-backend-global-shared-view
                   program-index.representations)
-                (compiler-backend-state-metrics program-index.backend-state)))
+                (compiler-backend-state-metrics program-index.backend-state)
+                (compiler-backend-state-advisory-sink
+                  program-index.backend-state)))
             (if (compiler-backend-mode-avx2? mode)
-              (compiler_regalloc.compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations-and-metrics
+              (compiler_regalloc.compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations-and-metrics-and-advisory-sink
                 type-segment-bases
                 fn-abi
                 (compiler-backend-global-shared-view walk-func)
                 (compiler-backend-global-shared-view
                   program-index.representations)
-                (compiler-backend-state-metrics program-index.backend-state))
-              (compiler_regalloc.compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations-and-metrics
+                (compiler-backend-state-metrics program-index.backend-state)
+                (compiler-backend-state-advisory-sink
+                  program-index.backend-state))
+              (compiler_regalloc.compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations-and-metrics-and-advisory-sink
                 type-segment-bases
                 fn-abi
                 (compiler-backend-global-shared-view walk-func)
                 (compiler-backend-global-shared-view
                   program-index.representations)
-                (compiler-backend-state-metrics program-index.backend-state))))]
+                (compiler-backend-state-metrics program-index.backend-state)
+                (compiler-backend-state-advisory-sink
+                  program-index.backend-state))))]
         ;; Did cycle 20's cold-call rewrite fire? That is the claim that this
         ;; function's ONLY kind-0 clobber was carried away, which is what lets a
         ;; replan below tell the param ABI-pin gate to ignore the clobber set.

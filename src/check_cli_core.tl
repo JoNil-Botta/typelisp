@@ -271,29 +271,34 @@
       (owned_view.compiler-owned-shared-view input-path)
       (owned_view.compiler-owned-shared-view stdlib-roots)
       check-cfgs)
-      [(compiler_check_core.ResultCompilerCheck.Ok _)
-        (let
-          [inline-test-status : i64
-            (test_cli_core.tltest-inline-typecheck-file-with-cfg
-              (owned_view.compiler-owned-shared-view input-path)
-              (owned_view.compiler-owned-shared-view stdlib-roots)
-              (target_cfg.compiler-target-cfgs-with-names
-                (owned_view.compiler-owned-shared-view target)
-                (owned_view.compiler-owned-shared-view cfg-names))
-              "typecheck-prefix-inline-check")]
-          (if (= inline-test-status 0)
-            (let
-              [doctest-status : i64
-                (selfhost-check-file-doctests
-                  input-path
-                  stdlib-roots
-                  (target_cfg.compiler-target-cfgs-with-names target cfg-names))]
-              (if (= doctest-status 0)
-                (selfhost-check-print-passed)
-                doctest-status))
-            inline-test-status))]
-      [(compiler_check_core.ResultCompilerCheck.Err diag)
+      [(compiler_check_core.ResultCompilerCheck.Ok _ advisories)
         (begin
+          (compiler_driver_core.compiler-driver-print-advisories (& advisories))
+          (let
+            [inline-test-status : i64
+              (test_cli_core.tltest-inline-typecheck-file-with-cfg
+                (owned_view.compiler-owned-shared-view input-path)
+                (owned_view.compiler-owned-shared-view stdlib-roots)
+                (target_cfg.compiler-target-cfgs-with-names
+                  (owned_view.compiler-owned-shared-view target)
+                  (owned_view.compiler-owned-shared-view cfg-names))
+                "typecheck-prefix-inline-check")]
+            (if (= inline-test-status 0)
+              (let
+                [doctest-status : i64
+                  (selfhost-check-file-doctests
+                    input-path
+                    stdlib-roots
+                    (target_cfg.compiler-target-cfgs-with-names
+                      target
+                      cfg-names))]
+                (if (= doctest-status 0)
+                  (selfhost-check-print-passed)
+                  doctest-status))
+              inline-test-status)))]
+      [(compiler_check_core.ResultCompilerCheck.Err diag advisories)
+        (begin
+          (compiler_driver_core.compiler-driver-print-advisories (& advisories))
           (selfhost-check-report-diagnostics
             (owned_view.compiler-owned-box-shared-view diag))
           1)])))
@@ -369,47 +374,57 @@
           (target_cfg.compiler-target-cfgs-with-names
             target
             (owned_view.compiler-owned-shared-view cfg-names)))
-          [(compiler_check_core.ResultCompilerCheckWithPaths.Ok _ paths)
-            (let
-              ;; Doctests run after the compiler and intern arenas are reset.
-              ;; Filesystem paths are values here, so retain owned copies rather
-              ;; than carrying parser identity across that lifetime boundary.
-              [doctest-paths : ast.AstDeclPathList
-                (selfhost-check-package-doctest-paths-snapshot paths)]
-              ;; Match standalone package inline-test runs: entry checking can
-              ;; leave enough compiler state live to exhaust long package checks.
-              [_reset-after-entry : unit
-                (begin
-                  (compiler_driver_core.compiler-driver-reset-file-state!)
-                  (ci.intern-persistent-arena-reset!))]
-              [inline-test-status : i64
-                (test_cli_core.tltest-inline-typecheck-package-sources-with-cfg
-                  (owned_view.compiler-owned-shared-view source-set.sources)
-                  (owned_view.compiler-owned-shared-view stdlib-roots)
-                  (owned_view.compiler-owned-shared-view manifest-dir)
-                  name
-                  (owned_view.compiler-owned-shared-view manifest.deps)
-                  (target_cfg.compiler-target-cfgs-with-names
-                    target
-                    (owned_view.compiler-owned-shared-view cfg-names))
-                  "typecheck-prefix-inline-check-package")]
-              (if (= inline-test-status 0)
-                (let
-                  [doctest-status : i64
-                    (selfhost-check-package-doctests
-                      doctest-paths
-                      stdlib-roots
-                      manifest-dir
-                      manifest.deps
-                      (target_cfg.compiler-target-cfgs-with-names
-                        target
-                        cfg-names))]
-                  (if (= doctest-status 0)
-                    (selfhost-check-print-passed)
-                    doctest-status))
-                inline-test-status))]
-          [(compiler_check_core.ResultCompilerCheckWithPaths.Err diag)
+          [(compiler_check_core.ResultCompilerCheckWithPaths.Ok
+              _
+              paths
+              advisories)
             (begin
+              (compiler_driver_core.compiler-driver-print-advisories
+                (& advisories))
+              (let
+                ;; Doctests run after the compiler and intern arenas are reset.
+                ;; Filesystem paths are values here, so retain owned copies rather
+                ;; than carrying parser identity across that lifetime boundary.
+                [doctest-paths : ast.AstDeclPathList
+                  (selfhost-check-package-doctest-paths-snapshot paths)]
+                ;; Match standalone package inline-test runs: entry checking can
+                ;; leave enough compiler state live to exhaust long package checks.
+                [_reset-after-entry : unit
+                  (begin
+                    (compiler_driver_core.compiler-driver-reset-file-state!)
+                    (ci.intern-persistent-arena-reset!))]
+                [inline-test-status : i64
+                  (test_cli_core.tltest-inline-typecheck-package-sources-with-cfg
+                    (owned_view.compiler-owned-shared-view source-set.sources)
+                    (owned_view.compiler-owned-shared-view stdlib-roots)
+                    (owned_view.compiler-owned-shared-view manifest-dir)
+                    name
+                    (owned_view.compiler-owned-shared-view manifest.deps)
+                    (target_cfg.compiler-target-cfgs-with-names
+                      target
+                      (owned_view.compiler-owned-shared-view cfg-names))
+                    "typecheck-prefix-inline-check-package")]
+                (if (= inline-test-status 0)
+                  (let
+                    [doctest-status : i64
+                      (selfhost-check-package-doctests
+                        doctest-paths
+                        stdlib-roots
+                        manifest-dir
+                        manifest.deps
+                        (target_cfg.compiler-target-cfgs-with-names
+                          target
+                          cfg-names))]
+                    (if (= doctest-status 0)
+                      (selfhost-check-print-passed)
+                      doctest-status))
+                  inline-test-status)))]
+          [(compiler_check_core.ResultCompilerCheckWithPaths.Err
+              diag
+              advisories)
+            (begin
+              (compiler_driver_core.compiler-driver-print-advisories
+                (& advisories))
               (selfhost-check-report-diagnostics
                 (cdiag.compiler-diagnostic-list-box-shared-view diag))
               1)]))]))

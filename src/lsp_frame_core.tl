@@ -4379,8 +4379,8 @@
     (owned_view.compiler-owned-shared-view text)
     (owned_view.compiler-owned-shared-view stdlib-roots)
     (lsp-language-cfgs))
-    [(compiler_check_core.ResultCompilerCheck.Ok _) acc]
-    [(compiler_check_core.ResultCompilerCheck.Err diagnostic-box)
+    [(compiler_check_core.ResultCompilerCheck.Ok _ _) acc]
+    [(compiler_check_core.ResultCompilerCheck.Err diagnostic-box _)
       (lsp-code-action-compiler-diagnostics
         docs
         uri
@@ -8841,8 +8841,8 @@
             stdlib-roots
             (lsp-language-cfgs)
             job-state)
-            [(compiler_check_core.ResultCompilerCheck.Ok _) unit]
-            [(compiler_check_core.ResultCompilerCheck.Err _) unit])
+            [(compiler_check_core.ResultCompilerCheck.Ok _ _) unit]
+            [(compiler_check_core.ResultCompilerCheck.Err _ _) unit])
           (let
             [hints : json.JsonSeq
               (lsp-inlay-build inlay-state text start-line end-line)]
@@ -14881,9 +14881,9 @@
         text
         stdlib-roots
         (lsp-language-cfgs))
-        [(compiler_check_core.ResultCompilerCheck.Ok _)
+        [(compiler_check_core.ResultCompilerCheck.Ok _ _)
           lsp_vector_families.LspCheckCacheOk]
-        [(compiler_check_core.ResultCompilerCheck.Err diag)
+        [(compiler_check_core.ResultCompilerCheck.Err diag _)
           (let
             [diagnostics : cdiag.CompilerDiagnosticList
               (cdiag.compiler-diagnostic-list-box-shared-view diag)]
@@ -15080,8 +15080,8 @@
                   stdlib-roots
                   (lsp-language-cfgs)
                   job-state)
-                  [(compiler_check_core.ResultCompilerCheck.Ok _) unit]
-                  [(compiler_check_core.ResultCompilerCheck.Err _) unit])
+                  [(compiler_check_core.ResultCompilerCheck.Ok _ _) unit]
+                  [(compiler_check_core.ResultCompilerCheck.Err _ _) unit])
                 (let
                   [found-idx : i64
                     (lsp-nearest-inlay-hint-index

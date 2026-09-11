@@ -1538,15 +1538,19 @@
                   target
                   true
                   (opt.compiler-optimize-default-level))
-                  [(driver.ResultCompilerDriver.Ok asm)
-                    (build_run_core.ResultSourceToolString.Ok
-                      (build_run_core.source-tool-augment-assembly-for-target
-                        asm
-                        target))]
-                  [(driver.ResultCompilerDriver.Err diag)
-                    (build_run_core.ResultSourceToolString.Err
-                      (cdiag.compiler-diagnostic-render
-                        (cdiag.compiler-diagnostic-box-shared-view diag)))])]
+                  [(driver.ResultCompilerDriver.Ok asm advisories)
+                    (begin
+                      (driver.compiler-driver-print-advisories (& advisories))
+                      (build_run_core.ResultSourceToolString.Ok
+                        (build_run_core.source-tool-augment-assembly-for-target
+                          asm
+                          target)))]
+                  [(driver.ResultCompilerDriver.Err diag advisories)
+                    (begin
+                      (driver.compiler-driver-print-advisories (& advisories))
+                      (build_run_core.ResultSourceToolString.Err
+                        (cdiag.compiler-diagnostic-render
+                          (cdiag.compiler-diagnostic-box-shared-view diag))))])]
               [(lower.ResultCompilerLower.Err diag)
                 (build_run_core.ResultSourceToolString.Err
                   (cdiag.compiler-diagnostic-render
@@ -1825,27 +1829,31 @@
       code
       stdlib-roots
       cfgs)
-      [(compiler_check_core.ResultCompilerCheck.Ok _)
-        (if expect-error
-          (DocTestMaybeFailure.Some
-            (DocTestRunFailure.Failure
-              path
-              source-line
-              index
-              (doc-test-unexpected-pass-message index)))
-          (DocTestMaybeFailure.No))]
-      [(compiler_check_core.ResultCompilerCheck.Err diag)
-        (if expect-error
-          (DocTestMaybeFailure.No)
-          (DocTestMaybeFailure.Some
-            (DocTestRunFailure.Failure
-              path
-              source-line
-              index
-              (doc-test-unexpected-error-message
+      [(compiler_check_core.ResultCompilerCheck.Ok _ advisories)
+        (begin
+          (driver.compiler-driver-print-advisories (& advisories))
+          (if expect-error
+            (DocTestMaybeFailure.Some
+              (DocTestRunFailure.Failure
+                path
+                source-line
                 index
-                (cdiag.compiler-diagnostic-list-first
-                  (cdiag.compiler-diagnostic-list-box-shared-view diag))))))])))
+                (doc-test-unexpected-pass-message index)))
+            (DocTestMaybeFailure.No)))]
+      [(compiler_check_core.ResultCompilerCheck.Err diag advisories)
+        (begin
+          (driver.compiler-driver-print-advisories (& advisories))
+          (if expect-error
+            (DocTestMaybeFailure.No)
+            (DocTestMaybeFailure.Some
+              (DocTestRunFailure.Failure
+                path
+                source-line
+                index
+                (doc-test-unexpected-error-message
+                  index
+                  (cdiag.compiler-diagnostic-list-first
+                    (cdiag.compiler-diagnostic-list-box-shared-view diag)))))))])))
 
 (define (doc-test-typecheck-example-with-roots
   [path : String]
@@ -1884,27 +1892,31 @@
       manifest-dir
       deps
       cfgs)
-      [(compiler_check_core.ResultCompilerCheck.Ok _)
-        (if expect-error
-          (DocTestMaybeFailure.Some
-            (DocTestRunFailure.Failure
-              path
-              source-line
-              index
-              (doc-test-unexpected-pass-message index)))
-          (DocTestMaybeFailure.No))]
-      [(compiler_check_core.ResultCompilerCheck.Err diag)
-        (if expect-error
-          (DocTestMaybeFailure.No)
-          (DocTestMaybeFailure.Some
-            (DocTestRunFailure.Failure
-              path
-              source-line
-              index
-              (doc-test-unexpected-error-message
+      [(compiler_check_core.ResultCompilerCheck.Ok _ advisories)
+        (begin
+          (driver.compiler-driver-print-advisories (& advisories))
+          (if expect-error
+            (DocTestMaybeFailure.Some
+              (DocTestRunFailure.Failure
+                path
+                source-line
                 index
-                (cdiag.compiler-diagnostic-list-first
-                  (cdiag.compiler-diagnostic-list-box-shared-view diag))))))])))
+                (doc-test-unexpected-pass-message index)))
+            (DocTestMaybeFailure.No)))]
+      [(compiler_check_core.ResultCompilerCheck.Err diag advisories)
+        (begin
+          (driver.compiler-driver-print-advisories (& advisories))
+          (if expect-error
+            (DocTestMaybeFailure.No)
+            (DocTestMaybeFailure.Some
+              (DocTestRunFailure.Failure
+                path
+                source-line
+                index
+                (doc-test-unexpected-error-message
+                  index
+                  (cdiag.compiler-diagnostic-list-first
+                    (cdiag.compiler-diagnostic-list-box-shared-view diag)))))))])))
 
 (define (doc-test-check-example-with-roots
   [path : String]

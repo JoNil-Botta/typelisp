@@ -22,7 +22,16 @@
 (import compiler_parallel_move as pmove)
 (import compiler_owned_view as owned_view)
 (import compiler_profile_state as profile_state)
+(import compiler_diagnostic as cdiag)
 (cfg test (import stdlib.test))
+
+(define (compiler-reg-add-advisory!
+  [sink : cdiag.CompilerAdvisorySink]
+  [diagnostic : (& diagnostic cdiag.CompilerDiagnostic)]) : bool
+  (cdiag.compiler-advisory-sink-push!
+    sink
+    (cdiag.CompilerAdvisoryPhase.RegisterAllocation)
+    diagnostic))
 
 (defmacro (compiler-reg-global-shared-view [place : Expr]) : Expr
   (cfg
@@ -39240,6 +39249,20 @@
       false
       (- 0 1))))
 
+(define (compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations-and-metrics-and-advisory-sink
+  [type-segment-bases : i64]
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [func : ir.CompilerIrFunction]
+  [representations : ir.CompilerIrRepresentationIndex]
+  [metrics : profile_state.CompilerProfileMetrics]
+  [_advisory-sink : cdiag.CompilerAdvisorySink]) : CompilerRegPlan
+  (compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations-and-metrics
+    type-segment-bases
+    target-abi
+    func
+    representations
+    metrics))
+
 (define (compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
@@ -39320,6 +39343,20 @@
       target-abi
       false
       (- 0 1))))
+
+(define (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations-and-metrics-and-advisory-sink
+  [type-segment-bases : i64]
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [func : ir.CompilerIrFunction]
+  [representations : ir.CompilerIrRepresentationIndex]
+  [metrics : profile_state.CompilerProfileMetrics]
+  [_advisory-sink : cdiag.CompilerAdvisorySink]) : CompilerRegPlan
+  (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations-and-metrics
+    type-segment-bases
+    target-abi
+    func
+    representations
+    metrics))
 
 (define (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations
   [type-segment-bases : i64]
@@ -39641,6 +39678,20 @@
     type-info
     (compiler-reg-assignment-table-empty)))
 
+(define (compiler-reg-plan-function-scalar-cold-with-type-segment-bases-for-abi-with-types-and-advisory-sink
+  [type-segment-bases : i64]
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [func : ir.CompilerIrFunction]
+  [forced-spill-from : i64]
+  [type-info : CompilerRegVarTypes]
+  [_advisory-sink : cdiag.CompilerAdvisorySink]) : CompilerRegPlan
+  (compiler-reg-plan-function-scalar-cold-with-type-segment-bases-for-abi-with-types
+    type-segment-bases
+    target-abi
+    func
+    forced-spill-from
+    type-info))
+
 (define (compiler-reg-plan-function-scalar-cold-for-abi-with-types
   [target-abi : cabi.CompilerRegTargetAbi]
   [func : ir.CompilerIrFunction]
@@ -39717,6 +39768,16 @@
       type-info
       (compiler-reg-call-split-empty)
       (compiler-reg-split-plan-empty))))
+
+(define (compiler-reg-plan-function-stack-only-with-representations-and-metrics-and-advisory-sink
+  [func : ir.CompilerIrFunction]
+  [representations : ir.CompilerIrRepresentationIndex]
+  [metrics : profile_state.CompilerProfileMetrics]
+  [_advisory-sink : cdiag.CompilerAdvisorySink]) : CompilerRegPlan
+  (compiler-reg-plan-function-stack-only-with-representations-and-metrics
+    func
+    representations
+    metrics))
 
 (define (compiler-reg-plan-function-stack-only-with-representations
   [func : ir.CompilerIrFunction]

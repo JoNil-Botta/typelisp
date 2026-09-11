@@ -783,12 +783,12 @@
     [bad-src : String "(define (main) : i64 (+ 1 \"two\"))"]
     [ok-result : bool
       (match (check_core.compiler-check-source "ok.tl" ok-src)
-        [(check_core.ResultCompilerCheck.Ok _) true]
-        [(check_core.ResultCompilerCheck.Err _) false])]
+        [(check_core.ResultCompilerCheck.Ok _ _) true]
+        [(check_core.ResultCompilerCheck.Err _ _) false])]
     [bad-result : bool
       (match (check_core.compiler-check-source "bad.tl" bad-src)
-        [(check_core.ResultCompilerCheck.Ok _) false]
-        [(check_core.ResultCompilerCheck.Err _) true])]
+        [(check_core.ResultCompilerCheck.Ok _ _) false]
+        [(check_core.ResultCompilerCheck.Err _ _) true])]
     (and ok-result bad-result)))
 
 (define (lsp-get-type-smoke-ok?) : bool
@@ -809,8 +809,8 @@
           (lsp_svec.new)
           (check_core.compiler-check-language-cfgs)
           job-state)
-          [(check_core.ResultCompilerCheck.Ok _) unit]
-          [(check_core.ResultCompilerCheck.Err _) unit])
+          [(check_core.ResultCompilerCheck.Ok _ _) unit]
+          [(check_core.ResultCompilerCheck.Err _ _) unit])
         (let
           [size : i64 (tc_core.tc-inlay-hints-size-for-state inlay-state)]
           [i : i64 0]

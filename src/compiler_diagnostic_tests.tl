@@ -564,6 +564,122 @@
           (compiler_diagnostic.compiler-diagnostic-code-registry-owner count)
           "")))))
 
+(define (compiler-diagnostic-advisory-warning
+  [path : String]
+  [line : i64]
+  [message : String]) : compiler_diagnostic.CompilerDiagnostic
+  (compiler_diagnostic.compiler-diagnostic-with-level
+    (compiler_diagnostic.compiler-diagnostic-simple path line 1 message)
+    compiler_diagnostic.CompilerDiagnosticWarning))
+
+(define (compiler-diagnostic-advisory-sink-ok?) : bool
+  (let
+    [sink-a : compiler_diagnostic.CompilerAdvisorySink
+      (compiler_diagnostic.compiler-advisory-sink-new)]
+    [sink-b : compiler_diagnostic.CompilerAdvisorySink
+      (compiler_diagnostic.compiler-advisory-sink-new)]
+    [_append : unit
+      (with-scratch
+        (let
+          [semantic : compiler_diagnostic.CompilerDiagnostic
+            (compiler-diagnostic-advisory-warning "first.tl" 1 "semantic")]
+          [lowering : compiler_diagnostic.CompilerDiagnostic
+            (compiler-diagnostic-advisory-warning "first.tl" 2 "lowering")]
+          [optimization : compiler_diagnostic.CompilerDiagnostic
+            (compiler-diagnostic-advisory-warning "first.tl" 3 "optimization")]
+          [regalloc : compiler_diagnostic.CompilerDiagnostic
+            (compiler-diagnostic-advisory-warning "first.tl" 4 "regalloc")]
+          [backend : compiler_diagnostic.CompilerDiagnostic
+            (compiler-diagnostic-advisory-warning "first.tl" 5 "backend")]
+          [other : compiler_diagnostic.CompilerDiagnostic
+            (compiler-diagnostic-advisory-warning "other.tl" 1 "other job")]
+          [fatal : compiler_diagnostic.CompilerDiagnostic
+            (compiler_diagnostic.compiler-diagnostic-simple
+              "first.tl"
+              6
+              1
+              "fatal")]
+          (begin
+            (compiler_diagnostic.compiler-advisory-sink-push!
+              sink-a
+              compiler_diagnostic.CompilerAdvisoryPhase.Semantic
+              (& semantic))
+            (compiler_diagnostic.compiler-advisory-sink-push!
+              sink-a
+              compiler_diagnostic.CompilerAdvisoryPhase.Lowering
+              (& lowering))
+            (compiler_diagnostic.compiler-advisory-sink-push!
+              sink-a
+              compiler_diagnostic.CompilerAdvisoryPhase.Optimization
+              (& optimization))
+            (compiler_diagnostic.compiler-advisory-sink-push!
+              sink-a
+              compiler_diagnostic.CompilerAdvisoryPhase.RegisterAllocation
+              (& regalloc))
+            (compiler_diagnostic.compiler-advisory-sink-push!
+              sink-a
+              compiler_diagnostic.CompilerAdvisoryPhase.Backend
+              (& backend))
+            (compiler_diagnostic.compiler-advisory-sink-push!
+              sink-b
+              compiler_diagnostic.CompilerAdvisoryPhase.Semantic
+              (& other))
+            (compiler_diagnostic.compiler-advisory-sink-push!
+              sink-a
+              compiler_diagnostic.CompilerAdvisoryPhase.Backend
+              (& fatal))
+            unit)))]
+    [a : compiler_diagnostic.CompilerAdvisoryList
+      (compiler_diagnostic.compiler-advisory-sink-snapshot sink-a)]
+    [b : compiler_diagnostic.CompilerAdvisoryList
+      (compiler_diagnostic.compiler-advisory-sink-snapshot sink-b)]
+    [a0 : compiler_diagnostic.CompilerAdvisory
+      (compiler_diagnostic.compiler-advisory-list-get (& a) 0)]
+    [a4 : compiler_diagnostic.CompilerAdvisory
+      (compiler_diagnostic.compiler-advisory-list-get (& a) 4)]
+    [b0 : compiler_diagnostic.CompilerAdvisory
+      (compiler_diagnostic.compiler-advisory-list-get (& b) 0)]
+    [a0-diagnostic : compiler_diagnostic.CompilerDiagnostic
+      (compiler_diagnostic.compiler-advisory-diagnostic (& a0))]
+    [a4-diagnostic : compiler_diagnostic.CompilerDiagnostic
+      (compiler_diagnostic.compiler-advisory-diagnostic (& a4))]
+    [b0-diagnostic : compiler_diagnostic.CompilerDiagnostic
+      (compiler_diagnostic.compiler-advisory-diagnostic (& b0))]
+    [before-reset : bool
+      (and
+        (= (compiler_diagnostic.compiler-advisory-list-count (& a)) 5)
+        (= (compiler_diagnostic.compiler-advisory-list-count (& b)) 1)
+        (match (compiler_diagnostic.compiler-advisory-phase (& a0))
+          [(compiler_diagnostic.CompilerAdvisoryPhase.Semantic) true]
+          [_ false])
+        (match (compiler_diagnostic.compiler-advisory-phase (& a4))
+          [(compiler_diagnostic.CompilerAdvisoryPhase.Backend) true]
+          [_ false])
+        (string.eq
+          (compiler_diagnostic.compiler-diagnostic-message a0-diagnostic)
+          "semantic")
+        (string.eq
+          (compiler_diagnostic.compiler-diagnostic-message a4-diagnostic)
+          "backend")
+        (string.eq
+          (compiler_diagnostic.compiler-diagnostic-message b0-diagnostic)
+          "other job"))]
+    (begin
+      (compiler_diagnostic.compiler-advisory-sink-reset! sink-a)
+      (let
+        [after-reset : compiler_diagnostic.CompilerAdvisoryList
+          (compiler_diagnostic.compiler-advisory-sink-snapshot sink-a)]
+        (and
+          before-reset
+          (=
+            (compiler_diagnostic.compiler-advisory-list-count (& after-reset))
+            0)
+          (= (compiler_diagnostic.compiler-advisory-sink-generation sink-a) 1)
+          (let
+            [still-b : compiler_diagnostic.CompilerAdvisoryList
+              (compiler_diagnostic.compiler-advisory-sink-snapshot sink-b)]
+            (= (compiler_diagnostic.compiler-advisory-list-count (& still-b)) 1)))))))
+
 (define (compiler-diagnostic-self-test) : i64
   (begin
     (unless (compiler-diagnostic-render-ok?) (return 1))
@@ -583,5 +699,6 @@
     (unless (compiler-diagnostic-code-or-empty-ok?) (return 4))
     (unless (compiler-diagnostic-dense-sequences-ok?) (return 4))
     (unless (compiler-diagnostic-code-registry-ok?) (return 4))
+    (unless (compiler-diagnostic-advisory-sink-ok?) (return 4))
     (unless (compiler-diagnostic-typecheck-code-kinds-ok?) (return 5))
     42))

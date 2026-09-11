@@ -146725,6 +146725,193 @@
 (define opt-call-memory-scratch : i64
   0)
 
+;; --- the callee table: which rows a candidate reads ------------------------
+;;
+;; A candidate's verdict reads the summaries map at one kind of key only: the
+;; callee of each direct Call / TailCall in its body (opt-call-memory-apply-
+;; direct-call and opt-call-memory-direct-needs-roots?). Two facts about a
+;; function therefore follow from its body and the map alone, before any
+;; environment is built:
+;;
+;;   - pessimistic phase: the verdict is Unresolved iff some callee that is in
+;;     the function set has no row yet (apply-direct-call's Unresolved arm,
+;;     sticky for the rest of the walk), and the source map, root environment
+;;     and element map built ahead of that walk are never consulted on that
+;;     path;
+;;   - optimistic phase: the transfer is a function of the body and the direct
+;;     callees' rows, so a residue row cannot move in a round unless one of its
+;;     callees' rows moved in the round before. Copying it forward is exact.
+;;
+;; Without the table each of the 22 pessimistic rounds of a compiler self-build
+;; rebuilt every not-yet-committed function's environments only to reach the
+;; first unresolved call, and each optimistic round rebuilt every residue
+;; function whether or not its inputs had moved: 331k candidate builds for 26k
+;; functions, 22.5G of the opt2 self-compile's 309G instructions and +9.4% on
+;; its wall clock. The table is one walk over the program (callee ids that are
+;; in the function set, one range per function index), built by the builder
+;; entry into the enclosing arena for the build's duration; the scratch arena
+;; is reset per candidate and cannot hold it. A driver run without the table
+;; (the tests drive the optimistic phase directly) rebuilds every candidate as
+;; before.
+(define opt-call-memory-callee-starts : opt_dense_i64_vec.Vec
+  (opt_dense_i64_vec.new))
+(define opt-call-memory-callee-ids : opt_dense_i64_vec.Vec
+  (opt_dense_i64_vec.new))
+
+;; The optimistic round being computed (0 outside the phase) and, per residue
+;; row, the last round in which it moved.
+(define opt-call-memory-round : i64
+  0)
+(define opt-call-memory-moved : opt_i64_i64_map.Map
+  (opt_i64_i64_map.with-capacity 1))
+
+(define (opt-call-memory-callees-reset!) : unit
+  (begin
+    (set! opt-call-memory-callee-starts (opt_dense_i64_vec.new))
+    (set! opt-call-memory-callee-ids (opt_dense_i64_vec.new))
+    (set! opt-call-memory-round 0)
+    (set! opt-call-memory-moved (opt_i64_i64_map.with-capacity 1))))
+
+(define (opt-call-memory-callee-note!
+  [function-set : opt_i64_i64_map.Map]
+  [name : i64]) : unit
+  (when
+    (opt_i64_i64_map.contains? (& function-set) (ir.compiler-ir-symbol-id name))
+    (opt_dense_i64_vec.push-ref!
+      (&mut opt-call-memory-callee-ids)
+      (ir.compiler-ir-symbol-id name))))
+
+(define (opt-call-memory-callee-instr!
+  [function-set : opt_i64_i64_map.Map]
+  [instr : ir.CompilerIrInstr]) : unit
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Call _ name _ _)
+      (opt-call-memory-callee-note! function-set name)]
+    [(ir.CompilerIrInstr.TailCall name _ _)
+      (opt-call-memory-callee-note! function-set name)]
+    [_ unit]))
+
+(define (opt-call-memory-callee-instrs!
+  [function-set : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : unit
+  (if (>=
+    index
+    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
+    unit
+    (begin
+      (opt-call-memory-callee-instr!
+        (compiler-opt-global-shared-view function-set)
+        (ir.compiler-ir-instr-seq-ref instrs index))
+      (opt-call-memory-callee-instrs! function-set instrs (+ index 1)))))
+
+(define (opt-call-memory-callee-blocks!
+  [function-set : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (begin
+            (opt-call-memory-callee-instrs!
+              (compiler-opt-global-shared-view function-set)
+              instrs
+              0)
+            (opt-call-memory-callee-blocks!
+              function-set
+              (compiler-opt-box-shared-view rest)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-call-memory-callee-blocks!
+        function-set
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-call-memory-callee-table!
+  [function-set : opt_i64_i64_map.Map]
+  [functions : ir.CompilerIrFunctionSeq]) : unit
+  (let
+    [index : i64 0]
+    (begin
+      (opt-call-memory-callees-reset!)
+      (set!
+        opt-call-memory-callee-starts
+        (opt_dense_i64_vec.with-capacity (+ functions.len 1)))
+      (while (< index functions.len)
+        (begin
+          (opt_dense_i64_vec.push-ref!
+            (&mut opt-call-memory-callee-starts)
+            (opt_dense_i64_vec.len (& opt-call-memory-callee-ids)))
+          (match (compiler-opt-global-array-element-shared-view
+            functions.slots
+            index)
+            [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+              (opt-call-memory-callee-blocks!
+                (compiler-opt-global-shared-view function-set)
+                (compiler-opt-global-shared-view blocks))])
+          (set! index (+ index 1))))
+      (opt_dense_i64_vec.push-ref!
+        (&mut opt-call-memory-callee-starts)
+        (opt_dense_i64_vec.len (& opt-call-memory-callee-ids))))))
+
+;; Whether the table covers function `index`; a driver run without it takes
+;; the full verdict every round.
+(define (opt-call-memory-callee-table? [index : i64]) : bool
+  (< (+ index 1) (opt_dense_i64_vec.len (& opt-call-memory-callee-starts))))
+
+(define (opt-call-memory-callee-at [at : i64]) : i64
+  (array-ref (opt_dense_i64_vec.slots (& opt-call-memory-callee-ids)) at))
+
+(define (opt-call-memory-callee-start [index : i64]) : i64
+  (array-ref (opt_dense_i64_vec.slots (& opt-call-memory-callee-starts)) index))
+
+;; Every callee of function `index` that is in the function set has a row in
+;; `current`: the pessimistic verdict cannot be Unresolved.
+(define (opt-call-memory-callees-resolved?
+  [current : opt_i64_i64_map.Map]
+  [index : i64]) : bool
+  (if (not (opt-call-memory-callee-table? index))
+    true
+    (let
+      [at : i64 (opt-call-memory-callee-start index)]
+      [end : i64 (opt-call-memory-callee-start (+ index 1))]
+      [resolved : bool true]
+      (begin
+        (while (and resolved (< at end))
+          (begin
+            (unless
+              (opt_i64_i64_map.contains?
+                (& current)
+                (opt-call-memory-callee-at at))
+              (set! resolved false))
+            (set! at (+ at 1))))
+        resolved))))
+
+;; Some callee's row moved in the previous optimistic round, so the residue
+;; row of function `index` has to be recomputed. The first round computes
+;; every residue row from its seed. A callee already stamped with THIS round
+;; (it precedes the function in the list and moved) is taken as moved too;
+;; recomputing is always exact, only copying needs the proof.
+(define (opt-call-memory-callees-moved? [index : i64]) : bool
+  (if (or
+    (<= opt-call-memory-round 1)
+    (not (opt-call-memory-callee-table? index)))
+    true
+    (let
+      [at : i64 (opt-call-memory-callee-start index)]
+      [end : i64 (opt-call-memory-callee-start (+ index 1))]
+      [moved : bool false]
+      (begin
+        (while (and (not moved) (< at end))
+          (begin
+            (match (opt_i64_i64_map.get
+              (& opt-call-memory-moved)
+              (opt-call-memory-callee-at at))
+              [(opt_i64_i64_map.LookupFound round)
+                (when (>= round (- opt-call-memory-round 1)) (set! moved true))]
+              [(opt_i64_i64_map.LookupMissing) unit])
+            (set! at (+ at 1))))
+        moved))))
+
 (define (opt-call-memory-candidate-code [candidate : OptCallMemoryCandidate]) : i64
   (match candidate
     [(OptCallMemoryCandidate.Unresolved) (- 0 1)]
@@ -146798,13 +146985,21 @@
                     (+ index 1)))]
               [(opt_i64_i64_map.LookupMissing)
                 (let
-                  [summary : i64
-                    (opt-call-memory-candidate-verdict
-                      type-segment-bases
-                      (compiler-opt-global-shared-view descriptor-globals)
+                  [summary
+                    : i64
+                    ;; A callee without a row is apply-direct-call's
+                    ;; Unresolved arm; the environments the verdict would build
+                    ;; first are never consulted on that path.
+                    (if (opt-call-memory-callees-resolved?
                       (compiler-opt-global-shared-view current)
-                      (compiler-opt-global-shared-view function-set)
-                      func)]
+                      index)
+                      (opt-call-memory-candidate-verdict
+                        type-segment-bases
+                        (compiler-opt-global-shared-view descriptor-globals)
+                        (compiler-opt-global-shared-view current)
+                        (compiler-opt-global-shared-view function-set)
+                        func)
+                      (- 0 1))]
                   (if (< summary 0)
                     (opt-call-memory-build-pass-from
                       type-segment-bases
@@ -147076,19 +147271,31 @@
                     (match (opt_i64_i64_map.get (& current) name-id)
                       [(opt_i64_i64_map.LookupFound value) value]
                       [(opt_i64_i64_map.LookupMissing) 0])]
-                  [summary : i64
-                    (opt-call-memory-candidate-verdict
-                      type-segment-bases
-                      (compiler-opt-global-shared-view descriptor-globals)
-                      (compiler-opt-global-shared-view current)
-                      (compiler-opt-global-shared-view function-set)
-                      func)]
+                  [summary
+                    : i64
+                    ;; The transfer reads the direct callees' rows and nothing
+                    ;; else of the map: a row none of whose callees moved last
+                    ;; round reproduces itself.
+                    (if (opt-call-memory-callees-moved? index)
+                      (opt-call-memory-candidate-verdict
+                        type-segment-bases
+                        (compiler-opt-global-shared-view descriptor-globals)
+                        (compiler-opt-global-shared-view current)
+                        (compiler-opt-global-shared-view function-set)
+                        func)
+                      previous)]
                   ;; Unresolved is unreachable in practice; taking it abandons
                   ;; the round.
                   (if (< summary 0)
                     (OptCallMemoryOptimisticPass.Pass next changed false)
                     (begin
                       (opt_i64_i64_map.insert-ref! (&mut next) name-id summary)
+                      (unless
+                        (= summary previous)
+                        (opt_i64_i64_map.insert-ref!
+                          (&mut opt-call-memory-moved)
+                          name-id
+                          opt-call-memory-round))
                       (opt-call-memory-optimistic-pass-from
                         type-segment-bases
                         descriptor-globals
@@ -147134,31 +147341,33 @@
   [remaining : i64]) : opt_i64_i64_map.Map
   (if (<= remaining 0)
     resolved
-    (match (opt-call-memory-optimistic-pass
-      type-segment-bases
-      (compiler-opt-global-shared-view descriptor-globals)
-      (compiler-opt-global-shared-view functions)
-      (compiler-opt-global-shared-view resolved)
-      (compiler-opt-global-shared-view current)
-      (compiler-opt-global-shared-view function-set)
-      (opt-call-memory-seed-builtins (opt_i64_i64_map.with-capacity capacity))
-      false
-      true)
-      [(OptCallMemoryOptimisticPass.Pass next changed usable?)
-        (if (not usable?)
-          resolved
-          (if changed
-            (opt-call-memory-optimistic-fixed-with-descriptor-globals
-              type-segment-bases
-              descriptor-globals
-              functions
-              resolved
-              function-set
-              next
-              capacity
-              (- remaining 1))
-            ;; The transfer reproduced this map: it is a fixed point, commit it.
-            next))])))
+    (let
+      [_round : unit (set! opt-call-memory-round (+ opt-call-memory-round 1))]
+      (match (opt-call-memory-optimistic-pass
+        type-segment-bases
+        (compiler-opt-global-shared-view descriptor-globals)
+        (compiler-opt-global-shared-view functions)
+        (compiler-opt-global-shared-view resolved)
+        (compiler-opt-global-shared-view current)
+        (compiler-opt-global-shared-view function-set)
+        (opt-call-memory-seed-builtins (opt_i64_i64_map.with-capacity capacity))
+        false
+        true)
+        [(OptCallMemoryOptimisticPass.Pass next changed usable?)
+          (if (not usable?)
+            resolved
+            (if changed
+              (opt-call-memory-optimistic-fixed-with-descriptor-globals
+                type-segment-bases
+                descriptor-globals
+                functions
+                resolved
+                function-set
+                next
+                capacity
+                (- remaining 1))
+              ;; The transfer reproduced this map: it is a fixed point, commit it.
+              next))]))))
 
 ;; The descriptor-global-free form: every `Gep <global>, 0` keeps its `unknown`
 ;; verdict, which is the summary this builder produced before SUM-3.
@@ -147170,15 +147379,17 @@
   [current : opt_i64_i64_map.Map]
   [capacity : i64]
   [remaining : i64]) : opt_i64_i64_map.Map
-  (opt-call-memory-optimistic-fixed-with-descriptor-globals
-    type-segment-bases
-    (opt_i64_i64_map.with-capacity 1)
-    functions
-    resolved
-    function-set
-    current
-    capacity
-    remaining))
+  (let
+    [_reset : unit (opt-call-memory-callees-reset!)]
+    (opt-call-memory-optimistic-fixed-with-descriptor-globals
+      type-segment-bases
+      (opt_i64_i64_map.with-capacity 1)
+      functions
+      resolved
+      function-set
+      current
+      capacity
+      remaining)))
 
 (define (opt-call-memory-build-with-descriptor-globals
   [type-segment-bases : i64]
@@ -147195,6 +147406,7 @@
         functions
         capacity)]
     (begin
+      (opt-call-memory-callees-reset!)
       (set! opt-call-memory-scratch 0)
       (unsafe
         (arena.tl_arena_destroy scratch))
@@ -147210,6 +147422,10 @@
       (opt-call-memory-function-set
         (compiler-opt-global-shared-view functions)
         (opt_i64_i64_map.with-capacity capacity))]
+    [_callees : unit
+      (opt-call-memory-callee-table!
+        (compiler-opt-global-shared-view function-set)
+        (compiler-opt-global-shared-view functions))]
     [resolved : opt_i64_i64_map.Map
       (opt-call-memory-build-fixed
         type-segment-bases

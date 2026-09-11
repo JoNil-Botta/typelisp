@@ -371,6 +371,12 @@ Inline stdlib coverage:
   coverage, and public-equivalence tests for the SHA-512 scoped raw
   source/exact sink seam. `crypto_sha512_unsafe_adapter_reject.tl` pins that
   the raw seam cannot be called outside an explicit unsafe context.
+- `crypto_sha1_git_inline.tl` owns archived FIPS vectors, every small padding
+  boundary split, a million-byte vector, Git-generated blob/tree/commit/tag and
+  pack-trailer fixtures, 32-bit-crossing and full-domain length checks,
+  finalized-state poisoning, and exact 20-byte sink no-write paths.
+  `crypto_sha1_git_unsafe_adapter_reject.tl` pins the raw seam behind explicit
+  unsafe context; the module remains forbidden for non-compatibility uses.
 - `profile.tl` owns inline tests for monotonic timestamp shape and allocator
   counter monotonicity around an observable allocation.
 - `time.tl` owns inline tests for Unix wall-clock range, monotonic timestamp

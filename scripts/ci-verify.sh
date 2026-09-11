@@ -723,6 +723,7 @@ run_with_compiler "$STAGE2_BIN" "stage2 codegen target parity" scripts/check-cod
 run_with_compiler "$STAGE2_BIN" "stage2 backend target assembly parity" scripts/check-backend-target-asm-parity.sh
 run_with_compiler "$STAGE2_BIN" "stage2 Windows COFF batch plan" scripts/verify-compile-batch-windows-coff.sh
 run_with_compiler "$STAGE2_BIN" "stage2 PIC relocation verifier" scripts/verify-pic-relocations.sh
+run_with_compiler "$STAGE2_BIN" "stage2 COFF relocation-overflow verifier" scripts/verify-coff-relocation-overflow.sh
 run_with_compiler "$STAGE2_BIN" "stage2 safety corpus" scripts/verify-safety-corpus.sh
 run_gate "integration manifest validator self-tests" scripts/verify-integration-manifest-validator.sh
 run_gate "Windows COFF plan validator self-tests" scripts/verify-windows-coff-plan-validator.sh

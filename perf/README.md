@@ -96,14 +96,17 @@ to catch disproportionate opt2 work:
 | --- | ---: |
 | `opt2-built:selfhost_main_opt1` | 25,000 ms |
 | `opt1-built:selfhost_main_opt1` | 45,000 ms |
-| `opt2-built:selfhost_main_opt2` | 65,000 ms |
-| `opt1-built:selfhost_main_opt2` | 115,000 ms |
+| `opt2-built:selfhost_main_opt2` | 70,000 ms |
+| `opt1-built:selfhost_main_opt2` | 130,000 ms |
 
-The opt2 workload caps retain about 17% headroom above two consecutive
-measurements on the current GitHub-hosted runner class (54,080 ms and 94,620
-ms for the two rows). A same-host main/branch comparison and the deterministic
-instruction-count ratchet distinguish that accepted runner throughput from
-compiler work before these caps move.
+The opt2 workload caps retain about 17% headroom above the level expected of
+the current GitHub-hosted runner class (about 57,000 ms and 111,000 ms for the
+two rows: five main-like runs measured 53,820-55,280 ms and 105,300-107,530 ms
+there, plus the 3% same-host residue of #7696). A same-host main/branch
+comparison and the deterministic instruction-count ratchet distinguish accepted
+runner throughput from compiler work before these caps move; #7696's own
+compiler work was measured that way, attributed to one builder, and fixed
+before its residue was accepted.
 
 The `opt2-built:selfhost_main_opt2` /
 `opt1-built:selfhost_main_opt1` ratio must be at most 2.5. The checker fails

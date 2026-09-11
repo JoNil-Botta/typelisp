@@ -729,6 +729,8 @@ fs_rooted_linux_direct
 fs_rooted_linux_native
 fs_rooted_linux_publication
 fs_rooted_linux_reopen_directory
+fs_rooted_linux_read_into
+fs_rooted_linux_read_reuse
 EOF
 }
 

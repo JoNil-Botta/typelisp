@@ -939,6 +939,9 @@
       (compiler_lower_tests.compiler-lower-function-value-shape-ok?)
       (io.panic "lower: function value smoke mismatch"))
     (unless
+      (compiler_lower_tests.compiler-lower-mutable-global-function-value-shape-ok?)
+      (io.panic "lower: mutable global function value smoke mismatch"))
+    (unless
       (compiler_lower_tests.compiler-lower-function-value-contextual-init-ok?)
       (io.panic "lower: contextual function value smoke mismatch"))
     (unless

@@ -7,6 +7,15 @@
 (define (dec [x : i64]) : i64
   (- x 1))
 
+(define callback : (-> i64 i64)
+  inc)
+
+(define (install-callback! [next : (-> i64 i64)]) : unit
+  (set! callback next))
+
+(define (invoke [x : i64]) : i64
+  (callback x))
+
 (define (mark) : unit
   (set! seen 42))
 
@@ -22,7 +31,10 @@
 (define (main) : i64
   (begin
     (apply0u mark)
+    (unless (= (invoke 41) 42) (return 4))
+    (install-callback! dec)
     (unless (= (apply1 inc 41) 42) (return 1))
     (unless (= (shadow-inc dec 43) 42) (return 2))
     (unless (= seen 42) (return 3))
+    (unless (= (invoke 43) 42) (return 5))
     42))

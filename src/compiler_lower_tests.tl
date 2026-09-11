@@ -471,6 +471,19 @@
 (define (main) : i64
   (+ (apply1 inc 41) (shadow-inc inc 1)))")
 
+(define (compiler-lower-mutable-global-function-value-source) : String
+  "(define (initial [x : i64]) : i64 x)
+(define (replacement [x : i64]) : i64 (- x 1))
+(define callback : (-> i64 i64) initial)
+(define (install! [next : (-> i64 i64)]) : unit
+  (set! callback next))
+(define (invoke [x : i64]) : i64
+  (+ (callback x) 0))
+(define (main) : i64
+  (begin
+    (install! replacement)
+    (+ (invoke 43) 0)))")
+
 (define (compiler-lower-function-value-contextual-init-source) : String
   "(define (inc [x : i64]) : i64 (+ x 1))
 (define (main) : i64
@@ -6121,6 +6134,42 @@
   [name : String]) : bool
   (lower-test-global-seq-has-name-at? globals name 0))
 
+(define (lower-test-global-function-initializer-at?
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
+  [global-name : String]
+  [function-name : String]
+  [index : i64]) : bool
+  (if (>= index globals.len)
+    false
+    (match (compiler_ir_types.compiler-ir-global-seq-ref
+      (owned_view.compiler-owned-shared-view globals)
+      index)
+      [(compiler_ir_types.CompilerIrGlobal.Global name _ initial)
+        (if (string.eq
+          (compiler_ir_types.compiler-ir-symbol-text name)
+          (owned_view.compiler-owned-shared-view global-name))
+          (match initial
+            [(compiler_ir_types.CompilerIrValue.Function found)
+              (string.eq
+                (compiler_ir_types.compiler-ir-symbol-text found)
+                function-name)]
+            [_ false])
+          (lower-test-global-function-initializer-at?
+            globals
+            global-name
+            function-name
+            (+ index 1)))])))
+
+(define (lower-test-global-function-initializer?
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
+  [global-name : String]
+  [function-name : String]) : bool
+  (lower-test-global-function-initializer-at?
+    globals
+    global-name
+    function-name
+    0))
+
 (define (lower-test-dispatch-cache-word-at?
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [name : String]
@@ -9527,6 +9576,51 @@
                 "main")
               0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-mutable-global-function-value-mode-shape-ok?
+  [mode : compiler_lower.CompilerLowerMode]) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode
+    (compiler-lower-mutable-global-function-value-source)
+    mode)
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program globals functions _)
+          (and
+            (lower-test-global-function-initializer?
+              globals
+              "callback"
+              "initial")
+            (=
+              (lower-test-function-indirect-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "invoke")
+              1)
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "invoke"
+                "callback")
+              0)
+            (=
+              (lower-test-function-store-global-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "install!"
+                "callback")
+              1)
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "invoke")
+              1))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-mutable-global-function-value-shape-ok?) : bool
+  (and
+    (compiler-lower-mutable-global-function-value-mode-shape-ok?
+      (compiler_lower.CompilerLowerMode.LinuxScalar))
+    (compiler-lower-mutable-global-function-value-mode-shape-ok?
+      (compiler_lower.CompilerLowerMode.WindowsScalar))))
 
 (define (compiler-lower-noncapturing-lambda-value-ok?) : bool
   (match (compiler_lower.lower-compiler-source

@@ -28001,6 +28001,21 @@
           (= kind (csym.compiler-symbol-kind-defdispatch))))
       false)))
 
+(define (lower-top-level-value-define-lookup-id?
+  [ctx : tc_core.TcContext]
+  [lookup-id : i64]) : bool
+  (let
+    [handle : i64
+      (csym.compiler-symbols-lookup-value-id-or
+        (tc_core.tc-context-symbols ctx)
+        lookup-id
+        (csym.compiler-symbols-missing-handle))]
+    (and
+      (csym.compiler-symbols-handle-found? handle)
+      (=
+        (csym.compiler-symbol-handle-kind handle)
+        (csym.compiler-symbol-kind-value-define)))))
+
 (define (lower-callable-lookup-id
   [ctx : tc_core.TcContext]
   [source-id : i64]
@@ -42174,6 +42189,67 @@
             fallback))]
       [else fallback])))
 
+(define (lower-value-define-or-direct-call-id
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [name : String]
+  [raw-name-id : i64]
+  [lookup-name-id : i64]
+  [args : ast.AstExprList]
+  [result-ty : ast.AstType]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (if (lower-top-level-value-define-lookup-id?
+    (lower-global-shared-view ctx)
+    lookup-name-id)
+    ;; A top-level value cell remains mutable through `set!`. Even when its
+    ;; declared type is a function, the symbol names DATA holding the current
+    ;; closure descriptor, not executable code. Lower the variable read first
+    ;; so calls observe the latest stored value.
+    (match (lower-lookup-type-id
+      (lower-global-shared-view ctx)
+      (lower-state-type-cache (lower-global-shared-view state))
+      (lower-global-shared-view env)
+      type-env
+      lookup-name-id)
+      [(tc_core.ResultTcType.Ok fn-ty)
+        (match (lower-var-or-nullary-variant-id
+          (lower-global-shared-view ctx)
+          state
+          env
+          type-env
+          raw-name-id
+          (lower-global-shared-view fn-ty))
+          [(ResultLowerExpr.Ok lowered-func)
+            (match lowered-func
+              [(LowerExpr.Expr func-state func-value _)
+                (lower-indirect-call
+                  (lower-global-shared-view ctx)
+                  func-state
+                  env
+                  type-env
+                  fn-ty
+                  func-value
+                  args
+                  result-ty
+                  origin)])]
+          [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+      [(tc_core.ResultTcType.Err message)
+        (ResultLowerExpr.Err
+          (box (lower-diagnostic-at-expr ctx origin message)))])
+    (lower-direct-call-id-with-lookup-id
+      (lower-global-shared-view ctx)
+      state
+      env
+      type-env
+      raw-name-id
+      lookup-name-id
+      name
+      args
+      result-ty
+      origin)))
+
 (define (lower-call-non-builtin
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -42291,14 +42367,14 @@
               struct-handle
               args
               result-ty)
-            (lower-direct-call-id-with-lookup-id
+            (lower-value-define-or-direct-call-id
               (lower-global-shared-view ctx)
               state
               env
               type-env
+              name
               raw-name-id
               callable-lookup-id
-              name
               args
               result-ty
               origin)))))))
@@ -76645,9 +76721,19 @@
                   (lower-name-cache-structural-session (& names))
                   name
                   name))])]
+        [symbol : i64
+          (lower-name-cache-ir-symbol names logical-id name display-name)]
         (ResultLowerValue.Ok
-          (ir.CompilerIrValue.Global
-            (lower-name-cache-ir-symbol names logical-id name display-name))))]
+          (if (and
+            (lower-function-type? (lower-global-shared-view ty))
+            (lower-symbol-function-value-id?
+              (lower-global-shared-view ctx)
+              logical-id))
+            ;; Function values are closure-descriptor pointers. A plain Global
+            ;; initializer names the function's code symbol instead, which makes
+            ;; the first indirect call interpret instruction bytes as a closure.
+            (ir.CompilerIrValue.Function symbol)
+            (ir.CompilerIrValue.Global symbol))))]
     [_
       (ResultLowerValue.Err
         (box (lower-diagnostic "lower: unsupported global initializer")))]))

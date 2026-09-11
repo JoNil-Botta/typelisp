@@ -296,23 +296,299 @@ tl_alloc:
       new-profile
       tail-asm)))
 
+(define (compiler-backend-runtime-linux-aligned-alloc-functions-base
+  [profile : bool]) : String
+  (let
+    [ordinary-profile : String
+      (runtime_common.compiler-backend-runtime-profile-aligned-alloc-account
+        "%rdx"
+        "%rdi"
+        ".L_tl_alloc_aligned_profile_fast_done"
+        profile
+        "%r10")]
+    [atomic-profile : String
+      (runtime_common.compiler-backend-runtime-profile-aligned-alloc-account
+        "%rdx"
+        "%rdi"
+        ".L_tl_alloc_aligned_profile_atomic_done"
+        profile
+        "%r10")]
+    [atomic-locked-profile : String
+      (runtime_common.compiler-backend-runtime-profile-aligned-alloc-account
+        "%rdx"
+        "%rdi"
+        ".L_tl_alloc_aligned_profile_atomic_locked_done"
+        profile
+        "%r10")]
+    [atomic-new-profile : String
+      (runtime_common.compiler-backend-runtime-profile-aligned-alloc-account
+        "%rdx"
+        "%r10"
+        ".L_tl_alloc_aligned_profile_atomic_new_done"
+        profile
+        "%rdi")]
+    [new-profile : String
+      (runtime_common.compiler-backend-runtime-profile-aligned-alloc-account
+        "%rdx"
+        "%r10"
+        ".L_tl_alloc_aligned_profile_new_done"
+        profile
+        "%rdi")]
+    (str_cat.str-cat
+      "    .globl tl_alloc_aligned
+    .type tl_alloc_aligned,@function
+tl_alloc_aligned:
+    testq %rdi, %rdi
+    js .L_tl_alloc_aligned_abort
+    jnz .L_tl_alloc_aligned_size_ready
+    movq $1, %rdi
+.L_tl_alloc_aligned_size_ready:
+    addq $7, %rdi
+    jc .L_tl_alloc_aligned_abort
+    jo .L_tl_alloc_aligned_abort
+    andq $-8, %rdi
+    movq %rdi, %rdx
+    testq %rsi, %rsi
+    jz .L_tl_alloc_aligned_abort
+    cmpq $4096, %rsi
+    ja .L_tl_alloc_aligned_abort
+    movq %rsi, %r11
+    decq %r11
+    testq %rsi, %r11
+    jnz .L_tl_alloc_aligned_abort
+    movq %fs:tl_current_arena@tpoff, %r8
+    testq %r8, %r8
+    jz .L_tl_alloc_aligned_new_arena
+    movq 56(%r8), %r9
+    testq $1, 48(%r8)
+    jnz .L_tl_alloc_aligned_atomic
+.L_tl_alloc_aligned_ordinary_retry:
+    movq 16(%r9), %r10
+    movq %r10, %rax
+    addq %r11, %rax
+    jc .L_tl_alloc_aligned_abort
+    movq %r11, %rdi
+    notq %rdi
+    andq %rdi, %rax
+    movq %rax, %rdi
+    addq %rdx, %rdi
+    jc .L_tl_alloc_aligned_abort
+    cmpq 24(%r9), %rdi
+    ja .L_tl_alloc_aligned_new_arena
+    movq %rdi, 16(%r9)
+    subq %r10, %rdi
+"
+      ordinary-profile
+      "    ret
+.L_tl_alloc_aligned_atomic:
+    movq %r8, %r9
+    movq 56(%r9), %r8
+    movq 16(%r8), %rax
+.L_tl_alloc_aligned_atomic_cas:
+    movq %rax, %rcx
+    addq %r11, %rcx
+    jc .L_tl_alloc_aligned_abort
+    movq %r11, %rdi
+    notq %rdi
+    andq %rdi, %rcx
+    movq %rcx, %rdi
+    addq %rdx, %rdi
+    jc .L_tl_alloc_aligned_abort
+    cmpq 24(%r8), %rdi
+    ja .L_tl_alloc_aligned_atomic_new_arena
+    lock cmpxchgq %rdi, 16(%r8)
+    jne .L_tl_alloc_aligned_atomic_cas
+    subq %rax, %rdi
+"
+      (str_cat.str-cat
+        atomic-profile
+        "    movq %rcx, %rax
+    ret
+.L_tl_alloc_aligned_atomic_new_arena:
+    movq $1, %rax
+    movq $3, %rcx
+    lock cmpxchgq %rcx, 48(%r9)
+    je .L_tl_alloc_aligned_atomic_locked
+    pause
+    jmp .L_tl_alloc_aligned_atomic_new_arena
+.L_tl_alloc_aligned_atomic_locked:
+    movq 56(%r9), %r8
+    movq 16(%r8), %rax
+.L_tl_alloc_aligned_atomic_locked_cas:
+    movq %rax, %rcx
+    addq %r11, %rcx
+    jc .L_tl_alloc_aligned_abort_locked
+    movq %r11, %rdi
+    notq %rdi
+    andq %rdi, %rcx
+    movq %rcx, %rdi
+    addq %rdx, %rdi
+    jc .L_tl_alloc_aligned_abort_locked
+    cmpq 24(%r8), %rdi
+    ja .L_tl_alloc_aligned_atomic_map
+    lock cmpxchgq %rdi, 16(%r8)
+    jne .L_tl_alloc_aligned_atomic_locked_cas
+    movq $1, 48(%r9)
+    subq %rax, %rdi
+"
+        atomic-locked-profile
+        "    movq %rcx, %rax
+    ret
+.L_tl_alloc_aligned_abort_locked:
+    movq $1, 48(%r9)
+    jmp .L_tl_alloc_aligned_abort
+.L_tl_alloc_aligned_atomic_map:
+    movq %rdx, %r10
+    addq %r11, %r10
+    jc .L_tl_alloc_aligned_abort_locked
+    addq $64, %r10
+    jc .L_tl_alloc_aligned_abort_locked
+    movq $0x4000000, %rdi
+    cmpq %rdi, %r10
+    ja .L_tl_alloc_aligned_atomic_len_ready
+    movq %rdi, %r10
+.L_tl_alloc_aligned_atomic_len_ready:
+    pushq %r9
+    pushq %rdx
+    pushq %r11
+    pushq %r10
+    movq %r10, %rsi
+    xorq %rdi, %rdi
+    movq $3, %rdx
+    movq $0x22, %r10
+    movq $-1, %r8
+    xorq %r9, %r9
+    movq $9, %rax
+    syscall
+    popq %r10
+    popq %r11
+    popq %rdx
+    popq %r9
+    testq %rax, %rax
+    js .L_tl_alloc_aligned_abort
+    movq %rax, %rdi
+    addq %r10, %rdi
+    jc .L_tl_alloc_aligned_abort
+    movq 56(%r9), %r8
+    movq %r8, 0(%rax)
+    movq $0, 32(%rax)
+    movq %r9, 40(%rax)
+    movq $1, 48(%rax)
+    movq $0, 56(%rax)
+    leaq 64(%rax), %rcx
+    movq %rcx, 8(%rax)
+    movq %rdi, 24(%rax)
+    movq %rcx, %rsi
+    addq %r11, %rsi
+    jc .L_tl_alloc_aligned_abort
+    movq %r11, %r10
+    notq %r10
+    andq %r10, %rsi
+    movq %rsi, %r10
+    addq %rdx, %r10
+    jc .L_tl_alloc_aligned_abort
+    movq %r10, 16(%rax)
+    movq %rax, 56(%r9)
+    movq $1, 48(%r9)
+    subq %rcx, %r10
+"
+        (str_cat.str-cat
+          atomic-new-profile
+          "    movq %rsi, %rax
+    ret
+.L_tl_alloc_aligned_new_arena:
+    movq %rdx, %r10
+    addq %r11, %r10
+    jc .L_tl_alloc_aligned_abort
+    addq $64, %r10
+    jc .L_tl_alloc_aligned_abort
+    movq $0x4000000, %rdi
+    cmpq %rdi, %r10
+    ja .L_tl_alloc_aligned_len_ready
+    movq %rdi, %r10
+.L_tl_alloc_aligned_len_ready:
+    pushq %rdx
+    pushq %r11
+    pushq %r10
+    movq %r10, %rsi
+    xorq %rdi, %rdi
+    movq $3, %rdx
+    movq $0x22, %r10
+    movq $-1, %r8
+    xorq %r9, %r9
+    movq $9, %rax
+    syscall
+    popq %r10
+    popq %r11
+    popq %rdx
+    testq %rax, %rax
+    js .L_tl_alloc_aligned_abort
+    movq %rax, %rdi
+    addq %r10, %rdi
+    jc .L_tl_alloc_aligned_abort
+    movq %fs:tl_current_arena@tpoff, %r8
+    testq %r8, %r8
+    jz .L_tl_alloc_aligned_root_self
+    movq 56(%r8), %r9
+    jmp .L_tl_alloc_aligned_root_ready
+.L_tl_alloc_aligned_root_self:
+    xorq %r9, %r9
+    movq %rax, %r8
+.L_tl_alloc_aligned_root_ready:
+    movq %r9, 0(%rax)
+    movq $0, 32(%rax)
+    movq %r8, 40(%rax)
+    movq $0, 48(%rax)
+    movq %rax, 56(%r8)
+    leaq 64(%rax), %rcx
+    movq %rcx, 8(%rax)
+    movq %rdi, 24(%rax)
+    movq %rcx, %rsi
+    addq %r11, %rsi
+    jc .L_tl_alloc_aligned_abort
+    movq %r11, %r10
+    notq %r10
+    andq %r10, %rsi
+    movq %rsi, %r10
+    addq %rdx, %r10
+    jc .L_tl_alloc_aligned_abort
+    movq %r10, 16(%rax)
+    movq %r8, %r9
+    movq %r9, %fs:tl_current_arena@tpoff
+    subq %rcx, %r10
+"
+          new-profile
+          "    movq %rsi, %rax
+    ret
+.L_tl_alloc_aligned_abort:
+    jmp tl_oom_abort
+    .size tl_alloc_aligned, . - tl_alloc_aligned
+
+"
+          "")
+        "")
+      "")))
+
 (define (compiler-backend-runtime-linux-alloc-functions
   [profile : bool]
   [_arena-debug : bool]) : String
   (let
     [base : String
       (compiler-backend-runtime-linux-alloc-functions-base profile)]
+    [aligned : String
+      (compiler-backend-runtime-linux-aligned-alloc-functions-base profile)]
     (cfg
       (any compiler-arena-debug test)
       (if _arena-debug
-        (string.replace
-          base
-          ".L_tl_alloc_root_self:
+        (str_cat.str-cat
+          (string.replace
+            base
+            ".L_tl_alloc_root_self:
     xorq %r10, %r10
     movq %rax, %r9
 .L_tl_alloc_root_ready:
 "
-          ".L_tl_alloc_root_self:
+            ".L_tl_alloc_root_self:
     movq %rax, %rdi
     subq $8, %rsp
     call .L_tl_arena_debug_register_root
@@ -321,8 +597,30 @@ tl_alloc:
     movq %rax, %r9
 .L_tl_alloc_root_ready:
 ")
-        base)
-      base)))
+          (string.replace
+            aligned
+            ".L_tl_alloc_aligned_root_self:
+    xorq %r9, %r9
+    movq %rax, %r8
+.L_tl_alloc_aligned_root_ready:
+"
+            ".L_tl_alloc_aligned_root_self:
+    pushq %rdx
+    pushq %r11
+    pushq %rdi
+    movq %rax, %rdi
+    call .L_tl_arena_debug_register_root
+    popq %rdi
+    popq %r11
+    popq %rdx
+    xorq %r9, %r9
+    movq %rax, %r8
+.L_tl_alloc_aligned_root_ready:
+")
+          ""
+          "")
+        (str_cat.str-cat base aligned "" ""))
+      (str_cat.str-cat base aligned "" ""))))
 
 (define (compiler-backend-runtime-linux-libc-shim-functions) : String
   "")

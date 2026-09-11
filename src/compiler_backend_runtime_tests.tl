@@ -2,7 +2,9 @@
 (import compiler_backend_runtime_common as runtime_common)
 (import compiler_backend_runtime_linux as runtime_linux)
 (import compiler_backend_runtime_windows as runtime_windows)
+(import stdlib.hash)
 (import stdlib.string)
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.test)
 
 (define (compiler-backend-runtime-test-contains?
@@ -63,6 +65,19 @@
       (runtime_windows.compiler-backend-runtime-externs (& minimal))]
     [windows-full-externs : String
       (runtime_windows.compiler-backend-runtime-externs (& full))]
+    [linux-ordinary-alloc : String
+      (runtime_linux.compiler-backend-runtime-linux-alloc-functions-base false)]
+    [linux-profile-ordinary-alloc : String
+      (runtime_linux.compiler-backend-runtime-linux-alloc-functions-base true)]
+    [windows-ordinary-alloc : String
+      (runtime_windows.compiler-backend-runtime-windows-alloc-functions-base
+        false)]
+    [windows-profile-ordinary-alloc : String
+      (runtime_windows.compiler-backend-runtime-windows-alloc-functions-base
+        true)]
+    [windows-aligned-alloc : String
+      (runtime_windows.compiler-backend-runtime-windows-aligned-alloc-functions-base
+        false)]
     (begin
       (test.assert-true
         (compiler-backend-runtime-test-contains? (& linux-min-data) ".tbss")
@@ -295,12 +310,17 @@
         "disabled Linux arena debug leaves reset assembly byte-identical")
       (test.assert-true
         (string.eq
-          (runtime_linux.compiler-backend-runtime-linux-alloc-functions-base
-            false)
+          (str_cat.str-cat
+            (runtime_linux.compiler-backend-runtime-linux-alloc-functions-base
+              false)
+            (runtime_linux.compiler-backend-runtime-linux-aligned-alloc-functions-base
+              false)
+            ""
+            "")
           (runtime_linux.compiler-backend-runtime-linux-alloc-functions
             false
             false))
-        "disabled Linux arena debug leaves allocator assembly byte-identical")
+        "disabled Linux arena debug leaves both allocator recipes byte-identical")
       (test.assert-true
         (string.eq
           (runtime_windows.compiler-backend-runtime-windows-arena-functions-base
@@ -319,12 +339,59 @@
         "disabled Windows arena debug leaves reset assembly byte-identical")
       (test.assert-true
         (string.eq
-          (runtime_windows.compiler-backend-runtime-windows-alloc-functions-base
-            false)
+          (str_cat.str-cat
+            (runtime_windows.compiler-backend-runtime-windows-alloc-functions-base
+              false)
+            (runtime_windows.compiler-backend-runtime-windows-aligned-alloc-functions-base
+              false)
+            ""
+            "")
           (runtime_windows.compiler-backend-runtime-windows-alloc-functions
             false
             false))
-        "disabled Windows arena debug leaves allocator assembly byte-identical")
+        "disabled Windows arena debug leaves both allocator recipes byte-identical")
+      (test.assert-true
+        (and
+          (= (string.string-length (& linux-ordinary-alloc)) 8146)
+          (= (hash.string-key (& linux-ordinary-alloc)) 1528833549)
+          (= (string.string-length (& linux-profile-ordinary-alloc)) 14779)
+          (= (hash.string-key (& linux-profile-ordinary-alloc)) 643856254)
+          (= (string.string-length (& windows-ordinary-alloc)) 13890)
+          (= (hash.string-key (& windows-ordinary-alloc)) 1909494154)
+          (= (string.string-length (& windows-profile-ordinary-alloc)) 20563)
+          (= (hash.string-key (& windows-profile-ordinary-alloc)) 812496703))
+        "ordinary tl_alloc assembly remains byte-identical in base/profile modes")
+      (test.assert-true
+        (and
+          (not
+            (compiler-backend-runtime-test-contains?
+              (& windows-aligned-alloc)
+              "%rbx"))
+          (not
+            (compiler-backend-runtime-test-contains?
+              (& windows-aligned-alloc)
+              "%rsi"))
+          (not
+            (compiler-backend-runtime-test-contains?
+              (& windows-aligned-alloc)
+              "%rdi"))
+          (not
+            (compiler-backend-runtime-test-contains?
+              (& windows-aligned-alloc)
+              "%r12"))
+          (not
+            (compiler-backend-runtime-test-contains?
+              (& windows-aligned-alloc)
+              "%r13"))
+          (not
+            (compiler-backend-runtime-test-contains?
+              (& windows-aligned-alloc)
+              "%r14"))
+          (not
+            (compiler-backend-runtime-test-contains?
+              (& windows-aligned-alloc)
+              "%r15")))
+        "Win64 aligned allocator preserves every nonvolatile register except framed rbp")
       (test.assert-true
         (not
           (compiler-backend-runtime-test-contains?
@@ -347,6 +414,39 @@
           (& windows-full-functions)
           ".globl tl_alloc")
         "full Windows functions emit the allocator")
+      (test.assert-true
+        (and
+          (compiler-backend-runtime-test-contains?
+            (& linux-full-functions)
+            ".globl tl_alloc_aligned")
+          (compiler-backend-runtime-test-contains?
+            (& windows-full-functions)
+            ".globl tl_alloc_aligned")
+          (compiler-backend-runtime-test-contains?
+            (& linux-full-functions)
+            "cmpq $4096, %rsi")
+          (compiler-backend-runtime-test-contains?
+            (& windows-full-functions)
+            "cmpq $4096, %rdx")
+          (compiler-backend-runtime-test-contains?
+            (& linux-full-functions)
+            "testq %rdi, %rdi\n    js .L_tl_alloc_aligned_abort")
+          (compiler-backend-runtime-test-contains?
+            (& windows-full-functions)
+            "testq %rcx, %rcx\n    js .L_tl_alloc_aligned_win_abort")
+          (compiler-backend-runtime-test-contains?
+            (& linux-full-functions)
+            "addq $7, %rdi\n    jc .L_tl_alloc_aligned_abort\n    jo .L_tl_alloc_aligned_abort")
+          (compiler-backend-runtime-test-contains?
+            (& windows-full-functions)
+            "addq $7, %rcx\n    jc .L_tl_alloc_aligned_win_abort\n    jo .L_tl_alloc_aligned_win_abort")
+          (compiler-backend-runtime-test-contains?
+            (& linux-full-functions)
+            ".L_tl_alloc_aligned_atomic_cas:")
+          (compiler-backend-runtime-test-contains?
+            (& windows-full-functions)
+            ".L_tl_alloc_aligned_win_atomic_cas:"))
+        "aligned allocators validate size, rounding, cap, and atomic CAS paths")
       (test.assert-true
         (compiler-backend-runtime-test-contains?
           (& windows-full-functions)

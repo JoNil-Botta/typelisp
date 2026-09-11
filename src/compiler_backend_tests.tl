@@ -27269,6 +27269,9 @@ g:
       "tl_arena_poison_enable")
     (compiler-backend-runtime-helper-inventory-core-symbol-ok?
       (owned_view.compiler-owned-shared-view plan)
+      "tl_alloc_aligned")
+    (compiler-backend-runtime-helper-inventory-core-symbol-ok?
+      (owned_view.compiler-owned-shared-view plan)
       "tl_thread_init")
     (compiler-backend-runtime-helper-inventory-core-symbol-ok?
       plan
@@ -27522,6 +27525,8 @@ g:
     (cbi.compiler-builtin-refresh!)
     (let
       [core-id : i64 (compiler-backend-test-runtime-name-id "tl_alloc")]
+      [aligned-core-id : i64
+        (compiler-backend-test-runtime-name-id "tl_alloc_aligned")]
       [profile-id : i64
         (compiler-backend-test-runtime-name-id "tl_profile_alloc_total")]
       [stdlib-id : i64
@@ -27543,6 +27548,8 @@ g:
               retired-env-id)))
         (compiler_backend.compiler-backend-runtime-helper-stdlib-type-lisp-id?
           atomic-id)
+        (compiler_backend.compiler-backend-runtime-helper-core-id?
+          aligned-core-id)
         (not
           (compiler_backend.compiler-backend-runtime-helper-known-id?
             retired-id))
@@ -27565,6 +27572,9 @@ g:
             cbi.compiler-builtin-id-tl-alloc)
           (compiler_backend.compiler-backend-plan-provides-id?
             (owned_view.compiler-owned-shared-view plan)
+            cbi.compiler-builtin-id-tl-alloc-aligned)
+          (compiler_backend.compiler-backend-plan-provides-id?
+            (owned_view.compiler-owned-shared-view plan)
             cbi.compiler-builtin-id-tl-profile-alloc-total)
           (not
             (compiler_backend.compiler-backend-plan-provides-id?
@@ -27582,6 +27592,52 @@ g:
               plan
               unknown-id))
           (= (ci.intern-generation) generation))))))
+
+(define (compiler-backend-aligned-alloc-runtime-plan-ok?) : bool
+  (let
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (compiler_ir_types.CompilerIrFunction.Function
+          (ci.intern "aligned-alloc-plan-test")
+          (compiler_ir_types.compiler-ir-param-seq-empty)
+          (compiler_ast_types.AstType.I64)
+          1
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler-backend-test-instr-seq-prepend
+                (compiler_ir_types.CompilerIrInstr.Call
+                  0
+                  cbi.compiler-builtin-id-tl-alloc-aligned
+                  (compiler_ir_types.CompilerIrCallArgs.Two
+                    (compiler_ir_types.CompilerIrValue.I64 17)
+                    (compiler_ir_types.CompilerIrValue.I64 64))
+                  (compiler_ast_types.AstType.I64))
+                (compiler-backend-test-instr-seq-prepend
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 0)))
+                  (compiler_ir_types.compiler-ir-instr-seq-empty))))
+            compiler_ir_types.CompilerIrBlockList.Nil))
+        (compiler_ir_types.compiler-ir-function-seq-empty))]
+    (match (compiler_backend.compiler-backend-runtime-plan-for
+      functions
+      (compiler_ir_types.compiler-ir-extern-seq-empty))
+      [(compiler_backend.ResultBackendRuntimePlan.Ok plan)
+        (let
+          [features : runtime_common.CompilerBackendRuntimeFeatures
+            (compiler_backend.compiler-backend-runtime-features
+              (owned_view.compiler-owned-shared-view plan))]
+          (and
+            (compiler_backend.compiler-backend-plan-provides-id?
+              (owned_view.compiler-owned-shared-view plan)
+              cbi.compiler-builtin-id-tl-alloc)
+            (compiler_backend.compiler-backend-plan-provides-id?
+              (owned_view.compiler-owned-shared-view plan)
+              cbi.compiler-builtin-id-tl-alloc-aligned)
+            (runtime_common.compiler-backend-runtime-features-alloc?
+              (& features))))]
+      [(compiler_backend.ResultBackendRuntimePlan.Err _) false])))
 
 (define (compiler-backend-region-extern-runtime-plan-ok?) : bool
   (let
@@ -27799,6 +27855,7 @@ g:
       (compiler-backend-runtime-helper-inventory-negative-ok? plan)
       (compiler-backend-runtime-helper-owner-id-ok?)
       (compiler-backend-runtime-plan-id-lookup-only-ok?)
+      (compiler-backend-aligned-alloc-runtime-plan-ok?)
       (compiler-backend-runtime-prelude-validation-plan-ok?)
       (compiler-backend-region-extern-runtime-plan-ok?)
       (compiler-backend-startup-profile-runtime-plan-ok?)
@@ -27904,6 +27961,9 @@ g:
         "tl_region_reset"))
     (compiler-backend-runtime-global-symbol-ok?
       (owned_view.compiler-owned-shared-view asm)
+      "tl_alloc_aligned")
+    (compiler-backend-runtime-global-symbol-ok?
+      (owned_view.compiler-owned-shared-view asm)
       "tl_mem_fill8")
     (compiler-backend-runtime-global-symbol-ok?
       (owned_view.compiler-owned-shared-view asm)
@@ -27927,7 +27987,7 @@ g:
       (compiler_backend.compiler-backend-string-count
         (owned_view.compiler-owned-shared-view asm)
         "    .globl ")
-      25)
+      26)
     (compiler-backend-runtime-common-global-symbols-ok?
       (owned_view.compiler-owned-shared-view asm))
     (compiler-backend-runtime-global-symbol-ok?
@@ -27949,7 +28009,7 @@ g:
       (compiler_backend.compiler-backend-string-count
         (owned_view.compiler-owned-shared-view asm)
         "    .globl ")
-      28)
+      29)
     (compiler-backend-runtime-common-global-symbols-ok?
       (owned_view.compiler-owned-shared-view asm))
     (compiler-backend-runtime-global-symbol-ok?
@@ -27974,7 +28034,7 @@ g:
       (compiler_backend.compiler-backend-string-count
         (owned_view.compiler-owned-shared-view asm)
         "    lock ")
-      11)
+      14)
     (if (compiler_backend.compiler-backend-target-windows? target)
       (and
         ;; tl_array_zero reads the current arena once for its virgin-arena
@@ -27983,7 +28043,7 @@ g:
           (compiler_backend.compiler-backend-string-count
             (owned_view.compiler-owned-shared-view asm)
             "%gs:0x28")
-          20)
+          23)
         (=
           (compiler_backend.compiler-backend-string-count
             (owned_view.compiler-owned-shared-view asm)
@@ -27994,7 +28054,7 @@ g:
           (compiler_backend.compiler-backend-string-count
             (owned_view.compiler-owned-shared-view asm)
             "%fs:tl_current_arena@tpoff")
-          18)
+          21)
         (=
           (compiler_backend.compiler-backend-string-count
             (owned_view.compiler-owned-shared-view asm)
@@ -28066,13 +28126,16 @@ g:
           "tl_arena_poison_enable:\n"))
       (compiler_backend.compiler-backend-string-contains?
         (owned_view.compiler-owned-shared-view asm)
+        "tl_alloc_aligned:\n")
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view asm)
         "tl_arena_make_atomic:\n")
       (compiler_backend.backend-and4
         (=
           (compiler_backend.compiler-backend-string-count
             (owned_view.compiler-owned-shared-view asm)
             "    movq $9, %rax\n    syscall\n")
-          5)
+          7)
         (=
           (compiler_backend.compiler-backend-string-count
             (owned_view.compiler-owned-shared-view asm)
@@ -28082,7 +28145,7 @@ g:
           (compiler_backend.compiler-backend-string-count
             (owned_view.compiler-owned-shared-view asm)
             "    syscall\n")
-          14)
+          16)
         (=
           (compiler_backend.compiler-backend-string-count
             (owned_view.compiler-owned-shared-view asm)
@@ -28133,6 +28196,9 @@ g:
           "tl_arena_poison_enable:\n"))
       (compiler_backend.compiler-backend-string-contains?
         (owned_view.compiler-owned-shared-view asm)
+        "tl_alloc_aligned:\n")
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view asm)
         "tl_arena_make_atomic:\n")
       (compiler_backend.backend-and4
         (and
@@ -28140,23 +28206,23 @@ g:
             (compiler_backend.compiler-backend-string-count
               (owned_view.compiler-owned-shared-view asm)
               "    call VirtualAlloc\n")
-            9)
+            13)
           (=
             (compiler_backend.compiler-backend-string-count
               (owned_view.compiler-owned-shared-view asm)
               "    call GetLastError\n")
-            9))
+            13))
         (and
           (=
             (compiler_backend.compiler-backend-string-count
               (owned_view.compiler-owned-shared-view asm)
               "    call VirtualFree\n")
-            10)
+            12)
           (=
             (compiler_backend.compiler-backend-string-count
               (owned_view.compiler-owned-shared-view asm)
               "    call tl_windows_allocation_abort\n")
-            9))
+            13))
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)

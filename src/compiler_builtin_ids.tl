@@ -17,6 +17,8 @@
   false)
 (define compiler-builtin-id-tl-alloc : i64
   -1)
+(define compiler-builtin-id-tl-alloc-aligned : i64
+  -1)
 (define compiler-builtin-id-tl-region-mark : i64
   -1)
 (define compiler-builtin-id-tl-region-reset : i64
@@ -801,7 +803,7 @@
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [metadata : (__tl_dyn-array i64) (__tl_make-array i64 4)]
-    [ids : (__tl_dyn-array i64) (__tl_make-array i64 319)]
+    [ids : (__tl_dyn-array i64) (__tl_make-array i64 320)]
     [ctfe-ids : (__tl_dyn-array i64) (__tl_make-array i64 293)]
     [i : i64 0]
     (begin
@@ -809,7 +811,7 @@
       (set! (array-ref metadata 1) -1)
       (set! (array-ref metadata 2) -1)
       (set! (array-ref metadata 3) 0)
-      (while (< i 319)
+      (while (< i 320)
         (begin
           (set! (array-ref ids i) -1)
           (set! i (+ i 1))))
@@ -1297,6 +1299,8 @@
     (state-set! state 316 compiler-builtin-id-tl-mem-fill8)
     (state-set! state 317 compiler-builtin-id-tl-mem-copy-fwd)
     (state-set! state 318 compiler-builtin-id-tl-mem-copy8-fwd)
+    ;; Append-only reset-aware slot for the compiler-private aligned allocator.
+    (state-set! state 319 compiler-builtin-id-tl-alloc-aligned)
     (state-capture-ctfe-ids! state)))
 
 (define (state-capture) : CompilerBuiltinIdsState
@@ -1355,6 +1359,7 @@
     (set! compiler-builtin-id-tl-mem-fill8 (state-ref state 316))
     (set! compiler-builtin-id-tl-mem-copy-fwd (state-ref state 317))
     (set! compiler-builtin-id-tl-mem-copy8-fwd (state-ref state 318))
+    (set! compiler-builtin-id-tl-alloc-aligned (state-ref state 319))
     (set! compiler-builtin-id-string-length (state-ref state 44))
     (set! compiler-builtin-id-length (state-ref state 45))
     (set! compiler-builtin-id-string-eq (state-ref state 46))
@@ -2094,6 +2099,9 @@
     (set!
       compiler-builtin-id-tl-alloc
       (compiler-builtin-resolve-name insert-missing "tl_alloc"))
+    (set!
+      compiler-builtin-id-tl-alloc-aligned
+      (compiler-builtin-resolve-name insert-missing "tl_alloc_aligned"))
     (set!
       compiler-builtin-id-tl-region-mark
       (compiler-builtin-resolve-name insert-missing "tl_region_mark"))
@@ -3544,6 +3552,7 @@
         compiler-builtin-id-tl-region-mark
         compiler-builtin-id-tl-region-reset
         compiler-builtin-id-tl-arena-make)
+      (= name-id compiler-builtin-id-tl-alloc-aligned)
       (compiler-builtin-id-any4?
         name-id
         compiler-builtin-id-tl-arena-make-small
@@ -3658,7 +3667,9 @@
 (define (compiler-builtin-backend-tl-alloc-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-alloc)))
+    (or
+      (= name-id compiler-builtin-id-tl-alloc)
+      (= name-id compiler-builtin-id-tl-alloc-aligned))))
 
 (define (compiler-builtin-backend-tl-region-mark-id? [name-id : i64]) : bool
   (begin

@@ -1080,72 +1080,83 @@
 (define (compiler-backend-runtime-atomic-wrapper-source) : String
   "(module stdlib.runtime)
 
-(define (atomic-i64-load-ptr [ptr : (Ptr i64)])
-  : i64
-  (unsafe (atomic-load ptr)))
+(unsafe
+  (define (atomic-i64-load-ptr [ptr : (Ptr i64)])
+    : i64
+    (unsafe (atomic-load ptr))))
 
-(define (atomic-i64-store-ptr! [ptr : (MutPtr i64)] [value : i64])
-  : unit
-  (unsafe (atomic-store! ptr value)))
+(unsafe
+  (define (atomic-i64-store-ptr! [ptr : (MutPtr i64)] [value : i64])
+    : unit
+    (unsafe (atomic-store! ptr value))))
 
-(define (atomic-i64-add-ptr! [ptr : (MutPtr i64)] [delta : i64])
-  : unit
-  (unsafe (atomic-add! ptr delta)))
+(unsafe
+  (define (atomic-i64-add-ptr! [ptr : (MutPtr i64)] [delta : i64])
+    : unit
+    (unsafe (atomic-add! ptr delta))))
 
-(define (atomic-i64-fetch-add-ptr!
-  [ptr : (MutPtr i64)]
-  [delta : i64])
-  : i64
-  (unsafe (atomic-fetch-add! ptr delta)))
+(unsafe
+  (define (atomic-i64-fetch-add-ptr!
+    [ptr : (MutPtr i64)]
+    [delta : i64])
+    : i64
+    (unsafe (atomic-fetch-add! ptr delta))))
 
-(define (atomic-i64-cas-ptr!
-  [ptr : (MutPtr i64)]
-  [expected : i64]
-  [new-value : i64])
-  : i64
-  (unsafe (atomic-cas! ptr expected new-value)))
+(unsafe
+  (define (atomic-i64-cas-ptr!
+    [ptr : (MutPtr i64)]
+    [expected : i64]
+    [new-value : i64])
+    : i64
+    (unsafe (atomic-cas! ptr expected new-value))))
 
-(define (atomic-i32-load-ptr [ptr : (Ptr i32)])
-  : i32
-  (unsafe (atomic-load ptr)))
+(unsafe
+  (define (atomic-i32-load-ptr [ptr : (Ptr i32)])
+    : i32
+    (unsafe (atomic-load ptr))))
 
-(define (atomic-i32-store-ptr! [ptr : (MutPtr i32)] [value : i32])
-  : unit
-  (unsafe (atomic-store! ptr value)))
+(unsafe
+  (define (atomic-i32-store-ptr! [ptr : (MutPtr i32)] [value : i32])
+    : unit
+    (unsafe (atomic-store! ptr value))))
 
-(define (atomic-i32-add-ptr! [ptr : (MutPtr i32)] [delta : i32])
-  : unit
-  (unsafe (atomic-add! ptr delta)))
+(unsafe
+  (define (atomic-i32-add-ptr! [ptr : (MutPtr i32)] [delta : i32])
+    : unit
+    (unsafe (atomic-add! ptr delta))))
 
-(define (atomic-i32-fetch-add-ptr!
-  [ptr : (MutPtr i32)]
-  [delta : i32])
-  : i32
-  (unsafe (atomic-fetch-add! ptr delta)))
+(unsafe
+  (define (atomic-i32-fetch-add-ptr!
+    [ptr : (MutPtr i32)]
+    [delta : i32])
+    : i32
+    (unsafe (atomic-fetch-add! ptr delta))))
 
-(define (atomic-i32-cas-ptr!
-  [ptr : (MutPtr i32)]
-  [expected : i32]
-  [new-value : i32])
-  : i32
-  (unsafe (atomic-cas! ptr expected new-value)))
+(unsafe
+  (define (atomic-i32-cas-ptr!
+    [ptr : (MutPtr i32)]
+    [expected : i32]
+    [new-value : i32])
+    : i32
+    (unsafe (atomic-cas! ptr expected new-value))))
 
 (define (atomic-wrapper-root
   [p64 : (MutPtr i64)]
   [p32 : (MutPtr i32)])
   : i64
-  (begin
-    (atomic-i64-load-ptr (unsafe (ptr-cast p64 : (Ptr i64))))
-    (atomic-i64-store-ptr! p64 0)
-    (atomic-i64-add-ptr! p64 1)
-    (atomic-i64-fetch-add-ptr! p64 1)
-    (atomic-i64-cas-ptr! p64 1 2)
-    (atomic-i32-load-ptr (unsafe (ptr-cast p32 : (Ptr i32))))
-    (atomic-i32-store-ptr! p32 (cast 0 : i32))
-    (atomic-i32-add-ptr! p32 (cast 1 : i32))
-    (atomic-i32-fetch-add-ptr! p32 (cast 1 : i32))
-    (atomic-i32-cas-ptr! p32 (cast 1 : i32) (cast 2 : i32))
-    42))
+  (unsafe
+    (begin
+      (atomic-i64-load-ptr (ptr-cast p64 : (Ptr i64)))
+      (atomic-i64-store-ptr! p64 0)
+      (atomic-i64-add-ptr! p64 1)
+      (atomic-i64-fetch-add-ptr! p64 1)
+      (atomic-i64-cas-ptr! p64 1 2)
+      (atomic-i32-load-ptr (ptr-cast p32 : (Ptr i32)))
+      (atomic-i32-store-ptr! p32 (cast 0 : i32))
+      (atomic-i32-add-ptr! p32 (cast 1 : i32))
+      (atomic-i32-fetch-add-ptr! p32 (cast 1 : i32))
+      (atomic-i32-cas-ptr! p32 (cast 1 : i32) (cast 2 : i32))
+      42)))
 
 (define (main) : i64
   (let

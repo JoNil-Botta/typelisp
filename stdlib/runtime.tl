@@ -105,73 +105,88 @@
 (unsafe
   (extern (runtime-arena-set [arg0 : i64]) : unit (:symbol "tl_arena_set")))
 
+;: Raw atomic pointer helpers are unsafe compatibility boundaries. The caller
+;: must provide live, correctly aligned and initialized storage of the named
+;: width for the full call, and must ensure that every concurrent access to the
+;: location is permitted by the storage owner. Operations are sequentially
+;: consistent; update forms additionally require writable storage.
 ;: Sequentially consistent atomic load of one raw `i64` pointer.
-(define (atomic-i64-load-ptr [ptr : (Ptr i64)])
-  (:export-symbol "tl_atomic_i64_load_ptr") : i64
-  (unsafe
-    (atomic-load ptr)))
+(unsafe
+  (define (atomic-i64-load-ptr [ptr : (Ptr i64)])
+    (:export-symbol "tl_atomic_i64_load_ptr") : i64
+    (unsafe
+      (atomic-load ptr))))
 
 ;: Sequentially consistent atomic store of one raw `i64` pointer.
-(define (atomic-i64-store-ptr! [ptr : (MutPtr i64)] [value : i64])
-  (:export-symbol "tl_atomic_i64_store_ptr") : unit
-  (unsafe
-    (atomic-store! ptr value)))
+(unsafe
+  (define (atomic-i64-store-ptr! [ptr : (MutPtr i64)] [value : i64])
+    (:export-symbol "tl_atomic_i64_store_ptr") : unit
+    (unsafe
+      (atomic-store! ptr value))))
 
 ;: Sequentially consistent atomic add of one raw `i64` pointer.
-(define (atomic-i64-add-ptr! [ptr : (MutPtr i64)] [delta : i64])
-  (:export-symbol "tl_atomic_i64_add_ptr") : unit
-  (unsafe
-    (atomic-add! ptr delta)))
+(unsafe
+  (define (atomic-i64-add-ptr! [ptr : (MutPtr i64)] [delta : i64])
+    (:export-symbol "tl_atomic_i64_add_ptr") : unit
+    (unsafe
+      (atomic-add! ptr delta))))
 
 ;: Sequentially consistent atomic fetch-add of one raw `i64` pointer.
-(define (atomic-i64-fetch-add-ptr! [ptr : (MutPtr i64)] [delta : i64])
-  (:export-symbol "tl_atomic_i64_fetch_add_ptr") : i64
-  (unsafe
-    (atomic-fetch-add! ptr delta)))
+(unsafe
+  (define (atomic-i64-fetch-add-ptr! [ptr : (MutPtr i64)] [delta : i64])
+    (:export-symbol "tl_atomic_i64_fetch_add_ptr") : i64
+    (unsafe
+      (atomic-fetch-add! ptr delta))))
 
 ;: Sequentially consistent compare-exchange of one raw `i64` pointer. Returns
 ;: the previous value observed at `ptr`.
-(define (atomic-i64-cas-ptr!
-  [ptr : (MutPtr i64)]
-  [expected : i64]
-  [new-value : i64])
-  (:export-symbol "tl_atomic_i64_cas_ptr") : i64
-  (unsafe
-    (atomic-cas! ptr expected new-value)))
+(unsafe
+  (define (atomic-i64-cas-ptr!
+    [ptr : (MutPtr i64)]
+    [expected : i64]
+    [new-value : i64])
+    (:export-symbol "tl_atomic_i64_cas_ptr") : i64
+    (unsafe
+      (atomic-cas! ptr expected new-value))))
 
 ;: Sequentially consistent atomic load of one raw `i32` pointer.
-(define (atomic-i32-load-ptr [ptr : (Ptr i32)])
-  (:export-symbol "tl_atomic_i32_load_ptr") : i32
-  (unsafe
-    (atomic-load ptr)))
+(unsafe
+  (define (atomic-i32-load-ptr [ptr : (Ptr i32)])
+    (:export-symbol "tl_atomic_i32_load_ptr") : i32
+    (unsafe
+      (atomic-load ptr))))
 
 ;: Sequentially consistent atomic store of one raw `i32` pointer.
-(define (atomic-i32-store-ptr! [ptr : (MutPtr i32)] [value : i32])
-  (:export-symbol "tl_atomic_i32_store_ptr") : unit
-  (unsafe
-    (atomic-store! ptr value)))
+(unsafe
+  (define (atomic-i32-store-ptr! [ptr : (MutPtr i32)] [value : i32])
+    (:export-symbol "tl_atomic_i32_store_ptr") : unit
+    (unsafe
+      (atomic-store! ptr value))))
 
 ;: Sequentially consistent atomic add of one raw `i32` pointer.
-(define (atomic-i32-add-ptr! [ptr : (MutPtr i32)] [delta : i32])
-  (:export-symbol "tl_atomic_i32_add_ptr") : unit
-  (unsafe
-    (atomic-add! ptr delta)))
+(unsafe
+  (define (atomic-i32-add-ptr! [ptr : (MutPtr i32)] [delta : i32])
+    (:export-symbol "tl_atomic_i32_add_ptr") : unit
+    (unsafe
+      (atomic-add! ptr delta))))
 
 ;: Sequentially consistent atomic fetch-add of one raw `i32` pointer.
-(define (atomic-i32-fetch-add-ptr! [ptr : (MutPtr i32)] [delta : i32])
-  (:export-symbol "tl_atomic_i32_fetch_add_ptr") : i32
-  (unsafe
-    (atomic-fetch-add! ptr delta)))
+(unsafe
+  (define (atomic-i32-fetch-add-ptr! [ptr : (MutPtr i32)] [delta : i32])
+    (:export-symbol "tl_atomic_i32_fetch_add_ptr") : i32
+    (unsafe
+      (atomic-fetch-add! ptr delta))))
 
 ;: Sequentially consistent compare-exchange of one raw `i32` pointer. Returns
 ;: the previous value observed at `ptr`.
-(define (atomic-i32-cas-ptr!
-  [ptr : (MutPtr i32)]
-  [expected : i32]
-  [new-value : i32])
-  (:export-symbol "tl_atomic_i32_cas_ptr") : i32
-  (unsafe
-    (atomic-cas! ptr expected new-value)))
+(unsafe
+  (define (atomic-i32-cas-ptr!
+    [ptr : (MutPtr i32)]
+    [expected : i32]
+    [new-value : i32])
+    (:export-symbol "tl_atomic_i32_cas_ptr") : i32
+    (unsafe
+      (atomic-cas! ptr expected new-value))))
 
 ;: Convert a read-only byte pointer into an integer (syscall/handle) argument.
 (define (ptr-arg [ptr : (Ptr u8)]) : i64

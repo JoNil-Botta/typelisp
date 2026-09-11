@@ -723,6 +723,11 @@ the exact global-symbol allowlist emitted by the full runtime-helper assembly.
   `tl_atomic_i32_fetch_add_ptr`, and `tl_atomic_i32_cas_ptr`. The string
   construction helpers are already exported from TypeLisp by #3291 while the
   runtime-plan names remain recognized for compatibility call-site tracking.
+  Every raw atomic pointer helper is an unsafe declaration: callers must prove
+  live, correctly aligned and initialized storage of the named width, retain it
+  for the complete call, and permit every concurrent access. Their existing
+  sequentially consistent ordering and exported machine ABI are unchanged;
+  `stdlib.atomic` remains the safe owning-buffer interface.
   Atomic helper migration is tracked by #3292 now that #3289 supplies the
   underlying atomic memory-operation intrinsics. String equality, string
   parsing, and string hashing are implemented by TypeLisp stdlib code in

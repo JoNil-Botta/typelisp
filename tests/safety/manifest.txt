@@ -267,6 +267,13 @@ io_core_raw_clear_safe_reject|check-fail|tests/safety/io_core_raw_clear_safe_rej
 io_raw_helper_callable_launder_reject|check-fail|tests/safety/io_raw_helper_callable_launder_reject.tl|-|io/c-string-length is an unsafe callable and cannot be used as a plain function value
 io_raw_helper_unsafe_call_ok|check-ok|tests/safety/io_raw_helper_unsafe_call_ok.tl|-|-
 io_formatter_callback_value_ok|check-ok|tests/safety/io_formatter_callback_value_ok.tl|-|-
+runtime_atomic_i64_load_safe_reject|check-fail|tests/safety/runtime_atomic_i64_load_safe_reject.tl|-|runtime/atomic-i64-load-ptr requires unsafe context
+runtime_atomic_i32_store_safe_reject|check-fail|tests/safety/runtime_atomic_i32_store_safe_reject.tl|-|runtime/atomic-i32-store-ptr! requires unsafe context
+runtime_atomic_i64_rmw_safe_reject|check-fail|tests/safety/runtime_atomic_i64_rmw_safe_reject.tl|-|runtime/atomic-i64-fetch-add-ptr! requires unsafe context
+runtime_atomic_i32_callable_launder_reject|check-fail|tests/safety/runtime_atomic_i32_callable_launder_reject.tl|-|runtime/atomic-i32-cas-ptr! is an unsafe callable and cannot be used as a plain function value
+runtime_atomic_raw_unsafe_call_ok|check-ok|tests/safety/runtime_atomic_raw_unsafe_call_ok.tl|-|-
+runtime_atomic_safe_owner_ok|check-ok|tests/safety/runtime_atomic_safe_owner_ok.tl|-|-
+sync_atomic_raw_alias_safe_reject|check-fail|tests/safety/sync_atomic_raw_alias_safe_reject.tl|-|sync/atomic-i64-load-ptr requires unsafe context
 fs_rooted_linux_state_read_reject|check-fail|tests/safety/fs_rooted_linux_state_read_reject.tl|-|linux-rooted-state-read requires unsafe context
 fs_rooted_linux_raw_close_reject|check-fail|tests/safety/fs_rooted_linux_raw_close_reject.tl|-|linux-rooted-raw-close requires unsafe context
 fs_rooted_linux_capability_copy_reject|check-fail|tests/safety/fs_rooted_linux_capability_copy_reject.tl|-|cleanup-required resource already has a cleanup owner

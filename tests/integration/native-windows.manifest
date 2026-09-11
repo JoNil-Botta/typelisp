@@ -477,6 +477,7 @@ sym_i64_env|tests/integration/sym_i64_env.tl|0|PASS: empty-miss\nPASS: empty-loo
 tail_self_loop|tests/integration/tail_self_loop.tl|42|-|-|-
 thread_runtime|tests/integration/thread_runtime.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 atomic_intrinsics_thread_counter|tests/integration/atomic_intrinsics_thread_counter.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
+runtime_atomic_raw_pointer|tests/integration/runtime_atomic_raw_pointer.tl|42|-|-|stdlib/runtime.tl
 thread_safe_i64|tests/integration/thread_safe_i64.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 thread_safe_bool_unit|tests/integration/thread_safe_bool_unit.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 thread_safe_unit|tests/integration/thread_safe_unit.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl

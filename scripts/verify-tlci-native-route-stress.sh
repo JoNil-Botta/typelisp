@@ -424,8 +424,10 @@ assert_macro_profile_counts \
     "$HEAVY_DISPATCHES" "$LIGHT_DISPATCHES" "$ROW_COUNT"
 assert_macro_profile_counts \
     "$NATIVE_STDERR" stdlib.core_macros/__tl-box-place 1 1 1 "$ROW_COUNT"
+# The generation-checked formatter writer registry contributes one shared
+# two-operand conjunction to every stress entry. Refs #7655.
 assert_macro_profile_counts \
-    "$NATIVE_STDERR" stdlib.core_macros/and 2 71 71 "$ROW_COUNT"
+    "$NATIVE_STDERR" stdlib.core_macros/and 2 72 72 "$ROW_COUNT"
 # #6984's Windows open-error mapping adds two `or` expansions to every Windows
 # compiler batch entry. The Linux route remains at 14; the authoritative
 # Windows stress artifact pins 16.

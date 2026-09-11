@@ -64,6 +64,7 @@ stdlib.format/format-write-literal-callback	5	fixed	expr	tests/integration/forma
 stdlib.format/format-write-expand	4	fixed	expr	tests/integration/format_writer_sinks.tl	ok	default	assembly
 stdlib.format/write!	3	variadic	expr	tests/integration/format_writer_sinks.tl	ok	default	assembly
 stdlib.format/writeln!	3	variadic	expr	tests/integration/format_writer_sinks.tl	ok	default	assembly
+stdlib.format_writer_core/format-writer-key	1	fixed	expr	tests/integration/format_writer_capabilities.tl	ok	default	assembly
 stdlib.hash/hash-shared-view	1	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
 stdlib.hash/hash-array-shared-view	2	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
 stdlib.hash/inline-hash	2	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly

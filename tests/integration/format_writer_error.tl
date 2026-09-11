@@ -1,5 +1,6 @@
 (import stdlib.byte_buf)
 (import stdlib.format)
+(import stdlib.format_writer_core)
 (import stdlib.string)
 
 (defstruct FailingWriter
@@ -31,35 +32,54 @@
 
 ; The canonical adapter deliberately accepts a prefix of the failing call.
 ; Formatter must retain status 77 and skip every later plan piece.
-(define (format-write-raw [context : i64] [data : String]) : i64
+(unsafe
+  (define (format-write-raw [address : i64] [data : String]) : i64
+    (let
+      [contents : (& data bytes) (byte_buf.str-as-bytes (& data))]
+      [count : i64 (byte_buf.bytes-length contents)]
+      [slot : (MutPtr FailingWriter)
+        (unsafe
+          (int->ptr (cast address : u64) : (MutPtr FailingWriter)))]
+      [writer : FailingWriter
+        (unsafe
+          (ptr-read (ptr-cast slot : (Ptr FailingWriter))))]
+      [accepted : i64
+        (if (< writer.remaining count)
+          writer.remaining
+          count)]
+      [index : i64 0]
+      (begin
+        (while (< index accepted)
+          (begin
+            (set!
+              writer.bytes
+              (byte_buf.push writer.bytes (byte_buf.bytes-ref contents index)))
+            (set! index (+ index 1))))
+        (set! writer.remaining (- writer.remaining accepted))
+        (set! writer.calls (+ writer.calls 1))
+        (unsafe
+          (ptr-write! slot writer))
+        (if (= accepted count)
+          0
+          77)))))
+
+(define (format-write-capability [context : i64] [data : String]) : i64
   (let
-    [contents : (& data bytes) (byte_buf.str-as-bytes (& data))]
-    [count : i64 (byte_buf.bytes-length contents)]
-    [slot : (MutPtr FailingWriter)
+    [address : i64
       (unsafe
-        (int->ptr (cast context : u64) : (MutPtr FailingWriter)))]
-    [writer : FailingWriter
-      (unsafe
-        (ptr-read (ptr-cast slot : (Ptr FailingWriter))))]
-    [accepted : i64
-      (if (< writer.remaining count)
-        writer.remaining
-        count)]
-    [index : i64 0]
-    (begin
-      (while (< index accepted)
+        (format_writer_core.format-writer-acquire-address
+          context
+          (format_writer_core.format-writer-key FailingWriter)))]
+    (if (= address 0)
+      format_writer_core.invalid-context-status
+      (let
+        [status : i64
+          (unsafe
+            (format-write-raw address data))]
         (begin
-          (set!
-            writer.bytes
-            (byte_buf.push writer.bytes (byte_buf.bytes-ref contents index)))
-          (set! index (+ index 1))))
-      (set! writer.remaining (- writer.remaining accepted))
-      (set! writer.calls (+ writer.calls 1))
-      (unsafe
-        (ptr-write! slot writer))
-      (if (= accepted count)
-        0
-        77))))
+          (unsafe
+            (format_writer_core.format-writer-release context))
+          status)))))
 
 (define (error-77? [result : format.FormatResult]) : bool
   (match result

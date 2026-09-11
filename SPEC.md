@@ -6787,22 +6787,40 @@ nominal writer place. The writer's canonical owner module defines exactly one
 of `format-write-raw` or `format-write-raw-<NominalName>` with signature
 `(i64, String) -> i64`. Stateful writers additionally define the corresponding
 `format-writer-cell` or `format-writer-cell-<NominalName>` helper with signature
-`T -> (Array T 1)`. The fixed cell gives the synchronous callback stable
-caller-owned storage and the opaque context denotes its address. A writer whose
-existing scalar capability is sufficient may instead define
+`T -> (Array T 1)` and `format-write-capability` or
+`format-write-capability-<NominalName>` with signature
+`(i64, String) -> i64`. The fixed cell gives the synchronous callback stable
+caller-owned storage. Its raw adapter is an `unsafe` declaration whose first
+argument is the cell address; it cannot be called by safe code or converted to
+an ordinary function value. The formatter registers that address under the
+writer's canonical `module/NominalName` key and passes only the resulting
+generation-checked scalar token to the ordinary first-class capability
+adapter. That adapter must acquire an exact-key lease, call the raw adapter
+inside `unsafe`, and release the lease; `format-writer-key T` derives the same
+canonical key without hard-coding a source path. Forged, stale, wrong-writer, and
+reentrant or concurrent tokens return a deterministic nonzero status without
+raw memory access. Unregistration closes a leased entry against new
+acquisitions and waits for the in-flight callback before the caller-owned cell
+can leave scope; registry acquisition and state transitions are serialized
+across threads. Registration and callback validation allocate no storage.
+
+A writer whose existing scalar capability is sufficient may instead define
 `format-writer-context` or `format-writer-context-<NominalName>` returning an
 `i64`; its callback must independently validate that value before performing a
-resource operation. The callback's `String` is a bounded byte value, so an
-ordinary first-class adapter never carries an unbounded pointer/count contract.
-Status zero means success and a nonzero value is a destination failure.
+resource operation, and no cell capability adapter is required. The callback's
+`String` is a bounded byte value, so an ordinary first-class adapter never
+carries an unbounded pointer/count contract. Status zero means success and a
+nonzero value is a destination failure.
 `FormatResult` is `FormatOk` or `FormatErr status`; the formatter retains the
 first failure and skips every later plan piece and newline. `ByteBuf`, `TextBuf`,
 and `FileHandle` provide canonical adapters; `ByteBuf` and `TextBuf` use cells,
-while `FileHandle` uses its validated table ID as a direct context. Stdout and
-stderr use the same bounded callback contract without a writer cell. Direct
-sinks and retained Arguments construction do not allocate the final combined
-String, although Arguments aggregate storage, scalar conversion, option
-rendering, TextBuf's
+while `FileHandle` uses its validated table ID as a direct context. Internal
+retained-Arguments String sinks use the same checked cell capability protocol;
+the raw formatter-cell write/result/status helpers are unsafe. Stdout and stderr
+use the same bounded callback contract without a writer cell. Direct sinks and
+retained Arguments construction do not allocate the final combined String,
+although Arguments aggregate storage, scalar conversion, option rendering,
+TextBuf's
 retained chunk copies, and fallback nominal `to-string` hooks may allocate. A
 direct owner `format-write` hook need not allocate.
 

@@ -28,6 +28,7 @@
 ;#       42
 ;#       1)))
 ;# ```
+(import stdlib.format_writer_core)
 (import stdlib.string)
 
 ;: Owned mutable binary byte buffer. Only the prefix `[0, len)` is live.
@@ -411,30 +412,50 @@
 (define (append-bytes [buf : ByteBuf] [src : (& source bytes)]) : ByteBuf
   (append-bytes-range buf src 0 (bytes-length src)))
 
-;: Raw Formatter destination adapter for a caller-owned ByteBuf cell.
+;: Place one ByteBuf in fixed caller-owned storage for formatter registration.
 ;:
-;: `context` points at the live writer cell created by `format.write!`; the
-;: callback is synchronous and the macro moves the updated buffer back into
-;: the caller's place before returning. Zero is the only success status.
+;: The format macro moves the updated buffer back into the caller's place
+;: after invalidating its generation-checked capability token.
 (define (format-writer-cell [buf : ByteBuf]) : (Array ByteBuf 1)
   (array buf))
 
-;: Append one bounded callback value to the ByteBuf stored at `context`.
+;: Append one bounded callback value to the ByteBuf stored at raw `address`.
 ;:
-;: The caller-owned cell is updated synchronously before returning.
-(define (format-write-raw [context : i64] [data : String]) : i64
+;: The address must name a live, exclusively leased ByteBuf cell.
+(unsafe
+  (define (format-write-raw [address : i64] [data : String]) : i64
+    (let
+      [slot : (MutPtr ByteBuf)
+        (unsafe
+          (int->ptr (cast address : u64) : (MutPtr ByteBuf)))]
+      [buf : ByteBuf
+        (unsafe
+          (ptr-read (ptr-cast slot : (Ptr ByteBuf))))]
+      [ready : ByteBuf (append-string buf data)]
+      (begin
+        (unsafe
+          (ptr-write! slot ready))
+        0))))
+
+;: Validate and lease one ByteBuf writer capability before raw cell access.
+;: This ordinary safe function may be retained as a formatter callback.
+(define (format-write-capability [context : i64] [data : String]) : i64
   (let
-    [slot : (MutPtr ByteBuf)
+    [address : i64
       (unsafe
-        (int->ptr (cast context : u64) : (MutPtr ByteBuf)))]
-    [buf : ByteBuf
-      (unsafe
-        (ptr-read (ptr-cast slot : (Ptr ByteBuf))))]
-    [ready : ByteBuf (append-string buf data)]
-    (begin
-      (unsafe
-        (ptr-write! slot ready))
-      0)))
+        (format_writer_core.format-writer-acquire-address
+          context
+          (format_writer_core.format-writer-key ByteBuf)))]
+    (if (= address 0)
+      format_writer_core.invalid-context-status
+      (let
+        [status : i64
+          (unsafe
+            (format-write-raw address data))]
+        (begin
+          (unsafe
+            (format_writer_core.format-writer-release context))
+          status)))))
 
 ;: Copy `count` bytes from `src` starting at `start` into a new buffer.
 (define (from-string-range [src : String] [start : i64] [count : i64]) : ByteBuf

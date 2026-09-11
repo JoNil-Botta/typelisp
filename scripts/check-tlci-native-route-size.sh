@@ -174,12 +174,12 @@ self_test() {
     check_evidence "$work/pass.tsv" > "$work/pass.out"
     grep -F 'bytes_per_dispatch=4.057' "$work/pass.out" >/dev/null
 
-    write_evidence_fixture "$work/breach.tsv" windows 85926
+    write_evidence_fixture "$work/breach.tsv" windows 97825
     if check_evidence "$work/breach.tsv" > "$work/breach.out" 2>&1; then
         echo "[tlci-size-ratchet] breach fixture unexpectedly passed" >&2
         return 1
     fi
-    grep -F 'raw=85926 baseline=78114 max=85925' "$work/breach.out" >/dev/null
+    grep -F 'raw=97825 baseline=88931 max=97824' "$work/breach.out" >/dev/null
     grep -F 'Reproduce: scripts/verify-tlci-native-route-stress.sh' \
         "$work/breach.out" >/dev/null
 
@@ -210,13 +210,13 @@ self_test() {
         echo "[tlci-size-ratchet] unknown policy kind unexpectedly passed" >&2
         return 1
     fi
-    sed 's/59007\t64908/59007\t70000/' "$POLICY" > "$work/broad.tsv"
+    sed 's/63091\t69400/63091\t80000/' "$POLICY" > "$work/broad.tsv"
     if TLCI_NATIVE_ROUTE_SIZE_POLICY="$work/broad.tsv" \
             "$0" --check-policy >/dev/null 2>&1; then
         echo "[tlci-size-ratchet] broad relaxation unexpectedly passed" >&2
         return 1
     fi
-    sed 's/\t#6906\t/\tno-reference\t/' "$POLICY" > "$work/unexplained.tsv"
+    sed 's/\t#7697\t/\tno-reference\t/' "$POLICY" > "$work/unexplained.tsv"
     if TLCI_NATIVE_ROUTE_SIZE_POLICY="$work/unexplained.tsv" \
             "$0" --check-policy >/dev/null 2>&1; then
         echo "[tlci-size-ratchet] unexplained baseline unexpectedly passed" >&2

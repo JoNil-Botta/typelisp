@@ -13,3 +13,4 @@
 # gate does not require to be reachable.
 #
 # script	reason
+scripts/verify-sframe-v3-corpus.sh	Requires the explicitly pinned GNU binutils 2.47 oracle toolchain, which moving CI runners do not provision; pure checked-in goldens remain covered by cross-platform tests.

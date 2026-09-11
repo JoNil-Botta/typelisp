@@ -1,0 +1,27 @@
+.cfi_sections .sframe
+.text
+
+.globl leaf
+.type leaf,@function
+leaf:
+.cfi_startproc
+  nop
+  ret
+.cfi_endproc
+.size leaf,.-leaf
+
+.globl framed
+.type framed,@function
+framed:
+.cfi_startproc
+  push %rbp
+  .cfi_def_cfa_offset 16
+  .cfi_offset %rbp,-16
+  mov %rsp,%rbp
+  .cfi_def_cfa_register %rbp
+  nop
+  leave
+  .cfi_def_cfa %rsp,8
+  ret
+.cfi_endproc
+.size framed,.-framed

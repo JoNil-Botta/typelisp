@@ -6253,6 +6253,13 @@
 ;;   C9 twin     : `0 - 5` is a literal pair, so the constant folder answers it
 ;;                 first and the result is `Mov -5`, exactly as before the rule
 ;;                 existed.
+;;   C10 admitted: `@g + x` -> `x + @g` (CANON-G: the backend's memory-source
+;;                 form keys off the right operand exactly as the immediate
+;;                 forms do).
+;;   C11 refused : `@g + @h` -- two cells have no better spelling either way.
+;;   C12 refused : `@g + x` stored straight back into `@g` -- the
+;;                 read-modify-write the RMW-2 peephole folds keeps its cell on
+;;                 the left.
 (define (opt-cc-var? [v : compiler_ir_types.CompilerIrValue] [id : i64]) : bool
   (match v
     [(compiler_ir_types.CompilerIrValue.Var x) (= x id)]
@@ -6267,6 +6274,20 @@
   (match v
     [(compiler_ir_types.CompilerIrValue.F64 _) true]
     [_ false]))
+
+(define (opt-cc-global? [v : compiler_ir_types.CompilerIrValue] [name : i64]) : bool
+  (match v
+    [(compiler_ir_types.CompilerIrValue.Global g) (= g name)]
+    [_ false]))
+
+;; Bare cell ids: the rule reads nothing but the id, and interning a symbol
+;; here would re-seed the builtin table under the typed-fold fixtures that run
+;; after this one.
+(define (opt-cc-g) : i64
+  4242)
+
+(define (opt-cc-h) : i64
+  4243)
 
 (define (opt-cc-op-is? [op : compiler_ir_types.CompilerIrBinOp] [tag : i64]) : bool
   (=
@@ -6354,6 +6375,28 @@
       (compiler_ir_types.CompilerIrBinOp.Sub)
       (compiler_ir_types.CompilerIrValue.I64 0)
       (compiler_ir_types.CompilerIrValue.I64 5)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      13
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Global (opt-cc-g))
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      14
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Global (opt-cc-g))
+      (compiler_ir_types.CompilerIrValue.Global (opt-cc-h))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      15
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Global (opt-cc-g))
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Store
+      (opt-cc-g)
+      (compiler_ir_types.CompilerIrValue.Var 15)
       (compiler_ast_types.AstType.I64))))
 
 ;; 0 when `instr` has the shape the rule prescribes for its dst, else the code
@@ -6404,6 +6447,27 @@
             0
             11)]
         [(= dst 12) 22]
+        [(= dst 13)
+          (if (and
+            (opt-cc-op-is? op 1)
+            (opt-cc-var? l 0)
+            (opt-cc-global? r (opt-cc-g)))
+            0
+            13)]
+        [(= dst 14)
+          (if (and
+            (opt-cc-op-is? op 1)
+            (opt-cc-global? l (opt-cc-g))
+            (opt-cc-global? r (opt-cc-h)))
+            0
+            14)]
+        [(= dst 15)
+          (if (and
+            (opt-cc-op-is? op 1)
+            (opt-cc-global? l (opt-cc-g))
+            (opt-cc-var? r 0))
+            0
+            15)]
         [else 30])]
     [(compiler_ir_types.CompilerIrInstr.UnOp dst op src _)
       (cond
@@ -6422,6 +6486,7 @@
             0
             12)]
         [else 32])]
+    [(compiler_ir_types.CompilerIrInstr.Store _ _ _) 0]
     [_ 33]))
 
 (define (opt-cc-check-from
@@ -92393,7 +92458,7 @@
   (test.assert-i64-eq
     (compiler-optimize-commute-constant-lhs-self-test)
     42
-    "a commutative integer op with a literal LHS canonicalises to a literal RHS, `0 - x` on i64 becomes Neg, and Sub/Shl/f32-f64/narrow-width neighbours are left alone"))
+    "a commutative integer op with a literal or global-cell LHS canonicalises to a literal or cell RHS (two cells stay), `0 - x` on i64 becomes Neg, and Sub/Shl/f32-f64/narrow-width neighbours are left alone"))
 
 (test
   scalar-shift-count-type-fold

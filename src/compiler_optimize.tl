@@ -1998,6 +1998,28 @@
 ;; integer op whose literal sits on the left and whose right operand is not
 ;; itself a literal (a literal pair is constant-folded before this runs, so the
 ;; guard only keeps the rewrite from oscillating on a shape the folder missed).
+;;
+;; CANON-G: a scalar global CELL on the left is the same story. The backend's
+;; memory-source form (`addq g(%rip), %dst`, the `imulq g(%rip)` the hash
+;; mixes already get) keys off the right operand too; with the cell on the
+;; left the add loads the cell into the destination first and, when the
+;; destination already holds the register operand, copies that aside as well.
+;; sccp_lattice's dispatch loop computes `at = @sccp-instr-base + row * 8` on
+;; every row: `leaq (,%row,8) / movq %rax, %r8 / movq base(%rip), %rax / addq
+;; %r8, %rax` today, `leaq (,%row,8) / addq base(%rip), %rax` with the cell on
+;; the right. Only a VAR on the right qualifies -- two cells, or a cell and a
+;; literal, have no better spelling either way -- and the read-modify-write of
+;; one cell keeps the cell on the left (opt-binop-commute-cell-lhs?).
+(define (opt-value-global-cell? [value : ir.CompilerIrValue]) : bool
+  (match (compiler-opt-global-shared-view value)
+    [(ir.CompilerIrValue.Global _) true]
+    [_ false]))
+
+(define (opt-value-var? [value : ir.CompilerIrValue]) : bool
+  (match (compiler-opt-global-shared-view value)
+    [(ir.CompilerIrValue.Var _) true]
+    [_ false]))
+
 (define (opt-binop-commute-constant-lhs?
   [op : ir.CompilerIrBinOp]
   [lhs : ir.CompilerIrValue]
@@ -2006,8 +2028,46 @@
   (and
     (opt-binop-commutative-int-op? op)
     (opt-int-or-char-type? ty)
-    (opt-value-int-literal? lhs)
+    (opt-value-int-literal? (compiler-opt-global-shared-view lhs))
     (not (opt-value-int-literal? rhs))))
+
+;; CANON-G's own rule. `rmw?` says the instruction's result is stored straight
+;; back into the same cell -- `(set! g (op g x))` -- where the cell on the LEFT
+;; is the shape the RMW-2 peephole folds to ONE memory-destination instruction
+;; (`orq %x, g(%rip)`); commuted, the memory-source form plus the store is
+;; three, so that shape keeps its spelling.
+(define (opt-binop-commute-cell-lhs?
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [ty : ast.AstType]
+  [rmw? : bool]) : bool
+  (and
+    (not rmw?)
+    (opt-binop-commutative-int-op? op)
+    (opt-int-or-char-type? ty)
+    (opt-value-global-cell? (compiler-opt-global-shared-view lhs))
+    (opt-value-var? rhs)))
+
+(define (opt-fold-cell-lhs-binop? [instr : ir.CompilerIrInstr]) : bool
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.BinOp _ _ (ir.CompilerIrValue.Global _) _ _) true]
+    [_ false]))
+
+;; Is `next` the store of `instr`'s result back into the cell `instr` reads on
+;; its left -- the read-modify-write of one global?
+(define (opt-fold-rmw-shape?
+  [instr : ir.CompilerIrInstr]
+  [next : ir.CompilerIrInstr]) : bool
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.BinOp dst _ (ir.CompilerIrValue.Global cell) _ _)
+      (match (compiler-opt-global-shared-view next)
+        [(ir.CompilerIrInstr.Store name (ir.CompilerIrValue.Var stored) _)
+          (and
+            (= stored dst)
+            (= (ir.compiler-ir-symbol-id name) (ir.compiler-ir-symbol-id cell)))]
+        [_ false])]
+    [_ false]))
 
 ;; `0 - x` is the one non-commutative constant-lhs shape worth a rule of its
 ;; own: it has no immediate form at all (the backend must materialise the zero
@@ -2042,7 +2102,8 @@
 (define (opt-fold-instr
   [type-segment-bases : i64]
   [env : OptConstEnv]
-  [instr : ir.CompilerIrInstr]) : OptInstrResult
+  [instr : ir.CompilerIrInstr]
+  [rmw? : bool]) : OptInstrResult
   (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.Mov dst value ty)
       (match (opt-resolve-known
@@ -2126,11 +2187,18 @@
           [(ir.CompilerIrMaybeValue.No)
             (OptInstrResult.Result
               (opt-const-unbind env dst)
-              (if (opt-binop-commute-constant-lhs?
-                (compiler-opt-global-shared-view op)
-                (compiler-opt-global-shared-view l)
-                (compiler-opt-global-shared-view r)
-                (compiler-opt-global-shared-view ty))
+              (if (or
+                (opt-binop-commute-constant-lhs?
+                  (compiler-opt-global-shared-view op)
+                  (compiler-opt-global-shared-view l)
+                  (compiler-opt-global-shared-view r)
+                  (compiler-opt-global-shared-view ty))
+                (opt-binop-commute-cell-lhs?
+                  (compiler-opt-global-shared-view op)
+                  (compiler-opt-global-shared-view l)
+                  (compiler-opt-global-shared-view r)
+                  (compiler-opt-global-shared-view ty)
+                  rmw?))
                 (ir.CompilerIrInstr.BinOp dst op r l ty)
                 (if (opt-binop-negate-zero-lhs?
                   (compiler-opt-global-shared-view op)
@@ -2242,15 +2310,27 @@
     [state : OptConstEnv env]
     [index : i64 0]
     (while (< index count)
-      (match (opt-fold-instr
-        type-segment-bases
-        (compiler-opt-global-shared-view state)
-        (clone (array-ref instrs.slots index)))
-        [(OptInstrResult.Result next-state rewritten)
-          (begin
-            (set! (array-ref instrs.slots index) rewritten)
-            (set! state next-state)
-            (set! index (+ index 1)))]))))
+      (let
+        [cur : ir.CompilerIrInstr (clone (array-ref instrs.slots index))]
+        ;; the peek clones the next slot only behind a cell-lhs binop, which
+        ;; is rare; every other instruction pays one shape test
+        [rmw? : bool
+          (and
+            (opt-fold-cell-lhs-binop? (compiler-opt-global-shared-view cur))
+            (< (+ index 1) count)
+            (opt-fold-rmw-shape?
+              (compiler-opt-global-shared-view cur)
+              (clone (array-ref instrs.slots (+ index 1)))))]
+        (match (opt-fold-instr
+          type-segment-bases
+          (compiler-opt-global-shared-view state)
+          cur
+          rmw?)
+          [(OptInstrResult.Result next-state rewritten)
+            (begin
+              (set! (array-ref instrs.slots index) rewritten)
+              (set! state next-state)
+              (set! index (+ index 1)))])))))
 
 (define (opt-strength-instr [env : OptConstEnv] [instr : ir.CompilerIrInstr]) : OptInstrResult
   (match (compiler-opt-global-shared-view instr)
@@ -77521,7 +77601,12 @@
         (match (opt-fold-instr
           type-segment-bases
           (compiler-opt-global-shared-view fold-state)
-          (ir.compiler-ir-instr-seq-ref instrs index))
+          (ir.compiler-ir-instr-seq-ref instrs index)
+          (and
+            (< (+ index 1) count)
+            (opt-fold-rmw-shape?
+              (ir.compiler-ir-instr-seq-ref instrs index)
+              (ir.compiler-ir-instr-seq-ref instrs (+ index 1)))))
           [(OptInstrResult.Result next-fold folded)
             (match (opt-strength-instr
               (compiler-opt-global-shared-view strength-state)
@@ -77817,6 +77902,12 @@
             (compiler-opt-global-shared-view l)
             (compiler-opt-global-shared-view r)
             (compiler-opt-global-shared-view ty))
+          (opt-binop-commute-cell-lhs?
+            (compiler-opt-global-shared-view op)
+            (compiler-opt-global-shared-view l)
+            (compiler-opt-global-shared-view r)
+            (compiler-opt-global-shared-view ty)
+            false)
           (opt-binop-negate-zero-lhs?
             (compiler-opt-global-shared-view op)
             (compiler-opt-global-shared-view l)

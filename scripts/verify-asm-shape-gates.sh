@@ -1131,16 +1131,17 @@ check_global_len_fold() {
             "global-len-fold-$_target"
     done
 }
-# BE-6: a scalar global read on an add's RIGHT folds into the add's
-# rip-relative memory operand. The read is `movq g(%rip), %rN` on both
-# targets, so the fold and its spelling are target-independent and both are
-# checked on both.
+# BE-6 / CANON-G: a scalar global read on an add's RIGHT folds into the add's
+# rip-relative memory operand, and a read written on the LEFT is commuted
+# there first. The read is `movq g(%rip), %rN` on both targets, so the fold
+# and its spelling are target-independent and both are checked on both.
 check_global_add_mem_fold() {
     for _target in linux-x86_64 windows-x86_64; do
         _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
         _asm=$(compile_gate "global_add_mem_fold_$_suffix" \
             tests/integration/global_add_mem_fold.tl "$_target")
         _rhs=$(function_body "$_asm" _tl_global_add_mem_fold_probe_rhs)
+        _lhs=$(function_body "$_asm" _tl_global_add_mem_fold_probe_lhs)
         _refused=$(function_body "$_asm" _tl_global_add_mem_fold_probe_refused)
 
         # The cell is the add's SOURCE operand and nothing stages it into a
@@ -1152,6 +1153,16 @@ check_global_add_mem_fold() {
         assert_not_matches "$_rhs" \
             '^[[:space:]]+movq _tl_global_add_mem_fold_gadd_k\(%rip\), %r' \
             "global-add-mem-fold-rhs-$_target"
+
+        # The mirror: the source put the cell on the LEFT; CANON-G commutes it
+        # and the same fold lands. Pre-CANON-G this body loaded the cell into
+        # the destination and added the register operand to it.
+        assert_regex_count_eq "$_lhs" \
+            '^[[:space:]]+addq _tl_global_add_mem_fold_gadd_m\(%rip\), %r[a-z0-9]+$' 1 \
+            "global-add-mem-fold-lhs-$_target"
+        assert_not_matches "$_lhs" \
+            '^[[:space:]]+movq _tl_global_add_mem_fold_gadd_m\(%rip\), %r' \
+            "global-add-mem-fold-lhs-$_target"
 
         # Nearest refused neighbour: the read is bound to a local that is read
         # twice, so the value must survive in a register and no add addresses

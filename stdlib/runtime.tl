@@ -31,12 +31,13 @@
 ;: Windows kernel32 `WriteFile` binding for the OS write primitive.
 (cfg
   windows
-  (extern (runtime-windows-write-file
-    [arg0 : i64]
-    [arg1 : (Ptr u8)]
-    [arg2 : i32]
-    [arg3 : (MutPtr i32)]
-    [arg4 : i64]) : i32 (:symbol "WriteFile")))
+  (unsafe
+    (extern (runtime-windows-write-file
+      [arg0 : i64]
+      [arg1 : (Ptr u8)]
+      [arg2 : i32]
+      [arg3 : (MutPtr i32)]
+      [arg4 : i64]) : i32 (:symbol "WriteFile"))))
 
 ;: Windows kernel32 `ExitProcess` binding for the OS exit primitive.
 (cfg
@@ -67,13 +68,16 @@
 (cfg
   (all linux compiler-backtrace)
   (extern (runtime-backtrace-stack-high) : i64 (:symbol "tl_backtrace_stack_high_get")))
+
 (cfg
   (all windows compiler-backtrace)
-  (extern (runtime-windows-capture-stack-back-trace
-    [skip : u32]
-    [count : u32]
-    [frames : (MutPtr i64)]
-    [hash : (MutPtr u32)]) : u16 (:symbol "RtlCaptureStackBackTrace")))
+  (unsafe
+    (extern (runtime-windows-capture-stack-back-trace
+      [skip : u32]
+      [count : u32]
+      [frames : (MutPtr i64)]
+      [hash : (MutPtr u32)]) : u16 (:symbol "RtlCaptureStackBackTrace"))))
+
 (cfg
   (all windows compiler-backtrace)
   (extern (runtime-windows-get-environment-strings) : (Ptr u8) (:symbol "GetEnvironmentStringsA")))
@@ -207,27 +211,32 @@
           fd)))))
 
 ;: Write `count` bytes from `buf` to `fd`; returns the bytes written or `-1`.
-;: OS write primitive shared by the abort handlers (and, in later slices, the
-;: stdlib IO layer). Linux uses the `write` syscall (1); Windows uses WriteFile.
-(define (os-write [fd : i64] [buf : (Ptr u8)] [count : i64]) : i64
-  (cfg
-    windows
-    (let
-      [handle : i64 (runtime-windows-fd-handle fd)]
-      [written-cell : i32 (cast 0 : i32)]
-      [written : (MutPtr i32)
-        (unsafe
-          (ptr-addr-of written-cell))]
-      [ok : i32
-        (runtime-windows-write-file handle buf (cast count : i32) written 0)]
-      (if (= ok (cast 0 : i32))
-        -1
-        (cast
+;: The caller must provide a live initialized readable range of at least
+;: `count` bytes for the full call. `count` must be non-negative, fit the
+;: target OS write width (signed i32 on Windows), and describe a range whose
+;: address arithmetic does not overflow. Linux uses the `write` syscall (1);
+;: Windows uses WriteFile. Partial writes retain their native result.
+(unsafe
+  (define (os-write [fd : i64] [buf : (Ptr u8)] [count : i64]) : i64
+    (cfg
+      windows
+      (let
+        [handle : i64 (runtime-windows-fd-handle fd)]
+        [written-cell : i32 (cast 0 : i32)]
+        [written : (MutPtr i32)
           (unsafe
-            (ptr-read (ptr-cast written : (Ptr i32))))
-          : i64)))
-    (unsafe
-      (syscall 1 fd (ptr-arg buf) count))))
+            (ptr-addr-of written-cell))]
+        [ok : i32
+          (unsafe
+            (runtime-windows-write-file handle buf (cast count : i32) written 0))]
+        (if (= ok (cast 0 : i32))
+          -1
+          (cast
+            (unsafe
+              (ptr-read (ptr-cast written : (Ptr i32))))
+            : i64)))
+      (unsafe
+        (syscall 1 fd (ptr-arg buf) count)))))
 
 ;: Terminate the process with `code`; never returns. Linux uses the
 ;: `exit_group` syscall (231); Windows uses ExitProcess.
@@ -248,7 +257,9 @@
       (unsafe
         (string-data message))]
     (begin
-      (os-write 2 data len)
+      ;; MESSAGE owns exactly LEN initialized bytes for this immediate write.
+      (unsafe
+        (os-write 2 data len))
       unit)))
 
 ;: Debug-only never-reset arena diagnostics. The backend guard reaches these
@@ -300,11 +311,13 @@
         (unsafe
           (string-data "0123456789"))]
       (begin
-        (os-write
-          2
-          (unsafe
-            (ptr-offset digits (cast digit : i64)))
-          1)
+        (unsafe
+          ;; DIGIT selects one initialized byte in the static table.
+          (os-write
+            2
+            (unsafe
+              (ptr-offset digits (cast digit : i64)))
+            1))
         unit))))
 
 ;: Write a negative-domain integer magnitude. Keeping the value non-positive
@@ -320,11 +333,13 @@
         (unsafe
           (string-data "0123456789"))]
       (begin
-        (os-write
-          2
-          (unsafe
-            (ptr-offset digits digit))
-          1)
+        (unsafe
+          ;; DIGIT selects one initialized byte in the static table.
+          (os-write
+            2
+            (unsafe
+              (ptr-offset digits digit))
+            1))
         unit))))
 
 ;: Write a signed integer without allocating, including the full INT64_MIN
@@ -349,11 +364,13 @@
           (unsafe
             (string-data "0123456789abcdef"))]
         (begin
-          (os-write
-            2
-            (unsafe
-              (ptr-offset digits digit))
-            1)
+          (unsafe
+            ;; DIGIT selects one initialized byte in the static table.
+            (os-write
+              2
+              (unsafe
+                (ptr-offset digits digit))
+              1))
           unit)))))
 
 (cfg
@@ -368,71 +385,75 @@
 ;; block fail closed instead of turning a diagnostic into an unbounded scan.
 (cfg
   compiler-backtrace
-  (define (backtrace-c-string-eq?
-    [value : (Ptr u8)]
-    [expected : (& expected str)]) : bool
-    (let
-      [n : i64 (string-length expected)]
-      [expected-data : (Ptr u8)
-        (unsafe
-          (string-data expected))]
-      [i : i64 0]
-      [equal : bool true]
-      (begin
-        (while (and equal (< i n))
-          (if (=
-            (unsafe
-              (ptr-read (ptr-offset value i)))
-            (unsafe
-              (ptr-read (ptr-offset expected-data i))))
-            (set! i (+ i 1))
-            (set! equal false)))
-        (and
-          equal
-          (=
-            (unsafe
-              (ptr-read (ptr-offset value n)))
-            (cast 0 : u8)))))))
+  (unsafe
+    (define (backtrace-c-string-eq?
+      [value : (Ptr u8)]
+      [expected : (& expected str)]) : bool
+      (let
+        [n : i64 (string-length expected)]
+        [expected-data : (Ptr u8)
+          (unsafe
+            (string-data expected))]
+        [i : i64 0]
+        [equal : bool true]
+        (begin
+          (while (and equal (< i n))
+            (if (=
+              (unsafe
+                (ptr-read (ptr-offset value i)))
+              (unsafe
+                (ptr-read (ptr-offset expected-data i))))
+              (set! i (+ i 1))
+              (set! equal false)))
+          (and
+            equal
+            (=
+              (unsafe
+                (ptr-read (ptr-offset value n)))
+              (cast 0 : u8))))))))
 
 (cfg
   compiler-backtrace
-  (define (backtrace-env-entry-value [entry : (Ptr u8)] [fold-ascii? : bool]) : (Ptr
-      u8)
-    (let
-      [name-data : (Ptr u8)
-        (unsafe
-          (string-data "TYPELISP_BACKTRACE"))]
-      [n : i64 18]
-      [i : i64 0]
-      [equal : bool true]
-      (begin
-        (while (and equal (< i n))
-          (let
-            [actual : u8
-              (unsafe
-                (ptr-read (ptr-offset entry i)))]
-            [expected : u8
-              (unsafe
-                (ptr-read (ptr-offset name-data i)))]
-            [actual-folded : u8
-              (if (and
-                fold-ascii?
-                (>= actual (cast 'a' : u8))
-                (<= actual (cast 'z' : u8)))
-                (cast (- (cast actual : i64) 32) : u8)
-                actual)]
-            (if (and (not (= actual (cast 0 : u8))) (= actual-folded expected))
-              (set! i (+ i 1))
-              (set! equal false))))
-        (if (and
-          equal
-          (=
-            (unsafe
-              (ptr-read (ptr-offset entry n)))
-            (cast '=' : u8)))
+  (unsafe
+    (define (backtrace-env-entry-value [entry : (Ptr u8)] [fold-ascii? : bool]) : (Ptr
+        u8)
+      (let
+        [name-data : (Ptr u8)
           (unsafe
-            (ptr-offset entry (+ n 1)))
-          (ptr-null : (Ptr u8)))))))
+            (string-data "TYPELISP_BACKTRACE"))]
+        [n : i64 18]
+        [i : i64 0]
+        [equal : bool true]
+        (begin
+          (while (and equal (< i n))
+            (let
+              [actual : u8
+                (unsafe
+                  (ptr-read (ptr-offset entry i)))]
+              [expected : u8
+                (unsafe
+                  (ptr-read (ptr-offset name-data i)))]
+              [actual-folded : u8
+                (if (and
+                  fold-ascii?
+                  (>= actual (cast 'a' : u8))
+                  (<= actual (cast 'z' : u8)))
+                  (cast (- (cast actual : i64) 32) : u8)
+                  actual)]
+              (if (and
+                (not (= actual (cast 0 : u8)))
+                (= actual-folded expected))
+                (set! i (+ i 1))
+                (set! equal false))))
+          (if (and
+            equal
+            (=
+              (unsafe
+                (ptr-read (ptr-offset entry n)))
+              (cast '=' : u8)))
+            (unsafe
+              (ptr-offset entry (+ n 1)))
+            (ptr-null : (Ptr u8))))))))
 
 (cfg
   (all linux compiler-backtrace)
@@ -453,7 +474,10 @@
             (if (ptr-null? entry)
               (set! done true)
               (let
-                [value : (Ptr u8) (backtrace-env-entry-value entry false)]
+                [value : (Ptr u8)
+                  (unsafe
+                    ;; ENTRY comes from the live OS environment vector.
+                    (backtrace-env-entry-value entry false))]
                 (if (ptr-null? value)
                   (set! index (+ index 1))
                   (begin
@@ -478,7 +502,10 @@
             (cast 0 : u8))
             (set! done true)
             (let
-              [value : (Ptr u8) (backtrace-env-entry-value entry true)]
+              [value : (Ptr u8)
+                (unsafe
+                  ;; ENTRY stays inside the bounded live OS environment block.
+                  (backtrace-env-entry-value entry true))]
               [length : i64 0]
               (if (ptr-null? value)
                 (begin
@@ -513,19 +540,27 @@
         2
         (cond
           [(or
-              (backtrace-c-string-eq? value "0")
-              (backtrace-c-string-eq? value "off")
-              (backtrace-c-string-eq? value "disabled"))
+              (unsafe
+                (backtrace-c-string-eq? value "0"))
+              (unsafe
+                (backtrace-c-string-eq? value "off"))
+              (unsafe
+                (backtrace-c-string-eq? value "disabled")))
             0]
-          [(backtrace-c-string-eq? value "short") 1]
-          [(backtrace-c-string-eq? value "full") 2]
+          [(unsafe
+              (backtrace-c-string-eq? value "short"))
+            1]
+          [(unsafe
+              (backtrace-c-string-eq? value "full"))
+            2]
           [else 2])))))
 
 (cfg
   compiler-backtrace
-  (define (backtrace-map-word [row : (Ptr i64)] [offset : i64]) : i64
-    (unsafe
-      (ptr-read (ptr-offset row offset)))))
+  (unsafe
+    (define (backtrace-map-word [row : (Ptr i64)] [offset : i64]) : i64
+      (unsafe
+        (ptr-read (ptr-offset row offset))))))
 
 (cfg
   compiler-backtrace
@@ -543,124 +578,132 @@
 
 (cfg
   compiler-backtrace
-  (define (backtrace-row-valid?
-    [row : (Ptr i64)]
-    [string-begin : i64]
-    [string-end : i64]) : bool
-    (and
-      (>= string-end string-begin)
-      (<= (- string-end string-begin) 67108864)
-      (backtrace-string-range-valid?
-        (backtrace-map-word row 2)
-        (backtrace-map-word row 3)
-        string-begin
-        string-end)
-      (backtrace-string-range-valid?
-        (backtrace-map-word row 4)
-        (backtrace-map-word row 5)
-        string-begin
-        string-end))))
+  (unsafe
+    (define (backtrace-row-valid?
+      [row : (Ptr i64)]
+      [string-begin : i64]
+      [string-end : i64]) : bool
+      (unsafe
+        (and
+          (>= string-end string-begin)
+          (<= (- string-end string-begin) 67108864)
+          (backtrace-string-range-valid?
+            (backtrace-map-word row 2)
+            (backtrace-map-word row 3)
+            string-begin
+            string-end)
+          (backtrace-string-range-valid?
+            (backtrace-map-word row 4)
+            (backtrace-map-word row 5)
+            string-begin
+            string-end))))))
 
 (cfg
   compiler-backtrace
-  (define (backtrace-map-find [pc : i64] [begin : (Ptr i64)] [row-count : i64]) : (Ptr
-      i64)
-    (let
-      [index : i64 0]
-      [found : (Ptr i64) (ptr-null : (Ptr i64))]
-      (begin
-        (while (and (< index row-count) (ptr-null? found))
-          (let
-            [row : (Ptr i64)
-              (unsafe
-                (ptr-offset begin (* index 8)))]
-            [start : i64 (backtrace-map-word row 0)]
-            [end : i64 (backtrace-map-word row 1)]
-            (if (and (> start 0) (> end start) (>= pc start) (< pc end))
-              (set! found row)
-              (set! index (+ index 1)))))
-        found))))
-
-(cfg
-  compiler-backtrace
-  (define (backtrace-runtime-path? [row : (Ptr i64)]) : bool
-    (let
-      [path-address : i64 (backtrace-map-word row 4)]
-      [path-length : i64 (backtrace-map-word row 5)]
-      [suffix-length : i64 17]
-      [suffix-data : (Ptr u8)
-        (unsafe
-          (string-data "stdlib/runtime.tl"))]
-      [path-data : (Ptr u8)
-        (unsafe
-          (int->ptr (cast path-address : u64) : (Ptr u8)))]
-      [i : i64 0]
-      [equal : bool (>= path-length suffix-length)]
-      (begin
-        (while (and equal (< i suffix-length))
-          (let
-            [actual : u8
-              (unsafe
-                (ptr-read
-                  (ptr-offset path-data (+ (- path-length suffix-length) i))))]
-            [expected : u8
-              (unsafe
-                (ptr-read (ptr-offset suffix-data i)))]
-            (if (or
-              (= actual expected)
-              (and (= expected (cast '/' : u8)) (= actual (cast '\\' : u8))))
-              (set! i (+ i 1))
-              (set! equal false))))
-        equal))))
-
-(cfg
-  compiler-backtrace
-  (define (backtrace-write-frame [ordinal : i64] [pc : i64] [row : (Ptr i64)]) : unit
-    (begin
-      (abort-write "  ")
-      (abort-write-signed-decimal ordinal)
-      (abort-write ": ")
-      (if (ptr-null? row)
-        (begin
-          (abort-write "<unknown> (")
-          (abort-write-address pc)
-          (abort-write ")\n"))
+  (unsafe
+    (define (backtrace-map-find
+      [pc : i64]
+      [begin : (Ptr i64)]
+      [row-count : i64]) : (Ptr i64)
+      (unsafe
         (let
-          [name-address : i64 (backtrace-map-word row 2)]
-          [name-length : i64 (backtrace-map-word row 3)]
+          [index : i64 0]
+          [found : (Ptr i64) (ptr-null : (Ptr i64))]
+          (begin
+            (while (and (< index row-count) (ptr-null? found))
+              (let
+                [row : (Ptr i64) (ptr-offset begin (* index 8))]
+                [start : i64 (backtrace-map-word row 0)]
+                [end : i64 (backtrace-map-word row 1)]
+                (if (and (> start 0) (> end start) (>= pc start) (< pc end))
+                  (set! found row)
+                  (set! index (+ index 1)))))
+            found))))))
+
+(cfg
+  compiler-backtrace
+  (unsafe
+    (define (backtrace-runtime-path? [row : (Ptr i64)]) : bool
+      (unsafe
+        (let
           [path-address : i64 (backtrace-map-word row 4)]
           [path-length : i64 (backtrace-map-word row 5)]
-          [line : i64 (backtrace-map-word row 6)]
-          [column : i64 (backtrace-map-word row 7)]
+          [suffix-length : i64 17]
+          [suffix-data : (Ptr u8)
+            (unsafe
+              (string-data "stdlib/runtime.tl"))]
+          [path-data : (Ptr u8)
+            (unsafe
+              (int->ptr (cast path-address : u64) : (Ptr u8)))]
+          [i : i64 0]
+          [equal : bool (>= path-length suffix-length)]
           (begin
-            (os-write
-              2
-              (unsafe
-                (int->ptr (cast name-address : u64) : (Ptr u8)))
-              name-length)
-            (if (> path-length 0)
+            (while (and equal (< i suffix-length))
+              (let
+                [actual : u8
+                  (unsafe
+                    (ptr-read
+                      (ptr-offset path-data (+ (- path-length suffix-length) i))))]
+                [expected : u8
+                  (unsafe
+                    (ptr-read (ptr-offset suffix-data i)))]
+                (if (or
+                  (= actual expected)
+                  (and (= expected (cast '/' : u8)) (= actual (cast '\\' : u8))))
+                  (set! i (+ i 1))
+                  (set! equal false))))
+            equal))))))
+
+(cfg
+  compiler-backtrace
+  (unsafe
+    (define (backtrace-write-frame [ordinal : i64] [pc : i64] [row : (Ptr i64)]) : unit
+      (unsafe
+        (begin
+          (abort-write "  ")
+          (abort-write-signed-decimal ordinal)
+          (abort-write ": ")
+          (if (ptr-null? row)
+            (begin
+              (abort-write "<unknown> (")
+              (abort-write-address pc)
+              (abort-write ")\n"))
+            (let
+              [name-address : i64 (backtrace-map-word row 2)]
+              [name-length : i64 (backtrace-map-word row 3)]
+              [path-address : i64 (backtrace-map-word row 4)]
+              [path-length : i64 (backtrace-map-word row 5)]
+              [line : i64 (backtrace-map-word row 6)]
+              [column : i64 (backtrace-map-word row 7)]
               (begin
-                (abort-write " at ")
                 (os-write
                   2
                   (unsafe
-                    (int->ptr (cast path-address : u64) : (Ptr u8)))
-                  path-length)
-                (if (> line 0)
+                    (int->ptr (cast name-address : u64) : (Ptr u8)))
+                  name-length)
+                (if (> path-length 0)
                   (begin
-                    (abort-write ":")
-                    (abort-write-signed-decimal line)
-                    (if (> column 0)
+                    (abort-write " at ")
+                    (os-write
+                      2
+                      (unsafe
+                        (int->ptr (cast path-address : u64) : (Ptr u8)))
+                      path-length)
+                    (if (> line 0)
                       (begin
                         (abort-write ":")
-                        (abort-write-signed-decimal column))
+                        (abort-write-signed-decimal line)
+                        (if (> column 0)
+                          (begin
+                            (abort-write ":")
+                            (abort-write-signed-decimal column))
+                          unit))
                       unit))
-                  unit))
-              (begin
-                (abort-write " (")
-                (abort-write-address pc)
-                (abort-write ")")))
-            (abort-write "\n")))))))
+                  (begin
+                    (abort-write " (")
+                    (abort-write-address pc)
+                    (abort-write ")")))
+                (abort-write "\n")))))))))
 
 (cfg
   compiler-backtrace
@@ -674,186 +717,200 @@
 
 (cfg
   compiler-backtrace
-  (define (backtrace-render-addresses
-    [addresses : (Ptr i64)]
-    [count : i64]
-    [limit : i64]) : unit
-    (let
-      [map-begin : (Ptr i64) (runtime-backtrace-map-begin)]
-      [map-end : (Ptr i64) (runtime-backtrace-map-end)]
-      [string-begin : (Ptr u8) (runtime-backtrace-string-begin)]
-      [string-end : (Ptr u8) (runtime-backtrace-string-end)]
-      [begin-address : i64
-        (cast
-          (unsafe
-            (ptr->int map-begin))
-          : i64)]
-      [end-address : i64
-        (cast
-          (unsafe
-            (ptr->int map-end))
-          : i64)]
-      [string-begin-address : i64
-        (cast
-          (unsafe
-            (ptr->int string-begin))
-          : i64)]
-      [string-end-address : i64
-        (cast
-          (unsafe
-            (ptr->int string-end))
-          : i64)]
-      [byte-count : i64 (- end-address begin-address)]
-      [valid-map? : bool
-        (and (>= byte-count 0) (<= byte-count 67108864) (= (% byte-count 64) 0))]
-      [row-count : i64
-        (if valid-map?
-          (/ byte-count 64)
-          0)]
-      [index : i64 0]
-      [shown : i64 0]
-      (when
-        (and (> row-count 0) (> count 0))
-        (begin
-          (abort-write "stack backtrace:\n")
-          (while (and (< index count) (< shown limit))
-            (let
-              [return-address : i64
-                (unsafe
-                  (ptr-read (ptr-offset addresses index)))]
-              [pc : i64
-                (if (> return-address 0)
-                  (- return-address 1)
-                  0)]
-              [located-row : (Ptr i64)
-                (backtrace-map-find pc map-begin row-count)]
-              [row : (Ptr i64)
-                (if (or
-                  (ptr-null? located-row)
-                  (not
-                    (backtrace-row-valid?
-                      located-row
-                      string-begin-address
-                      string-end-address)))
-                  (ptr-null : (Ptr i64))
-                  located-row)]
-              [repeat-count : i64 1]
-              (begin
-                (while (and
-                  (< (+ index repeat-count) count)
-                  (=
+  (unsafe
+    (define (backtrace-render-addresses
+      [addresses : (Ptr i64)]
+      [count : i64]
+      [limit : i64]) : unit
+      (unsafe
+        (let
+          [map-begin : (Ptr i64) (runtime-backtrace-map-begin)]
+          [map-end : (Ptr i64) (runtime-backtrace-map-end)]
+          [string-begin : (Ptr u8) (runtime-backtrace-string-begin)]
+          [string-end : (Ptr u8) (runtime-backtrace-string-end)]
+          [begin-address : i64
+            (cast
+              (unsafe
+                (ptr->int map-begin))
+              : i64)]
+          [end-address : i64
+            (cast
+              (unsafe
+                (ptr->int map-end))
+              : i64)]
+          [string-begin-address : i64
+            (cast
+              (unsafe
+                (ptr->int string-begin))
+              : i64)]
+          [string-end-address : i64
+            (cast
+              (unsafe
+                (ptr->int string-end))
+              : i64)]
+          [byte-count : i64 (- end-address begin-address)]
+          [valid-map? : bool
+            (and
+              (>= byte-count 0)
+              (<= byte-count 67108864)
+              (= (% byte-count 64) 0))]
+          [row-count : i64
+            (if valid-map?
+              (/ byte-count 64)
+              0)]
+          [index : i64 0]
+          [shown : i64 0]
+          (when
+            (and (> row-count 0) (> count 0))
+            (begin
+              (abort-write "stack backtrace:\n")
+              (while (and (< index count) (< shown limit))
+                (let
+                  [return-address : i64
                     (unsafe
-                      (ptr-read (ptr-offset addresses (+ index repeat-count))))
-                    return-address))
-                  (set! repeat-count (+ repeat-count 1)))
-                (if (and (not (ptr-null? row)) (backtrace-runtime-path? row))
-                  unit
+                      (ptr-read (ptr-offset addresses index)))]
+                  [pc : i64
+                    (if (> return-address 0)
+                      (- return-address 1)
+                      0)]
+                  [located-row : (Ptr i64)
+                    (backtrace-map-find pc map-begin row-count)]
+                  [row : (Ptr i64)
+                    (if (or
+                      (ptr-null? located-row)
+                      (not
+                        (backtrace-row-valid?
+                          located-row
+                          string-begin-address
+                          string-end-address)))
+                      (ptr-null : (Ptr i64))
+                      located-row)]
+                  [repeat-count : i64 1]
                   (begin
-                    (backtrace-write-frame shown pc row)
-                    (backtrace-write-repeat repeat-count)
-                    (set! shown (+ shown 1))))
-                (set! index (+ index repeat-count))))))))))
+                    (while (and
+                      (< (+ index repeat-count) count)
+                      (=
+                        (unsafe
+                          (ptr-read
+                            (ptr-offset addresses (+ index repeat-count))))
+                        return-address))
+                      (set! repeat-count (+ repeat-count 1)))
+                    (if (and
+                      (not (ptr-null? row))
+                      (backtrace-runtime-path? row))
+                      unit
+                      (begin
+                        (backtrace-write-frame shown pc row)
+                        (backtrace-write-repeat repeat-count)
+                        (set! shown (+ shown 1))))
+                    (set! index (+ index repeat-count))))))))))))
 
 (cfg
   (all linux compiler-backtrace)
   (define (abort-write-backtrace) : unit
-    (let
-      [mode : i64 (backtrace-mode)]
-      [limit : i64
-        (if (= mode 1)
-          8
-          64)]
-      [frame : (Ptr i64) (runtime-backtrace-frame-pointer)]
-      [initial-frame-address : i64
-        (cast
-          (unsafe
-            (ptr->int frame))
-          : i64)]
-      [installed-low : i64 (runtime-backtrace-stack-low)]
-      [installed-high : i64 (runtime-backtrace-stack-high)]
-      ;; Freestanding main and raw-clone workers install exact stack bounds.
-      ;; A Linux CRT calls `main` directly, but its captured ENVP vector still
-      ;; lives above every active main-stack frame in the same contiguous stack
-      ;; mapping. Start the fallback at the known-live current frame and stop at
-      ;; that vector, so a corrupt saved frame cannot escape mapped stack memory.
-      [low : i64
-        (if (> installed-low 0)
-          installed-low
-          initial-frame-address)]
-      [high : i64
-        (if (> installed-high 0)
-          installed-high
+    ;; FRAME is checked against the installed/fallback live stack bounds before
+    ;; each two-word read; ADDRESSES is a live aligned local array for COUNT.
+    (unsafe
+      (let
+        [mode : i64 (backtrace-mode)]
+        [limit : i64
+          (if (= mode 1)
+            8
+            64)]
+        [frame : (Ptr i64) (runtime-backtrace-frame-pointer)]
+        [initial-frame-address : i64
           (cast
             (unsafe
-              (ptr->int (program-envp)))
-            : i64))]
-      [addresses : (Array i64 64) (init)]
-      [count : i64 0]
-      [done : bool (= mode 0)]
-      (begin
-        (while (and (not done) (< count limit))
-          (let
-            [frame-address : i64
-              (cast
-                (unsafe
-                  (ptr->int frame))
-                : i64)]
-            (if (or
-              (= frame-address 0)
-              (not (= (bit-and frame-address 7) 0))
-              (< frame-address low)
-              (> frame-address (- high 16)))
-              (set! done true)
-              (let
-                [next-address : i64 (backtrace-map-word frame 0)]
-                [return-address : i64 (backtrace-map-word frame 1)]
-                (begin
-                  (set! (array-ref addresses count) return-address)
-                  (set! count (+ count 1))
-                  (if (or
-                    (<= next-address frame-address)
-                    (< next-address low)
-                    (> next-address (- high 16)))
-                    (set! done true)
-                    (set!
-                      frame
-                      (unsafe
-                        (int->ptr (cast next-address : u64) : (Ptr i64))))))))))
-        (backtrace-render-addresses
-          (unsafe
-            (ptr-cast (ptr-addr-of (array-ref addresses 0)) : (Ptr i64)))
-          count
-          limit)
-        ;; Keep ADDRESSES live across rendering. A tail call would release this
-        ;; frame and let the renderer overwrite its stack-backed input array.
-        unit))))
+              (ptr->int frame))
+            : i64)]
+        [installed-low : i64 (runtime-backtrace-stack-low)]
+        [installed-high : i64 (runtime-backtrace-stack-high)]
+        ;; Freestanding main and raw-clone workers install exact stack bounds.
+        ;; A Linux CRT calls `main` directly, but its captured ENVP vector still
+        ;; lives above every active main-stack frame in the same contiguous stack
+        ;; mapping. Start the fallback at the known-live current frame and stop at
+        ;; that vector, so a corrupt saved frame cannot escape mapped stack memory.
+        [low : i64
+          (if (> installed-low 0)
+            installed-low
+            initial-frame-address)]
+        [high : i64
+          (if (> installed-high 0)
+            installed-high
+            (cast
+              (unsafe
+                (ptr->int (program-envp)))
+              : i64))]
+        [addresses : (Array i64 64) (init)]
+        [count : i64 0]
+        [done : bool (= mode 0)]
+        (begin
+          (while (and (not done) (< count limit))
+            (let
+              [frame-address : i64
+                (cast
+                  (unsafe
+                    (ptr->int frame))
+                  : i64)]
+              (if (or
+                (= frame-address 0)
+                (not (= (bit-and frame-address 7) 0))
+                (< frame-address low)
+                (> frame-address (- high 16)))
+                (set! done true)
+                (let
+                  [next-address : i64 (backtrace-map-word frame 0)]
+                  [return-address : i64 (backtrace-map-word frame 1)]
+                  (begin
+                    (set! (array-ref addresses count) return-address)
+                    (set! count (+ count 1))
+                    (if (or
+                      (<= next-address frame-address)
+                      (< next-address low)
+                      (> next-address (- high 16)))
+                      (set! done true)
+                      (set!
+                        frame
+                        (unsafe
+                          (int->ptr (cast next-address : u64) : (Ptr i64))))))))))
+          (backtrace-render-addresses
+            (unsafe
+              (ptr-cast (ptr-addr-of (array-ref addresses 0)) : (Ptr i64)))
+            count
+            limit)
+          ;; Keep ADDRESSES live across rendering. A tail call would release this
+          ;; frame and let the renderer overwrite its stack-backed input array.
+          unit)))))
 
 (cfg
   (all windows compiler-backtrace)
   (define (abort-write-backtrace) : unit
-    (let
-      [mode : i64 (backtrace-mode)]
-      [limit : i64
-        (if (= mode 1)
-          8
-          64)]
-      [addresses : (Array i64 64) (init)]
-      [count : u16
-        (if (= mode 0)
-          (cast 0 : u16)
-          (runtime-windows-capture-stack-back-trace
-            (cast 0 : u32)
-            (cast limit : u32)
-            (unsafe
-              (ptr-addr-of (array-ref addresses 0)))
-            (ptr-null : (MutPtr u32))))]
-      (backtrace-render-addresses
-        (unsafe
-          (ptr-cast (ptr-addr-of (array-ref addresses 0)) : (Ptr i64)))
-        (cast count : i64)
-        limit)
-      ;; Keep ADDRESSES live across rendering; see the Linux path above.
-      unit)))
+    ;; ADDRESSES is a live aligned 64-word sink and LIMIT bounds both the host
+    ;; write and the renderer read before its address is exposed.
+    (unsafe
+      (let
+        [mode : i64 (backtrace-mode)]
+        [limit : i64
+          (if (= mode 1)
+            8
+            64)]
+        [addresses : (Array i64 64) (init)]
+        [count : u16
+          (if (= mode 0)
+            (cast 0 : u16)
+            (runtime-windows-capture-stack-back-trace
+              (cast 0 : u32)
+              (cast limit : u32)
+              (unsafe
+                (ptr-addr-of (array-ref addresses 0)))
+              (ptr-null : (MutPtr u32))))]
+        (backtrace-render-addresses
+          (unsafe
+            (ptr-cast (ptr-addr-of (array-ref addresses 0)) : (Ptr i64)))
+          (cast count : i64)
+          limit)
+        ;; Keep ADDRESSES live across rendering; see the Linux path above.
+        unit))))
 
 ;: Emit the optional fatal backtrace, then terminate with `code`.
 (cfg
@@ -923,106 +980,128 @@
     (abort-write "tl: shift count out of range\n")
     (cfg compiler-backtrace (abort-exit 129) (os-exit 129))))
 
-;: A compiler-emitted abort-site descriptor is four machine words:
-;: path-data pointer, path byte length, one-based line, and one-based column.
-;: Reading and rendering it stays allocation-free so diagnostics also work
-;: while the active arena is unavailable.
-(define (abort-site-word [site : (Ptr i64)] [offset : i64]) : i64
-  (unsafe
-    (ptr-read (ptr-offset site offset))))
+;: A compiler-emitted abort-site descriptor is four aligned, initialized
+;: machine words: path-data pointer, path byte length, one-based line, and
+;: one-based column. `site` must remain live for all four reads; `offset` must
+;: select one of those words. Reading stays allocation-free so diagnostics also
+;: work while the active arena is unavailable.
+(unsafe
+  (define (abort-site-word [site : (Ptr i64)] [offset : i64]) : i64
+    (unsafe
+      (ptr-read (ptr-offset site offset)))))
 
 ;: Render one compiler-emitted abort-site descriptor as `path:line:column: `.
-(define (abort-write-site [site : (Ptr i64)]) : unit
-  (let
-    [path-address : i64 (abort-site-word site 0)]
-    [path-length : i64 (abort-site-word site 1)]
-    [line : i64 (abort-site-word site 2)]
-    [column : i64 (abort-site-word site 3)]
-    (begin
-      (os-write
-        2
+;: In addition to the descriptor contract above, its path address must name an
+;: initialized readable range of `path-length` bytes for the full call.
+(unsafe
+  (define (abort-write-site [site : (Ptr i64)]) : unit
+    (let
+      [path-address : i64
         (unsafe
-          (int->ptr (cast path-address : u64) : (Ptr u8)))
-        path-length)
-      (abort-write ":")
-      (abort-write-signed-decimal line)
-      (abort-write ":")
-      (abort-write-signed-decimal column)
-      (abort-write ": "))))
+          (abort-site-word site 0))]
+      [path-length : i64
+        (unsafe
+          (abort-site-word site 1))]
+      [line : i64
+        (unsafe
+          (abort-site-word site 2))]
+      [column : i64
+        (unsafe
+          (abort-site-word site 3))]
+      (begin
+        (unsafe
+          (os-write
+            2
+            (unsafe
+              (int->ptr (cast path-address : u64) : (Ptr u8)))
+            path-length))
+        (abort-write ":")
+        (abort-write-signed-decimal line)
+        (abort-write ":")
+        (abort-write-signed-decimal column)
+        (abort-write ": ")))))
 
 ;: Report a source-located bounds failure with its index and length, then exit
 ;: with the legacy bounds-abort status.
-(define (oob-abort-at [site : (Ptr i64)] [index : i64] [length : i64])
-  (:export-symbol "tl_oob_abort_at") : never
-  (begin
-    (abort-write "tl: ")
-    (abort-write-site site)
-    (abort-write "array index out of bounds: index=")
-    (abort-write-signed-decimal index)
-    (abort-write " length=")
-    (abort-write-signed-decimal length)
-    (abort-write "\n")
-    (cfg compiler-backtrace (abort-exit 134) (os-exit 134))))
+(unsafe
+  (define (oob-abort-at [site : (Ptr i64)] [index : i64] [length : i64])
+    (:export-symbol "tl_oob_abort_at") : never
+    (begin
+      (abort-write "tl: ")
+      (unsafe
+        (abort-write-site site))
+      (abort-write "array index out of bounds: index=")
+      (abort-write-signed-decimal index)
+      (abort-write " length=")
+      (abort-write-signed-decimal length)
+      (abort-write "\n")
+      (cfg compiler-backtrace (abort-exit 134) (os-exit 134)))))
 
 ;: Report a source-located integer division or remainder failure with both
 ;: operands, then exit with the legacy division-abort status.
-(define (div-abort-at [site : (Ptr i64)] [dividend : i64] [divisor : i64])
-  (:export-symbol "tl_div_abort_at") : never
-  (begin
-    (abort-write "tl: ")
-    (abort-write-site site)
-    (abort-write "integer division or remainder error: dividend=")
-    (abort-write-signed-decimal dividend)
-    (abort-write " divisor=")
-    (abort-write-signed-decimal divisor)
-    (abort-write "\n")
-    (cfg compiler-backtrace (abort-exit 135) (os-exit 135))))
+(unsafe
+  (define (div-abort-at [site : (Ptr i64)] [dividend : i64] [divisor : i64])
+    (:export-symbol "tl_div_abort_at") : never
+    (begin
+      (abort-write "tl: ")
+      (unsafe
+        (abort-write-site site))
+      (abort-write "integer division or remainder error: dividend=")
+      (abort-write-signed-decimal dividend)
+      (abort-write " divisor=")
+      (abort-write-signed-decimal divisor)
+      (abort-write "\n")
+      (cfg compiler-backtrace (abort-exit 135) (os-exit 135)))))
 
 ;: Report a source-located invalid shift with its count and operand width, then
 ;: exit with the legacy shift-abort status.  The fourth ABI flag selects
 ;: unsigned decimal rendering for unsigned count types.
-(define (shift-abort-at
-  [site : (Ptr i64)]
-  [count : i64]
-  [width : i64]
-  [unsigned-count? : bool])
-  (:export-symbol "tl_shift_abort_at") : never
-  (begin
-    (abort-write "tl: ")
-    (abort-write-site site)
-    (abort-write "shift count out of range: count=")
-    (if unsigned-count?
-      (abort-write-decimal (cast count : u64))
-      (abort-write-signed-decimal count))
-    (abort-write " width=")
-    (abort-write-signed-decimal width)
-    (abort-write "\n")
-    (cfg compiler-backtrace (abort-exit 129) (os-exit 129))))
+(unsafe
+  (define (shift-abort-at
+    [site : (Ptr i64)]
+    [count : i64]
+    [width : i64]
+    [unsigned-count? : bool])
+    (:export-symbol "tl_shift_abort_at") : never
+    (begin
+      (abort-write "tl: ")
+      (unsafe
+        (abort-write-site site))
+      (abort-write "shift count out of range: count=")
+      (if unsigned-count?
+        (abort-write-decimal (cast count : u64))
+        (abort-write-signed-decimal count))
+      (abort-write " width=")
+      (abort-write-signed-decimal width)
+      (abort-write "\n")
+      (cfg compiler-backtrace (abort-exit 129) (os-exit 129)))))
 
 ;: Report a source-located panic message and exit with the legacy panic status.
 ;: A trailing newline in `message` is preserved without adding a second one.
-(define (panic-abort-at [site : (Ptr i64)] [message : (& message str)])
-  (:export-symbol "tl_panic_at") : never
-  (let
-    [len : i64 (string-length message)]
-    [ends-with-newline? : bool
-      (if (> len 0)
-        (=
-          (cast
-            (unsafe
-              (ptr-read (ptr-offset (string-data message) (- len 1))))
-            : i64)
-          10)
-        false)]
-    (begin
-      (abort-write "tl: ")
-      (abort-write-site site)
-      (abort-write "panic: ")
-      (abort-write message)
-      (if ends-with-newline?
-        unit
-        (abort-write "\n"))
-      (cfg compiler-backtrace (abort-exit 134) (os-exit 134)))))
+(unsafe
+  (define (panic-abort-at [site : (Ptr i64)] [message : (& message str)])
+    (:export-symbol "tl_panic_at") : never
+    (let
+      [len : i64 (string-length message)]
+      [ends-with-newline? : bool
+        (if (> len 0)
+          (=
+            (cast
+              (unsafe
+                (ptr-read (ptr-offset (string-data message) (- len 1))))
+              : i64)
+            10)
+          false)]
+      (begin
+        (abort-write "tl: ")
+        (unsafe
+          (abort-write-site site))
+        (abort-write "panic: ")
+        (abort-write message)
+        (if ends-with-newline?
+          unit
+          (abort-write "\n"))
+        (cfg compiler-backtrace (abort-exit 134) (os-exit 134))))))
 
 ;: General panic abort: write the supplied message to stderr and exit 134.
 ;: Exported as the fixed `tl_abort_string` symbol so `(panic …)` call sites and
@@ -1169,16 +1248,20 @@
           (unsafe
             (string-from-bytes (ptr-cast buf : (Ptr u8)) len)))))))
 
-;: Copy a byte slice into a fresh active-arena string.
-(define (substring [src : (Ptr u8)] [start : i64] [len : i64])
-  (:export-symbol "tl_substring") : String
-  (let
-    [dst : (MutPtr u8) (runtime-alloc len)]
-    (begin
-      (unsafe
-        (runtime-copy-bytes! dst (ptr-offset src start) len))
-      (unsafe
-        (string-from-bytes (ptr-cast dst : (Ptr u8)) len)))))
+;: Copy a byte slice into a fresh active-arena string. `start` and `len` must
+;: be non-negative, `start + len` must not overflow, and `src` must remain live
+;: and initialized for that whole readable range during the call. The fresh
+;: destination cannot overlap it.
+(unsafe
+  (define (substring [src : (Ptr u8)] [start : i64] [len : i64])
+    (:export-symbol "tl_substring") : String
+    (let
+      [dst : (MutPtr u8) (runtime-alloc len)]
+      (begin
+        (unsafe
+          (runtime-copy-bytes! dst (ptr-offset src start) len))
+        (unsafe
+          (string-from-bytes (ptr-cast dst : (Ptr u8)) len))))))
 
 ;: Cached process-lifetime arena used for borrowed string views.
 (define runtime-str-view-arena : i64
@@ -1192,162 +1275,183 @@
       runtime-str-view-arena)
     runtime-str-view-arena))
 
-;: Build a borrowed `str` view record. `String` has the same two-word runtime
-;: layout as a borrowed str record; callers see this fixed symbol through an
-;: extern returning `(& text str)`.
-(define (str-view [text : (& text str)] [start : i64] [len : i64])
-  (:export-symbol "tl_str_view") : String
-  (let
-    [src : (Ptr u8)
-      (unsafe
-        (ptr-offset (string-data text) start))]
-    [home : i64 (runtime-arena-current)]
-    [view-arena : i64 (str-view-arena-get)]
-    (begin
-      (unsafe
-        (runtime-arena-set view-arena))
-      (let
-        [view : String
-          (unsafe
-            (string-from-bytes src len))]
-        (begin
-          (unsafe
-            (runtime-arena-set home))
-          view)))))
+;: Build a borrowed `str` view record. `start` and `len` must be non-negative,
+;: their sum must not overflow or exceed `text`, and `text` must outlive every
+;: use of the result. `String` has the same two-word runtime layout as a
+;: borrowed str record; this return value is only an ABI carrier for the
+;: compiler-generated extern typed as `(& text str)`, never an owned String.
+(unsafe
+  (define (str-view [text : (& text str)] [start : i64] [len : i64])
+    (:export-symbol "tl_str_view") : String
+    (let
+      [src : (Ptr u8)
+        (unsafe
+          (ptr-offset (string-data text) start))]
+      [home : i64 (runtime-arena-current)]
+      [view-arena : i64 (str-view-arena-get)]
+      (begin
+        (unsafe
+          (runtime-arena-set view-arena))
+        (let
+          [view : String
+            (unsafe
+              (string-from-bytes src len))]
+          (begin
+            (unsafe
+              (runtime-arena-set home))
+            view))))))
 
 ;; This is the low-level compatibility primitive used to implement public
 ;; string building and cannot depend on `stdlib.str_cat`.
-;: Concatenate two byte ranges into a fresh active-arena string.
-;; lint-allow: deprecated-string-concat
-(define (string-concat
-  [a : (Ptr u8)]
-  [a-len : i64]
-  [b : (Ptr u8)]
-  [b-len : i64])
-  (:export-symbol "tl_string_concat") : String
-  (let
-    [total : i64 (+ a-len b-len)]
-    [dst : (MutPtr u8) (runtime-alloc total)]
-    (begin
-      (unsafe
-        (runtime-copy-bytes! dst a a-len))
-      (unsafe
-        (runtime-copy-bytes! (ptr-offset dst a-len) b b-len))
-      (unsafe
-        (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))
+;: The raw concatenation family requires every length to be non-negative, all
+;: length sums and offsets to fit i64, and each pointer to remain live and
+;: initialized for its complete readable byte range during the call. Source
+;: ranges may overlap each other; the fresh destination overlaps none of them.
+;: Concatenate two such byte ranges into a fresh active-arena string.
+(unsafe
+  ;; lint-allow: deprecated-string-concat
+  (define (string-concat
+    [a : (Ptr u8)]
+    [a-len : i64]
+    [b : (Ptr u8)]
+    [b-len : i64])
+    (:export-symbol "tl_string_concat") : String
+    (let
+      [total : i64 (+ a-len b-len)]
+      [dst : (MutPtr u8) (runtime-alloc total)]
+      (begin
+        (unsafe
+          (runtime-copy-bytes! dst a a-len))
+        (unsafe
+          (runtime-copy-bytes! (ptr-offset dst a-len) b b-len))
+        (unsafe
+          (string-from-bytes (ptr-cast dst : (Ptr u8)) total))))))
 
-;: Concatenate three byte ranges into a fresh active-arena string.
-(define (string-concat3
-  [a : (Ptr u8)]
-  [a-len : i64]
-  [b : (Ptr u8)]
-  [b-len : i64]
-  [c : (Ptr u8)]
-  [c-len : i64])
-  (:export-symbol "tl_string_concat3") : String
-  (let
-    [total : i64 (+ a-len (+ b-len c-len))]
-    [dst : (MutPtr u8) (runtime-alloc total)]
-    [off-b : i64 a-len]
-    [off-c : i64 (+ a-len b-len)]
-    (begin
-      (unsafe
-        (runtime-copy-bytes! dst a a-len))
-      (unsafe
-        (runtime-copy-bytes! (ptr-offset dst off-b) b b-len))
-      (unsafe
-        (runtime-copy-bytes! (ptr-offset dst off-c) c c-len))
-      (unsafe
-        (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))
+;: Concatenate three byte ranges satisfying the family contract above.
+(unsafe
+  (define (string-concat3
+    [a : (Ptr u8)]
+    [a-len : i64]
+    [b : (Ptr u8)]
+    [b-len : i64]
+    [c : (Ptr u8)]
+    [c-len : i64])
+    (:export-symbol "tl_string_concat3") : String
+    (let
+      [total : i64 (+ a-len (+ b-len c-len))]
+      [dst : (MutPtr u8) (runtime-alloc total)]
+      [off-b : i64 a-len]
+      [off-c : i64 (+ a-len b-len)]
+      (begin
+        (unsafe
+          (runtime-copy-bytes! dst a a-len))
+        (unsafe
+          (runtime-copy-bytes! (ptr-offset dst off-b) b b-len))
+        (unsafe
+          (runtime-copy-bytes! (ptr-offset dst off-c) c c-len))
+        (unsafe
+          (string-from-bytes (ptr-cast dst : (Ptr u8)) total))))))
 
-;: Concatenate four byte ranges into a fresh active-arena string.
-(define (string-concat4
-  [a : (Ptr u8)]
-  [a-len : i64]
-  [b : (Ptr u8)]
-  [b-len : i64]
-  [c : (Ptr u8)]
-  [c-len : i64]
-  [d : (Ptr u8)]
-  [d-len : i64])
-  (:export-symbol "tl_string_concat4") : String
-  (let
-    [total : i64 (+ a-len (+ b-len (+ c-len d-len)))]
-    [dst : (MutPtr u8) (runtime-alloc total)]
-    [off-b : i64 a-len]
-    [off-c : i64 (+ a-len b-len)]
-    [off-d : i64 (+ a-len (+ b-len c-len))]
-    (begin
-      (unsafe
-        (runtime-copy-bytes! dst a a-len))
-      (unsafe
-        (runtime-copy-bytes! (ptr-offset dst off-b) b b-len))
-      (unsafe
-        (runtime-copy-bytes! (ptr-offset dst off-c) c c-len))
-      (unsafe
-        (runtime-copy-bytes! (ptr-offset dst off-d) d d-len))
-      (unsafe
-        (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))
+;: Concatenate four byte ranges satisfying the family contract above.
+(unsafe
+  (define (string-concat4
+    [a : (Ptr u8)]
+    [a-len : i64]
+    [b : (Ptr u8)]
+    [b-len : i64]
+    [c : (Ptr u8)]
+    [c-len : i64]
+    [d : (Ptr u8)]
+    [d-len : i64])
+    (:export-symbol "tl_string_concat4") : String
+    (let
+      [total : i64 (+ a-len (+ b-len (+ c-len d-len)))]
+      [dst : (MutPtr u8) (runtime-alloc total)]
+      [off-b : i64 a-len]
+      [off-c : i64 (+ a-len b-len)]
+      [off-d : i64 (+ a-len (+ b-len c-len))]
+      (begin
+        (unsafe
+          (runtime-copy-bytes! dst a a-len))
+        (unsafe
+          (runtime-copy-bytes! (ptr-offset dst off-b) b b-len))
+        (unsafe
+          (runtime-copy-bytes! (ptr-offset dst off-c) c c-len))
+        (unsafe
+          (runtime-copy-bytes! (ptr-offset dst off-d) d d-len))
+        (unsafe
+          (string-from-bytes (ptr-cast dst : (Ptr u8)) total))))))
 
-;: Concatenate five byte ranges into a fresh active-arena string.
-(define (string-concat5
-  [a : (Ptr u8)]
-  [a-len : i64]
-  [b : (Ptr u8)]
-  [b-len : i64]
-  [c : (Ptr u8)]
-  [c-len : i64]
-  [d : (Ptr u8)]
-  [d-len : i64]
-  [e : (Ptr u8)]
-  [e-len : i64])
-  (:export-symbol "tl_string_concat5") : String
-  (let
-    [total : i64 (+ a-len (+ b-len (+ c-len (+ d-len e-len))))]
-    [dst : (MutPtr u8) (runtime-alloc total)]
-    [off-b : i64 a-len]
-    [off-c : i64 (+ a-len b-len)]
-    [off-d : i64 (+ a-len (+ b-len c-len))]
-    [off-e : i64 (+ a-len (+ b-len (+ c-len d-len)))]
-    (begin
-      (unsafe
-        (runtime-copy-bytes! dst a a-len))
-      (unsafe
-        (runtime-copy-bytes! (ptr-offset dst off-b) b b-len))
-      (unsafe
-        (runtime-copy-bytes! (ptr-offset dst off-c) c c-len))
-      (unsafe
-        (runtime-copy-bytes! (ptr-offset dst off-d) d d-len))
-      (unsafe
-        (runtime-copy-bytes! (ptr-offset dst off-e) e e-len))
-      (unsafe
-        (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))
+;: Concatenate five byte ranges satisfying the family contract above.
+(unsafe
+  (define (string-concat5
+    [a : (Ptr u8)]
+    [a-len : i64]
+    [b : (Ptr u8)]
+    [b-len : i64]
+    [c : (Ptr u8)]
+    [c-len : i64]
+    [d : (Ptr u8)]
+    [d-len : i64]
+    [e : (Ptr u8)]
+    [e-len : i64])
+    (:export-symbol "tl_string_concat5") : String
+    (let
+      [total : i64 (+ a-len (+ b-len (+ c-len (+ d-len e-len))))]
+      [dst : (MutPtr u8) (runtime-alloc total)]
+      [off-b : i64 a-len]
+      [off-c : i64 (+ a-len b-len)]
+      [off-d : i64 (+ a-len (+ b-len c-len))]
+      [off-e : i64 (+ a-len (+ b-len (+ c-len d-len)))]
+      (begin
+        (unsafe
+          (runtime-copy-bytes! dst a a-len))
+        (unsafe
+          (runtime-copy-bytes! (ptr-offset dst off-b) b b-len))
+        (unsafe
+          (runtime-copy-bytes! (ptr-offset dst off-c) c c-len))
+        (unsafe
+          (runtime-copy-bytes! (ptr-offset dst off-d) d d-len))
+        (unsafe
+          (runtime-copy-bytes! (ptr-offset dst off-e) e e-len))
+        (unsafe
+          (string-from-bytes (ptr-cast dst : (Ptr u8)) total))))))
 
-;: Fill `len` pointer-sized array slots with `value`.
-(define (array-fill8 [buf : (MutPtr u8)] [len : i64] [value : u64])
-  (:export-symbol "tl_array_fill8") : unit
-  (let
-    [slots : (MutPtr u64)
-      (unsafe
-        (ptr-cast buf : (MutPtr u64)))]
-    [i : i64 0]
-    (begin
-      (while (< i len)
-        (begin
-          (unsafe
-            (ptr-write! (ptr-offset slots i) value))
-          (set! i (+ i 1))))
-      unit)))
+;: Fill `len` pointer-sized array slots with `value`. A positive `len` requires
+;: `buf` to be aligned for u64 and live and writable for `len * 8` bytes; that
+;: byte count and every slot address must fit without overflow. A non-positive
+;: `len` writes nothing.
+(unsafe
+  (define (array-fill8 [buf : (MutPtr u8)] [len : i64] [value : u64])
+    (:export-symbol "tl_array_fill8") : unit
+    (let
+      [slots : (MutPtr u64)
+        (unsafe
+          (ptr-cast buf : (MutPtr u64)))]
+      [i : i64 0]
+      (begin
+        (while (< i len)
+          (begin
+            (unsafe
+              (ptr-write! (ptr-offset slots i) value))
+            (set! i (+ i 1))))
+        unit))))
 
-;: Fill `count` pointer-sized slots at `buf` with `value`. The backend provides
+;: Fill `count` pointer-sized slots at `buf` with `value`. A positive `count`
+;: requires u64-aligned live writable storage for `count * 8` bytes, with the
+;: byte count and last slot address representable without overflow. The backend provides
 ;: the body as a `rep stosq` (see compiler-backend-runtime-mem-fill8-functions),
 ;: one instruction per slot under the deterministic instruction-count gate, and
 ;: a non-positive `count` writes nothing. Unlike `array-zero` this NEVER skips
 ;: its fill: array-zero's virgin-arena early-out is sound only for storage the
 ;: bump allocator just handed out, never for an arbitrary live buffer.
-(extern (mem-fill8 [buf : (MutPtr u8)] [count : i64] [value : u64]) : unit (:symbol "tl_mem_fill8"))
+(unsafe
+  (extern (mem-fill8 [buf : (MutPtr u8)] [count : i64] [value : u64]) : unit (:symbol "tl_mem_fill8")))
 
-;: Copy `count` bytes from `src` to `dst` FORWARD and byte-exactly: this is the
+;: Copy `count` bytes from `src` to `dst` FORWARD and byte-exactly. A positive
+;: count requires `src` live and initialized for `count` readable bytes and
+;: `dst` live and writable for `count` bytes; both complete ranges and their
+;: end addresses must be representable. No alignment is required. This is the
 ;: machine equivalent of `for (i = 0; i < count; i += 1) dst[i] = src[i]` for
 ;: every argument triple, which is what the optimizer's `copy_call` pass relies
 ;: on when it rewrites such a loop into one call (see its header). Deliberately
@@ -1358,15 +1462,23 @@
 ;: or the ranges are disjoint, a byte `rep movsb` otherwise), so a copy costs
 ;: one instruction per eight bytes under the deterministic instruction-count
 ;: gate where the source loop cost three and a half per byte.
-(extern (mem-copy-fwd [dst : (MutPtr u8)] [src : (Ptr u8)] [count : i64]) : unit (:symbol "tl_mem_copy_fwd"))
+(unsafe
+  (extern (mem-copy-fwd [dst : (MutPtr u8)] [src : (Ptr u8)] [count : i64]) : unit (:symbol "tl_mem_copy_fwd")))
 
-;: Zero `byte-count` bytes starting at `buf`. The backend provides the body
+;: Zero `byte-count` bytes starting at `buf`. `byte-count` must be non-negative;
+;: a positive count requires a live writable range whose end address does not overflow. For 64 bytes or more,
+;: `buf` must additionally be the fresh, not-yet-observed backing storage from
+;: the immediately preceding allocation in the current arena: the backend may
+;: skip writes while that arena is virgin because OS pages already contain
+;: zeroes. This is not a clearing operation for arbitrary live buffers. A zero
+;: count writes nothing. The backend provides the body
 ;: as a qword `rep stosq` plus a byte `rep stosb` tail (see
 ;: compiler-backend-runtime-array-zero-functions), which costs one instruction
 ;: per eight bytes under the deterministic instruction-count gate. The
 ;: byte-at-a-time loop before it was the single largest zeroing cost in the
 ;: self-compile (every `__tl_make-array` zero-fills its backing storage).
-(extern (array-zero [buf : (MutPtr u8)] [byte-count : i64]) : unit (:symbol "tl_array_zero"))
+(unsafe
+  (extern (array-zero [buf : (MutPtr u8)] [byte-count : i64]) : unit (:symbol "tl_array_zero")))
 
 ;: Abort handler for an invalid arena/region mark, exported as `tl_region_abort`.
 ;: Reached from the allocator's region-reset validation (not the out-of-memory

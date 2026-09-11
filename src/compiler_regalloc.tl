@@ -10,6 +10,7 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.hashmap)
+(import compiler_regalloc_interval_sort as interval_sort)
 
 ;; Block labels are interned ids, so their maps are integer-keyed (refs #5718).
 (import (hashmap.hashmap i64 i64) as reg_label_i64_map)
@@ -8231,95 +8232,15 @@
           call-points
           base-ineligible))]))
 
-(define (compiler-reg-interval-before?
-  [left : CompilerRegInterval]
-  [right : CompilerRegInterval]) : bool
-  (let
-    [left-start : i64 left.start]
-    [right-start : i64 right.start]
-    [left-end : i64 left.end]
-    [right-end : i64 right.end]
-    (cond
-      [(< left-start right-start) true]
-      [(> left-start right-start) false]
-      [(< left-end right-end) true]
-      [(> left-end right-end) false]
-      [else (< left.var right.var)])))
-
-(define (compiler-reg-candidate-interval-copy [item : CompilerRegInterval]) : CompilerRegInterval
-  (CompilerRegInterval item.var item.start item.end))
-
-(define (compiler-reg-candidate-sift-down
-  [items : (__tl_dyn-array CompilerRegInterval)]
-  [root : i64]
-  [count : i64]) : unit
-  (let
-    [node : i64 root]
-    [done : bool false]
-    (while (not done)
-      (let
-        [left : i64 (+ (* node 2) 1)]
-        [right : i64 (+ (* node 2) 2)]
-        [largest : i64
-          (let
-            [pick : i64 node]
-            (begin
-              (if (and
-                (< left count)
-                (compiler-reg-interval-before?
-                  (array-ref items pick)
-                  (array-ref items left)))
-                (set! pick left)
-                unit)
-              (if (and
-                (< right count)
-                (compiler-reg-interval-before?
-                  (array-ref items pick)
-                  (array-ref items right)))
-                (set! pick right)
-                unit)
-              pick))]
-        (if (= largest node)
-          (set! done true)
-          (let
-            [node-item : CompilerRegInterval
-              (compiler-reg-candidate-interval-copy (array-ref items node))]
-            [largest-item : CompilerRegInterval
-              (compiler-reg-candidate-interval-copy (array-ref items largest))]
-            (begin
-              (set! (array-ref items node) largest-item)
-              (set! (array-ref items largest) node-item)
-              (set! node largest))))))))
-
-(define (compiler-reg-candidate-heapsort!
-  [items : (__tl_dyn-array CompilerRegInterval)]
-  [count : i64]) : unit
-  (begin
-    (let
-      [index : i64 (- (/ count 2) 1)]
-      (while (>= index 0)
-        (begin
-          (compiler-reg-candidate-sift-down
-            (compiler-reg-global-shared-view items)
-            index
-            count)
-          (set! index (- index 1)))))
-    (let
-      [last : i64 (- count 1)]
-      (while (> last 0)
-        (let
-          [root-item : CompilerRegInterval
-            (compiler-reg-candidate-interval-copy (array-ref items 0))]
-          [last-item : CompilerRegInterval
-            (compiler-reg-candidate-interval-copy (array-ref items last))]
-          (begin
-            (set! (array-ref items 0) last-item)
-            (set! (array-ref items last) root-item)
-            (compiler-reg-candidate-sift-down
-              (compiler-reg-global-shared-view items)
-              0
-              last)
-            (set! last (- last 1))))))))
+(interval_sort.compiler-reg-interval-heapsort
+  CompilerRegInterval
+  compiler-reg-interval-before?
+  compiler-reg-candidate-interval-copy
+  compiler-reg-global-shared-view
+  compiler-reg-candidate-sift-down
+  compiler-reg-candidate-heapsort!
+  full-array
+  candidate-start-end-var)
 
 (define (compiler-reg-candidate-sort [candidates : CompilerRegIntervalSeq]) : CompilerRegIntervalSeq
   (let
@@ -40279,58 +40200,15 @@
 ;; total order, O(n log n), no allocation beyond the array itself (the
 ;; insertion-sort cons spine it replaces allocated O(n^2) cells, which blew
 ;; the scratch arena on ~7000-var functions).
-(define (compiler-reg-color-interval-before?
-  [a : CompilerRegInterval]
-  [b : CompilerRegInterval]) : bool
-  (let
-    [a-start : i64 a.start]
-    [b-start : i64 b.start]
-    (or (< a-start b-start) (and (= a-start b-start) (< a.var b.var)))))
-
-(define (compiler-reg-color-interval-copy [item : CompilerRegInterval]) : CompilerRegInterval
-  (CompilerRegInterval item.var item.start item.end))
-
-(define (compiler-reg-color-sift-down
-  [items : (__tl_dyn-array CompilerRegInterval)]
-  [root : i64]
-  [count : i64]) : unit
-  (let
-    [node : i64 root]
-    [done : bool false]
-    (while (not done)
-      (let
-        [left : i64 (+ (* node 2) 1)]
-        [right : i64 (+ (* node 2) 2)]
-        [largest : i64
-          (let
-            [pick : i64 node]
-            (begin
-              (if (and
-                (< left count)
-                (compiler-reg-color-interval-before?
-                  (array-ref items pick)
-                  (array-ref items left)))
-                (set! pick left)
-                unit)
-              (if (and
-                (< right count)
-                (compiler-reg-color-interval-before?
-                  (array-ref items pick)
-                  (array-ref items right)))
-                (set! pick right)
-                unit)
-              pick))]
-        (if (= largest node)
-          (set! done true)
-          (let
-            [node-item : CompilerRegInterval
-              (compiler-reg-color-interval-copy (array-ref items node))]
-            [largest-item : CompilerRegInterval
-              (compiler-reg-color-interval-copy (array-ref items largest))]
-            (begin
-              (set! (array-ref items node) largest-item)
-              (set! (array-ref items largest) node-item)
-              (set! node largest))))))))
+(interval_sort.compiler-reg-interval-heapsort
+  CompilerRegInterval
+  compiler-reg-color-interval-before?
+  compiler-reg-color-interval-copy
+  compiler-reg-global-shared-view
+  compiler-reg-color-sift-down
+  compiler-reg-color-heapsort-unordered!
+  full-array
+  color-start-var)
 
 (define (compiler-reg-color-heapsort
   [items : (__tl_dyn-array CompilerRegInterval)]
@@ -40350,36 +40228,6 @@
       (if ordered?
         unit
         (compiler-reg-color-heapsort-unordered! items count)))))
-
-(define (compiler-reg-color-heapsort-unordered!
-  [items : (__tl_dyn-array CompilerRegInterval)]
-  [count : i64]) : unit
-  (begin
-    (let
-      [i : i64 (- (/ count 2) 1)]
-      (while (>= i 0)
-        (begin
-          (compiler-reg-color-sift-down
-            (compiler-reg-global-shared-view items)
-            i
-            count)
-          (set! i (- i 1)))))
-    (let
-      [last : i64 (- count 1)]
-      (while (> last 0)
-        (let
-          [root-item : CompilerRegInterval
-            (compiler-reg-color-interval-copy (array-ref items 0))]
-          [last-item : CompilerRegInterval
-            (compiler-reg-color-interval-copy (array-ref items last))]
-          (begin
-            (set! (array-ref items 0) last-item)
-            (set! (array-ref items last) root-item)
-            (compiler-reg-color-sift-down
-              (compiler-reg-global-shared-view items)
-              0
-              last)
-            (set! last (- last 1))))))))
 
 ;; Per-variable full lifetime end over all split live intervals. The scalar
 ;; coloring walk assigns each variable one remapped frame slot, so a slot must
@@ -50505,82 +50353,15 @@
   (offsets (__tl_dyn-array i64))
   (register-count i64))
 
-(define (compiler-reg-scratch-hull-sift-down
-  [items : (__tl_dyn-array CompilerRegInterval)]
-  [base : i64]
-  [root : i64]
-  [count : i64]) : unit
-  (let
-    [node : i64 root]
-    [done : bool false]
-    (while (not done)
-      (let
-        [left : i64 (+ (* node 2) 1)]
-        [right : i64 (+ (* node 2) 2)]
-        [largest : i64
-          (let
-            [pick : i64 node]
-            (begin
-              (if (and
-                (< left count)
-                (compiler-reg-color-interval-before?
-                  (array-ref items (+ base pick))
-                  (array-ref items (+ base left))))
-                (set! pick left)
-                unit)
-              (if (and
-                (< right count)
-                (compiler-reg-color-interval-before?
-                  (array-ref items (+ base pick))
-                  (array-ref items (+ base right))))
-                (set! pick right)
-                unit)
-              pick))]
-        (if (= largest node)
-          (set! done true)
-          (let
-            [node-item : CompilerRegInterval
-              (compiler-reg-color-interval-copy (array-ref items (+ base node)))]
-            [largest-item : CompilerRegInterval
-              (compiler-reg-color-interval-copy
-                (array-ref items (+ base largest)))]
-            (begin
-              (set! (array-ref items (+ base node)) largest-item)
-              (set! (array-ref items (+ base largest)) node-item)
-              (set! node largest))))))))
-
-(define (compiler-reg-scratch-hull-heapsort-range!
-  [items : (__tl_dyn-array CompilerRegInterval)]
-  [base : i64]
-  [count : i64]) : unit
-  (begin
-    (let
-      [index : i64 (- (/ count 2) 1)]
-      (while (>= index 0)
-        (begin
-          (compiler-reg-scratch-hull-sift-down
-            (compiler-reg-global-shared-view items)
-            base
-            index
-            count)
-          (set! index (- index 1)))))
-    (let
-      [last : i64 (- count 1)]
-      (while (> last 0)
-        (let
-          [root-item : CompilerRegInterval
-            (compiler-reg-color-interval-copy (array-ref items base))]
-          [last-item : CompilerRegInterval
-            (compiler-reg-color-interval-copy (array-ref items (+ base last)))]
-          (begin
-            (set! (array-ref items base) last-item)
-            (set! (array-ref items (+ base last)) root-item)
-            (compiler-reg-scratch-hull-sift-down
-              (compiler-reg-global-shared-view items)
-              base
-              0
-              last)
-            (set! last (- last 1))))))))
+(interval_sort.compiler-reg-interval-heapsort
+  CompilerRegInterval
+  compiler-reg-scratch-hull-interval-before?
+  compiler-reg-scratch-hull-interval-copy
+  compiler-reg-global-shared-view
+  compiler-reg-scratch-hull-sift-down
+  compiler-reg-scratch-hull-heapsort-range!
+  range
+  color-start-var)
 
 (define (compiler-reg-scratch-coalesced-hull-record!
   [starts : (__tl_dyn-array i64)]

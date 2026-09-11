@@ -23,6 +23,8 @@
 (import stdlib.string)
 (import sym_i64_env)
 
+(include-str compiler-regalloc-interval-sort-source "../compiler_regalloc_interval_sort.tl")
+
 (define (compiler-typecheck-smoke-write-text
   [path : String]
   [contents : String]) : unit
@@ -1871,6 +1873,65 @@
     (compiler_typecheck.compiler-typecheck-error-ok?
       (compiler-typecheck-smoke-comptime-error-decls-source)
       "custom decl macro failure")))
+
+(define (compiler-typecheck-smoke-regalloc-heapsort-macro-source
+  [invocation : String]
+  [tail : String]) : String
+  (str_cat.str-cat
+    (unsafe
+      (ptr-read (ptr-addr-of compiler-regalloc-interval-sort-source)))
+    "\n(import stdlib.comptime)\n
+(defstruct Interval (var i64) (start i64) (end i64))\n
+(defmacro (shared [place : Expr]) : Expr\n
+  `(unsafe (ptr-read (ptr-addr-of ,place))))\n"
+    invocation
+    tail))
+
+(define (compiler-typecheck-smoke-regalloc-heapsort-macro-ok-source) : String
+  (compiler-typecheck-smoke-regalloc-heapsort-macro-source
+    "(compiler-reg-interval-heapsort\n
+  Interval candidate-before candidate-copy shared candidate-sift candidate-sort\n
+  full-array candidate-start-end-var)\n
+(compiler-reg-interval-heapsort\n
+  Interval range-before range-copy shared range-sift range-sort\n
+  range color-start-var)\n"
+    "(define (main) : i64\n
+  (let [items : (__tl_dyn-array Interval) (__tl_make-array Interval 2)]\n
+    (begin\n
+      (candidate-sort (shared items) 2)\n
+      (range-sort items 0 2)\n
+      42)))"))
+
+(define (compiler-typecheck-smoke-regalloc-heapsort-macro-error-source
+  [invocation : String]) : String
+  (compiler-typecheck-smoke-regalloc-heapsort-macro-source
+    invocation
+    "(define (main) : i64 42)"))
+
+(define (compiler-typecheck-smoke-regalloc-heapsort-macro-tests-ok?) : bool
+  (and
+    (compiler_typecheck.compiler-typecheck-ok?
+      (compiler-typecheck-smoke-regalloc-heapsort-macro-ok-source))
+    (compiler_typecheck.compiler-typecheck-error-ok?
+      (compiler-typecheck-smoke-regalloc-heapsort-macro-error-source
+        "(compiler-reg-interval-heapsort\n
+  Interval (bad-comparator) copy shared sift sort full-array candidate-start-end-var)\n")
+      "compiler-reg-interval-heapsort: comparator must be a bare name")
+    (compiler_typecheck.compiler-typecheck-error-ok?
+      (compiler-typecheck-smoke-regalloc-heapsort-macro-error-source
+        "(compiler-reg-interval-heapsort\n
+  Interval before 42 shared sift sort full-array candidate-start-end-var)\n")
+      "compiler-reg-interval-heapsort: copy declaration must be a bare name")
+    (compiler_typecheck.compiler-typecheck-error-ok?
+      (compiler-typecheck-smoke-regalloc-heapsort-macro-error-source
+        "(compiler-reg-interval-heapsort\n
+  Interval before copy shared sift sort unknown-shape candidate-start-end-var)\n")
+      "compiler-reg-interval-heapsort: shape must be `full-array` or `range`")
+    (compiler_typecheck.compiler-typecheck-error-ok?
+      (compiler-typecheck-smoke-regalloc-heapsort-macro-error-source
+        "(compiler-reg-interval-heapsort\n
+  Interval before copy shared sift sort full-array unknown-order)\n")
+      "compiler-reg-interval-heapsort: ordering must be `candidate-start-end-var` or `color-start-var`")))
 
 (define (compiler-typecheck-smoke-module-catalog-invalid-unused-source) : String
   "(defmacro (catalog [T : type]) : Module
@@ -6816,6 +6877,9 @@
     (unless
       (compiler-typecheck-smoke-comptime-error-tests-ok?)
       (io.panic "typecheck: comptime-error smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-regalloc-heapsort-macro-tests-ok?)
+      (io.panic "typecheck: regalloc heapsort declaration macro smoke failed"))
     (unless
       (compiler-typecheck-smoke-decl-macro-body-tests-ok?)
       (io.panic "typecheck: declaration macro body smoke failed"))

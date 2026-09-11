@@ -1733,10 +1733,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     # headroom. Its combined macro-expand Expr graph crosses one pool boundary
     # below; the other three pool families stay within their existing segment
     # counts.
+    # #7696's eleven optimizer packets (GDP-1 .. P18-2, ~2,300 compiler-source
+    # lines) carried it to 30,550 KiB on the Windows CI probe; raised one more
+    # step.
     assert_profile_counter_at_most_in \
         "$SELFHOST_STDERR" \
         "typecheck.macro.walk_sp_reresolve_alloc_kb" \
-        30400 \
+        31400 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     # One constant per boundary: the segment count. capacity and segment_bytes

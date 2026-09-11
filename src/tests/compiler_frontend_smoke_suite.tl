@@ -6,7 +6,7 @@
 (import stdlib.string)
 (import stdlib.str_cat)
 (import compiler_symbols)
-(import compiler_check_core)
+(import compiler_check_tests)
 (import compiler_semantic_index)
 (import compiler_typecheck)
 (import compiler_ctfe)
@@ -592,13 +592,9 @@
         (cbi.compiler-builtin-initialize-for-parse!)
         (compiler_symbols.compiler-symbols-self-test))]
     [(string.eq name "check")
-      (begin
-        (cbi.compiler-builtin-initialize-for-parse!)
-        (if (and
-          (= (compiler_check_core.compiler-check-self-test) 42)
-          (compiler_semantic_index.compiler-check-semantic-index-ok?))
-          42
-          1))]
+      (if (compiler_check_tests.compiler-check-tests-ok?)
+        42
+        1)]
     [(string.eq name "ctfe")
       (if (and
         (= (compiler_ctfe.compiler-ctfe-self-test) 42)

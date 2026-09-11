@@ -389,6 +389,12 @@
 (define fs-linux-rooted-syscall-kind-directory-fsync : i64
   15)
 
+;: Fault-injection ID for reopening an existing child directory with
+;: `openat2`. Keep this distinct from existing regular-file reopen so focused
+;: failures cannot accidentally perturb the other acquisition path.
+(define fs-linux-rooted-syscall-kind-reopen-directory : i64
+  16)
+
 ;: Sentinel distinct from every valid raw syscall result.
 (define fs-linux-rooted-no-injection : i64
   -9223372036854775808)
@@ -473,6 +479,10 @@
     0))
 (cfg
   fs-rooted-linux-test-hooks
+  (define fs-linux-rooted-test-reopen-directory-calls : i64
+    0))
+(cfg
+  fs-rooted-linux-test-hooks
   (define fs-linux-rooted-test-read-max : i64
     0))
 (cfg
@@ -512,6 +522,7 @@
       (set! fs-linux-rooted-test-unlinkat-calls 0)
       (set! fs-linux-rooted-test-rmdirat-calls 0)
       (set! fs-linux-rooted-test-directory-fsync-calls 0)
+      (set! fs-linux-rooted-test-reopen-directory-calls 0)
       (set! fs-linux-rooted-test-read-max 0)
       (set! fs-linux-rooted-test-mkdir-race-enabled false)
       (set! fs-linux-rooted-test-mkdir-race-ok false)
@@ -596,6 +607,8 @@
         fs-linux-rooted-test-rmdirat-calls]
       [(= kind fs-linux-rooted-syscall-kind-directory-fsync)
         fs-linux-rooted-test-directory-fsync-calls]
+      [(= kind fs-linux-rooted-syscall-kind-reopen-directory)
+        fs-linux-rooted-test-reopen-directory-calls]
       [else 0])))
 
 ;: Record one syscall attempt and return an injected raw result or the sentinel.
@@ -695,6 +708,12 @@
                 fs-linux-rooted-test-directory-fsync-calls
                 (+ fs-linux-rooted-test-directory-fsync-calls 1))
               fs-linux-rooted-test-directory-fsync-calls)]
+          [(= kind fs-linux-rooted-syscall-kind-reopen-directory)
+            (begin
+              (set!
+                fs-linux-rooted-test-reopen-directory-calls
+                (+ fs-linux-rooted-test-reopen-directory-calls 1))
+              fs-linux-rooted-test-reopen-directory-calls)]
           [else 0])]
       (if (and
         (= kind fs-linux-rooted-test-fail-kind)
@@ -892,6 +911,29 @@
     (let
       [injected : i64
         (linux-rooted-injected-result fs-linux-rooted-syscall-kind-reopen)]
+      (if (not (= injected fs-linux-rooted-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall
+              fs-linux-rooted-syscall-openat2
+              dirfd
+              (linux-rooted-ptr-arg path)
+              (cast (ptr->int (ptr-cast (ptr-addr-of how) : (Ptr u8))) : i64)
+              fs-linux-rooted-open-how-size)))))))
+
+;: Raw Linux `openat2` dedicated to existing-directory reopen fault coverage.
+(unsafe
+  (define (linux-rooted-raw-reopen-directory-at2
+    [dirfd : i64]
+    [path : (Ptr u8)]
+    [how : FsLinuxOpenHow]) : i64
+    (let
+      [injected : i64
+        (linux-rooted-injected-result
+          fs-linux-rooted-syscall-kind-reopen-directory)]
       (if (not (= injected fs-linux-rooted-no-injection))
         injected
         (cfg
@@ -1536,6 +1578,58 @@
           (unsafe
             (linux-rooted-discard-fd fd)))))))
 
+;: Acquire and verify one child-directory descriptor through the complete
+;: descendant policy. Creation uses the ordinary openat2 fault seam and applies
+;: its final mode after verification. Existing-directory reopen uses its own
+;: fault seam and deliberately performs no mutation after acquisition.
+(unsafe
+  (define (linux-rooted-acquire-directory
+    [parent-fd : i64]
+    [component : (Ptr u8)]
+    [existing : bool]
+    [cancel-check : (-> bool)]) : FsLinuxRootedDirectory
+    (let
+      [how : FsLinuxOpenHow
+        (FsLinuxOpenHow
+          fs-linux-rooted-directory-open-flags
+          (cast 0 : u64)
+          fs-linux-rooted-resolve-policy)]
+      [fd : i64
+        (if existing
+          (unsafe
+            (linux-rooted-raw-reopen-directory-at2 parent-fd component how))
+          (unsafe
+            (linux-rooted-raw-openat2 parent-fd component how)))]
+      (if (< fd 0)
+        (linux-rooted-failed-directory (linux-rooted-result-from-raw fd))
+        (let
+          [kind-result : FsLinuxRootedResult
+            (unsafe
+              (linux-rooted-verify-kind
+                fd
+                fs-linux-rooted-stat-directory-mode
+                cancel-check))]
+          (if (not (linux-rooted-result-ok? kind-result))
+            (unsafe
+              (linux-rooted-failed-directory-after-close kind-result fd))
+            (if existing
+              (FsLinuxRootedDirectory
+                (unsafe
+                  (linux-rooted-state-new fd LinuxRootedOk)))
+              (let
+                [mode-result : FsLinuxRootedResult
+                  (unsafe
+                    (linux-rooted-apply-mode
+                      fd
+                      fs-linux-rooted-directory-mode
+                      cancel-check))]
+                (if (linux-rooted-result-ok? mode-result)
+                  (FsLinuxRootedDirectory
+                    (unsafe
+                      (linux-rooted-state-new fd LinuxRootedOk)))
+                  (unsafe
+                    (linux-rooted-failed-directory-after-close mode-result fd)))))))))))
+
 ;: Open the caller-selected staging root. Resolution of prefix ancestors is
 ;: caller-trusted; the final node is protected by O_NOFOLLOW, required to be a
 ;: directory, and marked close-on-exec. Descendants never use this path again.
@@ -1605,42 +1699,40 @@
                 (linux-rooted-after-mkdir parent-state.fd component-ptr)
                 (if (cancel-check)
                   (linux-rooted-failed-directory LinuxRootedCancelled)
-                  (let
-                    [how : FsLinuxOpenHow
-                      (FsLinuxOpenHow
-                        fs-linux-rooted-directory-open-flags
-                        (cast 0 : u64)
-                        fs-linux-rooted-resolve-policy)]
-                    [fd : i64
-                      (linux-rooted-raw-openat2
-                        parent-state.fd
-                        component-ptr
-                        how)]
-                    (if (< fd 0)
-                      (linux-rooted-failed-directory
-                        (linux-rooted-result-from-raw fd))
-                      (let
-                        [kind-result : FsLinuxRootedResult
-                          (linux-rooted-verify-kind
-                            fd
-                            fs-linux-rooted-stat-directory-mode
-                            cancel-check)]
-                        (if (not (linux-rooted-result-ok? kind-result))
-                          (linux-rooted-failed-directory-after-close
-                            kind-result
-                            fd)
-                          (let
-                            [mode-result : FsLinuxRootedResult
-                              (linux-rooted-apply-mode
-                                fd
-                                fs-linux-rooted-directory-mode
-                                cancel-check)]
-                            (if (linux-rooted-result-ok? mode-result)
-                              (FsLinuxRootedDirectory
-                                (linux-rooted-state-new fd LinuxRootedOk))
-                              (linux-rooted-failed-directory-after-close
-                                mode-result
-                                fd)))))))))))]))))
+                  (linux-rooted-acquire-directory
+                    parent-state.fd
+                    component-ptr
+                    false
+                    cancel-check)))))]))))
+
+;: Reopen one existing child directory without mutating it. Acquisition is one
+;: openat2 call relative to the retained parent and uses the exact same flags,
+;: resolution policy, kind verification, and close discipline as creation.
+(define (linux-rooted-reopen-directory
+  [parent : (& parent FsLinuxRootedDirectory)]
+  [component : (& component str)]
+  [cancel-check : (-> bool)]) : FsLinuxRootedDirectory
+  (unsafe
+    (let
+      [parent-state : FsLinuxRootedHandleState
+        (linux-rooted-state-read parent.state)]
+      (cond
+        [(not (linux-rooted-component-valid? component))
+          (linux-rooted-failed-directory LinuxRootedInvalidComponent)]
+        [(or
+            (< parent-state.fd 0)
+            (not (linux-rooted-result-ok? parent-state.result)))
+          (linux-rooted-failed-directory LinuxRootedClosed)]
+        [(cancel-check) (linux-rooted-failed-directory LinuxRootedCancelled)]
+        [else
+          (let
+            [component-bytes : (__tl_dyn-array u8)
+              (linux-rooted-c-string component)]
+            (linux-rooted-acquire-directory
+              parent-state.fd
+              (io.array-const-ptr component-bytes)
+              true
+              cancel-check))]))))
 
 ;: Create one regular child file atomically through one openat2 call. O_EXCL
 ;: means an existing file, directory, symlink, or other node is never reopened

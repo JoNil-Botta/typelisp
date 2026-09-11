@@ -122643,7 +122643,10 @@
                           "global_cell"
                           (opt-global-cell-function
                             (compiler-opt-global-shared-view summaries)
-                            (compiler-opt-global-shared-view ssa)))]
+                            (opt-pure-call-dedupe-function
+                              (compiler-opt-global-shared-view
+                                (__tl-project-field summaries call-memory))
+                              (compiler-opt-global-shared-view ssa))))]
                       [_p-global-cell : unit
                         (cfg
                           compile-profile
@@ -141379,6 +141382,10 @@
   [caller-scc : i64]) : ir.CompilerIrFunction
   (let
     [_begin : unit (opt-inline-checked-caller-begin!)]
+    ;; CSE-CALL: the caller's pure call sites, read before the walk (see
+    ;; opt-pure-call-inline-sites); the finish below merges what inlining left.
+    [sites : OptPureCallTable
+      (opt-pure-call-inline-sites (compiler-opt-global-shared-view func))]
     [banked : ir.CompilerIrFunction
       (opt-inline-function-walk
         type-segment-bases
@@ -141393,33 +141400,35 @@
       (if (opt-inline-checked-absorb-exposed-sites?)
         (- 0 1)
         0)]
-    (if (= opt-inline-checked-scan-count 0)
-      (if (< kept-before 0)
+    (opt-pure-call-inline-finish
+      sites
+      (if (= opt-inline-checked-scan-count 0)
+        (if (< kept-before 0)
+          (opt-inline-checked-generations
+            type-segment-bases
+            banked
+            index
+            census
+            scc-result
+            caller-scc
+            kept-before)
+          banked)
         (opt-inline-checked-generations
           type-segment-bases
-          banked
+          (opt-inline-checked-rounds
+            type-segment-bases
+            (compiler-opt-global-shared-view func)
+            (compiler-opt-global-shared-view index)
+            (compiler-opt-global-shared-view census)
+            (compiler-opt-global-shared-view scc-result)
+            caller-scc
+            banked
+            (- 0 1))
           index
           census
           scc-result
           caller-scc
-          kept-before)
-        banked)
-      (opt-inline-checked-generations
-        type-segment-bases
-        (opt-inline-checked-rounds
-          type-segment-bases
-          (compiler-opt-global-shared-view func)
-          (compiler-opt-global-shared-view index)
-          (compiler-opt-global-shared-view census)
-          (compiler-opt-global-shared-view scc-result)
-          caller-scc
-          banked
-          (- 0 1))
-        index
-        census
-        scc-result
-        caller-scc
-        kept-before))))
+          kept-before)))))
 
 (define (opt-inline-function-with-spans-walk
   [type-segment-bases : i64]
@@ -141690,6 +141699,9 @@
   [out-spans : ir.CompilerSourceSpans]) : OptInlineSpanProgram
   (let
     [_begin : unit (opt-inline-checked-caller-begin!)]
+    ;; CSE-CALL, as in opt-inline-function.
+    [sites : OptPureCallTable
+      (opt-pure-call-inline-sites (compiler-opt-global-shared-view func))]
     [banked : OptInlineSpanProgram
       (opt-inline-function-with-spans-walk
         type-segment-bases
@@ -141705,39 +141717,41 @@
       (if (opt-inline-checked-absorb-exposed-sites?)
         (- 0 1)
         0)]
-    (if (= opt-inline-checked-scan-count 0)
-      (if (< kept-before 0)
+    (opt-pure-call-inline-finish-spans
+      sites
+      (if (= opt-inline-checked-scan-count 0)
+        (if (< kept-before 0)
+          (opt-inline-checked-span-generations
+            type-segment-bases
+            (compiler-opt-global-shared-view func)
+            banked
+            index
+            census
+            scc-result
+            caller-scc
+            source-spans
+            kept-before)
+          banked)
         (opt-inline-checked-span-generations
           type-segment-bases
           (compiler-opt-global-shared-view func)
-          banked
+          (opt-inline-checked-span-rounds
+            type-segment-bases
+            (compiler-opt-global-shared-view func)
+            (compiler-opt-global-shared-view index)
+            (compiler-opt-global-shared-view census)
+            (compiler-opt-global-shared-view scc-result)
+            caller-scc
+            (compiler-opt-global-shared-view source-spans)
+            (compiler-opt-global-shared-view out-spans)
+            banked
+            (- 0 1))
           index
           census
           scc-result
           caller-scc
           source-spans
-          kept-before)
-        banked)
-      (opt-inline-checked-span-generations
-        type-segment-bases
-        (compiler-opt-global-shared-view func)
-        (opt-inline-checked-span-rounds
-          type-segment-bases
-          (compiler-opt-global-shared-view func)
-          (compiler-opt-global-shared-view index)
-          (compiler-opt-global-shared-view census)
-          (compiler-opt-global-shared-view scc-result)
-          caller-scc
-          (compiler-opt-global-shared-view source-spans)
-          (compiler-opt-global-shared-view out-spans)
-          banked
-          (- 0 1))
-        index
-        census
-        scc-result
-        caller-scc
-        source-spans
-        kept-before))))
+          kept-before)))))
 
 (define (opt-function-index-to-seq [index : OptFunctionIndex]) : ir.CompilerIrFunctionSeq
   (let
@@ -142596,6 +142610,10 @@
     (let
       [devirt : ir.CompilerIrFunctionSeq
         (opt-tailrec-function-seq! (opt-devirt-known-function-seq functions))]
+      [_pure-memory : unit
+        (opt-pure-call-inline-memory-install!
+          type-segment-bases
+          (compiler-opt-global-shared-view devirt))]
       [index : OptFunctionIndex
         (opt-function-index-build (compiler-opt-global-shared-view devirt))]
       [graph : OptCallGraph
@@ -142624,6 +142642,7 @@
           (begin
             (opt-inline-synth-reset!)
             (opt-inline-owned-state-reset! true)
+            (opt-pure-call-inline-memory-reset!)
             out))))))
 
 (define (opt-inline-program-functions-with-spans
@@ -142638,6 +142657,10 @@
     (let
       [devirt : ir.CompilerIrFunctionSeq
         (opt-tailrec-function-seq! (opt-devirt-known-function-seq functions))]
+      [_pure-memory : unit
+        (opt-pure-call-inline-memory-install!
+          type-segment-bases
+          (compiler-opt-global-shared-view devirt))]
       [index : OptFunctionIndex
         (opt-function-index-build (compiler-opt-global-shared-view devirt))]
       [graph : OptCallGraph
@@ -142671,6 +142694,7 @@
       (begin
         (opt-inline-synth-reset!)
         (opt-inline-owned-state-reset! true)
+        (opt-pure-call-inline-memory-reset!)
         out))))
 
 (define (opt-function-seq-defines-from?
@@ -172650,6 +172674,759 @@
     (opt_i64_i64_map.with-capacity 1)
     state
     instrs))
+
+;; --- pure direct-call dedupe (CSE-CALL) ---------------------------------------
+;;
+;; A direct call to a callee that writes no memory -- call-memory summary 0: no
+;; parameter write, no global store, no element write, no unknown effect (an
+;; allocation or an indirect call summarizes as unknown) -- computes a function
+;; of its arguments and of memory. Two such calls with the same callee and the
+;; same arguments, with no memory write between them on every path, return the
+;; same value: the second is a copy of the first. clang gets this from GVN over
+;; the inlined bodies; here the probes stay calls (a self-recursive lookup is
+;; never inlined, a refcount's body crosses the caller's block ceiling), so the
+;; call itself is the unit to value-number. callgraph_scc's fold asks the same
+;; `refcount name` twice per function, once directly and once inside the absorb
+;; class it inlined, and pays the second probe whole.
+;;
+;; SOUNDNESS. A table of (callee, arguments, result) entries is carried along a
+;; SINGLE-PREDECESSOR chain only: a block with exactly one predecessor, laid out
+;; after it, inherits that predecessor's exit table; every other block starts
+;; empty. Such a predecessor dominates the block, so the entry's result var
+;; dominates the copy that reads it. The table is dropped at every instruction
+;; that may write memory (opt-alias-instr-clears-all?: every store form, every
+;; call that is not a summarized write-free direct call, every unknown effect),
+;; so nothing the callee could read changes between the two calls. The callee
+;; is deterministic in its arguments and memory: it allocates nothing (tl_alloc
+;; has no summary row and a callee that calls it carries the unknown bit), and
+;; a bounds abort or divide trap inside it fires on the same inputs, so a
+;; second call that the first one returned from would return the same way.
+;; Arguments compare as values after following SSA `Mov` copies, which is what
+;; an inlined callee's parameter binding leaves behind.
+;;
+;; Two places run it: the `global_cell` pass (every function, after SSA, with
+;; the program's call-memory summaries), and the checked inline tier between
+;; generations (opt-inline-checked-generations), where a kept absorption has
+;; just exposed the duplicate and the next generation would otherwise inline
+;; one copy and refuse the other. The tier's summaries are built once at the
+;; inline stage's start (opt-pure-call-inline-memory-install!); inlining never
+;; turns a write-free callee into a writing one, so they stay valid across it.
+;; opt0/opt1 carry no summaries and are untouched.
+(defstruct OptPureCallEntry
+  (name i64)
+  (args ir.CompilerIrCallArgs)
+  (dst i64))
+
+(defenum OptPureCallTable
+  (Nil)
+  (Cons OptPureCallEntry (Box OptPureCallTable)))
+
+(defenum OptPureCallBlockOut
+  (Out ir.CompilerIrInstrSeq OptPureCallTable))
+
+;; The inline stage's own summaries (see the header).
+(define opt-pure-call-inline-memory : opt_i64_i64_map.Map
+  (opt_i64_i64_map.with-capacity 1))
+(define opt-pure-call-inline-memory-on : bool
+  false)
+
+(define (opt-pure-call-inline-memory-install!
+  [type-segment-bases : i64]
+  [functions : ir.CompilerIrFunctionSeq]) : unit
+  (begin
+    (set!
+      opt-pure-call-inline-memory
+      (opt-call-memory-build-with-descriptor-globals
+        type-segment-bases
+        (opt_i64_i64_map.with-capacity 1)
+        (compiler-opt-global-shared-view functions)
+        (opt-function-index-capacity
+          (opt-function-seq-count (compiler-opt-global-shared-view functions)))))
+    (set! opt-pure-call-inline-memory-on true)))
+
+(define (opt-pure-call-inline-memory-reset!) : unit
+  (begin
+    (set! opt-pure-call-inline-memory-on false)
+    (set! opt-pure-call-inline-memory (opt_i64_i64_map.with-capacity 1))))
+
+;; The inline stage's two entry points. A caller's pure call SITES are collected
+;; before its walk: a site the tier inlines keeps its result var -- the inlined
+;; body's return lands in it (a Mov or a continuation phi) -- and, the body
+;; writing nothing, that var holds the callee's value of the arguments exactly
+;; as a surviving call would. Seeding the table with (callee, arguments, dst)
+;; at that definition lets a later surviving call to the same callee with the
+;; same arguments read it, which is the fold's shape: the first `refcount`
+;; inlined in generation 1, the second -- exposed by the absorb band in the
+;; same generation -- refused on the block ceiling and left as a call.
+(define (opt-pure-call-inline-sites [func : ir.CompilerIrFunction]) : OptPureCallTable
+  (if opt-pure-call-inline-memory-on
+    (opt-pure-call-sites-collect
+      (compiler-opt-global-shared-view opt-pure-call-inline-memory)
+      (opt-function-blocks func)
+      (OptPureCallTable.Nil))
+    (OptPureCallTable.Nil)))
+
+(define (opt-pure-call-inline-finish
+  [sites : OptPureCallTable]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (if opt-pure-call-inline-memory-on
+    (opt-pure-call-dedupe-function-sites
+      (compiler-opt-global-shared-view opt-pure-call-inline-memory)
+      sites
+      func)
+    func))
+
+(define (opt-pure-call-inline-finish-spans
+  [sites : OptPureCallTable]
+  [program : OptInlineSpanProgram]) : OptInlineSpanProgram
+  (if (not opt-pure-call-inline-memory-on)
+    program
+    (match program
+      [(OptInlineSpanProgram.Program functions spans)
+        (if (= functions.len 1)
+          (OptInlineSpanProgram.Program
+            (ir.compiler-ir-function-seq-prepend
+              (opt-pure-call-dedupe-function-sites
+                (compiler-opt-global-shared-view opt-pure-call-inline-memory)
+                sites
+                (compiler-opt-global-array-element-shared-view
+                  functions.slots
+                  0))
+              (ir.compiler-ir-function-seq-empty))
+            spans)
+          (OptInlineSpanProgram.Program functions spans))])))
+
+;; Every pure, non-unit direct call site of a function, as (callee, args, dst).
+(define (opt-pure-call-sites-collect-instrs
+  [call-memory : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [acc : OptPureCallTable]) : OptPureCallTable
+  (if (>=
+    index
+    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
+    acc
+    (let
+      [next : OptPureCallTable
+        (match (ir.compiler-ir-instr-seq-ref
+          (compiler-opt-global-shared-view instrs)
+          index)
+          [(ir.CompilerIrInstr.Call dst name args ty)
+            (if (and
+              (opt-pure-call-callee-pure?
+                (compiler-opt-global-shared-view call-memory)
+                name)
+              (opt-pure-call-scalar-type? ty))
+              (OptPureCallTable.Cons
+                (OptPureCallEntry
+                  name
+                  (compiler-opt-global-shared-view args)
+                  dst)
+                (box acc))
+              acc)]
+          [_ acc])]
+      (opt-pure-call-sites-collect-instrs call-memory instrs (+ index 1) next))))
+
+(define (opt-pure-call-sites-collect
+  [call-memory : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]
+  [acc : OptPureCallTable]) : OptPureCallTable
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) acc]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-pure-call-sites-collect
+        call-memory
+        (ir.compiler-ir-block-seq-to-list seq)
+        acc)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (let
+        [next : OptPureCallTable
+          (match (compiler-opt-global-shared-view block)
+            [(ir.CompilerIrBlock.Block _ instrs)
+              (opt-pure-call-sites-collect-instrs
+                (compiler-opt-global-shared-view call-memory)
+                (compiler-opt-global-shared-view instrs)
+                0
+                acc)])]
+        (opt-pure-call-sites-collect
+          call-memory
+          (compiler-opt-box-shared-view rest)
+          next))]))
+
+;; `cur` with the site whose result var is `dst` consed on, when there is one.
+(define (opt-pure-call-sites-seed
+  [sites : OptPureCallTable]
+  [dst : i64]
+  [cur : OptPureCallTable]) : OptPureCallTable
+  (match (compiler-opt-global-shared-view sites)
+    [(OptPureCallTable.Nil) cur]
+    [(OptPureCallTable.Cons entry rest)
+      (if (= entry.dst dst)
+        (OptPureCallTable.Cons
+          (OptPureCallEntry
+            entry.name
+            (compiler-opt-global-shared-view entry.args)
+            entry.dst)
+          (box cur))
+        (opt-pure-call-sites-seed (compiler-opt-box-shared-view rest) dst cur))]))
+
+;; Summary 0 is "writes nothing"; a callee without a row (an extern, a runtime
+;; helper, an unresolved cycle) is not known to.
+(define (opt-pure-call-callee-pure?
+  [call-memory : opt_i64_i64_map.Map]
+  [name : i64]) : bool
+  (match (opt_i64_i64_map.get (& call-memory) (ir.compiler-ir-symbol-id name))
+    [(opt_i64_i64_map.LookupFound summary) (= summary 0)]
+    [(opt_i64_i64_map.LookupMissing) false]))
+
+;; Only a scalar result is copied: an integer or a bool lives in one register,
+;; so `Mov dst, %earlier` is exactly how the IR copies it. An aggregate result
+;; is a register group or an sret object and is left to its call.
+(define (opt-pure-call-scalar-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.I64) true]
+    [(ast.AstType.U64) true]
+    [(ast.AstType.I32) true]
+    [(ast.AstType.U32) true]
+    [(ast.AstType.I16) true]
+    [(ast.AstType.U16) true]
+    [(ast.AstType.I8) true]
+    [(ast.AstType.U8) true]
+    [(ast.AstType.Bool) true]
+    [_ false]))
+
+;; The inline stage runs ahead of SSA construction, where a var may be defined
+;; more than once. Everything the table relies on -- a result var, an argument
+;; var, a copy's source and destination -- must name one value along the chain,
+;; so only vars with exactly one definition in the whole function take part.
+;; After the `ssa` pass every var qualifies and the rule costs nothing.
+(define (opt-pure-call-single-def? [defs : (__tl_dyn-array i64)] [var : i64]) : bool
+  (and (>= var 0) (< var (array-length defs)) (= (array-ref defs var) 1)))
+
+(define (opt-pure-call-def-counts-instrs!
+  [defs : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]) : unit
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [dst : i64
+            (opt-bce-mb-instr-seq-dst-or
+              (compiler-opt-global-shared-view instrs)
+              index
+              (- 0 1))]
+          (begin
+            (if (and (>= dst 0) (< dst (array-length defs)))
+              (set! (array-ref defs dst) (+ (array-ref defs dst) 1))
+              unit)
+            (set! index (+ index 1)))))
+      unit)))
+
+;; A parameter is defined once, at entry.
+(define (opt-pure-call-def-counts-params!
+  [defs : (__tl_dyn-array i64)]
+  [params : ir.CompilerIrParamSeq]) : unit
+  (let
+    [count : i64
+      (ir.compiler-ir-param-seq-count (compiler-opt-global-shared-view params))]
+    [at : i64 0]
+    (begin
+      (while (< at count)
+        (begin
+          (match (ir.compiler-ir-param-seq-ref
+            (compiler-opt-global-shared-view params)
+            at)
+            [(ir.CompilerIrParam.Param _ _ index)
+              (if (and (>= index 0) (< index (array-length defs)))
+                (set! (array-ref defs index) (+ (array-ref defs index) 1))
+                unit)])
+          (set! at (+ at 1))))
+      unit)))
+
+(define (opt-pure-call-def-counts!
+  [defs : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-pure-call-def-counts! defs (ir.compiler-ir-block-seq-to-list seq))]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match (compiler-opt-global-shared-view block)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-pure-call-def-counts-instrs!
+              (compiler-opt-global-shared-view defs)
+              (compiler-opt-global-shared-view instrs))])
+        (opt-pure-call-def-counts! defs (compiler-opt-box-shared-view rest)))]))
+
+;; Every argument var, after copy resolution, is single-def (a literal always
+;; qualifies).
+(define (opt-pure-call-value-stable?
+  [defs : (__tl_dyn-array i64)]
+  [env : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : bool
+  (match (opt-pure-call-resolve (compiler-opt-global-shared-view env) value)
+    [(ir.CompilerIrValue.Var id) (opt-pure-call-single-def? defs id)]
+    [_ true]))
+
+(define (opt-pure-call-array-args-stable?
+  [defs : (__tl_dyn-array i64)]
+  [env : opt_i64_i64_map.Map]
+  [xs : (__tl_dyn-array ir.CompilerIrValue)]
+  [index : i64]) : bool
+  (or
+    (>= index (array-length xs))
+    (and
+      (opt-pure-call-value-stable?
+        (compiler-opt-global-shared-view defs)
+        (compiler-opt-global-shared-view env)
+        (compiler-opt-global-array-element-shared-view xs index))
+      (opt-pure-call-array-args-stable? defs env xs (+ index 1)))))
+
+(define (opt-pure-call-args-stable?
+  [defs : (__tl_dyn-array i64)]
+  [env : opt_i64_i64_map.Map]
+  [args : ir.CompilerIrCallArgs]) : bool
+  (match (compiler-opt-global-shared-view args)
+    [(ir.CompilerIrCallArgs.Nil) true]
+    [(ir.CompilerIrCallArgs.One x)
+      (opt-pure-call-value-stable?
+        (compiler-opt-global-shared-view defs)
+        (compiler-opt-global-shared-view env)
+        x)]
+    [(ir.CompilerIrCallArgs.Two x1 x2)
+      (and
+        (opt-pure-call-value-stable?
+          (compiler-opt-global-shared-view defs)
+          (compiler-opt-global-shared-view env)
+          x1)
+        (opt-pure-call-value-stable?
+          (compiler-opt-global-shared-view defs)
+          (compiler-opt-global-shared-view env)
+          x2))]
+    [(ir.CompilerIrCallArgs.Array xs)
+      (opt-pure-call-array-args-stable?
+        (compiler-opt-global-shared-view defs)
+        (compiler-opt-global-shared-view env)
+        (compiler-opt-global-shared-view xs)
+        0)]))
+
+;; A var's copy root: the env maps a `Mov dst, %src` to src's own root, so one
+;; lookup resolves a whole copy chain.
+(define (opt-pure-call-resolve
+  [env : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (match (compiler-opt-global-shared-view value)
+    [(ir.CompilerIrValue.Var id)
+      (match (opt_i64_i64_map.get (& env) id)
+        [(opt_i64_i64_map.LookupFound root) (ir.CompilerIrValue.Var root)]
+        [(opt_i64_i64_map.LookupMissing) value])]
+    [_ value]))
+
+(define (opt-pure-call-value-eq?
+  [env : opt_i64_i64_map.Map]
+  [a : ir.CompilerIrValue]
+  [b : ir.CompilerIrValue]) : bool
+  (opt-value-eq
+    (opt-pure-call-resolve (compiler-opt-global-shared-view env) a)
+    (opt-pure-call-resolve (compiler-opt-global-shared-view env) b)))
+
+(define (opt-pure-call-array-args-eq?
+  [env : opt_i64_i64_map.Map]
+  [xs : (__tl_dyn-array ir.CompilerIrValue)]
+  [ys : (__tl_dyn-array ir.CompilerIrValue)]
+  [index : i64]) : bool
+  (or
+    (>= index (array-length xs))
+    (and
+      (opt-pure-call-value-eq?
+        (compiler-opt-global-shared-view env)
+        (compiler-opt-global-array-element-shared-view xs index)
+        (compiler-opt-global-array-element-shared-view ys index))
+      (opt-pure-call-array-args-eq? env xs ys (+ index 1)))))
+
+(define (opt-pure-call-args-eq?
+  [env : opt_i64_i64_map.Map]
+  [a : ir.CompilerIrCallArgs]
+  [b : ir.CompilerIrCallArgs]) : bool
+  (match (compiler-opt-global-shared-view a)
+    [(ir.CompilerIrCallArgs.Nil)
+      (match (compiler-opt-global-shared-view b)
+        [(ir.CompilerIrCallArgs.Nil) true]
+        [_ false])]
+    [(ir.CompilerIrCallArgs.One x)
+      (match (compiler-opt-global-shared-view b)
+        [(ir.CompilerIrCallArgs.One y)
+          (opt-pure-call-value-eq? (compiler-opt-global-shared-view env) x y)]
+        [_ false])]
+    [(ir.CompilerIrCallArgs.Two x1 x2)
+      (match (compiler-opt-global-shared-view b)
+        [(ir.CompilerIrCallArgs.Two y1 y2)
+          (and
+            (opt-pure-call-value-eq?
+              (compiler-opt-global-shared-view env)
+              x1
+              y1)
+            (opt-pure-call-value-eq?
+              (compiler-opt-global-shared-view env)
+              x2
+              y2))]
+        [_ false])]
+    [(ir.CompilerIrCallArgs.Array xs)
+      (match (compiler-opt-global-shared-view b)
+        [(ir.CompilerIrCallArgs.Array ys)
+          (and
+            (= (array-length xs) (array-length ys))
+            (opt-pure-call-array-args-eq?
+              (compiler-opt-global-shared-view env)
+              (compiler-opt-global-shared-view xs)
+              (compiler-opt-global-shared-view ys)
+              0))]
+        [_ false])]))
+
+;; The result var of an earlier identical call, or -1.
+(define (opt-pure-call-table-find
+  [table : OptPureCallTable]
+  [env : opt_i64_i64_map.Map]
+  [name : i64]
+  [args : ir.CompilerIrCallArgs]) : i64
+  (match (compiler-opt-global-shared-view table)
+    [(OptPureCallTable.Nil) (- 0 1)]
+    [(OptPureCallTable.Cons entry rest)
+      (if (and
+        (ir.compiler-ir-symbol-eq? entry.name name)
+        (opt-pure-call-args-eq?
+          (compiler-opt-global-shared-view env)
+          (compiler-opt-global-shared-view entry.args)
+          (compiler-opt-global-shared-view args)))
+        entry.dst
+        (opt-pure-call-table-find
+          (compiler-opt-box-shared-view rest)
+          (compiler-opt-global-shared-view env)
+          name
+          (compiler-opt-global-shared-view args)))]))
+
+;; Any two direct calls to summarized write-free callees at all? The rebuild
+;; below is skipped for the many functions that have none.
+(define (opt-pure-call-count-instrs
+  [call-memory : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>=
+    index
+    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
+    acc
+    (let
+      [next : i64
+        (match (ir.compiler-ir-instr-seq-ref
+          (compiler-opt-global-shared-view instrs)
+          index)
+          [(ir.CompilerIrInstr.Call _ name _ ty)
+            (if (and
+              (opt-pure-call-callee-pure?
+                (compiler-opt-global-shared-view call-memory)
+                name)
+              (opt-pure-call-scalar-type? ty))
+              (+ acc 1)
+              acc)]
+          [_ acc])]
+      (opt-pure-call-count-instrs call-memory instrs (+ index 1) next))))
+
+(define (opt-pure-call-count-blocks
+  [call-memory : opt_i64_i64_map.Map]
+  [blocks : ir.CompilerIrBlockList]
+  [acc : i64]) : i64
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) acc]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-pure-call-count-blocks
+        call-memory
+        (ir.compiler-ir-block-seq-to-list seq)
+        acc)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (opt-pure-call-count-blocks
+        (compiler-opt-global-shared-view call-memory)
+        (compiler-opt-box-shared-view rest)
+        (match (compiler-opt-global-shared-view block)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-pure-call-count-instrs
+              (compiler-opt-global-shared-view call-memory)
+              (compiler-opt-global-shared-view instrs)
+              0
+              acc)]))]))
+
+;; The table a block starts from: its single predecessor's exit table when that
+;; predecessor is laid out (and so processed) before it, else empty.
+(define (opt-pure-call-entry-table
+  [index : OptCfgIndex]
+  [exits : (__tl_dyn-array OptPureCallTable)]
+  [id : i64]) : OptPureCallTable
+  (let
+    [preds : OptCfgCsr (compiler-opt-global-shared-view index.preds)]
+    [offsets : (__tl_dyn-array i64)
+      (compiler-opt-global-shared-view preds.offsets)]
+    [edges : (__tl_dyn-array i64) (compiler-opt-global-shared-view preds.edges)]
+    [start : i64 (array-ref offsets id)]
+    [end : i64 (array-ref offsets (+ id 1))]
+    (if (and (= (- end start) 1) (< (array-ref edges start) id))
+      (compiler-opt-global-array-element-shared-view
+        exits
+        (array-ref edges start))
+      (OptPureCallTable.Nil))))
+
+;; One block: rewrite its duplicate pure calls, return the rewritten
+;; instructions and the exit table. The copy env is the function's own and is
+;; written through (a var is defined once, so its root is a function-wide fact).
+(define (opt-pure-call-block
+  [call-memory : opt_i64_i64_map.Map]
+  [defs : (__tl_dyn-array i64)]
+  [sites : OptPureCallTable]
+  [env : opt_i64_i64_map.Map]
+  [table : OptPureCallTable]
+  [instrs : ir.CompilerIrInstrSeq]
+  [changed : (__tl_dyn-array i64)]) : OptPureCallBlockOut
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity count)]
+    [cur : OptPureCallTable table]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [instr : ir.CompilerIrInstr
+            (ir.compiler-ir-instr-seq-ref
+              (compiler-opt-global-shared-view instrs)
+              index)]
+          (begin
+            (match (compiler-opt-global-shared-view instr)
+              [(ir.CompilerIrInstr.Mov dst src _)
+                (begin
+                  (if (opt-pure-call-single-def?
+                    (compiler-opt-global-shared-view defs)
+                    dst)
+                    (match (opt-pure-call-resolve
+                      (compiler-opt-global-shared-view env)
+                      (compiler-opt-global-shared-view src))
+                      [(ir.CompilerIrValue.Var root)
+                        (if (opt-pure-call-single-def?
+                          (compiler-opt-global-shared-view defs)
+                          root)
+                          (opt_i64_i64_map.insert-ref! (&mut env) dst root)
+                          unit)]
+                      [_ unit])
+                    unit)
+                  ;; an inlined pure site's result lands here
+                  (if (opt-pure-call-single-def?
+                    (compiler-opt-global-shared-view defs)
+                    dst)
+                    (set!
+                      cur
+                      (opt-pure-call-sites-seed
+                        (compiler-opt-global-shared-view sites)
+                        dst
+                        cur))
+                    unit)
+                  (ir.compiler-ir-instr-builder-push!
+                    (&mut builder)
+                    (compiler-opt-global-shared-view instr)))]
+              [(ir.CompilerIrInstr.Phi dst _ _)
+                (begin
+                  ;; ...or here, as the continuation's merge of its returns
+                  (if (opt-pure-call-single-def?
+                    (compiler-opt-global-shared-view defs)
+                    dst)
+                    (set!
+                      cur
+                      (opt-pure-call-sites-seed
+                        (compiler-opt-global-shared-view sites)
+                        dst
+                        cur))
+                    unit)
+                  (ir.compiler-ir-instr-builder-push!
+                    (&mut builder)
+                    (compiler-opt-global-shared-view instr)))]
+              [(ir.CompilerIrInstr.Call dst name args ty)
+                (if (opt-pure-call-callee-pure?
+                  (compiler-opt-global-shared-view call-memory)
+                  name)
+                  (if (and
+                    (opt-pure-call-scalar-type?
+                      (compiler-opt-global-shared-view ty))
+                    (opt-pure-call-single-def?
+                      (compiler-opt-global-shared-view defs)
+                      dst)
+                    (opt-pure-call-args-stable?
+                      (compiler-opt-global-shared-view defs)
+                      (compiler-opt-global-shared-view env)
+                      (compiler-opt-global-shared-view args)))
+                    (let
+                      [found : i64
+                        (opt-pure-call-table-find
+                          (compiler-opt-global-shared-view cur)
+                          (compiler-opt-global-shared-view env)
+                          name
+                          (compiler-opt-global-shared-view args))]
+                      (if (>= found 0)
+                        (begin
+                          (opt_i64_i64_map.insert-ref! (&mut env) dst found)
+                          (set!
+                            (array-ref changed 0)
+                            (+ (array-ref changed 0) 1))
+                          (ir.compiler-ir-instr-builder-push!
+                            (&mut builder)
+                            (ir.CompilerIrInstr.Mov
+                              dst
+                              (ir.CompilerIrValue.Var found)
+                              ty)))
+                        (begin
+                          (set!
+                            cur
+                            (OptPureCallTable.Cons
+                              (OptPureCallEntry
+                                name
+                                (compiler-opt-global-shared-view args)
+                                dst)
+                              (box cur)))
+                          (ir.compiler-ir-instr-builder-push!
+                            (&mut builder)
+                            (compiler-opt-global-shared-view instr)))))
+                    ;; write-free, but its result or an argument is not one
+                    ;; value along the chain: neither read nor recorded
+                    (ir.compiler-ir-instr-builder-push!
+                      (&mut builder)
+                      (compiler-opt-global-shared-view instr)))
+                  ;; a call that may write: every entry is stale
+                  (begin
+                    (set! cur (OptPureCallTable.Nil))
+                    (ir.compiler-ir-instr-builder-push!
+                      (&mut builder)
+                      (compiler-opt-global-shared-view instr))))]
+              [_
+                (begin
+                  (if (opt-alias-instr-clears-all?
+                    (compiler-opt-global-shared-view instr))
+                    (set! cur (OptPureCallTable.Nil))
+                    unit)
+                  (ir.compiler-ir-instr-builder-push!
+                    (&mut builder)
+                    (compiler-opt-global-shared-view instr)))])
+            (set! index (+ index 1)))))
+      (OptPureCallBlockOut.Out
+        (ir.compiler-ir-instr-builder-to-seq builder)
+        cur))))
+
+(define (opt-pure-call-dedupe-function
+  [call-memory : opt_i64_i64_map.Map]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (opt-pure-call-dedupe-function-sites call-memory (OptPureCallTable.Nil) func))
+
+(define (opt-pure-call-sites-empty? [sites : OptPureCallTable]) : bool
+  (match (compiler-opt-global-shared-view sites)
+    [(OptPureCallTable.Nil) true]
+    [_ false]))
+
+(define (opt-pure-call-dedupe-function-sites
+  [call-memory : opt_i64_i64_map.Map]
+  [sites : OptPureCallTable]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+      (if (<
+        (+
+          (opt-pure-call-count-blocks
+            (compiler-opt-global-shared-view call-memory)
+            (compiler-opt-global-shared-view blocks)
+            0)
+          (if (opt-pure-call-sites-empty?
+            (compiler-opt-global-shared-view sites))
+            0
+            1))
+        2)
+        func
+        (let
+          [index : OptCfgIndex
+            (opt-cfg-index-build (compiler-opt-global-shared-view blocks))]
+          [count : i64 (array-length index.labels)]
+          [exits : (__tl_dyn-array OptPureCallTable)
+            (__tl_make-array OptPureCallTable count)]
+          [changed : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+          ;; sized so the var -> root table never rehashes under the walk
+          [env : opt_i64_i64_map.Map
+            (opt_i64_i64_map.with-capacity (+ (* 2 frame) 16))]
+          [defs : (__tl_dyn-array i64) (__tl_make-array i64 (+ frame 1))]
+          [_defs-params : unit
+            (opt-pure-call-def-counts-params!
+              (compiler-opt-global-shared-view defs)
+              (compiler-opt-global-shared-view params))]
+          [_defs : unit
+            (opt-pure-call-def-counts!
+              (compiler-opt-global-shared-view defs)
+              (compiler-opt-global-shared-view blocks))]
+          [builder : ir.CompilerIrBlockBuilder
+            (ir.compiler-ir-block-builder-with-capacity count)]
+          [id : i64 0]
+          (begin
+            (while (< id count)
+              (begin
+                (set! (array-ref exits id) (OptPureCallTable.Nil))
+                (set! id (+ id 1))))
+            (set! id 0)
+            (while (< id count)
+              (let
+                [entry : OptPureCallTable
+                  (opt-pure-call-entry-table
+                    (compiler-opt-global-shared-view index)
+                    (compiler-opt-global-shared-view exits)
+                    id)]
+                (begin
+                  (match (compiler-opt-global-array-element-shared-view
+                    index.blocks
+                    id)
+                    [(ir.CompilerIrBlock.Block label instrs)
+                      (match (opt-pure-call-block
+                        (compiler-opt-global-shared-view call-memory)
+                        (compiler-opt-global-shared-view defs)
+                        (compiler-opt-global-shared-view sites)
+                        (compiler-opt-global-shared-view env)
+                        entry
+                        (compiler-opt-global-shared-view instrs)
+                        (compiler-opt-global-shared-view changed))
+                        [(OptPureCallBlockOut.Out new-instrs exit-table)
+                          (begin
+                            (set! (array-ref exits id) exit-table)
+                            (ir.compiler-ir-block-builder-push!
+                              (&mut builder)
+                              (ir.CompilerIrBlock.Block label new-instrs)))])])
+                  (set! id (+ id 1)))))
+            (if (= (array-ref changed 0) 0)
+              func
+              (begin
+                (if (and
+                  compiler-opt-debug-trace-passes
+                  (not compiler-opt-debug-suppressed?))
+                  (io.print-error
+                    (str_cat.str-cat
+                      (str_cat.str-cat
+                        (str_cat.str-cat
+                          "pure-call-dedupe|"
+                          (ir.compiler-ir-symbol-text name))
+                        "|replaced=")
+                      (str_cat.str-cat
+                        (string.int->string (array-ref changed 0))
+                        "\n")))
+                  unit)
+                (ir.CompilerIrFunction.Function
+                  name
+                  params
+                  ret-ty
+                  frame
+                  (ir.compiler-ir-block-builder-to-list builder)))))))]))
 
 ;; --- cross-block redundant-load GVN -----------------------------------------
 (defenum OptMaybeLoadCseState

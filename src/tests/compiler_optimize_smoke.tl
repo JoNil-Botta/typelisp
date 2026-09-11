@@ -4526,6 +4526,10 @@
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-far-phi-input-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-pure-call-dedupe-self-test"
+      (compiler_optimize_tests.compiler-optimize-pure-call-dedupe-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bce-version-mb-merged-body-self-test"
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-merged-body-self-test)
       42)
@@ -5454,6 +5458,13 @@
     (compiler_optimize_tests.compiler-optimize-bce-version-mb-far-phi-input-self-test)
     42
     "a phi input out of a block the wire point dominates reads the merge phi"))
+
+(test
+  pure-call-dedupe
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-pure-call-dedupe-self-test)
+    42
+    "a repeated write-free direct call along single-predecessor blocks is a copy"))
 
 (test
   bce-version-multiblock-merged-body

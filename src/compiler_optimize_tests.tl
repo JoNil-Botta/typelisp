@@ -20691,6 +20691,24 @@
 ;; the shared gate refuses everywhere except at an in-loop site. Only the
 ;; CALLER varies across these fixtures, so each test isolates exactly one
 ;; clause of opt-inline-bounds-loop-absorb-ok?.
+;; The site call with `idx-var` in the callee's `idx` position instead of %1.
+(define (opt-inline-loop-site-call-idx
+  [callee-name : i64]
+  [dst : i64]
+  [idx-var : i64]) : compiler_ir_types.CompilerIrInstr
+  (let
+    [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (__tl_make-array compiler_ir_types.CompilerIrValue 3)]
+    (begin
+      (set! (array-ref args 0) (compiler_ir_types.CompilerIrValue.Var idx-var))
+      (set! (array-ref args 1) (compiler_ir_types.CompilerIrValue.Var 0))
+      (set! (array-ref args 2) (compiler_ir_types.CompilerIrValue.Var 2))
+      (compiler_ir_types.CompilerIrInstr.Call
+        dst
+        callee-name
+        (compiler_ir_types.CompilerIrCallArgs.Array args)
+        (compiler_ast_types.AstType.I64)))))
+
 (define (opt-inline-loop-site-call [callee-name : i64] [dst : i64]) : compiler_ir_types.CompilerIrInstr
   (let
     [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
@@ -29203,7 +29221,17 @@
       (compiler_ir_types.CompilerIrBlock.Block
         (opt-inline-hot-loop-budget-label index)
         (opt-test-instrs
-          (opt-inline-loop-site-call callee-name (+ 3 index))
+          ;; a per-site first argument (`idx + index`, computed rather than a
+          ;; literal), so the sites stay distinct calls: identical write-free
+          ;; calls along the chain would otherwise be one call and five copies
+          ;; (CSE-CALL), which is not the fuel question this fixture asks
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            (+ 10 index)
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.I64 index)
+            (compiler_ast_types.AstType.I64))
+          (opt-inline-loop-site-call-idx callee-name (+ 3 index) (+ 10 index))
           (compiler_ir_types.CompilerIrInstr.Jump
             (if (< (+ index 1) sites)
               (opt-inline-hot-loop-budget-label (+ index 1))
@@ -29222,7 +29250,7 @@
             symbols.main
             (opt-inline-switch-params)
             (compiler_ast_types.AstType.I64)
-            9
+            16
             (opt-inline-hot-loop-budget-blocks-from callee-name 0 6))
           (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-inline-dup-leaf-plain callee-name)
@@ -54899,6 +54927,368 @@
       ;; a source the wire point does not dominate: refused
       [(not (opt-bce-mb2-test-verify-ok? 9)) 10]
       [(opt-bce-mb2-test-versioned? undominated) 11]
+      [else 42])))
+
+;; --- pure direct-call dedupe (CSE-CALL) ---------------------------------------
+;;
+;; Two calls to a summarized write-free callee with the same argument, the
+;; second reached from the first along single-predecessor blocks with no memory
+;; write between, collapse into one call and a copy. Layout:
+;;
+;;   entry: %2 = pure(x); %3 = mov x; jump b1
+;;   b1:    %4 = pure(%3)        <- copy of %2 (argument through the Mov)
+;;          %5 = impure(x)       <- a call that may write: the table is dropped
+;;          %6 = pure(x); jump b2
+;;   b2:    %7 = pure(x)         <- copy of %6 (single predecessor b1)
+;;          store_ptr y, x       <- a store drops the table
+;;          %8 = pure(x); %9 = x < y; branch %9, b3, b4
+;;   b3:    %10 = pure(x)        <- copy of %8
+;;   b4:    %11 = pure(y)        <- a different argument: kept
+;;   b5:    %12 = pure(x)        <- two predecessors: kept
+;;          unitpure(x) twice    <- unit-typed: never a candidate
+(define opt-pcd-test-frame : i64
+  32)
+
+(define (opt-pcd-test-pure) : i64
+  (opt-test-symbol "pcd_pure"))
+
+(define (opt-pcd-test-unit-pure) : i64
+  (opt-test-symbol "pcd_unit_pure"))
+
+(define (opt-pcd-test-impure) : i64
+  (opt-test-symbol "pcd_impure"))
+
+(define (opt-pcd-test-call [dst : i64] [callee : i64] [arg : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Call
+    dst
+    callee
+    (compiler_ir_types.CompilerIrCallArgs.One
+      (compiler_ir_types.CompilerIrValue.Var arg))
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-pcd-test-unit-call [dst : i64] [arg : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Call
+    dst
+    (opt-pcd-test-unit-pure)
+    (compiler_ir_types.CompilerIrCallArgs.One
+      (compiler_ir_types.CompilerIrValue.Var arg))
+    (compiler_ast_types.AstType.Unit)))
+
+(define (opt-pcd-test-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (opt-pcd-test-call 2 (opt-pcd-test-pure) 0)
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "b1"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "b1")
+        (opt-test-instrs
+          (opt-pcd-test-call 4 (opt-pcd-test-pure) 3)
+          (opt-pcd-test-call 5 (opt-pcd-test-impure) 0)
+          (opt-pcd-test-call 6 (opt-pcd-test-pure) 0)
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "b2"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "b2")
+          (opt-test-instrs
+            (opt-pcd-test-call 7 (opt-pcd-test-pure) 0)
+            (compiler_ir_types.CompilerIrInstr.StorePtr
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ast_types.AstType.I64))
+            (opt-pcd-test-call 8 (opt-pcd-test-pure) 0)
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              9
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ast_types.AstType.Bool))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 9)
+              (compiler_ir_types.compiler-ir-label "b3")
+              (compiler_ir_types.compiler-ir-label "b4"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "b3")
+            (opt-test-instrs
+              (opt-pcd-test-call 10 (opt-pcd-test-pure) 0)
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "b5"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "b4")
+              (opt-test-instrs
+                (opt-pcd-test-call 11 (opt-pcd-test-pure) 1)
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "b5"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "b5")
+                (opt-test-instrs
+                  (opt-pcd-test-call 12 (opt-pcd-test-pure) 0)
+                  (opt-pcd-test-unit-call 13 0)
+                  (opt-pcd-test-unit-call 14 0)
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 12)))))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-pcd-test-params) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "x"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "y"
+        (compiler_ast_types.AstType.I64)
+        1)
+      (compiler_ir_types.compiler-ir-param-seq-empty))))
+
+(define (opt-pcd-test-function) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "pcd_fixture")
+    (opt-pcd-test-params)
+    (compiler_ast_types.AstType.I64)
+    opt-pcd-test-frame
+    (opt-pcd-test-blocks)))
+
+;; The call-memory rows: `pure` and `unitpure` write nothing; `impure` stores a
+;; global. With `pure-writes?` the pure callee is given a global store too.
+(define (opt-pcd-test-map [pure-writes? : bool]) : opt_i64_i64_map.Map
+  (let
+    [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
+    (begin
+      (opt_i64_i64_map.insert-ref!
+        (&mut out)
+        (opt-pcd-test-pure)
+        (if pure-writes?
+          (compiler_optimize.opt-call-memory-summary-add-global 0)
+          0))
+      (opt_i64_i64_map.insert-ref! (&mut out) (opt-pcd-test-unit-pure) 0)
+      (opt_i64_i64_map.insert-ref!
+        (&mut out)
+        (opt-pcd-test-impure)
+        (compiler_optimize.opt-call-memory-summary-add-global 0))
+      out)))
+
+(define (opt-pcd-test-run [pure-writes? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-function-blocks
+    (compiler_optimize.opt-pure-call-dedupe-function
+      (opt-pcd-test-map pure-writes?)
+      (opt-pcd-test-function))))
+
+;; Pre-SSA shapes, which the inline stage hands the pass:
+;;
+;;   entry: %2 = pure(x); %3 = mov x; %3 = mov y       <- %3 redefined
+;;          %4 = pure(%3)                              <- kept: %3 is not one value
+;;          %5 = pure(x); %5 = mov y                   <- result redefined: kept,
+;;                                                        not recorded, table intact
+;;          %6 = pure(x)                               <- copy of %2
+;;          %7 = agg(x); %8 = agg(x)                   <- kept: a struct result
+;;          return %6
+(define (opt-pcd-test-agg) : i64
+  (opt-test-symbol "pcd_agg"))
+
+(define (opt-pcd-test-agg-call [dst : i64] [arg : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Call
+    dst
+    (opt-pcd-test-agg)
+    (compiler_ir_types.CompilerIrCallArgs.One
+      (compiler_ir_types.CompilerIrValue.Var arg))
+    (compiler_ast_types.AstType.Struct 7)))
+
+(define (opt-pcd-test-redef-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (opt-pcd-test-call 2 (opt-pcd-test-pure) 0)
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.I64))
+        (opt-pcd-test-call 4 (opt-pcd-test-pure) 3)
+        (opt-pcd-test-call 5 (opt-pcd-test-pure) 0)
+        (compiler_ir_types.CompilerIrInstr.Mov
+          5
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.I64))
+        (opt-pcd-test-call 6 (opt-pcd-test-pure) 0)
+        (opt-pcd-test-agg-call 7 0)
+        (opt-pcd-test-agg-call 8 0)
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 6)))))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+(define (opt-pcd-test-redef-run) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [map : opt_i64_i64_map.Map (opt-pcd-test-map false)]
+    [_agg : unit (opt_i64_i64_map.insert-ref! (&mut map) (opt-pcd-test-agg) 0)]
+    (compiler_optimize.opt-function-blocks
+      (compiler_optimize.opt-pure-call-dedupe-function
+        map
+        (compiler_ir_types.CompilerIrFunction.Function
+          (opt-test-symbol "pcd_redef_fixture")
+          (opt-pcd-test-params)
+          (compiler_ast_types.AstType.I64)
+          opt-pcd-test-frame
+          (opt-pcd-test-redef-blocks))))))
+
+;; Is instruction `index` of block `label` `Mov dst, %src`?
+(define (opt-pcd-test-mov-at?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]
+  [index : i64]
+  [dst : i64]
+  [src : i64]) : bool
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) false]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (match (compiler_ir_types.compiler-ir-instr-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view instrs)
+            index)
+            [(compiler_ir_types.CompilerIrInstr.Mov d s _)
+              (and
+                (= d dst)
+                (match s
+                  [(compiler_ir_types.CompilerIrValue.Var v) (= v src)]
+                  [_ false]))]
+            [_ false])])]))
+
+;; Direct calls to `callee` in one block.
+(define (opt-pcd-test-calls-from
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [callee : i64]) : i64
+  (if (>=
+    index
+    (compiler_ir_types.compiler-ir-instr-seq-count
+      (compiler_ir_types.compiler-ir-global-shared-view instrs)))
+    0
+    (+
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref
+        (compiler_ir_types.compiler-ir-global-shared-view instrs)
+        index)
+        [(compiler_ir_types.CompilerIrInstr.Call _ name _ _)
+          (if (compiler_ir_types.compiler-ir-symbol-eq? name callee)
+            1
+            0)]
+        [_ 0])
+      (opt-pcd-test-calls-from instrs (+ index 1) callee))))
+
+(define (opt-pcd-test-calls
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [callee : i64]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-pcd-test-calls
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        callee)]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (+
+        (match (compiler_ir_types.compiler-ir-global-shared-view block)
+          [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+            (opt-pcd-test-calls-from instrs 0 callee)])
+        (opt-pcd-test-calls
+          (compiler_ir_types.compiler-ir-box-shared-view rest)
+          callee))]))
+
+(define (compiler-optimize-pure-call-dedupe-self-test) : i64
+  (let
+    [out : compiler_ir_types.CompilerIrBlockList (opt-pcd-test-run false)]
+    [same : compiler_ir_types.CompilerIrBlockList (opt-pcd-test-run true)]
+    [redef : compiler_ir_types.CompilerIrBlockList (opt-pcd-test-redef-run)]
+    (cond
+      ;; the copy-argument duplicate, the post-impure duplicate in the single-
+      ;; predecessor successor, and the one in the branch arm are copies
+      [(not
+          (opt-pcd-test-mov-at?
+            (compiler_ir_types.compiler-ir-global-shared-view out)
+            (compiler_ir_types.compiler-ir-label "b1")
+            0
+            4
+            2))
+        1]
+      [(not
+          (opt-pcd-test-mov-at?
+            (compiler_ir_types.compiler-ir-global-shared-view out)
+            (compiler_ir_types.compiler-ir-label "b2")
+            0
+            7
+            6))
+        2]
+      [(not
+          (opt-pcd-test-mov-at?
+            (compiler_ir_types.compiler-ir-global-shared-view out)
+            (compiler_ir_types.compiler-ir-label "b3")
+            0
+            10
+            8))
+        3]
+      ;; the first, the one after the impure call, the one after the store,
+      ;; the other-argument one and the join one stay: five of eight
+      [(not
+          (=
+            (opt-pcd-test-calls
+              (compiler_ir_types.compiler-ir-global-shared-view out)
+              (opt-pcd-test-pure))
+            5))
+        4]
+      ;; unit-typed calls are never candidates
+      [(not
+          (=
+            (opt-pcd-test-calls
+              (compiler_ir_types.compiler-ir-global-shared-view out)
+              (opt-pcd-test-unit-pure))
+            2))
+        5]
+      ;; the impure call is untouched
+      [(not
+          (=
+            (opt-pcd-test-calls
+              (compiler_ir_types.compiler-ir-global-shared-view out)
+              (opt-pcd-test-impure))
+            1))
+        6]
+      ;; a callee that writes a global is no candidate: every call stays
+      [(not (= (opt-pcd-test-calls same (opt-pcd-test-pure)) 8)) 7]
+      ;; pre-SSA: a redefined argument var and a redefined result var keep
+      ;; their calls (%4, %5) without disturbing the table, so %6 copies %2;
+      ;; an aggregate result keeps both calls
+      [(not
+          (=
+            (opt-pcd-test-calls
+              (compiler_ir_types.compiler-ir-global-shared-view redef)
+              (opt-pcd-test-pure))
+            3))
+        8]
+      [(not
+          (opt-pcd-test-mov-at?
+            (compiler_ir_types.compiler-ir-global-shared-view redef)
+            (compiler_ir_types.compiler-ir-label "entry")
+            6
+            6
+            2))
+        9]
+      [(not (= (opt-pcd-test-calls redef (opt-pcd-test-agg)) 2)) 10]
       [else 42])))
 
 ;; --- merged-body exit-join versioning -----------------------------------------

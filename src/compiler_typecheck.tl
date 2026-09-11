@@ -59,13 +59,13 @@
 (extern (io.append-file-status [arg0 : String] [arg1 : (& arg1 bytes)]) : i64)
 (extern (io.file-exists? [arg0 : String]) : bool)
 (extern (io.file-exists-status [arg0 : String]) : i64)
-(extern (io.file-open-status [arg0 : String] [arg1 : i64]) : i64)
-(extern (io.file-close-status [arg0 : i64]) : i64)
-(extern (io.file-read-chunk-status [arg0 : i64] [arg1 : i64]) : i64)
-(extern (io.file-write-status [arg0 : i64] [arg1 : (& arg1 bytes)]) : i64)
-(extern (io.file-flush-status [arg0 : i64]) : i64)
-(extern (io.file-read-chunk-bytes [arg0 : i64]) : ByteBuf)
-(extern (io.file-read-chunk-eof? [arg0 : i64]) : bool)
+(unsafe (extern (io.file-open-status [arg0 : String] [arg1 : i64]) : i64))
+(unsafe (extern (io.file-close-status [arg0 : i64]) : i64))
+(unsafe (extern (io.file-read-chunk-status [arg0 : i64] [arg1 : i64]) : i64))
+(unsafe (extern (io.file-write-status [arg0 : i64] [arg1 : (& arg1 bytes)]) : i64))
+(unsafe (extern (io.file-flush-status [arg0 : i64]) : i64))
+(unsafe (extern (io.file-read-chunk-bytes [arg0 : i64]) : ByteBuf))
+(unsafe (extern (io.file-read-chunk-eof? [arg0 : i64]) : bool))
 (extern (read-stdin-line) : ByteBuf)
 (extern (io.read-stdin-bytes [arg0 : i64]) : ByteBuf)
 (extern (stdin-eof?) : bool)
@@ -7631,7 +7631,7 @@
           "(define (f [p : String] [c : (& c bytes)]) : i64
   (begin
     (io.write-file p c)
-    (io.file-open-status p 0)))"))
+    (unsafe (io.file-open-status p 0))))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -7678,37 +7678,41 @@
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [p : String]) : i64 (io.file-open-status p 0))"))
+          "(define (f [p : String]) : i64 (unsafe (io.file-open-status p 0)))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [h : i64]) : i64 (io.file-close-status h))"))
+          "(define (f [h : i64]) : i64 (unsafe (io.file-close-status h)))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [h : i64] [n : i64]) : i64 (io.file-read-chunk-status h n))"))
+          "(define (f [h : i64] [n : i64]) : i64
+  (unsafe (io.file-read-chunk-status h n)))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [h : i64] [c : (& c bytes)]) : i64 (io.file-write-status h c))"))
+          "(define (f [h : i64] [c : (& c bytes)]) : i64
+  (unsafe (io.file-write-status h c)))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [h : i64]) : i64 (io.file-flush-status h))"))
+          "(define (f [h : i64]) : i64 (unsafe (io.file-flush-status h)))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [h : i64]) : ByteBuf (io.file-read-chunk-bytes h))"))
+          "(define (f [h : i64]) : ByteBuf
+  (unsafe (io.file-read-chunk-bytes h)))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [h : i64]) : bool (io.file-read-chunk-eof? h))"))
+          "(define (f [h : i64]) : bool
+  (unsafe (io.file-read-chunk-eof? h)))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -7760,7 +7764,8 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [p : String]) : i64 (io.file-open-status p \"r\"))")
+          "(define (f [p : String]) : i64
+  (unsafe (io.file-open-status p \"r\")))")
         "typecheck: call `io.file-open-status` argument 2 type mismatch: expected i64, found String")
         unit
         (set! ok false))
@@ -7784,19 +7789,19 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f) : i64 (io.file-close-status \"h\"))")
+          "(define (f) : i64 (unsafe (io.file-close-status \"h\")))")
         "typecheck: call `io.file-close-status` argument 1 type mismatch: expected i64, found String")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [h : i64]) : i64 (io.file-write-status h 5))")
+          "(define (f [h : i64]) : i64 (unsafe (io.file-write-status h 5)))")
         "typecheck: borrow requires a local, parameter, or aggregate place")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f) : i64 (io.file-flush-status))")
+          "(define (f) : i64 (unsafe (io.file-flush-status)))")
         "typecheck: call arity mismatch: io.file-flush-status expected 1 argument, got 0 arguments")
         unit
         (set! ok false))

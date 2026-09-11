@@ -499,98 +499,109 @@
               (string-from-bytes (ptr-cast dst : (Ptr u8)) total))))))
     (define (render [buf : TextBuf]) : String
       (stdlib.text_buf.render-chunks buf.chunks buf.len))
-    (define (write-chunks-rev
-      [raw : i64]
-      [write-chunks-list : TextBufChunkList]) : i64
-      (let
-        [count : i64
-          (stdlib.text_buf.chunk-count
-            (unsafe
-              (ptr-read (ptr-addr-of write-chunks-list)))
-            0)]
-        [items : (__tl_dyn-array String) (__tl_make-array String count)]
-        [index : i64 0]
-        [status : i64 io.io-status-ok]
-        (begin
-          (stdlib.text_buf.chunks-fill-array-rev
-            write-chunks-list
-            (&mut items)
-            (- count 1))
-          (while (and (< index count) (= status io.io-status-ok))
-            (let
-              [chunk : String
-                (unsafe
-                  (ptr-read (ptr-offset (__tl_array-data items) index)))]
-              (begin
-                (set!
-                  status
-                  (io.file-write-status raw (byte_buf.str-as-bytes (& chunk))))
-                (set! index (+ index 1)))))
-          status)))
-    (define (batched-write-threshold) : i64
-      1048576)
-    (define (write-array-batches
-      [raw : i64]
-      [items : (& items (__tl_dyn-array String))]
-      [count : i64]
-      [batch-limit : i64]) : i64
-      (let
-        [index : i64 0]
-        [status : i64 io.io-status-ok]
-        (begin
-          (while (and (= status io.io-status-ok) (< index count))
-            (let
-              [start : i64 index]
-              [bytes : i64 0]
-              [done : bool false]
-              (begin
-                (while (and (not done) (< index count))
-                  (let
-                    [chunk : (& items str) (& (array-ref items index))]
-                    [chunk-len : i64 (string-length chunk)]
-                    (if (and (> bytes 0) (> (+ bytes chunk-len) batch-limit))
-                      (set! done true)
-                      (begin
-                        (set! bytes (+ bytes chunk-len))
-                        (set! index (+ index 1))))))
-                (if (and (= (- index start) 1) (> bytes batch-limit))
-                  (let
-                    [chunk : (& items str) (& (array-ref items start))]
-                    (set!
-                      status
-                      (io.file-write-status raw (byte_buf.str-as-bytes chunk))))
-                  (let
-                    [rendered : String
-                      (stdlib.text_buf.chunks-render-array-range
-                        items
-                        start
-                        index)]
-                    (set!
-                      status
+    (unsafe
+      (define (write-chunks-rev
+        [raw : i64]
+        [write-chunks-list : TextBufChunkList]) : i64
+        (let
+          [count : i64
+            (stdlib.text_buf.chunk-count
+              (unsafe
+                (ptr-read (ptr-addr-of write-chunks-list)))
+              0)]
+          [items : (__tl_dyn-array String) (__tl_make-array String count)]
+          [index : i64 0]
+          [status : i64 io.io-status-ok]
+          (begin
+            (stdlib.text_buf.chunks-fill-array-rev
+              write-chunks-list
+              (&mut items)
+              (- count 1))
+            (while (and (< index count) (= status io.io-status-ok))
+              (let
+                [chunk : String
+                  (unsafe
+                    (ptr-read (ptr-offset (__tl_array-data items) index)))]
+                (begin
+                  (set!
+                    status
+                    (unsafe
                       (io.file-write-status
                         raw
-                        (byte_buf.str-as-bytes (& rendered)))))))))
-          status)))
-    (define (write-chunks-batched
-      [raw : i64]
-      [write-chunks-list : TextBufChunkList]) : i64
-      (let
-        [count : i64
-          (stdlib.text_buf.chunk-count
+                        (byte_buf.str-as-bytes (& chunk)))))
+                  (set! index (+ index 1)))))
+            status))))
+    (define (batched-write-threshold) : i64
+      1048576)
+    (unsafe
+      (define (write-array-batches
+        [raw : i64]
+        [items : (& items (__tl_dyn-array String))]
+        [count : i64]
+        [batch-limit : i64]) : i64
+        (let
+          [index : i64 0]
+          [status : i64 io.io-status-ok]
+          (begin
+            (while (and (= status io.io-status-ok) (< index count))
+              (let
+                [start : i64 index]
+                [bytes : i64 0]
+                [done : bool false]
+                (begin
+                  (while (and (not done) (< index count))
+                    (let
+                      [chunk : (& items str) (& (array-ref items index))]
+                      [chunk-len : i64 (string-length chunk)]
+                      (if (and (> bytes 0) (> (+ bytes chunk-len) batch-limit))
+                        (set! done true)
+                        (begin
+                          (set! bytes (+ bytes chunk-len))
+                          (set! index (+ index 1))))))
+                  (if (and (= (- index start) 1) (> bytes batch-limit))
+                    (let
+                      [chunk : (& items str) (& (array-ref items start))]
+                      (set!
+                        status
+                        (unsafe
+                          (io.file-write-status
+                            raw
+                            (byte_buf.str-as-bytes chunk)))))
+                    (let
+                      [rendered : String
+                        (stdlib.text_buf.chunks-render-array-range
+                          items
+                          start
+                          index)]
+                      (set!
+                        status
+                        (unsafe
+                          (io.file-write-status
+                            raw
+                            (byte_buf.str-as-bytes (& rendered))))))))))
+            status))))
+    (unsafe
+      (define (write-chunks-batched
+        [raw : i64]
+        [write-chunks-list : TextBufChunkList]) : i64
+        (let
+          [count : i64
+            (stdlib.text_buf.chunk-count
+              (unsafe
+                (ptr-read (ptr-addr-of write-chunks-list)))
+              0)]
+          [items : (__tl_dyn-array String) (__tl_make-array String count)]
+          (begin
+            (stdlib.text_buf.chunks-fill-array-rev
+              write-chunks-list
+              (&mut items)
+              (- count 1))
             (unsafe
-              (ptr-read (ptr-addr-of write-chunks-list)))
-            0)]
-        [items : (__tl_dyn-array String) (__tl_make-array String count)]
-        (begin
-          (stdlib.text_buf.chunks-fill-array-rev
-            write-chunks-list
-            (&mut items)
-            (- count 1))
-          (stdlib.text_buf.write-array-batches
-            raw
-            (& items)
-            count
-            (stdlib.text_buf.batched-write-threshold)))))
+              (stdlib.text_buf.write-array-batches
+                raw
+                (& items)
+                count
+                (stdlib.text_buf.batched-write-threshold)))))))
     (define (write-file [path : (& path str)] [buf : (& buf TextBuf)]) : i64
       (let
         [open-result : io.ResultIoFile
@@ -604,12 +615,14 @@
             [chunks : TextBufChunkList (clone buf.chunks)]
             [status : i64
               (if (> buf.len (stdlib.text_buf.batched-write-threshold))
-                (stdlib.text_buf.write-chunks-batched
-                  ,(comptime.expr-struct-get `handle "id")
-                  chunks)
-                (stdlib.text_buf.write-chunks-rev
-                  ,(comptime.expr-struct-get `handle "id")
-                  chunks))]
+                (unsafe
+                  (stdlib.text_buf.write-chunks-batched
+                    ,(comptime.expr-struct-get `handle "id")
+                    chunks))
+                (unsafe
+                  (stdlib.text_buf.write-chunks-rev
+                    ,(comptime.expr-struct-get `handle "id")
+                    chunks)))]
             [close-result : io.ResultIoUnit (io.file-close handle)]
             (if (io.result-unit-ok? close-result)
               status

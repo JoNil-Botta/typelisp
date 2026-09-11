@@ -4807,12 +4807,13 @@
                     (set! first (byte_buf.to-array (io.file-read-bytes read)))])
                 (if (and ok (> size sample-size))
                   (if (<
-                    (io.platform-lseek
-                      (io_core.io-file-i64-ref
-                        (io_core.io-file-fds-ptr)
-                        handle.id)
-                      (- size sample-size)
-                      0)
+                    (unsafe
+                      (io.platform-lseek
+                        (io_core.io-file-i64-ref
+                          (io_core.io-file-fds-ptr)
+                          handle.id)
+                        (- size sample-size)
+                        0))
                     0)
                     (begin
                       (set! ok false)

@@ -73,31 +73,34 @@
 (define (format-writer-cell [buf : TextBuf]) : (Array TextBuf 1)
   (array buf))
 
-;: Append one raw callback range to the TextBuf stored at `context`.
+;: Append one bounded callback value to the TextBuf stored at `context`.
 ;:
-;: Returns zero on success and a stable nonzero status for an invalid byte
-;: count. The callback copies retained data and updates the caller-owned cell.
-(define (format-write-raw [context : i64] [data : (Ptr u8)] [count : i64]) : i64
-  (if (< count 0)
-    22
-    (let
-      [slot : (MutPtr TextBuf)
-        (unsafe
-          (int->ptr (cast context : u64) : (MutPtr TextBuf)))]
-      [buf : TextBuf
-        (unsafe
-          (ptr-read (ptr-cast slot : (Ptr TextBuf))))]
-      [storage : (MutPtr u8) (string.string-runtime-alloc count)]
-      [chunk : String
-        (begin
-          (string.str-copy-bytes-into data storage 0 count)
-          (unsafe
-            (string-from-bytes (ptr-cast storage : (Ptr u8)) count)))]
-      [next : TextBuf (append buf chunk)]
+;: The callback retains the owned value and updates the caller-owned cell.
+(define (format-write-raw [context : i64] [data : String]) : i64
+  (let
+    [count : i64 (string.string-length (& data))]
+    [slot : (MutPtr TextBuf)
+      (unsafe
+        (int->ptr (cast context : u64) : (MutPtr TextBuf)))]
+    [buf : TextBuf
+      (unsafe
+        (ptr-read (ptr-cast slot : (Ptr TextBuf))))]
+    [storage : (MutPtr u8) (string.string-runtime-alloc count)]
+    [chunk : String
       (begin
+        (string.str-copy-bytes-into
+          (unsafe
+            (string-data (& data)))
+          storage
+          0
+          count)
         (unsafe
-          (ptr-write! slot next))
-        0))))
+          (string-from-bytes (ptr-cast storage : (Ptr u8)) count)))]
+    [next : TextBuf (append buf chunk)]
+    (begin
+      (unsafe
+        (ptr-write! slot next))
+      0)))
 
 (test
   text-buf-scoped-arena-render-policy

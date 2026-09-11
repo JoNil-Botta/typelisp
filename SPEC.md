@@ -6785,17 +6785,24 @@ each family they implement.
 `format.write! writer template ...` and `format.writeln!` accept a mutable
 nominal writer place. The writer's canonical owner module defines exactly one
 of `format-write-raw` or `format-write-raw-<NominalName>` with signature
-`(i64, (Ptr u8), i64) -> i64`, plus the corresponding `format-writer-cell` or
-`format-writer-cell-<NominalName>` helper with signature `T -> (Array T 1)`.
-The fixed cell gives the synchronous callback stable caller-owned storage; the
-opaque context denotes its address, and the byte pointer is valid only for that
-call. Status zero means success and a nonzero value is a destination failure.
+`(i64, String) -> i64`. Stateful writers additionally define the corresponding
+`format-writer-cell` or `format-writer-cell-<NominalName>` helper with signature
+`T -> (Array T 1)`. The fixed cell gives the synchronous callback stable
+caller-owned storage and the opaque context denotes its address. A writer whose
+existing scalar capability is sufficient may instead define
+`format-writer-context` or `format-writer-context-<NominalName>` returning an
+`i64`; its callback must independently validate that value before performing a
+resource operation. The callback's `String` is a bounded byte value, so an
+ordinary first-class adapter never carries an unbounded pointer/count contract.
+Status zero means success and a nonzero value is a destination failure.
 `FormatResult` is `FormatOk` or `FormatErr status`; the formatter retains the
 first failure and skips every later plan piece and newline. `ByteBuf`, `TextBuf`,
-and `FileHandle` provide both adapter functions. Stdout and stderr use the same
-raw callback contract without a writer cell. Direct sinks and retained
-Arguments construction do not allocate the final combined String, although
-Arguments aggregate storage, scalar conversion, option rendering, TextBuf's
+and `FileHandle` provide canonical adapters; `ByteBuf` and `TextBuf` use cells,
+while `FileHandle` uses its validated table ID as a direct context. Stdout and
+stderr use the same bounded callback contract without a writer cell. Direct
+sinks and retained Arguments construction do not allocate the final combined
+String, although Arguments aggregate storage, scalar conversion, option
+rendering, TextBuf's
 retained chunk copies, and fallback nominal `to-string` hooks may allocate. A
 direct owner `format-write` hook need not allocate.
 

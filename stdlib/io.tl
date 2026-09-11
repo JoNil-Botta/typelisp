@@ -69,48 +69,63 @@
 (cfg
   windows
   (extern (io-win-get-std-handle [arg0 : i32]) : i64 (:symbol "GetStdHandle")))
+
 (cfg
   windows
-  (extern (io-win-write-file
-    [arg0 : i64]
-    [arg1 : (Ptr u8)]
-    [arg2 : i32]
-    [arg3 : (MutPtr i32)]
-    [arg4 : i64]) : i32 (:symbol "WriteFile")))
+  (unsafe
+    (extern (io-win-write-file
+      [arg0 : i64]
+      [arg1 : (Ptr u8)]
+      [arg2 : i32]
+      [arg3 : (MutPtr i32)]
+      [arg4 : i64]) : i32 (:symbol "WriteFile"))))
+
 (cfg
   windows
-  (extern (io-win-read-file
-    [arg0 : i64]
-    [arg1 : (MutPtr u8)]
-    [arg2 : i32]
-    [arg3 : (MutPtr i32)]
-    [arg4 : i64]) : i32 (:symbol "ReadFile")))
+  (unsafe
+    (extern (io-win-read-file
+      [arg0 : i64]
+      [arg1 : (MutPtr u8)]
+      [arg2 : i32]
+      [arg3 : (MutPtr i32)]
+      [arg4 : i64]) : i32 (:symbol "ReadFile"))))
+
 (cfg
   windows
-  (extern (io-win-create-file
-    [arg0 : (Ptr u8)]
-    [arg1 : i64]
-    [arg2 : i64]
-    [arg3 : i64]
-    [arg4 : i64]
-    [arg5 : i64]
-    [arg6 : i64]) : i64 (:symbol "CreateFileA")))
+  (unsafe
+    (extern (io-win-create-file
+      [arg0 : (Ptr u8)]
+      [arg1 : i64]
+      [arg2 : i64]
+      [arg3 : i64]
+      [arg4 : i64]
+      [arg5 : i64]
+      [arg6 : i64]) : i64 (:symbol "CreateFileA"))))
+
 (cfg
   windows
-  (extern (io-win-close-handle [arg0 : i64]) : i32 (:symbol "CloseHandle")))
+  (unsafe
+    (extern (io-win-close-handle [arg0 : i64]) : i32 (:symbol "CloseHandle"))))
+
 (cfg
   windows
-  (extern (io-win-flush-file-buffers [arg0 : i64]) : i32 (:symbol "FlushFileBuffers")))
+  (unsafe
+    (extern (io-win-flush-file-buffers [arg0 : i64]) : i32 (:symbol "FlushFileBuffers"))))
+
 (cfg
   windows
-  (extern (io-win-set-file-pointer-ex
-    [arg0 : i64]
-    [arg1 : i64]
-    [arg2 : (MutPtr i64)]
-    [arg3 : i32]) : i32 (:symbol "SetFilePointerEx")))
+  (unsafe
+    (extern (io-win-set-file-pointer-ex
+      [arg0 : i64]
+      [arg1 : i64]
+      [arg2 : (MutPtr i64)]
+      [arg3 : i32]) : i32 (:symbol "SetFilePointerEx"))))
+
 (cfg
   windows
-  (extern (io-win-get-file-attributes [arg0 : (Ptr u8)]) : i32 (:symbol "GetFileAttributesA")))
+  (unsafe
+    (extern (io-win-get-file-attributes [arg0 : (Ptr u8)]) : i32 (:symbol "GetFileAttributesA"))))
+
 (cfg windows (extern (io-win-get-last-error) : i32 (:symbol "GetLastError")))
 
 ;: Map a stdio fd (0/1/2) to its Windows standard handle; other fd values are
@@ -129,71 +144,76 @@
 ;: Windows `_write` replacement via WriteFile; returns bytes written or -1.
 (cfg
   windows
-  (define (io-windows-write [fd : i32] [buf : (Ptr u8)] [count : i32]) : i32
-    (let
-      [handle : i64 (io-windows-fd-handle fd)]
-      [written : (__tl_dyn-array i32) (__tl_make-array i32 1)]
-      [ok : i32
-        (io-win-write-file
-          handle
-          buf
-          count
+  (unsafe
+    (define (io-windows-write [fd : i32] [buf : (Ptr u8)] [count : i32]) : i32
+      (let
+        [handle : i64 (io-windows-fd-handle fd)]
+        [written : (__tl_dyn-array i32) (__tl_make-array i32 1)]
+        [ok : i32
           (unsafe
-            (ptr-cast (__tl_array-data written) : (MutPtr i32)))
-          0)]
-      (if (= ok (cast 0 : i32))
-        (cast -1 : i32)
-        (array-ref written 0)))))
+            (io-win-write-file
+              handle
+              buf
+              count
+              (ptr-cast (__tl_array-data written) : (MutPtr i32))
+              0))]
+        (if (= ok (cast 0 : i32))
+          (cast -1 : i32)
+          (array-ref written 0))))))
 
 ;: Windows `_read` replacement via ReadFile; a broken pipe (error 109) is EOF.
 (cfg
   windows
-  (define (io-windows-read [fd : i32] [buf : (MutPtr u8)] [count : i32]) : i32
-    (let
-      [handle : i64 (io-windows-fd-handle fd)]
-      [nread : (__tl_dyn-array i32) (__tl_make-array i32 1)]
-      [ok : i32
-        (io-win-read-file
-          handle
-          buf
-          count
+  (unsafe
+    (define (io-windows-read [fd : i32] [buf : (MutPtr u8)] [count : i32]) : i32
+      (let
+        [handle : i64 (io-windows-fd-handle fd)]
+        [nread : (__tl_dyn-array i32) (__tl_make-array i32 1)]
+        [ok : i32
           (unsafe
-            (ptr-cast (__tl_array-data nread) : (MutPtr i32)))
-          0)]
-      (if (= ok (cast 0 : i32))
-        (if (= (io-win-get-last-error) (cast 109 : i32))
-          (cast 0 : i32)
-          (cast -1 : i32))
-        (array-ref nread 0)))))
+            (io-win-read-file
+              handle
+              buf
+              count
+              (ptr-cast (__tl_array-data nread) : (MutPtr i32))
+              0))]
+        (if (= ok (cast 0 : i32))
+          (if (= (io-win-get-last-error) (cast 109 : i32))
+            (cast 0 : i32)
+            (cast -1 : i32))
+          (array-ref nread 0))))))
 
 ;: Windows `_close` replacement: std handles (fd 0/1/2) are a no-op, else
 ;: CloseHandle. Always reports success, matching the former shim.
 (cfg
   windows
-  (define (io-windows-close [fd : i32]) : i32
-    (if (<= fd (cast 2 : i32))
-      (cast 0 : i32)
-      (begin
-        (io-win-close-handle (cast fd : i64))
-        (cast 0 : i32)))))
+  (unsafe
+    (define (io-windows-close [fd : i32]) : i32
+      (if (<= fd (cast 2 : i32))
+        (cast 0 : i32)
+        (begin
+          (unsafe
+            (io-win-close-handle (cast fd : i64)))
+          (cast 0 : i32))))))
 
 ;: Windows `_lseeki64` replacement via SetFilePointerEx; returns offset or -1.
 (cfg
   windows
-  (define (io-windows-lseek [fd : i32] [offset : i64] [whence : i32]) : i64
-    (let
-      [handle : i64 (io-windows-fd-handle fd)]
-      [newpos : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-      [ok : i32
-        (io-win-set-file-pointer-ex
-          handle
-          offset
+  (unsafe
+    (define (io-windows-lseek [fd : i32] [offset : i64] [whence : i32]) : i64
+      (let
+        [handle : i64 (io-windows-fd-handle fd)]
+        [newpos : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+        [ok : i32
           (unsafe
-            (ptr-cast (__tl_array-data newpos) : (MutPtr i64)))
-          whence)]
-      (if (= ok (cast 0 : i32))
-        -1
-        (array-ref newpos 0)))))
+            (io-win-set-file-pointer-ex
+              handle
+              offset
+              (ptr-cast (__tl_array-data newpos) : (MutPtr i64))
+              whence))]
+        (if (= ok (cast 0 : i32))
+          -1
+          (array-ref newpos 0))))))
 
 ;: Windows `_open` replacement via CreateFileA, translating the POSIX-style
 ;: open flags (O_APPEND/O_RDWR/O_WRONLY, O_CREAT/O_TRUNC) into the kernel32
@@ -201,65 +221,76 @@
 ;: unused (files are created with FILE_ATTRIBUTE_NORMAL), matching the shim.
 (cfg
   windows
-  (define (io-windows-open [path : (Ptr u8)] [flags : i32] [mode : i32]) : i32
-    (let
-      [ignore-mode : i32 mode]
-      [f : i64 (cast flags : i64)]
-      [access : i64
-        (if (= (bit-and f 0x8) 0)
-          (if (= (bit-and f 0x2) 0)
-            (if (= (bit-and f 0x1) 0)
-              0x80000000
-              0x40000000)
-            0xc0000000)
-          0x4)]
-      [disp : i64
-        (if (not (= (bit-and f 0x400) 0))
-          1
-          (if (= (bit-and f 0x100) 0)
-            (if (= (bit-and f 0x200) 0)
-              3
-              5)
-            (if (= (bit-and f 0x200) 0)
-              4
-              2)))]
-      [handle : i64 (io-win-create-file path access 0x3 0 disp 0x80 0)]
-      (if (= handle -1)
-        (begin
-          (let
-            [code : i64 (cast (io-win-get-last-error) : i64)]
-            (set-error-code
-              (if (or (= code 80) (= code 183))
-                17
-                (if (= code 5)
-                  13
-                  (if (or (= code 2) (= code 3))
-                    2
-                    code)))))
-          (cast -1 : i32))
-        (cast handle : i32)))))
+  (unsafe
+    (define (io-windows-open [path : (Ptr u8)] [flags : i32] [mode : i32]) : i32
+      (let
+        [ignore-mode : i32 mode]
+        [f : i64 (cast flags : i64)]
+        [access : i64
+          (if (= (bit-and f 0x8) 0)
+            (if (= (bit-and f 0x2) 0)
+              (if (= (bit-and f 0x1) 0)
+                0x80000000
+                0x40000000)
+              0xc0000000)
+            0x4)]
+        [disp : i64
+          (if (not (= (bit-and f 0x400) 0))
+            1
+            (if (= (bit-and f 0x100) 0)
+              (if (= (bit-and f 0x200) 0)
+                3
+                5)
+              (if (= (bit-and f 0x200) 0)
+                4
+                2)))]
+        [handle : i64
+          (unsafe
+            (io-win-create-file path access 0x3 0 disp 0x80 0))]
+        (if (= handle -1)
+          (begin
+            (let
+              [code : i64 (cast (io-win-get-last-error) : i64)]
+              (set-error-code
+                (if (or (= code 80) (= code 183))
+                  17
+                  (if (= code 5)
+                    13
+                    (if (or (= code 2) (= code 3))
+                      2
+                      code)))))
+            (cast -1 : i32))
+          (cast handle : i32))))))
 
 ;: Windows write-handle flush via FlushFileBuffers.
 (cfg
   windows
-  (define (io-windows-flush [fd : i32]) : i32
-    (if (= (io-win-flush-file-buffers (io-windows-fd-handle fd)) (cast 0 : i32))
-      (begin
-        (set-error-code (cast (io-win-get-last-error) : i64))
-        (cast -1 : i32))
-      (cast 0 : i32))))
+  (unsafe
+    (define (io-windows-flush [fd : i32]) : i32
+      (if (=
+        (unsafe
+          (io-win-flush-file-buffers (io-windows-fd-handle fd)))
+        (cast 0 : i32))
+        (begin
+          (set-error-code (cast (io-win-get-last-error) : i64))
+          (cast -1 : i32))
+        (cast 0 : i32)))))
 
 ;: Windows `_access` replacement via GetFileAttributesA existence probe.
 (cfg
   windows
-  (define (io-windows-access [path : (Ptr u8)] [mode : i32]) : i32
-    (let
-      [ignore-mode : i32 mode]
-      (if (= (io-win-get-file-attributes path) (cast -1 : i32))
-        (begin
-          (set-error-code 2)
+  (unsafe
+    (define (io-windows-access [path : (Ptr u8)] [mode : i32]) : i32
+      (let
+        [ignore-mode : i32 mode]
+        (if (=
+          (unsafe
+            (io-win-get-file-attributes path))
           (cast -1 : i32))
-        (cast 0 : i32)))))
+          (begin
+            (set-error-code 2)
+            (cast -1 : i32))
+          (cast 0 : i32))))))
 
 ;: Windows process exit via kernel32 ExitProcess; never returns. Replaces the
 ;: former backend `exit` CRT-ABI shim.
@@ -307,39 +338,49 @@
   (unsafe
     (string-data text)))
 
-;: Copy a NUL-terminated C string into an owned TypeLisp String.
-(define (copy-c-string [ptr : (Ptr u8)]) : String
-  (let
-    [n : i64 (c-string-length ptr)]
-    [buf : (__tl_dyn-array u8) (__tl_make-array u8 n)]
-    [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set!
-            (array-ref buf i)
-            (unsafe
-              (ptr-read (ptr-offset ptr i))))
-          (set! i (+ i 1))))
-      (unsafe
-        (string-from-bytes (array-const-ptr buf) n)))))
+;: Raw host-boundary contract: C-string pointers must name live NUL-terminated
+;: storage; data pointers and counts must describe live readable or writable
+;: ranges; integer descriptors and handles must name resources owned by the
+;: caller for the requested operation. Declarations carrying those obligations
+;: are unsafe. Safe path, borrowed-bytes, stdio, and FileHandle wrappers below
+;: establish their storage extents and resource state before entering unsafe.
+;: Copy a caller-proven live NUL-terminated C string into an owned String.
+(unsafe
+  (define (copy-c-string [ptr : (Ptr u8)]) : String
+    (let
+      [n : i64
+        (unsafe
+          (c-string-length ptr))]
+      [buf : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+      [i : i64 0]
+      (begin
+        (while (< i n)
+          (begin
+            (set!
+              (array-ref buf i)
+              (unsafe
+                (ptr-read (ptr-offset ptr i))))
+            (set! i (+ i 1))))
+        (unsafe
+          (string-from-bytes (array-const-ptr buf) n))))))
 
 ;: Return the byte length of a NUL-terminated C string.
-(define (c-string-length [ptr : (Ptr u8)]) : i64
-  (let
-    [n : i64 0]
-    [done : bool false]
-    (begin
-      (while (not done)
-        (if (=
-          (cast
-            (unsafe
-              (ptr-read (ptr-offset ptr n)))
-            : i64)
-          0)
-          (set! done true)
-          (set! n (+ n 1))))
-      n)))
+(unsafe
+  (define (c-string-length [ptr : (Ptr u8)]) : i64
+    (let
+      [n : i64 0]
+      [done : bool false]
+      (begin
+        (while (not done)
+          (if (=
+            (cast
+              (unsafe
+                (ptr-read (ptr-offset ptr n)))
+              : i64)
+            0)
+            (set! done true)
+            (set! n (+ n 1))))
+        n))))
 
 ;: Return the current private errno-style status value as an i64.
 (define (last-error-code) : i64
@@ -358,78 +399,86 @@
     result))
 
 ;: Convert a read-only byte pointer into an integer syscall argument.
-(define (linux-ptr-arg [ptr : (Ptr u8)]) : i64
-  (unsafe
-    (cast (ptr->int ptr) : i64)))
+(unsafe
+  (define (linux-ptr-arg [ptr : (Ptr u8)]) : i64
+    (unsafe
+      (cast (ptr->int ptr) : i64))))
 
 ;: Linux `open` via the `openat`-style `open` syscall (number 2).
-(define (linux-syscall-open [path : (Ptr u8)] [flags : i64] [mode : i64]) : i64
-  (cfg
-    windows
-    -1
-    (linux-syscall-status
-      (unsafe
-        (syscall 2 (linux-ptr-arg path) flags mode)))))
+(unsafe
+  (define (linux-syscall-open [path : (Ptr u8)] [flags : i64] [mode : i64]) : i64
+    (cfg
+      windows
+      -1
+      (linux-syscall-status
+        (unsafe
+          (syscall 2 (linux-ptr-arg path) flags mode))))))
 
 ;: Linux `read` via the `read` syscall (number 0).
-(define (linux-syscall-read [fd : i64] [buf : (MutPtr u8)] [count : i64]) : i64
-  (cfg
-    windows
-    -1
-    (linux-syscall-status
-      (unsafe
-        (syscall
-          0
-          fd
-          (linux-ptr-arg
-            (unsafe
-              (ptr-cast buf : (Ptr u8))))
-          count)))))
+(unsafe
+  (define (linux-syscall-read [fd : i64] [buf : (MutPtr u8)] [count : i64]) : i64
+    (cfg
+      windows
+      -1
+      (linux-syscall-status
+        (unsafe
+          (syscall
+            0
+            fd
+            (linux-ptr-arg
+              (unsafe
+                (ptr-cast buf : (Ptr u8))))
+            count))))))
 
 ;: Linux `write` via the `write` syscall (number 1).
-(define (linux-syscall-write [fd : i64] [buf : (Ptr u8)] [count : i64]) : i64
-  (cfg
-    windows
-    -1
-    (linux-syscall-status
-      (unsafe
-        (syscall 1 fd (linux-ptr-arg buf) count)))))
+(unsafe
+  (define (linux-syscall-write [fd : i64] [buf : (Ptr u8)] [count : i64]) : i64
+    (cfg
+      windows
+      -1
+      (linux-syscall-status
+        (unsafe
+          (syscall 1 fd (linux-ptr-arg buf) count))))))
 
 ;: Linux `close` via the `close` syscall (number 3).
-(define (linux-syscall-close [fd : i64]) : i64
-  (cfg
-    windows
-    -1
-    (linux-syscall-status
-      (unsafe
-        (syscall 3 fd)))))
+(unsafe
+  (define (linux-syscall-close [fd : i64]) : i64
+    (cfg
+      windows
+      -1
+      (linux-syscall-status
+        (unsafe
+          (syscall 3 fd))))))
 
 ;: Linux `lseek` via the `lseek` syscall (number 8).
-(define (linux-syscall-lseek [fd : i64] [offset : i64] [whence : i64]) : i64
-  (cfg
-    windows
-    -1
-    (linux-syscall-status
-      (unsafe
-        (syscall 8 fd offset whence)))))
+(unsafe
+  (define (linux-syscall-lseek [fd : i64] [offset : i64] [whence : i64]) : i64
+    (cfg
+      windows
+      -1
+      (linux-syscall-status
+        (unsafe
+          (syscall 8 fd offset whence))))))
 
 ;: Linux `fsync` via syscall number 74.
-(define (linux-syscall-fsync [fd : i64]) : i64
-  (cfg
-    windows
-    -1
-    (linux-syscall-status
-      (unsafe
-        (syscall 74 fd)))))
+(unsafe
+  (define (linux-syscall-fsync [fd : i64]) : i64
+    (cfg
+      windows
+      -1
+      (linux-syscall-status
+        (unsafe
+          (syscall 74 fd))))))
 
 ;: Linux `access` via the `access` syscall (number 21).
-(define (linux-syscall-access [path : (Ptr u8)] [mode : i64]) : i64
-  (cfg
-    windows
-    -1
-    (linux-syscall-status
-      (unsafe
-        (syscall 21 (linux-ptr-arg path) mode)))))
+(unsafe
+  (define (linux-syscall-access [path : (Ptr u8)] [mode : i64]) : i64
+    (cfg
+      windows
+      -1
+      (linux-syscall-status
+        (unsafe
+          (syscall 21 (linux-ptr-arg path) mode))))))
 
 ;: Linux process exit via the `exit_group` syscall (number 231); never returns.
 ;: The tail call is unreachable at runtime (the syscall terminates the process)
@@ -448,53 +497,67 @@
   (cfg windows (io-windows-exit (cast code : i32)) (linux-exit code)))
 
 ;: Dispatch a platform `open` call and return its file descriptor or negative status.
-(define (platform-open [path : (Ptr u8)] [flags : i64] [mode : i64]) : i64
-  (cfg
-    windows
-    (cast (io-windows-open path (cast flags : i32) (cast mode : i32)) : i64)
-    (linux-syscall-open path flags mode)))
+(unsafe
+  (define (platform-open [path : (Ptr u8)] [flags : i64] [mode : i64]) : i64
+    (unsafe
+      (cfg
+        windows
+        (cast (io-windows-open path (cast flags : i32) (cast mode : i32)) : i64)
+        (linux-syscall-open path flags mode)))))
 
 ;: Dispatch a platform `read` call and return its byte count or negative status.
-(define (platform-read [fd : i64] [buf : (MutPtr u8)] [count : i64]) : i64
-  (cfg
-    windows
-    (cast (io-windows-read (cast fd : i32) buf (cast count : i32)) : i64)
-    (linux-syscall-read fd buf count)))
+(unsafe
+  (define (platform-read [fd : i64] [buf : (MutPtr u8)] [count : i64]) : i64
+    (unsafe
+      (cfg
+        windows
+        (cast (io-windows-read (cast fd : i32) buf (cast count : i32)) : i64)
+        (linux-syscall-read fd buf count)))))
 
 ;: Dispatch a platform `write` call and return its byte count or negative status.
-(define (platform-write [fd : i64] [buf : (Ptr u8)] [count : i64]) : i64
-  (cfg
-    windows
-    (cast (io-windows-write (cast fd : i32) buf (cast count : i32)) : i64)
-    (linux-syscall-write fd buf count)))
+(unsafe
+  (define (platform-write [fd : i64] [buf : (Ptr u8)] [count : i64]) : i64
+    (unsafe
+      (cfg
+        windows
+        (cast (io-windows-write (cast fd : i32) buf (cast count : i32)) : i64)
+        (linux-syscall-write fd buf count)))))
 
 ;: Dispatch a platform `close` call and return zero or negative status.
-(define (platform-close [fd : i64]) : i64
-  (cfg
-    windows
-    (cast (io-windows-close (cast fd : i32)) : i64)
-    (linux-syscall-close fd)))
+(unsafe
+  (define (platform-close [fd : i64]) : i64
+    (unsafe
+      (cfg
+        windows
+        (cast (io-windows-close (cast fd : i32)) : i64)
+        (linux-syscall-close fd)))))
 
 ;: Flush an open file's accepted writes to the host storage boundary.
-(define (platform-flush [fd : i64]) : i64
-  (cfg
-    windows
-    (cast (io-windows-flush (cast fd : i32)) : i64)
-    (linux-syscall-fsync fd)))
+(unsafe
+  (define (platform-flush [fd : i64]) : i64
+    (unsafe
+      (cfg
+        windows
+        (cast (io-windows-flush (cast fd : i32)) : i64)
+        (linux-syscall-fsync fd)))))
 
 ;: Dispatch a platform seek call and return the resulting offset or negative status.
-(define (platform-lseek [fd : i64] [offset : i64] [whence : i64]) : i64
-  (cfg
-    windows
-    (io-windows-lseek (cast fd : i32) offset (cast whence : i32))
-    (linux-syscall-lseek fd offset whence)))
+(unsafe
+  (define (platform-lseek [fd : i64] [offset : i64] [whence : i64]) : i64
+    (unsafe
+      (cfg
+        windows
+        (io-windows-lseek (cast fd : i32) offset (cast whence : i32))
+        (linux-syscall-lseek fd offset whence)))))
 
 ;: Dispatch a platform existence/access probe and return zero or negative status.
-(define (platform-access [path : (Ptr u8)] [mode : i64]) : i64
-  (cfg
-    windows
-    (cast (io-windows-access path (cast mode : i32)) : i64)
-    (linux-syscall-access path mode)))
+(unsafe
+  (define (platform-access [path : (Ptr u8)] [mode : i64]) : i64
+    (unsafe
+      (cfg
+        windows
+        (cast (io-windows-access path (cast mode : i32)) : i64)
+        (linux-syscall-access path mode)))))
 
 ;: Return platform flags for opening a path read-only.
 (define (open-read-flags) : i64
@@ -529,53 +592,50 @@
   (- 0 code))
 
 ;: Write all bytes from `data` to `fd`, returning a host status code.
-(define (write-all-fd-status [fd : i64] [data : (Ptr u8)] [len : i64]) : i64
-  (let
-    [offset : i64 0]
-    [status : i64 0]
-    (begin
-      (while (if (= status 0)
-        (< offset len)
-        false)
-        (let
-          [written : i64
-            (platform-write
-              fd
+(unsafe
+  (define (write-all-fd-status [fd : i64] [data : (Ptr u8)] [len : i64]) : i64
+    (let
+      [offset : i64 0]
+      [status : i64 0]
+      (begin
+        (while (if (= status 0)
+          (< offset len)
+          false)
+          (let
+            [written : i64
               (unsafe
-                (ptr-offset data offset))
-              (- len offset))]
-          (if (< written 0)
-            (set! status (last-error-code))
-            (if (= written 0)
-              (set! status 5)
-              (set! offset (+ offset written))))))
-      status)))
+                (platform-write fd (ptr-offset data offset) (- len offset)))]
+            (if (< written 0)
+              (set! status (last-error-code))
+              (if (= written 0)
+                (set! status 5)
+                (set! offset (+ offset written))))))
+        status))))
 
 ;: Write a whole String to `fd`, returning a host status code.
-(define (write-string-fd-status [fd : i64] [text : (& text str)]) : i64
-  (write-all-fd-status fd (string-const-ptr text) (string-length text)))
+(unsafe
+  (define (write-string-fd-status [fd : i64] [text : (& text str)]) : i64
+    (unsafe
+      (write-all-fd-status fd (string-const-ptr text) (string-length text)))))
 
 ;: Write an immutable borrowed byte view to `fd`.
-(define (write-bytes-fd-status [fd : i64] [contents : (& contents bytes)]) : i64
-  (write-all-fd-status
-    fd
+(unsafe
+  (define (write-bytes-fd-status [fd : i64] [contents : (& contents bytes)]) : i64
     (unsafe
-      (byte_buf.bytes-data contents))
-    (byte_buf.bytes-length contents)))
+      (write-all-fd-status
+        fd
+        (byte_buf.bytes-data contents)
+        (byte_buf.bytes-length contents)))))
 
-;: Raw Formatter adapter for stdout; the context is intentionally unused.
-(define (format-stdout-write-raw
-  [_context : i64]
-  [data : (Ptr u8)]
-  [count : i64]) : i64
-  (write-all-fd-status 1 data count))
+;: Bounded Formatter adapter for stdout; the context is intentionally unused.
+(define (format-stdout-write-raw [_context : i64] [data : String]) : i64
+  (unsafe
+    (write-string-fd-status 1 (& data))))
 
-;: Raw Formatter adapter for stderr; the context is intentionally unused.
-(define (format-stderr-write-raw
-  [_context : i64]
-  [data : (Ptr u8)]
-  [count : i64]) : i64
-  (write-all-fd-status 2 data count))
+;: Bounded Formatter adapter for stderr; the context is intentionally unused.
+(define (format-stderr-write-raw [_context : i64] [data : String]) : i64
+  (unsafe
+    (write-string-fd-status 2 (& data))))
 
 ;: Format a literal template directly to stdout without a combined String.
 (defmacro (print [template : comptime.Expr] [args : comptime.Expr ...]) : unit
@@ -1165,7 +1225,9 @@
 ;: Write a string to stderr without adding a newline.
 (define (print-error [text : (& text str)]) : unit
   (let
-    [status : i64 (write-string-fd-status 2 text)]
+    [status : i64
+      (unsafe
+        (write-string-fd-status 2 text))]
     (if (= status 0)
       unit
       (platform-exit 134))))
@@ -1197,74 +1259,89 @@
         [raw : (Ptr u8)
           (unsafe
             (ptr-read (ptr-offset argv index)))]
-        (copy-c-string raw)))))
+        (unsafe
+          (copy-c-string raw))))))
 
 ;: Read the entire seekable descriptor `fd` into an active-arena byte buffer.
-(define (read-fd-to-byte-buf [fd : i64]) : byte_buf.ByteBuf
-  (let
-    [end : i64 (stdlib.io.platform-lseek fd 0 2)]
-    (if (< end 0)
-      (panic "tl: read-file failed\n")
-      (begin
-        (if (< (stdlib.io.platform-lseek fd 0 0) 0)
-          (panic "tl: read-file failed\n")
-          unit)
-        (let
-          [buf : (__tl_dyn-array u8) (__tl_make-array u8 end)]
-          [offset : i64 0]
-          [done : bool false]
-          (begin
-            (while (if (not done)
-              (< offset end)
-              false)
-              (let
-                [read-count : i64
-                  (stdlib.io.platform-read
-                    fd
+(unsafe
+  (define (read-fd-to-byte-buf [fd : i64]) : byte_buf.ByteBuf
+    (let
+      [end : i64
+        (unsafe
+          (stdlib.io.platform-lseek fd 0 2))]
+      (if (< end 0)
+        (panic "tl: read-file failed\n")
+        (begin
+          (if (<
+            (unsafe
+              (stdlib.io.platform-lseek fd 0 0))
+            0)
+            (panic "tl: read-file failed\n")
+            unit)
+          (let
+            [buf : (__tl_dyn-array u8) (__tl_make-array u8 end)]
+            [offset : i64 0]
+            [done : bool false]
+            (begin
+              (while (if (not done)
+                (< offset end)
+                false)
+                (let
+                  [read-count : i64
                     (unsafe
-                      (ptr-offset (stdlib.io.array-ptr buf) offset))
-                    (- end offset))]
-                (if (< read-count 0)
-                  (panic "tl: read-file failed\n")
-                  (if (= read-count 0)
-                    (set! done true)
-                    (set! offset (+ offset read-count))))))
-            (byte_buf.from-array-prefix buf offset)))))))
+                      (stdlib.io.platform-read
+                        fd
+                        (ptr-offset (stdlib.io.array-ptr buf) offset)
+                        (- end offset)))]
+                  (if (< read-count 0)
+                    (panic "tl: read-file failed\n")
+                    (if (= read-count 0)
+                      (set! done true)
+                      (set! offset (+ offset read-count))))))
+              (byte_buf.from-array-prefix buf offset))))))))
 
 ;: Return the host status code for reading `path`.
 (define (read-file-status [path : (& path str)]) : i64
   (let
     [path-bytes : (__tl_dyn-array u8) (stdlib.io.c-string path)]
     [fd : i64
-      (stdlib.io.platform-open
-        (stdlib.io.array-const-ptr path-bytes)
-        (stdlib.io.open-read-flags)
-        0)]
+      (unsafe
+        (stdlib.io.platform-open
+          (stdlib.io.array-const-ptr path-bytes)
+          (stdlib.io.open-read-flags)
+          0))]
     (if (< fd 0)
       (stdlib.io.last-error-code)
       (let
         [probe : (__tl_dyn-array u8) (__tl_make-array u8 1)]
         [read-count : i64
-          (stdlib.io.platform-read fd (stdlib.io.array-ptr probe) 1)]
+          (unsafe
+            (stdlib.io.platform-read fd (stdlib.io.array-ptr probe) 1))]
         [status : i64
           (if (< read-count 0)
             (stdlib.io.last-error-code)
             0)]
         (begin
-          (stdlib.io.platform-close fd)
+          (unsafe
+            (stdlib.io.platform-close fd))
           status)))))
 
 ;: Read a whole file into an active-arena byte buffer, aborting on host failure.
 (define (read-file [path : String]) : byte_buf.ByteBuf
   (let
     [path-bytes : (__tl_dyn-array u8) (c-string path)]
-    [fd : i64 (platform-open (array-const-ptr path-bytes) (open-read-flags) 0)]
+    [fd : i64
+      (unsafe
+        (platform-open (array-const-ptr path-bytes) (open-read-flags) 0))]
     (if (< fd 0)
       (panic "tl: read-file failed\n")
       (let
-        [contents : byte_buf.ByteBuf (read-fd-to-byte-buf fd)]
+        [contents : byte_buf.ByteBuf
+          (unsafe
+            (read-fd-to-byte-buf fd))]
         (begin
-          (platform-close fd)
+          (unsafe
+            (platform-close fd))
           contents)))))
 
 ;: Write borrowed bytes to `path` using `flags`, returning a host status code.
@@ -1274,12 +1351,18 @@
   [flags : i64]) : i64
   (let
     [path-bytes : (__tl_dyn-array u8) (c-string path)]
-    [fd : i64 (platform-open (array-const-ptr path-bytes) flags (open-mode))]
+    [fd : i64
+      (unsafe
+        (platform-open (array-const-ptr path-bytes) flags (open-mode)))]
     (if (< fd 0)
       (last-error-code)
       (let
-        [status : i64 (write-bytes-fd-status fd contents)]
-        [close-status : i64 (platform-close fd)]
+        [status : i64
+          (unsafe
+            (write-bytes-fd-status fd contents))]
+        [close-status : i64
+          (unsafe
+            (platform-close fd))]
         (if (= status 0)
           (if (< close-status 0)
             (last-error-code)
@@ -1324,7 +1407,8 @@
   (let
     [path-bytes : (__tl_dyn-array u8) (stdlib.io.c-string path)]
     [status : i64
-      (stdlib.io.platform-access (stdlib.io.array-const-ptr path-bytes) 0)]
+      (unsafe
+        (stdlib.io.platform-access (stdlib.io.array-const-ptr path-bytes) 0))]
     (if (= status 0)
       0
       (stdlib.io.last-error-code))))
@@ -1345,125 +1429,181 @@
 (define (valid-handle? [raw : i64]) : bool
   (io_core.io-file-valid-handle? raw))
 
-;: Return a stdlib file handle id or negative status for opening `path`.
-(define (file-open-status [path : String] [mode : i64]) : i64
-  (begin
-    (io_core.io-file-table-init!)
-    (let
-      [path-bytes : (__tl_dyn-array u8) (stdlib.io.c-string path)]
-      [fd : i64
-        (stdlib.io.platform-open
-          (stdlib.io.array-const-ptr path-bytes)
-          (stdlib.io.open-flags-for-mode mode)
-          (stdlib.io.open-mode))]
-      (if (< fd 0)
-        (stdlib.io.neg-status (stdlib.io.last-error-code))
-        (let
-          [handle : i64 (io_core.io-file-alloc-handle!)]
-          (if (< handle 0)
-            (begin
-              (stdlib.io.platform-close fd)
-              (stdlib.io.neg-status 38))
-            (begin
-              (io_core.io-file-i64-set! (io_core.io-file-fds-ptr) handle fd)
-              (io_core.io-file-i64-set! (io_core.io-file-modes-ptr) handle mode)
-              (io_core.io-file-i64-set! (io_core.io-file-states-ptr) handle 1)
-              (io_core.io-file-bool-set!
-                (io_core.io-file-eofs-ptr)
-                handle
-                false)
-              (io_core.io-file-bool-set!
-                (io_core.io-file-last-ready-ptr)
-                handle
-                false)
-              handle)))))))
-
-;: Return the host status code for closing a stdlib file handle id.
-(define (file-close-status [raw : i64]) : i64
-  (if (stdlib.io.valid-handle? raw)
-    (let
-      [fd : i64 (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) raw)]
-      [status : i64 (stdlib.io.platform-close fd)]
-      (begin
-        (io_core.io-file-release-handle! raw)
-        (if (< status 0)
-          (stdlib.io.last-error-code)
-          0)))
-    38))
-
-;: Return the host status code for reading a chunk into the stdlib handle cache.
-(define (file-read-chunk-status [raw : i64] [count : i64]) : i64
-  (cond
-    [(not (stdlib.io.valid-handle? raw)) 38]
-    [(not (= (io_core.io-file-i64-ref (io_core.io-file-modes-ptr) raw) 0)) 38]
-    [(< count 0) 22]
-    [(= count 0)
-      (begin
-        (io_core.io-file-byte-buf-set!
-          (io_core.io-file-last-bytes-ptr)
-          raw
-          (byte_buf.new))
-        (io_core.io-file-bool-set! (io_core.io-file-last-ready-ptr) raw true)
-        0)]
-    [else
+;: Return a raw stdlib file handle id or negative status for opening `path`.
+(unsafe
+  (define (file-open-status [path : String] [mode : i64]) : i64
+    (begin
+      (io_core.io-file-table-init!)
       (let
-        [buf : (__tl_dyn-array u8) (__tl_make-array u8 count)]
-        [fd : i64 (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) raw)]
-        [read-count : i64
-          (stdlib.io.platform-read fd (stdlib.io.array-ptr buf) count)]
-        (if (< read-count 0)
-          (stdlib.io.last-error-code)
-          (begin
-            (if (= read-count 0)
-              (io_core.io-file-bool-set! (io_core.io-file-eofs-ptr) raw true)
-              (io_core.io-file-bool-set! (io_core.io-file-eofs-ptr) raw false))
+        [path-bytes : (__tl_dyn-array u8) (stdlib.io.c-string path)]
+        [fd : i64
+          (unsafe
+            (stdlib.io.platform-open
+              (stdlib.io.array-const-ptr path-bytes)
+              (stdlib.io.open-flags-for-mode mode)
+              (stdlib.io.open-mode)))]
+        (if (< fd 0)
+          (stdlib.io.neg-status (stdlib.io.last-error-code))
+          (let
+            [handle : i64
+              (unsafe
+                (io_core.io-file-alloc-handle!))]
+            (if (< handle 0)
+              (begin
+                (unsafe
+                  (stdlib.io.platform-close fd))
+                (stdlib.io.neg-status 38))
+              (unsafe
+                (begin
+                  (io_core.io-file-i64-set! (io_core.io-file-fds-ptr) handle fd)
+                  (io_core.io-file-i64-set!
+                    (io_core.io-file-modes-ptr)
+                    handle
+                    mode)
+                  (io_core.io-file-i64-set!
+                    (io_core.io-file-states-ptr)
+                    handle
+                    1)
+                  (io_core.io-file-bool-set!
+                    (io_core.io-file-eofs-ptr)
+                    handle
+                    false)
+                  (io_core.io-file-bool-set!
+                    (io_core.io-file-last-ready-ptr)
+                    handle
+                    false))
+                handle))))))))
+
+;: Return the host status code for closing a raw stdlib file handle id.
+(unsafe
+  (define (file-close-status [raw : i64]) : i64
+    (if (stdlib.io.valid-handle? raw)
+      (let
+        [fd : i64
+          (unsafe
+            (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) raw))]
+        [status : i64
+          (unsafe
+            (stdlib.io.platform-close fd))]
+        (begin
+          (unsafe
+            (io_core.io-file-release-handle! raw))
+          (if (< status 0)
+            (stdlib.io.last-error-code)
+            0)))
+      38)))
+
+;: Return the host status code for reading through a raw stdlib handle id.
+(unsafe
+  (define (file-read-chunk-status [raw : i64] [count : i64]) : i64
+    (cond
+      [(not (stdlib.io.valid-handle? raw)) 38]
+      [(not
+          (=
+            (unsafe
+              (io_core.io-file-i64-ref (io_core.io-file-modes-ptr) raw))
+            0))
+        38]
+      [(< count 0) 22]
+      [(= count 0)
+        (begin
+          (unsafe
             (io_core.io-file-byte-buf-set!
               (io_core.io-file-last-bytes-ptr)
               raw
-              (byte_buf.from-array-prefix buf read-count))
+              (byte_buf.new)))
+          (unsafe
             (io_core.io-file-bool-set!
               (io_core.io-file-last-ready-ptr)
               raw
-              true)
-            0)))]))
+              true))
+          0)]
+      [else
+        (let
+          [buf : (__tl_dyn-array u8) (__tl_make-array u8 count)]
+          [fd : i64
+            (unsafe
+              (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) raw))]
+          [read-count : i64
+            (unsafe
+              (stdlib.io.platform-read fd (stdlib.io.array-ptr buf) count))]
+          (if (< read-count 0)
+            (stdlib.io.last-error-code)
+            (begin
+              (unsafe
+                (if (= read-count 0)
+                  (io_core.io-file-bool-set!
+                    (io_core.io-file-eofs-ptr)
+                    raw
+                    true)
+                  (io_core.io-file-bool-set!
+                    (io_core.io-file-eofs-ptr)
+                    raw
+                    false)))
+              (unsafe
+                (io_core.io-file-byte-buf-set!
+                  (io_core.io-file-last-bytes-ptr)
+                  raw
+                  (byte_buf.from-array-prefix buf read-count)))
+              (unsafe
+                (io_core.io-file-bool-set!
+                  (io_core.io-file-last-ready-ptr)
+                  raw
+                  true))
+              0)))])))
 
-;: Return the host status code for writing borrowed bytes through a stdlib handle.
-(define (file-write-status [raw : i64] [contents : (& contents bytes)]) : i64
-  (if (not (stdlib.io.valid-handle? raw))
-    38
-    (if (= (io_core.io-file-i64-ref (io_core.io-file-modes-ptr) raw) 0)
+;: Return the host status code for writing through a raw stdlib handle id.
+(unsafe
+  (define (file-write-status [raw : i64] [contents : (& contents bytes)]) : i64
+    (if (not (stdlib.io.valid-handle? raw))
       38
-      (stdlib.io.write-bytes-fd-status
-        (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) raw)
-        contents))))
+      (if (=
+        (unsafe
+          (io_core.io-file-i64-ref (io_core.io-file-modes-ptr) raw))
+        0)
+        38
+        (unsafe
+          (stdlib.io.write-bytes-fd-status
+            (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) raw)
+            contents))))))
 
-;: Return the host status code for flushing a stdlib handle.
-(define (file-flush-status [raw : i64]) : i64
-  (if (not (stdlib.io.valid-handle? raw))
-    38
-    (if (= (io_core.io-file-i64-ref (io_core.io-file-modes-ptr) raw) 0)
+;: Return the host status code for flushing a raw stdlib handle id.
+(unsafe
+  (define (file-flush-status [raw : i64]) : i64
+    (if (not (stdlib.io.valid-handle? raw))
       38
-      (let
-        [status : i64
-          (stdlib.io.platform-flush
-            (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) raw))]
-        (if (< status 0)
-          (stdlib.io.last-error-code)
-          0)))))
+      (if (=
+        (unsafe
+          (io_core.io-file-i64-ref (io_core.io-file-modes-ptr) raw))
+        0)
+        38
+        (let
+          [status : i64
+            (unsafe
+              (stdlib.io.platform-flush
+                (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) raw)))]
+          (if (< status 0)
+            (stdlib.io.last-error-code)
+            0))))))
 
-;: Return the owned buffer from the last successful file chunk read.
-(define (file-read-chunk-bytes [raw : i64]) : byte_buf.ByteBuf
-  (if (if (stdlib.io.valid-handle? raw)
-    (io_core.io-file-bool-ref (io_core.io-file-last-ready-ptr) raw)
-    false)
-    (io_core.io-file-byte-buf-ref (io_core.io-file-last-bytes-ptr) raw)
-    (byte_buf.new)))
+;: Return the owned buffer cached for a raw stdlib handle id.
+(unsafe
+  (define (file-read-chunk-bytes [raw : i64]) : byte_buf.ByteBuf
+    (if (if (stdlib.io.valid-handle? raw)
+      (unsafe
+        (io_core.io-file-bool-ref (io_core.io-file-last-ready-ptr) raw))
+      false)
+      (unsafe
+        (io_core.io-file-byte-buf-ref (io_core.io-file-last-bytes-ptr) raw))
+      (byte_buf.new))))
 
-;: Return the sticky EOF bit from the last successful stdlib file chunk read.
-(define (file-read-chunk-eof? [raw : i64]) : bool
-  (if (stdlib.io.valid-handle? raw)
-    (io_core.io-file-bool-ref (io_core.io-file-eofs-ptr) raw)
-    true))
+;: Return the sticky EOF bit cached for a raw stdlib handle id.
+(unsafe
+  (define (file-read-chunk-eof? [raw : i64]) : bool
+    (if (stdlib.io.valid-handle? raw)
+      (unsafe
+        (io_core.io-file-bool-ref (io_core.io-file-eofs-ptr) raw))
+      true)))
 
 ;: Read up to `count` stdin bytes into an active-arena buffer.
 (define (read-stdin-bytes [count : i64]) : byte_buf.ByteBuf
@@ -1483,11 +1623,11 @@
                 (set! done true))
               (let
                 [read-count : i64
-                  (platform-read
-                    0
-                    (unsafe
-                      (ptr-offset (array-ptr buf) offset))
-                    (- count offset))]
+                  (unsafe
+                    (platform-read
+                      0
+                      (ptr-offset (array-ptr buf) offset)
+                      (- count offset)))]
                 (if (< read-count 0)
                   (panic "tl: stdin failed\n")
                   (if (= read-count 0)
@@ -1506,7 +1646,9 @@
     (begin
       (while (not done)
         (let
-          [read-count : i64 (platform-read 0 (array-ptr one) 1)]
+          [read-count : i64
+            (unsafe
+              (platform-read 0 (array-ptr one) 1))]
           (if (< read-count 0)
             (panic "tl: stdin failed\n")
             (if (= read-count 0)
@@ -1646,36 +1788,26 @@
 (defstruct FileHandle
   (id i64))
 
-;: Place one FileHandle in fixed caller-owned storage for Formatter callbacks.
+;: Return the file-table token that the Formatter callback validates on use.
 ;; lint-allow: function-name-case -- exact nominal suffix is the writer key.
-(define (format-writer-cell-FileHandle [handle : FileHandle]) : (Array
-    FileHandle
-    1)
-  (array handle))
+(define (format-writer-context-FileHandle [handle : FileHandle]) : i64
+  handle.id)
 
-;: Raw Formatter destination adapter for a caller-owned FileHandle cell.
+;: Bounded Formatter destination adapter for a validated FileHandle id.
 ;; lint-allow: function-name-case -- exact nominal suffix is the writer key.
-(define (format-write-raw-FileHandle
-  [context : i64]
-  [data : (Ptr u8)]
-  [count : i64]) : i64
-  (let
-    [slot : (Ptr FileHandle)
+(define (format-write-raw-FileHandle [context : i64] [data : String]) : i64
+  (cond
+    [(not (valid-handle? context)) io-status-unsupported]
+    [(=
+        (unsafe
+          (io_core.io-file-i64-ref (io_core.io-file-modes-ptr) context))
+        0)
+      io-status-unsupported]
+    [else
       (unsafe
-        (int->ptr (cast context : u64) : (Ptr FileHandle)))]
-    [handle : FileHandle
-      (unsafe
-        (ptr-read slot))]
-    (cond
-      [(< count 0) 22]
-      [(not (valid-handle? handle.id)) io-status-unsupported]
-      [(= (io_core.io-file-i64-ref (io_core.io-file-modes-ptr) handle.id) 0)
-        io-status-unsupported]
-      [else
-        (write-all-fd-status
-          (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) handle.id)
-          data
-          count)])))
+        (write-string-fd-status
+          (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) context)
+          (& data)))]))
 
 ;: File open mode for v1 streaming handles.
 (defenum OpenMode
@@ -1878,7 +2010,9 @@
     (if (empty-path? path)
       (ErrIoFile (invalid-path-error path))
       (let
-        [raw : i64 (file-open-status path-text (open-mode-code mode))]
+        [raw : i64
+          (unsafe
+            (file-open-status path-text (open-mode-code mode)))]
         (if (< raw 0)
           (ErrIoFile (error-from-status path (- 0 raw)))
           (OkIoFile (FileHandle raw)))))))
@@ -1889,7 +2023,9 @@
 ;: closed handle returns `ErrIoUnit (IoUnsupported ...)` and never panics.
 (define (file-close [handle : FileHandle]) : ResultIoUnit
   (let
-    [status : i64 (file-close-status handle.id)]
+    [status : i64
+      (unsafe
+        (file-close-status handle.id))]
     (if (= status io-status-ok)
       OkIoUnit
       (if (= status io-status-unsupported)
@@ -1913,10 +2049,13 @@
     (ErrIoRead (IoInvalidPath (file-read-invalid-count-message)))
     (let
       [raw : i64 handle.id]
-      [status : i64 (file-read-chunk-status raw count)]
+      [status : i64
+        (unsafe
+          (file-read-chunk-status raw count))]
       (if (= status io-status-ok)
         (OkIoRead
-          (FileRead (file-read-chunk-bytes raw) (file-read-chunk-eof? raw)))
+          (unsafe
+            (FileRead (file-read-chunk-bytes raw) (file-read-chunk-eof? raw))))
         (if (= status io-status-unsupported)
           (ErrIoRead (IoUnsupported (file-read-unsupported-message)))
           (ErrIoRead (error-from-label "file-read-chunk" status)))))))
@@ -1928,7 +2067,9 @@
 ;: return `IoUnsupported`.
 (define (file-write [handle : FileHandle] [contents : (& contents bytes)]) : ResultIoUnit
   (let
-    [status : i64 (file-write-status handle.id contents)]
+    [status : i64
+      (unsafe
+        (file-write-status handle.id contents))]
     (if (= status io-status-ok)
       OkIoUnit
       (if (= status io-status-unsupported)
@@ -1941,7 +2082,9 @@
 ;: `IoUnsupported`; host flush failures are mapped through `error-from-status`.
 (define (file-flush [handle : FileHandle]) : ResultIoUnit
   (let
-    [status : i64 (file-flush-status handle.id)]
+    [status : i64
+      (unsafe
+        (file-flush-status handle.id))]
     (if (= status io-status-ok)
       OkIoUnit
       (if (= status io-status-unsupported)
@@ -2061,7 +2204,9 @@
 ;: Write borrowed bytes to stdout without adding a newline.
 (define (stdout-write [contents : (& contents bytes)]) : unit
   (let
-    [status : i64 (write-bytes-fd-status 1 contents)]
+    [status : i64
+      (unsafe
+        (write-bytes-fd-status 1 contents))]
     (if (= status io-status-ok)
       unit
       (platform-exit 134))))
@@ -2081,7 +2226,9 @@
 ;: Write borrowed bytes to stderr without adding a newline.
 (define (stderr-write [contents : (& contents bytes)]) : unit
   (let
-    [status : i64 (write-bytes-fd-status 2 contents)]
+    [status : i64
+      (unsafe
+        (write-bytes-fd-status 2 contents))]
     (if (= status io-status-ok)
       unit
       (platform-exit 134))))

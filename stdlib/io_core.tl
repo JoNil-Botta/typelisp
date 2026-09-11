@@ -48,114 +48,145 @@
 (define io-file-last-bytes-addr : u64
   (cast 0 : u64))
 
-;: Return the raw file descriptor table pointer.
-(define (io-file-fds-ptr) : (MutPtr i64)
-  (unsafe
-    (int->ptr io-file-fds-addr : (MutPtr i64))))
+;: Raw table access requires completed initialization, an in-range slot, and
+;: the appropriate live-slot ownership. These helpers carry unsafe declaration
+;: metadata so importing this implementation module cannot bypass that proof.
+;: Return the raw file descriptor table pointer after external initialization.
+(unsafe
+  (define (io-file-fds-ptr) : (MutPtr i64)
+    (unsafe
+      (int->ptr io-file-fds-addr : (MutPtr i64)))))
 
 ;: Return the raw file mode table pointer.
-(define (io-file-modes-ptr) : (MutPtr i64)
-  (unsafe
-    (int->ptr io-file-modes-addr : (MutPtr i64))))
+(unsafe
+  (define (io-file-modes-ptr) : (MutPtr i64)
+    (unsafe
+      (int->ptr io-file-modes-addr : (MutPtr i64)))))
 
 ;: Return the raw file handle state table pointer.
-(define (io-file-states-ptr) : (MutPtr i64)
-  (unsafe
-    (int->ptr io-file-states-addr : (MutPtr i64))))
+(unsafe
+  (define (io-file-states-ptr) : (MutPtr i64)
+    (unsafe
+      (int->ptr io-file-states-addr : (MutPtr i64)))))
 
 ;: Return the raw file EOF state table pointer.
-(define (io-file-eofs-ptr) : (MutPtr bool)
-  (unsafe
-    (int->ptr io-file-eofs-addr : (MutPtr bool))))
+(unsafe
+  (define (io-file-eofs-ptr) : (MutPtr bool)
+    (unsafe
+      (int->ptr io-file-eofs-addr : (MutPtr bool)))))
 
 ;: Return the raw cached-read readiness table pointer.
-(define (io-file-last-ready-ptr) : (MutPtr bool)
-  (unsafe
-    (int->ptr io-file-last-ready-addr : (MutPtr bool))))
+(unsafe
+  (define (io-file-last-ready-ptr) : (MutPtr bool)
+    (unsafe
+      (int->ptr io-file-last-ready-addr : (MutPtr bool)))))
 
 ;: Return the raw cached-read byte table pointer.
-(define (io-file-last-bytes-ptr) : (MutPtr byte_buf.ByteBuf)
-  (unsafe
-    (int->ptr io-file-last-bytes-addr : (MutPtr byte_buf.ByteBuf))))
+(unsafe
+  (define (io-file-last-bytes-ptr) : (MutPtr byte_buf.ByteBuf)
+    (unsafe
+      (int->ptr io-file-last-bytes-addr : (MutPtr byte_buf.ByteBuf)))))
 
 ;: Convert a mutable byte pointer into an integer address for global storage.
-(define (io-file-ptr-addr [ptr : (MutPtr u8)]) : u64
-  (unsafe
-    (ptr->int (ptr-cast ptr : (Ptr u8)))))
+(unsafe
+  (define (io-file-ptr-addr [ptr : (MutPtr u8)]) : u64
+    (unsafe
+      (ptr->int (ptr-cast ptr : (Ptr u8))))))
 
 ;: Read an i64 from a raw table at `index`.
-(define (io-file-i64-ref [items : (MutPtr i64)] [index : i64]) : i64
-  (unsafe
-    (ptr-read (ptr-cast (ptr-offset items index) : (Ptr i64)))))
+(unsafe
+  (define (io-file-i64-ref [items : (MutPtr i64)] [index : i64]) : i64
+    (unsafe
+      (ptr-read (ptr-cast (ptr-offset items index) : (Ptr i64))))))
 
 ;: Write an i64 to a raw table at `index`.
-(define (io-file-i64-set! [items : (MutPtr i64)] [index : i64] [value : i64]) : unit
-  (unsafe
-    (ptr-write! (ptr-offset items index) value)))
+(unsafe
+  (define (io-file-i64-set! [items : (MutPtr i64)] [index : i64] [value : i64]) : unit
+    (unsafe
+      (ptr-write! (ptr-offset items index) value))))
 
 ;: Read a bool from a raw table at `index`.
-(define (io-file-bool-ref [items : (MutPtr bool)] [index : i64]) : bool
-  (unsafe
-    (ptr-read (ptr-cast (ptr-offset items index) : (Ptr bool)))))
+(unsafe
+  (define (io-file-bool-ref [items : (MutPtr bool)] [index : i64]) : bool
+    (unsafe
+      (ptr-read (ptr-cast (ptr-offset items index) : (Ptr bool))))))
 
 ;: Write a bool to a raw table at `index`.
-(define (io-file-bool-set! [items : (MutPtr bool)] [index : i64] [value : bool]) : unit
-  (unsafe
-    (ptr-write! (ptr-offset items index) value)))
+(unsafe
+  (define (io-file-bool-set!
+    [items : (MutPtr bool)]
+    [index : i64]
+    [value : bool]) : unit
+    (unsafe
+      (ptr-write! (ptr-offset items index) value))))
 
 ;: Read a byte buffer from a raw table at `index`.
-(define (io-file-byte-buf-ref [items : (MutPtr byte_buf.ByteBuf)] [index : i64]) : byte_buf.ByteBuf
-  (unsafe
-    (ptr-read (ptr-cast (ptr-offset items index) : (Ptr byte_buf.ByteBuf)))))
+(unsafe
+  (define (io-file-byte-buf-ref
+    [items : (MutPtr byte_buf.ByteBuf)]
+    [index : i64]) : byte_buf.ByteBuf
+    (unsafe
+      (ptr-read (ptr-cast (ptr-offset items index) : (Ptr byte_buf.ByteBuf))))))
 
 ;: Write a byte buffer to a raw table at `index`.
-(define (io-file-byte-buf-set!
-  [items : (MutPtr byte_buf.ByteBuf)]
-  [index : i64]
-  [value : byte_buf.ByteBuf]) : unit
-  (unsafe
-    (ptr-write! (ptr-offset items index) value)))
+(unsafe
+  (define (io-file-byte-buf-set!
+    [items : (MutPtr byte_buf.ByteBuf)]
+    [index : i64]
+    [value : byte_buf.ByteBuf]) : unit
+    (unsafe
+      (ptr-write! (ptr-offset items index) value))))
 
 ;: Clear all per-handle table state for a closed or reusable handle slot.
-(define (io-file-handle-clear! [handle : i64]) : unit
-  (begin
-    (io-file-i64-set! (io-file-fds-ptr) handle 0)
-    (io-file-i64-set! (io-file-modes-ptr) handle 0)
-    (io-file-i64-set! (io-file-states-ptr) handle 0)
-    (io-file-bool-set! (io-file-eofs-ptr) handle false)
-    (io-file-bool-set! (io-file-last-ready-ptr) handle false)
-    (io-file-byte-buf-set! (io-file-last-bytes-ptr) handle (byte_buf.new))
-    unit))
+(unsafe
+  (define (io-file-handle-clear! [handle : i64]) : unit
+    (unsafe
+      (begin
+        (io-file-i64-set! (io-file-fds-ptr) handle 0)
+        (io-file-i64-set! (io-file-modes-ptr) handle 0)
+        (io-file-i64-set! (io-file-states-ptr) handle 0)
+        (io-file-bool-set! (io-file-eofs-ptr) handle false)
+        (io-file-bool-set! (io-file-last-ready-ptr) handle false)
+        (io-file-byte-buf-set! (io-file-last-bytes-ptr) handle (byte_buf.new))
+        unit))))
 
 ;: Return the first currently closed file-handle slot at or after `start`.
-(define (io-file-find-free-handle-from [start : i64]) : i64
-  (let
-    [i : i64 start]
-    (begin
-      (while (< i io-file-handle-cap)
-        (begin
-          (when (= (io-file-i64-ref (io-file-states-ptr) i) 0) (return i))
-          (set! i (+ i 1))))
-      -1)))
+(unsafe
+  (define (io-file-find-free-handle-from [start : i64]) : i64
+    (let
+      [i : i64 start]
+      (begin
+        (while (< i io-file-handle-cap)
+          (begin
+            (when
+              (unsafe
+                (= (io-file-i64-ref (io-file-states-ptr) i) 0))
+              (return i))
+            (set! i (+ i 1))))
+        -1))))
 
 ;: Reserve a stdlib file-handle slot, reusing closed slots before failing.
-(define (io-file-alloc-handle!) : i64
-  (begin
-    (io-file-table-init!)
-    (let
-      [handle : i64 (io-file-find-free-handle-from io-file-handle-next)]
-      [fallback : i64
-        (if (< handle 0)
-          (io-file-find-free-handle-from 1)
-          handle)]
-      (if (< fallback 0)
-        -1
-        (begin
-          (set! io-file-handle-next (+ fallback 1))
-          (if (>= io-file-handle-next io-file-handle-cap)
-            (set! io-file-handle-next 1)
-            unit)
-          fallback)))))
+(unsafe
+  (define (io-file-alloc-handle!) : i64
+    (begin
+      (io-file-table-init!)
+      (let
+        [handle : i64
+          (unsafe
+            (io-file-find-free-handle-from io-file-handle-next))]
+        [fallback : i64
+          (if (< handle 0)
+            (unsafe
+              (io-file-find-free-handle-from 1))
+            handle)]
+        (if (< fallback 0)
+          -1
+          (begin
+            (set! io-file-handle-next (+ fallback 1))
+            (if (>= io-file-handle-next io-file-handle-cap)
+              (set! io-file-handle-next 1)
+              unit)
+            fallback))))))
 
 ;; The table pointers are stored as raw integer addresses the region
 ;; checker cannot see, and this init can fire inside a (with-arena ...) region
@@ -192,41 +223,52 @@
       (begin
         (set!
           io-file-fds-addr
-          (io-file-ptr-addr
-            (unsafe
-              (ptr-cast fds : (MutPtr u8)))))
+          (unsafe
+            (io-file-ptr-addr
+              (unsafe
+                (ptr-cast fds : (MutPtr u8))))))
         (set!
           io-file-modes-addr
-          (io-file-ptr-addr
-            (unsafe
-              (ptr-cast modes : (MutPtr u8)))))
+          (unsafe
+            (io-file-ptr-addr
+              (unsafe
+                (ptr-cast modes : (MutPtr u8))))))
         (set!
           io-file-states-addr
-          (io-file-ptr-addr
-            (unsafe
-              (ptr-cast states : (MutPtr u8)))))
+          (unsafe
+            (io-file-ptr-addr
+              (unsafe
+                (ptr-cast states : (MutPtr u8))))))
         (set!
           io-file-eofs-addr
-          (io-file-ptr-addr
-            (unsafe
-              (ptr-cast eofs : (MutPtr u8)))))
+          (unsafe
+            (io-file-ptr-addr
+              (unsafe
+                (ptr-cast eofs : (MutPtr u8))))))
         (set!
           io-file-last-ready-addr
-          (io-file-ptr-addr
-            (unsafe
-              (ptr-cast last-ready : (MutPtr u8)))))
+          (unsafe
+            (io-file-ptr-addr
+              (unsafe
+                (ptr-cast last-ready : (MutPtr u8))))))
         (set!
           io-file-last-bytes-addr
-          (io-file-ptr-addr
-            (unsafe
-              (ptr-cast last-bytes : (MutPtr u8)))))
+          (unsafe
+            (io-file-ptr-addr
+              (unsafe
+                (ptr-cast last-bytes : (MutPtr u8))))))
         (while (< i io-file-handle-cap)
           (begin
-            (io-file-i64-set! (io-file-fds-ptr) i 0)
-            (io-file-i64-set! (io-file-modes-ptr) i 0)
-            (io-file-i64-set! (io-file-states-ptr) i 0)
-            (io-file-bool-set! (io-file-eofs-ptr) i false)
-            (io-file-bool-set! (io-file-last-ready-ptr) i false)
+            (unsafe
+              (io-file-i64-set! (io-file-fds-ptr) i 0))
+            (unsafe
+              (io-file-i64-set! (io-file-modes-ptr) i 0))
+            (unsafe
+              (io-file-i64-set! (io-file-states-ptr) i 0))
+            (unsafe
+              (io-file-bool-set! (io-file-eofs-ptr) i false))
+            (unsafe
+              (io-file-bool-set! (io-file-last-ready-ptr) i false))
             (set! i (+ i 1))))
         unit))
     unit))
@@ -237,15 +279,18 @@
     (io-file-table-init!)
     (if (> raw 0)
       (if (< raw io-file-handle-cap)
-        (= (io-file-i64-ref (io-file-states-ptr) raw) 1)
+        (unsafe
+          (= (io-file-i64-ref (io-file-states-ptr) raw) 1))
         false)
       false)))
 
 ;: Clear and release a closed handle slot for reuse.
-(define (io-file-release-handle! [handle : i64]) : unit
-  (begin
-    (io-file-handle-clear! handle)
-    (if (< handle io-file-handle-next)
-      (set! io-file-handle-next handle)
-      unit)
-    unit))
+(unsafe
+  (define (io-file-release-handle! [handle : i64]) : unit
+    (begin
+      (unsafe
+        (io-file-handle-clear! handle))
+      (if (< handle io-file-handle-next)
+        (set! io-file-handle-next handle)
+        unit)
+      unit)))

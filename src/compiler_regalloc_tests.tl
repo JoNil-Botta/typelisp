@@ -15,6 +15,7 @@
 (import compiler_intern as ci)
 (import stdlib.io)
 (cfg test (import stdlib.string))
+(cfg test (import stdlib.profile))
 (import stdlib.hashmap)
 (import (hashmap.hashmap String i64) as reg_string_i64_map)
 (import (hashmap.hashmap i64 i64) as reg_i64_i64_map)
@@ -23299,6 +23300,379 @@
           (reg.compiler-reg-trace-reason-name
             (reg.compiler-reg-trace-reason-none))
           "none")))))
+
+(cfg
+  test
+  (define (compiler-reg-heapsort-golden-input [index : i64]) : reg.CompilerRegInterval
+    (cond
+      [(= index 0) (reg.CompilerRegInterval 2 1 90)]
+      [(= index 1) (reg.CompilerRegInterval 1 1 80)]
+      [(= index 2) (reg.CompilerRegInterval 1 1 70)]
+      [(= index 3) (reg.CompilerRegInterval 0 2 60)]
+      [(= index 4) (reg.CompilerRegInterval 1 1 50)]
+      [(= index 5) (reg.CompilerRegInterval 0 0 40)]
+      [else (reg.CompilerRegInterval 1 1 30)])))
+
+(cfg
+  test
+  (define (compiler-reg-heapsort-golden-output
+    [candidate? : bool]
+    [index : i64]) : reg.CompilerRegInterval
+    (cond
+      [(= index 0) (reg.CompilerRegInterval 0 0 40)]
+      [(= index 1)
+        (reg.CompilerRegInterval
+          1
+          1
+          (if candidate?
+            30
+            70))]
+      [(= index 2)
+        (reg.CompilerRegInterval
+          1
+          1
+          (if candidate?
+            50
+            80))]
+      [(= index 3)
+        (reg.CompilerRegInterval
+          1
+          1
+          (if candidate?
+            70
+            50))]
+      [(= index 4)
+        (reg.CompilerRegInterval
+          1
+          1
+          (if candidate?
+            80
+            30))]
+      [(= index 5) (reg.CompilerRegInterval 2 1 90)]
+      [else (reg.CompilerRegInterval 0 2 60)])))
+
+(cfg
+  test
+  (define (compiler-reg-heapsort-interval-eq?
+    [left : reg.CompilerRegInterval]
+    [right : reg.CompilerRegInterval]) : bool
+    (and
+      (= left.var right.var)
+      (= left.start right.start)
+      (= left.end right.end))))
+
+(cfg
+  test
+  (define (compiler-reg-heapsort-fill-golden!
+    [items : (__tl_dyn-array reg.CompilerRegInterval)]
+    [base : i64]) : unit
+    (let
+      [index : i64 0]
+      (while (< index 7)
+        (begin
+          (set!
+            (array-ref items (+ base index))
+            (compiler-reg-heapsort-golden-input index))
+          (set! index (+ index 1)))))))
+
+(cfg
+  test
+  (define (compiler-reg-heapsort-matches-golden?
+    [items : (__tl_dyn-array reg.CompilerRegInterval)]
+    [base : i64]
+    [candidate? : bool]) : bool
+    (let
+      [index : i64 0]
+      (begin
+        (while (< index 7)
+          (begin
+            (unless
+              (compiler-reg-heapsort-interval-eq?
+                (array-ref items (+ base index))
+                (compiler-reg-heapsort-golden-output candidate? index))
+              (return false))
+            (set! index (+ index 1))))
+        true))))
+
+(cfg
+  test
+  (define (compiler-reg-heapsort-sentinel [index : i64]) : reg.CompilerRegInterval
+    (reg.CompilerRegInterval (- 0 index) -700 (- 0 (+ index 900)))))
+
+(cfg
+  test
+  (define (compiler-reg-heapsort-fill-sentinels!
+    [items : (__tl_dyn-array reg.CompilerRegInterval)]) : unit
+    (let
+      [index : i64 0]
+      (while (< index (array-length items))
+        (begin
+          (set! (array-ref items index) (compiler-reg-heapsort-sentinel index))
+          (set! index (+ index 1)))))))
+
+(cfg
+  test
+  (define (compiler-reg-heapsort-sentinels-ok?
+    [items : (__tl_dyn-array reg.CompilerRegInterval)]
+    [base : i64]
+    [count : i64]) : bool
+    (let
+      [index : i64 0]
+      (begin
+        (while (< index (array-length items))
+          (begin
+            (when
+              (or (< index base) (>= index (+ base count)))
+              (unless
+                (compiler-reg-heapsort-interval-eq?
+                  (array-ref items index)
+                  (compiler-reg-heapsort-sentinel index))
+                (return false)))
+            (set! index (+ index 1))))
+        true))))
+
+(cfg
+  test
+  (define (compiler-reg-heapsort-large-item [index : i64]) : reg.CompilerRegInterval
+    (let
+      [mixed : i64 (+ (* index 1103515245) 12345)]
+      [start : i64 (bit-and mixed 255)]
+      (reg.CompilerRegInterval
+        index
+        start
+        (+ start (bit-and (shr mixed 13) 127))))))
+
+(cfg
+  test
+  (define (compiler-reg-heapsort-fill-large!
+    [items : (__tl_dyn-array reg.CompilerRegInterval)]
+    [base : i64]
+    [count : i64]) : unit
+    (let
+      [index : i64 0]
+      (while (< index count)
+        (begin
+          (set!
+            (array-ref items (+ base index))
+            (compiler-reg-heapsort-large-item index))
+          (set! index (+ index 1)))))))
+
+(cfg
+  test
+  (define (compiler-reg-heapsort-order-permutation-ok?
+    [items : (__tl_dyn-array reg.CompilerRegInterval)]
+    [base : i64]
+    [count : i64]
+    [candidate? : bool]) : bool
+    (let
+      [seen : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [index : i64 0]
+      (begin
+        (while (< index count)
+          (let
+            [item : reg.CompilerRegInterval (array-ref items (+ base index))]
+            [var : i64 item.var]
+            (begin
+              (when (or (< var 0) (>= var count)) (return false))
+              (when (= (array-ref seen var) 1) (return false))
+              (unless
+                (compiler-reg-heapsort-interval-eq?
+                  item
+                  (compiler-reg-heapsort-large-item var))
+                (return false))
+              (when
+                (> index 0)
+                (let
+                  [previous : reg.CompilerRegInterval
+                    (array-ref items (+ base (- index 1)))]
+                  (when
+                    (if candidate?
+                      (reg.compiler-reg-interval-before? item previous)
+                      (reg.compiler-reg-color-interval-before? item previous))
+                    (return false))))
+              (set! (array-ref seen var) 1)
+              (set! index (+ index 1)))))
+        true))))
+
+(cfg
+  test
+  (define (compiler-reg-heapsort-exact-goldens-ok?) : bool
+    (let
+      [candidate : (__tl_dyn-array reg.CompilerRegInterval)
+        (__tl_make-array reg.CompilerRegInterval 7)]
+      [color : (__tl_dyn-array reg.CompilerRegInterval)
+        (__tl_make-array reg.CompilerRegInterval 7)]
+      [ordered : (__tl_dyn-array reg.CompilerRegInterval)
+        (__tl_make-array reg.CompilerRegInterval 7)]
+      [range : (__tl_dyn-array reg.CompilerRegInterval)
+        (__tl_make-array reg.CompilerRegInterval 14)]
+      (begin
+        (compiler-reg-heapsort-fill-golden!
+          (reg.compiler-reg-global-shared-view candidate)
+          0)
+        (compiler-reg-heapsort-fill-golden!
+          (reg.compiler-reg-global-shared-view color)
+          0)
+        (compiler-reg-heapsort-fill-sentinels!
+          (reg.compiler-reg-global-shared-view range))
+        (compiler-reg-heapsort-fill-golden!
+          (reg.compiler-reg-global-shared-view range)
+          3)
+        (reg.compiler-reg-candidate-heapsort!
+          (reg.compiler-reg-global-shared-view candidate)
+          7)
+        (reg.compiler-reg-color-heapsort-unordered!
+          (reg.compiler-reg-global-shared-view color)
+          7)
+        (reg.compiler-reg-scratch-hull-heapsort-range!
+          (reg.compiler-reg-global-shared-view range)
+          3
+          7)
+        ;; The unordered heap would permute these four equivalent records, so
+        ;; exact preservation proves the handwritten ordered scan returned.
+        (let
+          [index : i64 0]
+          (while (< index 7)
+            (begin
+              (set!
+                (array-ref ordered index)
+                (compiler-reg-heapsort-golden-output false index))
+              (set! index (+ index 1)))))
+        (reg.compiler-reg-color-heapsort
+          (reg.compiler-reg-global-shared-view ordered)
+          7)
+        (and
+          (compiler-reg-heapsort-matches-golden? candidate 0 true)
+          (compiler-reg-heapsort-matches-golden? color 0 false)
+          (compiler-reg-heapsort-matches-golden? ordered 0 false)
+          (compiler-reg-heapsort-sentinels-ok?
+            (reg.compiler-reg-global-shared-view range)
+            3
+            7)
+          (compiler-reg-heapsort-matches-golden? range 3 false))))))
+
+(cfg
+  test
+  (define (compiler-reg-heapsort-range-case-ok? [count : i64]) : bool
+    (let
+      [base : i64 3]
+      [items : (__tl_dyn-array reg.CompilerRegInterval)
+        (__tl_make-array reg.CompilerRegInterval (+ base (+ count 4)))]
+      (begin
+        (compiler-reg-heapsort-fill-sentinels!
+          (reg.compiler-reg-global-shared-view items))
+        (compiler-reg-heapsort-fill-large!
+          (reg.compiler-reg-global-shared-view items)
+          base
+          count)
+        (reg.compiler-reg-scratch-hull-heapsort-range!
+          (reg.compiler-reg-global-shared-view items)
+          base
+          count)
+        (and
+          (compiler-reg-heapsort-sentinels-ok?
+            (reg.compiler-reg-global-shared-view items)
+            base
+            count)
+          (compiler-reg-heapsort-order-permutation-ok? items base count false))))))
+
+(cfg
+  test
+  (define (compiler-reg-heapsort-large-ok?) : bool
+    (let
+      [count : i64 2049]
+      [candidate : (__tl_dyn-array reg.CompilerRegInterval)
+        (__tl_make-array reg.CompilerRegInterval count)]
+      [color : (__tl_dyn-array reg.CompilerRegInterval)
+        (__tl_make-array reg.CompilerRegInterval count)]
+      (begin
+        (compiler-reg-heapsort-fill-large!
+          (reg.compiler-reg-global-shared-view candidate)
+          0
+          count)
+        (compiler-reg-heapsort-fill-large!
+          (reg.compiler-reg-global-shared-view color)
+          0
+          count)
+        (reg.compiler-reg-candidate-heapsort!
+          (reg.compiler-reg-global-shared-view candidate)
+          count)
+        (reg.compiler-reg-color-heapsort-unordered!
+          (reg.compiler-reg-global-shared-view color)
+          count)
+        (and
+          (compiler-reg-heapsort-order-permutation-ok? candidate 0 count true)
+          (compiler-reg-heapsort-order-permutation-ok? color 0 count false))))))
+
+(cfg
+  test
+  (define (compiler-reg-heapsort-allocation-free-ok?) : bool
+    (let
+      [candidate : (__tl_dyn-array reg.CompilerRegInterval)
+        (__tl_make-array reg.CompilerRegInterval 7)]
+      [color : (__tl_dyn-array reg.CompilerRegInterval)
+        (__tl_make-array reg.CompilerRegInterval 7)]
+      [range : (__tl_dyn-array reg.CompilerRegInterval)
+        (__tl_make-array reg.CompilerRegInterval 14)]
+      [before : i64 0]
+      [after : i64 0]
+      (begin
+        (compiler-reg-heapsort-fill-golden!
+          (reg.compiler-reg-global-shared-view candidate)
+          0)
+        (compiler-reg-heapsort-fill-golden!
+          (reg.compiler-reg-global-shared-view color)
+          0)
+        (compiler-reg-heapsort-fill-sentinels!
+          (reg.compiler-reg-global-shared-view range))
+        (compiler-reg-heapsort-fill-golden!
+          (reg.compiler-reg-global-shared-view range)
+          3)
+        (set! before (profile.alloc-total))
+        (reg.compiler-reg-candidate-heapsort!
+          (reg.compiler-reg-global-shared-view candidate)
+          7)
+        (reg.compiler-reg-color-heapsort-unordered!
+          (reg.compiler-reg-global-shared-view color)
+          7)
+        (reg.compiler-reg-scratch-hull-heapsort-range!
+          (reg.compiler-reg-global-shared-view range)
+          3
+          7)
+        (set! after (profile.alloc-total))
+        (and
+          (= after before)
+          (= (array-ref candidate 0).end 40)
+          (= (array-ref color 1).end 70)
+          (= (array-ref range 4).end 70))))))
+
+(cfg
+  test
+  (test
+    regalloc-generated-heapsort-exact-goldens
+    (test.assert-true
+      (compiler-reg-heapsort-exact-goldens-ok?)
+      "generated interval heapsorts preserve exact legacy permutations")))
+
+(cfg
+  test
+  (test
+    regalloc-generated-heapsort-order-permutation
+    (test.assert-true
+      (and
+        (compiler-reg-heapsort-large-ok?)
+        (compiler-reg-heapsort-range-case-ok? 0)
+        (compiler-reg-heapsort-range-case-ok? 1)
+        (compiler-reg-heapsort-range-case-ok? 97))
+      "generated heapsorts preserve order, permutation, and range sentinels")))
+
+(cfg
+  test
+  (test
+    regalloc-generated-heapsort-allocation-free
+    (test.assert-true
+      (compiler-reg-heapsort-allocation-free-ok?)
+      "generated heapsort entries allocate no auxiliary arena storage")))
 
 (define (compiler-regalloc-self-test) : i64
   (begin

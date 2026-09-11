@@ -89806,6 +89806,223 @@
     42
     "the descriptor HANDLE a global's inline cell holds leaves a loop that calls an unknown callee every trip, and the length load behind it stays inside because the descriptor proofs still refuse that callee -- while an element-only callee lets the length load follow it out; a callee that writes that global's storage through a mutable reference parameter refuses the chain, the same callee leaves a different global's chain hoistable, and an indirect call or an absent storage table refuses it"))
 
+;; --- LICM-PART: the header hoist under the budget -----------------------------
+;;
+;; Three chains (`gep @g, 0` / handle / `gep, 1` / length, as opt-og-loop-blocks
+;; spells one) off `og_a`, `og_b` and `og_c`, with `og_a` named by two more
+;; literal-offset geps and `og_b` by one more, in a loop that calls `plain`
+;; every trip and reads `live` parameters besides. The gate priced the whole
+;; set: live-in + 3 against twelve. With ten live-ins nothing fit and every
+;; handle stayed; the budget now takes the two most-referenced handles out and
+;; leaves `og_c`'s where it was. With three live-ins all three fit, as before.
+(define (opt-lpa-params [live : i64]) : compiler_ir_types.CompilerIrParamSeq
+  (opt-lpa-params-from
+    live
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "cond"
+        (compiler_ast_types.AstType.Bool)
+        0)
+      (compiler_ir_types.compiler-ir-param-seq-empty))))
+
+(define (opt-lpa-params-from
+  [index : i64]
+  [acc : compiler_ir_types.CompilerIrParamSeq]) : compiler_ir_types.CompilerIrParamSeq
+  (if (<= index 0)
+    acc
+    (opt-lpa-params-from
+      (- index 1)
+      (compiler_ir_types.compiler-ir-param-seq-prepend
+        (compiler_ir_types.CompilerIrParam.Param
+          "p"
+          (compiler_ast_types.AstType.I64)
+          (+ 39 index))
+        acc))))
+
+;; One add per live parameter (`%40`, `%41`, ...; the loop skeleton owns
+;; `%0`..`%5`), chained so every parameter is read inside the loop. The first
+;; add reads the counter phi.
+(define (opt-lpa-sum-instrs
+  [index : i64]
+  [live : i64]
+  [prev : i64]
+  [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (if (> index live)
+    tail
+    (opt-test-instr-seq-prepend
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        (+ 49 index)
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var prev)
+        (compiler_ir_types.CompilerIrValue.Var (+ 39 index))
+        (compiler_ast_types.AstType.I64))
+      (opt-lpa-sum-instrs (+ index 1) live (+ 49 index) tail))))
+
+(define (opt-lpa-extra-gep
+  [dst : i64]
+  [global : i64]
+  [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instr-seq-prepend
+    (compiler_ir_types.CompilerIrInstr.Gep
+      dst
+      (compiler_ir_types.CompilerIrValue.Global global)
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))
+    tail))
+
+(define (opt-lpa-loop-blocks [symbols : OptOgTestSymbols] [live : i64]) : compiler_ir_types.CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (opt-fz-chain-instrs
+      (compiler_ir_types.CompilerIrValue.Global symbols.a)
+      11
+      (opt-fz-chain-instrs
+        (compiler_ir_types.CompilerIrValue.Global symbols.b)
+        15
+        (opt-fz-chain-instrs
+          (compiler_ir_types.CompilerIrValue.Global symbols.c)
+          19
+          (opt-lpa-extra-gep
+            23
+            symbols.a
+            (opt-lpa-extra-gep
+              24
+              symbols.a
+              (opt-lpa-extra-gep
+                25
+                symbols.b
+                (opt-test-instr-seq-prepend
+                  (opt-fz-call-instr 26 symbols.plain)
+                  (opt-lpa-sum-instrs
+                    1
+                    live
+                    4
+                    (opt-test-instr-seq-prepend
+                      (compiler_ir_types.CompilerIrInstr.BinOp
+                        27
+                        (compiler_ir_types.CompilerIrBinOp.Add)
+                        (compiler_ir_types.CompilerIrValue.Var (+ 49 live))
+                        (compiler_ir_types.CompilerIrValue.Var 14)
+                        (compiler_ast_types.AstType.I64))
+                      (opt-test-instr-seq-prepend
+                        (compiler_ir_types.CompilerIrInstr.BinOp
+                          28
+                          (compiler_ir_types.CompilerIrBinOp.Add)
+                          (compiler_ir_types.CompilerIrValue.Var 27)
+                          (compiler_ir_types.CompilerIrValue.Var 18)
+                          (compiler_ast_types.AstType.I64))
+                        (opt-test-instr-seq-prepend
+                          (compiler_ir_types.CompilerIrInstr.BinOp
+                            29
+                            (compiler_ir_types.CompilerIrBinOp.Add)
+                            (compiler_ir_types.CompilerIrValue.Var 28)
+                            (compiler_ir_types.CompilerIrValue.Var 22)
+                            (compiler_ast_types.AstType.I64))
+                          (opt-licm-loop-finish-instrs))))))))))))
+    29))
+
+(define (opt-lpa-licm-late
+  [symbols : OptOgTestSymbols]
+  [live : i64]
+  [cells : compiler_optimize.OptGlobalCellSummary]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-lpa-loop-blocks symbols live)]
+    [func : compiler_ir_types.CompilerIrFunction
+      (compiler_ir_types.CompilerIrFunction.Function
+        (opt-test-symbol "licm_part")
+        (opt-lpa-params live)
+        (compiler_ast_types.AstType.I64)
+        64
+        (compiler_ir_types.compiler-ir-global-shared-view blocks))]
+    (match (compiler_optimize.opt-licm-function-with-context-result-and-direct-call-clean
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler_optimize.opt-cfg-context-build
+        (compiler_ir_types.compiler-ir-global-shared-view blocks))
+      false
+      (opt_i64_i64_map.with-capacity 1)
+      (opt_i64_i64_map.with-capacity 1)
+      cells
+      true
+      func)
+      [(compiler_optimize.OptFunctionCtxResult.Result next _)
+        (compiler_optimize.opt-function-blocks next)])))
+
+(define (compiler-optimize-licm-global-header-partial-self-test) : i64
+  (let
+    [symbols : OptOgTestSymbols (opt-og-test-symbols)]
+    [cells : compiler_optimize.OptGlobalCellSummary
+      (opt-og-cells
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        (opt-og-base-functions
+          (compiler_optimize.compiler-opt-global-shared-view symbols)))]
+    ;; ten live-ins (eight parameters, the branch flag and the counter) leave
+    ;; room for two under the twelve-word budget
+    [partial : compiler_ir_types.CompilerIrBlockList
+      (opt-lpa-licm-late
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        8
+        (compiler_optimize.compiler-opt-global-shared-view cells))]
+    ;; eleven leave room for one: the most-referenced, og_a
+    [one : compiler_ir_types.CompilerIrBlockList
+      (opt-lpa-licm-late
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        9
+        (compiler_optimize.compiler-opt-global-shared-view cells))]
+    ;; five leave room for all three
+    [whole : compiler_ir_types.CompilerIrBlockList
+      (opt-lpa-licm-late
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        3
+        (compiler_optimize.compiler-opt-global-shared-view cells))]
+    (cond
+      ;; og_a's and og_b's handles leave; og_c's stays with every length load
+      [(not
+          (=
+            (opt-fz-preheader-loads
+              (compiler_ir_types.compiler-ir-global-shared-view partial))
+            2))
+        1]
+      [(not
+          (=
+            (opt-fz-body-loads
+              (compiler_ir_types.compiler-ir-global-shared-view partial))
+            4))
+        2]
+      ;; room for one: og_a's handle alone
+      [(not
+          (=
+            (opt-fz-preheader-loads
+              (compiler_ir_types.compiler-ir-global-shared-view one))
+            1))
+        3]
+      [(not
+          (=
+            (opt-fz-body-loads
+              (compiler_ir_types.compiler-ir-global-shared-view one))
+            5))
+        4]
+      ;; the whole set fits: all three handles leave
+      [(not
+          (=
+            (opt-fz-preheader-loads
+              (compiler_ir_types.compiler-ir-global-shared-view whole))
+            3))
+        5]
+      [(not
+          (=
+            (opt-fz-body-loads
+              (compiler_ir_types.compiler-ir-global-shared-view whole))
+            3))
+        6]
+      [else 42])))
+
+(test
+  licm-global-header-partial-admit
+  (test.assert-i64-eq
+    (compiler-optimize-licm-global-header-partial-self-test)
+    42
+    "a loop whose live-ins leave the header-hoist budget room for two of its three global handles takes the two most-referenced ones out and keeps the third's chain inside, where the whole set was refused before; with room for one the most-referenced handle alone leaves, and with room for all three every handle does"))
+
 (test
   global-obj-storage-row-overflow
   (test.assert-i64-eq

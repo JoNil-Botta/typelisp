@@ -26759,6 +26759,10 @@
   ;; Whether THIS loop is allowed to take a global's descriptor HANDLE out.
   ;; The pressure gate; see opt-licm-global-header-hoist?.
   (header-hoist? bool)
+  ;; LICM-PART: WHICH globals it may take a handle out for -- every eligible
+  ;; one when the whole set fits the budget, the most-referenced ones that do
+  ;; when it does not (opt-licm-global-header-admit).
+  (header-admit opt_i64_i64_map.Map)
   ;; Whether explicit ownership capabilities may take descriptor chains out
   ;; of THIS loop. Soundness is carried by LoadOwned; this is only its measured
   ;; register-pressure gate.
@@ -26771,6 +26775,7 @@
   [frozen-hoist? : bool]
   [obj-mask : i64]
   [header-hoist? : bool]
+  [header-admit : opt_i64_i64_map.Map]
   [owned-hoist? : bool]) : OptLicmGlobalFacts
   (let
     [mod-ref : OptGlobalModRef cells.mod-ref]
@@ -26784,7 +26789,18 @@
       obj.index
       obj-mask
       header-hoist?
+      header-admit
       owned-hoist?)))
+
+;; LICM-PART: is `name` one of the globals this loop takes a handle out for?
+(define (opt-licm-global-header-admitted?
+  [facts : OptLicmGlobalFacts]
+  [name : i64]) : bool
+  (and
+    facts.header-hoist?
+    (opt_i64_i64_map.contains?
+      (& facts.header-admit)
+      (ir.compiler-ir-symbol-id name))))
 
 (define (opt-licm-global-facts-invariant?
   [facts : OptLicmGlobalFacts]
@@ -27899,7 +27915,11 @@
   [value : ir.CompilerIrValue]) : bool
   (match value
     [(ir.CompilerIrValue.Global name)
-      (and facts.header-hoist? (opt-licm-global-storage-invariant? facts name))]
+      (and
+        (opt-licm-global-header-admitted?
+          (compiler-opt-global-shared-view facts)
+          name)
+        (opt-licm-global-storage-invariant? facts name))]
     [_ false]))
 
 ;; The head of the chain, as an ADDRESS KIND.
@@ -27909,7 +27929,9 @@
   (match kind
     [(OptLicmPtrKind.GlobalSlot global)
       (and
-        facts.header-hoist?
+        (opt-licm-global-header-admitted?
+          (compiler-opt-global-shared-view facts)
+          global)
         (opt-licm-global-storage-invariant? facts global))]
     ;; A FROZEN global's cell word is the same address, classified more
     ;; strongly. P20's own gate has already refused this loop when
@@ -27918,7 +27940,9 @@
     ;; budget the frozen gate could not pay.
     [(OptLicmPtrKind.FrozenBoxSlot global)
       (and
-        facts.header-hoist?
+        (opt-licm-global-header-admitted?
+          (compiler-opt-global-shared-view facts)
+          global)
         (opt-licm-global-storage-invariant? facts global))]
     [_ false]))
 
@@ -32088,6 +32112,240 @@
         (compiler-opt-global-shared-view body-blocks))
       0)))
 
+;; LICM-PART: the globals this loop takes a handle out for, chosen under the
+;; budget instead of refused as a block. The gate above admitted the WHOLE
+;; eligible set or none of it; a loop whose live-ins already sit near the
+;; budget therefore kept every rip-relative handle reload it had, however
+;; hot, because the count of everything referenced did not fit. What fits is
+;; taken: every eligible global when `live-in + n` is within the budget, else
+;; the `budget - live-in` most-referenced ones (ties to the lower symbol id),
+;; none when the loop's own live-ins already fill it. Reference counts are the
+;; literal-offset geps off the global in the body and the preheader -- the
+;; preheader so the answer stays stable once a handle has moved out.
+(defstruct OptLicmHeaderAdmitScan
+  (counts opt_i64_i64_map.Map)
+  (ids OptI64List))
+
+(define (opt-licm-header-admit-scan-instr
+  [scan : OptLicmHeaderAdmitScan]
+  [instr : ir.CompilerIrInstr]) : OptLicmHeaderAdmitScan
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Gep _ base offset _)
+      (match (compiler-opt-global-shared-view offset)
+        [(ir.CompilerIrValue.I64 _)
+          (match (compiler-opt-global-shared-view base)
+            [(ir.CompilerIrValue.Global name)
+              (let
+                [key : i64 (ir.compiler-ir-symbol-id name)]
+                [counts : opt_i64_i64_map.Map scan.counts]
+                (match (opt_i64_i64_map.get (& counts) key)
+                  [(opt_i64_i64_map.LookupFound seen)
+                    (begin
+                      (opt_i64_i64_map.insert-ref! (&mut counts) key (+ seen 1))
+                      (OptLicmHeaderAdmitScan counts scan.ids))]
+                  [(opt_i64_i64_map.LookupMissing)
+                    (begin
+                      (opt_i64_i64_map.insert-ref! (&mut counts) key 1)
+                      (OptLicmHeaderAdmitScan
+                        counts
+                        (OptI64List.Cons key (box scan.ids))))]))]
+            [_ scan])]
+        [_ scan])]
+    [_ scan]))
+
+(define (opt-licm-header-admit-scan-seq
+  [scan : OptLicmHeaderAdmitScan]
+  [instrs : ir.CompilerIrInstrSeq]
+  [position : i64]
+  [count : i64]) : OptLicmHeaderAdmitScan
+  (if (>= position count)
+    scan
+    (opt-licm-header-admit-scan-seq
+      (opt-licm-header-admit-scan-instr
+        scan
+        (ir.compiler-ir-instr-seq-ref
+          (compiler-opt-global-shared-view instrs)
+          position))
+      instrs
+      (+ position 1)
+      count)))
+
+(define (opt-licm-header-admit-scan-blocks
+  [scan : OptLicmHeaderAdmitScan]
+  [blocks : ir.CompilerIrBlockList]) : OptLicmHeaderAdmitScan
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) scan]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (opt-licm-header-admit-scan-blocks
+        (match (compiler-opt-global-shared-view block)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-licm-header-admit-scan-seq
+              scan
+              (compiler-opt-global-shared-view instrs)
+              0
+              (ir.compiler-ir-instr-seq-count instrs))])
+        (compiler-opt-box-shared-view rest))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-licm-header-admit-scan-blocks
+        scan
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; The eligible ids (storage the loop provably does not write), in scan order.
+(define (opt-licm-header-admit-eligible
+  [cells : OptGlobalCellSummary]
+  [clean? : bool]
+  [cell-writes : i64]
+  [obj-writes : i64]
+  [ids : OptI64List]
+  [acc : OptI64List]) : OptI64List
+  (match (compiler-opt-global-shared-view ids)
+    [(OptI64List.Nil) acc]
+    [(OptI64List.Cons name rest)
+      (opt-licm-header-admit-eligible
+        (compiler-opt-global-shared-view cells)
+        clean?
+        cell-writes
+        obj-writes
+        (compiler-opt-box-shared-view rest)
+        (if (opt-licm-global-storage-writable?
+          (compiler-opt-global-shared-view cells)
+          clean?
+          cell-writes
+          obj-writes
+          name)
+          acc
+          (OptI64List.Cons name (box acc))))]))
+
+(define (opt-licm-header-admit-len [ids : OptI64List] [acc : i64]) : i64
+  (match (compiler-opt-global-shared-view ids)
+    [(OptI64List.Nil) acc]
+    [(OptI64List.Cons _ rest)
+      (opt-licm-header-admit-len (compiler-opt-box-shared-view rest) (+ acc 1))]))
+
+(define (opt-licm-header-admit-all
+  [ids : OptI64List]
+  [out : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  (match (compiler-opt-global-shared-view ids)
+    [(OptI64List.Nil) out]
+    [(OptI64List.Cons name rest)
+      (let
+        [next : opt_i64_i64_map.Map out]
+        (begin
+          (opt_i64_i64_map.insert-ref! (&mut next) name 1)
+          (opt-licm-header-admit-all (compiler-opt-box-shared-view rest) next)))]))
+
+;; The best not-yet-picked id: the highest count, the lowest id among equals;
+;; -1 when every id is picked.
+(define (opt-licm-header-admit-best
+  [counts : opt_i64_i64_map.Map]
+  [picked : opt_i64_i64_map.Map]
+  [ids : OptI64List]
+  [best : i64]
+  [best-count : i64]) : i64
+  (match (compiler-opt-global-shared-view ids)
+    [(OptI64List.Nil) best]
+    [(OptI64List.Cons name rest)
+      (let
+        [count : i64
+          (match (opt_i64_i64_map.get (& counts) name)
+            [(opt_i64_i64_map.LookupFound seen) seen]
+            [(opt_i64_i64_map.LookupMissing) 0])]
+        [better? : bool
+          (and
+            (not (opt_i64_i64_map.contains? (& picked) name))
+            (or
+              (< best 0)
+              (> count best-count)
+              (and (= count best-count) (< name best))))]
+        (opt-licm-header-admit-best
+          (compiler-opt-global-shared-view counts)
+          (compiler-opt-global-shared-view picked)
+          (compiler-opt-box-shared-view rest)
+          (if better?
+            name
+            best)
+          (if better?
+            count
+            best-count)))]))
+
+(define (opt-licm-header-admit-pick
+  [counts : opt_i64_i64_map.Map]
+  [ids : OptI64List]
+  [k : i64]
+  [out : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  (if (<= k 0)
+    out
+    (let
+      [best : i64
+        (opt-licm-header-admit-best
+          (compiler-opt-global-shared-view counts)
+          (compiler-opt-global-shared-view out)
+          (compiler-opt-global-shared-view ids)
+          (- 0 1)
+          0)]
+      (if (< best 0)
+        out
+        (let
+          [next : opt_i64_i64_map.Map out]
+          (begin
+            (opt_i64_i64_map.insert-ref! (&mut next) best 1)
+            (opt-licm-header-admit-pick
+              (compiler-opt-global-shared-view counts)
+              (compiler-opt-global-shared-view ids)
+              (- k 1)
+              next)))))))
+
+(define (opt-licm-global-header-admit
+  [cells : OptGlobalCellSummary]
+  [preheader : i64]
+  [clean? : bool]
+  [cell-writes : i64]
+  [obj-writes : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [body-blocks : ir.CompilerIrBlockList]
+  [live-in : i64]
+  [budget : i64]) : opt_i64_i64_map.Map
+  (if (opt-global-obj-any? obj-writes)
+    (opt_i64_i64_map.with-capacity 1)
+    (let
+      [body-scan : OptLicmHeaderAdmitScan
+        (opt-licm-header-admit-scan-blocks
+          (OptLicmHeaderAdmitScan
+            (opt_i64_i64_map.with-capacity 8)
+            (OptI64List.Nil))
+          body-blocks)]
+      [scan : OptLicmHeaderAdmitScan
+        (match (opt-cfg-find-block blocks preheader)
+          [(OptMaybeBlock.No) body-scan]
+          [(OptMaybeBlock.Some block)
+            (match (compiler-opt-global-shared-view block)
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (opt-licm-header-admit-scan-seq
+                  body-scan
+                  (compiler-opt-global-shared-view instrs)
+                  0
+                  (ir.compiler-ir-instr-seq-count instrs))])])]
+      [eligible : OptI64List
+        (opt-licm-header-admit-eligible
+          (compiler-opt-global-shared-view cells)
+          clean?
+          cell-writes
+          obj-writes
+          (compiler-opt-global-shared-view scan.ids)
+          (OptI64List.Nil))]
+      [n : i64
+        (opt-licm-header-admit-len (compiler-opt-global-shared-view eligible) 0)]
+      [room : i64 (- budget live-in)]
+      (if (<= (+ live-in (* n (opt-licm-global-header-words))) budget)
+        (opt-licm-header-admit-all
+          (compiler-opt-global-shared-view eligible)
+          (opt_i64_i64_map.with-capacity 8))
+        (opt-licm-header-admit-pick
+          (compiler-opt-global-shared-view scan.counts)
+          (compiler-opt-global-shared-view eligible)
+          (/ room (opt-licm-global-header-words))
+          (opt_i64_i64_map.with-capacity 8))))))
+
 (define (opt-licm-global-header-hoist?
   [header : i64]
   [frozen-hoist? : bool]
@@ -33177,6 +33435,18 @@
             late?
             side-exit-kind
             (compiler-opt-global-shared-view body-blocks))]
+        ;; LICM-PART: the handles this loop takes out under the budget.
+        [header-admit : opt_i64_i64_map.Map
+          (opt-licm-global-header-admit
+            (compiler-opt-global-shared-view global-cells)
+            preheader
+            globals-clean?
+            cell-writes
+            obj-writes
+            (compiler-opt-global-shared-view blocks)
+            (compiler-opt-global-shared-view body-blocks)
+            loop-live-in
+            (opt-licm-global-header-live-in-budget))]
         [globals : OptLicmGlobalFacts
           (opt-licm-global-facts
             globals-clean?
@@ -33188,8 +33458,9 @@
               (opt-natural-loop-header (compiler-opt-global-shared-view loop))
               frozen-hoist?
               side-exit-kind
-              header-count
+              (opt_i64_i64_map.len (& header-admit))
               loop-live-in)
+            (compiler-opt-global-shared-view header-admit)
             owned-hoist?)]
         [globals-promote-clean? : bool
           (and

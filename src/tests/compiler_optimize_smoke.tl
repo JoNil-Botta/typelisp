@@ -4789,6 +4789,13 @@
     "the multiblock gate admits an aggregate-building body and names the clause that refuses each neighbour"))
 
 (test
+  thread-phi-chain
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-thread-phi-chain-self-test)
+    42
+    "a phi merge threads through the compare tree it feeds on the facts each edge carries, and collapses onto the exit that reads it"))
+
+(test
   inline-one-block-shape
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-one-block-shape-ok?)

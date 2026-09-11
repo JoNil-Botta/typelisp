@@ -95139,6 +95139,254 @@
     blocks
     (compiler_ir_types.compiler-ir-label label)))
 
+;; --- JT-2: a phi merge threaded through the compare tree it feeds ----------
+;;
+;; `sccp-state-bind` in miniature. Params: %0 old.tag, %1 new.tag, %2 old.kind,
+;; %3 new.kind. The join arms build `merged` (%8 tag, %9 kind) and meet at
+;; `merge`, which jumps into the value-eq tree c1..c6 exiting to `same` or
+;; `bind`; `bind` reads %9. c1 is the gvn-unified form, `[branch %4]` on the
+;; compare the entry already made.
+(define (opt-jt2-var [var : i64]) : compiler_ir_types.CompilerIrValue
+  (compiler_ir_types.CompilerIrValue.Var var))
+
+(define (opt-jt2-lit [literal : i64]) : compiler_ir_types.CompilerIrValue
+  (compiler_ir_types.CompilerIrValue.I64 literal))
+
+(define (opt-jt2-eq
+  [dst : i64]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BinOp
+    dst
+    (compiler_ir_types.CompilerIrBinOp.Eq)
+    lhs
+    rhs
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-jt2-input
+  [value : compiler_ir_types.CompilerIrValue]
+  [label : String]
+  [rest : compiler_ir_types.CompilerIrPhiInputSeq]) : compiler_ir_types.CompilerIrPhiInputSeq
+  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+    value
+    (compiler_ir_types.compiler-ir-label label)
+    rest))
+
+(define (opt-jt2-phi
+  [dst : i64]
+  [inputs : compiler_ir_types.CompilerIrPhiInputSeq]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Phi
+    dst
+    inputs
+    (compiler_ast_types.AstType.I64)))
+
+;; The five join-arm inputs of the tag phi (%8) and the kind phi (%9).
+(define (opt-jt2-tag-inputs) : compiler_ir_types.CompilerIrPhiInputSeq
+  (opt-jt2-input
+    (opt-jt2-lit 2)
+    "old_unknown"
+    (opt-jt2-input
+      (opt-jt2-lit 1)
+      "ou_const"
+      (opt-jt2-input
+        (opt-jt2-lit 2)
+        "old_rest"
+        (opt-jt2-input
+          (opt-jt2-lit 1)
+          "old_const"
+          (opt-jt2-input
+            (opt-jt2-lit 2)
+            "oc_diff"
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))))))
+
+(define (opt-jt2-kind-inputs) : compiler_ir_types.CompilerIrPhiInputSeq
+  (opt-jt2-input
+    (opt-jt2-lit 0)
+    "old_unknown"
+    (opt-jt2-input
+      (opt-jt2-var 3)
+      "ou_const"
+      (opt-jt2-input
+        (opt-jt2-lit 0)
+        "old_rest"
+        (opt-jt2-input
+          (opt-jt2-var 2)
+          "old_const"
+          (opt-jt2-input
+            (opt-jt2-lit 0)
+            "oc_diff"
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))))))
+
+;; With `same-reads?` the `same` exit reads the kind phi too, so the merge's
+;; definitions are live in two exits and the rail must refuse the site.
+(define (opt-jt2-blocks [same-reads? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-pcf-block
+      "entry"
+      (opt-test-instrs
+        (opt-jt2-eq 4 (opt-jt2-var 0) (opt-jt2-lit 0))
+        (opt-pcc-branch 4 "old_unknown" "old_rest")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-pcf-block
+        "old_unknown"
+        (opt-test-instrs
+          (opt-jt2-eq 5 (opt-jt2-var 1) (opt-jt2-lit 2))
+          (opt-pcc-branch 5 "merge" "ou_const")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-pcf-block "ou_const" (opt-test-instrs (opt-pcf-jump "merge")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-pcf-block
+            "old_rest"
+            (opt-test-instrs
+              (opt-jt2-eq 6 (opt-jt2-var 0) (opt-jt2-lit 2))
+              (opt-pcc-branch 6 "merge" "old_const")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-pcf-block
+              "old_const"
+              (opt-test-instrs
+                (opt-jt2-eq 7 (opt-jt2-var 2) (opt-jt2-var 3))
+                (opt-pcc-branch 7 "merge" "oc_diff")))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-pcf-block "oc_diff" (opt-test-instrs (opt-pcf-jump "merge")))
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-pcf-block
+                  "merge"
+                  (opt-test-instrs
+                    (opt-jt2-phi 8 (opt-jt2-tag-inputs))
+                    (opt-jt2-phi 9 (opt-jt2-kind-inputs))
+                    (opt-pcf-jump "c1")))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (opt-pcf-block
+                    "c1"
+                    (opt-test-instrs (opt-pcc-branch 4 "c2" "c3")))
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (opt-pcf-block
+                      "c2"
+                      (opt-test-instrs
+                        (opt-jt2-eq 10 (opt-jt2-var 8) (opt-jt2-lit 0))
+                        (opt-pcc-branch 10 "same" "bind")))
+                    (compiler_ir_types.compiler-ir-block-cons
+                      (opt-pcf-block
+                        "c3"
+                        (opt-test-instrs
+                          (opt-jt2-eq 11 (opt-jt2-var 0) (opt-jt2-lit 2))
+                          (opt-pcc-branch 11 "c4" "c5")))
+                      (compiler_ir_types.compiler-ir-block-cons
+                        (opt-pcf-block
+                          "c4"
+                          (opt-test-instrs
+                            (opt-jt2-eq 12 (opt-jt2-var 8) (opt-jt2-lit 2))
+                            (opt-pcc-branch 12 "same" "bind")))
+                        (compiler_ir_types.compiler-ir-block-cons
+                          (opt-pcf-block
+                            "c5"
+                            (opt-test-instrs
+                              (opt-jt2-eq 13 (opt-jt2-var 8) (opt-jt2-lit 1))
+                              (opt-pcc-branch 13 "c6" "bind")))
+                          (compiler_ir_types.compiler-ir-block-cons
+                            (opt-pcf-block
+                              "c6"
+                              (opt-test-instrs
+                                (opt-jt2-eq 14 (opt-jt2-var 2) (opt-jt2-var 9))
+                                (opt-pcc-branch 14 "same" "bind")))
+                            (compiler_ir_types.compiler-ir-block-cons
+                              (opt-pcf-block
+                                "same"
+                                (if same-reads?
+                                  (opt-test-instrs
+                                    (opt-pcc-mov 15 9)
+                                    (opt-pcf-return true))
+                                  (opt-test-instrs (opt-pcf-return true))))
+                              (compiler_ir_types.compiler-ir-block-cons
+                                (opt-pcf-block
+                                  "bind"
+                                  (opt-test-instrs
+                                    (opt-pcc-mov 15 9)
+                                    (opt-pcf-return false)))
+                                (compiler_ir_types.CompilerIrBlockList.Nil)))))))))))))))))
+
+;; The true target of the branch closing `label`, or `label-none`.
+(define (opt-jt2-branch-true-target
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : i64
+  (let
+    [block : compiler_ir_types.CompilerIrBlock (opt-pcf-block-of blocks label)]
+    [count : i64
+      (opt-block-instr-count
+        (compiler_optimize.compiler-opt-global-shared-view block))]
+    (if (= count 0)
+      (compiler_ir_types.compiler-ir-label-none)
+      (match (opt-block-instr-at block (- count 1))
+        [(compiler_ir_types.CompilerIrInstr.Branch _ true-label _) true-label]
+        [_ (compiler_ir_types.compiler-ir-label-none)]))))
+
+(define (opt-jt2-branches-true-to?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]
+  [target : String]) : bool
+  (=
+    (opt-jt2-branch-true-target blocks label)
+    (compiler_ir_types.compiler-ir-label target)))
+
+;; Returns 42 only when the edges the facts decide leave, the rest collapse
+;; onto the one exit that reads the merge, and the two-reader variant refuses.
+(define (compiler-optimize-thread-phi-chain-self-test) : i64
+  (let
+    [threaded : compiler_ir_types.CompilerIrBlockList
+      (opt-thread-pass-blocks (opt-jt2-blocks false) 4)]
+    (cond
+      ;; old Overdefined: `old.tag != 0` from the entry's false edge, `== 2`
+      ;; from its own branch, merged tag 2 -- `same`.
+      [(not (opt-thread-pass-changed? (opt-jt2-blocks false) 4)) 1]
+      [(not
+          (opt-jt2-branches-true-to?
+            (compiler_ir_types.compiler-ir-global-shared-view threaded)
+            "old_rest"
+            "same"))
+        2]
+      ;; old Const and equal: merged tag 1 and `eq %2, %9` with %9 = %2 on
+      ;; this edge -- `same`.
+      [(not
+          (opt-jt2-branches-true-to?
+            (compiler_ir_types.compiler-ir-global-shared-view threaded)
+            "old_const"
+            "same"))
+        3]
+      ;; the three edges that bind stay, and the merge jumps to `bind` itself
+      [(not
+          (opt-pcf-jumps-to?
+            (compiler_ir_types.compiler-ir-global-shared-view threaded)
+            "merge"
+            "bind"))
+        4]
+      [(not
+          (=
+            (opt-pcf-input-count
+              (opt-pcf-phi-inputs
+                (compiler_ir_types.compiler-ir-global-shared-view threaded)
+                "merge"
+                0))
+            3))
+        5]
+      [(not
+          (opt-pcf-jumps-to?
+            (compiler_ir_types.compiler-ir-global-shared-view threaded)
+            "ou_const"
+            "merge"))
+        6]
+      ;; the tree is entered from nowhere and the cleanup deletes it
+      [(opt-pcm-has-block?
+          (compiler_ir_types.compiler-ir-global-shared-view threaded)
+          "c1")
+        7]
+      [(opt-pcm-has-block?
+          (compiler_ir_types.compiler-ir-global-shared-view threaded)
+          "c6")
+        8]
+      ;; readers of the merge in two exits: no exit can take a threaded edge
+      [(opt-thread-pass-changed? (opt-jt2-blocks true) 4) 9]
+      [else 42])))
+
 ;; Returns 42 only when every fold, every refusal and every repair holds.
 (define (compiler-optimize-phi-cmp-fold-chain-self-test) : i64
   (let

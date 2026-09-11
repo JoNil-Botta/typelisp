@@ -46695,6 +46695,159 @@
       [(opt-block-list-has-label? negative-blocks outer-clone) 13]
       [else 42])))
 
+;; --- LU-1: any invariant branch the body tests twice --------------------------
+;;
+;; A rotated loop with no nested loop: `a` and `b` both branch on the invariant
+;; `sel`. With `twice?` both test it and the loop unswitches -- the original
+;; side folds both to their true arms, the clone both to their false arms; with
+;; one test the dispatch would cost more than a trip saves and the loop is left
+;; alone. Inside the inliner's priced prefix the rail stays off.
+(define (opt-lu1-test-params) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "cond"
+      (compiler_ast_types.AstType.Bool)
+      0)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "sel"
+        (compiler_ast_types.AstType.Bool)
+        1)
+      (compiler_ir_types.compiler-ir-param-seq-empty))))
+
+(define (opt-lu1-test-branch [var : i64] [on-true : String] [on-false : String]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Branch
+    (compiler_ir_types.CompilerIrValue.Var var)
+    (compiler_ir_types.compiler-ir-label on-true)
+    (compiler_ir_types.compiler-ir-label on-false)))
+
+(define (opt-lu1-test-blocks [twice? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-pcf-block
+      "entry"
+      (opt-test-instrs (opt-lu1-test-branch 0 "pre" "exit")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-pcf-block "pre" (opt-test-instrs (opt-pcf-jump "head")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-pcf-block "head" (opt-test-instrs (opt-pcf-jump "a")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-pcf-block
+            "a"
+            (opt-test-instrs (opt-lu1-test-branch 1 "a_t" "a_f")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-pcf-block "a_t" (opt-test-instrs (opt-pcf-jump "b")))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-pcf-block "a_f" (opt-test-instrs (opt-pcf-jump "b")))
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-pcf-block
+                  "b"
+                  (if twice?
+                    (opt-test-instrs (opt-lu1-test-branch 1 "b_t" "b_f"))
+                    (opt-test-instrs (opt-pcf-jump "b_t"))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (opt-pcf-block "b_t" (opt-test-instrs (opt-pcf-jump "latch")))
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (opt-pcf-block
+                      "b_f"
+                      (opt-test-instrs (opt-pcf-jump "latch")))
+                    (compiler_ir_types.compiler-ir-block-cons
+                      (opt-pcf-block
+                        "latch"
+                        (opt-test-instrs (opt-lu1-test-branch 0 "head" "exit")))
+                      (compiler_ir_types.compiler-ir-block-cons
+                        (opt-pcf-block
+                          "exit"
+                          (opt-test-instrs
+                            (compiler_ir_types.CompilerIrInstr.Return
+                              (compiler_ir_types.CompilerIrMaybeValue.Some
+                                (compiler_ir_types.CompilerIrValue.I64 0)))))
+                        (compiler_ir_types.CompilerIrBlockList.Nil)))))))))))))
+
+(define (opt-lu1-test-function [twice? : bool]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "licm_unswitch_general")
+    (opt-lu1-test-params)
+    (compiler_ast_types.AstType.I64)
+    2
+    (opt-lu1-test-blocks twice?)))
+
+(define (compiler-optimize-licm-unswitch-general-self-test) : i64
+  (let
+    [positive : compiler_ir_types.CompilerIrFunction
+      (opt-licm-unswitch-test-run (opt-lu1-test-function true))]
+    [positive-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view positive))]
+    [once : compiler_ir_types.CompilerIrFunction
+      (opt-licm-unswitch-test-run (opt-lu1-test-function false))]
+    [once-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view once))]
+    [_enter : unit (compiler_optimize.compiler-opt-late-sweep-suppress-enter!)]
+    [priced : compiler_ir_types.CompilerIrFunction
+      (opt-licm-unswitch-test-run (opt-lu1-test-function true))]
+    [_leave : unit (compiler_optimize.compiler-opt-late-sweep-suppress-leave!)]
+    [priced-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view priced))]
+    [head-clone : i64 (compiler_ir_types.compiler-ir-label "head__licm_false")]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view positive))))
+        1]
+      [(not
+          (opt-block-list-has-label?
+            (compiler_optimize.compiler-opt-global-shared-view positive-blocks)
+            head-clone))
+        2]
+      ;; the dispatch: `pre` branches between the two copies
+      [(not
+          (opt-loop-rotation-successors?
+            (compiler_optimize.compiler-opt-global-shared-view positive-blocks)
+            (compiler_ir_types.compiler-ir-label "pre")
+            (compiler_ir_types.compiler-ir-label "head")
+            head-clone))
+        3]
+      ;; both tests fold on the original side ...
+      [(not
+          (opt-licm-unswitch-one-successor?
+            (compiler_optimize.compiler-opt-global-shared-view positive-blocks)
+            (compiler_ir_types.compiler-ir-label "a")
+            (compiler_ir_types.compiler-ir-label "a_t")))
+        4]
+      [(not
+          (opt-licm-unswitch-one-successor?
+            (compiler_optimize.compiler-opt-global-shared-view positive-blocks)
+            (compiler_ir_types.compiler-ir-label "b")
+            (compiler_ir_types.compiler-ir-label "b_t")))
+        5]
+      ;; ... and in the clone
+      [(not
+          (opt-licm-unswitch-one-successor?
+            (compiler_optimize.compiler-opt-global-shared-view positive-blocks)
+            (compiler_ir_types.compiler-ir-label "a__licm_false")
+            (compiler_ir_types.compiler-ir-label "a_f__licm_false")))
+        6]
+      [(not
+          (opt-licm-unswitch-one-successor?
+            (compiler_optimize.compiler-opt-global-shared-view positive-blocks)
+            (compiler_ir_types.compiler-ir-label "b__licm_false")
+            (compiler_ir_types.compiler-ir-label "b_f__licm_false")))
+        7]
+      ;; one test: left alone
+      [(opt-block-list-has-label?
+          (compiler_optimize.compiler-opt-global-shared-view once-blocks)
+          head-clone)
+        8]
+      ;; inside the priced prefix: left alone
+      [(opt-block-list-has-label?
+          (compiler_optimize.compiler-opt-global-shared-view priced-blocks)
+          head-clone)
+        9]
+      [else 42])))
+
 ;; --- the invariant dispatch chain -------------------------------------------
 ;;
 ;; `dispatch-a` and `dispatch-b` are the two-test dispatch an inlined, versioned

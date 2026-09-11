@@ -34364,6 +34364,12 @@
               [_ (ir.CompilerIrValue.Bool true)])
             (ir.CompilerIrValue.Bool true))])]))
 
+;; The variable a selected branch tests, or -1 for a literal condition.
+(define (opt-licm-unswitch-cond-var [cond : ir.CompilerIrValue]) : i64
+  (match (compiler-opt-global-shared-view cond)
+    [(ir.CompilerIrValue.Var var) var]
+    [_ (- 0 1)]))
+
 (define (opt-licm-unswitch-chain-from
   [blocks : ir.CompilerIrBlockList]
   [loops : OptNaturalLoopList]
@@ -34372,6 +34378,7 @@
   [header : i64]
   [latch : i64]
   [origin : i64]
+  [cond-var : i64]
   [label : i64]
   [acc : OptLabelSet]
   [fuel : i64]) : OptLabelSet
@@ -34404,10 +34411,11 @@
                     header
                     latch
                     origin
+                    cond-var
                     target
                     acc
                     (- fuel 1))]
-                [(ir.CompilerIrInstr.Branch _ _ _)
+                [(ir.CompilerIrInstr.Branch cond _ _)
                   (let
                     [taken : i64
                       (opt-licm-unswitch-dispatch-taken
@@ -34415,6 +34423,15 @@
                         (compiler-opt-global-shared-view body-labels)
                         (compiler-opt-global-shared-view loop-defs)
                         label)]
+                    ;; LU-1: a dispatch block that re-tests the selected
+                    ;; condition is no new conjunct -- the same-condition fold
+                    ;; decides it on both sides -- so the walk passes through
+                    ;; it without adding it, and a run of such re-tests leaves
+                    ;; the chain empty, which is what lets the clone fold.
+                    [same? : bool
+                      (match (compiler-opt-global-shared-view cond)
+                        [(ir.CompilerIrValue.Var var) (= var cond-var)]
+                        [_ false])]
                     (if (< taken 0)
                       acc
                       (opt-licm-unswitch-chain-from
@@ -34425,8 +34442,11 @@
                         header
                         latch
                         origin
+                        cond-var
                         taken
-                        (opt-label-add acc label)
+                        (if same?
+                          acc
+                          (opt-label-add acc label))
                         (- fuel 1))))]
                 [_ acc])
               acc)])])))
@@ -34470,11 +34490,42 @@
         (ir.compiler-ir-instr-builder-to-seq builder)
         result))))
 
+;; LU-1: how many Branch terminators in `blocks` test `var`.
+(define (opt-licm-unswitch-cond-branch-count
+  [blocks : ir.CompilerIrBlockList]
+  [var : i64]) : i64
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) 0]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (+
+        (match (compiler-opt-global-shared-view block)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (let
+              [count : i64
+                (ir.compiler-ir-instr-seq-count
+                  (compiler-opt-global-shared-view instrs))]
+              (if (= count 0)
+                0
+                (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+                  [(ir.CompilerIrInstr.Branch (ir.CompilerIrValue.Var v) _ _)
+                    (if (= v var)
+                      1
+                      0)]
+                  [_ 0])))])
+        (opt-licm-unswitch-cond-branch-count
+          (compiler-opt-box-shared-view rest)
+          var))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-licm-unswitch-cond-branch-count
+        (ir.compiler-ir-block-seq-to-list seq)
+        var)]))
+
 (define (opt-licm-unswitch-find-instrs
   [loops : OptNaturalLoopList]
   [header : i64]
   [body-labels : OptLabelSet]
   [loop-defs : opt_i64_i64_map.Map]
+  [body-blocks-all : ir.CompilerIrBlockList]
   [label : i64]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]) : OptMaybeLicmUnswitchShape
@@ -34493,23 +34544,43 @@
               (opt-label-contains
                 (compiler-opt-global-shared-view body-labels)
                 false-label)
-              (or
-                (opt-licm-unswitch-target-enters-nested-loop?
-                  (compiler-opt-global-shared-view loops)
-                  header
-                  (compiler-opt-global-shared-view body-labels)
-                  true-label)
-                (opt-licm-unswitch-target-enters-nested-loop?
-                  (compiler-opt-global-shared-view loops)
-                  header
-                  (compiler-opt-global-shared-view body-labels)
-                  false-label))
+              ;; A branch that enters a nested loop (the entry guard this
+              ;; pass was written for), or -- LU-1 -- any invariant branch the
+              ;; body tests at least TWICE. The dispatch the unswitch adds runs
+              ;; once per loop entry and the saving once per test per
+              ;; iteration, so two tests pay for the dispatch on the first trip
+              ;; (`rg-merge-run!`'s three `from-order` tests: regalloc_greedy
+              ;; -2.1%); one test does not on the short-trip loops the corpus
+              ;; has (ssa-verify's per-instruction use scan, 1-2 trips per
+              ;; entry: +0.3% when admitted). LU-1's rail is read outside the
+              ;; inliner's priced prefix only, so no calibrated verdict moves
+              ;; (inside it, `get-value-or` into hashmap_get's main flipped to
+              ;; a revert and the row paid +15.8%).
               (match (compiler-opt-global-shared-view cond)
                 [(ir.CompilerIrValue.Var var)
-                  (not
-                    (opt-used-contains
-                      (compiler-opt-global-shared-view loop-defs)
-                      var))]
+                  (and
+                    (not
+                      (opt-used-contains
+                        (compiler-opt-global-shared-view loop-defs)
+                        var))
+                    (or
+                      (opt-licm-unswitch-target-enters-nested-loop?
+                        (compiler-opt-global-shared-view loops)
+                        header
+                        (compiler-opt-global-shared-view body-labels)
+                        true-label)
+                      (opt-licm-unswitch-target-enters-nested-loop?
+                        (compiler-opt-global-shared-view loops)
+                        header
+                        (compiler-opt-global-shared-view body-labels)
+                        false-label)
+                      (and
+                        (not (compiler-opt-late-sweep-suppressed?))
+                        (>=
+                          (opt-licm-unswitch-cond-branch-count
+                            (compiler-opt-global-shared-view body-blocks-all)
+                            var)
+                          2))))]
                 [_ false]))]
           (if candidate?
             ;; The caller fills the loop-wide fields after this local scan.
@@ -34530,6 +34601,7 @@
               header
               (compiler-opt-global-shared-view body-labels)
               (compiler-opt-global-shared-view loop-defs)
+              (compiler-opt-global-shared-view body-blocks-all)
               label
               (compiler-opt-global-shared-view instrs)
               (+ index 1))))]
@@ -34539,6 +34611,7 @@
           header
           body-labels
           loop-defs
+          body-blocks-all
           label
           instrs
           (+ index 1))])))
@@ -34549,6 +34622,7 @@
   [latch : i64]
   [body-labels : OptLabelSet]
   [loop-defs : opt_i64_i64_map.Map]
+  [body-blocks-all : ir.CompilerIrBlockList]
   [blocks : ir.CompilerIrBlockList]) : OptMaybeLicmUnswitchShape
   (match blocks
     [(ir.CompilerIrBlockList.Nil) (OptMaybeLicmUnswitchShape.No)]
@@ -34562,12 +34636,14 @@
               latch
               (compiler-opt-global-shared-view body-labels)
               (compiler-opt-global-shared-view loop-defs)
+              (compiler-opt-global-shared-view body-blocks-all)
               (compiler-opt-box-shared-view rest))
             (match (opt-licm-unswitch-find-instrs
               (compiler-opt-global-shared-view loops)
               header
               (compiler-opt-global-shared-view body-labels)
               (compiler-opt-global-shared-view loop-defs)
+              (compiler-opt-global-shared-view body-blocks-all)
               label
               (compiler-opt-global-shared-view instrs)
               0)
@@ -34580,6 +34656,7 @@
                   latch
                   body-labels
                   loop-defs
+                  body-blocks-all
                   (compiler-opt-box-shared-view rest))]))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-licm-unswitch-find-blocks
@@ -34588,6 +34665,7 @@
         latch
         body-labels
         loop-defs
+        body-blocks-all
         (ir.compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-licm-unswitch-loop-shape
@@ -34619,17 +34697,18 @@
                 (compiler-opt-global-shared-view body-blocks))))]
         (if (or
           (< (opt-label-count (compiler-opt-global-shared-view body-labels)) 3)
-          (> (opt-label-count (compiler-opt-global-shared-view body-labels)) 16)
+          ;; LU-1: the bounds were 16 blocks and 192 instructions, sized for an
+          ;; entry guard's outer body; `rg-merge-run!`'s merge loop, with
+          ;; `rg-weight-before?` inlined, is 41 blocks. The clone is cold on
+          ;; one side of the dispatch and hot on the other, so the bound is a
+          ;; code-size statement, not a pressure one. The refusal of bodies
+          ;; holding a `__bce_` label went with it: the corpus's unswitchable
+          ;; loops ARE versioned fast copies, and no row moved on the rule.
+          (> (opt-label-count (compiler-opt-global-shared-view body-labels)) 64)
           (>
             (ir.compiler-ir-block-list-instruction-count
               (compiler-opt-global-shared-view body-blocks))
-            192)
-          ;; Do not clone an already BCE-versioned nested loop. Its fast/slow
-          ;; dispatch is not a zero-trip entry guard, and duplicating both
-          ;; versions inflates function-wide live-range weights enough to spill
-          ;; the hot scalar SPMD loop.
-          (opt-licm-unswitch-has-versioned-label?
-            (compiler-opt-global-shared-view body-labels))
+            320)
           (not
             (opt-licm-unswitch-labels-contained?
               (compiler-opt-global-shared-view successors)
@@ -34653,6 +34732,7 @@
             latch
             (compiler-opt-global-shared-view body-labels)
             (compiler-opt-global-shared-view loop-defs)
+            (compiler-opt-global-shared-view body-blocks)
             (compiler-opt-global-shared-view body-blocks))
             [(OptMaybeLicmUnswitchShape.No) (OptMaybeLicmUnswitchShape.No)]
             [(OptMaybeLicmUnswitchShape.Some candidate)
@@ -34675,6 +34755,8 @@
                     header
                     latch
                     candidate.branch-label
+                    (opt-licm-unswitch-cond-var
+                      (compiler-opt-global-shared-view candidate.cond))
                     candidate.true-label
                     (if (=
                       (opt-label-count
@@ -34688,6 +34770,8 @@
                         header
                         latch
                         candidate.branch-label
+                        (opt-licm-unswitch-cond-var
+                          (compiler-opt-global-shared-view candidate.cond))
                         (opt-label-ref
                           (compiler-opt-global-shared-view successors)
                           0)
@@ -34899,13 +34983,23 @@
             ;; A negated conjunction is only a verdict on ONE conjunct, so the
             ;; clone resolves its branch exactly when the chain is empty.
             (if (and
-              (= label shape.branch-label)
-              (= cursor shape.branch-index)
-              (= (opt-label-count shape.chain-labels) 0))
-              (ir.CompilerIrInstr.Jump
-                (opt-licm-unswitch-clone-label
-                  shape.body-labels
-                  shape.false-label))
+              (= (opt-label-count shape.chain-labels) 0)
+              (or
+                (and (= label shape.branch-label) (= cursor shape.branch-index))
+                (opt-licm-unswitch-same-cond-branch?
+                  (compiler-opt-global-shared-view shape)
+                  (ir.compiler-ir-instr-seq-ref instrs cursor))))
+              (match (ir.compiler-ir-instr-seq-ref instrs cursor)
+                [(ir.CompilerIrInstr.Branch _ _ false-label)
+                  (ir.CompilerIrInstr.Jump
+                    (opt-licm-unswitch-clone-label
+                      shape.body-labels
+                      false-label))]
+                [_
+                  (ir.CompilerIrInstr.Jump
+                    (opt-licm-unswitch-clone-label
+                      shape.body-labels
+                      shape.false-label))])
               (opt-licm-unswitch-clone-instr
                 (ir.compiler-ir-instr-seq-ref instrs cursor)
                 (compiler-opt-global-shared-view remap)
@@ -34991,6 +35085,30 @@
   [tail : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (opt-instr-seq-concat prefix tail))
 
+;; LU-1: a Branch on the shape's own condition variable, wherever it stands
+;; in the body with both targets inside it, is decided the same way as the
+;; selected branch -- true on the original side, false in the clone when the
+;; dispatch is the condition alone.
+(define (opt-licm-unswitch-same-cond-branch?
+  [shape : OptLicmUnswitchShape]
+  [instr : ir.CompilerIrInstr]) : bool
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Branch
+        (ir.CompilerIrValue.Var var)
+        true-label
+        false-label)
+      (and
+        (opt-label-contains
+          (compiler-opt-global-shared-view shape.body-labels)
+          true-label)
+        (opt-label-contains
+          (compiler-opt-global-shared-view shape.body-labels)
+          false-label)
+        (match (compiler-opt-global-shared-view shape.cond)
+          [(ir.CompilerIrValue.Var cond-var) (= var cond-var)]
+          [_ false]))]
+    [_ false]))
+
 (define (opt-licm-unswitch-original-instrs
   [shape : OptLicmUnswitchShape]
   [label : i64]
@@ -35006,8 +35124,15 @@
         (begin
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
-            (if (and (= label shape.branch-label) (= cursor shape.branch-index))
-              (ir.CompilerIrInstr.Jump shape.true-label)
+            (if (or
+              (and (= label shape.branch-label) (= cursor shape.branch-index))
+              (opt-licm-unswitch-same-cond-branch?
+                (compiler-opt-global-shared-view shape)
+                (ir.compiler-ir-instr-seq-ref instrs cursor)))
+              (match (ir.compiler-ir-instr-seq-ref instrs cursor)
+                [(ir.CompilerIrInstr.Branch _ true-label _)
+                  (ir.CompilerIrInstr.Jump true-label)]
+                [_ (ir.CompilerIrInstr.Jump shape.true-label)])
               ;; Every collected conjunct holds on this side, so each chain
               ;; block's Branch is the Jump it always takes here.
               (if (opt-label-contains shape.chain-labels label)
@@ -35338,6 +35463,17 @@
                 (if (not changed)
                   (OptFunctionCtxResult.Result func context)
                   (let
+                    [_trace : unit
+                      (if (and
+                        compiler-opt-debug-trace-passes
+                        (not compiler-opt-debug-suppressed?))
+                        (io.print-error
+                          (str_cat.str-cat
+                            (str_cat.str-cat
+                              "licm-unswitch|"
+                              (ir.compiler-ir-symbol-text name))
+                            "|unswitched\n"))
+                        unit)]
                     [simplified : ir.CompilerIrBlockList
                       (opt-cfg-simplify-blocks next)]
                     [rewritten : ir.CompilerIrFunction

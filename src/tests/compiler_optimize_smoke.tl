@@ -3484,6 +3484,10 @@
       "compiler-optimize-licm-unswitch-chain-self-test"
       (compiler_optimize_tests.compiler-optimize-licm-unswitch-chain-self-test)
       42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-licm-unswitch-general-self-test"
+      (compiler_optimize_tests.compiler-optimize-licm-unswitch-general-self-test)
+      42)
     (cfg
       test
       (compiler_optimize_tests.compiler-optimize-self-test-require-i64!

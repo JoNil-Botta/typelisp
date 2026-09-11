@@ -315,9 +315,14 @@ Vec bang place macros as available yet.
   independent close outcomes, never raw errno or descriptors. Existing child
   directories can be reopened without mutation through the same flags,
   resolution policy, kind verification, and exact-once close discipline used
-  after directory creation. Bounded reads
-  allocate at most one MiB per call, report positive short reads separately
-  from zero-byte EOF, and support descriptor metadata/exact-length checks. File
+  after directory creation. The convenience
+  chunk reader allocates at most one MiB per call. Its reusable alternative
+  fills an exclusive initialized mutable byte view, returns only typed scalar
+  operation/count/EOF/short metadata, and performs no per-read allocation when
+  called directly in a loop over one retained view. Both readers report
+  positive short progress separately from zero-byte EOF, reject requests above
+  the view or one-MiB ceiling before I/O, and support descriptor metadata and
+  exact-length checks. File
   finish writes an exact promised byte count with partial-write/EINTR handling,
   applies `0644` or `0755`, optionally flushes, and closes exactly once.
   Descriptor-relative `renameat` provides atomic replace-existing publication;

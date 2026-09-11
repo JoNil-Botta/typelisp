@@ -3516,6 +3516,10 @@
       (compiler_optimize_tests.compiler-optimize-induction-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-induction-add-inv-self-test"
+      (compiler_optimize_tests.compiler-optimize-induction-add-inv-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-lftr-self-test"
       (compiler_optimize_tests.compiler-optimize-lftr-self-test)
       42)

@@ -48572,6 +48572,169 @@
                       (compiler_ir_types.CompilerIrValue.Var 3)))))
               (compiler_ir_types.CompilerIrBlockList.Nil))))))))
 
+;; IND-BASE. `%4 = add %2, (mul %3, scale)` -- the strided index off an
+;; invariant base -- read by a gep; with `invariant?` false the base is
+;; defined inside the loop (a `mov` of the counter) and nothing may derive.
+(define (opt-induction-add-inv-blocks [scale : i64] [invariant? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "loop"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Phi
+            3
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-label "exit"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "body")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Mov
+              9
+              (if invariant?
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.CompilerIrValue.Var 3))
+              (compiler_ast_types.AstType.I64))
+            ;; scale 1 adds the counter itself (a `mul i, 1` never survives
+            ;; the folder); the product var is then an unread `mov`
+            (if (= scale 1)
+              (compiler_ir_types.CompilerIrInstr.Mov
+                7
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                7
+                (compiler_ir_types.CompilerIrBinOp.Mul)
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.CompilerIrValue.I64 scale)
+                (compiler_ast_types.AstType.I64)))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              4
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (if invariant?
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.CompilerIrValue.Var 9))
+              (if (= scale 1)
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.CompilerIrValue.Var 7))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Gep
+              8
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Load
+              6
+              (compiler_ir_types.CompilerIrValue.Var 8)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              5
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "loop"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 3)))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; IND-BASE: the sum becomes a `mov` off a derived phi (two phis: the counter
+;; and the sum -- the product yields to the sum rather than deriving its own).
+;; The plain `c + i` sum is refused (a loop-live phi for one add), and with
+;; the base defined inside the loop the add stays while the product still
+;; derives its own phi as before.
+(define (compiler-optimize-induction-add-inv-self-test) : i64
+  (let
+    [scaled-func : compiler_ir_types.CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-add-inv-blocks 3 true))]
+    [scaled : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view scaled-func))]
+    [unit-func : compiler_ir_types.CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-add-inv-blocks 1 true))]
+    [unit-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view unit-func))]
+    [local-func : compiler_ir_types.CompilerIrFunction
+      (opt-induction-optimized-function (opt-induction-add-inv-blocks 3 false))]
+    [local-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view local-func))]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view scaled-func))))
+        1]
+      [(not
+          (=
+            (opt-count-phi-blocks
+              (compiler_ir_types.compiler-ir-global-shared-view scaled))
+            2))
+        2]
+      [(=
+          (opt-blocks-mov-src-var
+            (compiler_ir_types.compiler-ir-global-shared-view scaled)
+            4
+            (- 0 1))
+          (- 0 1))
+        3]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view unit-func))))
+        4]
+      [(not
+          (=
+            (opt-count-phi-blocks
+              (compiler_ir_types.compiler-ir-global-shared-view unit-blocks))
+            1))
+        5]
+      [(not
+          (=
+            (opt-blocks-mov-src-var
+              (compiler_ir_types.compiler-ir-global-shared-view unit-blocks)
+              4
+              (- 0 1))
+            (- 0 1)))
+        6]
+      [(not
+          (=
+            (opt-count-phi-blocks
+              (compiler_ir_types.compiler-ir-global-shared-view local-blocks))
+            2))
+        7]
+      [(not
+          (=
+            (opt-blocks-mov-src-var
+              (compiler_ir_types.compiler-ir-global-shared-view local-blocks)
+              4
+              (- 0 1))
+            (- 0 1)))
+        8]
+      [else 42])))
+
 (define (compiler-optimize-induction-self-test) : i64
   (let
     [blocks : compiler_ir_types.CompilerIrBlockList

@@ -36431,7 +36431,13 @@
   ;; scaled recurrence, not an affine phi+const): base, scale, element type.
   ;; The derived phi is the ADDRESS itself, stepping step*scale elements per
   ;; iteration, which folds the fetch into the load's addressing mode.
-  (GepScaled ir.CompilerIrValue i64 ast.AstType))
+  (GepScaled ir.CompilerIrValue i64 ast.AstType)
+  ;; IND-BASE. `add c, (mul phi, scale)` or `add c, phi` with `c` loop-invariant:
+  ;; the strided index `c + i*scale` a walk over rows of `scale` words computes
+  ;; on every trip (regalloc's union entries, sccp's token rows). The derived
+  ;; phi is the sum itself, seeded `c + start*scale` and stepping step*scale,
+  ;; which retires the add and, once nothing else reads it, the product.
+  (AddInv ir.CompilerIrValue i64 ast.AstType))
 
 (defenum OptInductionDerivedList
   (Nil)
@@ -37107,6 +37113,139 @@
         [_ (option_i64.None)])]
     [_ (option_i64.None)]))
 
+;; IND-BASE. The (invariant, var) split of an i64 `add`: one operand a var
+;; defined outside the loop, the other a var; `None` otherwise. The var side
+;; is what may be the counter or one of its products.
+(defenum OptInductionAddInvSplit
+  (No)
+  (Some ir.CompilerIrValue i64))
+
+(define (opt-induction-add-inv-split
+  [loop-defs : opt_i64_i64_map.Map]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [ty : ast.AstType]) : OptInductionAddInvSplit
+  (if (not (opt-induction-i64-type? ty))
+    (OptInductionAddInvSplit.No)
+    (match lhs
+      [(ir.CompilerIrValue.Var l)
+        (match rhs
+          [(ir.CompilerIrValue.Var r)
+            (let
+              [l-in? : bool
+                (opt-used-contains
+                  (compiler-opt-global-shared-view loop-defs)
+                  l)]
+              [r-in? : bool
+                (opt-used-contains
+                  (compiler-opt-global-shared-view loop-defs)
+                  r)]
+              (cond
+                [(and (not l-in?) r-in?)
+                  (OptInductionAddInvSplit.Some (ir.CompilerIrValue.Var l) r)]
+                [(and (not r-in?) l-in?)
+                  (OptInductionAddInvSplit.Some (ir.CompilerIrValue.Var r) l)]
+                [else (OptInductionAddInvSplit.No)]))]
+          [_ (OptInductionAddInvSplit.No)])]
+      [_ (OptInductionAddInvSplit.No)])))
+
+(define (opt-induction-add-inv-var
+  [loop-defs : opt_i64_i64_map.Map]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [ty : ast.AstType]) : option_i64.Option
+  (match (opt-induction-add-inv-split loop-defs lhs rhs ty)
+    [(OptInductionAddInvSplit.Some _ var) (option_i64.Some var)]
+    [(OptInductionAddInvSplit.No) (option_i64.None)]))
+
+;; The scale the var side carries: 1 for the counter itself, the product's
+;; scale for a `mul phi, scale` the feeder scan admitted, none otherwise.
+(define (opt-induction-add-inv-scale
+  [scaled : opt_i64_i64_map.Map]
+  [phi-var : i64]
+  [var : i64]) : option_i64.Option
+  (if (= var phi-var)
+    (option_i64.Some 1)
+    (match (opt_i64_i64_map.get (& scaled) var)
+      [(opt_i64_i64_map.LookupFound scale) (option_i64.Some scale)]
+      [(opt_i64_i64_map.LookupMissing) (option_i64.None)])))
+
+(define (opt-induction-add-inv-derived
+  [loop-defs : opt_i64_i64_map.Map]
+  [scaled : opt_i64_i64_map.Map]
+  [phi-var : i64]
+  [step : i64]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [ty : ast.AstType]) : OptMaybeInductionDerived
+  (match (opt-induction-add-inv-split
+    (compiler-opt-global-shared-view loop-defs)
+    (compiler-opt-global-shared-view lhs)
+    (compiler-opt-global-shared-view rhs)
+    (compiler-opt-global-shared-view ty))
+    [(OptInductionAddInvSplit.Some c var)
+      (match (opt-induction-add-inv-scale
+        (compiler-opt-global-shared-view scaled)
+        phi-var
+        var)
+        [(option_i64.Some scale)
+          ;; Products only. The plain `c + i` sum would trade one add per
+          ;; trip for a loop-live phi, and admitting it cost regalloc_greedy
+          ;; +24.8M and ssa_construct +33.4M in spills; the product rule's
+          ;; own scale window is the right gate here too.
+          (if (opt-induction-scale-ok? step scale)
+            (OptMaybeInductionDerived.Some
+              (OptInductionDerived.AddInv c scale ty))
+            (OptMaybeInductionDerived.No))]
+        [(option_i64.None) (OptMaybeInductionDerived.No)])]
+    [(OptInductionAddInvSplit.No) (OptMaybeInductionDerived.No)]))
+
+;; The var side of a candidate `add`: the counter, or a product of it the
+;; feeder scan admitted, at exactly `scale`.
+(define (opt-induction-add-inv-side?
+  [scaled : opt_i64_i64_map.Map]
+  [phi-var : i64]
+  [scale : i64]
+  [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (match (opt-induction-add-inv-scale
+        (compiler-opt-global-shared-view scaled)
+        phi-var
+        var)
+        [(option_i64.Some found) (= found scale)]
+        [(option_i64.None) false])]
+    [_ false]))
+
+;; Does this `add` compute the derived sum: the same invariant on one side
+;; and the counter, or a product of it with the same scale, on the other?
+(define (opt-induction-add-inv-matches?
+  [scaled : opt_i64_i64_map.Map]
+  [phi-var : i64]
+  [c : ir.CompilerIrValue]
+  [scale : i64]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]) : bool
+  (or
+    (and
+      (opt-value-eq
+        (compiler-opt-global-shared-view lhs)
+        (compiler-opt-global-shared-view c))
+      (opt-induction-add-inv-side?
+        (compiler-opt-global-shared-view scaled)
+        phi-var
+        scale
+        (compiler-opt-global-shared-view rhs)))
+    (and
+      (opt-value-eq
+        (compiler-opt-global-shared-view rhs)
+        (compiler-opt-global-shared-view c))
+      (opt-induction-add-inv-side?
+        (compiler-opt-global-shared-view scaled)
+        phi-var
+        scale
+        (compiler-opt-global-shared-view lhs)))))
+
 ;; Vars used as a gep's var offset (invariant base only, mirroring the
 ;; derived-collection rule).
 (define (opt-induction-gep-offset-vars-instr-seq-from
@@ -37136,6 +37275,26 @@
                 (+ index 1)
                 vars))]
           [_
+            (opt-induction-gep-offset-vars-instr-seq-from
+              loop-defs
+              (compiler-opt-global-shared-view instrs)
+              (+ index 1)
+              vars)])]
+      ;; IND-BASE: the var an invariant-plus-var add consumes feeds a sum
+      ;; derived value the same way a gep's offset feeds an address one.
+      [(ir.CompilerIrInstr.BinOp _ (ir.CompilerIrBinOp.Add) lhs rhs ty)
+        (match (opt-induction-add-inv-var
+          (compiler-opt-global-shared-view loop-defs)
+          (compiler-opt-global-shared-view lhs)
+          (compiler-opt-global-shared-view rhs)
+          (compiler-opt-global-shared-view ty))
+          [(option_i64.Some var)
+            (opt-induction-gep-offset-vars-instr-seq-from
+              loop-defs
+              (compiler-opt-global-shared-view instrs)
+              (+ index 1)
+              (opt-used-add vars var))]
+          [(option_i64.None)
             (opt-induction-gep-offset-vars-instr-seq-from
               loop-defs
               (compiler-opt-global-shared-view instrs)
@@ -37343,6 +37502,15 @@
                 (not (opt-used-contains scaled dst)))
                 (opt-induction-mul-derived offsets lhs rhs phi-var step ty)
                 (OptMaybeInductionDerived.No))]
+            [(ir.CompilerIrBinOp.Add)
+              (opt-induction-add-inv-derived
+                (compiler-opt-global-shared-view loop-defs)
+                (compiler-opt-global-shared-view scaled)
+                phi-var
+                step
+                (compiler-opt-global-shared-view lhs)
+                (compiler-opt-global-shared-view rhs)
+                (compiler-opt-global-shared-view ty))]
             [_ (OptMaybeInductionDerived.No)])]
         [(ir.CompilerIrInstr.Gep _ base offset ty)
           (match (opt-induction-value-offset
@@ -37408,6 +37576,14 @@
         [(OptInductionDerived.GepScaled right-base right-scale right-ty)
           (and
             (opt-value-eq left-base right-base)
+            (= left-scale right-scale)
+            (opt-type-eq type-segment-bases left-ty right-ty))]
+        [_ false])]
+    [(OptInductionDerived.AddInv left-c left-scale left-ty)
+      (match right
+        [(OptInductionDerived.AddInv right-c right-scale right-ty)
+          (and
+            (opt-value-eq left-c right-c)
             (= left-scale right-scale)
             (opt-type-eq type-segment-bases left-ty right-ty))]
         [_ false])]))
@@ -37853,6 +38029,25 @@
                         (= found-scale scale)]
                       [(opt_i64_i64_map.LookupMissing) false])]
                   [_ false]))]
+            [_ false])]
+        [(OptInductionDerived.AddInv c scale ty)
+          (match instr
+            [(ir.CompilerIrInstr.BinOp _ op lhs rhs instr-ty)
+              (match op
+                [(ir.CompilerIrBinOp.Add)
+                  (and
+                    (opt-type-eq
+                      type-segment-bases
+                      instr-ty
+                      (compiler-opt-global-shared-view ty))
+                    (opt-induction-add-inv-matches?
+                      (compiler-opt-global-shared-view scaled)
+                      phi-var
+                      (compiler-opt-global-shared-view c)
+                      scale
+                      (compiler-opt-global-shared-view lhs)
+                      (compiler-opt-global-shared-view rhs)))]
+                [_ false])]
             [_ false])])]))
 
 ;; The rewrite mov must carry the PHI's type: for address deriveds that is
@@ -38051,7 +38246,13 @@
   (match derived
     [(OptInductionDerived.Mul _ offset _) offset]
     [(OptInductionDerived.Gep _ offset _) offset]
-    [(OptInductionDerived.GepScaled _ _ _) 1]))
+    [(OptInductionDerived.GepScaled _ _ _) 1]
+    ;; a scaled sum seeds through a product temp; the counter's own sum
+    ;; seeds straight off `start`
+    [(OptInductionDerived.AddInv _ scale _)
+      (if (= scale 1)
+        0
+        scale)]))
 
 (define (opt-induction-derived-slot-count [derived : OptInductionDerived]) : i64
   (if (= (opt-induction-derived-offset derived) 0)
@@ -38094,6 +38295,13 @@
             start
             (ir.CompilerIrValue.I64 scale)
             ty)]
+        [(OptInductionDerived.AddInv _ scale _)
+          (ir.CompilerIrInstr.BinOp
+            offset-var
+            (ir.CompilerIrBinOp.Mul)
+            start
+            (ir.CompilerIrValue.I64 scale)
+            ty)]
         [_
           (ir.CompilerIrInstr.BinOp
             offset-var
@@ -38129,6 +38337,15 @@
         seed-var
         base
         (ir.CompilerIrValue.Var (- seed-var 1))
+        ty)]
+    [(OptInductionDerived.AddInv c scale ty)
+      (ir.CompilerIrInstr.BinOp
+        seed-var
+        (ir.CompilerIrBinOp.Add)
+        c
+        (if (= scale 1)
+          (opt-induction-fact-start fact)
+          (ir.CompilerIrValue.Var (- seed-var 1)))
         ty)]))
 
 (define (opt-induction-next-instr
@@ -38155,6 +38372,13 @@
         next-var
         (ir.CompilerIrValue.Var derived-phi)
         (ir.CompilerIrValue.I64 (* (opt-induction-fact-step fact) scale))
+        ty)]
+    [(OptInductionDerived.AddInv _ scale ty)
+      (ir.CompilerIrInstr.BinOp
+        next-var
+        (ir.CompilerIrBinOp.Add)
+        (ir.CompilerIrValue.Var derived-phi)
+        (ir.CompilerIrValue.I64 (* (opt-induction-fact-step fact) scale))
         ty)]))
 
 ;; A Gep-derived induction value is an ADDRESS: its phi must be word-typed.
@@ -38166,7 +38390,8 @@
   (match derived
     [(OptInductionDerived.Mul _ _ ty) ty]
     [(OptInductionDerived.Gep _ _ _) (ast.AstType.I64)]
-    [(OptInductionDerived.GepScaled _ _ _) (ast.AstType.I64)]))
+    [(OptInductionDerived.GepScaled _ _ _) (ast.AstType.I64)]
+    [(OptInductionDerived.AddInv _ _ ty) ty]))
 
 (define (opt-induction-phi-instr
   [derived : OptInductionDerived]

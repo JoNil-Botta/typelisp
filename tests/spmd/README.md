@@ -76,6 +76,9 @@ compile and run in `avx2` and `avx512`.
   for varying f64 arguments/results loaded and stored through a tail. Exit 42.
 - `private_helper_bool.tl` - scalar/AVX2/AVX-512 out-of-line helper ABI coverage
   for a varying bool result consumed as a branch mask. Exit 42.
+- `private_helper_mask_arg.tl` - scalar/AVX2/AVX-512 out-of-line helper ABI
+  coverage for an active mask and the maximum five varying bool arguments;
+  their AVX-512 opmask homes must be initialized as one parallel move. Exit 42.
 - `private_helper_uniform_stack.tl` - scalar/AVX2/AVX-512 out-of-line helper
   ABI coverage with seven ordinary uniform arguments preceding a varying
   argument. This forces platform stack arguments and verifies that they remain

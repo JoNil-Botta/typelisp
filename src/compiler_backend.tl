@@ -69694,13 +69694,503 @@
     (str_cat.str-cat "%k" (string.int->string (+ 2 index)))
     ""))
 
+;; Private AVX-512 helper masks arrive together in %k1-%k6, but the allocator
+;; chooses their local homes independently of ABI order.  Keep the complete
+;; register permutation as one graph: a sequential prologue can otherwise
+;; overwrite an incoming value before its later parameter reads it.
+(defenum CompilerBackendSpmdMaskEntryMove
+  (SpmdMaskEntryMove i64 i64))
+
+(defstruct CompilerBackendSpmdMaskEntryMoveSeq
+  (slots (__tl_dyn-array CompilerBackendSpmdMaskEntryMove))
+  (len i64))
+
+(defenum CompilerBackendMaybeSpmdMaskEntryMove
+  (NoSpmdMaskEntryMove)
+  (SomeSpmdMaskEntryMove CompilerBackendSpmdMaskEntryMove))
+
+(defstruct CompilerBackendSpmdMaskEntryPlan
+  (moves CompilerBackendSpmdMaskEntryMoveSeq)
+  (destinations (__tl_dyn-array i64))
+  (destination-count i64)
+  (spill-asm String))
+
+(define (compiler-backend-spmd-mask-entry-move-seq-with-capacity
+  [capacity : i64]) : CompilerBackendSpmdMaskEntryMoveSeq
+  (CompilerBackendSpmdMaskEntryMoveSeq
+    (__tl_make-array CompilerBackendSpmdMaskEntryMove capacity)
+    0))
+
+(define (compiler-backend-spmd-mask-entry-move-seq-copy-range!
+  [dst : (&mut dst (__tl_dyn-array CompilerBackendSpmdMaskEntryMove))]
+  [src : (& src (__tl_dyn-array CompilerBackendSpmdMaskEntryMove))]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (set! (array-ref dst index) (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (compiler-backend-spmd-mask-entry-move-seq-push!
+  [seq : (&mut seq CompilerBackendSpmdMaskEntryMoveSeq)]
+  [move : CompilerBackendSpmdMaskEntryMove]) : unit
+  (begin
+    (if (< seq.len (array-length seq.slots))
+      unit
+      (let
+        [bigger : (__tl_dyn-array CompilerBackendSpmdMaskEntryMove)
+          (__tl_make-array
+            CompilerBackendSpmdMaskEntryMove
+            (compiler-backend-seq-capacity (array-length seq.slots)))]
+        (begin
+          (compiler-backend-spmd-mask-entry-move-seq-copy-range!
+            (&mut bigger)
+            (& seq.slots)
+            seq.len)
+          (set! seq.slots bigger))))
+    (let
+      [index : i64 seq.len]
+      (begin
+        (set! (array-ref seq.slots index) move)
+        (set! seq.len (+ index 1))))))
+
+(define (compiler-backend-spmd-mask-entry-error [message : String]) : ResultCompilerBackend
+  (ResultCompilerBackend.Err
+    (box (compiler_diagnostic.compiler-diagnostic-at-start "" message))))
+
+(define (compiler-backend-spmd-mask-entry-abi-reg? [reg : i64]) : bool
+  (and
+    (>= reg (compiler_abi.compiler-abi-mask-register-id 1))
+    (<= reg (compiler_abi.compiler-abi-mask-register-id 6))))
+
+(define (compiler-backend-spmd-mask-entry-move-duplicate-destination-before?
+  [moves : CompilerBackendSpmdMaskEntryMoveSeq]
+  [index : i64]
+  [destination : i64]) : bool
+  (let
+    [cursor : i64 0]
+    (begin
+      (while (< cursor index)
+        (begin
+          (match (compiler-backend-global-array-element-shared-view
+            moves.slots
+            cursor)
+            [(SpmdMaskEntryMove _ earlier)
+              (when (= earlier destination) (return true))])
+          (set! cursor (+ cursor 1))))
+      false)))
+
+(define (compiler-backend-spmd-mask-entry-moves-validate-from
+  [moves : CompilerBackendSpmdMaskEntryMoveSeq]
+  [index : i64]) : ResultCompilerBackend
+  (if (>= index moves.len)
+    (ResultCompilerBackend.Ok "")
+    (match (compiler-backend-global-array-element-shared-view moves.slots index)
+      [(SpmdMaskEntryMove source destination)
+        (cond
+          [(not (compiler-backend-spmd-mask-entry-abi-reg? source))
+            (compiler-backend-spmd-mask-entry-error
+              "backend: private AVX-512 SPMD mask entry source is not %k1-%k6")]
+          [(= destination (compiler_abi.compiler-abi-mask-register-id 7))
+            (compiler-backend-spmd-mask-entry-error
+              "backend: private AVX-512 SPMD mask allocator assigned reserved %k7 home")]
+          [(not (compiler-backend-spmd-mask-entry-abi-reg? destination))
+            (compiler-backend-spmd-mask-entry-error
+              "backend: private AVX-512 SPMD mask entry destination is not %k1-%k6")]
+          [(compiler-backend-spmd-mask-entry-move-duplicate-destination-before?
+              (compiler-backend-global-shared-view moves)
+              index
+              destination)
+            (compiler-backend-spmd-mask-entry-error
+              "backend: duplicate live private AVX-512 SPMD mask entry destination")]
+          [else
+            (compiler-backend-spmd-mask-entry-moves-validate-from
+              moves
+              (+ index 1))])])))
+
+(define (compiler-backend-spmd-mask-entry-move-parallel-edge
+  [move : CompilerBackendSpmdMaskEntryMove]) : pmove.CompilerParallelMoveEdge
+  (match move
+    [(SpmdMaskEntryMove source destination)
+      (let
+        [destination-resource : i64
+          (compiler-backend-parallel-reg-id-resource destination)]
+        (pmove.ParallelMoveEdge
+          destination-resource
+          destination-resource
+          0
+          (compiler-backend-parallel-reg-id-resource source)
+          0))]))
+
+(define (compiler-backend-spmd-mask-entry-move-parallel-edges
+  [moves : CompilerBackendSpmdMaskEntryMoveSeq]) : pmove.CompilerParallelMoveEdgeSeq
+  (let
+    [edges : pmove.CompilerParallelMoveEdgeSeq
+      (pmove.compiler-parallel-move-edge-seq-with-capacity moves.len)]
+    [index : i64 0]
+    (begin
+      (while (< index moves.len)
+        (begin
+          (pmove.compiler-parallel-move-edge-push!
+            (&mut edges)
+            (compiler-backend-spmd-mask-entry-move-parallel-edge
+              (compiler-backend-global-array-element-shared-view
+                moves.slots
+                index)))
+          (set! index (+ index 1))))
+      edges)))
+
+(define (compiler-backend-spmd-mask-entry-move-decision
+  [moves : CompilerBackendSpmdMaskEntryMoveSeq]) : pmove.CompilerParallelMoveDecision
+  (let
+    [edges : pmove.CompilerParallelMoveEdgeSeq
+      (compiler-backend-spmd-mask-entry-move-parallel-edges moves)]
+    (pmove.compiler-parallel-move-decision
+      (compiler-backend-global-shared-view edges)
+      edges)))
+
+(define (compiler-backend-spmd-mask-entry-move-find
+  [moves : CompilerBackendSpmdMaskEntryMoveSeq]
+  [wanted : i64]) : CompilerBackendMaybeSpmdMaskEntryMove
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index moves.len)
+        (let
+          [move : CompilerBackendSpmdMaskEntryMove
+            (compiler-backend-global-array-element-shared-view
+              moves.slots
+              index)]
+          (begin
+            (match (compiler-backend-global-shared-view move)
+              [(SpmdMaskEntryMove _ destination)
+                (when
+                  (=
+                    (compiler-backend-parallel-reg-id-resource destination)
+                    wanted)
+                  (return (SomeSpmdMaskEntryMove move)))])
+            (set! index (+ index 1)))))
+      NoSpmdMaskEntryMove)))
+
+(define (compiler-backend-spmd-mask-entry-move-remove
+  [moves : CompilerBackendSpmdMaskEntryMoveSeq]
+  [destination : i64]) : CompilerBackendSpmdMaskEntryMoveSeq
+  (let
+    [out : CompilerBackendSpmdMaskEntryMoveSeq
+      (compiler-backend-spmd-mask-entry-move-seq-with-capacity moves.len)]
+    [index : i64 0]
+    [removed : bool false]
+    (begin
+      (while (< index moves.len)
+        (let
+          [move : CompilerBackendSpmdMaskEntryMove
+            (compiler-backend-global-array-element-shared-view
+              moves.slots
+              index)]
+          (begin
+            (match (compiler-backend-global-shared-view move)
+              [(SpmdMaskEntryMove _ next-destination)
+                (if (and (not removed) (= next-destination destination))
+                  (set! removed true)
+                  (compiler-backend-spmd-mask-entry-move-seq-push!
+                    (&mut out)
+                    move))])
+            (set! index (+ index 1)))))
+      out)))
+
+(define (compiler-backend-spmd-mask-entry-move-redirect
+  [moves : CompilerBackendSpmdMaskEntryMoveSeq]
+  [old-source : i64]
+  [new-source : i64]) : CompilerBackendSpmdMaskEntryMoveSeq
+  (let
+    [out : CompilerBackendSpmdMaskEntryMoveSeq
+      (compiler-backend-spmd-mask-entry-move-seq-with-capacity moves.len)]
+    [index : i64 0]
+    (begin
+      (while (< index moves.len)
+        (begin
+          (match (compiler-backend-global-array-element-shared-view
+            moves.slots
+            index)
+            [(SpmdMaskEntryMove source destination)
+              (compiler-backend-spmd-mask-entry-move-seq-push!
+                (&mut out)
+                (SpmdMaskEntryMove
+                  (if (= source old-source)
+                    new-source
+                    source)
+                  destination))])
+          (set! index (+ index 1))))
+      out)))
+
+(define (compiler-backend-emit-spmd-mask-entry-move
+  [move : CompilerBackendSpmdMaskEntryMove]) : String
+  (match move
+    [(SpmdMaskEntryMove source destination)
+      (if (= source destination)
+        ""
+        (str_cat.str-cat
+          "    kmovq "
+          (compiler_abi.compiler-abi-register-spelling source)
+          ", "
+          (compiler_abi.compiler-abi-register-spelling destination)
+          "\n"))]))
+
+(define (compiler-backend-emit-spmd-mask-entry-moves-unchecked
+  [moves : CompilerBackendSpmdMaskEntryMoveSeq]) : ResultCompilerBackend
+  (match (compiler-backend-spmd-mask-entry-move-decision
+    (compiler-backend-global-shared-view moves))
+    [(pmove.CompilerParallelMoveDone) (ResultCompilerBackend.Ok "")]
+    [(pmove.CompilerParallelMoveUnblocked move-id)
+      (match (compiler-backend-spmd-mask-entry-move-find
+        (compiler-backend-global-shared-view moves)
+        move-id)
+        [(SomeSpmdMaskEntryMove move)
+          (match (compiler-backend-global-shared-view move)
+            [(SpmdMaskEntryMove _ destination)
+              (match (compiler-backend-emit-spmd-mask-entry-moves-unchecked
+                (compiler-backend-spmd-mask-entry-move-remove
+                  (compiler-backend-global-shared-view moves)
+                  destination))
+                [(ResultCompilerBackend.Ok tail)
+                  (ResultCompilerBackend.Ok
+                    (str_cat.str-cat
+                      (compiler-backend-emit-spmd-mask-entry-move move)
+                      tail))]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])])]
+        [(NoSpmdMaskEntryMove)
+          (compiler-backend-parallel-move-missing "SPMD mask entry" move-id)])]
+    [(pmove.CompilerParallelMoveCycle move-id)
+      (match (compiler-backend-spmd-mask-entry-move-find
+        (compiler-backend-global-shared-view moves)
+        move-id)
+        [(SomeSpmdMaskEntryMove move)
+          (match move
+            [(SpmdMaskEntryMove source _)
+              (match (compiler-backend-emit-spmd-mask-entry-moves-unchecked
+                (compiler-backend-spmd-mask-entry-move-redirect
+                  (compiler-backend-global-shared-view moves)
+                  source
+                  (compiler_abi.compiler-abi-mask-register-id 7)))
+                [(ResultCompilerBackend.Ok tail)
+                  (ResultCompilerBackend.Ok
+                    (str_cat.str-cat
+                      "    kmovq "
+                      (compiler_abi.compiler-abi-register-spelling source)
+                      ", %k7\n"
+                      tail))]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])])]
+        [(NoSpmdMaskEntryMove)
+          (compiler-backend-parallel-move-missing "SPMD mask entry" move-id)])]))
+
+(define (compiler-backend-emit-spmd-mask-entry-moves
+  [moves : CompilerBackendSpmdMaskEntryMoveSeq]) : ResultCompilerBackend
+  (match (compiler-backend-spmd-mask-entry-moves-validate-from
+    (compiler-backend-global-shared-view moves)
+    0)
+    [(ResultCompilerBackend.Ok _)
+      (compiler-backend-emit-spmd-mask-entry-moves-unchecked moves)]
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
+
+(define (compiler-backend-spmd-mask-entry-plan-empty) : CompilerBackendSpmdMaskEntryPlan
+  (CompilerBackendSpmdMaskEntryPlan
+    (compiler-backend-spmd-mask-entry-move-seq-with-capacity 6)
+    (__tl_make-array i64 6)
+    0
+    ""))
+
+(define (compiler-backend-spmd-mask-entry-plan-has-destination?
+  [plan : (&mut plan CompilerBackendSpmdMaskEntryPlan)]
+  [destination : i64]) : bool
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index plan.destination-count)
+        (begin
+          (when
+            (= (array-ref plan.destinations index) destination)
+            (return true))
+          (set! index (+ index 1))))
+      false)))
+
+(define (compiler-backend-spmd-mask-entry-plan-record-destination!
+  [plan : (&mut plan CompilerBackendSpmdMaskEntryPlan)]
+  [destination : i64]) : ResultCompilerBackend
+  (cond
+    [(compiler-backend-spmd-mask-entry-plan-has-destination? plan destination)
+      (compiler-backend-spmd-mask-entry-error
+        "backend: duplicate live private AVX-512 SPMD mask entry destination")]
+    [(>= plan.destination-count (array-length plan.destinations))
+      (compiler-backend-spmd-mask-entry-error
+        "backend: private AVX-512 SPMD call supports at most 6 live mask parameters")]
+    [else
+      (begin
+        (set! (array-ref plan.destinations plan.destination-count) destination)
+        (set! plan.destination-count (+ plan.destination-count 1))
+        (ResultCompilerBackend.Ok ""))]))
+
+(define (compiler-backend-spmd-mask-entry-plan-add-register!
+  [plan : (&mut plan CompilerBackendSpmdMaskEntryPlan)]
+  [source : i64]
+  [destination : i64]) : ResultCompilerBackend
+  (cond
+    [(not (compiler-backend-spmd-mask-entry-abi-reg? source))
+      (compiler-backend-spmd-mask-entry-error
+        "backend: private AVX-512 SPMD mask entry source is not %k1-%k6")]
+    [(= destination (compiler_abi.compiler-abi-mask-register-id 7))
+      (compiler-backend-spmd-mask-entry-error
+        "backend: private AVX-512 SPMD mask allocator assigned reserved %k7 home")]
+    [(not (compiler-backend-spmd-mask-entry-abi-reg? destination))
+      (compiler-backend-spmd-mask-entry-error
+        "backend: private AVX-512 SPMD mask entry destination is not %k1-%k6")]
+    [else
+      (match (compiler-backend-spmd-mask-entry-plan-record-destination!
+        plan
+        (compiler-backend-parallel-reg-id-resource destination))
+        [(ResultCompilerBackend.Ok _)
+          (begin
+            (compiler-backend-spmd-mask-entry-move-seq-push!
+              (&mut plan.moves)
+              (SpmdMaskEntryMove source destination))
+            (ResultCompilerBackend.Ok ""))]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)])]))
+
+(define (compiler-backend-spmd-mask-entry-plan-add-spill!
+  [plan : (&mut plan CompilerBackendSpmdMaskEntryPlan)]
+  [source : i64]
+  [destination-resource : i64]
+  [operand : String]) : ResultCompilerBackend
+  (if (not (compiler-backend-spmd-mask-entry-abi-reg? source))
+    (compiler-backend-spmd-mask-entry-error
+      "backend: private AVX-512 SPMD mask entry source is not %k1-%k6")
+    (match (compiler-backend-spmd-mask-entry-plan-record-destination!
+      plan
+      destination-resource)
+      [(ResultCompilerBackend.Ok _)
+        (begin
+          ;; KMOVQ supports a direct opmask-to-memory store, so spilling does
+          ;; not consume %k7 or mutate any still-live incoming ABI register.
+          (set!
+            plan.spill-asm
+            (str_cat.str-cat
+              (string.copy (& plan.spill-asm))
+              "    kmovq "
+              (compiler_abi.compiler-abi-register-spelling source)
+              ", "
+              operand
+              "\n"))
+          (ResultCompilerBackend.Ok ""))]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+
+(define (compiler-backend-emit-spmd-mask-entry-plan
+  [plan : CompilerBackendSpmdMaskEntryPlan]) : ResultCompilerBackend
+  (match (compiler-backend-emit-spmd-mask-entry-moves plan.moves)
+    [(ResultCompilerBackend.Ok register-asm)
+      (ResultCompilerBackend.Ok (str_cat.str-cat plan.spill-asm register-asm))]
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
+
+(define (compiler-backend-spmd-mask-entry-plan-collect!
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [params : compiler_ir_types.CompilerIrParamSeq]
+  [plan : (&mut plan CompilerBackendSpmdMaskEntryPlan)]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [param-index : i64 0]
+    [mask-index : i64 0]
+    (begin
+      (while (< param-index params.len)
+        (begin
+          (match (compiler_ir_types.compiler-ir-param-seq-ref
+            (compiler-backend-global-shared-view params)
+            param-index)
+            [(compiler_ir_types.CompilerIrParam.Param name _ var-id)
+              (let
+                [active? : bool
+                  (compiler-backend-spmd-active-mask-param?
+                    (compiler-backend-global-shared-view name))]
+                [mask? : bool
+                  (compiler-backend-spmd-mask-param?
+                    (compiler-backend-global-shared-view name))]
+                (begin
+                  (when
+                    (and
+                      (or active? mask?)
+                      (not
+                        (compiler-backend-var-never-used? backend-state var-id)))
+                    (let
+                      [source : i64
+                        (if active?
+                          (compiler_abi.compiler-abi-mask-register-id 1)
+                          (if (< mask-index 5)
+                            (compiler_abi.compiler-abi-mask-register-id
+                              (+ mask-index 2))
+                            compiler_abi.compiler-reg-id-invalid))]
+                      (begin
+                        (when
+                          (= source compiler_abi.compiler-reg-id-invalid)
+                          (return
+                            (compiler-backend-spmd-mask-entry-error
+                              "backend: private AVX-512 SPMD call supports at most 5 varying bool arguments")))
+                        (match (compiler-backend-emit-assignment-lookup
+                          backend-state
+                          (compiler-backend-global-shared-view assignments)
+                          var-id)
+                          [(compiler_regalloc.CompilerRegMaybeLocation.Some
+                              location)
+                            (match location
+                              [(compiler_regalloc.CompilerRegLocation.Register
+                                  home)
+                                (match (compiler-backend-spmd-mask-entry-plan-add-register!
+                                  plan
+                                  source
+                                  home)
+                                  [(ResultCompilerBackend.Ok _) unit]
+                                  [(ResultCompilerBackend.Err message)
+                                    (return (ResultCompilerBackend.Err message))])]
+                              [(compiler_regalloc.CompilerRegLocation.Spill
+                                  offset)
+                                (match (compiler-backend-spmd-mask-entry-plan-add-spill!
+                                  plan
+                                  source
+                                  (compiler-backend-parallel-spill-resource
+                                    offset)
+                                  (compiler-backend-frame-offset-with-backend-state
+                                    backend-state
+                                    offset))
+                                  [(ResultCompilerBackend.Ok _) unit]
+                                  [(ResultCompilerBackend.Err message)
+                                    (return (ResultCompilerBackend.Err message))])]
+                              [_
+                                (return
+                                  (compiler-backend-spmd-mask-entry-error
+                                    (compiler-backend-mask-home-unavailable
+                                      "private SPMD helper mask parameter")))])]
+                          [(compiler_regalloc.CompilerRegMaybeLocation.No)
+                            (match (compiler-backend-spmd-mask-entry-plan-add-spill!
+                              plan
+                              source
+                              (compiler-backend-parallel-spill-resource
+                                (- 0 (* 8 (+ var-id 1))))
+                              (compiler-backend-slot-with-backend-state
+                                backend-state
+                                var-id))
+                              [(ResultCompilerBackend.Ok _) unit]
+                              [(ResultCompilerBackend.Err message)
+                                (return (ResultCompilerBackend.Err message))])]))))
+                  (when mask? (set! mask-index (+ mask-index 1)))))])
+          (set! param-index (+ param-index 1))))
+      (ResultCompilerBackend.Ok ""))))
+
 (define (compiler-backend-emit-spmd-private-special-param
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [name : String]
   [ty : compiler_ast_types.AstType]
   [var-id : i64]
   [vector-index : i64]
-  [mask-index : i64]
   [special-index : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-var-never-used? backend-state var-id)
@@ -69782,48 +70272,10 @@
                           ""
                           message)))])])))]
       [else
-        (let
-          [incoming : String
-            (if (compiler-backend-spmd-active-mask-param? name)
-              "%k1"
-              (compiler-backend-spmd-private-mask-arg-reg mask-index))]
-          (if (= (string.string-length incoming) 0)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler_diagnostic.compiler-diagnostic-at-start
-                  ""
-                  "backend: private AVX-512 SPMD call supports at most 5 varying bool arguments")))
-            (match (compiler-backend-avx512-mask-dst-reg
-              (compiler-backend-global-shared-view assignments)
-              var-id
-              "private SPMD helper mask parameter"
-              "%k7"
-              backend-state)
-              [(ResultBackendReg.Ok home)
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat
-                    (if (string.eq incoming home)
-                      ""
-                      (str_cat.str-cat
-                        "    kmovq "
-                        incoming
-                        ", "
-                        (compiler-backend-global-shared-view home)
-                        "\n"
-                        ""))
-                    (compiler-backend-avx512-mask-store-dst
-                      assignments
-                      var-id
-                      64
-                      home
-                      backend-state)
-                    ""))]
-              [(ResultBackendReg.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler_diagnostic.compiler-diagnostic-at-start
-                      ""
-                      message)))])))])))
+        ;; The opmask prepass owns all active/varying-bool entry moves as one
+        ;; parallel graph. Emitting one here would reintroduce source-order
+        ;; clobbers.
+        (ResultCompilerBackend.Ok "")])))
 
 (define (compiler-backend-emit-spmd-private-param-spills-from
   [type-segment-bases : i64]
@@ -69836,7 +70288,6 @@
   [position : i64]
   [stack-idx : i64]
   [vector-index : i64]
-  [mask-index : i64]
   [special-index : i64]
   [vars : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
@@ -69876,7 +70327,6 @@
               ty
               var-id
               vector-index
-              mask-index
               special-index
               (compiler-backend-global-shared-view backend-state))
             (if on-stack
@@ -69951,9 +70401,6 @@
                 (if varying?
                   (+ vector-index 1)
                   vector-index)
-                (if mask?
-                  (+ mask-index 1)
-                  mask-index)
                 (if special?
                   (+ special-index 1)
                   special-index)
@@ -69973,21 +70420,47 @@
   [params : compiler_ir_types.CompilerIrParamSeq]
   [vars : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (compiler-backend-emit-spmd-private-param-spills-from
-    type-segment-bases
-    target
-    assignments
-    params
-    0
-    0
-    0
-    0
-    0
-    0
-    0
-    0
-    vars
-    backend-state))
+  (let
+    [mask-plan : CompilerBackendSpmdMaskEntryPlan
+      (compiler-backend-spmd-mask-entry-plan-empty)]
+    [opmask? : bool
+      (not
+        (compiler-backend-current-mode-avx2?
+          (compiler-backend-state-function-state backend-state)))]
+    (match (if opmask?
+      (compiler-backend-spmd-mask-entry-plan-collect!
+        (compiler-backend-global-shared-view assignments)
+        (compiler-backend-global-shared-view params)
+        (&mut mask-plan)
+        backend-state)
+      (ResultCompilerBackend.Ok ""))
+      [(ResultCompilerBackend.Ok _)
+        (match (if opmask?
+          (compiler-backend-emit-spmd-mask-entry-plan
+            (compiler-backend-global-shared-view mask-plan))
+          (ResultCompilerBackend.Ok ""))
+          [(ResultCompilerBackend.Ok mask-asm)
+            (match (compiler-backend-emit-spmd-private-param-spills-from
+              type-segment-bases
+              target
+              assignments
+              params
+              0
+              0
+              0
+              0
+              0
+              0
+              0
+              vars
+              backend-state)
+              [(ResultCompilerBackend.Ok other-asm)
+                (ResultCompilerBackend.Ok (str_cat.str-cat mask-asm other-asm))]
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)])]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-private-memory-param-address
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]

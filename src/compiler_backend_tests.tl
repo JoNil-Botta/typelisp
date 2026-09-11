@@ -26354,6 +26354,167 @@ g:
             [(compiler_backend.ResultCompilerBackend.Err _) false])])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
+(define (compiler-backend-test-mask-reg [number : i64]) : i64
+  (compiler_abi.compiler-abi-mask-register-id number))
+
+(define (compiler-backend-test-mask-entry-moves-empty [capacity : i64]) : compiler_backend.CompilerBackendSpmdMaskEntryMoveSeq
+  (compiler_backend.compiler-backend-spmd-mask-entry-move-seq-with-capacity
+    capacity))
+
+(define (compiler-backend-test-mask-entry-move-push!
+  [moves : (&mut moves compiler_backend.CompilerBackendSpmdMaskEntryMoveSeq)]
+  [source : i64]
+  [destination : i64]) : unit
+  (compiler_backend.compiler-backend-spmd-mask-entry-move-seq-push!
+    moves
+    (compiler_backend.SpmdMaskEntryMove source destination)))
+
+(define (compiler-backend-test-mask-entry-moves-eq?
+  [moves : compiler_backend.CompilerBackendSpmdMaskEntryMoveSeq]
+  [expected : String]) : bool
+  (match (compiler_backend.compiler-backend-emit-spmd-mask-entry-moves moves)
+    [(compiler_backend.ResultCompilerBackend.Ok asm) (string.eq asm expected)]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-test-mask-entry-moves-error?
+  [moves : compiler_backend.CompilerBackendSpmdMaskEntryMoveSeq]) : bool
+  (match (compiler_backend.compiler-backend-emit-spmd-mask-entry-moves moves)
+    [(compiler_backend.ResultCompilerBackend.Ok _) false]
+    [(compiler_backend.ResultCompilerBackend.Err _) true]))
+
+(define (compiler-backend-spmd-mask-entry-chain-ok? [reverse? : bool]) : bool
+  (let
+    [moves : compiler_backend.CompilerBackendSpmdMaskEntryMoveSeq
+      (compiler-backend-test-mask-entry-moves-empty 2)]
+    [k1 : i64 (compiler-backend-test-mask-reg 1)]
+    [k2 : i64 (compiler-backend-test-mask-reg 2)]
+    [k4 : i64 (compiler-backend-test-mask-reg 4)]
+    (begin
+      (if reverse?
+        (begin
+          (compiler-backend-test-mask-entry-move-push! (&mut moves) k2 k4)
+          (compiler-backend-test-mask-entry-move-push! (&mut moves) k1 k2))
+        (begin
+          (compiler-backend-test-mask-entry-move-push! (&mut moves) k1 k2)
+          (compiler-backend-test-mask-entry-move-push! (&mut moves) k2 k4)))
+      (compiler-backend-test-mask-entry-moves-eq?
+        moves
+        "    kmovq %k2, %k4\n    kmovq %k1, %k2\n"))))
+
+(define (compiler-backend-spmd-mask-entry-identity-subset-ok?) : bool
+  (let
+    [moves : compiler_backend.CompilerBackendSpmdMaskEntryMoveSeq
+      (compiler-backend-test-mask-entry-moves-empty 2)]
+    [k2 : i64 (compiler-backend-test-mask-reg 2)]
+    [k4 : i64 (compiler-backend-test-mask-reg 4)]
+    (begin
+      (compiler-backend-test-mask-entry-move-push! (&mut moves) k2 k2)
+      (compiler-backend-test-mask-entry-move-push! (&mut moves) k2 k4)
+      (compiler-backend-test-mask-entry-moves-eq? moves "    kmovq %k2, %k4\n"))))
+
+(define (compiler-backend-spmd-mask-entry-two-cycle-ok?) : bool
+  (let
+    [moves : compiler_backend.CompilerBackendSpmdMaskEntryMoveSeq
+      (compiler-backend-test-mask-entry-moves-empty 2)]
+    [k1 : i64 (compiler-backend-test-mask-reg 1)]
+    [k2 : i64 (compiler-backend-test-mask-reg 2)]
+    (begin
+      (compiler-backend-test-mask-entry-move-push! (&mut moves) k1 k2)
+      (compiler-backend-test-mask-entry-move-push! (&mut moves) k2 k1)
+      (compiler-backend-test-mask-entry-moves-eq?
+        moves
+        "    kmovq %k1, %k7\n    kmovq %k2, %k1\n    kmovq %k7, %k2\n"))))
+
+(define (compiler-backend-spmd-mask-entry-three-cycle-ok?) : bool
+  (let
+    [moves : compiler_backend.CompilerBackendSpmdMaskEntryMoveSeq
+      (compiler-backend-test-mask-entry-moves-empty 3)]
+    [k1 : i64 (compiler-backend-test-mask-reg 1)]
+    [k2 : i64 (compiler-backend-test-mask-reg 2)]
+    [k3 : i64 (compiler-backend-test-mask-reg 3)]
+    (begin
+      (compiler-backend-test-mask-entry-move-push! (&mut moves) k1 k2)
+      (compiler-backend-test-mask-entry-move-push! (&mut moves) k2 k3)
+      (compiler-backend-test-mask-entry-move-push! (&mut moves) k3 k1)
+      (compiler-backend-test-mask-entry-moves-eq?
+        moves
+        "    kmovq %k1, %k7\n    kmovq %k3, %k1\n    kmovq %k2, %k3\n    kmovq %k7, %k2\n"))))
+
+(define (compiler-backend-spmd-mask-entry-six-cycle-ok?) : bool
+  (let
+    [moves : compiler_backend.CompilerBackendSpmdMaskEntryMoveSeq
+      (compiler-backend-test-mask-entry-moves-empty 6)]
+    [k1 : i64 (compiler-backend-test-mask-reg 1)]
+    [k2 : i64 (compiler-backend-test-mask-reg 2)]
+    [k3 : i64 (compiler-backend-test-mask-reg 3)]
+    [k4 : i64 (compiler-backend-test-mask-reg 4)]
+    [k5 : i64 (compiler-backend-test-mask-reg 5)]
+    [k6 : i64 (compiler-backend-test-mask-reg 6)]
+    (begin
+      (compiler-backend-test-mask-entry-move-push! (&mut moves) k1 k2)
+      (compiler-backend-test-mask-entry-move-push! (&mut moves) k2 k3)
+      (compiler-backend-test-mask-entry-move-push! (&mut moves) k3 k4)
+      (compiler-backend-test-mask-entry-move-push! (&mut moves) k4 k5)
+      (compiler-backend-test-mask-entry-move-push! (&mut moves) k5 k6)
+      (compiler-backend-test-mask-entry-move-push! (&mut moves) k6 k1)
+      (compiler-backend-test-mask-entry-moves-eq?
+        moves
+        "    kmovq %k1, %k7\n    kmovq %k6, %k1\n    kmovq %k5, %k6\n    kmovq %k4, %k5\n    kmovq %k3, %k4\n    kmovq %k2, %k3\n    kmovq %k7, %k2\n"))))
+
+(define (compiler-backend-spmd-mask-entry-validation-ok?) : bool
+  (let
+    [duplicate : compiler_backend.CompilerBackendSpmdMaskEntryMoveSeq
+      (compiler-backend-test-mask-entry-moves-empty 2)]
+    [reserved : compiler_backend.CompilerBackendSpmdMaskEntryMoveSeq
+      (compiler-backend-test-mask-entry-moves-empty 1)]
+    [k1 : i64 (compiler-backend-test-mask-reg 1)]
+    [k2 : i64 (compiler-backend-test-mask-reg 2)]
+    [k3 : i64 (compiler-backend-test-mask-reg 3)]
+    [k7 : i64 (compiler-backend-test-mask-reg 7)]
+    (begin
+      (compiler-backend-test-mask-entry-move-push! (&mut duplicate) k1 k2)
+      (compiler-backend-test-mask-entry-move-push! (&mut duplicate) k3 k2)
+      (compiler-backend-test-mask-entry-move-push! (&mut reserved) k1 k7)
+      (and
+        (compiler-backend-test-mask-entry-moves-error? duplicate)
+        (compiler-backend-test-mask-entry-moves-error? reserved)))))
+
+(define (compiler-backend-spmd-mask-entry-spill-first-ok?) : bool
+  (let
+    [plan : compiler_backend.CompilerBackendSpmdMaskEntryPlan
+      (compiler_backend.compiler-backend-spmd-mask-entry-plan-empty)]
+    [k1 : i64 (compiler-backend-test-mask-reg 1)]
+    [k2 : i64 (compiler-backend-test-mask-reg 2)]
+    (match (compiler_backend.compiler-backend-spmd-mask-entry-plan-add-spill!
+      (&mut plan)
+      k2
+      (compiler_backend.compiler-backend-parallel-spill-resource -8)
+      "-8(%rbp)")
+      [(compiler_backend.ResultCompilerBackend.Ok _)
+        (match (compiler_backend.compiler-backend-spmd-mask-entry-plan-add-register!
+          (&mut plan)
+          k1
+          k2)
+          [(compiler_backend.ResultCompilerBackend.Ok _)
+            (match (compiler_backend.compiler-backend-emit-spmd-mask-entry-plan
+              plan)
+              [(compiler_backend.ResultCompilerBackend.Ok asm)
+                (string.eq asm "    kmovq %k2, -8(%rbp)\n    kmovq %k1, %k2\n")]
+              [(compiler_backend.ResultCompilerBackend.Err _) false])]
+          [(compiler_backend.ResultCompilerBackend.Err _) false])]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
+(define (compiler-backend-spmd-mask-entry-parallel-ok?) : bool
+  (and
+    (compiler-backend-spmd-mask-entry-chain-ok? false)
+    (compiler-backend-spmd-mask-entry-chain-ok? true)
+    (compiler-backend-spmd-mask-entry-identity-subset-ok?)
+    (compiler-backend-spmd-mask-entry-two-cycle-ok?)
+    (compiler-backend-spmd-mask-entry-three-cycle-ok?)
+    (compiler-backend-spmd-mask-entry-six-cycle-ok?)
+    (compiler-backend-spmd-mask-entry-validation-ok?)
+    (compiler-backend-spmd-mask-entry-spill-first-ok?)))
+
 (define (compiler-backend-simd-vector-ok?) : bool
   (and
     (compiler-backend-avx2-vector-map-ok?)
@@ -26378,6 +26539,7 @@ g:
     (compiler-backend-avx512-mask-binop-same-registers-ok?)
     (compiler-backend-avx512-mask-reduce-ok?)
     (compiler-backend-avx512-mask-spill-ok?)
+    (compiler-backend-spmd-mask-entry-parallel-ok?)
     (compiler-backend-simd-copy-paths-ok?)
     (compiler-backend-vector-load-binop-folding-ok?)
     (compiler-backend-avx2-data-pointer-cse-ok?)

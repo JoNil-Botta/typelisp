@@ -10489,12 +10489,14 @@
     ((lambda () : String s))))"))
 
 (define (compiler-lower-runtime-atomic-reachable-source) : String
-  "(define (atomic-i64-fetch-add-ptr!
-  [ptr : (MutPtr i64)]
-  [delta : i64]) : i64
-  (unsafe (atomic-fetch-add! ptr delta)))
-(define (atomic-i64-load-ptr [ptr : (Ptr i64)]) : i64
-  (unsafe (atomic-load ptr)))
+  "(unsafe
+  (define (atomic-i64-fetch-add-ptr!
+    [ptr : (MutPtr i64)]
+    [delta : i64]) : i64
+    (unsafe (atomic-fetch-add! ptr delta))))
+(unsafe
+  (define (atomic-i64-load-ptr [ptr : (Ptr i64)]) : i64
+    (unsafe (atomic-load ptr))))
 (extern (atomic-i64-fetch-add!
   [items : (__tl_dyn-array i64)]
   [index : i64]

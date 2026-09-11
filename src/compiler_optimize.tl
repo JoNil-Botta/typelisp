@@ -150551,106 +150551,6 @@
   (No)
   (Some opt_i64_i64_map.Map i64))
 
-(define (opt-global-mod-ref-store-count
-  [globals : ir.CompilerIrGlobalSeq]
-  [stores : opt_i64_i64_map.Map]
-  [at : i64]
-  [count : i64]) : i64
-  (if (>= at globals.len)
-    count
-    (match (ir.compiler-ir-global-seq-ref
-      (compiler-opt-global-shared-view globals)
-      at)
-      [(ir.CompilerIrGlobal.Global name _ _)
-        (opt-global-mod-ref-store-count
-          globals
-          (compiler-opt-global-shared-view stores)
-          (+ at 1)
-          (if (opt_i64_i64_map.contains?
-            (& stores)
-            (ir.compiler-ir-symbol-id name))
-            (+ count 1)
-            count))])))
-
-;; ALIAS-2. The CELL row's overflow bit, the exact analogue of
-;; opt-global-obj-overflow-bit and sound for the same reason: a row is a set of
-;; cells, a `Store g` contributes g's bit and a query tests it, so two globals
-;; sharing one bit are one element of the lattice -- a `set!` of either is
-;; reported as a `set!` of both. That over-approximates the write set, so no
-;; consumer is told a cell is invariant that is not.
-;;
-;; It replaces DECLINING the table when a program has more than 62 directly
-;; stored globals. That decline seeds every loop at "may write any cell"
-;; (opt-licm-global-cell-writes-seed), which withdraws P18's whole per-global
-;; refinement: the loop-scope cell promotion, the scalar operand arms, IAG-2's
-;; head-of-chain proof (opt-licm-global-storage-writable? asks this row first)
-;; and P20's frozen chain all fall back to the loop-wide answer at once.
-;; benchmarks/ssa_construct `set!`s 83 distinct globals in its setup and loses
-;; every one of those refinements on that count -- including in
-;; `ssa-dominance-frontier`, whose inner loop writes no cell at all.
-;;
-;; The two rows overflow independently and are counted independently: this one
-;; counts the globals some `Store` names, IAG-2's counts the non-scalar ones.
-(define (opt-global-mod-ref-overflow-bit
-  [globals : ir.CompilerIrGlobalSeq]
-  [stores : opt_i64_i64_map.Map]) : i64
-  (if (>
-    (opt-global-mod-ref-store-count
-      (compiler-opt-global-shared-view globals)
-      (compiler-opt-global-shared-view stores)
-      0
-      0)
-    (opt-global-mod-ref-limit))
-    (- (opt-global-mod-ref-limit) 1)
-    (- 0 1)))
-
-(define (opt-global-mod-ref-index-fill
-  [globals : ir.CompilerIrGlobalSeq]
-  [stores : opt_i64_i64_map.Map]
-  [overflow-bit : i64]
-  [out : opt_i64_i64_map.Map]
-  [at : i64]
-  [next : i64]) : OptGlobalModRefIndex
-  (if (>= at globals.len)
-    (OptGlobalModRefIndex.Some out next)
-    (match (ir.compiler-ir-global-seq-ref
-      (compiler-opt-global-shared-view globals)
-      at)
-      [(ir.CompilerIrGlobal.Global name _ _)
-        (if (not
-          (opt_i64_i64_map.contains? (& stores) (ir.compiler-ir-symbol-id name)))
-          (opt-global-mod-ref-index-fill
-            globals
-            stores
-            overflow-bit
-            out
-            (+ at 1)
-            next)
-          (let
-            [bit : i64
-              (if (< next (opt-global-mod-ref-limit))
-                next
-                overflow-bit)]
-            (if (< bit 0)
-              (OptGlobalModRefIndex.No)
-              (let
-                [assigned : opt_i64_i64_map.Map
-                  (compiler-opt-global-shared-view out)]
-                (begin
-                  (opt_i64_i64_map.insert-ref!
-                    (&mut assigned)
-                    (ir.compiler-ir-symbol-id name)
-                    bit)
-                  (opt-global-mod-ref-index-fill
-                    globals
-                    stores
-                    overflow-bit
-                    assigned
-                    (+ at 1)
-                    (if (< next (opt-global-mod-ref-limit))
-                      (+ next 1)
-                      next)))))))])))
-
 (define (opt-global-mod-ref-callee-mask
   [current : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
@@ -150845,6 +150745,165 @@
 ;; header: no global cell ADDRESS exists in the program (otherwise a pointer
 ;; write could reach a cell and the per-instruction classification above would
 ;; be wrong), the program is small enough that the summary passes run at all
+;; P18-2: the stored globals of one POOL -- the scalars, or the non-scalars.
+(define (opt-global-mod-ref-store-count-pool
+  [globals : ir.CompilerIrGlobalSeq]
+  [stores : opt_i64_i64_map.Map]
+  [scalar? : bool]
+  [at : i64]
+  [count : i64]) : i64
+  (if (>= at globals.len)
+    count
+    (match (ir.compiler-ir-global-seq-ref
+      (compiler-opt-global-shared-view globals)
+      at)
+      [(ir.CompilerIrGlobal.Global name ty _)
+        (opt-global-mod-ref-store-count-pool
+          globals
+          (compiler-opt-global-shared-view stores)
+          scalar?
+          (+ at 1)
+          (if (and
+            (= scalar? (opt-global-obj-scalar-type? (compiler-opt-global-shared-view ty)))
+            (opt_i64_i64_map.contains? (& stores) (ir.compiler-ir-symbol-id name)))
+            (+ count 1)
+            count))])))
+
+;; P18-2: bits for one pool. Distinct bits run from `next` up to
+;; `last-distinct`; past that every global of the pool shares `overflow-bit`.
+(define (opt-global-mod-ref-index-fill-pool
+  [globals : ir.CompilerIrGlobalSeq]
+  [stores : opt_i64_i64_map.Map]
+  [scalar? : bool]
+  [last-distinct : i64]
+  [overflow-bit : i64]
+  [out : opt_i64_i64_map.Map]
+  [at : i64]
+  [next : i64]) : OptGlobalModRefIndex
+  (if (>= at globals.len)
+    (OptGlobalModRefIndex.Some out next)
+    (match (ir.compiler-ir-global-seq-ref
+      (compiler-opt-global-shared-view globals)
+      at)
+      [(ir.CompilerIrGlobal.Global name ty _)
+        (if (not
+          (and
+            (= scalar? (opt-global-obj-scalar-type? (compiler-opt-global-shared-view ty)))
+            (opt_i64_i64_map.contains? (& stores) (ir.compiler-ir-symbol-id name))))
+          (opt-global-mod-ref-index-fill-pool
+            globals
+            stores
+            scalar?
+            last-distinct
+            overflow-bit
+            out
+            (+ at 1)
+            next)
+          (let
+            [bit : i64
+              (if (<= next last-distinct)
+                next
+                overflow-bit)]
+            (if (< bit 0)
+              (OptGlobalModRefIndex.No)
+              (let
+                [assigned : opt_i64_i64_map.Map
+                  (compiler-opt-global-shared-view out)]
+                (begin
+                  (opt_i64_i64_map.insert-ref!
+                    (&mut assigned)
+                    (ir.compiler-ir-symbol-id name)
+                    bit)
+                  (opt-global-mod-ref-index-fill-pool
+                    globals
+                    stores
+                    scalar?
+                    last-distinct
+                    overflow-bit
+                    assigned
+                    (+ at 1)
+                    (if (<= next last-distinct)
+                      (+ next 1)
+                      next)))))))])))
+
+;; P18-2: the packed row, assigned in two pools. A hot loop's cell writes are
+;; its counters -- `ssa-mt-fill`, `rg-heap-len`, `sccp-changed` -- and what it
+;; asks the row about are its ARRAYS, whose cells only the setup code ever
+;; writes. Filling the row in declaration order let the two share the overflow
+;; bit once a program stores more than 62 globals (benchmarks/ssa_construct
+;; stores 83): `ssa-materialize`'s bump of `ssa-mt-fill` then read as a write of
+;; `ssa-mt`'s cell, and the descriptor handle reloaded on every instruction
+;; copied. The non-scalar globals take the low bits first, and the scalars take
+;; what is left; when the row overflows, the scalars share ONE bit of their own
+;; (the top one) and the non-scalars past the row share the bit below it, so a
+;; scalar store never reads as an array's cell write whatever the count. Below
+;; the limit the assignment is a permutation of the old one, and no verdict
+;; moves.
+(define (opt-global-mod-ref-index-build
+  [globals : ir.CompilerIrGlobalSeq]
+  [stores : opt_i64_i64_map.Map]
+  [capacity : i64]) : OptGlobalModRefIndex
+  (let
+    [limit : i64 (opt-global-mod-ref-limit)]
+    [arrays : i64
+      (opt-global-mod-ref-store-count-pool
+        (compiler-opt-global-shared-view globals)
+        (compiler-opt-global-shared-view stores)
+        false
+        0
+        0)]
+    [scalars : i64
+      (opt-global-mod-ref-store-count-pool
+        (compiler-opt-global-shared-view globals)
+        (compiler-opt-global-shared-view stores)
+        true
+        0
+        0)]
+    [fits? : bool (<= (+ arrays scalars) limit)]
+    ;; arrays: distinct bits up to `array-last`, then `array-overflow`
+    [array-last : i64
+      (cond
+        [fits? (- limit 1)]
+        [(<= arrays (- limit 1)) (- limit 2)]
+        [else (- limit 3)])]
+    [array-overflow : i64
+      (if (<= arrays (- limit 1))
+        (- 0 1)
+        (- limit 2))]
+    ;; scalars: distinct bits from where the arrays stopped up to
+    ;; `scalar-last`, then the top bit
+    [scalar-last : i64
+      (cond
+        [fits? (- limit 1)]
+        [(<= arrays (- limit 1)) (- limit 2)]
+        [else (- limit 3)])]
+    [scalar-overflow : i64
+      (if fits?
+        (- 0 1)
+        (- limit 1))]
+    (match (opt-global-mod-ref-index-fill-pool
+      (compiler-opt-global-shared-view globals)
+      (compiler-opt-global-shared-view stores)
+      false
+      array-last
+      array-overflow
+      (opt_i64_i64_map.with-capacity capacity)
+      0
+      0)
+      [(OptGlobalModRefIndex.No) (OptGlobalModRefIndex.No)]
+      [(OptGlobalModRefIndex.Some out next)
+        (opt-global-mod-ref-index-fill-pool
+          (compiler-opt-global-shared-view globals)
+          (compiler-opt-global-shared-view stores)
+          true
+          scalar-last
+          scalar-overflow
+          out
+          0
+          (if (<= arrays (- limit 1))
+            next
+            (- limit 1)))])))
+
 ;; (the same gate opt-build-program-summaries applies, so a big program pays
 ;; nothing for a table its LICM would not consult), and the directly-stored
 ;; globals fit the packed row.
@@ -150861,13 +150920,10 @@
       (> (opt_i64_i64_map.len (& addr-taken)) 0)
       (> count (opt-loop-bce-summary-function-limit)))
       (opt-global-mod-ref-none)
-      (match (opt-global-mod-ref-index-fill
+      (match (opt-global-mod-ref-index-build
         (compiler-opt-global-shared-view globals)
         (compiler-opt-global-shared-view stores)
-        (opt-global-mod-ref-overflow-bit globals stores)
-        (opt_i64_i64_map.with-capacity capacity)
-        0
-        0)
+        capacity)
         [(OptGlobalModRefIndex.No) (opt-global-mod-ref-none)]
         [(OptGlobalModRefIndex.Some index _)
           (match (opt-global-mod-ref-fixed

@@ -83908,15 +83908,44 @@
 ;; ALIAS-2. The index the real builder computes for a program of `count`
 ;; stored globals, overflow bit and all.
 (define (opt-mr-wide-index-fill [count : i64]) : compiler_optimize.OptGlobalModRefIndex
-  (compiler_optimize.opt-global-mod-ref-index-fill
+  (compiler_optimize.opt-global-mod-ref-index-build
     (opt-mr-wide-globals count)
     (opt-mr-wide-stores count (opt_i64_i64_map.with-capacity 128) 0)
-    (compiler_optimize.opt-global-mod-ref-overflow-bit
-      (opt-mr-wide-globals count)
-      (opt-mr-wide-stores count (opt_i64_i64_map.with-capacity 128) 0))
-    (opt_i64_i64_map.with-capacity 128)
-    0
-    0))
+    128))
+
+;; P18-2. The same program with every EVEN global an array: the two pools.
+(define (opt-mr-mixed-globals-fill!
+  [builder : (&mut b compiler_ir_types.CompilerIrGlobalBuilder)]
+  [at : i64]
+  [count : i64]) : unit
+  (if (>= at count)
+    unit
+    (begin
+      (compiler_ir_types.compiler-ir-global-builder-push!
+        builder
+        (compiler_ir_types.CompilerIrGlobal.Global
+          (opt-test-symbol (str_cat.str-cat "mr_wide_" (string.int->string at)))
+          (if (= (% at 2) 0)
+            (compiler_ast_types.AstType.DynArray 0)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrValue.I64 at)))
+      (opt-mr-mixed-globals-fill! builder (+ at 1) count))))
+
+(define (opt-mr-mixed-bit [count : i64] [at : i64]) : i64
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 64)]
+    (begin
+      (opt-mr-mixed-globals-fill! (&mut builder) 0 count)
+      (match (compiler_optimize.opt-global-mod-ref-index-build
+        (compiler_ir_types.compiler-ir-global-builder-to-seq builder)
+        (opt-mr-wide-stores count (opt_i64_i64_map.with-capacity 128) 0)
+        128)
+        [(compiler_optimize.OptGlobalModRefIndex.No) 0]
+        [(compiler_optimize.OptGlobalModRefIndex.Some index _)
+          (compiler_optimize.opt-global-mod-ref-cell-bit
+            index
+            (opt-test-symbol (str_cat.str-cat "mr_wide_" (string.int->string at))))]))))
 
 (define (opt-mr-wide-index-built? [count : i64]) : bool
   (match (opt-mr-wide-index-fill count)
@@ -84090,6 +84119,34 @@
             (+ (compiler_optimize.opt-global-mod-ref-limit) 1)
             (compiler_optimize.opt-global-mod-ref-limit)))
         18]
+      ;; P18-2: two pools. 64 globals, the even ones arrays: the 32 arrays take
+      ;; the low bits, the scalars follow, and the scalars past the row share
+      ;; the TOP bit alone -- never an array's.
+      [(not
+          (=
+            (opt-mr-mixed-bit
+              (+ (compiler_optimize.opt-global-mod-ref-limit) 2)
+              (+ (compiler_optimize.opt-global-mod-ref-limit) 1))
+            (shl 1 (- (compiler_optimize.opt-global-mod-ref-limit) 1))))
+        181]
+      [(not
+          (=
+            (opt-mr-mixed-bit
+              (+ (compiler_optimize.opt-global-mod-ref-limit) 2)
+              (- (compiler_optimize.opt-global-mod-ref-limit) 1))
+            (shl 1 (- (compiler_optimize.opt-global-mod-ref-limit) 1))))
+        182]
+      [(=
+          (opt-mr-mixed-bit
+            (+ (compiler_optimize.opt-global-mod-ref-limit) 2)
+            (compiler_optimize.opt-global-mod-ref-limit))
+          (shl 1 (- (compiler_optimize.opt-global-mod-ref-limit) 1)))
+        183]
+      [(not
+          (=
+            (opt-mr-mixed-bit (+ (compiler_optimize.opt-global-mod-ref-limit) 2) 0)
+            1))
+        184]
       ;; --- the decision the table moves ---
       ;; a callee that writes mr_a keeps mr_b's cell promotable and refuses
       ;; mr_a's

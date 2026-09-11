@@ -96541,7 +96541,13 @@
   (wire i64)
   (wire-vars OptBceMbVarList)
   (far-labels OptLabelSet)
-  (far-vars OptBceMbVarList))
+  (far-vars OptBceMbVarList)
+  ;; BCE-FARPHI: phi inputs carrying a loop def over a non-group edge, as
+  ;; parallel lists of (source label, def). They join the far set only where
+  ;; the wire point dominates the source; the rest stay with the exit-phi
+  ;; extension and the stub widening, which is what decided them before.
+  (phi-labels OptBceMbVarList)
+  (phi-vars OptBceMbVarList))
 
 (define (opt-bce-mb-var-list-contains? [vars : OptBceMbVarList] [var : i64]) : bool
   (opt-bce-mb-var-list-contains-from? vars var 0))
@@ -96606,6 +96612,160 @@
 
 ;; Classify every outside block with a direct loop-def use as the wire point or
 ;; as a far block.
+(define (opt-bce-mb-far-phi-inputs
+  [body-labels : OptLabelSet]
+  [body-blocks : ir.CompilerIrBlockList]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
+  [plan : OptBceMbFarPlan]) : OptBceMbFarPlan
+  (if (>= index count)
+    plan
+    (let
+      [next : OptBceMbFarPlan
+        (match (ir.compiler-ir-instr-seq-ref
+          (compiler-opt-global-shared-view instrs)
+          index)
+          [(ir.CompilerIrInstr.Phi _ inputs _)
+            (opt-bce-mb-far-phi-input-seq
+              (compiler-opt-global-shared-view body-labels)
+              (compiler-opt-global-shared-view body-blocks)
+              (compiler-opt-global-shared-view inputs)
+              0
+              plan)]
+          [_ plan])]
+      (opt-bce-mb-far-phi-inputs
+        body-labels
+        body-blocks
+        instrs
+        (+ index 1)
+        count
+        next))))
+
+(define (opt-bce-mb-far-phi-input-seq
+  [body-labels : OptLabelSet]
+  [body-blocks : ir.CompilerIrBlockList]
+  [inputs : ir.CompilerIrPhiInputSeq]
+  [index : i64]
+  [plan : OptBceMbFarPlan]) : OptBceMbFarPlan
+  (if (>= index inputs.len)
+    plan
+    (let
+      [input : ir.CompilerIrPhiInput
+        (ir.compiler-ir-phi-input-seq-ref
+          (ir.compiler-ir-global-shared-view inputs)
+          index)]
+      [label : i64 input.label]
+      [next : OptBceMbFarPlan
+        (if (opt-label-contains
+          (compiler-opt-global-shared-view body-labels)
+          label)
+          plan
+          (match (compiler-opt-global-shared-view input.value)
+            [(ir.CompilerIrValue.Var var)
+              (let
+                [uses : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 2)]
+                [_mark : unit (opt_i64_i64_map.insert-ref! (&mut uses) var 1)]
+                [vars : OptBceMbVarList
+                  (opt-bce-mb-wire-vars-blocks
+                    (compiler-opt-global-shared-view body-blocks)
+                    uses
+                    (opt-bce-mb-var-list-new))]
+                (if (opt-bce-mb-var-list-empty?
+                  (compiler-opt-global-shared-view vars))
+                  plan
+                  (OptBceMbFarPlan
+                    plan.wire
+                    plan.wire-vars
+                    plan.far-labels
+                    plan.far-vars
+                    (opt-bce-mb-var-list-prepend plan.phi-labels label)
+                    (opt-bce-mb-var-list-prepend plan.phi-vars var))))]
+            [_ plan]))]
+      (opt-bce-mb-far-phi-input-seq
+        body-labels
+        body-blocks
+        inputs
+        (+ index 1)
+        next))))
+
+(define (opt-bce-mb-far-rewrite-phis
+  [instrs : ir.CompilerIrInstrSeq]
+  [wire : i64]
+  [far-labels : OptLabelSet]
+  [env : OptCopyEnv]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [phi-count : i64
+      (opt-unroll-phi-prefix-count (compiler-opt-global-shared-view instrs) 0)]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (if (< index phi-count)
+              (match (ir.compiler-ir-instr-seq-ref
+                (compiler-opt-global-shared-view instrs)
+                index)
+                [(ir.CompilerIrInstr.Phi dst inputs ty)
+                  (ir.CompilerIrInstr.Phi
+                    dst
+                    (opt-bce-mb-far-rewrite-inputs
+                      (compiler-opt-global-shared-view inputs)
+                      wire
+                      (compiler-opt-global-shared-view far-labels)
+                      (compiler-opt-global-shared-view env))
+                    ty)]
+                [_
+                  (ir.compiler-ir-instr-seq-ref
+                    (compiler-opt-global-shared-view instrs)
+                    index)])
+              (ir.compiler-ir-instr-seq-ref
+                (compiler-opt-global-shared-view instrs)
+                index)))
+          (set! index (+ index 1))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+(define (opt-bce-mb-far-rewrite-inputs
+  [inputs : ir.CompilerIrPhiInputSeq]
+  [wire : i64]
+  [far-labels : OptLabelSet]
+  [env : OptCopyEnv]) : ir.CompilerIrPhiInputSeq
+  (let
+    [builder : ir.CompilerIrPhiInputBuilder
+      (ir.compiler-ir-phi-input-builder-with-capacity inputs.len)]
+    [index : i64 0]
+    (begin
+      (while (< index inputs.len)
+        (let
+          [input : ir.CompilerIrPhiInput
+            (ir.compiler-ir-phi-input-seq-ref
+              (ir.compiler-ir-global-shared-view inputs)
+              index)]
+          [label : i64 input.label]
+          (begin
+            (ir.compiler-ir-phi-input-builder-push!
+              (&mut builder)
+              (if (or
+                (= label wire)
+                (opt-label-contains
+                  (compiler-opt-global-shared-view far-labels)
+                  label))
+                (ir.CompilerIrPhiInput
+                  (opt-copy-resolve
+                    (compiler-opt-global-shared-view env)
+                    (compiler-opt-global-shared-view input.value))
+                  label)
+                (ir.CompilerIrPhiInput
+                  (compiler-opt-global-shared-view input.value)
+                  label)))
+            (set! index (+ index 1)))))
+      (ir.compiler-ir-phi-input-builder-to-seq builder))))
+
 (define (opt-bce-mb-far-scan
   [pred-map : OptPredMap]
   [blocks : ir.CompilerIrBlockList]
@@ -96637,6 +96797,23 @@
               label)
               plan
               (let
+                ;; BCE-FARPHI: a phi input whose VALUE is a loop def and whose
+                ;; edge comes from an outside block L is a far use at the end
+                ;; of L: the merge phi the wire point materializes for that
+                ;; def is what the input has to read, so L joins the far
+                ;; labels (it must be dominated by the wire point) and the def
+                ;; the far vars. An input on a group edge is the ordinary
+                ;; exit-phi extension's and is left alone.
+                [plan : OptBceMbFarPlan
+                  (opt-bce-mb-far-phi-inputs
+                    (compiler-opt-global-shared-view body-labels)
+                    (compiler-opt-global-shared-view body-blocks)
+                    (compiler-opt-global-shared-view instrs)
+                    0
+                    (opt-unroll-phi-prefix-count
+                      (compiler-opt-global-shared-view instrs)
+                      0)
+                    plan)]
                 [vars : OptBceMbVarList
                   (opt-bce-mb-wire-vars-blocks
                     body-blocks
@@ -96664,13 +96841,17 @@
                           vars
                           plan.wire-vars)
                         plan.far-labels
-                        plan.far-vars)]
+                        plan.far-vars
+                        plan.phi-labels
+                        plan.phi-vars)]
                     [(OptBceMbMaybeLabels.No)
                       (OptBceMbFarPlan
                         plan.wire
                         plan.wire-vars
                         (opt-label-add plan.far-labels label)
-                        (opt-bce-mb-var-list-union vars plan.far-vars))]))))]))]))
+                        (opt-bce-mb-var-list-union vars plan.far-vars)
+                        plan.phi-labels
+                        plan.phi-vars)]))))]))]))
 
 (define (opt-bce-mb-far-labels-dominated?
   [doms : OptDomInfo]
@@ -96808,12 +96989,25 @@
                   label)
                 (ir.CompilerIrBlock.Block
                   label
-                  (opt-bce-mb-wire-block-instrs
-                    (compiler-opt-global-shared-view instrs)
-                    (opt-unroll-phi-prefix-count instrs 0)
-                    (ir.compiler-ir-instr-seq-empty)
+                  (opt-bce-mb-far-rewrite-phis
+                    (opt-bce-mb-wire-block-instrs
+                      (compiler-opt-global-shared-view instrs)
+                      (opt-unroll-phi-prefix-count instrs 0)
+                      (ir.compiler-ir-instr-seq-empty)
+                      (compiler-opt-global-shared-view env))
+                    wire
+                    (compiler-opt-global-shared-view far-labels)
                     (compiler-opt-global-shared-view env)))]
-              [else block])
+              ;; BCE-FARPHI: an outside block's phi inputs out of the wire point
+              ;; or a far label read the merge phis.
+              [else
+                (ir.CompilerIrBlock.Block
+                  label
+                  (opt-bce-mb-far-rewrite-phis
+                    (compiler-opt-global-shared-view instrs)
+                    wire
+                    (compiler-opt-global-shared-view far-labels)
+                    (compiler-opt-global-shared-view env)))])
             (opt-bce-mb-far-rewrite
               (compiler-opt-box-shared-view rest)
               wire
@@ -96828,6 +97022,43 @@
   (Same)
   (Some ir.CompilerIrBlockList))
 
+(define (opt-bce-mb-far-merge-phis
+  [doms : OptDomInfo]
+  [plan : OptBceMbFarPlan]
+  [index : i64]) : OptBceMbFarPlan
+  (if (>=
+    index
+    (opt-bce-mb-var-list-count
+      (compiler-opt-global-shared-view plan.phi-labels)))
+    plan
+    (let
+      [label : i64
+        (opt-bce-mb-var-list-ref
+          (compiler-opt-global-shared-view plan.phi-labels)
+          index)]
+      [var : i64
+        (opt-bce-mb-var-list-ref
+          (compiler-opt-global-shared-view plan.phi-vars)
+          index)]
+      [next : OptBceMbFarPlan
+        (if (opt-dom-dominates?
+          (compiler-opt-global-shared-view doms)
+          plan.wire
+          label)
+          (OptBceMbFarPlan
+            plan.wire
+            plan.wire-vars
+            (opt-label-add plan.far-labels label)
+            (if (opt-bce-mb-var-list-contains?
+              (compiler-opt-global-shared-view plan.far-vars)
+              var)
+              plan.far-vars
+              (opt-bce-mb-var-list-prepend plan.far-vars var))
+            plan.phi-labels
+            plan.phi-vars)
+          plan)]
+      (opt-bce-mb-far-merge-phis doms next (+ index 1)))))
+
 (define (opt-bce-mb-far-repair
   [pred-map : OptPredMap]
   [doms : OptDomInfo]
@@ -96837,7 +97068,7 @@
   [body-blocks : ir.CompilerIrBlockList]
   [cell : (__tl_dyn-array i64)]) : OptBceMbFarResult
   (let
-    [plan : OptBceMbFarPlan
+    [scanned : OptBceMbFarPlan
       (opt-bce-mb-far-scan
         (compiler-opt-global-shared-view pred-map)
         (compiler-opt-global-shared-view blocks)
@@ -96848,7 +97079,16 @@
           -1
           (opt-bce-mb-var-list-new)
           (OptLabelSet.Nil)
+          (opt-bce-mb-var-list-new)
+          (opt-bce-mb-var-list-new)
           (opt-bce-mb-var-list-new)))]
+    [plan : OptBceMbFarPlan
+      (if (< scanned.wire 0)
+        scanned
+        (opt-bce-mb-far-merge-phis
+          (compiler-opt-global-shared-view doms)
+          scanned
+          0))]
     (if (=
       (opt-label-count (compiler-opt-global-shared-view plan.far-labels))
       0)

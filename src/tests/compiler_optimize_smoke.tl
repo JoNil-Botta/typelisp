@@ -4522,6 +4522,10 @@
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-refusal-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-mb-far-phi-input-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-version-mb-far-phi-input-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bce-version-mb-merged-body-self-test"
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-merged-body-self-test)
       42)
@@ -5443,6 +5447,13 @@
     (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-refusal-self-test)
     42
     "guard-chain admission keeps chain checks and refuses diamonds and unproven far uses"))
+
+(test
+  bce-version-multiblock-far-phi-input
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-version-mb-far-phi-input-self-test)
+    42
+    "a phi input out of a block the wire point dominates reads the merge phi"))
 
 (test
   bce-version-multiblock-merged-body

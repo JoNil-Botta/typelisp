@@ -54252,12 +54252,25 @@
 ;;   5 gives the LATCH a second exit as well (`branch f, lexit, header`);
 ;;   6 makes the far use read a header def that is NOT a phi (`i + n`), which
 ;;     the wire point does not read either: only header phis are admitted
-;;     without a read at the wire point, so the far repair refuses.
+;;     without a read at the wire point, so the far repair refuses;
+;;   7 reads the flag through a PHI INPUT: `farjoin` merges it on the edge from
+;;     `fara`, an outside block the exit dominates (BCE-FARPHI);
+;;   8 the same phi input, on the edge from the exit block itself;
+;;   9 the same phi input from `fara`, but `flagexit` jumps to `fara` too, so
+;;     the exit does not dominate the input's source and the loop refuses.
 (define opt-bce-mb2-test-frame : i64
   20)
 
 (define (opt-bce-mb2-test-far-variant? [variant : i64]) : bool
-  (or (= variant 1) (= variant 2) (= variant 6)))
+  (or
+    (= variant 1)
+    (= variant 2)
+    (= variant 6)
+    (opt-bce-mb2-test-phi-variant? variant)))
+
+;; The variants whose far join reads the flag through a phi input.
+(define (opt-bce-mb2-test-phi-variant? [variant : i64]) : bool
+  (or (= variant 7) (= variant 8) (= variant 9)))
 
 (define (opt-bce-mb2-test-entry-block) : compiler_ir_types.CompilerIrBlock
   (compiler_ir_types.CompilerIrBlock.Block
@@ -54317,10 +54330,12 @@
     (compiler_ir_types.compiler-ir-label "flagexit")
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Jump
-        (if (= variant 4)
+        (cond
           ;; back inside the loop: the header branch is now a diamond
-          (compiler_ir_types.compiler-ir-label "merge")
-          (compiler_ir_types.compiler-ir-label "exit"))))))
+          [(= variant 4) (compiler_ir_types.compiler-ir-label "merge")]
+          ;; past the exit block: the exit no longer dominates `fara`
+          [(= variant 9) (compiler_ir_types.compiler-ir-label "fara")]
+          [else (compiler_ir_types.compiler-ir-label "exit")])))))
 
 (define (opt-bce-mb2-test-gate-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
   (compiler_ir_types.CompilerIrBlock.Block
@@ -54395,9 +54410,11 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Branch
         (compiler_ir_types.CompilerIrValue.Var 4)
-        (if (opt-bce-mb2-test-far-variant? variant)
-          (compiler_ir_types.compiler-ir-label "fara")
-          (compiler_ir_types.compiler-ir-label "ret1"))
+        (cond
+          [(= variant 8) (compiler_ir_types.compiler-ir-label "farjoin")]
+          [(opt-bce-mb2-test-far-variant? variant)
+            (compiler_ir_types.compiler-ir-label "fara")]
+          [else (compiler_ir_types.compiler-ir-label "ret1")])
         (if (opt-bce-mb2-test-far-variant? variant)
           (compiler_ir_types.compiler-ir-label "farb")
           (compiler_ir_types.compiler-ir-label "ret0"))))))
@@ -54405,28 +54422,49 @@
 (define (opt-bce-mb2-test-farjoin-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
   (compiler_ir_types.CompilerIrBlock.Block
     (compiler_ir_types.compiler-ir-label "farjoin")
-    (if (or (= variant 2) (= variant 6))
+    (cond
+      ;; reads the flag through a phi input on an outside edge
+      [(opt-bce-mb2-test-phi-variant? variant)
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Phi
+            14
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (if (= variant 8)
+                (compiler_ir_types.compiler-ir-label "exit")
+                (compiler_ir_types.compiler-ir-label "fara"))
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Bool false)
+                (compiler_ir_types.compiler-ir-label "farb")
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 14)
+            (compiler_ir_types.compiler-ir-label "ret1")
+            (compiler_ir_types.compiler-ir-label "ret0")))]
       ;; reads a var the wire point does not read: the COUNTER (a header phi)
       ;; or the header's non-phi `i + n`
-      (opt-test-instrs
-        (compiler_ir_types.CompilerIrInstr.BinOp
-          13
-          (compiler_ir_types.CompilerIrBinOp.Lt)
-          (compiler_ir_types.CompilerIrValue.Var
-            (if (= variant 2)
-              3
-              10))
-          (compiler_ir_types.CompilerIrValue.Var 0)
-          (compiler_ast_types.AstType.Bool))
-        (compiler_ir_types.CompilerIrInstr.Branch
-          (compiler_ir_types.CompilerIrValue.Var 13)
-          (compiler_ir_types.compiler-ir-label "ret1")
-          (compiler_ir_types.compiler-ir-label "ret0")))
-      (opt-test-instrs
-        (compiler_ir_types.CompilerIrInstr.Branch
-          (compiler_ir_types.CompilerIrValue.Var 4)
-          (compiler_ir_types.compiler-ir-label "ret1")
-          (compiler_ir_types.compiler-ir-label "ret0"))))))
+      [(or (= variant 2) (= variant 6))
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            13
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var
+              (if (= variant 2)
+                3
+                10))
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 13)
+            (compiler_ir_types.compiler-ir-label "ret1")
+            (compiler_ir_types.compiler-ir-label "ret0")))]
+      [else
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.compiler-ir-label "ret1")
+            (compiler_ir_types.compiler-ir-label "ret0")))])))
 
 (define (opt-bce-mb2-test-return-block [label : String] [value : i64]) : compiler_ir_types.CompilerIrBlock
   (compiler_ir_types.CompilerIrBlock.Block
@@ -54449,17 +54487,23 @@
               compiler_ir_types.CompilerIrBlockList.Nil)
             compiler_ir_types.CompilerIrBlockList.Nil)))]
     (if (opt-bce-mb2-test-far-variant? variant)
-      (compiler_ir_types.compiler-ir-block-cons
-        (opt-bce-mb-test-jump-block
-          (compiler_ir_types.compiler-ir-label "fara")
-          (compiler_ir_types.compiler-ir-label "farjoin"))
-        (compiler_ir_types.compiler-ir-block-cons
-          (opt-bce-mb-test-jump-block
-            (compiler_ir_types.compiler-ir-label "farb")
-            (compiler_ir_types.compiler-ir-label "farjoin"))
+      (let
+        [joined : compiler_ir_types.CompilerIrBlockList
           (compiler_ir_types.compiler-ir-block-cons
-            (opt-bce-mb2-test-farjoin-block variant)
-            returns)))
+            (opt-bce-mb-test-jump-block
+              (compiler_ir_types.compiler-ir-label "farb")
+              (compiler_ir_types.compiler-ir-label "farjoin"))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-bce-mb2-test-farjoin-block variant)
+              returns))]
+        ;; the exit reaches the join directly in variant 8: no `fara`
+        (if (= variant 8)
+          joined
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-bce-mb-test-jump-block
+              (compiler_ir_types.compiler-ir-label "fara")
+              (compiler_ir_types.compiler-ir-label "farjoin"))
+            joined)))
       returns)))
 
 (define (opt-bce-mb2-test-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
@@ -54573,6 +54617,45 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (opt-bce-mb2-test-binop-lhs-var-from instrs 0)])]))
+
+;; The var a block's first phi reads on the edge from `pred`, or -1.
+(define (opt-bce-mb2-test-phi-input-var-from
+  [inputs : compiler_ir_types.CompilerIrPhiInputSeq]
+  [index : i64]
+  [pred : i64]) : i64
+  (if (>= index inputs.len)
+    (- 0 1)
+    (let
+      [input : compiler_ir_types.CompilerIrPhiInput
+        (compiler_ir_types.compiler-ir-phi-input-seq-ref
+          (compiler_ir_types.compiler-ir-global-shared-view inputs)
+          index)]
+      (if (= input.label pred)
+        (match input.value
+          [(compiler_ir_types.CompilerIrValue.Var id) id]
+          [_ (- 0 1)])
+        (opt-bce-mb2-test-phi-input-var-from inputs (+ index 1) pred)))))
+
+(define (opt-bce-mb2-test-phi-input-var
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]
+  [pred : i64]) : i64
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (if (<
+            (compiler_ir_types.compiler-ir-instr-seq-count
+              (compiler_ir_types.compiler-ir-global-shared-view instrs))
+            1)
+            (- 0 1)
+            (match (compiler_ir_types.compiler-ir-instr-seq-ref
+              (compiler_ir_types.compiler-ir-global-shared-view instrs)
+              0)
+              [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _)
+                (opt-bce-mb2-test-phi-input-var-from inputs 0 pred)]
+              [_ (- 0 1)]))])]))
 
 ;; A loop whose entry test short-circuits through a SECOND exiting branch
 ;; versions: the guard chain walk finds the counter compare one block below the
@@ -54743,6 +54826,79 @@
               (compiler_ir_types.compiler-ir-label "body__bce_fast"))
             0))
         11]
+      [else 42])))
+
+;; BCE-FARPHI: a loop def read by a PHI INPUT on an edge out of an outside
+;; block is a far use at the end of that block. Where the wire point dominates
+;; the block, the input reads the merge phi the wire point materializes -- the
+;; same phi the exit's own direct read wires through -- and the loop versions.
+;; The wire point may be that block itself. A source the wire point does not
+;; dominate keeps the escape refusal.
+(define (compiler-optimize-bce-version-mb-far-phi-input-self-test) : i64
+  (let
+    [dominated : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mb2-test-versioned 7)]
+    [at-wire : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mb2-test-versioned 8)]
+    [undominated : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mb2-test-versioned 9)]
+    (cond
+      [(not (opt-bce-mb2-test-verify-ok? 7)) 1]
+      [(not
+          (opt-bce-mb2-test-versioned?
+            (compiler_optimize.compiler-opt-global-shared-view dominated)))
+        2]
+      ;; one merge phi serves the exit's direct read and the far phi input
+      [(not
+          (=
+            (opt-bce-mb2-test-block-phis
+              (compiler_optimize.compiler-opt-global-shared-view dominated)
+              (compiler_ir_types.compiler-ir-label "exit"))
+            1))
+        3]
+      [(<
+          (opt-bce-mb2-test-phi-input-var
+            (compiler_optimize.compiler-opt-global-shared-view dominated)
+            (compiler_ir_types.compiler-ir-label "farjoin")
+            (compiler_ir_types.compiler-ir-label "fara"))
+          opt-bce-mb2-test-frame)
+        4]
+      [(not
+          (=
+            (opt-bce-mb2-test-phi-input-var
+              (compiler_optimize.compiler-opt-global-shared-view dominated)
+              (compiler_ir_types.compiler-ir-label "farjoin")
+              (compiler_ir_types.compiler-ir-label "fara"))
+            (opt-bce-mb2-test-branch-var
+              dominated
+              (compiler_ir_types.compiler-ir-label "exit"))))
+        5]
+      ;; the input's source may be the wire point itself
+      [(not (opt-bce-mb2-test-verify-ok? 8)) 6]
+      [(not
+          (opt-bce-mb2-test-versioned?
+            (compiler_optimize.compiler-opt-global-shared-view at-wire)))
+        7]
+      [(not
+          (=
+            (opt-bce-mb2-test-block-phis
+              (compiler_optimize.compiler-opt-global-shared-view at-wire)
+              (compiler_ir_types.compiler-ir-label "exit"))
+            1))
+        8]
+      [(not
+          (=
+            (opt-bce-mb2-test-phi-input-var
+              (compiler_optimize.compiler-opt-global-shared-view at-wire)
+              (compiler_ir_types.compiler-ir-label "farjoin")
+              (compiler_ir_types.compiler-ir-label "exit"))
+            (opt-bce-mb2-test-branch-var
+              at-wire
+              (compiler_ir_types.compiler-ir-label "exit"))))
+        9]
+      ;; a source the wire point does not dominate: refused
+      [(not (opt-bce-mb2-test-verify-ok? 9)) 10]
+      [(opt-bce-mb2-test-versioned? undominated) 11]
       [else 42])))
 
 ;; --- merged-body exit-join versioning -----------------------------------------

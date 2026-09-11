@@ -430,11 +430,23 @@
             "cmpq $4096, %rdx")
           (compiler-backend-runtime-test-contains?
             (& linux-full-functions)
+            "testq %rdi, %rdi\n    js .L_tl_alloc_aligned_abort")
+          (compiler-backend-runtime-test-contains?
+            (& windows-full-functions)
+            "testq %rcx, %rcx\n    js .L_tl_alloc_aligned_win_abort")
+          (compiler-backend-runtime-test-contains?
+            (& linux-full-functions)
+            "addq $7, %rdi\n    jc .L_tl_alloc_aligned_abort\n    jo .L_tl_alloc_aligned_abort")
+          (compiler-backend-runtime-test-contains?
+            (& windows-full-functions)
+            "addq $7, %rcx\n    jc .L_tl_alloc_aligned_win_abort\n    jo .L_tl_alloc_aligned_win_abort")
+          (compiler-backend-runtime-test-contains?
+            (& linux-full-functions)
             ".L_tl_alloc_aligned_atomic_cas:")
           (compiler-backend-runtime-test-contains?
             (& windows-full-functions)
             ".L_tl_alloc_aligned_win_atomic_cas:"))
-        "aligned allocators validate the cap and keep target atomic CAS paths")
+        "aligned allocators validate size, rounding, cap, and atomic CAS paths")
       (test.assert-true
         (compiler-backend-runtime-test-contains?
           (& windows-full-functions)

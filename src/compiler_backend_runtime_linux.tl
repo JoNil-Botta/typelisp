@@ -339,11 +339,13 @@ tl_alloc:
     .type tl_alloc_aligned,@function
 tl_alloc_aligned:
     testq %rdi, %rdi
+    js .L_tl_alloc_aligned_abort
     jnz .L_tl_alloc_aligned_size_ready
     movq $1, %rdi
 .L_tl_alloc_aligned_size_ready:
     addq $7, %rdi
     jc .L_tl_alloc_aligned_abort
+    jo .L_tl_alloc_aligned_abort
     andq $-8, %rdi
     movq %rdi, %rdx
     testq %rsi, %rsi

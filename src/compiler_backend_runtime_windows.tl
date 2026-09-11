@@ -1174,11 +1174,13 @@ tl_alloc_aligned:
     movq %rsp, %rbp
     subq $112, %rsp
     testq %rcx, %rcx
+    js .L_tl_alloc_aligned_win_abort
     jnz .L_tl_alloc_aligned_win_size_ready
     movq $1, %rcx
 .L_tl_alloc_aligned_win_size_ready:
     addq $7, %rcx
     jc .L_tl_alloc_aligned_win_abort
+    jo .L_tl_alloc_aligned_win_abort
     andq $-8, %rcx
     movq %rcx, -8(%rbp)
     testq %rdx, %rdx

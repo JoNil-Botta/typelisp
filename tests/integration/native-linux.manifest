@@ -367,6 +367,8 @@ read_file_missing_trap|tests/integration/read_file_missing_trap.tl|134|-|-|-|exp
 write_file_invalid_trap|tests/integration/write_file_invalid_trap.tl|134|-|-|-|expected-stderr:tl: write-file failed: io: not found: tests/integration/missing-parent-zzz/output.txt\n
 selfhost_argv_oob|tests/integration/selfhost_argv_oob.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1254:8: panic: tl: argv index out of bounds\n
 tl_alloc_huge_trap|tests/integration/tl_alloc_huge_trap.tl|134|-|-|-|expected-stderr:tl: allocation failed\n
+tl_alloc_aligned_invalid|tests/integration/tl_alloc_aligned_invalid.tl|134|-|-|-|expected-stderr:tl: allocation failed\n
+tl_alloc_aligned_overflow|tests/integration/tl_alloc_aligned_overflow.tl|134|-|-|-|expected-stderr:tl: allocation failed\n
 stdin_bytes_negative_trap|tests/integration/stdin_bytes_negative_trap.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1611:6: panic: tl: stdin failed\n
 region_mark_zero|tests/integration/region_mark_zero.tl|42|-|-|-
 region_reset_zero|tests/integration/region_reset_zero.tl|44|-|-|stdlib/string.tl
@@ -483,6 +485,7 @@ atomic_thread_spawn|tests/integration/atomic_thread_spawn.tl|42|-|-|stdlib/arena
 safe_threading_example|examples/safe_threading.tl|42|safe threading score: 42\n|-|stdlib/arena.tl stdlib/io.tl stdlib/thread.tl stdlib/string.tl stdlib/str_cat.tl
 arena_lifetimes_example|examples/arena_lifetimes.tl|42|arena lifetime score: 42\n|-|stdlib/arena.tl stdlib/io.tl stdlib/profile.tl stdlib/thread.tl stdlib/string.tl stdlib/test.tl
 tl_alloc|tests/integration/tl_alloc.tl|0|-|-|-
+tl_alloc_aligned|tests/integration/tl_alloc_aligned.tl|42|-|-|stdlib/arena.tl stdlib/profile.tl stdlib/thread.tl stdlib/string.tl
 tree|tests/integration/tree.tl|3|-|-|-
 tuple_values|tests/integration/tuple_values.tl|42|-|-|-
 tuple_match_pattern|tests/integration/tuple_match_pattern.tl|42|-|-|stdlib/string.tl

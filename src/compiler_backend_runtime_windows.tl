@@ -1129,31 +1129,471 @@ tl_alloc:
 
 ")))
 
+(define (compiler-backend-runtime-windows-aligned-alloc-functions-base
+  [profile : bool]) : String
+  (let
+    [ordinary-profile : String
+      (runtime_common.compiler-backend-runtime-profile-aligned-alloc-account
+        "%rdx"
+        "%r10"
+        ".L_tl_alloc_aligned_profile_win_fast_done"
+        profile
+        "%r11")]
+    [atomic-profile : String
+      (runtime_common.compiler-backend-runtime-profile-aligned-alloc-account
+        "%rdx"
+        "%r10"
+        ".L_tl_alloc_aligned_profile_win_atomic_done"
+        profile
+        "%r11")]
+    [atomic-locked-profile : String
+      (runtime_common.compiler-backend-runtime-profile-aligned-alloc-account
+        "%rdx"
+        "%r10"
+        ".L_tl_alloc_aligned_profile_win_atomic_locked_done"
+        profile
+        "%r11")]
+    [atomic-new-profile : String
+      (runtime_common.compiler-backend-runtime-profile-aligned-alloc-account
+        "%rdx"
+        "%r10"
+        ".L_tl_alloc_aligned_profile_win_atomic_new_done"
+        profile
+        "%r11")]
+    [new-profile : String
+      (runtime_common.compiler-backend-runtime-profile-aligned-alloc-account
+        "%rdx"
+        "%r10"
+        ".L_tl_alloc_aligned_profile_win_new_done"
+        profile
+        "%r11")]
+    (str_cat.str-cat
+      "    .globl tl_alloc_aligned
+tl_alloc_aligned:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $112, %rsp
+    testq %rcx, %rcx
+    jnz .L_tl_alloc_aligned_win_size_ready
+    movq $1, %rcx
+.L_tl_alloc_aligned_win_size_ready:
+    addq $7, %rcx
+    jc .L_tl_alloc_aligned_win_abort
+    andq $-8, %rcx
+    movq %rcx, -8(%rbp)
+    testq %rdx, %rdx
+    jz .L_tl_alloc_aligned_win_abort
+    cmpq $4096, %rdx
+    ja .L_tl_alloc_aligned_win_abort
+    movq %rdx, %r11
+    decq %r11
+    testq %rdx, %r11
+    jnz .L_tl_alloc_aligned_win_abort
+    movq %r11, -16(%rbp)
+    movq %gs:0x28, %r8
+    testq %r8, %r8
+    jz .L_tl_alloc_aligned_win_new_arena
+    movq 56(%r8), %r9
+    testq $1, 48(%r8)
+    jnz .L_tl_alloc_aligned_win_atomic
+.L_tl_alloc_aligned_win_ordinary_retry:
+    movq 16(%r9), %r11
+    movq %r11, %rax
+    addq -16(%rbp), %rax
+    jc .L_tl_alloc_aligned_win_abort
+    movq -16(%rbp), %r10
+    notq %r10
+    andq %r10, %rax
+    movq %rax, -56(%rbp)
+    movq %rax, %r10
+    addq -8(%rbp), %r10
+    jc .L_tl_alloc_aligned_win_abort
+    cmpq 24(%r9), %r10
+    ja .L_tl_alloc_aligned_win_new_arena
+    cmpq 64(%r9), %r10
+    ja .L_tl_alloc_aligned_win_commit
+    movq %r10, 16(%r9)
+    subq %r11, %r10
+    movq -8(%rbp), %rdx
+"
+      ordinary-profile
+      "    movq -56(%rbp), %rax
+    movq %rbp, %rsp
+    popq %rbp
+    ret
+.L_tl_alloc_aligned_win_commit:
+    movq %r9, -24(%rbp)
+    movq %r9, %rcx
+    movq %r10, %rdx
+    call .L_tl_alloc_win_commit_to
+    testq %rax, %rax
+    jz .L_tl_alloc_aligned_win_abort
+    movq -24(%rbp), %r9
+    jmp .L_tl_alloc_aligned_win_ordinary_retry
+.L_tl_alloc_aligned_win_atomic:
+    movq %r8, -24(%rbp)
+    movq 56(%r8), %r8
+    movq 16(%r8), %rax
+.L_tl_alloc_aligned_win_atomic_cas:
+    movq %rax, %r11
+    addq -16(%rbp), %r11
+    jc .L_tl_alloc_aligned_win_abort
+    movq -16(%rbp), %r10
+    notq %r10
+    andq %r10, %r11
+    movq %r11, -56(%rbp)
+    movq %r11, %r10
+    addq -8(%rbp), %r10
+    jc .L_tl_alloc_aligned_win_abort
+    cmpq 24(%r8), %r10
+    ja .L_tl_alloc_aligned_win_atomic_slow
+    cmpq 64(%r8), %r10
+    ja .L_tl_alloc_aligned_win_atomic_slow
+    lock cmpxchgq %r10, 16(%r8)
+    jne .L_tl_alloc_aligned_win_atomic_cas
+    subq %rax, %r10
+    movq -8(%rbp), %rdx
+"
+      (str_cat.str-cat
+        atomic-profile
+        "    movq -56(%rbp), %rax
+    movq %rbp, %rsp
+    popq %rbp
+    ret
+.L_tl_alloc_aligned_win_atomic_slow:
+.L_tl_alloc_aligned_win_atomic_lock:
+    movq -24(%rbp), %r9
+    movq $1, %rax
+    movq $3, %r10
+    lock cmpxchgq %r10, 48(%r9)
+    je .L_tl_alloc_aligned_win_atomic_locked
+    pause
+    jmp .L_tl_alloc_aligned_win_atomic_lock
+.L_tl_alloc_aligned_win_atomic_locked:
+    movq 56(%r9), %r8
+    movq 16(%r8), %rax
+.L_tl_alloc_aligned_win_atomic_locked_cas:
+    movq %rax, %r11
+    addq -16(%rbp), %r11
+    jc .L_tl_alloc_aligned_win_abort_locked
+    movq -16(%rbp), %r10
+    notq %r10
+    andq %r10, %r11
+    movq %r11, -56(%rbp)
+    movq %r11, %r10
+    addq -8(%rbp), %r10
+    jc .L_tl_alloc_aligned_win_abort_locked
+    cmpq 24(%r8), %r10
+    ja .L_tl_alloc_aligned_win_atomic_map
+    cmpq 64(%r8), %r10
+    ja .L_tl_alloc_aligned_win_atomic_commit
+    lock cmpxchgq %r10, 16(%r8)
+    jne .L_tl_alloc_aligned_win_atomic_locked_cas
+    movq $1, 48(%r9)
+    subq %rax, %r10
+    movq -8(%rbp), %rdx
+"
+        atomic-locked-profile
+        "    movq -56(%rbp), %rax
+    movq %rbp, %rsp
+    popq %rbp
+    ret
+.L_tl_alloc_aligned_win_atomic_commit:
+    movq %r8, -32(%rbp)
+    movq %r8, %rcx
+    movq %r10, %rdx
+    call .L_tl_alloc_win_commit_to
+    testq %rax, %rax
+    jz .L_tl_alloc_aligned_win_abort_locked_reload
+    movq -24(%rbp), %r9
+    movq -32(%rbp), %r8
+    movq 16(%r8), %rax
+    jmp .L_tl_alloc_aligned_win_atomic_locked_cas
+.L_tl_alloc_aligned_win_abort_locked_reload:
+    movq -24(%rbp), %r9
+.L_tl_alloc_aligned_win_abort_locked:
+    movq $1, 48(%r9)
+    jmp .L_tl_alloc_aligned_win_abort
+.L_tl_alloc_aligned_win_atomic_map:
+    movq -8(%rbp), %r10
+    addq -16(%rbp), %r10
+    jc .L_tl_alloc_aligned_win_abort_locked
+    addq $72, %r10
+    jc .L_tl_alloc_aligned_win_abort_locked
+    movq $0x4000000, %rdx
+    cmpq %rdx, %r10
+    ja .L_tl_alloc_aligned_win_atomic_len_ready
+    movq %rdx, %r10
+.L_tl_alloc_aligned_win_atomic_len_ready:
+    movq %r10, -32(%rbp)
+    xorq %rcx, %rcx
+    movq %r10, %rdx
+    movq $0x2000, %r8
+    movq $4, %r9
+    call VirtualAlloc
+    testq %rax, %rax
+    jz .L_tl_alloc_aligned_win_atomic_reserve_fail
+    movq %rax, -40(%rbp)
+    movq -8(%rbp), %r10
+    addq -16(%rbp), %r10
+    jc .L_tl_alloc_aligned_win_atomic_initial_fail
+    addq $72, %r10
+    jc .L_tl_alloc_aligned_win_atomic_initial_fail
+    cmpq $0x400000, %r10
+    jae .L_tl_alloc_aligned_win_atomic_commit_len_ready
+    movq $0x400000, %r10
+.L_tl_alloc_aligned_win_atomic_commit_len_ready:
+    cmpq -32(%rbp), %r10
+    jbe .L_tl_alloc_aligned_win_atomic_commit_len_capped
+    movq -32(%rbp), %r10
+.L_tl_alloc_aligned_win_atomic_commit_len_capped:
+    movq %r10, -48(%rbp)
+    movq -40(%rbp), %rcx
+    movq %r10, %rdx
+    movq $0x1000, %r8
+    movq $4, %r9
+    call VirtualAlloc
+    testq %rax, %rax
+    jz .L_tl_alloc_aligned_win_atomic_initial_fail
+    movq -40(%rbp), %rax
+    movq -24(%rbp), %r9
+    movq %rax, %r11
+    addq -32(%rbp), %r11
+    jc .L_tl_alloc_aligned_win_abort_locked
+    movq %r11, -64(%rbp)
+    movq 56(%r9), %r8
+    movq %r8, 0(%rax)
+    movq %r9, 40(%rax)
+    movq $1, 48(%rax)
+    movq $0, 32(%rax)
+    movq $0, 56(%rax)
+    leaq 72(%rax), %rcx
+    movq %rcx, 8(%rax)
+    movq -64(%rbp), %r10
+    movq %r10, 24(%rax)
+    movq -48(%rbp), %r10
+    addq %rax, %r10
+    movq %r10, 64(%rax)
+    movq %rcx, %r11
+    addq -16(%rbp), %r11
+    jc .L_tl_alloc_aligned_win_abort_locked
+    movq -16(%rbp), %r10
+    notq %r10
+    andq %r10, %r11
+    movq %r11, -56(%rbp)
+    movq %r11, %r10
+    addq -8(%rbp), %r10
+    jc .L_tl_alloc_aligned_win_abort_locked
+    movq %r10, 16(%rax)
+    movq %rax, 56(%r9)
+    movq $1, 48(%r9)
+    subq %rcx, %r10
+    movq -8(%rbp), %rdx
+"
+        (str_cat.str-cat
+          atomic-new-profile
+          "    movq -56(%rbp), %rax
+    movq %rbp, %rsp
+    popq %rbp
+    ret
+.L_tl_alloc_aligned_win_atomic_reserve_fail:
+    call GetLastError
+    movl %eax, %eax
+    movq %rax, 40(%rsp)
+    movq $0, 32(%rsp)
+    movq -24(%rbp), %r10
+    movq $1, 48(%r10)
+    movq $1, %rcx
+    xorq %rdx, %rdx
+    movq -32(%rbp), %r8
+    xorq %r9, %r9
+    call tl_windows_allocation_abort
+    jmp .L_tl_alloc_aligned_win_abort
+.L_tl_alloc_aligned_win_atomic_initial_fail:
+    call GetLastError
+    movl %eax, %eax
+    movq %rax, -64(%rbp)
+    movq -40(%rbp), %rcx
+    xorq %rdx, %rdx
+    movq $0x8000, %r8
+    call VirtualFree
+    movq -64(%rbp), %rax
+    movq %rax, 40(%rsp)
+    movq $0, 32(%rsp)
+    movq -24(%rbp), %r10
+    movq $1, 48(%r10)
+    movq $1, %rcx
+    movq $1, %rdx
+    movq -48(%rbp), %r8
+    movq -32(%rbp), %r9
+    call tl_windows_allocation_abort
+    jmp .L_tl_alloc_aligned_win_abort
+.L_tl_alloc_aligned_win_new_arena:
+    movq -8(%rbp), %r10
+    addq -16(%rbp), %r10
+    jc .L_tl_alloc_aligned_win_abort
+    addq $72, %r10
+    jc .L_tl_alloc_aligned_win_abort
+    movq $0x4000000, %rdx
+    cmpq %rdx, %r10
+    ja .L_tl_alloc_aligned_win_len_ready
+    movq %rdx, %r10
+.L_tl_alloc_aligned_win_len_ready:
+    movq %r10, -32(%rbp)
+    xorq %rcx, %rcx
+    movq %r10, %rdx
+    movq $0x2000, %r8
+    movq $4, %r9
+    call VirtualAlloc
+    testq %rax, %rax
+    jz .L_tl_alloc_aligned_win_reserve_fail
+    movq %rax, -40(%rbp)
+    movq -8(%rbp), %r10
+    addq -16(%rbp), %r10
+    jc .L_tl_alloc_aligned_win_initial_fail
+    addq $72, %r10
+    jc .L_tl_alloc_aligned_win_initial_fail
+    cmpq $0x400000, %r10
+    jae .L_tl_alloc_aligned_win_commit_len_ready
+    movq $0x400000, %r10
+.L_tl_alloc_aligned_win_commit_len_ready:
+    cmpq -32(%rbp), %r10
+    jbe .L_tl_alloc_aligned_win_commit_len_capped
+    movq -32(%rbp), %r10
+.L_tl_alloc_aligned_win_commit_len_capped:
+    movq %r10, -48(%rbp)
+    movq -40(%rbp), %rcx
+    movq %r10, %rdx
+    movq $0x1000, %r8
+    movq $4, %r9
+    call VirtualAlloc
+    testq %rax, %rax
+    jz .L_tl_alloc_aligned_win_initial_fail
+    movq -40(%rbp), %rax
+    movq %rax, %r11
+    addq -32(%rbp), %r11
+    jc .L_tl_alloc_aligned_win_abort
+    movq %r11, -64(%rbp)
+    movq %gs:0x28, %r8
+    testq %r8, %r8
+    jz .L_tl_alloc_aligned_win_root_self
+    movq 56(%r8), %r9
+    jmp .L_tl_alloc_aligned_win_root_ready
+.L_tl_alloc_aligned_win_root_self:
+    xorq %r9, %r9
+    movq %rax, %r8
+.L_tl_alloc_aligned_win_root_ready:
+    movq %r9, 0(%rax)
+    movq %r8, 40(%rax)
+    movq $0, 48(%rax)
+    movq $0, 32(%rax)
+    movq %rax, 56(%r8)
+    leaq 72(%rax), %rcx
+    movq %rcx, 8(%rax)
+    movq -64(%rbp), %r10
+    movq %r10, 24(%rax)
+    movq -48(%rbp), %r10
+    addq %rax, %r10
+    movq %r10, 64(%rax)
+    movq %rcx, %r11
+    addq -16(%rbp), %r11
+    jc .L_tl_alloc_aligned_win_abort
+    movq -16(%rbp), %r10
+    notq %r10
+    andq %r10, %r11
+    movq %r11, -56(%rbp)
+    movq %r11, %r10
+    addq -8(%rbp), %r10
+    jc .L_tl_alloc_aligned_win_abort
+    movq %r10, 16(%rax)
+    movq %r8, %gs:0x28
+    subq %rcx, %r10
+    movq -8(%rbp), %rdx
+"
+          new-profile
+          "    movq -56(%rbp), %rax
+    movq %rbp, %rsp
+    popq %rbp
+    ret
+.L_tl_alloc_aligned_win_reserve_fail:
+    call GetLastError
+    movl %eax, %eax
+    movq %rax, 40(%rsp)
+    movq $0, 32(%rsp)
+    xorq %rcx, %rcx
+    xorq %rdx, %rdx
+    movq -32(%rbp), %r8
+    xorq %r9, %r9
+    call tl_windows_allocation_abort
+    jmp .L_tl_alloc_aligned_win_abort
+.L_tl_alloc_aligned_win_initial_fail:
+    call GetLastError
+    movl %eax, %eax
+    movq %rax, -64(%rbp)
+    movq -40(%rbp), %rcx
+    xorq %rdx, %rdx
+    movq $0x8000, %r8
+    call VirtualFree
+    movq -64(%rbp), %rax
+    movq %rax, 40(%rsp)
+    movq $0, 32(%rsp)
+    xorq %rcx, %rcx
+    movq $1, %rdx
+    movq -48(%rbp), %r8
+    movq -32(%rbp), %r9
+    call tl_windows_allocation_abort
+.L_tl_alloc_aligned_win_abort:
+    call tl_oom_abort
+
+"
+          "")
+        "")
+      "")))
+
 (define (compiler-backend-runtime-windows-alloc-functions
   [profile : bool]
   [_arena-debug : bool]) : String
   (let
     [base : String
       (compiler-backend-runtime-windows-alloc-functions-base profile)]
+    [aligned : String
+      (compiler-backend-runtime-windows-aligned-alloc-functions-base profile)]
     (cfg
       (any compiler-arena-debug test)
       (if _arena-debug
-        (string.replace
-          base
-          ".L_tl_alloc_win_root_self:
+        (str_cat.str-cat
+          (string.replace
+            base
+            ".L_tl_alloc_win_root_self:
     xorq %r10, %r10
     movq %rax, %r8
 .L_tl_alloc_win_root_ready:
 "
-          ".L_tl_alloc_win_root_self:
+            ".L_tl_alloc_win_root_self:
     movq %rax, %rcx
     call .L_tl_arena_debug_register_root
     xorq %r10, %r10
     movq %rax, %r8
 .L_tl_alloc_win_root_ready:
 ")
-        base)
-      base)))
+          (string.replace
+            aligned
+            ".L_tl_alloc_aligned_win_root_self:
+    xorq %r9, %r9
+    movq %rax, %r8
+.L_tl_alloc_aligned_win_root_ready:
+"
+            ".L_tl_alloc_aligned_win_root_self:
+    movq %rax, %rcx
+    call .L_tl_arena_debug_register_root
+    xorq %r9, %r9
+    movq %rax, %r8
+.L_tl_alloc_aligned_win_root_ready:
+")
+          ""
+          "")
+        (str_cat.str-cat base aligned "" ""))
+      (str_cat.str-cat base aligned "" ""))))
 
 ;; Rewinding a non-atomic arena marks it as reused with flags bit 2 (bit 0 is
 ;; the atomic flag, which runs a 1/3 lock protocol and is left untouched);

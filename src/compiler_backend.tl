@@ -87381,9 +87381,13 @@
         (compiler-backend-global-shared-view functions)
         externs)]
     [defines-alloc : bool
-      (compiler-backend-runtime-index-defines?
-        (compiler-backend-global-shared-view index)
-        cbi.compiler-builtin-id-tl-alloc)]
+      (or
+        (compiler-backend-runtime-index-defines?
+          (compiler-backend-global-shared-view index)
+          cbi.compiler-builtin-id-tl-alloc)
+        (compiler-backend-runtime-index-defines?
+          (compiler-backend-global-shared-view index)
+          cbi.compiler-builtin-id-tl-alloc-aligned))]
     [defines-substring : bool
       (compiler-backend-runtime-index-defines?
         (compiler-backend-global-shared-view index)
@@ -87492,9 +87496,13 @@
         (compiler-backend-global-shared-view index)
         cbi.compiler-builtin-id-tl-profile-alloc-reset-peak)]
     [calls-alloc : bool
-      (compiler-backend-runtime-index-calls?
-        (compiler-backend-global-shared-view index)
-        cbi.compiler-builtin-id-tl-alloc)]
+      (or
+        (compiler-backend-runtime-index-calls?
+          (compiler-backend-global-shared-view index)
+          cbi.compiler-builtin-id-tl-alloc)
+        (compiler-backend-runtime-index-calls?
+          (compiler-backend-global-shared-view index)
+          cbi.compiler-builtin-id-tl-alloc-aligned))]
     [calls-substring : bool
       (compiler-backend-runtime-index-calls?
         (compiler-backend-global-shared-view index)
@@ -92410,9 +92418,10 @@
 (define (compiler-backend-object-runtime-symbols-list) : BackendStringSeq
   (let
     [symbols : BackendStringSeq
-      (BackendStringSeq (__tl_make-array String 16) 0)]
+      (BackendStringSeq (__tl_make-array String 17) 0)]
     (begin
       (compiler-backend-string-push! (&mut symbols) "tl_alloc")
+      (compiler-backend-string-push! (&mut symbols) "tl_alloc_aligned")
       (compiler-backend-string-push! (&mut symbols) "tl_arena_current")
       (compiler-backend-string-push! (&mut symbols) "tl_arena_set")
       (compiler-backend-string-push! (&mut symbols) "tl_arena_make_small")
@@ -92441,6 +92450,7 @@
     (cbi.compiler-builtin-refresh!)
     (cond
       [(string.eq name "tl_alloc") true]
+      [(string.eq name "tl_alloc_aligned") true]
       [(string.eq name "tl_memcpy") true]
       [(string.eq name "tl_memcpy_fresh") true]
       [(string.eq name "tl_memchr") true]

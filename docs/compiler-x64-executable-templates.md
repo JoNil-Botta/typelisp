@@ -36,7 +36,7 @@ different rendered variant.
 
 Each row records its producer and schema, target and ABI, feature gate,
 entry/interior/end anchors, related data, terminal behavior, and an ordered
-event transcript. The transcript contains 2,499 reviewed events in 15,042
+event transcript. The transcript contains 3,155 reviewed events in 18,814
 bytes. Its closed event codes are:
 
 | Code | Meaning |

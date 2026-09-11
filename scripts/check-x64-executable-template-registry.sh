@@ -31,14 +31,14 @@ count_matches 6 '\.globl' src/compiler_backend_runtime_common.tl
 count_matches 9 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
 count_matches 0 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
 count_matches 1 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
-count_matches 33 '\.globl' src/compiler_backend_runtime_linux.tl
-count_matches 42 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
-count_matches 8 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
-count_matches 18 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
-count_matches 28 '\.globl' src/compiler_backend_runtime_windows.tl
-count_matches 39 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
-count_matches 79 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
-count_matches 36 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
+count_matches 34 '\.globl' src/compiler_backend_runtime_linux.tl
+count_matches 47 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
+count_matches 9 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
+count_matches 22 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
+count_matches 29 '\.globl' src/compiler_backend_runtime_windows.tl
+count_matches 44 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
+count_matches 97 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
+count_matches 44 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
 
 # All target-owned executable byte helpers carry closed IDs.  Windows has two
 # additional bytes-from-hex sites: the data-only UNWIND_INFO and resource tree.

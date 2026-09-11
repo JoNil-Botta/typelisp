@@ -169,6 +169,39 @@ tl_startup_profile_process_entry_tick:
         ":\n"))
     ""))
 
+;; Explicitly aligned allocation separates the logical payload charge from the
+;; physical arena claim.  `total` counts the rounded payload once; `live` and
+;; `peak` include the padding consumed between the old cursor and aligned end.
+;; Reserved/committed mapping capacity is intentionally not profiled.
+(define (compiler-backend-runtime-profile-aligned-alloc-account
+  [payload-reg : String]
+  [claim-reg : String]
+  [done-label : String]
+  [profile : bool]
+  [scratch-reg : String]) : String
+  (if profile
+    (str_cat.str-cat
+      (str_cat.str-cat
+        "    addq "
+        (owned_view.compiler-owned-shared-view payload-reg)
+        ", tl_profile_alloc_total_bytes(%rip)\n    addq ")
+      (str_cat.str-cat
+        (owned_view.compiler-owned-shared-view claim-reg)
+        ", tl_profile_alloc_live_bytes(%rip)\n    movq tl_profile_alloc_live_bytes(%rip), "
+        (owned_view.compiler-owned-shared-view scratch-reg)
+        "\n")
+      (str_cat.str-cat
+        "    cmpq tl_profile_alloc_peak_bytes(%rip), "
+        (owned_view.compiler-owned-shared-view scratch-reg)
+        "\n    jbe "
+        (owned_view.compiler-owned-shared-view done-label))
+      (str_cat.str-cat
+        "\n    movq "
+        (owned_view.compiler-owned-shared-view scratch-reg)
+        ", tl_profile_alloc_peak_bytes(%rip)\n"
+        (str_cat.str-cat done-label ":\n" "" "")))
+    ""))
+
 (define (compiler-backend-runtime-profile-live-sub
   [arena-reg : String]
   [used-reg : String]

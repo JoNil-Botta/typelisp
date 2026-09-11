@@ -6859,7 +6859,7 @@ allocation-free, import-free TypeLisp with equivalent codegen:
 
 | Symbol(s) | Disposition |
 |-----------|-------------|
-| `tl_alloc`, `tl_region_mark`, `tl_region_reset`, `tl_arena_make`, `tl_arena_make_atomic`, `tl_arena_current`, `tl_arena_set`, `tl_arena_destroy`, `tl_arena_poison_enable`, `tl_thread_init`, `tl_thread_entry_ptr` | Core allocator/arena/TLS substrate. Current-arena TLS reads/writes can be expressed from TypeLisp with the `tls-current-arena` intrinsics below; page ownership, region reset, arena creation/destruction, thread entry, and public raw helper compatibility remain backend-owned. |
+| `tl_alloc`, `tl_alloc_aligned`, `tl_region_mark`, `tl_region_reset`, `tl_arena_make`, `tl_arena_make_atomic`, `tl_arena_current`, `tl_arena_set`, `tl_arena_destroy`, `tl_arena_poison_enable`, `tl_thread_init`, `tl_thread_entry_ptr` | Core allocator/arena/TLS substrate. `tl_alloc_aligned` is a compiler-private explicit-alignment entry, not a public allocator. Current-arena TLS reads/writes can be expressed from TypeLisp with the `tls-current-arena` intrinsics below; page ownership, region reset, arena creation/destruction, thread entry, and public raw helper compatibility remain backend-owned. |
 | `tl_memcpy`, `tl_memchr`, `tl_tlci_call_image_entry` | Core primitives: `tl_memcpy` is the overlap-safe bulk-copy primitive used by source code and lowering; `tl_memchr` is the allocation-free borrowed byte search; `tl_tlci_call_image_entry` is the raw C-ABI bridge used by the tlci loader to call a mapped `tlci_image_entry` address with the host callback table and writable image registration record. |
 | `__chkstk` | Windows/MSVC ABI helper required for large stack frames. |
 | `tl_setup_argv`, `_tl_start` | Windows freestanding entry bootstrap: build argv from `GetCommandLineA`, clear the current-arena TEB slot, reserve a 1 GiB fiber stack with a 64 KiB initial commit and exception-stack guarantee, switch once to its `main` callback, and exit through `ExitProcess`. Fiber conversion/reservation failure and `STATUS_STACK_OVERFLOW` report without allocation and exit 134. |
@@ -6915,6 +6915,23 @@ published state. Ordinary arenas keep the non-atomic bump fast path. The
 retained-chunk reset behavior above is a correctness requirement for the
 atomic slow path: a reset must not make overflow chunks reusable while stale
 arena-owned values can still exist.
+
+The compiler-private `tl_alloc_aligned(size, alignment)` entry uses the target
+integer calling convention (System V `%rdi`/`%rsi`, Win64 `%rcx`/`%rdx`) and
+returns the pointer in `%rax`. `alignment` must be a power of two from 1 through
+4096. The payload is rounded to the allocator's eight-byte quantum; a zero-size
+request consumes one such quantum and therefore returns storage distinct from
+the next successful allocation. Invalid alignment and every size, alignment,
+cursor, end, mapping-length, or commit-length overflow take the fatal allocation
+path. The ordinary path aligns the current cursor before recording the exact
+payload end. The atomic path claims alignment padding and payload in one CAS.
+New mappings include the arena header plus worst-case padding and payload.
+
+Allocation profiling charges an aligned request once: `alloc-total` increases
+by the rounded payload, while `alloc-live` and `alloc-peak` include the physical
+cursor claim (alignment padding plus payload). Reserved or committed mapping
+capacity is not included in these counters. Ordinary `tl_alloc` and its fixed
+helpers retain their existing eight-byte alignment and profiling semantics.
 
 Atomic allocation serializes allocation only. It does not protect array
 writes, struct/enum mutation, raw pointer access, or user data from data
@@ -7293,6 +7310,9 @@ low-level exception and carry no safety guarantees.
 - Non-escaping aggregate fat/inline storage is usually kept in the current
   stack frame.
 - Allocation goes through `tl_alloc`, a backend-emitted bump allocator.
+  Compiler-generated over-aligned storage may explicitly select the private
+  `tl_alloc_aligned` entry described in §6.2; no source-level allocator API is
+  implied.
 - Fatal page-allocation failures terminate with status 134 without allocating
   while reporting the failure. On Windows, `VirtualAlloc` failures include the
   ordinary/atomic arena kind, reserve/initial-commit/growth-commit operation,

@@ -50,6 +50,7 @@ generated_hashmap_global_mutation|tests/integration/generated_hashmap_global_mut
 hashmap_slot_update_shape|tests/integration/hashmap_slot_update_shape.tl|42|-|-|stdlib/hashmap.tl
 hashmap_nominal_value_local_smoke|tests/integration/hashmap_nominal_value_local_smoke.tl|42|-|-|stdlib/hashmap.tl
 stdlib_time_sleep|tests/integration/stdlib_time_sleep.tl|42|-|-|stdlib/time.tl
+stdlib_time_allocation|tests/integration/stdlib_time_allocation.tl|42|-|-|stdlib/arena.tl stdlib/profile.tl stdlib/string.tl stdlib/thread.tl stdlib/time.tl
 stdlib_crypto_random|tests/integration/stdlib_crypto_random.tl|42|-|-|stdlib/crypto_random.tl stdlib/byte_buf.tl stdlib/string.tl|stage-stdlib
 windows_nt_create_file_boundary|tests/integration/windows_nt_create_file_boundary.tl|42|-|-|stdlib/byte_buf.tl stdlib/fs.tl stdlib/io.tl stdlib/process.tl stdlib/str_cat.tl stdlib/string.tl|stage-stdlib
 array_compat_aliases|tests/integration/array_compat_aliases.tl|42|-|-|-

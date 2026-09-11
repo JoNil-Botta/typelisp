@@ -562,11 +562,16 @@ check_lattice_join_split() {
         lattice-join-split
     assert_not_matches "$_bind" '^[[:space:]]+cmpq -?[0-9]+\(%rsp\), %' \
         lattice-join-split
-    # The equality's match is ONE tag compare against a register, and its three
-    # payload comparisons are register-to-register.
-    assert_matches "$_bind" '^[[:space:]]+cmpq \$1, %[a-z0-9]+$' lattice-join-split
+    # The equality's match used to be ONE tag compare against a register
+    # (`cmpq $1`) and three register-to-register payload comparisons. JT-2
+    # threads that match away altogether: every join arm already knows the
+    # equality's verdict, so each exits straight to the return or the bind and
+    # no compare against the merged tag remains. What is left of the value
+    # comparison is the join's own: the three payload words of the clone, in
+    # registers, against the new value's words in memory.
+    assert_not_matches "$_bind" '^[[:space:]]+cmpq \$1, %[a-z0-9]+$' lattice-join-split
     assert_regex_count_at_least "$_bind" \
-        '^[[:space:]]+cmpq %r[a-z0-9]+, %r[a-z0-9]+$' 3 lattice-join-split
+        '^[[:space:]]+cmpq [0-9]+\(%r[a-z0-9]+\), %r[a-z0-9]+$' 3 lattice-join-split
 }
 
 check_divmagic_hoist() {

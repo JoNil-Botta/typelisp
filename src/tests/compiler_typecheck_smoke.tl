@@ -23,8 +23,6 @@
 (import stdlib.string)
 (import sym_i64_env)
 
-(include-str compiler-regalloc-interval-sort-source "../compiler_regalloc_interval_sort.tl")
-
 (define (compiler-typecheck-smoke-write-text
   [path : String]
   [contents : String]) : unit
@@ -1878,8 +1876,7 @@
   [invocation : String]
   [tail : String]) : String
   (str_cat.str-cat
-    (unsafe
-      (ptr-read (ptr-addr-of compiler-regalloc-interval-sort-source)))
+    (byte_buf.to-string (io.read-file "src/compiler_regalloc_interval_sort.tl"))
     "\n(import stdlib.comptime)\n
 (defstruct Interval (var i64) (start i64) (end i64))\n
 (defmacro (shared [place : Expr]) : Expr\n

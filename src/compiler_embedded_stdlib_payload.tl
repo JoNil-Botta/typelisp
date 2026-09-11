@@ -21,6 +21,8 @@
 
 (include-str-lzss payload-crypto-sha1-git "../stdlib/crypto_sha1_git.tl")
 
+(include-str-lzss payload-crypto-sha256 "../stdlib/crypto_sha256.tl")
+
 (include-str-lzss payload-crypto-sha512 "../stdlib/crypto_sha512.tl")
 
 (include-str-lzss payload-dense-list "../stdlib/dense_list.tl")
@@ -157,6 +159,8 @@
       (compiler-embedded-stdlib-payload-copy payload-core-macros)]
     [(string.eq suffix "crypto_sha1_git.tl")
       (compiler-embedded-stdlib-payload-copy payload-crypto-sha1-git)]
+    [(string.eq suffix "crypto_sha256.tl")
+      (compiler-embedded-stdlib-payload-copy payload-crypto-sha256)]
     [(string.eq suffix "crypto_sha512.tl")
       (compiler-embedded-stdlib-payload-copy payload-crypto-sha512)]
     [(string.eq suffix "dense_list.tl")

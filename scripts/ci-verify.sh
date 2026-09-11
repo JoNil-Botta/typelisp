@@ -745,6 +745,7 @@ run_with_compiler "$STAGE2_BIN" "stage2 native integration corpus" scripts/verif
 if [ "$HOST_OS" = linux ]; then
     run_with_compiler "$STAGE2_BIN" "stage2 regalloc/backend asm shape gates" scripts/verify-asm-shape-gates.sh
     run_with_compiler "$STAGE2_BIN" "stage2 Git SHA-1 fixed-round/wipe asm shape gate" scripts/verify-crypto-sha1-git-shape.sh
+    run_with_compiler "$STAGE2_BIN" "stage2 SHA-256 fixed-round/wipe asm shape gate" scripts/verify-crypto-sha256-shape.sh
     run_with_compiler "$STAGE2_BIN" "stage2 SHA-512 wipe asm shape gate" scripts/verify-crypto-sha512-shape.sh
     run_with_compiler "$STAGE2_BIN" "stage2 by-value aggregate ABI shape gate" scripts/verify-by-value-aggregate-abi.sh
 fi

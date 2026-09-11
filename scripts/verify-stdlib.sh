@@ -210,6 +210,7 @@ core_macros.tl
 crypto_rsa_core.tl
 crypto_random.tl
 crypto_sha1_git.tl
+crypto_sha256.tl
 crypto_sha512.tl
 dense_list.tl
 io_core.tl
@@ -332,6 +333,8 @@ stdlib/tests/args_api.tl|pass|-
 stdlib/tests/core_macros_api.tl|pass|-
 stdlib/tests/crypto_sha1_git_inline.tl|pass|-
 stdlib/tests/crypto_sha1_git_unsafe_adapter_reject.tl|fail|requires unsafe context
+stdlib/tests/crypto_sha256_inline.tl|pass|-
+stdlib/tests/crypto_sha256_unsafe_adapter_reject.tl|fail|requires unsafe context
 stdlib/tests/crypto_sha512_inline.tl|pass|-
 stdlib/tests/crypto_sha512_unsafe_adapter_reject.tl|fail|requires unsafe context
 stdlib/tests/env_api.tl|pass|-

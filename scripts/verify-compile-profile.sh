@@ -1733,10 +1733,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     # headroom. Its combined macro-expand Expr graph crosses one pool boundary
     # below; the other three pool families stay within their existing segment
     # counts.
+    # #7696's eleven optimizer packets (GDP-1 .. P18-2, ~2,300 compiler-source
+    # lines) carried it to 30,550 KiB on the Windows CI probe; raised one more
+    # step.
     assert_profile_counter_at_most_in \
         "$SELFHOST_STDERR" \
         "typecheck.macro.walk_sp_reresolve_alloc_kb" \
-        30400 \
+        31400 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     # One constant per boundary: the segment count. capacity and segment_bytes
@@ -1967,8 +1970,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # #7574's twenty packets cross the composed graph from 61 to 62 segments: the
     # authoritative Windows CI probe measured 4,005,073 used nodes, 4,063,232
     # capacity, and 130,023,424 physical payload bytes.
+    # #7696's eleven optimizer packets, rebased over #7698, cross the composed
+    # graph from 62 to 63 segments: the authoritative Windows CI probe measured
+    # 4,063,428 used nodes, 4,128,768 capacity, and 132,120,576 physical payload
+    # bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 62 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 63 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain

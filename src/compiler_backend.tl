@@ -36061,6 +36061,18 @@
         (not (string.eq index-reg ""))
         (not (string.eq index-reg "%rbp")))
       (str_cat.str-cat "(" index-reg ",%rbp,1)")]
+    ;; BE-4: at every other scale the base slot is the only place the base can
+    ;; stand, and it is spelled outright: `(%rbp,idx,s)`. A %rbp base reaching
+    ;; this formatter is always a pool value of an rbp-planned function, where
+    ;; the rsp-rebase audit steps over the indexed form, and no other reader
+    ;; sees a frame reference in it -- the peephole's slot recognizers key the
+    ;; trailing `(%rbp)`, the base classifier the operand's last six bytes.
+    [(and (not (string.eq index-reg "")) (not (string.eq index-reg "%rbp")))
+      (str_cat.str-cat
+        "(%rbp,"
+        index-reg
+        ","
+        (str_cat.str-cat (string.int->string scale) ")" "" ""))]
     [else ""]))
 
 ;; BE-2: the dynamic-index base filter for a site that spells its address
@@ -36068,7 +36080,7 @@
 ;; scale 1, where that formatter can spell it, and filtered as before at every
 ;; other scale.
 (define (compiler-backend-address-base-filter-sib [home : String] [scale : i64]) : String
-  (if (and (string.eq home "%rbp") (= scale 1))
+  (if (and (string.eq home "%rbp") (compiler-backend-gep-sib-scale? scale))
     home
     (compiler-backend-address-base-filter home)))
 
@@ -36179,15 +36191,11 @@
                   (compiler-backend-global-shared-view elem-ty))]
               (if (and
                 (not (string.eq offset-home ""))
-                (compiler-backend-gep-sib-scale? scale)
-                ;; GAP7 #rbp-base: a %rbp base cannot occupy the SIB BASE slot
-                ;; alongside the gep index (`(%rbp,idx,s)` would read as a frame
-                ;; ref); route it to the staged path instead -- except at scale
-                ;; 1, where compiler-backend-gep-index-address swaps it into
-                ;; the index slot (BE-2): `leaq (idx,%rbp,1), dst` is the whole
-                ;; gep, where the staged path copied %rbp first, and the
-                ;; peephole then folds the lea into the load it feeds.
-                (or (= scale 1) (not (string.eq base-reg "%rbp"))))
+                ;; BE-2/BE-4: a %rbp base is spelled at every SIB scale
+                ;; (swapped into the index slot at scale 1, outright above
+                ;; it), so the one-leaq form is the whole gep where the staged
+                ;; path copied %rbp first.
+                (compiler-backend-gep-sib-scale? scale))
                 (ResultCompilerBackend.Ok
                   (str_cat.str-cat
                     "    leaq "
@@ -39417,10 +39425,9 @@
       (compiler-backend-global-shared-view base)
       (compiler-backend-global-shared-view scav-fold)
       (compiler-backend-global-shared-view scav-idx)
-      ;; GAP7: variable-index store -- the base reg feeds gep-index-address
-      ;; (SIB base slot alongside the index), so a %rbp base must NOT be
-      ;; admitted here (it would spell `(%rbp,idx,s)` = a frame-ref collision).
-      false
+      ;; BE-4: variable-index store -- the base reg feeds gep-index-address,
+      ;; which spells a %rbp base at every SIB scale now, so it is admitted.
+      true
       backend-state)
       [(ResultCompilerBackendAddressBase.Ok base-plan)
         (match (if direct-index?
@@ -75368,8 +75375,28 @@
                                                       data
                                                       (+ p 5))
                                                     41)))
-                                                ;; "(%rbp," indexed or truncated
-                                                (set! ok false)
+                                                ;; "(%rbp," indexed or truncated.
+                                                ;; BE-4: in an rbp-planned
+                                                ;; function an INDEXED form is a
+                                                ;; pool base with a SIB index --
+                                                ;; the emitter never spells a
+                                                ;; frame slot with an index (a
+                                                ;; stack array is addressed
+                                                ;; through a leaq of its slot) --
+                                                ;; so the audit steps over it and
+                                                ;; leaves the text as it is.
+                                                ;; Anywhere else it refuses as
+                                                ;; before.
+                                                (if (and
+                                                  compiler_regalloc.compiler-reg-rbp-pool-enabled
+                                                  (< (+ p 5) end)
+                                                  (=
+                                                    (compiler-backend-peephole-byte-at
+                                                      data
+                                                      (+ p 5))
+                                                    44))
+                                                  unit
+                                                  (set! ok false))
                                                 (let
                                                   [ks : i64
                                                     (compiler-backend-rsp-rebase-int-start

@@ -562,11 +562,16 @@ check_lattice_join_split() {
         lattice-join-split
     assert_not_matches "$_bind" '^[[:space:]]+cmpq -?[0-9]+\(%rsp\), %' \
         lattice-join-split
-    # The equality's match is ONE tag compare against a register, and its three
-    # payload comparisons are register-to-register.
-    assert_matches "$_bind" '^[[:space:]]+cmpq \$1, %[a-z0-9]+$' lattice-join-split
+    # The equality's match used to be ONE tag compare against a register
+    # (`cmpq $1`) and three register-to-register payload comparisons. JT-2
+    # threads that match away altogether: every join arm already knows the
+    # equality's verdict, so each exits straight to the return or the bind and
+    # no compare against the merged tag remains. What is left of the value
+    # comparison is the join's own: the three payload words of the clone, in
+    # registers, against the new value's words in memory.
+    assert_not_matches "$_bind" '^[[:space:]]+cmpq \$1, %[a-z0-9]+$' lattice-join-split
     assert_regex_count_at_least "$_bind" \
-        '^[[:space:]]+cmpq %r[a-z0-9]+, %r[a-z0-9]+$' 3 lattice-join-split
+        '^[[:space:]]+cmpq [0-9]+\(%r[a-z0-9]+\), %r[a-z0-9]+$' 3 lattice-join-split
 }
 
 check_divmagic_hoist() {
@@ -3075,7 +3080,8 @@ check_gep_load_cmp_spilled_stage() {
     # Nearest refused neighbour: `refused` reads each loaded element a SECOND
     # time to fold it into a sum, so the value is not single-use, the fold
     # cannot retire it, and its home stays load-bearing. No compare in it
-    # addresses an element directly.
+    # addresses a base-relative element as its memory SOURCE (the M6-H shape);
+    # the single-use left element may still fold as a memory destination.
     assert_regex_count_eq "$_refused"         '^[[:space:]]+cmpq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' 0         gep-load-cmp-spilled-stage-refused
     # The elements are still loaded and still compared there -- the refusal is
     # a refusal to fold, not a refusal to emit.

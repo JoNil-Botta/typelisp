@@ -45,6 +45,20 @@ set -eu
 # so the step is in the base -- the per-file policy resolution added by #7277 --
 # and the branch rides on top of it. The revised cap keeps about 17% headroom
 # above the larger hosted measurement, matching the opt2 rows above.
+#
+# The opt2 caps moved once more with #7696. Two Linux runs of that branch on
+# the current hosted-runner class measured 115660/115860ms for the opt1-built
+# compiler and 59710/60220ms for the opt2-built one, over the 115000ms cap.
+# Five main-like runs on the same class in the same hours measured
+# 105300-107530ms and 53820-55280ms, so the base itself had 7% of the cap left,
+# and the opt1 rows of all seven runs agree (39390-41930ms). The branch's own
+# share was compiler work, not runner throughput: a same-host opt2 self-compile
+# ran 12% longer than main's, 22.5G of the 26.5G added instructions in one
+# builder (the CSE-CALL call-memory table), and the builder fix in the same PR
+# brings the same-host difference to 3%. The revised caps keep about 17%
+# headroom above the branch's expected level on that runner class (the
+# main-like measurement plus that residue, about 111000ms and 57000ms) and
+# 21%/27% above the main-like measurements themselves.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -134,8 +148,8 @@ check_budget() {
         -v host_action_gate="$HOST_ACTION_GATE" \
         -v opt2_opt1_cap=25000 \
         -v opt1_opt1_cap=45000 \
-        -v opt2_opt2_cap=65000 \
-        -v opt1_opt2_cap=115000 \
+        -v opt2_opt2_cap=70000 \
+        -v opt1_opt2_cap=130000 \
         -v lint_cap=105000 \
         -v host_action_cap=36000 \
         -v ratio_limit=2.5 '
@@ -428,7 +442,7 @@ self-test denylisted gate without cap"
     # carries the larger of the two #6248 measurements that moved the lint cap,
     # so the accepted level is asserted rather than described.
     write_fixture \
-        "$workdir/pass.tsv" 21040 37900 49100 85500 89750 29980
+        "$workdir/pass.tsv" 21040 37900 60220 115860 89750 29980
     expect_fixture pass pass "$workdir/pass.tsv" "$workdir/pass.out"
 
     write_fixture "$workdir/ratio.tsv" 12000 18000 48000 50000
@@ -447,17 +461,17 @@ self-test denylisted gate without cap"
     grep -F 'opt1-built:selfhost_main_opt1 exceeds its 45000ms cap' \
         "$workdir/opt1-absolute.out" >/dev/null
 
-    write_fixture "$workdir/opt2-workload-absolute.tsv" 12800 18700 65001 50500
+    write_fixture "$workdir/opt2-workload-absolute.tsv" 12800 18700 70001 50500
     expect_fixture opt2-workload-absolute-breach fail \
         "$workdir/opt2-workload-absolute.tsv" \
         "$workdir/opt2-workload-absolute.out"
-    grep -F 'opt2-built:selfhost_main_opt2 exceeds its 65000ms cap' \
+    grep -F 'opt2-built:selfhost_main_opt2 exceeds its 70000ms cap' \
         "$workdir/opt2-workload-absolute.out" >/dev/null
 
-    write_fixture "$workdir/opt1-opt2-absolute.tsv" 12800 18700 30300 115001
+    write_fixture "$workdir/opt1-opt2-absolute.tsv" 12800 18700 30300 130001
     expect_fixture opt1-opt2-absolute-breach fail \
         "$workdir/opt1-opt2-absolute.tsv" "$workdir/opt1-opt2-absolute.out"
-    grep -F 'opt1-built:selfhost_main_opt2 exceeds its 115000ms cap' \
+    grep -F 'opt1-built:selfhost_main_opt2 exceeds its 130000ms cap' \
         "$workdir/opt1-opt2-absolute.out" >/dev/null
 
     write_fixture "$workdir/lint-absolute.tsv" 12800 18700 30300 50500 105001
@@ -559,7 +573,7 @@ self-test denylisted gate without cap"
     write_fixture "$workdir/missing.tsv" 12800 18700 30300
     expect_fixture missing-row fail \
         "$workdir/missing.tsv" "$workdir/missing.out"
-    grep -F 'opt1-built:selfhost_main_opt2=<missing> cap=115000ms' \
+    grep -F 'opt1-built:selfhost_main_opt2=<missing> cap=130000ms' \
         "$workdir/missing.out" >/dev/null
     grep -F 'scripts/benchmark-compile-cli.sh' "$workdir/missing.out" >/dev/null
 

@@ -3484,6 +3484,10 @@
       "compiler-optimize-licm-unswitch-chain-self-test"
       (compiler_optimize_tests.compiler-optimize-licm-unswitch-chain-self-test)
       42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-licm-unswitch-general-self-test"
+      (compiler_optimize_tests.compiler-optimize-licm-unswitch-general-self-test)
+      42)
     (cfg
       test
       (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
@@ -4522,6 +4526,14 @@
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-refusal-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-mb-far-phi-input-self-test"
+      (compiler_optimize_tests.compiler-optimize-bce-version-mb-far-phi-input-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-pure-call-dedupe-self-test"
+      (compiler_optimize_tests.compiler-optimize-pure-call-dedupe-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-bce-version-mb-merged-body-self-test"
       (compiler_optimize_tests.compiler-optimize-bce-version-mb-merged-body-self-test)
       42)
@@ -4779,6 +4791,19 @@
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-multiblock-alloc-shape-ok?)
     "the multiblock gate admits an aggregate-building body and names the clause that refuses each neighbour"))
+
+(test
+  thread-phi-chain
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-thread-phi-chain-self-test)
+    42
+    "a phi merge threads through the compare tree it feeds on the facts each edge carries, and collapses onto the exit that reads it"))
+
+(test
+  inline-one-block-shape
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-one-block-shape-ok?)
+    "a one-block body past the single-block cap is the checked tier's, and only a small one keeps there"))
 
 (test
   inline-multiblock-alloc-splice
@@ -5443,6 +5468,20 @@
     (compiler_optimize_tests.compiler-optimize-bce-version-mb-second-exit-refusal-self-test)
     42
     "guard-chain admission keeps chain checks and refuses diamonds and unproven far uses"))
+
+(test
+  bce-version-multiblock-far-phi-input
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bce-version-mb-far-phi-input-self-test)
+    42
+    "a phi input out of a block the wire point dominates reads the merge phi"))
+
+(test
+  pure-call-dedupe
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-pure-call-dedupe-self-test)
+    42
+    "a repeated write-free direct call along single-predecessor blocks is a copy"))
 
 (test
   bce-version-multiblock-merged-body

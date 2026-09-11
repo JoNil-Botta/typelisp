@@ -78,7 +78,10 @@
         hit))))
 
 ;; Nearest refused neighbour: the loaded element is read twice, so it is not
-;; single-use, the fold cannot retire it, and it keeps a home of its own.
+;; single-use, the fold cannot retire it, and it keeps a home of its own. The
+;; element is bound before the compare: written as two `array-ref`s, the second
+;; read of `d` sat on the short-circuit arm's far side, where the loads were
+;; never one value and a versioned clone folded the compare's copy.
 (define (refused
   [a : (& a (__tl_dyn-array i64))]
   [b : (&mut b (__tl_dyn-array i64))]
@@ -95,15 +98,18 @@
       [sum : i64 0]
       (begin
         (while (and (< i n) (= hit 0))
-          (begin
-            (when
-              (or
-                (!= (array-ref a i) (array-ref b (+ base i)))
-                (!= (array-ref c i) (array-ref d (+ base i))))
-              (set! hit 1))
-            (set! sum (+ sum (array-ref b (+ base i))))
-            (set! sum (+ sum (array-ref d (+ base i))))
-            (set! i (+ i 1))))
+          ;; each element is loaded ONCE, ahead of the compare, so the compare
+          ;; and the sum share that load on every path through the `or`
+          (let
+            [bi : i64 (array-ref b (+ base i))]
+            [di : i64 (array-ref d (+ base i))]
+            (begin
+              (when
+                (or (!= (array-ref a i) bi) (!= (array-ref c i) di))
+                (set! hit 1))
+              (set! sum (+ sum bi))
+              (set! sum (+ sum di))
+              (set! i (+ i 1)))))
         (when
           (= hit 1)
           (let

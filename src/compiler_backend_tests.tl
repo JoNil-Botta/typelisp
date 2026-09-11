@@ -7770,6 +7770,79 @@
           rebased
           "    leave\n")))))
 
+;; BE-4: an INDEXED `(%rbp,idx,s)` operand is a pool base of an rbp-planned
+;; function -- the emitter never spells a frame slot with an index -- so the
+;; rsp-rebase audit steps over it and leaves it as it is while the frame slots
+;; around it are rebased as before. Without the pool flag the same text is
+;; refused, exactly as every other indexed form always was.
+(define (compiler-backend-rsp-rebase-indexed-pool-base-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [_abi : unit
+      (compiler_backend.compiler-backend-set-current-fn-linux! backend-state)]
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler-backend-callee-save-assignments3)]
+    [push-regs : (__tl_dyn-array String)
+      (compiler_backend.compiler-backend-rsp-rebase-make-push-regs)]
+    [push-count : i64
+      (compiler_backend.compiler-backend-fill-push-csr-regs!
+        assignments
+        (owned_view.compiler-owned-shared-view push-regs)
+        backend-state)]
+    [body : String
+      "    movq -8(%rbp), %rax
+    movq (%rbp,%rcx,8), %rdx
+    movq 16(%rbp,%rcx,8), %rsi
+    movq %rsi, 8(%rbp,%rcx,4)
+    leaq -48(%rbp), %rsp
+    popq %r14
+    popq %r13
+    popq %r12
+    leave
+    ret
+"]
+    [_pool-on : unit
+      (compiler_regalloc.compiler-reg-set-rbp-pool-enabled! true)]
+    [planned : compiler_backend.CompilerBackendRspRebaseResult
+      (compiler_backend.compiler-backend-rsp-rebase-full-result
+        (owned_view.compiler-owned-shared-view body)
+        64
+        true
+        (owned_view.compiler-owned-shared-view push-regs)
+        push-count
+        3
+        backend-state)]
+    [_pool-off : unit
+      (compiler_regalloc.compiler-reg-set-rbp-pool-enabled! false)]
+    [framed : compiler_backend.CompilerBackendRspRebaseResult
+      (compiler_backend.compiler-backend-rsp-rebase-full-result
+        (owned_view.compiler-owned-shared-view body)
+        64
+        true
+        (owned_view.compiler-owned-shared-view push-regs)
+        push-count
+        3
+        backend-state)]
+    (and
+      (= push-count 3)
+      planned.ok
+      (string.eq
+        planned.text
+        "    movq 56(%rsp), %rax
+    movq (%rbp,%rcx,8), %rdx
+    movq 16(%rbp,%rcx,8), %rsi
+    movq %rsi, 8(%rbp,%rcx,4)
+    addq $64, %rsp
+    popq %r14
+    popq %r13
+    popq %r12
+    ret
+")
+      (not framed.ok)
+      (string.eq framed.text body))))
+
 ;; GAP1 corollary: a function whose ONLY frame references were callee-save
 ;; slots reaches the push prologue with a DEAD slot region. `frame = 0` with an
 ;; odd push count makes the prologue subq vanish (S = frame + 0), and the
@@ -15468,14 +15541,14 @@ g:
 
 (define (compiler-backend-gep-rbp-base-scale-one-ok?) : bool
   (and
-    ;; the formatter: swapped at scale 1, declined at every other scale, and
-    ;; a %rbp INDEX (BE-1) unchanged
+    ;; the formatter: swapped at scale 1, spelled outright at every other
+    ;; scale (BE-4), and a %rbp INDEX (BE-1) unchanged
     (string.eq
       (compiler_backend.compiler-backend-gep-index-address "%rbp" 1 "%r13")
       "(%r13,%rbp,1)")
     (string.eq
       (compiler_backend.compiler-backend-gep-index-address "%rbp" 8 "%r13")
-      "")
+      "(%rbp,%r13,8)")
     (string.eq
       (compiler_backend.compiler-backend-gep-index-address "%rbp" 1 "%rbp")
       "")
@@ -15489,12 +15562,15 @@ g:
         1
         "%r13")
       "16(%r13,%rbp,1)")
-    ;; the filter: %rbp admitted at scale 1 only
+    ;; the filter: %rbp admitted at every SIB scale (BE-4), declined at none
     (string.eq
       (compiler_backend.compiler-backend-address-base-filter-sib "%rbp" 1)
       "%rbp")
     (string.eq
       (compiler_backend.compiler-backend-address-base-filter-sib "%rbp" 8)
+      "%rbp")
+    (string.eq
+      (compiler_backend.compiler-backend-address-base-filter-sib "%rbp" 3)
       "")
     (string.eq
       (compiler_backend.compiler-backend-address-base-filter-sib "%r12" 8)
@@ -15512,19 +15588,20 @@ g:
               (compiler_backend.compiler-backend-global-shared-view asm)
               "    movq %rbp, ")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])
-    ;; ...and a word load still stages the base, since `(%rbp,idx,8)` is the
-    ;; frame spelling the rebase pass rewrites
+    ;; ...and a word load reads it in place too (BE-4): `(%rbp,idx,8)` is a
+    ;; pool base with an index, which the rsp-rebase audit steps over in an
+    ;; rbp-planned function, so nothing stages the base first
     (match (compiler-backend-gep-rbp-base-load-asm
       (compiler_ast_types.AstType.I64))
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
             (compiler_backend.compiler-backend-global-shared-view asm)
-            "    movq %rbp, ")
+            "(%rbp,%r13,8)")
           (not
             (compiler_backend.compiler-backend-string-contains?
               (compiler_backend.compiler-backend-global-shared-view asm)
-              "(%rbp,")))]
+              "    movq %rbp, ")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
 ;; SS-P5(a). A register-homed index is READ by the composing instruction --
@@ -58094,6 +58171,7 @@ b_keep:
         (compiler-backend-fusion-pin-store-fusion-ok?)
         (compiler-backend-callee-save-pop-epilogue-ok?)
         (compiler-backend-callee-save-push-prologue-rebase-ok?)
+        (compiler-backend-rsp-rebase-indexed-pool-base-ok?)
         (compiler-backend-csr-unused-save-trim-ok?)
         (compiler-backend-csr-narrow-spelling-keeps-save-ok?)
         (compiler-backend-dead-slot-region-push-ok?)

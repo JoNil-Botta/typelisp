@@ -4446,6 +4446,41 @@
     (compiler-backend-extern-value-fnptr-target-ok?
       (compiler_backend.CompilerBackendTarget.Windows))))
 
+(define (compiler-backend-mutable-global-function-value-target-ok?
+  [target : compiler_backend.CompilerBackendTarget]) : bool
+  (match (compiler_backend.compiler-backend-emit-source-for-target
+    (compiler_lower_tests.compiler-lower-mutable-global-function-value-source)
+    target)
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (let
+        [body : String
+          (compiler-backend-asm-function-body
+            (owned_view.compiler-owned-shared-view asm)
+            "_tl_invoke")]
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view body)
+            "_tl_callback(%rip)")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view body)
+            "    call *(")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view body)
+              "    call _tl_callback\n"))
+          ;; Ordinary named function definitions remain direct-call targets.
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    call _tl_invoke\n")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-mutable-global-function-value-ok?) : bool
+  (and
+    (compiler-backend-mutable-global-function-value-target-ok?
+      (compiler_backend.CompilerBackendTarget.Linux))
+    (compiler-backend-mutable-global-function-value-target-ok?
+      (compiler_backend.CompilerBackendTarget.Windows))))
+
 (define (compiler-backend-indirect-c-call-shape-asm
   [target : compiler_backend.CompilerBackendTarget]
   [func : compiler_ir_types.CompilerIrValue]
@@ -57962,6 +57997,7 @@ b_keep:
     (compiler-backend-windows-env-runtime-ok?)
     (compiler_backend.compiler-backend-extern-metadata-symbol-ok?)
     (compiler-backend-extern-value-fnptr-ok?)
+    (compiler-backend-mutable-global-function-value-ok?)
     (compiler-backend-indirect-c-call-home-shape-ok?)
     (compiler-backend-varargs-ffi-ok?)
     (compiler-backend-c-abi-bool-return-ok?)

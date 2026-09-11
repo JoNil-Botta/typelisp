@@ -88227,6 +88227,336 @@
       [(not (= (opt-le-check-count in-loop-late-unrelated) 2)) 28]
       [else 42])))
 
+;; --- P-D: a scalar global bounded by a length family's reset loop ------------
+;;
+;; The class's question ("does every reader of `@g` see it at most the family's
+;; array length, because the one function that stores it walks a member
+;; checked from 0 to `@g` before anything else runs?") and the decision it
+;; moves: in a function that leaves `@g` alone, a member's check guarded by
+;; `(and (>= x 0) (< x @g))` is dead. Each negative is one clause broken.
+(defstruct OptPdTestSymbols
+  ;; the counter: an i64 cell initialized to 0, never address-taken
+  (g i64)
+  ;; `(set! g p)` then the checked walk `for v in 0..@g: le_a[v]`
+  (cover i64)
+  ;; the same store, the same walk with no check
+  (bare i64)
+  ;; `(set! g p)` and return
+  (clobber i64)
+  ;; the guarded reader of le_b
+  (use i64)
+  (main i64))
+
+(define (opt-pd-test-symbols) : OptPdTestSymbols
+  (OptPdTestSymbols
+    (opt-test-symbol "pd_g")
+    (opt-test-symbol "pd_cover")
+    (opt-test-symbol "pd_bare")
+    (opt-test-symbol "pd_clobber")
+    (opt-test-symbol "pd_use")
+    (opt-test-symbol "main")))
+
+;; P-B's globals plus the counter.
+(define (opt-pd-test-globals [le : OptLeTestSymbols] [pd : OptPdTestSymbols]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 16)]
+    (begin
+      (opt-le-runtime-global (&mut builder) le.a le.init-a)
+      (opt-le-runtime-global (&mut builder) le.b le.init-b)
+      (opt-le-runtime-global (&mut builder) le.c le.init-c)
+      (opt-le-runtime-global (&mut builder) le.d le.init-d)
+      (opt-le-runtime-global (&mut builder) le.e le.init-e)
+      (opt-le-runtime-global (&mut builder) le.f le.init-f)
+      (opt-le-runtime-global (&mut builder) le.g le.init-g)
+      (opt-le-runtime-global (&mut builder) le.h le.init-h)
+      (opt-test-global-builder-push!
+        (&mut builder)
+        pd.g
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+
+(define (opt-pd-store-g [g : i64] [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instr-seq-prepend
+    (compiler_ir_types.CompilerIrInstr.Store
+      g
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ast_types.AstType.I64))
+    tail))
+
+;; `(set! g p0)`, `v = 0`, then `while (< v @g) { [bounds_check v, len(cell)];
+;; v = v + 1 }` at the pre-SSA program: `v` is var 1, redefined by the step.
+(define (opt-pd-walk-function
+  [name : i64]
+  [g : i64]
+  [cell : i64]
+  [checked? : bool]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [step : compiler_ir_types.CompilerIrInstrSeq
+      (opt-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          1
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (opt-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "header"))
+          (compiler_ir_types.compiler-ir-instr-seq-empty)))]
+    (compiler_ir_types.CompilerIrFunction.Function
+      name
+      (opt-le-params 1)
+      (compiler_ast_types.AstType.I64)
+      64
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (opt-pd-store-g
+            g
+            (opt-test-instr-seq-prepend
+              (compiler_ir_types.CompilerIrInstr.Mov
+                1
+                (compiler_ir_types.CompilerIrValue.I64 0)
+                (compiler_ast_types.AstType.I64))
+              (opt-test-instr-seq-prepend
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "header"))
+                (compiler_ir_types.compiler-ir-instr-seq-empty)))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "header")
+            (opt-test-instr-seq-prepend
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                2
+                (compiler_ir_types.CompilerIrBinOp.Lt)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.Global g)
+                (compiler_ast_types.AstType.I64))
+              (opt-test-instr-seq-prepend
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 2)
+                  (compiler_ir_types.compiler-ir-label "body")
+                  (compiler_ir_types.compiler-ir-label "exit"))
+                (compiler_ir_types.compiler-ir-instr-seq-empty))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "body")
+              (opt-fz-chain-instrs
+                (compiler_ir_types.CompilerIrValue.Global cell)
+                3
+                (if checked?
+                  (opt-test-instr-seq-prepend
+                    (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                      (compiler_ir_types.CompilerIrValue.Var 1)
+                      (compiler_ir_types.CompilerIrValue.Var 6)
+                      0)
+                    step)
+                  step)))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "exit")
+                (opt-mr-return-zero))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-pd-clobber-function [name : i64] [g : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-le-function
+    name
+    (opt-le-params 1)
+    (opt-pd-store-g g (opt-mr-return-zero))))
+
+;; `(when (and (>= p0 0) (< p0 @g)) (cell-ref p0))`: the guarded check.
+(define (opt-pd-use-blocks [g : i64] [cell : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          1
+          (compiler_ir_types.CompilerIrBinOp.Ge)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (opt-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.compiler-ir-label "mid")
+            (compiler_ir_types.compiler-ir-label "exit"))
+          (compiler_ir_types.compiler-ir-instr-seq-empty))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "mid")
+        (opt-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            2
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.Global g)
+            (compiler_ast_types.AstType.I64))
+          (opt-test-instr-seq-prepend
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.compiler-ir-label "yes")
+              (compiler_ir_types.compiler-ir-label "exit"))
+            (compiler_ir_types.compiler-ir-instr-seq-empty))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "yes")
+          (opt-fz-chain-instrs
+            (compiler_ir_types.CompilerIrValue.Global cell)
+            3
+            (opt-test-instr-seq-prepend
+              (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.Var 6)
+                0)
+              (opt-test-instr-seq-prepend
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "exit"))
+                (compiler_ir_types.compiler-ir-instr-seq-empty)))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (opt-mr-return-zero))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-pd-use-function [pd : OptPdTestSymbols] [cell : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-le-blocks-function pd.use (opt-pd-use-blocks pd.g cell)))
+
+;; `main`: three calls in the given order.
+(define (opt-pd-main-function
+  [name : i64]
+  [first : i64]
+  [second : i64]
+  [third : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-le-function
+    name
+    (opt-le-params 0)
+    (opt-test-instr-seq-prepend
+      (opt-le-call-instr 0 first)
+      (opt-test-instr-seq-prepend
+        (opt-le-call-instr 1 second)
+        (opt-test-instr-seq-prepend
+          (opt-le-call-instr 2 third)
+          (opt-mr-return-zero))))))
+
+;; P-B's program plus `walker`, the reader, and a `main` calling `first`,
+;; `second`, then the reader.
+(define (opt-pd-test-cells
+  [le : OptLeTestSymbols]
+  [pd : OptPdTestSymbols]
+  [walker : compiler_ir_types.CompilerIrFunction]
+  [first : i64]
+  [second : i64]) : compiler_optimize.OptGlobalCellSummary
+  (compiler_optimize.opt-global-cell-summary-build-with-call-memory
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-pd-test-globals
+      (compiler_optimize.compiler-opt-global-shared-view le)
+      (compiler_optimize.compiler-opt-global-shared-view pd))
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      walker
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-pd-use-function
+          (compiler_optimize.compiler-opt-global-shared-view pd)
+          le.b)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-pd-main-function pd.main first second pd.use)
+          (opt-le-test-functions
+            (compiler_optimize.compiler-opt-global-shared-view le)))))
+    (opt-le-test-call-memory
+      (compiler_optimize.compiler-opt-global-shared-view le))))
+
+(define (compiler-optimize-pd-self-test) : i64
+  (let
+    [le : OptLeTestSymbols (opt-le-test-symbols)]
+    [pd : OptPdTestSymbols (opt-pd-test-symbols)]
+    ;; the class: reset the family, store and cover, then read
+    [cells : compiler_optimize.OptGlobalCellSummary
+      (opt-pd-test-cells
+        (compiler_optimize.compiler-opt-global-shared-view le)
+        (compiler_optimize.compiler-opt-global-shared-view pd)
+        (opt-pd-walk-function pd.cover pd.g le.a true)
+        le.reset
+        pd.cover)]
+    [admitted? : bool (compiler_optimize.opt-pd-admitted? pd.g)]
+    [pairs : i64 (compiler_optimize.opt-pd-pair-count)]
+    [use-blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-pd-use-blocks pd.g le.b)]
+    ;; the reader with its seeds: the guarded check retires
+    [seeded? : bool
+      (compiler_optimize.opt-pd-install-seeds!
+        (compiler_optimize.compiler-opt-global-shared-view cells.len-eq-clean)
+        pd.use
+        (compiler_optimize.compiler-opt-global-shared-view use-blocks))]
+    [retired : i64
+      (opt-le-check-count
+        (opt-le-late-sweep
+          (compiler_optimize.compiler-opt-global-shared-view cells)
+          pd.use
+          (compiler_optimize.compiler-opt-global-shared-view use-blocks)))]
+    ;; the same blocks with no seeds
+    [_reset : unit (compiler_optimize.opt-bounds-dom-seeds-reset!)]
+    [unseeded : i64
+      (opt-le-check-count
+        (opt-le-late-sweep
+          (compiler_optimize.compiler-opt-global-shared-view cells)
+          pd.use
+          (compiler_optimize.compiler-opt-global-shared-view use-blocks)))]
+    ;; the same blocks read as the function that stores g: `@g` is not one
+    ;; value there, so no fact is recorded against it
+    [_writer : bool
+      (compiler_optimize.opt-pd-install-seeds!
+        (compiler_optimize.compiler-opt-global-shared-view cells.len-eq-clean)
+        pd.cover
+        (compiler_optimize.compiler-opt-global-shared-view use-blocks))]
+    [in-writer : i64
+      (opt-le-check-count
+        (opt-le-late-sweep
+          (compiler_optimize.compiler-opt-global-shared-view cells)
+          pd.cover
+          (compiler_optimize.compiler-opt-global-shared-view use-blocks)))]
+    [_reset2 : unit (compiler_optimize.opt-bounds-dom-seeds-reset!)]
+    ;; the walk with no check covers nothing
+    [_bare : compiler_optimize.OptGlobalCellSummary
+      (opt-pd-test-cells
+        (compiler_optimize.compiler-opt-global-shared-view le)
+        (compiler_optimize.compiler-opt-global-shared-view pd)
+        (opt-pd-walk-function pd.bare pd.g le.a false)
+        le.reset
+        pd.bare)]
+    [bare? : bool (compiler_optimize.opt-pd-admitted? pd.g)]
+    ;; the family reset AFTER the cover: a member store in the VALID state
+    [_late : compiler_optimize.OptGlobalCellSummary
+      (opt-pd-test-cells
+        (compiler_optimize.compiler-opt-global-shared-view le)
+        (compiler_optimize.compiler-opt-global-shared-view pd)
+        (opt-pd-walk-function pd.cover pd.g le.a true)
+        pd.cover
+        le.reset)]
+    [late-reset? : bool (compiler_optimize.opt-pd-admitted? pd.g)]
+    ;; a store of g that returns with no cover
+    [_clobber : compiler_optimize.OptGlobalCellSummary
+      (opt-pd-test-cells
+        (compiler_optimize.compiler-opt-global-shared-view le)
+        (compiler_optimize.compiler-opt-global-shared-view pd)
+        (opt-pd-clobber-function pd.clobber pd.g)
+        le.reset
+        pd.clobber)]
+    [clobber? : bool (compiler_optimize.opt-pd-admitted? pd.g)]
+    [_reset3 : unit (compiler_optimize.opt-pd-reset!)]
+    (cond
+      [(not admitted?) 1]
+      [(not (= pairs 2)) 2]
+      [(not seeded?) 3]
+      [(not (= retired 0)) 4]
+      [(not (= unseeded 1)) 5]
+      [(not (= in-writer 1)) 6]
+      [bare? 7]
+      [late-reset? 8]
+      [clobber? 9]
+      [else 42])))
+
 ;; --- GAP-1: call-site global-argument identity facts --------------------------
 ;;
 ;; The class is one question ("does every direct call site of this function pass
@@ -91660,6 +91990,13 @@
     (compiler-optimize-len-eq-families-self-test)
     42
     "two global Vec cells reset together in one straight-line region with one length are proven length-equal, and a dominating check on one retires the check on the other; a member whose box reaches a parameter-writing callee is dropped, a call that may read a member between the two stores breaks the region, the Vec.len field invariant discharges the unsigned check against the array length, and a constructor whose .len word is not its array length refuses it"))
+
+(test
+  pd-scalar-global-bounded-by-reset-loop
+  (test.assert-i64-eq
+    (compiler-optimize-pd-self-test)
+    42
+    "an i64 global initialized to zero that one function stores and then walks a length-family member checked from 0 to its value is proven at most the family's array length program-wide, and in a function that leaves it alone a member's check guarded by (and (>= x 0) (< x @g)) retires; the same blocks with no seeds, or read as the storing function, keep the check; a walk with no check, a family reset after the cover, and a store that returns uncovered all refuse the pair"))
 
 (test
   arg-global-call-site-identity-facts

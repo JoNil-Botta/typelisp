@@ -27823,6 +27823,16 @@
 (define opt-licm-global-data-slot-on : bool
   false)
 
+;; Both live across programs in one process -- `compile --batch` tears each
+;; entry's arenas down before the next -- so the map the previous program's
+;; summary build left behind is a dangling handle, and the flag its late
+;; round left set would send the next program's early classifier to read it.
+;; The program entry starts both over, exactly as a fresh process does.
+(define (opt-licm-global-headers-reset!) : unit
+  (begin
+    (set! opt-licm-global-data-slot-on false)
+    (set! opt-licm-global-headers (opt_i64_i64_map.with-capacity 1))))
+
 (define (opt-licm-global-headers-fill
   [type-segment-bases : i64]
   [globals : ir.CompilerIrGlobalSeq]
@@ -166221,6 +166231,8 @@
           ;; dedicated arena lets that whole generation be released there
           ;; instead of riding the compiler-entry arena through the backend.
           (let
+            ;; LICM-GDP: the header-typed-global table is per program.
+            [_licm-headers : unit (opt-licm-global-headers-reset!)]
             [enclosing : i64 (arena.tl_arena_current)]
             ;; Keep this direct-local owner raw. Level 2 destroys it before
             ;; summary/function optimization after copying survivors to the

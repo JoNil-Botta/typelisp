@@ -146710,6 +146710,60 @@
 (defenum OptCallMemoryBuildPass
   (Pass opt_i64_i64_map.Map bool))
 
+;; The working storage of one candidate -- its source map, root environment
+;; and element-pointer map -- is garbage the moment its verdict is read, and
+;; the fixed point asks for a candidate per unresolved function per round (a
+;; round per call-graph depth, then the optimistic rounds). Left in the
+;; caller's arena those environments were the bulk of the inline arena when
+;; CSE-CALL began building this table at the inline stage's start: a compiler
+;; self-build peaked at 9.1G against 3.0G without the table, over the 8 GiB
+;; cap of the embedded-stdlib bounded-resource gate. The builder now owns a
+;; scratch arena for the duration of one build (opt-call-memory-scratch, 0
+;; outside a build), each candidate runs in it and the scratch is reset to
+;; where it stood once the verdict is out. The verdict is the summary's bit
+;; set, or -1 for Unresolved.
+(define opt-call-memory-scratch : i64
+  0)
+
+(define (opt-call-memory-candidate-code [candidate : OptCallMemoryCandidate]) : i64
+  (match candidate
+    [(OptCallMemoryCandidate.Unresolved) (- 0 1)]
+    [(OptCallMemoryCandidate.Known summary) summary]))
+
+(define (opt-call-memory-candidate-verdict
+  [type-segment-bases : i64]
+  [descriptor-globals : opt_i64_i64_map.Map]
+  [summaries : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [func : ir.CompilerIrFunction]) : i64
+  (if (= opt-call-memory-scratch 0)
+    (opt-call-memory-candidate-code
+      (opt-call-memory-function-candidate
+        type-segment-bases
+        descriptor-globals
+        summaries
+        function-set
+        func))
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [_enter : unit
+        (unsafe
+          (arena.tl_arena_set opt-call-memory-scratch))]
+      [mark : i64 (arena.tl_region_mark)]
+      [verdict : i64
+        (opt-call-memory-candidate-code
+          (opt-call-memory-function-candidate
+            type-segment-bases
+            descriptor-globals
+            summaries
+            function-set
+            func))]
+      (begin
+        (unsafe
+          (arena.tl_region_reset mark)
+          (arena.tl_arena_set enclosing))
+        verdict))))
+
 (define (opt-call-memory-build-pass-from
   [type-segment-bases : i64]
   [descriptor-globals : opt_i64_i64_map.Map]
@@ -146743,13 +146797,15 @@
                     changed
                     (+ index 1)))]
               [(opt_i64_i64_map.LookupMissing)
-                (match (opt-call-memory-function-candidate
-                  type-segment-bases
-                  (compiler-opt-global-shared-view descriptor-globals)
-                  (compiler-opt-global-shared-view current)
-                  (compiler-opt-global-shared-view function-set)
-                  func)
-                  [(OptCallMemoryCandidate.Unresolved)
+                (let
+                  [summary : i64
+                    (opt-call-memory-candidate-verdict
+                      type-segment-bases
+                      (compiler-opt-global-shared-view descriptor-globals)
+                      (compiler-opt-global-shared-view current)
+                      (compiler-opt-global-shared-view function-set)
+                      func)]
+                  (if (< summary 0)
                     (opt-call-memory-build-pass-from
                       type-segment-bases
                       descriptor-globals
@@ -146758,8 +146814,7 @@
                       function-set
                       next
                       changed
-                      (+ index 1))]
-                  [(OptCallMemoryCandidate.Known summary)
+                      (+ index 1))
                     (begin
                       (opt_i64_i64_map.insert-ref! (&mut next) name-id summary)
                       (opt-call-memory-build-pass-from
@@ -146770,7 +146825,7 @@
                         function-set
                         next
                         true
-                        (+ index 1)))])]))]))))
+                        (+ index 1)))))]))]))))
 
 (define (opt-call-memory-build-pass
   [type-segment-bases : i64]
@@ -147021,32 +147076,30 @@
                     (match (opt_i64_i64_map.get (& current) name-id)
                       [(opt_i64_i64_map.LookupFound value) value]
                       [(opt_i64_i64_map.LookupMissing) 0])]
-                  (match (opt-call-memory-function-candidate
-                    type-segment-bases
-                    (compiler-opt-global-shared-view descriptor-globals)
-                    (compiler-opt-global-shared-view current)
-                    (compiler-opt-global-shared-view function-set)
-                    func)
-                    ;; Unreachable in practice; taking it abandons the round.
-                    [(OptCallMemoryCandidate.Unresolved)
-                      (OptCallMemoryOptimisticPass.Pass next changed false)]
-                    [(OptCallMemoryCandidate.Known summary)
-                      (begin
-                        (opt_i64_i64_map.insert-ref!
-                          (&mut next)
-                          name-id
-                          summary)
-                        (opt-call-memory-optimistic-pass-from
-                          type-segment-bases
-                          descriptor-globals
-                          functions
-                          resolved
-                          current
-                          function-set
-                          next
-                          (or changed (not (= summary previous)))
-                          usable?
-                          (+ index 1)))]))]))]))))
+                  [summary : i64
+                    (opt-call-memory-candidate-verdict
+                      type-segment-bases
+                      (compiler-opt-global-shared-view descriptor-globals)
+                      (compiler-opt-global-shared-view current)
+                      (compiler-opt-global-shared-view function-set)
+                      func)]
+                  ;; Unresolved is unreachable in practice; taking it abandons
+                  ;; the round.
+                  (if (< summary 0)
+                    (OptCallMemoryOptimisticPass.Pass next changed false)
+                    (begin
+                      (opt_i64_i64_map.insert-ref! (&mut next) name-id summary)
+                      (opt-call-memory-optimistic-pass-from
+                        type-segment-bases
+                        descriptor-globals
+                        functions
+                        resolved
+                        current
+                        function-set
+                        next
+                        (or changed (not (= summary previous)))
+                        usable?
+                        (+ index 1)))))]))]))))
 
 (define (opt-call-memory-optimistic-pass
   [type-segment-bases : i64]
@@ -147128,6 +147181,26 @@
     remaining))
 
 (define (opt-call-memory-build-with-descriptor-globals
+  [type-segment-bases : i64]
+  [descriptor-globals : opt_i64_i64_map.Map]
+  [functions : ir.CompilerIrFunctionSeq]
+  [capacity : i64]) : opt_i64_i64_map.Map
+  (let
+    [scratch : i64 (arena.tl_arena_make)]
+    [_own : unit (set! opt-call-memory-scratch scratch)]
+    [table : opt_i64_i64_map.Map
+      (opt-call-memory-build-with-descriptor-globals-in
+        type-segment-bases
+        descriptor-globals
+        functions
+        capacity)]
+    (begin
+      (set! opt-call-memory-scratch 0)
+      (unsafe
+        (arena.tl_arena_destroy scratch))
+      table)))
+
+(define (opt-call-memory-build-with-descriptor-globals-in
   [type-segment-bases : i64]
   [descriptor-globals : opt_i64_i64_map.Map]
   [functions : ir.CompilerIrFunctionSeq]

@@ -4789,6 +4789,12 @@
     "the multiblock gate admits an aggregate-building body and names the clause that refuses each neighbour"))
 
 (test
+  inline-one-block-shape
+  (test.assert-true
+    (compiler_optimize_tests.compiler-optimize-inline-one-block-shape-ok?)
+    "a one-block body past the single-block cap is the checked tier's, and only a small one keeps there"))
+
+(test
   inline-multiblock-alloc-splice
   (test.assert-true
     (compiler_optimize_tests.compiler-optimize-inline-multiblock-alloc-splice-ok?)

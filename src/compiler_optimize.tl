@@ -129798,10 +129798,24 @@
       [(not (opt-inline-params-sequential? cparams 0))
         (opt-inline-shape-params-not-sequential)]
       [(< cvars np) (opt-inline-shape-structure)]
-      [(<=
-          (ir.compiler-ir-block-list-count
-            (compiler-opt-global-shared-view cblocks))
-          1)
+      ;; INL-23: a one-block body is the single-block tier's while it fits that
+      ;; tier's cap (opt-inline-max-body, read the way that tier reads it: the
+      ;; instructions before the terminator). Past the cap it is priced here,
+      ;; on the checked tier's measured plan, instead of falling between the
+      ;; two tiers -- which is where `rg-heap-swap!` (17 instructions per
+      ;; execution) and `cg-scc-discover!` (37) sat, refused for size by one
+      ;; tier and for structure by the other.
+      [(and
+          (<=
+            (ir.compiler-ir-block-list-count
+              (compiler-opt-global-shared-view cblocks))
+            1)
+          (<=
+            (-
+              (ir.compiler-ir-block-list-instruction-count
+                (compiler-opt-global-shared-view cblocks))
+              1)
+            (opt-inline-max-body)))
         (opt-inline-shape-structure)]
       [(and
           (<=
@@ -137524,6 +137538,12 @@
 
 ;; The same window with the site's specialization gain (INL-18) added to the
 ;; prediction the cap is read against.
+;; INL-17: a body of at most sixty-four instructions per site execution is one
+;; the model prices well; the verdict says why, and INL-23 reads the same bound
+;; for a one-block body.
+(define (opt-inline-checked-small-body? [callee-cost : i64] [site-weight : i64]) : bool
+  (<= callee-cost (* 64 site-weight)))
+
 (define (opt-inline-checked-window-ok-at?
   [saving : i64]
   [boundary : i64]
@@ -137792,7 +137812,32 @@
     ;; loop-carrying body of hundreds (it-hash-words 523, it-grow! 624, the
     ;; cfg loop walkers 184 to 1376). A small body past the cap keeps on the
     ;; floor alone.
-    [small-body? : bool (<= callee-cost (* 64 site-weight))]
+    [small-body? : bool
+      (opt-inline-checked-small-body? callee-cost site-weight)]
+    ;; INL-23: a one-block callee reaches this tier past the single-block
+    ;; tier's cap (opt-inline-multiblock-callee-shape-reason). Its splice adds
+    ;; no block and no branch, so the one thing that can go wrong is the one
+    ;; thing the standalone plans do not price: a straight-line body of a
+    ;; hundred instructions inside the caller's loop raises the pressure on the
+    ;; loop's carried values, and they spill on EVERY iteration, not only the
+    ;; ones that reach the body. `ssa-env-bind` (103 instructions, 65 per
+    ;; execution) into `ssa-rename-block` models a saving of 80 against a
+    ;; boundary of 64 -- squarely in the window -- and costs ssa_construct
+    ;; +1.04%: rename_block's hot-path stack traffic doubles while the body
+    ;; itself runs on a fourteenth of the iterations. The one-block bodies the
+    ;; tier gains from are small ones: `rg-heap-swap!` (17 per execution) into
+    ;; the sift walkers is regalloc_greedy -2.09%, `cg-scc-discover!` (37)
+    ;; into `cg-scc-compute!` callgraph_scc -1.48%. So a one-block body keeps
+    ;; only as a small body: the same statement about the model INL-17 makes,
+    ;; read as a ceiling instead of a floor.
+    [one-block? : bool
+      (match (compiler-opt-global-shared-view callee)
+        [(ir.CompilerIrFunction.Function _ _ _ _ cblocks)
+          (<=
+            (ir.compiler-ir-block-list-count
+              (compiler-opt-global-shared-view cblocks))
+            1)])]
+    [one-block-ok? : bool (or (not one-block?) small-body?)]
     ;; INL-18: past the base ceiling the caller is large and the plan's growth
     ;; accounting is what the ceiling stopped trusting; a site is priced there
     ;; only on what it folds, and the fold must cover half the boundary.
@@ -137802,6 +137847,7 @@
         (>= (* 2 spec-gain) boundary))]
     [keep? : bool
       (and
+        one-block-ok?
         fold-carries?
         (or
           (opt-inline-checked-window-ok-at? saving boundary spec-gain)
@@ -138890,9 +138936,23 @@
             ;; +19,337,616 (+2.59%). So a tail site reaches the verdict or it
             ;; reaches nothing, and no band's fuel is charged for it either
             ;; (the import flags below).
+            ;; INL-23: a one-block body past the single-block tier's cap is the
+            ;; measured tier's alone. The single-block tier IS the band tier
+            ;; for one-block bodies, and its cap is the statement that a
+            ;; straight-line body is admitted on shape only up to twelve
+            ;; instructions; the bands here were calibrated on bodies with
+            ;; branches, and letting them read a one-block body past that cap
+            ;; would retire the cap for every absorbable or cost-band body. The
+            ;; verdict prices such a body and holds it to the small-body bound.
+            [one-block-callee? : bool
+              (<=
+                (ir.compiler-ir-block-list-count
+                  (compiler-opt-global-shared-view cblocks))
+                1)]
             [band-admits? : bool
               (and
                 (not tail-site?)
+                (not one-block-callee?)
                 (not
                   (opt-inline-checked-tail-only-body?
                     (compiler-opt-global-shared-view cblocks)))
@@ -140112,9 +140172,23 @@
             ;; Same predictive verdict as the non-span path, and the same
             ;; refusal of the tail-call site class: it belongs to the measured
             ;; tier alone.
+            ;; INL-23: a one-block body past the single-block tier's cap is the
+            ;; measured tier's alone. The single-block tier IS the band tier
+            ;; for one-block bodies, and its cap is the statement that a
+            ;; straight-line body is admitted on shape only up to twelve
+            ;; instructions; the bands here were calibrated on bodies with
+            ;; branches, and letting them read a one-block body past that cap
+            ;; would retire the cap for every absorbable or cost-band body. The
+            ;; verdict prices such a body and holds it to the small-body bound.
+            [one-block-callee? : bool
+              (<=
+                (ir.compiler-ir-block-list-count
+                  (compiler-opt-global-shared-view cblocks))
+                1)]
             [band-admits? : bool
               (and
                 (not tail-site?)
+                (not one-block-callee?)
                 (not
                   (opt-inline-checked-tail-only-body?
                     (compiler-opt-global-shared-view cblocks)))

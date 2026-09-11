@@ -32033,6 +32033,67 @@
 
 ;; The shape gate's verdict on each body above, and the reason text a
 ;; `--trace-passes` `inline-shape|` line carries for it.
+;; INL-23. A one-block body of `count` instructions before its return: a chain
+;; of adds from the one parameter.
+(define (opt-inline-one-block-test-body [count : i64]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [builder : compiler_ir_types.CompilerIrInstrBuilder
+      (compiler_ir_types.compiler-ir-instr-builder-with-capacity (+ count 1))]
+    [k : i64 1]
+    (begin
+      (while (<= k count)
+        (begin
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              k
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var (- k 1))
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64)))
+          (set! k (+ k 1))))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var count))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "one_block.entry")
+          (compiler_ir_types.compiler-ir-instr-builder-to-seq builder))
+        compiler_ir_types.CompilerIrBlockList.Nil))))
+
+(define (opt-inline-one-block-test-shape-reason [count : i64]) : i64
+  (compiler_optimize.opt-inline-multiblock-callee-shape-reason
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "x"
+        (compiler_ast_types.AstType.I64)
+        0)
+      (compiler_ir_types.compiler-ir-param-seq-empty))
+    (compiler_ast_types.AstType.I64)
+    (+ count 2)
+    (opt-inline-one-block-test-body count)))
+
+;; INL-23. The multiblock gate leaves a one-block body to the single-block tier
+;; while it fits that tier's cap and admits it one instruction past the cap;
+;; the checked tier's small-body bound then separates the measured corpus's
+;; one-block bodies: `cg-scc-discover!` at a depth-2 site (296 against a site
+;; weight of 8) keeps, `ssa-env-bind` (520 against 8) does not.
+(define (compiler-optimize-inline-one-block-shape-ok?) : bool
+  (let
+    [cap : i64 (compiler_optimize.opt-inline-max-body)]
+    (and
+      (=
+        (opt-inline-one-block-test-shape-reason cap)
+        (compiler_optimize.opt-inline-shape-structure))
+      (=
+        (opt-inline-one-block-test-shape-reason (+ cap 1))
+        (compiler_optimize.opt-inline-shape-ok))
+      (compiler_optimize.opt-inline-checked-small-body? 296 8)
+      (compiler_optimize.opt-inline-checked-small-body? 512 8)
+      (not (compiler_optimize.opt-inline-checked-small-body? 520 8)))))
+
 (define (compiler-optimize-inline-multiblock-alloc-shape-ok?) : bool
   (let
     [private-text : String "__tl_internal_abi_mem_s32__alloc_sret"]

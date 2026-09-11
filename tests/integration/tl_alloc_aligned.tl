@@ -19,6 +19,7 @@
     [home : arena.Arena (arena.current)]
     [_set : unit
       (unsafe
+        ;; lint-allow: raw-arena-op -- isolate allocator cursor and counter checks.
         (arena.set! owner))]
     [start : i64 (arena.mark-raw-handle (arena.mark))]
     [_peak-reset : unit (profile.alloc-reset-peak)]
@@ -73,8 +74,10 @@
         (= peak-after live-after))]
     (begin
       (unsafe
+        ;; lint-allow: raw-arena-op -- restore the caller before retiring owner.
         (arena.set! home))
       (unsafe
+        ;; lint-allow: raw-arena-op -- final retirement after restoring the caller.
         (arena.destroy owner))
       ok)))
 
@@ -84,18 +87,22 @@
     [home : arena.Arena (arena.current)]
     [_set : unit
       (unsafe
+        ;; lint-allow: raw-arena-op -- isolate aligned rewind behavior.
         (arena.set! owner))]
     [mark : arena.ArenaMark (arena.mark)]
     [first : i64 (tl_alloc_aligned 57 4096)]
     [_reset : unit
       (unsafe
+        ;; lint-allow: raw-arena-op -- the fixture deliberately exercises rewind.
         (arena.rewind mark))]
     [second : i64 (tl_alloc_aligned 57 4096)]
     [ok : bool (and (= first second) (aligned? second 4096))]
     (begin
       (unsafe
+        ;; lint-allow: raw-arena-op -- restore the caller before retiring owner.
         (arena.set! home))
       (unsafe
+        ;; lint-allow: raw-arena-op -- final retirement after restoring the caller.
         (arena.destroy owner))
       ok)))
 
@@ -105,6 +112,7 @@
     [home : arena.Arena (arena.current)]
     [_set : unit
       (unsafe
+        ;; lint-allow: raw-arena-op -- isolate exact-end arena growth behavior.
         (arena.set! owner))]
     [root : i64 (arena.raw-handle owner)]
     [cursor : i64 (arena.mark-raw-handle (arena.mark))]
@@ -125,8 +133,10 @@
         (= root-after root))]
     (begin
       (unsafe
+        ;; lint-allow: raw-arena-op -- restore the caller before retiring owner.
         (arena.set! home))
       (unsafe
+        ;; lint-allow: raw-arena-op -- final retirement after restoring the caller.
         (arena.destroy owner))
       ok)))
 
@@ -150,6 +160,7 @@
     [valid : bool true]
     (begin
       (unsafe
+        ;; lint-allow: raw-arena-op -- install the shared atomic arena in this worker.
         (arena.tl_arena_set owner))
       (while (< i 4096)
         (let
@@ -165,6 +176,7 @@
             (set! last current)
             (set! i (+ i 1)))))
       (unsafe
+        ;; lint-allow: raw-arena-op -- restore the worker's original arena.
         (arena.tl_arena_set home))
       (if valid
         last
@@ -249,19 +261,23 @@
     (begin
       (tl_arena_poison_enable)
       (unsafe
+        ;; lint-allow: raw-arena-op -- isolate poisoned rewind behavior.
         (arena.set! owner))
       (let
         [mark : arena.ArenaMark (arena.mark)]
         [first : i64 (tl_alloc_aligned 257 4096)]
         [_reset : unit
           (unsafe
+            ;; lint-allow: raw-arena-op -- the fixture deliberately exercises rewind.
             (arena.rewind mark))]
         [second : i64 (tl_alloc_aligned 257 4096)]
         [ok : bool (and (= first second) (aligned? second 4096))]
         (begin
           (unsafe
+            ;; lint-allow: raw-arena-op -- restore the caller before retiring owner.
             (arena.set! home))
           (unsafe
+            ;; lint-allow: raw-arena-op -- final retirement after restoring the caller.
             (arena.destroy owner))
           ok)))))
 

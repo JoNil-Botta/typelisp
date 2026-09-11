@@ -19,12 +19,22 @@
 (import sym_i64_env)
 
 (defenum ResultCompilerCheck
-  (Ok tc.CompilerTypecheckSummary)
-  (Err (Box cdiag.CompilerDiagnosticList)))
+  (Ok tc.CompilerTypecheckSummary cdiag.CompilerAdvisoryList)
+  (Err (Box cdiag.CompilerDiagnosticList) cdiag.CompilerAdvisoryList))
 
 (defenum ResultCompilerCheckWithPaths
-  (Ok tc.CompilerTypecheckSummary ast.AstDeclPathList)
-  (Err (Box cdiag.CompilerDiagnosticList)))
+  (Ok
+    tc.CompilerTypecheckSummary
+    ast.AstDeclPathList
+    cdiag.CompilerAdvisoryList)
+  (Err (Box cdiag.CompilerDiagnosticList) cdiag.CompilerAdvisoryList))
+
+(define (compiler-check-advisories-for-job [job-state : tc.TcJobState]) : cdiag.CompilerAdvisoryList
+  (cdiag.compiler-advisory-sink-snapshot
+    (tc.tc-job-state-advisory-sink job-state)))
+
+(define (compiler-check-serial-advisories) : cdiag.CompilerAdvisoryList
+  (compiler-check-advisories-for-job (tc.tc-serial-job-state)))
 
 (cfg
   compile-profile
@@ -156,14 +166,14 @@
                 index))
             (set! index (+ index 1))))
         (match result
-          [(ResultCompilerCheck.Ok _)
-            (ResultCompilerCheck.Err (box owned-parse))]
-          [(ResultCompilerCheck.Err semantic-diagnostics)
+          [(ResultCompilerCheck.Ok _ advisories)
+            (ResultCompilerCheck.Err (box owned-parse) advisories)]
+          [(ResultCompilerCheck.Err semantic-diagnostics advisories)
             (begin
               (compiler-check-diagnostic-list-insert-all-source-order
                 (owned_view.compiler-owned-box-shared-view semantic-diagnostics)
                 (&mut owned-parse))
-              (ResultCompilerCheck.Err (box owned-parse)))])))))
+              (ResultCompilerCheck.Err (box owned-parse) advisories))])))))
 
 (define (compiler-check-reset-pools!) : unit
   (compiler_load.compiler-load-session-reset-pools!))
@@ -194,7 +204,9 @@
       [(tc.ResultCompilerTypecheck.Ok summary)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "typecheck"))
-          (ResultCompilerCheck.Ok summary))]
+          (ResultCompilerCheck.Ok
+            summary
+            (compiler-check-advisories-for-job job-state)))]
       [(tc.ResultCompilerTypecheck.Err diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "typecheck"))
@@ -202,7 +214,8 @@
             (box
               (compiler-check-diagnostics-with-fallback-path
                 (owned_view.compiler-owned-box-shared-view diag)
-                path))))])))
+                path))
+            (compiler-check-advisories-for-job job-state)))])))
 
 (define (compiler-check-program-with-paths-cache
   [path : String]
@@ -249,7 +262,8 @@
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
         (ResultCompilerCheck.Err
-          (cdiag.compiler-diagnostic-list-box-single diag)))]))
+          (cdiag.compiler-diagnostic-list-box-single diag)
+          (compiler-check-advisories-for-job job-state)))]))
 
 (define (compiler-check-loaded-with-prelude-cache
   [path : String]
@@ -284,7 +298,9 @@
     [(parser.ResultAstProgramRecovery.Fatal diagnostics)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
-        (ResultCompilerCheck.Err diagnostics))]
+        (ResultCompilerCheck.Err
+          diagnostics
+          (compiler-check-advisories-for-job job-state)))]
     [(parser.ResultAstProgramRecovery.Parsed program diagnostics)
       (let
         [parse-identity : compiler_load.CompilerLoadParseIdentity
@@ -331,15 +347,16 @@
             (owned_view.compiler-owned-shared-view owned-paths)
             (owned_view.compiler-owned-shared-view stdlib-roots)
             cache-scope)
-            [(ResultCompilerCheck.Ok summary)
-              (ResultCompilerCheckWithPaths.Ok summary owned-paths)]
-            [(ResultCompilerCheck.Err diag)
-              (ResultCompilerCheckWithPaths.Err diag)])))]
+            [(ResultCompilerCheck.Ok summary advisories)
+              (ResultCompilerCheckWithPaths.Ok summary owned-paths advisories)]
+            [(ResultCompilerCheck.Err diag advisories)
+              (ResultCompilerCheckWithPaths.Err diag advisories)])))]
     [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
         (ResultCompilerCheckWithPaths.Err
-          (cdiag.compiler-diagnostic-list-box-single diag)))]))
+          (cdiag.compiler-diagnostic-list-box-single diag)
+          (compiler-check-serial-advisories)))]))
 
 (define (compiler-check-file-with-roots
   [path : String]
@@ -376,7 +393,7 @@
     [(parser.ResultAstProgramRecovery.Fatal diagnostics)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
-        (ResultCompilerCheck.Err diagnostics))]
+        (ResultCompilerCheck.Err diagnostics (compiler-check-serial-advisories)))]
     [(parser.ResultAstProgramRecovery.Parsed program diagnostics)
       (let
         [parse-identity : compiler_load.CompilerLoadParseIdentity
@@ -418,6 +435,7 @@
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheck
   (begin
     (compiler-check-reset-pools!)
+    (tc.tc-job-state-reset-advisories! (tc.tc-serial-job-state))
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler_load.compiler-load-package-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
@@ -444,7 +462,8 @@
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
           (ResultCompilerCheck.Err
-            (cdiag.compiler-diagnostic-list-box-single diag)))])))
+            (cdiag.compiler-diagnostic-list-box-single diag)
+            (compiler-check-serial-advisories)))])))
 
 (define (compiler-check-package-entry-file-with-roots-and-cfg
   [path : String]
@@ -455,6 +474,7 @@
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerCheckWithPaths
   (begin
     (compiler-check-reset-pools!)
+    (tc.tc-job-state-reset-advisories! (tc.tc-serial-job-state))
     (cfg compile-profile (compiler-check-profile-start))
     (compiler-check-loaded-cache-with-paths
       (owned_view.compiler-owned-shared-view path)
@@ -486,6 +506,7 @@
   [job-state : tc.TcJobState]) : ResultCompilerCheck
   (begin
     (compiler-check-reset-pools!)
+    (tc.tc-job-state-reset-advisories! job-state)
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler_load.compiler-load-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)
@@ -513,7 +534,8 @@
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
           (ResultCompilerCheck.Err
-            (cdiag.compiler-diagnostic-list-box-single diag)))])))
+            (cdiag.compiler-diagnostic-list-box-single diag)
+            (compiler-check-advisories-for-job job-state)))])))
 
 (define (compiler-check-source-with-roots-and-cfg
   [path : String]
@@ -529,16 +551,16 @@
 
 (define (compiler-check-source-ok? [path : String] [source : String]) : bool
   (match (compiler-check-source path source)
-    [(ResultCompilerCheck.Ok _) true]
-    [(ResultCompilerCheck.Err _) false]))
+    [(ResultCompilerCheck.Ok _ _) true]
+    [(ResultCompilerCheck.Err _ _) false]))
 
 (define (compiler-check-source-error-ok?
   [path : String]
   [source : String]
   [want : String]) : bool
   (match (compiler-check-source path source)
-    [(ResultCompilerCheck.Ok _) false]
-    [(ResultCompilerCheck.Err diag)
+    [(ResultCompilerCheck.Ok _ _) false]
+    [(ResultCompilerCheck.Err diag _)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diag)]
@@ -564,6 +586,7 @@
 (define (compiler-check-direct-source [path : String] [source : String]) : ResultCompilerCheck
   (begin
     (compiler-check-reset-pools!)
+    (tc.tc-job-state-reset-advisories! (tc.tc-serial-job-state))
     (match (parser.parse-ast-source-recovery-diagnostic-with-cfg
       (owned_view.compiler-owned-shared-view path)
       (owned_view.compiler-owned-shared-view source)
@@ -583,12 +606,12 @@
                   (svec.new)
                   (compiler-check-language-cfgs)))]))]
       [(parser.ResultAstProgramRecovery.Fatal diagnostics)
-        (ResultCompilerCheck.Err diagnostics)])))
+        (ResultCompilerCheck.Err diagnostics (compiler-check-serial-advisories))])))
 
 (define (compiler-check-direct-source-ok? [path : String] [source : String]) : bool
   (match (compiler-check-direct-source path source)
-    [(ResultCompilerCheck.Ok _) true]
-    [(ResultCompilerCheck.Err _) false]))
+    [(ResultCompilerCheck.Ok _ _) true]
+    [(ResultCompilerCheck.Err _ _) false]))
 
 (define (compiler-check-qualified-export-cache-exported-source) : String
   "(module a)
@@ -683,9 +706,9 @@
   (match (compiler-check-source
     "src/virtual_entry.tl"
     (compiler-check-virtual-import-source))
-    [(ResultCompilerCheck.Ok summary)
+    [(ResultCompilerCheck.Ok summary _)
       (> (compiler_typecheck_api.compiler-typecheck-summary-score summary) 0)]
-    [(ResultCompilerCheck.Err _) false]))
+    [(ResultCompilerCheck.Err _ _) false]))
 
 (define (compiler-check-inline-layout-name-ok?
   [ctx : tc.TcContext]
@@ -777,9 +800,9 @@
   (match (compiler-check-source
     "src/export_entry.tl"
     (compiler-check-export-source))
-    [(ResultCompilerCheck.Ok summary)
+    [(ResultCompilerCheck.Ok summary _)
       (> (compiler_typecheck_api.compiler-typecheck-summary-score summary) 0)]
-    [(ResultCompilerCheck.Err _) false]))
+    [(ResultCompilerCheck.Err _ _) false]))
 
 (define (compiler-check-qualified-export-cache-reset-ok?) : bool
   (and
@@ -796,8 +819,8 @@
   (match (compiler-check-source
     "docs/examples/bad_type.tl"
     "(define (main) : i64 true)")
-    [(ResultCompilerCheck.Ok _) false]
-    [(ResultCompilerCheck.Err diag)
+    [(ResultCompilerCheck.Ok _ _) false]
+    [(ResultCompilerCheck.Err diag _)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diag)]
@@ -889,16 +912,16 @@
       (match (compiler-check-source
         "tests/pool_reset_a.tl"
         (owned_view.compiler-owned-shared-view source))
-        [(ResultCompilerCheck.Ok _)
+        [(ResultCompilerCheck.Ok _ _)
           (let
             [first-len : i64 (ast.ty-node-pool-len)]
             (match (compiler-check-source "tests/pool_reset_b.tl" source)
-              [(ResultCompilerCheck.Ok _)
+              [(ResultCompilerCheck.Ok _ _)
                 (let
                   [second-len : i64 (ast.ty-node-pool-len)]
                   (and (> first-len 0) (= first-len second-len)))]
-              [(ResultCompilerCheck.Err _) false]))]
-        [(ResultCompilerCheck.Err _) false]))))
+              [(ResultCompilerCheck.Err _ _) false]))]
+        [(ResultCompilerCheck.Err _ _) false]))))
 
 (define (compiler-check-target-cfg-ok?) : bool
   (let
@@ -918,8 +941,8 @@
           (target_cfg.compiler-target-cfgs-with-names
             target_cfg.CompilerTargetCfg.Linux
             (owned_view.compiler-owned-shared-view names)))
-          [(ResultCompilerCheck.Ok _) true]
-          [(ResultCompilerCheck.Err _) false])
+          [(ResultCompilerCheck.Ok _ _) true]
+          [(ResultCompilerCheck.Err _ _) false])
         (match (compiler-check-source-with-roots-and-cfg
           "tests/check_cfg_windows.tl"
           source
@@ -927,8 +950,8 @@
           (target_cfg.compiler-target-cfgs-with-names
             target_cfg.CompilerTargetCfg.Windows
             names))
-          [(ResultCompilerCheck.Ok _) true]
-          [(ResultCompilerCheck.Err _) false])))))
+          [(ResultCompilerCheck.Ok _ _) true]
+          [(ResultCompilerCheck.Err _ _) false])))))
 
 (define (compiler-check-self-test) : i64
   (begin

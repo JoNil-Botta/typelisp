@@ -83,8 +83,8 @@
     (match (compiler_check_core.compiler-check-source
       (tc_core.tc-global-shared-view path)
       (tc_core.tc-global-shared-view source))
-      [(compiler_check_core.ResultCompilerCheck.Ok _) false]
-      [(compiler_check_core.ResultCompilerCheck.Err diag-box)
+      [(compiler_check_core.ResultCompilerCheck.Ok _ _) false]
+      [(compiler_check_core.ResultCompilerCheck.Err diag-box _)
         (let
           [diag : cdiag.CompilerDiagnostic
             (cdiag.compiler-diagnostic-list-first
@@ -142,8 +142,8 @@
   (match (compiler_check_core.compiler-check-source
     "tests/import_help_only.tl"
     "(define (main) : i64 (begin (println \"value\") 0))")
-    [(compiler_check_core.ResultCompilerCheck.Ok _) false]
-    [(compiler_check_core.ResultCompilerCheck.Err diag)
+    [(compiler_check_core.ResultCompilerCheck.Ok _ _) false]
+    [(compiler_check_core.ResultCompilerCheck.Err diag _)
       (let
         [first : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-list-first
@@ -161,8 +161,8 @@
   (match (check_core.compiler-check-source
     (tc_core.tc-global-shared-view path)
     source)
-    [(check_core.ResultCompilerCheck.Ok _) false]
-    [(check_core.ResultCompilerCheck.Err diagnostics-box)
+    [(check_core.ResultCompilerCheck.Ok _ _) false]
+    [(check_core.ResultCompilerCheck.Err diagnostics-box _)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
@@ -325,8 +325,8 @@
     "(defstruct Point (x i64))
 (defstruct Point (y i64))
 (define (main) : i64 0)")
-    [(compiler_check_core.ResultCompilerCheck.Ok _) false]
-    [(compiler_check_core.ResultCompilerCheck.Err diag-box)
+    [(compiler_check_core.ResultCompilerCheck.Ok _ _) false]
+    [(compiler_check_core.ResultCompilerCheck.Err diag-box _)
       (let
         [diag : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-list-first
@@ -346,8 +346,8 @@
 (define (b) : i64 (unknown-two 2))
 (define (c) : i64 (+ \"str\" 1))
 (define (main) : i64 0)")
-    [(compiler_check_core.ResultCompilerCheck.Ok _) false]
-    [(compiler_check_core.ResultCompilerCheck.Err diagnostics-box)
+    [(compiler_check_core.ResultCompilerCheck.Ok _ _) false]
+    [(compiler_check_core.ResultCompilerCheck.Err diagnostics-box _)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
@@ -384,8 +384,8 @@
 (define (compiler-check-parser-recovery-result-ok?
   [result : compiler_check_core.ResultCompilerCheck]) : bool
   (match result
-    [(compiler_check_core.ResultCompilerCheck.Ok _) false]
-    [(compiler_check_core.ResultCompilerCheck.Err diagnostics-box)
+    [(compiler_check_core.ResultCompilerCheck.Ok _ _) false]
+    [(compiler_check_core.ResultCompilerCheck.Err diagnostics-box _)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
@@ -452,8 +452,8 @@
 (define (derived-two) : i64 (+ (derived-one) 1))
 (define (derived-three) : i64 (derived-two))
 (define (main) : i64 0)")
-    [(compiler_check_core.ResultCompilerCheck.Ok _) false]
-    [(compiler_check_core.ResultCompilerCheck.Err diagnostics-box)
+    [(compiler_check_core.ResultCompilerCheck.Ok _ _) false]
+    [(compiler_check_core.ResultCompilerCheck.Err diagnostics-box _)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
           (cdiag.compiler-diagnostic-list-box-shared-view diagnostics-box)]
@@ -762,6 +762,51 @@
           false)]
       [(semantic_index.ResultCompilerCheckWithSemanticIndex.Err _) false])))
 
+(define (compiler-check-advisory-result-ok?) : bool
+  (let
+    [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [warning : cdiag.CompilerDiagnostic
+      (cdiag.compiler-diagnostic-with-level
+        (cdiag.compiler-diagnostic-simple
+          "tests/check_advisory.tl"
+          1
+          1
+          "successful check advisory")
+        cdiag.CompilerDiagnosticWarning)]
+    [fatal : cdiag.CompilerDiagnostic
+      (cdiag.compiler-diagnostic-simple
+        "tests/check_advisory.tl"
+        2
+        1
+        "fatal after advisory")]
+    [_append : bool (tc_core.tc-job-state-add-advisory! job (& warning))]
+    [success : check_core.ResultCompilerCheck
+      (check_core.ResultCompilerCheck.Ok
+        (tc_core.CompilerTypecheckSummary 1 0 0)
+        (check_core.compiler-check-advisories-for-job job))]
+    [failure : check_core.ResultCompilerCheck
+      (check_core.ResultCompilerCheck.Err
+        (cdiag.compiler-diagnostic-list-box-single (box fatal))
+        (check_core.compiler-check-advisories-for-job job))]
+    [carried? : bool
+      (and
+        (match success
+          [(check_core.ResultCompilerCheck.Ok _ advisories)
+            (= (cdiag.compiler-advisory-list-count (& advisories)) 1)]
+          [(check_core.ResultCompilerCheck.Err _ _) false])
+        (match failure
+          [(check_core.ResultCompilerCheck.Ok _ _) false]
+          [(check_core.ResultCompilerCheck.Err _ advisories)
+            (= (cdiag.compiler-advisory-list-count (& advisories)) 1)]))]
+    (begin
+      (tc_core.tc-job-state-reset-file-state! job)
+      (let
+        [after-reset : cdiag.CompilerAdvisoryList
+          (check_core.compiler-check-advisories-for-job job)]
+        (and
+          carried?
+          (= (cdiag.compiler-advisory-list-count (& after-reset)) 0))))))
+
 (define (main) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
@@ -776,6 +821,7 @@
           (compiler-check-poison-suppresses-derived-diagnostics-ok?)
           (semantic_index.compiler-check-semantic-index-ok?)
           (compiler-check-semantic-access-ok?)
+          (compiler-check-advisory-result-ok?)
           (compiler-check-subform-diagnostic-spans-ok?)
           (compiler-check-qualified-near-miss-ok?)
           (compiler-check-qualified-unbound-display-ok?))

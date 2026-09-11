@@ -33,6 +33,15 @@
 (import compiler_intern_state as cis)
 (import compiler_ast_types as ast)
 (import compiler_owned_view as owned_view)
+(import compiler_diagnostic as cdiag)
+
+(define (compiler-opt-add-advisory!
+  [sink : cdiag.CompilerAdvisorySink]
+  [diagnostic : (& diagnostic cdiag.CompilerDiagnostic)]) : bool
+  (cdiag.compiler-advisory-sink-push!
+    sink
+    (cdiag.CompilerAdvisoryPhase.Optimization)
+    diagnostic))
 
 ;; The inliner's measured-plan check (opt-inline-checked-*) reads one register
 ;; allocation plan per candidate to price the caller's prologue and spill
@@ -164283,6 +164292,22 @@
     level
     profile-state))
 
+;; Compiler jobs use this explicit capability seam. Keeping the compatibility
+;; entrypoint above lets standalone optimizer tests remain allocation-free.
+(define (optimize-program-with-spans-and-pools-and-level-and-profile-state-and-advisory-sink
+  [pools : ast.AstNodePoolContext]
+  [program : ir.CompilerIrProgram]
+  [spans : ir.CompilerSourceSpans]
+  [level : i64]
+  [profile-state : profile_state.CompilerProfileState]
+  [_advisory-sink : cdiag.CompilerAdvisorySink]) : CompilerOptimizedProgram
+  (optimize-program-with-spans-and-pools-and-level-and-profile-state
+    pools
+    program
+    spans
+    level
+    profile-state))
+
 (define (optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations
   [pools : ast.AstNodePoolContext]
   [program : ir.CompilerIrProgram]
@@ -164293,6 +164318,22 @@
   (optimize-program-with-spans-and-reader-context-and-level-and-profile-state-and-representations
     (compiler-opt-global-shared-view pools)
     (ast.ast-node-pool-context-type-segment-bases pools)
+    program
+    spans
+    level
+    profile-state
+    representations))
+
+(define (optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations-and-advisory-sink
+  [pools : ast.AstNodePoolContext]
+  [program : ir.CompilerIrProgram]
+  [spans : ir.CompilerSourceSpans]
+  [level : i64]
+  [profile-state : profile_state.CompilerProfileState]
+  [representations : ir.CompilerIrRepresentationIndex]
+  [_advisory-sink : cdiag.CompilerAdvisorySink]) : CompilerOptimizedProgram
+  (optimize-program-with-spans-and-pools-and-level-and-profile-state-and-representations
+    pools
     program
     spans
     level

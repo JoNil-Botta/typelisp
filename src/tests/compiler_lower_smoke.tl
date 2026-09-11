@@ -318,7 +318,7 @@
           (backend.CompilerBackendTarget.Linux)
           (parser.compiler-cfg-empty)))
         [(compiler_driver_core.ResultCompilerDriverLowered.Ok _ _ _ _ _ _) true]
-        [(compiler_driver_core.ResultCompilerDriverLowered.Err _) false]))))
+        [(compiler_driver_core.ResultCompilerDriverLowered.Err _ _) false]))))
 
 (define (compiler-lower-smoke-macro-prepass-diagnostic-path-ok?) : bool
   (let
@@ -360,7 +360,7 @@
               (parser.compiler-cfg-empty)))
             [(compiler_driver_core.ResultCompilerDriverLowered.Ok _ _ _ _ _ _)
               false]
-            [(compiler_driver_core.ResultCompilerDriverLowered.Err diag-box)
+            [(compiler_driver_core.ResultCompilerDriverLowered.Err diag-box _)
               (let
                 [diag : diagnostic.CompilerDiagnostic
                   (diagnostic.compiler-diagnostic-box-shared-view diag-box)]
@@ -438,8 +438,8 @@
         0
         (backend.CompilerBackendMode.Scalar)
         (parser.compiler-cfg-empty))
-        [(compiler_driver_core.ResultCompilerDriver.Ok _) true]
-        [(compiler_driver_core.ResultCompilerDriver.Err diag)
+        [(compiler_driver_core.ResultCompilerDriver.Ok _ _) true]
+        [(compiler_driver_core.ResultCompilerDriver.Err diag _)
           (io.panic
             (diagnostic.compiler-diagnostic-message (__tl-box-place diag)))]))))
 
@@ -465,13 +465,13 @@
         0
         (backend.CompilerBackendMode.Scalar)
         (parser.compiler-cfg-empty))
-        [(compiler_driver_core.ResultCompilerDriverBuffer.Ok buf)
+        [(compiler_driver_core.ResultCompilerDriverBuffer.Ok buf _)
           (let
             [asm : String (text_buf.render buf)]
             [needle : String
               "_tl_lower_direct_no_main_symbols_no_main_direct_helper:"]
             (string.contains (& asm) (& needle)))]
-        [(compiler_driver_core.ResultCompilerDriverBuffer.Err diag)
+        [(compiler_driver_core.ResultCompilerDriverBuffer.Err diag _)
           (io.panic
             (diagnostic.compiler-diagnostic-message (__tl-box-place diag)))]))))
 

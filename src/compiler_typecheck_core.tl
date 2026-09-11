@@ -690,7 +690,10 @@
   ;; Lazily points into the expansion scratch arena while one macro walk owns
   ;; a segmented declaration/path view. Zero outside that structural scope, so
   ;; idle compiler jobs retain no segment table or maximum-capacity storage.
-  (macro-program-view-address i64))
+  (macro-program-view-address i64)
+  ;; One job-owned non-fatal channel is shared with lowering and codegen by
+  ;; the compiler driver. Its payload arena remains lazy for ordinary jobs.
+  (advisory-sink cdiag.CompilerAdvisorySink))
 
 (defstruct TcJobState
   ;; Small immutable capability; the pointed-to cell and its tables are
@@ -970,7 +973,8 @@
           0
           0
           0
-          0))
+          0
+          (cdiag.compiler-advisory-sink-new)))
       (TcJobState
         (cast
           (unsafe
@@ -1006,6 +1010,20 @@
 
 (define (tc-job-state-data [state : TcJobState]) : TcJobStateData
   (tc-state-cell-read state.address TcJobStateData))
+
+(define (tc-job-state-advisory-sink [state : TcJobState]) : cdiag.CompilerAdvisorySink
+  (tc-job-state-field state advisory-sink cdiag.CompilerAdvisorySink))
+
+(define (tc-job-state-add-advisory!
+  [state : TcJobState]
+  [diagnostic : (& diagnostic cdiag.CompilerDiagnostic)]) : bool
+  (cdiag.compiler-advisory-sink-push!
+    (tc-job-state-advisory-sink state)
+    cdiag.CompilerAdvisoryPhase.Semantic
+    diagnostic))
+
+(define (tc-job-state-reset-advisories! [state : TcJobState]) : unit
+  (cdiag.compiler-advisory-sink-reset! (tc-job-state-advisory-sink state)))
 
 (define (tc-job-state-macro-state [state : TcJobState]) : TcMacroState
   (TcMacroState
@@ -2534,6 +2552,7 @@
 
 (define (tc-job-state-reset-file-state! [state : TcJobState]) : unit
   (begin
+    (tc-job-state-reset-advisories! state)
     (tc-job-state-reset-derived-caches! state)
     (tc-inlay-hints-reset-for-state! (tc-job-state-inlay-hints state))
     (tc-unused-unsafe-tracking-clear! (tc-job-state-unused-unsafe state))

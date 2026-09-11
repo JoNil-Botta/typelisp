@@ -1352,10 +1352,13 @@
     (match result
       [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.CoffObject
           object
-          _)
+          _
+          advisories)
         (let
           [write-status : i64
             (begin
+              (compiler_driver_core.compiler-driver-print-advisories
+                (& advisories))
               (cfg
                 compile-profile
                 (compiler_driver_core.compiler-driver-profile-start-phase
@@ -1406,10 +1409,13 @@
               (ResultCompileCliWindowsBatchEntry.Err write-status))))]
       [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Assembly
           asm
-          category)
+          category
+          advisories)
         (let
           [write-status : i64
             (begin
+              (compiler_driver_core.compiler-driver-print-advisories
+                (& advisories))
               (cfg
                 compile-profile
                 (compiler_driver_core.compiler-driver-profile-start-phase
@@ -1447,8 +1453,11 @@
                   assembly-path
                   category))
               (ResultCompileCliWindowsBatchEntry.Err write-status))))]
-      [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Err diag)
+      [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Err
+          diag
+          advisories)
         (begin
+          (compiler_driver_core.compiler-driver-print-advisories (& advisories))
           (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
             (compiler_driver_core.compiler-driver-state-typecheck
               (owned_view.compiler-owned-shared-view _state))
@@ -2571,26 +2580,31 @@
       (match (compiler_check_core.compiler-check-file-with-roots
         (owned_view.compiler-owned-shared-view input-path)
         (owned_view.compiler-owned-shared-view stdlib-roots))
-        [(compiler_check_core.ResultCompilerCheck.Ok _)
-          (let
-            [inline-test-status : i64
-              (test_cli_core.tltest-inline-typecheck-file-with-cfg
-                (owned_view.compiler-owned-shared-view input-path)
-                (owned_view.compiler-owned-shared-view stdlib-roots)
-                (compiler_check_core.compiler-check-language-cfgs)
-                "typecheck-prefix-inline-compile-check")]
-            (if (= inline-test-status 0)
-              (let
-                [doctest-status : i64
-                  (compile-cli-typecheck-doctests input-path stdlib-roots)]
-                (if (= doctest-status 0)
-                  (begin
-                    (io.print-format "{}" "Type checking passed!\n")
-                    0)
-                  doctest-status))
-              inline-test-status))]
-        [(compiler_check_core.ResultCompilerCheck.Err diag)
+        [(compiler_check_core.ResultCompilerCheck.Ok _ advisories)
           (begin
+            (compiler_driver_core.compiler-driver-print-advisories
+              (& advisories))
+            (let
+              [inline-test-status : i64
+                (test_cli_core.tltest-inline-typecheck-file-with-cfg
+                  (owned_view.compiler-owned-shared-view input-path)
+                  (owned_view.compiler-owned-shared-view stdlib-roots)
+                  (compiler_check_core.compiler-check-language-cfgs)
+                  "typecheck-prefix-inline-compile-check")]
+              (if (= inline-test-status 0)
+                (let
+                  [doctest-status : i64
+                    (compile-cli-typecheck-doctests input-path stdlib-roots)]
+                  (if (= doctest-status 0)
+                    (begin
+                      (io.print-format "{}" "Type checking passed!\n")
+                      0)
+                    doctest-status))
+                inline-test-status)))]
+        [(compiler_check_core.ResultCompilerCheck.Err diag advisories)
+          (begin
+            (compiler_driver_core.compiler-driver-print-advisories
+              (& advisories))
             (io.print-error
               (compiler_driver_core.compiler-driver-render-source-diagnostic
                 (cdiag.compiler-diagnostic-list-first

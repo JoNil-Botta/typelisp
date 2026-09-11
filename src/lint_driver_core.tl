@@ -882,6 +882,11 @@
     (selfhost-lint-path-suffix?
       (owned_view.compiler-owned-shared-view path)
       "src/compiler_backend.tl")
+    ;; The advisory sink owns a lazily allocated payload arena and destroys it
+    ;; at the explicit per-job reset boundary.
+    (selfhost-lint-path-suffix?
+      (owned_view.compiler-owned-shared-view path)
+      "src/compiler_diagnostic.tl")
     (selfhost-lint-path-suffix?
       (owned_view.compiler-owned-shared-view path)
       "src/compiler_driver_core.tl")
@@ -1679,7 +1684,7 @@
           (owned_view.compiler-owned-shared-view stdlib-roots)
           (owned_view.compiler-owned-shared-view cfgs)
           (owned_view.compiler-owned-shared-view job-state)))
-        [(compiler_check_core.ResultCompilerCheck.Ok _)
+        [(compiler_check_core.ResultCompilerCheck.Ok _ _)
           (let
             [unused-findings : lint_core.LintFindings
               (selfhost-lint-unused-unsafe-findings-from
@@ -1692,7 +1697,7 @@
             (begin
               (tc.tc-unused-unsafe-tracking-disable! unused-unsafe)
               findings))]
-        [(compiler_check_core.ResultCompilerCheck.Err diag)
+        [(compiler_check_core.ResultCompilerCheck.Err diag _)
           (begin
             (set!
               selfhost-lint-typed-unused-unsafe-error

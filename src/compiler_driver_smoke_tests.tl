@@ -15,6 +15,7 @@
 (import compiler_typecheck_core)
 (import compiler_parse_core)
 (import compiler_backend)
+(import compiler_regalloc)
 (import compiler_ir_types)
 (import compiler_load)
 (import sym_i64_env)
@@ -470,9 +471,9 @@
     (compiler_optimize.compiler-optimize-default-level)
     (compiler_backend.CompilerBackendMode.Scalar)
     (compiler_cfg_core.compiler-cfg-empty))
-    [(compiler_driver_core.ResultCompilerDriverPic.Ok output)
+    [(compiler_driver_core.ResultCompilerDriverPic.Ok output _)
       (compiler-driver-pic-smoke-output-ok? output)]
-    [(compiler_driver_core.ResultCompilerDriverPic.Err _) false]))
+    [(compiler_driver_core.ResultCompilerDriverPic.Err _ _) false]))
 
 (define (compiler-driver-pic-smoke-core-macros-ok?
   [target : compiler_backend.CompilerBackendTarget]) : bool
@@ -538,8 +539,8 @@
     (compiler_backend.CompilerBackendMode.Scalar)
     (compiler_cfg_core.compiler-cfg-empty)
     true)
-    [(compiler_driver_core.ResultCompilerDriver.Ok _) false]
-    [(compiler_driver_core.ResultCompilerDriver.Err diag)
+    [(compiler_driver_core.ResultCompilerDriver.Ok _ _) false]
+    [(compiler_driver_core.ResultCompilerDriver.Err diag _)
       (let
         [rendered : String
           (compiler_diagnostic.compiler-diagnostic-render
@@ -851,13 +852,13 @@
             (begin
               (compiler_ast_types.ast-node-pool-reader-use! restore-reader)
               ok))]
-        [(compiler_driver_core.ResultCompilerDriverLowered.Err diag)
+        [(compiler_driver_core.ResultCompilerDriverLowered.Err diag _)
           (compiler-driver-reader-context-smoke-fail
             (str_cat.str-cat
               "state B lower failed: "
               (compiler_diagnostic.compiler-diagnostic-render
                 (compiler_diagnostic.compiler-diagnostic-box-shared-view diag))))])]
-    [(compiler_driver_core.ResultCompilerDriverLowered.Err diag)
+    [(compiler_driver_core.ResultCompilerDriverLowered.Err diag _)
       (compiler-driver-reader-context-smoke-fail
         (str_cat.str-cat
           "state A lower failed: "
@@ -1085,7 +1086,7 @@
                         (owned_view.compiler-owned-shared-view state-b))
                       (compiler_driver_core.compiler-driver-state-typecheck
                         (owned_view.compiler-owned-shared-view state-b))))))]
-            [(compiler_driver_core.ResultCompilerDriverLowered.Err diag)
+            [(compiler_driver_core.ResultCompilerDriverLowered.Err diag _)
               (compiler-driver-reader-context-smoke-fail
                 (str_cat.str-cat
                   "state A lower failed: "
@@ -1674,8 +1675,8 @@
     (compiler_optimize.compiler-optimize-default-level)
     (compiler_backend.CompilerBackendMode.Scalar)
     (compiler_cfg_core.compiler-cfg-empty))
-    [(compiler_driver_core.ResultCompilerDriverPic.Ok _) false]
-    [(compiler_driver_core.ResultCompilerDriverPic.Err diag)
+    [(compiler_driver_core.ResultCompilerDriverPic.Ok _ _) false]
+    [(compiler_driver_core.ResultCompilerDriverPic.Err diag _)
       (let
         [rendered : String
           (compiler_diagnostic.compiler-diagnostic-render
@@ -1693,6 +1694,172 @@
     [(ResultCompilerLoadWithPaths.Ok _ paths _ _)
       (compiler-driver-pic-smoke-paths-contain? paths "stdlib/runtime.tl")]
     [(ResultCompilerLoadWithPaths.Err _) false]))
+
+(define (compiler-driver-advisory-fixture [message : String]) : compiler_diagnostic.CompilerDiagnostic
+  (compiler_diagnostic.compiler-diagnostic-with-level
+    (compiler_diagnostic.compiler-diagnostic-simple
+      "tests/advisories.tl"
+      1
+      1
+      message)
+    compiler_diagnostic.CompilerDiagnosticWarning))
+
+(define (compiler-driver-advisory-phase-is?
+  [advisories : (& advisories compiler_diagnostic.CompilerAdvisoryList)]
+  [index : i64]
+  [phase : compiler_diagnostic.CompilerAdvisoryPhase]) : bool
+  (let
+    [advisory : compiler_diagnostic.CompilerAdvisory
+      (compiler_diagnostic.compiler-advisory-list-get advisories index)]
+    (match phase
+      [(compiler_diagnostic.CompilerAdvisoryPhase.Semantic)
+        (match (compiler_diagnostic.compiler-advisory-phase (& advisory))
+          [(compiler_diagnostic.CompilerAdvisoryPhase.Semantic) true]
+          [_ false])]
+      [(compiler_diagnostic.CompilerAdvisoryPhase.Lowering)
+        (match (compiler_diagnostic.compiler-advisory-phase (& advisory))
+          [(compiler_diagnostic.CompilerAdvisoryPhase.Lowering) true]
+          [_ false])]
+      [(compiler_diagnostic.CompilerAdvisoryPhase.Optimization)
+        (match (compiler_diagnostic.compiler-advisory-phase (& advisory))
+          [(compiler_diagnostic.CompilerAdvisoryPhase.Optimization) true]
+          [_ false])]
+      [(compiler_diagnostic.CompilerAdvisoryPhase.RegisterAllocation)
+        (match (compiler_diagnostic.compiler-advisory-phase (& advisory))
+          [(compiler_diagnostic.CompilerAdvisoryPhase.RegisterAllocation) true]
+          [_ false])]
+      [(compiler_diagnostic.CompilerAdvisoryPhase.Backend)
+        (match (compiler_diagnostic.compiler-advisory-phase (& advisory))
+          [(compiler_diagnostic.CompilerAdvisoryPhase.Backend) true]
+          [_ false])])))
+
+(define (compiler-driver-advisory-transport-ok?) : bool
+  (let
+    [state-a : compiler_driver_core.CompilerDriverState
+      (compiler_driver_core.compiler-driver-state-new-for-compile)]
+    [state-b : compiler_driver_core.CompilerDriverState
+      (compiler_driver_core.compiler-driver-state-new-for-compile)]
+    [semantic : compiler_diagnostic.CompilerDiagnostic
+      (compiler-driver-advisory-fixture "semantic")]
+    [lowering : compiler_diagnostic.CompilerDiagnostic
+      (compiler-driver-advisory-fixture "lowering")]
+    [optimization : compiler_diagnostic.CompilerDiagnostic
+      (compiler-driver-advisory-fixture "optimization")]
+    [regalloc : compiler_diagnostic.CompilerDiagnostic
+      (compiler-driver-advisory-fixture "regalloc")]
+    [backend : compiler_diagnostic.CompilerDiagnostic
+      (compiler-driver-advisory-fixture "backend")]
+    [other : compiler_diagnostic.CompilerDiagnostic
+      (compiler-driver-advisory-fixture "other job")]
+    [fatal : compiler_diagnostic.CompilerDiagnostic
+      (compiler_diagnostic.compiler-diagnostic-simple
+        "tests/advisories.tl"
+        2
+        1
+        "fatal")]
+    [sink-a : compiler_diagnostic.CompilerAdvisorySink
+      (compiler_driver_core.compiler-driver-state-advisory-sink
+        (owned_view.compiler-owned-shared-view state-a))]
+    [_append : unit
+      (begin
+        (compiler_typecheck_core.tc-job-state-add-advisory!
+          (compiler_driver_core.compiler-driver-state-typecheck
+            (owned_view.compiler-owned-shared-view state-a))
+          (& semantic))
+        (compiler_lower.compiler-lower-state-add-advisory!
+          (compiler_driver_core.compiler-driver-state-owned-lower-state
+            (owned_view.compiler-owned-shared-view state-a))
+          (& lowering))
+        (compiler_optimize.compiler-opt-add-advisory! sink-a (& optimization))
+        (compiler_regalloc.compiler-reg-add-advisory! sink-a (& regalloc))
+        (compiler_backend.compiler-backend-state-add-advisory!
+          (compiler_driver_core.compiler-driver-state-backend
+            (owned_view.compiler-owned-shared-view state-a))
+          compiler_diagnostic.CompilerAdvisoryPhase.Backend
+          (& backend))
+        (compiler_typecheck_core.tc-job-state-add-advisory!
+          (compiler_driver_core.compiler-driver-state-typecheck
+            (owned_view.compiler-owned-shared-view state-b))
+          (& other))
+        unit)]
+    [advisories : compiler_diagnostic.CompilerAdvisoryList
+      (compiler_driver_core.compiler-driver-state-advisories
+        (owned_view.compiler-owned-shared-view state-a))]
+    [success : compiler_driver_core.ResultCompilerDriver
+      (compiler_driver_core.ResultCompilerDriver.Ok
+        "artifact"
+        (compiler_driver_core.compiler-driver-state-advisories
+          (owned_view.compiler-owned-shared-view state-a)))]
+    [failure : compiler_driver_core.ResultCompilerDriver
+      (compiler_driver_core.ResultCompilerDriver.Err
+        (box fatal)
+        (compiler_driver_core.compiler-driver-state-advisories
+          (owned_view.compiler-owned-shared-view state-a)))]
+    [transport-ok? : bool
+      (and
+        (= (compiler_diagnostic.compiler-advisory-list-count (& advisories)) 5)
+        (compiler-driver-advisory-phase-is?
+          (& advisories)
+          0
+          compiler_diagnostic.CompilerAdvisoryPhase.Semantic)
+        (compiler-driver-advisory-phase-is?
+          (& advisories)
+          1
+          compiler_diagnostic.CompilerAdvisoryPhase.Lowering)
+        (compiler-driver-advisory-phase-is?
+          (& advisories)
+          2
+          compiler_diagnostic.CompilerAdvisoryPhase.Optimization)
+        (compiler-driver-advisory-phase-is?
+          (& advisories)
+          3
+          compiler_diagnostic.CompilerAdvisoryPhase.RegisterAllocation)
+        (compiler-driver-advisory-phase-is?
+          (& advisories)
+          4
+          compiler_diagnostic.CompilerAdvisoryPhase.Backend)
+        (match success
+          [(compiler_driver_core.ResultCompilerDriver.Ok artifact carried)
+            (and
+              (string.eq artifact "artifact")
+              (=
+                (compiler_diagnostic.compiler-advisory-list-count (& carried))
+                5))]
+          [(compiler_driver_core.ResultCompilerDriver.Err _ _) false])
+        (match failure
+          [(compiler_driver_core.ResultCompilerDriver.Ok _ _) false]
+          [(compiler_driver_core.ResultCompilerDriver.Err diag carried)
+            (let
+              [fatal-diagnostic : compiler_diagnostic.CompilerDiagnostic
+                (compiler_diagnostic.compiler-diagnostic-box-shared-view diag)]
+              (and
+                (string.eq
+                  (compiler_diagnostic.compiler-diagnostic-message
+                    fatal-diagnostic)
+                  "fatal")
+                (=
+                  (compiler_diagnostic.compiler-advisory-list-count (& carried))
+                  5)))]))]
+    (begin
+      ;; Reset A as a cache/retry boundary. B is interleaved and must retain
+      ;; its own advisory; A's retired payload strings must not leak forward.
+      (compiler_driver_core.compiler-driver-state-prefix-cache-enable!
+        (owned_view.compiler-owned-shared-view state-a))
+      (compiler_driver_core.compiler-driver-state-reset-typecheck!
+        (owned_view.compiler-owned-shared-view state-a))
+      (let
+        [after-reset : compiler_diagnostic.CompilerAdvisoryList
+          (compiler_driver_core.compiler-driver-state-advisories
+            (owned_view.compiler-owned-shared-view state-a))]
+        [still-b : compiler_diagnostic.CompilerAdvisoryList
+          (compiler_driver_core.compiler-driver-state-advisories
+            (owned_view.compiler-owned-shared-view state-b))]
+        (and
+          transport-ok?
+          (=
+            (compiler_diagnostic.compiler-advisory-list-count (& after-reset))
+            0)
+          (= (compiler_diagnostic.compiler-advisory-list-count (& still-b)) 1))))))
 
 (define (compiler-driver-pic-smoke-main) : i64
   (begin
@@ -1712,4 +1879,5 @@
       (compiler-driver-pic-smoke-user-cfg-keeps-runtime-prelude?)
       (return 4))
     (unless (compiler-driver-runtime-prelude-cache-arena-scope-ok?) (return 8))
+    (unless (compiler-driver-advisory-transport-ok?) (return 9))
     42))

@@ -549,6 +549,8 @@
   36)
 (define profile-owner : i64
   37)
+(define advisory-sink-owner : i64
+  (cfg (any compile-profile test) 38 37))
 
 ;; Package identity is job-owned. Function-local lowering keeps its four SPMD
 ;; traversal values and two memo generations in a separate one-word capability;
@@ -704,7 +706,7 @@
   [_profile-state : profile_state.CompilerProfileState]) : CompilerLowerState
   (let
     [cells : (__tl_dyn-array i64)
-      (__tl_make-array i64 (cfg (any compile-profile test) 38 37))]
+      (__tl_make-array i64 (cfg (any compile-profile test) 39 38))]
     [address : i64
       (cast
         (unsafe
@@ -862,6 +864,11 @@
             profile_state.CompilerProfileState
             _profile-state))
         unit)
+      (set!
+        (array-ref cells advisory-sink-owner)
+        (compiler-lower-state-cell
+          cdiag.CompilerAdvisorySink
+          (cdiag.compiler-advisory-sink-new)))
       state)))
 
 (define (compiler-lower-state-new-with-intern-state
@@ -881,6 +888,29 @@
 
 (define (compiler-lower-state-interns [state : CompilerLowerState]) : ci.InternCompatState
   (compiler-lower-state-read state ci.InternCompatState intern-owner))
+
+(define (compiler-lower-state-advisory-sink [state : CompilerLowerState]) : cdiag.CompilerAdvisorySink
+  (compiler-lower-state-read
+    state
+    cdiag.CompilerAdvisorySink
+    advisory-sink-owner))
+
+(define (compiler-lower-state-use-advisory-sink!
+  [state : CompilerLowerState]
+  [sink : cdiag.CompilerAdvisorySink]) : unit
+  (compiler-lower-state-write!
+    state
+    cdiag.CompilerAdvisorySink
+    advisory-sink-owner
+    sink))
+
+(define (compiler-lower-state-add-advisory!
+  [state : CompilerLowerState]
+  [diagnostic : (& diagnostic cdiag.CompilerDiagnostic)]) : bool
+  (cdiag.compiler-advisory-sink-push!
+    (compiler-lower-state-advisory-sink state)
+    cdiag.CompilerAdvisoryPhase.Lowering
+    diagnostic))
 
 (define (compiler-lower-state-intern-str
   [state : CompilerLowerState]

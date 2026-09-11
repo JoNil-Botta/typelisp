@@ -3262,22 +3262,35 @@
           paths)
           [(compiler_driver_core.ResultCompilerDriverPackageRuntime.Object
               image
-              asm)
-            (match (build-package-render-linux-direct-object kind image)
-              [(build_run_core.ResultSourceToolString.Ok object)
-                (ResultBuildPackagePreparedRuntime.DirectObject
-                  object
-                  (BuildPackageSideAssembly.Prepared asm))]
-              [(build_run_core.ResultSourceToolString.Err message)
-                (ResultBuildPackagePreparedRuntime.Assembly asm message)])]
+              asm
+              advisories)
+            (begin
+              (compiler_driver_core.compiler-driver-print-advisories
+                (& advisories))
+              (match (build-package-render-linux-direct-object kind image)
+                [(build_run_core.ResultSourceToolString.Ok object)
+                  (ResultBuildPackagePreparedRuntime.DirectObject
+                    object
+                    (BuildPackageSideAssembly.Prepared asm))]
+                [(build_run_core.ResultSourceToolString.Err message)
+                  (ResultBuildPackagePreparedRuntime.Assembly asm message)]))]
           [(compiler_driver_core.ResultCompilerDriverPackageRuntime.Assembly
               asm
-              category)
-            (ResultBuildPackagePreparedRuntime.Assembly asm category)]
-          [(compiler_driver_core.ResultCompilerDriverPackageRuntime.Err diag)
-            (ResultBuildPackagePreparedRuntime.Err
-              (compiler_driver_core.compiler-driver-render-source-diagnostic
-                (owned_view.compiler-owned-box-shared-view diag)))])]
+              category
+              advisories)
+            (begin
+              (compiler_driver_core.compiler-driver-print-advisories
+                (& advisories))
+              (ResultBuildPackagePreparedRuntime.Assembly asm category))]
+          [(compiler_driver_core.ResultCompilerDriverPackageRuntime.Err
+              diag
+              advisories)
+            (begin
+              (compiler_driver_core.compiler-driver-print-advisories
+                (& advisories))
+              (ResultBuildPackagePreparedRuntime.Err
+                (compiler_driver_core.compiler-driver-render-source-diagnostic
+                  (owned_view.compiler-owned-box-shared-view diag))))])]
       [(backend.CompilerBackendTarget.Windows)
         ;; The shared Windows batch emitter owns the semantic gate as well as
         ;; the COFF encoding/linkability checks. Its Assembly result is an
@@ -3297,28 +3310,40 @@
           true)
           [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.CoffObject
               object
-              side-assembly)
-            (match side-assembly
-              [(compiler_windows_coff_core.CompilerWindowsBatchSideAssembly.None)
-                (ResultBuildPackagePreparedRuntime.DirectObject
-                  object
-                  BuildPackageSideAssembly.Regenerate)]
-              [(compiler_windows_coff_core.CompilerWindowsBatchSideAssembly.Some
-                  asm)
-                (ResultBuildPackagePreparedRuntime.DirectObject
-                  object
-                  (BuildPackageSideAssembly.Prepared asm))])]
+              side-assembly
+              advisories)
+            (begin
+              (compiler_driver_core.compiler-driver-print-advisories
+                (& advisories))
+              (match side-assembly
+                [(compiler_windows_coff_core.CompilerWindowsBatchSideAssembly.None)
+                  (ResultBuildPackagePreparedRuntime.DirectObject
+                    object
+                    BuildPackageSideAssembly.Regenerate)]
+                [(compiler_windows_coff_core.CompilerWindowsBatchSideAssembly.Some
+                    asm)
+                  (ResultBuildPackagePreparedRuntime.DirectObject
+                    object
+                    (BuildPackageSideAssembly.Prepared asm))]))]
           [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Assembly
               asm
-              category)
-            (ResultBuildPackagePreparedRuntime.Assembly
-              (text_buf.render asm)
-              category)]
+              category
+              advisories)
+            (begin
+              (compiler_driver_core.compiler-driver-print-advisories
+                (& advisories))
+              (ResultBuildPackagePreparedRuntime.Assembly
+                (text_buf.render asm)
+                category))]
           [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Err
-              diag)
-            (ResultBuildPackagePreparedRuntime.Err
-              (compiler_driver_core.compiler-driver-render-source-diagnostic
-                (owned_view.compiler-owned-box-shared-view diag)))])])
+              diag
+              advisories)
+            (begin
+              (compiler_driver_core.compiler-driver-print-advisories
+                (& advisories))
+              (ResultBuildPackagePreparedRuntime.Err
+                (compiler_driver_core.compiler-driver-render-source-diagnostic
+                  (owned_view.compiler-owned-box-shared-view diag))))])])
     (ResultBuildPackagePreparedRuntime.Unavailable
       "package direct object disabled")))
 
@@ -6360,12 +6385,15 @@
     crt-entry
     (owned_view.compiler-owned-shared-view decls)
     (owned_view.compiler-owned-shared-view owned-paths))
-    [(compiler_driver_core.ResultCompilerDriver.Err diag)
-      (build_run_core.SourceToolCommandStatus.Err
-        (compiler_driver_core.compiler-driver-render-source-diagnostic
-          (owned_view.compiler-owned-box-shared-view diag)))]
-    [(compiler_driver_core.ResultCompilerDriver.Ok asm)
+    [(compiler_driver_core.ResultCompilerDriver.Err diag advisories)
       (begin
+        (compiler_driver_core.compiler-driver-print-advisories (& advisories))
+        (build_run_core.SourceToolCommandStatus.Err
+          (compiler_driver_core.compiler-driver-render-source-diagnostic
+            (owned_view.compiler-owned-box-shared-view diag))))]
+    [(compiler_driver_core.ResultCompilerDriver.Ok asm advisories)
+      (begin
+        (compiler_driver_core.compiler-driver-print-advisories (& advisories))
         (compiler_driver_core.compiler-driver-release-lower-arenas-after-emit!)
         (build-package-write-assembly asm-path asm target))]))
 
@@ -6866,30 +6894,35 @@
         crt-entry
         decls
         owned-paths)
-        [(compiler_driver_core.ResultCompilerDriver.Err diag)
+        [(compiler_driver_core.ResultCompilerDriver.Err diag advisories)
           (begin
+            (compiler_driver_core.compiler-driver-print-advisories
+              (& advisories))
             (io.print-error
               (compiler_driver_core.compiler-driver-render-source-diagnostic
                 (owned_view.compiler-owned-box-shared-view diag)))
             1)]
-        [(compiler_driver_core.ResultCompilerDriver.Ok asm)
-          (build-package-finish-assembly-fresh-artifacts
-            name
-            kind
-            target
-            opt-level
-            profile
-            mode
-            producer-identity
-            output-dir
-            asm-path
-            obj-path
-            artifact-path
-            link-inputs
-            tlci-path
-            tlci-text
-            (owned_view.compiler-owned-shared-view asm)
-            announce)])]))
+        [(compiler_driver_core.ResultCompilerDriver.Ok asm advisories)
+          (begin
+            (compiler_driver_core.compiler-driver-print-advisories
+              (& advisories))
+            (build-package-finish-assembly-fresh-artifacts
+              name
+              kind
+              target
+              opt-level
+              profile
+              mode
+              producer-identity
+              output-dir
+              asm-path
+              obj-path
+              artifact-path
+              link-inputs
+              tlci-path
+              tlci-text
+              (owned_view.compiler-owned-shared-view asm)
+              announce))])]))
 
 (define (build-package-prepare-runtime
   [name : String]
@@ -6923,12 +6956,18 @@
         crt-entry
         decls
         owned-paths)
-        [(compiler_driver_core.ResultCompilerDriver.Err diag)
-          (ResultBuildPackagePreparedRuntime.Err
-            (compiler_driver_core.compiler-driver-render-source-diagnostic
-              (owned_view.compiler-owned-box-shared-view diag)))]
-        [(compiler_driver_core.ResultCompilerDriver.Ok asm)
-          (ResultBuildPackagePreparedRuntime.Assembly asm category)])]
+        [(compiler_driver_core.ResultCompilerDriver.Err diag advisories)
+          (begin
+            (compiler_driver_core.compiler-driver-print-advisories
+              (& advisories))
+            (ResultBuildPackagePreparedRuntime.Err
+              (compiler_driver_core.compiler-driver-render-source-diagnostic
+                (owned_view.compiler-owned-box-shared-view diag))))]
+        [(compiler_driver_core.ResultCompilerDriver.Ok asm advisories)
+          (begin
+            (compiler_driver_core.compiler-driver-print-advisories
+              (& advisories))
+            (ResultBuildPackagePreparedRuntime.Assembly asm category))])]
     [(ResultBuildPackagePreparedRuntime.DirectObject object side-assembly)
       (ResultBuildPackagePreparedRuntime.DirectObject object side-assembly)]
     [(ResultBuildPackagePreparedRuntime.Assembly asm category)

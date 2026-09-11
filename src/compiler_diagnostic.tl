@@ -1,5 +1,6 @@
 ;; compiler_diagnostic.tl - Shared selfhost compiler diagnostic payloads.
 (import stdlib.str_cat_runtime as str_cat)
+(import stdlib.arena)
 (import token)
 (import compiler_ast_types as ast)
 (import stdlib.string)
@@ -84,6 +85,204 @@
 (defstruct CompilerDiagnosticList
   (slots (__tl_dyn-array CompilerDiagnostic))
   (len i64))
+
+;; Successful compiler work may discover diagnostics that do not invalidate
+;; its artifact. Keep those values separate from fatal result payloads and tag
+;; their producing phase so transport tests and later policy layers never have
+;; to infer provenance from message text.
+(defenum CompilerAdvisoryPhase
+  (Semantic)
+  (Lowering)
+  (Optimization)
+  (RegisterAllocation)
+  (Backend))
+
+(defstruct CompilerAdvisory
+  (phase CompilerAdvisoryPhase)
+  (diagnostic CompilerDiagnostic))
+
+(defstruct CompilerAdvisoryList
+  (slots (__tl_dyn-array CompilerAdvisory))
+  (len i64))
+
+;; The stable cell lives with its compiler job. Advisory payloads live in a
+;; separate, lazily created arena: producers may append while frontend/lower
+;; scratch arenas are current, and a job reset can release every retained
+;; string/span in one operation without growing the driver's lifetime arena.
+(defstruct CompilerAdvisorySinkData
+  (payload-arena i64)
+  (advisories CompilerAdvisoryList)
+  (generation i64))
+
+(defstruct CompilerAdvisorySink
+  (address i64))
+
+(define (compiler-advisory-phase-copy [phase : CompilerAdvisoryPhase]) : CompilerAdvisoryPhase
+  (match phase
+    [(CompilerAdvisoryPhase.Semantic) (CompilerAdvisoryPhase.Semantic)]
+    [(CompilerAdvisoryPhase.Lowering) (CompilerAdvisoryPhase.Lowering)]
+    [(CompilerAdvisoryPhase.Optimization) (CompilerAdvisoryPhase.Optimization)]
+    [(CompilerAdvisoryPhase.RegisterAllocation)
+      (CompilerAdvisoryPhase.RegisterAllocation)]
+    [(CompilerAdvisoryPhase.Backend) (CompilerAdvisoryPhase.Backend)]))
+
+(define (compiler-advisory-list-with-capacity [capacity : i64]) : CompilerAdvisoryList
+  (CompilerAdvisoryList (__tl_make-array CompilerAdvisory capacity) 0))
+
+(define (compiler-advisory-list-empty) : CompilerAdvisoryList
+  (compiler-advisory-list-with-capacity 0))
+
+(define (compiler-advisory-list-count
+  [advisories : (& advisories CompilerAdvisoryList)]) : i64
+  advisories.len)
+
+(define (compiler-advisory-list-get
+  [advisories : (& advisories CompilerAdvisoryList)]
+  [index : i64]) : CompilerAdvisory
+  (compiler-advisory-copy-ref (& (array-ref advisories.slots index))))
+
+(define (compiler-advisory-phase [advisory : (& advisory CompilerAdvisory)]) : CompilerAdvisoryPhase
+  (match advisory.phase
+    [(CompilerAdvisoryPhase.Semantic) (CompilerAdvisoryPhase.Semantic)]
+    [(CompilerAdvisoryPhase.Lowering) (CompilerAdvisoryPhase.Lowering)]
+    [(CompilerAdvisoryPhase.Optimization) (CompilerAdvisoryPhase.Optimization)]
+    [(CompilerAdvisoryPhase.RegisterAllocation)
+      (CompilerAdvisoryPhase.RegisterAllocation)]
+    [(CompilerAdvisoryPhase.Backend) (CompilerAdvisoryPhase.Backend)]))
+
+(define (compiler-advisory-diagnostic
+  [advisory : (& advisory CompilerAdvisory)]) : CompilerDiagnostic
+  (compiler-diagnostic-copy-ref (& advisory.diagnostic)))
+
+(define (compiler-advisory-copy-ref [advisory : (& advisory CompilerAdvisory)]) : CompilerAdvisory
+  (CompilerAdvisory
+    (compiler-advisory-phase advisory)
+    (compiler-diagnostic-copy-ref (& advisory.diagnostic))))
+
+(define (compiler-advisory-list-grow!
+  [advisories : (&mut advisories CompilerAdvisoryList)]) : unit
+  (let
+    [count : i64 advisories.len]
+    [old-capacity : i64 (array-length advisories.slots)]
+    [new-capacity : i64
+      (if (< old-capacity 1)
+        4
+        (* old-capacity 2))]
+    [next : (__tl_dyn-array CompilerAdvisory)
+      (__tl_make-array CompilerAdvisory new-capacity)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            (array-ref next index)
+            (compiler-advisory-copy-ref (& (array-ref advisories.slots index))))
+          (set! index (+ index 1))))
+      (set! advisories.slots next))))
+
+(define (compiler-advisory-list-push!
+  [advisories : (&mut advisories CompilerAdvisoryList)]
+  [phase : CompilerAdvisoryPhase]
+  [diagnostic : CompilerDiagnostic]) : unit
+  (begin
+    (if (< advisories.len (array-length advisories.slots))
+      unit
+      (compiler-advisory-list-grow! advisories))
+    (let
+      [index : i64 advisories.len]
+      (begin
+        (set!
+          (array-ref advisories.slots index)
+          (CompilerAdvisory phase diagnostic))
+        (set! advisories.len (+ index 1))))))
+
+(define (compiler-advisory-sink-new) : CompilerAdvisorySink
+  (let
+    [cell : (__tl_dyn-array CompilerAdvisorySinkData)
+      (__tl_make-array CompilerAdvisorySinkData 1)]
+    (begin
+      (set!
+        (array-ref cell 0)
+        (CompilerAdvisorySinkData 0 (compiler-advisory-list-empty) 0))
+      (CompilerAdvisorySink
+        (cast
+          (unsafe
+            (ptr->int
+              (ptr-cast (__tl_array-data cell) : (Ptr CompilerAdvisorySinkData))))
+          : i64)))))
+
+(define (compiler-advisory-sink-data [sink : CompilerAdvisorySink]) : CompilerAdvisorySinkData
+  (unsafe
+    (ptr-read
+      (int->ptr (cast sink.address : u64) : (Ptr CompilerAdvisorySinkData)))))
+
+(define (compiler-advisory-sink-data-set!
+  [sink : CompilerAdvisorySink]
+  [data : CompilerAdvisorySinkData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr (cast sink.address : u64) : (MutPtr CompilerAdvisorySinkData))
+      data)))
+
+(define (compiler-advisory-sink-generation [sink : CompilerAdvisorySink]) : i64
+  (compiler-advisory-sink-data sink).generation)
+
+(define (compiler-advisory-sink-snapshot [sink : CompilerAdvisorySink]) : CompilerAdvisoryList
+  (compiler-advisory-sink-data sink).advisories)
+
+(define (compiler-advisory-sink-reset! [sink : CompilerAdvisorySink]) : unit
+  (let
+    [data : CompilerAdvisorySinkData (compiler-advisory-sink-data sink)]
+    (begin
+      (if (= data.payload-arena 0)
+        unit
+        (unsafe
+          (arena.tl_arena_destroy data.payload-arena)))
+      (compiler-advisory-sink-data-set!
+        sink
+        (CompilerAdvisorySinkData
+          0
+          (compiler-advisory-list-empty)
+          (+ data.generation 1))))))
+
+(define (compiler-advisory-level? [level : CompilerDiagnosticLevel]) : bool
+  (match level
+    [(CompilerDiagnosticError) false]
+    [(CompilerDiagnosticWarning) true]
+    [(CompilerDiagnosticNote) true]))
+
+;; Return false for an error-level diagnostic instead of silently reclassifying
+;; it. The caller retains the original value and must take its ordinary fatal
+;; path. Accepted advisories are deep-copied while the sink arena is current.
+(define (compiler-advisory-sink-push!
+  [sink : CompilerAdvisorySink]
+  [phase : CompilerAdvisoryPhase]
+  [diagnostic : (& diagnostic CompilerDiagnostic)]) : bool
+  (if (not (compiler-advisory-level? (compiler-diagnostic-level diagnostic)))
+    false
+    (let
+      [data : CompilerAdvisorySinkData (compiler-advisory-sink-data sink)]
+      [payload-arena : i64
+        (if (= data.payload-arena 0)
+          (arena.tl_arena_make_small)
+          data.payload-arena)]
+      [advisories : CompilerAdvisoryList
+        (if (= data.payload-arena 0)
+          (in-arena
+            (arena.Arena payload-arena)
+            (compiler-advisory-list-with-capacity 4))
+          data.advisories)]
+      (begin
+        (in-arena
+          (arena.Arena payload-arena)
+          (compiler-advisory-list-push!
+            (&mut advisories)
+            (compiler-advisory-phase-copy phase)
+            (compiler-diagnostic-copy-ref diagnostic)))
+        (compiler-advisory-sink-data-set!
+          sink
+          (CompilerAdvisorySinkData payload-arena advisories data.generation))
+        true))))
 
 (define (compiler-diagnostic-list-box-shared-view
   [value : (Box CompilerDiagnosticList)]) : CompilerDiagnosticList

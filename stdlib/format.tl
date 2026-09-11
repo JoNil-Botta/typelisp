@@ -308,14 +308,14 @@
   (FormatOk)
   (FormatErr i64))
 
-;: Raw destination callback used by `Formatter`.
+;: Bounded destination callback used by `Formatter`.
 ;:
-;: The callback receives its adapter context, a byte pointer valid for the
-;: duration of the call, and a byte length. Zero means success; every nonzero
-;: value is a destination error. The raw ABI keeps `stdlib.format` independent
-;: of `stdlib.io` and concrete buffer modules.
+;: The callback receives its adapter context and one owned byte string. Zero
+;: means success; every nonzero value is a destination error. Passing the
+;: bounded value instead of raw pointer/length pairs keeps formatter callbacks
+;: ordinary safe function values.
 (defstruct Formatter
-  (write-raw (-> i64 (Ptr u8) i64 i64))
+  (write-raw (-> i64 String i64))
   (context i64)
   (status i64))
 
@@ -327,66 +327,65 @@
   (len i64))
 
 ;: Copy bytes into the growable String sink addressed by `context`.
-(define (arguments-string-write-raw
-  [context : i64]
-  [data : (Ptr u8)]
-  [count : i64]) : i64
-  (if (<= count 0)
-    0
-    (let
-      [slot : (MutPtr ArgumentsStringSink)
-        (unsafe
-          (int->ptr (cast context : u64) : (MutPtr ArgumentsStringSink)))]
-      [sink : ArgumentsStringSink
-        (unsafe
-          (ptr-read (ptr-cast slot : (Ptr ArgumentsStringSink))))]
-      [required : i64
-        (if (> sink.len (- 9223372036854775807 count))
-          (format-runtime-abort-string
-            "format: Arguments output length overflow")
-          (+ sink.len count))]
-      (begin
-        (if (> required (array-length sink.slots))
-          (let
-            [old-capacity : i64 (array-length sink.slots)]
-            [new-capacity : i64
-              (if (< old-capacity 1)
-                64
-                old-capacity)]
-            (begin
-              (while (< new-capacity required)
-                (if (> new-capacity (/ 9223372036854775807 2))
-                  (set! new-capacity required)
-                  (set! new-capacity (* new-capacity 2))))
-              (let
-                [larger : (__tl_dyn-array u8) (__tl_make-array u8 new-capacity)]
-                (begin
-                  (if (> sink.len 0)
-                    (string.str-copy-bytes-into
-                      (unsafe
-                        (ptr-cast (__tl_array-data sink.slots) : (Ptr u8)))
-                      (unsafe
-                        (__tl_array-data larger))
-                      0
-                      sink.len)
-                    unit)
-                  (set! sink.slots larger)))))
-          unit)
-        (string.str-copy-bytes-into
-          data
+(define (arguments-string-write-raw [context : i64] [data : String]) : i64
+  (let
+    [count : i64 (string.string-length (& data))]
+    (if (<= count 0)
+      0
+      (let
+        [slot : (MutPtr ArgumentsStringSink)
           (unsafe
-            (__tl_array-data sink.slots))
-          sink.len
-          count)
-        (set! sink.len required)
-        (unsafe
-          (ptr-write! slot sink))
-        0))))
+            (int->ptr (cast context : u64) : (MutPtr ArgumentsStringSink)))]
+        [sink : ArgumentsStringSink
+          (unsafe
+            (ptr-read (ptr-cast slot : (Ptr ArgumentsStringSink))))]
+        [required : i64
+          (if (> sink.len (- 9223372036854775807 count))
+            (format-runtime-abort-string
+              "format: Arguments output length overflow")
+            (+ sink.len count))]
+        (begin
+          (if (> required (array-length sink.slots))
+            (let
+              [old-capacity : i64 (array-length sink.slots)]
+              [new-capacity : i64
+                (if (< old-capacity 1)
+                  64
+                  old-capacity)]
+              (begin
+                (while (< new-capacity required)
+                  (if (> new-capacity (/ 9223372036854775807 2))
+                    (set! new-capacity required)
+                    (set! new-capacity (* new-capacity 2))))
+                (let
+                  [larger : (__tl_dyn-array u8)
+                    (__tl_make-array u8 new-capacity)]
+                  (begin
+                    (if (> sink.len 0)
+                      (string.str-copy-bytes-into
+                        (unsafe
+                          (ptr-cast (__tl_array-data sink.slots) : (Ptr u8)))
+                        (unsafe
+                          (__tl_array-data larger))
+                        0
+                        sink.len)
+                      unit)
+                    (set! sink.slots larger)))))
+            unit)
+          (string.str-copy-bytes-into
+            (unsafe
+              (string-data (& data)))
+            (unsafe
+              (__tl_array-data sink.slots))
+            sink.len
+            count)
+          (set! sink.len required)
+          (unsafe
+            (ptr-write! slot sink))
+          0)))))
 
 ;: Construct a formatter backed by one concrete destination adapter.
-(define (formatter-writer
-  [context : i64]
-  [write-raw : (-> i64 (Ptr u8) i64 i64)]) : Formatter
+(define (formatter-writer [context : i64] [write-raw : (-> i64 String i64)]) : Formatter
   (Formatter write-raw context 0))
 
 ;: Place one formatter in fixed caller-owned storage for synchronous writes.
@@ -394,23 +393,19 @@
   (array formatter))
 
 ;: Signature probe used for canonical writer-adapter reflection.
-(define (formatter-unreachable-write-raw
-  [_context : i64]
-  [_data : (Ptr u8)]
-  [_len : i64]) : i64
+(define (formatter-unreachable-write-raw [_context : i64] [_data : String]) : i64
   1)
 
-;: Write one raw byte range, preserving the first destination failure.
+;: Write one bounded byte string, preserving the first destination failure.
 (define (formatter-write-raw!
   [formatter : (&mut formatter Formatter)]
-  [data : (Ptr u8)]
-  [len : i64]) : unit
-  (if (<= len 0)
+  [data : String]) : unit
+  (if (<= (string.string-length (& data)) 0)
     unit
     (if (!= formatter.status 0)
       unit
       (let
-        [status : i64 (formatter.write-raw formatter.context data len)]
+        [status : i64 (formatter.write-raw formatter.context data)]
         (if (= status 0)
           unit
           (set! formatter.status status))))))
@@ -419,11 +414,7 @@
 (define (formatter-write-string!
   [formatter : (&mut formatter Formatter)]
   [text : String]) : unit
-  (formatter-write-raw!
-    formatter
-    (unsafe
-      (string-data (& text)))
-    (string.string-length (& text))))
+  (formatter-write-raw! formatter text))
 
 ;: Return the current formatter result.
 (define (formatter-result [formatter : (& formatter Formatter)]) : FormatResult
@@ -7463,7 +7454,11 @@
           (if (= dispatch 2)
             (comptime.string-append "format-writer-cell-" nominal-name)
             "format-writer-cell")]
-        [cell-present? : bool (comptime.module-value? owner cell-name)]
+        [context-name : String
+          (if (= dispatch 2)
+            (comptime.string-append "format-writer-context-" nominal-name)
+            "format-writer-context")]
+        [context-present? : bool (comptime.module-value? owner context-name)]
         [hook : comptime.Expr
           (match dispatch
             [1 (comptime.module-value-expr owner plain-name)]
@@ -7483,33 +7478,47 @@
                   (comptime.string-append
                     "format: unsupported writer type from canonical module "
                     owner)))])]
-        [cell-hook : comptime.Expr
-          (if cell-present?
-            (comptime.module-value-expr owner cell-name)
-            (comptime.comptime-error
-              (comptime.string-append
-                "format: writer cell adapter is missing from canonical module "
-                owner)))]
-        `(let
-          [__tl_format_writer_cell (,cell-hook ,writer)]
-          [__tl_format_writer_address : i64
-            (unsafe
-              (cast
-                (ptr->int
-                  (ptr-cast
-                    (__tl_array-data __tl_format_writer_cell)
-                    : (Ptr u8)))
-                : i64))]
-          [__tl_format_writer_result
-            (stdlib.format.format-write-callback-dispatch
-              ,template
-              ,argument-carrier
-              __tl_format_writer_address
-              ,hook
-              ,newline)]
-          (begin
-            (set! ,writer (array-ref __tl_format_writer_cell 0))
-            __tl_format_writer_result)))
+        (if context-present?
+          (let
+            [context-hook : comptime.Expr
+              (comptime.module-value-expr owner context-name)]
+            `(let
+              [__tl_format_writer_context : i64 (,context-hook ,writer)]
+              (stdlib.format.format-write-callback-dispatch
+                ,template
+                ,argument-carrier
+                __tl_format_writer_context
+                ,hook
+                ,newline)))
+          (let
+            [cell-present? : bool (comptime.module-value? owner cell-name)]
+            [cell-hook : comptime.Expr
+              (if cell-present?
+                (comptime.module-value-expr owner cell-name)
+                (comptime.comptime-error
+                  (comptime.string-append
+                    "format: writer cell adapter is missing from canonical module "
+                    owner)))]
+            `(let
+              [__tl_format_writer_cell (,cell-hook ,writer)]
+              [__tl_format_writer_address : i64
+                (unsafe
+                  (cast
+                    (ptr->int
+                      (ptr-cast
+                        (__tl_array-data __tl_format_writer_cell)
+                        : (Ptr u8)))
+                    : i64))]
+              [__tl_format_writer_result
+                (stdlib.format.format-write-callback-dispatch
+                  ,template
+                  ,argument-carrier
+                  __tl_format_writer_address
+                  ,hook
+                  ,newline)]
+              (begin
+                (set! ,writer (array-ref __tl_format_writer_cell 0))
+                __tl_format_writer_result)))))
       (comptime.comptime-error
         "format: write destination must be a nominal mutable writer"))))
 

@@ -31,8 +31,10 @@
 
 ; The canonical adapter deliberately accepts a prefix of the failing call.
 ; Formatter must retain status 77 and skip every later plan piece.
-(define (format-write-raw [context : i64] [data : (Ptr u8)] [count : i64]) : i64
+(define (format-write-raw [context : i64] [data : String]) : i64
   (let
+    [contents : (& data bytes) (byte_buf.str-as-bytes (& data))]
+    [count : i64 (byte_buf.bytes-length contents)]
     [slot : (MutPtr FailingWriter)
       (unsafe
         (int->ptr (cast context : u64) : (MutPtr FailingWriter)))]
@@ -49,10 +51,7 @@
         (begin
           (set!
             writer.bytes
-            (byte_buf.push
-              writer.bytes
-              (unsafe
-                (ptr-read (ptr-offset data index)))))
+            (byte_buf.push writer.bytes (byte_buf.bytes-ref contents index)))
           (set! index (+ index 1))))
       (set! writer.remaining (- writer.remaining accepted))
       (set! writer.calls (+ writer.calls 1))

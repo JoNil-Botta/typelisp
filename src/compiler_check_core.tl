@@ -631,7 +631,7 @@
       (io.print-format \"{}\" \"\")
       (io.flush-stdout)
       (+ (byte_buf.len (& data))
-         (io.file-open-status path 0)))))")
+         (unsafe (io.file-open-status path 0))))))")
 
 (define (compiler-check-runtime-stdlib-boundary-env-source) : String
   "(import stdlib.env)

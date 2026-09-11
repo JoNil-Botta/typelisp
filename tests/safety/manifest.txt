@@ -259,6 +259,14 @@ fs_raw_resource_integer_safe_reject|check-fail|tests/safety/fs_raw_resource_inte
 fs_raw_helper_callable_launder_reject|check-fail|tests/safety/fs_raw_helper_callable_launder_reject.tl|-|fs/metadata-read-i64-at is an unsafe callable and cannot be used as a plain function value
 fs_raw_helper_unsafe_call_ok|check-ok|tests/safety/fs_raw_helper_unsafe_call_ok.tl|-|-
 fs_owned_wrappers_safe_ok|check-ok|tests/safety/fs_owned_wrappers_safe_ok.tl|-|-
+io_c_string_length_safe_reject|check-fail|tests/safety/io_c_string_length_safe_reject.tl|-|io/c-string-length requires unsafe context
+io_raw_resource_alias_safe_reject|check-fail|tests/safety/io_raw_resource_alias_safe_reject.tl|-|streams/platform-close requires unsafe context
+io_raw_handle_status_safe_reject|check-fail|tests/safety/io_raw_handle_status_safe_reject.tl|-|io/file-close-status requires unsafe context
+io_core_raw_table_safe_reject|check-fail|tests/safety/io_core_raw_table_safe_reject.tl|-|io_core/io-file-i64-ref requires unsafe context
+io_core_raw_clear_safe_reject|check-fail|tests/safety/io_core_raw_clear_safe_reject.tl|-|io_core/io-file-handle-clear! requires unsafe context
+io_raw_helper_callable_launder_reject|check-fail|tests/safety/io_raw_helper_callable_launder_reject.tl|-|io/c-string-length is an unsafe callable and cannot be used as a plain function value
+io_raw_helper_unsafe_call_ok|check-ok|tests/safety/io_raw_helper_unsafe_call_ok.tl|-|-
+io_formatter_callback_value_ok|check-ok|tests/safety/io_formatter_callback_value_ok.tl|-|-
 fs_rooted_linux_state_read_reject|check-fail|tests/safety/fs_rooted_linux_state_read_reject.tl|-|linux-rooted-state-read requires unsafe context
 fs_rooted_linux_raw_close_reject|check-fail|tests/safety/fs_rooted_linux_raw_close_reject.tl|-|linux-rooted-raw-close requires unsafe context
 fs_rooted_linux_capability_copy_reject|check-fail|tests/safety/fs_rooted_linux_capability_copy_reject.tl|-|cleanup-required resource already has a cleanup owner

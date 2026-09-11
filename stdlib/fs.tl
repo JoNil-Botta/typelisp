@@ -149,9 +149,8 @@
         (int->ptr (cast 0 : u64) : (Ptr u8)))
       (let
         [ptr : i64
-          (io.linux-ptr-arg
-            (unsafe
-              (ptr-cast buf : (Ptr u8))))]
+          (unsafe
+            (io.linux-ptr-arg (ptr-cast buf : (Ptr u8))))]
         [result : i64
           (io.linux-syscall-status
             (unsafe
@@ -760,7 +759,8 @@
       (let
         [path-bytes : (__tl_dyn-array u8) (io.c-string path)]
         [fd : i64
-          (io.linux-syscall-open (io.array-const-ptr path-bytes) 524354 384)]
+          (unsafe
+            (io.linux-syscall-open (io.array-const-ptr path-bytes) 524354 384))]
         (if (< fd 0)
           (- 0 (io.last-error-code))
           (let
@@ -771,7 +771,8 @@
               (let
                 [error-status : i64 (io.last-error-code)]
                 (begin
-                  (io.linux-syscall-close fd)
+                  (unsafe
+                    (io.linux-syscall-close fd))
                   (- 0 error-status)))
               fd)))))))
 
@@ -810,7 +811,9 @@
           (if (< unlock-status 0)
             (io.last-error-code)
             0)]
-        [close-status : i64 (io.linux-syscall-close handle)]
+        [close-status : i64
+          (unsafe
+            (io.linux-syscall-close handle))]
         (if (not (= unlock-error 0))
           unlock-error
           (if (< close-status 0)
@@ -1022,7 +1025,9 @@
           (linux-open-dir-owned path))]
       (if (< fd 0)
         (io.last-error-code)
-        (status-from-result (io.linux-syscall-close fd))))))
+        (status-from-result
+          (unsafe
+            (io.linux-syscall-close fd)))))))
 
 ;: Append entries from one Linux getdents64 buffer page.
 (cfg
@@ -1102,7 +1107,8 @@
                       (begin
                         (set! ok false)
                         (set! done true)))))))
-            (io.linux-syscall-close fd)
+            (unsafe
+              (io.linux-syscall-close fd))
             (if ok
               (read-dir-bytes-string (&mut out))
               "")))))))
@@ -1614,7 +1620,8 @@
         (if (= written 0)
           ""
           (if (< written capacity)
-            (io.copy-c-string (io.array-const-ptr buf))
+            (unsafe
+              (io.copy-c-string (io.array-const-ptr buf)))
             (stdlib.fs.current-dir-loop
               (stdlib.fs.current-dir-next-capacity capacity written))))))
     (if (> capacity stdlib.fs.fs-current-dir-max-capacity)
@@ -1632,7 +1639,8 @@
                 (stdlib.fs.current-dir-loop (* capacity 2))
                 "")
               ""))
-          (io.copy-c-string result))))))
+          (unsafe
+            (io.copy-c-string result)))))))
 
 ;: Return the host status code for retrieving the current working directory.
 (define (current-dir-status) : i64

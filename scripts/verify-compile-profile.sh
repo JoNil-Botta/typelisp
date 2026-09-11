@@ -1970,8 +1970,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # #7574's twenty packets cross the composed graph from 61 to 62 segments: the
     # authoritative Windows CI probe measured 4,005,073 used nodes, 4,063,232
     # capacity, and 130,023,424 physical payload bytes.
+    # #7696's eleven optimizer packets, rebased over #7698, cross the composed
+    # graph from 62 to 63 segments: the authoritative Windows CI probe measured
+    # 4,063,428 used nodes, 4,128,768 capacity, and 132,120,576 physical payload
+    # bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 62 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 63 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain

@@ -21174,6 +21174,236 @@
             (= (array-ref remap 4) 1))]
         [(reg.CompilerRegColoring.None) false])]))
 
+;; The hidden output pointer is borrowed only across the call. Its result is
+;; another alias of the same two-word range; an ordinary pointer call must
+;; still invalidate the range even when it has the same physical ABI.
+(define (compiler-reg-sret-color-blocks
+  [ordinary? : bool]
+  [overlap? : bool]
+  [derived-escape? : bool]
+  [structural? : bool]) : ir.CompilerIrBlockList
+  (let
+    [big : ast.AstType (ast.AstType.Struct (ci.intern "SretColor"))]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity 12)]
+    (begin
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Alloc 0 (clone big)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Alloc 1 (clone big)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.AddrOf 2 1))
+      (if structural?
+        (ir.compiler-ir-instr-builder-push!
+          (&mut builder)
+          (ir.CompilerIrInstr.Cast
+            12
+            (ir.CompilerIrValue.Var 2)
+            (ast.AstType.Array (ci.intern "i64") 2)
+            (ast.AstType.U64)))
+        unit)
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Call
+          3
+          (ir.compiler-ir-test-symbol "sret_one")
+          (if ordinary?
+            (ir.CompilerIrCallArgs.One
+              (ir.CompilerIrValue.Var
+                (if structural?
+                  12
+                  2)))
+            (ir.compiler-ir-call-args-sret-from-seq
+              (ir.compiler-ir-value-seq1
+                (ir.CompilerIrValue.Var
+                  (if structural?
+                    12
+                    2)))
+              0))
+          (ast.AstType.U64)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Load
+          4
+          (ir.CompilerIrValue.Var
+            (if ordinary?
+              2
+              3))
+          (ast.AstType.I64)))
+      (if derived-escape?
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.Gep
+              10
+              (ir.CompilerIrValue.Var 2)
+              (ir.CompilerIrValue.I64 0)
+              (ast.AstType.U64)))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.Call
+              11
+              (ir.compiler-ir-test-symbol "escaping_pointer")
+              (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 10))
+              (ast.AstType.U64))))
+        unit)
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Alloc 5 (clone big)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Alloc 6 big))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.AddrOf 7 6))
+      (if structural?
+        (ir.compiler-ir-instr-builder-push!
+          (&mut builder)
+          (ir.CompilerIrInstr.Cast
+            13
+            (ir.CompilerIrValue.Var 7)
+            (ast.AstType.Array (ci.intern "i64") 2)
+            (ast.AstType.U64)))
+        unit)
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Call
+          8
+          (ir.compiler-ir-test-symbol "sret_two")
+          (ir.compiler-ir-call-args-sret-from-seq
+            (ir.compiler-ir-value-seq1
+              (ir.CompilerIrValue.Var
+                (if structural?
+                  13
+                  7)))
+            0)
+          (ast.AstType.U64)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Load 9 (ir.CompilerIrValue.Var 8) (ast.AstType.I64)))
+      (if overlap?
+        (ir.compiler-ir-instr-builder-push!
+          (&mut builder)
+          (ir.CompilerIrInstr.Load
+            10
+            (ir.CompilerIrValue.Var 3)
+            (ast.AstType.I64)))
+        unit)
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No))
+      (ir.compiler-ir-block-cons
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-builder-to-seq builder))
+        ir.CompilerIrBlockList.Nil))))
+
+(define (compiler-reg-sret-color-intervals
+  [overlap? : bool]
+  [derived-escape? : bool]
+  [structural? : bool]) : reg.CompilerRegIntervalSeq
+  (let
+    [second : i64
+      (if derived-escape?
+        9
+        7)]
+    [shift : i64
+      (if structural?
+        1
+        0)]
+    [rest : reg.CompilerRegIntervalSeq
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval
+          2
+          2
+          (+
+            shift
+            (if derived-escape?
+              6
+              4)))
+        (reg.compiler-reg-interval-seq-prepend
+          (reg.CompilerRegInterval
+            3
+            (+ shift 3)
+            (+
+              (* shift 2)
+              (if overlap?
+                10
+                4)))
+          (reg.compiler-reg-interval-seq-prepend
+            (reg.CompilerRegInterval
+              7
+              (+ second shift)
+              (+ second 2 (* shift 2)))
+            (reg.compiler-reg-interval-seq-prepend
+              (reg.CompilerRegInterval
+                8
+                (+ second 1 (* shift 2))
+                (+ second 2 (* shift 2)))
+              (if structural?
+                (reg.compiler-reg-interval-seq-prepend
+                  (reg.CompilerRegInterval 12 3 4)
+                  (reg.compiler-reg-interval-seq-prepend
+                    (reg.CompilerRegInterval 13 (+ second 2) (+ second 3))
+                    (reg.compiler-reg-interval-seq-empty)))
+                (reg.compiler-reg-interval-seq-empty))))))]
+    (if derived-escape?
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 10 5 6)
+        rest)
+      rest)))
+
+(define (compiler-reg-sret-color-case
+  [ordinary? : bool]
+  [overlap? : bool]
+  [derived-escape? : bool]
+  [structural? : bool]) : bool
+  (let
+    [slots : (__tl_dyn-array i64) (__tl_make-array i64 32)]
+    [remap : (__tl_dyn-array i64) (__tl_make-array i64 14)]
+    [index : i64 0]
+    (begin
+      (while (< index 32)
+        (begin
+          (set! (array-ref slots index) -1)
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index 14)
+        (begin
+          (set! (array-ref remap index) -1)
+          (set! index (+ index 1))))
+      (reg.compiler-reg-color-inline-storage
+        (compiler-reg-sret-color-blocks
+          ordinary?
+          overlap?
+          derived-escape?
+          structural?)
+        (compiler-reg-sret-color-intervals overlap? derived-escape? structural?)
+        (reg.compiler-reg-global-shared-view slots)
+        (reg.compiler-reg-global-shared-view remap)
+        14
+        0)
+      (if (or ordinary? overlap? derived-escape?)
+        (not (= (array-ref remap 0) (array-ref remap 5)))
+        (and
+          (= (array-ref remap 0) (array-ref remap 5))
+          (= (array-ref remap 1) (array-ref remap 6)))))))
+
+(test
+  regalloc-call-scoped-sret-storage
+  (test.assert-true
+    (and
+      (compiler-reg-sret-color-case false false false false)
+      (compiler-reg-sret-color-case true false false false)
+      (compiler-reg-sret-color-case false true false false)
+      (compiler-reg-sret-color-case false false true false)
+      (compiler-reg-sret-color-case false false false true)
+      (compiler-reg-sret-color-case true false false true))
+    "sret calls reuse disjoint ranges; ordinary, derived and overlapping uses do not"))
+
 (define (compiler-reg-stack-only-storage-branch-ok?) : bool
   (let
     [func : ir.CompilerIrFunction

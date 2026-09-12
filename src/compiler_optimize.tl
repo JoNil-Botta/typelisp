@@ -2484,6 +2484,8 @@
     [(ir.CompilerIrCallArgs.Two a b)
       (opt-collect-value-uses (opt-collect-value-uses set a) b)]
     [(ir.CompilerIrCallArgs.Array values)
+      (opt-collect-call-args-array-uses set values 0)]
+    [(ir.CompilerIrCallArgs.Sret values _)
       (opt-collect-call-args-array-uses set values 0)]))
 
 (define (opt-collect-spmd-call-args-uses
@@ -3012,6 +3014,8 @@
         (opt-collect-value-uses-array (compiler-opt-global-shared-view items) a)
         (opt-collect-value-uses-array items b))]
     [(ir.CompilerIrCallArgs.Array values)
+      (opt-collect-call-args-array-uses-array items values 0)]
+    [(ir.CompilerIrCallArgs.Sret values _)
       (opt-collect-call-args-array-uses-array items values 0)]))
 
 (define (opt-collect-spmd-call-args-uses-array
@@ -4444,6 +4448,8 @@
           a)
         (opt-aggregate-value-has-pointer? base ptrs b))]
     [(ir.CompilerIrCallArgs.Array values)
+      (opt-aggregate-call-args-array-has-pointer? base ptrs values 0)]
+    [(ir.CompilerIrCallArgs.Sret values _)
       (opt-aggregate-call-args-array-has-pointer? base ptrs values 0)]))
 
 (define (opt-aggregate-spmd-call-args-has-pointer?
@@ -7077,6 +7083,8 @@
           a)
         (opt-aggregate-split-refuse-arg! plan b))]
     [(ir.CompilerIrCallArgs.Array values)
+      (opt-aggregate-split-refuse-args-array! plan values 0)]
+    [(ir.CompilerIrCallArgs.Sret values _)
       (opt-aggregate-split-refuse-args-array! plan values 0)]))
 
 (define (opt-aggregate-split-refuse-args-array!
@@ -8769,6 +8777,14 @@
       (match (compiler-opt-global-shared-view b)
         [(ir.CompilerIrCallArgs.Array bv)
           (and
+            (= (array-length av) (array-length bv))
+            (opt-call-args-array-eq av bv 0))]
+        [_ false])]
+    [(ir.CompilerIrCallArgs.Sret av ai)
+      (match (compiler-opt-global-shared-view b)
+        [(ir.CompilerIrCallArgs.Sret bv bi)
+          (and
+            (= ai bi)
             (= (array-length av) (array-length bv))
             (opt-call-args-array-eq av bv 0))]
         [_ false])]))
@@ -10626,7 +10642,18 @@
             values
             (compiler-opt-global-shared-view out)
             0)
-          (ir.CompilerIrCallArgs.Array out)))]))
+          (ir.CompilerIrCallArgs.Array out)))]
+    [(ir.CompilerIrCallArgs.Sret values index)
+      (let
+        [out : (__tl_dyn-array ir.CompilerIrValue)
+          (__tl_make-array ir.CompilerIrValue (array-length values))]
+        (begin
+          (opt-copy-subst-call-args-array
+            env
+            values
+            (compiler-opt-global-shared-view out)
+            0)
+          (ir.CompilerIrCallArgs.Sret out index)))]))
 
 (define (opt-copy-resolve-spmd-value
   [env : OptCopyEnv]
@@ -14915,7 +14942,46 @@
           use-pos)
         (opt-verify-value-use defs doms b use-block use-pos))]
     [(ir.CompilerIrCallArgs.Array values)
-      (opt-verify-call-args-array-uses defs doms values use-block use-pos 0)]))
+      (opt-verify-call-args-array-uses defs doms values use-block use-pos 0)]
+    [(ir.CompilerIrCallArgs.Sret values index)
+      (if (or (< index 0) (>= index (array-length values)))
+        (ResultCompilerOptimizeVerify.Err
+          "optimizer verify: sret argument index out of bounds")
+        (match (compiler-opt-global-array-element-shared-view values index)
+          [(ir.CompilerIrValue.Var _)
+            (opt-verify-call-args-array-uses
+              defs
+              doms
+              values
+              use-block
+              use-pos
+              0)]
+          [_
+            (ResultCompilerOptimizeVerify.Err
+              "optimizer verify: sret argument must be a pointer variable")]))]))
+
+(define (opt-verify-call-sret-result
+  [args : ir.CompilerIrCallArgs]
+  [ty : ast.AstType]) : ResultCompilerOptimizeVerify
+  (match args
+    [(ir.CompilerIrCallArgs.Sret _ _)
+      (match ty
+        [(ast.AstType.U64) (ResultCompilerOptimizeVerify.Ok)]
+        [(ast.AstType.Struct _) (ResultCompilerOptimizeVerify.Ok)]
+        [(ast.AstType.StructArgs _ _) (ResultCompilerOptimizeVerify.Ok)]
+        [(ast.AstType.Enum _) (ResultCompilerOptimizeVerify.Ok)]
+        [(ast.AstType.EnumArgs _ _) (ResultCompilerOptimizeVerify.Ok)]
+        [_
+          (ResultCompilerOptimizeVerify.Err
+            "optimizer verify: sret call has incompatible result type")])]
+    [_ (ResultCompilerOptimizeVerify.Ok)]))
+
+(define (opt-verify-no-sret-call-args [args : ir.CompilerIrCallArgs]) : ResultCompilerOptimizeVerify
+  (match args
+    [(ir.CompilerIrCallArgs.Sret _ _)
+      (ResultCompilerOptimizeVerify.Err
+        "optimizer verify: sret role on a non-result call")]
+    [_ (ResultCompilerOptimizeVerify.Ok)]))
 
 (define (opt-verify-spmd-call-args-uses
   [defs : (__tl_dyn-array OptMaybeVarDef)]
@@ -16207,10 +16273,14 @@
     [(ir.CompilerIrInstr.Xgetbv _ index)
       (opt-verify-value-use defs doms index block-id pos)]
     [(ir.CompilerIrInstr.Syscall _ args)
-      (opt-verify-call-args-uses defs doms args block-id pos)]
-    [(ir.CompilerIrInstr.Call _ _ args _)
-      (opt-verify-call-args-uses defs doms args block-id pos)]
-    [(ir.CompilerIrInstr.CallIndirect _ func args _)
+      (opt-verify-two
+        (opt-verify-no-sret-call-args (compiler-opt-global-shared-view args))
+        (opt-verify-call-args-uses defs doms args block-id pos))]
+    [(ir.CompilerIrInstr.Call _ _ args ty)
+      (opt-verify-two
+        (opt-verify-call-sret-result (compiler-opt-global-shared-view args) ty)
+        (opt-verify-call-args-uses defs doms args block-id pos))]
+    [(ir.CompilerIrInstr.CallIndirect _ func args ty)
       (opt-verify-two
         (opt-verify-value-use
           (compiler-opt-global-shared-view defs)
@@ -16218,8 +16288,12 @@
           func
           block-id
           pos)
-        (opt-verify-call-args-uses defs doms args block-id pos))]
-    [(ir.CompilerIrInstr.CallIndirectC _ func args _)
+        (opt-verify-two
+          (opt-verify-call-sret-result
+            (compiler-opt-global-shared-view args)
+            ty)
+          (opt-verify-call-args-uses defs doms args block-id pos)))]
+    [(ir.CompilerIrInstr.CallIndirectC _ func args ty)
       (opt-verify-two
         (opt-verify-value-use
           (compiler-opt-global-shared-view defs)
@@ -16227,7 +16301,11 @@
           func
           block-id
           pos)
-        (opt-verify-call-args-uses defs doms args block-id pos))]
+        (opt-verify-two
+          (opt-verify-call-sret-result
+            (compiler-opt-global-shared-view args)
+            ty)
+          (opt-verify-call-args-uses defs doms args block-id pos)))]
     [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
         [base (compiler-opt-box-field-shared-view payload-box base)]
@@ -16239,7 +16317,10 @@
             base
             block-id
             pos)
-          (opt-verify-call-args-uses defs doms args block-id pos)))]
+          (opt-verify-two
+            (opt-verify-no-sret-call-args
+              (compiler-opt-global-shared-view args))
+            (opt-verify-call-args-uses defs doms args block-id pos))))]
     [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (let
         [base (compiler-opt-box-field-shared-view payload-box base)]
@@ -16259,7 +16340,10 @@
               func
               block-id
               pos)
-            (opt-verify-call-args-uses defs doms args block-id pos))))]
+            (opt-verify-two
+              (opt-verify-no-sret-call-args
+                (compiler-opt-global-shared-view args))
+              (opt-verify-call-args-uses defs doms args block-id pos)))))]
     [(ir.CompilerIrInstr.SpmdCall payload-box)
       (let
         [active-mask
@@ -16274,7 +16358,9 @@
             pos)
           (opt-verify-spmd-call-args-uses defs doms args block-id pos)))]
     [(ir.CompilerIrInstr.TailCall _ args _)
-      (opt-verify-call-args-uses defs doms args block-id pos)]
+      (opt-verify-two
+        (opt-verify-no-sret-call-args (compiler-opt-global-shared-view args))
+        (opt-verify-call-args-uses defs doms args block-id pos))]
     [(ir.CompilerIrInstr.Store _ value _)
       (opt-verify-value-use defs doms value block-id pos)]
     [(ir.CompilerIrInstr.Branch cond _ _)
@@ -16301,7 +16387,9 @@
           func
           block-id
           pos)
-        (opt-verify-call-args-uses defs doms args block-id pos))]
+        (opt-verify-two
+          (opt-verify-no-sret-call-args (compiler-opt-global-shared-view args))
+          (opt-verify-call-args-uses defs doms args block-id pos)))]
     [(ir.CompilerIrInstr.Switch index _ _ _)
       (opt-verify-value-use defs doms index block-id pos)]
     [(ir.CompilerIrInstr.TotalEnumSwitch index _ _ _ _)
@@ -18136,7 +18224,18 @@
             values
             (compiler-opt-global-shared-view out)
             0)
-          (ir.CompilerIrCallArgs.Array out)))]))
+          (ir.CompilerIrCallArgs.Array out)))]
+    [(ir.CompilerIrCallArgs.Sret values index)
+      (let
+        [out : (__tl_dyn-array ir.CompilerIrValue)
+          (__tl_make-array ir.CompilerIrValue (array-length values))]
+        (begin
+          (opt-ssa-rewrite-call-args-array
+            env
+            values
+            (compiler-opt-global-shared-view out)
+            0)
+          (ir.CompilerIrCallArgs.Sret out index)))]))
 
 (define (opt-ssa-rewrite-spmd-call-arg
   [env : OptSsaRenameEnv]
@@ -20746,7 +20845,21 @@
             values
             (compiler-opt-global-shared-view out)
             0)
-          (ir.CompilerIrCallArgs.Array out)))]))
+          (ir.CompilerIrCallArgs.Array out)))]
+    [(ir.CompilerIrCallArgs.Sret values index)
+      (let
+        [out : (__tl_dyn-array ir.CompilerIrValue)
+          (__tl_make-array ir.CompilerIrValue (array-length values))]
+        (begin
+          (opt-global-copy-subst-call-args-array
+            (compiler-opt-global-shared-view facts)
+            (compiler-opt-global-shared-view doms)
+            use-block-id
+            use-pos
+            values
+            (compiler-opt-global-shared-view out)
+            0)
+          (ir.CompilerIrCallArgs.Sret out index)))]))
 
 (define (opt-global-copy-resolve-spmd-value
   [facts : OptGlobalCopyFactTable]
@@ -56459,7 +56572,18 @@
             values
             (compiler-opt-global-shared-view out)
             0)
-          (ir.CompilerIrCallArgs.Array out)))]))
+          (ir.CompilerIrCallArgs.Array out)))]
+    [(ir.CompilerIrCallArgs.Sret values index)
+      (let
+        [out : (__tl_dyn-array ir.CompilerIrValue)
+          (__tl_make-array ir.CompilerIrValue (array-length values))]
+        (begin
+          (opt-sccp-rewrite-call-args-array
+            env
+            values
+            (compiler-opt-global-shared-view out)
+            0)
+          (ir.CompilerIrCallArgs.Sret out index)))]))
 
 (define (opt-sccp-rewrite-spmd-call-arg
   [env : OptSccpEnv]
@@ -77822,6 +77946,8 @@
           a)
         (opt-scan-note-value-uses items generation b))]
     [(ir.CompilerIrCallArgs.Array values)
+      (opt-scan-note-value-array-uses items generation values 0)]
+    [(ir.CompilerIrCallArgs.Sret values _)
       (opt-scan-note-value-array-uses items generation values 0)]))
 
 (define (opt-scan-note-value-array-uses
@@ -78937,6 +79063,10 @@
     [(ir.CompilerIrCallArgs.One a) (ir.compiler-ir-value-seq1 a)]
     [(ir.CompilerIrCallArgs.Two a b) (ir.compiler-ir-value-seq2 a b)]
     [(ir.CompilerIrCallArgs.Array values)
+      (let
+        [count : i64 (array-length (compiler-opt-global-shared-view values))]
+        (ir.CompilerIrValueSeq values count))]
+    [(ir.CompilerIrCallArgs.Sret values _)
       (let
         [count : i64 (array-length (compiler-opt-global-shared-view values))]
         (ir.CompilerIrValueSeq values count))]))
@@ -106036,7 +106166,18 @@
             (compiler-opt-global-shared-view values)
             (compiler-opt-global-shared-view out)
             0)
-          (ir.CompilerIrCallArgs.Array out)))]))
+          (ir.CompilerIrCallArgs.Array out)))]
+    [(ir.CompilerIrCallArgs.Sret values index)
+      (let
+        [out : (__tl_dyn-array ir.CompilerIrValue)
+          (__tl_make-array ir.CompilerIrValue (array-length values))]
+        (begin
+          (opt-bce-mb-subst-call-args-array
+            (compiler-opt-global-shared-view remap)
+            (compiler-opt-global-shared-view values)
+            (compiler-opt-global-shared-view out)
+            0)
+          (ir.CompilerIrCallArgs.Sret out index)))]))
 
 (define (opt-bce-mb-clone-switch-cases
   [cases : ir.CompilerIrSwitchCaseSeq]
@@ -129582,6 +129723,8 @@
         (opt-inline-census-value index census a)
         b)]
     [(ir.CompilerIrCallArgs.Array values)
+      (opt-inline-census-args-array index census values 0)]
+    [(ir.CompilerIrCallArgs.Sret values _)
       (opt-inline-census-args-array index census values 0)]))
 
 (define (opt-inline-census-spmd-args
@@ -133046,7 +133189,8 @@
     [(ir.CompilerIrCallArgs.Nil) (= np 0)]
     [(ir.CompilerIrCallArgs.One _) (= np 1)]
     [(ir.CompilerIrCallArgs.Two _ _) (= np 2)]
-    [(ir.CompilerIrCallArgs.Array arr) (= np (array-length arr))]))
+    [(ir.CompilerIrCallArgs.Array arr) (= np (array-length arr))]
+    [(ir.CompilerIrCallArgs.Sret arr _) (= np (array-length arr))]))
 
 (define (opt-inline-value-constant? [value : ir.CompilerIrValue]) : bool
   (match value
@@ -133083,6 +133227,8 @@
           1
           0))]
     [(ir.CompilerIrCallArgs.Array values)
+      (opt-inline-args-array-const-count values 0 0)]
+    [(ir.CompilerIrCallArgs.Sret values _)
       (opt-inline-args-array-const-count values 0 0)]))
 
 (define (opt-inline-cost-min [a : i64] [b : i64]) : i64
@@ -133457,6 +133603,9 @@
         (ir.compiler-ir-clone-value b))]
     [(ir.CompilerIrCallArgs.Array arr)
       (ir.compiler-ir-clone-value
+        (compiler-opt-global-array-element-shared-view arr id))]
+    [(ir.CompilerIrCallArgs.Sret arr _)
+      (ir.compiler-ir-clone-value
         (compiler-opt-global-array-element-shared-view arr id))]))
 
 (define (opt-inline-remap-value
@@ -133515,7 +133664,25 @@
                   np
                   base))
               (set! i (+ i 1))))
-          (ir.CompilerIrCallArgs.Array out)))]))
+          (ir.CompilerIrCallArgs.Array out)))]
+    [(ir.CompilerIrCallArgs.Sret arr index)
+      (let
+        [n : i64 (array-length arr)]
+        [out : (__tl_dyn-array ir.CompilerIrValue)
+          (__tl_make-array ir.CompilerIrValue n)]
+        [i : i64 0]
+        (begin
+          (while (< i n)
+            (begin
+              (set!
+                (array-ref out i)
+                (opt-inline-remap-value
+                  (compiler-opt-global-array-element-shared-view arr i)
+                  (compiler-opt-global-shared-view sa)
+                  np
+                  base))
+              (set! i (+ i 1))))
+          (ir.CompilerIrCallArgs.Sret out index)))]))
 
 (define (opt-inline-remap-value-seq
   [values : ir.CompilerIrValueSeq]
@@ -138905,6 +139072,8 @@
             (opt-inline-checked-literal-note! 0 a)
             (opt-inline-checked-literal-note! 1 b))]
         [(ir.CompilerIrCallArgs.Array values)
+          (opt-inline-checked-literal-note-array! values 0 0)]
+        [(ir.CompilerIrCallArgs.Sret values _)
           (opt-inline-checked-literal-note-array! values 0 0)]))))
 
 (define (opt-inline-checked-copy-literals-from! [index : i64]) : unit
@@ -145912,6 +146081,8 @@
         (opt-reach-value index state a)
         b)]
     [(ir.CompilerIrCallArgs.Array values)
+      (opt-reach-call-args-array index state values 0)]
+    [(ir.CompilerIrCallArgs.Sret values _)
       (opt-reach-call-args-array index state values 0)]))
 
 (define (opt-reach-spmd-call-args
@@ -147867,6 +148038,11 @@
       (if (and (>= index 0) (< index (array-length values)))
         (ir.CompilerIrMaybeValue.Some
           (compiler-opt-global-array-element-shared-view values index))
+        (ir.CompilerIrMaybeValue.No))]
+    [(ir.CompilerIrCallArgs.Sret values _)
+      (if (and (>= index 0) (< index (array-length values)))
+        (ir.CompilerIrMaybeValue.Some
+          (compiler-opt-global-array-element-shared-view values index))
         (ir.CompilerIrMaybeValue.No))]))
 
 (defenum OptCallMemoryCandidate
@@ -149094,6 +149270,8 @@
     [(ir.CompilerIrCallArgs.Two a b)
       (opt-const-globals-disq-value (opt-const-globals-disq-value disq a) b)]
     [(ir.CompilerIrCallArgs.Array values)
+      (opt-const-globals-disq-args-array disq values 0)]
+    [(ir.CompilerIrCallArgs.Sret values _)
       (opt-const-globals-disq-args-array disq values 0)]))
 
 (define (opt-const-globals-disq-spmd-args
@@ -149668,6 +149846,8 @@
     [(ir.CompilerIrCallArgs.Two a b)
       (opt-cl-count-value (opt-cl-count-value counts a) b)]
     [(ir.CompilerIrCallArgs.Array values)
+      (opt-cl-count-args-array counts values 0)]
+    [(ir.CompilerIrCallArgs.Sret values _)
       (opt-cl-count-args-array counts values 0)]))
 
 (define (opt-cl-count-spmd-args
@@ -151765,6 +151945,8 @@
     [(ir.CompilerIrCallArgs.Two a b)
       (opt-global-cell-scan-value (opt-global-cell-scan-value scan a) b)]
     [(ir.CompilerIrCallArgs.Array values)
+      (opt-global-cell-scan-args-array scan values 0)]
+    [(ir.CompilerIrCallArgs.Sret values _)
       (opt-global-cell-scan-args-array scan values 0)]))
 
 (define (opt-global-cell-scan-spmd-args
@@ -156160,6 +156342,15 @@
             (opt-len-eq-defs-mark-arg!
               (compiler-opt-global-shared-view tables)
               (compiler-opt-global-array-element-shared-view values index))
+            (set! index (+ index 1)))))]
+    [(ir.CompilerIrCallArgs.Sret values _)
+      (let
+        [index : i64 0]
+        (while (< index (array-length values))
+          (begin
+            (opt-len-eq-defs-mark-arg!
+              (compiler-opt-global-shared-view tables)
+              (compiler-opt-global-array-element-shared-view values index))
             (set! index (+ index 1)))))]))
 
 (define (opt-len-eq-defs-mark-arg!
@@ -156809,7 +157000,8 @@
     [(ir.CompilerIrCallArgs.Nil) 0]
     [(ir.CompilerIrCallArgs.One _) 1]
     [(ir.CompilerIrCallArgs.Two _ _) 2]
-    [(ir.CompilerIrCallArgs.Array values) (array-length values)]))
+    [(ir.CompilerIrCallArgs.Array values) (array-length values)]
+    [(ir.CompilerIrCallArgs.Sret values _) (array-length values)]))
 
 ;; Does this instruction name a global the walk refuses to lose track of?
 (define (opt-len-eq-mentions? [set : opt_i64_i64_map.Map] [names : OptI64List]) : bool
@@ -162602,6 +162794,8 @@
     [(ir.CompilerIrCallArgs.Two a b)
       (opt-arg-global-scan-value (opt-arg-global-scan-value scan a) b)]
     [(ir.CompilerIrCallArgs.Array values)
+      (opt-arg-global-scan-values-array scan values 0)]
+    [(ir.CompilerIrCallArgs.Sret values _)
       (opt-arg-global-scan-values-array scan values 0)]))
 
 (define (opt-arg-global-scan-spmd-args
@@ -162723,6 +162917,8 @@
         1
         b)]
     [(ir.CompilerIrCallArgs.Array values)
+      (opt-arg-global-scan-site-array scan name values 0)]
+    [(ir.CompilerIrCallArgs.Sret values _)
       (opt-arg-global-scan-site-array scan name values 0)]))
 
 (define (opt-arg-global-args-count [args : ir.CompilerIrCallArgs]) : i64
@@ -162730,7 +162926,8 @@
     [(ir.CompilerIrCallArgs.Nil) 0]
     [(ir.CompilerIrCallArgs.One _) 1]
     [(ir.CompilerIrCallArgs.Two _ _) 2]
-    [(ir.CompilerIrCallArgs.Array values) (array-length values)]))
+    [(ir.CompilerIrCallArgs.Array values) (array-length values)]
+    [(ir.CompilerIrCallArgs.Sret values _) (array-length values)]))
 
 ;; A site whose argument count does not match the callee's parameter list
 ;; cannot be read positionally, so it refuses every position of that callee.
@@ -162767,20 +162964,31 @@
     [name : i64 (ir.compiler-ir-symbol-id callee)]
     [count : i64
       (opt-arg-global-arity-of (compiler-opt-global-shared-view scan) name)]
-    (if (< count 0)
-      (opt-arg-global-scan-args scan (compiler-opt-global-shared-view args))
-      (if (=
-        count
-        (opt-arg-global-args-count (compiler-opt-global-shared-view args)))
-        (opt-arg-global-scan-site-args
-          scan
-          name
-          (compiler-opt-global-shared-view args))
+    (match (compiler-opt-global-shared-view args)
+      [(ir.CompilerIrCallArgs.Sret _ _)
+        ;; Never drop or reindex a hidden output parameter at any call site.
         (opt-arg-global-scan-refuse
-          (opt-arg-global-scan-args scan (compiler-opt-global-shared-view args))
+          (opt-arg-global-scan-args scan args)
           name
           0
-          count)))))
+          count)]
+      [_
+        (if (< count 0)
+          (opt-arg-global-scan-args scan (compiler-opt-global-shared-view args))
+          (if (=
+            count
+            (opt-arg-global-args-count (compiler-opt-global-shared-view args)))
+            (opt-arg-global-scan-site-args
+              scan
+              name
+              (compiler-opt-global-shared-view args))
+            (opt-arg-global-scan-refuse
+              (opt-arg-global-scan-args
+                scan
+                (compiler-opt-global-shared-view args))
+              name
+              0
+              count)))])))
 
 ;; Mirrors opt-global-cell-scan-instr arm-for-arm and, like it, carries no
 ;; wildcard: a new IR instruction fails to compile until an operand position is
@@ -164816,7 +165024,23 @@
                   (compiler-opt-global-shared-view removed)
                   (compiler-opt-global-array-element-shared-view values index)))
               (set! index (+ index 1))))
-          (ir.CompilerIrCallArgs.Array slots)))]))
+          (ir.CompilerIrCallArgs.Array slots)))]
+    [(ir.CompilerIrCallArgs.Sret values sret-index)
+      (let
+        [count : i64 (array-length (compiler-opt-global-shared-view values))]
+        [slots : (__tl_dyn-array ir.CompilerIrValue)
+          (__tl_make-array ir.CompilerIrValue count)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (set!
+                (array-ref slots index)
+                (opt-lga-subst-value
+                  (compiler-opt-global-shared-view removed)
+                  (compiler-opt-global-array-element-shared-view values index)))
+              (set! index (+ index 1))))
+          (ir.CompilerIrCallArgs.Sret slots sret-index)))]))
 
 ;; How many of this callee's arguments this pass drops at a site.
 (define (opt-lga-drop-count
@@ -166934,7 +167158,23 @@
                   (compiler-opt-global-shared-view plan)
                   (compiler-opt-global-array-element-shared-view values index)))
               (set! index (+ index 1))))
-          (ir.CompilerIrCallArgs.Array slots)))]))
+          (ir.CompilerIrCallArgs.Array slots)))]
+    [(ir.CompilerIrCallArgs.Sret values sret-index)
+      (let
+        [count : i64 (array-length values)]
+        [slots : (__tl_dyn-array ir.CompilerIrValue)
+          (__tl_make-array ir.CompilerIrValue count)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (set!
+                (array-ref slots index)
+                (opt-global-cell-subst-value
+                  (compiler-opt-global-shared-view plan)
+                  (compiler-opt-global-array-element-shared-view values index)))
+              (set! index (+ index 1))))
+          (ir.CompilerIrCallArgs.Sret slots sret-index)))]))
 
 (define (opt-global-cell-subst-spmd-args
   [plan : opt_i64_i64_map.Map]
@@ -176373,7 +176613,8 @@
         (compiler-opt-global-shared-view defs)
         (compiler-opt-global-shared-view env)
         (compiler-opt-global-shared-view xs)
-        0)]))
+        0)]
+    [(ir.CompilerIrCallArgs.Sret _ _) false]))
 
 ;; A var's copy root: the env maps a `Mov dst, %src` to src's own root, so one
 ;; lookup resolves a whole copy chain.
@@ -176446,7 +176687,8 @@
               (compiler-opt-global-shared-view xs)
               (compiler-opt-global-shared-view ys)
               0))]
-        [_ false])]))
+        [_ false])]
+    [(ir.CompilerIrCallArgs.Sret _ _) false]))
 
 ;; The result var of an earlier identical call, or -1.
 (define (opt-pure-call-table-find

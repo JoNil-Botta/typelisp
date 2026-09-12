@@ -5517,6 +5517,72 @@
           1)]
       [(compiler_optimize.ResultCompilerOptimizeVerify.Ok) 2])))
 
+(define (opt-sret-role-verify-function
+  [args : compiler_ir_types.CompilerIrCallArgs]
+  [result-ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "sret_role_verify")
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "storage"
+        (compiler_ast_types.AstType.U64)
+        0)
+      (compiler_ir_types.compiler-ir-param-seq-empty))
+    (compiler_ast_types.AstType.Unit)
+    2
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Call
+            1
+            (opt-test-symbol "sret_callee")
+            args
+            result-ty)
+          (compiler_ir_types.CompilerIrInstr.Return
+            compiler_ir_types.CompilerIrMaybeValue.No)))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-sret-role-rejected?
+  [args : compiler_ir_types.CompilerIrCallArgs]
+  [result-ty : compiler_ast_types.AstType]) : bool
+  (match (compiler_optimize.opt-verify-function
+    (opt-sret-role-verify-function args result-ty))
+    [(compiler_optimize.ResultCompilerOptimizeVerify.Err _) true]
+    [(compiler_optimize.ResultCompilerOptimizeVerify.Ok) false]))
+
+(test
+  optimizer-sret-role-verifier
+  (test.assert-true
+    (and
+      (compiler_optimize.opt-verify-ok?
+        (compiler_optimize.opt-verify-function
+          (opt-sret-role-verify-function
+            (compiler_ir_types.compiler-ir-call-args-sret-from-seq
+              (compiler_ir_types.compiler-ir-value-seq1
+                (compiler_ir_types.CompilerIrValue.Var 0))
+              0)
+            (compiler_ast_types.AstType.U64))))
+      (opt-sret-role-rejected?
+        (compiler_ir_types.compiler-ir-call-args-sret-from-seq
+          (compiler_ir_types.compiler-ir-value-seq1
+            (compiler_ir_types.CompilerIrValue.Var 0))
+          1)
+        (compiler_ast_types.AstType.U64))
+      (opt-sret-role-rejected?
+        (compiler_ir_types.compiler-ir-call-args-sret-from-seq
+          (compiler_ir_types.compiler-ir-value-seq1
+            (compiler_ir_types.CompilerIrValue.I64 0))
+          0)
+        (compiler_ast_types.AstType.U64))
+      (opt-sret-role-rejected?
+        (compiler_ir_types.compiler-ir-call-args-sret-from-seq
+          (compiler_ir_types.compiler-ir-value-seq1
+            (compiler_ir_types.CompilerIrValue.Var 0))
+          0)
+        (compiler_ast_types.AstType.F64)))
+    "sret role requires a live pointer variable, in-range index and pointer result"))
+
 (define (opt-indirect-call-def-is?
   [instr : compiler_ir_types.CompilerIrInstr]
   [want : i64]) : bool

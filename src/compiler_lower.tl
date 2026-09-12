@@ -28436,8 +28436,8 @@
               "lower: missing generated clone helper for "
               (tc_core.tc-nominal-name-id-display name-id)))))
       (match (lower-call-append-sret-arg
-        ctx
-        state
+        (lower-global-shared-view ctx)
+        (lower-global-shared-view state)
         (ir.compiler-ir-value-seq1 value)
         (lower-global-shared-view ty))
         [(ResultLowerArgs.Ok sret-state sret-values)
@@ -28456,7 +28456,11 @@
                       (ir.CompilerIrInstr.Call
                         var-id
                         call-name
-                        (ir.compiler-ir-call-args-from-seq sret-values)
+                        (lower-call-args-with-nominal-sret
+                          (lower-global-shared-view ctx)
+                          (lower-global-shared-view state)
+                          sret-values
+                          (lower-global-shared-view ty))
                         (lower-global-shared-view ty)))
                     (ir.CompilerIrValue.Var var-id)
                     ty)))])]
@@ -39862,10 +39866,11 @@
                           env
                           name-id
                           name)
-                        (ir.compiler-ir-call-args-from-seq
+                        (ir.compiler-ir-call-args-sret-from-seq
                           (ir.compiler-ir-value-seq-prepend
                             (lower-global-shared-view base)
-                            values))
+                            values)
+                          0)
                         (ast.AstType.U64))]
                     (lower-c-abi-finish-call-result
                       (lower-global-shared-view ctx)
@@ -40022,10 +40027,11 @@
                   (ir.CompilerIrInstr.CallIndirectC
                     var-id
                     func-value
-                    (ir.compiler-ir-call-args-from-seq
+                    (ir.compiler-ir-call-args-sret-from-seq
                       (ir.compiler-ir-value-seq-prepend
                         (lower-global-shared-view base)
-                        values))
+                        values)
+                      0)
                     (ast.AstType.U64))]
                 (lower-c-abi-finish-call-result
                   (lower-global-shared-view ctx)
@@ -40124,6 +40130,26 @@
       [(ResultLowerSize.Err message)
         (ResultLowerArgs.Err (box (lower-diagnostic message)))])
     (ResultLowerArgs.Ok state values)))
+
+;; Keep the ownership role on the IR argument carrier. The ABI still sees the
+;; same physical values, but colouring no longer has to guess from position.
+(define (lower-call-args-with-nominal-sret
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [values : ir.CompilerIrValueSeq]
+  [result-ty : ast.AstType]) : ir.CompilerIrCallArgs
+  (if (and
+    (lower-type-inline-struct-or-enum?
+      (lower-global-shared-view ctx)
+      (lower-global-shared-view result-ty))
+    (lower-inline-aggregate-abi-copy-needed?
+      (lower-global-shared-view ctx)
+      (lower-global-shared-view state)
+      (lower-global-shared-view result-ty)))
+    (let
+      [index : i64 (- values.len 1)]
+      (ir.compiler-ir-call-args-sret-from-seq values index))
+    (ir.compiler-ir-call-args-from-seq values)))
 
 (define (lower-value-seq-prepend-one
   [head : ir.CompilerIrValue]
@@ -40461,10 +40487,11 @@
                                     (ir.CompilerIrInstr.Call
                                       call-var
                                       callee
-                                      (ir.compiler-ir-call-args-from-seq
+                                      (ir.compiler-ir-call-args-sret-from-seq
                                         (lower-value-seq-prepend-one
                                           sret-pointer
-                                          physical-values))
+                                          physical-values)
+                                        0)
                                       (ast.AstType.U64))
                                     origin)]
                                 (if (>=
@@ -40505,8 +40532,11 @@
                                 (ir.CompilerIrInstr.Call
                                   call-var
                                   callee
-                                  (ir.compiler-ir-call-args-from-seq
-                                    call-values)
+                                  (lower-call-args-with-nominal-sret
+                                    (lower-global-shared-view ctx)
+                                    (lower-global-shared-view state)
+                                    call-values
+                                    (lower-global-shared-view result-ty))
                                   (lower-one-word-register-storage-type
                                     (lower-global-shared-view ctx)
                                     (lower-global-shared-view result-ty)))
@@ -40610,10 +40640,11 @@
                                   (ir.CompilerIrInstr.CallIndirect
                                     call-var
                                     func-value
-                                    (ir.compiler-ir-call-args-from-seq
+                                    (ir.compiler-ir-call-args-sret-from-seq
                                       (lower-value-seq-prepend-one
                                         sret-pointer
-                                        physical-values))
+                                        physical-values)
+                                      0)
                                     (ast.AstType.U64))
                                   origin)]
                               (if (>=
@@ -40694,7 +40725,11 @@
               (ir.CompilerIrInstr.Call
                 var-id
                 callee
-                (ir.compiler-ir-call-args-from-seq sret-values)
+                (lower-call-args-with-nominal-sret
+                  (lower-global-shared-view ctx)
+                  (lower-global-shared-view state)
+                  sret-values
+                  (lower-global-shared-view result-ty))
                 result-ir-ty)]
             (ResultLowerExpr.Ok
               (LowerExpr.Expr
@@ -41042,7 +41077,11 @@
               (ir.CompilerIrInstr.CallIndirect
                 var-id
                 func-value
-                (ir.compiler-ir-call-args-from-seq sret-values)
+                (lower-call-args-with-nominal-sret
+                  (lower-global-shared-view ctx)
+                  (lower-global-shared-view state)
+                  sret-values
+                  (lower-global-shared-view result-ty))
                 result-ir-ty)]
             (ResultLowerExpr.Ok
               (LowerExpr.Expr

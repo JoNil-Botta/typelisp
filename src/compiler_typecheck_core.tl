@@ -52291,7 +52291,7 @@
         (ast.ast-extern-metadata-box-shared-view metadata))
         [(ast.AstImportedSpmdMetadata.No)
           (ResultTcSpmdInlineHelper.Ok (TcSpmdInlineHelper.No))]
-        [(ast.AstImportedSpmdMetadata.Package _ callables)
+        [(ast.AstImportedSpmdMetadata.Package _ _ _ callables)
           (ResultTcSpmdInlineHelper.Ok
             (TcSpmdInlineHelper.Imported ty callables))])]
     [(ast.AstDecl.Unsafe inner-box)

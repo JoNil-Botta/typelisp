@@ -697,6 +697,227 @@
             (= (ast.ast-source-span-end-col found) 9))]
         [(compiler_ir_types.CompilerMaybeSourceSpan.No) false]))))
 
+(define (compiler-ir-smoke-spmd-catalog-origin-ok?) : bool
+  (let
+    [args : compiler_ir_types.CompilerIrSpmdCallArgSeq
+      (compiler-ir-smoke-spmd-call-args)]
+    [callee : i64 (compiler-ir-smoke-symbol-id "helper")]
+    [selected : compiler_ir_types.CompilerIrImportedSpmdCall
+      (compiler_ir_types.CompilerIrImportedSpmdCall
+        "fixture"
+        "1.0.0"
+        "fixture/helper"
+        "(-> i64 i64 i64)"
+        "spmd-call-v1"
+        "avx512"
+        8
+        "uv"
+        "v"
+        -1
+        "_tl_helper")]
+    [call : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.ir-instr-spmd-call-with-origin
+        callee
+        compiler_ir_types.CompilerIrSpmdBackend.Avx512
+        8
+        (compiler_ir_types.CompilerIrValue.Var 20)
+        args
+        (compiler_ir_types.CompilerIrSpmdCallResult.Value
+          6
+          compiler_ir_types.CompilerIrSpmdValueClass.Varying
+          (ast.AstType.I64))
+        (compiler_ir_types.CompilerIrSpmdCallOrigin.Imported (box selected)))]
+    [cloned : compiler_ir_types.CompilerIrInstr
+      (compiler_ir_types.compiler-ir-clone-instr
+        (ast.ast-node-pool-reader-context-current)
+        (compiler_ir_types.compiler-ir-global-shared-view call))]
+    (and
+      (match call
+        [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
+          (string.eq
+            (compiler_ir_types.compiler-ir-spmd-call-descriptor-error
+              (compiler_ir_types.compiler-ir-box-shared-view payload-box))
+            "")]
+        [_ false])
+      (match cloned
+        [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
+          (match (compiler_ir_types.compiler-ir-box-field-shared-view
+            payload-box
+            origin)
+            [(compiler_ir_types.CompilerIrSpmdCallOrigin.Imported origin-box)
+              (let
+                [origin : compiler_ir_types.CompilerIrImportedSpmdCall
+                  (compiler_ir_types.compiler-ir-box-shared-view origin-box)]
+                (and
+                  (string.eq origin.package-owner "fixture")
+                  (string.eq origin.package-version "1.0.0")
+                  (string.eq origin.link-symbol "_tl_helper")))]
+            [(compiler_ir_types.CompilerIrSpmdCallOrigin.Private) false])]
+        [_ false])
+      (>
+        (string.string-length
+          (compiler_ir_types.compiler-ir-spmd-call-descriptor-error
+            (compiler_ir_types.CompilerIrInstrSpmdCallPayload
+              callee
+              compiler_ir_types.CompilerIrSpmdBackend.Scalar
+              8
+              (compiler_ir_types.CompilerIrValue.Var 20)
+              (compiler-ir-smoke-spmd-call-args)
+              (compiler_ir_types.CompilerIrSpmdCallResult.Value
+                6
+                compiler_ir_types.CompilerIrSpmdValueClass.Varying
+                (ast.AstType.I64))
+              (compiler_ir_types.CompilerIrSpmdCallOrigin.Imported
+                (box
+                  (compiler_ir_types.CompilerIrImportedSpmdCall
+                    "fixture"
+                    "1.0.0"
+                    "fixture/helper"
+                    "(-> i64 i64 i64)"
+                    "spmd-call-v1"
+                    "avx512"
+                    8
+                    "uv"
+                    "v"
+                    -1
+                    "_tl_helper"))))))
+        0))))
+
+(define (compiler-ir-smoke-spmd-catalog-invalid?
+  [signature : String]
+  [abi : String]
+  [args-code : String]
+  [result-code : String]
+  [index-param : i64]
+  [link-symbol : String]) : bool
+  (>
+    (string.string-length
+      (compiler_ir_types.compiler-ir-spmd-call-descriptor-error
+        (compiler_ir_types.CompilerIrInstrSpmdCallPayload
+          (compiler-ir-smoke-symbol-id "helper")
+          compiler_ir_types.CompilerIrSpmdBackend.Avx512
+          8
+          (compiler_ir_types.CompilerIrValue.Var 20)
+          (compiler-ir-smoke-spmd-call-args)
+          (compiler_ir_types.CompilerIrSpmdCallResult.Value
+            6
+            compiler_ir_types.CompilerIrSpmdValueClass.Varying
+            (ast.AstType.I64))
+          (compiler_ir_types.CompilerIrSpmdCallOrigin.Imported
+            (box
+              (compiler_ir_types.CompilerIrImportedSpmdCall
+                "fixture"
+                "1.0.0"
+                "fixture/helper"
+                signature
+                abi
+                "avx512"
+                8
+                args-code
+                result-code
+                index-param
+                link-symbol))))))
+    0))
+
+(define (compiler-ir-smoke-spmd-catalog-varying-index-ok?) : bool
+  (let
+    [payload : compiler_ir_types.CompilerIrInstrSpmdCallPayload
+      (compiler_ir_types.CompilerIrInstrSpmdCallPayload
+        (compiler-ir-smoke-symbol-id "helper")
+        compiler_ir_types.CompilerIrSpmdBackend.Avx512
+        8
+        (compiler_ir_types.CompilerIrValue.Var 20)
+        (compiler-ir-smoke-spmd-call-args)
+        (compiler_ir_types.CompilerIrSpmdCallResult.Value
+          6
+          compiler_ir_types.CompilerIrSpmdValueClass.Varying
+          (ast.AstType.I64))
+        (compiler_ir_types.CompilerIrSpmdCallOrigin.Imported
+          (box
+            (compiler_ir_types.CompilerIrImportedSpmdCall
+              "fixture"
+              "1.0.0"
+              "fixture/helper"
+              "(-> i64 i64 i64)"
+              "spmd-call-v1"
+              "avx512"
+              8
+              "uv"
+              "v"
+              1
+              "_tl_helper"))))]
+    (string.eq
+      (compiler_ir_types.compiler-ir-spmd-call-descriptor-error payload)
+      "")))
+
+(define (compiler-ir-smoke-spmd-catalog-mismatches-ok?) : bool
+  (and
+    (compiler-ir-smoke-spmd-catalog-varying-index-ok?)
+    (compiler-ir-smoke-spmd-catalog-invalid?
+      "(-> i64 i64 i64)"
+      "spmd-call-v1"
+      "uv"
+      "v"
+      0
+      "_tl_helper")
+    (compiler-ir-smoke-spmd-catalog-invalid?
+      "(-> i64 i64 u64)"
+      "spmd-call-v1"
+      "uv"
+      "v"
+      -1
+      "_tl_helper")
+    (compiler-ir-smoke-spmd-catalog-invalid?
+      "(-> i64 i64 i64)"
+      "spmd-call-v2"
+      "uv"
+      "v"
+      -1
+      "_tl_helper")
+    (compiler-ir-smoke-spmd-catalog-invalid?
+      "(-> i64 i64 i64)"
+      "spmd-call-v1"
+      "uu"
+      "v"
+      -1
+      "_tl_helper")
+    (compiler-ir-smoke-spmd-catalog-invalid?
+      "(-> i64 i64 i64)"
+      "spmd-call-v1"
+      "uv"
+      "u"
+      -1
+      "_tl_helper")
+    (compiler-ir-smoke-spmd-catalog-invalid?
+      "(-> i64 i64 i64)"
+      "spmd-call-v1"
+      "uv"
+      "v"
+      2
+      "_tl_helper")
+    (compiler-ir-smoke-spmd-catalog-invalid?
+      "(-> i64 i64 i64)"
+      "spmd-call-v1"
+      "uv"
+      "v"
+      0
+      "_tl_helper")
+    (compiler-ir-smoke-spmd-catalog-invalid?
+      "(-> i64 i64 i64)"
+      "spmd-call-v1"
+      "uv"
+      "v"
+      -1
+      "_tl_other")
+    (not
+      (compiler-ir-smoke-spmd-catalog-invalid?
+        "(-> i64 i64 i64)"
+        "spmd-call-v1"
+        "uv"
+        "v"
+        1
+        "_tl_helper"))))
+
 (define (compiler-ir-smoke-owned-capability-ok?) : bool
   (let
     [root : compiler_ir_types.CompilerIrInstr
@@ -1534,6 +1755,8 @@
     (unless (compiler-ir-smoke-function-seq-roundtrip-ok?) (return 1))
     (unless (compiler-ir-smoke-reversed-compaction-ok?) (return 2))
     (unless (compiler-ir-smoke-spmd-call-shape-ok?) (return 3))
+    (unless (compiler-ir-smoke-spmd-catalog-origin-ok?) (return 22))
+    (unless (compiler-ir-smoke-spmd-catalog-mismatches-ok?) (return 23))
     (unless (compiler-ir-smoke-dense-function-params-ok?) (return 4))
     (unless (compiler-ir-smoke-global-extern-seq-roundtrip-ok?) (return 5))
     (unless (compiler-ir-smoke-access-helpers-ok?) (return 6))

@@ -641,9 +641,11 @@
 
 (defenum AstImportedSpmdMetadata
   (No)
-  ;; Canonical helper name plus every TLCI callable record having that name.
+  ;; Validated dependency identity, canonical helper name, and every TLCI
+  ;; callable record having that name. Keep identity as owned strings rather
+  ;; than adding otherwise-unused names to the package surface identity table.
   ;; An empty list marks a package-owned extern for which no record exists.
-  (Package ci.InternId (Box AstImportedSpmdCallableList)))
+  (Package String String ci.InternId (Box AstImportedSpmdCallableList)))
 
 ;; Export and callable metadata are mutually exclusive. Keep the common `No`
 ;; and export cases inline at the old `AstFnExport` footprint, while boxing the
@@ -6185,8 +6187,10 @@
 (define (ast-imported-spmd-metadata-clone [metadata : AstImportedSpmdMetadata]) : AstImportedSpmdMetadata
   (match metadata
     [(AstImportedSpmdMetadata.No) AstImportedSpmdMetadata.No]
-    [(AstImportedSpmdMetadata.Package name callables)
+    [(AstImportedSpmdMetadata.Package owner version name callables)
       (AstImportedSpmdMetadata.Package
+        (string.copy owner)
+        (string.copy version)
         name
         (box (ast-imported-spmd-callable-list-clone (& (deref callables)))))]))
 
@@ -11387,8 +11391,12 @@
         (&mut callables)
         (AstImportedSpmdCallable signature specializations))
       (match (ast-imported-spmd-metadata-clone
-        (AstImportedSpmdMetadata.Package name-id (box callables)))
-        [(AstImportedSpmdMetadata.Package name copied-callables)
+        (AstImportedSpmdMetadata.Package
+          "fixture"
+          "1.0.0"
+          name-id
+          (box callables)))
+        [(AstImportedSpmdMetadata.Package owner version name copied-callables)
           (let
             [copied : AstImportedSpmdCallableList
               (ast-imported-spmd-callable-list-box-shared-view copied-callables)]
@@ -11405,6 +11413,8 @@
                 0
                 (ast-imported-spmd-specialization-fallback))]
             (and
+              (string.eq owner "fixture")
+              (string.eq version "1.0.0")
               (ci.intern-id-eq? name name-id)
               (= (ast-imported-spmd-callable-list-len (& copied)) 1)
               (ci.intern-id-eq? callable.signature signature)

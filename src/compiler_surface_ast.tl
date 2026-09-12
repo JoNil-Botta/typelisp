@@ -757,7 +757,7 @@
     [metadata : ast.AstImportedSpmdMetadata]) : unit
     (match metadata
       [(ast.AstImportedSpmdMetadata.No) (codec.surface-ast-write-i64! out 0)]
-      [(ast.AstImportedSpmdMetadata.Package name callables)
+      [(ast.AstImportedSpmdMetadata.Package _ _ name callables)
         (begin
           (codec.surface-ast-write-i64! out 1)
           (codec.surface-ast-write-name! out context (ci.intern-id-value name))
@@ -773,9 +773,19 @@
     (cond
       [(= tag 0) ast.AstImportedSpmdMetadata.No]
       [(= tag 1)
-        (ast.AstImportedSpmdMetadata.Package
-          (ci.intern-id-from-renderable (codec.surface-ast-read-name! reader))
-          (box (surface-ast-read-imported-spmd-callable-list! reader)))]
+        (let
+          [name : ci.InternId
+            (ci.intern-id-from-renderable (codec.surface-ast-read-name! reader))]
+          [callables : ast.AstImportedSpmdCallableList
+            (surface-ast-read-imported-spmd-callable-list! reader)]
+          (begin
+            ;; Schema 8 carries the callable rows but not the validated owner
+            ;; and version. Re-parse this source rather than hydrate an origin
+            ;; that cannot satisfy the imported IR descriptor contract.
+            (codec.surface-ast-reader-fail!
+              reader
+              "surface ast: imported SPMD metadata needs source validation")
+            (ast.AstImportedSpmdMetadata.Package "" "" name (box callables))))]
       [else
         (begin
           (codec.surface-ast-reader-fail!

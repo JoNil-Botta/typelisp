@@ -2,7 +2,8 @@
 set -eu
 
 # verify-fs-rooted-linux.sh - adversarial native checks for the private Linux
-# rooted staging and publication backend. refs #7221, #7409, #7550
+# rooted staging, publication, and reusable-read backend. refs #7221, #7409,
+# #7550, #7653
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -37,6 +38,10 @@ command -v as >/dev/null 2>&1 || {
 }
 command -v ld >/dev/null 2>&1 || {
     echo "rooted filesystem verification requires ld" >&2
+    exit 1
+}
+command -v truncate >/dev/null 2>&1 || {
+    echo "rooted filesystem verification requires truncate" >&2
     exit 1
 }
 
@@ -80,6 +85,48 @@ run_expect() {
     fi
     [ ! -s "$_stdout" ] || fail "$_label wrote unexpected stdout"
     [ ! -s "$_stderr" ] || fail "$_label wrote unexpected stderr"
+}
+
+run_reuse_expect() {
+    _label=$1
+    _component=$2
+    _expected=$3
+    _stdout="$WORKDIR/$_label.stdout"
+    _stderr="$WORKDIR/$_label.stderr"
+    set +e
+    "$READ_REUSE_BIN" reuse "$WORKDIR/read-reuse-data" \
+        "$_component" "$_expected" > "$_stdout" 2> "$_stderr"
+    _actual=$?
+    set -e
+    [ "$_actual" -eq 42 ] || {
+        echo "FAIL: $_label expected exit 42, got $_actual" >&2
+        [ ! -s "$_stdout" ] || sed 's/^/  stdout: /' "$_stdout" >&2
+        [ ! -s "$_stderr" ] || sed 's/^/  stderr: /' "$_stderr" >&2
+        exit 1
+    }
+    [ ! -s "$_stderr" ] || fail "$_label wrote unexpected stderr"
+    _extra=
+    IFS=' ' read -r _mode _size _reads _consumed _total _live _peak \
+        _elapsed _frequency _extra < "$_stdout" ||
+        fail "$_label wrote a malformed measurement"
+    [ -z "$_extra" ] || fail "$_label wrote extra measurement fields"
+    [ "$_mode" = reuse ] || fail "$_label reported mode $_mode"
+    [ "$_size" -eq "$_expected" ] || fail "$_label reported size $_size"
+    [ "$_consumed" -eq "$_expected" ] ||
+        fail "$_label consumed $_consumed bytes"
+    [ "$_total" -eq 0 ] || fail "$_label allocated $_total bytes"
+    [ "$_live" -eq 0 ] || fail "$_label retained $_live bytes"
+    [ "$_peak" -eq 0 ] ||
+        fail "$_label raised peak live bytes by $_peak"
+    _expected_reads=$(((_expected / 1048576) + 1))
+    [ "$_reads" -eq "$_expected_reads" ] ||
+        fail "$_label used $_reads reads, expected $_expected_reads"
+    [ "$_elapsed" -gt 0 ] || fail "$_label reported a non-positive duration"
+    [ "$_frequency" -gt 0 ] ||
+        fail "$_label reported an invalid tick frequency"
+    [ "$(wc -l < "$_stdout")" -eq 1 ] ||
+        fail "$_label wrote extra measurement rows"
+    echo "[fs-rooted-linux] $_label: $_reads reads, 0 allocated bytes"
 }
 
 assert_mode() {
@@ -133,6 +180,36 @@ echo "[fs-rooted-linux] compile rooted directory-reopen coverage"
     fail "directory-reopen fixture compile failed"
 as "$REOPEN_DIRECTORY_ASM" -o "$REOPEN_DIRECTORY_OBJ"
 ld "$REOPEN_DIRECTORY_OBJ" -o "$REOPEN_DIRECTORY_BIN" -e _tl_start
+
+READ_INTO_SOURCE="$ROOT/tests/integration/fs_rooted_linux_read_into.tl"
+READ_INTO_ASM="$WORKDIR/read-into.s"
+READ_INTO_OBJ="$WORKDIR/read-into.o"
+READ_INTO_BIN="$WORKDIR/read-into"
+
+echo "[fs-rooted-linux] compile caller-owned read contract coverage"
+"$COMPILER" compile "$READ_INTO_SOURCE" -o "$READ_INTO_ASM" \
+    --target linux-x86_64 --backend-mode scalar \
+    --cfg fs-rooted-linux-test-hooks --stdlib-root "$ROOT/stdlib" \
+    > "$WORKDIR/read-into-compile.stdout" \
+    2> "$WORKDIR/read-into-compile.stderr" ||
+    fail "caller-owned read fixture compile failed"
+as "$READ_INTO_ASM" -o "$READ_INTO_OBJ"
+ld "$READ_INTO_OBJ" -o "$READ_INTO_BIN" -e _tl_start
+
+READ_REUSE_SOURCE="$ROOT/tests/integration/fs_rooted_linux_read_reuse.tl"
+READ_REUSE_ASM="$WORKDIR/read-reuse.s"
+READ_REUSE_OBJ="$WORKDIR/read-reuse.o"
+READ_REUSE_BIN="$WORKDIR/read-reuse"
+
+echo "[fs-rooted-linux] compile reusable-read allocation coverage"
+"$COMPILER" compile "$READ_REUSE_SOURCE" -o "$READ_REUSE_ASM" \
+    --target linux-x86_64 --backend-mode scalar \
+    --cfg fs-rooted-linux-test-hooks --stdlib-root "$ROOT/stdlib" \
+    > "$WORKDIR/read-reuse-compile.stdout" \
+    2> "$WORKDIR/read-reuse-compile.stderr" ||
+    fail "reusable-read allocation fixture compile failed"
+as "$READ_REUSE_ASM" -o "$READ_REUSE_OBJ"
+ld "$READ_REUSE_OBJ" -o "$READ_REUSE_BIN" -e _tl_start
 
 mkdir -p "$WORKDIR/happy"
 run_expect happy 42 "$NATIVE_BIN" happy "$WORKDIR/happy"
@@ -363,6 +440,17 @@ run_expect publication-faults 42 \
     fail "injected unlink failure removed its target"
 [ -d "$WORKDIR/publication-faults/rmdir-fault" ] ||
     fail "injected rmdir failure removed its target"
+
+mkdir -p "$WORKDIR/read-into-data"
+run_expect caller-owned-read 42 "$READ_INTO_BIN" "$WORKDIR/read-into-data"
+
+mkdir -p "$WORKDIR/read-reuse-data"
+truncate -s 16777216 "$WORKDIR/read-reuse-data/size-16m.bin"
+truncate -s 67108864 "$WORKDIR/read-reuse-data/size-64m.bin"
+truncate -s 268435456 "$WORKDIR/read-reuse-data/size-256m.bin"
+run_reuse_expect reusable-read-16m size-16m.bin 16777216
+run_reuse_expect reusable-read-64m size-64m.bin 67108864
+run_reuse_expect reusable-read-256m size-256m.bin 268435456
 
 # A privileged runner can install a real bind mount during the deterministic
 # post-mkdir pause. Unprivileged CI reports the limitation instead of silently

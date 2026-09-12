@@ -16,6 +16,9 @@
 ;# state pointer; safe callers cannot copy or close the raw descriptor. Explicit
 ;# finish/close functions report close failures, while lexical cleanup closes
 ;# still-live descriptors on recoverable early exits.
+;# `linux-rooted-read-file-into!` accepts an exclusive initialized byte view so
+;# a read loop can retain one caller-owned buffer and receive only scalar
+;# operation/count/EOF metadata without allocating per read.
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
@@ -65,6 +68,14 @@
 (defstruct FsLinuxRootedReadResult
   (operation FsLinuxRootedResult)
   (bytes byte_buf.ByteBuf)
+  (eof bool)
+  (short bool))
+
+;: Scalar outcome from reading into caller-owned initialized mutable bytes.
+;: `count` is the exact newly read prefix length and is zero on every failure.
+(defstruct FsLinuxRootedReadIntoResult
+  (operation FsLinuxRootedResult)
+  (count i64)
   (eof bool)
   (short bool))
 
@@ -135,6 +146,36 @@
 (define (linux-rooted-read-short? [read : (& read FsLinuxRootedReadResult)]) : bool
   read.short)
 
+;: Operation status returned by one caller-owned-buffer read.
+(define (linux-rooted-read-into-operation
+  [read : (& read FsLinuxRootedReadIntoResult)]) : FsLinuxRootedResult
+  (clone read.operation))
+
+;: True when a caller-owned-buffer read succeeded. This observes the scalar
+;: operation tag in place so hot read loops need not clone the typed outcome.
+(define (linux-rooted-read-into-ok?
+  [read : (& read FsLinuxRootedReadIntoResult)]) : bool
+  (match read.operation
+    [(LinuxRootedOk) true]
+    [_ false]))
+
+;: Exact initialized prefix written by one successful caller-owned-buffer read.
+;: Failures and zero-length requests return zero.
+(define (linux-rooted-read-into-count
+  [read : (& read FsLinuxRootedReadIntoResult)]) : i64
+  read.count)
+
+;: True only when a positive caller-owned-buffer request reached EOF.
+(define (linux-rooted-read-into-eof?
+  [read : (& read FsLinuxRootedReadIntoResult)]) : bool
+  read.eof)
+
+;: True when a successful positive caller-owned-buffer read made progress but
+;: returned fewer bytes than requested.
+(define (linux-rooted-read-into-short?
+  [read : (& read FsLinuxRootedReadIntoResult)]) : bool
+  read.short)
+
 ;: Linux x86-64 syscall and ABI constants. Keep the value tests next to the
 ;: representation tests below so changing a target constant is deliberate.
 (define fs-linux-rooted-syscall-read : i64
@@ -196,7 +237,7 @@
 (define fs-linux-rooted-component-max-bytes : i64
   255)
 
-;: Largest allocation accepted by one streaming read call.
+;: Largest byte count accepted by one bounded streaming read call.
 (define fs-linux-rooted-read-max-bytes : i64
   1048576)
 
@@ -1889,6 +1930,73 @@
     (byte_buf.from-array (__tl_make-array u8 0))
     eof
     false))
+
+;: Construct a scalar caller-owned-buffer read outcome with no valid new bytes.
+(define (linux-rooted-empty-read-into-result
+  [operation : FsLinuxRootedResult]
+  [eof : bool]) : FsLinuxRootedReadIntoResult
+  (FsLinuxRootedReadIntoResult operation 0 eof false))
+
+;: Read at most one MiB into an initialized caller-owned mutable byte range.
+;:
+;: `count` is checked against both the fixed request ceiling and the borrowed
+;: view before descriptor access or I/O. On success exactly `[0, result.count)`
+;: contains newly read bytes; the initialized suffix remains outside the valid
+;: result prefix. A positive short read is successful progress, a zero-byte
+;: positive read is EOF, and a zero request is successful without claiming
+;: EOF. On failure `result.count` is zero, so no buffer prefix is exposed as
+;: newly read. The mutable borrow ends with the call and no pointer escapes.
+(define (linux-rooted-read-file-into!
+  [file : (&mut file FsLinuxRootedReadFile)]
+  [out : (&mut out bytes)]
+  [count : i64]
+  [cancel-check : (-> bool)]) : FsLinuxRootedReadIntoResult
+  (unsafe
+    (let
+      [length : i64 (byte_buf.bytes-mut-length out)]
+      (cond
+        [(or
+            (< count 0)
+            (> count fs-linux-rooted-read-max-bytes)
+            (> count length))
+          (linux-rooted-empty-read-into-result LinuxRootedInvalidLength false)]
+        [else
+          (let
+            [state : FsLinuxRootedHandleState
+              (linux-rooted-state-read file.state)]
+            (cond
+              [(or (< state.fd 0) (not (linux-rooted-result-ok? state.result)))
+                (linux-rooted-empty-read-into-result LinuxRootedClosed false)]
+              [(cancel-check)
+                (linux-rooted-empty-read-into-result LinuxRootedCancelled false)]
+              [(= count 0)
+                (linux-rooted-empty-read-into-result LinuxRootedOk false)]
+              [else
+                (let
+                  [raw : i64 -4]
+                  (begin
+                    (while (and (= raw -4) (not (cancel-check)))
+                      (set!
+                        raw
+                        (linux-rooted-raw-read
+                          state.fd
+                          (byte_buf.bytes-mut-data out)
+                          count)))
+                    (cond
+                      [(>= raw 0)
+                        (FsLinuxRootedReadIntoResult
+                          LinuxRootedOk
+                          raw
+                          (= raw 0)
+                          (and (> raw 0) (< raw count)))]
+                      [(or (= raw -4) (= raw -125))
+                        (linux-rooted-empty-read-into-result
+                          LinuxRootedCancelled
+                          false)]
+                      [else
+                        (linux-rooted-empty-read-into-result
+                          LinuxRootedReadFailure
+                          false)])))]))]))))
 
 ;: Read at most one MiB from a retained regular-file descriptor. EINTR retries
 ;: only while cancellation remains clear. Short success and EOF are explicit.

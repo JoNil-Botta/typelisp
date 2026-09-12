@@ -13082,6 +13082,60 @@
       0
       n)))
 
+;; FLAGS-1. `subq $1, %r` + `testq %r, %r` + `jge` is the counted-down loop
+;; latch IV-AFF leaves; the arithmetic set ZF and SF from the value the `test`
+;; reads, so the `test` goes and `jge` (SF = 0 once OF = 0) becomes `jns`; `jl`
+;; becomes `js`; `je`/`jne` keep their spelling. A branch that reads OF or CF
+;; (`jg`), a label between the writer and the `test`, or a `test` on another
+;; register keep the `test`.
+(define (compiler-backend-peephole-flags-branch-case [body : String]) : String
+  (compiler_backend.compiler-backend-peephole-asm-once
+    (str_cat.str-cat ".text\n.globl f\nf:\n" body "    ret\n")))
+
+(define (compiler-backend-peephole-flags-branch-ok?) : bool
+  (let
+    [ge : String
+      (compiler-backend-peephole-flags-branch-case
+        "    subq $1, %rsi\n    testq %rsi, %rsi\n    jge .La\n    movq %rsi, %rax\n.La:\n")]
+    [lt : String
+      (compiler-backend-peephole-flags-branch-case
+        "    addq %rdx, %rcx\n    testq %rcx, %rcx\n    jl .Lb\n    movq %rcx, %rax\n.Lb:\n")]
+    [eq : String
+      (compiler-backend-peephole-flags-branch-case
+        "    xorq %rdx, %r9\n    testq %r9, %r9\n    jne .Lc\n    movq %r9, %rax\n.Lc:\n")]
+    [gt : String
+      (compiler-backend-peephole-flags-branch-case
+        "    subq $1, %rsi\n    testq %rsi, %rsi\n    jg .Ld\n    movq %rsi, %rax\n.Ld:\n")]
+    [label : String
+      (compiler-backend-peephole-flags-branch-case
+        "    subq $1, %rsi\n.Lm:\n    testq %rsi, %rsi\n    jge .Le\n    movq %rsi, %rax\n.Le:\n")]
+    [other : String
+      (compiler-backend-peephole-flags-branch-case
+        "    subq $1, %rsi\n    testq %rdi, %rdi\n    jge .Lf\n    movq %rsi, %rax\n.Lf:\n")]
+    (and
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view ge)
+        "    subq $1, %rsi\n    jns .La\n")
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view ge)
+          "testq"))
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view lt)
+        "    addq %rdx, %rcx\n    js .Lb\n")
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view eq)
+        "    xorq %rdx, %r9\n    jne .Lc\n")
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view gt)
+        "    testq %rsi, %rsi\n    jg .Ld\n")
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view label)
+        "    testq %rsi, %rsi\n    jge .Le\n")
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view other)
+        "    testq %rdi, %rdi\n    jge .Lf\n"))))
+
 ;; The grouped TextBuf path must preserve pairs that cross arbitrary physical
 ;; chunks, while splitting safely at the following function's `.globl` chunk.
 (define (compiler-backend-chunked-peephole-equivalent?) : bool
@@ -15186,6 +15240,7 @@ g:
     (compiler-backend-deadstore-sweep-win64-ok?)
     (compiler-backend-r10-dead-scan-long-gap-ok?)
     (compiler-backend-chunked-peephole-equivalent?)
+    (compiler-backend-peephole-flags-branch-ok?)
     (compiler-backend-streamed-final-output-equivalent?)
     (compiler-backend-streamed-final-batch-equivalent?)
     true

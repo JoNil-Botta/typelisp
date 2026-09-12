@@ -97642,7 +97642,11 @@
   (live (__tl_dyn-array i64))
   (len i64)
   (rmw-cands (__tl_dyn-array i64))
-  (rmw-cand-len i64))
+  (rmw-cand-len i64)
+  ;; FLAGS-1: the tracked register the last pushed line wrote with an
+  ;; arithmetic that sets ZF and SF from its result (sub/add/and/or/xor and
+  ;; the one-operand inc/dec/neg), or -1 after any other line.
+  (flags-reg i64))
 
 (define (compiler-backend-peephole-records-publish!
   [walk : CompilerBackendPeepholeWalkState]) : unit
@@ -97872,11 +97876,185 @@
 
 ;; Append one surviving line, compacted. Records are live until the sweep marks
 ;; them dead, and the arrays are never rebuilt.
+;; --- FLAGS-1: a test of the register an arithmetic just wrote --------------
+;;
+;;     subq $1, %r        (or addq/andq/orq/xorq ..., %r; incq/decq/negq %r)
+;;     testq %r, %r
+;;     jcc L
+;;
+;; The arithmetic already set ZF and SF from the very value the `test` reads,
+;; so the `test` is dead for a branch that reads only those two flags: je/jne
+;; (ZF) and js/jns (SF) stay as they are, and `jge`/`jl` -- which after a
+;; `test` (OF = 0) mean SF = 0 / SF = 1 -- become `jns`/`js`, since after an
+;; add or sub OF may be set. `and`/`or`/`xor` clear OF and CF exactly like
+;; `test`, but the branch set is kept to the flag-exact four for every writer.
+;; IV-AFF's counted-down loops end in exactly this triple (`sub $1; test;
+;; jge`), 5.7M instructions of ssa_construct; clang emits `dec; jns`.
+;;
+;; Adjacency is what makes "nothing wrote flags in between" true: the writer
+;; is the line pushed immediately before the `test` (records-push! notes its
+;; register; any other line, a label included, clears the note), and the
+;; branch is the line after the `test`. The rewrite drops the `test` and
+;; keeps the branch, respelled when it must be.
+(define (compiler-backend-peephole-flags-writer-desc?
+  [line : CompilerBackendPeepholeLine]) : bool
+  (let
+    [ml : i64
+      (compiler-backend-peephole-desc-mnemonic-len
+        (compiler-backend-global-shared-view line))]
+    (cond
+      [(= ml 4)
+        (or
+          (compiler-backend-peephole-line-mnemonic-eq?
+            (compiler-backend-global-shared-view line)
+            "subq")
+          (compiler-backend-peephole-line-mnemonic-eq?
+            (compiler-backend-global-shared-view line)
+            "addq")
+          (compiler-backend-peephole-line-mnemonic-eq?
+            (compiler-backend-global-shared-view line)
+            "andq")
+          (compiler-backend-peephole-line-mnemonic-eq?
+            (compiler-backend-global-shared-view line)
+            "xorq")
+          (compiler-backend-peephole-line-mnemonic-eq?
+            (compiler-backend-global-shared-view line)
+            "incq")
+          (compiler-backend-peephole-line-mnemonic-eq?
+            (compiler-backend-global-shared-view line)
+            "decq")
+          (compiler-backend-peephole-line-mnemonic-eq?
+            (compiler-backend-global-shared-view line)
+            "negq"))]
+      [(= ml 3)
+        (compiler-backend-peephole-line-mnemonic-eq?
+          (compiler-backend-global-shared-view line)
+          "orq")]
+      [else false])))
+
+;; The register `line` leaves ZF/SF for, or -1.
+(define (compiler-backend-peephole-flags-next-desc
+  [line : CompilerBackendPeepholeLine]) : i64
+  (if (compiler-backend-peephole-flags-writer-desc?
+    (compiler-backend-global-shared-view line))
+    (compiler-backend-peephole-desc-last-reg
+      (compiler-backend-global-shared-view line))
+    (- 0 1)))
+
+;; `pending` is `testq %r, %r` on the register the previous line wrote
+;; (flags-reg), and `next` is a branch on ZF or SF alone.
+(define (compiler-backend-peephole-flags-branch-desc?
+  [flags-reg : i64]
+  [pending : CompilerBackendPeepholeLine]
+  [next : CompilerBackendPeepholeLine]) : bool
+  (if (or
+    (< flags-reg 0)
+    (not
+      (compiler-backend-peephole-line-mnemonic-eq?
+        (compiler-backend-global-shared-view pending)
+        "testq"))
+    (not
+      (or
+        (compiler-backend-peephole-line-mnemonic-eq?
+          (compiler-backend-global-shared-view next)
+          "je")
+        (compiler-backend-peephole-line-mnemonic-eq?
+          (compiler-backend-global-shared-view next)
+          "jne")
+        (compiler-backend-peephole-line-mnemonic-eq?
+          (compiler-backend-global-shared-view next)
+          "js")
+        (compiler-backend-peephole-line-mnemonic-eq?
+          (compiler-backend-global-shared-view next)
+          "jns")
+        (compiler-backend-peephole-line-mnemonic-eq?
+          (compiler-backend-global-shared-view next)
+          "jge")
+        (compiler-backend-peephole-line-mnemonic-eq?
+          (compiler-backend-global-shared-view next)
+          "jl"))))
+    false
+    (let
+      [pd : (Ptr u8) pending.data]
+      [pms : i64
+        (compiler-backend-peephole-desc-mnemonic-start
+          (compiler-backend-global-shared-view pending))]
+      [pmlen : i64
+        (compiler-backend-peephole-desc-mnemonic-len
+          (compiler-backend-global-shared-view pending))]
+      [pend : i64
+        (compiler-backend-peephole-desc-end
+          (compiler-backend-global-shared-view pending))]
+      [pops : i64
+        (compiler-backend-peephole-operand-start-range pd (+ pms pmlen) pend)]
+      [pcomma : i64
+        (compiler-backend-peephole-find-comma-space-range pd pops pend)]
+      ;; `test` writes no destination, so the parser records no register for
+      ;; it; the operand is read off the text here.
+      (and
+        (> pcomma pops)
+        (< (+ pcomma 2) pend)
+        (= (compiler-backend-peephole-byte-at pd pops) 37)
+        (= (compiler-backend-peephole-byte-at pd (+ pcomma 2)) 37)
+        (compiler-backend-peephole-ranges-eq?
+          pd
+          pops
+          pcomma
+          pd
+          (+ pcomma 2)
+          pend)
+        (=
+          (compiler-backend-peephole-last-operand-reg-index pd pops pend)
+          flags-reg)))))
+
+;; The branch line with `jge`/`jl` respelled `jns`/`js`; other branches as
+;; they are.
+(define (compiler-backend-peephole-flags-branch-line-desc
+  [next : CompilerBackendPeepholeLine]) : String
+  (let
+    [text : String
+      (compiler-backend-peephole-line-text
+        (compiler-backend-global-shared-view next))]
+    [start : i64
+      (compiler-backend-peephole-desc-start
+        (compiler-backend-global-shared-view next))]
+    [ms : i64
+      (-
+        (compiler-backend-peephole-desc-mnemonic-start
+          (compiler-backend-global-shared-view next))
+        start)]
+    [ml : i64
+      (compiler-backend-peephole-desc-mnemonic-len
+        (compiler-backend-global-shared-view next))]
+    [spelling : String
+      (cond
+        [(compiler-backend-peephole-line-mnemonic-eq?
+            (compiler-backend-global-shared-view next)
+            "jge")
+          "jns"]
+        [(compiler-backend-peephole-line-mnemonic-eq?
+            (compiler-backend-global-shared-view next)
+            "jl")
+          "js"]
+        [else ""])]
+    (if (= (string.string-length spelling) 0)
+      text
+      (str_cat.str-cat
+        (string.substring text 0 ms)
+        spelling
+        (string.substring
+          text
+          (+ ms ml)
+          (- (string.string-length text) (+ ms ml)))))))
+
 (define (compiler-backend-peephole-records-push!
   [walk : (&mut walk CompilerBackendPeepholeWalkState)]
   [line : CompilerBackendPeepholeLine]) : unit
   (let
     [index : i64 walk.len]
+    [flags-next : i64
+      (compiler-backend-peephole-flags-next-desc
+        (compiler-backend-global-shared-view line))]
     (begin
       ;; RMW-2 recognition rides here, on the descriptor and before the record
       ;; build consumes it. This mask is the whole per-line cost for a line that
@@ -97893,6 +98071,7 @@
         (array-ref walk.lines index)
         (compiler-backend-peephole-line-record line))
       (set! (array-ref walk.live index) 1)
+      (set! walk.flags-reg flags-next)
       (set! walk.len (+ index 1)))))
 
 ;; True iff the line [start,end) is a label (non-blank after leading spaces and
@@ -98289,187 +98468,194 @@
       (compiler-backend-global-shared-view pending)
       (compiler-backend-global-shared-view next)))
     2
-    (if (compiler-backend-peephole-desc-movq?
-      (compiler-backend-global-shared-view pending))
-      (if (compiler-backend-peephole-line-self-move-desc?
+    (if (compiler-backend-peephole-flags-branch-desc?
+      walk.flags-reg
+      (compiler-backend-global-shared-view pending)
+      (compiler-backend-global-shared-view next))
+      5
+      (if (compiler-backend-peephole-desc-movq?
         (compiler-backend-global-shared-view pending))
-        1
-        (if (compiler-backend-peephole-desc-movq?
-          (compiler-backend-global-shared-view next))
-          (let
-            [pd : (Ptr u8) pending.data]
-            [nd : (Ptr u8) next.data]
-            [pss : i64
-              (compiler-backend-peephole-desc-op-src-start
-                (compiler-backend-global-shared-view pending))]
-            [pse : i64
-              (compiler-backend-peephole-desc-op-src-end
-                (compiler-backend-global-shared-view pending))]
-            [pds : i64
-              (compiler-backend-peephole-desc-op-dst-start
-                (compiler-backend-global-shared-view pending))]
-            [pde : i64
-              (compiler-backend-peephole-desc-op-dst-end
-                (compiler-backend-global-shared-view pending))]
-            [nss : i64
-              (compiler-backend-peephole-desc-op-src-start
-                (compiler-backend-global-shared-view next))]
-            [nse : i64
-              (compiler-backend-peephole-desc-op-src-end
-                (compiler-backend-global-shared-view next))]
-            [nds : i64
-              (compiler-backend-peephole-desc-op-dst-start
-                (compiler-backend-global-shared-view next))]
-            [nde : i64
-              (compiler-backend-peephole-desc-op-dst-end
-                (compiler-backend-global-shared-view next))]
-            [psf : i64
-              (compiler-backend-peephole-desc-op-src-flags
-                (compiler-backend-global-shared-view pending))]
-            [pdf : i64
-              (compiler-backend-peephole-desc-op-dst-flags
-                (compiler-backend-global-shared-view pending))]
-            [nsf : i64
-              (compiler-backend-peephole-desc-op-src-flags
-                (compiler-backend-global-shared-view next))]
-            [ndf : i64
-              (compiler-backend-peephole-desc-op-dst-flags
-                (compiler-backend-global-shared-view next))]
-            (cond
-              [(and
-                  (compiler-backend-peephole-op-flag?
-                    psf
-                    compiler-backend-peephole-op-register-flag)
-                  (compiler-backend-peephole-op-flag?
-                    pdf
-                    compiler-backend-peephole-op-local-frame-flag)
-                  (compiler-backend-peephole-op-flag?
-                    nsf
-                    compiler-backend-peephole-op-register-flag)
-                  (compiler-backend-peephole-op-flag?
-                    ndf
-                    compiler-backend-peephole-op-local-frame-flag)
-                  (compiler-backend-peephole-ranges-eq? pd pds pde nd nds nde))
-                1]
-              [(and
-                  (not (= (bit-and psf 3) 0))
-                  (not (= (bit-and pdf 3) 0))
-                  (not (= (bit-and nsf 3) 0))
-                  (not (= (bit-and ndf 3) 0))
-                  (or
-                    (and
-                      (compiler-backend-peephole-ranges-eq?
-                        pd
-                        pss
-                        pse
-                        nd
-                        nss
-                        nse)
-                      (compiler-backend-peephole-ranges-eq?
-                        pd
-                        pds
-                        pde
-                        nd
-                        nds
-                        nde))
-                    (and
-                      (compiler-backend-peephole-ranges-eq?
-                        pd
-                        pds
-                        pde
-                        nd
-                        nss
-                        nse)
-                      (compiler-backend-peephole-ranges-eq?
-                        pd
-                        pss
-                        pse
-                        nd
-                        nds
-                        nde))))
-                2]
-              [(and
-                  (compiler-backend-peephole-op-flag?
-                    psf
-                    compiler-backend-peephole-op-register-flag)
-                  (compiler-backend-peephole-op-flag?
-                    pdf
-                    compiler-backend-peephole-op-local-frame-flag)
-                  (compiler-backend-peephole-op-flag?
-                    nsf
-                    compiler-backend-peephole-op-local-frame-flag)
-                  (compiler-backend-peephole-op-flag?
-                    ndf
-                    compiler-backend-peephole-op-register-flag)
-                  (compiler-backend-peephole-ranges-eq? pd pds pde nd nss nse))
-                3]
-              [(and
-                  (compiler-backend-peephole-op-flag?
-                    psf
-                    compiler-backend-peephole-op-register-flag)
-                  (not (compiler-backend-peephole-range-eq? pd pss pse "%r10"))
-                  (not (compiler-backend-peephole-range-eq? pd pss pse "%rbp"))
-                  (=
-                    (compiler-backend-peephole-desc-op-dst-reg
-                      (compiler-backend-global-shared-view pending))
-                    8)
-                  (compiler-backend-peephole-op-flag?
-                    nsf
-                    compiler-backend-peephole-op-r10-base-flag)
-                  (compiler-backend-peephole-op-flag?
-                    ndf
-                    compiler-backend-peephole-op-register-flag)
-                  (or
+        (if (compiler-backend-peephole-line-self-move-desc?
+          (compiler-backend-global-shared-view pending))
+          1
+          (if (compiler-backend-peephole-desc-movq?
+            (compiler-backend-global-shared-view next))
+            (let
+              [pd : (Ptr u8) pending.data]
+              [nd : (Ptr u8) next.data]
+              [pss : i64
+                (compiler-backend-peephole-desc-op-src-start
+                  (compiler-backend-global-shared-view pending))]
+              [pse : i64
+                (compiler-backend-peephole-desc-op-src-end
+                  (compiler-backend-global-shared-view pending))]
+              [pds : i64
+                (compiler-backend-peephole-desc-op-dst-start
+                  (compiler-backend-global-shared-view pending))]
+              [pde : i64
+                (compiler-backend-peephole-desc-op-dst-end
+                  (compiler-backend-global-shared-view pending))]
+              [nss : i64
+                (compiler-backend-peephole-desc-op-src-start
+                  (compiler-backend-global-shared-view next))]
+              [nse : i64
+                (compiler-backend-peephole-desc-op-src-end
+                  (compiler-backend-global-shared-view next))]
+              [nds : i64
+                (compiler-backend-peephole-desc-op-dst-start
+                  (compiler-backend-global-shared-view next))]
+              [nde : i64
+                (compiler-backend-peephole-desc-op-dst-end
+                  (compiler-backend-global-shared-view next))]
+              [psf : i64
+                (compiler-backend-peephole-desc-op-src-flags
+                  (compiler-backend-global-shared-view pending))]
+              [pdf : i64
+                (compiler-backend-peephole-desc-op-dst-flags
+                  (compiler-backend-global-shared-view pending))]
+              [nsf : i64
+                (compiler-backend-peephole-desc-op-src-flags
+                  (compiler-backend-global-shared-view next))]
+              [ndf : i64
+                (compiler-backend-peephole-desc-op-dst-flags
+                  (compiler-backend-global-shared-view next))]
+              (cond
+                [(and
+                    (compiler-backend-peephole-op-flag?
+                      psf
+                      compiler-backend-peephole-op-register-flag)
+                    (compiler-backend-peephole-op-flag?
+                      pdf
+                      compiler-backend-peephole-op-local-frame-flag)
+                    (compiler-backend-peephole-op-flag?
+                      nsf
+                      compiler-backend-peephole-op-register-flag)
+                    (compiler-backend-peephole-op-flag?
+                      ndf
+                      compiler-backend-peephole-op-local-frame-flag)
+                    (compiler-backend-peephole-ranges-eq? pd pds pde nd nds nde))
+                  1]
+                [(and
+                    (not (= (bit-and psf 3) 0))
+                    (not (= (bit-and pdf 3) 0))
+                    (not (= (bit-and nsf 3) 0))
+                    (not (= (bit-and ndf 3) 0))
+                    (or
+                      (and
+                        (compiler-backend-peephole-ranges-eq?
+                          pd
+                          pss
+                          pse
+                          nd
+                          nss
+                          nse)
+                        (compiler-backend-peephole-ranges-eq?
+                          pd
+                          pds
+                          pde
+                          nd
+                          nds
+                          nde))
+                      (and
+                        (compiler-backend-peephole-ranges-eq?
+                          pd
+                          pds
+                          pde
+                          nd
+                          nss
+                          nse)
+                        (compiler-backend-peephole-ranges-eq?
+                          pd
+                          pss
+                          pse
+                          nd
+                          nds
+                          nde))))
+                  2]
+                [(and
+                    (compiler-backend-peephole-op-flag?
+                      psf
+                      compiler-backend-peephole-op-register-flag)
+                    (compiler-backend-peephole-op-flag?
+                      pdf
+                      compiler-backend-peephole-op-local-frame-flag)
+                    (compiler-backend-peephole-op-flag?
+                      nsf
+                      compiler-backend-peephole-op-local-frame-flag)
+                    (compiler-backend-peephole-op-flag?
+                      ndf
+                      compiler-backend-peephole-op-register-flag)
+                    (compiler-backend-peephole-ranges-eq? pd pds pde nd nss nse))
+                  3]
+                [(and
+                    (compiler-backend-peephole-op-flag?
+                      psf
+                      compiler-backend-peephole-op-register-flag)
+                    (not
+                      (compiler-backend-peephole-range-eq? pd pss pse "%r10"))
+                    (not
+                      (compiler-backend-peephole-range-eq? pd pss pse "%rbp"))
                     (=
                       (compiler-backend-peephole-desc-op-dst-reg
-                        (compiler-backend-global-shared-view next))
+                        (compiler-backend-global-shared-view pending))
                       8)
-                    (let
-                      [nend : i64
-                        (compiler-backend-peephole-desc-end
-                          (compiler-backend-global-shared-view next))]
-                      [nlen : i64
-                        (string.string-length (array-ref chunks.items chunk))]
-                      (compiler-backend-peephole-r10-dead-after-desc?
-                        (CompilerBackendState walk.backend-state-address)
-                        (CompilerBackendStreamState walk.stream-address)
-                        chunks
-                        chunk
-                        (if (< nend nlen)
-                          (+ nend 1)
-                          nend)))))
-                4]
-              ;; P22-A2: dead definition. `movq SRC, %rX` immediately followed
-              ;; by `movq SRC2, %rX` that does not read %rX rewrites the whole
-              ;; 64-bit register before anything can observe the first value, so
-              ;; the first line is dead and is dropped (action 1). Nothing may
-              ;; sit between the two lines -- the pair rules only see textually
-              ;; adjacent lines -- and `movq` touches no flags, so the drop has
-              ;; no other effect. `desc-op-dst-reg` is the dense OWNER index, so
-              ;; %rbp/%rsp/%xmm destinations classify to -1 and are excluded, and
-              ;; the mention scan maps sub-register reads to their 64-bit parent.
-              ;; The dropped line's owner transfer is skipped with it, which is
-              ;; exactly right: it would have set owners[%rX] and the surviving
-              ;; line overwrites that same entry.
-              [(and
-                  (>=
-                    (compiler-backend-peephole-desc-op-dst-reg
-                      (compiler-backend-global-shared-view pending))
-                    0)
-                  (=
-                    (compiler-backend-peephole-desc-op-dst-reg next)
-                    (compiler-backend-peephole-desc-op-dst-reg
-                      (compiler-backend-global-shared-view pending)))
-                  (not
-                    (compiler-backend-peephole-range-mentions-reg-index?
-                      nd
-                      nss
-                      nse
-                      (compiler-backend-peephole-desc-op-dst-reg pending))))
-                1]
-              [else 0]))
-          0))
-      0)))
+                    (compiler-backend-peephole-op-flag?
+                      nsf
+                      compiler-backend-peephole-op-r10-base-flag)
+                    (compiler-backend-peephole-op-flag?
+                      ndf
+                      compiler-backend-peephole-op-register-flag)
+                    (or
+                      (=
+                        (compiler-backend-peephole-desc-op-dst-reg
+                          (compiler-backend-global-shared-view next))
+                        8)
+                      (let
+                        [nend : i64
+                          (compiler-backend-peephole-desc-end
+                            (compiler-backend-global-shared-view next))]
+                        [nlen : i64
+                          (string.string-length (array-ref chunks.items chunk))]
+                        (compiler-backend-peephole-r10-dead-after-desc?
+                          (CompilerBackendState walk.backend-state-address)
+                          (CompilerBackendStreamState walk.stream-address)
+                          chunks
+                          chunk
+                          (if (< nend nlen)
+                            (+ nend 1)
+                            nend)))))
+                  4]
+                ;; P22-A2: dead definition. `movq SRC, %rX` immediately followed
+                ;; by `movq SRC2, %rX` that does not read %rX rewrites the whole
+                ;; 64-bit register before anything can observe the first value, so
+                ;; the first line is dead and is dropped (action 1). Nothing may
+                ;; sit between the two lines -- the pair rules only see textually
+                ;; adjacent lines -- and `movq` touches no flags, so the drop has
+                ;; no other effect. `desc-op-dst-reg` is the dense OWNER index, so
+                ;; %rbp/%rsp/%xmm destinations classify to -1 and are excluded, and
+                ;; the mention scan maps sub-register reads to their 64-bit parent.
+                ;; The dropped line's owner transfer is skipped with it, which is
+                ;; exactly right: it would have set owners[%rX] and the surviving
+                ;; line overwrites that same entry.
+                [(and
+                    (>=
+                      (compiler-backend-peephole-desc-op-dst-reg
+                        (compiler-backend-global-shared-view pending))
+                      0)
+                    (=
+                      (compiler-backend-peephole-desc-op-dst-reg next)
+                      (compiler-backend-peephole-desc-op-dst-reg
+                        (compiler-backend-global-shared-view pending)))
+                    (not
+                      (compiler-backend-peephole-range-mentions-reg-index?
+                        nd
+                        nss
+                        nse
+                        (compiler-backend-peephole-desc-op-dst-reg pending))))
+                  1]
+                [else 0]))
+            0))
+        0))))
 
 (define (compiler-backend-peephole-forward-frame-load-line-desc
   [pending : CompilerBackendPeepholeLine]
@@ -102800,7 +102986,8 @@
         (__tl_make-array i64 sink-capacity)
         0
         (__tl_make-array i64 0)
-        0)]
+        0
+        (- 0 1))]
     [_walk-open : unit
       (compiler-backend-peephole-records-publish!
         (compiler-backend-global-shared-view walk))]
@@ -103060,6 +103247,21 @@
                                     backend-state
                                     stream
                                     folded-line
+                                    line-newline)))]
+                            ;; FLAGS-1: the `test` is dropped and the branch,
+                            ;; respelled where it must be, takes its place as
+                            ;; the pending line.
+                            [(= action 5)
+                              (let
+                                [fused-line : String
+                                  (compiler-backend-peephole-flags-branch-line-desc
+                                    (compiler-backend-global-shared-view line))]
+                                (set!
+                                  pending
+                                  (compiler-backend-peephole-owned-line
+                                    backend-state
+                                    stream
+                                    fused-line
                                     line-newline)))]
                             [else
                               (let

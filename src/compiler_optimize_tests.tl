@@ -46857,6 +46857,595 @@
         9]
       [else 42])))
 
+;; --- PH-1: a big loop's guard chain hoisted as one predicate -----------------
+;;
+;; A rotated loop whose body is 76 blocks -- past the 64-block clone cap -- so
+;; the unswitch takes the predicate path. `g1` tests `lt lo, hi` computed in
+;; the body (admitted only on this path), `g2` chains `le lo, hi` behind it,
+;; `fast` re-tests `g1`'s condition; all three fail to `slow`, which reaches
+;; the latch through 70 jump stubs (the bulk). The hoist puts the conjunction
+;; in `pre`, branches `g1` on it, and folds `g2` and `fast` to their jumps; no
+;; block is cloned. Inside the priced prefix, and for the same shape under the
+;; clone cap (10 stubs), the loop is left alone: the body-computed condition
+;; is not invariant there.
+(define (opt-ph1-test-params) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "cond"
+      (compiler_ast_types.AstType.Bool)
+      0)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "lo"
+        (compiler_ast_types.AstType.I64)
+        1)
+      (compiler_ir_types.compiler-ir-param-seq-prepend
+        (compiler_ir_types.CompilerIrParam.Param
+          "hi"
+          (compiler_ast_types.AstType.I64)
+          2)
+        (compiler_ir_types.compiler-ir-param-seq-empty)))))
+
+(define (opt-ph1-test-compare
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BinOp
+    dst
+    op
+    (compiler_ir_types.CompilerIrValue.Var 1)
+    (compiler_ir_types.CompilerIrValue.Var 2)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-ph1-stub-name [index : i64]) : String
+  (str_cat.str-cat "t" (string.int->string index)))
+
+;; t<index> .. t<count-1>, each jumping to the next, the last to `latch`.
+(define (opt-ph1-test-stubs
+  [index : i64]
+  [count : i64]
+  [tail : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (if (>= index count)
+    tail
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-pcf-block
+        (opt-ph1-stub-name index)
+        (opt-test-instrs
+          (opt-pcf-jump
+            (if (= index (- count 1))
+              "latch"
+              (opt-ph1-stub-name (+ index 1))))))
+      (opt-ph1-test-stubs (+ index 1) count tail))))
+
+(define (opt-ph1-test-blocks [stubs : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-pcf-block
+      "entry"
+      (opt-test-instrs (opt-lu1-test-branch 0 "pre" "exit")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-pcf-block "pre" (opt-test-instrs (opt-pcf-jump "head")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-pcf-block "head" (opt-test-instrs (opt-pcf-jump "g1")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-pcf-block
+            "g1"
+            (opt-test-instrs
+              (opt-ph1-test-compare 3 (compiler_ir_types.CompilerIrBinOp.Lt))
+              (opt-lu1-test-branch 3 "g2" "slow")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-pcf-block
+              "g2"
+              (opt-test-instrs
+                (opt-ph1-test-compare 4 (compiler_ir_types.CompilerIrBinOp.Le))
+                (opt-lu1-test-branch 4 "fast" "slow")))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-pcf-block
+                "fast"
+                (opt-test-instrs (opt-lu1-test-branch 3 "latch" "slow")))
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-pcf-block "slow" (opt-test-instrs (opt-pcf-jump "t0")))
+                (opt-ph1-test-stubs
+                  0
+                  stubs
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (opt-pcf-block
+                      "latch"
+                      (opt-test-instrs (opt-lu1-test-branch 0 "head" "exit")))
+                    (compiler_ir_types.compiler-ir-block-cons
+                      (opt-pcf-block
+                        "exit"
+                        (opt-test-instrs
+                          (compiler_ir_types.CompilerIrInstr.Return
+                            (compiler_ir_types.CompilerIrMaybeValue.Some
+                              (compiler_ir_types.CompilerIrValue.I64 0)))))
+                      (compiler_ir_types.CompilerIrBlockList.Nil))))))))))))
+
+(define (opt-ph1-test-function [stubs : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "licm_predicate_hoist")
+    (opt-ph1-test-params)
+    (compiler_ast_types.AstType.I64)
+    5
+    (opt-ph1-test-blocks stubs)))
+
+;; The var the block's last instruction branches on, or -1.
+(define (opt-ph1-branch-cond-var
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : i64
+  (let
+    [block : compiler_ir_types.CompilerIrBlock (opt-pcf-block-of blocks label)]
+    [count : i64
+      (opt-block-instr-count
+        (compiler_optimize.compiler-opt-global-shared-view block))]
+    (if (<= count 0)
+      (- 0 1)
+      (match (opt-block-instr-at block (- count 1))
+        [(compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var var)
+            _
+            _)
+          var]
+        [_ (- 0 1)]))))
+
+(define (compiler-optimize-licm-predicate-hoist-self-test) : i64
+  (let
+    [positive : compiler_ir_types.CompilerIrFunction
+      (opt-licm-unswitch-test-run (opt-ph1-test-function 70))]
+    [positive-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view positive))]
+    [small : compiler_ir_types.CompilerIrFunction
+      (opt-licm-unswitch-test-run (opt-ph1-test-function 10))]
+    [small-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view small))]
+    [_enter : unit (compiler_optimize.compiler-opt-late-sweep-suppress-enter!)]
+    [priced : compiler_ir_types.CompilerIrFunction
+      (opt-licm-unswitch-test-run (opt-ph1-test-function 70))]
+    [_leave : unit (compiler_optimize.compiler-opt-late-sweep-suppress-leave!)]
+    [priced-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view priced))]
+    [head-clone : i64 (compiler_ir_types.compiler-ir-label "head__licm_false")]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view positive))))
+        1]
+      ;; no clone
+      [(opt-block-list-has-label?
+          (compiler_optimize.compiler-opt-global-shared-view positive-blocks)
+          head-clone)
+        2]
+      ;; the two materialized compares and their conjunction, before the jump
+      [(not
+          (=
+            (opt-pcf-count
+              (compiler_optimize.compiler-opt-global-shared-view
+                positive-blocks)
+              "pre")
+            4))
+        3]
+      ;; g1 branches on the predicate (a fresh var) ...
+      [(<
+          (opt-ph1-branch-cond-var
+            (compiler_optimize.compiler-opt-global-shared-view positive-blocks)
+            "g1")
+          5)
+        4]
+      [(not
+          (opt-licm-unswitch-one-successor?
+            (compiler_optimize.compiler-opt-global-shared-view positive-blocks)
+            (compiler_ir_types.compiler-ir-label "g2")
+            (compiler_ir_types.compiler-ir-label "fast")))
+        5]
+      ;; ... and g2 and the re-test fold to the edges they always took
+      [(not
+          (opt-pcf-jumps-to?
+            (compiler_optimize.compiler-opt-global-shared-view positive-blocks)
+            "g2"
+            "fast"))
+        6]
+      [(not
+          (opt-pcf-jumps-to?
+            (compiler_optimize.compiler-opt-global-shared-view positive-blocks)
+            "fast"
+            "latch"))
+        7]
+      ;; under the clone cap the body-computed condition is no candidate
+      [(not
+          (=
+            (opt-pcf-count
+              (compiler_optimize.compiler-opt-global-shared-view small-blocks)
+              "pre")
+            1))
+        8]
+      [(opt-block-list-has-label?
+          (compiler_optimize.compiler-opt-global-shared-view small-blocks)
+          head-clone)
+        9]
+      ;; the priced prefix leaves the loop alone
+      [(not
+          (=
+            (opt-pcf-count
+              (compiler_optimize.compiler-opt-global-shared-view priced-blocks)
+              "pre")
+            1))
+        10]
+      [else 42])))
+
+;; --- IV-AFF: a derived affine induction variable, counted directly ---------
+;;
+;; `(while (< index count) (let [entry (- (- count index) 1)] ...))` as IR:
+;; `index` is `phi [0, pre], [next, latch]`, `entry` two subtractions off it,
+;; read by a load in the body and returned past the loop through a phi, and
+;; the latch tests `next < count`. After the pass the header carries a phi
+;; seeded with `count - 1` and stepped by the latch's `sub`, the loads and the
+;; exit phi read it, the latch tests it against 0, and the counter, its
+;; increment and the two subtractions are gone. Inside the priced prefix the
+;; loop is left alone.
+(define (opt-ivaff-test-params) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "count"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "base"
+        (compiler_ast_types.AstType.I64)
+        1)
+      (compiler_ir_types.compiler-ir-param-seq-empty))))
+
+(define (opt-ivaff-binop
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BinOp
+    dst
+    op
+    lhs
+    rhs
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-ivaff-var [var : i64]) : compiler_ir_types.CompilerIrValue
+  (compiler_ir_types.CompilerIrValue.Var var))
+
+(define (opt-ivaff-lit [value : i64]) : compiler_ir_types.CompilerIrValue
+  (compiler_ir_types.CompilerIrValue.I64 value))
+
+;; vars: 0 count, 1 base, 2 index, 3 next, 4 count-index, 5 entry, 6 address,
+;; 7 loaded, 8 hit?, 9 exit test, 10 result phi, 11 the entry guard. The bridge
+;; keeps the guard and loop preheader in separate blocks for the entry proof.
+(define (opt-ivaff-test-blocks
+  [start : compiler_ir_types.CompilerIrValue]
+  [step : i64]
+  [k : i64]
+  [guard-bound : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-pcf-block
+      "entry"
+      (opt-test-instrs
+        (opt-ivaff-binop
+          11
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (opt-ivaff-lit 0)
+          guard-bound)
+        (opt-lu1-test-branch 11 "guard_bridge" "done")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-pcf-block "guard_bridge" (opt-test-instrs (opt-pcf-jump "pre")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-pcf-block "pre" (opt-test-instrs (opt-pcf-jump "head")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-pcf-block
+            "head"
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Phi
+                2
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  start
+                  (compiler_ir_types.compiler-ir-label "pre")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                    (opt-ivaff-var 3)
+                    (compiler_ir_types.compiler-ir-label "latch")
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+                (compiler_ast_types.AstType.I64))
+              (opt-ivaff-binop
+                4
+                (compiler_ir_types.CompilerIrBinOp.Sub)
+                (opt-ivaff-var 0)
+                (opt-ivaff-var 2))
+              (opt-ivaff-binop
+                5
+                (compiler_ir_types.CompilerIrBinOp.Sub)
+                (opt-ivaff-var 4)
+                (opt-ivaff-lit k))
+              (compiler_ir_types.CompilerIrInstr.Gep
+                6
+                (opt-ivaff-var 1)
+                (opt-ivaff-var 5)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Load
+                7
+                (opt-ivaff-var 6)
+                (compiler_ast_types.AstType.I64))
+              (opt-ivaff-binop
+                8
+                (compiler_ir_types.CompilerIrBinOp.Eq)
+                (opt-ivaff-var 7)
+                (opt-ivaff-lit 7))
+              (opt-lu1-test-branch 8 "found" "latch")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-pcf-block
+              "latch"
+              (opt-test-instrs
+                (opt-ivaff-binop
+                  3
+                  (compiler_ir_types.CompilerIrBinOp.Add)
+                  (opt-ivaff-var 2)
+                  (opt-ivaff-lit step))
+                (opt-ivaff-binop
+                  9
+                  (compiler_ir_types.CompilerIrBinOp.Lt)
+                  (opt-ivaff-var 3)
+                  (opt-ivaff-var 0))
+                (opt-lu1-test-branch 9 "head" "done")))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-pcf-block "found" (opt-test-instrs (opt-pcf-jump "done")))
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-pcf-block
+                  "done"
+                  (opt-test-instrs
+                    (compiler_ir_types.CompilerIrInstr.Phi
+                      10
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                        (opt-ivaff-lit (- 0 1))
+                        (compiler_ir_types.compiler-ir-label "entry")
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                          (opt-ivaff-lit (- 0 1))
+                          (compiler_ir_types.compiler-ir-label "latch")
+                          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                            (opt-ivaff-var 5)
+                            (compiler_ir_types.compiler-ir-label "found")
+                            (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (opt-ivaff-var 10)))))
+                (compiler_ir_types.CompilerIrBlockList.Nil)))))))))
+
+(define (opt-ivaff-test-function-with
+  [start : compiler_ir_types.CompilerIrValue]
+  [step : i64]
+  [k : i64]
+  [guard-bound : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "iv_aff_lookup")
+    (opt-ivaff-test-params)
+    (compiler_ast_types.AstType.I64)
+    12
+    (opt-ivaff-test-blocks start step k guard-bound)))
+
+(define (opt-ivaff-test-function) : compiler_ir_types.CompilerIrFunction
+  (opt-ivaff-test-function-with (opt-ivaff-lit 0) 1 1 (opt-ivaff-var 0)))
+
+;; Whether any instruction of `label` defines `var`.
+(define (opt-ivaff-defines?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]
+  [var : i64]) : bool
+  (let
+    [block : compiler_ir_types.CompilerIrBlock (opt-pcf-block-of blocks label)]
+    [count : i64
+      (opt-block-instr-count
+        (compiler_optimize.compiler-opt-global-shared-view block))]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (match (opt-block-instr-at
+            (compiler_optimize.compiler-opt-global-shared-view block)
+            i)
+            [(compiler_ir_types.CompilerIrInstr.Phi dst _ _)
+              (when (= dst var) (return true))]
+            [(compiler_ir_types.CompilerIrInstr.BinOp dst _ _ _ _)
+              (when (= dst var) (return true))]
+            [_ unit])
+          (set! i (+ i 1))))
+      false)))
+
+;; The op of the latch's compare that feeds its branch, as a code: 1 for lt,
+;; 2 for ge, 0 otherwise.
+(define (opt-ivaff-latch-compare-code
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (let
+    [block : compiler_ir_types.CompilerIrBlock
+      (opt-pcf-block-of blocks "latch")]
+    [count : i64
+      (opt-block-instr-count
+        (compiler_optimize.compiler-opt-global-shared-view block))]
+    (if (< count 2)
+      0
+      (match (opt-block-instr-at block (- count 2))
+        [(compiler_ir_types.CompilerIrInstr.BinOp _ op _ _ _)
+          (cond
+            [(compiler_optimize.opt-binop-eq
+                (compiler_optimize.compiler-opt-global-shared-view op)
+                (compiler_ir_types.CompilerIrBinOp.Lt))
+              1]
+            [(compiler_optimize.opt-binop-eq
+                (compiler_optimize.compiler-opt-global-shared-view op)
+                (compiler_ir_types.CompilerIrBinOp.Ge))
+              2]
+            [else 0])]
+        [_ 0]))))
+
+;; Whether any input of the phi at `index` in `label` is `Var var`.
+(define (opt-ivaff-phi-reads-var?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]
+  [index : i64]
+  [var : i64]) : bool
+  (let
+    [inputs : compiler_ir_types.CompilerIrPhiInputSeq
+      (opt-pcf-phi-inputs blocks label index)]
+    [n : i64 inputs.len]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (let
+          [input : compiler_ir_types.CompilerIrPhiInput
+            (compiler_ir_types.compiler-ir-phi-input-seq-ref
+              (compiler_ir_types.compiler-ir-global-shared-view inputs)
+              i)]
+          (begin
+            (match input.value
+              [(compiler_ir_types.CompilerIrValue.Var v)
+                (when (= v var) (return true))]
+              [_ unit])
+            (set! i (+ i 1)))))
+      false)))
+
+(define (opt-ivaff-refused-exit? [func : compiler_ir_types.CompilerIrFunction]) : bool
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view func))]
+    (and
+      (compiler_optimize.opt-verify-ok?
+        (compiler_optimize.opt-verify-function
+          (compiler_optimize.compiler-opt-global-shared-view func)))
+      (=
+        (opt-ivaff-latch-compare-code
+          (compiler_optimize.compiler-opt-global-shared-view blocks))
+        1)
+      (opt-ivaff-defines?
+        (compiler_optimize.compiler-opt-global-shared-view blocks)
+        "head"
+        2)
+      (opt-ivaff-defines?
+        (compiler_optimize.compiler-opt-global-shared-view blocks)
+        "latch"
+        3))))
+
+(define (compiler-optimize-iv-aff-self-test) : i64
+  (let
+    [positive : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-iv-aff-final
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-ivaff-test-function))]
+    [positive-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view positive))]
+    [_enter : unit (compiler_optimize.compiler-opt-late-sweep-suppress-enter!)]
+    [priced : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-iv-aff-final
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-ivaff-test-function))]
+    [_leave : unit (compiler_optimize.compiler-opt-late-sweep-suppress-leave!)]
+    [priced-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view priced))]
+    [dynamic-start : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-iv-aff-final
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-ivaff-test-function-with (opt-ivaff-var 1) 1 1 (opt-ivaff-var 0)))]
+    [step-two : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-iv-aff-final
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-ivaff-test-function-with (opt-ivaff-lit 0) 2 1 (opt-ivaff-var 0)))]
+    [unguarded : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-iv-aff-final
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-ivaff-test-function-with (opt-ivaff-lit 0) 1 1 (opt-ivaff-var 1)))]
+    [shift-two : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-iv-aff-final
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-ivaff-test-function-with (opt-ivaff-lit 0) 1 2 (opt-ivaff-var 0)))]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view positive))))
+        1]
+      ;; the counter, its increment and the two subtractions are gone
+      [(opt-ivaff-defines?
+          (compiler_optimize.compiler-opt-global-shared-view positive-blocks)
+          "head"
+          2)
+        2]
+      [(opt-ivaff-defines?
+          (compiler_optimize.compiler-opt-global-shared-view positive-blocks)
+          "latch"
+          3)
+        3]
+      [(opt-ivaff-defines?
+          (compiler_optimize.compiler-opt-global-shared-view positive-blocks)
+          "head"
+          4)
+        4]
+      [(opt-ivaff-defines?
+          (compiler_optimize.compiler-opt-global-shared-view positive-blocks)
+          "head"
+          5)
+        5]
+      ;; the derived phi (a fresh var) heads the header ...
+      [(not
+          (match (opt-block-instr-at
+            (opt-pcf-block-of
+              (compiler_optimize.compiler-opt-global-shared-view
+                positive-blocks)
+              "head")
+            0)
+            [(compiler_ir_types.CompilerIrInstr.Phi dst _ _) (>= dst 12)]
+            [_ false]))
+        6]
+      ;; ... the seed sits in the preheader before its jump ...
+      [(not
+          (=
+            (opt-pcf-count
+              (compiler_optimize.compiler-opt-global-shared-view
+                positive-blocks)
+              "pre")
+            2))
+        7]
+      ;; ... and the latch tests the stepped phi against 0
+      [(not
+          (=
+            (opt-ivaff-latch-compare-code
+              (compiler_optimize.compiler-opt-global-shared-view
+                positive-blocks))
+            2))
+        8]
+      ;; the exit phi reads the derived phi, not the retired subtraction
+      [(opt-ivaff-phi-reads-var?
+          (compiler_optimize.compiler-opt-global-shared-view positive-blocks)
+          "done"
+          0
+          5)
+        9]
+      ;; the priced prefix leaves the loop alone
+      [(not
+          (=
+            (opt-ivaff-latch-compare-code
+              (compiler_optimize.compiler-opt-global-shared-view priced-blocks))
+            1))
+        10]
+      [(not
+          (opt-ivaff-defines?
+            (compiler_optimize.compiler-opt-global-shared-view priced-blocks)
+            "head"
+            5))
+        11]
+      ;; The derived phi may still replace the body expression, but the signed
+      ;; exit and original counter must survive without the exact range proof.
+      [(not (opt-ivaff-refused-exit? dynamic-start)) 12]
+      [(not (opt-ivaff-refused-exit? step-two)) 13]
+      [(not (opt-ivaff-refused-exit? unguarded)) 14]
+      [(not (opt-ivaff-refused-exit? shift-two)) 15]
+      [else 42])))
+
 ;; --- the invariant dispatch chain -------------------------------------------
 ;;
 ;; `dispatch-a` and `dispatch-b` are the two-test dispatch an inlined, versioned

@@ -19351,6 +19351,126 @@
         4]
       [else 42])))
 
+;; --- REF-GEP: a borrowed global's field geps respell onto the direct form -----
+;;
+;; `%2 = mov @g : (& T)` then `gep %2, 8` beside a direct `gep @g, 8`: the pass
+;; rewrites the borrowed gep's base to `@g` so the two loads share one address.
+;; A returning call or a `Store g` anywhere in the function refuses the rewrite.
+(define (opt-ref-gep-blocks [extra : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [g : i64 (opt-test-symbol "ref_gep_g")]
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_optimize.opt-licm-unswitch-instrs-onto
+          extra
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Mov
+              2
+              (compiler_ir_types.CompilerIrValue.Global g)
+              (compiler_ast_types.AstType.Ref 0 0))
+            (compiler_ir_types.CompilerIrInstr.Gep
+              3
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.I64 8)
+              (compiler_ast_types.AstType.U8))
+            (compiler_ir_types.CompilerIrInstr.Load
+              4
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Gep
+              5
+              (compiler_ir_types.CompilerIrValue.Global g)
+              (compiler_ir_types.CompilerIrValue.I64 8)
+              (compiler_ast_types.AstType.U8))
+            (compiler_ir_types.CompilerIrInstr.Load
+              6
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              7
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ir_types.CompilerIrValue.Var 6)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 7))))))
+      (compiler_ir_types.CompilerIrBlockList.Nil))))
+
+(define (opt-ref-gep-function [extra : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "ref_gep")
+    (compiler_ir_types.compiler-ir-param-seq-empty)
+    (compiler_ast_types.AstType.I64)
+    8
+    (opt-ref-gep-blocks extra)))
+
+;; Geps whose base is a `Var` (the borrowed spelling), over every block.
+(define (opt-count-gep-var-base-instr-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    0
+    (+
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+        [(compiler_ir_types.CompilerIrInstr.Gep _ base _ _)
+          (match base
+            [(compiler_ir_types.CompilerIrValue.Var _) 1]
+            [_ 0])]
+        [_ 0])
+      (opt-count-gep-var-base-instr-seq instrs (+ index 1)))))
+
+(define (opt-count-gep-var-base-function
+  [func : compiler_ir_types.CompilerIrFunction]) : i64
+  (opt-count-gep-var-base-instr-seq (opt-function-first-instrs func) 0))
+
+(define (compiler-optimize-ref-gep-self-test) : i64
+  (let
+    [plain : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-ref-gep-function
+        (opt-ref-gep-function (compiler_ir_types.compiler-ir-instr-seq-empty)))]
+    [called : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-ref-gep-function
+        (opt-ref-gep-function
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Call
+              1
+              (opt-test-symbol "ref_gep_callee")
+              compiler_ir_types.CompilerIrCallArgs.Nil
+              (compiler_ast_types.AstType.I64)))))]
+    [rebound : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-ref-gep-function
+        (opt-ref-gep-function
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Store
+              (opt-test-symbol "ref_gep_g")
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ast_types.AstType.I64)))))]
+    (cond
+      ;; the borrowed gep is respelled onto the global
+      [(not
+          (=
+            (opt-count-gep-var-base-function
+              (compiler_optimize.compiler-opt-global-shared-view plain))
+            0))
+        1]
+      ;; a returning call refuses the function
+      [(not
+          (=
+            (opt-count-gep-var-base-function
+              (compiler_optimize.compiler-opt-global-shared-view called))
+            1))
+        2]
+      ;; so does a rebind of the borrowed global
+      [(not
+          (=
+            (opt-count-gep-var-base-function
+              (compiler_optimize.compiler-opt-global-shared-view rebound))
+            1))
+        3]
+      [else 42])))
+
 (define (compiler-optimize-inline-large-callee-ok?) : bool
   (let
     [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]

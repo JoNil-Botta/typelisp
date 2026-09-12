@@ -125960,6 +125960,256 @@
     "bounds_group"
     (opt-bg-function-fixed func (opt-bg-function-rounds))))
 
+;; --- REF-GEP: one spelling for a global aggregate's field address -------------
+;;
+;; A borrowed global -- `(& g)` handed to an accessor that is then inlined --
+;; reaches the field read as `%r = mov @g : (& T)` followed by `gep %r, k`,
+;; while a direct access to the same field in the same function is spelled
+;; `gep @g, k`. Both name the same address (the backend materialises a
+;; reference-typed `Global g` as the aggregate's address, boxed or inline), but
+;; GVN keys a load on the spelling of its address, so the two never unify.
+;; sccp_lattice's `sccp-state-bind` is the measured shape: the lookup half
+;; reads `env.cap` and `env.slots` through the borrow, the set half through the
+;; global, and every one of its 2.85M calls re-tests `var < env.cap`, reloads
+;; the slot descriptor and re-checks the bounds on the store path -- a
+;; second guard the first already decided.
+;;
+;; Rewrite the borrowed spelling onto the direct one: every `gep %r, k` whose
+;; base is such a Mov becomes `gep @g, k`, and the Mov dies with its last use.
+;; Two conditions keep the two spellings equal for the whole function, which is
+;; what lets the rewrite read the global at each use instead of once at the
+;; borrow: the function contains no `Store g` (no rebind of the cell it
+;; borrows) and no call that returns into it (a callee may rebind any global;
+;; a tail call ends the function, a syscall rebinds nothing). Runs on the SSA
+;; form, so the Mov's var has one definition, and before GVN, which is the pass
+;; that cashes the unified spelling.
+(define (opt-ref-gep-instr-returning-call? [instr : ir.CompilerIrInstr]) : bool
+  (match (compiler-opt-global-shared-view instr)
+    [(ir.CompilerIrInstr.Call _ _ _ _) true]
+    [(ir.CompilerIrInstr.CallIndirect _ _ _ _) true]
+    [(ir.CompilerIrInstr.CallIndirectC _ _ _ _) true]
+    [(ir.CompilerIrInstr.CallCAbiStoreResult _) true]
+    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult _) true]
+    [(ir.CompilerIrInstr.SpmdCall _) true]
+    [_ false]))
+
+(define (opt-ref-gep-reference-type? [ty : ast.AstType]) : bool
+  (match (compiler-opt-global-shared-view ty)
+    [(ast.AstType.Ref _ _) true]
+    [(ast.AstType.MutRef _ _) true]
+    [_ false]))
+
+;; First walk: refuse on a returning call; note every rebound global.
+;; Returns false when the function is refused.
+(define (opt-ref-gep-scan-instrs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [stored : (&mut stored opt_i64_i64_map.Map)]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index count))
+        (begin
+          (match (ir.compiler-ir-instr-seq-ref instrs index)
+            [(ir.CompilerIrInstr.Store g _ _)
+              (opt_i64_i64_map.insert-ref! stored g 1)]
+            [_
+              (if (opt-ref-gep-instr-returning-call?
+                (ir.compiler-ir-instr-seq-ref instrs index))
+                (set! ok false)
+                unit)])
+          (set! index (+ index 1))))
+      ok)))
+
+(define (opt-ref-gep-scan-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [stored : (&mut stored opt_i64_i64_map.Map)]) : bool
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) true]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (and
+            (opt-ref-gep-scan-instrs! instrs stored)
+            (opt-ref-gep-scan-blocks!
+              (compiler-opt-box-shared-view rest)
+              stored))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64
+          (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+        [index : i64 0]
+        [ok : bool true]
+        (begin
+          (while (and ok (< index count))
+            (begin
+              (match (ir.compiler-ir-block-seq-ref
+                (compiler-opt-global-shared-view seq)
+                index)
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (set! ok (opt-ref-gep-scan-instrs! instrs stored))])
+              (set! index (+ index 1))))
+          ok))]))
+
+;; Second walk: record the borrows (`var -> g + 1`, 0 = none) of globals the
+;; function never rebinds.
+(define (opt-ref-gep-note-instrs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [stored : opt_i64_i64_map.Map]
+  [borrows : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (match (ir.compiler-ir-instr-seq-ref instrs index)
+          [(ir.CompilerIrInstr.Mov dst value ty)
+            (match value
+              [(ir.CompilerIrValue.Global g)
+                (if (and
+                  (>= dst 0)
+                  (< dst (array-length borrows))
+                  (opt-ref-gep-reference-type? ty)
+                  (not (opt_i64_i64_map.contains? (& stored) g)))
+                  (set! (array-ref borrows dst) (+ g 1))
+                  unit)]
+              [_ unit])]
+          [_ unit])
+        (set! index (+ index 1))))))
+
+(define (opt-ref-gep-note-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [stored : opt_i64_i64_map.Map]
+  [borrows : (__tl_dyn-array i64)]) : unit
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-ref-gep-note-instrs!
+              instrs
+              (compiler-opt-global-shared-view stored)
+              (compiler-opt-global-shared-view borrows))])
+        (opt-ref-gep-note-blocks!
+          (compiler-opt-box-shared-view rest)
+          stored
+          borrows))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64
+          (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+        [index : i64 0]
+        (while (< index count)
+          (begin
+            (match (ir.compiler-ir-block-seq-ref
+              (compiler-opt-global-shared-view seq)
+              index)
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (opt-ref-gep-note-instrs!
+                  instrs
+                  (compiler-opt-global-shared-view stored)
+                  (compiler-opt-global-shared-view borrows))])
+            (set! index (+ index 1)))))]))
+
+;; Third walk: respell the geps. Returns how many were rewritten.
+(define (opt-ref-gep-rewrite-instrs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [borrows : (__tl_dyn-array i64)]) : i64
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [index : i64 0]
+    [rewritten : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (ir.compiler-ir-instr-seq-ref instrs index)
+            [(ir.CompilerIrInstr.Gep dst base offset ty)
+              (match base
+                [(ir.CompilerIrValue.Var v)
+                  (if (and
+                    (>= v 0)
+                    (< v (array-length borrows))
+                    (> (array-ref borrows v) 0))
+                    (begin
+                      (ir.compiler-ir-instr-seq-set!
+                        (compiler-opt-global-shared-view instrs)
+                        index
+                        (ir.CompilerIrInstr.Gep
+                          dst
+                          (ir.CompilerIrValue.Global
+                            (- (array-ref borrows v) 1))
+                          offset
+                          ty))
+                      (set! rewritten (+ rewritten 1)))
+                    unit)]
+                [_ unit])]
+            [_ unit])
+          (set! index (+ index 1))))
+      rewritten)))
+
+(define (opt-ref-gep-rewrite-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [borrows : (__tl_dyn-array i64)]) : i64
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) 0]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (+
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-ref-gep-rewrite-instrs!
+              instrs
+              (compiler-opt-global-shared-view borrows))])
+        (opt-ref-gep-rewrite-blocks!
+          (compiler-opt-box-shared-view rest)
+          borrows))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64
+          (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+        [index : i64 0]
+        [rewritten : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (match (ir.compiler-ir-block-seq-ref
+                (compiler-opt-global-shared-view seq)
+                index)
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (set!
+                    rewritten
+                    (+
+                      rewritten
+                      (opt-ref-gep-rewrite-instrs!
+                        instrs
+                        (compiler-opt-global-shared-view borrows))))])
+              (set! index (+ index 1))))
+          rewritten))]))
+
+(define (opt-ref-gep-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (begin
+    (match (compiler-opt-global-shared-view func)
+      [(ir.CompilerIrFunction.Function _ _ _ frame blocks)
+        (let
+          [stored : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 4)]
+          (if (opt-ref-gep-scan-blocks!
+            (compiler-opt-global-shared-view blocks)
+            (&mut stored))
+            (let
+              [borrows : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+              (begin
+                (opt-ref-gep-note-blocks!
+                  (compiler-opt-global-shared-view blocks)
+                  (compiler-opt-global-shared-view stored)
+                  (compiler-opt-global-shared-view borrows))
+                (opt-ref-gep-rewrite-blocks!
+                  (compiler-opt-global-shared-view blocks)
+                  (compiler-opt-global-shared-view borrows))
+                unit))
+            unit))])
+    func))
+
 (define (optimize-function-once-with-summaries
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
@@ -126354,11 +126604,33 @@
                             name
                             _t-global-cell)
                           unit)]
+                      ;; REF-GEP respells a borrowed global's field geps onto
+                      ;; the direct form, so GVN below sees one address for
+                      ;; the field whichever accessor was inlined to read it.
+                      ;; In-place operand rewrite, CFG untouched.
+                      [_t-ref-gep : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [ref-gep : ir.CompilerIrFunction
+                        (compiler-opt-debug-observe-function
+                          type-segment-bases
+                          "ref_gep"
+                          (opt-ref-gep-function
+                            (compiler-opt-global-shared-view global-cell)))]
+                      [_p-ref-gep : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            (profile_state.compiler-profile-state-shared-view
+                              summaries.profile-state)
+                            "ref_gep"
+                            name
+                            _t-ref-gep)
+                          unit)]
                       [ssa-frame : i64
                         (opt-function-frame
-                          (compiler-opt-global-shared-view global-cell))]
+                          (compiler-opt-global-shared-view ref-gep))]
                       [ssa-blocks : ir.CompilerIrBlockList
-                        (opt-function-blocks global-cell)]
+                        (opt-function-blocks ref-gep)]
                       [_t-gvn : i64 (cfg compile-profile (profile.now-ms) 0)]
                       ;; MF-5 (i) promotes repeated scalar global-cell reads to
                       ;; one materialized Mov, so this pass mints vars and hands

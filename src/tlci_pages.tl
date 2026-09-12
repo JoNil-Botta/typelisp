@@ -263,19 +263,20 @@
   [bytes : (& bytes (__tl_dyn-array u8))]) : ResultTlciPageUnit
   (let
     [count : i64 (array-length bytes)]
-    (if (cfg test tlci-pages-test-fail-copy false)
-      (ResultTlciPageUnit.Err "tlci pages: injected copy failure")
-      (if (not region.writable)
-        (ResultTlciPageUnit.Err "tlci pages: cannot copy into protected region")
-        (if (> count region.size)
-          (ResultTlciPageUnit.Err
-            "tlci pages: byte buffer exceeds mapped region")
-          (begin
-            (tlci-pages-copy-bytes!
-              (tlci-pages-addr->mut-u8 region.addr)
-              (tlci-pages-array-ptr bytes)
-              count)
-            (ResultTlciPageUnit.Ok)))))))
+    (cond
+      [(cfg test tlci-pages-test-fail-copy false)
+        (ResultTlciPageUnit.Err "tlci pages: injected copy failure")]
+      [(not region.writable)
+        (ResultTlciPageUnit.Err "tlci pages: cannot copy into protected region")]
+      [(> count region.size)
+        (ResultTlciPageUnit.Err "tlci pages: byte buffer exceeds mapped region")]
+      [else
+        (begin
+          (tlci-pages-copy-bytes!
+            (tlci-pages-addr->mut-u8 region.addr)
+            (tlci-pages-array-ptr bytes)
+            count)
+          (ResultTlciPageUnit.Ok))])))
 
 (define (tlci-pages-protect-code-executable [region : TlciPageRegion]) : ResultTlciPageRegion
   (cond

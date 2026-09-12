@@ -52,6 +52,21 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
+# A rename request must compute the module move once. The validated Found or
+# Missing value then flows into the workspace-edit builder; a second call could
+# discard a changed filesystem error after validation.
+rename_module_move_calls=$(
+    awk '
+    /^[[:space:]]*\(define \(lsp-rename-module-move[[:space:]]*$/ { next }
+    /\(lsp-rename-module-move([[:space:]]|$)/ { calls += 1 }
+    END { print calls + 0 }
+    ' "$ROOT/src/lsp_frame_core.tl"
+)
+[ "$rename_module_move_calls" -eq 1 ] || {
+    echo "rename must call lsp-rename-module-move exactly once per request path" >&2
+    exit 1
+}
+
 HOST_ACTION_ENABLED=1
 HOST_EXE_SUFFIX=
 HOST_STATIC_LIB_PREFIX=lib

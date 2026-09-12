@@ -18321,101 +18321,6 @@
           1)
         state)]))
 
-;; Keep reusable-result provenance in a high, disjoint key range of the
-;; address-taken fact map. Function-local IR var ids are dense from zero and
-;; stay far below this boundary.
-(define (lower-inline-result-alias-key [var-id : i64]) : i64
-  (+ 1073741824 var-id))
-
-(define (lower-inline-result-alias-marker-set-ref!
-  [facts : (&mut facts lower_i64_i64_map.Map)]
-  [var-id : i64]
-  [marker : i64]) : unit
-  (let
-    [key : i64 (lower-inline-result-alias-key var-id)]
-    (if (> marker 0)
-      (lower_i64_i64_map.insert-ref! facts key marker)
-      (if (lower_i64_i64_map.contains? facts key)
-        (begin
-          (lower_i64_i64_map.remove-ref! facts key)
-          unit)
-        unit))))
-
-(define (lower-inline-result-alias-marker-in-map
-  [facts : (& facts lower_i64_i64_map.Map)]
-  [value : ir.CompilerIrValue]) : i64
-  (match value
-    [(ir.CompilerIrValue.Var var-id)
-      (lower_i64_i64_map.get-value-or
-        facts
-        (lower-inline-result-alias-key var-id)
-        0)]
-    [_ 0]))
-
-(define (lower-state-inline-result-alias-tracking-active? [state : LowerState]) : bool
-  (and
-    (>=
-      (lower-state-active-loop-entry-var-limit (lower-global-shared-view state))
-      0)
-    (=
-      (lower-state-current-function-id (lower-global-shared-view state))
-      (lower-state-active-loop-function state))))
-
-(define (lower-state-inline-result-alias-origin
-  [state : LowerState]
-  [value : ir.CompilerIrValue]) : i64
-  (if (lower-state-inline-result-alias-tracking-active?
-    (lower-global-shared-view state))
-    (match (lower-global-shared-view state)
-      [(LowerState.State data)
-        (-
-          (lower-inline-result-alias-marker-in-map
-            (& (__tl-project-field (__tl-box-place data) address-taken))
-            value)
-          1)])
-    -1))
-
-(define (lower-state-inline-result-alias-set
-  [state : LowerState]
-  [var-id : i64]
-  [origin-var : i64]) : LowerState
-  (if (lower-state-inline-result-alias-tracking-active?
-    (lower-global-shared-view state))
-    (match (lower-global-shared-view state)
-      [(LowerState.State data)
-        (begin
-          (lower-inline-result-alias-marker-set-ref!
-            (&mut (__tl-project-field (__tl-box-place data) address-taken))
-            var-id
-            (if (>= origin-var 0)
-              (+ origin-var 1)
-              0))
-          state)])
-    state))
-
-(define (lower-state-inline-result-alias-mark-value
-  [state : LowerState]
-  [value : ir.CompilerIrValue]) : LowerState
-  (match value
-    [(ir.CompilerIrValue.Var var-id)
-      (lower-state-inline-result-alias-set state var-id var-id)]
-    [_ state]))
-
-(define (lower-state-inline-result-alias-mark-call-result
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [value : ir.CompilerIrValue]
-  [result-ty : ast.AstType]) : LowerState
-  (if (and
-    (lower-state-inline-result-alias-tracking-active?
-      (lower-global-shared-view state))
-    (lower-inline-aggregate-abi-copy-needed?
-      ctx
-      (lower-global-shared-view state)
-      result-ty))
-    (lower-state-inline-result-alias-mark-value state value)
-    state))
-
 (define (lower-state-tail-param-start [state : LowerState]) : i64
   (match state
     [(LowerState.State data)
@@ -19228,17 +19133,9 @@
       (match (lower-state-alloc-var storage-state)
         [(LowerAlloc.Alloc addr-alloc addr-var)
           (LowerExpr.Expr
-            (let
-              [next-state : LowerState
-                (lower-state-emit
-                  addr-alloc
-                  (ir.CompilerIrInstr.AddrOf addr-var storage-var))]
-              (if (>= (lower-state-active-loop-entry-var-limit state) 0)
-                (lower-state-inline-result-alias-set
-                  next-state
-                  addr-var
-                  addr-var)
-                next-state))
+            (lower-state-emit
+              addr-alloc
+              (ir.CompilerIrInstr.AddrOf addr-var storage-var))
             (ir.CompilerIrValue.Var addr-var)
             ty)])]))
 
@@ -20768,22 +20665,15 @@
     (<
       target-var
       (lower-state-active-loop-entry-var-limit (lower-global-shared-view state)))
-    (>=
-      (lower-state-inline-result-alias-origin
-        (lower-global-shared-view state)
-        (lower-global-shared-view value))
-      (lower-state-active-loop-entry-var-limit (lower-global-shared-view state)))
-    ;; Derived raw pointers retain provenance too, but copying a pointer
-    ;; does not copy its referent. Only a memory-class value needs a snapshot.
     (lower-inline-aggregate-abi-copy-needed?
       (lower-global-shared-view ctx)
       (lower-global-shared-view state)
       (lower-global-shared-view ty)))
-    ;; A loop-carried memory-class binding must not retain a pointer to the
-    ;; producer's fixed frame slot: that same expression reuses the slot after
-    ;; the backedge. Copy into a dedicated frame slot for this assignment site;
-    ;; it remains valid until this same assignment replaces the old value and
-    ;; does not inherit the active arena's lifetime.
+    ;; A loop-carried memory-class value needs independent inline storage.
+    ;; Its source address can arrive through projections, branch merges, or
+    ;; an enclosing loop. Snapshot at the assignment boundary rather than
+    ;; depending on a partial address-provenance analysis. Raw pointers copy
+    ;; only the address because they are not memory-class aggregates.
     (lower-copy-inline-aggregate-to-inline ctx state value ty)
     (ResultLowerExpr.Ok (LowerExpr.Expr state value ty))))
 
@@ -33387,32 +33277,14 @@
                                       assign-value-state)]
                                   (ResultLowerExpr.Ok
                                     (LowerExpr.Expr
-                                      (let
-                                        [next-state : LowerState
-                                          (lower-state-emit-at-expr
-                                            ctx
-                                            assign-state
-                                            (ir.CompilerIrInstr.Mov
-                                              id
-                                              (lower-global-shared-view
-                                                assign-ir)
-                                              target-ir-ty)
-                                            origin)]
-                                        (if (>=
-                                          (lower-state-active-loop-entry-var-limit
-                                            state)
-                                          0)
-                                          (let
-                                            [assign-origin : i64
-                                              (lower-state-inline-result-alias-origin
-                                                (lower-global-shared-view
-                                                  next-state)
-                                                assign-ir)]
-                                            (lower-state-inline-result-alias-set
-                                              next-state
-                                              id
-                                              assign-origin))
-                                          next-state))
+                                      (lower-state-emit-at-expr
+                                        ctx
+                                        assign-state
+                                        (ir.CompilerIrInstr.Mov
+                                          id
+                                          (lower-global-shared-view assign-ir)
+                                          target-ir-ty)
+                                        origin)
                                       ir.CompilerIrValue.Unit
                                       expr-ty)))])]
                           [(ResultLowerExpr.Err message)
@@ -34147,32 +34019,15 @@
                                           assign-value-state)]
                                       (ResultLowerExpr.Ok
                                         (LowerExpr.Expr
-                                          (let
-                                            [next-state : LowerState
-                                              (lower-state-emit-at-expr
-                                                ctx
-                                                assign-state
-                                                (ir.CompilerIrInstr.Mov
-                                                  id
-                                                  (lower-global-shared-view
-                                                    assign-ir)
-                                                  target-ir-ty)
-                                                origin)]
-                                            (if (>=
-                                              (lower-state-active-loop-entry-var-limit
-                                                state)
-                                              0)
-                                              (let
-                                                [assign-origin : i64
-                                                  (lower-state-inline-result-alias-origin
-                                                    (lower-global-shared-view
-                                                      next-state)
-                                                    assign-ir)]
-                                                (lower-state-inline-result-alias-set
-                                                  next-state
-                                                  id
-                                                  assign-origin))
-                                              next-state))
+                                          (lower-state-emit-at-expr
+                                            ctx
+                                            assign-state
+                                            (ir.CompilerIrInstr.Mov
+                                              id
+                                              (lower-global-shared-view
+                                                assign-ir)
+                                              target-ir-ty)
+                                            origin)
                                           ir.CompilerIrValue.Unit
                                           expr-ty)))])]
                               [(ResultLowerExpr.Err message)
@@ -40494,29 +40349,19 @@
                               name)]
                           (ResultLowerExpr.Ok
                             (LowerExpr.Expr
-                              (let
-                                [call-state : LowerState
-                                  (lower-state-emit-at-expr
-                                    ctx
-                                    allocated
-                                    (ir.CompilerIrInstr.Call
-                                      call-var
-                                      callee
-                                      (ir.compiler-ir-call-args-sret-from-seq
-                                        (lower-value-seq-prepend-one
-                                          sret-pointer
-                                          physical-values)
-                                        0)
-                                      (ast.AstType.U64))
-                                    origin)]
-                                (if (>=
-                                  (lower-state-active-loop-entry-var-limit
-                                    state)
-                                  0)
-                                  (lower-state-inline-result-alias-mark-value
-                                    call-state
-                                    (lower-global-shared-view slot-ptr))
-                                  call-state))
+                              (lower-state-emit-at-expr
+                                ctx
+                                allocated
+                                (ir.CompilerIrInstr.Call
+                                  call-var
+                                  callee
+                                  (ir.compiler-ir-call-args-sret-from-seq
+                                    (lower-value-seq-prepend-one
+                                      sret-pointer
+                                      physical-values)
+                                    0)
+                                  (ast.AstType.U64))
+                                origin)
                               slot-ptr
                               result-ty)))])])])]
           [(LowerCAbiAggregate.No)
@@ -40539,32 +40384,21 @@
                           name)]
                       (ResultLowerExpr.Ok
                         (LowerExpr.Expr
-                          (let
-                            [call-state : LowerState
-                              (lower-state-emit-at-expr
-                                ctx
-                                allocated
-                                (ir.CompilerIrInstr.Call
-                                  call-var
-                                  callee
-                                  (lower-call-args-with-nominal-sret
-                                    (lower-global-shared-view ctx)
-                                    (lower-global-shared-view state)
-                                    call-values
-                                    (lower-global-shared-view result-ty))
-                                  (lower-one-word-register-storage-type
-                                    (lower-global-shared-view ctx)
-                                    (lower-global-shared-view result-ty)))
-                                origin)]
-                            (if (>=
-                              (lower-state-active-loop-entry-var-limit state)
-                              0)
-                              (lower-state-inline-result-alias-mark-call-result
-                                ctx
-                                call-state
-                                (ir.CompilerIrValue.Var call-var)
+                          (lower-state-emit-at-expr
+                            ctx
+                            allocated
+                            (ir.CompilerIrInstr.Call
+                              call-var
+                              callee
+                              (lower-call-args-with-nominal-sret
+                                (lower-global-shared-view ctx)
+                                (lower-global-shared-view state)
+                                call-values
                                 (lower-global-shared-view result-ty))
-                              call-state))
+                              (lower-one-word-register-storage-type
+                                (lower-global-shared-view ctx)
+                                (lower-global-shared-view result-ty)))
+                            origin)
                           (ir.CompilerIrValue.Var call-var)
                           result-ty)))])]
               [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)])]
@@ -40647,28 +40481,19 @@
                       [(LowerAlloc.Alloc allocated call-var)
                         (ResultLowerExpr.Ok
                           (LowerExpr.Expr
-                            (let
-                              [call-state : LowerState
-                                (lower-state-emit-at-expr
-                                  ctx
-                                  allocated
-                                  (ir.CompilerIrInstr.CallIndirect
-                                    call-var
-                                    func-value
-                                    (ir.compiler-ir-call-args-sret-from-seq
-                                      (lower-value-seq-prepend-one
-                                        sret-pointer
-                                        physical-values)
-                                      0)
-                                    (ast.AstType.U64))
-                                  origin)]
-                              (if (>=
-                                (lower-state-active-loop-entry-var-limit state)
-                                0)
-                                (lower-state-inline-result-alias-mark-value
-                                  call-state
-                                  (lower-global-shared-view slot-ptr))
-                                call-state))
+                            (lower-state-emit-at-expr
+                              ctx
+                              allocated
+                              (ir.CompilerIrInstr.CallIndirect
+                                call-var
+                                func-value
+                                (ir.compiler-ir-call-args-sret-from-seq
+                                  (lower-value-seq-prepend-one
+                                    sret-pointer
+                                    physical-values)
+                                  0)
+                                (ast.AstType.U64))
+                              origin)
                             slot-ptr
                             result-ty))])])])]
           [(LowerCAbiAggregate.No)
@@ -40748,16 +40573,7 @@
                 result-ir-ty)]
             (ResultLowerExpr.Ok
               (LowerExpr.Expr
-                (let
-                  [call-state : LowerState
-                    (lower-state-emit-at-expr ctx allocated instr origin)]
-                  (if (>= (lower-state-active-loop-entry-var-limit state) 0)
-                    (lower-state-inline-result-alias-mark-call-result
-                      ctx
-                      call-state
-                      (ir.CompilerIrValue.Var var-id)
-                      (lower-global-shared-view result-ty))
-                    call-state))
+                (lower-state-emit-at-expr ctx allocated instr origin)
                 (ir.CompilerIrValue.Var var-id)
                 result-ty)))])]
     [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)]))
@@ -41100,16 +40916,7 @@
                 result-ir-ty)]
             (ResultLowerExpr.Ok
               (LowerExpr.Expr
-                (let
-                  [call-state : LowerState
-                    (lower-state-emit-at-expr ctx allocated instr origin)]
-                  (if (>= (lower-state-active-loop-entry-var-limit state) 0)
-                    (lower-state-inline-result-alias-mark-call-result
-                      ctx
-                      call-state
-                      (ir.CompilerIrValue.Var var-id)
-                      (lower-global-shared-view result-ty))
-                    call-state))
+                (lower-state-emit-at-expr ctx allocated instr origin)
                 (ir.CompilerIrValue.Var var-id)
                 result-ty)))])]
     [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)]))
@@ -44458,27 +44265,16 @@
   [gep-ty : ast.AstType]) : LowerExpr
   (match (lower-state-alloc-var state)
     [(LowerAlloc.Alloc s v)
-      (let
-        [origin : i64
-          (lower-state-inline-result-alias-origin
-            (lower-global-shared-view s)
-            (lower-global-shared-view base))]
-        [gep-state : LowerState
-          (lower-state-emit
-            s
-            (ir.CompilerIrInstr.Gep
-              v
-              base
-              index
-              (lower-global-shared-view gep-ty)))]
-        (LowerExpr.Expr
-          ;; Address arithmetic preserves the producer's reusable-slot
-          ;; provenance through nested fields, payloads, and array elements.
-          (if (>= origin 0)
-            (lower-state-inline-result-alias-set gep-state v origin)
-            gep-state)
-          (ir.CompilerIrValue.Var v)
-          gep-ty))]))
+      (LowerExpr.Expr
+        (lower-state-emit
+          s
+          (ir.CompilerIrInstr.Gep
+            v
+            base
+            index
+            (lower-global-shared-view gep-ty)))
+        (ir.CompilerIrValue.Var v)
+        gep-ty)]))
 
 (define (lower-emit-load
   [state : LowerState]
@@ -49135,27 +48931,12 @@
                               init)]
                           (lower-let-bindings-at
                             ctx
-                            (let
-                              [next-state : LowerState
-                                (lower-state-emit
-                                  allocated
-                                  (ir.CompilerIrInstr.Mov
-                                    var-id
-                                    (lower-global-shared-view init-value)
-                                    binding-ir-ty))]
-                              (if (>=
-                                (lower-state-active-loop-entry-var-limit state)
-                                0)
-                                (let
-                                  [init-alias-origin : i64
-                                    (lower-state-inline-result-alias-origin
-                                      (lower-global-shared-view next-state)
-                                      init-value)]
-                                  (lower-state-inline-result-alias-set
-                                    next-state
-                                    var-id
-                                    init-alias-origin))
-                                next-state))
+                            (lower-state-emit
+                              allocated
+                              (ir.CompilerIrInstr.Mov
+                                var-id
+                                (lower-global-shared-view init-value)
+                                binding-ir-ty))
                             (sym_i64_env.sym-i64-bind-id env name-id var-id)
                             next-type-env
                             bindings

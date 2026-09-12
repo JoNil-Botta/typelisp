@@ -21,17 +21,16 @@ Compilation is one whole program per executable with import-graph dedup
 codegen'd once into archives; an in-process session cache warms compiler
 pools across compiles within one process (batch and LSP paths).
 
-Memory-class aggregate expressions carry addresses into inline storage. A
-field, enum-payload, or fixed-array projection keeps the storage lifetime of its
-containing value: `lower-emit-gep` is the shared address-generation path and
-preserves reusable-result provenance, including through `lower-gep-byte`.
-`lower-local-assignment-value` uses that
-provenance to copy a loop-carried value before the next iteration overwrites
-its producer's result slot. Raw pointers retain address identity rather than
-copying their referents. Losing provenance can make a local change during a later
-call, even at opt0. The native `loop_carried_enum_payload_snapshot` and
+Memory-class aggregate expressions carry addresses into inline storage.
+`lower-local-assignment-value` gives a loop-carried memory-class local its own
+inline storage before rebinding it. The source can arrive through a field,
+enum payload, fixed-array projection, conditional merge, or nested loop; the
+copy must not depend on incomplete address-provenance tracking. Otherwise a
+later call can overwrite a retained result slot even at opt0. Raw pointers
+copy only their address. The native `loop_carried_enum_payload_snapshot` and
 `loop_carried_raw_read_snapshot` fixtures guard this boundary on both targets
-at every optimization level.
+at every optimization level. Address generation uses `lower-emit-gep`, also
+shared by byte-offset projections through `lower-gep-byte`.
 
 The compiler also has a pure, versioned incremental-query identity layer. It
 canonicalizes typed source, logical-name, dependency, package/stdlib,

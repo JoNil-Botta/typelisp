@@ -31627,6 +31627,7 @@ g:
     (compiler-backend-gep-fold-sub-shape-ok?)
     (compiler-backend-gep-fold-zero-shape-ok?)
     (compiler-backend-gep-fold-drift-detected-ok?)
+    (compiler-backend-scavenge-narrow-window-ok?)
     (compiler-backend-chained-gep-same-home-ok?)
     (compiler-backend-cmp-mem-fold-shapes-ok?)
     (compiler-backend-gep-store-fold-shapes-ok?)))
@@ -31989,6 +31990,61 @@ g:
     "leaq 1("))
 
 ;; GAP9-SUB: `sub j, 1` folds as `-8(base,j,8)` and nothing computes j - 1.
+;; R4-C: the narrow staging window is admitted for R4-B's scalar compute
+;; family, and for any instruction outside the sibling-reordering load
+;; families; inside one of those families (the pair-emission flag) only the
+;; R4-B admission opens it.
+(define (compiler-backend-scavenge-narrow-window-ok?) : bool
+  (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [function-state : compiler_backend.CompilerBackendFunctionState
+      (compiler_backend.compiler-backend-state-function-state
+        (compiler_backend.compiler-backend-global-shared-view backend-state))]
+    (begin
+      (compiler_backend.compiler-backend-function-scratch-set-bool!
+        function-state
+        compiler_backend.compiler-backend-scratch-bool-instr-staging-narrow-ok
+        false)
+      (compiler_backend.compiler-backend-function-scratch-set-bool!
+        function-state
+        compiler_backend.compiler-backend-scratch-bool-pair-emission
+        false)
+      (compiler_backend.backend-and4
+        ;; a lone load/gep/store outside any pair: narrow
+        (compiler_backend.compiler-backend-scavenge-narrow-window?
+          function-state)
+        ;; inside a sibling-reordering family: wide
+        (begin
+          (compiler_backend.compiler-backend-function-scratch-set-bool!
+            function-state
+            compiler_backend.compiler-backend-scratch-bool-pair-emission
+            true)
+          (not
+            (compiler_backend.compiler-backend-scavenge-narrow-window?
+              function-state)))
+        ;; R4-B's scalar admission still opens it there
+        (begin
+          (compiler_backend.compiler-backend-function-scratch-set-bool!
+            function-state
+            compiler_backend.compiler-backend-scratch-bool-instr-staging-narrow-ok
+            true)
+          (compiler_backend.compiler-backend-scavenge-narrow-window?
+            function-state))
+        ;; and the flag cleared again restores the lone-instruction answer
+        (begin
+          (compiler_backend.compiler-backend-function-scratch-set-bool!
+            function-state
+            compiler_backend.compiler-backend-scratch-bool-instr-staging-narrow-ok
+            false)
+          (compiler_backend.compiler-backend-function-scratch-set-bool!
+            function-state
+            compiler_backend.compiler-backend-scratch-bool-pair-emission
+            false)
+          (compiler_backend.compiler-backend-scavenge-narrow-window?
+            function-state))))))
+
 (define (compiler-backend-gep-fold-sub-shape-ok?) : bool
   (compiler-backend-gep-fold-disp-shape-with-ok?
     (compiler_ir_types.CompilerIrBinOp.Sub)

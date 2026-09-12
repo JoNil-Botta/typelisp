@@ -2398,8 +2398,18 @@
 ;; compiler-backend-instr-staging-narrow-ok?.
 (define compiler-backend-scratch-bool-instr-staging-narrow-ok : i64
   5)
-(define compiler-backend-scratch-bool-count : i64
+
+;; R4-C: set while one of the load-fusion families that emits SIBLING loads
+;; out of def-point order is running (emit-load-from-gep-pair and friends,
+;; emit-load-load, emit-gep-load-pair-alu). Only there can a register-homed
+;; sibling be written into its home ahead of its interval point, which is the
+;; hazard the 16-point staging window guards against; every other staging
+;; pick may fall back to the [point, point+2] window before the emergency
+;; tier borrows an occupied register (see compiler-backend-scavenge-reg).
+(define compiler-backend-scratch-bool-pair-emission : i64
   6)
+(define compiler-backend-scratch-bool-count : i64
+  7)
 (define compiler-backend-scratch-i64-array-emergency-regs : i64
   0)
 (define compiler-backend-scratch-i64-array-const-hoist-site-points : i64
@@ -38709,7 +38719,52 @@
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)]))]))
 
+;; R4-C wrapper: bracket the reordering family with the pair-emission flag,
+;; restoring the caller's value so a nested pair keeps the outer one flagged.
 (define (compiler-backend-emit-load-from-gep-pair-first
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : i64]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [load-ty : compiler_ast_types.AstType]
+  [base-reg : String]
+  [sibling-home : String]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [function-state : CompilerBackendFunctionState
+      (compiler-backend-state-function-state
+        (compiler-backend-global-shared-view backend-state))]
+    [prev : bool
+      (compiler-backend-function-scratch-bool?
+        function-state
+        compiler-backend-scratch-bool-pair-emission)]
+    [_on : unit
+      (compiler-backend-function-scratch-set-bool!
+        function-state
+        compiler-backend-scratch-bool-pair-emission
+        true)]
+    [result : ResultCompilerBackend
+      (compiler-backend-emit-load-from-gep-pair-first-unflagged
+        type-segment-bases
+        assignments
+        dst
+        base
+        offset
+        elem-ty
+        load-ty
+        base-reg
+        sibling-home
+        backend-state)]
+    [_off : unit
+      (compiler-backend-function-scratch-set-bool!
+        function-state
+        compiler-backend-scratch-bool-pair-emission
+        prev)]
+    result))
+
+(define (compiler-backend-emit-load-from-gep-pair-first-unflagged
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
@@ -38780,7 +38835,50 @@
             ""
             "backend: non-immediate gep pair first load")))]))
 
+;; R4-C wrapper: bracket the reordering family with the pair-emission flag,
+;; restoring the caller's value so a nested pair keeps the outer one flagged.
 (define (compiler-backend-emit-load-from-gep-r10-live
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : i64]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [load-ty : compiler_ast_types.AstType]
+  [base-reg : String]
+  [sibling-home : String]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [function-state : CompilerBackendFunctionState
+      (compiler-backend-state-function-state
+        (compiler-backend-global-shared-view backend-state))]
+    [prev : bool
+      (compiler-backend-function-scratch-bool?
+        function-state
+        compiler-backend-scratch-bool-pair-emission)]
+    [_on : unit
+      (compiler-backend-function-scratch-set-bool!
+        function-state
+        compiler-backend-scratch-bool-pair-emission
+        true)]
+    [result : ResultCompilerBackend
+      (compiler-backend-emit-load-from-gep-r10-live-unflagged
+        type-segment-bases
+        assignments
+        dst
+        offset
+        elem-ty
+        load-ty
+        base-reg
+        sibling-home
+        backend-state)]
+    [_off : unit
+      (compiler-backend-function-scratch-set-bool!
+        function-state
+        compiler-backend-scratch-bool-pair-emission
+        prev)]
+    result))
+
+(define (compiler-backend-emit-load-from-gep-r10-live-unflagged
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
@@ -38841,7 +38939,56 @@
             ""
             "backend: non-immediate r10-live gep load")))]))
 
+;; R4-C wrapper: bracket the reordering family with the pair-emission flag,
+;; restoring the caller's value so a nested pair keeps the outer one flagged.
 (define (compiler-backend-emit-load-from-gep-pair
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset0 : compiler_ir_types.CompilerIrValue]
+  [elem-ty0 : compiler_ast_types.AstType]
+  [load-dst0 : i64]
+  [load-ty0 : compiler_ast_types.AstType]
+  [offset1 : compiler_ir_types.CompilerIrValue]
+  [elem-ty1 : compiler_ast_types.AstType]
+  [load-dst1 : i64]
+  [load-ty1 : compiler_ast_types.AstType]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [function-state : CompilerBackendFunctionState
+      (compiler-backend-state-function-state
+        (compiler-backend-global-shared-view backend-state))]
+    [prev : bool
+      (compiler-backend-function-scratch-bool?
+        function-state
+        compiler-backend-scratch-bool-pair-emission)]
+    [_on : unit
+      (compiler-backend-function-scratch-set-bool!
+        function-state
+        compiler-backend-scratch-bool-pair-emission
+        true)]
+    [result : ResultCompilerBackend
+      (compiler-backend-emit-load-from-gep-pair-unflagged
+        type-segment-bases
+        assignments
+        base
+        offset0
+        elem-ty0
+        load-dst0
+        load-ty0
+        offset1
+        elem-ty1
+        load-dst1
+        load-ty1
+        backend-state)]
+    [_off : unit
+      (compiler-backend-function-scratch-set-bool!
+        function-state
+        compiler-backend-scratch-bool-pair-emission
+        prev)]
+    result))
+
+(define (compiler-backend-emit-load-from-gep-pair-unflagged
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
@@ -38939,7 +39086,68 @@
             (ResultCompilerBackend.Err message)])]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
+;; R4-C wrapper: bracket the reordering family with the pair-emission flag,
+;; restoring the caller's value so a nested pair keeps the outer one flagged.
 (define (compiler-backend-emit-load-from-gep-pair-planned
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset0 : compiler_ir_types.CompilerIrValue]
+  [elem-ty0 : compiler_ast_types.AstType]
+  [load-dst0 : i64]
+  [load-ty0 : compiler_ast_types.AstType]
+  [offset1 : compiler_ir_types.CompilerIrValue]
+  [elem-ty1 : compiler_ast_types.AstType]
+  [load-dst1 : i64]
+  [load-ty1 : compiler_ast_types.AstType]
+  [address0 : String]
+  [index0 : String]
+  [value0 : String]
+  [address1 : String]
+  [index1 : String]
+  [value1 : String]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [function-state : CompilerBackendFunctionState
+      (compiler-backend-state-function-state
+        (compiler-backend-global-shared-view backend-state))]
+    [prev : bool
+      (compiler-backend-function-scratch-bool?
+        function-state
+        compiler-backend-scratch-bool-pair-emission)]
+    [_on : unit
+      (compiler-backend-function-scratch-set-bool!
+        function-state
+        compiler-backend-scratch-bool-pair-emission
+        true)]
+    [result : ResultCompilerBackend
+      (compiler-backend-emit-load-from-gep-pair-planned-unflagged
+        type-segment-bases
+        assignments
+        base
+        offset0
+        elem-ty0
+        load-dst0
+        load-ty0
+        offset1
+        elem-ty1
+        load-dst1
+        load-ty1
+        address0
+        index0
+        value0
+        address1
+        index1
+        value1
+        backend-state)]
+    [_off : unit
+      (compiler-backend-function-scratch-set-bool!
+        function-state
+        compiler-backend-scratch-bool-pair-emission
+        prev)]
+    result))
+
+(define (compiler-backend-emit-load-from-gep-pair-planned-unflagged
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [base : compiler_ir_types.CompilerIrValue]
@@ -39007,7 +39215,56 @@
             (ResultCompilerBackend.Err message)])]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
+;; R4-C wrapper: bracket the reordering family with the pair-emission flag,
+;; restoring the caller's value so a nested pair keeps the outer one flagged.
 (define (compiler-backend-emit-load-load
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [first-dst : i64]
+  [ptr : compiler_ir_types.CompilerIrValue]
+  [first-ty : compiler_ast_types.AstType]
+  [second-dst : i64]
+  [second-ty : compiler_ast_types.AstType]
+  [first-address : String]
+  [first-value : String]
+  [second-address : String]
+  [second-value : String]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [function-state : CompilerBackendFunctionState
+      (compiler-backend-state-function-state
+        (compiler-backend-global-shared-view backend-state))]
+    [prev : bool
+      (compiler-backend-function-scratch-bool?
+        function-state
+        compiler-backend-scratch-bool-pair-emission)]
+    [_on : unit
+      (compiler-backend-function-scratch-set-bool!
+        function-state
+        compiler-backend-scratch-bool-pair-emission
+        true)]
+    [result : ResultCompilerBackend
+      (compiler-backend-emit-load-load-unflagged
+        type-segment-bases
+        assignments
+        first-dst
+        ptr
+        first-ty
+        second-dst
+        second-ty
+        first-address
+        first-value
+        second-address
+        second-value
+        backend-state)]
+    [_off : unit
+      (compiler-backend-function-scratch-set-bool!
+        function-state
+        compiler-backend-scratch-bool-pair-emission
+        prev)]
+    result))
+
+(define (compiler-backend-emit-load-load-unflagged
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [first-dst : i64]
@@ -58777,7 +59034,44 @@
         [_ (CompilerBackendGepLoadPairAluFold.No)]))
     (CompilerBackendGepLoadPairAluFold.No)))
 
+;; R4-C wrapper: bracket the reordering family with the pair-emission flag,
+;; restoring the caller's value so a nested pair keeps the outer one flagged.
 (define (compiler-backend-emit-gep-load-pair-alu
+  [backend-state : CompilerBackendState]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [mnem : String]
+  [dst : i64]
+  [addr0 : String]
+  [addr1 : String]) : ResultCompilerBackend
+  (let
+    [function-state : CompilerBackendFunctionState
+      (compiler-backend-state-function-state
+        (compiler-backend-global-shared-view backend-state))]
+    [prev : bool
+      (compiler-backend-function-scratch-bool?
+        function-state
+        compiler-backend-scratch-bool-pair-emission)]
+    [_on : unit
+      (compiler-backend-function-scratch-set-bool!
+        function-state
+        compiler-backend-scratch-bool-pair-emission
+        true)]
+    [result : ResultCompilerBackend
+      (compiler-backend-emit-gep-load-pair-alu-unflagged
+        backend-state
+        assignments
+        mnem
+        dst
+        addr0
+        addr1)]
+    [_off : unit
+      (compiler-backend-function-scratch-set-bool!
+        function-state
+        compiler-backend-scratch-bool-pair-emission
+        prev)]
+    result))
+
+(define (compiler-backend-emit-gep-load-pair-alu-unflagged
   [backend-state : CompilerBackendState]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [mnem : String]
@@ -58886,7 +59180,55 @@
       (CompilerBackendMaybeGepLoadPairAluDivmodStore.No))
     (CompilerBackendMaybeGepLoadPairAluDivmodStore.No)))
 
+;; R4-C wrapper: bracket the reordering family with the pair-emission flag,
+;; restoring the caller's value so a nested pair keeps the outer one flagged.
 (define (compiler-backend-emit-gep-load-pair-alu-divmod-rest
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [mnem : String]
+  [alu-dst : i64]
+  [addr0 : String]
+  [addr1 : String]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset0 : compiler_ir_types.CompilerIrValue]
+  [offset1 : compiler_ir_types.CompilerIrValue]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [out : (&mut out CompilerBackendAsmBuf)]) : CompilerBackendMaybeGepLoadPairAluDivmodEmission
+  (let
+    [function-state : CompilerBackendFunctionState
+      (compiler-backend-global-shared-view ctx.function-state)]
+    [prev : bool
+      (compiler-backend-function-scratch-bool?
+        function-state
+        compiler-backend-scratch-bool-pair-emission)]
+    [_on : unit
+      (compiler-backend-function-scratch-set-bool!
+        function-state
+        compiler-backend-scratch-bool-pair-emission
+        true)]
+    [result : CompilerBackendMaybeGepLoadPairAluDivmodEmission
+      (compiler-backend-emit-gep-load-pair-alu-divmod-rest-unflagged
+        ctx
+        fallthrough
+        mnem
+        alu-dst
+        addr0
+        addr1
+        base
+        offset0
+        offset1
+        instrs
+        index
+        out)]
+    [_off : unit
+      (compiler-backend-function-scratch-set-bool!
+        function-state
+        compiler-backend-scratch-bool-pair-emission
+        prev)]
+    result))
+
+(define (compiler-backend-emit-gep-load-pair-alu-divmod-rest-unflagged
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [mnem : String]
@@ -72888,6 +73230,24 @@
         0
         (array-length cands)))))
 
+;; R4-C: may this staging pick retry against the [point, point+2] window
+;; before the emergency tier? Yes for the scalar compute family (R4-B's
+;; admission, set per instruction by compiler-backend-instr-reserved-home-mask)
+;; and for ANY instruction outside the sibling-reordering load families (the
+;; pair-emission flag): there nothing has been written ahead of its point, so
+;; the at-point occupancy is exact. Inside those families the wide window
+;; stands, whatever the instruction.
+(define (compiler-backend-scavenge-narrow-window?
+  [function-state : CompilerBackendFunctionState]) : bool
+  (or
+    (compiler-backend-function-scratch-bool?
+      function-state
+      compiler-backend-scratch-bool-instr-staging-narrow-ok)
+    (not
+      (compiler-backend-function-scratch-bool?
+        function-state
+        compiler-backend-scratch-bool-pair-emission))))
+
 (define (compiler-backend-scavenge-reg-peek
   [dst-var : i64]
   [exclude : (__tl_dyn-array String)]
@@ -72927,9 +73287,7 @@
         function-state
         point
         hi-point)
-      (if (compiler-backend-function-scratch-bool?
-        function-state
-        compiler-backend-scratch-bool-instr-staging-narrow-ok)
+      (if (compiler-backend-scavenge-narrow-window? function-state)
         (compiler-backend-scavenge-occupied-mask-over-range
           function-state
           point
@@ -73001,10 +73359,12 @@
     ;; to the reserved-home mask). Passing the wide mask itself disables the tier
     ;; -- compiler-backend-scavenge-narrow-index returns -1 on equality -- so the
     ;; load-fusion families keep today's behaviour exactly.
+    ;; R4-C: the narrow window is also right for any staging pick made
+    ;; outside the sibling-reordering load families (the pair-emission flag),
+    ;; a lone gep/load/store included: nothing was written ahead of its
+    ;; point, so the at-point occupancy is exact.
     [narrow-mask : i64
-      (if (compiler-backend-function-scratch-bool?
-        function-state
-        compiler-backend-scratch-bool-instr-staging-narrow-ok)
+      (if (compiler-backend-scavenge-narrow-window? function-state)
         (compiler-backend-scavenge-occupied-mask-over-range
           function-state
           point

@@ -872,64 +872,111 @@
 (define (source-tool-linux-direct-object-enabled?) : bool
   (source-tool-env-command-set? (source-tool-linux-direct-object-env-name)))
 
+(defenum SourceToolLinuxDirectObjectEligibility
+  (Eligible)
+  (Fallback backend.CompilerDirectObjectFallbackReason))
+
+(defenum ResultSourceToolLinuxDirectObject
+  (Ok String)
+  (Fallback backend.CompilerDirectObjectFallbackReason))
+
+;; One ELF capability boundary for source and package artifacts. The package
+;; policy preflight must not duplicate these serializer/linkability checks.
+(define (source-tool-linux-direct-object-eligibility
+  [kind : backend.CompilerDirectObjectArtifactKind]
+  [image : cobj.CompilerObjectImage]) : SourceToolLinuxDirectObjectEligibility
+  (cond
+    [(not
+        (compiler_object_elf.compiler-object-elf-sections-supported?
+          (owned_view.compiler-owned-shared-view image.sections)))
+      (SourceToolLinuxDirectObjectEligibility.Fallback
+        backend.CompilerDirectObjectFallbackReason.ObjectEncoding)]
+    [(not
+        (compiler_object_elf.compiler-object-elf-relocation-list-supported?
+          (owned_view.compiler-owned-shared-view image.relocations)))
+      (SourceToolLinuxDirectObjectEligibility.Fallback
+        backend.CompilerDirectObjectFallbackReason.ObjectRelocation)]
+    [(not
+        (and
+          (compiler_object_elf.compiler-object-elf-relocation-sites-known?
+            (owned_view.compiler-owned-shared-view image)
+            (owned_view.compiler-owned-shared-view image.relocations))
+          (compiler_object_elf.compiler-object-elf-text-targets-known?
+            (owned_view.compiler-owned-shared-view image))
+          (compiler_object_elf.compiler-object-elf-text-relocation-count-matches?
+            (owned_view.compiler-owned-shared-view image))))
+      (SourceToolLinuxDirectObjectEligibility.Fallback
+        backend.CompilerDirectObjectFallbackReason.ObjectFixup)]
+    [(not
+        (compiler_object_elf.compiler-object-elf-image-supported?
+          (owned_view.compiler-owned-shared-view image)))
+      (SourceToolLinuxDirectObjectEligibility.Fallback
+        backend.CompilerDirectObjectFallbackReason.ObjectEncoding)]
+    [(match kind
+        [(backend.CompilerDirectObjectArtifactKind.Bin)
+          (not
+            (or
+              (cobj.compiler-object-symbol-list-contains?
+                (owned_view.compiler-owned-shared-view image.symbols)
+                "_tl_start"
+                (cobj.CompilerObjectSymbolBinding.Export)
+                (cobj.CompilerObjectSymbolKind.Function))
+              (cobj.compiler-object-symbol-list-contains?
+                (owned_view.compiler-owned-shared-view image.symbols)
+                "main"
+                (cobj.CompilerObjectSymbolBinding.Export)
+                (cobj.CompilerObjectSymbolKind.Function))))]
+        [(backend.CompilerDirectObjectArtifactKind.StaticLib) false])
+      (SourceToolLinuxDirectObjectEligibility.Fallback
+        backend.CompilerDirectObjectFallbackReason.MissingEntrySymbol)]
+    [(match kind
+        [(backend.CompilerDirectObjectArtifactKind.Bin)
+          (<=
+            (compiler_object_elf.compiler-object-elf-section-raw-size
+              (owned_view.compiler-owned-shared-view image)
+              (cobj.CompilerObjectSectionKind.Text))
+            0)]
+        [(backend.CompilerDirectObjectArtifactKind.StaticLib) false])
+      (SourceToolLinuxDirectObjectEligibility.Fallback
+        backend.CompilerDirectObjectFallbackReason.EmptyTextSection)]
+    [else SourceToolLinuxDirectObjectEligibility.Eligible]))
+
+(define (source-tool-render-linux-direct-object
+  [kind : backend.CompilerDirectObjectArtifactKind]
+  [image : cobj.CompilerObjectImage]) : ResultSourceToolLinuxDirectObject
+  (match (source-tool-linux-direct-object-eligibility
+    kind
+    (owned_view.compiler-owned-shared-view image))
+    [(SourceToolLinuxDirectObjectEligibility.Fallback reason)
+      (ResultSourceToolLinuxDirectObject.Fallback reason)]
+    [(SourceToolLinuxDirectObjectEligibility.Eligible)
+      (match (compiler_object_elf.compiler-object-elf-render image)
+        [(compiler_object_elf.ResultCompilerObjectElf.Ok object)
+          (ResultSourceToolLinuxDirectObject.Ok object)]
+        [(compiler_object_elf.ResultCompilerObjectElf.Err _)
+          (ResultSourceToolLinuxDirectObject.Fallback
+            backend.CompilerDirectObjectFallbackReason.ObjectEncoding)])]))
+
 (define (source-tool-linux-direct-object-linkable?
   [image : cobj.CompilerObjectImage]) : bool
-  (and
-    (compiler_object_elf.compiler-object-elf-image-supported?
-      (owned_view.compiler-owned-shared-view image))
-    (or
-      (cobj.compiler-object-symbol-list-contains?
-        (owned_view.compiler-owned-shared-view image.symbols)
-        "_tl_start"
-        (cobj.CompilerObjectSymbolBinding.Export)
-        (cobj.CompilerObjectSymbolKind.Function))
-      (cobj.compiler-object-symbol-list-contains?
-        (owned_view.compiler-owned-shared-view image.symbols)
-        "main"
-        (cobj.CompilerObjectSymbolBinding.Export)
-        (cobj.CompilerObjectSymbolKind.Function)))
-    (>
-      (compiler_object_elf.compiler-object-elf-section-raw-size
-        (owned_view.compiler-owned-shared-view image)
-        (cobj.CompilerObjectSectionKind.Text))
-      0)))
-
-(define (source-tool-linux-direct-object-archivable?
-  [image : cobj.CompilerObjectImage]) : bool
-  (compiler_object_elf.compiler-object-elf-image-supported?
-    (owned_view.compiler-owned-shared-view image)))
-
-(define (source-tool-linux-direct-object-unavailable-message) : String
-  "linux direct object unavailable: object image lacks encoded .text or entry symbol")
-
-(define (source-tool-linux-direct-object-archive-unavailable-message) : String
-  "linux direct object unavailable: object image has unsupported ELF records")
+  (match (source-tool-linux-direct-object-eligibility
+    backend.CompilerDirectObjectArtifactKind.Bin
+    image)
+    [(SourceToolLinuxDirectObjectEligibility.Eligible) true]
+    [(SourceToolLinuxDirectObjectEligibility.Fallback _) false]))
 
 (define (source-tool-render-linkable-linux-elf-object
   [image : cobj.CompilerObjectImage]) : ResultSourceToolString
-  (if (source-tool-linux-direct-object-linkable?
-    (owned_view.compiler-owned-shared-view image))
-    (match (compiler_object_elf.compiler-object-elf-render
-      (owned_view.compiler-owned-shared-view image))
-      [(compiler_object_elf.ResultCompilerObjectElf.Ok obj)
-        (ResultSourceToolString.Ok obj)]
-      [(compiler_object_elf.ResultCompilerObjectElf.Err message)
-        (ResultSourceToolString.Err message)])
-    (ResultSourceToolString.Err
-      (source-tool-linux-direct-object-unavailable-message))))
-
-(define (source-tool-render-archivable-linux-elf-object
-  [image : cobj.CompilerObjectImage]) : ResultSourceToolString
-  (if (source-tool-linux-direct-object-archivable?
-    (owned_view.compiler-owned-shared-view image))
-    (match (compiler_object_elf.compiler-object-elf-render
-      (owned_view.compiler-owned-shared-view image))
-      [(compiler_object_elf.ResultCompilerObjectElf.Ok obj)
-        (ResultSourceToolString.Ok obj)]
-      [(compiler_object_elf.ResultCompilerObjectElf.Err message)
-        (ResultSourceToolString.Err message)])
-    (ResultSourceToolString.Err
-      (source-tool-linux-direct-object-archive-unavailable-message))))
+  (match (source-tool-render-linux-direct-object
+    backend.CompilerDirectObjectArtifactKind.Bin
+    image)
+    [(ResultSourceToolLinuxDirectObject.Ok object)
+      (ResultSourceToolString.Ok object)]
+    [(ResultSourceToolLinuxDirectObject.Fallback reason)
+      (ResultSourceToolString.Err
+        (str_cat.str-cat
+          "linux direct object unavailable: "
+          (backend.compiler-direct-object-fallback-transcript reason)))]))
 
 (define (source-tool-emit-linux-elf-object
   [source : String]

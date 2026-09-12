@@ -3099,74 +3099,14 @@
             obj-path
             artifact-path)])]))
 
-(defenum ResultBuildPackageLinuxDirectObject
-  (Ok String)
-  (Fallback backend.CompilerDirectObjectFallbackReason))
-
 (define (build-package-render-linux-direct-object
   [kind : load.CompilerPkgKind]
-  [image : cobj.CompilerObjectImage]) : ResultBuildPackageLinuxDirectObject
-  (cond
-    [(not
-        (compiler_object_elf.compiler-object-elf-sections-supported?
-          (owned_view.compiler-owned-shared-view image.sections)))
-      (ResultBuildPackageLinuxDirectObject.Fallback
-        backend.CompilerDirectObjectFallbackReason.ObjectEncoding)]
-    [(not
-        (compiler_object_elf.compiler-object-elf-relocation-list-supported?
-          (owned_view.compiler-owned-shared-view image.relocations)))
-      (ResultBuildPackageLinuxDirectObject.Fallback
-        backend.CompilerDirectObjectFallbackReason.ObjectRelocation)]
-    [(not
-        (and
-          (compiler_object_elf.compiler-object-elf-relocation-sites-known?
-            (owned_view.compiler-owned-shared-view image)
-            (owned_view.compiler-owned-shared-view image.relocations))
-          (compiler_object_elf.compiler-object-elf-text-targets-known?
-            (owned_view.compiler-owned-shared-view image))
-          (compiler_object_elf.compiler-object-elf-text-relocation-count-matches?
-            (owned_view.compiler-owned-shared-view image))))
-      (ResultBuildPackageLinuxDirectObject.Fallback
-        backend.CompilerDirectObjectFallbackReason.ObjectFixup)]
-    [(not
-        (compiler_object_elf.compiler-object-elf-image-supported?
-          (owned_view.compiler-owned-shared-view image)))
-      (ResultBuildPackageLinuxDirectObject.Fallback
-        backend.CompilerDirectObjectFallbackReason.ObjectEncoding)]
-    [(match kind
-        [(CompilerPkgKindBin)
-          (not
-            (or
-              (cobj.compiler-object-symbol-list-contains?
-                (owned_view.compiler-owned-shared-view image.symbols)
-                "_tl_start"
-                (cobj.CompilerObjectSymbolBinding.Export)
-                (cobj.CompilerObjectSymbolKind.Function))
-              (cobj.compiler-object-symbol-list-contains?
-                (owned_view.compiler-owned-shared-view image.symbols)
-                "main"
-                (cobj.CompilerObjectSymbolBinding.Export)
-                (cobj.CompilerObjectSymbolKind.Function))))]
-        [(CompilerPkgKindLib) false])
-      (ResultBuildPackageLinuxDirectObject.Fallback
-        backend.CompilerDirectObjectFallbackReason.MissingEntrySymbol)]
-    [(match kind
-        [(CompilerPkgKindBin)
-          (<=
-            (compiler_object_elf.compiler-object-elf-section-raw-size
-              (owned_view.compiler-owned-shared-view image)
-              (cobj.CompilerObjectSectionKind.Text))
-            0)]
-        [(CompilerPkgKindLib) false])
-      (ResultBuildPackageLinuxDirectObject.Fallback
-        backend.CompilerDirectObjectFallbackReason.EmptyTextSection)]
-    [else
-      (match (compiler_object_elf.compiler-object-elf-render image)
-        [(compiler_object_elf.ResultCompilerObjectElf.Ok object)
-          (ResultBuildPackageLinuxDirectObject.Ok object)]
-        [(compiler_object_elf.ResultCompilerObjectElf.Err _)
-          (ResultBuildPackageLinuxDirectObject.Fallback
-            backend.CompilerDirectObjectFallbackReason.ObjectEncoding)])]))
+  [image : cobj.CompilerObjectImage]) : build_run_core.ResultSourceToolLinuxDirectObject
+  (build_run_core.source-tool-render-linux-direct-object
+    (match kind
+      [(CompilerPkgKindBin) backend.CompilerDirectObjectArtifactKind.Bin]
+      [(CompilerPkgKindLib) backend.CompilerDirectObjectArtifactKind.StaticLib])
+    image))
 
 (cfg
   test
@@ -3183,21 +3123,20 @@
             (match (build-package-render-linux-direct-object
               (CompilerPkgKindBin)
               (owned_view.compiler-owned-shared-view image))
-              [(ResultBuildPackageLinuxDirectObject.Ok typed)
-                (match (build_run_core.source-tool-render-linkable-linux-elf-object
+              [(build_run_core.ResultSourceToolLinuxDirectObject.Ok typed)
+                (match (compiler_object_elf.compiler-object-elf-render
                   (owned_view.compiler-owned-shared-view image))
-                  [(build_run_core.ResultSourceToolString.Ok legacy)
-                    (string.eq typed legacy)]
+                  [(compiler_object_elf.ResultCompilerObjectElf.Ok serialized)
+                    (string.eq typed serialized)]
                   [_ false])]
               [_ false])
             (match (build-package-render-linux-direct-object
               (CompilerPkgKindLib)
               (owned_view.compiler-owned-shared-view image))
-              [(ResultBuildPackageLinuxDirectObject.Ok typed)
-                (match (build_run_core.source-tool-render-archivable-linux-elf-object
-                  image)
-                  [(build_run_core.ResultSourceToolString.Ok legacy)
-                    (string.eq typed legacy)]
+              [(build_run_core.ResultSourceToolLinuxDirectObject.Ok typed)
+                (match (compiler_object_elf.compiler-object-elf-render image)
+                  [(compiler_object_elf.ResultCompilerObjectElf.Ok serialized)
+                    (string.eq typed serialized)]
                   [_ false])]
               [_ false]))
           (io.panic "Linux package direct-object bytes changed"))])))
@@ -3209,15 +3148,29 @@
     (match (build-package-render-linux-direct-object
       (CompilerPkgKindBin)
       (compiler_object_elf.compiler-object-elf-smoke-image))
-      [(ResultBuildPackageLinuxDirectObject.Fallback
+      [(build_run_core.ResultSourceToolLinuxDirectObject.Fallback
           (backend.CompilerDirectObjectFallbackReason.MissingEntrySymbol))
         unit]
       [_ (io.panic "Linux package missing-entry reason changed")])))
 
 (cfg
   test
+  (test
+    build-package-linux-direct-object-source-fallback-parity
+    (match (build_run_core.source-tool-render-linkable-linux-elf-object
+      (compiler_object_elf.compiler-object-elf-smoke-image))
+      [(build_run_core.ResultSourceToolString.Err message)
+        (unless
+          (string.eq
+            message
+            "linux direct object unavailable: missing-entry-symbol")
+          (io.panic "Linux source object fallback lost its typed reason"))]
+      [_ (io.panic "Linux source object accepted an image without entry")])))
+
+(cfg
+  test
   (define (build-package-linux-direct-object-with-relocation
-    [reloc : cobj.CompilerObjectRelocation]) : ResultBuildPackageLinuxDirectObject
+    [reloc : cobj.CompilerObjectRelocation]) : build_run_core.ResultSourceToolLinuxDirectObject
     (let
       [fixture : cobj.CompilerObjectImage
         (compiler_object_elf.compiler-object-elf-smoke-image)]
@@ -3232,7 +3185,7 @@
 
 (cfg
   test
-  (define (build-package-linux-direct-object-with-pdata) : ResultBuildPackageLinuxDirectObject
+  (define (build-package-linux-direct-object-with-pdata) : build_run_core.ResultSourceToolLinuxDirectObject
     (let
       [fixture : cobj.CompilerObjectImage
         (compiler_object_elf.compiler-object-elf-smoke-image)]
@@ -3257,7 +3210,7 @@
     (unless
       (and
         (match (build-package-linux-direct-object-with-pdata)
-          [(ResultBuildPackageLinuxDirectObject.Fallback
+          [(build_run_core.ResultSourceToolLinuxDirectObject.Fallback
               (backend.CompilerDirectObjectFallbackReason.ObjectEncoding))
             true]
           [_ false])
@@ -3267,7 +3220,7 @@
             "_tl_empty"
             (cobj.CompilerObjectRelocationKind.Abs64)
             "_tl_empty"))
-          [(ResultBuildPackageLinuxDirectObject.Fallback
+          [(build_run_core.ResultSourceToolLinuxDirectObject.Fallback
               (backend.CompilerDirectObjectFallbackReason.ObjectRelocation))
             true]
           [_ false])
@@ -3277,7 +3230,7 @@
             "_tl_no_site"
             (cobj.CompilerObjectRelocationKind.Call)
             "_tl_empty"))
-          [(ResultBuildPackageLinuxDirectObject.Fallback
+          [(build_run_core.ResultSourceToolLinuxDirectObject.Fallback
               (backend.CompilerDirectObjectFallbackReason.ObjectFixup))
             true]
           [_ false]))
@@ -3750,11 +3703,12 @@
                 (compiler_driver_core.compiler-driver-print-advisories
                   (& advisories))
                 (match (build-package-render-linux-direct-object kind image)
-                  [(ResultBuildPackageLinuxDirectObject.Ok object)
+                  [(build_run_core.ResultSourceToolLinuxDirectObject.Ok object)
                     (ResultBuildPackagePreparedRuntime.DirectObject
                       object
                       (BuildPackageSideAssembly.Prepared asm))]
-                  [(ResultBuildPackageLinuxDirectObject.Fallback reason)
+                  [(build_run_core.ResultSourceToolLinuxDirectObject.Fallback
+                      reason)
                     (ResultBuildPackagePreparedRuntime.Assembly asm reason)]))]
             [(compiler_driver_core.ResultCompilerDriverPackageRuntime.Assembly
                 asm

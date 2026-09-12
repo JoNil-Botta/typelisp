@@ -143,24 +143,47 @@
     [(ast.AstType.Char) (cast (cast value : char) : f64)]
     [_ (cast value : f64)]))
 
+;; Convert directly to binary32 before widening the exact result for compiler
+;; storage. Going through binary64 first double-rounds U64 values whose low
+;; bits distinguish the two sides of a binary32 midpoint above 2^63.
+(define (compiler-finite-cast-int-to-f32-as-f64
+  [value : i64]
+  [from-ty : ast.AstType]) : f64
+  (match from-ty
+    [(ast.AstType.U64) (cast (cast (cast value : u64) : f32) : f64)]
+    [(ast.AstType.U32) (cast (cast (cast value : u32) : f32) : f64)]
+    [(ast.AstType.U16) (cast (cast (cast value : u16) : f32) : f64)]
+    [(ast.AstType.U8) (cast (cast (cast value : u8) : f32) : f64)]
+    [(ast.AstType.Char) (cast (cast (cast value : char) : f32) : f64)]
+    [_ (cast (cast value : f32) : f64)]))
+
 (define (compiler-finite-cast-int-to-float-result
   [value : i64]
   [from-ty : ast.AstType]
   [to-ty : ast.AstType]) : CompilerFiniteCastResult
-  (let
-    [as-f64 : f64 (compiler-finite-cast-int-to-f64 value from-ty)]
-    (match to-ty
-      [(ast.AstType.F64)
+  (match to-ty
+    [(ast.AstType.F64)
+      (let
+        [as-f64 : f64 (compiler-finite-cast-int-to-f64 value from-ty)]
         (if (compiler-float-f64-finite? as-f64)
           (CompilerFiniteCastResultF64 as-f64)
-          (CompilerFiniteCastNoResult))]
-      [(ast.AstType.F32)
-        (let
-          [rounded : f64 (compiler-float-round-f32-as-f64 as-f64)]
-          (if (compiler-float-f64-finite? rounded)
-            (CompilerFiniteCastResultF32 rounded)
-            (CompilerFiniteCastNoResult)))]
-      [_ (CompilerFiniteCastNoResult)])))
+          (CompilerFiniteCastNoResult)))]
+    [(ast.AstType.F32)
+      (let
+        [rounded : f64 (compiler-finite-cast-int-to-f32-as-f64 value from-ty)]
+        (if (compiler-float-f64-finite? rounded)
+          (CompilerFiniteCastResultF32 rounded)
+          (CompilerFiniteCastNoResult)))]
+    [_ (CompilerFiniteCastNoResult)]))
+
+(define (compiler-finite-cast-u64-f32-bits-eq? [value : u64] [want : u32]) : bool
+  (match (compiler-finite-cast-fold
+    (CompilerFiniteCastInputI64 (cast value : i64))
+    (ast.AstType.U64)
+    (ast.AstType.F32))
+    [(CompilerFiniteCastResultF32 rounded)
+      (= (compiler-float-f32-bits (cast rounded : f32)) want)]
+    [_ false]))
 
 (define (compiler-finite-cast-signed-min [ty : ast.AstType]) : f64
   (match ty
@@ -351,6 +374,15 @@
     (compiler-float-parse-f32-bits-eq? "0.1" 0x3dcccccd)
     (compiler-float-parse-f32-bits-eq? "0.10000000149011612" 0x3dcccccd)
     (compiler-float-parse-f32-bits-eq? "-0" 0x80000000)
+    (compiler-finite-cast-u64-f32-bits-eq?
+      (cast 9223372586610589695 : u64)
+      (cast 0x5f000000 : u32))
+    (compiler-finite-cast-u64-f32-bits-eq?
+      (cast 9223372586610589696 : u64)
+      (cast 0x5f000000 : u32))
+    (compiler-finite-cast-u64-f32-bits-eq?
+      (cast 9223372586610589697 : u64)
+      (cast 0x5f000001 : u32))
     (match (compiler-float-parse-f64-bits "1e+309")
       [(CompilerFloatSomeBits _) false]
       [(CompilerFloatNoBits) true])

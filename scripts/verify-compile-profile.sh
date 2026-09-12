@@ -2026,8 +2026,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # capacity, and 737,280 physical payload bytes.
     # #5407's semantic completion provider measured 26,662 used nodes and 27
     # segments on the pre-ownership mainline tree.
+    # #7452's closed direct-object fallback types cross to 31 segments: the
+    # authoritative Windows CI probe measured 30,725 used nodes, 31,744
+    # capacity, and 761,856 physical payload bytes. The other three AST pool
+    # boundaries remain unchanged.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool macro_expand 30 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool macro_expand 31 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # #6828's dense flag-exit/BCE storage declarations cross the next type-pool
     # typecheck boundary: the authoritative Windows probe measured 9,221 used

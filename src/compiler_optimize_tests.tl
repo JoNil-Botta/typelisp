@@ -6057,7 +6057,12 @@
       (compiler_ir_types.CompilerIrValue.F64
         (opt-test-f32-bits "18446742974197923840.0"))
       (compiler_ast_types.AstType.F32)
-      (compiler_ast_types.AstType.U64))))
+      (compiler_ast_types.AstType.U64))
+    (compiler_ir_types.CompilerIrInstr.Cast
+      67
+      (compiler_ir_types.CompilerIrValue.I64 (- 0 9223371487098961919))
+      (compiler_ast_types.AstType.U64)
+      (compiler_ast_types.AstType.F32))))
 
 (define (opt-finite-cast-no-fold-instrs) : compiler_ir_types.CompilerIrInstrSeq
   (opt-test-instrs
@@ -6215,6 +6220,10 @@
           66
           999)
         -1099511627776)
+      (opt-mov-dst-f64-bits?
+        (compiler_ir_types.compiler-ir-global-shared-view finite-casts)
+        67
+        (opt-test-f32-bits "9223373136366403584.0"))
       (=
         (opt-count-cast-instr-seq
           (compiler_ir_types.compiler-ir-global-shared-view deferred-casts))

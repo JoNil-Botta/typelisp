@@ -16940,6 +16940,13 @@
         (ast.AstType.U64))]
     [u64-max-f64 : i64 (ast.ast-expr-cast u64-max (ast.AstType.F64))]
     [u64-max-f32 : i64 (ast.ast-expr-cast u64-max (ast.AstType.F32))]
+    [u64-f32-above-tie : i64
+      (ast.ast-expr-cast
+        (ast.ast-expr-cast
+          (ast.ast-node-push
+            (ast.AstExpr.Literal (ast.ast-lit-int (- 0 9223371487098961919))))
+          (ast.AstType.U64))
+        (ast.AstType.F32))]
     [x-id : i64 (ctfe-materialize-generated-name-id "x")]
     [u64-var : i64 (ast.ast-node-push (ast.AstExpr.Var x-id))]
     [typed-let-u64-max-f64 : i64
@@ -17017,6 +17024,7 @@
       (compiler-ctfe-eval-f64-ok? char-a-f64 env 65.0)
       (compiler-ctfe-eval-f64-ok? u64-max-f64 env 18446744073709551616.0)
       (compiler-ctfe-eval-f32-ok? u64-max-f32 env 18446744073709551616.0)
+      (compiler-ctfe-eval-f32-ok? u64-f32-above-tie env 9223373136366403584.0)
       (compiler-ctfe-eval-f64-ok?
         typed-let-u64-max-f64
         env

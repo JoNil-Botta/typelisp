@@ -2063,6 +2063,11 @@ run_linux_backend_fixtures() {
         tests/integration/u64_float_casts.tl \
         0 \
         1
+    run_linux_program_fixture \
+        u64-float-casts-opt2 \
+        tests/integration/u64_float_casts.tl \
+        0 \
+        2
     # RMW-2: the load/op/store triple over one memory location folds to a single
     # memory-operand ALU instruction. The rewrite is a backend text peephole
     # that runs at every optimization level, so the opt0 and opt1 rows are the
@@ -2627,6 +2632,11 @@ run_windows_backend_fixtures() {
         tests/integration/u64_float_casts.tl \
         0 \
         1
+    run_windows_program_fixture \
+        u64-float-casts-opt2 \
+        tests/integration/u64_float_casts.tl \
+        0 \
+        2
     run_windows_fatal_backtrace_fixture
     run_windows_program_fixture \
         constructor-alias-two-phase-opt0 \

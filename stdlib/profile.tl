@@ -3,11 +3,6 @@
 ;# Provides allocation counters and a coarse monotonic millisecond timestamp.
 ;# Time is implemented here over platform FFI/syscalls; allocation counters remain
 ;# allocator-runtime hooks. Import explicitly with `(import stdlib.profile)`.
-;: Shared scratch for the time helper's OS out-parameters. Allocated once at
-;: module initialization so `now-ms` does not allocate on every sample.
-(define now-scratch : (__tl_dyn-array i64)
-  (__tl_make-array i64 2))
-
 ;: Windows kernel32 high-resolution performance counter bindings.
 (cfg
   windows
@@ -85,71 +80,92 @@
       (compile-wide-peak-note!)
       (+ compile-wide-peak-start-live compile-wide-peak-best))))
 
-;: Return a pointer to one slot in the shared timestamp scratch buffer.
-(define (scratch-ptr [slot : i64]) : (MutPtr i64)
-  (unsafe
-    (ptr-offset (ptr-cast (__tl_array-data now-scratch) : (MutPtr i64)) slot)))
-
-;: Return the shared timestamp scratch data address for raw Linux syscalls.
-(define (scratch-addr) : i64
-  (unsafe
-    (cast (ptr->int (ptr-cast (__tl_array-data now-scratch) : (Ptr u8))) : i64)))
-
 ;: Linux `clock_gettime(CLOCK_MONOTONIC)` via raw syscall 228.
-(define (linux-now-ticks) : i64
-  (let
-    [status : i64
-      (unsafe
-        (syscall 228 1 (scratch-addr)))]
-    (if (< status 0)
-      0
-      (+ (* (array-ref now-scratch 0) 1000000000) (array-ref now-scratch 1)))))
+(cfg
+  (not windows)
+  (define (linux-now-ticks) : i64
+    (let
+      [timespec : (Array i64 2) (array 0 0)]
+      [status : i64
+        (unsafe
+          (syscall
+            228
+            1
+            (cast (ptr->int (ptr-cast (ptr-addr-of timespec) : (Ptr u8))) : i64)))]
+      (if (< status 0)
+        0
+        (+ (* (array-ref timespec 0) 1000000000) (array-ref timespec 1))))))
 
 ;: Linux monotonic ticks per second. `linux-now-ticks` returns nanoseconds.
-(define (linux-ticks-per-second) : i64
-  1000000000)
+(cfg
+  (not windows)
+  (define (linux-ticks-per-second) : i64
+    1000000000))
 
 ;: Linux `clock_gettime(CLOCK_MONOTONIC)` in coarse milliseconds.
-(define (linux-now-ms) : i64
-  (let
-    [status : i64
-      (unsafe
-        (syscall 228 1 (scratch-addr)))]
-    (if (< status 0)
-      0
-      (+
-        (* (array-ref now-scratch 0) 1000)
-        (/ (array-ref now-scratch 1) 1000000)))))
+(cfg
+  (not windows)
+  (define (linux-now-ms) : i64
+    (let
+      [timespec : (Array i64 2) (array 0 0)]
+      [status : i64
+        (unsafe
+          (syscall
+            228
+            1
+            (cast (ptr->int (ptr-cast (ptr-addr-of timespec) : (Ptr u8))) : i64)))]
+      (if (< status 0)
+        0
+        (+ (* (array-ref timespec 0) 1000) (/ (array-ref timespec 1) 1000000))))))
 
 ;: Windows raw `QueryPerformanceCounter` timestamp.
 (cfg
   windows
   (define (windows-now-ticks) : i64
-    (if (= (windows-query-performance-counter (scratch-ptr 0)) (cast 0 : i32))
-      0
-      (array-ref now-scratch 0))))
+    (let
+      [counter : i64 0]
+      [status : i32
+        (windows-query-performance-counter
+          (unsafe
+            (ptr-addr-of counter)))]
+      (if (= status (cast 0 : i32))
+        0
+        counter))))
 
 ;: Windows `QueryPerformanceCounter` ticks per second.
 (cfg
   windows
   (define (windows-ticks-per-second) : i64
-    (if (= (windows-query-performance-frequency (scratch-ptr 1)) (cast 0 : i32))
-      0
-      (array-ref now-scratch 1))))
+    (let
+      [frequency : i64 0]
+      [status : i32
+        (windows-query-performance-frequency
+          (unsafe
+            (ptr-addr-of frequency)))]
+      (if (= status (cast 0 : i32))
+        0
+        frequency))))
 
 ;: Windows `QueryPerformanceCounter/Frequency` timestamp.
 (cfg
   windows
   (define (windows-now-ms) : i64
     (let
-      [counter-ok : i32 (windows-query-performance-counter (scratch-ptr 0))]
-      [freq-ok : i32 (windows-query-performance-frequency (scratch-ptr 1))]
-      [freq : i64 (array-ref now-scratch 1)]
+      [counter : i64 0]
+      [freq : i64 0]
+      [counter-ok : i32
+        (windows-query-performance-counter
+          (unsafe
+            (ptr-addr-of counter)))]
+      [freq-ok : i32
+        (windows-query-performance-frequency
+          (unsafe
+            (ptr-addr-of freq)))]
       (if (or (= counter-ok (cast 0 : i32)) (= freq-ok (cast 0 : i32)))
         0
         (if (= freq 0)
           0
-          (/ (* (array-ref now-scratch 0) 1000) freq))))))
+          (/ (* counter 1000) freq))))))
 
 ;: Return a coarse monotonic timestamp in milliseconds.
 (define (now-ms) : i64

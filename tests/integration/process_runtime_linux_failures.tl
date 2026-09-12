@@ -179,14 +179,9 @@
     label))
 
 (define (child-or-panic [result : process.ResultProcessChild] [label : String]) : process.ProcessChild
-  (let
-    [info : process.ProcessChildInfo (process.child-result-info (clone result))]
-    (if (process.child-info-ok? info)
-      (process.ProcessChild
-        (process.child-info-pid info)
-        (process.child-info-stdout-handle info)
-        (process.child-info-stderr-handle info))
-      (io.panic label))))
+  (match result
+    [(process.OkProcessChild child) child]
+    [(process.ErrProcessChild _) (io.panic label)]))
 
 (define (assert-no-resource-growth [baseline-fds : i64] [label : String]) : unit
   (begin
@@ -195,6 +190,14 @@
       baseline-fds
       (clone label))
     (test.assert-true (linux-test-no-children?) label)))
+
+(define (assert-fd-open [fd : i64] [label : String]) : unit
+  (test.assert-true
+    (>=
+      (unsafe
+        (syscall 72 fd 1))
+      0)
+    label))
 
 ;: Every injected failure is followed by a clean success and resource proof.
 (define (assert-clean-follow-up [baseline-fds : i64] [label : String]) : unit
@@ -725,11 +728,12 @@
       baseline-fds
       "async exec failure")
     (process_linux_test_hooks.reset!)
-    (let
-      [child : process.ProcessChild
-        (child-or-panic
-          (process.start (printf-command "async-capture"))
-          "async start failed")]
+    (with
+      ([child
+          (child-or-panic
+            (process.start (printf-command "async-capture"))
+            "async start failed")
+          process.cleanup-process-child])
       (begin
         (process_linux_test_hooks.set-read-max! 1)
         (process_linux_test_hooks.fail-on!
@@ -737,25 +741,26 @@
           1
           4)
         (assert-output-ok
-          (process.wait child)
+          (process.wait (&mut child))
           0
           "async-capture"
           ""
           "async wait short read and EINTR")
         (assert-no-resource-growth baseline-fds "async wait resources")))
     (process_linux_test_hooks.reset!)
-    (let
-      [child : process.ProcessChild
-        (child-or-panic
-          (process.start (true-command))
-          "async wait failure start failed")]
+    (with
+      ([child
+          (child-or-panic
+            (process.start (true-command))
+            "async wait failure start failed")
+          process.cleanup-process-child])
       (begin
         (process_linux_test_hooks.fail-on!
           process_runtime.process-linux-syscall-wait
           1
           10)
         (assert-output-error
-          (process.wait child)
+          (process.wait (&mut child))
           "process: wait failed"
           "async wait failure")
         (assert-clean-follow-up baseline-fds "async wait failure cleanup")))
@@ -788,6 +793,134 @@
       "process: stdin failed (-5)"
       baseline-fds
       "inherited stdin failure")))
+
+(define (run-capability-filler [text : String]) : unit
+  (with
+    ([child
+        (child-or-panic
+          (process.start (printf-command (clone text)))
+          "capability filler start failed")
+        process.cleanup-process-child])
+    (assert-output-ok
+      (process.wait (&mut child))
+      0
+      text
+      ""
+      "capability filler wait")))
+
+(define (run-child-capability-safety [baseline-fds : i64]) : unit
+  (let
+    [sentinel-fd : i64 (save-standard-fd 1)]
+    (begin
+      (process_linux_test_hooks.reset!)
+      (with
+        ([original
+            (child-or-panic
+              (process.start (printf-command "capability-original"))
+              "capability original start failed")
+            process.cleanup-process-child]
+          [copied-live (clone original) process.cleanup-process-child]
+          [stale (clone original) process.cleanup-process-child])
+        (let
+          [original-pid : i64 (process_linux_test_hooks.last-child-pid)]
+          [original-stdout : i64 (process_linux_test_hooks.last-child-stdout)]
+          [original-stderr : i64 (process_linux_test_hooks.last-child-stderr)]
+          [before-copied-wait : i64
+            (process_linux_test_hooks.call-count
+              process_runtime.process-linux-syscall-wait)]
+          (begin
+            (assert-output-error
+              (process.wait (&mut copied-live))
+              "process: invalid or consumed child capability"
+              "copied live child capability")
+            (test.assert-i64-eq
+              (process_linux_test_hooks.call-count
+                process_runtime.process-linux-syscall-wait)
+              before-copied-wait
+              "copied capability skipped wait syscall")
+            (assert-fd-open
+              sentinel-fd
+              "copied capability preserved sentinel fd")
+            (assert-output-ok
+              (process.wait (&mut original))
+              0
+              "capability-original"
+              ""
+              "original capability wait")
+            (run-capability-filler "capability-filler-1")
+            (run-capability-filler "capability-filler-2")
+            (run-capability-filler "capability-filler-3")
+            (with
+              ([replacement
+                  (child-or-panic
+                    (process.start (printf-command "capability-replacement"))
+                    "capability replacement start failed")
+                  process.cleanup-process-child])
+              (let
+                [before-stale-wait : i64
+                  (process_linux_test_hooks.call-count
+                    process_runtime.process-linux-syscall-wait)]
+                [before-stale-read : i64
+                  (process_linux_test_hooks.call-count
+                    process_runtime.process-linux-syscall-capture-read)]
+                [before-stale-close : i64
+                  (process_linux_test_hooks.call-count
+                    process_runtime.process-linux-syscall-close)]
+                (begin
+                  (test.assert-true
+                    (not
+                      (= (process_linux_test_hooks.last-child-pid) original-pid))
+                    "replacement child has distinct pid")
+                  (test.assert-i64-eq
+                    (process_linux_test_hooks.last-child-stdout)
+                    original-stdout
+                    "replacement reuses stdout descriptor number")
+                  (test.assert-i64-eq
+                    (process_linux_test_hooks.last-child-stderr)
+                    original-stderr
+                    "replacement reuses stderr descriptor number")
+                  (assert-output-error
+                    (process.wait (&mut stale))
+                    "process: invalid or consumed child capability"
+                    "stale capability after slot and fd reuse")
+                  (test.assert-i64-eq
+                    (process_linux_test_hooks.call-count
+                      process_runtime.process-linux-syscall-wait)
+                    before-stale-wait
+                    "stale capability skipped wait syscall")
+                  (test.assert-i64-eq
+                    (process_linux_test_hooks.call-count
+                      process_runtime.process-linux-syscall-capture-read)
+                    before-stale-read
+                    "stale capability skipped capture read")
+                  (test.assert-i64-eq
+                    (process_linux_test_hooks.call-count
+                      process_runtime.process-linux-syscall-close)
+                    before-stale-close
+                    "stale capability skipped close syscall")
+                  (assert-fd-open
+                    sentinel-fd
+                    "stale capability preserved sentinel fd")
+                  (assert-output-ok
+                    (process.wait (&mut replacement))
+                    0
+                    "capability-replacement"
+                    ""
+                    "replacement capability remains live")))))))
+      (assert-fd-open sentinel-fd "capability test preserved sentinel fd")
+      (close-standard-fd sentinel-fd)
+      (assert-no-resource-growth baseline-fds "capability reuse resources")
+      (process_linux_test_hooks.reset!)
+      (with
+        ([dropped
+            (child-or-panic
+              (process.start (printf-command "cleanup-owned-child"))
+              "cleanup-owned child start failed")
+            process.cleanup-process-child])
+        unit)
+      (assert-no-resource-growth
+        baseline-fds
+        "child cleanup reaps exactly once"))))
 
 (define (run-stress [remaining : i64] [baseline-fds : i64]) : unit
   (if (= remaining 0)
@@ -874,6 +1007,7 @@
       (run-exec-channel-faults baseline-fds)
       (run-capture-faults baseline-fds)
       (run-async-and-inherited-faults baseline-fds)
+      (run-child-capability-safety baseline-fds)
       (run-stress 20 baseline-fds)
       (run-metrics baseline-fds)
       42)))

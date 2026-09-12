@@ -494,6 +494,11 @@ Vec bang place macros as available yet.
   `output`/`inherit`/`start`/`wait` wrappers for selfhost tools. `inherit`
   leaves child stdout/stderr connected to the caller for live output; `output`
   retains the captured-output contract.
+  `start` returns a cleanup-owning `ProcessChild` whose boxed issued identity
+  carries no native PID, fd, or HANDLE. Bind successful children with `with`;
+  `wait` takes `&mut ProcessChild`, consumes its authority on every outcome,
+  and a dropped live child is reaped by cleanup. Fabricated, cloned, stale, or
+  repeated capabilities return a stable wait error before any native action.
   `ProcessCommand` keeps the existing list-backed argv/env runtime boundary and
   also exposes `StringVec` argv conversion helpers plus `ProcessEnvVec`, a
   parallel-`StringVec` env builder surface. Vector argv helpers convert once
@@ -506,7 +511,11 @@ Vec bang place macros as available yet.
   (`tl_process_output`/`tl_process_inherit`/`tl_process_start`/`tl_process_wait`) that `process.tl`
   calls — Linux uses raw syscalls (fork/execve with memfd-captured output),
   Windows uses kernel32 `CreateProcessA` with temp-file redirection. Replaces the
-  former backend assembly (#2142 slice 4); imported transitively via `process.tl`.
+  former backend assembly (#2142 slice 4). Linux async children are held in a
+  locked registry keyed by generation plus arena-stable issued-box identity;
+  native resources are detached atomically before wait/close. Windows async is
+  still unsupported and will reuse this representation when implemented.
+  Imported transitively via `process.tl`.
 - `profile.tl`: runtime profiling helpers for coarse elapsed time and
   allocation counters. `now-ms` is implemented in TypeLisp over
   platform FFI/syscalls; allocator counters still use allocator-runtime hooks.

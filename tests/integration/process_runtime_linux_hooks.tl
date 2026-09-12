@@ -27,6 +27,12 @@
   0)
 (define marker-mode-value : i64
   0)
+(define last-child-pid-value : i64
+  -1)
+(define last-child-stdout-value : i64
+  -1)
+(define last-child-stderr-value : i64
+  -1)
 
 (define (reset!) : unit
   (let
@@ -46,7 +52,10 @@
       (set! read-max 0)
       (set! child-fail-kind 0)
       (set! child-fail-errno 0)
-      (set! marker-mode-value 0))))
+      (set! marker-mode-value 0)
+      (set! last-child-pid-value -1)
+      (set! last-child-stdout-value -1)
+      (set! last-child-stderr-value -1))))
 
 (define (fail-on! [kind : i64] [call : i64] [errno-code : i64]) : unit
   (begin
@@ -106,3 +115,18 @@
 
 (define (marker-mode) : i64
   marker-mode-value)
+
+(define (record-child! [pid : i64] [stdout-fd : i64] [stderr-fd : i64]) : unit
+  (begin
+    (set! last-child-pid-value pid)
+    (set! last-child-stdout-value stdout-fd)
+    (set! last-child-stderr-value stderr-fd)))
+
+(define (last-child-pid) : i64
+  last-child-pid-value)
+
+(define (last-child-stdout) : i64
+  last-child-stdout-value)
+
+(define (last-child-stderr) : i64
+  last-child-stderr-value)

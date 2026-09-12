@@ -18,6 +18,7 @@
 (import stdlib.string)
 (import stdlib.vector)
 (import stdlib.io)
+(import stdlib.process_runtime)
 (import (vector.vector String) as svec)
 
 ;; Process values are persistent arena-backed records. These shallow reads make
@@ -104,13 +105,6 @@
   (present bool)
   (value String))
 
-;: Single-pass destructured child result for imported callers.
-(defstruct ProcessChildInfo
-  (ok bool)
-  (pid i64)
-  (stdout-handle i64)
-  (stderr-handle i64))
-
 ;: Process command data: executable path, argv, cwd, env, and stdin.
 (defstruct ProcessCommand
   (executable String)
@@ -125,14 +119,19 @@
   (stdout String)
   (stderr String))
 
-;: Runtime-owned asynchronous process handle data.
-;:
-;: The integer fields are opaque runtime handles. Callers should pass the value
-;: to `wait` rather than inspecting or constructing handles directly.
+;: Cleanup adapter for a runtime-issued child authority. Fabricated or already
+;: consumed tokens are rejected by the runtime registry before any OS action.
+(define (process-child-authority-cleanup [authority : (Box i64)]) : unit
+  (process_runtime.process-runtime-child-authority-cleanup authority))
+
+;: Runtime-issued asynchronous process capability. The only source-visible
+;: field is a boxed token. It contains no PID, fd, or HANDLE, and the runtime
+;: validates both its generation and arena-stable box identity before acquiring
+;: native authority. Cloning creates a different, unauthorized box identity.
+;: Dropping a live child reaps it exactly once.
 (defstruct ProcessChild
-  (pid i64)
-  (stdout-handle i64)
-  (stderr-handle i64))
+  (:cleanup cleanup-process-child)
+  (authority (Box i64) (:cleanup process-child-authority-cleanup)))
 
 ;: Structured process failures returned instead of host-action panics.
 (defenum ProcessError
@@ -148,7 +147,8 @@
 
 ;: Result type for asynchronous process start APIs.
 (defenum ResultProcessChild
-  (OkProcessChild ProcessChild)
+  (:cleanup cleanup-result-process-child)
+  (OkProcessChild ProcessChild (:owned))
   (ErrProcessChild ProcessError))
 
 ;: Internal lifetime-carrying wrapper around a borrowed process string.
@@ -770,33 +770,10 @@
     [(ErrProcessOutput _) false]))
 
 ;: Return true when `result` is a started child handle.
-(define (child-started? [result : ResultProcessChild]) : bool
-  (match (result-child-normalize result)
+(define (child-started? [result : (& result ResultProcessChild)]) : bool
+  (match result
     [(OkProcessChild _) true]
     [(ErrProcessChild _) false]))
-
-;: Destructure a child result in one pass.
-(define (child-result-info [result : ResultProcessChild]) : ProcessChildInfo
-  (match result
-    [(OkProcessChild child)
-      (ProcessChildInfo true child.pid child.stdout-handle child.stderr-handle)]
-    [(ErrProcessChild _) (ProcessChildInfo false (- 0 1) (- 0 1) (- 0 1))]))
-
-;: Return true when `info` describes a started child.
-(define (child-info-ok? [info : (& info ProcessChildInfo)]) : bool
-  info.ok)
-
-;: Return the child pid from `info`, or -1 when it is not ok.
-(define (child-info-pid [info : (& info ProcessChildInfo)]) : i64
-  info.pid)
-
-;: Return the child stdout handle from `info`, or -1 when it is not ok.
-(define (child-info-stdout-handle [info : (& info ProcessChildInfo)]) : i64
-  info.stdout-handle)
-
-;: Return the child stderr handle from `info`, or -1 when it is not ok.
-(define (child-info-stderr-handle [info : (& info ProcessChildInfo)]) : i64
-  info.stderr-handle)
 
 ;: Return the output status, or `fallback` when `result` is an error.
 (define (result-status-or [result : ResultProcessOutput] [fallback : i64]) : i64
@@ -831,12 +808,6 @@
           false)
         false)]
     [(ErrProcessOutput _) false]))
-
-;: Return the child pid, or `fallback` when `result` is an error.
-(define (child-result-pid-or [result : ResultProcessChild] [fallback : i64]) : i64
-  (match (result-child-normalize result)
-    [(OkProcessChild child) child.pid]
-    [(ErrProcessChild _) fallback]))
 
 ;: Return true when an output result carries an invalid-command error.
 (define (result-invalid-command? [result : ResultProcessOutput]) : bool
@@ -998,12 +969,9 @@
 (define (output-error-public [error : ProcessError]) : ResultProcessOutput
   (ErrProcessOutput error))
 
-;: Construct a public child success result.
-(define (child-ok-public
-  [pid : i64]
-  [stdout-handle : i64]
-  [stderr-handle : i64]) : ResultProcessChild
-  (OkProcessChild (ProcessChild pid stdout-handle stderr-handle)))
+;: Construct a public child success result from a runtime-issued authority.
+(define (child-ok-public [authority : (Box i64)]) : ResultProcessChild
+  (OkProcessChild (ProcessChild authority)))
 
 ;: Construct a public child error result.
 (define (child-error-public [error : ProcessError]) : ResultProcessChild
@@ -1016,14 +984,6 @@
     [(= kind 2) (ProcessWaitFailed message)]
     [(= kind 3) (ProcessUnsupported message)]
     [else (ProcessInvalidCommand message)]))
-
-;: The process-execution runtime (`tl_process_output`, `tl_process_inherit`,
-;: `tl_process_start`, `tl_process_wait`) is implemented in TypeLisp in
-;: `process_runtime.tl`,
-;: replacing the former backend assembly. The public wrappers
-;: validate first, then call those functions. Keep this import after the shared
-;: data model and validation helpers so the runtime sees a complete module.
-(import stdlib.process_runtime)
 
 ;: Convert public argv storage to the runtime module's no-cycle representation,
 ;: walking backwards so the emitted list keeps argv order.
@@ -1081,10 +1041,6 @@
       (runtime-env env)
       (runtime-maybe-string (command-stdin command)))))
 
-;: Convert a public child handle to the runtime module's no-cycle representation.
-(define (runtime-child [child : ProcessChild]) : process_runtime.ProcessRuntimeChild
-  (process_runtime.child child.pid child.stdout-handle child.stderr-handle))
-
 ;: Convert a runtime captured-output result to the public result enum.
 (define (output-from-runtime
   [result : process_runtime.ResultProcessRuntimeOutput]) : ResultProcessOutput
@@ -1102,7 +1058,7 @@
     [info : process_runtime.ProcessRuntimeChildInfo
       (process_runtime.result-child-info result)]
     (if info.ok
-      (child-ok-public info.pid info.stdout-handle info.stderr-handle)
+      (child-ok-public info.authority)
       (child-error-public (error-from-runtime-kind info.kind info.message)))))
 
 ;: Run a command and capture stdout, stderr, and exit status.
@@ -1151,11 +1107,14 @@
           (process_runtime.tl_process_start (runtime-command command)))))))
 
 ;: Wait for a child started by `start`, collect its captured output, and
-;: release the child handle resources. Do not wait on the same child twice.
-(define (wait [child : ProcessChild]) : ResultProcessOutput
-  (output-from-runtime
-    (unsafe
-      (process_runtime.tl_process_wait (runtime-child child)))))
+;: consume its issued authority. A repeated wait returns `ProcessWaitFailed`
+;: without touching a native resource.
+(define (wait [child : (&mut child ProcessChild)]) : ResultProcessOutput
+  (let
+    [authority : (Box i64) (replace! child.authority (box 0))]
+    (output-from-runtime
+      (unsafe
+        (process_runtime.tl_process_wait authority)))))
 
 ;: Inline test failure helper.
 (define (test-fail) : unit
@@ -1541,7 +1500,13 @@
       (test-assert (error-spawn-failed? (ProcessSpawnFailed "spawn failed")))
       (test-assert (error-wait-failed? (ProcessWaitFailed "wait failed")))
       (test-assert (error-unsupported? (ProcessUnsupported "unsupported")))
-      (test-assert (child-started? (OkProcessChild (ProcessChild 1 2 3))))
-      (test-assert
-        (not
-          (child-started? (ErrProcessChild (ProcessUnsupported "unsupported"))))))))
+      (with
+        ([started
+            (OkProcessChild (ProcessChild (box 0)))
+            cleanup-result-process-child])
+        (test-assert (child-started? (& started))))
+      (with
+        ([unsupported
+            (ErrProcessChild (ProcessUnsupported "unsupported"))
+            cleanup-result-process-child])
+        (test-assert (not (child-started? (& unsupported))))))))

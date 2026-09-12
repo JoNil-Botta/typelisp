@@ -616,12 +616,18 @@
       (test.assert-true
         (process.error-wait-failed? (process.ProcessWaitFailed "wait failed"))
         "process wait predicate")
-      (test.assert-true
-        (process.child-started?
-          (process.OkProcessChild (process.ProcessChild 1 2 3)))
-        "process child started predicate")
-      (test.assert-false
-        (process.child-started?
-          (process.ErrProcessChild (process.ProcessUnsupported "unsupported")))
-        "process child unsupported predicate")
+      (with
+        ([started
+            (process.OkProcessChild (process.ProcessChild (box 0)))
+            process.cleanup-result-process-child])
+        (test.assert-true
+          (process.child-started? (& started))
+          "process child started predicate"))
+      (with
+        ([unsupported
+            (process.ErrProcessChild (process.ProcessUnsupported "unsupported"))
+            process.cleanup-result-process-child])
+        (test.assert-false
+          (process.child-started? (& unsupported))
+          "process child unsupported predicate"))
       42)))

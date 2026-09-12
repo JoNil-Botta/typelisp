@@ -10967,7 +10967,7 @@
           (compiler-opt-box-field-shared-view payload-box active-mask)]
         [args (compiler-opt-box-field-shared-view payload-box args)]
         [result (compiler-opt-box-field-shared-view payload-box result)]
-        (ir.ir-instr-spmd-call
+        (ir.ir-instr-spmd-call-with-origin
           callee
           backend
           lanes
@@ -10975,7 +10975,8 @@
             (compiler-opt-global-shared-view env)
             active-mask)
           (opt-copy-subst-spmd-call-args env args)
-          result))]
+          result
+          (clone (compiler-opt-box-field-shared-view payload-box origin))))]
     [(ir.CompilerIrInstr.TailCall name args ty)
       (ir.CompilerIrInstr.TailCall
         name
@@ -16262,17 +16263,24 @@
             (opt-verify-call-args-uses defs doms args block-id pos))))]
     [(ir.CompilerIrInstr.SpmdCall payload-box)
       (let
+        [payload : ir.CompilerIrInstrSpmdCallPayload
+          (compiler-opt-box-shared-view payload-box)]
+        [descriptor-error : String
+          (ir.compiler-ir-spmd-call-descriptor-error
+            (compiler-opt-global-shared-view payload))]
         [active-mask
           (compiler-opt-box-field-shared-view payload-box active-mask)]
         [args (compiler-opt-box-field-shared-view payload-box args)]
-        (opt-verify-two
-          (opt-verify-value-use
-            (compiler-opt-global-shared-view defs)
-            (compiler-opt-global-shared-view doms)
-            active-mask
-            block-id
-            pos)
-          (opt-verify-spmd-call-args-uses defs doms args block-id pos)))]
+        (if (> (string.string-length descriptor-error) 0)
+          (ResultCompilerOptimizeVerify.Err descriptor-error)
+          (opt-verify-two
+            (opt-verify-value-use
+              (compiler-opt-global-shared-view defs)
+              (compiler-opt-global-shared-view doms)
+              active-mask
+              block-id
+              pos)
+            (opt-verify-spmd-call-args-uses defs doms args block-id pos))))]
     [(ir.CompilerIrInstr.TailCall _ args _)
       (opt-verify-call-args-uses defs doms args block-id pos)]
     [(ir.CompilerIrInstr.Store _ value _)
@@ -18381,7 +18389,7 @@
         (match (compiler-opt-global-shared-view result)
           [(ir.CompilerIrSpmdCallResult.Unit)
             (OptSsaInstrResult.Result
-              (ir.ir-instr-spmd-call
+              (ir.ir-instr-spmd-call-with-origin
                 callee
                 backend
                 lanes
@@ -18391,7 +18399,8 @@
                 (opt-ssa-rewrite-spmd-call-args
                   (compiler-opt-global-shared-view env)
                   args)
-                result)
+                result
+                (clone (compiler-opt-box-field-shared-view payload-box origin)))
               env
               next-var)]
           [(ir.CompilerIrSpmdCallResult.Value dst class ty)
@@ -18407,13 +18416,15 @@
               (match (opt-ssa-rename-dst facts env next-var dst)
                 [(OptSsaDstResult.Result out-dst next-env out-next)
                   (OptSsaInstrResult.Result
-                    (ir.ir-instr-spmd-call
+                    (ir.ir-instr-spmd-call-with-origin
                       callee
                       backend
                       lanes
                       out-mask
                       out-args
-                      (ir.CompilerIrSpmdCallResult.Value out-dst class ty))
+                      (ir.CompilerIrSpmdCallResult.Value out-dst class ty)
+                      (clone
+                        (compiler-opt-box-field-shared-view payload-box origin)))
                     next-env
                     out-next)]))]))]
     [(ir.CompilerIrInstr.EntryArgc dst)
@@ -21083,7 +21094,7 @@
           (compiler-opt-box-field-shared-view payload-box active-mask)]
         [args (compiler-opt-box-field-shared-view payload-box args)]
         [result (compiler-opt-box-field-shared-view payload-box result)]
-        (ir.ir-instr-spmd-call
+        (ir.ir-instr-spmd-call-with-origin
           callee
           backend
           lanes
@@ -21094,7 +21105,8 @@
             pos
             active-mask)
           (opt-global-copy-subst-spmd-call-args facts doms block-id pos args)
-          result))]
+          result
+          (clone (compiler-opt-box-field-shared-view payload-box origin))))]
     [(ir.CompilerIrInstr.TailCall name args ty)
       (ir.CompilerIrInstr.TailCall
         name
@@ -56683,7 +56695,7 @@
           (compiler-opt-box-field-shared-view payload-box active-mask)]
         [args (compiler-opt-box-field-shared-view payload-box args)]
         [result (compiler-opt-box-field-shared-view payload-box result)]
-        (ir.ir-instr-spmd-call
+        (ir.ir-instr-spmd-call-with-origin
           callee
           backend
           lanes
@@ -56691,7 +56703,8 @@
             (compiler-opt-global-shared-view env)
             active-mask)
           (opt-sccp-rewrite-spmd-call-args env args)
-          result))]
+          result
+          (clone (compiler-opt-box-field-shared-view payload-box origin))))]
     [(ir.CompilerIrInstr.TailCall name args ty)
       (ir.CompilerIrInstr.TailCall
         name
@@ -167273,7 +167286,7 @@
     [(ir.CompilerIrInstr.SpmdCall payload-box)
       (let
         [payload (compiler-opt-box-shared-view payload-box)]
-        (ir.ir-instr-spmd-call
+        (ir.ir-instr-spmd-call-with-origin
           payload.callee
           payload.backend
           payload.lanes
@@ -167281,7 +167294,8 @@
             (compiler-opt-global-shared-view plan)
             payload.active-mask)
           (opt-global-cell-subst-spmd-args plan payload.args)
-          payload.result))]
+          payload.result
+          (clone payload.origin)))]
     [(ir.CompilerIrInstr.CallIndirect dst func args ty)
       (ir.CompilerIrInstr.CallIndirect
         dst

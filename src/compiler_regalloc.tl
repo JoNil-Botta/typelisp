@@ -44783,7 +44783,8 @@
           (compiler-reg-box-field-shared-view payload-box active-mask)]
         [args (compiler-reg-box-field-shared-view payload-box args)]
         [result (compiler-reg-box-field-shared-view payload-box result)]
-        (ir.ir-instr-spmd-call
+        [origin (compiler-reg-box-field-shared-view payload-box origin)]
+        (ir.ir-instr-spmd-call-with-origin
           callee
           backend
           lanes
@@ -44795,7 +44796,8 @@
             args)
           (compiler-reg-remap-spmd-call-result
             (compiler-reg-global-shared-view remap)
-            result)))]
+            result)
+          (clone origin)))]
     [(ir.CompilerIrInstr.TailCall name args ty)
       (ir.CompilerIrInstr.TailCall
         name

@@ -21,16 +21,17 @@ native_link_detect_host
 # source-visible declarations. Windows builds dependency nodes serially in one
 # process, which still changes prefix skip totals. All three library nodes are
 # dependency-free, however, so forced-source fallback happens only for the
-# root consumer on both hosts.
+# root consumer on both hosts. Removing the generic shared-view bridge
+# subtracts one prelude declaration from both trusted and failure totals.
 case "$NL_HOST_OS" in
     windows)
-        TRUSTED_PREFIX_SKIPPED=229
-        FAILURE_PREFIX_SKIPPED=214
+        TRUSTED_PREFIX_SKIPPED=228
+        FAILURE_PREFIX_SKIPPED=213
         FORCED_SOURCE_FALLBACKS=1
         ;;
     *)
-        TRUSTED_PREFIX_SKIPPED=224
-        FAILURE_PREFIX_SKIPPED=209
+        TRUSTED_PREFIX_SKIPPED=223
+        FAILURE_PREFIX_SKIPPED=208
         FORCED_SOURCE_FALLBACKS=1
         ;;
 esac

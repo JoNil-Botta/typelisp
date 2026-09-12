@@ -1,7 +1,7 @@
 ;; Focused semantic witnesses for the shallow-view helpers introduced by the
-;; by-value ownership migration. These remaining macros are part of the
-;; embedded stdlib TLCI inventory, but ordinary discovery does not reach every
-;; path together.
+;; by-value ownership migration. The remaining stdlib macros are part of the
+;; embedded TLCI inventory, but ordinary discovery does not reach every path
+;; together. The core String view is now an explicit unsafe operation.
 (import stdlib.msvc)
 (import stdlib.process)
 (import stdlib.process_runtime)
@@ -16,7 +16,8 @@
     [boxed : (Box i64) (box 29)]
     [text : String "core"]
     [core-view : String
-      (__tl-compiler-owned-shared-view-dyn-ref-as (& text) String)]
+      (unsafe
+        (ptr-read (ptr-cast (__tl_array-data (array (& text))) : (Ptr String))))]
     [place-view : TlciIdentityMsvcWitness (msvc.msvc-shared-view place)]
     [item-view : i64 (msvc.msvc-array-element-shared-view items 0)]
     [box-view : i64 (msvc.msvc-box-shared-view boxed)]

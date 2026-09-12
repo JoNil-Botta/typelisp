@@ -63,24 +63,40 @@
 ;: The registry bounds retained memory even when callers retain stale values.
 (define concurrency-resource-capacity : i64
   1024)
+
+;: Maximum number of simultaneously issued authority identities.
 (define concurrency-authority-capacity : i64
   4096)
+
+;: Last resource generation before permanently retiring a slot.
 (define concurrency-max-resource-generation : i64
   9007199254740990)
+
+;: Last authority generation before permanently retiring a slot.
 (define concurrency-max-authority-generation : i64
   2251799813685246)
 
 ;: Family tags checked by each future safe wrapper.
 (define concurrency-family-thread : i64
   1)
+
+;: Registry family assigned to semaphore resources.
 (define concurrency-family-semaphore : i64
   2)
+
+;: Registry family assigned to integer channels.
 (define concurrency-family-channel-i64 : i64
   3)
+
+;: Registry family assigned to pair channels.
 (define concurrency-family-channel-pair : i64
   4)
+
+;: Registry family assigned to string channels.
 (define concurrency-family-channel-string : i64
   5)
+
+;: Registry family assigned to integer mutexes.
 (define concurrency-family-mutex-i64 : i64
   6)
 
@@ -96,21 +112,33 @@
 (define concurrency-resource-state : (MutPtr i64)
   (unsafe
     (concurrency-make-table concurrency-resource-capacity)))
+
+;: Generation counters invalidate stale resource-slot references.
 (define concurrency-resource-generation : (MutPtr i64)
   (unsafe
     (concurrency-make-table concurrency-resource-capacity)))
+
+;: Family tags prevent authorities from crossing resource kinds.
 (define concurrency-resource-family : (MutPtr i64)
   (unsafe
     (concurrency-make-table concurrency-resource-capacity)))
+
+;: Number of live raw words in each resource row.
 (define concurrency-resource-field-count : (MutPtr i64)
   (unsafe
     (concurrency-make-table concurrency-resource-capacity)))
+
+;: Outstanding leases that must drain before close can detach a row.
 (define concurrency-resource-leases : (MutPtr i64)
   (unsafe
     (concurrency-make-table concurrency-resource-capacity)))
+
+;: Linked-list head for each resource's issued authorities.
 (define concurrency-resource-authority-head : (MutPtr i64)
   (unsafe
     (concurrency-make-table concurrency-resource-capacity)))
+
+;: Seven raw words reserved per resource for native adapter payloads.
 (define concurrency-resource-fields : (MutPtr i64)
   (unsafe
     (concurrency-make-table (* concurrency-resource-capacity 7))))
@@ -119,25 +147,41 @@
 (define concurrency-authority-state : (MutPtr i64)
   (unsafe
     (concurrency-make-table concurrency-authority-capacity)))
+
+;: Generation counters invalidate reused authority slots.
 (define concurrency-authority-generation : (MutPtr i64)
   (unsafe
     (concurrency-make-table concurrency-authority-capacity)))
+
+;: Backing Box address proving the authority was issued by this registry.
 (define concurrency-authority-box-address : (MutPtr i64)
   (unsafe
     (concurrency-make-table concurrency-authority-capacity)))
+
+;: Resource slot named by each live authority.
 (define concurrency-authority-resource-slot : (MutPtr i64)
   (unsafe
     (concurrency-make-table concurrency-authority-capacity)))
+
+;: Generation of the resource named by each authority.
 (define concurrency-authority-resource-generation : (MutPtr i64)
   (unsafe
     (concurrency-make-table concurrency-authority-capacity)))
+
+;: Next issued authority in a resource's linked list.
 (define concurrency-authority-next : (MutPtr i64)
   (unsafe
     (concurrency-make-table concurrency-authority-capacity)))
+
+;: Rotating resource-slot allocation cursor.
 (define concurrency-next-resource : i64
   0)
+
+;: Rotating authority-slot allocation cursor.
 (define concurrency-next-authority : i64
   0)
+
+;: Spin-lock word protecting all registry state.
 (define concurrency-lock : i64
   0)
 
@@ -198,6 +242,7 @@
   (address i64)
   (token i64))
 
+;: Capture an owned Box together with its address and issued token.
 (define (concurrency-owned-box-identity [box : (Box i64)]) : ConcurrencyBoxIdentity
   (let
     [address : i64
@@ -217,6 +262,7 @@
     (unsafe
       (ptr-read (int->ptr (cast struct-address : u64) : (Ptr i64))))))
 
+;: Read the scalar token from a borrowed issued authority.
 (define (concurrency-authority-token
   [authority : (& authority ConcurrencyAuthority)]) : i64
   (deref authority.token))
@@ -930,6 +976,7 @@
       (/ code 0)
       unit)))
 
+;: Assert that a valid authority can close its inert test resource.
 (define (concurrency-test-close-ok
   [authority : (& authority ConcurrencyAuthority)]) : bool
   (let
@@ -938,6 +985,7 @@
         (concurrency-close authority concurrency-family-channel-i64 2))]
     claim.ok))
 
+;: Assert that a valid authority can acquire and release a lease.
 (define (concurrency-test-acquire-ok
   [authority : (& authority ConcurrencyAuthority)]) : bool
   (let
@@ -949,11 +997,13 @@
         (concurrency-release lease))
       false)))
 
+;: A caller-constructed Box must never acquire a resource lease.
 (define (concurrency-test-forged-acquire-ok [token : i64]) : bool
   (with
     ([forged (ConcurrencyAuthority (box token)) cleanup-concurrency-authority])
     (concurrency-test-acquire-ok (& forged))))
 
+;: A shared authority remains usable until its own cleanup runs.
 (define (concurrency-test-share-and-drop
   [authority : (& authority ConcurrencyAuthority)]) : bool
   (match (concurrency-share authority concurrency-family-channel-i64)

@@ -22,13 +22,20 @@
         1))))
 
 (define (joined-ok? [worker : thread.Thread]) : bool
-  (= (thread.join-result-value-or (thread.join worker) -1) 42))
+  (=
+    (thread.join-result-value-or
+      (unsafe
+        (thread.join worker))
+      -1)
+    42))
 
 (define (main) : i64
-  (match (thread.spawn sample-clock 100000)
+  (match (unsafe
+    (thread.spawn sample-clock 100000))
     [(thread.ThreadSpawnErr _) 1]
     [(thread.ThreadSpawnOk first)
-      (match (thread.spawn sample-clock 100000)
+      (match (unsafe
+        (thread.spawn sample-clock 100000))
         [(thread.ThreadSpawnErr _)
           (begin
             (joined-ok? first)

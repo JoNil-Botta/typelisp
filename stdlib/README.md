@@ -582,8 +582,12 @@ Vec bang place macros as available yet.
   also use its bounded, allocation-free fatal stack renderer: Linux validates
   frame pointers against per-thread stack bounds, while Windows captures frames
   with `RtlCaptureStackBackTrace`; both symbolize through a compiler-emitted
-  compact read-only map. Imported implicitly into every executable; programs do
-  not import it by hand.
+  compact read-only map. Raw OS-write, pointer string/view, fill/copy/zero,
+  backtrace-reader, and source-located abort-site helpers are unsafe callables;
+  their comments state the exact caller range, alignment, lifetime, overlap,
+  and fresh-allocation obligations. Safe string/array/fault surfaces establish
+  those proofs internally. Imported implicitly into every executable; programs
+  do not import it by hand.
 - `string.tl`: string utility functions built on compiler/runtime primitives,
   including append/concat-all, substring, equality, integer rendering, and
   integer parsing helpers. Import it with `(import stdlib.string)`.

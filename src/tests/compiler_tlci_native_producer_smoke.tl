@@ -2812,7 +2812,8 @@
         name-text
         canonical-id
         (compiler_ctfe.CtfeReflectCleanup.No)
-        (compiler_ctfe.ctfe-reflect-variant-list-with-capacity 0))
+        (compiler_ctfe.ctfe-reflect-variant-list-with-capacity 0)
+        0)
       (compiler_ctfe.CtfeReflectInfo.Struct
         (str_cat.str-cat
           (owned_view.compiler-owned-shared-view module-text)
@@ -2822,7 +2823,8 @@
         name-text
         canonical-id
         (compiler_ctfe.CtfeReflectCleanup.No)
-        (compiler_ctfe.ctfe-reflect-field-list-with-capacity 0)))
+        (compiler_ctfe.ctfe-reflect-field-list-with-capacity 0)
+        0))
     canonical-id))
 
 (define (producer-test-nominal-result-eq?

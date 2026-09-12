@@ -1305,8 +1305,14 @@
   (Fn String i64))
 
 (defenum CtfeReflectInfo
-  (Struct String String String i64 CtfeReflectCleanup CtfeReflectFieldList)
-  (Enum String String String i64 CtfeReflectCleanup CtfeReflectVariantList))
+  (Struct String String String i64 CtfeReflectCleanup CtfeReflectFieldList i64)
+  (Enum String String String i64 CtfeReflectCleanup CtfeReflectVariantList i64))
+
+(define (ctfe-reflect-info-must-use? [info : CtfeReflectInfo]) : bool
+  (match info
+    [(CtfeReflectInfo.Struct _ _ _ _ _ _ markers)
+      (not (= (bit-and markers 1) 0))]
+    [(CtfeReflectInfo.Enum _ _ _ _ _ _ markers) (not (= (bit-and markers 1) 0))]))
 
 (defstruct CtfeReflectInfoList
   (slots (__tl_dyn-array CtfeReflectInfo))
@@ -2633,15 +2639,29 @@
   [alias : String]
   [alias-id : i64]) : CtfeReflectInfoList
   (match info
-    [(CtfeReflectInfo.Struct _ module name canonical-id cleanup fields)
+    [(CtfeReflectInfo.Struct _ module name canonical-id cleanup fields markers)
       (ctfe-reflect-info-list-add-if-missing-id
         infos
-        (CtfeReflectInfo.Struct alias module name canonical-id cleanup fields)
+        (CtfeReflectInfo.Struct
+          alias
+          module
+          name
+          canonical-id
+          cleanup
+          fields
+          markers)
         alias-id)]
-    [(CtfeReflectInfo.Enum _ module name canonical-id cleanup variants)
+    [(CtfeReflectInfo.Enum _ module name canonical-id cleanup variants markers)
       (ctfe-reflect-info-list-add-if-missing-id
         infos
-        (CtfeReflectInfo.Enum alias module name canonical-id cleanup variants)
+        (CtfeReflectInfo.Enum
+          alias
+          module
+          name
+          canonical-id
+          cleanup
+          variants
+          markers)
         alias-id)]))
 
 (define (ctfe-reflect-struct-cleanup
@@ -2702,6 +2722,7 @@
   [module-id : i64]
   [name : i64]
   [cleanup : ast.AstStructCleanup]
+  [markers : i64]
   [fields : ast.AstFieldDefList]) : CtfeReflectInfoList
   (let
     [name-str : String (ci.intern-syntax-name-text-or name "<structural-name>")]
@@ -2720,7 +2741,8 @@
         (string.copy name-str)
         key-id
         (ctfe-reflect-struct-cleanup (string.copy module) module-id cleanup)
-        (ctfe-reflect-field-list-from-fields fields))]
+        (ctfe-reflect-field-list-from-fields fields)
+        markers)]
     (ctfe-reflect-info-add-names infos info key-id name-str name module)))
 
 (define (ctfe-reflections-add-enum
@@ -2729,6 +2751,7 @@
   [module-id : i64]
   [name : i64]
   [cleanup : ast.AstEnumCleanup]
+  [markers : i64]
   [variants : ast.AstVariantDefList]) : CtfeReflectInfoList
   (let
     [name-str : String (ci.intern-syntax-name-text-or name "<structural-name>")]
@@ -2747,7 +2770,8 @@
         (string.copy name-str)
         key-id
         (ctfe-reflect-enum-cleanup (string.copy module) module-id cleanup)
-        (ctfe-reflect-variant-list-from-variants variants))]
+        (ctfe-reflect-variant-list-from-variants variants)
+        markers)]
     (ctfe-reflect-info-add-names infos info key-id name-str name module)))
 
 (define (ctfe-reflections-from-decls
@@ -2789,6 +2813,7 @@
                   current-module-id
                   name
                   cleanup
+                  (ast.ast-decl-meta-aggregate-markers decl-meta)
                   fields))]
             [(ast.AstDecl.DefStructLifetimes decl-meta name _ _ cleanup fields)
               (set!
@@ -2799,6 +2824,7 @@
                   current-module-id
                   name
                   cleanup
+                  (ast.ast-decl-meta-aggregate-markers decl-meta)
                   fields))]
             [(ast.AstDecl.DefEnum decl-meta name cleanup variants)
               (set!
@@ -2809,6 +2835,7 @@
                   current-module-id
                   name
                   cleanup
+                  (ast.ast-decl-meta-aggregate-markers decl-meta)
                   variants))]
             [(ast.AstDecl.DefEnumLifetimes decl-meta name _ cleanup variants)
               (set!
@@ -2819,6 +2846,7 @@
                   current-module-id
                   name
                   cleanup
+                  (ast.ast-decl-meta-aggregate-markers decl-meta)
                   variants))]
             [_ unit])
           (set! index (+ index 1))))
@@ -3914,15 +3942,15 @@
   (match info
     ;; Imported nominals also have a short-name reflection alias. The alias is
     ;; a lookup convenience, not the type's identity.
-    [(CtfeReflectInfo.Struct _ _ _ canonical-id _ _)
+    [(CtfeReflectInfo.Struct _ _ _ canonical-id _ _ _)
       (ast.AstType.Struct canonical-id)]
-    [(CtfeReflectInfo.Enum _ _ _ canonical-id _ _)
+    [(CtfeReflectInfo.Enum _ _ _ canonical-id _ _ _)
       (ast.AstType.Enum canonical-id)]))
 
 (define (ctfe-reflect-info-canonical-id [info : CtfeReflectInfo]) : i64
   (match info
-    [(CtfeReflectInfo.Struct _ _ _ canonical-id _ _) canonical-id]
-    [(CtfeReflectInfo.Enum _ _ _ canonical-id _ _) canonical-id]))
+    [(CtfeReflectInfo.Struct _ _ _ canonical-id _ _ _) canonical-id]
+    [(CtfeReflectInfo.Enum _ _ _ canonical-id _ _ _) canonical-id]))
 
 (define (ctfe-reflect-info-nominal-name-id [info : CtfeReflectInfo]) : i64
   (let
@@ -4097,9 +4125,9 @@
           (unsafe
             (ptr-read (ptr-offset (__tl_array-data infos.slots) slot)))]
         (match info
-          [(CtfeReflectInfo.Struct _ _ _ canonical-id _ _)
+          [(CtfeReflectInfo.Struct _ _ _ canonical-id _ _ _)
             (ast.AstMaybeType.Some (ast.AstType.Struct canonical-id))]
-          [(CtfeReflectInfo.Enum _ _ _ canonical-id _ _)
+          [(CtfeReflectInfo.Enum _ _ _ canonical-id _ _ _)
             (ast.AstMaybeType.Some (ast.AstType.Enum canonical-id))]))]
     [(ctfe_key_map.LookupMissing) (ast.AstMaybeType.No)]))
 
@@ -4652,7 +4680,7 @@
       (clone ty))
       [(CtfeMaybeReflectInfo.Some info)
         (match info
-          [(CtfeReflectInfo.Struct _ _ _ _ _ fields)
+          [(CtfeReflectInfo.Struct _ _ _ _ _ fields _)
             (if want-struct
               (if (ctfe-pattern-variant-name? variant "Struct")
                 (ctfe-match-pattern-list
@@ -4664,7 +4692,7 @@
                   env)
                 (CtfePatternMatch.No))
               (CtfePatternMatch.No))]
-          [(CtfeReflectInfo.Enum _ _ _ _ _ variants)
+          [(CtfeReflectInfo.Enum _ _ _ _ _ variants _)
             (if want-struct
               (CtfePatternMatch.No)
               (if (ctfe-pattern-variant-name? variant "Enum")
@@ -5307,7 +5335,7 @@
                   (clone ty))
                   [(CtfeMaybeReflectInfo.Some info)
                     (match info
-                      [(CtfeReflectInfo.Struct _ _ _ _ cleanup _)
+                      [(CtfeReflectInfo.Struct _ _ _ _ cleanup _ _)
                         (match cleanup
                           [(CtfeReflectCleanup.No)
                             (ResultCtfe.Ok
@@ -5317,7 +5345,7 @@
                             (ResultCtfe.Ok
                               (CompilerCtfeValue.Bool true)
                               arg-fuel)])]
-                      [(CtfeReflectInfo.Enum _ _ _ _ cleanup _)
+                      [(CtfeReflectInfo.Enum _ _ _ _ cleanup _ _)
                         (match cleanup
                           [(CtfeReflectCleanup.No)
                             (ResultCtfe.Ok
@@ -5338,8 +5366,8 @@
                     (let
                       [cleanup : CtfeReflectCleanup
                         (match info
-                          [(CtfeReflectInfo.Struct _ _ _ _ value _) value]
-                          [(CtfeReflectInfo.Enum _ _ _ _ value _) value])]
+                          [(CtfeReflectInfo.Struct _ _ _ _ value _ _) value]
+                          [(CtfeReflectInfo.Enum _ _ _ _ value _ _) value])]
                       (match cleanup
                         [(CtfeReflectCleanup.Fn cleanup-name cleanup-name-id)
                           (ResultCtfe.Ok
@@ -5400,7 +5428,7 @@
                   (clone ty))
                   [(CtfeMaybeReflectInfo.Some info)
                     (match info
-                      [(CtfeReflectInfo.Struct _ _ _ _ _ fields)
+                      [(CtfeReflectInfo.Struct _ _ _ _ _ fields _)
                         (ResultCtfe.Ok
                           (CompilerCtfeValue.I64
                             (ctfe-reflect-field-list-count fields))
@@ -5424,7 +5452,7 @@
                   (clone ty))
                   [(CtfeMaybeReflectInfo.Some info)
                     (match info
-                      [(CtfeReflectInfo.Enum _ _ _ _ _ variants)
+                      [(CtfeReflectInfo.Enum _ _ _ _ _ variants _)
                         (ResultCtfe.Ok
                           (CompilerCtfeValue.I64
                             (ctfe-reflect-variant-list-count variants))
@@ -5614,7 +5642,7 @@
     (match (ctfe-reflect-info-for-type-with-pools (ctfe-env-pools env) infos ty)
       [(CtfeMaybeReflectInfo.Some info)
         (match info
-          [(CtfeReflectInfo.Struct _ _ _ _ _ fields)
+          [(CtfeReflectInfo.Struct _ _ _ _ _ fields _)
             (ctfe-eval-struct-field-from-fields
               name
               fields
@@ -5710,7 +5738,7 @@
     (match (ctfe-reflect-info-for-type-with-pools (ctfe-env-pools env) infos ty)
       [(CtfeMaybeReflectInfo.Some info)
         (match info
-          [(CtfeReflectInfo.Enum _ _ _ _ _ variants)
+          [(CtfeReflectInfo.Enum _ _ _ _ _ variants _)
             (ctfe-eval-enum-variant-from-variants
               name
               variants
@@ -5803,7 +5831,7 @@
     (match (ctfe-reflect-info-for-type-with-pools (ctfe-env-pools env) infos ty)
       [(CtfeMaybeReflectInfo.Some info)
         (match info
-          [(CtfeReflectInfo.Enum _ _ _ _ _ variants)
+          [(CtfeReflectInfo.Enum _ _ _ _ _ variants _)
             (ctfe-eval-enum-payload-type-from-variants
               variants
               (ctfe-env-pools env)
@@ -17242,7 +17270,8 @@
               (CtfeReflectCleanup.Fn
                 "cleanup-point"
                 (ctfe-materialize-generated-name-id "cleanup-point"))
-              point-fields)
+              point-fields
+              0)
             cbi.compiler-builtin-id-fix-Point)
           (CtfeReflectInfo.Enum
             "Maybe"
@@ -17250,7 +17279,8 @@
             "Maybe"
             cbi.compiler-builtin-id-fix-Maybe
             CtfeReflectCleanup.No
-            (clone maybe-variants))
+            (clone maybe-variants)
+            0)
           cbi.compiler-builtin-id-fix-Maybe)
         (CtfeReflectInfo.Enum
           "stdlib/Status"
@@ -17260,7 +17290,8 @@
             cbi.compiler-builtin-id-fix-stdlib
             cbi.compiler-builtin-id-fix-Status)
           CtfeReflectCleanup.No
-          maybe-variants)
+          maybe-variants
+          0)
         (ctfe-qualified-name-key-id
           cbi.compiler-builtin-id-fix-stdlib
           cbi.compiler-builtin-id-fix-Status))]
@@ -17941,7 +17972,7 @@
       (box
         (ast.ast-decl-cons-boxed
           (ast.AstDecl.DefStruct
-            (ast.ast-decl-meta-runtime-shared-view)
+            (ast.AstDeclMeta (box (ast.AstDeclMetaValue.Runtime 1)))
             cbi.compiler-builtin-id-fix-Record
             (ast.AstStructRepr.Default)
             (ast.AstStructCleanup.No)
@@ -17949,7 +17980,7 @@
           (box
             (ast.ast-decl-cons-boxed
               (ast.AstDecl.DefEnum
-                (ast.ast-decl-meta-runtime-shared-view)
+                (ast.AstDeclMeta (box (ast.AstDeclMetaValue.Runtime 1)))
                 cbi.compiler-builtin-id-fix-Status
                 (ast.AstEnumCleanup.No)
                 variants)
@@ -17970,8 +18001,36 @@
         (ast.AstExpr.TypeLiteral
           (ast.ty-node-push
             (ast.AstType.Var cbi.compiler-builtin-id-fix-Status))))]
+    [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
+    [alias-id : i64 (ctfe-materialize-generated-name-id "RecordAlias")]
     [ok : bool true]
     (begin
+      (match (ctfe-reflect-info-lookup-name-id
+        infos
+        cbi.compiler-builtin-id-fix-Record)
+        [(CtfeMaybeReflectInfo.Some info)
+          (begin
+            (unless (ctfe-reflect-info-must-use? (clone info)) (set! ok false))
+            (let
+              [alias-infos : CtfeReflectInfoList
+                (ctfe-reflect-info-add-alias
+                  (clone infos)
+                  info
+                  "RecordAlias"
+                  alias-id)]
+              (match (ctfe-reflect-info-lookup-name-id alias-infos alias-id)
+                [(CtfeMaybeReflectInfo.Some alias-info)
+                  (unless
+                    (ctfe-reflect-info-must-use? alias-info)
+                    (set! ok false))]
+                [(CtfeMaybeReflectInfo.None) (set! ok false)])))]
+        [(CtfeMaybeReflectInfo.None) (set! ok false)])
+      (match (ctfe-reflect-info-lookup-name-id
+        infos
+        cbi.compiler-builtin-id-fix-Status)
+        [(CtfeMaybeReflectInfo.Some info)
+          (unless (ctfe-reflect-info-must-use? info) (set! ok false))]
+        [(CtfeMaybeReflectInfo.None) (set! ok false)])
       (if (compiler-ctfe-eval-i64-ok?
         (compiler-ctfe-call1 (ctfe-builtin-ref 75) record-ty)
         env

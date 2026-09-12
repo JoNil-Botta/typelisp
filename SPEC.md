@@ -657,6 +657,28 @@ ownership metadata is specified separately in section 4.7.1 and is not a layout
 contract. `packed`, `(:repr packed)`, and equivalent packed-layout spellings
 are reserved and rejected.
 
+Both `defstruct` and `defenum` may carry the type-level declaration marker
+`(:must-use)` before their first field or variant. It takes no arguments and
+may appear only once. It is stored as nominal compile-time metadata: it does
+not alter value layout, ABI classification, construction, copying, ownership,
+or cleanup. It is not a warning or discard rule by itself. The marker may
+compose with valid `:lifetimes`, `:repr c` (structs), and `:cleanup` metadata;
+existing restrictions between those forms still apply. The canonical order
+for new declarations and emitted source is `:lifetimes`, `:repr`, `:cleanup`,
+then zero-argument markers (`:must-use`, followed by `:opaque` when that
+marker is introduced). Existing valid metadata orders remain accepted.
+
+```lisp test=ignore name=must-use-aggregate-metadata reason="declaration metadata only"
+(defstruct Receipt
+  (:must-use)
+  (id i64))
+
+(defenum Operation
+  (:must-use)
+  (Done Receipt)
+  (Failed i64))
+```
+
 TypeLisp enum layout is a tagged union by default. The tag is an 8-byte
 integer at offset 0. Variant payload storage starts at offset 8; payloads are
 placed in variant declaration order using the same natural-alignment rule as

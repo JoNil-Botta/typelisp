@@ -41249,34 +41249,10 @@
   [roots : (__tl_dyn-array i64)]
   [invalid : (__tl_dyn-array bool)]
   [args : ir.CompilerIrCallArgs]) : unit
-  (match args
-    [(ir.CompilerIrCallArgs.Nil) unit]
-    [(ir.CompilerIrCallArgs.One a)
-      (compiler-reg-color-invalidate-value!
-        (compiler-reg-global-shared-view roots)
-        (compiler-reg-global-shared-view invalid)
-        a)]
-    [(ir.CompilerIrCallArgs.Two a b)
-      (begin
-        (compiler-reg-color-invalidate-value!
-          (compiler-reg-global-shared-view roots)
-          (compiler-reg-global-shared-view invalid)
-          a)
-        (compiler-reg-color-invalidate-value!
-          (compiler-reg-global-shared-view roots)
-          (compiler-reg-global-shared-view invalid)
-          b))]
-    [(ir.CompilerIrCallArgs.Array items)
-      (let
-        [i : i64 0]
-        [len : i64 (array-length items)]
-        (while (< i len)
-          (begin
-            (compiler-reg-color-invalidate-value!
-              (compiler-reg-global-shared-view roots)
-              (compiler-reg-global-shared-view invalid)
-              (compiler-reg-global-array-element-shared-view items i))
-            (set! i (+ i 1)))))]
+  ;; Hidden return storage remains colourable at its defining call. This
+  ;; position-sensitive exception skips only that argument; ordinary shapes
+  ;; use the shared value visitor.
+  (match (compiler-reg-global-shared-view args)
     [(ir.CompilerIrCallArgs.Sret items sret-index)
       (let
         [i : i64 0]
@@ -41289,7 +41265,13 @@
                 (compiler-reg-global-shared-view invalid)
                 (compiler-reg-global-array-element-shared-view items i))
               unit)
-            (set! i (+ i 1)))))]))
+            (set! i (+ i 1)))))]
+    [_
+      (ir.compiler-ir-call-args-visit
+        args
+        compiler-reg-color-invalidate-value!
+        (compiler-reg-global-shared-view roots)
+        (compiler-reg-global-shared-view invalid))]))
 
 (define (compiler-reg-color-invalidate-spmd-call-args!
   [roots : (__tl_dyn-array i64)]
@@ -44374,22 +44356,10 @@
 (define (compiler-reg-remap-value-seq
   [remap : (__tl_dyn-array i64)]
   [values : ir.CompilerIrValueSeq]) : ir.CompilerIrValueSeq
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrValue)
-      (__tl_make-array ir.CompilerIrValue values.len)]
-    [index : i64 0]
-    (begin
-      (while (< index values.len)
-        (begin
-          (set!
-            (array-ref slots index)
-            (compiler-reg-remap-value
-              (compiler-reg-global-shared-view remap)
-              (ir.compiler-ir-value-seq-ref
-                (compiler-reg-global-shared-view values)
-                index)))
-          (set! index (+ index 1))))
-      (ir.CompilerIrValueSeq slots values.len))))
+  (ir.compiler-ir-value-seq-map
+    values
+    compiler-reg-remap-value
+    (compiler-reg-global-shared-view remap)))
 
 (define (compiler-reg-remap-params
   [remap : (__tl_dyn-array i64)]
@@ -44419,75 +44389,24 @@
 (define (compiler-reg-remap-call-args
   [remap : (__tl_dyn-array i64)]
   [args : ir.CompilerIrCallArgs]) : ir.CompilerIrCallArgs
-  (match args
-    [(ir.CompilerIrCallArgs.Nil) ir.CompilerIrCallArgs.Nil]
-    [(ir.CompilerIrCallArgs.One a)
-      (ir.CompilerIrCallArgs.One
-        (compiler-reg-remap-value (compiler-reg-global-shared-view remap) a))]
-    [(ir.CompilerIrCallArgs.Two a b)
-      (ir.CompilerIrCallArgs.Two
-        (compiler-reg-remap-value (compiler-reg-global-shared-view remap) a)
-        (compiler-reg-remap-value (compiler-reg-global-shared-view remap) b))]
-    [(ir.CompilerIrCallArgs.Array items)
-      (let
-        [count : i64 (array-length items)]
-        [out : (__tl_dyn-array ir.CompilerIrValue)
-          (__tl_make-array ir.CompilerIrValue count)]
-        [i : i64 0]
-        (begin
-          (while (< i count)
-            (begin
-              (set!
-                (array-ref out i)
-                (compiler-reg-remap-value
-                  (compiler-reg-global-shared-view remap)
-                  (compiler-reg-global-array-element-shared-view items i)))
-              (set! i (+ i 1))))
-          (ir.CompilerIrCallArgs.Array out)))]
-    [(ir.CompilerIrCallArgs.Sret items index)
-      (let
-        [count : i64 (array-length items)]
-        [out : (__tl_dyn-array ir.CompilerIrValue)
-          (__tl_make-array ir.CompilerIrValue count)]
-        [i : i64 0]
-        (begin
-          (while (< i count)
-            (begin
-              (set!
-                (array-ref out i)
-                (compiler-reg-remap-value
-                  (compiler-reg-global-shared-view remap)
-                  (compiler-reg-global-array-element-shared-view items i)))
-              (set! i (+ i 1))))
-          (ir.CompilerIrCallArgs.Sret out index)))]))
+  (ir.compiler-ir-call-args-map
+    args
+    compiler-reg-remap-value
+    (compiler-reg-global-shared-view remap)))
 
-(define (compiler-reg-remap-spmd-call-arg
+(define (compiler-reg-remap-spmd-value
   [remap : (__tl_dyn-array i64)]
-  [arg : ir.CompilerIrSpmdCallArg]) : ir.CompilerIrSpmdCallArg
-  (match arg
-    [(ir.CompilerIrSpmdCallArg.Arg class value ty)
-      (ir.CompilerIrSpmdCallArg.Arg
-        class
-        (compiler-reg-remap-value (compiler-reg-global-shared-view remap) value)
-        ty)]))
+  [_class : ir.CompilerIrSpmdValueClass]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (compiler-reg-remap-value remap value))
 
 (define (compiler-reg-remap-spmd-call-args
   [remap : (__tl_dyn-array i64)]
   [args : ir.CompilerIrSpmdCallArgSeq]) : ir.CompilerIrSpmdCallArgSeq
-  (let
-    [out : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
-      (__tl_make-array ir.CompilerIrSpmdCallArg args.len)]
-    [i : i64 0]
-    (begin
-      (while (< i args.len)
-        (begin
-          (set!
-            (array-ref out i)
-            (compiler-reg-remap-spmd-call-arg
-              (compiler-reg-global-shared-view remap)
-              (compiler-reg-global-array-element-shared-view args.slots i)))
-          (set! i (+ i 1))))
-      (ir.CompilerIrSpmdCallArgSeq out args.len))))
+  (ir.compiler-ir-spmd-call-args-map
+    args
+    compiler-reg-remap-spmd-value
+    (compiler-reg-global-shared-view remap)))
 
 (define (compiler-reg-remap-spmd-call-result
   [remap : (__tl_dyn-array i64)]

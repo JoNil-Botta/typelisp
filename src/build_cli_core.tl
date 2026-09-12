@@ -31,7 +31,7 @@
 (import compiler_lower as lower)
 (import compiler_optimize as opt)
 (import compiler_object as cobj)
-(import compiler_object_elf)
+(cfg test (import compiler_object_elf))
 (import compiler_windows_coff_core)
 (import doc_test)
 (import test_cli_core)

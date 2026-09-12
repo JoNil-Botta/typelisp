@@ -200,6 +200,36 @@
         [_ false])]
     (and conflict? self? aborted?)))
 
+(define (trace-test-note-budget?) : bool
+  (let
+    [limits : trace.CompilerIncrementalTraceLimits
+      (trace.CompilerIncrementalTraceLimits 512 100 512 4 2048 2048)]
+    (match (trace.compiler-trace-begin (trace-test-parent 5) limits)
+      [(trace.ResultCompilerIncrementalTraceBuilder.Ok builder)
+        (let
+          [attempts : i64 0]
+          [accepted? : bool true]
+          (begin
+            ;; Identical notes would collapse at finalization, but must not
+            ;; accumulate without a bound in the open transaction.
+            (while (and (< attempts 100) accepted?)
+              (begin
+                (set!
+                  accepted?
+                  (trace.compiler-trace-note!
+                    (&mut builder)
+                    (trace-test-absent)))
+                (set! attempts (+ attempts 1))))
+            (and
+              (> attempts 1)
+              (< attempts 100)
+              (not accepted?)
+              (match (trace.compiler-trace-finalize builder)
+                [(trace.ResultCompilerIncrementalTrace.Err error)
+                  (= error.code trace.compiler-trace-error-state)]
+                [_ false]))))]
+      [_ false])))
+
 (define (trace-test-structural-child-keys?) : bool
   (let
     [parent : identity.CompilerIncrementalIdentity (trace-test-parent 5)]
@@ -380,6 +410,12 @@
 (test
   compiler-incremental-trace-transaction-and-self-dependency
   (if (trace-test-transaction?)
+    unit
+    (string.tl_oob_abort)))
+
+(test
+  compiler-incremental-trace-note-budget-before-finalize
+  (if (trace-test-note-budget?)
     unit
     (string.tl_oob_abort)))
 

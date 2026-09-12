@@ -136,7 +136,9 @@
   (state i64)
   (parent compiler_incremental_identity.CompilerIncrementalIdentity)
   (edges trace_record_vec.Vec)
-  (limits CompilerIncrementalTraceLimits))
+  (limits CompilerIncrementalTraceLimits)
+  (planned-bytes i64)
+  (owned-bytes i64))
 
 (defstruct CompilerIncrementalTrace
   (schema i64)
@@ -217,24 +219,41 @@
 (define (compiler-trace-begin
   [parent : compiler_incremental_identity.CompilerIncrementalIdentity]
   [limits : CompilerIncrementalTraceLimits]) : ResultCompilerIncrementalTraceBuilder
-  (cond
-    [(not (compiler-trace-limits-valid? (& limits)))
-      (ResultCompilerIncrementalTraceBuilder.Err
-        (compiler-trace-error
-          compiler-trace-error-limit
-          "trace limits are invalid"))]
-    [(not (compiler-trace-parent-valid? (& parent) (& limits)))
-      (ResultCompilerIncrementalTraceBuilder.Err
-        (compiler-trace-error
-          compiler-trace-error-parent
-          "parent query identity is invalid"))]
-    [else
-      (ResultCompilerIncrementalTraceBuilder.Ok
-        (CompilerIncrementalTraceBuilder
-          1
-          parent
-          (trace_record_vec.with-capacity 0)
-          limits))]))
+  (let
+    [header-bytes : i64
+      (+
+        16
+        (+
+          (string.string-length compiler-incremental-trace-domain)
+          (array-length parent.transcript)))]
+    [owned-bytes : i64 (+ 128 (* 4 (array-length parent.transcript)))]
+    (cond
+      [(not (compiler-trace-limits-valid? (& limits)))
+        (ResultCompilerIncrementalTraceBuilder.Err
+          (compiler-trace-error
+            compiler-trace-error-limit
+            "trace limits are invalid"))]
+      [(not (compiler-trace-parent-valid? (& parent) (& limits)))
+        (ResultCompilerIncrementalTraceBuilder.Err
+          (compiler-trace-error
+            compiler-trace-error-parent
+            "parent query identity is invalid"))]
+      [(or
+          (> header-bytes limits.max-bytes)
+          (> owned-bytes limits.max-owned-bytes))
+        (ResultCompilerIncrementalTraceBuilder.Err
+          (compiler-trace-error
+            compiler-trace-error-limit
+            "trace parent exceeds builder budget"))]
+      [else
+        (ResultCompilerIncrementalTraceBuilder.Ok
+          (CompilerIncrementalTraceBuilder
+            1
+            parent
+            (trace_record_vec.with-capacity 0)
+            limits
+            header-bytes
+            owned-bytes))])))
 
 (define (compiler-trace-abort!
   [builder : (&mut builder CompilerIncrementalTraceBuilder)]) : unit
@@ -251,9 +270,36 @@
       (& builder.parent)
       (& builder.limits))
       [(ResultCompilerIncrementalTraceRecord.Ok record)
-        (begin
-          (trace_record_vec.push-ref! (&mut builder.edges) record)
-          true)]
+        (let
+          [record-bytes : i64
+            (compiler_incremental_identity.compiler-incremental-add-size
+              (string.string-length record.key)
+              (string.string-length record.observation))]
+          [planned : i64
+            (compiler_incremental_identity.compiler-incremental-add-size
+              builder.planned-bytes
+              (compiler_incremental_identity.compiler-incremental-add-size
+                8
+                record-bytes))]
+          ;; Include encoded-string copies, record storage, vector slack, and
+          ;; temporary encoding buffers in the builder's conservative budget.
+          [owned : i64
+            (compiler_incremental_identity.compiler-incremental-add-size
+              builder.owned-bytes
+              (+ 128 (* 4 record-bytes)))]
+          (if (or
+            (< planned 0)
+            (> planned builder.limits.max-bytes)
+            (< owned 0)
+            (> owned builder.limits.max-owned-bytes))
+            (begin
+              (set! builder.state 3)
+              false)
+            (begin
+              (trace_record_vec.push-ref! (&mut builder.edges) record)
+              (set! builder.planned-bytes planned)
+              (set! builder.owned-bytes owned)
+              true)))]
       [(ResultCompilerIncrementalTraceRecord.Err _)
         (begin
           (set! builder.state 3)

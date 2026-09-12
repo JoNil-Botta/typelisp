@@ -632,34 +632,37 @@
                           (concurrency-unlock!))
                         (ConcurrencyShared authority))]))))))))))
 
-;: Issue a second authority for one live shareable resource.
+;: Issue a second authority for one live shareable resource. Thread task
+;: owners are deliberately excluded: their typed handles must remain move-only.
 (define (concurrency-share
   [authority : (& authority ConcurrencyAuthority)]
   [family : i64]) : ConcurrencyShareResult
-  (let
-    [token : i64 (concurrency-authority-token authority)]
-    [box-address : i64 (concurrency-authority-address authority)]
-    (begin
-      (unsafe
-        (concurrency-lock!))
-      (let
-        [slot : i64
-          (unsafe
-            (concurrency-validated-resource token box-address family))]
-        (match (if (< slot 0)
-          (ConcurrencyShareErr)
-          (unsafe
-            (concurrency-issue slot)))
-          [(ConcurrencyShareErr)
-            (begin
-              (unsafe
-                (concurrency-unlock!))
-              (ConcurrencyShareErr))]
-          [(ConcurrencyShared issued)
-            (begin
-              (unsafe
-                (concurrency-unlock!))
-              (ConcurrencyShared issued))])))))
+  (if (= family concurrency-family-thread)
+    (ConcurrencyShareErr)
+    (let
+      [token : i64 (concurrency-authority-token authority)]
+      [box-address : i64 (concurrency-authority-address authority)]
+      (begin
+        (unsafe
+          (concurrency-lock!))
+        (let
+          [slot : i64
+            (unsafe
+              (concurrency-validated-resource token box-address family))]
+          (match (if (< slot 0)
+            (ConcurrencyShareErr)
+            (unsafe
+              (concurrency-issue slot)))
+            [(ConcurrencyShareErr)
+              (begin
+                (unsafe
+                  (concurrency-unlock!))
+                (ConcurrencyShareErr))]
+            [(ConcurrencyShared issued)
+              (begin
+                (unsafe
+                  (concurrency-unlock!))
+                (ConcurrencyShared issued))]))))))
 
 ;: Lease one resource, returning raw fields only to an unsafe adapter.
 (unsafe
@@ -1117,6 +1120,32 @@
               (concurrency-test-assert
                 (concurrency-test-close-ok (& successor))
                 44)))])]))
+
+(test
+  concurrency-registry-thread-owner-cannot-share
+  (match (unsafe
+    (concurrency-register concurrency-family-thread 1 73 0 0 0 0 0 0))
+    [(ConcurrencyShareErr) (concurrency-test-assert false 50)]
+    [(ConcurrencyShared owner)
+      (begin
+        (match (concurrency-share (& owner) concurrency-family-thread)
+          [(ConcurrencyShared _) (concurrency-test-assert false 51)]
+          [(ConcurrencyShareErr) unit])
+        (let
+          [lease : ConcurrencyLease
+            (unsafe
+              (concurrency-acquire (& owner) concurrency-family-thread 1))]
+          (begin
+            (concurrency-test-assert lease.ok 52)
+            (concurrency-test-assert (= lease.field0 73) 53)
+            (concurrency-test-assert
+              (unsafe
+                (concurrency-release lease))
+              54)
+            (concurrency-test-assert
+              (unsafe
+                (concurrency-close (& owner) concurrency-family-thread 1)).ok
+              55))))]))
 
 (test
   concurrency-registry-slot-reuse

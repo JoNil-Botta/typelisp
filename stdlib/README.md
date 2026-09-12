@@ -144,7 +144,8 @@ Vec bang place macros as available yet.
   active arena, so cross-thread wrappers must choose and retain a spanning
   atomic owner. Dropping an authority revokes its Box identity before that
   arena can recycle storage. Resource words are available only to explicit
-  unsafe adapters.
+  unsafe adapters. Checked sharing rejects the thread-owner family; typed
+  task handles remain move-only.
   The existing `thread.tl` and `sync.tl` wrappers are not yet
   protected by this registry; #7718 tracks their migration.
 - `dense_list.tl`: low-level declaration generation for compiler-private

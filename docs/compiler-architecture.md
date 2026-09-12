@@ -34,6 +34,32 @@ closed [compiler-owned executable template registry](compiler-x64-executable-tem
 It records mutation-sensitive source identities and typed control/frame events
 for later native-code certification.
 
+### Package direct-object routing
+
+`build-package-prepare-runtime` in `build_cli_core.tl` owns package route
+selection through `BuildPackageDirectObjectRequest`: target, artifact kind,
+backend mode, debug policy, resource policy, strict policy, and loaded inputs.
+Its result contains object bytes and side-assembly state, valid fallback
+assembly with a closed `CompilerDirectObjectFallbackReason`, or a diagnostic.
+Callers must not recheck eligibility or infer the route from diagnostic text.
+The strict helper rejects every fallback before external tools or publication.
+
+Package policy is distinct from serializer capability. Source and package ELF
+consumers share `source-tool-linux-direct-object-eligibility` and
+`source-tool-render-linux-direct-object` in `build_run_core.tl`; package code
+only translates the artifact kind. COFF capability remains owned by
+`compiler_windows_coff_core.tl`. Reason categories and bounded context are
+rendered centrally in `compiler_backend.tl`, without parsing serializer errors.
+The package freshness gate checks the shared ELF boundary, including mutations
+that bypass it; inline tests cover policy combinations and malformed images.
+
+Preparation lowers and optimizes once. Fallbacks retain assembly, without
+retaining the object image. Future archive export summaries must be derived at
+the successful-image boundary before compiler arenas retire, then returned as
+bounded owned data alongside bytes. This preserves the route contract while
+the backend migrates to shared machine records; it does not broaden object
+eligibility or introduce public strict-mode options (#7452, #7395, #7032).
+
 ## Performance gates
 
 Generated code is compared with `clang -O2` using paired cases under

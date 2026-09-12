@@ -45,6 +45,37 @@ fail() {
     exit 1
 }
 
+# Package ELF preparation translates artifact kind and delegates to the shared
+# source/package capability owner. Keep serializer decisions out of this seam.
+check_direct_object_boundary() {
+    awk '
+        /^\(define \(build-package-render-linux-direct-object$/ { active = 1; found += 1; next }
+        active && /^\(/ { active = 0 }
+        active {
+            if ($0 ~ /build_run_core[.]source-tool-render-linux-direct-object/) calls += 1
+            if ($0 ~ /compiler_object_elf[.]|compiler-object-symbol-list-contains[?]|\(cond|\(if/) forbidden += 1
+        }
+        END { exit !(found == 1 && calls == 1 && forbidden == 0) }
+    ' "$1"
+}
+
+check_direct_object_boundary src/build_cli_core.tl || fail "package ELF route bypasses shared capability owner"
+sed 's/build_run_core.source-tool-render-linux-direct-object/unowned-renderer/' \
+    src/build_cli_core.tl > "$WORK/bypassed-owner.tl"
+if check_direct_object_boundary "$WORK/bypassed-owner.tl"; then
+    fail "package ELF boundary guard accepted a bypassed owner"
+fi
+sed '/^  (build_run_core.source-tool-render-linux-direct-object$/a\
+    (compiler_object_elf.compiler-object-elf-image-supported? image)' \
+    src/build_cli_core.tl > "$WORK/duplicated-capability.tl"
+if check_direct_object_boundary "$WORK/duplicated-capability.tl"; then
+    fail "package ELF boundary guard accepted duplicated capability checks"
+fi
+if [ "${1:-}" = --boundary-self-test ]; then
+    echo "package direct-object boundary: owner and mutation checks passed"
+    exit 0
+fi
+
 assert_contains() {
     file=$1
     text=$2

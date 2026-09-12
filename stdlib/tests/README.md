@@ -211,6 +211,14 @@ Inline stdlib coverage:
   exact-width representative boundaries, all four bounded limb classes,
   maximal carry chains, and independently generated modular-exponentiation
   fixtures for 2048-, 3072-, 4096-, and 8192-bit public moduli.
+- `crypto_rsa_verify_api.tl` pins C2SP/Wycheproof PKCS#1-v1_5-SHA256 and
+  PSS-SHA256/MGF1-SHA256/32-salt positives at 2048, 3072, and 4096 bits,
+  plus published PKCS#1 and offline-generated PSS positives at 8192 bits;
+  mutates every encoded field, message, and width; checks bounded MGF1 lengths;
+  and exercises a 2049-bit PSS modulus with a required zero discarded octet.
+  Fixtures are checked in; normal tests invoke no external crypto provider.
+  See `crypto_rsa_verify_vectors.md` for pinned provenance and offline
+  generation commands.
 - `crypto_random.tl` owns inline tests for zero-length no-call behavior,
   bounded chunk completion, partial writes, interruption retry/exhaustion,
   impossible partial results, injected missing-library/missing-symbol/exact

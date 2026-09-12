@@ -3528,6 +3528,10 @@
       (compiler_optimize_tests.compiler-optimize-lftr-sum-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-inline-converted-leaf-self-test"
+      (compiler_optimize_tests.compiler-optimize-inline-converted-leaf-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-unroll-self-test"
       (compiler_optimize_tests.compiler-optimize-unroll-self-test)
       42)

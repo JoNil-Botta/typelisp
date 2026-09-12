@@ -19043,6 +19043,314 @@
       (opt-inline-function-instrs optimized "self_inline")]
     (= (opt-count-direct-call-name-instr-seq instrs "self_inline") 1)))
 
+;; --- INL-11X: a converted leaf absorbs at an in-loop site of a converted caller
+;;
+;; `conv_leaf` and `conv_walk` are both self tail-recursive, so the program
+;; stage's tailrec rewrite converts both before the inliner reads them. The
+;; leaf is call-free with one reference and `conv_walk` calls it from what is
+;; now its loop body, so INL-11X absorbs it; a second reference from
+;; `conv_other` keeps it out of line at every site, and `loop_walk` -- the same
+;; in-loop site in a caller that was never converted -- keeps its call too,
+;; which is what leaves the never-taken-self-recursion fixtures standing.
+(define (opt-inline-conv-params) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "a"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "b"
+        (compiler_ast_types.AstType.I64)
+        1)
+      (compiler_ir_types.compiler-ir-param-seq-empty))))
+
+(define (opt-inline-conv-leaf) : compiler_ir_types.CompilerIrFunction
+  (let
+    [name : i64 (opt-test-symbol "conv_leaf")]
+    (compiler_ir_types.CompilerIrFunction.Function
+      name
+      (opt-inline-conv-params)
+      (compiler_ast_types.AstType.I64)
+      5
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              2
+              (compiler_ir_types.CompilerIrBinOp.Eq)
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.compiler-ir-label "done")
+              (compiler_ir_types.compiler-ir-label "body"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "done")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 1)))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "body")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.BinOp
+                  3
+                  (compiler_ir_types.CompilerIrBinOp.Sub)
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (compiler_ir_types.CompilerIrValue.I64 1)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstr.BinOp
+                  4
+                  (compiler_ir_types.CompilerIrBinOp.Add)
+                  (compiler_ir_types.CompilerIrValue.Var 1)
+                  (compiler_ir_types.CompilerIrValue.Var 3)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstr.TailCall
+                  name
+                  (compiler_ir_types.CompilerIrCallArgs.Two
+                    (compiler_ir_types.CompilerIrValue.Var 3)
+                    (compiler_ir_types.CompilerIrValue.Var 4))
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 4)))))
+            (compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+;; `conv_walk(i, acc)`: while i < 8, acc = conv_leaf(i, acc); i = i + 1.
+(define (opt-inline-conv-walk) : compiler_ir_types.CompilerIrFunction
+  (let
+    [name : i64 (opt-test-symbol "conv_walk")]
+    (compiler_ir_types.CompilerIrFunction.Function
+      name
+      (opt-inline-conv-params)
+      (compiler_ast_types.AstType.I64)
+      5
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              2
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.CompilerIrValue.I64 8)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.compiler-ir-label "body")
+              (compiler_ir_types.compiler-ir-label "exit"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "body")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Call
+                3
+                (opt-test-symbol "conv_leaf")
+                (compiler_ir_types.CompilerIrCallArgs.Two
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (compiler_ir_types.CompilerIrValue.Var 1))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                4
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.TailCall
+                name
+                (compiler_ir_types.CompilerIrCallArgs.Two
+                  (compiler_ir_types.CompilerIrValue.Var 4)
+                  (compiler_ir_types.CompilerIrValue.Var 3))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 3)))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "exit")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 1)))))
+            (compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+;; A second, straight-line reference to the leaf.
+(define (opt-inline-conv-other) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "conv_other")
+    (opt-inline-conv-params)
+    (compiler_ast_types.AstType.I64)
+    3
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Call
+            2
+            (opt-test-symbol "conv_leaf")
+            (compiler_ir_types.CompilerIrCallArgs.Two
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.CompilerIrValue.Var 0))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 2)))))
+      (compiler_ir_types.CompilerIrBlockList.Nil))))
+
+;; `loop_walk(i, acc)`: the same loop as `conv_walk`, spelled as a CFG loop
+;; rather than a self tail call, so the caller is not a converted function.
+(define (opt-inline-loop-walk) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "loop_walk")
+    (opt-inline-conv-params)
+    (compiler_ast_types.AstType.I64)
+    7
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "header"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "header")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Phi
+              2
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.compiler-ir-label "entry")
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var 5)
+                  (compiler_ir_types.compiler-ir-label "body")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Phi
+              3
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.compiler-ir-label "entry")
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                  (compiler_ir_types.CompilerIrValue.Var 6)
+                  (compiler_ir_types.compiler-ir-label "body")
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              4
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.I64 8)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ir_types.compiler-ir-label "body")
+              (compiler_ir_types.compiler-ir-label "exit"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "body")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Call
+                6
+                (opt-test-symbol "conv_leaf")
+                (compiler_ir_types.CompilerIrCallArgs.Two
+                  (compiler_ir_types.CompilerIrValue.Var 2)
+                  (compiler_ir_types.CompilerIrValue.Var 3))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                5
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "header"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "exit")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 3)))))
+            (compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-inline-convwalk-functions) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-inline-conv-leaf)
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-inline-loop-walk)
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
+
+(define (opt-inline-conv-functions [other? : bool]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-inline-conv-leaf)
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-inline-conv-walk)
+      (if other?
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-inline-conv-other)
+          (compiler_ir_types.compiler-ir-function-seq-empty))
+        (compiler_ir_types.compiler-ir-function-seq-empty)))))
+
+(define (compiler-optimize-inline-converted-leaf-self-test) : i64
+  (let
+    [absorbed : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-conv-functions false)
+        2)]
+    [shared : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-conv-functions true)
+        2)]
+    [looped : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-convwalk-functions)
+        2)]
+    (cond
+      ;; the single-reference leaf is absorbed into the converted caller's loop
+      [(not
+          (=
+            (opt-count-direct-call-name-function-seq
+              (compiler_optimize.compiler-opt-global-shared-view absorbed)
+              "conv_walk"
+              "conv_leaf")
+            0))
+        1]
+      ;; a second reference keeps the converted leaf behind its call
+      [(not
+          (=
+            (opt-count-direct-call-name-function-seq
+              (compiler_optimize.compiler-opt-global-shared-view shared)
+              "conv_walk"
+              "conv_leaf")
+            1))
+        2]
+      [(not
+          (=
+            (opt-count-direct-call-name-function-seq
+              (compiler_optimize.compiler-opt-global-shared-view shared)
+              "conv_other"
+              "conv_leaf")
+            1))
+        3]
+      ;; an in-loop site of a caller that was never converted keeps its call
+      [(not
+          (=
+            (opt-count-direct-call-name-function-seq
+              (compiler_optimize.compiler-opt-global-shared-view looped)
+              "loop_walk"
+              "conv_leaf")
+            1))
+        4]
+      [else 42])))
+
 (define (compiler-optimize-inline-large-callee-ok?) : bool
   (let
     [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]

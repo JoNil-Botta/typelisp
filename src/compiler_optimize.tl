@@ -132161,6 +132161,32 @@
 ;; loss too: every such import adds a loop nest. The wins come from converted
 ;; CALLERS whose own sites now read in-loop, and refusing converted callees does
 ;; not touch those sites.
+;;
+;; INL-11X: one measured exception. regalloc_greedy's `rg-call-set-in-range-words?`
+;; walks the clobber words of a call set and asks `rg-call-word-in-range?` about
+;; each one -- both written as self tail recursion, both converted here, so the
+;; inner one stayed a call: 1.0M calls per run, each paying the argument moves,
+;; the transfer, the callee's descriptor loads and the return, and the caller
+;; paying five callee-saved push/pop pairs on every one of its own 712K calls
+;; only because it held live ranges across that call. Absorbing it takes the
+;; caller to two pushes and a nested loop: regalloc_greedy -10,351,747
+;; (-1.78%), every other row byte identical.
+;;
+;; The exception is the absorption shape and nothing wider: the converted
+;; callee has exactly one static reference (the body moves, the program does
+;; not grow), it is call-free (a leaf: no frame of its own to re-enter), it
+;; fits opt-inline-converted-leaf-max-body / -max-blocks, its site lies in a
+;; natural loop of the caller, so the retired boundary is repaid per
+;; iteration -- and the CALLER is itself a converted function. That last
+;; clause is what keeps the fixtures above standing: their never-taken
+;; self-recursions are called from ordinary `main`s, which are never converted,
+;; so every one of them keeps its call, and a converted body with more than one
+;; reference, a call of its own, or a straight-line site is refused as before.
+;; It is also what makes the cascade clause moot here: that clause protects the
+;; caller's own inline, which a converted caller can never have, and at inline
+;; time such a caller reads as a bounds-free single-site function anyway (its
+;; bounds check still sits inside the accessor it absorbs later), so the clause
+;; would refuse exactly the measured shape for an inline that does not exist.
 (define opt-inline-tailrec-converted : (__tl_dyn-array bool)
   (__tl_make-array bool 0))
 
@@ -135900,6 +135926,17 @@
 
 (define (opt-inline-bounds-loop-max-blocks) : i64
   6)
+
+;; INL-11X's band, in the cost model's units (opt-inline-multiblock-cost-instrs
+;; charges a 35-instruction body as 62). The measured leaf presents as 62 in 12
+;; blocks at the round the inliner sees it; 72 and 12 sit just above it, below
+;; the smallest converted bodies the census carries that are not leaves of this
+;; shape (`rg-first-free` at 145, `rg-heap-sift-down!` at 246).
+(define (opt-inline-converted-leaf-max-body) : i64
+  72)
+
+(define (opt-inline-converted-leaf-max-blocks) : i64
+  12)
 
 (define (opt-inline-bounds-loop-small?
   [blocks : ir.CompilerIrBlockList]
@@ -142805,6 +142842,34 @@
             ;; branches, and letting them read a one-block body past that cap
             ;; would retire the cap for every absorbable or cost-band body. The
             ;; verdict prices such a body and holds it to the small-body bound.
+            [converted-callee? : bool
+              (opt-inline-tailrec-converted-slot?
+                (compiler-opt-global-shared-view index)
+                callee-name)]
+            ;; INL-11X: a converted callee that is a call-free leaf with
+            ;; exactly one reference, within the leaf band, at an in-loop
+            ;; site of a caller with nothing to lose, absorbs: the body
+            ;; moves, the boundary it retires is paid per iteration, and the
+            ;; caller stops holding its live ranges across a call.
+            [converted-leaf-ok? : bool
+              (and
+                converted-callee?
+                ;; ...into a CONVERTED caller's loop. The cascade clause guards
+                ;; the caller's own inline; a converted caller has none to
+                ;; lose (INL-11), and a converted leaf stays out of every
+                ;; other caller exactly as before.
+                (opt-inline-tailrec-converted-slot?
+                  (compiler-opt-global-shared-view index)
+                  func-name)
+                (= absorb-class 1)
+                (opt-inline-blocks-call-free?
+                  (compiler-opt-global-shared-view cblocks))
+                (<= callee-instrs (opt-inline-converted-leaf-max-body))
+                (<=
+                  (ir.compiler-ir-block-list-count
+                    (compiler-opt-global-shared-view cblocks))
+                  (opt-inline-converted-leaf-max-blocks))
+                (opt-inline-bounds-loop-site-in-loop?))]
             [one-block-callee? : bool
               (<=
                 (ir.compiler-ir-block-list-count
@@ -142818,7 +142883,7 @@
                   (opt-inline-checked-tail-only-body?
                     (compiler-opt-global-shared-view cblocks)))
                 bounds-ok?
-                bounds-loop-ok?
+                (or bounds-loop-ok? converted-leaf-ok?)
                 ;; INL-6: not a loop into a loop of a caller this tier merged.
                 ;; See opt-inline-checked-rescan-loop-import? for the row.
                 (not
@@ -142835,10 +142900,6 @@
             ;; measured argument.
             ;; INL-11: a converted self-tail-recursive callee keeps its frame
             ;; (see opt-inline-tailrec-converted).
-            [converted-callee? : bool
-              (opt-inline-tailrec-converted-slot?
-                (compiler-opt-global-shared-view index)
-                callee-name)]
             [_literals : unit
               (opt-inline-checked-record-literals!
                 (compiler-opt-global-shared-view cargs))]
@@ -142860,7 +142921,9 @@
                   site-pos
                   tail-site?))]
             [inline? : bool
-              (and (not converted-callee?) (or band-admits? checked?))]
+              (and
+                (or (not converted-callee?) converted-leaf-ok?)
+                (or band-admits? checked?))]
             ;; True only when the hot-loop-leaf gate is what admits this
             ;; site: its blocks spend the gate's own fuel, not the shared
             ;; accumulator the caller's banked absorptions draw on.
@@ -144041,6 +144104,34 @@
             ;; branches, and letting them read a one-block body past that cap
             ;; would retire the cap for every absorbable or cost-band body. The
             ;; verdict prices such a body and holds it to the small-body bound.
+            [converted-callee? : bool
+              (opt-inline-tailrec-converted-slot?
+                (compiler-opt-global-shared-view index)
+                callee-name)]
+            ;; INL-11X: a converted callee that is a call-free leaf with
+            ;; exactly one reference, within the leaf band, at an in-loop
+            ;; site of a caller with nothing to lose, absorbs: the body
+            ;; moves, the boundary it retires is paid per iteration, and the
+            ;; caller stops holding its live ranges across a call.
+            [converted-leaf-ok? : bool
+              (and
+                converted-callee?
+                ;; ...into a CONVERTED caller's loop. The cascade clause guards
+                ;; the caller's own inline; a converted caller has none to
+                ;; lose (INL-11), and a converted leaf stays out of every
+                ;; other caller exactly as before.
+                (opt-inline-tailrec-converted-slot?
+                  (compiler-opt-global-shared-view index)
+                  func-name)
+                (= absorb-class 1)
+                (opt-inline-blocks-call-free?
+                  (compiler-opt-global-shared-view cblocks))
+                (<= callee-instrs (opt-inline-converted-leaf-max-body))
+                (<=
+                  (ir.compiler-ir-block-list-count
+                    (compiler-opt-global-shared-view cblocks))
+                  (opt-inline-converted-leaf-max-blocks))
+                (opt-inline-bounds-loop-site-in-loop?))]
             [one-block-callee? : bool
               (<=
                 (ir.compiler-ir-block-list-count
@@ -144054,7 +144145,7 @@
                   (opt-inline-checked-tail-only-body?
                     (compiler-opt-global-shared-view cblocks)))
                 bounds-ok?
-                bounds-loop-ok?
+                (or bounds-loop-ok? converted-leaf-ok?)
                 ;; INL-6: not a loop into a loop of a caller this tier merged.
                 ;; See opt-inline-checked-rescan-loop-import? for the row.
                 (not
@@ -144068,10 +144159,6 @@
             ;; Same measured tier as the non-span path.
             ;; INL-11: a converted self-tail-recursive callee keeps its frame
             ;; (see opt-inline-tailrec-converted).
-            [converted-callee? : bool
-              (opt-inline-tailrec-converted-slot?
-                (compiler-opt-global-shared-view index)
-                callee-name)]
             [_literals : unit
               (opt-inline-checked-record-literals!
                 (compiler-opt-global-shared-view cargs))]
@@ -144093,7 +144180,9 @@
                   site-pos
                   tail-site?))]
             [inline? : bool
-              (and (not converted-callee?) (or band-admits? checked?))]
+              (and
+                (or (not converted-callee?) converted-leaf-ok?)
+                (or band-admits? checked?))]
             ;; Same hot-import accounting as the non-span path.
             [hot-import? : bool
               (and (not tail-site?) hot-loop-leaf? (not legacy-cost-ok?))]

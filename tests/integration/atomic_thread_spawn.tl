@@ -39,13 +39,19 @@
 ;: Spawn one worker over `owner`, join it, and surface the joined value.
 (define (atomic-thread-run [owner : i64]) : i64
   (let
-    [spawn : thread.ThreadSpawnResult (thread.spawn atomic-thread-worker owner)]
+    [spawn : thread.ThreadSpawnResult
+      (unsafe
+        (thread.spawn atomic-thread-worker owner))]
     (if (not (thread.spawn-result-ok? (& spawn)))
       2
       (let
         [worker : thread.Thread
-          (thread.spawn-result-thread-or spawn (thread.Thread 0 0 0 ""))]
-        (thread.join-result-value-or (thread.join worker) 3)))))
+          (unsafe
+            (thread.spawn-result-thread-or spawn (thread.Thread 0 0 0 "")))]
+        (thread.join-result-value-or
+          (unsafe
+            (thread.join worker))
+          3)))))
 
 (define (main) : i64
   (let

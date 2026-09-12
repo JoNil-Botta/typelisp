@@ -95,7 +95,8 @@
   [base : i64]
   [count : i64]) : unit
   (begin
-    (sync.channel-i64-pair-store-raw! channel ctx 0)
+    (unsafe
+      (sync.channel-i64-pair-store-raw! channel ctx 0))
     (set! (array-ref ctx sync.channel-i64-pair-raw-field-count) base)
     (set! (array-ref ctx (+ sync.channel-i64-pair-raw-field-count 1)) count)))
 
@@ -132,8 +133,14 @@
       (sync-pair-integration-receive-sum
         channel
         (* sync-pair-integration-count 2))]
-    [a-code : i64 (sync-pair-integration-join-code (thread.join a))]
-    [b-code : i64 (sync-pair-integration-join-code (thread.join b))]
+    [a-code : i64
+      (sync-pair-integration-join-code
+        (unsafe
+          (thread.join a)))]
+    [b-code : i64
+      (sync-pair-integration-join-code
+        (unsafe
+          (thread.join b)))]
     [a-expected : i64
       (sync-pair-integration-sum 100 sync-pair-integration-count)]
     [b-expected : i64
@@ -163,14 +170,16 @@
         channel
         1000
         sync-pair-integration-count)
-      (match (thread.spawn
-        sync-pair-integration-producer
-        (sync-pair-integration-array-i64-addr ctx-a))
+      (match (unsafe
+        (thread.spawn
+          sync-pair-integration-producer
+          (sync-pair-integration-array-i64-addr ctx-a)))
         [(ThreadSpawnErr _) 6]
         [(ThreadSpawnOk a)
-          (match (thread.spawn
-            sync-pair-integration-producer
-            (sync-pair-integration-array-i64-addr ctx-b))
+          (match (unsafe
+            (thread.spawn
+              sync-pair-integration-producer
+              (sync-pair-integration-array-i64-addr ctx-b)))
             [(ThreadSpawnErr _) 7]
             [(ThreadSpawnOk b) (sync-pair-integration-finish channel a b)])]))))
 

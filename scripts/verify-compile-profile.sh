@@ -2034,8 +2034,11 @@ if [ "$NL_HOST_OS" = windows ]; then
     # nodes, 10 segments, 10,240 capacity, and 245,760 physical payload bytes.
     # #6215's checked ownership surface measures 10,378 used nodes and crosses
     # to 11 segments, 11,264 capacity, and 270,336 physical payload bytes.
+    # The REPL scratch cleanup result/reporting paths on #7746 measured 11,266
+    # used nodes on Windows, crossing to 12 segments, 12,288 capacity, and
+    # 294,912 physical payload bytes. Keep the exact capacity boundary pinned.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool typecheck 11 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool typecheck 12 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # Each ownership boundary must expose used nodes, logical capacity, and
     # physical segmentation for both pools. Values vary with the source graph;

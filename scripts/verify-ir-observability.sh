@@ -22,6 +22,45 @@ WORKDIR="$ROOT/target/ir-observability-verify"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
+# Inject a verifier rejection at the CLI result handoff for every result
+# carrier. Real invalid IR is intentionally not needed for this regression:
+# the fixture owns advisory lists and checks rejection status without writing.
+"$COMPILER" run "$ROOT/src/tests/compile_cli_verify_ir_advisories_smoke.tl" \
+    --stdlib-root "$ROOT/stdlib" \
+    --stdlib-root "$ROOT/src" \
+    >"$WORKDIR/advisories.stdout" 2>"$WORKDIR/advisories.stderr"
+test ! -s "$WORKDIR/advisories.stdout"
+grep -E '^(error: |compile: IR verification failed: )' \
+    "$WORKDIR/advisories.stderr" >"$WORKDIR/advisories.actual"
+printf '%s\n' \
+    'error: driver-first' \
+    'error: driver-second' \
+    'compile: IR verification failed: verify-driver-ok' \
+    'error: driver-err' \
+    'compile: IR verification failed: verify-driver-err' \
+    'error: buffer-ok' \
+    'compile: IR verification failed: verify-buffer-ok' \
+    'error: buffer-err' \
+    'compile: IR verification failed: verify-buffer-err' \
+    'error: pic-ok' \
+    'compile: IR verification failed: verify-pic-ok' \
+    'error: pic-err' \
+    'compile: IR verification failed: verify-pic-err' \
+    'error: coff-first' \
+    'error: coff-second' \
+    'compile: IR verification failed: verify-coff' \
+    'error: assembly' \
+    'compile: IR verification failed: verify-assembly' \
+    'error: windows-err' \
+    'compile: IR verification failed: verify-windows-err' \
+    'compile: IR verification failed: verify-empty-later-job' \
+    >"$WORKDIR/advisories.expected"
+if ! cmp -s "$WORKDIR/advisories.expected" "$WORKDIR/advisories.actual"; then
+    echo "IR verification rejection lost or reordered advisories" >&2
+    diff -u "$WORKDIR/advisories.expected" "$WORKDIR/advisories.actual" >&2 || true
+    exit 1
+fi
+
 SOURCE="$ROOT/tests/golden/optimizer_fold.tl"
 EXPECTED="$ROOT/tests/golden/optimizer_fold.after-fold.ir"
 ACTUAL="$WORKDIR/optimizer_fold.after-fold.ir"

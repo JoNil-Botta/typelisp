@@ -41087,7 +41087,8 @@
     [(compiler_ir_types.CompilerIrCallArgs.Nil) 0]
     [(compiler_ir_types.CompilerIrCallArgs.One _) 1]
     [(compiler_ir_types.CompilerIrCallArgs.Two _ _) 2]
-    [(compiler_ir_types.CompilerIrCallArgs.Array values) (array-length values)]))
+    [(compiler_ir_types.CompilerIrCallArgs.Array values) (array-length values)]
+    [(compiler_ir_types.CompilerIrCallArgs.Sret values _) (array-length values)]))
 
 (define (compiler-backend-call-arg-at
   [args : compiler_ir_types.CompilerIrCallArgs]
@@ -41106,6 +41107,8 @@
           b
           (compiler_ir_types.CompilerIrValue.Unit)))]
     [(compiler_ir_types.CompilerIrCallArgs.Array values)
+      (array-ref values index)]
+    [(compiler_ir_types.CompilerIrCallArgs.Sret values _)
       (array-ref values index)]))
 
 (define (compiler-backend-fast-alloc-size
@@ -56777,6 +56780,8 @@
           a)
         (compiler-backend-count-value-use counts b))]
     [(compiler_ir_types.CompilerIrCallArgs.Array values)
+      (compiler-backend-count-call-args-array-uses counts values 0)]
+    [(compiler_ir_types.CompilerIrCallArgs.Sret values _)
       (compiler-backend-count-call-args-array-uses counts values 0)]))
 
 (define (compiler-backend-count-spmd-call-args-uses
@@ -85803,6 +85808,11 @@
       (compiler-backend-collect-call-args-array-collections
         collections
         values
+        0)]
+    [(compiler_ir_types.CompilerIrCallArgs.Sret values _)
+      (compiler-backend-collect-call-args-array-collections
+        collections
+        values
         0)]))
 
 (define (compiler-backend-collect-spmd-call-args-collections
@@ -93657,6 +93667,22 @@
     [(compiler_ir_types.CompilerIrValue.RuntimeGlobal _) false]
     [_ true]))
 
+(define (compiler-backend-object-semantic-call-args-array-supported?
+  [values : (__tl_dyn-array compiler_ir_types.CompilerIrValue)]) : bool
+  (let
+    [index : i64 0]
+    [count : i64 (array-length values)]
+    [supported : bool true]
+    (begin
+      (while (and supported (< index count))
+        (begin
+          (set!
+            supported
+            (compiler-backend-object-semantic-value-supported?
+              (compiler-backend-global-array-element-shared-view values index)))
+          (set! index (+ index 1))))
+      supported)))
+
 (define (compiler-backend-object-semantic-call-args-supported?
   [args : compiler_ir_types.CompilerIrCallArgs]) : bool
   (match args
@@ -93668,21 +93694,9 @@
         (compiler-backend-object-semantic-value-supported? lhs)
         (compiler-backend-object-semantic-value-supported? rhs))]
     [(compiler_ir_types.CompilerIrCallArgs.Array values)
-      (let
-        [index : i64 0]
-        [count : i64 (array-length values)]
-        [supported : bool true]
-        (begin
-          (while (and supported (< index count))
-            (begin
-              (set!
-                supported
-                (compiler-backend-object-semantic-value-supported?
-                  (compiler-backend-global-array-element-shared-view
-                    values
-                    index)))
-              (set! index (+ index 1))))
-          supported))]))
+      (compiler-backend-object-semantic-call-args-array-supported? values)]
+    [(compiler_ir_types.CompilerIrCallArgs.Sret values _)
+      (compiler-backend-object-semantic-call-args-array-supported? values)]))
 
 (define (compiler-backend-object-semantic-call-supported?
   [backend-state : CompilerBackendState]

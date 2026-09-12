@@ -1130,6 +1130,8 @@
     [(ir.CompilerIrCallArgs.One value) (compiler-live-value-vars value)]
     [(ir.CompilerIrCallArgs.Two a b) (compiler-live-values2-vars a b)]
     [(ir.CompilerIrCallArgs.Array values)
+      (compiler-live-call-args-array-vars values 0)]
+    [(ir.CompilerIrCallArgs.Sret values _)
       (compiler-live-call-args-array-vars values 0)]))
 
 (define (compiler-live-spmd-call-args-seq-vars
@@ -1488,6 +1490,8 @@
         (compiler-live-use-ids-add-value! out n a)
         b)]
     [(ir.CompilerIrCallArgs.Array values)
+      (compiler-live-use-ids-add-value-array! out n values 0)]
+    [(ir.CompilerIrCallArgs.Sret values _)
       (compiler-live-use-ids-add-value-array! out n values 0)]))
 
 ;; Walk dense value slots in place; no transient chain is materialized.

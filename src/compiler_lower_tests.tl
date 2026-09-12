@@ -3422,6 +3422,8 @@
           (owned_view.compiler-owned-shared-view name))
         (lower-test-value-function-count b name))]
     [(compiler_ir_types.CompilerIrCallArgs.Array values)
+      (lower-test-call-args-array-function-count values name 0)]
+    [(compiler_ir_types.CompilerIrCallArgs.Sret values _)
       (lower-test-call-args-array-function-count values name 0)]))
 
 (define (lower-test-call-args-array-function-count

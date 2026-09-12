@@ -7681,6 +7681,13 @@
         (compiler-reg-global-shared-view values)
         types
         0
+        (array-length values))]
+    [(ir.CompilerIrCallArgs.Sret values _)
+      (compiler-reg-call-args-array-gp-class?
+        type-segment-bases
+        (compiler-reg-global-shared-view values)
+        types
+        0
         (array-length values))]))
 
 ;; A call whose args are ALL single-GP-register passed (and within the per-ABI
@@ -7813,6 +7820,12 @@
         type-segment-bases
         values
         types
+        0)]
+    [(ir.CompilerIrCallArgs.Sret values _)
+      (compiler-reg-call-args-array-has-group?
+        type-segment-bases
+        values
+        types
         0)]))
 
 ;; The backend's current float marshaller is ordered rather than a parallel-move
@@ -7930,6 +7943,16 @@
             0)
           (+ start 1)))]
     [(ir.CompilerIrCallArgs.Array values)
+      (compiler-reg-call-arg-vars-selective-array
+        out
+        values
+        types
+        target-abi
+        0
+        start
+        0
+        start)]
+    [(ir.CompilerIrCallArgs.Sret values _)
       (compiler-reg-call-arg-vars-selective-array
         out
         values
@@ -32602,6 +32625,12 @@
         type-segment-bases
         types
         values
+        0)]
+    [(ir.CompilerIrCallArgs.Sret values _)
+      (compiler-reg-call-args-array-have-private-memory?
+        type-segment-bases
+        types
+        values
         0)]))
 
 (define (compiler-reg-reference-to-slice?
@@ -35662,6 +35691,15 @@
         0
         start
         prefs
+        parents)]
+    [(ir.CompilerIrCallArgs.Sret values _)
+      (compiler-reg-arg-pref-array-at!
+        target-abi
+        pool
+        values
+        0
+        start
+        prefs
         parents)]))
 
 (define (compiler-reg-arg-pref-args!
@@ -36073,6 +36111,17 @@
         0
         position
         prefs
+        parents)]
+    [(ir.CompilerIrCallArgs.Sret values _)
+      (compiler-reg-float-arg-pref-array!
+        target-abi
+        pool
+        values
+        types
+        0
+        0
+        position
+        prefs
         parents)]))
 
 (define (compiler-reg-float-arg-pref-instr!
@@ -36366,6 +36415,16 @@
             parents
             assignments)))]
     [(ir.CompilerIrCallArgs.Array values)
+      (compiler-reg-float-arg-demote-array!
+        target-abi
+        values
+        types
+        0
+        0
+        position
+        parents
+        assignments)]
+    [(ir.CompilerIrCallArgs.Sret values _)
       (compiler-reg-float-arg-demote-array!
         target-abi
         values
@@ -36708,6 +36767,21 @@
         (compiler-reg-group-pair-add-value-var set a)
         b)]
     [(ir.CompilerIrCallArgs.Array arr)
+      (let
+        [n : i64 (array-length arr)]
+        [i : i64 0]
+        [acc : live.CompilerLiveI64Set set]
+        (begin
+          (while (< i n)
+            (begin
+              (set!
+                acc
+                (compiler-reg-group-pair-add-value-var
+                  acc
+                  (compiler-reg-global-array-element-shared-view arr i)))
+              (set! i (+ i 1))))
+          acc))]
+    [(ir.CompilerIrCallArgs.Sret arr _)
       (let
         [n : i64 (array-length arr)]
         [i : i64 0]
@@ -40681,12 +40755,16 @@
     false
     (let
       [old : i64 (array-ref roots dst)]
-      (if (= old root)
-        false
-        (if (< old 0)
+      ;; -1 has not received a root; -2 records a conflicting pair and
+      ;; must stay invalid even if a later replay sees either root again.
+      (cond
+        [(= old root) false]
+        [(= old (- 0 2)) false]
+        [(< old 0)
           (begin
             (set! (array-ref roots dst) root)
-            true)
+            true)]
+        [else
           (begin
             (if (< old (array-length invalid))
               (set! (array-ref invalid old) true)
@@ -40695,7 +40773,7 @@
               (set! (array-ref invalid root) true)
               unit)
             (set! (array-ref roots dst) (- 0 2))
-            true))))))
+            true)]))))
 
 ;; Result code of one propagation attempt. Bit 0 says the instruction is one of
 ;; the forms that can ever set a root, so later rounds must revisit it; bit 1
@@ -40704,6 +40782,20 @@
   (if changed
     3
     1))
+
+;; Lowering retypes an inline tuple/array storage pointer to the physical U64
+;; sret parameter. This cast preserves the address, unlike arbitrary casts;
+;; all later uses of its alias still participate in escape invalidation.
+(define (compiler-reg-color-structural-sret-cast?
+  [from-ty : ast.AstType]
+  [to-ty : ast.AstType]) : bool
+  (match to-ty
+    [(ast.AstType.U64)
+      (match from-ty
+        [(ast.AstType.Tuple _) true]
+        [(ast.AstType.Array _ _) true]
+        [_ false])]
+    [_ false]))
 
 (define (compiler-reg-color-propagate-root-instr
   [instr : ir.CompilerIrInstr]
@@ -40727,6 +40819,15 @@
           invalid
           dst
           (compiler-reg-color-value-root roots base)))]
+    [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
+      (if (compiler-reg-color-structural-sret-cast? from-ty to-ty)
+        (compiler-reg-color-propagate-root-code
+          (compiler-reg-color-set-root!
+            (compiler-reg-global-shared-view roots)
+            invalid
+            dst
+            (compiler-reg-color-value-root roots src)))
+        0)]
     [(ir.CompilerIrInstr.Mov dst value _)
       (compiler-reg-color-propagate-root-code
         (compiler-reg-color-set-root!
@@ -40761,6 +40862,48 @@
             (if (and (>= left 0) (= left right))
               (compiler-reg-color-set-root! roots invalid dst left)
               false))))]
+    [(ir.CompilerIrInstr.Call dst _ args _)
+      (match args
+        [(ir.CompilerIrCallArgs.Sret values index)
+          (compiler-reg-color-propagate-root-code
+            (if (and (>= index 0) (< index (array-length values)))
+              (compiler-reg-color-set-root!
+                (compiler-reg-global-shared-view roots)
+                invalid
+                dst
+                (compiler-reg-color-value-root
+                  roots
+                  (compiler-reg-global-array-element-shared-view values index)))
+              false))]
+        [_ 0])]
+    [(ir.CompilerIrInstr.CallIndirect dst _ args _)
+      (match args
+        [(ir.CompilerIrCallArgs.Sret values index)
+          (compiler-reg-color-propagate-root-code
+            (if (and (>= index 0) (< index (array-length values)))
+              (compiler-reg-color-set-root!
+                (compiler-reg-global-shared-view roots)
+                invalid
+                dst
+                (compiler-reg-color-value-root
+                  roots
+                  (compiler-reg-global-array-element-shared-view values index)))
+              false))]
+        [_ 0])]
+    [(ir.CompilerIrInstr.CallIndirectC dst _ args _)
+      (match args
+        [(ir.CompilerIrCallArgs.Sret values index)
+          (compiler-reg-color-propagate-root-code
+            (if (and (>= index 0) (< index (array-length values)))
+              (compiler-reg-color-set-root!
+                (compiler-reg-global-shared-view roots)
+                invalid
+                dst
+                (compiler-reg-color-value-root
+                  roots
+                  (compiler-reg-global-array-element-shared-view values index)))
+              false))]
+        [_ 0])]
     [_ 0]))
 
 ;; One block's share of the FIRST propagation round.
@@ -41133,6 +41276,19 @@
               (compiler-reg-global-shared-view roots)
               (compiler-reg-global-shared-view invalid)
               (compiler-reg-global-array-element-shared-view items i))
+            (set! i (+ i 1)))))]
+    [(ir.CompilerIrCallArgs.Sret items sret-index)
+      (let
+        [i : i64 0]
+        [len : i64 (array-length items)]
+        (while (< i len)
+          (begin
+            (if (not (= i sret-index))
+              (compiler-reg-color-invalidate-value!
+                (compiler-reg-global-shared-view roots)
+                (compiler-reg-global-shared-view invalid)
+                (compiler-reg-global-array-element-shared-view items i))
+              unit)
             (set! i (+ i 1)))))]))
 
 (define (compiler-reg-color-invalidate-spmd-call-args!
@@ -41238,11 +41394,13 @@
           (compiler-reg-global-shared-view roots)
           (compiler-reg-global-shared-view invalid)
           length))]
-    [(ir.CompilerIrInstr.Cast _ src _ _)
-      (compiler-reg-color-invalidate-value!
-        (compiler-reg-global-shared-view roots)
-        (compiler-reg-global-shared-view invalid)
-        src)]
+    [(ir.CompilerIrInstr.Cast _ src from-ty to-ty)
+      (if (compiler-reg-color-structural-sret-cast? from-ty to-ty)
+        unit
+        (compiler-reg-color-invalidate-value!
+          (compiler-reg-global-shared-view roots)
+          (compiler-reg-global-shared-view invalid)
+          src))]
     [(ir.CompilerIrInstr.Bitcast _ src _ _)
       (compiler-reg-color-invalidate-value!
         (compiler-reg-global-shared-view roots)
@@ -44285,7 +44443,23 @@
                   (compiler-reg-global-shared-view remap)
                   (compiler-reg-global-array-element-shared-view items i)))
               (set! i (+ i 1))))
-          (ir.CompilerIrCallArgs.Array out)))]))
+          (ir.CompilerIrCallArgs.Array out)))]
+    [(ir.CompilerIrCallArgs.Sret items index)
+      (let
+        [count : i64 (array-length items)]
+        [out : (__tl_dyn-array ir.CompilerIrValue)
+          (__tl_make-array ir.CompilerIrValue count)]
+        [i : i64 0]
+        (begin
+          (while (< i count)
+            (begin
+              (set!
+                (array-ref out i)
+                (compiler-reg-remap-value
+                  (compiler-reg-global-shared-view remap)
+                  (compiler-reg-global-array-element-shared-view items i)))
+              (set! i (+ i 1))))
+          (ir.CompilerIrCallArgs.Sret out index)))]))
 
 (define (compiler-reg-remap-spmd-call-arg
   [remap : (__tl_dyn-array i64)]

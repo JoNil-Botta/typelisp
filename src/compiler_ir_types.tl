@@ -533,7 +533,10 @@
   (Nil)
   (One CompilerIrValue)
   (Two CompilerIrValue CompilerIrValue)
-  (Array (__tl_dyn-array CompilerIrValue)))
+  (Array (__tl_dyn-array CompilerIrValue))
+  ;; The indexed argument is a call-scoped output borrow, not an escaping
+  ;; ordinary pointer. Its storage is also aliased by the call result.
+  (Sret (__tl_dyn-array CompilerIrValue) i64))
 
 (defenum CompilerIrSpmdBackend
   (Scalar)
@@ -2924,7 +2927,9 @@
         (compiler-ir-clone-value a)
         (compiler-ir-clone-value b))]
     [(CompilerIrCallArgs.Array values)
-      (CompilerIrCallArgs.Array (clone values))]))
+      (CompilerIrCallArgs.Array (clone values))]
+    [(CompilerIrCallArgs.Sret values index)
+      (CompilerIrCallArgs.Sret (clone values) index)]))
 
 (define (compiler-ir-clone-spmd-backend [backend : CompilerIrSpmdBackend]) : CompilerIrSpmdBackend
   (match backend
@@ -4228,6 +4233,17 @@
         (compiler-ir-value-seq-ref values 1))]
     [else (compiler-ir-call-args-array values)]))
 
+(define (compiler-ir-call-args-sret-from-seq
+  [values : CompilerIrValueSeq]
+  [index : i64]) : CompilerIrCallArgs
+  (let
+    [count : i64 values.len]
+    [out : (__tl_dyn-array CompilerIrValue)
+      (__tl_make-array CompilerIrValue count)]
+    (begin
+      (compiler-ir-value-builder-copy-range! (&mut out) (& values.slots) count)
+      (CompilerIrCallArgs.Sret out index))))
+
 (define (compiler-ir-call-args-array-render
   [values : (__tl_dyn-array CompilerIrValue)]
   [index : i64]) : String
@@ -4253,14 +4269,21 @@
         ", "
         (compiler-ir-value-render b))]
     [(CompilerIrCallArgs.Array values)
-      (compiler-ir-call-args-array-render values 0)]))
+      (compiler-ir-call-args-array-render values 0)]
+    [(CompilerIrCallArgs.Sret values index)
+      (str_cat.str-cat
+        "[sret arg "
+        (string.int->string index)
+        "] "
+        (compiler-ir-call-args-array-render values 0))]))
 
 (define (compiler-ir-call-args-count [args : CompilerIrCallArgs]) : i64
   (match args
     [(CompilerIrCallArgs.Nil) 0]
     [(CompilerIrCallArgs.One _) 1]
     [(CompilerIrCallArgs.Two _ _) 2]
-    [(CompilerIrCallArgs.Array values) (array-length values)]))
+    [(CompilerIrCallArgs.Array values) (array-length values)]
+    [(CompilerIrCallArgs.Sret values _) (array-length values)]))
 
 (define (compiler-ir-spmd-backend-render [backend : CompilerIrSpmdBackend]) : String
   (match backend

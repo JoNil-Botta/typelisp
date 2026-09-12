@@ -220,9 +220,12 @@
   (Ok i64)
   (Err String))
 
-(defenum LspRenameModuleMoveLookup
+(defenum LspRenameModuleMove
   (Found String String)
-  (Missing)
+  (Missing))
+
+(defenum LspRenameModuleMoveLookup
+  (Ok LspRenameModuleMove)
   (Err String))
 
 (defstruct LspLineCol
@@ -11571,6 +11574,28 @@
       ""
       (lsp-str3 (string.substring path 0 start) new-name ".tl"))))
 
+;; Keep workspace-boundary and filesystem-probe decisions deterministic and
+;; directly testable. Callers pass a dummy successful probe for an outside
+;; path; the value is ignored, so no filesystem access occurs in that branch.
+(define (lsp-rename-module-move-from-probe
+  [old-path : String]
+  [new-path : String]
+  [inside-workspace : bool]
+  [probe : io.ResultIoBool]) : LspRenameModuleMoveLookup
+  (if (not inside-workspace)
+    (LspRenameModuleMoveLookup.Err
+      "Renamed module path would leave the editable workspace")
+    (match probe
+      [(io.ErrIoBool _)
+        (LspRenameModuleMoveLookup.Err
+          "Cannot validate the renamed module destination")]
+      [(io.OkIoBool exists)
+        (if exists
+          (LspRenameModuleMoveLookup.Err
+            "Renamed module source path already exists")
+          (LspRenameModuleMoveLookup.Ok
+            (LspRenameModuleMove.Found old-path new-path)))])))
+
 ;; A real module declaration is source-addressed by its final component. Its
 ;; file must move after all TextDocumentEdits have applied to the old URI;
 ;; selected import aliases have no matching source leaf and therefore need no
@@ -11581,7 +11606,7 @@
   [target : LspRenameTarget]
   [new-name : String]) : LspRenameModuleMoveLookup
   (if (not (lsp-rename-module-kind? (& target.kind)))
-    LspRenameModuleMoveLookup.Missing
+    (LspRenameModuleMoveLookup.Ok LspRenameModuleMove.Missing)
     (let
       [index : i64 0]
       [old-path : String ""]
@@ -11630,24 +11655,21 @@
                 unit)
               (set! index (+ index 1)))))
         (if (= (string.string-length old-path) 0)
-          LspRenameModuleMoveLookup.Missing
+          (LspRenameModuleMoveLookup.Ok LspRenameModuleMove.Missing)
           (match (lsp-workspace-root-for-path
             (& state.workspace.roots)
             (lsp-global-shared-view new-path)
             false)
             [(lsp_vector_families.LspWorkspaceRootLookup.Missing)
-              (LspRenameModuleMoveLookup.Err
-                "Renamed module path would leave the editable workspace")]
+              (lsp-rename-module-move-from-probe
+                old-path
+                new-path
+                false
+                (io.OkIoBool false))]
             [(lsp_vector_families.LspWorkspaceRootLookup.Found _)
-              (match (io.try-file-exists? (& new-path))
-                [(io.ErrIoBool _)
-                  (LspRenameModuleMoveLookup.Err
-                    "Cannot validate the renamed module destination")]
-                [(io.OkIoBool exists)
-                  (if exists
-                    (LspRenameModuleMoveLookup.Err
-                      "Renamed module source path already exists")
-                    (LspRenameModuleMoveLookup.Found old-path new-path))])]))))))
+              (let
+                [probe : io.ResultIoBool (io.try-file-exists? (& new-path))]
+                (lsp-rename-module-move-from-probe old-path new-path true probe))]))))))
 
 (define (lsp-rename-space-list-contains? [items : String] [name : String]) : bool
   (let
@@ -11893,11 +11915,24 @@
     "newUri"
     (json.JsonString (lsp-path-to-file-uri new-path))))
 
+(define (lsp-rename-append-module-move
+  [changes : json.JsonSeq]
+  [module-move : LspRenameModuleMove]) : json.JsonSeq
+  (match module-move
+    [(LspRenameModuleMove.Found old-path new-path)
+      (json.list-concat
+        changes
+        (lsp-json-list-cons
+          (lsp-rename-file-operation old-path new-path)
+          (json.list-empty)))]
+    [(LspRenameModuleMove.Missing) changes]))
+
 (define (lsp-rename-workspace-edit
   [state : (& state lsp_vector_families.LspServerState)]
   [query : (& query LspWorkspaceSemanticQuery)]
   [target : LspRenameTarget]
-  [new-name : String]) : json.Json
+  [new-name : String]
+  [module-move : LspRenameModuleMove]) : json.Json
   (let
     [index : i64 (- query.len 1)]
     [changes : json.JsonSeq (json.list-empty)]
@@ -11957,17 +11992,90 @@
                   (lsp-rename-document-edit uri open version edits)
                   changes))
               unit))))
-      (match (lsp-rename-module-move state query target new-name)
-        [(LspRenameModuleMoveLookup.Found old-path new-path)
-          (set!
-            changes
-            (json.list-concat
-              changes
-              (lsp-json-list-cons
-                (lsp-rename-file-operation old-path new-path)
-                (json.list-empty))))]
-        [_ unit])
+      (set! changes (lsp-rename-append-module-move changes module-move))
       (lsp-json-object1 "documentChanges" (lsp-json-array changes)))))
+
+(define (lsp-rename-module-move-probe-smoke-ok?) : bool
+  (and
+    (match (lsp-rename-module-move-from-probe
+      "/workspace/old.tl"
+      "/outside/new.tl"
+      false
+      (io.OkIoBool false))
+      [(LspRenameModuleMoveLookup.Err message)
+        (string.eq
+          message
+          "Renamed module path would leave the editable workspace")]
+      [(LspRenameModuleMoveLookup.Ok _) false])
+    (match (lsp-rename-module-move-from-probe
+      "/workspace/old.tl"
+      "/workspace/new.tl"
+      true
+      (io.ErrIoBool (io.IoInvalidPath "/workspace/new.tl")))
+      [(LspRenameModuleMoveLookup.Err message)
+        (string.eq message "Cannot validate the renamed module destination")]
+      [(LspRenameModuleMoveLookup.Ok _) false])
+    (match (lsp-rename-module-move-from-probe
+      "/workspace/old.tl"
+      "/workspace/new.tl"
+      true
+      (io.OkIoBool true))
+      [(LspRenameModuleMoveLookup.Err message)
+        (string.eq message "Renamed module source path already exists")]
+      [(LspRenameModuleMoveLookup.Ok _) false])
+    (match (lsp-rename-module-move-from-probe
+      "/workspace/old.tl"
+      "/workspace/new.tl"
+      true
+      (io.OkIoBool false))
+      [(LspRenameModuleMoveLookup.Ok move)
+        (match move
+          [(LspRenameModuleMove.Found old-path new-path)
+            (and
+              (string.eq old-path "/workspace/old.tl")
+              (string.eq new-path "/workspace/new.tl"))]
+          [(LspRenameModuleMove.Missing) false])]
+      [(LspRenameModuleMoveLookup.Err _) false])))
+
+(define (lsp-rename-module-move-append-smoke-ok?) : bool
+  (let
+    [missing-changes : json.JsonSeq
+      (lsp-rename-append-module-move
+        (lsp-json-list-cons
+          (lsp-json-object1 "kind" (json.JsonString "text"))
+          (json.list-empty))
+        LspRenameModuleMove.Missing)]
+    [found-changes : json.JsonSeq
+      (lsp-rename-append-module-move
+        (lsp-json-list-cons
+          (lsp-json-object1 "kind" (json.JsonString "text"))
+          (json.list-empty))
+        (LspRenameModuleMove.Found "/old.tl" "/new.tl"))]
+    [missing-count : i64
+      (json.list-count (lsp-global-shared-view missing-changes))]
+    [found-count : i64 (json.list-count (lsp-global-shared-view found-changes))]
+    [missing-rendered : String
+      (json.stringify (lsp-json-array missing-changes))]
+    [found-rendered : String (json.stringify (lsp-json-array found-changes))]
+    (and
+      (= missing-count 1)
+      (= found-count 2)
+      (string.eq missing-rendered "[{\"kind\":\"text\"}]")
+      (string.eq
+        found-rendered
+        "[{\"kind\":\"text\"},{\"kind\":\"rename\",\"oldUri\":\"file:///old.tl\",\"newUri\":\"file:///new.tl\"}]"))))
+
+(test
+  lsp-rename-module-move-probe
+  (unless
+    (lsp-rename-module-move-probe-smoke-ok?)
+    (io.panic "lsp-rename-module-move-probe failed")))
+
+(test
+  lsp-rename-module-move-append
+  (unless
+    (lsp-rename-module-move-append-smoke-ok?)
+    (io.panic "lsp-rename-module-move-append failed")))
 
 (define (lsp-prepare-rename-result [target : LspRenameTarget]) : json.Json
   (lsp-json-object2
@@ -16880,7 +16988,7 @@
               (lsp-global-shared-view new-name))
               [(LspRenameModuleMoveLookup.Err message)
                 (lsp-write-error id -32803 message)]
-              [_
+              [(LspRenameModuleMoveLookup.Ok module-move)
                 (match (lsp-rename-validate-query
                   state
                   query
@@ -16894,7 +17002,8 @@
                         state
                         query
                         (lsp-global-shared-view target)
-                        (lsp-global-shared-view new-name)))]
+                        (lsp-global-shared-view new-name)
+                        module-move))]
                   [(LspRenameValidation.Err message)
                     (lsp-write-error id -32803 message)])])])])))
 

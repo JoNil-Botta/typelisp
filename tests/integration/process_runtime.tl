@@ -98,6 +98,22 @@
     [(process.OkProcessOutput _)
       (io.panic "process async wait should be unsupported")]))
 
+(define (assert-process-output-invalid-child
+  [result : process.ResultProcessOutput]
+  [message : String]) : unit
+  (match result
+    [(process.ErrProcessOutput error)
+      (begin
+        (test.assert-true
+          (process.error-wait-failed? (clone error))
+          (clone message))
+        (assert-owned-string-eq
+          (process.error-message error)
+          "process: invalid or consumed child capability"
+          message))]
+    [(process.OkProcessOutput _)
+      (io.panic "invalid child capability should not reach the OS")]))
+
 (define (windows-process-command) : process.ProcessCommand
   (process.command
     "C:\\Windows\\System32\\cmd.exe"
@@ -300,8 +316,11 @@
       (assert-process-spawn-failed (process.output (windows-missing-command)))
       (assert-process-child-unsupported
         (process.start (windows-process-command)))
-      (assert-process-output-unsupported
-        (process.wait (process.ProcessChild 1 2 3)))
+      (with
+        ([fabricated
+            (process.ProcessChild (box 0))
+            process.cleanup-process-child])
+        (assert-process-output-unsupported (process.wait (&mut fabricated))))
       42)
     (begin
       (assert-process-output-result
@@ -340,24 +359,52 @@
         ""
         "")
       (assert-process-spawn-failed (process.output (linux-missing-command)))
-      (let
-        [first : process.ProcessChild
-          (assert-process-child-result
-            (process.start (linux-async-process-command "async-one")))]
-        [second : process.ProcessChild
-          (assert-process-child-result
-            (process.start (linux-async-process-command "async-two")))]
-        [third : process.ProcessChild
-          (assert-process-child-result
-            (linux-borrowed-process-start "/usr/bin/printf" "borrowed-async"))]
-        (begin
-          (assert-process-output-result
-            (process.wait third)
-            0
-            "borrowed-async"
-            "")
-          (assert-process-output-result (process.wait second) 0 "async-two" "")
-          (assert-process-output-result (process.wait first) 0 "async-one" "")))
+      (with
+        ([first
+            (assert-process-child-result
+              (process.start (linux-async-process-command "async-one")))
+            process.cleanup-process-child]
+          [second
+            (assert-process-child-result
+              (process.start (linux-async-process-command "async-two")))
+            process.cleanup-process-child]
+          [third
+            (assert-process-child-result
+              (linux-borrowed-process-start "/usr/bin/printf" "borrowed-async"))
+            process.cleanup-process-child])
+        (let
+          [first-token : i64 (deref first.authority)]
+          (begin
+            (with
+              ([copied-live (clone first) process.cleanup-process-child])
+              (assert-process-output-invalid-child
+                (process.wait (&mut copied-live))
+                "copied live child capability"))
+            (assert-process-output-result
+              (process.wait (&mut third))
+              0
+              "borrowed-async"
+              "")
+            (assert-process-output-result
+              (process.wait (&mut second))
+              0
+              "async-two"
+              "")
+            (assert-process-output-result
+              (process.wait (&mut first))
+              0
+              "async-one"
+              "")
+            (assert-process-output-invalid-child
+              (process.wait (&mut first))
+              "repeated child wait")
+            (with
+              ([fabricated-stale
+                  (process.ProcessChild (box first-token))
+                  process.cleanup-process-child])
+              (assert-process-output-invalid-child
+                (process.wait (&mut fabricated-stale))
+                "fabricated stale child token")))))
       (assert-process-child-spawn-failed
         (process.start
           (process.command

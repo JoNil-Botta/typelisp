@@ -1,9 +1,8 @@
-;; Runtime wait is part of the same unsafe OS seam; the public process wrapper
-;; remains the only safe entry while child-capability hardening is tracked
-;; separately.
+;; Runtime wait is part of the unsafe OS seam even though its boxed capability
+;; is validated before native authority can be acquired.
 (import stdlib.process_runtime)
 
 (define (main) : i64
   (begin
-    (process_runtime.tl_process_wait (process_runtime.child 1 2 3))
+    (process_runtime.tl_process_wait (box 0))
     0))

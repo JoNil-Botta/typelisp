@@ -50,17 +50,10 @@
 (define (assert-process-child-ok
   [result : process.ResultProcessChild]
   [message : String]) : process.ProcessChild
-  (let
-    [info : process.ProcessChildInfo (process.child-result-info (clone result))]
-    (if (process.child-info-ok? info)
-      (process.ProcessChild
-        (process.child-info-pid info)
-        (process.child-info-stdout-handle info)
-        (process.child-info-stderr-handle info))
-      (io.panic
-        (str_cat.str-cat
-          message
-          (process.child-result-error-message-or result ""))))))
+  (match result
+    [(process.OkProcessChild child) child]
+    [(process.ErrProcessChild error)
+      (io.panic (str_cat.str-cat message (process.error-message error)))]))
 
 (define (assert-process-child-spawn-failed
   [result : process.ResultProcessChild]
@@ -305,9 +298,13 @@
       (assert-process-child-unsupported
         (process.start (process-runtime-windows-command))
         "process: async child handles are not supported by this runtime")
-      (assert-process-unsupported
-        (process.wait (process.ProcessChild 1 2 3))
-        "process: async child handles are not supported by this runtime")
+      (with
+        ([fabricated
+            (process.ProcessChild (box 0))
+            process.cleanup-process-child])
+        (assert-process-unsupported
+          (process.wait (&mut fabricated))
+          "process: async child handles are not supported by this runtime"))
       42)
     (begin
       (test.assert-true
@@ -382,24 +379,26 @@
             "/definitely_missing_typelisp_process_840"
             (process.args-empty)))
         "process missing executable")
-      (let
-        [child-a : process.ProcessChild
-          (assert-process-child-ok
-            (process.start (process-runtime-printf-command "async-a"))
-            "process async start a: ")]
-        [child-b : process.ProcessChild
-          (assert-process-child-ok
-            (process.start (process-runtime-printf-command "async-b"))
-            "process async start b: ")]
+      (with
+        ([child-a
+            (assert-process-child-ok
+              (process.start (process-runtime-printf-command "async-a"))
+              "process async start a: ")
+            process.cleanup-process-child]
+          [child-b
+            (assert-process-child-ok
+              (process.start (process-runtime-printf-command "async-b"))
+              "process async start b: ")
+            process.cleanup-process-child])
         (begin
           (assert-process-ok
-            (process.wait child-b)
+            (process.wait (&mut child-b))
             0
             "async-b"
             ""
             "process async wait b")
           (assert-process-ok
-            (process.wait child-a)
+            (process.wait (&mut child-a))
             0
             "async-a"
             ""

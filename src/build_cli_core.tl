@@ -261,24 +261,37 @@
   (Err String))
 
 (defstruct BuildPackageGraphWorker
+  (:cleanup cleanup-build-package-graph-worker)
   (node BuildPackageGraphNode)
   (artifacts BuildPackageArtifactPaths)
-  (child process.ProcessChild))
+  (child process.ProcessChild (:owned)))
 
 (defenum ResultBuildPackageGraphWorker
-  (Ok BuildPackageGraphWorker)
+  (:cleanup cleanup-result-build-package-graph-worker)
+  (Ok BuildPackageGraphWorker (:owned))
   (Err String))
 
-(defstruct BuildPackageGraphWorkerVec
-  (slots (__tl_dyn-array BuildPackageGraphWorker))
-  (len i64))
+(defenum BuildPackageGraphWorkerList
+  (:cleanup cleanup-build-package-graph-worker-list)
+  (Empty)
+  (More
+    BuildPackageGraphWorker
+    (:owned)
+    (Box BuildPackageGraphWorkerList)
+    (:cleanup cleanup-build-package-graph-worker-list-tail)))
+
+(define (cleanup-build-package-graph-worker-list-tail
+  [tail : (Box BuildPackageGraphWorkerList)]) : unit
+  (cleanup-build-package-graph-worker-list (deref tail)))
 
 (defstruct BuildPackageSchedulePass
+  (:cleanup cleanup-build-package-schedule-pass)
   (scheduled build_string_i64_map.Map)
-  (workers BuildPackageGraphWorkerVec))
+  (workers BuildPackageGraphWorkerList (:owned)))
 
 (defenum ResultBuildPackageSchedulePass
-  (Ok BuildPackageSchedulePass)
+  (:cleanup cleanup-result-build-package-schedule-pass)
+  (Ok BuildPackageSchedulePass (:owned))
   (Err String))
 
 (defenum ResultBuildPackageWait
@@ -3733,12 +3746,11 @@
       (BuildProfile.Release)
       (backend.CompilerBackendMode.Scalar)
       (BuildPackageLockPolicy.Default)
-      (cli_svec.new)
-      (build-package-graph-worker-vec-new))
+      (cli_svec.new))
       [(ResultBuildPackageSchedulePass.Err _) false]
       [(ResultBuildPackageSchedulePass.Ok pass)
         (and
-          (build-package-graph-worker-vec-empty? pass.workers)
+          (build-package-graph-worker-list-empty? (& pass.workers))
           (not
             (build-package-node-scheduled?
               pass.scheduled
@@ -7875,87 +7887,27 @@
     [(build_string_i64_map.LookupFound _) true]
     [(build_string_i64_map.LookupMissing) false]))
 
-(define (build-package-graph-worker-vec-len [v : BuildPackageGraphWorkerVec]) : i64
-  v.len)
+(define (build-package-graph-worker-list-empty?
+  [items : (& items BuildPackageGraphWorkerList)]) : bool
+  (match items
+    [(BuildPackageGraphWorkerList.Empty) true]
+    [(BuildPackageGraphWorkerList.More _ _) false]))
 
-(define (build-package-graph-worker-vec-capacity
-  [v : BuildPackageGraphWorkerVec]) : i64
-  (array-length v.slots))
+(define (build-package-graph-worker-list-reverse-with
+  [remaining : BuildPackageGraphWorkerList]
+  [out : BuildPackageGraphWorkerList]) : BuildPackageGraphWorkerList
+  (match remaining
+    [(BuildPackageGraphWorkerList.Empty) out]
+    [(BuildPackageGraphWorkerList.More worker tail)
+      (build-package-graph-worker-list-reverse-with
+        (deref tail)
+        (BuildPackageGraphWorkerList.More worker (box out)))]))
 
-(define (build-package-graph-worker-vec-with-capacity [capacity : i64]) : BuildPackageGraphWorkerVec
-  (let
-    [cap : i64
-      (if (< capacity 1)
-        1
-        capacity)]
-    (BuildPackageGraphWorkerVec (__tl_make-array BuildPackageGraphWorker cap) 0)))
-
-(define (build-package-graph-worker-vec-new) : BuildPackageGraphWorkerVec
-  (build-package-graph-worker-vec-with-capacity 4))
-
-(define (build-package-graph-worker-vec-at
-  [v : BuildPackageGraphWorkerVec]
-  [index : i64]) : BuildPackageGraphWorker
-  (array-ref v.slots index))
-
-(define (build-package-graph-worker-vec-copy-range!
-  [dst : (__tl_dyn-array BuildPackageGraphWorker)]
-  [src : (__tl_dyn-array BuildPackageGraphWorker)]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (set! (array-ref dst index) (array-ref src index))
-        (set! index (+ index 1))))))
-
-(define (build-package-graph-worker-vec-grow [v : BuildPackageGraphWorkerVec]) : BuildPackageGraphWorkerVec
-  (let
-    [count : i64
-      (build-package-graph-worker-vec-len
-        (owned_view.compiler-owned-shared-view v))]
-    [bigger : (__tl_dyn-array BuildPackageGraphWorker)
-      (__tl_make-array
-        BuildPackageGraphWorker
-        (*
-          (build-package-graph-worker-vec-capacity
-            (owned_view.compiler-owned-shared-view v))
-          2))]
-    (begin
-      (build-package-graph-worker-vec-copy-range!
-        (owned_view.compiler-owned-shared-view bigger)
-        v.slots
-        count)
-      (BuildPackageGraphWorkerVec bigger count))))
-
-(define (build-package-graph-worker-vec-push
-  [v : BuildPackageGraphWorkerVec]
-  [worker : BuildPackageGraphWorker]) : BuildPackageGraphWorkerVec
-  (if (<
-    (build-package-graph-worker-vec-len
-      (owned_view.compiler-owned-shared-view v))
-    (build-package-graph-worker-vec-capacity
-      (owned_view.compiler-owned-shared-view v)))
-    (let
-      [slots : (__tl_dyn-array BuildPackageGraphWorker)
-        (owned_view.compiler-owned-shared-view v.slots)]
-      (begin
-        (set!
-          (array-ref
-            slots
-            (build-package-graph-worker-vec-len
-              (owned_view.compiler-owned-shared-view v)))
-          worker)
-        (BuildPackageGraphWorkerVec
-          slots
-          (+ (build-package-graph-worker-vec-len v) 1))))
-    (build-package-graph-worker-vec-push
-      (build-package-graph-worker-vec-grow v)
-      worker)))
-
-(define (build-package-graph-worker-vec-empty?
-  [items : BuildPackageGraphWorkerVec]) : bool
-  (<= (build-package-graph-worker-vec-len items) 0))
+(define (build-package-graph-worker-list-reverse
+  [workers : BuildPackageGraphWorkerList]) : BuildPackageGraphWorkerList
+  (build-package-graph-worker-list-reverse-with
+    workers
+    (BuildPackageGraphWorkerList.Empty)))
 
 (define (build-package-start-worker
   [node : BuildPackageGraphNode]
@@ -8005,7 +7957,7 @@
                 "`: "
                 (process.error-message error)))])])))
 
-(define (build-package-schedule-pass
+(define (build-package-schedule-pass-with
   [nodes : BuildPackageGraphNodeVec]
   [scheduled : build_string_i64_map.Map]
   [built : build_string_i64_map.Map]
@@ -8015,64 +7967,96 @@
   [mode : backend.CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
-  [workers : BuildPackageGraphWorkerVec]) : ResultBuildPackageSchedulePass
+  [workers : BuildPackageGraphWorkerList]
+  [index : i64]
+  [count : i64]) : ResultBuildPackageSchedulePass
+  (if (>= index count)
+    (ResultBuildPackageSchedulePass.Ok
+      (BuildPackageSchedulePass
+        scheduled
+        (build-package-graph-worker-list-reverse workers)))
+    (let
+      [node : BuildPackageGraphNode
+        (build-package-graph-node-vec-at
+          (owned_view.compiler-owned-shared-view nodes)
+          index)]
+      [manifest-path : String
+        (owned_view.compiler-owned-shared-view node.manifest-path)]
+      (if (or
+        (build-package-node-scheduled?
+          (owned_view.compiler-owned-shared-view scheduled)
+          (owned_view.compiler-owned-shared-view manifest-path))
+        (not
+          (build-package-node-ready?
+            (owned_view.compiler-owned-shared-view node)
+            (owned_view.compiler-owned-shared-view built))))
+        (build-package-schedule-pass-with
+          (owned_view.compiler-owned-shared-view nodes)
+          (owned_view.compiler-owned-shared-view scheduled)
+          (owned_view.compiler-owned-shared-view built)
+          target
+          opt-level
+          profile
+          mode
+          lock-policy
+          (owned_view.compiler-owned-shared-view stdlib-roots)
+          workers
+          (+ index 1)
+          count)
+        (match (build-package-start-worker
+          node
+          target
+          opt-level
+          profile
+          mode
+          lock-policy
+          (owned_view.compiler-owned-shared-view stdlib-roots))
+          [(ResultBuildPackageGraphWorker.Err message)
+            (ResultBuildPackageSchedulePass.Err message)]
+          [(ResultBuildPackageGraphWorker.Ok worker)
+            (begin
+              (build-string-index-map-put! (&mut scheduled) manifest-path 1)
+              (build-package-schedule-pass-with
+                (owned_view.compiler-owned-shared-view nodes)
+                scheduled
+                (owned_view.compiler-owned-shared-view built)
+                target
+                opt-level
+                profile
+                mode
+                lock-policy
+                (owned_view.compiler-owned-shared-view stdlib-roots)
+                (BuildPackageGraphWorkerList.More worker (box workers))
+                (+ index 1)
+                count))])))))
+
+(define (build-package-schedule-pass
+  [nodes : BuildPackageGraphNodeVec]
+  [scheduled : build_string_i64_map.Map]
+  [built : build_string_i64_map.Map]
+  [target : backend.CompilerBackendTarget]
+  [opt-level : i64]
+  [profile : BuildProfile]
+  [mode : backend.CompilerBackendMode]
+  [lock-policy : BuildPackageLockPolicy]
+  [stdlib-roots : cli_svec.Vec]) : ResultBuildPackageSchedulePass
   (let
-    [index : i64 0]
     [count : i64
       (build-package-graph-node-vec-len
         (owned_view.compiler-owned-shared-view nodes))]
-    [next-scheduled : build_string_i64_map.Map
-      (owned_view.compiler-owned-shared-view scheduled)]
-    [next-workers : BuildPackageGraphWorkerVec
-      (owned_view.compiler-owned-shared-view workers)]
-    [ok : bool true]
-    [error-message : String ""]
-    (begin
-      (while (and ok (< index count))
-        (let
-          [node : BuildPackageGraphNode
-            (build-package-graph-node-vec-at
-              (owned_view.compiler-owned-shared-view nodes)
-              index)]
-          [manifest-path : String
-            (owned_view.compiler-owned-shared-view node.manifest-path)]
-          (begin
-            (if (build-package-node-scheduled?
-              (owned_view.compiler-owned-shared-view next-scheduled)
-              (owned_view.compiler-owned-shared-view manifest-path))
-              unit
-              (if (build-package-node-ready?
-                (owned_view.compiler-owned-shared-view node)
-                (owned_view.compiler-owned-shared-view built))
-                (match (build-package-start-worker
-                  node
-                  target
-                  opt-level
-                  profile
-                  mode
-                  lock-policy
-                  (owned_view.compiler-owned-shared-view stdlib-roots))
-                  [(ResultBuildPackageGraphWorker.Err message)
-                    (begin
-                      (set! ok false)
-                      (set! error-message message))]
-                  [(ResultBuildPackageGraphWorker.Ok worker)
-                    (begin
-                      (build-string-index-map-put!
-                        (&mut next-scheduled)
-                        manifest-path
-                        1)
-                      (set!
-                        next-workers
-                        (build-package-graph-worker-vec-push
-                          next-workers
-                          worker)))])
-                unit))
-            (set! index (+ index 1)))))
-      (if ok
-        (ResultBuildPackageSchedulePass.Ok
-          (BuildPackageSchedulePass next-scheduled next-workers))
-        (ResultBuildPackageSchedulePass.Err error-message)))))
+    (build-package-schedule-pass-with
+      nodes
+      scheduled
+      built
+      target
+      opt-level
+      profile
+      mode
+      lock-policy
+      stdlib-roots
+      (BuildPackageGraphWorkerList.Empty)
+      0
+      count)))
 
 (define (build-package-all-built?
   [nodes : BuildPackageGraphNodeVec]
@@ -8103,113 +8087,111 @@
     status
     failed-status))
 
+(define (build-package-wait-worker
+  [worker : (&mut worker BuildPackageGraphWorker)]
+  [built : (&mut built build_string_i64_map.Map)]
+  [announce : bool]
+  [failed-status : (&mut failed-status i64)]) : unit
+  (let
+    [manifest-path : String (string.copy (& worker.node.manifest-path))]
+    [name : String (string.copy (& worker.node.manifest.name))]
+    [runtime-path : String (string.copy (& worker.artifacts.runtime))]
+    [tlci-path : String (string.copy (& worker.artifacts.tlci))]
+    [result : process.ResultProcessOutput (process.wait (&mut worker.child))]
+    (match result
+      [(process.OkProcessOutput output)
+        (begin
+          (if (or announce (not (process.success? output)))
+            (build_run_core.source-tool-forward-output
+              (owned_view.compiler-owned-shared-view output))
+            unit)
+          (if (process.success? output)
+            (let
+              [runtime-state : BuildPackageArtifactState
+                (build-package-artifact-file-state
+                  (owned_view.compiler-owned-shared-view runtime-path))]
+              (if (build-package-artifact-state-dirty?
+                (owned_view.compiler-owned-shared-view runtime-state))
+                (begin
+                  (io.print-error
+                    (build-package-artifact-status-error-message
+                      name
+                      "target runtime"
+                      runtime-path
+                      runtime-state))
+                  (set!
+                    (deref failed-status)
+                    (build-package-failure-status (deref failed-status) 1)))
+                (let
+                  [tlci-state : BuildPackageArtifactState
+                    (build-package-artifact-file-state
+                      (owned_view.compiler-owned-shared-view tlci-path))]
+                  (if (build-package-artifact-state-dirty?
+                    (owned_view.compiler-owned-shared-view tlci-state))
+                    (begin
+                      (io.print-error
+                        (build-package-artifact-status-error-message
+                          name
+                          "host tlci"
+                          tlci-path
+                          tlci-state))
+                      (set!
+                        (deref failed-status)
+                        (build-package-failure-status (deref failed-status) 1)))
+                    (build-string-index-map-put! built manifest-path 1)))))
+            (let
+              [status : i64 (process.output-status output)]
+              (begin
+                (io.print-error
+                  (str_cat.str-cat
+                    "build: package dependency `"
+                    name
+                    "` failed with status "
+                    (string.int->string status)))
+                (set!
+                  (deref failed-status)
+                  (build-package-failure-status (deref failed-status) status))))))]
+      [(process.ErrProcessOutput error)
+        (begin
+          (io.print-error
+            (str_cat.str-cat
+              "build: failed to wait for package dependency `"
+              name
+              "`: "
+              (process.error-message error)))
+          (set!
+            (deref failed-status)
+            (build-package-failure-status (deref failed-status) 1)))])))
+
 (define (build-package-wait-workers-with
-  [workers : BuildPackageGraphWorkerVec]
+  [workers : BuildPackageGraphWorkerList]
   [built : build_string_i64_map.Map]
   [announce : bool]
   [failed-status : i64]) : ResultBuildPackageWait
-  (let
-    [index : i64 0]
-    [count : i64
-      (build-package-graph-worker-vec-len
-        (owned_view.compiler-owned-shared-view workers))]
-    [next-built : build_string_i64_map.Map
-      (owned_view.compiler-owned-shared-view built)]
-    [next-failed-status : i64 failed-status]
-    (begin
-      (while (< index count)
-        (let
-          [worker : BuildPackageGraphWorker
-            (build-package-graph-worker-vec-at
-              (owned_view.compiler-owned-shared-view workers)
-              index)]
-          [node : BuildPackageGraphNode worker.node]
-          [artifacts : BuildPackageArtifactPaths worker.artifacts]
-          [manifest-path : String node.manifest-path]
-          [manifest : load.CompilerPkgManifest node.manifest]
-          [name : String manifest.name]
-          [result : process.ResultProcessOutput (process.wait worker.child)]
-          (begin
-            (match result
-              [(process.OkProcessOutput output)
-                (begin
-                  (if (or announce (not (process.success? output)))
-                    (build_run_core.source-tool-forward-output
-                      (owned_view.compiler-owned-shared-view output))
-                    unit)
-                  (if (process.success? output)
-                    (let
-                      [runtime-path : String artifacts.runtime]
-                      [runtime-state : BuildPackageArtifactState
-                        (build-package-artifact-file-state
-                          (owned_view.compiler-owned-shared-view runtime-path))]
-                      (if (build-package-artifact-state-dirty?
-                        (owned_view.compiler-owned-shared-view runtime-state))
-                        (begin
-                          (io.print-error
-                            (build-package-artifact-status-error-message
-                              name
-                              "target runtime"
-                              runtime-path
-                              runtime-state))
-                          (set!
-                            next-failed-status
-                            (build-package-failure-status next-failed-status 1)))
-                        (let
-                          [tlci-path : String artifacts.tlci]
-                          [tlci-state : BuildPackageArtifactState
-                            (build-package-artifact-file-state
-                              (owned_view.compiler-owned-shared-view tlci-path))]
-                          (if (build-package-artifact-state-dirty?
-                            (owned_view.compiler-owned-shared-view tlci-state))
-                            (begin
-                              (io.print-error
-                                (build-package-artifact-status-error-message
-                                  name
-                                  "host tlci"
-                                  tlci-path
-                                  tlci-state))
-                              (set!
-                                next-failed-status
-                                (build-package-failure-status
-                                  next-failed-status
-                                  1)))
-                            (build-string-index-map-put!
-                              (&mut next-built)
-                              manifest-path
-                              1)))))
-                    (let
-                      [status : i64 (process.output-status output)]
-                      (begin
-                        (io.print-error
-                          (str_cat.str-cat
-                            "build: package dependency `"
-                            name
-                            "` failed with status "
-                            (string.int->string status)))
-                        (set!
-                          next-failed-status
-                          (build-package-failure-status
-                            next-failed-status
-                            status))))))]
-              [(process.ErrProcessOutput error)
-                (begin
-                  (io.print-error
-                    (str_cat.str-cat
-                      "build: failed to wait for package dependency `"
-                      name
-                      "`: "
-                      (process.error-message error)))
-                  (set!
-                    next-failed-status
-                    (build-package-failure-status next-failed-status 1)))])
-            (set! index (+ index 1)))))
-      (if (= next-failed-status 0)
-        (ResultBuildPackageWait.Ok next-built)
-        (ResultBuildPackageWait.Err next-failed-status)))))
+  (match workers
+    [(BuildPackageGraphWorkerList.Empty)
+      (if (= failed-status 0)
+        (ResultBuildPackageWait.Ok built)
+        (ResultBuildPackageWait.Err failed-status))]
+    [(BuildPackageGraphWorkerList.More worker tail)
+      (let
+        [next-built : build_string_i64_map.Map
+          (owned_view.compiler-owned-shared-view built)]
+        [next-failed-status : i64 failed-status]
+        (begin
+          (build-package-wait-worker
+            (&mut worker)
+            (&mut next-built)
+            announce
+            (&mut next-failed-status))
+          (build-package-wait-workers-with
+            (deref tail)
+            next-built
+            announce
+            next-failed-status)))]))
 
 (define (build-package-wait-workers
-  [workers : BuildPackageGraphWorkerVec]
+  [workers : BuildPackageGraphWorkerList]
   [built : build_string_i64_map.Map]
   [announce : bool]) : ResultBuildPackageWait
   (build-package-wait-workers-with workers built announce 0))
@@ -8238,40 +8220,34 @@
       profile
       mode
       lock-policy
-      (owned_view.compiler-owned-shared-view stdlib-roots)
-      (build-package-graph-worker-vec-with-capacity
-        (build-package-graph-node-vec-len
-          (owned_view.compiler-owned-shared-view nodes))))
+      (owned_view.compiler-owned-shared-view stdlib-roots))
       [(ResultBuildPackageSchedulePass.Err message)
         (begin
           (io.print-error message)
           1)]
       [(ResultBuildPackageSchedulePass.Ok pass)
-        (let
-          [workers : BuildPackageGraphWorkerVec pass.workers]
-          (if (build-package-graph-worker-vec-empty?
-            (owned_view.compiler-owned-shared-view workers))
-            (begin
-              (io.print-error
-                "build: package dependency scheduler made no progress")
-              1)
-            (match (build-package-wait-workers
-              (owned_view.compiler-owned-shared-view workers)
-              (owned_view.compiler-owned-shared-view built)
-              announce)
-              [(ResultBuildPackageWait.Err status) status]
-              [(ResultBuildPackageWait.Ok next-built)
-                (build-package-emit-graph-nodes-parallel-loop
-                  (owned_view.compiler-owned-shared-view nodes)
-                  target
-                  opt-level
-                  profile
-                  mode
-                  lock-policy
-                  (owned_view.compiler-owned-shared-view stdlib-roots)
-                  announce
-                  (owned_view.compiler-owned-shared-view pass.scheduled)
-                  next-built)])))])))
+        (if (build-package-graph-worker-list-empty? (& pass.workers))
+          (begin
+            (io.print-error
+              "build: package dependency scheduler made no progress")
+            1)
+          (match (build-package-wait-workers
+            pass.workers
+            (owned_view.compiler-owned-shared-view built)
+            announce)
+            [(ResultBuildPackageWait.Err status) status]
+            [(ResultBuildPackageWait.Ok next-built)
+              (build-package-emit-graph-nodes-parallel-loop
+                (owned_view.compiler-owned-shared-view nodes)
+                target
+                opt-level
+                profile
+                mode
+                lock-policy
+                (owned_view.compiler-owned-shared-view stdlib-roots)
+                announce
+                (owned_view.compiler-owned-shared-view pass.scheduled)
+                next-built)]))])))
 
 (define (build-package-emit-graph-nodes-parallel
   [nodes : BuildPackageGraphNodeVec]

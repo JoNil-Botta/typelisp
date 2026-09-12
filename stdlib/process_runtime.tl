@@ -130,11 +130,14 @@
   (stdout String)
   (stderr String))
 
-;: Private asynchronous process handle data.
+;: Runtime asynchronous child capability. The boxed scalar is an issued token,
+;: not a native PID, descriptor, or HANDLE. Its arena-stable box identity and
+;: generation must both match the private registry before a wait can acquire
+;: native authority; a structural clone receives a different identity and no
+;: authority. The field cleanup consumes still-live children.
 (defstruct ProcessRuntimeChild
-  (pid i64)
-  (stdout-handle i64)
-  (stderr-handle i64))
+  (:cleanup cleanup-process-runtime-child)
+  (authority (Box i64) (:cleanup process-runtime-child-authority-cleanup)))
 
 ;: Private structured runtime failures.
 (defenum ProcessRuntimeError
@@ -150,7 +153,8 @@
 
 ;: Private runtime async-start result.
 (defenum ResultProcessRuntimeChild
-  (OkProcessRuntimeChild ProcessRuntimeChild)
+  (:cleanup cleanup-result-process-runtime-child)
+  (OkProcessRuntimeChild ProcessRuntimeChild (:owned))
   (ErrProcessRuntimeChild ProcessRuntimeError))
 
 ;: Single-pass destructured captured-output result for imported callers.
@@ -162,14 +166,332 @@
   (stderr String)
   (message String))
 
-;: Single-pass destructured child result for imported callers.
+;: Single-pass destructured child result for imported callers. Error rows carry
+;: an unregistered dummy authority so no native handle ever crosses modules.
 (defstruct ProcessRuntimeChildInfo
   (ok bool)
   (kind i64)
+  (authority (Box i64))
+  (message String))
+
+;: Native child resources claimed exactly once from the private registry.
+(defstruct ProcessRuntimeChildClaim
+  (ok bool)
   (pid i64)
   (stdout-handle i64)
-  (stderr-handle i64)
-  (message String))
+  (stderr-handle i64))
+
+;: Internal result of registering a newly spawned native child.
+(defenum ProcessRuntimeChildRegistration
+  (:cleanup cleanup-process-runtime-child-registration)
+  (ProcessRuntimeChildRegistered ProcessRuntimeChild (:owned))
+  (ProcessRuntimeChildRegistryExhausted))
+
+;: Move-preserving snapshot of a boxed authority's private identity.
+(defstruct ProcessRuntimeChildAuthorityIdentity
+  (authority (Box i64))
+  (address i64)
+  (token i64))
+
+;: Fixed maximum number of simultaneously live asynchronous children.
+(define process-runtime-child-registry-capacity : i64
+  (cfg process-linux-test-hooks 4 4096))
+
+;: Largest generation that keeps the encoded token positive.
+(define process-runtime-child-registry-max-generation : i64
+  2251799813685246)
+
+;: Allocate one initialized process-lifetime child-registry table.
+(unsafe
+  (define (process-runtime-child-registry-make-table) : (MutPtr i64)
+    (let
+      [items : (__tl_dyn-array i64)
+        (__tl_make-array i64 process-runtime-child-registry-capacity)]
+      (unsafe
+        (__tl_array-data items)))))
+
+;: Registry state: 0 is free, 1 is live, and 2 is permanently exhausted.
+(define process-runtime-child-registry-states : (MutPtr i64)
+  (unsafe
+    (process-runtime-child-registry-make-table)))
+
+;: Monotonic per-slot generation counters.
+(define process-runtime-child-registry-generations : (MutPtr i64)
+  (unsafe
+    (process-runtime-child-registry-make-table)))
+
+;: Exact arena-stable box address authorized for each live slot.
+(define process-runtime-child-registry-authorities : (MutPtr i64)
+  (unsafe
+    (process-runtime-child-registry-make-table)))
+
+;: Native resources retained only behind a live issued authority.
+(define process-runtime-child-registry-pids : (MutPtr i64)
+  (unsafe
+    (process-runtime-child-registry-make-table)))
+(define process-runtime-child-registry-stdout : (MutPtr i64)
+  (unsafe
+    (process-runtime-child-registry-make-table)))
+(define process-runtime-child-registry-stderr : (MutPtr i64)
+  (unsafe
+    (process-runtime-child-registry-make-table)))
+
+;: Slot at which the next bounded registration scan begins.
+(define process-runtime-child-registry-next : i64
+  0)
+
+;: Process-wide lock protecting child registration and exact-once claiming.
+(define process-runtime-child-registry-lock : i64
+  0)
+
+;: Read one registry word while holding the registry lock.
+(unsafe
+  (define (process-runtime-child-registry-ref
+    [items : (MutPtr i64)]
+    [index : i64]) : i64
+    (unsafe
+      (ptr-read (ptr-cast (ptr-offset items index) : (Ptr i64))))))
+
+;: Write one registry word while holding the registry lock.
+(unsafe
+  (define (process-runtime-child-registry-set!
+    [items : (MutPtr i64)]
+    [index : i64]
+    [value : i64]) : unit
+    (unsafe
+      (ptr-write! (ptr-offset items index) value))))
+
+;: Acquire the process-wide child registry lock.
+(unsafe
+  (define (process-runtime-child-registry-lock!) : unit
+    (let
+      [lock : (MutPtr i64)
+        (unsafe
+          (ptr-addr-of process-runtime-child-registry-lock))]
+      (while (!=
+        (unsafe
+          (atomic-cas! lock 0 1))
+        0)
+        unit))))
+
+;: Release the process-wide child registry lock.
+(unsafe
+  (define (process-runtime-child-registry-unlock!) : unit
+    (unsafe
+      (atomic-store! (ptr-addr-of process-runtime-child-registry-lock) 0))))
+
+;: Read the arena-stable address stored in a Box handle without exposing it to
+;: safe callers. Returning the Box preserves its move-only ownership.
+(define (process-runtime-child-authority-identity [authority : (Box i64)]) : ProcessRuntimeChildAuthorityIdentity
+  (let
+    [address : i64
+      (unsafe
+        (ptr-read (ptr-cast (ptr-addr-of authority) : (Ptr i64))))]
+    [token : i64 (deref authority)]
+    (ProcessRuntimeChildAuthorityIdentity authority address token)))
+
+;: Find a reusable child slot while holding the registry lock.
+(unsafe
+  (define (process-runtime-child-registry-find-free [start : i64]) : i64
+    (let
+      [offset : i64 0]
+      [found : i64 -1]
+      (begin
+        (while (and
+          (< offset process-runtime-child-registry-capacity)
+          (< found 0))
+          (let
+            [slot : i64
+              (% (+ start offset) process-runtime-child-registry-capacity)]
+            (begin
+              (if (=
+                (unsafe
+                  (process-runtime-child-registry-ref
+                    process-runtime-child-registry-states
+                    slot))
+                0)
+                (set! found slot)
+                unit)
+              (set! offset (+ offset 1)))))
+        found))))
+
+;: Register newly spawned native resources and issue their unique move-only
+;: authority. Slot, generation, and Box identity must all match at claim time.
+(unsafe
+  (define (process-runtime-child-register
+    [pid : i64]
+    [stdout-handle : i64]
+    [stderr-handle : i64]) : ProcessRuntimeChildRegistration
+    (begin
+      (unsafe
+        (process-runtime-child-registry-lock!))
+      (let
+        [slot : i64
+          (unsafe
+            (process-runtime-child-registry-find-free
+              process-runtime-child-registry-next))]
+        (if (< slot 0)
+          (begin
+            (unsafe
+              (process-runtime-child-registry-unlock!))
+            (ProcessRuntimeChildRegistryExhausted))
+          (let
+            [previous : i64
+              (unsafe
+                (process-runtime-child-registry-ref
+                  process-runtime-child-registry-generations
+                  slot))]
+            [generation : i64 (+ previous 1)]
+            (if (> generation process-runtime-child-registry-max-generation)
+              (begin
+                (unsafe
+                  (process-runtime-child-registry-set!
+                    process-runtime-child-registry-states
+                    slot
+                    2))
+                (unsafe
+                  (process-runtime-child-registry-unlock!))
+                (unsafe
+                  (process-runtime-child-register
+                    pid
+                    stdout-handle
+                    stderr-handle)))
+              (let
+                [token : i64
+                  (+
+                    (* generation process-runtime-child-registry-capacity)
+                    slot)]
+                [identity : ProcessRuntimeChildAuthorityIdentity
+                  (process-runtime-child-authority-identity (box token))]
+                (begin
+                  (unsafe
+                    (process-runtime-child-registry-set!
+                      process-runtime-child-registry-generations
+                      slot
+                      generation))
+                  (unsafe
+                    (process-runtime-child-registry-set!
+                      process-runtime-child-registry-authorities
+                      slot
+                      identity.address))
+                  (unsafe
+                    (process-runtime-child-registry-set!
+                      process-runtime-child-registry-pids
+                      slot
+                      pid))
+                  (unsafe
+                    (process-runtime-child-registry-set!
+                      process-runtime-child-registry-stdout
+                      slot
+                      stdout-handle))
+                  (unsafe
+                    (process-runtime-child-registry-set!
+                      process-runtime-child-registry-stderr
+                      slot
+                      stderr-handle))
+                  (unsafe
+                    (process-runtime-child-registry-set!
+                      process-runtime-child-registry-states
+                      slot
+                      1))
+                  (set!
+                    process-runtime-child-registry-next
+                    (% (+ slot 1) process-runtime-child-registry-capacity))
+                  (unsafe
+                    (process-runtime-child-registry-unlock!))
+                  (ProcessRuntimeChildRegistered
+                    (ProcessRuntimeChild identity.authority)))))))))))
+
+;: Atomically consume an authority and detach its native resources. Invalid,
+;: fabricated, stale, and duplicate authorities return an empty claim and do
+;: not read, close, or wait on a native value.
+(unsafe
+  (define (process-runtime-child-claim [authority : (Box i64)]) : ProcessRuntimeChildClaim
+    (let
+      [identity : ProcessRuntimeChildAuthorityIdentity
+        (process-runtime-child-authority-identity authority)]
+      [claim : ProcessRuntimeChildClaim
+        (ProcessRuntimeChildClaim false -1 -1 -1)]
+      (begin
+        (unsafe
+          (process-runtime-child-registry-lock!))
+        (if (> identity.token 0)
+          (let
+            [slot : i64
+              (% identity.token process-runtime-child-registry-capacity)]
+            [generation : i64
+              (/ identity.token process-runtime-child-registry-capacity)]
+            (if (and
+              (>= slot 0)
+              (< slot process-runtime-child-registry-capacity)
+              (> generation 0)
+              (=
+                (unsafe
+                  (process-runtime-child-registry-ref
+                    process-runtime-child-registry-states
+                    slot))
+                1)
+              (=
+                (unsafe
+                  (process-runtime-child-registry-ref
+                    process-runtime-child-registry-generations
+                    slot))
+                generation)
+              (=
+                (unsafe
+                  (process-runtime-child-registry-ref
+                    process-runtime-child-registry-authorities
+                    slot))
+                identity.address))
+              (begin
+                (set!
+                  claim
+                  (ProcessRuntimeChildClaim
+                    true
+                    (unsafe
+                      (process-runtime-child-registry-ref
+                        process-runtime-child-registry-pids
+                        slot))
+                    (unsafe
+                      (process-runtime-child-registry-ref
+                        process-runtime-child-registry-stdout
+                        slot))
+                    (unsafe
+                      (process-runtime-child-registry-ref
+                        process-runtime-child-registry-stderr
+                        slot))))
+                ;; Poison authority and native words before releasing the lock,
+                ;; so a duplicate/concurrent wait can never acquire them.
+                (unsafe
+                  (process-runtime-child-registry-set!
+                    process-runtime-child-registry-states
+                    slot
+                    0))
+                (unsafe
+                  (process-runtime-child-registry-set!
+                    process-runtime-child-registry-authorities
+                    slot
+                    0))
+                (unsafe
+                  (process-runtime-child-registry-set!
+                    process-runtime-child-registry-pids
+                    slot
+                    -1))
+                (unsafe
+                  (process-runtime-child-registry-set!
+                    process-runtime-child-registry-stdout
+                    slot
+                    -1))
+                (unsafe
+                  (process-runtime-child-registry-set!
+                    process-runtime-child-registry-stderr
+                    slot
+                    -1)))
+              unit))
+          unit)
+        (unsafe
+          (process-runtime-child-registry-unlock!))
+        claim))))
 
 ;: Internal wrapper around a borrowed runtime argument list.
 (defstruct ProcessRuntimeStringListRef
@@ -316,10 +638,6 @@
   [stdin : ProcessRuntimeMaybeString]) : ProcessRuntimeCommand
   (ProcessRuntimeCommand executable argv cwd env stdin))
 
-;: Construct a private runtime child handle.
-(define (child [pid : i64] [stdout-handle : i64] [stderr-handle : i64]) : ProcessRuntimeChild
-  (ProcessRuntimeChild pid stdout-handle stderr-handle))
-
 ;: Return the number of runtime argv entries.
 (define (args-count [args : (& args ProcessRuntimeStringList)]) : i64
   (array-length args.slots))
@@ -362,9 +680,23 @@
 (define (output-ok [status : i64] [stdout : String] [stderr : String]) : ResultProcessRuntimeOutput
   (OkProcessRuntimeOutput (ProcessRuntimeOutput status stdout stderr)))
 
-;: Construct a successful child runtime result.
+;: Register native child resources and construct their issued capability.
+;: Registry exhaustion consumes the unregistered child before returning an
+;: ordinary spawn failure, so no native resource loses its owner.
 (define (child-ok [pid : i64] [stdout-handle : i64] [stderr-handle : i64]) : ResultProcessRuntimeChild
-  (OkProcessRuntimeChild (ProcessRuntimeChild pid stdout-handle stderr-handle)))
+  (begin
+    (cfg
+      process-linux-test-hooks
+      (process_linux_test_hooks.record-child! pid stdout-handle stderr-handle)
+      unit)
+    (match (unsafe
+      (process-runtime-child-register pid stdout-handle stderr-handle))
+      [(ProcessRuntimeChildRegistered child) (OkProcessRuntimeChild child)]
+      [(ProcessRuntimeChildRegistryExhausted)
+        (begin
+          (unsafe
+            (linux-wait-native pid stdout-handle stderr-handle))
+          (child-spawn-failed "process: child capability registry exhausted"))])))
 
 ;: Construct a runtime output error result.
 (define (output-error [error : ProcessRuntimeError]) : ResultProcessRuntimeOutput
@@ -466,14 +798,6 @@
     [(OkProcessRuntimeChild _) true]
     [(ErrProcessRuntimeChild _) false]))
 
-;: Return the child pid, or `fallback` when `result` is an error.
-(define (child-result-pid-or
-  [result : ResultProcessRuntimeChild]
-  [fallback : i64]) : i64
-  (match result
-    [(OkProcessRuntimeChild child) child.pid]
-    [(ErrProcessRuntimeChild _) fallback]))
-
 ;: Return a child-result error kind code, or `fallback` when `result` is ok.
 (define (child-result-error-kind-or
   [result : ResultProcessRuntimeChild]
@@ -504,23 +828,17 @@
 (define (result-child-info [result : ResultProcessRuntimeChild]) : ProcessRuntimeChildInfo
   (match result
     [(OkProcessRuntimeChild child)
-      (ProcessRuntimeChildInfo
-        true
-        0
-        child.pid
-        child.stdout-handle
-        child.stderr-handle
-        "")]
+      (ProcessRuntimeChildInfo true 0 child.authority "")]
     [(ErrProcessRuntimeChild error)
       (match error
         [(ProcessRuntimeInvalidCommand message)
-          (ProcessRuntimeChildInfo false 0 (- 0 1) (- 0 1) (- 0 1) message)]
+          (ProcessRuntimeChildInfo false 0 (box 0) message)]
         [(ProcessRuntimeSpawnFailed message)
-          (ProcessRuntimeChildInfo false 1 (- 0 1) (- 0 1) (- 0 1) message)]
+          (ProcessRuntimeChildInfo false 1 (box 0) message)]
         [(ProcessRuntimeWaitFailed message)
-          (ProcessRuntimeChildInfo false 2 (- 0 1) (- 0 1) (- 0 1) message)]
+          (ProcessRuntimeChildInfo false 2 (box 0) message)]
         [(ProcessRuntimeUnsupported message)
-          (ProcessRuntimeChildInfo false 3 (- 0 1) (- 0 1) (- 0 1) message)])]))
+          (ProcessRuntimeChildInfo false 3 (box 0) message)])]))
 
 (import stdlib.str_cat)
 
@@ -2911,18 +3229,15 @@
                   (stdlib.process_runtime.linux-exec-child spawn)
                   (stdlib.process_runtime.linux-start-parent spawn pid))))))))))
 
-;: Linux asynchronous wait runtime: reap the child, read the memfd-captured
-;: stdout/stderr, release the capture descriptors, and decode the exit status.
+;: Consume already-claimed Linux native resources: reap the child, read the
+;: memfd captures, release both descriptors, and decode the exit status.
 (unsafe
-  (define (linux-wait [child : ProcessRuntimeChild]) : ResultProcessRuntimeOutput
+  (define (linux-wait-native [pid : i64] [stdout-fd : i64] [stderr-fd : i64]) : ResultProcessRuntimeOutput
     (unsafe
       (cfg
         windows
         (stdlib.process_runtime.wait-error)
         (let
-          [pid : i64 child.pid]
-          [stdout-fd : i64 child.stdout-handle]
-          [stderr-fd : i64 child.stderr-handle]
           [statusbuf : (__tl_dyn-array i32) (__tl_make-array i32 1)]
           [failure : ProcessLinuxFailure (linux-failure-none)]
           [stdout-text : String ""]
@@ -2974,6 +3289,20 @@
                 (stdlib.process_runtime.decode-status (array-ref statusbuf 0))
                 stdout-text
                 stderr-text))))))))
+
+;: Linux asynchronous wait entry: atomically claim an issued authority before
+;: any native operation. Fabricated, stale, duplicate, and concurrently reused
+;: values fail without touching a PID or descriptor.
+(unsafe
+  (define (linux-wait [authority : (Box i64)]) : ResultProcessRuntimeOutput
+    (let
+      [claim : ProcessRuntimeChildClaim
+        (unsafe
+          (process-runtime-child-claim authority))]
+      (if claim.ok
+        (unsafe
+          (linux-wait-native claim.pid claim.stdout-handle claim.stderr-handle))
+        (output-wait-failed "process: invalid or consumed child capability")))))
 
 ;; ---------------------------------------------------------------------------
 ;; Windows runtime (kernel32 CreateProcessA with temp-file redirection).
@@ -3548,12 +3877,21 @@
         (stdlib.process_runtime.async-unsupported-child)
         (stdlib.process_runtime.linux-start command)))))
 
-;: Wait for a started child; Windows reports async as unsupported.
+;: Wait for an issued child authority; Windows reports async as unsupported.
 (unsafe
   ;; lint-allow: function-name-case -- stable runtime ABI symbol
-  (define (tl_process_wait [child : ProcessRuntimeChild]) : ResultProcessRuntimeOutput
+  (define (tl_process_wait [authority : (Box i64)]) : ResultProcessRuntimeOutput
     (unsafe
       (cfg
         windows
         (stdlib.process_runtime.async-unsupported-output)
-        (stdlib.process_runtime.linux-wait child)))))
+        (stdlib.process_runtime.linux-wait authority)))))
+
+;: Cleanup adapter for a still-live runtime/public child authority. The registry
+;: claim happens before any OS operation, so fabricated or duplicate values are
+;: harmless and an issued child is reaped at most once.
+(define (process-runtime-child-authority-cleanup [authority : (Box i64)]) : unit
+  (begin
+    (unsafe
+      (tl_process_wait authority))
+    unit))

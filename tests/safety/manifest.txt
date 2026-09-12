@@ -38,6 +38,7 @@ process_runtime_safe_entry_reject|check-fail|tests/safety/process_runtime_safe_e
 process_runtime_safe_inherit_reject|check-fail|tests/safety/process_runtime_safe_inherit_reject.tl|-|process_runtime/tl_process_inherit requires unsafe context
 process_runtime_safe_start_reject|check-fail|tests/safety/process_runtime_safe_start_reject.tl|-|process_runtime/tl_process_start requires unsafe context
 process_runtime_safe_wait_reject|check-fail|tests/safety/process_runtime_safe_wait_reject.tl|-|process_runtime/tl_process_wait requires unsafe context
+process_child_copy_reject|check-fail|tests/safety/process_child_copy_reject.tl|-|typecheck: use of moved value `child`
 process_runtime_safe_linux_output_reject|check-fail|tests/safety/process_runtime_safe_linux_output_reject.tl|-|process_runtime/linux-output requires unsafe context
 process_runtime_safe_raw_helper_reject|check-fail|tests/safety/process_runtime_safe_raw_helper_reject.tl|-|process_runtime/linux-build-argv requires unsafe context
 process_runtime_redundant_count_reject|check-fail|tests/safety/process_runtime_redundant_count_reject.tl|-|process_runtime.ProcessRuntimeStringList expected 1 argument, got 2 arguments

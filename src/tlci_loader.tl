@@ -11,6 +11,7 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.hash)
+(cfg test (import stdlib.io))
 (import compiler_comptime_diagnostics_core as comptime_diagnostics)
 (import tlci_core as tlci)
 (import tlci_pages as pages)
@@ -74,7 +75,10 @@
   ;; 0 = resolved native entry, 1 = terminal registration shell.
   (macro-index-entry-states (__tl_dyn-array i64))
   ;; Dedicated owner destroyed with the mapping; zero means no index storage.
-  (macro-index-arena i64))
+  (macro-index-arena i64)
+  ;; One shared owner-arena cell revokes all copied views before either release
+  ;; or rollback touches the mapping. A failed unmap is not a live image.
+  (live (__tl_dyn-array bool)))
 
 (defenum ResultTlciLoadedImage
   (Ok TlciLoadedImage)
@@ -87,6 +91,32 @@
 (defenum ResultTlciLoaderI64
   (Ok i64)
   (Err String))
+
+(cfg
+  test
+  (define tlci-loader-test-fail-index-before-alloc : bool
+    false))
+(cfg
+  test
+  (define tlci-loader-test-fail-index-after-alloc : bool
+    false))
+(cfg
+  test
+  (define tlci-loader-test-index-arena-destroys : i64
+    0))
+
+(define (tlci-loader-destroy-index-arena [index-arena : i64]) : unit
+  (if (> index-arena 0)
+    (begin
+      (cfg
+        test
+        (set!
+          tlci-loader-test-index-arena-destroys
+          (+ tlci-loader-test-index-arena-destroys 1))
+        unit)
+      (unsafe
+        (arena.tl_arena_destroy index-arena)))
+    unit))
 
 (defstruct TlciMacroEntry
   (name-addr i64)
@@ -625,22 +655,45 @@
     loaded.image-region-writable
     loaded.image-region-executable))
 
+(define (tlci-loader-image-live? [loaded : (& loaded TlciLoadedImage)]) : bool
+  (and (= (array-length loaded.live) 1) (array-ref loaded.live 0)))
+
 (define (tlci-loader-release [loaded : TlciLoadedImage]) : ResultTlciLoaderUnit
-  (let
-    [index-arena : i64 loaded.macro-index-arena]
-    [page-result : pages.ResultTlciPageUnit
-      (pages.tlci-pages-release (tlci-loader-loaded-image-region loaded))]
-    (begin
-      (if (> index-arena 0)
-        (unsafe
-          (arena.tl_arena_destroy index-arena))
-        unit)
-      (match page-result
-        [(pages.ResultTlciPageUnit.Ok) (ResultTlciLoaderUnit.Ok)]
-        [(pages.ResultTlciPageUnit.Err message)
-          (ResultTlciLoaderUnit.Err message)]))))
+  (if (not (tlci-loader-image-live? (& loaded)))
+    (ResultTlciLoaderUnit.Err "tlci loader: image already released")
+    (let
+      [_revoke : unit (set! (array-ref loaded.live 0) false)]
+      [index-arena : i64 loaded.macro-index-arena]
+      [page-result : pages.ResultTlciPageUnit
+        (pages.tlci-pages-release (tlci-loader-loaded-image-region loaded))]
+      (begin
+        (tlci-loader-destroy-index-arena index-arena)
+        (match page-result
+          [(pages.ResultTlciPageUnit.Ok) (ResultTlciLoaderUnit.Ok)]
+          [(pages.ResultTlciPageUnit.Err message)
+            (ResultTlciLoaderUnit.Err message)])))))
+
+;; Every failed load relinquishes its only mapping owner. The index arena is
+;; destroyed by tlci-loader-release even when the host leaves pages mapped;
+;; no failed image or stale entry is returned for later dispatch.
+(define (tlci-loader-rollback-loaded
+  [loaded : TlciLoadedImage]
+  [primary : String]) : ResultTlciLoadedImage
+  (match (tlci-loader-release loaded)
+    [(ResultTlciLoaderUnit.Ok) (ResultTlciLoadedImage.Err primary)]
+    [(ResultTlciLoaderUnit.Err release-message)
+      (ResultTlciLoadedImage.Err
+        (pages.tlci-pages-first-error
+          primary
+          (pages.ResultTlciPageUnit.Err release-message)))]))
+
+(define (tlci-loader-rollback-region
+  [region : pages.TlciPageRegion]
+  [primary : String]) : ResultTlciLoadedImage
+  (ResultTlciLoadedImage.Err (pages.tlci-pages-rollback-error region primary)))
 
 (define (tlci-loader-loaded-image
+  [owner-arena : i64]
   [image-region : pages.TlciPageRegion]
   [image-base : i64]
   [rodata-offset : i64]
@@ -678,7 +731,8 @@
     (__tl_make-array i64 0)
     (__tl_make-array i64 0)
     (__tl_make-array i64 0)
-    0))
+    0
+    (in-arena (arena.Arena owner-arena) (__tl_make-array true))))
 
 (define (tlci-loader-loaded-image-with-registration
   [loaded : TlciLoadedImage]
@@ -714,7 +768,8 @@
     (__tl_make-array i64 0)
     (__tl_make-array i64 0)
     (__tl_make-array i64 0)
-    0))
+    0
+    loaded.live))
 
 (define (tlci-loader-registration-status-error [status : i64]) : String
   (str_cat.str-cat
@@ -770,13 +825,12 @@
         (__tl_make-array i64 0)
         (__tl_make-array i64 0)
         (__tl_make-array i64 0)
-        0)]
+        0
+        loaded.live)]
     (match (tlci-loader-index-macro-entries
       (tlci-loader-global-shared-view installed))
       [(ResultTlciLoadedImage.Err message)
-        (begin
-          (tlci-loader-release installed)
-          (ResultTlciLoadedImage.Err message))]
+        (tlci-loader-rollback-loaded installed message)]
       [(ResultTlciLoadedImage.Ok indexed) (ResultTlciLoadedImage.Ok indexed)])))
 
 (define (tlci-loader-load-from-bytes-with-registration
@@ -789,6 +843,7 @@
       (let
         [native-table : i64 (tlci-loader-native-table-offset parsed)]
         (match (tlci-loader-load-parsed
+          owner-arena
           (owned_view.compiler-owned-shared-view bytes)
           parsed
           (& host-table))
@@ -826,19 +881,17 @@
               host-table-addr
               registration-addr))]
         (if (not (= status tlci.tlci-image-entry-success))
-          (begin
-            (tlci-loader-release loaded)
-            (ResultTlciLoadedImage.Err
-              (tlci-loader-registration-status-error status)))
+          (tlci-loader-rollback-loaded
+            loaded
+            (tlci-loader-registration-status-error status))
           (let
             [registration : tlci.TlciImageRegistration
               (tlci-loader-read-registration registration-addr)]
             (match (tlci.tlci-validate-image-registration registration)
               [(tlci.ResultTlciHostAbi.Err message)
-                (begin
-                  (tlci-loader-release loaded)
-                  (ResultTlciLoadedImage.Err
-                    (tlci-loader-registration-error message)))]
+                (tlci-loader-rollback-loaded
+                  loaded
+                  (tlci-loader-registration-error message))]
               [(tlci.ResultTlciHostAbi.Ok)
                 (let
                   [registered : TlciLoadedImage
@@ -852,13 +905,12 @@
                   (match (tlci-loader-index-macro-entries
                     (tlci-loader-global-shared-view registered))
                     [(ResultTlciLoadedImage.Err message)
-                      (begin
-                        (tlci-loader-release registered)
-                        (ResultTlciLoadedImage.Err message))]
+                      (tlci-loader-rollback-loaded registered message)]
                     [(ResultTlciLoadedImage.Ok indexed)
                       (ResultTlciLoadedImage.Ok indexed)]))]))))]))
 
 (define (tlci-loader-load-mapped-region
+  [owner-arena : i64]
   [bytes : (__tl_dyn-array u8)]
   [image : tlci.TlciImage]
   [image-region : pages.TlciPageRegion]
@@ -879,31 +931,24 @@
     (begin
       (match (pages.tlci-pages-copy-from-array! image-region bytes)
         [(pages.ResultTlciPageUnit.Err message)
-          (begin
-            (pages.tlci-pages-release image-region)
-            (return (ResultTlciLoadedImage.Err message)))]
+          (return (tlci-loader-rollback-region image-region message))]
         [(pages.ResultTlciPageUnit.Ok) unit])
       (tlci-loader-apply-fixups! image-base image)
       (match (tlci-loader-bind-imports! image-base image host-table)
         [(ResultTlciLoaderUnit.Err message)
-          (begin
-            (pages.tlci-pages-release image-region)
-            (return (ResultTlciLoadedImage.Err message)))]
+          (return (tlci-loader-rollback-region image-region message))]
         [(ResultTlciLoaderUnit.Ok) unit])
       (match (tlci-loader-protect-rodata image-base rodata-offset rodata-len)
         [(ResultTlciLoaderUnit.Err message)
-          (begin
-            (pages.tlci-pages-release image-region)
-            (return (ResultTlciLoadedImage.Err message)))]
+          (return (tlci-loader-rollback-region image-region message))]
         [(ResultTlciLoaderUnit.Ok) unit])
       (match (tlci-loader-protect-code image-base code-offset code-len)
         [(ResultTlciLoaderUnit.Err message)
-          (begin
-            (pages.tlci-pages-release image-region)
-            (return (ResultTlciLoadedImage.Err message)))]
+          (return (tlci-loader-rollback-region image-region message))]
         [(ResultTlciLoaderUnit.Ok) unit])
       (ResultTlciLoadedImage.Ok
         (tlci-loader-loaded-image
+          owner-arena
           image-region
           image-base
           rodata-offset
@@ -916,6 +961,7 @@
           symbol-count)))))
 
 (define (tlci-loader-load-parsed
+  [owner-arena : i64]
   [bytes : (__tl_dyn-array u8)]
   [image : tlci.TlciImage]
   [host-table : (& host-table tlci.TlciHostCallbackTable)]) : ResultTlciLoadedImage
@@ -955,6 +1001,7 @@
                         (ResultTlciLoadedImage.Err message)]
                       [(pages.ResultTlciPageRegion.Ok image-region)
                         (tlci-loader-load-mapped-region
+                          owner-arena
                           bytes
                           image
                           image-region
@@ -983,7 +1030,11 @@
     [(tlci.ResultTlciImage.Ok image)
       (let
         [host-table : tlci.TlciHostCallbackTable (tlci-loader-empty-host-table)]
-        (tlci-loader-load-parsed bytes image (& host-table)))]))
+        (tlci-loader-load-parsed
+          (arena.tl_arena_current)
+          bytes
+          image
+          (& host-table)))]))
 
 ;: `owner-arena` owns the storage the returned image RETAINS, and must outlive
 ;: every dispatch on it -- see the ownership rule above
@@ -1059,6 +1110,8 @@
     [table : i64 loaded.macro-entry-table]
     [record-size : i64 tlci.tlci-macro-entry-record-size]
     (cond
+      [(not (tlci-loader-image-live? loaded))
+        (ResultTlciMacroEntry.Err "tlci loader: image has been released")]
       [(or (< index 0) (>= index count))
         (ResultTlciMacroEntry.Err "tlci loader: macro entry index out of range")]
       [(or (< count 0) (> count (/ loaded.image-region-size record-size)))
@@ -1260,7 +1313,8 @@
     name-lens
     function-addrs
     entry-states
-    index-arena))
+    index-arena
+    loaded.live))
 
 (define (tlci-loader-macro-index-insert!
   [slots : (&mut slots (__tl_dyn-array i64))]
@@ -1345,18 +1399,20 @@
                   (set! failed true)
                   (set! message index-message))]
               [(ResultTlciLoaderUnit.Ok) (set! index (+ index 1))])]))
-      (if failed
-        (ResultTlciLoadedImage.Err message)
-        (ResultTlciLoadedImage.Ok
-          (tlci-loader-loaded-image-with-macro-index
-            loaded
-            (tlci-loader-macro-index-generation-next!)
-            slots
-            name-addrs
-            name-lens
-            function-addrs
-            entry-states
-            index-arena))))))
+      (if (cfg test tlci-loader-test-fail-index-after-alloc false)
+        (ResultTlciLoadedImage.Err "tlci loader: injected macro index failure")
+        (if failed
+          (ResultTlciLoadedImage.Err message)
+          (ResultTlciLoadedImage.Ok
+            (tlci-loader-loaded-image-with-macro-index
+              loaded
+              (tlci-loader-macro-index-generation-next!)
+              slots
+              name-addrs
+              name-lens
+              function-addrs
+              entry-states
+              index-arena)))))))
 
 (define (tlci-loader-index-macro-entries [loaded : TlciLoadedImage]) : ResultTlciLoadedImage
   (let
@@ -1364,6 +1420,10 @@
     [table : i64 loaded.macro-entry-table]
     [record-size : i64 tlci.tlci-macro-entry-record-size]
     (cond
+      [(not (tlci-loader-image-live? (& loaded)))
+        (ResultTlciLoadedImage.Err "tlci loader: image has been released")]
+      [(cfg test tlci-loader-test-fail-index-before-alloc false)
+        (ResultTlciLoadedImage.Err "tlci loader: injected macro index failure")]
       [(or (< count 0) (> count (/ loaded.image-region-size record-size)))
         (ResultTlciLoadedImage.Err "tlci loader: macro entry count is invalid")]
       [(= count 0)
@@ -1397,8 +1457,7 @@
           (match result
             [(ResultTlciLoadedImage.Err message)
               (begin
-                (unsafe
-                  (arena.tl_arena_destroy index-arena))
+                (tlci-loader-destroy-index-arena index-arena)
                 (ResultTlciLoadedImage.Err message))]
             [(ResultTlciLoadedImage.Ok indexed)
               (ResultTlciLoadedImage.Ok indexed)]))])))
@@ -1408,10 +1467,7 @@
     [(ResultTlciLoadedImage.Err message) (ResultTlciLoaderUnit.Err message)]
     [(ResultTlciLoadedImage.Ok indexed)
       (begin
-        (if (> indexed.macro-index-arena 0)
-          (unsafe
-            (arena.tl_arena_destroy indexed.macro-index-arena))
-          unit)
+        (tlci-loader-destroy-index-arena indexed.macro-index-arena)
         (ResultTlciLoaderUnit.Ok))]))
 
 (define (tlci-loader-resolve-macro-entry
@@ -1425,6 +1481,8 @@
     [name-lens : (__tl_dyn-array i64) loaded.macro-index-name-lens]
     [entry-states : (__tl_dyn-array i64) loaded.macro-index-entry-states]
     (cond
+      [(not (tlci-loader-image-live? loaded))
+        (TlciMacroEntryLookup.Err "tlci loader: image has been released")]
       [(= count 0) TlciMacroEntryLookup.Missing]
       [(or
           (<= generation 0)
@@ -1480,6 +1538,8 @@
     [name-lens : (__tl_dyn-array i64) loaded.macro-index-name-lens]
     [function-addrs : (__tl_dyn-array i64) loaded.macro-index-function-addrs]
     (cond
+      [(not (tlci-loader-image-live? loaded))
+        (ResultTlciMacroEntry.Err "tlci loader: image has been released")]
       [(not (= resolved.catalog-generation loaded.macro-index-generation))
         (ResultTlciMacroEntry.Err
           "tlci loader: macro entry handle belongs to another catalog")]
@@ -1534,31 +1594,33 @@
   [session-context : i64]
   [operands : (__tl_dyn-array i64)]
   [initial-result : i64]) : ResultTlciMacroDispatch
-  (let
-    [result-storage : (__tl_dyn-array i64) (__tl_make-array initial-result)]
-    [operand-count : i64 (array-length operands)]
-    [operands-addr : i64
-      (if (= operand-count 0)
-        0
-        (tlci-loader-i64-array-addr operands))]
-    [result-addr : i64 (tlci-loader-i64-array-addr result-storage)]
-    [host-context : i64
-      (tlci-loader-read-mapped-i64
-        (+
-          loaded.host-table-addr
-          tlci.tlci-host-callback-table-host-context-offset))]
-    [status : i64
-      (unsafe
-        (tlci-loader-call-macro-entry-raw
-          entry.function-addr
-          loaded.image-context
-          host-context
-          session-context
-          operands-addr
-          operand-count
-          result-addr))]
-    (ResultTlciMacroDispatch.Ok
-      (TlciMacroDispatch status (array-ref result-storage 0)))))
+  (if (not (tlci-loader-image-live? loaded))
+    (ResultTlciMacroDispatch.Err "tlci loader: image has been released")
+    (let
+      [result-storage : (__tl_dyn-array i64) (__tl_make-array initial-result)]
+      [operand-count : i64 (array-length operands)]
+      [operands-addr : i64
+        (if (= operand-count 0)
+          0
+          (tlci-loader-i64-array-addr operands))]
+      [result-addr : i64 (tlci-loader-i64-array-addr result-storage)]
+      [host-context : i64
+        (tlci-loader-read-mapped-i64
+          (+
+            loaded.host-table-addr
+            tlci.tlci-host-callback-table-host-context-offset))]
+      [status : i64
+        (unsafe
+          (tlci-loader-call-macro-entry-raw
+            entry.function-addr
+            loaded.image-context
+            host-context
+            session-context
+            operands-addr
+            operand-count
+            result-addr))]
+      (ResultTlciMacroDispatch.Ok
+        (TlciMacroDispatch status (array-ref result-storage 0))))))
 
 (define (tlci-loader-dispatch-resolved-macro
   [loaded : (& loaded TlciLoadedImage)]
@@ -1659,7 +1721,8 @@
       (__tl_make-array i64 0)
       (__tl_make-array i64 0)
       (__tl_make-array i64 0)
-      0)))
+      0
+      (__tl_make-array true))))
 
 (define (tlci-loader-test-write-macro-entry!
   [storage : (&mut storage (__tl_dyn-array u8))]
@@ -2208,9 +2271,9 @@
   (match result
     [(ResultTlciLoadedImage.Err message) (string.eq message expected)]
     [(ResultTlciLoadedImage.Ok loaded)
-      (begin
-        (tlci-loader-release loaded)
-        false)]))
+      (match (tlci-loader-release loaded)
+        [(ResultTlciLoaderUnit.Ok) false]
+        [(ResultTlciLoaderUnit.Err _) false])]))
 
 (define (tlci-loader-test-registration-rejections-ok?) : bool
   (match (tlci-loader-test-emit-with-code
@@ -2368,6 +2431,344 @@
                   74]
                 [(not released) 75]
                 [else 0]))]))]))
+
+(cfg
+  test
+  (define (tlci-loader-test-rollback-case?
+    [bytes : (__tl_dyn-array u8)]
+    [host-table : tlci.TlciHostCallbackTable]
+    [copy? : bool]
+    [data-protect? : bool]
+    [code-protect? : bool]
+    [release? : bool]
+    [index? : bool]
+    [expected : String]) : bool
+    (let
+      [_inject : unit
+        (pages.tlci-pages-test-inject!
+          copy?
+          code-protect?
+          data-protect?
+          release?)]
+      [_index : unit (set! tlci-loader-test-fail-index-before-alloc index?)]
+      [result : ResultTlciLoadedImage
+        (tlci-loader-load-from-bytes-with-host
+          (tlci-loader-test-owner-arena)
+          bytes
+          host-table)]
+      [attempts : i64 pages.tlci-pages-test-release-attempts]
+      [index-destroys : i64 tlci-loader-test-index-arena-destroys]
+      [_reset : unit
+        (begin
+          (pages.tlci-pages-test-inject! false false false false)
+          (set! tlci-loader-test-fail-index-before-alloc false))]
+      (and
+        (= attempts 1)
+        (= index-destroys 0)
+        (match result
+          [(ResultTlciLoadedImage.Err message) (string.eq message expected)]
+          [(ResultTlciLoadedImage.Ok loaded)
+            (match (tlci-loader-release loaded)
+              [(ResultTlciLoaderUnit.Ok) false]
+              [(ResultTlciLoaderUnit.Err _) false])])))))
+
+(cfg
+  test
+  (define (tlci-loader-test-rollback-faults?) : bool
+    (match (tlci-loader-test-emit-with-real-fixup)
+      [(tlci.ResultTlciBytes.Err _) false]
+      [(tlci.ResultTlciBytes.Ok bytes)
+        (and
+          (tlci-loader-test-rollback-case?
+            (owned_view.compiler-owned-shared-view bytes)
+            (tlci.tlci-test-host-callback-table)
+            true
+            false
+            false
+            false
+            false
+            "tlci pages: injected copy failure")
+          (tlci-loader-test-rollback-case?
+            (owned_view.compiler-owned-shared-view bytes)
+            (tlci.tlci-test-host-callback-table)
+            true
+            false
+            false
+            true
+            false
+            "tlci pages: injected copy failure; cleanup/release: tlci pages: page release failed")
+          (tlci-loader-test-rollback-case?
+            (owned_view.compiler-owned-shared-view bytes)
+            (tlci.tlci-test-host-callback-table)
+            false
+            true
+            false
+            true
+            false
+            "tlci pages: data page protection failed; cleanup/release: tlci pages: page release failed")
+          (tlci-loader-test-rollback-case?
+            (owned_view.compiler-owned-shared-view bytes)
+            (tlci.tlci-test-host-callback-table)
+            false
+            false
+            true
+            true
+            false
+            "tlci pages: code page protection failed; cleanup/release: tlci pages: page release failed")
+          (tlci-loader-test-rollback-case?
+            (owned_view.compiler-owned-shared-view bytes)
+            (tlci.tlci-test-host-callback-table)
+            false
+            false
+            false
+            true
+            true
+            "tlci loader: injected macro index failure; cleanup/release: tlci pages: page release failed")
+          (match (tlci-loader-test-emit-with-import "fuel-check")
+            [(tlci.ResultTlciBytes.Err _) false]
+            [(tlci.ResultTlciBytes.Ok import-bytes)
+              (tlci-loader-test-rollback-case?
+                import-bytes
+                (tlci-loader-test-host-table "other" 8192)
+                false
+                false
+                false
+                true
+                false
+                "tlci loader: image `demo@0.1.0` has unresolved host import `fuel-check`; cleanup/release: tlci pages: page release failed")])
+          (match (tlci-loader-test-emit-with-code
+            (tlci-loader-test-status-code-bytes
+              tlci.tlci-host-callback-status-bad-request))
+            [(tlci.ResultTlciBytes.Err _) false]
+            [(tlci.ResultTlciBytes.Ok status-bytes)
+              (tlci-loader-test-rollback-case?
+                status-bytes
+                (tlci.tlci-test-host-callback-table)
+                false
+                false
+                false
+                true
+                false
+                "tlci loader: tlci_image_entry returned status 4; cleanup/release: tlci pages: page release failed")])
+          (match (tlci-loader-test-emit-with-code
+            (tlci-loader-test-bad-registration-code-bytes))
+            [(tlci.ResultTlciBytes.Err _) false]
+            [(tlci.ResultTlciBytes.Ok bad-registration-bytes)
+              (tlci-loader-test-rollback-case?
+                bad-registration-bytes
+                (tlci.tlci-test-host-callback-table)
+                false
+                false
+                false
+                true
+                false
+                "tlci loader: invalid image registration: tlci host ABI: bad image registration magic; cleanup/release: tlci pages: page release failed")]))])))
+
+(test
+  tlci-loader-rollback-fault-matrix
+  (if (tlci-loader-test-rollback-faults?)
+    unit
+    (io.panic "tlci loader: injected rollback failed")))
+
+(cfg
+  test
+  (define (tlci-loader-test-explicit-release-revokes? [release-fails? : bool]) : bool
+    (match (tlci-loader-test-emit-with-real-fixup)
+      [(tlci.ResultTlciBytes.Err _) false]
+      [(tlci.ResultTlciBytes.Ok bytes)
+        (match (tlci-loader-load-from-bytes-with-host
+          (tlci-loader-test-owner-arena)
+          bytes
+          (tlci.tlci-test-host-callback-table))
+          [(ResultTlciLoadedImage.Err _) false]
+          [(ResultTlciLoadedImage.Ok loaded)
+            (let
+              [stale : TlciLoadedImage
+                (owned_view.compiler-owned-shared-view loaded)]
+              [_inject : unit
+                (pages.tlci-pages-test-inject! false false false release-fails?)]
+              [result : ResultTlciLoaderUnit (tlci-loader-release loaded)]
+              [dispatch : ResultTlciMacroDispatch
+                (tlci-loader-dispatch-macro
+                  (& stale)
+                  "missing"
+                  0
+                  (__tl_make-array i64 0)
+                  0)]
+              [second : ResultTlciLoaderUnit (tlci-loader-release stale)]
+              [attempts : i64 pages.tlci-pages-test-release-attempts]
+              [_reset : unit
+                (pages.tlci-pages-test-inject! false false false false)]
+              (and
+                (= attempts 1)
+                (match result
+                  [(ResultTlciLoaderUnit.Ok) (not release-fails?)]
+                  [(ResultTlciLoaderUnit.Err message)
+                    (and
+                      release-fails?
+                      (string.eq message "tlci pages: page release failed"))])
+                (match dispatch
+                  [(ResultTlciMacroDispatch.Ok _) false]
+                  [(ResultTlciMacroDispatch.Err message)
+                    (string.eq message "tlci loader: image has been released")])
+                (match second
+                  [(ResultTlciLoaderUnit.Ok) false]
+                  [(ResultTlciLoaderUnit.Err message)
+                    (string.eq message "tlci loader: image already released")])))])])))
+
+(test
+  tlci-loader-explicit-release-revokes-copied-handles
+  (if (and
+    (tlci-loader-test-explicit-release-revokes? true)
+    (tlci-loader-test-explicit-release-revokes? false))
+    unit
+    (io.panic "tlci loader: explicit release did not revoke copies")))
+
+(cfg
+  test
+  (define (tlci-loader-test-index-arena-rollback?) : bool
+    (let
+      [storage : (__tl_dyn-array u8) (__tl_make-array u8 128)]
+      [base : i64 (tlci-loader-u8-array-addr storage)]
+      [_entry : unit
+        (begin
+          (tlci-loader-test-put-string! (&mut storage) 64 "one")
+          (tlci-loader-test-write-macro-entry! (&mut storage) 0 64 3 96 0))]
+      [loaded : TlciLoadedImage
+        (tlci-loader-test-macro-loaded (& storage) base 1)]
+      [_inject : unit
+        (begin
+          (set! tlci-loader-test-index-arena-destroys 0)
+          (set! tlci-loader-test-fail-index-after-alloc true)
+          (pages.tlci-pages-test-inject! false false false true))]
+      [indexed : ResultTlciLoadedImage
+        (tlci-loader-index-macro-entries
+          (owned_view.compiler-owned-shared-view loaded))]
+      [result : ResultTlciLoadedImage
+        (match indexed
+          [(ResultTlciLoadedImage.Err message)
+            (tlci-loader-rollback-loaded loaded message)]
+          [(ResultTlciLoadedImage.Ok value)
+            (tlci-loader-rollback-loaded value "unexpected index success")])]
+      [attempts : i64 pages.tlci-pages-test-release-attempts]
+      [destroys : i64 tlci-loader-test-index-arena-destroys]
+      [_reset : unit
+        (begin
+          (set! tlci-loader-test-fail-index-after-alloc false)
+          (pages.tlci-pages-test-inject! false false false false))]
+      (and
+        (= attempts 1)
+        (= destroys 1)
+        (match result
+          [(ResultTlciLoadedImage.Err message)
+            (string.eq
+              message
+              "tlci loader: injected macro index failure; cleanup/release: tlci pages: page release failed")]
+          [(ResultTlciLoadedImage.Ok _) false])))))
+
+(test
+  tlci-loader-index-arena-rollback-on-release-failure
+  (if (tlci-loader-test-index-arena-rollback?)
+    unit
+    (io.panic "tlci loader: index arena rollback was not exact-once")))
+
+(cfg
+  test
+  (define (tlci-loader-test-index-arena-release?) : bool
+    (let
+      [storage : (__tl_dyn-array u8) (__tl_make-array u8 128)]
+      [base : i64 (tlci-loader-u8-array-addr storage)]
+      [_entry : unit
+        (begin
+          (tlci-loader-test-put-string! (&mut storage) 64 "one")
+          (tlci-loader-test-write-macro-entry! (&mut storage) 0 64 3 96 0))]
+      [loaded : TlciLoadedImage
+        (tlci-loader-test-macro-loaded (& storage) base 1)]
+      (match (tlci-loader-index-macro-entries loaded)
+        [(ResultTlciLoadedImage.Err _) false]
+        [(ResultTlciLoadedImage.Ok indexed)
+          (let
+            [stale : TlciLoadedImage
+              (owned_view.compiler-owned-shared-view indexed)]
+            [_inject : unit
+              (begin
+                (set! tlci-loader-test-index-arena-destroys 0)
+                (pages.tlci-pages-test-inject! false false false true))]
+            [result : ResultTlciLoaderUnit (tlci-loader-release indexed)]
+            [second : ResultTlciLoaderUnit (tlci-loader-release stale)]
+            [attempts : i64 pages.tlci-pages-test-release-attempts]
+            [destroys : i64 tlci-loader-test-index-arena-destroys]
+            [_reset : unit
+              (pages.tlci-pages-test-inject! false false false false)]
+            (and
+              (= attempts 1)
+              (= destroys 1)
+              (match result
+                [(ResultTlciLoaderUnit.Ok) false]
+                [(ResultTlciLoaderUnit.Err message)
+                  (string.eq message "tlci pages: page release failed")])
+              (match second
+                [(ResultTlciLoaderUnit.Ok) false]
+                [(ResultTlciLoaderUnit.Err message)
+                  (string.eq message "tlci loader: image already released")])))]))))
+
+(test
+  tlci-loader-index-arena-destroyed-on-explicit-release-failure
+  (if (tlci-loader-test-index-arena-release?)
+    unit
+    (io.panic "tlci loader: failed release destroyed index arena twice")))
+
+(cfg
+  test
+  (define (tlci-loader-test-native-index-rollback?) : bool
+    (match (tlci-loader-test-emit-with-real-fixup)
+      [(tlci.ResultTlciBytes.Err _) false]
+      [(tlci.ResultTlciBytes.Ok bytes)
+        (match (tlci.tlci-parse-image
+          (owned_view.compiler-owned-shared-view bytes))
+          [(tlci.ResultTlciImage.Err _) false]
+          [(tlci.ResultTlciImage.Ok parsed)
+            (let
+              [table : tlci.TlciHostCallbackTable
+                (tlci.tlci-test-host-callback-table)]
+              (match (tlci-loader-load-parsed
+                (tlci-loader-test-owner-arena)
+                (owned_view.compiler-owned-shared-view bytes)
+                parsed
+                (& table))
+                [(ResultTlciLoadedImage.Err _) false]
+                [(ResultTlciLoadedImage.Ok loaded)
+                  (let
+                    [_inject : unit
+                      (begin
+                        (pages.tlci-pages-test-inject! false false false true)
+                        (set! tlci-loader-test-fail-index-before-alloc true))]
+                    [result : ResultTlciLoadedImage
+                      (tlci-loader-install-native-table
+                        (tlci-loader-test-owner-arena)
+                        bytes
+                        loaded
+                        table
+                        0)]
+                    [attempts : i64 pages.tlci-pages-test-release-attempts]
+                    [_reset : unit
+                      (begin
+                        (pages.tlci-pages-test-inject! false false false false)
+                        (set! tlci-loader-test-fail-index-before-alloc false))]
+                    (and
+                      (= attempts 1)
+                      (match result
+                        [(ResultTlciLoadedImage.Err message)
+                          (string.eq
+                            message
+                            "tlci loader: injected macro index failure; cleanup/release: tlci pages: page release failed")]
+                        [(ResultTlciLoadedImage.Ok _) false])))]))])])))
+
+(test
+  tlci-loader-native-table-index-rollback
+  (if (tlci-loader-test-native-index-rollback?)
+    unit
+    (io.panic "tlci loader: native table rollback lost release failure")))
 
 (define (tlci-loader-self-test-status) : i64
   (let

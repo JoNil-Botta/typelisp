@@ -5,6 +5,8 @@
 ;; pages non-executable, and releases the mapping. Container parsing, fixups,
 ;; callback ABI entry, and real comptime images belong to later tlci slices.
 (import stdlib.io)
+(cfg test (import stdlib.string))
+(import stdlib.str_cat_runtime as str_cat)
 
 (defstruct TlciPageRegion
   (addr i64)
@@ -20,6 +22,44 @@
 (defenum ResultTlciPageUnit
   (Ok)
   (Err String))
+
+;; Test-only fault controls are reset by each fixture. A simulated failed
+;; release deliberately retains its mapping until process exit, matching the
+;; real failure contract without attempting an unsafe second unmap.
+(cfg
+  test
+  (define tlci-pages-test-fail-copy : bool
+    false))
+(cfg
+  test
+  (define tlci-pages-test-fail-code-protect : bool
+    false))
+(cfg
+  test
+  (define tlci-pages-test-fail-data-protect : bool
+    false))
+(cfg
+  test
+  (define tlci-pages-test-fail-release : bool
+    false))
+(cfg
+  test
+  (define tlci-pages-test-release-attempts : i64
+    0))
+
+(cfg
+  test
+  (define (tlci-pages-test-inject!
+    [copy? : bool]
+    [code-protect? : bool]
+    [data-protect? : bool]
+    [release? : bool]) : unit
+    (begin
+      (set! tlci-pages-test-fail-copy copy?)
+      (set! tlci-pages-test-fail-code-protect code-protect?)
+      (set! tlci-pages-test-fail-data-protect data-protect?)
+      (set! tlci-pages-test-fail-release release?)
+      (set! tlci-pages-test-release-attempts 0))))
 
 (define tlci-pages-page-size : i64
   4096)
@@ -223,16 +263,19 @@
   [bytes : (& bytes (__tl_dyn-array u8))]) : ResultTlciPageUnit
   (let
     [count : i64 (array-length bytes)]
-    (if (not region.writable)
-      (ResultTlciPageUnit.Err "tlci pages: cannot copy into protected region")
-      (if (> count region.size)
-        (ResultTlciPageUnit.Err "tlci pages: byte buffer exceeds mapped region")
-        (begin
-          (tlci-pages-copy-bytes!
-            (tlci-pages-addr->mut-u8 region.addr)
-            (tlci-pages-array-ptr bytes)
-            count)
-          (ResultTlciPageUnit.Ok))))))
+    (if (cfg test tlci-pages-test-fail-copy false)
+      (ResultTlciPageUnit.Err "tlci pages: injected copy failure")
+      (if (not region.writable)
+        (ResultTlciPageUnit.Err "tlci pages: cannot copy into protected region")
+        (if (> count region.size)
+          (ResultTlciPageUnit.Err
+            "tlci pages: byte buffer exceeds mapped region")
+          (begin
+            (tlci-pages-copy-bytes!
+              (tlci-pages-addr->mut-u8 region.addr)
+              (tlci-pages-array-ptr bytes)
+              count)
+            (ResultTlciPageUnit.Ok)))))))
 
 (define (tlci-pages-protect-code-executable [region : TlciPageRegion]) : ResultTlciPageRegion
   (cond
@@ -240,7 +283,9 @@
       (ResultTlciPageRegion.Err "tlci pages: data pages cannot be executable")]
     [region.executable
       (ResultTlciPageRegion.Err "tlci pages: code page is already executable")]
-    [(tlci-pages-platform-protect-code region)
+    [(and
+        (not (cfg test tlci-pages-test-fail-code-protect false))
+        (tlci-pages-platform-protect-code region))
       (ResultTlciPageRegion.Ok
         (TlciPageRegion region.addr region.size true false true))]
     [else (ResultTlciPageRegion.Err "tlci pages: code page protection failed")]))
@@ -249,15 +294,40 @@
   (if region.code
     (ResultTlciPageRegion.Err
       "tlci pages: code pages cannot use data protection")
-    (if (tlci-pages-platform-protect-data-readonly region)
+    (if (and
+      (not (cfg test tlci-pages-test-fail-data-protect false))
+      (tlci-pages-platform-protect-data-readonly region))
       (ResultTlciPageRegion.Ok
         (TlciPageRegion region.addr region.size false false false))
       (ResultTlciPageRegion.Err "tlci pages: data page protection failed"))))
 
 (define (tlci-pages-release [region : TlciPageRegion]) : ResultTlciPageUnit
-  (if (tlci-pages-platform-release region)
-    (ResultTlciPageUnit.Ok)
-    (ResultTlciPageUnit.Err "tlci pages: page release failed")))
+  (begin
+    (cfg
+      test
+      (set!
+        tlci-pages-test-release-attempts
+        (+ tlci-pages-test-release-attempts 1))
+      unit)
+    (if (and
+      (not (cfg test tlci-pages-test-fail-release false))
+      (tlci-pages-platform-release region))
+      (ResultTlciPageUnit.Ok)
+      (ResultTlciPageUnit.Err "tlci pages: page release failed"))))
+
+;; Preserve the primary failure byte-for-byte when cleanup succeeds. A failed
+;; release is secondary but never invisible: the caller drops the unmapped or
+;; quarantined region and does not retry the release or publish the image.
+(define (tlci-pages-first-error
+  [primary : String]
+  [release : ResultTlciPageUnit]) : String
+  (match release
+    [(ResultTlciPageUnit.Ok) primary]
+    [(ResultTlciPageUnit.Err message)
+      (str_cat.str-cat primary (str_cat.str-cat "; cleanup/release: " message))]))
+
+(define (tlci-pages-rollback-error [region : TlciPageRegion] [primary : String]) : String
+  (tlci-pages-first-error primary (tlci-pages-release region)))
 
 (define (tlci-pages-map-code [bytes : (& bytes (__tl_dyn-array u8))]) : ResultTlciPageRegion
   (match (tlci-pages-allocate-code (array-length bytes))
@@ -265,10 +335,14 @@
     [(ResultTlciPageRegion.Ok region)
       (match (tlci-pages-copy-from-array! region bytes)
         [(ResultTlciPageUnit.Err message)
-          (begin
-            (tlci-pages-release region)
-            (ResultTlciPageRegion.Err message))]
-        [(ResultTlciPageUnit.Ok) (tlci-pages-protect-code-executable region)])]))
+          (ResultTlciPageRegion.Err (tlci-pages-rollback-error region message))]
+        [(ResultTlciPageUnit.Ok)
+          (match (tlci-pages-protect-code-executable region)
+            [(ResultTlciPageRegion.Ok executable)
+              (ResultTlciPageRegion.Ok executable)]
+            [(ResultTlciPageRegion.Err message)
+              (ResultTlciPageRegion.Err
+                (tlci-pages-rollback-error region message))])])]))
 
 (define (tlci-pages-map-data [bytes : (& bytes (__tl_dyn-array u8))]) : ResultTlciPageRegion
   (match (tlci-pages-allocate-data (array-length bytes))
@@ -276,9 +350,7 @@
     [(ResultTlciPageRegion.Ok region)
       (match (tlci-pages-copy-from-array! region bytes)
         [(ResultTlciPageUnit.Err message)
-          (begin
-            (tlci-pages-release region)
-            (ResultTlciPageRegion.Err message))]
+          (ResultTlciPageRegion.Err (tlci-pages-rollback-error region message))]
         [(ResultTlciPageUnit.Ok) (ResultTlciPageRegion.Ok region)])]))
 
 (define (tlci-pages-read-byte [region : TlciPageRegion] [offset : i64]) : u8
@@ -298,14 +370,102 @@
     (io.panic message)
     unit))
 
+(cfg
+  test
+  (define (tlci-pages-test-map-rollback?
+    [code? : bool]
+    [copy? : bool]
+    [protect? : bool]
+    [release? : bool]
+    [expected : String]) : bool
+    (let
+      [bytes : (__tl_dyn-array u8)
+        (tlci-pages-test-bytes (cast 1 : u8) (cast 2 : u8) (cast 3 : u8))]
+      [_inject : unit (tlci-pages-test-inject! copy? protect? false release?)]
+      [result : ResultTlciPageRegion
+        (if code?
+          (tlci-pages-map-code bytes)
+          (tlci-pages-map-data bytes))]
+      [attempts : i64 tlci-pages-test-release-attempts]
+      [_reset : unit (tlci-pages-test-inject! false false false false)]
+      (and
+        (= attempts 1)
+        (match result
+          [(ResultTlciPageRegion.Err message) (string.eq message expected)]
+          [(ResultTlciPageRegion.Ok region)
+            (match (tlci-pages-release region)
+              [(ResultTlciPageUnit.Ok) false]
+              [(ResultTlciPageUnit.Err _) false])])))))
+
+(test
+  tlci-pages-first-error-policy
+  (tlci-pages-test-panic-if
+    (not
+      (and
+        (string.eq
+          (tlci-pages-first-error
+            "tlci pages: injected copy failure"
+            (ResultTlciPageUnit.Ok))
+          "tlci pages: injected copy failure")
+        (string.eq
+          (tlci-pages-first-error
+            "tlci pages: injected copy failure"
+            (ResultTlciPageUnit.Err "tlci pages: page release failed"))
+          "tlci pages: injected copy failure; cleanup/release: tlci pages: page release failed")))
+    "tlci pages: first-error policy changed"))
+
+(test
+  tlci-pages-map-rollback-faults
+  (tlci-pages-test-panic-if
+    (not
+      (and
+        (tlci-pages-test-map-rollback?
+          true
+          true
+          false
+          false
+          "tlci pages: injected copy failure")
+        (tlci-pages-test-map-rollback?
+          false
+          true
+          false
+          false
+          "tlci pages: injected copy failure")
+        (tlci-pages-test-map-rollback?
+          true
+          true
+          false
+          true
+          "tlci pages: injected copy failure; cleanup/release: tlci pages: page release failed")
+        (tlci-pages-test-map-rollback?
+          false
+          true
+          false
+          true
+          "tlci pages: injected copy failure; cleanup/release: tlci pages: page release failed")
+        (tlci-pages-test-map-rollback?
+          true
+          false
+          true
+          false
+          "tlci pages: code page protection failed")
+        (tlci-pages-test-map-rollback?
+          true
+          false
+          true
+          true
+          "tlci pages: code page protection failed; cleanup/release: tlci pages: page release failed")))
+    "tlci pages: injected rollback failed"))
+
 (test
   tlci-pages-invalid-size
   (match (tlci-pages-allocate-code 0)
     [(ResultTlciPageRegion.Err _) unit]
     [(ResultTlciPageRegion.Ok region)
-      (begin
-        (tlci-pages-release region)
-        (io.panic "tlci pages: expected invalid size failure"))]))
+      (match (tlci-pages-release region)
+        [(ResultTlciPageUnit.Ok)
+          (io.panic "tlci pages: expected invalid size failure")]
+        [(ResultTlciPageUnit.Err message) (io.panic message)])]))
 
 (test
   tlci-pages-map-data-non-executable

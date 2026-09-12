@@ -3477,6 +3477,14 @@
       (compiler_optimize_tests.compiler-optimize-global-cell-call-mod-ref-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-pd-self-test"
+      (compiler_optimize_tests.compiler-optimize-pd-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-cfg-straighten-below-threader-self-test"
+      (compiler_optimize_tests.compiler-optimize-cfg-straighten-below-threader-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-licm-unswitch-self-test"
       (compiler_optimize_tests.compiler-optimize-licm-unswitch-self-test)
       42)
@@ -3504,12 +3512,36 @@
         42)
       unit)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-call-memory-frame-roots-self-test"
+      (compiler_optimize_tests.compiler-optimize-call-memory-frame-roots-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-licm-frame-call-self-test"
+      (compiler_optimize_tests.compiler-optimize-licm-frame-call-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-induction-self-test"
       (compiler_optimize_tests.compiler-optimize-induction-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-induction-add-inv-self-test"
+      (compiler_optimize_tests.compiler-optimize-induction-add-inv-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-lftr-self-test"
       (compiler_optimize_tests.compiler-optimize-lftr-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-lftr-sum-self-test"
+      (compiler_optimize_tests.compiler-optimize-lftr-sum-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-inline-converted-leaf-self-test"
+      (compiler_optimize_tests.compiler-optimize-inline-converted-leaf-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-ref-gep-self-test"
+      (compiler_optimize_tests.compiler-optimize-ref-gep-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-unroll-self-test"
@@ -4688,6 +4720,10 @@
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-runtime-call-identity-self-test"
       (compiler_optimize_tests.compiler-optimize-runtime-call-identity-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-thread-facts-merge-self-test"
+      (compiler_optimize_tests.compiler-optimize-thread-facts-merge-self-test)
       42)
     (smoke-optimizer-core-self-tests)
     (smoke-optimizer-loop-self-tests)

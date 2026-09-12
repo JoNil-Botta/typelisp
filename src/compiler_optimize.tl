@@ -138661,6 +138661,13 @@
 (define (opt-inline-checked-term-branch) : i64
   5)
 
+;; SW-SPINE: a `switch` or a total enum switch -- the canonical dispatch, and
+;; what the `cond` lowering emits for a chain of literal compares on one value.
+;; Its targets are not published beside the class: a case list is not a pair of
+;; labels, so the dispatch walk re-reads the instruction for them.
+(define (opt-inline-checked-term-switch) : i64
+  6)
+
 ;; The labels a classified terminator names, published beside its class because
 ;; that is the only thing an i64 answer cannot carry.
 (define opt-inline-checked-term-jump-target : i64
@@ -138709,6 +138716,9 @@
         (set! opt-inline-checked-term-branch-yes true-label)
         (set! opt-inline-checked-term-branch-no false-label)
         (opt-inline-checked-term-branch))]
+    [(ir.CompilerIrInstr.Switch _ _ _ _) (opt-inline-checked-term-switch)]
+    [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _)
+      (opt-inline-checked-term-switch)]
     [_ (opt-inline-checked-term-none)]))
 
 (define (opt-inline-checked-term-class-of [instrs : ir.CompilerIrInstrSeq]) : i64
@@ -138908,18 +138918,43 @@
 (define (opt-inline-checked-dispatch-max-rounds) : i64
   128)
 
-;; A SPINE block: its terminator is a branch and it holds no call. Asked of the
-;; instruction sequence directly, so the fixpoint below pays no label lookup.
+;; A SPINE block: it holds no call and its terminator stays inside the
+;; function -- a branch, a switch or a jump. Asked of the instruction sequence
+;; directly, so the fixpoint below pays no label lookup.
+;;
+;; SW-SPINE. The reading's argument is that reaching an arm costs nothing the
+;; caller did not already pay: every block between the entry and the arm is
+;; call-free and only routes. Nothing in that argument turns on the spelling
+;; of the routing, and the two spellings the branch-only reading refused are
+;; both what the front end emits for one `cond`. A `switch` is the selector
+;; itself, which the `switch` pass makes of a chain of literal compares on one
+;; value; a `jump` block is the phi feeder an `(or ...)` test lowers to --
+;; `mov true; jump merge` -- and the merge it feeds is the branch that selects.
+;; `sccp-normalize-const` has both: its class test is `(or sint uint)` over a
+;; loaded class, so the chain from the entry to the arm that calls
+;; `sccp-normalize-int-to-i64` runs entry -> jump block -> phi merge -> branch
+;; -> branch -> arm, and the arm read `none` at the one point the tier looks,
+;; which is before the `switch` pass has folded the test. A jump block that
+;; does work of its own (stores, arithmetic) is walked through as well: the
+;; arm below it still runs at most once per invocation, which is the only
+;; property the reading asserts, and the verdict prices what the path costs.
+;; A block that leaves the function -- a return or a tail call -- is where
+;; the walk stops, and that block is the arm. Measured on this tree: see the
+;; log entry SW-SPINE.
 (define (opt-inline-checked-spine-instrs? [instrs : ir.CompilerIrInstrSeq]) : bool
   (and
     (=
       (opt-inline-checked-instrs-call-count
         (compiler-opt-global-shared-view instrs))
       0)
-    (=
-      (opt-inline-checked-term-class-of
-        (compiler-opt-global-shared-view instrs))
-      (opt-inline-checked-term-branch))))
+    (let
+      [class : i64
+        (opt-inline-checked-term-class-of
+          (compiler-opt-global-shared-view instrs))]
+      (or
+        (= class (opt-inline-checked-term-branch))
+        (= class (opt-inline-checked-term-switch))
+        (= class (opt-inline-checked-term-jump))))))
 
 ;; ...and of one label, for the seed.
 (define (opt-inline-checked-spine-block-at?
@@ -138961,20 +138996,76 @@
               (set! i (+ i 1))))
           out))]))
 
-;; Mark the two successors of one spine block. Only a branch reaches here, so
-;; the two labels the classifier published are the whole successor set.
+;; SW-SPINE: every case target of a switch, marked as a branch's successors
+;; are. Answers whether any mark was new.
+(define (opt-inline-checked-dispatch-switch-cases!
+  [cases : ir.CompilerIrSwitchCaseSeq]
+  [generation : i64]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-switch-case-seq-count cases)]
+    [index : i64 0]
+    [any? : bool false]
+    (begin
+      (while (< index count)
+        (begin
+          (match (ir.compiler-ir-switch-case-seq-ref cases index)
+            [(ir.CompilerIrSwitchCase.Case _ label)
+              (set!
+                any?
+                (or (opt-inline-checked-reach-mark! label generation) any?))])
+          (set! index (+ index 1))))
+      any?)))
+
+;; ...and the whole successor set of a switch-terminated spine block: the
+;; default and every case.
+(define (opt-inline-checked-dispatch-switch-succs!
+  [instrs : ir.CompilerIrInstrSeq]
+  [generation : i64]) : bool
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    (if (< count 1)
+      false
+      (match (ir.compiler-ir-instr-seq-ref
+        (compiler-opt-global-shared-view instrs)
+        (- count 1))
+        [(ir.CompilerIrInstr.Switch _ _ cases default-label)
+          (let
+            [a : bool (opt-inline-checked-reach-mark! default-label generation)]
+            [b : bool
+              (opt-inline-checked-dispatch-switch-cases! cases generation)]
+            (or a b))]
+        [(ir.CompilerIrInstr.TotalEnumSwitch _ _ cases default-label _)
+          (let
+            [a : bool (opt-inline-checked-reach-mark! default-label generation)]
+            [b : bool
+              (opt-inline-checked-dispatch-switch-cases! cases generation)]
+            (or a b))]
+        [_ false]))))
+
+;; Mark the successors of one spine block: a branch's two published labels, a
+;; jump's one, or a switch's default and cases (SW-SPINE).
 (define (opt-inline-checked-dispatch-succs!
   [instrs : ir.CompilerIrInstrSeq]
   [generation : i64]) : bool
   (let
-    [_class : i64
+    [class : i64
       (opt-inline-checked-term-class-of
         (compiler-opt-global-shared-view instrs))]
-    [yes : i64 opt-inline-checked-term-branch-yes]
-    [no : i64 opt-inline-checked-term-branch-no]
-    [a : bool (opt-inline-checked-reach-mark! yes generation)]
-    [b : bool (opt-inline-checked-reach-mark! no generation)]
-    (or a b)))
+    (cond
+      [(= class (opt-inline-checked-term-switch))
+        (opt-inline-checked-dispatch-switch-succs! instrs generation)]
+      [(= class (opt-inline-checked-term-jump))
+        (opt-inline-checked-reach-mark!
+          opt-inline-checked-term-jump-target
+          generation)]
+      [else
+        (let
+          [yes : i64 opt-inline-checked-term-branch-yes]
+          [no : i64 opt-inline-checked-term-branch-no]
+          [a : bool (opt-inline-checked-reach-mark! yes generation)]
+          [b : bool (opt-inline-checked-reach-mark! no generation)]
+          (or a b))])))
 
 ;; One relaxation round of "reachable from the entry through spine blocks".
 ;; A marked block is expanded only when it is a spine block, so an ARM is
@@ -139837,6 +139928,13 @@
 
 (define opt-inline-checked-active? : bool
   false)
+
+;; SW-SPINE: a hot depth-0 site of the caller being walked was refused because
+;; no position reading reached its block -- frequency cleared, raw position
+;; `none` -- against the snapshot of the caller the walk started from. Read
+;; with the walk's own site count by opt-inline-checked-shape-changed-sites?.
+(define opt-inline-checked-position-refused? : bool
+  false)
 (define opt-inline-checked-budget : i64
   0)
 
@@ -140551,6 +140649,7 @@
 (define (opt-inline-checked-caller-begin!) : unit
   (begin
     (set! opt-inline-checked-accepted-count 0)
+    (set! opt-inline-checked-position-refused? false)
     (set! opt-inline-checked-scan-count 0)
     (set! opt-inline-checked-caller-verdicts 0)
     (set! opt-inline-checked-caller-relaxed-verdicts 0)
@@ -141421,7 +141520,22 @@
                   (opt-inline-checked-entry-equivalent? position-class)
                   (opt-inline-blocks-call-free?
                     (compiler-opt-global-shared-view blocks))))
-              (opt-inline-checked-clause-site-depth)]
+              (begin
+                ;; SW-SPINE: a refusal the WALK decided -- no reading reached
+                ;; the block -- is remembered for
+                ;; opt-inline-checked-shape-changed-sites?. A block a reading
+                ;; did reach and the caller clause then refused is not: that
+                ;; clause's measurements were made against the snapshot, and
+                ;; the rescan re-reads the walk, not the clause.
+                (if (and
+                  (= site-depth 0)
+                  (>= frequency (opt-inline-checked-depth-relaxed-frequency))
+                  (=
+                    opt-inline-checked-trace-rawpos
+                    (opt-inline-checked-pos-none)))
+                  (set! opt-inline-checked-position-refused? true)
+                  unit)
+                (opt-inline-checked-clause-site-depth))]
             ;; RICHNESS: what a free inline of this site would be worth -- how
             ;; often the site runs times what its boundary costs. It is the
             ;; `boundary` term of the verdict itself, scaled by the caller's own
@@ -145669,6 +145783,37 @@
 (define (opt-inline-checked-absorb-exposed-sites?) : bool
   (> opt-inline-caller-absorb-blocks 0))
 
+;; SW-SPINE: INL-19's rescan with a second trigger. A body ANY band moves in
+;; changes the caller's SHAPE, not only its text: the block that carried the
+;; call is call-free once the callee's body stands in it, and the position
+;; reading (opt-inline-checked-position-class) asks exactly that of every block
+;; between the entry and a site. The sites were scanned against the snapshot
+;; opt-inline-caller-facts-install! took before the walk. `sccp-normalize-const`
+;; is the measurement: its entry still called `sccp-class-of` in that snapshot,
+;; so no spine walk from the entry reached the arm that calls
+;; `sccp-normalize-int-to-i64`, and the arm read `none` -- in a caller whose
+;; every block is call-free by the time the walk ends, and whose `switch` the
+;; later passes fold. The signal is the conjunction of the two facts that make
+;; the refusal stale: the walk moved a body in (its site count), and a hot
+;; depth-0 site was refused because no reading reached its block (the flag the
+;; clause raises). A caller that moved nothing is still the snapshot; a caller
+;; with no such site has nothing the rescan could re-read. Both together are
+;; rare enough that the rescan's cost is one walk of those callers and nothing
+;; else.
+;;
+;; What the rescan does NOT re-read is the caller clause
+;; (opt-inline-checked-depth0-caller-ok?): a block a reading reached in the
+;; snapshot and that clause refused -- a caller with too many calls of its own
+;; for the post and arm readings -- stays refused, because the clause was
+;; measured against callers at their snapshot call counts, and re-asking it
+;; after a walk has moved the accessors in admits the class it exists to
+;; refuse. Measured: with the clause re-read, `cg-map-clear!` (a table-clear
+;; loop) moves into `cg-map-grow!`'s exit block, then with it into
+;; `cg-function-index-fill-from!`, and callgraph_scc pays +428,040 on a
+;; modelled saving of 15.
+(define (opt-inline-checked-shape-changed-sites?) : bool
+  (and opt-inline-checked-position-refused? (> opt-inline-caller-site-count 0)))
+
 (define (opt-inline-function
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
@@ -145693,7 +145838,9 @@
     ;; INL-19: a body the absorb band moved in is scanned as a generation of
     ;; its own, keep or no keep (opt-inline-checked-absorb-exposed-sites?).
     [kept-before : i64
-      (if (opt-inline-checked-absorb-exposed-sites?)
+      (if (or
+        (opt-inline-checked-absorb-exposed-sites?)
+        (opt-inline-checked-shape-changed-sites?))
         (- 0 1)
         0)]
     (opt-pure-call-inline-finish
@@ -146010,7 +146157,9 @@
         (compiler-opt-global-shared-view out-spans))]
     ;; INL-19, as in opt-inline-function.
     [kept-before : i64
-      (if (opt-inline-checked-absorb-exposed-sites?)
+      (if (or
+        (opt-inline-checked-absorb-exposed-sites?)
+        (opt-inline-checked-shape-changed-sites?))
         (- 0 1)
         0)]
     (opt-pure-call-inline-finish-spans

@@ -24047,6 +24047,23 @@
     (compiler_ir_types.compiler-ir-label yes)
     (compiler_ir_types.compiler-ir-label no)))
 
+;; SW-SPINE: the same selector as a two-case `switch` with a default.
+(define (opt-inline-pos-switch
+  [zero : String]
+  [one : String]
+  [default : String]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Switch
+    (compiler_ir_types.CompilerIrValue.Var 0)
+    0
+    (compiler_ir_types.compiler-ir-switch-case-seq2
+      (compiler_ir_types.CompilerIrSwitchCase.Case
+        0
+        (compiler_ir_types.compiler-ir-label zero))
+      (compiler_ir_types.CompilerIrSwitchCase.Case
+        1
+        (compiler_ir_types.compiler-ir-label one)))
+    (compiler_ir_types.compiler-ir-label default)))
+
 ;; The two arms and the merge below them. The merge post-dominates the entry:
 ;; every path out of the branch runs it, and neither arm leaves the function.
 (define (opt-inline-pos-post-blocks
@@ -24196,6 +24213,35 @@
   (opt-test-instrs
     (opt-inline-pos-call (opt-inline-pos-other) 4)
     (opt-inline-pos-branch "d_arm2" "d_arm3")))
+
+;; SW-SPINE: the three-arm selector spelled as one `switch` in the entry --
+;; `sccp-normalize-const`'s class dispatch -- with the entry's instructions
+;; supplied, so the same shape can be given a call of its own.
+(define (opt-inline-pos-switch-dispatch-blocks
+  [entry-instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      entry-instrs)
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "s_arm1")
+        (opt-test-instrs
+          (opt-inline-pos-call (opt-inline-pos-callee) 1)
+          (opt-inline-pos-return 1)))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "s_arm2")
+          (opt-test-instrs
+            (opt-inline-pos-call (opt-inline-pos-other) 2)
+            (opt-inline-pos-return 2)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "s_arm3")
+            (opt-test-instrs
+              (opt-inline-pos-call (opt-inline-pos-callee) 3)
+              (opt-inline-pos-return 3)))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
 
 (define (opt-inline-pos-blocks [mode : i64]) : compiler_ir_types.CompilerIrBlockList
   (cond
@@ -24371,6 +24417,64 @@
                     (compiler_ir_types.compiler-ir-label "arm_bail")
                     (opt-test-instrs (opt-inline-pos-return-literal)))
                   compiler_ir_types.CompilerIrBlockList.Nil))))))]
+    ;; SW-SPINE 16: the `(or a b)` shape -- entry -> {j_a, j_b} -> j_merge,
+    ;; jump blocks feeding a phi merge that is the selecting branch, with a
+    ;; two-level chain below it. This is `sccp-normalize-const` at the point
+    ;; the tier looks: no reading before the widening reaches `j_arm3`.
+    [(= mode 16)
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (opt-test-instrs (opt-inline-pos-branch "j_a" "j_b")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "j_a")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "j_merge"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "j_b")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "j_merge"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "j_merge")
+                (opt-test-instrs (opt-inline-pos-branch "j_arm1" "j_spine")))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "j_arm1")
+                  (opt-test-instrs
+                    (opt-inline-pos-call (opt-inline-pos-callee) 1)
+                    (opt-inline-pos-return 1)))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.CompilerIrBlock.Block
+                    (compiler_ir_types.compiler-ir-label "j_spine")
+                    (opt-test-instrs (opt-inline-pos-branch "j_arm2" "j_arm3")))
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (compiler_ir_types.CompilerIrBlock.Block
+                      (compiler_ir_types.compiler-ir-label "j_arm2")
+                      (opt-test-instrs
+                        (opt-inline-pos-call (opt-inline-pos-other) 2)
+                        (opt-inline-pos-return 2)))
+                    (compiler_ir_types.compiler-ir-block-cons
+                      (compiler_ir_types.CompilerIrBlock.Block
+                        (compiler_ir_types.compiler-ir-label "j_arm3")
+                        (opt-test-instrs
+                          (opt-inline-pos-call (opt-inline-pos-callee) 3)
+                          (opt-inline-pos-return 3)))
+                      compiler_ir_types.CompilerIrBlockList.Nil))))))))]
+    ;; SW-SPINE 14: the dispatch as one `switch`; 15: the same switch block
+    ;; with a call of its own, which is no spine.
+    [(= mode 14)
+      (opt-inline-pos-switch-dispatch-blocks
+        (opt-test-instrs (opt-inline-pos-switch "s_arm1" "s_arm2" "s_arm3")))]
+    [(= mode 15)
+      (opt-inline-pos-switch-dispatch-blocks
+        (opt-test-instrs
+          (opt-inline-pos-call (opt-inline-pos-other) 4)
+          (opt-inline-pos-switch "s_arm1" "s_arm2" "s_arm3")))]
     ;; 8: NEITHER. One arm returns, so the merge below the other does not
     ;; post-dominate the entry, and the merge is no arm of the entry branch.
     [else
@@ -24576,7 +24680,11 @@
       (compiler_ir_types.compiler-ir-label "arm_work"))
     ;; ...and the branch itself, or a block with a second way in, is no arm:
     ;; pm_check post-dominates the entry (it reads POST), and arm_work with a
-    ;; jump from pm_a into it is a merge the reading refuses.
+    ;; jump from pm_a into it is a merge the post-arm reading refuses. SW-SPINE:
+    ;; the dispatch walk, asked after it, now reaches arm_work through pm_a's
+    ;; jump and through pm_check's branch -- every block on both paths is
+    ;; call-free and only routes, and arm_work runs at most once per
+    ;; invocation -- so the site reads DISPATCH, and the verdict prices it.
     (=
       (opt-inline-pos-site 12 3 "pm_check")
       (compiler_optimize.opt-inline-checked-pos-post))
@@ -24587,14 +24695,17 @@
         (compiler_ir_types.compiler-ir-label "arm_work")))
     (=
       (opt-inline-pos-site 13 4 "arm_work")
-      (compiler_optimize.opt-inline-checked-pos-none))
-    ;; NEITHER: a merge below an arm that returns post-dominates nothing and is
-    ;; no arm of the entry branch, so the floor stands exactly as it did before
-    ;; the widening -- and the caller here is wrapper-shaped, so the refusal is
-    ;; the site's position and nothing else
+      (compiler_optimize.opt-inline-checked-pos-dispatch))
+    ;; A merge below an arm that returns post-dominates nothing and is no arm
+    ;; of the entry branch, so the post and arm readings leave the floor
+    ;; standing. SW-SPINE: it is the second case of a two-way selector whose
+    ;; first case leaves -- the entry branches to nb_hit, which returns, or
+    ;; into nb_join through a call-free jump block -- and the dispatch walk
+    ;; reads it so; the caller here is wrapper-shaped, so the site's position
+    ;; is the whole question.
     (=
       (opt-inline-pos-site 8 3 "nb_join")
-      (compiler_optimize.opt-inline-checked-pos-none))
+      (compiler_optimize.opt-inline-checked-pos-dispatch))
     ;; DISPATCH: a three-arm selector whose spine only compares and branches.
     ;; The FIRST arm is a successor of the entry branch and the arm reading
     ;; still refuses it -- its sibling is the rest of the chain, which works --
@@ -24623,6 +24734,44 @@
     (=
       (opt-inline-pos-site 11 3 "d_arm2")
       (compiler_optimize.opt-inline-checked-pos-none))
+    ;; SW-SPINE: the selector spelled as the `switch` the cond lowering emits
+    ;; for literal compares on one value (`sccp-normalize-const`'s class
+    ;; dispatch). Every case target and the default is an arm; the arm reading
+    ;; has no branch to read; and a call in the switch block unmakes the spine
+    ;; exactly as it does the branch one.
+    (=
+      (opt-inline-pos-site 14 1 "s_arm1")
+      (compiler_optimize.opt-inline-checked-pos-dispatch))
+    (=
+      (opt-inline-pos-site 14 2 "s_arm2")
+      (compiler_optimize.opt-inline-checked-pos-dispatch))
+    (=
+      (opt-inline-pos-site 14 3 "s_arm3")
+      (compiler_optimize.opt-inline-checked-pos-dispatch))
+    (not
+      (compiler_optimize.opt-inline-checked-arm-site?
+        (opt-inline-pos-blocks 14)
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-label "s_arm1")))
+    (=
+      (opt-inline-pos-site 15 1 "s_arm1")
+      (compiler_optimize.opt-inline-checked-pos-none))
+    (=
+      (opt-inline-pos-site 15 3 "s_arm3")
+      (compiler_optimize.opt-inline-checked-pos-none))
+    ;; ...and the `(or a b)` spelling: jump blocks feeding the phi merge that
+    ;; selects are walked through, so the arms below the merge are dispatch
+    ;; arms -- the first of them is what the post-arm reading refuses (its
+    ;; sibling works on), and the two below that are not entry-adjacent at all.
+    (=
+      (opt-inline-pos-site 16 4 "j_arm1")
+      (compiler_optimize.opt-inline-checked-pos-dispatch))
+    (=
+      (opt-inline-pos-site 16 6 "j_arm2")
+      (compiler_optimize.opt-inline-checked-pos-dispatch))
+    (=
+      (opt-inline-pos-site 16 7 "j_arm3")
+      (compiler_optimize.opt-inline-checked-pos-dispatch))
     ;; THE DISPATCH ARM'S OWN CLAUSE is on the CALLEE and it is acyclicity: an
     ;; imported loop is paid at every entry while the arm runs on a fraction of
     ;; them (gvn_table +8,031,268 for `gvn-table-clear` alone).

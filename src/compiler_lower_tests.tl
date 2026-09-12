@@ -9931,7 +9931,7 @@
                 (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "__tl_lambda_main_0"
                 1)
-              "__sret"))])]
+              (compiler_ir_types.compiler-ir-hidden-sret-param-name)))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-capturing-lambda-shadow-shape-ok?) : bool

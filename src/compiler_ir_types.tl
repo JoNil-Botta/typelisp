@@ -1102,6 +1102,12 @@
 (defenum CompilerIrParam
   (Param String ast.AstType i64))
 
+;; The control-byte prefix cannot occur in a source identifier. Keep hidden
+;; ABI parameters distinct from user parameters even when users name one
+;; `__sret`; optimizer ownership proofs must not rely on a spellable name.
+(define (compiler-ir-hidden-sret-param-name) : String
+  "\x01__sret")
+
 (defstruct CompilerIrParamSeq
   (slots (__tl_dyn-array CompilerIrParam))
   (len i64))

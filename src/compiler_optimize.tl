@@ -27493,7 +27493,7 @@
 ;; opt-load-table-filter-call-writes). The name is the only mark the parameter
 ;; carries; it is spelled by the lowering alone and never by source.
 (define (opt-licm-sret-param-name) : String
-  "__sret")
+  (ir.compiler-ir-hidden-sret-param-name))
 
 (define (opt-licm-root-env-seed-param!
   [type-segment-bases : i64]
@@ -134414,7 +134414,7 @@
             (compiler-opt-global-shared-view params)
             position)
             [(ir.CompilerIrParam.Param name _ _)
-              (if (string.eq name "__sret")
+              (if (string.eq name (ir.compiler-ir-hidden-sret-param-name))
                 (set! found true)
                 unit)])
           (set! position (+ position 1))))
@@ -135080,7 +135080,8 @@
     (match (ir.compiler-ir-param-seq-ref
       (compiler-opt-global-shared-view params)
       target)
-      [(ir.CompilerIrParam.Param name _ _) (string.eq name "__sret")])))
+      [(ir.CompilerIrParam.Param name _ _)
+        (string.eq name (ir.compiler-ir-hidden-sret-param-name))])))
 
 (define (opt-inline-staged-arg
   [params : ir.CompilerIrParamSeq]
@@ -135166,7 +135167,9 @@
       index)
       [(ir.CompilerIrParam.Param name ty _)
         (begin
-          (if (or stage-all? (not (string.eq name "__sret")))
+          (if (or
+            stage-all?
+            (not (string.eq name (ir.compiler-ir-hidden-sret-param-name))))
             (ir.compiler-ir-instr-builder-push!
               (&mut builder)
               (ir.CompilerIrInstr.Mov
@@ -142405,7 +142408,7 @@
             (compiler-opt-global-shared-view params)
             position)
             [(ir.CompilerIrParam.Param name _ var)
-              (if (string.eq name "__sret")
+              (if (string.eq name (ir.compiler-ir-hidden-sret-param-name))
                 (set! found var)
                 unit)])
           (set! position (+ position 1))))

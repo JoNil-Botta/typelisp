@@ -21848,7 +21848,7 @@
       0)
     (compiler_ir_types.compiler-ir-param-seq-prepend
       (compiler_ir_types.CompilerIrParam.Param
-        "__sret"
+        (compiler_ir_types.compiler-ir-hidden-sret-param-name)
         (compiler_ast_types.AstType.U64)
         1)
       (compiler_ir_types.compiler-ir-param-seq-empty))))
@@ -27901,7 +27901,7 @@
     callee-name
     (compiler_ir_types.compiler-ir-param-seq-prepend
       (compiler_ir_types.CompilerIrParam.Param
-        "__sret"
+        (compiler_ir_types.compiler-ir-hidden-sret-param-name)
         (compiler_ast_types.AstType.I64)
         0)
       (opt-inline-wide-params-from 1 (opt-inline-sole-call-params)))
@@ -32116,7 +32116,7 @@
     [sret-params : compiler_ir_types.CompilerIrParamSeq
       (compiler_ir_types.compiler-ir-param-seq-prepend
         (compiler_ir_types.CompilerIrParam.Param
-          "__sret"
+          (compiler_ir_types.compiler-ir-hidden-sret-param-name)
           (compiler_ast_types.ast-ty-mut-ptr
             (compiler_optimize.compiler-opt-global-shared-view enum-ty))
           0)
@@ -32278,7 +32278,7 @@
   [value-ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrParamSeq
   (compiler_ir_types.compiler-ir-param-seq-prepend
     (compiler_ir_types.CompilerIrParam.Param
-      "__sret"
+      (compiler_ir_types.compiler-ir-hidden-sret-param-name)
       (compiler_ast_types.AstType.U64)
       0)
     (compiler_ir_types.compiler-ir-param-seq-prepend
@@ -32510,7 +32510,7 @@
       0)
     (compiler_ir_types.compiler-ir-param-seq-prepend
       (compiler_ir_types.CompilerIrParam.Param
-        "__sret"
+        (compiler_ir_types.compiler-ir-hidden-sret-param-name)
         (compiler_ast_types.AstType.U64)
         1)
       (compiler_ir_types.compiler-ir-param-seq-empty))))
@@ -32652,7 +32652,7 @@
       1)
     (compiler_ir_types.compiler-ir-param-seq-prepend
       (compiler_ir_types.CompilerIrParam.Param
-        "__sret"
+        (compiler_ir_types.compiler-ir-hidden-sret-param-name)
         (compiler_ast_types.AstType.U64)
         2)
       (compiler_ir_types.compiler-ir-param-seq-empty))))
@@ -32759,7 +32759,7 @@
           0)
         (compiler_ir_types.compiler-ir-param-seq-prepend
           (compiler_ir_types.CompilerIrParam.Param
-            "__sret"
+            (compiler_ir_types.compiler-ir-hidden-sret-param-name)
             (compiler_ast_types.AstType.U64)
             1)
           (compiler_ir_types.compiler-ir-param-seq-empty)))]
@@ -45053,10 +45053,20 @@
 
 (define (compiler-optimize-call-memory-frame-roots-self-test) : i64
   (let
-    [sret : i64 (opt-callmem-roots-row "__sret" 0)]
-    [sret-only : i64 (opt-callmem-roots-row "__sret" 1)]
+    [sret : i64
+      (opt-callmem-roots-row
+        (compiler_ir_types.compiler-ir-hidden-sret-param-name)
+        0)]
+    [sret-only : i64
+      (opt-callmem-roots-row
+        (compiler_ir_types.compiler-ir-hidden-sret-param-name)
+        1)]
     [raw : i64 (opt-callmem-roots-row "raw" 1)]
-    [scalar : i64 (opt-callmem-roots-row "__sret" 2)]
+    [source-name : i64 (opt-callmem-roots-row "__sret" 1)]
+    [scalar : i64
+      (opt-callmem-roots-row
+        (compiler_ir_types.compiler-ir-hidden-sret-param-name)
+        2)]
     (cond
       [(< sret 0) 1]
       ;; the sret store is a write through parameter 1...
@@ -45069,6 +45079,10 @@
       ;; a raw u64 parameter under another name keeps the older reading
       [(< raw 0) 7]
       [(not (compiler_optimize.opt-call-memory-summary-unknown? raw)) 8]
+      ;; A source-spellable `__sret` is still just an ordinary raw u64 param.
+      [(< source-name 0) 11]
+      [(not (compiler_optimize.opt-call-memory-summary-unknown? source-name))
+        12]
       ;; a store through a non-pointer parameter is unknown whatever the slot
       [(< scalar 0) 9]
       [(not (compiler_optimize.opt-call-memory-summary-unknown? scalar)) 10]

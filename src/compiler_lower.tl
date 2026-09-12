@@ -26610,7 +26610,7 @@
                                   (if structural-sret?
                                     (ir.compiler-ir-param-seq-prepend
                                       (ir.CompilerIrParam.Param
-                                        "__sret"
+                                        (ir.compiler-ir-hidden-sret-param-name)
                                         (ast.AstType.U64)
                                         1)
                                       source)
@@ -76155,7 +76155,10 @@
           (ir.compiler-ir-param-builder-to-seq builder)))]
     (if leading-sret?
       (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "__sret" (ast.AstType.U64) (- source-start 1))
+        (ir.CompilerIrParam.Param
+          (ir.compiler-ir-hidden-sret-param-name)
+          (ast.AstType.U64)
+          (- source-start 1))
         source)
       source)))
 
@@ -76402,7 +76405,10 @@
   [sret-var : i64]) : ir.CompilerIrParamSeq
   (ir.compiler-ir-param-seq-append-one
     params
-    (ir.CompilerIrParam.Param "__sret" (ast.AstType.U64) sret-var)))
+    (ir.CompilerIrParam.Param
+      (ir.compiler-ir-hidden-sret-param-name)
+      (ast.AstType.U64)
+      sret-var)))
 
 (define (lower-supported-function-param-type?
   [ctx : tc_core.TcContext]
@@ -76660,7 +76666,7 @@
                               (if structural-sret?
                                 (ir.compiler-ir-param-seq-prepend
                                   (ir.CompilerIrParam.Param
-                                    "__sret"
+                                    (ir.compiler-ir-hidden-sret-param-name)
                                     (ast.AstType.U64)
                                     (- source-start 1))
                                   source)
@@ -78114,7 +78120,10 @@
       (if leading-sret?
         (ir.compiler-ir-param-builder-push!
           (&mut builder)
-          (ir.CompilerIrParam.Param "__sret" (ast.AstType.U64) 0))
+          (ir.CompilerIrParam.Param
+            (ir.compiler-ir-hidden-sret-param-name)
+            (ast.AstType.U64)
+            0))
         unit)
       (lower-dispatch-physical-param-list-into!
         ctx

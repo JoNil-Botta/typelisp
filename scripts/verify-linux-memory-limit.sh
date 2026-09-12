@@ -31,6 +31,7 @@ LIMIT_BYTES=33554432
 # the two small accounting fixtures alive for one bounded interval. This is
 # part of each command's single execution, not a retry of the bounded command.
 ACCOUNTING_FIXTURE_SECONDS=1
+export ACCOUNTING_FIXTURE_SECONDS
 ALLOCATE_AWK='BEGIN {
     chunk = sprintf("%1048576s", "x")
     for (i = 0; i < 96; i++) values[i] = chunk i
@@ -208,6 +209,12 @@ cd "$1"
 mode=$2
 expected=$3
 inner_report=$4
+# Direct systemd metrics need the existing stable accounting interval. The
+# wrapper's own launch-gated sampler provides positive evidence for its cases.
+nested_delay=0.1
+if [ "$mode" = metrics ] && [ "${LINUX_MEMORY_LIMIT_BACKEND:-}" = systemd-user-cgroup ]; then
+    nested_delay=$ACCOUNTING_FIXTURE_SECONDS
+fi
 printf 'outer-before\n' >&2
 status=0
 case "$mode" in
@@ -221,7 +228,7 @@ case "$mode" in
             export TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE
         fi
         linux_memory_limit_run 33554432 \
-            sh -c 'printf "inner-marker\n" >&2; sleep 0.1; exit "$1"' sh "$expected" || status=$?
+            sh -c 'printf "inner-marker\n" >&2; sleep "$2"; exit "$1"' sh "$expected" "$nested_delay" || status=$?
         ;;
 esac
 printf 'outer-after\n' >&2

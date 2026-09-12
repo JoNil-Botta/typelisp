@@ -100,6 +100,15 @@ identity, output, routing, and parity results live separately in
 `assertions.tsv`. Linux adds Cachegrind instruction evidence when available;
 no noisy time or instruction measurement is a regression ratchet.
 
+On Linux, `TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE` is an invocation-local
+output destination for the limiting helper. The helper removes it from the
+workload's environment; its own sampler receives the destination explicitly.
+Nested callers can request their own metrics file or `--report` path. They do
+not inherit or remove their parent's evidence. Systemd stderr uses a unique
+temporary file per invocation, cleaned up after success or failure. The helper
+self-test covers nested library calls and explicit inner reports on both Linux
+backends without building another compiler.
+
 `benchmark-semantic-index.sh` is the opt-in compiler-scale consumer of that
 interface. It builds a current-tree runner with an explicitly selected compiler
 and reports owned semantic record count, process-tree peak memory, wall time,

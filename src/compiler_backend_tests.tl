@@ -1743,7 +1743,7 @@
   (match (compiler_lower.lower-compiler-source source)
     [(compiler_lower.ResultCompilerLower.Err _)
       (compiler_backend.CompilerBackendObjectEligibility.Unsupported
-        "test-lowering-failed")]
+        compiler_backend.CompilerDirectObjectFallbackReason.UnsupportedSemantics)]
     [(compiler_lower.ResultCompilerLower.Ok program _)
       (let
         [backend-state : compiler_backend.CompilerBackendState

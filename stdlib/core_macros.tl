@@ -23,23 +23,6 @@
 ;# ```
 (import stdlib.comptime)
 
-;; Internal migration bridge for compiler/stdlib code that deliberately makes
-;; a representation-level shallow copy while converting old sharing APIs to
-;; explicit references. Dynamic arrays are indirect handles, so reinterpret
-;; the reference cell itself for that case. Other values are loaded through
-;; the address carried by the reference. Keeping type reflection on the simple
-;; local reference also preserves nested dotted places across macro expansion.
-;; The published seed keeps its pre-cutover sharing behavior.
-;: Internal bootstrap bridge that copies a value through its dynamic reference.
-;; lint-allow: function-name-case -- private one-epoch bootstrap ABI
-(defmacro (__tl-compiler-owned-shared-view-dyn-ref-as
-  [value : Expr]
-  ;; Spliced into the generated pointer element type.
-  ;; lint-allow: unused-variable
-  [value-ty : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-cast (__tl_array-data (array ,value)) : (Ptr ,value-ty)))))
-
 ;; Private AST-level bridge for the checked-in seed's pre-dotted global and
 ;; macro-hygiene resolver. Ordinary source uses direct `value.field` places.
 ;: Internal bootstrap bridge that projects the named field from `target`.

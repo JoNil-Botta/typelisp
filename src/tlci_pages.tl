@@ -91,7 +91,11 @@
   (unsafe
     (ptr-cast
       (__tl_array-data
-        (__tl-compiler-owned-shared-view-dyn-ref-as bytes (__tl_dyn-array u8)))
+        (unsafe
+          (ptr-read
+            (ptr-cast
+              (__tl_array-data (array bytes))
+              : (Ptr (__tl_dyn-array u8))))))
       : (Ptr u8))))
 
 (define (tlci-pages-copy-bytes!

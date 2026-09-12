@@ -23,9 +23,10 @@ native_link_detect_host
 # cutover's explicit compiler-owned-view import adds one back. Explicit clone
 # generation adds seven public declaration macros to the loaded prefix. Test
 # declaration metadata adds two source-visible declarations to that prefix.
+# Removing the generic shared-view bridge subtracts one on both hosts.
 case "$NL_HOST_OS" in
-    windows) TRUSTED_PREFIX_SKIPPED=224 ;;
-    *) TRUSTED_PREFIX_SKIPPED=219 ;;
+    windows) TRUSTED_PREFIX_SKIPPED=223 ;;
+    *) TRUSTED_PREFIX_SKIPPED=218 ;;
 esac
 
 COMPILER=${1:-${TYPELISP_BIN:-}}

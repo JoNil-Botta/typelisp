@@ -107,7 +107,8 @@
 
 ;: Re-expose a borrowed string field through the public String surface.
 (define (args-string-shared-view [value : (& value str)]) : String
-  (__tl-compiler-owned-shared-view-dyn-ref-as value String))
+  (unsafe
+    (ptr-read (ptr-cast (__tl_array-data (array value)) : (Ptr String)))))
 
 ;: Return an empty option spec list.
 (define (option-spec-empty) : ArgsOptionSpecList

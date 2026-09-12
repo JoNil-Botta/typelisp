@@ -1147,53 +1147,89 @@
             (io.print-error (doc_test.doc-test-run-report-render report))
             1)))]))
 
-(define (compile-cli-ir-verification-failed?) : bool
-  (let
-    [message : String (opt.compiler-opt-debug-verification-error)]
-    (if (= (string.string-length message) 0)
-      false
-      (begin
-        (io.print-error
-          (str_cat.str-cat "compile: IR verification failed: " message "\n"))
-        true))))
+(define (compile-cli-print-ir-verification-error [message : String]) : unit
+  (io.print-error
+    (str_cat.str-cat "compile: IR verification failed: " message "\n")))
+
+(define (compile-cli-reject-result-on-ir-verification
+  [result : compiler_driver_core.ResultCompilerDriver]
+  [message : String]) : i64
+  (begin
+    (match result
+      [(compiler_driver_core.ResultCompilerDriver.Ok _ advisories)
+        (compiler_driver_core.compiler-driver-print-advisories (& advisories))]
+      [(compiler_driver_core.ResultCompilerDriver.Err _ advisories)
+        (compiler_driver_core.compiler-driver-print-advisories (& advisories))])
+    (compile-cli-print-ir-verification-error message)
+    1))
+
+(define (compile-cli-reject-buffer-result-on-ir-verification
+  [result : compiler_driver_core.ResultCompilerDriverBuffer]
+  [message : String]) : i64
+  (begin
+    (match result
+      [(compiler_driver_core.ResultCompilerDriverBuffer.Ok _ advisories)
+        (compiler_driver_core.compiler-driver-print-advisories (& advisories))]
+      [(compiler_driver_core.ResultCompilerDriverBuffer.Err _ advisories)
+        (compiler_driver_core.compiler-driver-print-advisories (& advisories))])
+    (compile-cli-print-ir-verification-error message)
+    1))
+
+(define (compile-cli-reject-pic-result-on-ir-verification
+  [result : compiler_driver_core.ResultCompilerDriverPic]
+  [message : String]) : i64
+  (begin
+    (match result
+      [(compiler_driver_core.ResultCompilerDriverPic.Ok _ advisories)
+        (compiler_driver_core.compiler-driver-print-advisories (& advisories))]
+      [(compiler_driver_core.ResultCompilerDriverPic.Err _ advisories)
+        (compiler_driver_core.compiler-driver-print-advisories (& advisories))])
+    (compile-cli-print-ir-verification-error message)
+    1))
 
 (define (compile-cli-write-result-with-ir-verification
   [state : compiler_driver_core.CompilerDriverState]
   [result : compiler_driver_core.ResultCompilerDriver]
   [output-path : String]) : i64
-  (if (compile-cli-ir-verification-failed?)
-    1
-    (compiler_driver_core.compiler-driver-write-result
-      (compiler_driver_core.compiler-driver-state-profile
-        (owned_view.compiler-owned-shared-view state))
-      result
-      output-path)))
+  (let
+    [message : String (opt.compiler-opt-debug-verification-error)]
+    (if (> (string.string-length message) 0)
+      (compile-cli-reject-result-on-ir-verification result message)
+      (compiler_driver_core.compiler-driver-write-result
+        (compiler_driver_core.compiler-driver-state-profile
+          (owned_view.compiler-owned-shared-view state))
+        result
+        output-path))))
 
 (define (compile-cli-write-buffer-result-with-ir-verification
   [state : compiler_driver_core.CompilerDriverState]
   [result : compiler_driver_core.ResultCompilerDriverBuffer]
   [output-path : String]) : i64
-  (if (compile-cli-ir-verification-failed?)
-    1
-    (compiler_driver_core.compiler-driver-write-buffer-result
-      (compiler_driver_core.compiler-driver-state-profile
-        (owned_view.compiler-owned-shared-view state))
-      (compiler_driver_core.compiler-driver-state-typecheck
-        (owned_view.compiler-owned-shared-view state))
-      result
-      output-path)))
+  (let
+    [message : String (opt.compiler-opt-debug-verification-error)]
+    (if (> (string.string-length message) 0)
+      (compile-cli-reject-buffer-result-on-ir-verification result message)
+      (compiler_driver_core.compiler-driver-write-buffer-result
+        (compiler_driver_core.compiler-driver-state-profile
+          (owned_view.compiler-owned-shared-view state))
+        (compiler_driver_core.compiler-driver-state-typecheck
+          (owned_view.compiler-owned-shared-view state))
+        result
+        output-path))))
 
 (define (compile-cli-write-pic-result-with-ir-verification
   [state : compiler_driver_core.CompilerDriverState]
   [result : compiler_driver_core.ResultCompilerDriverPic]
   [output-path : String]) : i64
-  (if (compile-cli-ir-verification-failed?)
-    1
-    (compiler_driver_core.compiler-driver-write-pic-result
-      (compiler_driver_core.compiler-driver-state-profile
-        (owned_view.compiler-owned-shared-view state))
-      result
-      output-path)))
+  (let
+    [message : String (opt.compiler-opt-debug-verification-error)]
+    (if (> (string.string-length message) 0)
+      (compile-cli-reject-pic-result-on-ir-verification result message)
+      (compiler_driver_core.compiler-driver-write-pic-result
+        (compiler_driver_core.compiler-driver-state-profile
+          (owned_view.compiler-owned-shared-view state))
+        result
+        output-path))))
 
 (define (compile-cli-run-compile-file
   [state : compiler_driver_core.CompilerDriverState]
@@ -1342,13 +1378,37 @@
             unit)
           doctest-status)))))
 
+(define (compile-cli-reject-windows-batch-artifact-on-ir-verification
+  [result : compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact]
+  [message : String]) : ResultCompileCliWindowsBatchEntry
+  (begin
+    (match result
+      [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.CoffObject
+          _
+          _
+          advisories)
+        (compiler_driver_core.compiler-driver-print-advisories (& advisories))]
+      [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Assembly
+          _
+          _
+          advisories)
+        (compiler_driver_core.compiler-driver-print-advisories (& advisories))]
+      [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Err
+          _
+          advisories)
+        (compiler_driver_core.compiler-driver-print-advisories (& advisories))])
+    (compile-cli-print-ir-verification-error message)
+    (ResultCompileCliWindowsBatchEntry.Err 1)))
+
 (define (compile-cli-write-windows-batch-artifact
   [_state : compiler_driver_core.CompilerDriverState]
   [result : compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact]
   [object-path : String]
   [assembly-path : String]) : ResultCompileCliWindowsBatchEntry
-  (if (compile-cli-ir-verification-failed?)
-    (ResultCompileCliWindowsBatchEntry.Err 1)
+  (if (> (string.string-length (opt.compiler-opt-debug-verification-error)) 0)
+    (compile-cli-reject-windows-batch-artifact-on-ir-verification
+      result
+      (opt.compiler-opt-debug-verification-error))
     (match result
       [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.CoffObject
           object

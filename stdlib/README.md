@@ -420,11 +420,11 @@ Vec bang place macros as available yet.
   cleanup-owned lexical guard and rejects close while guards or lock attempts
   are live. It also exposes raw `i64` pointer atomic load/store/add/fetch-add/CAS
   wrappers for synchronization internals. Import it with `(import stdlib.sync)`
-  only inside explicit `unsafe` when calling raw address/slot atomics,
-  semaphore-handle adapters, allocation/free, or raw handle load/store.
-  Typed channel/mutex create, send/recv, lock/guard and close remain safe.
   and instantiate with `(import (sync.channel i64) as channel_i64)` or
-  `(import (sync.mutex i64) as mutex_i64)`. Generated modules expose
+  `(import (sync.mutex i64) as mutex_i64)`. Raw address/slot atomics,
+  semaphore-handle adapters, allocation/free, and raw handle load/store require
+  explicit `unsafe`; typed channel/mutex create, send/recv, lock/guard, and
+  close remain safe. Generated modules expose
   `raw-field-count` as a zero-argument accessor; channels also expose
   `max-capacity`.
 - `json.tl`: JSON value parser and serializer for tool protocols and data

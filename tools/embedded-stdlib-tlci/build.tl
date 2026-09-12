@@ -246,9 +246,11 @@
         (begin
           (let
             [identity : String
-              (__tl-compiler-owned-shared-view-dyn-ref-as
-                (& (array-ref names index))
-                String)]
+              (unsafe
+                (ptr-read
+                  (ptr-cast
+                    (__tl_array-data (array (& (array-ref names index))))
+                    : (Ptr String))))]
             [slot : i64
               (compiler_tlci_native_producer.tlci-native-macro-capture-slot
                 captures

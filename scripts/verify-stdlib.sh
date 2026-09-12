@@ -206,6 +206,7 @@ byte_buf.tl
 byte_buf_core.tl
 clone.tl
 comptime.tl
+concurrency_registry.tl
 core_macros.tl
 crypto_rsa_core.tl
 crypto_rsa_verify.tl
@@ -283,6 +284,8 @@ stdlib/tests/byte_buf_api.tl|42|-|-
 stdlib/tests/byte_buf_core_api.tl|42|-|-
 stdlib/tests/crypto_rsa_core_api.tl|42|-|-|-
 stdlib/tests/crypto_rsa_verify_api.tl|42|-|-|-
+stdlib/tests/concurrency_registry_api.tl|42|-|-|-
+stdlib/tests/concurrency_registry_exhaustion.tl|42|-|-|-
 stdlib/tests/format_api.tl|42|-|-|-
 stdlib/tests/format_debug_bytes.tl|42|-|-|-
 stdlib/tests/format_debug_length_overflow.tl|134|-|literal:format: Debug output length overflow|-
@@ -331,6 +334,7 @@ stdlib_check_manifest() {
 stdlib/tests/arena_policy_escape_string.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/comptime_api.tl|pass|-
+stdlib/tests/concurrency_registry_unsafe_reject.tl|fail|requires unsafe context
 stdlib/tests/comptime_string_literal_reject.tl|fail|expr-string-value expects a string literal Expr
 stdlib/tests/args_api.tl|pass|-
 stdlib/tests/core_macros_api.tl|pass|-

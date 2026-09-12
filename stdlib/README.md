@@ -135,6 +135,18 @@ Vec bang place macros as available yet.
   unsupported shapes, and generated-name collisions are expansion errors. The
   older compiler-discovered `clone` root producer remains in this module only
   during the repository migration tracked by #7073.
+- `concurrency_registry.tl`: shared, bounded generation/issued-Box-identity
+  registry for future checked task, semaphore, channel, mutex, and guard
+  capabilities. It validates family and exact raw-field count under a single
+  lock, counts leases across blocked native operations, and detaches resources
+  once only when quiescent. Its fixed table payloads use 303,104 bytes (1,024
+  resource rows, 4,096 authority rows); each issued Box uses the constructor's
+  active arena, so cross-thread wrappers must choose and retain a spanning
+  atomic owner. Dropping an authority revokes its Box identity before that
+  arena can recycle storage. Resource words are available only to explicit
+  unsafe adapters.
+  The existing `thread.tl` and `sync.tl` wrappers are not yet
+  protected by this registry; #7718 tracks their migration.
 - `dense_list.tl`: low-level declaration generation for compiler-private
   append-oriented `{slots, len}` structs. The macro keeps each concrete type,
   public function prefix, capacity policy, checked fallback, and optional

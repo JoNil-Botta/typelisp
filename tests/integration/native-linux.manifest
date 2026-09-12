@@ -8,6 +8,7 @@
 # the row then compiles standalone at that level instead of the default one the
 # batched pre-pass uses, so a claim that only holds at a particular level can be
 # pinned beside the default-level row for the same source.
+hash_length_chain|tests/integration/hash_length_chain.tl|42|-|-|-|opt-level:2+stage-stdlib
 aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|stdlib/string.tl
 inline_aggregate_global|tests/integration/inline_aggregate_global.tl|42|98\n|-|stdlib/io.tl stdlib/string.tl
 inline_aggregate_global_escape|tests/integration/inline_aggregate_global_escape.tl|42|4\n|-|stdlib/io.tl stdlib/string.tl

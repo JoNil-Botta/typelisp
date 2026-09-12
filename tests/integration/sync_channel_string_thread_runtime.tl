@@ -96,7 +96,8 @@
   [channel : sync.ChannelString]
   [count : i64]) : unit
   (begin
-    (sync.channel-string-store-raw! channel ctx 0)
+    (unsafe
+      (sync.channel-string-store-raw! channel ctx 0))
     (set! (array-ref ctx sync.channel-string-raw-field-count) count)))
 
 (define (sync-string-integration-run [channel : sync.ChannelString]) : i64
@@ -114,9 +115,10 @@
         (&mut ctx)
         channel
         sync-string-integration-count)
-      (match (thread.spawn
-        sync-string-integration-consumer
-        (sync-string-integration-array-i64-addr ctx))
+      (match (unsafe
+        (thread.spawn
+          sync-string-integration-consumer
+          (sync-string-integration-array-i64-addr ctx)))
         [(ThreadSpawnErr _) 2]
         [(ThreadSpawnOk worker)
           (begin
@@ -136,7 +138,9 @@
                   (set! ok false))))
             (let
               [worker-code : i64
-                (sync-string-integration-join-code (thread.join worker))]
+                (sync-string-integration-join-code
+                  (unsafe
+                    (thread.join worker)))]
               [closed : bool (sync.channel-string-close channel)]
               (cond
                 [(not ok) 3]

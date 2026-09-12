@@ -30,7 +30,8 @@
         (begin
           (set! (array-ref raw i) (sync-integration-read-i64 ctx (+ offset i)))
           (set! i (+ i 1))))
-      (channel_i64.load-raw raw 0))))
+      (unsafe
+        (channel_i64.load-raw raw 0)))))
 
 (define (sync-integration-send-ok? [result : channel_i64.SendResult]) : bool
   (match result
@@ -88,7 +89,8 @@
   [base : i64]
   [count : i64]) : unit
   (begin
-    (channel_i64.store-raw! channel ctx 0)
+    (unsafe
+      (channel_i64.store-raw! channel ctx 0))
     (set! (array-ref ctx (channel_i64.raw-field-count)) base)
     (set! (array-ref ctx (+ (channel_i64.raw-field-count) 1)) count)))
 
@@ -120,8 +122,14 @@
   (let
     [received : i64
       (sync-integration-receive-sum channel (* sync-integration-count 2))]
-    [a-code : i64 (sync-integration-join-code (thread.join a))]
-    [b-code : i64 (sync-integration-join-code (thread.join b))]
+    [a-code : i64
+      (sync-integration-join-code
+        (unsafe
+          (thread.join a)))]
+    [b-code : i64
+      (sync-integration-join-code
+        (unsafe
+          (thread.join b)))]
     [a-expected : i64 (sync-integration-sum 100 sync-integration-count)]
     [b-expected : i64 (sync-integration-sum 1000 sync-integration-count)]
     [closed : bool (channel_i64.close channel)]
@@ -149,14 +157,16 @@
         channel
         1000
         sync-integration-count)
-      (match (thread.spawn
-        sync-integration-producer
-        (sync-integration-array-i64-addr ctx-a))
+      (match (unsafe
+        (thread.spawn
+          sync-integration-producer
+          (sync-integration-array-i64-addr ctx-a)))
         [(ThreadSpawnErr _) 6]
         [(ThreadSpawnOk a)
-          (match (thread.spawn
-            sync-integration-producer
-            (sync-integration-array-i64-addr ctx-b))
+          (match (unsafe
+            (thread.spawn
+              sync-integration-producer
+              (sync-integration-array-i64-addr ctx-b)))
             [(ThreadSpawnErr _) 7]
             [(ThreadSpawnOk b) (sync-integration-finish channel a b)])]))))
 

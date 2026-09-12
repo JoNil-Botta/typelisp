@@ -10,9 +10,11 @@
   (+ (backtrace-worker-leaf value) 1))
 
 (define (main) : i64
-  (match (thread.spawn backtrace-worker 42)
+  (match (unsafe
+    (thread.spawn backtrace-worker 42))
     [(ThreadSpawnErr _) 2]
     [(ThreadSpawnOk handle)
-      (match (thread.join handle)
+      (match (unsafe
+        (thread.join handle))
         [(ThreadJoinErr _) 3]
         [(ThreadJoinOk value) value])]))

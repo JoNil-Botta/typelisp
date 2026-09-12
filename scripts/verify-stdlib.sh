@@ -335,6 +335,7 @@ stdlib/tests/arena_policy_escape_string.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/comptime_api.tl|pass|-
 stdlib/tests/concurrency_registry_unsafe_reject.tl|fail|requires unsafe context
+stdlib/tests/concurrency_registry_test_helpers_reject.tl|fail|unbound name registry.concurrency-test-close-ok
 stdlib/tests/comptime_string_literal_reject.tl|fail|expr-string-value expects a string literal Expr
 stdlib/tests/args_api.tl|pass|-
 stdlib/tests/core_macros_api.tl|pass|-

@@ -143,8 +143,10 @@ Vec bang place macros as available yet.
   resource rows, 4,096 authority rows); each issued Box uses the constructor's
   active arena, so cross-thread wrappers must choose and retain a spanning
   atomic owner. Dropping an authority revokes its Box identity before that
-  arena can recycle storage. Resource words are available only to explicit
-  unsafe adapters. Checked sharing rejects the thread-owner family; typed
+  arena can recycle storage, even if the caller mutated the Box's scalar token.
+  Unchanged tokens use a direct slot lookup; cleanup of changed or forged tokens
+  may scan the bounded authority table. Resource words are available only to
+  explicit unsafe adapters. Checked sharing rejects the thread-owner family; typed
   task handles remain move-only.
   The existing `thread.tl` and `sync.tl` wrappers are not yet
   protected by this registry; #7718 tracks their migration.

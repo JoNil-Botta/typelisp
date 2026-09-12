@@ -43,6 +43,8 @@ reject_diag() {
             printf 'expr-string-value expects a string literal Expr' ;;
         stdlib/tests/concurrency_registry_unsafe_reject.tl)
             printf 'registry/concurrency-register requires unsafe context' ;;
+        stdlib/tests/concurrency_registry_test_helpers_reject.tl)
+            printf 'unbound name registry.concurrency-test-close-ok' ;;
         stdlib/tests/core_macros_cond_flat_reject.tl)
             printf 'typecheck: ExprClause macro operand expects bracket syntax' ;;
         stdlib/tests/core_macros_cond_missing_else.tl)

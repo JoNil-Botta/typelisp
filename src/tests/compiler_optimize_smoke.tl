@@ -4721,6 +4721,10 @@
       "compiler-optimize-runtime-call-identity-self-test"
       (compiler_optimize_tests.compiler-optimize-runtime-call-identity-self-test)
       42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-thread-facts-merge-self-test"
+      (compiler_optimize_tests.compiler-optimize-thread-facts-merge-self-test)
+      42)
     (smoke-optimizer-core-self-tests)
     (smoke-optimizer-loop-self-tests)
     (smoke-optimizer-late-self-tests)

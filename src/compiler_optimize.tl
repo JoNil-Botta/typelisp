@@ -54149,6 +54149,202 @@
           (opt-label-tail (compiler-opt-global-shared-view preds))
           (or changed step)))]))
 
+;; Does one of `merge`'s two successors dominate it? Then the edge onto that
+;; successor is a back edge and the merge is a latch of the loop it closes.
+(define (opt-thread-latch-merge?
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [merge-label : i64]
+  [true-label : i64]
+  [false-label : i64]) : bool
+  (match (opt-cfg-index-id (compiler-opt-global-shared-view index) merge-label)
+    [(option_i64.None) true]
+    [(option_i64.Some merge-id)
+      (or
+        (match (opt-cfg-index-id
+          (compiler-opt-global-shared-view index)
+          true-label)
+          [(option_i64.None) true]
+          [(option_i64.Some true-id)
+            (opt-dom-info-dominates-id?
+              (compiler-opt-global-shared-view doms)
+              true-id
+              merge-id)])
+        (match (opt-cfg-index-id
+          (compiler-opt-global-shared-view index)
+          false-label)
+          [(option_i64.None) true]
+          [(option_i64.Some false-id)
+            (opt-dom-info-dominates-id?
+              (compiler-opt-global-shared-view doms)
+              false-id
+              merge-id)]))]))
+
+;; JT-4. A merge of phis whose terminator is `branch %c` on a condition defined
+;; ABOVE the merge -- neither a phi of this block nor a compare in it -- is the
+;; shape a re-tested condition takes once gvn has unified the second compare
+;; with the first and the straightening has folded the merge and its branch
+;; into one block: `right = (if (< j hi) (ref j) 0)` followed by
+;; `(and (< j hi) ...)` in `rg-merge-run!` leaves `if_merge.11: %right = phi
+;; ...; branch %jlt, take, keep`, where `%jlt` was branched on two blocks
+;; above. Neither the mov scan (the predecessors define nothing) nor the JT-2
+;; rail (the merge jumps into no separate link) reaches it. Each predecessor
+;; edge is asked the rail's own question instead: the facts on its dominator
+;; chain (opt-thread-facts-collect!) decide `%c == true` or not, and a decided
+;; edge is redirected to the side it decided, dropping its phi inputs -- the
+;; merge's definitions must be re-expressible there
+;; (opt-thread-merge-defs-admissible?), and an edge whose side is the one exit
+;; that reads them stays. Nothing is cloned: the merge keeps the undecided
+;; edges and the branch they still need.
+;;
+;; A LATCH is left alone (opt-thread-latch-merge?): its phis and its branch are
+;; the loop's own shape, and an edge redirected around it moves the loop's
+;; exit or its back edge. Measured: `rg-count-conflicts`' outer latch threaded
+;; -- the header's exit edge straight to the function exit, the inner loop's
+;; exit straight to the header -- retired a compare that ran once per outer
+;; trip and cost a spill pair per outer trip (+3.27M); the compare a latch
+;; re-tests is the loop-carried one the allocator has already placed.
+(define (opt-thread-facts-preds-try!
+  [budget : (__tl_dyn-array i64)]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [uses : (__tl_dyn-array i64)]
+  [scratch : (__tl_dyn-array i64)]
+  [merge-label : i64]
+  [instrs : ir.CompilerIrInstrSeq]) : bool
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [phi-count : i64
+      (opt-thread-phi-prefix-count (compiler-opt-global-shared-view instrs) 0)]
+    (if (or (< count 2) (not (= count (+ phi-count 1))))
+      false
+      (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+        [(ir.CompilerIrInstr.Branch
+            (ir.CompilerIrValue.Var cond-var)
+            true-label
+            false-label)
+          (if (or
+            (= true-label false-label)
+            (= true-label merge-label)
+            (= false-label merge-label)
+            (>=
+              (opt-thread-phi-slot-for-var
+                (compiler-opt-global-shared-view instrs)
+                0
+                phi-count
+                cond-var)
+              0)
+            (opt-thread-latch-merge?
+              (compiler-opt-global-shared-view index)
+              (compiler-opt-global-shared-view doms)
+              merge-label
+              true-label
+              false-label))
+            false
+            (match (opt-thread-merge-defs-admissible?
+              (compiler-opt-global-shared-view index)
+              (compiler-opt-global-shared-view doms)
+              (compiler-opt-global-shared-view uses)
+              (compiler-opt-global-shared-view scratch)
+              (compiler-opt-global-shared-view instrs)
+              0
+              phi-count
+              (- count 1)
+              merge-label
+              true-label
+              false-label
+              (ir.compiler-ir-label-none))
+              [(OptThreadBlocked.No) false]
+              [(OptThreadBlocked.Some blocked)
+                (let
+                  [preds : OptLabelSet
+                    (opt-cfg-index-predecessors
+                      (compiler-opt-global-shared-view index)
+                      merge-label)]
+                  [pred-count : i64
+                    (opt-label-count (compiler-opt-global-shared-view preds))]
+                  [merge-rpo : i64
+                    (opt-phi-cmp-fold-label-rpo
+                      (compiler-opt-global-shared-view index)
+                      merge-label)]
+                  [facts : (__tl_dyn-array i64) (opt-thread-facts-new)]
+                  [i : i64 0]
+                  [changed : bool false]
+                  ;; Every predecessor must be forward of the merge (the JT-2
+                  ;; rail's rule): an edge arriving from below is a back edge,
+                  ;; the merge is a loop header, and redirecting that edge onto
+                  ;; one of the header's arms would enter the loop body past
+                  ;; its header -- a second entry, not a retired compare.
+                  (if (or
+                    (< pred-count 2)
+                    (< merge-rpo 0)
+                    (not
+                      (opt-phi-cmp-fold-preds-forward?
+                        (compiler-opt-global-shared-view index)
+                        (compiler-opt-global-shared-view preds)
+                        merge-rpo)))
+                    false
+                    (begin
+                      (while (< i pred-count)
+                        (let
+                          [origin : i64
+                            (opt-label-ref
+                              (compiler-opt-global-shared-view preds)
+                              i)]
+                          (begin
+                            (opt-thread-facts-collect!
+                              (compiler-opt-global-shared-view facts)
+                              (compiler-opt-global-shared-view index)
+                              (compiler-opt-global-shared-view doms)
+                              origin
+                              merge-label)
+                            (match (opt-thread-facts-decide-eq
+                              (compiler-opt-global-shared-view facts)
+                              cond-var
+                              1)
+                              [(OptMaybeBool.No) unit]
+                              [(OptMaybeBool.Some known)
+                                (let
+                                  [target : i64
+                                    (if known
+                                      true-label
+                                      false-label)]
+                                  (when
+                                    (not (= target blocked))
+                                    (when
+                                      (opt-thread-apply-edge-budgeted!
+                                        (compiler-opt-global-shared-view budget)
+                                        (compiler-opt-global-shared-view index)
+                                        (compiler-opt-global-shared-view uses)
+                                        origin
+                                        (OptThreadVia.Nil)
+                                        merge-label
+                                        target
+                                        (compiler-opt-global-shared-view instrs)
+                                        phi-count
+                                        phi-count
+                                        (opt-thread-drop-all-phi-inputs))
+                                      (begin
+                                        (when
+                                          (and
+                                            compiler-opt-debug-trace-passes
+                                            (not compiler-opt-debug-suppressed?))
+                                          (io.print-error
+                                            (str_cat.str-cat
+                                              "facts-thread|origin="
+                                              (ir.compiler-ir-label-text origin)
+                                              "|merge="
+                                              (ir.compiler-ir-label-text
+                                                merge-label)
+                                              "|exit="
+                                              (ir.compiler-ir-label-text target)
+                                              "\n")))
+                                        (set! changed true)))))])
+                            (set! i (+ i 1)))))
+                      changed)))]))]
+        [_ false]))))
+
 (define (opt-thread-try-block!
   [budget : (__tl_dyn-array i64)]
   [type-segment-bases : i64]
@@ -54170,16 +54366,26 @@
           merge-label
           (compiler-opt-global-shared-view instrs))
           [(OptThreadMerge.No)
-            ;; JT-2: a merge of phis that jumps into a compare run.
-            (opt-thread-phi-chain-try!
-              (compiler-opt-global-shared-view budget)
-              type-segment-bases
-              (compiler-opt-global-shared-view index)
-              (compiler-opt-global-shared-view doms)
-              (compiler-opt-global-shared-view uses)
-              (compiler-opt-global-shared-view scratch)
-              merge-label
-              (compiler-opt-global-shared-view instrs))]
+            ;; JT-2: a merge of phis that jumps into a compare run; JT-4: a
+            ;; merge of phis whose own branch reads a condition decided above.
+            (or
+              (opt-thread-phi-chain-try!
+                (compiler-opt-global-shared-view budget)
+                type-segment-bases
+                (compiler-opt-global-shared-view index)
+                (compiler-opt-global-shared-view doms)
+                (compiler-opt-global-shared-view uses)
+                (compiler-opt-global-shared-view scratch)
+                merge-label
+                (compiler-opt-global-shared-view instrs))
+              (opt-thread-facts-preds-try!
+                (compiler-opt-global-shared-view budget)
+                (compiler-opt-global-shared-view index)
+                (compiler-opt-global-shared-view doms)
+                (compiler-opt-global-shared-view uses)
+                (compiler-opt-global-shared-view scratch)
+                merge-label
+                (compiler-opt-global-shared-view instrs)))]
           [(OptThreadMerge.Some
               cond-var
               phi-slot

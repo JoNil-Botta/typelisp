@@ -98012,6 +98012,131 @@
 
 ;; Returns 42 only when the edges the facts decide leave, the rest collapse
 ;; onto the one exit that reads the merge, and the two-reader variant refuses.
+;; --- JT-4: a merge whose own branch re-tests a condition decided above -----
+;;
+;; `entry` branches on `%4 = eq %0, 0` into `a` and `b`; both jump to `merge`,
+;; which holds one phi and branches on the same `%4` again. `take` reads the
+;; phi, `keep` does not. The `b` edge decides `%4` false and goes to `keep`
+;; directly; the `a` edge decides true, but `take` is the one exit that reads
+;; the merge's phi, so it stays and the merge keeps its branch for it. The
+;; latch variant puts the same merge at the bottom of a loop -- its true side
+;; is the loop header -- and nothing moves.
+(define (opt-jt4-tail [latch? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-pcf-block
+      "a"
+      (opt-test-instrs (opt-pcc-mov-literal 5 1) (opt-pcf-jump "merge")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-pcf-block
+        "b"
+        (opt-test-instrs (opt-pcc-mov-literal 6 2) (opt-pcf-jump "merge")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-pcf-block
+          "merge"
+          (opt-test-instrs
+            (opt-jt2-phi
+              7
+              (opt-jt2-input
+                (opt-jt2-var 5)
+                "a"
+                (opt-jt2-input
+                  (opt-jt2-var 6)
+                  "b"
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
+            (if latch?
+              (opt-pcc-branch 4 "head" "keep")
+              (opt-pcc-branch 4 "take" "keep"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-pcf-block
+            "take"
+            (opt-test-instrs (opt-pcc-mov 8 7) (opt-pcf-return true)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-pcf-block "keep" (opt-test-instrs (opt-pcf-return false)))
+            (compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+;; The latch variant routes through a loop header `head`; the plain one has no
+;; such block, so `a` and `b` are entered from the entry branch alone.
+(define (opt-jt4-blocks [latch? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (if latch?
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-pcf-block
+        "entry"
+        (opt-test-instrs
+          (opt-jt2-eq 4 (opt-jt2-var 0) (opt-jt2-lit 0))
+          (opt-pcf-jump "head")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-pcf-block
+          "head"
+          (opt-test-instrs
+            (opt-jt2-phi
+              9
+              (opt-jt2-input
+                (opt-jt2-lit 0)
+                "entry"
+                (opt-jt2-input
+                  (opt-jt2-var 7)
+                  "merge"
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
+            (opt-pcc-branch 4 "a" "b")))
+        (opt-jt4-tail true)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-pcf-block
+        "entry"
+        (opt-test-instrs
+          (opt-jt2-eq 4 (opt-jt2-var 0) (opt-jt2-lit 0))
+          (opt-pcc-branch 4 "a" "b")))
+      (opt-jt4-tail false))))
+
+(define (compiler-optimize-thread-facts-merge-self-test) : i64
+  (let
+    [threaded : compiler_ir_types.CompilerIrBlockList
+      (opt-thread-pass-blocks (opt-jt4-blocks false) 4)]
+    [latched : compiler_ir_types.CompilerIrBlockList
+      (opt-thread-pass-blocks (opt-jt4-blocks true) 4)]
+    (cond
+      [(not (opt-thread-pass-changed? (opt-jt4-blocks false) 4)) 1]
+      ;; `b` decides the re-test false and skips the merge
+      [(not
+          (opt-pcf-jumps-to?
+            (compiler_ir_types.compiler-ir-global-shared-view threaded)
+            "b"
+            "keep"))
+        2]
+      ;; `a` decides it true, but `take` reads the merge's phi: it stays
+      [(not
+          (opt-pcf-jumps-to?
+            (compiler_ir_types.compiler-ir-global-shared-view threaded)
+            "a"
+            "merge"))
+        3]
+      ;; the same merge as a loop latch is left alone, and the header it
+      ;; closes -- a merge with a back-edge predecessor -- keeps its arms
+      [(not
+          (opt-pcf-jumps-to?
+            (compiler_ir_types.compiler-ir-global-shared-view latched)
+            "a"
+            "merge"))
+        4]
+      [(not
+          (opt-pcf-jumps-to?
+            (compiler_ir_types.compiler-ir-global-shared-view latched)
+            "b"
+            "merge"))
+        5]
+      [(not
+          (opt-jt2-branches-true-to?
+            (compiler_ir_types.compiler-ir-global-shared-view latched)
+            "merge"
+            "head"))
+        6]
+      [(not
+          (opt-jt2-branches-true-to?
+            (compiler_ir_types.compiler-ir-global-shared-view latched)
+            "head"
+            "a"))
+        7]
+      [else 42])))
+
 (define (compiler-optimize-thread-phi-chain-self-test) : i64
   (let
     [threaded : compiler_ir_types.CompilerIrBlockList

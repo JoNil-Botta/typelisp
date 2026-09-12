@@ -32,6 +32,7 @@ reference_region_defined|check-ok|tests/safety/reference_region_defined.tl|-|-
 signature_lifetime_alias_reborrow_ok|run-exit|tests/safety/signature_lifetime_alias_reborrow_ok.tl|42|-
 raw_pointer_values_defined|check-ok|tests/safety/raw_pointer_values_defined.tl|-|-
 private_array_data_safe_reject|check-fail|tests/safety/private_array_data_safe_reject.tl|-|typecheck: __tl_array-data requires unsafe context
+rsa_verify_digest_as_message_reject|check-fail|tests/safety/rsa_verify_digest_as_message_reject.tl|-|expected (& message bytes), found (& digest stdlib.crypto_sha256/Sha256Digest)
 shared_view_bridge_reinterpret_reject|check-fail|tests/safety/shared_view_bridge_reinterpret_reject.tl|-|typecheck: unbound name __tl-compiler-owned-shared-view-dyn-ref-as
 shared_view_bridge_alias_reject|check-fail|tests/safety/shared_view_bridge_alias_reject.tl|-|typecheck: unbound name core.__tl-compiler-owned-shared-view-dyn-ref-as
 shared_view_bridge_owner_reject|check-fail|tests/safety/shared_view_bridge_owner_reject.tl|-|typecheck: unbound name __tl-compiler-owned-shared-view-dyn-ref-as

@@ -2,7 +2,7 @@
 ;; one-optimization object-or-assembly emission.
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
-(import stdlib.io)
+(cfg test (import stdlib.io))
 (import stdlib.text_buf)
 (import stdlib.string)
 (import stdlib.vector)

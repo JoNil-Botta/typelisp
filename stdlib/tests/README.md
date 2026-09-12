@@ -393,6 +393,8 @@ Inline stdlib coverage:
   unsafe context.
 - `profile.tl` owns inline tests for monotonic timestamp shape and allocator
   counter monotonicity around an observable allocation.
+- `profile_concurrent_api.tl` samples all public profile clocks from three
+  threads and checks their shape without relying on elapsed-time thresholds.
 - `time.tl` owns inline tests for Unix wall-clock range, monotonic timestamp
   shape, and structured `ResultTimeMs` error/fallback helpers.
 - `msvc_api.tl` owns standalone tests for pure MSVC discovery helpers with

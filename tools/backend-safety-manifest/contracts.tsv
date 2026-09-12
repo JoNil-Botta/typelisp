@@ -1,0 +1,81 @@
+contract	targets	optimizer_effect	memory	access	provenance	ordering	failure	abi	obligation
+value_move	both	Pure	none	typed-value	typed-source	reorderable-if-dataflow	none	internal	preserve type width and bits
+allocate	both	MemoryWrite	write	checked-byte-count+alignment	fresh-arena-owner	effect-barrier	allocation-failure-abort	internal	check size overflow before allocation and establish owner lifetime
+address_of	both	Pure	none	address-only	live-place	reorderable-if-dataflow	none	internal	derive address without dereference and retain place provenance
+gep	both	Pure	none	scaled-offset-no-deref	base-provenance	reorderable-if-dataflow	deferred-deref-trap	internal	preserve scaled offset and downstream bounds dominance
+own_root	both	Pure	none	ownership-edge	fresh-private-root	proof-only	none	internal	new root must not alias a cleanup owner
+typed_load	both	MemoryRead	read	type-width+alignment	valid-initialized-referent	alias-guarded	invalid-raw-pointer-is-unsafe	internal	load only from initialized live range of the declared type
+owned_load	both	MemoryRead	read	type-width+alignment	checked-owner-edge	alias-guarded	none	internal	retain owner capability and forbid stale borrowed handles
+owned_store	both	MemoryWrite	write	type-width+alignment	checked-move-into-owner	effect-barrier	none	internal	move exactly once into fresh owned field
+typed_store	both	MemoryWrite	write	type-width+alignment	live-typed-place	effect-barrier	none	internal	store only into live aligned place with checked ownership
+raw_store	both	MemoryWrite	write	type-width+alignment	unsafe-pointer	effect-barrier	invalid-pointer-is-unsafe	internal	caller proves range alignment initialization and lifetime
+copy_bytes	both	MemoryWrite	read+write	explicit-byte-count	live-src+dst	effect-barrier	invalid-range-is-unsafe	internal	copy exact count without silently changing overlap semantics
+bounds_check	both	ControlFlow	none	index+length	checked-aggregate	trap-dominates-access	out-of-bounds-abort	internal	abort precedes every dependent memory access
+cast_value	both	Pure	none	source+target-width	typed-source	reorderable-if-dataflow	operator-specific	internal	preserve specified conversion and overflow behavior
+bitcast_value	both	Pure	none	equal-representation	typed-source	reorderable-if-dataflow	unsupported-shape-reject	internal	preserve bits and reject incompatible layouts
+binary_value	both	Pure	none	operator-width	typed-operands	reorderable-if-dataflow	fatal-subset-owned-by-7608	internal	arithmetic edge conditions are not inferred from optimizer purity
+unary_value	both	Pure	none	operator-width	typed-operand	reorderable-if-dataflow	none	internal	preserve width sign and floating behavior
+lane_id	both	Pure	none	lane-width	active-gang	mode-observable	none	spmd-private	result follows selected gang and lane identity
+simd_value	both	Pure	none	element-width+lane-count	active-mask	mode-observable	operator-specific	spmd-private	inactive lanes cannot affect observable results
+simd_prefix	both	Pure	none	lane-count+carry	active-mask	ordered-lanes	none	spmd-private	inclusive carry seed and lane order match scalar reference
+simd_reduce	both	Pure	none	lane-count	active-mask	mode-observable	none	spmd-private	reduce only active lanes with specified tree
+simd_mask	both	Pure	none	mask-width	active-mask	mode-observable	none	spmd-private	preserve mask truth and inactive-lane isolation
+simd_load	both	MemoryRead	read	element-width+lane-count	live-array	alias-guarded+all-lanes-active	bounds-abort-active-only	spmd-private	full-width access requires all lanes active; tails use predicated load
+simd_store	both	MemoryWrite	write	element-width+lane-count	live-array	effect-barrier+all-lanes-active	bounds-abort-active-only	spmd-private	full-width access requires all lanes active; tails use predicated store
+pred_load	both	MemoryRead	read	element-width+lane-mask	live-array	alias-guarded+active-mask	bounds-abort-active-only	spmd-private	masked-off lane must not issue a memory read
+pred_store	both	MemoryWrite	write	element-width+lane-mask	live-array	effect-barrier+active-mask	bounds-abort-active-only	spmd-private	masked-off lane must not issue a memory write
+gather_load	both	MemoryRead	read	per-lane-index+width	live-array	alias-guarded+active-mask	bounds-abort-active-only	spmd-private	validate each active lane address before access
+vector_shuffle	both	Unknown	none	selector+lane-count	active-mask	effect-barrier	selector-abort	spmd-private	invalid active selector aborts and inactive selector is unobserved
+tail_mask	both	Pure	none	start+end+lane-count	active-gang	mode-observable	none	spmd-private	mask exactly the active tail range
+entry_read	both	MemoryRead	read	pointer-width	process-entry-storage	stable-input	none	platform-entry	read argc argv envp only from initialized entry state
+cpu_probe	both	CpuProbe	none	cpu-registers	host-cpu	nonremovable	none	x86_64	preserve probe results and required ordering
+syscall	linux-x86_64	Unknown	unknown	syscall-operands	unsafe-os-boundary	effect-barrier	kernel-result	linux-syscall	unsafe caller owns kernel ABI and pointer validity
+internal_call	both	DynamicCall	unknown	signature-dependent	typed-function	effect-barrier	callee-dependent	typelisp	marshal arguments results clobbers and owner moves by signature
+indirect_call	both	Unknown	unknown	signature-dependent	typed-callable	effect-barrier	callee-dependent	typelisp	preserve callable effect and descriptor lifetime
+foreign_call	both	Unknown	unknown	target-c-signature	unsafe-foreign-pointer	effect-barrier	foreign-dependent	c-abi	validate supported target signature stack class and clobbers
+foreign_aggregate_call	linux-x86_64	Unknown	write	classified-result-slots	unsafe-foreign-pointer	effect-barrier	foreign-dependent	sysv-c	store classified return registers at exact aggregate offsets
+spmd_call	both	Unknown	unknown	masked-arg-shape	active-mask	effect-barrier	callee-dependent	spmd-private	match private masked signature and preserve active lanes
+tail_call	both	ControlFlow	unknown	signature-dependent	typed-callable	terminator	callee-dependent	typelisp	restore frame and ownership before transferring control
+control_flow	both	ControlFlow	none	branch-target	typed-condition	terminator	none	internal	preserve selected successor and exhaustive-match proof
+return_value	both	ControlFlow	unknown	return-class	typed-result	terminator	none	target-abi	restore callee-saved state and return classified value
+phi_value	both	Pure	none	incoming-type	cfg-predecessor	edge-specific	none	internal	select matching predecessor without dropping ownership
+pack_words	both	Pure	none	word-count+layout	typed-group	reorderable-if-dataflow	none	internal	preserve low-word-first group shape and owner provenance
+word_extract	both	Pure	none	word-index	typed-group	reorderable-if-dataflow	invalid-index-reject	internal	extract only existing group word
+binary_pure	both	n/a	none	operator-width	typed-operands	reorderable-if-dataflow	none	internal	preserve signedness width and floating edge cases
+binary_divrem	both	n/a	none	operator-width	typed-operands	fatal-order-pending-7608	division-abort-or-safe-form	internal	safe-code divide failure cannot be elided by pure effect
+binary_shift	both	n/a	none	shift-width	typed-operands	fatal-order-pending-7608	shift-abort	internal	out-of-range shift count must abort before emission
+unary_op	both	n/a	none	operator-width	typed-operand	reorderable-if-dataflow	none	internal	preserve sign bitwise and sqrt semantics
+vector_op	both	n/a	none	lane-width	active-mask	mode-observable	none	spmd-private	match scalar active-lane semantics
+spmd_class	both	n/a	none	lane-shape	active-mask	mode-observable	none	spmd-private	class identity controls register and mask layout
+c_return_slot	linux-x86_64	n/a	none	slot-offset+class	classified-aggregate	ordered-abi	unsupported-class-reject	sysv-c	slot offset matches source aggregate layout
+c_eightbyte	linux-x86_64	n/a	none	eightbyte-class	classified-aggregate	ordered-abi	unsupported-class-reject	sysv-c	integer and SSE classes are preserved per eightbyte
+c_aggregate	both	n/a	none	aggregate-size+alignment	repr-c-or-supported-layout	ordered-abi	unsupported-class-reject	c-abi	register memory byref and sret routes match target classifier
+object_label	both	n/a	none	symbol-offset	defined-symbol	emission-order	duplicate-symbol-reject	object	label names resolve to exact section offsets
+object_call	both	n/a	unknown	rel32-target	resolved-symbol	control-effect	range-or-symbol-reject	object	relocation preserves call versus tail-call target semantics
+object_branch	both	n/a	none	rel32-target	resolved-label	control-effect	range-or-symbol-reject	object	conditional and unconditional edges retain target identity
+object_rip_read	both	n/a	read	fixed-width-rip-relative	resolved-data-symbol	ordered-memory	range-or-symbol-reject	object	RIP displacement resolves within encoded range
+object_rip_address	both	n/a	none	fixed-width-rip-relative	resolved-data-symbol	ordered-address	range-or-symbol-reject	object	LEA computes symbol address without reading the target
+object_rip_write	both	n/a	write	fixed-width-rip-relative	resolved-data-symbol	ordered-memory	range-or-symbol-reject	object	RIP displacement and store width preserve data layout
+object_rip_rmw	both	n/a	read+write	fixed-width-rip-relative	resolved-data-symbol	ordered-memory	range-or-symbol-reject	object	read-modify-write retains exact width and target address
+object_stack	both	n/a	none	stack-delta	aligned-live-frame	ordered-abi	caller-frame-probe-required	object	stack adjustment preserves call-site alignment and shadow space
+object_register	both	n/a	none	fixed-register-width	live-register	ordered-abi	none	object	register move respects target clobber and value class
+object_bytes	both	n/a	unknown	explicit-byte-sequence	trusted-encoder	ordered-emission	invalid-encoding-reject	object	opaque bytes require checked producer and range validation
+object_raw_elf	linux-x86_64	n/a	unknown	opaque-raw-bytes	trusted-elf-producer	ordered-emission	coff-route-reject	elf	raw bytes are rejected by COFF and admitted only by ELF route
+data_record	both	n/a	write	record-width	section-owned-storage	ordered-layout	overflow-reject	object	physical extent and serializer offsets agree
+data_rva	windows-x86_64	n/a	write	u32-rva	resolved-image-symbol	ordered-layout	range-or-symbol-reject	coff	RVA relocation fits 32 bits and target is image-relative
+reloc_pc	both	n/a	write	rel32	resolved-symbol	link-time	range-or-symbol-reject	object	PC-relative displacement fits encoding and names one target
+reloc_abs	both	n/a	write	u64-address	resolved-symbol	link-time	range-or-symbol-reject	object	absolute relocation writes exact pointer width
+reloc_rva	windows-x86_64	n/a	write	u32-rva	resolved-image-symbol	link-time	range-or-symbol-reject	coff	image-relative relocation fits target field
+object_section	both	n/a	write	section-alignment	owned-records	ordered-layout	overflow-reject	object	section extent and symbol offsets remain consistent
+object_section_win	windows-x86_64	n/a	write	section-alignment	owned-records	ordered-layout	overflow-reject	coff	Windows unwind and resource sections retain PE applicability
+object_symbol	both	n/a	none	symbol-kind	resolved-or-extern	link-time	duplicate-or-missing-reject	object	binding kind and target section are not conflated
+sysv_abi	linux-x86_64	n/a	read+write	sysv-arg-return-class	typed-call	ordered-abi	unsupported-signature-reject	sysv	six GP and eight SSE argument registers; sixteen-byte call alignment; caller-save and return class preserved
+win64_abi	windows-x86_64	n/a	read+write	win64-arg-return-class	typed-call	ordered-abi	unsupported-signature-reject	win64	four positional registers; 32-byte shadow space; sixteen-byte call alignment; nonvolatile GP and XMM preserved
+backend_scalar	both	n/a	none	scalar-lane	typed-program	mode-observable	none	backend	scalar reference preserves source active program order
+backend_avx2	both	n/a	read+write	vector-lane	active-mask	mode-observable	unsupported-shape-reject	backend	AVX2 memory and masked semantics match scalar reference
+backend_avx512	both	n/a	read+write	vector-lane	active-mask	mode-observable	unsupported-shape-reject	backend	AVX512 masked memory never touches inactive lanes
+object_abi_context	both	n/a	read+write	scalar-intlike-subset	typed-call	ordered-abi	unsupported-signature-reject	object	fail closed outside currently witnessed direct-object call entry return subset
+scratch_gp	both	n/a	none	gp-register	live-interval	ordered-abi	spill-or-reject	regalloc	scratch home must not overlap live owner or reserved target register
+scratch_xmm	both	n/a	none	xmm-register	live-interval	ordered-abi	spill-or-reject	regalloc	XMM scratch home must respect vector class and caller clobber
+scratch_fixed	both	n/a	none	fixed-register	live-interval	ordered-abi	spill-or-reject	regalloc	fixed RAX RDX RCX reservations exclude competing live values
+scratch_role	both	n/a	none	constraint-carried-register-class	live-interval	ordered-abi	spill-or-reject	regalloc	per-instance class allowed excluded and fixed homes cannot overlap live owner values

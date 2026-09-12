@@ -54,8 +54,14 @@
   [a : Thread]
   [b : Thread]) : i64
   (let
-    [a-code : i64 (atomic-counter-join-code (thread.join a))]
-    [b-code : i64 (atomic-counter-join-code (thread.join b))]
+    [a-code : i64
+      (atomic-counter-join-code
+        (unsafe
+          (thread.join a)))]
+    [b-code : i64
+      (atomic-counter-join-code
+        (unsafe
+          (thread.join b)))]
     [value : i64 (atomic-counter-final-value counter)]
     (cond
       [(not (= a-code 0)) 1]
@@ -75,13 +81,15 @@
       (atomic-counter-write-slot! (&mut ctx-a) 1 atomic-counter-iterations)
       (atomic-counter-write-slot! (&mut ctx-b) 0 counter-addr)
       (atomic-counter-write-slot! (&mut ctx-b) 1 atomic-counter-iterations)
-      (match (thread.spawn
-        atomic-counter-worker
-        (atomic-counter-array-i64-addr ctx-a))
+      (match (unsafe
+        (thread.spawn
+          atomic-counter-worker
+          (atomic-counter-array-i64-addr ctx-a)))
         [(ThreadSpawnErr _) 4]
         [(ThreadSpawnOk a)
-          (match (thread.spawn
-            atomic-counter-worker
-            (atomic-counter-array-i64-addr ctx-b))
+          (match (unsafe
+            (thread.spawn
+              atomic-counter-worker
+              (atomic-counter-array-i64-addr ctx-b)))
             [(ThreadSpawnErr _) 5]
             [(ThreadSpawnOk b) (atomic-counter-finish counter a b)])]))))

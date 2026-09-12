@@ -1,3 +1,5 @@
+;; Raw round-trips pack only freshly created handles into arrays of the exact
+;; field count, reload before close, and do not retain an active waiter.
 (import stdlib.arena)
 (import stdlib.sync)
 (import (sync.channel i64) as channel_i64)
@@ -19,7 +21,8 @@
   (let
     [raw : (__tl_dyn-array i64)
       (__tl_make-array i64 (channel_i64.raw-field-count))]
-    (channel_i64.load-raw raw 0)))
+    (unsafe
+      (channel_i64.load-raw raw 0))))
 
 (define (sync-api-duplicate-channel-score
   [_channel : channel_i64_again.Channel]) : i64
@@ -32,9 +35,12 @@
     [packed : (__tl_dyn-array i64)
       (__tl_make-array i64 (channel_i64.raw-field-count))]
     (begin
-      (channel_i64.store-raw! channel (&mut packed) 0)
+      (unsafe
+        (channel_i64.store-raw! channel (&mut packed) 0))
       (let
-        [loaded : channel_i64.Channel (channel_i64.load-raw packed 0)]
+        [loaded : channel_i64.Channel
+          (unsafe
+            (channel_i64.load-raw packed 0))]
         [send-a : bool (channel_i64.send-value-ok? loaded 11)]
         [send-b : bool (channel_i64.send-value-ok? loaded 31)]
         [first : i64 (channel_i64.recv-or loaded -1)]
@@ -63,10 +69,12 @@
     [packed : (__tl_dyn-array i64)
       (__tl_make-array i64 sync.channel-i64-pair-raw-field-count)]
     (begin
-      (sync.channel-i64-pair-store-raw! channel (&mut packed) 0)
+      (unsafe
+        (sync.channel-i64-pair-store-raw! channel (&mut packed) 0))
       (let
         [loaded : sync.ChannelI64PairChannel
-          (sync.channel-i64-pair-load-raw packed 0)]
+          (unsafe
+            (sync.channel-i64-pair-load-raw packed 0))]
         [first-msg : sync.ChannelI64Pair (sync.ChannelI64Pair 5 7)]
         [second-msg : sync.ChannelI64Pair (sync.ChannelI64Pair 11 13)]
         [third-msg : sync.ChannelI64Pair (sync.ChannelI64Pair 17 19)]
@@ -97,9 +105,12 @@
     [packed : (__tl_dyn-array i64)
       (__tl_make-array i64 sync.channel-string-raw-field-count)]
     (begin
-      (sync.channel-string-store-raw! channel (&mut packed) 0)
+      (unsafe
+        (sync.channel-string-store-raw! channel (&mut packed) 0))
       (let
-        [loaded : sync.ChannelString (sync.channel-string-load-raw packed 0)]
+        [loaded : sync.ChannelString
+          (unsafe
+            (sync.channel-string-load-raw packed 0))]
         [send-a : bool
           (sync.channel-string-send-value-ok?
             loaded
@@ -137,9 +148,12 @@
     [packed : (__tl_dyn-array i64)
       (__tl_make-array i64 (mutex_i64.raw-field-count))]
     (begin
-      (mutex_i64.store-raw! mutex (&mut packed) 0)
+      (unsafe
+        (mutex_i64.store-raw! mutex (&mut packed) 0))
       (let
-        [loaded : mutex_i64.Mutex (mutex_i64.load-raw packed 0)]
+        [loaded : mutex_i64.Mutex
+          (unsafe
+            (mutex_i64.load-raw packed 0))]
         [first : i64
           (with
             ([guard (mutex_i64.lock loaded) mutex_i64.unlock])

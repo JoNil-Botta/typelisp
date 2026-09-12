@@ -706,3 +706,20 @@ loop_mut_borrow_stored_return_ok|check-ok|tests/safety/loop_mut_borrow_stored_re
 loop_mut_borrow_stored_break_reject|check-fail|tests/safety/loop_mut_borrow_stored_break_reject.tl|-|cannot assign to borrowed place `items[0]`
 loop_mut_borrow_return_or_continue_ok|check-ok|tests/safety/loop_mut_borrow_return_or_continue_ok.tl|-|-
 loop_mut_borrow_continue_edge_reject|check-fail|tests/safety/loop_mut_borrow_continue_edge_reject.tl|-|cannot assign to borrowed place `items[0]`
+
+# Raw thread/sync effects stay on the adapters, including generated modules.
+thread_raw_spawn_safe_reject|check-fail|tests/safety/thread_raw_spawn_safe_reject.tl|-|thread/spawn requires unsafe context
+thread_raw_result_projection_safe_reject|check-fail|tests/safety/thread_raw_result_projection_safe_reject.tl|-|thread/spawn-result-handle-or requires unsafe context
+thread_raw_address_safe_reject|check-fail|tests/safety/thread_raw_address_safe_reject.tl|-|thread/addr->mut-i64 requires unsafe context
+thread_raw_timespec_safe_reject|check-fail|tests/safety/thread_raw_timespec_safe_reject.tl|-|thread/linux-monotonic-ms requires unsafe context
+thread_raw_callable_launder_reject|check-fail|tests/safety/thread_raw_callable_launder_reject.tl|-|thread/semaphore-close is an unsafe callable and cannot be used as a plain function value
+thread_raw_semaphore_safe_reject|check-fail|tests/safety/thread_raw_semaphore_safe_reject.tl|-|thread/semaphore-close requires unsafe context
+sync_raw_atomic_safe_reject|check-fail|tests/safety/sync_raw_atomic_safe_reject.tl|-|sync/atomic-i64-load requires unsafe context
+sync_raw_free_safe_reject|check-fail|tests/safety/sync_raw_free_safe_reject.tl|-|sync/runtime-free requires unsafe context
+sync_raw_channel_record_safe_reject|check-fail|tests/safety/sync_raw_channel_record_safe_reject.tl|-|sync/i64-channel-send requires unsafe context
+sync_raw_mutex_record_safe_reject|check-fail|tests/safety/sync_raw_mutex_record_safe_reject.tl|-|sync/i64-mutex-lock requires unsafe context
+sync_raw_callable_launder_reject|check-fail|tests/safety/sync_raw_callable_launder_reject.tl|-|sync/atomic-i64-load is an unsafe callable and cannot be used as a plain function value
+sync_generated_raw_alias_safe_reject|check-fail|tests/safety/sync_generated_raw_alias_safe_reject.tl|-|channel_alias/load-raw requires unsafe context
+sync_generated_mutex_raw_safe_reject|check-fail|tests/safety/sync_generated_mutex_raw_safe_reject.tl|-|mutex_alias/load-raw requires unsafe context
+thread_sync_raw_explicit_unsafe_ok|check-ok|tests/safety/thread_sync_raw_explicit_unsafe_ok.tl|-|-
+thread_sync_typed_safe_control_ok|check-ok|tests/safety/thread_sync_typed_safe_control_ok.tl|-|-

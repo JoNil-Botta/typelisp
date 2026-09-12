@@ -410,6 +410,8 @@ Vec bang place macros as available yet.
   active arena. The module also exposes borrowed and owned string less-than
   helpers. Import it with `(import stdlib.sort)`.
 - `sync.tl`: semaphore-backed synchronization helpers over `thread.tl`.
+  The [effect inventory](../docs/thread-sync-unsafe-effects.md) records raw
+  boundaries and the typed-operation proofs.
   `(channel i64)` emits a bounded `channel_i64.Channel` module whose queued
   scalar messages live in runtime-owned OS memory. `ChannelI64PairChannel` moves
   two-field `ChannelI64Pair` messages; `ChannelString` moves atomic-arena-owned
@@ -418,6 +420,9 @@ Vec bang place macros as available yet.
   cleanup-owned lexical guard and rejects close while guards or lock attempts
   are live. It also exposes raw `i64` pointer atomic load/store/add/fetch-add/CAS
   wrappers for synchronization internals. Import it with `(import stdlib.sync)`
+  only inside explicit `unsafe` when calling raw address/slot atomics,
+  semaphore-handle adapters, allocation/free, or raw handle load/store.
+  Typed channel/mutex create, send/recv, lock/guard and close remain safe.
   and instantiate with `(import (sync.channel i64) as channel_i64)` or
   `(import (sync.mutex i64) as mutex_i64)`. Generated modules expose
   `raw-field-count` as a zero-argument accessor; channels also expose
@@ -628,7 +633,9 @@ Vec bang place macros as available yet.
   copied exactly once into that owner before publication; callers never
   handle compiler-private backing storage. Linux uses raw clone/futex/eventfd
   syscalls; Windows uses kernel32 threads and semaphores. Import it with
-  `(import stdlib.thread)`.
+  `(import stdlib.thread)`. Raw integer-context spawn/join/wait and OS-handle
+  semaphore operations require explicit `unsafe`; generated typed task
+  handles and aggregate task wrappers remain safe.
 - `time.tl`: portable millisecond timestamp helpers separate from profiling
   counters. `unix-ms` returns wall-clock Unix epoch milliseconds and
   `monotonic-ms` returns monotonic elapsed milliseconds, both as

@@ -167,11 +167,10 @@
 ;;   that is never released cannot reintroduce one, and it needs no
 ;;   head-tracking to keep an overflow segment reachable for a destroy that
 ;;   does not happen (H4).
-;; * The retention is exactly two 8-word arrays and, at most, one failure
-;;   message per process. Transient load working memory -- the payload byte
-;;   copy and the parse, which are megabytes -- deliberately stays in the
-;;   caller's current arena and is still dropped with it, so this does not move
-;;   the macro-walk peak.
+;; * The retention is two 8-word arrays, the loader's one-element liveness
+;;   cell, and at most one failure message per process. The payload byte copy
+;;   and parse, which are megabytes, remain in the caller's current arena and
+;;   are dropped with it, so this does not move the macro-walk peak.
 (define compiler-embedded-stdlib-tlci-session-arena-handle : i64
   0)
 

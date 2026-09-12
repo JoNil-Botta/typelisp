@@ -21,6 +21,14 @@ Compilation is one whole program per executable with import-graph dedup
 codegen'd once into archives; an in-process session cache warms compiler
 pools across compiles within one process (batch and LSP paths).
 
+The compiler also has a pure, versioned incremental-query identity layer. It
+canonicalizes typed source, logical-name, dependency, package/stdlib,
+configuration, macro/comptime, target, and ordered-child inputs into a bounded
+binary transcript and exact SHA-256 fingerprint. The layer is relocatable and
+independent of cache storage: callers supply authority-checked package-relative
+paths and nominal compiler/child identities, while event capture, invalidation,
+result serialization, and reuse policy remain separate compiler services.
+
 Handwritten runtime, startup, and direct-object x86-64 code is covered by the
 closed [compiler-owned executable template registry](compiler-x64-executable-templates.md).
 It records mutation-sensitive source identities and typed control/frame events

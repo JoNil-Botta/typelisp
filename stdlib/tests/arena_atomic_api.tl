@@ -1,3 +1,5 @@
+;; Raw worker contexts are eight-byte i64 cells in a spanning atomic arena.
+;; The owner remains live until every spawned worker has joined.
 (import stdlib.arena)
 (import stdlib.thread)
 
@@ -119,13 +121,19 @@
 
 (define (arena-atomic-thread-or [spawn : thread.ThreadSpawnResult]) : thread.Thread
   (thread.Thread
-    (thread.spawn-result-handle-or (& spawn) 0)
-    (thread.spawn-result-clear-tid-addr-or (& spawn) 0)
-    (thread.spawn-result-result-addr-or (& spawn) 0)
+    (unsafe
+      (thread.spawn-result-handle-or (& spawn) 0))
+    (unsafe
+      (thread.spawn-result-clear-tid-addr-or (& spawn) 0))
+    (unsafe
+      (thread.spawn-result-result-addr-or (& spawn) 0))
     ""))
 
 (define (arena-atomic-join [worker : thread.Thread]) : i64
-  (thread.join-result-value-or (thread.join worker) 8))
+  (thread.join-result-value-or
+    (unsafe
+      (thread.join worker))
+    8))
 
 (define (arena-atomic-validate-slot
   [addresses : i64]
@@ -212,7 +220,8 @@
     [context : (__tl_dyn-array i64)
       (arena-atomic-context owner 3 addresses lengths start-gate)]
     [spawn : thread.ThreadSpawnResult
-      (thread.spawn arena-atomic-worker (arena-atomic-array-i64-addr context))]
+      (unsafe
+        (thread.spawn arena-atomic-worker (arena-atomic-array-i64-addr context)))]
     (if (not (thread.spawn-result-ok? (& spawn)))
       5
       (let
@@ -241,7 +250,8 @@
     [context : (__tl_dyn-array i64)
       (arena-atomic-context owner 2 addresses lengths start-gate)]
     [spawn : thread.ThreadSpawnResult
-      (thread.spawn arena-atomic-worker (arena-atomic-array-i64-addr context))]
+      (unsafe
+        (thread.spawn arena-atomic-worker (arena-atomic-array-i64-addr context)))]
     (if (not (thread.spawn-result-ok? (& spawn)))
       4
       (arena-atomic-spawn-fourth
@@ -263,7 +273,8 @@
     [context : (__tl_dyn-array i64)
       (arena-atomic-context owner 1 addresses lengths start-gate)]
     [spawn : thread.ThreadSpawnResult
-      (thread.spawn arena-atomic-worker (arena-atomic-array-i64-addr context))]
+      (unsafe
+        (thread.spawn arena-atomic-worker (arena-atomic-array-i64-addr context)))]
     (if (not (thread.spawn-result-ok? (& spawn)))
       3
       (arena-atomic-spawn-third
@@ -283,7 +294,8 @@
     [context : (__tl_dyn-array i64)
       (arena-atomic-context owner 0 addresses lengths start-gate)]
     [spawn : thread.ThreadSpawnResult
-      (thread.spawn arena-atomic-worker (arena-atomic-array-i64-addr context))]
+      (unsafe
+        (thread.spawn arena-atomic-worker (arena-atomic-array-i64-addr context)))]
     (if (not (thread.spawn-result-ok? (& spawn)))
       2
       (arena-atomic-spawn-second

@@ -5,6 +5,8 @@
 ;; 42, avx2 = 106, avx512 = 170. A bad SIMD result returns a small failure code
 ;; instead of the tag. Keep the SPMD loop directly inside each variant while
 ;; sharing ordinary scalar setup/checksum helpers across all variants.
+;; Raw semaphore cells are created here, stay live through worker rendezvous,
+;; and close only after no worker can wait or post.
 (import stdlib.thread)
 (import (thread.handle i64) as thread_i64)
 
@@ -102,8 +104,10 @@
 (define (dispatch-spawn [ready : i64] [start : i64]) : thread_i64.SpawnResult
   (thread_i64.spawn
     (lambda () : i64
-      (if (thread.semaphore-post (thread.ThreadSemaphore ready))
-        (if (thread.semaphore-wait (thread.ThreadSemaphore start))
+      (if (unsafe
+        (thread.semaphore-post (thread.ThreadSemaphore ready)))
+        (if (unsafe
+          (thread.semaphore-wait (thread.ThreadSemaphore start)))
           (dispatch_run 13)
           249)
         248))))
@@ -112,14 +116,17 @@
   (if (= remaining 0)
     true
     (and
-      (thread.semaphore-wait (thread.ThreadSemaphore handle))
+      (unsafe
+        (thread.semaphore-wait (thread.ThreadSemaphore handle)))
       (dispatch-semaphore-wait-count handle (- remaining 1)))))
 
 (define (dispatch-semaphore-post-count [handle : i64] [remaining : i64]) : bool
   (if (= remaining 0)
     true
     (let
-      [posted : bool (thread.semaphore-post (thread.ThreadSemaphore handle))]
+      [posted : bool
+        (unsafe
+          (thread.semaphore-post (thread.ThreadSemaphore handle)))]
       [rest : bool (dispatch-semaphore-post-count handle (- remaining 1))]
       (and posted rest))))
 
@@ -143,9 +150,11 @@
     [cv : i64 (dispatch-join-value c)]
     [dv : i64 (dispatch-join-value d)]
     [ready-closed : bool
-      (thread.semaphore-close (thread.ThreadSemaphore ready))]
+      (unsafe
+        (thread.semaphore-close (thread.ThreadSemaphore ready)))]
     [start-closed : bool
-      (thread.semaphore-close (thread.ThreadSemaphore start))]
+      (unsafe
+        (thread.semaphore-close (thread.ThreadSemaphore start)))]
     [warm : i64 (dispatch_run 13)]
     (if (and
       all-ready
@@ -176,8 +185,12 @@
 
 (define (main) : i64
   (let
-    [ready : i64 (thread.semaphore-create-handle-or 0 -1)]
-    [start : i64 (thread.semaphore-create-handle-or 0 -1)]
+    [ready : i64
+      (unsafe
+        (thread.semaphore-create-handle-or 0 -1))]
+    [start : i64
+      (unsafe
+        (thread.semaphore-create-handle-or 0 -1))]
     (if (or (< ready 0) (< start 0))
       245
       (dispatch-run-contended ready start))))

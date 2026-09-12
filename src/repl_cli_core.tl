@@ -627,15 +627,14 @@
                   (build_run_core.source-tool-link-inputs-empty)
                   false
                   (owned_view.compiler-owned-shared-view temp-dir))]
-              (let
-                [file-result : io.ResultIoUnit
-                  (repl-try-remove-file-if-exists source-path)]
-                [dir-result : io.ResultIoUnit
-                  (repl-try-remove-dir-if-exists temp-dir)]
-                (repl-report-run-and-scratch-cleanup-results
-                  status
-                  file-result
-                  dir-result)))]))]
+              [file-result : io.ResultIoUnit
+                (repl-try-remove-file-if-exists source-path)]
+              [dir-result : io.ResultIoUnit
+                (repl-try-remove-dir-if-exists temp-dir)]
+              (repl-report-run-and-scratch-cleanup-results
+                status
+                file-result
+                dir-result))]))]
     [(build_run_core.ResultSourceToolString.Err message)
       (repl-print-error-line
         (str_cat.str-cat "repl: failed to create scratch temp dir: " message))]))

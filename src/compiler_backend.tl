@@ -905,12 +905,44 @@
 ;; lowering is incremental. Direct ELF/COFF callers consume this result before
 ;; choosing an object artifact; internal object-image consumers that do not
 ;; link the image retain their existing lower-level contract.
+(defenum CompilerBackendObjectAbiContext
+  (Call)
+  (FunctionEntry)
+  (FunctionReturn))
+
+;; A closed route vocabulary shared by object emitters and package callers.
+;; Context is target/kind enums or a numeric resource bound, never a path or
+;; user-controlled symbol.
+(defenum CompilerDirectObjectArtifactKind
+  (Bin)
+  (StaticLib))
+
+(defenum CompilerDirectObjectFallbackReason
+  (ArtifactKindUnavailable
+    CompilerBackendTarget
+    CompilerDirectObjectArtifactKind)
+  (DebugMetadata)
+  (BackendMode)
+  (PrivateSpmdAbi)
+  (ResourceBudget i64 i64)
+  (UnsupportedSemantics)
+  (UnsupportedAbi CompilerBackendTarget CompilerBackendObjectAbiContext)
+  (ObjectEncoding)
+  (UnsupportedCoffImage)
+  (ObjectFixup)
+  (ObjectRelocation)
+  (MissingEntrySymbol)
+  (MissingRuntimeEntry)
+  (EmptyTextSection)
+  (TargetMismatch)
+  (ForcedAssembly))
+
 (defenum CompilerBackendObjectEligibility
   (Eligible)
-  (Unsupported String))
+  (Unsupported CompilerDirectObjectFallbackReason))
 
-(define (compiler-backend-object-unsupported-semantics-category) : String
-  "unsupported-object-semantics")
+(define (compiler-backend-object-unsupported-semantics-category) : CompilerDirectObjectFallbackReason
+  CompilerDirectObjectFallbackReason.UnsupportedSemantics)
 
 (defenum CompilerBackendSwitchValidation
   (Ok)
@@ -93902,34 +93934,90 @@
           (set! index (+ index 1))))
       true)))
 
-(defenum CompilerBackendObjectAbiContext
-  (Call)
-  (FunctionEntry)
-  (FunctionReturn))
-
 ;; Object-only ordinary-call lowering predates the shared ABI planner. Keep its
 ;; diagnostic vocabulary fixed and bounded: no user-controlled symbol text is
 ;; copied into a fallback category consumed by batch manifests and drivers.
 (define (compiler-backend-object-unsupported-abi-category
   [target : CompilerBackendTarget]
-  [context : CompilerBackendObjectAbiContext]) : String
-  (match target
-    [(CompilerBackendTarget.Linux)
-      (match context
-        [(CompilerBackendObjectAbiContext.Call)
-          "unsupported-object-abi:linux-x86_64:call"]
-        [(CompilerBackendObjectAbiContext.FunctionEntry)
-          "unsupported-object-abi:linux-x86_64:function-entry"]
-        [(CompilerBackendObjectAbiContext.FunctionReturn)
-          "unsupported-object-abi:linux-x86_64:function-return"])]
-    [(CompilerBackendTarget.Windows)
-      (match context
-        [(CompilerBackendObjectAbiContext.Call)
-          "unsupported-object-abi:windows-x86_64:call"]
-        [(CompilerBackendObjectAbiContext.FunctionEntry)
-          "unsupported-object-abi:windows-x86_64:function-entry"]
-        [(CompilerBackendObjectAbiContext.FunctionReturn)
-          "unsupported-object-abi:windows-x86_64:function-return"])]))
+  [context : CompilerBackendObjectAbiContext]) : CompilerDirectObjectFallbackReason
+  (CompilerDirectObjectFallbackReason.UnsupportedAbi target context))
+
+(define (compiler-direct-object-fallback-category
+  [reason : CompilerDirectObjectFallbackReason]) : String
+  (match reason
+    [(CompilerDirectObjectFallbackReason.ArtifactKindUnavailable _ _)
+      "artifact-kind-unavailable"]
+    [(CompilerDirectObjectFallbackReason.DebugMetadata) "debug-metadata"]
+    [(CompilerDirectObjectFallbackReason.BackendMode) "backend-mode"]
+    [(CompilerDirectObjectFallbackReason.PrivateSpmdAbi) "private-spmd-abi"]
+    [(CompilerDirectObjectFallbackReason.ResourceBudget _ _) "resource-budget"]
+    [(CompilerDirectObjectFallbackReason.UnsupportedSemantics)
+      "unsupported-object-semantics"]
+    [(CompilerDirectObjectFallbackReason.UnsupportedAbi target context)
+      (match target
+        [(CompilerBackendTarget.Linux)
+          (match context
+            [(CompilerBackendObjectAbiContext.Call)
+              "unsupported-object-abi:linux-x86_64:call"]
+            [(CompilerBackendObjectAbiContext.FunctionEntry)
+              "unsupported-object-abi:linux-x86_64:function-entry"]
+            [(CompilerBackendObjectAbiContext.FunctionReturn)
+              "unsupported-object-abi:linux-x86_64:function-return"])]
+        [(CompilerBackendTarget.Windows)
+          (match context
+            [(CompilerBackendObjectAbiContext.Call)
+              "unsupported-object-abi:windows-x86_64:call"]
+            [(CompilerBackendObjectAbiContext.FunctionEntry)
+              "unsupported-object-abi:windows-x86_64:function-entry"]
+            [(CompilerBackendObjectAbiContext.FunctionReturn)
+              "unsupported-object-abi:windows-x86_64:function-return"])])]
+    [(CompilerDirectObjectFallbackReason.ObjectEncoding)
+      "unsupported-object-encoding"]
+    [(CompilerDirectObjectFallbackReason.UnsupportedCoffImage)
+      "unsupported-coff-image"]
+    [(CompilerDirectObjectFallbackReason.ObjectFixup)
+      "unsupported-object-fixup"]
+    [(CompilerDirectObjectFallbackReason.ObjectRelocation)
+      "unsupported-external-relocation"]
+    [(CompilerDirectObjectFallbackReason.MissingEntrySymbol)
+      "missing-entry-symbol"]
+    [(CompilerDirectObjectFallbackReason.MissingRuntimeEntry)
+      "missing-runtime-entry"]
+    [(CompilerDirectObjectFallbackReason.EmptyTextSection) "empty-text-section"]
+    [(CompilerDirectObjectFallbackReason.TargetMismatch) "target-mismatch"]
+    [(CompilerDirectObjectFallbackReason.ForcedAssembly) "forced-assembly"]))
+
+(define (compiler-direct-object-fallback-context
+  [reason : CompilerDirectObjectFallbackReason]) : String
+  (match reason
+    [(CompilerDirectObjectFallbackReason.ArtifactKindUnavailable target kind)
+      (str_cat.str-cat
+        "target="
+        (match target
+          [(CompilerBackendTarget.Linux) "linux-x86_64"]
+          [(CompilerBackendTarget.Windows) "windows-x86_64"])
+        "|kind="
+        (match kind
+          [(CompilerDirectObjectArtifactKind.Bin) "bin"]
+          [(CompilerDirectObjectArtifactKind.StaticLib) "staticlib"]))]
+    [(CompilerDirectObjectFallbackReason.ResourceBudget count limit)
+      (str_cat.str-cat
+        "owned-paths="
+        (string.int->string count)
+        "|limit="
+        (string.int->string limit))]
+    [_ ""]))
+
+(define (compiler-direct-object-fallback-transcript
+  [reason : CompilerDirectObjectFallbackReason]) : String
+  (let
+    [category : String
+      (compiler-direct-object-fallback-category
+        (owned_view.compiler-owned-shared-view reason))]
+    [context : String (compiler-direct-object-fallback-context reason)]
+    (if (string.eq context "")
+      category
+      (str_cat.str-cat category "|" context))))
 
 (define (compiler-backend-object-abi-capacity [target : CompilerBackendTarget]) : i64
   (match target

@@ -66,7 +66,9 @@
 
 (defenum ResultCompilerDriverObject
   (Ok cobj.CompilerObjectImage compiler_diagnostic.CompilerAdvisoryList)
-  (Unavailable String compiler_diagnostic.CompilerAdvisoryList)
+  (Unavailable
+    compiler_backend.CompilerDirectObjectFallbackReason
+    compiler_diagnostic.CompilerAdvisoryList)
   (Err
     (Box compiler_diagnostic.CompilerDiagnostic)
     compiler_diagnostic.CompilerAdvisoryList))
@@ -76,7 +78,10 @@
     cobj.CompilerObjectImage
     String
     compiler_diagnostic.CompilerAdvisoryList)
-  (Assembly String String compiler_diagnostic.CompilerAdvisoryList)
+  (Assembly
+    String
+    compiler_backend.CompilerDirectObjectFallbackReason
+    compiler_diagnostic.CompilerAdvisoryList)
   (Err
     (Box compiler_diagnostic.CompilerDiagnostic)
     compiler_diagnostic.CompilerAdvisoryList))

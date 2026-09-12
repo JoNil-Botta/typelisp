@@ -968,7 +968,8 @@
             [(compiler_driver_core.ResultCompilerDriverObject.Unavailable
                 category
                 _)
-              (ResultSourceToolString.Err category)]
+              (ResultSourceToolString.Err
+                (backend.compiler-direct-object-fallback-category category))]
             [(compiler_driver_core.ResultCompilerDriverObject.Err
                 diag
                 advisories)
@@ -1010,7 +1011,8 @@
         [(compiler_driver_core.ResultCompilerDriverObject.Unavailable
             category
             _)
-          (ResultSourceToolString.Err category)]
+          (ResultSourceToolString.Err
+            (backend.compiler-direct-object-fallback-category category))]
         [(compiler_driver_core.ResultCompilerDriverObject.Err diag advisories)
           (begin
             (compiler_driver_core.compiler-driver-print-advisories
@@ -1095,7 +1097,8 @@
             [(compiler_driver_core.ResultCompilerDriverObject.Unavailable
                 category
                 _)
-              (ResultSourceToolString.Err category)]
+              (ResultSourceToolString.Err
+                (backend.compiler-direct-object-fallback-category category))]
             [(compiler_driver_core.ResultCompilerDriverObject.Err
                 diag
                 advisories)
@@ -1136,7 +1139,8 @@
         [(compiler_driver_core.ResultCompilerDriverObject.Unavailable
             category
             _)
-          (ResultSourceToolString.Err category)]
+          (ResultSourceToolString.Err
+            (backend.compiler-direct-object-fallback-category category))]
         [(compiler_driver_core.ResultCompilerDriverObject.Err diag advisories)
           (begin
             (compiler_driver_core.compiler-driver-print-advisories

@@ -2,6 +2,7 @@
 ;; one-optimization object-or-assembly emission.
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
+(import stdlib.io)
 (import stdlib.text_buf)
 (import stdlib.string)
 (import stdlib.vector)
@@ -21,7 +22,7 @@
 
 (defenum CompilerWindowsCoffLinkability
   (Linkable)
-  (Unavailable String))
+  (Unavailable compiler_backend.CompilerDirectObjectFallbackReason))
 
 (defenum CompilerWindowsBatchSideAssembly
   (None)
@@ -32,7 +33,10 @@
     String
     CompilerWindowsBatchSideAssembly
     compiler_diagnostic.CompilerAdvisoryList)
-  (Assembly text_buf.TextBuf String compiler_diagnostic.CompilerAdvisoryList)
+  (Assembly
+    text_buf.TextBuf
+    compiler_backend.CompilerDirectObjectFallbackReason
+    compiler_diagnostic.CompilerAdvisoryList)
   (Err
     (Box compiler_diagnostic.CompilerDiagnostic)
     compiler_diagnostic.CompilerAdvisoryList))
@@ -111,39 +115,54 @@
     [(not
         (compiler_object_coff.compiler-object-coff-image-supported?
           (owned_view.compiler-owned-shared-view image)))
-      (CompilerWindowsCoffLinkability.Unavailable "unsupported-coff-image")]
+      (CompilerWindowsCoffLinkability.Unavailable
+        compiler_backend.CompilerDirectObjectFallbackReason.UnsupportedCoffImage)]
     [(not
         (compiler-windows-coff-relocations-linkable?
           (owned_view.compiler-owned-shared-view image.symbols)
           (owned_view.compiler-owned-shared-view image.relocations)))
       (CompilerWindowsCoffLinkability.Unavailable
-        "unsupported-external-relocation")]
+        compiler_backend.CompilerDirectObjectFallbackReason.ObjectRelocation)]
     [(not
         (cobj.compiler-object-symbol-list-contains?
           (owned_view.compiler-owned-shared-view image.symbols)
           "_tl_start"
           (cobj.CompilerObjectSymbolBinding.Export)
           (cobj.CompilerObjectSymbolKind.Function)))
-      (CompilerWindowsCoffLinkability.Unavailable "missing-entry-symbol")]
+      (CompilerWindowsCoffLinkability.Unavailable
+        compiler_backend.CompilerDirectObjectFallbackReason.MissingEntrySymbol)]
     [(<
         (compiler_object_coff.compiler-object-coff-section-label-offset
           (owned_view.compiler-owned-shared-view image)
           (cobj.CompilerObjectSectionKind.Text)
           "tl_setup_argv")
         0)
-      (CompilerWindowsCoffLinkability.Unavailable "missing-runtime-entry")]
+      (CompilerWindowsCoffLinkability.Unavailable
+        compiler_backend.CompilerDirectObjectFallbackReason.MissingRuntimeEntry)]
     [(<=
         (compiler_object_coff.compiler-object-coff-section-raw-size
           (owned_view.compiler-owned-shared-view image)
           (cobj.CompilerObjectSectionKind.Text))
         0)
-      (CompilerWindowsCoffLinkability.Unavailable "empty-text-section")]
+      (CompilerWindowsCoffLinkability.Unavailable
+        compiler_backend.CompilerDirectObjectFallbackReason.EmptyTextSection)]
     [else (CompilerWindowsCoffLinkability.Linkable)]))
 
 (define (compiler-windows-coff-linkable? [image : cobj.CompilerObjectImage]) : bool
   (match (compiler-windows-coff-linkability image)
     [(CompilerWindowsCoffLinkability.Linkable) true]
     [(CompilerWindowsCoffLinkability.Unavailable _) false]))
+
+(cfg
+  test
+  (test
+    compiler-windows-coff-typed-missing-entry
+    (match (compiler-windows-coff-linkability
+      (compiler_object_coff.compiler-object-coff-smoke-image))
+      [(CompilerWindowsCoffLinkability.Unavailable
+          (compiler_backend.CompilerDirectObjectFallbackReason.MissingEntrySymbol))
+        unit]
+      [_ (io.panic "COFF missing-entry reason changed")])))
 
 (define (compiler-windows-batch-diagnostic
   [input-path : String]
@@ -166,7 +185,7 @@
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [mode : compiler_backend.CompilerBackendMode]
-  [category : String]
+  [category : compiler_backend.CompilerDirectObjectFallbackReason]
   [profile-state : profile_state.CompilerProfileState]
   [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerWindowsBatchArtifact
   (begin
@@ -245,7 +264,7 @@
       program
       spans
       mode
-      "forced-assembly"
+      compiler_backend.CompilerDirectObjectFallbackReason.ForcedAssembly
       profile-state
       typecheck-state)
     (match (compiler-windows-coff-object-program-eligibility

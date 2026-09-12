@@ -229,9 +229,13 @@
 (define process-runtime-child-registry-pids : (MutPtr i64)
   (unsafe
     (process-runtime-child-registry-make-table)))
+
+;: Native stdout capture descriptors retained for issued children.
 (define process-runtime-child-registry-stdout : (MutPtr i64)
   (unsafe
     (process-runtime-child-registry-make-table)))
+
+;: Native stderr capture descriptors retained for issued children.
 (define process-runtime-child-registry-stderr : (MutPtr i64)
   (unsafe
     (process-runtime-child-registry-make-table)))

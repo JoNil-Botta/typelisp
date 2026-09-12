@@ -41,6 +41,8 @@ reject_diag() {
             printf 'typecheck: reference value would escape lexical scope' ;;
         stdlib/tests/comptime_string_literal_reject.tl)
             printf 'expr-string-value expects a string literal Expr' ;;
+        stdlib/tests/concurrency_registry_unsafe_reject.tl)
+            printf 'registry/concurrency-register requires unsafe context' ;;
         stdlib/tests/core_macros_cond_flat_reject.tl)
             printf 'typecheck: ExprClause macro operand expects bracket syntax' ;;
         stdlib/tests/core_macros_cond_missing_else.tl)

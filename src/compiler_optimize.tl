@@ -26328,7 +26328,24 @@
   ;; exactly what it killed before and the unknown case needs no seventh flag.
   ;; A summary with no element write at all carries 0, which the readers gate
   ;; behind the two flags above.
-  (element-classes i64))
+  (element-classes i64)
+  ;; FRAME-STORE. A store through the address of an object `alloc` created in
+  ;; THIS activation (OptLicmPtrKind.LocalObject / LocalSlot), or a direct
+  ;; callee's write into such an object (opt-licm-call-frame-state). A frame
+  ;; object is a distinct allocation from every descriptor, every global cell
+  ;; and every element buffer -- the P16 argument at OptLicmPtrKind -- so such a
+  ;; store cannot change a descriptor header word or a cell, and it does not
+  ;; set `header-or-unknown-store?`: the descriptor-header and global-cell
+  ;; proofs read through it. It IS a memory write (`clean?` is false), it
+  ;; contributes every element class (the typed-word rule never separates a
+  ;; load from it), and a FRAME-WORD load is still blocked by it
+  ;; (opt-licm-store-summary-frame-load-safe?) exactly as before -- the only
+  ;; loads it releases are of words it provably cannot reach. Before this flag
+  ;; every `store_ptr` into a local aggregate inside a loop closed every
+  ;; descriptor and cell proof in that loop: the sccp_lattice dispatch loop
+  ;; builds an `SccpValue` in a frame slot per record and reloaded
+  ;; `sccp-tokens`' descriptor words per record for it.
+  (frame-store? bool))
 
 (defenum OptLicmPtrKind
   (Unknown)
@@ -26993,16 +27010,27 @@
       (opt-licm-element-class-any))))
 
 (define (opt-licm-store-summary-empty) : OptLicmStoreSummary
-  (OptLicmStoreSummary false false false false 0))
+  (OptLicmStoreSummary false false false false 0 false))
 
 (define (opt-licm-store-summary-call-or-unknown) : OptLicmStoreSummary
-  (OptLicmStoreSummary true false false false 0))
+  (OptLicmStoreSummary true false false false 0 false))
 
 (define (opt-licm-store-summary-header-or-unknown-store) : OptLicmStoreSummary
-  (OptLicmStoreSummary false true false false 0))
+  (OptLicmStoreSummary false true false false 0 false))
 
 (define (opt-licm-store-summary-element-only-store [classes : i64]) : OptLicmStoreSummary
-  (OptLicmStoreSummary false false true false classes))
+  (OptLicmStoreSummary false false true false classes false))
+
+;; FRAME-STORE: a write into one of this activation's frame objects. See the
+;; field comment on OptLicmStoreSummary.
+(define (opt-licm-store-summary-frame-store) : OptLicmStoreSummary
+  (OptLicmStoreSummary
+    false
+    false
+    false
+    false
+    (opt-licm-element-class-any)
+    true))
 
 ;; An element-only CALLEE writes element storage of a class this summary does
 ;; not carry yet, so it contributes "any class" and the typed-word rule below
@@ -27011,7 +27039,13 @@
 ;; change and is deliberately not made here, so this packet's rule moves no
 ;; decision that involves a call.
 (define (opt-licm-store-summary-element-only-call) : OptLicmStoreSummary
-  (OptLicmStoreSummary false false false true (opt-licm-element-class-any)))
+  (OptLicmStoreSummary
+    false
+    false
+    false
+    true
+    (opt-licm-element-class-any)
+    false))
 
 (define (opt-licm-store-summary-merge
   [left : OptLicmStoreSummary]
@@ -27021,18 +27055,53 @@
     (or left.header-or-unknown-store? right.header-or-unknown-store?)
     (or left.element-only-store? right.element-only-store?)
     (or left.element-only-call? right.element-only-call?)
-    (bit-or left.element-classes right.element-classes)))
+    (bit-or left.element-classes right.element-classes)
+    (or left.frame-store? right.frame-store?)))
 
 (define (opt-licm-store-summary-clean? [summary : OptLicmStoreSummary]) : bool
   (and
     (not summary.call-or-unknown?)
     (not summary.header-or-unknown-store?)
     (not summary.element-only-store?)
-    (not summary.element-only-call?)))
+    (not summary.element-only-call?)
+    (not summary.frame-store?)))
 
 (define (opt-licm-store-summary-header-load-safe?
   [summary : OptLicmStoreSummary]) : bool
   (and (not summary.call-or-unknown?) (not summary.header-or-unknown-store?)))
+
+;; FRAME-STORE: the header-load question asked for a FRAME-WORD load, which a
+;; frame store can reach. Same answer as before the flag existed.
+(define (opt-licm-store-summary-frame-load-safe?
+  [summary : OptLicmStoreSummary]) : bool
+  (and
+    (opt-licm-store-summary-header-load-safe? summary)
+    (not summary.frame-store?)))
+
+(define (opt-licm-frame-object-kind? [kind : OptLicmPtrKind]) : bool
+  (match kind
+    [(OptLicmPtrKind.LocalObject _) true]
+    [(OptLicmPtrKind.LocalSlot _) true]
+    [_ false]))
+
+;; Is this load's address a word of one of this activation's frame objects?
+(define (opt-licm-frame-word-source?
+  [ptrs : OptLicmPtrEnv]
+  [src : ir.CompilerIrValue]) : bool
+  (match (compiler-opt-global-shared-view src)
+    [(ir.CompilerIrValue.Var ptr-var)
+      (opt-licm-frame-object-kind? (opt-licm-ptr-lookup ptrs ptr-var))]
+    [_ false]))
+
+;; The header-load-safety a Load candidate reads: the frame-word reading for a
+;; frame-word address, the descriptor one for everything else.
+(define (opt-licm-store-summary-header-load-safe-for?
+  [summary : OptLicmStoreSummary]
+  [ptrs : OptLicmPtrEnv]
+  [src : ir.CompilerIrValue]) : bool
+  (if (opt-licm-frame-word-source? ptrs src)
+    (opt-licm-store-summary-frame-load-safe? summary)
+    (opt-licm-store-summary-header-load-safe? summary)))
 
 ;; ALIAS-3. The TYPED-WORD rule, as a load-survives-this-body question.
 ;;
@@ -28708,11 +28777,95 @@
         (opt-direct-call-clean-unconditional-global-bit))
       (= (opt_i64_i64_map.len (& global-cells.addr-taken)) 0))))
 
+;; SRET-SITE. A direct callee whose call-memory row names PARAMETER writes
+;; and nothing unknown writes, through those parameters, the objects its
+;; arguments name -- and when every such argument at THIS site is the address
+;; of an object `alloc` created in this activation (OptLicmPtrKind.LocalObject
+;; / LocalSlot, root Fresh), every one of those writes lands in this frame.
+;; A frame object is a distinct allocation from every global cell, every
+;; descriptor and every element buffer (the P16 argument at OptLicmPtrKind),
+;; so such a call can change none of the words the descriptor-header and
+;; global-cell proofs read. The per-callee bits cannot say this: the same
+;; callee called with a global's address would write that global, which is
+;; exactly why opt-direct-call-clean-unconditional-global-bit is not set for
+;; any callee with a parameter write, and why, in a program with one
+;; address-taken global, opt-licm-direct-call-keeps-globals-clean? refused
+;; every `sret`-returning helper at every site.
+;;
+;; The measurement is sccp_lattice's dispatch loop: `sccp-value` (and the
+;; `sccp-fold-*` helpers) return an `SccpValue` through a hidden slot the
+;; caller allocates, the loop calls them 1.7M times, and every descriptor
+;; word of `sccp-tokens` and the `sccp-instr-base` cell reloaded per record
+;; (`licm-refuse ... global-cell|header-load-safe:call:call=sccp-value`).
+;;
+;; What the call still is: a CALL. It keeps `any-call?`, its cell and
+;; storage rows (P18, IAG-2), and the element-only-call summary -- header-load
+;; safe, a call boundary for the hoist/allocate interlock, "any class" for the
+;; typed-word rule -- and it contributes one rooted FRAME store per frame
+;; object it writes, exactly what a `store_ptr` through that object's address
+;; contributes (the StorePtr arm of opt-licm-store-state-instr), so a load of
+;; the same object is blocked as before. Callees with an unknown write, or any
+;; written parameter whose argument is not such an object, take the older
+;; path unchanged.
+(defenum OptLicmFrameCall
+  (No)
+  (Some OptLicmStoreState))
+
+(define (opt-licm-call-frame-state
+  [state : OptLicmStoreState]
+  [call-memory : opt_i64_i64_map.Map]
+  [name : i64]
+  [args : ir.CompilerIrCallArgs]) : OptLicmFrameCall
+  (match (opt_i64_i64_map.get (& call-memory) (ir.compiler-ir-symbol-id name))
+    [(opt_i64_i64_map.LookupMissing) (OptLicmFrameCall.No)]
+    [(opt_i64_i64_map.LookupFound summary)
+      (if (or
+        (opt-call-memory-summary-unknown? summary)
+        (not (opt-call-memory-summary-has-param-writes? summary)))
+        (OptLicmFrameCall.No)
+        (let
+          [limit : i64 (opt-call-memory-param-limit)]
+          [index : i64 0]
+          [ok : bool true]
+          [out : OptLicmStoreState state]
+          (begin
+            (while (and ok (< index limit))
+              (begin
+                (if (opt-call-memory-summary-param-write? summary index)
+                  (match (opt-call-memory-arg-at
+                    (compiler-opt-global-shared-view args)
+                    index)
+                    [(ir.CompilerIrMaybeValue.Some value)
+                      (match value
+                        [(ir.CompilerIrValue.Var var)
+                          (if (opt-licm-frame-object-kind?
+                            (opt-licm-ptr-lookup
+                              (compiler-opt-global-shared-view out.ptrs)
+                              var))
+                            (match (opt-licm-root-env-lookup (& out.roots) var)
+                              [(OptLicmRoot.Fresh id)
+                                (set!
+                                  out
+                                  (opt-licm-store-state-add-rooted-store
+                                    out
+                                    (OptLicmRoot.Fresh id)
+                                    (opt-licm-store-summary-frame-store)))]
+                              [_ (set! ok false)])
+                            (set! ok false))]
+                        [_ (set! ok false)])]
+                    [(ir.CompilerIrMaybeValue.No) (set! ok false)])
+                  unit)
+                (set! index (+ index 1))))
+            (if ok
+              (OptLicmFrameCall.Some out)
+              (OptLicmFrameCall.No)))))]))
+
 (define (opt-licm-store-state-direct-call
   [state : OptLicmStoreState]
   [direct-call-clean : opt_i64_i64_map.Map]
   [global-cells : OptGlobalCellSummary]
-  [name : i64]) : OptLicmStoreState
+  [name : i64]
+  [args : ir.CompilerIrCallArgs]) : OptLicmStoreState
   (if (opt-direct-call-noreturn? name)
     state
     (let
@@ -28737,21 +28890,44 @@
         (opt-licm-store-summary-for-direct-call
           (compiler-opt-global-shared-view direct-call-clean)
           name)]
-      (if (opt-licm-direct-call-keeps-globals-clean?
-        (compiler-opt-global-shared-view direct-call-clean)
-        global-cells
-        name)
-        (opt-licm-store-state-add-summary-keeping-globals
-          (if (opt-direct-call-memory-clean? direct-call-clean name)
-            (opt-licm-store-state-mark-mem-clean-call called)
-            called)
-          summary)
-        ;; Unproven: the flag is set here rather than left to the summary,
-        ;; because a memory-clean callee contributes the EMPTY summary and would
-        ;; otherwise sail through. `any-call?` used to be what closed that case.
-        (opt-licm-store-state-add-summary
-          (opt-licm-store-state-mark-global-write called)
-          summary)))))
+      ;; SRET-SITE: asked only where the per-callee verdict fell to
+      ;; `call-or-unknown?`, which is where a parameter write lands it.
+      [frame : OptLicmFrameCall
+        (if summary.call-or-unknown?
+          (opt-licm-call-frame-state
+            (compiler-opt-global-shared-view called)
+            (compiler-opt-global-shared-view global-cells.call-memory)
+            name
+            args)
+          (OptLicmFrameCall.No))]
+      (match frame
+        [(OptLicmFrameCall.Some with-frame-stores)
+          (if (opt-direct-call-global-clean?
+            (compiler-opt-global-shared-view direct-call-clean)
+            name)
+            (opt-licm-store-state-add-summary-keeping-globals
+              with-frame-stores
+              (opt-licm-store-summary-element-only-call))
+            (opt-licm-store-state-add-summary
+              (opt-licm-store-state-mark-global-write with-frame-stores)
+              (opt-licm-store-summary-element-only-call)))]
+        [(OptLicmFrameCall.No)
+          (if (opt-licm-direct-call-keeps-globals-clean?
+            (compiler-opt-global-shared-view direct-call-clean)
+            global-cells
+            name)
+            (opt-licm-store-state-add-summary-keeping-globals
+              (if (opt-direct-call-memory-clean? direct-call-clean name)
+                (opt-licm-store-state-mark-mem-clean-call called)
+                called)
+              summary)
+            ;; Unproven: the flag is set here rather than left to the summary,
+            ;; because a memory-clean callee contributes the EMPTY summary and
+            ;; would otherwise sail through. `any-call?` used to be what closed
+            ;; that case.
+            (opt-licm-store-state-add-summary
+              (opt-licm-store-state-mark-global-write called)
+              summary))]))))
 
 (define (opt-licm-store-state-invalidate-ptr-def
   [state : OptLicmStoreState]
@@ -28790,6 +28966,9 @@
           (opt-licm-store-summary-element-only-store classes)]
         [(OptLicmPtrKind.DataElement _)
           (opt-licm-store-summary-element-only-store classes)]
+        ;; FRAME-STORE: a word of this activation's own object.
+        [(OptLicmPtrKind.LocalObject _) (opt-licm-store-summary-frame-store)]
+        [(OptLicmPtrKind.LocalSlot _) (opt-licm-store-summary-frame-store)]
         [_ (opt-licm-store-summary-header-or-unknown-store)])]
     [_ (opt-licm-store-summary-header-or-unknown-store)]))
 
@@ -29014,12 +29193,13 @@
           (compiler-opt-global-shared-view instr))
         state)]
     (match (compiler-opt-global-shared-view instr)
-      [(ir.CompilerIrInstr.Call _ name _ _)
+      [(ir.CompilerIrInstr.Call _ name args _)
         (opt-licm-store-state-direct-call
           provenance
           direct-call-clean
           global-cells
-          name)]
+          name
+          args)]
       [(ir.CompilerIrInstr.CallIndirect _ _ _ _)
         (opt-licm-store-state-indirect-call provenance)]
       [(ir.CompilerIrInstr.CallIndirectC _ _ _ _)
@@ -29030,14 +29210,25 @@
         (opt-licm-store-state-indirect-call provenance)]
       [(ir.CompilerIrInstr.SpmdCall payload-box)
         (opt-licm-store-state-indirect-call provenance)]
-      [(ir.CompilerIrInstr.TailCall name _ _)
+      [(ir.CompilerIrInstr.TailCall name args _)
         (opt-licm-store-state-direct-call
           provenance
           direct-call-clean
           global-cells
-          name)]
+          name
+          args)]
       [(ir.CompilerIrInstr.TailCallIndirect _ _ _)
         (opt-licm-store-state-indirect-call provenance)]
+      ;; FRAME-STORE: `alloc` creates a fresh frame object. It writes no word
+      ;; any load in the body could have read -- there was no such word -- so
+      ;; it contributes nothing to the store summary and nothing to the cell
+      ;; and storage rows. Without this arm it fell to the effect arm below,
+      ;; where its MemoryWrite class is a header-or-unknown store that writes
+      ;; every cell: an inlined callee's temporaries, allocated inside the loop
+      ;; that absorbed it, closed every descriptor and cell proof in that loop.
+      ;; The provenance pass binds its pointer kind and root
+      ;; (opt-licm-provenance-state-instr); nothing is needed here.
+      [(ir.CompilerIrInstr.Alloc _ _) provenance]
       [(ir.CompilerIrInstr.StorePtr ptr _ store-ty)
         (let
           ;; IAG-2: which global's own storage this write may land on.
@@ -29165,9 +29356,34 @@
               (compiler-opt-global-shared-view global-cells)
               (compiler-opt-global-shared-view provenance.ptrs)
               (compiler-opt-global-shared-view dst))]
-          (opt-licm-store-state-add-summary
-            (opt-licm-store-state-add-obj-writes provenance obj-mask)
-            (opt-licm-store-summary-header-or-unknown-store)))]
+          [provenance : OptLicmStoreState
+            (opt-licm-store-state-add-obj-writes provenance obj-mask)]
+          ;; FRAME-STORE: a byte copy INTO one of this activation's frame
+          ;; objects -- the aggregate copy-out every constructor ends with --
+          ;; is a frame store, rooted as a `store_ptr` through that address
+          ;; would be. Every other copy keeps the header-or-unknown reading.
+          [frame? : bool
+            (opt-licm-frame-word-source?
+              (compiler-opt-global-shared-view provenance.ptrs)
+              (compiler-opt-global-shared-view dst))]
+          [root : OptLicmRoot
+            (opt-licm-root-of-value
+              (& provenance.roots)
+              (compiler-opt-global-shared-view dst))]
+          (if frame?
+            (match root
+              [(OptLicmRoot.Fresh _)
+                (opt-licm-store-state-add-rooted-store
+                  provenance
+                  root
+                  (opt-licm-store-summary-frame-store))]
+              [_
+                (opt-licm-store-state-add-summary
+                  provenance
+                  (opt-licm-store-summary-header-or-unknown-store))])
+            (opt-licm-store-state-add-summary
+              provenance
+              (opt-licm-store-summary-header-or-unknown-store))))]
       ;; A named global-cell write is the one write whose target is a SYMBOL
       ;; rather than a pointer, so it can be classified by name instead of by
       ;; may-alias. A cell holds a descriptor HANDLE (or a scalar); the two
@@ -30917,7 +31133,10 @@
             any-call?
             (opt-licm-root-of-value roots (compiler-opt-global-shared-view src))
             (and
-              (opt-licm-store-summary-header-load-safe? legacy-store-summary)
+              (opt-licm-store-summary-header-load-safe-for?
+                legacy-store-summary
+                (compiler-opt-global-shared-view ptrs)
+                (compiler-opt-global-shared-view src))
               (opt-licm-header-slot-source?
                 type-segment-bases
                 (compiler-opt-global-shared-view types)
@@ -30939,6 +31158,14 @@
           ;; the return-shaped side-exit poison closed the general path.
           (and
             descriptor-header-hoist?
+            ;; FRAME-STORE: the exception is licensed on the descriptor
+            ;; reading; a frame-word load asks the frame reading too.
+            (or
+              (not
+                (opt-licm-frame-word-source?
+                  (compiler-opt-global-shared-view ptrs)
+                  (compiler-opt-global-shared-view src)))
+              (not legacy-store-summary.frame-store?))
             (opt-licm-header-slot-source?
               type-segment-bases
               types
@@ -32919,9 +33146,16 @@
     [(ir.CompilerIrInstr.StoreOwned ptr _ _)
       (opt-licm-refuse-blame-store mode name cells ptrs ptr)]
     [(ir.CompilerIrInstr.CopyBytes dst _ _)
-      (if (= mode (opt-licm-refuse-blame-mode-obj))
-        (opt-licm-refuse-blame-store mode name cells ptrs dst)
-        (OptLicmRefuseBlame 5 0))]
+      (cond
+        [(= mode (opt-licm-refuse-blame-mode-obj))
+          (opt-licm-refuse-blame-store mode name cells ptrs dst)]
+        ;; FRAME-STORE: a copy into a frame object is rooted and contributes
+        ;; no header-or-unknown store, so it is not what this mode blames.
+        [(opt-licm-frame-word-source?
+            (compiler-opt-global-shared-view ptrs)
+            (compiler-opt-global-shared-view dst))
+          (opt-licm-refuse-blame-none)]
+        [else (OptLicmRefuseBlame 5 0)])]
     [_ (opt-licm-refuse-blame-none)]))
 
 (define (opt-licm-refuse-blame-seq
@@ -74329,7 +74563,16 @@
   ;; whenever the program is under the whole-program function-count gate,
   ;; because CK-1's families are per FUNCTION and need no global cell at all.
   ;; Its emptiness is also the program-level gate on the local channel.
-  (len-ctors opt_i64_i64_map.Map))
+  (len-ctors opt_i64_i64_map.Map)
+  ;; SRET-SITE: the per-callee call-memory rows (opt-call-memory-build) --
+  ;; which checked-reference parameters a direct callee writes through, beside
+  ;; its global/unknown/element flags. Carried here because the LICM store-state
+  ;; fold reads them at a call site beside the cell and storage rows above, and
+  ;; this struct is what that fold already receives
+  ;; (opt-licm-call-frame-state). Empty below level 2 and in every program
+  ;; whose summaries were not built, where the site rule is never proven and
+  ;; the older verdict stands.
+  (call-memory opt_i64_i64_map.Map))
 
 (define (opt-global-cell-summary-empty) : OptGlobalCellSummary
   (OptGlobalCellSummary
@@ -74346,7 +74589,31 @@
     (opt-global-obj-mod-ref-none)
     (opt_i64_i64_map.with-capacity 1)
     (opt_i64_i64_map.with-capacity 1)
+    (opt_i64_i64_map.with-capacity 1)
     (opt_i64_i64_map.with-capacity 1)))
+
+;; SRET-SITE: the same summary with the call-memory rows attached. The
+;; program-summary builder fills the field directly; this is for the drivers
+;; and fixtures that start from the empty summary.
+(define (opt-global-cell-summary-with-call-memory
+  [cell : OptGlobalCellSummary]
+  [call-memory : opt_i64_i64_map.Map]) : OptGlobalCellSummary
+  (OptGlobalCellSummary
+    cell.addr-taken
+    cell.type-index
+    cell.types
+    cell.word-cell
+    cell.mod-ref
+    cell.frozen
+    cell.nonneg
+    cell.len-eq
+    cell.len-eq-clean
+    cell.arg-global
+    cell.obj-mod-ref
+    cell.len-reset
+    cell.content
+    cell.len-ctors
+    call-memory))
 
 (define (opt-global-cell-summary-with-arg-global
   [cell : OptGlobalCellSummary]
@@ -74365,7 +74632,8 @@
     cell.obj-mod-ref
     cell.len-reset
     cell.content
-    cell.len-ctors))
+    cell.len-ctors
+    cell.call-memory))
 
 (define (opt-global-cell-summary-with-obj-mod-ref
   [cell : OptGlobalCellSummary]
@@ -74384,7 +74652,8 @@
     obj-mod-ref
     cell.len-reset
     cell.content
-    cell.len-ctors))
+    cell.len-ctors
+    cell.call-memory))
 
 (define (opt-global-cell-summary-with-content
   [cell : OptGlobalCellSummary]
@@ -74403,7 +74672,8 @@
     cell.obj-mod-ref
     cell.len-reset
     content
-    cell.len-ctors))
+    cell.len-ctors
+    cell.call-memory))
 
 (define (opt-global-cell-summary-with-len-ctors
   [cell : OptGlobalCellSummary]
@@ -74422,7 +74692,8 @@
     cell.obj-mod-ref
     cell.len-reset
     cell.content
-    len-ctors))
+    len-ctors
+    cell.call-memory))
 
 (defstruct OptLoopBceSummaries
   (enabled bool)
@@ -169158,6 +169429,7 @@
             (opt-global-obj-mod-ref-none)
             (opt_i64_i64_map.with-capacity 1)
             (opt_i64_i64_map.with-capacity 1)
+            (opt_i64_i64_map.with-capacity 1)
             (opt_i64_i64_map.with-capacity 1))]
         [nonneg : opt_i64_i64_map.Map
           (opt-nonneg-globals-build
@@ -169173,7 +169445,7 @@
             (compiler-opt-global-shared-view globals)
             (compiler-opt-global-shared-view functions)
             (compiler-opt-global-shared-view addr-taken)
-            call-memory
+            (compiler-opt-global-shared-view call-memory)
             capacity
             (&mut len-reset))]
         [len-eq-clean : opt_i64_i64_map.Map
@@ -169231,7 +169503,8 @@
           ;; CB-1's content table is attached by opt-cb-attach, which needs
           ;; GAP-1's facts and therefore runs from the program-summary builder.
           (opt_i64_i64_map.with-capacity 1)
-          len-ctors)))))
+          len-ctors
+          call-memory)))))
 
 ;; --- condition (a): stores a later read can OBSERVE ---------------------------
 ;;

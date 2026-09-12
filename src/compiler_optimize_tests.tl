@@ -45074,6 +45074,198 @@
       [(not (compiler_optimize.opt-call-memory-summary-unknown? scalar)) 10]
       [else 42])))
 
+;; --- SRET-SITE: a callee that writes only through a frame object ------------
+;;
+;; `loop` loads the array parameter's data slot every trip and calls `touch`
+;; with one pointer argument. When touch's call-memory row names a write
+;; through parameter 0 and nothing unknown, and the argument is the address of
+;; an object THIS function allocated, the write lands in the frame and the
+;; load hoists. The raw pointer parameter as the argument, a row with an
+;; unknown write, or no row at all each keep the load in the loop. Modes 1
+;; and 2 replace the call with a store into the frame object (FRAME-STORE):
+;; the descriptor load still moves, and a load of the stored word does not.
+(define (opt-licm-frame-call-blocks [arg-var : i64] [mode : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Mov
+          5
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Alloc
+          12
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "loop"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Phi
+            6
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Var 7)
+                (compiler_ir_types.compiler-ir-label "body")
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Gep
+            8
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Load
+            9
+            (compiler_ir_types.CompilerIrValue.Var 8)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.AddrOf 13 12)
+          ;; mode 0: the call; 1 and 2: a store into the frame object
+          ;; instead (FRAME-STORE); 2 also reads that word back below
+          (if (= mode 0)
+            (compiler_ir_types.CompilerIrInstr.Call
+              11
+              (opt-test-symbol "touch")
+              (compiler_ir_types.CompilerIrCallArgs.One
+                (compiler_ir_types.CompilerIrValue.Var arg-var))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.StorePtr
+              (compiler_ir_types.CompilerIrValue.Var 13)
+              (compiler_ir_types.CompilerIrValue.I64 7)
+              (compiler_ast_types.AstType.I64)))
+          (if (= mode 2)
+            (compiler_ir_types.CompilerIrInstr.Load
+              14
+              (compiler_ir_types.CompilerIrValue.Var 13)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Mov
+              14
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64)))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            7
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 6)
+            (compiler_ir_types.CompilerIrValue.Var 14)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-label "exit"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "body")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "loop"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 9)))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; touch's call-memory row: a write through parameter 0, with or without an
+;; unknown write beside it.
+(define (opt-licm-frame-call-map [unknown? : bool]) : opt_i64_i64_map.Map
+  (let
+    [map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 4)]
+    [row : i64
+      (if unknown?
+        (compiler_optimize.opt-call-memory-summary-add-unknown 1)
+        1)]
+    (begin
+      (opt_i64_i64_map.insert-ref!
+        (&mut map)
+        (compiler_ir_types.compiler-ir-symbol-id (opt-test-symbol "touch"))
+        row)
+      map)))
+
+(define (opt-licm-frame-call-run
+  [arg-var : i64]
+  [mode : i64]
+  [call-memory : opt_i64_i64_map.Map]) : compiler_ir_types.CompilerIrFunction
+  (compiler_optimize.opt-licm-function-with-global-cells
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_optimize.opt-global-cell-summary-with-call-memory
+      (compiler_optimize.opt-global-cell-summary-empty)
+      call-memory)
+    true
+    (opt-licm-array-test-function (opt-licm-frame-call-blocks arg-var mode))))
+
+(define (opt-licm-frame-call-loop-loads
+  [arg-var : i64]
+  [mode : i64]
+  [call-memory : opt_i64_i64_map.Map]) : i64
+  (opt-count-load-label-blocks
+    (compiler_optimize.opt-function-blocks
+      (opt-licm-frame-call-run arg-var mode call-memory))
+    (compiler_ir_types.compiler-ir-label "loop")))
+
+(define (compiler-optimize-licm-frame-call-self-test) : i64
+  (cond
+    ;; the frame object's address: the load leaves the loop
+    [(not
+        (=
+          (opt-licm-frame-call-loop-loads 13 0 (opt-licm-frame-call-map false))
+          0))
+      1]
+    [(not
+        (compiler_optimize.opt-verify-ok?
+          (compiler_optimize.opt-verify-function
+            (opt-licm-frame-call-run 13 0 (opt-licm-frame-call-map false)))))
+      2]
+    ;; the raw pointer parameter: nothing says where that write lands
+    [(not
+        (=
+          (opt-licm-frame-call-loop-loads 2 0 (opt-licm-frame-call-map false))
+          1))
+      3]
+    ;; an unknown write beside the parameter write
+    [(not
+        (=
+          (opt-licm-frame-call-loop-loads 13 0 (opt-licm-frame-call-map true))
+          1))
+      4]
+    ;; no row: the callee is opaque
+    [(not
+        (=
+          (opt-licm-frame-call-loop-loads
+            13
+            0
+            (opt_i64_i64_map.with-capacity 1))
+          1))
+      5]
+    ;; FRAME-STORE: a store into the frame object in place of the call leaves
+    ;; the descriptor load free to move...
+    [(not
+        (=
+          (opt-licm-frame-call-loop-loads
+            13
+            1
+            (opt_i64_i64_map.with-capacity 1))
+          0))
+      6]
+    [(not
+        (compiler_optimize.opt-verify-ok?
+          (compiler_optimize.opt-verify-function
+            (opt-licm-frame-call-run 13 1 (opt_i64_i64_map.with-capacity 1)))))
+      7]
+    ;; ...while a load of the stored frame word itself stays put
+    [(not
+        (=
+          (opt-licm-frame-call-loop-loads
+            13
+            2
+            (opt_i64_i64_map.with-capacity 1))
+          1))
+      8]
+    [else 42]))
+
 (cfg
   test
   (define (compiler-optimize-licm-checked-root-self-test) : i64
@@ -46733,9 +46925,11 @@
       (opt-licm-ls-load 8 7 (compiler_ast_types.AstType.U64))
       (opt-licm-ls-element-store-instrs tail))))
 
-;; A write through the SAME frame object, at a different offset. It is a
-;; header-or-unknown store, so it closes the proof for every fixed word of that
-;; object -- and for every other descriptor word in the loop.
+;; A write through the SAME frame object, at a different offset. It closes the
+;; proof for every fixed word of that object. FRAME-STORE: it no longer closes
+;; the proof for the other descriptor words in the loop -- the array
+;; parameter's data slot is a different allocation, and its load moves out
+;; while the frame word's stays.
 (define (opt-licm-ls-same-object-store-instrs) : compiler_ir_types.CompilerIrInstrSeq
   (opt-test-instr-seq-prepend
     (opt-licm-ls-gep 13 21 8 (compiler_ast_types.AstType.U8))
@@ -46961,7 +47155,9 @@
     [opaque-call : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks
         (compiler_optimize.compiler-opt-global-shared-view opaque-call-func))]
-    ;; Negative: the loop writes the SAME frame object at another offset.
+    ;; Negative for the frame word: the loop writes the SAME frame object at
+    ;; another offset. The array parameter's data-slot load in the same body
+    ;; still moves (FRAME-STORE).
     [same-object-func : compiler_ir_types.CompilerIrFunction
       (opt-licm-ls-optimized
         (opt-licm-ls-blocks
@@ -47145,14 +47341,14 @@
             (opt-count-load-label-blocks
               (compiler_ir_types.compiler-ir-global-shared-view same-object)
               (compiler_ir_types.compiler-ir-label "entry"))
-            0))
+            1))
         320]
       [(not
           (=
             (opt-count-load-label-blocks
               same-object
               (compiler_ir_types.compiler-ir-label "loop"))
-            2))
+            1))
         321]
       [(not
           (compiler_optimize.opt-verify-ok?
@@ -103524,7 +103720,8 @@
         (compiler_optimize.OptGlobalObjModRef true obj-index obj-writes)
         empty.len-reset
         empty.content
-        empty.len-ctors))))
+        empty.len-ctors
+        empty.call-memory))))
 
 (define (opt-guard-sink-run
   [name : String]

@@ -785,6 +785,10 @@ decision|src/lint_core.tl|lint rule engine (nested-if-ladder rule, #1163); impor
 
 decision|src/lint_policy_core.tl|pure deterministic lint severity/group policy resolver (#7277): typed origin-bearing inputs, documented layer precedence, forbid protection, structured validation diagnostics, trace/provenance, legacy flag floors, and bounded work census; exercised through src/tests/lint_smoke.tl and the lint driver compatibility adapter
 
+decision|src/lint_fix_plan_core.tl|pure snapshot-bound lint fix planning (#7279): applicability, stable source identities, UTF-8/CRLF validation, symmetric conflicts, deterministic in-memory edit composition; exercised by the inline tests in src/lint_fix_plan_core_tests.tl
+
+decision|src/lint_fix_plan_core_tests.tl|inline planner conformance tests (#7279) found by scripts/verify-inline-tests.sh; checks multi-file/large edits, stale sources, UTF-8/CRLF boundaries, conflicts, deterministic ordering, and atomicity
+
 decision|src/lint_driver_core.tl|selfhost lint driver logic (#1163/#1987): arg parsing, finding rendering (path:line:col), and file/package source linting; main-less, imported by src/main.tl and src/tests/lint_driver_smoke.tl and exercised through the selfhost_lint_driver_smoke and selfhost_main cases; has no main to compile directly
 
 # Optimization-benchmark codegen smoke. Each flattened opt_* TypeLisp source

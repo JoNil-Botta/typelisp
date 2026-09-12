@@ -2172,7 +2172,8 @@
         (lint_core.lint-rule-single-begin-message)
         (lint_core.lint-rule-single-begin-id)
         0
-        span)]
+        span
+        (lint_core.lint-fix-unproven))]
     [slots : (__tl_dyn-array lint_core.LintFinding)
       (__tl_make-array lint_core.LintFinding 2)]
     [request-range : json.Json
@@ -2275,6 +2276,105 @@
           (string.eq (lsp_frame_core.lsp-code-action-newline "a\r\nb") "\r\n")
           (string.contains (& edit-rendered) (& directive))
           (string.contains (& edit-rendered) (& insertion)))))))
+
+;; Rule-proved lint fixes use the shared diagnostic edit transport, while the
+;; suppression action remains available and uncertain fixes stay hidden.
+(define (lsp-code-action-lint-structured-fix-ok?) : bool
+  (let
+    [path : String "target/lint_fix.tl"]
+    [uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri (clone path))]
+    [text : String "abc"]
+    [version : i64 5]
+    [span : ast.AstSourceSpan (ast.AstSourceSpan 1 1 1 2)]
+    [base : lint_core.LintFinding (lint_core.lint-single-begin-finding span)]
+    [edit : cdiag.CompilerDiagnosticTextEdit
+      (cdiag.compiler-diagnostic-text-edit-new
+        (cdiag.CompilerDiagnosticSpan "" 1 1 1 2)
+        "X")]
+    [machine : lint_core.LintFinding
+      (lint_core.lint-finding-with-fix
+        (clone base)
+        (cdiag.compiler-diagnostic-fix-new
+          "Replace lint token"
+          cdiag.CompilerDiagnosticMachineApplicable
+          (cdiag.compiler-diagnostic-text-edit-single (clone edit))))]
+    [uncertain : lint_core.LintFinding
+      (lint_core.lint-finding-with-fix
+        base
+        (cdiag.compiler-diagnostic-fix-new
+          "Uncertain lint token"
+          cdiag.CompilerDiagnosticMaybeIncorrect
+          (cdiag.compiler-diagnostic-text-edit-single edit)))]
+    [docs : lsp_document_vec.Vec
+      (lsp_frame_core.lsp-documents-set-versioned
+        (lsp_document_vec.new)
+        (clone uri)
+        (clone path)
+        (clone text)
+        version
+        (lsp_frame_core.lsp-diagnostic-uris-empty))]
+    [request-range : json.Json
+      (lsp_frame_core.lsp-json-object2
+        "start"
+        (lsp_frame_core.lsp-position 1 1)
+        "end"
+        (lsp_frame_core.lsp-position 1 2))]
+    [context : json.JsonSeq
+      (lsp_frame_core.lsp-json-list-cons
+        (lsp_frame_core.lsp-lint-finding-diagnostic
+          (clone text)
+          version
+          0
+          (clone machine))
+        (json.list-empty))]
+    [machine-slots : (__tl_dyn-array lint_core.LintFinding)
+      (__tl_make-array lint_core.LintFinding 1)]
+    [uncertain-slots : (__tl_dyn-array lint_core.LintFinding)
+      (__tl_make-array lint_core.LintFinding 1)]
+    (begin
+      (set! (array-ref machine-slots 0) machine)
+      (set! (array-ref uncertain-slots 0) uncertain)
+      (let
+        [machine-json : String
+          (json.stringify
+            (lsp_frame_core.lsp-json-array
+              (lsp_frame_core.lsp-code-action-lint-from
+                (clone docs)
+                (clone uri)
+                (clone path)
+                (clone text)
+                version
+                (lint_core.LintFindings machine-slots 1)
+                (clone request-range)
+                (clone context)
+                0
+                (json.list-empty))))]
+        [uncertain-json : String
+          (json.stringify
+            (lsp_frame_core.lsp-json-array
+              (lsp_frame_core.lsp-code-action-lint-from
+                docs
+                uri
+                path
+                text
+                version
+                (lint_core.LintFindings uncertain-slots 1)
+                request-range
+                context
+                0
+                (json.list-empty))))]
+        [machine-title : String "Replace lint token"]
+        [suppression-title : String "Suppress single-begin"]
+        [replacement-json : String "\"newText\":\"X\""]
+        [version-json : String "\"version\":5"]
+        [uncertain-title : String "Uncertain lint token"]
+        (and
+          (string.contains (& machine-json) (& machine-title))
+          (string.contains (& machine-json) (& suppression-title))
+          (string.contains (& machine-json) (& replacement-json))
+          (string.contains (& machine-json) (& version-json))
+          (not (string.contains (& uncertain-json) (& uncertain-title)))
+          (string.contains (& uncertain-json) (& suppression-title)))))))
 
 (define (lsp-transcript-code-action
   [uri : String]
@@ -2882,6 +2982,7 @@
         (unless (lsp-position-encoding-diagnostic-smoke-ok?) (return 32))
         (unless (lsp-code-action-workspace-edit-smoke-ok?) (return 33))
         (unless (lsp-code-action-lint-smoke-ok?) (return 34))
+        (unless (lsp-code-action-lint-structured-fix-ok?) (return 49))
         (unless (lsp-code-action-transcript-smoke-ok?) (return 35))
         (unless (lsp-second-diagnostic-code-action-smoke-ok?) (return 38))
         (unless (lsp-workspace-index-smoke-ok?) (return 39))

@@ -402,13 +402,18 @@
     [rule-id : String finding.rule-id]
     [suggestion : String
       (lint_core.lint-rule-suggestion (string.copy (& rule-id)))]
-    (cdiag.compiler-diagnostic-with-help
-      (cdiag.compiler-diagnostic-with-code
-        (cdiag.compiler-diagnostic-with-level
-          (cdiag.compiler-diagnostic-from-ast-span path fspan finding.message)
-          cdiag.CompilerDiagnosticWarning)
-        rule-id)
-      suggestion)))
+    [diagnostic : cdiag.CompilerDiagnostic
+      (cdiag.compiler-diagnostic-with-help
+        (cdiag.compiler-diagnostic-with-code
+          (cdiag.compiler-diagnostic-with-level
+            (cdiag.compiler-diagnostic-from-ast-span path fspan finding.message)
+            cdiag.CompilerDiagnosticWarning)
+          rule-id)
+        suggestion)]
+    (match finding.fix
+      [(lint_core.LintFixAvailable fix)
+        (cdiag.compiler-diagnostic-with-fix diagnostic fix)]
+      [(lint_core.LintFixUnavailable _ _) diagnostic])))
 
 ;; Rich diagnostics are the human-facing default. `--format flat` preserves the
 ;; historical line-oriented form for scripts and editors that parse it.

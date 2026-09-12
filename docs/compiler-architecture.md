@@ -21,6 +21,18 @@ Compilation is one whole program per executable with import-graph dedup
 codegen'd once into archives; an in-process session cache warms compiler
 pools across compiles within one process (batch and LSP paths).
 
+Memory-class aggregate expressions carry addresses into inline storage. A
+field, enum-payload, or fixed-array projection keeps the storage lifetime of its
+containing value: `lower-emit-gep` is the shared address-generation path and
+preserves reusable-result provenance, including through `lower-gep-byte`.
+`lower-local-assignment-value` uses that
+provenance to copy a loop-carried value before the next iteration overwrites
+its producer's result slot. Raw pointers retain address identity rather than
+copying their referents. Losing provenance can make a local change during a later
+call, even at opt0. The native `loop_carried_enum_payload_snapshot` and
+`loop_carried_raw_read_snapshot` fixtures guard this boundary on both targets
+at every optimization level.
+
 The compiler also has a pure, versioned incremental-query identity layer. It
 canonicalizes typed source, logical-name, dependency, package/stdlib,
 configuration, macro/comptime, target, and ordered-child inputs into a bounded

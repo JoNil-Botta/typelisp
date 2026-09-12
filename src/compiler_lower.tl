@@ -19246,18 +19246,13 @@
   [state : LowerState]
   [base : ir.CompilerIrValue]
   [offset : i64]) : LowerExpr
-  (match (lower-state-alloc-var state)
-    [(LowerAlloc.Alloc allocated var-id)
-      (LowerExpr.Expr
-        (lower-state-emit
-          allocated
-          (ir.CompilerIrInstr.Gep
-            var-id
-            base
-            (ir.CompilerIrValue.I64 offset)
-            (ast.AstType.U8)))
-        (ir.CompilerIrValue.Var var-id)
-        (ast.AstType.U64))]))
+  (match (lower-emit-gep
+    state
+    base
+    (ir.CompilerIrValue.I64 offset)
+    (ast.AstType.U8))
+    [(LowerExpr.Expr gep-state ptr _)
+      (LowerExpr.Expr gep-state ptr (ast.AstType.U64))]))
 
 (define (lower-store-at-offset
   [state : LowerState]
@@ -20777,7 +20772,13 @@
       (lower-state-inline-result-alias-origin
         (lower-global-shared-view state)
         (lower-global-shared-view value))
-      (lower-state-active-loop-entry-var-limit (lower-global-shared-view state))))
+      (lower-state-active-loop-entry-var-limit (lower-global-shared-view state)))
+    ;; Derived raw pointers retain provenance too, but copying a pointer
+    ;; does not copy its referent. Only a memory-class value needs a snapshot.
+    (lower-inline-aggregate-abi-copy-needed?
+      (lower-global-shared-view ctx)
+      (lower-global-shared-view state)
+      (lower-global-shared-view ty)))
     ;; A loop-carried memory-class binding must not retain a pointer to the
     ;; producer's fixed frame slot: that same expression reuses the slot after
     ;; the backedge. Copy into a dedicated frame slot for this assignment site;
@@ -44457,16 +44458,27 @@
   [gep-ty : ast.AstType]) : LowerExpr
   (match (lower-state-alloc-var state)
     [(LowerAlloc.Alloc s v)
-      (LowerExpr.Expr
-        (lower-state-emit
-          s
-          (ir.CompilerIrInstr.Gep
-            v
-            base
-            index
-            (lower-global-shared-view gep-ty)))
-        (ir.CompilerIrValue.Var v)
-        gep-ty)]))
+      (let
+        [origin : i64
+          (lower-state-inline-result-alias-origin
+            (lower-global-shared-view s)
+            (lower-global-shared-view base))]
+        [gep-state : LowerState
+          (lower-state-emit
+            s
+            (ir.CompilerIrInstr.Gep
+              v
+              base
+              index
+              (lower-global-shared-view gep-ty)))]
+        (LowerExpr.Expr
+          ;; Address arithmetic preserves the producer's reusable-slot
+          ;; provenance through nested fields, payloads, and array elements.
+          (if (>= origin 0)
+            (lower-state-inline-result-alias-set gep-state v origin)
+            gep-state)
+          (ir.CompilerIrValue.Var v)
+          gep-ty))]))
 
 (define (lower-emit-load
   [state : LowerState]

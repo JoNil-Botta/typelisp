@@ -256,6 +256,12 @@ loopcarried_phi_home|tests/integration/loopcarried_phi_home.tl|42|-|-|-
 ssa_fixed_handle_values|tests/integration/ssa_fixed_handle_values.tl|42|-|-|stdlib/string.tl
 ssa_nominal_one_word|tests/integration/ssa_nominal_one_word.tl|42|-|-|-
 loop_carried_memory_aggregate_move|tests/integration/loop_carried_memory_aggregate_move.tl|42|-|-|-
+loop_carried_enum_payload_snapshot_opt0|tests/integration/loop_carried_enum_payload_snapshot.tl|42|-|-|-|opt-level:0+stage-stdlib
+loop_carried_enum_payload_snapshot_opt1|tests/integration/loop_carried_enum_payload_snapshot.tl|42|-|-|-|opt-level:1+stage-stdlib
+loop_carried_enum_payload_snapshot_opt2|tests/integration/loop_carried_enum_payload_snapshot.tl|42|-|-|-|opt-level:2+stage-stdlib
+loop_carried_raw_read_snapshot_opt0|tests/integration/loop_carried_raw_read_snapshot.tl|42|-|-|-|opt-level:0+stage-stdlib
+loop_carried_raw_read_snapshot_opt1|tests/integration/loop_carried_raw_read_snapshot.tl|42|-|-|-|opt-level:1+stage-stdlib
+loop_carried_raw_read_snapshot_opt2|tests/integration/loop_carried_raw_read_snapshot.tl|42|-|-|-|opt-level:2+stage-stdlib
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
 constant_divisor_strength|tests/integration/constant_divisor_strength.tl|42|-|-|-
 constructor_alias_two_phase|tests/integration/constructor_alias_two_phase.tl|42|-|-|stdlib/string.tl

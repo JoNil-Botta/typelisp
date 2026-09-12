@@ -41,8 +41,10 @@
 # element-specific functions, shrinking the catalog to 159 without introducing
 # a fallback route. Issue #7526 adds the compiler dense-list declaration
 # generator, reaching 160. Issue #7655 adds the canonical formatter writer-key
-# capability macro; all 161 remain native.
-native-entries-min 161
+# capability macro; all 161 remain native. Issue #7650 removes the generic
+# unsafe shared-view bridge instead of replacing it with an interpreted
+# transformer: the catalog now has 160 entries, all still native.
+native-entries-min 160
 shell-entries-max 0
 partial-entries-max 0
 interpreted-arms-max 0

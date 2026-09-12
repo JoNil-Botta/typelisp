@@ -23904,6 +23904,50 @@
       (compiler-reg-heapsort-allocation-free-ok?)
       "generated heapsort entries allocate no auxiliary arena storage")))
 
+(cfg
+  test
+  (test
+    regalloc-root-conflict-absorbs-replay
+    (let
+      [roots : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+      [invalid : (__tl_dyn-array bool) (__tl_make-array bool 2)]
+      (begin
+        (set! (array-ref roots 0) -1)
+        (test.assert-true
+          (reg.compiler-reg-color-set-root!
+            (reg.compiler-reg-global-shared-view roots)
+            (reg.compiler-reg-global-shared-view invalid)
+            0
+            0)
+          "first root propagates")
+        (test.assert-true
+          (reg.compiler-reg-color-set-root!
+            (reg.compiler-reg-global-shared-view roots)
+            (reg.compiler-reg-global-shared-view invalid)
+            0
+            1)
+          "conflicting root invalidates")
+        (test.assert-i64-eq (array-ref roots 0) -2 "conflict sentinel")
+        (test.assert-true (array-ref invalid 0) "first root invalidated")
+        (test.assert-true (array-ref invalid 1) "second root invalidated")
+        (test.assert-true
+          (not
+            (reg.compiler-reg-color-set-root!
+              (reg.compiler-reg-global-shared-view roots)
+              (reg.compiler-reg-global-shared-view invalid)
+              0
+              0))
+          "replay cannot restore first root")
+        (test.assert-true
+          (not
+            (reg.compiler-reg-color-set-root!
+              (reg.compiler-reg-global-shared-view roots)
+              (reg.compiler-reg-global-shared-view invalid)
+              0
+              1))
+          "replay cannot restore second root")
+        (test.assert-i64-eq (array-ref roots 0) -2 "conflict remains terminal")))))
+
 (define (compiler-regalloc-self-test) : i64
   (begin
     (compiler-regalloc-core-self-test?)

@@ -40757,19 +40757,23 @@
       [old : i64 (array-ref roots dst)]
       (if (= old root)
         false
-        (if (< old 0)
-          (begin
-            (set! (array-ref roots dst) root)
-            true)
-          (begin
-            (if (< old (array-length invalid))
-              (set! (array-ref invalid old) true)
-              unit)
-            (if (< root (array-length invalid))
-              (set! (array-ref invalid root) true)
-              unit)
-            (set! (array-ref roots dst) (- 0 2))
-            true))))))
+        ;; -1 has not received a root; -2 records a conflicting pair and
+        ;; must stay invalid even if a later replay sees either root again.
+        (if (= old (- 0 2))
+          false
+          (if (< old 0)
+            (begin
+              (set! (array-ref roots dst) root)
+              true)
+            (begin
+              (if (< old (array-length invalid))
+                (set! (array-ref invalid old) true)
+                unit)
+              (if (< root (array-length invalid))
+                (set! (array-ref invalid root) true)
+                unit)
+              (set! (array-ref roots dst) (- 0 2))
+              true)))))))
 
 ;; Result code of one propagation attempt. Bit 0 says the instruction is one of
 ;; the forms that can ever set a root, so later rounds must revisit it; bit 1

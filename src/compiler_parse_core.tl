@@ -1447,11 +1447,12 @@
     ast.AstLifetimeList
     ast.AstStructRepr
     ast.AstStructCleanup
+    i64
     ast.AstFieldDefList)
   (Err String))
 
 (defenum ResultAstEnumDefParts
-  (Ok ast.AstLifetimeList ast.AstEnumCleanup ast.AstVariantDefList)
+  (Ok ast.AstLifetimeList ast.AstEnumCleanup i64 ast.AstVariantDefList)
   (Err String))
 
 (defenum ResultAstExternAbi
@@ -5392,6 +5393,7 @@
   [lifetimes : ast.AstLifetimeList]
   [repr : ast.AstStructRepr]
   [cleanup : ast.AstStructCleanup]
+  [markers : i64]
   [fields : ast.AstFieldDefList]
   [seen-lifetimes : bool]
   [seen-repr : bool]
@@ -5427,6 +5429,7 @@
             lifetimes
             repr
             cleanup
+            markers
             next-fields
             seen-lifetimes
             seen-repr
@@ -5441,6 +5444,7 @@
   [lifetimes : ast.AstLifetimeList]
   [repr : ast.AstStructRepr]
   [cleanup : ast.AstStructCleanup]
+  [markers : i64]
   [fields : ast.AstFieldDefList]
   [seen-lifetimes : bool]
   [seen-repr : bool]
@@ -5448,7 +5452,7 @@
   [seen-field : bool]) : ResultAstStructDefParts
   (match (reader.spanned-sexpr-view items)
     [(reader.SpannedSexprView.Nil _)
-      (ResultAstStructDefParts.Ok lifetimes repr cleanup fields)]
+      (ResultAstStructDefParts.Ok lifetimes repr cleanup markers fields)]
     [(reader.SpannedSexprView.Cons head tail _)
       (match (reader.sexpr-view
         (reader.spanned-sexpr-form (compiler-parse-place-shared-view head)))
@@ -5477,6 +5481,7 @@
                             next-lifetimes
                             repr
                             cleanup
+                            markers
                             fields
                             true
                             seen-repr
@@ -5507,6 +5512,7 @@
                               lifetimes
                               next-repr
                               cleanup
+                              markers
                               fields
                               seen-lifetimes
                               true
@@ -5535,6 +5541,7 @@
                               lifetimes
                               repr
                               next-cleanup
+                              markers
                               fields
                               seen-lifetimes
                               seen-repr
@@ -5542,6 +5549,33 @@
                               false))]
                         [(ResultAstStructCleanup.Err message)
                           (ResultAstStructDefParts.Err message)])))]
+                [(=
+                    (ci.intern-syntax-id-value key)
+                    (cbi.compiler-builtin-ctfe-ref 293))
+                  (if seen-field
+                    (ResultAstStructDefParts.Err
+                      "parse: defstruct metadata must appear before fields")
+                    (if (not (= (bit-and markers 1) 0))
+                      (ResultAstStructDefParts.Err
+                        "parse: duplicate defstruct :must-use metadata")
+                      (match (reader.sexpr-view after-key)
+                        [(reader.SexprView.Nil)
+                          (parse-ast-defstruct-items
+                            dispatch
+                            pools
+                            tail
+                            lifetimes
+                            repr
+                            cleanup
+                            (+ markers 1)
+                            fields
+                            seen-lifetimes
+                            seen-repr
+                            seen-cleanup
+                            false)]
+                        [_
+                          (ResultAstStructDefParts.Err
+                            "parse: :must-use metadata takes no arguments")])))]
                 [(compiler-parse-metadata-key? dispatch key)
                   (if seen-field
                     (ResultAstStructDefParts.Err
@@ -5564,6 +5598,7 @@
                     lifetimes
                     repr
                     cleanup
+                    markers
                     fields
                     seen-lifetimes
                     seen-repr
@@ -5577,6 +5612,7 @@
                 lifetimes
                 repr
                 cleanup
+                markers
                 fields
                 seen-lifetimes
                 seen-repr
@@ -5590,6 +5626,7 @@
             lifetimes
             repr
             cleanup
+            markers
             fields
             seen-lifetimes
             seen-repr
@@ -5844,6 +5881,7 @@
   [tail : reader.SpannedSexpr]
   [lifetimes : ast.AstLifetimeList]
   [cleanup : ast.AstEnumCleanup]
+  [markers : i64]
   [seen-lifetimes : bool]
   [seen-cleanup : bool]) : ResultAstEnumDefParts
   (match (parse-ast-variant-def
@@ -5877,16 +5915,19 @@
           tail
           lifetimes
           cleanup
+          markers
           seen-lifetimes
           seen-cleanup
           true)
           [(ResultAstEnumDefParts.Ok
               parsed-lifetimes
               parsed-cleanup
+              parsed-markers
               parsed-rest)
             (ResultAstEnumDefParts.Ok
               parsed-lifetimes
               parsed-cleanup
+              parsed-markers
               (ast.ast-variant-def-cons parsed-variant parsed-rest))]
           [(ResultAstEnumDefParts.Err message)
             (ResultAstEnumDefParts.Err message)]))]
@@ -5898,6 +5939,7 @@
   [items : reader.SpannedSexpr]
   [lifetimes : ast.AstLifetimeList]
   [cleanup : ast.AstEnumCleanup]
+  [markers : i64]
   [seen-lifetimes : bool]
   [seen-cleanup : bool]
   [seen-variant : bool]) : ResultAstEnumDefParts
@@ -5906,6 +5948,7 @@
       (ResultAstEnumDefParts.Ok
         lifetimes
         cleanup
+        markers
         (ast.ast-variant-def-list-new))]
     [(reader.SpannedSexprView.Cons head tail _)
       (match (reader.sexpr-view
@@ -5922,6 +5965,7 @@
                     tail
                     lifetimes
                     cleanup
+                    markers
                     seen-lifetimes
                     seen-cleanup)]
                 [seen-variant
@@ -5944,6 +5988,7 @@
                           tail
                           next-lifetimes
                           cleanup
+                          markers
                           true
                           seen-cleanup
                           false)]
@@ -5963,11 +6008,33 @@
                           tail
                           lifetimes
                           next-cleanup
+                          markers
                           seen-lifetimes
                           true
                           false)]
                       [(ResultAstEnumCleanup.Err message)
                         (ResultAstEnumDefParts.Err message)]))]
+                [(=
+                    (ci.intern-syntax-id-value key)
+                    (cbi.compiler-builtin-ctfe-ref 293))
+                  (if (not (= (bit-and markers 1) 0))
+                    (ResultAstEnumDefParts.Err
+                      "parse: duplicate defenum :must-use metadata")
+                    (match (reader.sexpr-view after-key)
+                      [(reader.SexprView.Nil)
+                        (parse-ast-defenum-items
+                          dispatch
+                          pools
+                          tail
+                          lifetimes
+                          cleanup
+                          (+ markers 1)
+                          seen-lifetimes
+                          seen-cleanup
+                          false)]
+                      [_
+                        (ResultAstEnumDefParts.Err
+                          "parse: :must-use metadata takes no arguments")]))]
                 [else
                   (ResultAstEnumDefParts.Err
                     (str_cat.str-cat
@@ -5981,6 +6048,7 @@
                 tail
                 lifetimes
                 cleanup
+                markers
                 seen-lifetimes
                 seen-cleanup)])]
         [_
@@ -5991,6 +6059,7 @@
             tail
             lifetimes
             cleanup
+            markers
             seen-lifetimes
             seen-cleanup)])]
     [_ (ResultAstEnumDefParts.Err "parse: malformed variant list")]))
@@ -11219,10 +11288,15 @@
                 variants
                 (ast.ast-lifetime-list-new)
                 (ast.AstEnumCleanup.No)
+                0
                 false
                 false
                 false)
-                [(ResultAstEnumDefParts.Ok lifetimes cleanup parsed-variants)
+                [(ResultAstEnumDefParts.Ok
+                    lifetimes
+                    cleanup
+                    markers
+                    parsed-variants)
                   (begin
                     (set!
                       (array-ref reader.sp-node-pool-slots member-marker)
@@ -11241,16 +11315,20 @@
                         "parse: defenum needs at least one variant")
                       (if (ast.ast-lifetime-list-empty? (& lifetimes))
                         (ResultAstDecl.Ok
-                          (ast.ast-decl-def-enum-id
-                            name-id
-                            cleanup
-                            parsed-variants))
+                          (ast.ast-decl-with-aggregate-markers
+                            (ast.ast-decl-def-enum-id
+                              name-id
+                              cleanup
+                              parsed-variants)
+                            markers))
                         (ResultAstDecl.Ok
-                          (ast.ast-decl-def-enum-lifetimes-id
-                            name-id
-                            lifetimes
-                            cleanup
-                            parsed-variants)))))]
+                          (ast.ast-decl-with-aggregate-markers
+                            (ast.ast-decl-def-enum-lifetimes-id
+                              name-id
+                              lifetimes
+                              cleanup
+                              parsed-variants)
+                            markers)))))]
                 [(ResultAstEnumDefParts.Err message)
                   (ResultAstDecl.Err message)])))]
         [_ (ResultAstDecl.Err "parse: malformed defenum")])]
@@ -11283,6 +11361,7 @@
                 (ast.ast-lifetime-list-new)
                 (ast.AstStructRepr.Default)
                 (ast.AstStructCleanup.No)
+                0
                 (ast.ast-field-def-list-new)
                 false
                 false
@@ -11292,6 +11371,7 @@
                     lifetimes
                     repr
                     cleanup
+                    markers
                     parsed-fields)
                   (begin
                     (set!
@@ -11311,18 +11391,22 @@
                         "parse: defstruct needs at least one field")
                       (if (ast.ast-lifetime-list-empty? (& lifetimes))
                         (ResultAstDecl.Ok
-                          (ast.ast-decl-def-struct-id
-                            name-id
-                            repr
-                            cleanup
-                            parsed-fields))
+                          (ast.ast-decl-with-aggregate-markers
+                            (ast.ast-decl-def-struct-id
+                              name-id
+                              repr
+                              cleanup
+                              parsed-fields)
+                            markers))
                         (ResultAstDecl.Ok
-                          (ast.ast-decl-def-struct-lifetimes-id
-                            name-id
-                            lifetimes
-                            repr
-                            cleanup
-                            parsed-fields)))))]
+                          (ast.ast-decl-with-aggregate-markers
+                            (ast.ast-decl-def-struct-lifetimes-id
+                              name-id
+                              lifetimes
+                              repr
+                              cleanup
+                              parsed-fields)
+                            markers)))))]
                 [(ResultAstStructDefParts.Err message)
                   (ResultAstDecl.Err message)])))]
         [_ (ResultAstDecl.Err "parse: malformed defstruct")])]
@@ -15484,6 +15568,72 @@
       "(defstruct Bad (:repr c))"
       "parse: defstruct needs at least one field")))
 
+(define (compiler-parse-first-decl-must-use? [source : String]) : bool
+  (match (parse-ast-source source)
+    [(ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+      (let
+        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
+        (and
+          (= (ast.ast-decl-list-len (& decls)) 1)
+          (ast.ast-decl-must-use? (ast.ast-decl-list-ref decls 0))))]
+    [(ResultAstProgram.Err _) false]))
+
+(define (compiler-parse-must-use-metadata-ok?) : bool
+  (and
+    (not (compiler-parse-first-decl-must-use? "(defstruct Ticket (id i64))"))
+    (not
+      (compiler-parse-first-decl-must-use? "(defenum Status (Ok) (Err i64))"))
+    (compiler-parse-first-decl-must-use?
+      "(defstruct Ticket (:must-use) (id i64))")
+    (compiler-parse-first-decl-must-use?
+      "(defenum Status (:must-use) (Ok) (Err i64))")
+    (compiler-parse-first-decl-must-use?
+      "(defstruct View (:lifetimes a) (:must-use) (value (& a i64)))")
+    (compiler-parse-first-decl-must-use?
+      "(defenum View (:must-use) (:lifetimes a) (Some (& a i64)))")
+    (compiler-parse-first-decl-must-use?
+      "(defstruct Stat (:must-use) (:repr c) (size i64))")
+    (compiler-parse-first-decl-must-use?
+      "(defstruct File (:cleanup close-file) (:must-use) (fd i64))")
+    (compiler-parse-first-decl-must-use?
+      "(defenum File (:cleanup close-file) (:must-use) (Open i64))")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:must-use) (:must-use) (x i64))"
+      "parse: duplicate defstruct :must-use metadata")
+    (compiler-parse-error-ok?
+      "(defenum Bad (:must-use) (:must-use) (Yes))"
+      "parse: duplicate defenum :must-use metadata")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:must-use x) (x i64))"
+      "parse: :must-use metadata takes no arguments")
+    (compiler-parse-error-ok?
+      "(defenum Bad (:must-use x) (Yes))"
+      "parse: :must-use metadata takes no arguments")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (x i64) (:must-use))"
+      "parse: defstruct metadata must appear before fields")
+    (compiler-parse-error-ok?
+      "(defenum Bad (Yes) (:must-use))"
+      "parse: defenum metadata must appear before variants")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:cleanup close-bad) (x i64 (:must-use)))"
+      "parse: unknown field metadata :must-use")
+    (compiler-parse-error-ok?
+      "(defenum Bad (:cleanup close-bad) (Yes i64 (:must-use)))"
+      "parse: unknown enum payload metadata :must-use")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (x i64 (:must-use)))"
+      "parse: field cleanup metadata requires struct :cleanup metadata")
+    (compiler-parse-error-ok?
+      "(defenum Bad (Yes i64 (:must-use)))"
+      "parse: enum payload cleanup metadata requires enum :cleanup metadata")
+    (compiler-parse-error-ok?
+      "(define (bad) (:must-use) : i64 1)"
+      "parse: unknown define metadata :must-use")
+    (compiler-parse-error-ok?
+      "(test bad (:must-use) unit)"
+      "parse: unknown test metadata :must-use")))
+
 (define (compiler-parse-cleanup-error-tests-ok?) : bool
   (and
     (compiler-parse-error-ok?
@@ -15929,6 +16079,7 @@
     [(not (compiler-parse-special-form-error-tests-ok?)) false]
     [(not (compiler-parse-unsafe-decl-error-tests-ok?)) false]
     [(not (compiler-parse-repr-c-error-tests-ok?)) false]
+    [(not (compiler-parse-must-use-metadata-ok?)) false]
     [(not (compiler-parse-cleanup-error-tests-ok?)) false]
     [(not
         (compiler-parse-error-ok?

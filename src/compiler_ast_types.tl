@@ -5174,8 +5174,8 @@
   (Some String String AstExprList String))
 
 (defenum AstDeclMetaValue
-  (Runtime)
-  (Comptime AstGeneratedDeclMeta))
+  (Runtime i64)
+  (Comptime AstGeneratedDeclMeta i64))
 
 ;; Keep the per-declaration metadata field pointer-sized. An inline tagged
 ;; AstDeclMeta adds both a tag and a payload word to every AstDecl slot, while
@@ -5184,7 +5184,7 @@
   (value (Box AstDeclMetaValue)))
 
 (define ast-decl-meta-runtime : AstDeclMeta
-  (AstDeclMeta (box AstDeclMetaValue.Runtime)))
+  (AstDeclMeta (box (AstDeclMetaValue.Runtime 0))))
 
 (define (ast-decl-meta-runtime-shared-view) : AstDeclMeta
   (ast-global-shared-view ast-decl-meta-runtime))
@@ -7861,13 +7861,26 @@
 
 (define (ast-decl-generated-meta [decl : AstDecl]) : AstGeneratedDeclMeta
   (match (__tl-box-place (__tl-project-field (ast-decl-meta decl) value))
-    [(AstDeclMetaValue.Runtime) AstGeneratedDeclMeta.No]
-    [(AstDeclMetaValue.Comptime meta) meta]))
+    [(AstDeclMetaValue.Runtime _) AstGeneratedDeclMeta.No]
+    [(AstDeclMetaValue.Comptime meta _) meta]))
 
 (define (ast-decl-comptime-only? [decl : AstDecl]) : bool
   (match (__tl-box-place (__tl-project-field (ast-decl-meta decl) value))
-    [(AstDeclMetaValue.Runtime) false]
-    [(AstDeclMetaValue.Comptime _) true]))
+    [(AstDeclMetaValue.Runtime _) false]
+    [(AstDeclMetaValue.Comptime _ _) true]))
+
+;; Aggregate markers are declaration metadata, not runtime representation.
+;; Bit 0 is :must-use; higher bits are reserved for future aggregate markers.
+(define (ast-decl-meta-aggregate-markers [meta : AstDeclMeta]) : i64
+  (match (__tl-box-place meta.value)
+    [(AstDeclMetaValue.Runtime markers) markers]
+    [(AstDeclMetaValue.Comptime _ markers) markers]))
+
+(define (ast-decl-aggregate-markers [decl : AstDecl]) : i64
+  (ast-decl-meta-aggregate-markers (ast-decl-meta decl)))
+
+(define (ast-decl-must-use? [decl : AstDecl]) : bool
+  (not (= (bit-and (ast-decl-aggregate-markers decl) 1) 0)))
 
 (define (ast-decl-with-meta [meta : AstDeclMeta] [inner : AstDecl]) : AstDecl
   (let
@@ -7899,14 +7912,32 @@
 
 (define (ast-decl-comptime-decl [inner : AstDecl]) : AstDecl
   (ast-decl-with-meta
-    (AstDeclMeta (box (AstDeclMetaValue.Comptime AstGeneratedDeclMeta.No)))
+    (AstDeclMeta
+      (box
+        (AstDeclMetaValue.Comptime
+          AstGeneratedDeclMeta.No
+          (ast-decl-aggregate-markers (ast-global-shared-view inner)))))
     inner))
 
 (define (ast-decl-comptime-decl-with-meta
   [meta : AstGeneratedDeclMeta]
   [inner : AstDecl]) : AstDecl
   (ast-decl-with-meta
-    (AstDeclMeta (box (AstDeclMetaValue.Comptime meta)))
+    (AstDeclMeta
+      (box
+        (AstDeclMetaValue.Comptime
+          meta
+          (ast-decl-aggregate-markers (ast-global-shared-view inner)))))
+    inner))
+
+(define (ast-decl-with-aggregate-markers [inner : AstDecl] [markers : i64]) : AstDecl
+  (ast-decl-with-meta
+    (match (__tl-box-place
+      (__tl-project-field (ast-decl-meta (ast-global-shared-view inner)) value))
+      [(AstDeclMetaValue.Runtime _)
+        (AstDeclMeta (box (AstDeclMetaValue.Runtime markers)))]
+      [(AstDeclMetaValue.Comptime generated _)
+        (AstDeclMeta (box (AstDeclMetaValue.Comptime generated markers)))])
     inner))
 
 (define (ast-decl-unwrapped [decl : AstDecl]) : AstDecl
@@ -9894,12 +9925,16 @@
   [remap : (& remap AstProgramCompactionRemap)]
   [meta : AstDeclMeta]) : AstDeclMeta
   (match (__tl-box-place meta.value)
-    [(AstDeclMetaValue.Runtime) (ast-global-shared-view ast-decl-meta-runtime)]
-    [(AstDeclMetaValue.Comptime generated)
+    [(AstDeclMetaValue.Runtime markers)
+      (if (= markers 0)
+        (ast-global-shared-view ast-decl-meta-runtime)
+        (AstDeclMeta (box (AstDeclMetaValue.Runtime markers))))]
+    [(AstDeclMetaValue.Comptime generated markers)
       (AstDeclMeta
         (box
           (AstDeclMetaValue.Comptime
-            (ast-compaction-remap-generated-meta remap generated))))]))
+            (ast-compaction-remap-generated-meta remap generated)
+            markers)))]))
 
 (define (ast-compaction-remap-test-metadata [metadata : AstTestMetadata]) : AstTestMetadata
   (match (__tl-box-place metadata.value)
@@ -11586,3 +11621,33 @@
           " callable="
           (string.int->string
             (comptime (size-of (type AstImportedSpmdCallable)))))))))
+
+(cfg
+  test
+  (test
+    compiler-ast-aggregate-marker-wrappers
+    (let
+      [marked : AstDecl
+        (ast-decl-with-aggregate-markers
+          (ast-decl-def-struct-id
+            (ci.intern-generated-name "Marked")
+            AstStructRepr.Default
+            AstStructCleanup.No
+            (ast-field-def-list-new))
+          1)]
+      [comptime-decl : AstDecl
+        (ast-decl-comptime-decl (ast-place-shared-view marked))]
+      [generated-decl : AstDecl
+        (ast-decl-comptime-decl-with-meta
+          AstGeneratedDeclMeta.No
+          (ast-place-shared-view marked))]
+      [unsafe-decl : AstDecl
+        (ast-decl-unsafe (ast-place-shared-view comptime-decl))]
+      (unless
+        (and
+          (ast-decl-must-use? marked)
+          (ast-decl-must-use? comptime-decl)
+          (ast-decl-must-use? generated-decl)
+          (ast-decl-must-use? (ast-place-shared-view unsafe-decl))
+          (ast-decl-comptime-only? unsafe-decl))
+        (io.panic "aggregate marker lost through declaration wrapper")))))

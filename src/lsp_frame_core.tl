@@ -4483,7 +4483,9 @@
           (json.list-empty))))))
 
 (define (lsp-code-action-lint-from
+  [docs : lsp_document_vec.Vec]
   [uri : String]
+  [path : String]
   [text : String]
   [version : i64]
   [findings : lint.LintFindings]
@@ -4519,21 +4521,38 @@
             0)
             [(LspJsonValue.Missing) acc]
             [(LspJsonValue.Found diagnostic)
-              (lsp-json-list-cons
-                (lsp-code-action
-                  (lsp-str3
-                    "Suppress "
-                    (owned_view.compiler-owned-shared-view finding.rule-id)
-                    " for this form")
-                  diagnostic
-                  (lsp-code-action-lint-edit
-                    (owned_view.compiler-owned-shared-view uri)
-                    version
-                    (owned_view.compiler-owned-shared-view text)
-                    (owned_view.compiler-owned-shared-view finding)))
-                acc)]))]
+              (let
+                [lint-diagnostic : cdiag.CompilerDiagnostic
+                  (lint_driver_core.selfhost-lint-finding-diagnostic
+                    (owned_view.compiler-owned-shared-view path)
+                    (owned_view.compiler-owned-shared-view finding))]
+                [fixes : cdiag.CompilerDiagnosticFixSeq
+                  (cdiag.compiler-diagnostic-fixes (& lint-diagnostic))]
+                [with-fixes : json.JsonSeq
+                  (lsp-code-action-compiler-fixes-from
+                    (owned_view.compiler-owned-shared-view docs)
+                    (owned_view.compiler-owned-shared-view path)
+                    (owned_view.compiler-owned-shared-view diagnostic)
+                    fixes
+                    0
+                    acc)]
+                (lsp-json-list-cons
+                  (lsp-code-action
+                    (lsp-str3
+                      "Suppress "
+                      (owned_view.compiler-owned-shared-view finding.rule-id)
+                      " for this form")
+                    diagnostic
+                    (lsp-code-action-lint-edit
+                      (owned_view.compiler-owned-shared-view uri)
+                      version
+                      (owned_view.compiler-owned-shared-view text)
+                      (owned_view.compiler-owned-shared-view finding)))
+                  with-fixes))]))]
       (lsp-code-action-lint-from
+        docs
         (owned_view.compiler-owned-shared-view uri)
+        (owned_view.compiler-owned-shared-view path)
         (owned_view.compiler-owned-shared-view text)
         version
         findings
@@ -4652,7 +4671,9 @@
                                   (lint.lint-findings-empty))]
                               [actions : json.JsonSeq
                                 (lsp-code-action-lint-from
+                                  docs
                                   uri
+                                  doc.path
                                   doc.text
                                   version
                                   findings

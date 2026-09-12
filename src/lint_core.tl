@@ -12,6 +12,7 @@
 ;# metadata and the lint core verified by `compiler-lint-self-test` in the
 ;# `lint_core_tests.tl` companion (driver: `src/tests/lint_smoke.tl`).
 (import compiler_owned_view as owned_view)
+(import compiler_diagnostic as cdiag)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 (import compiler_ast_types as ast)
@@ -27,14 +28,38 @@
     `(unsafe
       (ptr-read (ptr-addr-of ,place)))))
 
-;: A single lint finding: stable rule id, human-readable message, rule-specific
-;: depth metadata, and the source span of the flagged node (the `lint-no-span`
-;: sentinel when the node carried no location, e.g. a synthesized expression).
+;: A rule either supplies an ordinary shared diagnostic fix or records why its
+;: suggestion is not safe to apply automatically. A finding without a proved
+;: edit is never silently promoted to machine-applicable.
+(defenum LintFixDecision
+  (LintFixUnavailable String String)
+  (LintFixAvailable cdiag.CompilerDiagnosticFix))
+
+(define (lint-fix-unproven) : LintFixDecision
+  (LintFixUnavailable
+    "rule-safety-unproven"
+    "This lint suggestion has no validated source edit"))
+
+;: A single lint finding: stable rule id, message, rule-specific depth, span,
+;: and an explicit fix/applicability decision. `lint-no-span` denotes generated
+;: expressions with no editable source location.
 (defstruct LintFinding
   (message String)
   (rule-id String)
   (depth i64)
-  (span ast.AstSourceSpan))
+  (span ast.AstSourceSpan)
+  (fix LintFixDecision))
+
+;: Attach a rule-proved fix without inventing a second edit coordinate type.
+(define (lint-finding-with-fix
+  [finding : LintFinding]
+  [fix : cdiag.CompilerDiagnosticFix]) : LintFinding
+  (LintFinding
+    finding.message
+    finding.rule-id
+    finding.depth
+    finding.span
+    (LintFixAvailable fix)))
 
 ;: Stable rule id for the dormant nested-`if`-ladder rule. Rule ids are the
 ;: suppression key (`;; lint-allow: <rule-id>`) and the registry key, so this
@@ -1073,21 +1098,24 @@
     (lint-if-ladder-message then-branch else-branch)
     (lint-rule-nested-if-ladder-id)
     depth
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-nested-let-finding [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
     (lint-rule-message (lint-rule-nested-let-id))
     (lint-rule-nested-let-id)
     0
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-single-begin-finding [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
     (lint-rule-message (lint-rule-single-begin-id))
     (lint-rule-single-begin-id)
     0
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-return-path-chain-finding
   [depth : i64]
@@ -1096,7 +1124,8 @@
     (lint-rule-message (lint-rule-return-path-chain-id))
     (lint-rule-return-path-chain-id)
     depth
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-unit-if-guard-finding
   [then-unit : bool]
@@ -1107,28 +1136,32 @@
       "unit guard if: unit else-branch; prefer when/unless")
     (lint-rule-unit-if-guard-id)
     1
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-no-effect-finding [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
     (lint-rule-message (lint-rule-no-effect-id))
     (lint-rule-no-effect-id)
     0
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-unreachable-code-finding [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
     (lint-rule-message (lint-rule-unreachable-code-id))
     (lint-rule-unreachable-code-id)
     0
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-redundant-divergence-padding-finding [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
     (lint-rule-message (lint-rule-redundant-divergence-padding-id))
     (lint-rule-redundant-divergence-padding-id)
     0
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-dead-code-finding [name : String] [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
@@ -1138,7 +1171,8 @@
       " is unreachable from package entry/test roots")
     (lint-rule-dead-code-id)
     0
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-unused-assignment-finding
   [name : String]
@@ -1150,7 +1184,8 @@
       " is overwritten before it is read")
     (lint-rule-unused-assignment-id)
     0
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-copy-on-update-struct-finding
   [name : String]
@@ -1165,7 +1200,8 @@
       "; use in-place field assignment")
     (lint-rule-copy-on-update-struct-id)
     1
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-single-element-array-cell-finding
   [name : String]
@@ -1177,7 +1213,8 @@
       " is only read or written at index 0; prefer Box T, &mut, or returning the updated value")
     (lint-rule-single-element-array-cell-id)
     0
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-prefer-dynamic-array-literal-finding
   [name : String]
@@ -1189,7 +1226,8 @@
       " is initialized by consecutive array-set! calls; prefer (__tl_make-array v0 v1 ...)")
     (lint-rule-prefer-dynamic-array-literal-id)
     0
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-unused-variable-finding
   [name : String]
@@ -1198,21 +1236,24 @@
     (str_cat.str-cat "unused variable: " name " is never used")
     (lint-rule-unused-variable-id)
     0
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-unused-unsafe-finding [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
     (lint-rule-message (lint-rule-unused-unsafe-id))
     (lint-rule-unused-unsafe-id)
     0
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-raw-arena-op-finding [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
     (lint-rule-message (lint-rule-raw-arena-op-id))
     (lint-rule-raw-arena-op-id)
     0
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-redundant-function-name-finding
   [module-name : String]
@@ -1235,7 +1276,8 @@
         short-name)
       (lint-rule-redundant-function-name-id)
       0
-      span)))
+      span
+      (lint-fix-unproven))))
 
 (define (lint-name-case-ascii-lower? [c : char]) : bool
   (and (>= c 'a') (<= c 'z')))
@@ -1571,7 +1613,8 @@
       suggested)
     rule-id
     0
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-global-name-case-finding
   [name : String]
@@ -1783,7 +1826,8 @@
         (lint-rule-message (lint-rule-deprecated-string-concat-id))))
     (lint-rule-deprecated-string-concat-id)
     (lint-deprecated-string-concat-depth in-loop in-chain)
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-and-or-op-name [name : String]) : String
   (if (or
@@ -1847,7 +1891,8 @@
       qualified)
     (lint-rule-transitional-core-macro-qualifier-id)
     0
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-transitional-core-macro-add
   [func : ast.AstExpr]
@@ -2125,14 +2170,16 @@
         (owned_view.compiler-owned-shared-view args)))
     (lint-rule-cascading-and-or-id)
     (lint-cascading-and-or-flat-arg-count-list op args)
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-nested-str-cat-finding [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
     (lint-rule-nested-str-cat-message)
     (lint-rule-nested-str-cat-id)
     0
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-deprecated-string-concat-token-span
   [tok : token.SpannedToken]
@@ -4262,14 +4309,16 @@
       " is never referenced")
     (lint-rule-unused-import-id)
     0
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-redundant-import-alias-finding [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
     (lint-rule-redundant-import-alias-message)
     (lint-rule-redundant-import-alias-id)
     0
-    span))
+    span
+    (lint-fix-unproven)))
 
 (define (lint-module-default-alias [module-name : String]) : String
   (let

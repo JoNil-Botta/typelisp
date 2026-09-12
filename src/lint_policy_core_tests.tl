@@ -627,7 +627,8 @@
           "nested let"
           "nested-let"
           2
-          (lint_core.lint-no-span)))]
+          (lint_core.lint-no-span)
+          (lint_core.lint-fix-unproven)))]
     (lint-policy-test-expect
       (and
         (string.eq resolved.finding.rule-id "nested-let")

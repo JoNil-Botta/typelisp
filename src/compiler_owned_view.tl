@@ -15,10 +15,14 @@
       (comptime.reference-element-type (comptime.expr-type reference))]
     (match (comptime.type-info value-ty)
       [(comptime.TypeInfo.DynArray _)
-        `(__tl-compiler-owned-shared-view-dyn-ref-as ,reference ,value-ty)]
+        `(unsafe
+          (ptr-read
+            (ptr-cast (__tl_array-data (array ,reference)) : (Ptr ,value-ty))))]
       [(comptime.TypeInfo.Builtin kind)
         (if (string.eq kind "string")
-          `(__tl-compiler-owned-shared-view-dyn-ref-as ,reference ,value-ty)
+          `(unsafe
+            (ptr-read
+              (ptr-cast (__tl_array-data (array ,reference)) : (Ptr ,value-ty))))
           `(let
             [address : u64
               (unsafe
@@ -49,7 +53,11 @@
               (compiler-owned-reference-shared-view shared-ref))
             `(let
               [shared-ref (& ,place)]
-              (__tl-compiler-owned-shared-view-dyn-ref-as shared-ref ,value-ty)))]
+              (unsafe
+                (ptr-read
+                  (ptr-cast
+                    (__tl_array-data (array shared-ref))
+                    : (Ptr ,value-ty))))))]
         [(comptime.TypeInfo.Builtin kind)
           (if region?
             `(let
@@ -58,9 +66,11 @@
             (if (string.eq kind "string")
               `(let
                 [shared-ref (& ,place)]
-                (__tl-compiler-owned-shared-view-dyn-ref-as
-                  shared-ref
-                  ,value-ty))
+                (unsafe
+                  (ptr-read
+                    (ptr-cast
+                      (__tl_array-data (array shared-ref))
+                      : (Ptr ,value-ty)))))
               place))]
         [(comptime.TypeInfo.Opaque _)
           (if region?
@@ -82,7 +92,8 @@
 (defmacro (compiler-owned-string-place-shared-view [place : Expr]) : Expr
   `(let
     [shared-ref (& ,place)]
-    (__tl-compiler-owned-shared-view-dyn-ref-as shared-ref String)))
+    (unsafe
+      (ptr-read (ptr-cast (__tl_array-data (array shared-ref)) : (Ptr String))))))
 
 ;; Global and ordinary local places keep the direct shallow load used by the
 ;; bootstrap. A projected place rooted in an explicit reference is lifetime-

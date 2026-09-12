@@ -337,14 +337,19 @@
 
 (define (compiler-backend-i64-array-shared-view
   [items : (& items (__tl_dyn-array i64))]) : (__tl_dyn-array i64)
-  (__tl-compiler-owned-shared-view-dyn-ref-as items (__tl_dyn-array i64)))
+  (unsafe
+    (ptr-read
+      (ptr-cast (__tl_array-data (array items)) : (Ptr (__tl_dyn-array i64))))))
 
 (define (compiler-backend-string-array-shared-view
   [items : (& items (__tl_dyn-array String))]) : (__tl_dyn-array String)
-  (__tl-compiler-owned-shared-view-dyn-ref-as items (__tl_dyn-array String)))
+  (unsafe
+    (ptr-read
+      (ptr-cast (__tl_array-data (array items)) : (Ptr (__tl_dyn-array String))))))
 
 (define (compiler-backend-string-shared-view [value : (& value str)]) : String
-  (__tl-compiler-owned-shared-view-dyn-ref-as value String))
+  (unsafe
+    (ptr-read (ptr-cast (__tl_array-data (array value)) : (Ptr String)))))
 
 (defmacro (compiler-backend-global-array-element-shared-view
   [items : Expr]

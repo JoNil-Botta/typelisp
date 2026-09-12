@@ -173,7 +173,8 @@
 
 ;: Re-expose a borrowed process string through the public String surface.
 (define (process-string-shared-view [value : (& value str)]) : String
-  (__tl-compiler-owned-shared-view-dyn-ref-as value String))
+  (unsafe
+    (ptr-read (ptr-cast (__tl_array-data (array value)) : (Ptr String)))))
 
 ;: Return a checked representation-level shared view of a process string-array
 ;: element.

@@ -36,7 +36,8 @@
     (ptr-read (ptr-addr-of ,place))))
 
 (define (chooser-string-shared-view [value : (& value str)]) : String
-  (__tl-compiler-owned-shared-view-dyn-ref-as value String))
+  (unsafe
+    (ptr-read (ptr-cast (__tl_array-data (array value)) : (Ptr String)))))
 
 ;: Kind tags: 0 = PR (review), 1 = ready-for-implementation issue (implement),
 ;: 2 = research/triage issue.

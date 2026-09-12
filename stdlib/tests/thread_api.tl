@@ -11,9 +11,11 @@
       (ptr->int
         (ptr-cast
           (__tl_array-data
-            (__tl-compiler-owned-shared-view-dyn-ref-as
-              items
-              (__tl_dyn-array i64)))
+            (unsafe
+              (ptr-read
+                (ptr-cast
+                  (__tl_array-data (array items))
+                  : (Ptr (__tl_dyn-array i64))))))
           : (Ptr u8)))
       : i64)))
 

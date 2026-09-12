@@ -208,6 +208,7 @@ clone.tl
 comptime.tl
 core_macros.tl
 crypto_rsa_core.tl
+crypto_rsa_verify.tl
 crypto_random.tl
 crypto_sha1_git.tl
 crypto_sha256.tl
@@ -281,6 +282,7 @@ stdlib/tests/arena_patterns.tl|42|-|-|-
 stdlib/tests/byte_buf_api.tl|42|-|-
 stdlib/tests/byte_buf_core_api.tl|42|-|-
 stdlib/tests/crypto_rsa_core_api.tl|42|-|-|-
+stdlib/tests/crypto_rsa_verify_api.tl|42|-|-|-
 stdlib/tests/format_api.tl|42|-|-|-
 stdlib/tests/format_debug_bytes.tl|42|-|-|-
 stdlib/tests/format_debug_length_overflow.tl|134|-|literal:format: Debug output length overflow|-

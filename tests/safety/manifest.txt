@@ -32,6 +32,11 @@ reference_region_defined|check-ok|tests/safety/reference_region_defined.tl|-|-
 signature_lifetime_alias_reborrow_ok|run-exit|tests/safety/signature_lifetime_alias_reborrow_ok.tl|42|-
 raw_pointer_values_defined|check-ok|tests/safety/raw_pointer_values_defined.tl|-|-
 private_array_data_safe_reject|check-fail|tests/safety/private_array_data_safe_reject.tl|-|typecheck: __tl_array-data requires unsafe context
+rsa_verify_digest_as_message_reject|check-fail|tests/safety/rsa_verify_digest_as_message_reject.tl|-|expected (& message bytes), found (& digest stdlib.crypto_sha256/Sha256Digest)
+shared_view_bridge_reinterpret_reject|check-fail|tests/safety/shared_view_bridge_reinterpret_reject.tl|-|typecheck: unbound name __tl-compiler-owned-shared-view-dyn-ref-as
+shared_view_bridge_alias_reject|check-fail|tests/safety/shared_view_bridge_alias_reject.tl|-|typecheck: unbound name core.__tl-compiler-owned-shared-view-dyn-ref-as
+shared_view_bridge_owner_reject|check-fail|tests/safety/shared_view_bridge_owner_reject.tl|-|typecheck: unbound name __tl-compiler-owned-shared-view-dyn-ref-as
+borrowed_array_explicit_unsafe_data_ok|run-exit|tests/safety/borrowed_array_explicit_unsafe_data_ok.tl|42|-
 process_owned_redundant_count_reject|check-fail|tests/safety/process_owned_redundant_count_reject.tl|-|process.ProcessStringList expected 1 argument, got 2 arguments
 process_borrowed_raw_word_reject|check-fail|tests/safety/process_borrowed_raw_word_reject.tl|-|expected (& text str), found (& raw u64)
 process_runtime_safe_entry_reject|check-fail|tests/safety/process_runtime_safe_entry_reject.tl|-|process_runtime/tl_process_output requires unsafe context
@@ -706,3 +711,20 @@ loop_mut_borrow_stored_return_ok|check-ok|tests/safety/loop_mut_borrow_stored_re
 loop_mut_borrow_stored_break_reject|check-fail|tests/safety/loop_mut_borrow_stored_break_reject.tl|-|cannot assign to borrowed place `items[0]`
 loop_mut_borrow_return_or_continue_ok|check-ok|tests/safety/loop_mut_borrow_return_or_continue_ok.tl|-|-
 loop_mut_borrow_continue_edge_reject|check-fail|tests/safety/loop_mut_borrow_continue_edge_reject.tl|-|cannot assign to borrowed place `items[0]`
+
+# Raw thread/sync effects stay on the adapters, including generated modules.
+thread_raw_spawn_safe_reject|check-fail|tests/safety/thread_raw_spawn_safe_reject.tl|-|thread/spawn requires unsafe context
+thread_raw_result_projection_safe_reject|check-fail|tests/safety/thread_raw_result_projection_safe_reject.tl|-|thread/spawn-result-handle-or requires unsafe context
+thread_raw_address_safe_reject|check-fail|tests/safety/thread_raw_address_safe_reject.tl|-|thread/addr->mut-i64 requires unsafe context
+thread_raw_timespec_safe_reject|check-fail|tests/safety/thread_raw_timespec_safe_reject.tl|-|thread/linux-monotonic-ms requires unsafe context
+thread_raw_callable_launder_reject|check-fail|tests/safety/thread_raw_callable_launder_reject.tl|-|thread/semaphore-close is an unsafe callable and cannot be used as a plain function value
+thread_raw_semaphore_safe_reject|check-fail|tests/safety/thread_raw_semaphore_safe_reject.tl|-|thread/semaphore-close requires unsafe context
+sync_raw_atomic_safe_reject|check-fail|tests/safety/sync_raw_atomic_safe_reject.tl|-|sync/atomic-i64-load requires unsafe context
+sync_raw_free_safe_reject|check-fail|tests/safety/sync_raw_free_safe_reject.tl|-|sync/runtime-free requires unsafe context
+sync_raw_channel_record_safe_reject|check-fail|tests/safety/sync_raw_channel_record_safe_reject.tl|-|sync/i64-channel-send requires unsafe context
+sync_raw_mutex_record_safe_reject|check-fail|tests/safety/sync_raw_mutex_record_safe_reject.tl|-|sync/i64-mutex-lock requires unsafe context
+sync_raw_callable_launder_reject|check-fail|tests/safety/sync_raw_callable_launder_reject.tl|-|sync/atomic-i64-load is an unsafe callable and cannot be used as a plain function value
+sync_generated_raw_alias_safe_reject|check-fail|tests/safety/sync_generated_raw_alias_safe_reject.tl|-|channel_alias/load-raw requires unsafe context
+sync_generated_mutex_raw_safe_reject|check-fail|tests/safety/sync_generated_mutex_raw_safe_reject.tl|-|mutex_alias/load-raw requires unsafe context
+thread_sync_raw_explicit_unsafe_ok|check-ok|tests/safety/thread_sync_raw_explicit_unsafe_ok.tl|-|-
+thread_sync_typed_safe_control_ok|check-ok|tests/safety/thread_sync_typed_safe_control_ok.tl|-|-

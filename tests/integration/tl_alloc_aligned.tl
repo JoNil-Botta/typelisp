@@ -228,20 +228,27 @@
     (begin
       (set! (array-ref context-a 0) (arena.raw-handle owner))
       (set! (array-ref context-b 0) (arena.raw-handle owner))
-      (match (thread.spawn atomic-aligned-worker (array-i64-address context-a))
+      (match (unsafe
+        (thread.spawn atomic-aligned-worker (array-i64-address context-a)))
         [(thread.ThreadSpawnErr _) false]
         [(thread.ThreadSpawnOk worker-a)
-          (match (thread.spawn
-            atomic-aligned-worker
-            (array-i64-address context-b))
+          (match (unsafe
+            (thread.spawn atomic-aligned-worker (array-i64-address context-b)))
             [(thread.ThreadSpawnErr _)
               (begin
-                (thread.join worker-a)
+                (unsafe
+                  (thread.join worker-a))
                 false)]
             [(thread.ThreadSpawnOk worker-b)
               (let
-                [address-a : i64 (joined-address (thread.join worker-a))]
-                [address-b : i64 (joined-address (thread.join worker-b))]
+                [address-a : i64
+                  (joined-address
+                    (unsafe
+                      (thread.join worker-a)))]
+                [address-b : i64
+                  (joined-address
+                    (unsafe
+                      (thread.join worker-b)))]
                 [ok : bool
                   (and
                     (not (= address-a 0))

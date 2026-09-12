@@ -103,7 +103,8 @@
 
 ;: Re-expose a borrowed MSVC string field through the public String surface.
 (define (msvc-string-shared-view [value : (& value str)]) : String
-  (__tl-compiler-owned-shared-view-dyn-ref-as value String))
+  (unsafe
+    (ptr-read (ptr-cast (__tl_array-data (array value)) : (Ptr String)))))
 
 ;: Return the resolved tool executable path.
 (define (tool-executable [tool : (& tool MsvcTool)]) : String

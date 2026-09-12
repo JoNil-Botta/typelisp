@@ -1,3 +1,5 @@
+;; Raw test contexts are live parent-owned i64 arrays through both joins;
+;; semaphore handles come from create and close only after their waiters exit.
 (import stdlib.thread)
 (import stdlib.vector)
 (import (thread.handle i64) as thread_i64)
@@ -11,9 +13,11 @@
       (ptr->int
         (ptr-cast
           (__tl_array-data
-            (__tl-compiler-owned-shared-view-dyn-ref-as
-              items
-              (__tl_dyn-array i64)))
+            (unsafe
+              (ptr-read
+                (ptr-cast
+                  (__tl_array-data (array items))
+                  : (Ptr (__tl_dyn-array i64))))))
           : (Ptr u8)))
       : i64)))
 
@@ -37,7 +41,8 @@
     [sem-handle : i64 (test-read-i64 ctx 2)]
     (begin
       (test-write-i64! out-addr 0 value)
-      (thread.semaphore-post (thread.ThreadSemaphore sem-handle))
+      (unsafe
+        (thread.semaphore-post (thread.ThreadSemaphore sem-handle)))
       value)))
 
 (define (thread-api-join-code [result : thread.ThreadJoinResult]) : i64
@@ -45,9 +50,12 @@
 
 (define (thread-api-thread-or [spawn : thread.ThreadSpawnResult]) : thread.Thread
   (thread.Thread
-    (thread.spawn-result-handle-or (& spawn) 0)
-    (thread.spawn-result-clear-tid-addr-or (& spawn) 0)
-    (thread.spawn-result-result-addr-or (& spawn) 0)
+    (unsafe
+      (thread.spawn-result-handle-or (& spawn) 0))
+    (unsafe
+      (thread.spawn-result-clear-tid-addr-or (& spawn) 0))
+    (unsafe
+      (thread.spawn-result-result-addr-or (& spawn) 0))
     ""))
 
 (define (thread-api-join-i64-code [result : thread_i64.JoinResult]) : i64
@@ -120,18 +128,26 @@
       unit)))
 
 (define (thread-api-negative-semaphore-rejected?) : bool
-  (= (thread.semaphore-create-handle-or -1 -1) -1))
+  (=
+    (unsafe
+      (thread.semaphore-create-handle-or -1 -1))
+    -1))
 
 (define (thread-api-large-semaphore-rejected?) : bool
-  (= (thread.semaphore-create-handle-or 2147483648 -1) -1))
+  (=
+    (unsafe
+      (thread.semaphore-create-handle-or 2147483648 -1))
+    -1))
 
 (define (thread-api-bounded-wait-worker [sem-handle : i64]) : i64
-  (if (thread.semaphore-wait (thread.ThreadSemaphore sem-handle))
+  (if (unsafe
+    (thread.semaphore-wait (thread.ThreadSemaphore sem-handle)))
     42
     -1))
 
 (define (thread-api-bounded-wait-run [sem : thread.ThreadSemaphore]) : i64
-  (match (thread.spawn thread-api-bounded-wait-worker sem.handle)
+  (match (unsafe
+    (thread.spawn thread-api-bounded-wait-worker sem.handle))
     [(thread.ThreadSpawnErr _) 14]
     [(thread.ThreadSpawnOk worker)
       (let
@@ -140,43 +156,71 @@
         [join-code : i64 -1]
         (begin
           (if (not
-            (thread-api-negative-wait-rejected? (thread.wait-for (& worker) -1)))
+            (thread-api-negative-wait-rejected?
+              (unsafe
+                (thread.wait-for (& worker) -1))))
             (set! result 15)
             unit)
           (if (and
             (= result 42)
-            (not (thread-api-wait-timed-out? (thread.wait-for (& worker) 0))))
+            (not
+              (thread-api-wait-timed-out?
+                (unsafe
+                  (thread.wait-for (& worker) 0)))))
             (set! result 16)
             unit)
           (if (and
             (= result 42)
-            (not (thread-api-wait-timed-out? (thread.wait-for (& worker) 1))))
+            (not
+              (thread-api-wait-timed-out?
+                (unsafe
+                  (thread.wait-for (& worker) 1)))))
             (set! result 17)
             unit)
           (if (and
             (= result 42)
-            (not (thread-api-wait-timed-out? (thread.wait-for (& worker) 0))))
+            (not
+              (thread-api-wait-timed-out?
+                (unsafe
+                  (thread.wait-for (& worker) 0)))))
             (set! result 18)
             unit)
-          (set! released (thread.semaphore-post sem))
+          (set!
+            released
+            (unsafe
+              (thread.semaphore-post sem)))
           (if (not released)
             (set! result 19)
             (begin
               (if (and
                 (= result 42)
-                (not (thread-api-wait-ready? (thread.wait-for (& worker) 5000))))
+                (not
+                  (thread-api-wait-ready?
+                    (unsafe
+                      (thread.wait-for (& worker) 5000)))))
                 (set! result 20)
                 unit)
               (if (and
                 (= result 42)
-                (not (thread-api-wait-ready? (thread.wait-for (& worker) 0))))
+                (not
+                  (thread-api-wait-ready?
+                    (unsafe
+                      (thread.wait-for (& worker) 0)))))
                 (set! result 21)
                 unit)
-              (set! join-code (thread-api-join-code (thread.join worker)))
+              (set!
+                join-code
+                (thread-api-join-code
+                  (unsafe
+                    (thread.join worker))))
               (if (and (= result 42) (not (= join-code 42)))
                 (set! result 22)
                 unit)
-              (if (and (= result 42) (not (thread.semaphore-close sem)))
+              (if (and
+                (= result 42)
+                (not
+                  (unsafe
+                    (thread.semaphore-close sem))))
                 (set! result 23)
                 unit)))
           result))]))
@@ -192,15 +236,33 @@
     [a-code : i64 -1]
     [b-code : i64 -1]
     (begin
-      (if (not (thread.semaphore-wait sem))
+      (if (not
+        (unsafe
+          (thread.semaphore-wait sem)))
         (set! result 4)
         unit)
-      (if (and (= result 42) (not (thread.semaphore-wait sem)))
+      (if (and
+        (= result 42)
+        (not
+          (unsafe
+            (thread.semaphore-wait sem))))
         (set! result 5)
         unit)
-      (set! a-code (thread-api-join-code (thread.join a)))
-      (set! b-code (thread-api-join-code (thread.join b)))
-      (if (and (= result 42) (not (thread.semaphore-close sem)))
+      (set!
+        a-code
+        (thread-api-join-code
+          (unsafe
+            (thread.join a))))
+      (set!
+        b-code
+        (thread-api-join-code
+          (unsafe
+            (thread.join b))))
+      (if (and
+        (= result 42)
+        (not
+          (unsafe
+            (thread.semaphore-close sem))))
         (set! result 6)
         unit)
       (if (and (= result 42) (not (= (array-ref out-a 0) 11)))
@@ -233,13 +295,15 @@
       (set! (array-ref ctx-b 2) sem-handle)
       (let
         [a-spawn : thread.ThreadSpawnResult
-          (thread.spawn thread-api-worker (test-array-i64-addr (& ctx-a)))]
+          (unsafe
+            (thread.spawn thread-api-worker (test-array-i64-addr (& ctx-a))))]
         (if (not (thread.spawn-result-ok? (& a-spawn)))
           2
           (let
             [a : thread.Thread (thread-api-thread-or a-spawn)]
             [b-spawn : thread.ThreadSpawnResult
-              (thread.spawn thread-api-worker (test-array-i64-addr (& ctx-b)))]
+              (unsafe
+                (thread.spawn thread-api-worker (test-array-i64-addr (& ctx-b))))]
             (if (not (thread.spawn-result-ok? (& b-spawn)))
               3
               (thread-api-finish-run
@@ -265,7 +329,9 @@
       [(not (thread-api-large-semaphore-rejected?)) 12]
       [else
         (let
-          [wait-sem-handle : i64 (thread.semaphore-create-handle-or 0 -1)]
+          [wait-sem-handle : i64
+            (unsafe
+              (thread.semaphore-create-handle-or 0 -1))]
           (if (= wait-sem-handle -1)
             13
             (let
@@ -275,7 +341,9 @@
               (if (not (= wait-code 42))
                 wait-code
                 (let
-                  [sem-handle : i64 (thread.semaphore-create-handle-or 0 -1)]
+                  [sem-handle : i64
+                    (unsafe
+                      (thread.semaphore-create-handle-or 0 -1))]
                   (if (= sem-handle -1)
                     24
                     (thread-api-run-with-semaphore

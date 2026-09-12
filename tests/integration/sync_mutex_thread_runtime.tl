@@ -52,7 +52,8 @@
   [ctx : (&mut ctx (__tl_dyn-array i64))]
   [mutex : mutex_i64.Mutex]) : unit
   (begin
-    (mutex_i64.store-raw! mutex ctx 0)
+    (unsafe
+      (mutex_i64.store-raw! mutex ctx 0))
     (set!
       (array-ref ctx (mutex_i64.raw-field-count))
       sync-mutex-integration-count)))
@@ -65,8 +66,14 @@
   [a : Thread]
   [b : Thread]) : i64
   (let
-    [a-code : i64 (sync-mutex-integration-join-code (thread.join a))]
-    [b-code : i64 (sync-mutex-integration-join-code (thread.join b))]
+    [a-code : i64
+      (sync-mutex-integration-join-code
+        (unsafe
+          (thread.join a)))]
+    [b-code : i64
+      (sync-mutex-integration-join-code
+        (unsafe
+          (thread.join b)))]
     [total : i64 (sync-mutex-integration-total mutex)]
     [closed : bool (mutex_i64.close mutex)]
     (cond
@@ -85,14 +92,16 @@
     (begin
       (sync-mutex-integration-pack-context! (&mut ctx-a) mutex)
       (sync-mutex-integration-pack-context! (&mut ctx-b) mutex)
-      (match (thread.spawn
-        sync-mutex-integration-worker
-        (sync-mutex-integration-array-i64-addr ctx-a))
+      (match (unsafe
+        (thread.spawn
+          sync-mutex-integration-worker
+          (sync-mutex-integration-array-i64-addr ctx-a)))
         [(ThreadSpawnErr _) 6]
         [(ThreadSpawnOk a)
-          (match (thread.spawn
-            sync-mutex-integration-worker
-            (sync-mutex-integration-array-i64-addr ctx-b))
+          (match (unsafe
+            (thread.spawn
+              sync-mutex-integration-worker
+              (sync-mutex-integration-array-i64-addr ctx-b)))
             [(ThreadSpawnErr _) 7]
             [(ThreadSpawnOk b) (sync-mutex-integration-finish mutex a b)])]))))
 

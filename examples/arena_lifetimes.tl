@@ -151,7 +151,8 @@
       [(thread-i64.I64SpawnOk (thread-i64.Handle worker))
         (let
           [worker-score : i64
-            (match (thread.join worker)
+            (match (unsafe
+              (thread.join worker))
               [(thread.ThreadJoinOk value) value]
               [(thread.ThreadJoinErr _) -1])]
           [name-score : i64 (string.string-length (& level-name))]

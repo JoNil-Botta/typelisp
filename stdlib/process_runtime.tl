@@ -41,7 +41,9 @@
       (string.eq kind "string"))
       `(let
         [shared-ref (& ,place)]
-        (__tl-compiler-owned-shared-view-dyn-ref-as shared-ref ,value-ty))
+        (unsafe
+          (ptr-read
+            (ptr-cast (__tl_array-data (array shared-ref)) : (Ptr ,value-ty)))))
       `(unsafe
         (ptr-read (ptr-addr-of ,place))))))
 
@@ -521,9 +523,11 @@
 (define (process-runtime-string-array-shared-view
   [items : (& items (__tl_dyn-array String))]
   [index : i64]) : String
-  (__tl-compiler-owned-shared-view-dyn-ref-as
-    (& (array-ref items index))
-    String))
+  (unsafe
+    (ptr-read
+      (ptr-cast
+        (__tl_array-data (array (& (array-ref items index))))
+        : (Ptr String)))))
 
 ;: Re-expose a borrowed runtime environment entry through the compatibility
 ;: surface.
@@ -658,11 +662,15 @@
 ;: Return the string from a destructured optional string.
 (define (maybe-string-info-value
   [info : (& info ProcessRuntimeMaybeStringInfo)]) : String
-  (__tl-compiler-owned-shared-view-dyn-ref-as (& info.value) String))
+  (unsafe
+    (ptr-read
+      (ptr-cast (__tl_array-data (array (& info.value))) : (Ptr String)))))
 
 ;: Return the executable path from a runtime command.
 (define (command-executable [command : (& command ProcessRuntimeCommand)]) : String
-  (__tl-compiler-owned-shared-view-dyn-ref-as (& command.executable) String))
+  (unsafe
+    (ptr-read
+      (ptr-cast (__tl_array-data (array (& command.executable))) : (Ptr String)))))
 
 ;: Return the argv list from a runtime command.
 (define (command-argv [command : (& command ProcessRuntimeCommand)]) : ProcessRuntimeStringList

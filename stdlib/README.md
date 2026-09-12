@@ -410,6 +410,8 @@ Vec bang place macros as available yet.
   active arena. The module also exposes borrowed and owned string less-than
   helpers. Import it with `(import stdlib.sort)`.
 - `sync.tl`: semaphore-backed synchronization helpers over `thread.tl`.
+  The [effect inventory](../docs/thread-sync-unsafe-effects.md) records raw
+  boundaries and the typed-operation proofs.
   `(channel i64)` emits a bounded `channel_i64.Channel` module whose queued
   scalar messages live in runtime-owned OS memory. `ChannelI64PairChannel` moves
   two-field `ChannelI64Pair` messages; `ChannelString` moves atomic-arena-owned
@@ -419,7 +421,10 @@ Vec bang place macros as available yet.
   are live. It also exposes raw `i64` pointer atomic load/store/add/fetch-add/CAS
   wrappers for synchronization internals. Import it with `(import stdlib.sync)`
   and instantiate with `(import (sync.channel i64) as channel_i64)` or
-  `(import (sync.mutex i64) as mutex_i64)`. Generated modules expose
+  `(import (sync.mutex i64) as mutex_i64)`. Raw address/slot atomics,
+  semaphore-handle adapters, allocation/free, and raw handle load/store require
+  explicit `unsafe`; typed channel/mutex create, send/recv, lock/guard, and
+  close remain safe. Generated modules expose
   `raw-field-count` as a zero-argument accessor; channels also expose
   `max-capacity`.
 - `json.tl`: JSON value parser and serializer for tool protocols and data
@@ -543,6 +548,15 @@ Vec bang place macros as available yet.
   forbidden for private factors, exponents, CRT/blinding values, or other
   secret operands. Import it only from RSA-internal modules with
   `(import stdlib.crypto_rsa_core)`.
+- `crypto_rsa_verify.tl`: strict protocol-neutral RSA signature verification
+  over checked public keys and exact borrowed message bytes. Separate
+  `verify-pkcs1-sha256` and `verify-pss-sha256` operations hash the message
+  exactly once and require the complete RFC 8017 encoding. PSS is fixed to
+  SHA-256, MGF1-SHA-256, a 32-byte salt, and trailer field 1; the bounded MGF1
+  and digest-level helpers are RSA-internal. TLS, X.509, and SSH adapters must
+  enforce their own scheme/key/parameter policy before calling this layer.
+  Public-input verification makes no secret constant-time claim. Import with
+  `(import stdlib.crypto_rsa_verify)`.
 - `crypto_random.tl`: cryptographically secure random-byte fills over exact
   caller-owned mutable `bytes` views. Linux uses direct `getrandom`; Windows
   dynamically resolves the system `BCryptGenRandom` capability through
@@ -628,7 +642,9 @@ Vec bang place macros as available yet.
   copied exactly once into that owner before publication; callers never
   handle compiler-private backing storage. Linux uses raw clone/futex/eventfd
   syscalls; Windows uses kernel32 threads and semaphores. Import it with
-  `(import stdlib.thread)`.
+  `(import stdlib.thread)`. Raw integer-context spawn/join/wait and OS-handle
+  semaphore operations require explicit `unsafe`; generated typed task
+  handles and aggregate task wrappers remain safe.
 - `time.tl`: portable millisecond timestamp helpers separate from profiling
   counters. `unix-ms` returns wall-clock Unix epoch milliseconds and
   `monotonic-ms` returns monotonic elapsed milliseconds, both as
@@ -875,6 +891,7 @@ borrowed process runtime wrappers likewise copy at their owned boundary.
 | `net/http_types.tl`, `net/http_head_codec.tl`, `net/http_trailer.tl`, and `net/http_trailer_policy.tl` | Checked protocol tokens, retained field bytes, ordered header/trailer-name storage, policy entries, incremental parser buffering, response-head/trailer results, and serialized request heads allocate in the active arena. Head parsing copies only the bounded head prefix; trailer parsing retains only approved name/value bytes plus reusable current-line scratch. Both stop before a coalesced suffix and never rescan completed lines. Field-line range validation, header lookup, syntax/framing inspection, trailer-policy lookup/list validation, sensitivity checks, and body-plan selection are otherwise non-allocating over retained bytes. Policy construction copies normalized approved names in deterministic insertion order. Request serialization validates all fields and the complete bounded output length before allocating its final `ByteBuf`; framing fields are emitted once in canonical form. |
 | `net/ip.tl` | Address construction, byte access, equality, ordering, hashing, and strict borrowed-text parsing are non-allocating. IPv4 and IPv6 formatting use bounded stack scratch storage, then allocate exactly the returned active-arena `String` backing bytes and handle; no growable intermediate buffer is allocated. |
 | `crypto_rsa_core.tl` | Key parsing rejects negative, noncanonical, undersized, oversized, or even public values before arithmetic allocation. Limb arrays allocate only at a selected 2048/3072/4096/8192-bit public capacity. Setup retains modulus and `R^2 mod n`; each public exponentiation allocates one exact-width result plus bounded 32-bit-limb results and 64-bit `2n+2` REDC scratch in the active arena. `public-exponentiation-retained-bytes-upper-bound` reports a conservative per-call bound from the checked public class, actual modulus limbs, and at-most-32-bit exponent. No routine accepts secret operands or claims constant-time behavior. |
+| `crypto_rsa_verify.tl` | Both public message verifiers reuse `crypto_rsa_core`'s checked exact-width exponentiation and one SHA-256 digest. PKCS#1 compares the complete fixed DER encoding without another output buffer. PSS bounds its MGF1 mask to the RSA maximum of 1024 bytes before allocation, then retains one mask, one decoded DB, a 72-byte recomputation input, and at most one 36-byte seed/counter input per mask digest block in the active arena. Rejection never publishes a partial result. |
 | `crypto_random.fill-random!` | Fills an exact caller-owned mutable `bytes` view from the operating-system cryptographic source without allocating output storage. Zero-length views succeed without a host call. Linux uses direct x86-64 `getrandom` with flags zero in at most 256-byte requests and checks partial/interrupted results. Windows loads `bcrypt.dll` through kernel32, validates and calls `BCryptGenRandom(NULL, ..., BCRYPT_USE_SYSTEM_PREFERRED_RNG)` through a raw C function pointer while its DLL reference remains live, then unloads it. Every failure is structured and wipes the complete valid view; there is no PRNG, clock, identifier, file, or third-party fallback. `fill-random-with!` is the low-level checked adapter seam for deterministic tests and explicitly injected protocol providers. |
 | `crypto_sha1_git.*` | `new`, `update!`, `finalize!`, `git-digest`, byte access/equality, the raw source seam, and the exact 20-byte consuming sink allocate nothing; a state retains one 64-byte partial block. `to-hex` allocates one exact 40-byte lowercase Git object-ID `String`. The byte counter admits exactly the FIPS SHA-1 domain below 2^64 bits and finalization clears and poisons the state. Compression scratch and explicit state/digest wipe hooks use volatile stores. This allocation behavior does not rehabilitate SHA-1: the API is compatibility-only and forbidden for new security uses. |
 | `crypto_sha256.*` | `new`, `update!`, `finalize!`, `digest`, the unsafe scoped raw-source/exact-sink adapters, digest byte access/equality, and the checked length machinery allocate nothing; a state retains exactly one 64-byte partial block. `to-hex` allocates one exact 64-byte lowercase `String`. The byte counter admits exactly the FIPS SHA-256 domain below 2^64 bits. Compression scratch and explicit consuming state/digest wipe hooks use volatile stores. Digests are ordinary public values; the unsafe adapters preserve caller-owned lifetime, generation, and non-overlap checks, and the wipe hooks are a narrow secret-derived-caller seam rather than a side-channel or whole-machine erasure claim. |

@@ -38536,11 +38536,13 @@
 ;; with the canonical counter `i = phi(start, i + step)` and a body value
 ;; `e = (c - i) - k` (c invariant, k a literal, k = 0 when the inner `sub` is
 ;; the value itself), a derived phi `p = phi(c - start - k, p - step)` replaces
-;; every body use of `e`, and when the latch's exit test is `i + step < c` on
-;; the same `c` it becomes `p_next >= 1 - k` -- `i + step < c` iff
-;; `c - (i + step) - k >= 1 - k` -- which leaves the counter to dead-code
-;; elimination. The old form and the derived phi agree at every point of the
-;; body because `i` has one definition there (its phi) and `c` is invariant.
+;; every body use of `e`. The latch's signed exit comparison can only be
+;; replaced when a unique entry guard proves 0 < c, start = 0, step = 1, and
+;; k is 0 or 1: then no counter or derived value wraps before the exit. Without
+;; that proof the derived phi is still valid modulo 2^64, but the original
+;; signed exit test and counter must stay. The old form and the derived phi
+;; agree at every point of the body because `i` has one definition there (its
+;; phi) and `c` is invariant.
 ;; Off inside the inliner's priced prefix like the rest of the final slot's
 ;; structural passes. Loops with a call or an allocation keep their shape (a
 ;; loop-live value across a call spills for more than the two subtractions).
@@ -38717,6 +38719,103 @@
                     (set! i (+ i 1))))
                 (- 0 1))))]
         [_ (- 0 1)]))))
+
+;; The branch condition's SSA definition may be in an earlier block, as with a
+;; versioned loop whose slow preheader reuses the original `0 < c` result.
+(define (opt-iv-aff-entry-positive-compare?
+  [blocks : ir.CompilerIrBlockList]
+  [cnd : i64]
+  [c : ir.CompilerIrValue]) : bool
+  (match (opt-bce-mb-find-def (compiler-opt-global-shared-view blocks) cnd)
+    [(OptBceMbMaybeInstr.Some instr)
+      (match instr
+        [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+          (and
+            (opt-binop-eq
+              (compiler-opt-global-shared-view op)
+              (ir.CompilerIrBinOp.Lt))
+            (opt-induction-i64-type? (compiler-opt-global-shared-view ty))
+            (match (compiler-opt-global-shared-view lhs)
+              [(ir.CompilerIrValue.I64 0) true]
+              [_ false])
+            (opt-value-eq
+              (compiler-opt-global-shared-view rhs)
+              (compiler-opt-global-shared-view c)))]
+        [_ false])]
+    [(OptBceMbMaybeInstr.No) false]))
+
+;; Walk only a bounded unique-predecessor chain back from the preheader. A
+;; versioned fast loop may have several guards and landing blocks between its
+;; preheader and the earlier positive-count test; none can bypass a guard on a
+;; unique chain. A join or unrecognised terminator stops the proof.
+(define (opt-iv-aff-entry-positive?
+  [blocks : ir.CompilerIrBlockList]
+  [preheader : i64]
+  [c : ir.CompilerIrValue]) : bool
+  (let
+    [index : OptCfgIndex
+      (opt-cfg-index-build (compiler-opt-global-shared-view blocks))]
+    [current : i64 preheader]
+    [depth : i64 0]
+    (begin
+      (while (< depth 32)
+        (let
+          [preds : OptLabelSet
+            (opt-cfg-index-predecessors
+              (compiler-opt-global-shared-view index)
+              current)]
+          (begin
+            (unless
+              (= (opt-label-count (compiler-opt-global-shared-view preds)) 1)
+              (return false))
+            (let
+              [pred : i64
+                (opt-label-ref (compiler-opt-global-shared-view preds) 0)]
+              (match (opt-cfg-find-block
+                (compiler-opt-global-shared-view blocks)
+                pred)
+                [(OptMaybeBlock.No) (return false)]
+                [(OptMaybeBlock.Some block)
+                  (match block
+                    [(ir.CompilerIrBlock.Block _ instrs)
+                      (let
+                        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+                        (begin
+                          (when (= count 0) (return false))
+                          (match (ir.compiler-ir-instr-seq-ref
+                            instrs
+                            (- count 1))
+                            [(ir.CompilerIrInstr.Jump label)
+                              (unless (= label current) (return false))]
+                            [(ir.CompilerIrInstr.Branch
+                                condition
+                                true-label
+                                false-label)
+                              (begin
+                                (unless
+                                  (or
+                                    (= true-label current)
+                                    (= false-label current))
+                                  (return false))
+                                (when
+                                  (and
+                                    (= true-label current)
+                                    (not (= false-label current)))
+                                  (match (compiler-opt-global-shared-view
+                                    condition)
+                                    [(ir.CompilerIrValue.Var cnd)
+                                      (when
+                                        (opt-iv-aff-entry-positive-compare?
+                                          (compiler-opt-global-shared-view
+                                            blocks)
+                                          cnd
+                                          (compiler-opt-global-shared-view c))
+                                        (return true))]
+                                    [_ unit])))]
+                            [_ (return false)])))])])
+              (set! current pred)
+              (set! depth (+ depth 1))))))
+      false)))
 
 (define (opt-iv-aff-trace! [header : i64] [k : i64] [exit? : bool]) : unit
   (when
@@ -39055,7 +39154,7 @@
                               (ir.CompilerIrValue.Var p)
                               (ir.CompilerIrValue.I64 step)
                               (compiler-opt-global-shared-view ty))]
-                          [exit-cnd : i64
+                          [possible-exit-cnd : i64
                             (match (opt-cfg-find-block
                               (compiler-opt-global-shared-view blocks)
                               latch)
@@ -39068,6 +39167,20 @@
                                       (compiler-opt-global-shared-view c)
                                       header)])]
                               [(OptMaybeBlock.No) (- 0 1)])]
+                          [exit-cnd : i64
+                            (if (and
+                              (>= possible-exit-cnd 0)
+                              (match (compiler-opt-global-shared-view start)
+                                [(ir.CompilerIrValue.I64 0) true]
+                                [_ false])
+                              (= step 1)
+                              (or (= k 0) (= k 1))
+                              (opt-iv-aff-entry-positive?
+                                (compiler-opt-global-shared-view blocks)
+                                preheader
+                                (compiler-opt-global-shared-view c)))
+                              possible-exit-cnd
+                              (- 0 1))]
                           [exit-instr : ir.CompilerIrInstr
                             (ir.CompilerIrInstr.BinOp
                               (if (>= exit-cnd 0)

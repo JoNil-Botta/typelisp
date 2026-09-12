@@ -3512,6 +3512,10 @@
         42)
       unit)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-call-memory-frame-roots-self-test"
+      (compiler_optimize_tests.compiler-optimize-call-memory-frame-roots-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-induction-self-test"
       (compiler_optimize_tests.compiler-optimize-induction-self-test)
       42)

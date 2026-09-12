@@ -44971,6 +44971,109 @@
       (compiler_optimize.opt-licm-store-summary-clean?
         (opt-licm-summary-for-instr instr)))))
 
+;; --- CALLMEM-ROOTS: the sret slot and the callee's own allocas ---------------
+;;
+;; `sret_callee` stores its result through the hidden `__sret` parameter and
+;; fills a temporary it allocated itself. Its call-memory row names a write
+;; through parameter 1 and nothing unknown: the slot is the object the caller
+;; handed over, and the temporary is the callee's own frame. With the slot
+;; renamed -- a raw `u64` the lowering did not spell -- the same store is an
+;; unknown write again, and a store through a non-pointer parameter is unknown
+;; in every variant.
+(define (opt-callmem-roots-params [sret-name : String]) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "kind"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        sret-name
+        (compiler_ast_types.AstType.U64)
+        1)
+      (compiler_ir_types.compiler-ir-param-seq-empty))))
+
+;; mode 0: the sret store and a store into an alloca of the callee's own;
+;; 1: the sret store alone; 2: a store through the non-pointer `kind`.
+(define (opt-callmem-roots-body [mode : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (cond
+    [(= mode 2)
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.StorePtr
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64)))]
+    [(= mode 1)
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Gep
+          2
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.U8))
+        (compiler_ir_types.CompilerIrInstr.StorePtr
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.I64)))]
+    [else
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Gep
+          2
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.U8))
+        (compiler_ir_types.CompilerIrInstr.StorePtr
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Alloc
+          3
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.AddrOf 4 3)
+        (compiler_ir_types.CompilerIrInstr.StorePtr
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          (compiler_ir_types.CompilerIrValue.I64 5)
+          (compiler_ast_types.AstType.I64)))]))
+
+;; The callee's call-memory row, or -1 when the builder left it unresolved.
+(define (opt-callmem-roots-row [sret-name : String] [mode : i64]) : i64
+  (let
+    [rows : opt_i64_i64_map.Map
+      (compiler_optimize.opt-call-memory-build
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_ir_types.compiler-ir-function-seq1
+          (opt-inline-sret-callee
+            (opt-callmem-roots-params sret-name)
+            (opt-callmem-roots-body mode)))
+        8)]
+    (match (opt_i64_i64_map.get
+      (& rows)
+      (compiler_ir_types.compiler-ir-symbol-id (opt-test-symbol "sret_callee")))
+      [(opt_i64_i64_map.LookupFound row) row]
+      [(opt_i64_i64_map.LookupMissing) (- 0 1)])))
+
+(define (compiler-optimize-call-memory-frame-roots-self-test) : i64
+  (let
+    [sret : i64 (opt-callmem-roots-row "__sret" 0)]
+    [sret-only : i64 (opt-callmem-roots-row "__sret" 1)]
+    [raw : i64 (opt-callmem-roots-row "raw" 1)]
+    [scalar : i64 (opt-callmem-roots-row "__sret" 2)]
+    (cond
+      [(< sret 0) 1]
+      ;; the sret store is a write through parameter 1...
+      [(not (compiler_optimize.opt-call-memory-summary-param-write? sret 1)) 2]
+      ;; ...and neither it nor the alloca store is unknown
+      [(compiler_optimize.opt-call-memory-summary-unknown? sret) 3]
+      [(compiler_optimize.opt-call-memory-summary-param-write? sret 0) 4]
+      [(< sret-only 0) 5]
+      [(compiler_optimize.opt-call-memory-summary-unknown? sret-only) 6]
+      ;; a raw u64 parameter under another name keeps the older reading
+      [(< raw 0) 7]
+      [(not (compiler_optimize.opt-call-memory-summary-unknown? raw)) 8]
+      ;; a store through a non-pointer parameter is unknown whatever the slot
+      [(< scalar 0) 9]
+      [(not (compiler_optimize.opt-call-memory-summary-unknown? scalar)) 10]
+      [else 42])))
+
 (cfg
   test
   (define (compiler-optimize-licm-checked-root-self-test) : i64

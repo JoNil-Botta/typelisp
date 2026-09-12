@@ -27411,16 +27411,37 @@
         var)]
     [_ (OptLicmRoot.NoRoot)]))
 
+;; SRET-SITE. The hidden trailing `__sret` parameter (lower-prepare-internal-
+;; return-value) is a raw `u64`, so opt-licm-param-root gives it no root and
+;; every store through it -- the whole return value of every aggregate-returning
+;; function -- was an UNKNOWN write in that function's call-memory row, which
+;; made every such callee a full barrier at every call site. The slot is the
+;; one object the caller handed over for exactly this purpose: the callee
+;; writes it at literal offsets and nothing else is reachable from it, which is
+;; the Exclusive reading a `&mut` parameter gets. So it is seeded Exclusive, and
+;; a write through it is attributed to its parameter position, where a caller's
+;; root of the argument decides what it can reach (opt-licm-call-frame-state,
+;; opt-load-table-filter-call-writes). The name is the only mark the parameter
+;; carries; it is spelled by the lowering alone and never by source.
+(define (opt-licm-sret-param-name) : String
+  "__sret")
+
 (define (opt-licm-root-env-seed-param!
   [type-segment-bases : i64]
   [env : (&mut env OptLicmRootEnv)]
   [param : ir.CompilerIrParam]) : unit
   (match param
-    [(ir.CompilerIrParam.Param _ ty var)
+    [(ir.CompilerIrParam.Param name ty var)
       (opt-licm-root-env-bind!
         env
         var
-        (opt-licm-param-root type-segment-bases ty var))]))
+        (if (and
+          (match (compiler-opt-global-shared-view ty)
+            [(ast.AstType.U64) true]
+            [_ false])
+          (string.eq name (opt-licm-sret-param-name)))
+          (OptLicmRoot.Exclusive var)
+          (opt-licm-param-root type-segment-bases ty var)))]))
 
 (define (opt-licm-root-env-seed-params!
   [type-segment-bases : i64]
@@ -148943,6 +148964,17 @@
         (match instr
           [(ir.CompilerIrInstr.Alloc _ _)
             (opt-licm-root-env-bind! roots dst (OptLicmRoot.Fresh dst))]
+          ;; SRET-SITE: the address of an object this function allocated
+          ;; designates that object, exactly as LICM's provenance reads it
+          ;; (the AddrOf arm of opt-licm-root-env-update-instr!). Without this
+          ;; arm every address-taken local was unrooted here, so a callee's
+          ;; stores into its OWN frame -- the temporaries every
+          ;; aggregate-building function fills before copying them out -- were
+          ;; unknown writes in its row, and the row made the callee a full
+          ;; barrier at every call site. A write into the callee's frame is
+          ;; invisible to the caller.
+          [(ir.CompilerIrInstr.AddrOf _ src)
+            (opt-licm-root-env-copy! roots dst (ir.CompilerIrValue.Var src))]
           [(ir.CompilerIrInstr.Gep _ base _ _)
             (opt-licm-root-env-copy! roots dst base)]
           [(ir.CompilerIrInstr.Mov _ src _)

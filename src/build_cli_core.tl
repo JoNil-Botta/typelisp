@@ -31,6 +31,7 @@
 (import compiler_lower as lower)
 (import compiler_optimize as opt)
 (import compiler_object as cobj)
+(import compiler_object_elf)
 (import compiler_windows_coff_core)
 (import doc_test)
 (import test_cli_core)
@@ -93,9 +94,48 @@
 
 (defenum ResultBuildPackagePreparedRuntime
   (DirectObject String BuildPackageSideAssembly)
-  (Assembly String String)
-  (Unavailable String)
+  (Assembly String backend.CompilerDirectObjectFallbackReason)
   (Err String))
+
+(defstruct BuildPackageDirectObjectRequest
+  (name String)
+  (kind load.CompilerPkgKind)
+  (target backend.CompilerBackendTarget)
+  (opt-level i64)
+  (mode backend.CompilerBackendMode)
+  (debug-info bool)
+  (path-budget i64)
+  (linux-budget-override bool)
+  (require-direct-object bool)
+  (emit-entry bool)
+  (crt-entry bool)
+  (decls ast.AstDeclList)
+  (paths ast.AstDeclPathList))
+
+(define (build-package-direct-object-default-request
+  [name : String]
+  [kind : load.CompilerPkgKind]
+  [target : backend.CompilerBackendTarget]
+  [opt-level : i64]
+  [mode : backend.CompilerBackendMode]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]) : BuildPackageDirectObjectRequest
+  (BuildPackageDirectObjectRequest
+    name
+    kind
+    target
+    opt-level
+    mode
+    (ir.compiler-debug-info-enabled?)
+    (build-package-direct-object-owned-path-budget)
+    (build_run_core.source-tool-linux-direct-object-enabled?)
+    false
+    emit-entry
+    crt-entry
+    decls
+    paths))
 
 (defenum ResultBuildManifest
   (Ok load.CompilerPkgManifest)
@@ -3059,14 +3099,189 @@
             obj-path
             artifact-path)])]))
 
+(defenum ResultBuildPackageLinuxDirectObject
+  (Ok String)
+  (Fallback backend.CompilerDirectObjectFallbackReason))
+
 (define (build-package-render-linux-direct-object
   [kind : load.CompilerPkgKind]
-  [image : cobj.CompilerObjectImage]) : build_run_core.ResultSourceToolString
-  (match kind
-    [(CompilerPkgKindBin)
-      (build_run_core.source-tool-render-linkable-linux-elf-object image)]
-    [(CompilerPkgKindLib)
-      (build_run_core.source-tool-render-archivable-linux-elf-object image)]))
+  [image : cobj.CompilerObjectImage]) : ResultBuildPackageLinuxDirectObject
+  (cond
+    [(not
+        (compiler_object_elf.compiler-object-elf-sections-supported?
+          (owned_view.compiler-owned-shared-view image.sections)))
+      (ResultBuildPackageLinuxDirectObject.Fallback
+        backend.CompilerDirectObjectFallbackReason.ObjectEncoding)]
+    [(not
+        (compiler_object_elf.compiler-object-elf-relocation-list-supported?
+          (owned_view.compiler-owned-shared-view image.relocations)))
+      (ResultBuildPackageLinuxDirectObject.Fallback
+        backend.CompilerDirectObjectFallbackReason.ObjectRelocation)]
+    [(not
+        (and
+          (compiler_object_elf.compiler-object-elf-relocation-sites-known?
+            (owned_view.compiler-owned-shared-view image)
+            (owned_view.compiler-owned-shared-view image.relocations))
+          (compiler_object_elf.compiler-object-elf-text-targets-known?
+            (owned_view.compiler-owned-shared-view image))
+          (compiler_object_elf.compiler-object-elf-text-relocation-count-matches?
+            (owned_view.compiler-owned-shared-view image))))
+      (ResultBuildPackageLinuxDirectObject.Fallback
+        backend.CompilerDirectObjectFallbackReason.ObjectFixup)]
+    [(not
+        (compiler_object_elf.compiler-object-elf-image-supported?
+          (owned_view.compiler-owned-shared-view image)))
+      (ResultBuildPackageLinuxDirectObject.Fallback
+        backend.CompilerDirectObjectFallbackReason.ObjectEncoding)]
+    [(match kind
+        [(CompilerPkgKindBin)
+          (not
+            (or
+              (cobj.compiler-object-symbol-list-contains?
+                (owned_view.compiler-owned-shared-view image.symbols)
+                "_tl_start"
+                (cobj.CompilerObjectSymbolBinding.Export)
+                (cobj.CompilerObjectSymbolKind.Function))
+              (cobj.compiler-object-symbol-list-contains?
+                (owned_view.compiler-owned-shared-view image.symbols)
+                "main"
+                (cobj.CompilerObjectSymbolBinding.Export)
+                (cobj.CompilerObjectSymbolKind.Function))))]
+        [(CompilerPkgKindLib) false])
+      (ResultBuildPackageLinuxDirectObject.Fallback
+        backend.CompilerDirectObjectFallbackReason.MissingEntrySymbol)]
+    [(match kind
+        [(CompilerPkgKindBin)
+          (<=
+            (compiler_object_elf.compiler-object-elf-section-raw-size
+              (owned_view.compiler-owned-shared-view image)
+              (cobj.CompilerObjectSectionKind.Text))
+            0)]
+        [(CompilerPkgKindLib) false])
+      (ResultBuildPackageLinuxDirectObject.Fallback
+        backend.CompilerDirectObjectFallbackReason.EmptyTextSection)]
+    [else
+      (match (compiler_object_elf.compiler-object-elf-render image)
+        [(compiler_object_elf.ResultCompilerObjectElf.Ok object)
+          (ResultBuildPackageLinuxDirectObject.Ok object)]
+        [(compiler_object_elf.ResultCompilerObjectElf.Err _)
+          (ResultBuildPackageLinuxDirectObject.Fallback
+            backend.CompilerDirectObjectFallbackReason.ObjectEncoding)])]))
+
+(cfg
+  test
+  (test
+    build-package-linux-direct-object-render-parity
+    (match (backend.compiler-backend-emit-source-object-image-for-target
+      "(define (main) : i64 42)"
+      (backend.CompilerBackendTarget.Linux))
+      [(backend.ResultCompilerBackendObject.Err _)
+        (io.panic "Linux object fixture failed")]
+      [(backend.ResultCompilerBackendObject.Ok image)
+        (unless
+          (and
+            (match (build-package-render-linux-direct-object
+              (CompilerPkgKindBin)
+              (owned_view.compiler-owned-shared-view image))
+              [(ResultBuildPackageLinuxDirectObject.Ok typed)
+                (match (build_run_core.source-tool-render-linkable-linux-elf-object
+                  (owned_view.compiler-owned-shared-view image))
+                  [(build_run_core.ResultSourceToolString.Ok legacy)
+                    (string.eq typed legacy)]
+                  [_ false])]
+              [_ false])
+            (match (build-package-render-linux-direct-object
+              (CompilerPkgKindLib)
+              (owned_view.compiler-owned-shared-view image))
+              [(ResultBuildPackageLinuxDirectObject.Ok typed)
+                (match (build_run_core.source-tool-render-archivable-linux-elf-object
+                  image)
+                  [(build_run_core.ResultSourceToolString.Ok legacy)
+                    (string.eq typed legacy)]
+                  [_ false])]
+              [_ false]))
+          (io.panic "Linux package direct-object bytes changed"))])))
+
+(cfg
+  test
+  (test
+    build-package-linux-direct-object-missing-entry
+    (match (build-package-render-linux-direct-object
+      (CompilerPkgKindBin)
+      (compiler_object_elf.compiler-object-elf-smoke-image))
+      [(ResultBuildPackageLinuxDirectObject.Fallback
+          (backend.CompilerDirectObjectFallbackReason.MissingEntrySymbol))
+        unit]
+      [_ (io.panic "Linux package missing-entry reason changed")])))
+
+(cfg
+  test
+  (define (build-package-linux-direct-object-with-relocation
+    [reloc : cobj.CompilerObjectRelocation]) : ResultBuildPackageLinuxDirectObject
+    (let
+      [fixture : cobj.CompilerObjectImage
+        (compiler_object_elf.compiler-object-elf-smoke-image)]
+      [relocations : cobj.CompilerObjectRelocationList
+        (cobj.compiler-object-relocation-builder-finish
+          (cobj.compiler-object-relocation-builder-push
+            (cobj.compiler-object-relocation-builder-with-capacity 1)
+            reloc))]
+      (build-package-render-linux-direct-object
+        (CompilerPkgKindLib)
+        (cobj.CompilerObjectImage fixture.sections fixture.symbols relocations)))))
+
+(cfg
+  test
+  (define (build-package-linux-direct-object-with-pdata) : ResultBuildPackageLinuxDirectObject
+    (let
+      [fixture : cobj.CompilerObjectImage
+        (compiler_object_elf.compiler-object-elf-smoke-image)]
+      [sections : cobj.CompilerObjectSectionList
+        (cobj.compiler-object-section-builder-finish
+          (cobj.compiler-object-section-builder-push
+            (cobj.compiler-object-section-builder-with-capacity 1)
+            (cobj.CompilerObjectSection.Section
+              (cobj.CompilerObjectSectionKind.Pdata)
+              (cobj.compiler-object-data-record-builder-finish
+                (cobj.compiler-object-data-record-builder-with-capacity 1))
+              (cobj.compiler-object-instr-builder-finish
+                (cobj.compiler-object-instr-builder-with-capacity 1)))))]
+      (build-package-render-linux-direct-object
+        (CompilerPkgKindLib)
+        (cobj.CompilerObjectImage sections fixture.symbols fixture.relocations)))))
+
+(cfg
+  test
+  (test
+    build-package-linux-direct-object-typed-serializer-fallbacks
+    (unless
+      (and
+        (match (build-package-linux-direct-object-with-pdata)
+          [(ResultBuildPackageLinuxDirectObject.Fallback
+              (backend.CompilerDirectObjectFallbackReason.ObjectEncoding))
+            true]
+          [_ false])
+        (match (build-package-linux-direct-object-with-relocation
+          (cobj.CompilerObjectRelocation.Relocation
+            (cobj.CompilerObjectSectionKind.Text)
+            "_tl_empty"
+            (cobj.CompilerObjectRelocationKind.Abs64)
+            "_tl_empty"))
+          [(ResultBuildPackageLinuxDirectObject.Fallback
+              (backend.CompilerDirectObjectFallbackReason.ObjectRelocation))
+            true]
+          [_ false])
+        (match (build-package-linux-direct-object-with-relocation
+          (cobj.CompilerObjectRelocation.Relocation
+            (cobj.CompilerObjectSectionKind.Text)
+            "_tl_no_site"
+            (cobj.CompilerObjectRelocationKind.Call)
+            "_tl_empty"))
+          [(ResultBuildPackageLinuxDirectObject.Fallback
+              (backend.CompilerDirectObjectFallbackReason.ObjectFixup))
+            true]
+          [_ false]))
+      (io.panic "Linux package serializer reasons changed"))))
 
 (define (build-package-write-direct-object-artifact
   [kind : load.CompilerPkgKind]
@@ -3148,14 +3363,16 @@
 
 (define (build-package-direct-object-size-ok?
   [target : backend.CompilerBackendTarget]
+  [path-budget : i64]
+  [linux-budget-override : bool]
   [paths : (& paths ast.AstDeclPathList)]) : bool
   (match target
     [(backend.CompilerBackendTarget.Linux)
       (or
-        (build_run_core.source-tool-linux-direct-object-enabled?)
-        (build-package-direct-object-within-budget? paths))]
+        linux-budget-override
+        (<= (build-package-direct-object-owned-path-count paths) path-budget))]
     [(backend.CompilerBackendTarget.Windows)
-      (build-package-direct-object-within-budget? paths)]))
+      (<= (build-package-direct-object-owned-path-count paths) path-budget)]))
 
 (cfg
   test
@@ -3226,17 +3443,269 @@
       (build-package-direct-object-size-smoke-ok?)
       (io.panic "build package direct object size smoke failed"))))
 
-(define (build-package-kind-supports-direct-object?
+(defenum BuildPackageDirectObjectPreflight
+  (Eligible)
+  (Fallback backend.CompilerDirectObjectFallbackReason))
+
+(define (build-package-direct-object-preflight
   [kind : load.CompilerPkgKind]
-  [target : backend.CompilerBackendTarget]) : bool
-  (match target
-    [(backend.CompilerBackendTarget.Linux) true]
-    ;; COFF archive production remains on the assembler path. Package bins can
-    ;; link the existing backend-owned object directly.
-    [(backend.CompilerBackendTarget.Windows)
-      (match kind
-        [(CompilerPkgKindBin) true]
-        [(CompilerPkgKindLib) false])]))
+  [target : backend.CompilerBackendTarget]
+  [mode : backend.CompilerBackendMode]
+  [debug-info : bool]
+  [path-budget : i64]
+  [linux-budget-override : bool]
+  [decls : ast.AstDeclList]
+  [paths : (& paths ast.AstDeclPathList)]) : BuildPackageDirectObjectPreflight
+  (cond
+    ;; COFF archive production remains on the assembler path.
+    [(match target
+        [(backend.CompilerBackendTarget.Linux) false]
+        [(backend.CompilerBackendTarget.Windows)
+          (match kind
+            [(CompilerPkgKindBin) false]
+            [(CompilerPkgKindLib) true])])
+      (BuildPackageDirectObjectPreflight.Fallback
+        (backend.CompilerDirectObjectFallbackReason.ArtifactKindUnavailable
+          target
+          (match kind
+            [(CompilerPkgKindBin) backend.CompilerDirectObjectArtifactKind.Bin]
+            [(CompilerPkgKindLib)
+              backend.CompilerDirectObjectArtifactKind.StaticLib])))]
+    [debug-info
+      (BuildPackageDirectObjectPreflight.Fallback
+        backend.CompilerDirectObjectFallbackReason.DebugMetadata)]
+    [(not (build-package-direct-object-mode? mode))
+      (BuildPackageDirectObjectPreflight.Fallback
+        backend.CompilerDirectObjectFallbackReason.BackendMode)]
+    [(build-package-decls-have-spmd-callable? decls)
+      (BuildPackageDirectObjectPreflight.Fallback
+        backend.CompilerDirectObjectFallbackReason.PrivateSpmdAbi)]
+    [(not
+        (build-package-direct-object-size-ok?
+          target
+          path-budget
+          linux-budget-override
+          paths))
+      (BuildPackageDirectObjectPreflight.Fallback
+        (backend.CompilerDirectObjectFallbackReason.ResourceBudget
+          (build-package-direct-object-owned-path-count paths)
+          path-budget))]
+    [else BuildPackageDirectObjectPreflight.Eligible]))
+
+(cfg
+  test
+  (define (build-package-preflight-category-is?
+    [result : BuildPackageDirectObjectPreflight]
+    [expected : String]) : bool
+    (match result
+      [(BuildPackageDirectObjectPreflight.Eligible) (string.eq expected "")]
+      [(BuildPackageDirectObjectPreflight.Fallback reason)
+        (string.eq
+          (backend.compiler-direct-object-fallback-category reason)
+          expected)])))
+
+(cfg
+  test
+  (test
+    build-package-direct-object-typed-route
+    (let
+      [empty-decls : ast.AstDeclList (ast.ast-decl-list-new)]
+      [empty-paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
+      [one-path : ast.AstDeclPathList
+        (build-package-direct-object-test-paths
+          1
+          "pkg.tl"
+          (ast.ast-decl-path-list-new))]
+      [spmd-decl : ast.AstDecl
+        (ast.ast-decl-def-fn-metadata-id
+          (ci.intern "typed-route-spmd")
+          (ast.ast-param-list-new)
+          (ast.AstType.I64)
+          cbi.compiler-builtin-id-fix-empty
+          (ast.ast-fn-metadata-full
+            ast.AstFnExport.No
+            (ast.AstSpmdCallable.Callable
+              (ast.ast-spmd-specialization-list-new))))]
+      [spmd-decls : ast.AstDeclList
+        (ast.ast-decl-cons spmd-decl (ast.ast-decl-list-new))]
+      (unless
+        (and
+          (build-package-preflight-category-is?
+            (build-package-direct-object-preflight
+              (CompilerPkgKindLib)
+              (backend.CompilerBackendTarget.Windows)
+              (backend.CompilerBackendMode.Scalar)
+              false
+              512
+              false
+              (owned_view.compiler-owned-shared-view empty-decls)
+              (& empty-paths))
+            "artifact-kind-unavailable")
+          (build-package-preflight-category-is?
+            (build-package-direct-object-preflight
+              (CompilerPkgKindBin)
+              (backend.CompilerBackendTarget.Windows)
+              (backend.CompilerBackendMode.Scalar)
+              true
+              512
+              false
+              (owned_view.compiler-owned-shared-view empty-decls)
+              (& empty-paths))
+            "debug-metadata")
+          (build-package-preflight-category-is?
+            (build-package-direct-object-preflight
+              (CompilerPkgKindBin)
+              (backend.CompilerBackendTarget.Windows)
+              (backend.CompilerBackendMode.Avx2)
+              false
+              512
+              false
+              (owned_view.compiler-owned-shared-view empty-decls)
+              (& empty-paths))
+            "backend-mode")
+          (build-package-preflight-category-is?
+            (build-package-direct-object-preflight
+              (CompilerPkgKindBin)
+              (backend.CompilerBackendTarget.Windows)
+              (backend.CompilerBackendMode.Scalar)
+              false
+              512
+              false
+              spmd-decls
+              (& empty-paths))
+            "private-spmd-abi")
+          (build-package-preflight-category-is?
+            (build-package-direct-object-preflight
+              (CompilerPkgKindBin)
+              (backend.CompilerBackendTarget.Windows)
+              (backend.CompilerBackendMode.Scalar)
+              false
+              0
+              false
+              (owned_view.compiler-owned-shared-view empty-decls)
+              (& one-path))
+            "resource-budget")
+          (match (build-package-direct-object-preflight
+            (CompilerPkgKindBin)
+            (backend.CompilerBackendTarget.Windows)
+            (backend.CompilerBackendMode.Scalar)
+            false
+            1
+            false
+            (owned_view.compiler-owned-shared-view empty-decls)
+            (& one-path))
+            [(BuildPackageDirectObjectPreflight.Eligible) true]
+            [_ false]))
+        (io.panic "typed package direct-object route failed")))))
+
+(cfg
+  test
+  (define (build-package-typed-route-table-from [index : i64]) : bool
+    (if (>= index 192)
+      true
+      (let
+        [target-index : i64 (% index 2)]
+        [kind-index : i64 (% (/ index 2) 2)]
+        [debug-index : i64 (% (/ index 4) 2)]
+        [mode-index : i64 (% (/ index 8) 3)]
+        [spmd-index : i64 (% (/ index 24) 2)]
+        [size-index : i64 (% (/ index 48) 2)]
+        [override-index : i64 (% (/ index 96) 2)]
+        [target : backend.CompilerBackendTarget
+          (if (= target-index 0)
+            (backend.CompilerBackendTarget.Linux)
+            (backend.CompilerBackendTarget.Windows))]
+        [kind : load.CompilerPkgKind
+          (if (= kind-index 0)
+            (CompilerPkgKindBin)
+            (CompilerPkgKindLib))]
+        [mode : backend.CompilerBackendMode
+          (cond
+            [(= mode-index 0) (backend.CompilerBackendMode.Scalar)]
+            [(= mode-index 1) (backend.CompilerBackendMode.Avx2)]
+            [else (backend.CompilerBackendMode.Avx512)])]
+        [decls : ast.AstDeclList
+          (if (= spmd-index 0)
+            (ast.ast-decl-list-new)
+            (ast.ast-decl-cons
+              (ast.ast-decl-def-fn-metadata-id
+                (ci.intern "typed-route-table-spmd")
+                (ast.ast-param-list-new)
+                (ast.AstType.I64)
+                cbi.compiler-builtin-id-fix-empty
+                (ast.ast-fn-metadata-full
+                  ast.AstFnExport.No
+                  (ast.AstSpmdCallable.Callable
+                    (ast.ast-spmd-specialization-list-new))))
+              (ast.ast-decl-list-new)))]
+        [paths : ast.AstDeclPathList
+          (build-package-direct-object-test-paths
+            size-index
+            "pkg.tl"
+            (ast.ast-decl-path-list-new))]
+        [expected : String
+          (cond
+            [(and (= target-index 1) (= kind-index 1))
+              "artifact-kind-unavailable"]
+            [(= debug-index 1) "debug-metadata"]
+            [(> mode-index 0) "backend-mode"]
+            [(= spmd-index 1) "private-spmd-abi"]
+            [(and (= size-index 1) (or (= target-index 1) (= override-index 0)))
+              "resource-budget"]
+            [else ""])]
+        (and
+          (build-package-preflight-category-is?
+            (build-package-direct-object-preflight
+              kind
+              target
+              mode
+              (= debug-index 1)
+              0
+              (= override-index 1)
+              decls
+              (& paths))
+            expected)
+          (build-package-typed-route-table-from (+ index 1)))))))
+
+(cfg
+  test
+  (test
+    build-package-direct-object-route-table
+    (unless
+      (build-package-typed-route-table-from 0)
+      (io.panic "typed package direct-object route table failed"))))
+
+(define (build-package-emit-assembly-fallback
+  [name : String]
+  [target : backend.CompilerBackendTarget]
+  [opt-level : i64]
+  [mode : backend.CompilerBackendMode]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
+  [reason : backend.CompilerDirectObjectFallbackReason]) : ResultBuildPackagePreparedRuntime
+  (match (compiler_driver_core.compiler-driver-emit-package-loaded
+    ""
+    name
+    target
+    true
+    opt-level
+    mode
+    emit-entry
+    crt-entry
+    decls
+    paths)
+    [(compiler_driver_core.ResultCompilerDriver.Err diag advisories)
+      (begin
+        (compiler_driver_core.compiler-driver-print-advisories (& advisories))
+        (ResultBuildPackagePreparedRuntime.Err
+          (compiler_driver_core.compiler-driver-render-source-diagnostic
+            (owned_view.compiler-owned-box-shared-view diag))))]
+    [(compiler_driver_core.ResultCompilerDriver.Ok asm advisories)
+      (begin
+        (compiler_driver_core.compiler-driver-print-advisories (& advisories))
+        (ResultBuildPackagePreparedRuntime.Assembly asm reason))]))
 
 (define (build-package-try-prepare-direct-runtime
   [name : String]
@@ -3244,121 +3713,130 @@
   [target : backend.CompilerBackendTarget]
   [opt-level : i64]
   [mode : backend.CompilerBackendMode]
+  [debug-info : bool]
+  [path-budget : i64]
+  [linux-budget-override : bool]
   [emit-entry : bool]
   [crt-entry : bool]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : ResultBuildPackagePreparedRuntime
-  (if (and
-    (build-package-kind-supports-direct-object? kind target)
-    ;; Structured object images do not carry source-line/unwind debug records.
-    ;; Preserve --debug package behavior through the assembly path.
-    (not (ir.compiler-debug-info-enabled?))
-    (build-package-direct-object-mode? mode)
-    ;; Direct object emission does not yet preserve scalar f32/f64 parameter
-    ;; and return registers for generated private SPMD helpers. Use the
-    ;; assembler path so runtime artifacts carry the same ABI as side assembly.
-    (not
-      (build-package-decls-have-spmd-callable?
-        (owned_view.compiler-owned-shared-view decls)))
-    (build-package-direct-object-size-ok? target (& paths)))
-    (match target
-      [(backend.CompilerBackendTarget.Linux)
-        (match (compiler_driver_core.compiler-driver-emit-package-loaded-runtime
-          ""
-          name
-          target
-          opt-level
-          mode
-          emit-entry
-          crt-entry
-          decls
-          paths)
-          [(compiler_driver_core.ResultCompilerDriverPackageRuntime.Object
-              image
-              asm
-              advisories)
-            (begin
-              (compiler_driver_core.compiler-driver-print-advisories
-                (& advisories))
-              (match (build-package-render-linux-direct-object kind image)
-                [(build_run_core.ResultSourceToolString.Ok object)
-                  (ResultBuildPackagePreparedRuntime.DirectObject
-                    object
-                    (BuildPackageSideAssembly.Prepared asm))]
-                [(build_run_core.ResultSourceToolString.Err message)
-                  (ResultBuildPackagePreparedRuntime.Assembly asm message)]))]
-          [(compiler_driver_core.ResultCompilerDriverPackageRuntime.Assembly
-              asm
-              category
-              advisories)
-            (begin
-              (compiler_driver_core.compiler-driver-print-advisories
-                (& advisories))
-              (ResultBuildPackagePreparedRuntime.Assembly asm category))]
-          [(compiler_driver_core.ResultCompilerDriverPackageRuntime.Err
-              diag
-              advisories)
-            (begin
-              (compiler_driver_core.compiler-driver-print-advisories
-                (& advisories))
-              (ResultBuildPackagePreparedRuntime.Err
-                (compiler_driver_core.compiler-driver-render-source-diagnostic
-                  (owned_view.compiler-owned-box-shared-view diag))))])]
-      [(backend.CompilerBackendTarget.Windows)
-        ;; The shared Windows batch emitter owns the semantic gate as well as
-        ;; the COFF encoding/linkability checks. Its Assembly result is an
-        ;; intentional, stable fallback rather than a compilation failure.
-        (match (compiler_windows_coff_core.compiler-windows-batch-emit-lowered-result
-          ""
-          (compiler_driver_core.compiler-driver-lower-package-loaded
+  (match (build-package-direct-object-preflight
+    kind
+    target
+    mode
+    debug-info
+    path-budget
+    linux-budget-override
+    (owned_view.compiler-owned-shared-view decls)
+    (& paths))
+    [(BuildPackageDirectObjectPreflight.Eligible)
+      (match target
+        [(backend.CompilerBackendTarget.Linux)
+          (match (compiler_driver_core.compiler-driver-emit-package-loaded-runtime
             ""
             name
             target
+            opt-level
             mode
+            emit-entry
+            crt-entry
             decls
             paths)
-          mode
-          opt-level
-          false
-          true)
-          [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.CoffObject
-              object
-              side-assembly
-              advisories)
-            (begin
-              (compiler_driver_core.compiler-driver-print-advisories
-                (& advisories))
-              (match side-assembly
-                [(compiler_windows_coff_core.CompilerWindowsBatchSideAssembly.None)
-                  (ResultBuildPackagePreparedRuntime.DirectObject
-                    object
-                    BuildPackageSideAssembly.Regenerate)]
-                [(compiler_windows_coff_core.CompilerWindowsBatchSideAssembly.Some
-                    asm)
-                  (ResultBuildPackagePreparedRuntime.DirectObject
-                    object
-                    (BuildPackageSideAssembly.Prepared asm))]))]
-          [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Assembly
-              asm
-              category
-              advisories)
-            (begin
-              (compiler_driver_core.compiler-driver-print-advisories
-                (& advisories))
-              (ResultBuildPackagePreparedRuntime.Assembly
-                (text_buf.render asm)
-                category))]
-          [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Err
-              diag
-              advisories)
-            (begin
-              (compiler_driver_core.compiler-driver-print-advisories
-                (& advisories))
-              (ResultBuildPackagePreparedRuntime.Err
-                (compiler_driver_core.compiler-driver-render-source-diagnostic
-                  (owned_view.compiler-owned-box-shared-view diag))))])])
-    (ResultBuildPackagePreparedRuntime.Unavailable
-      "package direct object disabled")))
+            [(compiler_driver_core.ResultCompilerDriverPackageRuntime.Object
+                image
+                asm
+                advisories)
+              (begin
+                (compiler_driver_core.compiler-driver-print-advisories
+                  (& advisories))
+                (match (build-package-render-linux-direct-object kind image)
+                  [(ResultBuildPackageLinuxDirectObject.Ok object)
+                    (ResultBuildPackagePreparedRuntime.DirectObject
+                      object
+                      (BuildPackageSideAssembly.Prepared asm))]
+                  [(ResultBuildPackageLinuxDirectObject.Fallback reason)
+                    (ResultBuildPackagePreparedRuntime.Assembly asm reason)]))]
+            [(compiler_driver_core.ResultCompilerDriverPackageRuntime.Assembly
+                asm
+                category
+                advisories)
+              (begin
+                (compiler_driver_core.compiler-driver-print-advisories
+                  (& advisories))
+                (ResultBuildPackagePreparedRuntime.Assembly asm category))]
+            [(compiler_driver_core.ResultCompilerDriverPackageRuntime.Err
+                diag
+                advisories)
+              (begin
+                (compiler_driver_core.compiler-driver-print-advisories
+                  (& advisories))
+                (ResultBuildPackagePreparedRuntime.Err
+                  (compiler_driver_core.compiler-driver-render-source-diagnostic
+                    (owned_view.compiler-owned-box-shared-view diag))))])]
+        [(backend.CompilerBackendTarget.Windows)
+          ;; The shared Windows batch emitter owns the semantic gate as well as
+          ;; the COFF encoding/linkability checks. Its Assembly result is an
+          ;; intentional, stable fallback rather than a compilation failure.
+          (match (compiler_windows_coff_core.compiler-windows-batch-emit-lowered-result
+            ""
+            (compiler_driver_core.compiler-driver-lower-package-loaded
+              ""
+              name
+              target
+              mode
+              decls
+              paths)
+            mode
+            opt-level
+            false
+            true)
+            [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.CoffObject
+                object
+                side-assembly
+                advisories)
+              (begin
+                (compiler_driver_core.compiler-driver-print-advisories
+                  (& advisories))
+                (match side-assembly
+                  [(compiler_windows_coff_core.CompilerWindowsBatchSideAssembly.None)
+                    (ResultBuildPackagePreparedRuntime.DirectObject
+                      object
+                      BuildPackageSideAssembly.Regenerate)]
+                  [(compiler_windows_coff_core.CompilerWindowsBatchSideAssembly.Some
+                      asm)
+                    (ResultBuildPackagePreparedRuntime.DirectObject
+                      object
+                      (BuildPackageSideAssembly.Prepared asm))]))]
+            [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Assembly
+                asm
+                category
+                advisories)
+              (begin
+                (compiler_driver_core.compiler-driver-print-advisories
+                  (& advisories))
+                (ResultBuildPackagePreparedRuntime.Assembly
+                  (text_buf.render asm)
+                  category))]
+            [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Err
+                diag
+                advisories)
+              (begin
+                (compiler_driver_core.compiler-driver-print-advisories
+                  (& advisories))
+                (ResultBuildPackagePreparedRuntime.Err
+                  (compiler_driver_core.compiler-driver-render-source-diagnostic
+                    (owned_view.compiler-owned-box-shared-view diag))))])])]
+    [(BuildPackageDirectObjectPreflight.Fallback reason)
+      (build-package-emit-assembly-fallback
+        name
+        target
+        opt-level
+        mode
+        emit-entry
+        crt-entry
+        decls
+        paths
+        reason)]))
 
 (define (build-package-graph-node-artifact-paths
   [node : BuildPackageGraphNode]
@@ -6839,16 +7317,17 @@
   [tlci-path : String]
   [tlci-text : String]
   [announce : bool]) : i64
-  (match (build-package-try-prepare-direct-runtime
-    (owned_view.compiler-owned-shared-view name)
-    kind
-    target
-    opt-level
-    mode
-    emit-entry
-    crt-entry
-    (owned_view.compiler-owned-shared-view decls)
-    (owned_view.compiler-owned-shared-view owned-paths))
+  (match (build-package-prepare-runtime
+    (build-package-direct-object-default-request
+      (owned_view.compiler-owned-shared-view name)
+      kind
+      target
+      opt-level
+      mode
+      emit-entry
+      crt-entry
+      (owned_view.compiler-owned-shared-view decls)
+      (owned_view.compiler-owned-shared-view owned-paths)))
     [(ResultBuildPackagePreparedRuntime.DirectObject object-text side-assembly)
       (build-package-finish-direct-fresh-artifacts
         name
@@ -6893,99 +7372,76 @@
     [(ResultBuildPackagePreparedRuntime.Err message)
       (begin
         (io.print-error (owned_view.compiler-owned-shared-view message))
-        1)]
-    [(ResultBuildPackagePreparedRuntime.Unavailable _)
-      (match (compiler_driver_core.compiler-driver-emit-package-loaded
-        ""
-        (owned_view.compiler-owned-shared-view name)
-        target
-        true
-        opt-level
-        mode
-        emit-entry
-        crt-entry
-        decls
-        owned-paths)
-        [(compiler_driver_core.ResultCompilerDriver.Err diag advisories)
-          (begin
-            (compiler_driver_core.compiler-driver-print-advisories
-              (& advisories))
-            (io.print-error
-              (compiler_driver_core.compiler-driver-render-source-diagnostic
-                (owned_view.compiler-owned-box-shared-view diag)))
-            1)]
-        [(compiler_driver_core.ResultCompilerDriver.Ok asm advisories)
-          (begin
-            (compiler_driver_core.compiler-driver-print-advisories
-              (& advisories))
-            (build-package-finish-assembly-fresh-artifacts
-              name
-              kind
-              target
-              opt-level
-              profile
-              mode
-              producer-identity
-              output-dir
-              asm-path
-              obj-path
-              artifact-path
-              link-inputs
-              tlci-path
-              tlci-text
-              (owned_view.compiler-owned-shared-view asm)
-              announce))])]))
+        1)]))
 
-(define (build-package-prepare-runtime
-  [name : String]
-  [kind : load.CompilerPkgKind]
-  [target : backend.CompilerBackendTarget]
-  [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [decls : ast.AstDeclList]
-  [owned-paths : ast.AstDeclPathList]) : ResultBuildPackagePreparedRuntime
-  (match (build-package-try-prepare-direct-runtime
-    (owned_view.compiler-owned-shared-view name)
-    kind
-    target
-    opt-level
-    mode
-    emit-entry
-    crt-entry
-    (owned_view.compiler-owned-shared-view decls)
-    (owned_view.compiler-owned-shared-view owned-paths))
-    [(ResultBuildPackagePreparedRuntime.Unavailable category)
-      (match (compiler_driver_core.compiler-driver-emit-package-loaded
-        ""
-        name
-        target
-        true
-        opt-level
-        mode
-        emit-entry
-        crt-entry
-        decls
-        owned-paths)
-        [(compiler_driver_core.ResultCompilerDriver.Err diag advisories)
-          (begin
-            (compiler_driver_core.compiler-driver-print-advisories
-              (& advisories))
-            (ResultBuildPackagePreparedRuntime.Err
-              (compiler_driver_core.compiler-driver-render-source-diagnostic
-                (owned_view.compiler-owned-box-shared-view diag))))]
-        [(compiler_driver_core.ResultCompilerDriver.Ok asm advisories)
-          (begin
-            (compiler_driver_core.compiler-driver-print-advisories
-              (& advisories))
-            (ResultBuildPackagePreparedRuntime.Assembly asm category))])]
+(define (build-package-require-direct-object
+  [prepared : ResultBuildPackagePreparedRuntime]) : ResultBuildPackagePreparedRuntime
+  (match prepared
     [(ResultBuildPackagePreparedRuntime.DirectObject object side-assembly)
       (ResultBuildPackagePreparedRuntime.DirectObject object side-assembly)]
-    [(ResultBuildPackagePreparedRuntime.Assembly asm category)
-      (ResultBuildPackagePreparedRuntime.Assembly asm category)]
+    [(ResultBuildPackagePreparedRuntime.Assembly _ reason)
+      (ResultBuildPackagePreparedRuntime.Err
+        (str_cat.str-cat
+          "build: direct object required: "
+          (backend.compiler-direct-object-fallback-transcript reason)))]
     [(ResultBuildPackagePreparedRuntime.Err message)
       (ResultBuildPackagePreparedRuntime.Err message)]))
+
+(cfg
+  test
+  (test
+    build-package-require-direct-object-typed-fallback
+    (unless
+      (and
+        (string.eq
+          (backend.compiler-direct-object-fallback-transcript
+            (backend.CompilerDirectObjectFallbackReason.ArtifactKindUnavailable
+              (backend.CompilerBackendTarget.Windows)
+              backend.CompilerDirectObjectArtifactKind.StaticLib))
+          "artifact-kind-unavailable|target=windows-x86_64|kind=staticlib")
+        (match (build-package-require-direct-object
+          (ResultBuildPackagePreparedRuntime.Assembly
+            "assembly"
+            (backend.CompilerDirectObjectFallbackReason.ResourceBudget 513 512)))
+          [(ResultBuildPackagePreparedRuntime.Err message)
+            (string.eq
+              message
+              "build: direct object required: resource-budget|owned-paths=513|limit=512")]
+          [_ false])
+        (match (build-package-require-direct-object
+          (ResultBuildPackagePreparedRuntime.DirectObject
+            "object"
+            BuildPackageSideAssembly.Regenerate))
+          [(ResultBuildPackagePreparedRuntime.DirectObject object _)
+            (string.eq object "object")]
+          [_ false])
+        (match (build-package-require-direct-object
+          (ResultBuildPackagePreparedRuntime.Err "diagnostic"))
+          [(ResultBuildPackagePreparedRuntime.Err message)
+            (string.eq message "diagnostic")]
+          [_ false]))
+      (io.panic "strict direct-object route failed"))))
+
+(define (build-package-prepare-runtime
+  [request : BuildPackageDirectObjectRequest]) : ResultBuildPackagePreparedRuntime
+  (let
+    [prepared : ResultBuildPackagePreparedRuntime
+      (build-package-try-prepare-direct-runtime
+        request.name
+        request.kind
+        request.target
+        request.opt-level
+        request.mode
+        request.debug-info
+        request.path-budget
+        request.linux-budget-override
+        request.emit-entry
+        request.crt-entry
+        request.decls
+        request.paths)]
+    (if request.require-direct-object
+      (build-package-require-direct-object prepared)
+      prepared)))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -7024,15 +7480,16 @@
       (let
         [prepared : ResultBuildPackagePreparedRuntime
           (build-package-prepare-runtime
-            (owned_view.compiler-owned-shared-view name)
-            kind
-            target
-            opt-level
-            mode
-            emit-entry
-            crt-entry
-            (owned_view.compiler-owned-shared-view decls)
-            (owned_view.compiler-owned-shared-view owned-paths))]
+            (build-package-direct-object-default-request
+              (owned_view.compiler-owned-shared-view name)
+              kind
+              target
+              opt-level
+              mode
+              emit-entry
+              crt-entry
+              (owned_view.compiler-owned-shared-view decls)
+              (owned_view.compiler-owned-shared-view owned-paths)))]
         (match (owned_view.compiler-owned-shared-view prepared)
           [(ResultBuildPackagePreparedRuntime.Err message)
             (begin

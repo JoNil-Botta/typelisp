@@ -1689,10 +1689,9 @@
         (profile_state.compiler-profile-state-new))
         [(compiler_backend.CompilerBackendObjectEligibility.Eligible) false]
         [(compiler_backend.CompilerBackendObjectEligibility.Unsupported
-            category)
-          (string.eq
-            category
-            (compiler_backend.compiler-backend-object-unsupported-semantics-category))])
+            (compiler_backend.CompilerDirectObjectFallbackReason.UnsupportedSemantics))
+          true]
+        [_ false])
       (compiler_backend.backend-and8
         (compiler_backend.compiler-backend-object-semantic-value-supported?
           (compiler_ir_types.CompilerIrValue.I64 -2147483648))
@@ -1764,7 +1763,9 @@
   (match (compiler-backend-object-source-eligibility source target)
     [(compiler_backend.CompilerBackendObjectEligibility.Eligible) false]
     [(compiler_backend.CompilerBackendObjectEligibility.Unsupported category)
-      (string.eq category expected)]))
+      (string.eq
+        (compiler_backend.compiler-direct-object-fallback-category category)
+        expected)]))
 
 (define (compiler-backend-object-source-eligible?
   [source : String]
@@ -1805,7 +1806,9 @@
     ret-ty)
     [(compiler_backend.CompilerBackendObjectEligibility.Eligible) false]
     [(compiler_backend.CompilerBackendObjectEligibility.Unsupported category)
-      (string.eq category expected)]))
+      (string.eq
+        (compiler_backend.compiler-direct-object-fallback-category category)
+        expected)]))
 
 (define (compiler-backend-object-corrupt-call-abi-eligibility-ok?) : bool
   (let

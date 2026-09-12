@@ -492,11 +492,53 @@
           (repl-scratch-main-source body)))]
     [(ResultReplString.Err message) (ResultReplString.Err message)]))
 
-(define (repl-clean-scratch-source [temp-dir : String] [source-path : String]) : unit
-  (begin
-    (repl-try-remove-file-if-exists source-path)
-    (repl-try-remove-dir-if-exists temp-dir)
-    unit))
+(define (repl-scratch-cleanup-error-class [error : io.IoError]) : String
+  (match error
+    [(io.IoError.IoNotFound _) "not-found"]
+    [(io.IoError.IoPermissionDenied _) "permission-denied"]
+    [(io.IoError.IoInvalidPath _) "invalid-path"]
+    [(io.IoError.IoUnsupported _) "unsupported"]
+    [(io.IoError.IoInterrupted _) "interrupted"]
+    [(io.IoError.IoSystemCode _ _) "system-error"]
+    [(io.IoError.IoUnknown _) "unknown"]))
+
+;; Error payloads can contain the randomized scratch path. Only fixed class
+;; names and caller-owned component labels may reach the REPL diagnostic.
+(define (repl-scratch-cleanup-message
+  [component : String]
+  [result : io.ResultIoUnit]) : String
+  (match result
+    [(io.ResultIoUnit.OkIoUnit) ""]
+    [(io.ResultIoUnit.ErrIoUnit error)
+      (str_cat.str-cat
+        "repl: scratch "
+        component
+        " cleanup failed ("
+        (repl-scratch-cleanup-error-class error)
+        ")")]))
+
+(define (repl-scratch-cleanup-report-text
+  [file-result : io.ResultIoUnit]
+  [dir-result : io.ResultIoUnit]) : String
+  (let
+    [file-message : String (repl-scratch-cleanup-message "file" file-result)]
+    [dir-message : String (repl-scratch-cleanup-message "directory" dir-result)]
+    (str_cat.str-cat
+      (if (string.eq file-message "")
+        ""
+        (str_cat.str-cat file-message "\n"))
+      (if (string.eq dir-message "")
+        ""
+        (str_cat.str-cat dir-message "\n")))))
+
+(define (repl-report-scratch-cleanup-results
+  [file-result : io.ResultIoUnit]
+  [dir-result : io.ResultIoUnit]) : unit
+  (let
+    [report : String (repl-scratch-cleanup-report-text file-result dir-result)]
+    (if (string.eq report "")
+      unit
+      (repl-stderr-write report))))
 
 (define (repl-session-source-path) : String
   "repl-session.tl")
@@ -523,15 +565,32 @@
         (box
           (cdiag.compiler-diagnostic-list-single (tc.tc-diag-at-start message))))]))
 
-(define (repl-report-run-status [status : i64]) : unit
+(define (repl-run-status-report-text [status : i64]) : String
   (if (= status 0)
-    unit
-    (begin
-      (repl-stderr-write "\n")
-      (repl-print-error-line
-        (str_cat.str-cat
-          "REPL evaluation exited with status "
-          (string.int->string status))))))
+    ""
+    (str_cat.str-cat
+      "\nREPL evaluation exited with status "
+      (string.int->string status)
+      "\n")))
+
+(define (repl-run-and-scratch-cleanup-report-text
+  [status : i64]
+  [file-result : io.ResultIoUnit]
+  [dir-result : io.ResultIoUnit]) : String
+  (str_cat.str-cat
+    (repl-run-status-report-text status)
+    (repl-scratch-cleanup-report-text file-result dir-result)))
+
+(define (repl-report-run-and-scratch-cleanup-results
+  [status : i64]
+  [file-result : io.ResultIoUnit]
+  [dir-result : io.ResultIoUnit]) : unit
+  (let
+    [report : String
+      (repl-run-and-scratch-cleanup-report-text status file-result dir-result)]
+    (if (string.eq report "")
+      unit
+      (repl-stderr-write report))))
 
 (define (repl-run-scratch-source [source : String]) : unit
   (match (build_run_core.source-tool-create-temp-dir "typelisp-repl")
@@ -548,7 +607,12 @@
           [(build_run_core.SourceToolCommandStatus.Err message)
             (begin
               (repl-print-error-line message)
-              (repl-clean-scratch-source temp-dir source-path))]
+              (let
+                [file-result : io.ResultIoUnit
+                  (repl-try-remove-file-if-exists source-path)]
+                [dir-result : io.ResultIoUnit
+                  (repl-try-remove-dir-if-exists temp-dir)]
+                (repl-report-scratch-cleanup-results file-result dir-result)))]
           [(build_run_core.SourceToolCommandStatus.Ok)
             (let
               [status : i64
@@ -563,9 +627,15 @@
                   (build_run_core.source-tool-link-inputs-empty)
                   false
                   (owned_view.compiler-owned-shared-view temp-dir))]
-              (begin
-                (repl-clean-scratch-source temp-dir source-path)
-                (repl-report-run-status status)))]))]
+              (let
+                [file-result : io.ResultIoUnit
+                  (repl-try-remove-file-if-exists source-path)]
+                [dir-result : io.ResultIoUnit
+                  (repl-try-remove-dir-if-exists temp-dir)]
+                (repl-report-run-and-scratch-cleanup-results
+                  status
+                  file-result
+                  dir-result)))]))]
     [(build_run_core.ResultSourceToolString.Err message)
       (repl-print-error-line
         (str_cat.str-cat "repl: failed to create scratch temp dir: " message))]))
@@ -1006,3 +1076,90 @@
   (if (repl-scratch-source-stdlib-imports-ok?)
     unit
     (io.panic "repl: scratch source stdlib imports mismatch")))
+
+(define (repl-scratch-cleanup-report-test-ok?) : bool
+  (let
+    [both : String
+      (repl-scratch-cleanup-report-text
+        (io.ResultIoUnit.ErrIoUnit
+          (io.IoError.IoSystemCode 123 "/secret/repl_expr.tl"))
+        (io.ResultIoUnit.ErrIoUnit
+          (io.IoError.IoPermissionDenied "/secret/repl-dir")))]
+    [secret : String "/secret"]
+    [code : String "123"]
+    (and
+      (string.eq
+        (repl-scratch-cleanup-report-text
+          (io.ResultIoUnit.OkIoUnit)
+          (io.ResultIoUnit.OkIoUnit))
+        "")
+      (string.eq
+        (repl-scratch-cleanup-report-text
+          (io.ResultIoUnit.ErrIoUnit
+            (io.IoError.IoSystemCode 123 "/secret/repl_expr.tl"))
+          (io.ResultIoUnit.OkIoUnit))
+        "repl: scratch file cleanup failed (system-error)\n")
+      (string.eq
+        (repl-scratch-cleanup-report-text
+          (io.ResultIoUnit.OkIoUnit)
+          (io.ResultIoUnit.ErrIoUnit
+            (io.IoError.IoPermissionDenied "/secret/repl-dir")))
+        "repl: scratch directory cleanup failed (permission-denied)\n")
+      (string.eq
+        both
+        (str_cat.str-cat
+          "repl: scratch file cleanup failed (system-error)\n"
+          "repl: scratch directory cleanup failed (permission-denied)\n"))
+      (string.eq
+        (repl-run-and-scratch-cleanup-report-text
+          0
+          (io.ResultIoUnit.OkIoUnit)
+          (io.ResultIoUnit.ErrIoUnit
+            (io.IoError.IoPermissionDenied "/secret/repl-dir")))
+        "repl: scratch directory cleanup failed (permission-denied)\n")
+      (string.eq
+        (repl-run-and-scratch-cleanup-report-text
+          135
+          (io.ResultIoUnit.ErrIoUnit
+            (io.IoError.IoSystemCode 123 "/secret/repl_expr.tl"))
+          (io.ResultIoUnit.ErrIoUnit
+            (io.IoError.IoPermissionDenied "/secret/repl-dir")))
+        (str_cat.str-cat
+          "\nREPL evaluation exited with status 135\n"
+          "repl: scratch file cleanup failed (system-error)\n"
+          "repl: scratch directory cleanup failed (permission-denied)\n"))
+      (not (string.contains (& both) (& secret)))
+      (not (string.contains (& both) (& code)))
+      (string.eq
+        (repl-scratch-cleanup-message
+          "file"
+          (io.ResultIoUnit.ErrIoUnit (io.IoError.IoNotFound "hidden")))
+        "repl: scratch file cleanup failed (not-found)")
+      (string.eq
+        (repl-scratch-cleanup-message
+          "file"
+          (io.ResultIoUnit.ErrIoUnit (io.IoError.IoInvalidPath "hidden")))
+        "repl: scratch file cleanup failed (invalid-path)")
+      (string.eq
+        (repl-scratch-cleanup-message
+          "file"
+          (io.ResultIoUnit.ErrIoUnit (io.IoError.IoUnsupported "hidden")))
+        "repl: scratch file cleanup failed (unsupported)")
+      (string.eq
+        (repl-scratch-cleanup-message
+          "file"
+          (io.ResultIoUnit.ErrIoUnit (io.IoError.IoInterrupted "hidden")))
+        "repl: scratch file cleanup failed (interrupted)")
+      (string.eq
+        (repl-scratch-cleanup-message
+          "file"
+          (io.ResultIoUnit.ErrIoUnit (io.IoError.IoUnknown "hidden")))
+        "repl: scratch file cleanup failed (unknown)"))))
+
+(test
+  repl-scratch-cleanup-reports
+  (if (and
+    (repl-scratch-cleanup-report-test-ok?)
+    (repl-scratch-cleanup-report-test-ok?))
+    unit
+    (io.panic "repl: scratch cleanup report mismatch")))

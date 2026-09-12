@@ -1131,6 +1131,50 @@ check_global_len_fold() {
             "global-len-fold-$_target"
     done
 }
+# BE-6 / CANON-G: a scalar global read on an add's RIGHT folds into the add's
+# rip-relative memory operand, and a read written on the LEFT is commuted
+# there first. The read is `movq g(%rip), %rN` on both targets, so the fold
+# and its spelling are target-independent and both are checked on both.
+check_global_add_mem_fold() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "global_add_mem_fold_$_suffix" \
+            tests/integration/global_add_mem_fold.tl "$_target")
+        _rhs=$(function_body "$_asm" _tl_global_add_mem_fold_probe_rhs)
+        _lhs=$(function_body "$_asm" _tl_global_add_mem_fold_probe_lhs)
+        _refused=$(function_body "$_asm" _tl_global_add_mem_fold_probe_refused)
+
+        # The cell is the add's SOURCE operand and nothing stages it into a
+        # register first. Pre-BE-6 this body carried
+        # `movq gadd_k(%rip), %r8 ; addq %r8, %rax`.
+        assert_regex_count_eq "$_rhs" \
+            '^[[:space:]]+addq _tl_global_add_mem_fold_gadd_k\(%rip\), %r[a-z0-9]+$' 1 \
+            "global-add-mem-fold-rhs-$_target"
+        assert_not_matches "$_rhs" \
+            '^[[:space:]]+movq _tl_global_add_mem_fold_gadd_k\(%rip\), %r' \
+            "global-add-mem-fold-rhs-$_target"
+
+        # The mirror: the source put the cell on the LEFT; CANON-G commutes it
+        # and the same fold lands. Pre-CANON-G this body loaded the cell into
+        # the destination and added the register operand to it.
+        assert_regex_count_eq "$_lhs" \
+            '^[[:space:]]+addq _tl_global_add_mem_fold_gadd_m\(%rip\), %r[a-z0-9]+$' 1 \
+            "global-add-mem-fold-lhs-$_target"
+        assert_not_matches "$_lhs" \
+            '^[[:space:]]+movq _tl_global_add_mem_fold_gadd_m\(%rip\), %r' \
+            "global-add-mem-fold-lhs-$_target"
+
+        # Nearest refused neighbour: the read is bound to a local that is read
+        # twice, so the value must survive in a register and no add addresses
+        # the cell.
+        assert_matches "$_refused" \
+            '^[[:space:]]+movq _tl_global_add_mem_fold_gadd_k\(%rip\), %r' \
+            "global-add-mem-fold-refused-$_target"
+        assert_not_matches "$_refused" \
+            '^[[:space:]]+addq _tl_global_add_mem_fold_gadd_k\(%rip\), %r' \
+            "global-add-mem-fold-refused-$_target"
+    done
+}
 # M6-I: a scalar global read folds into the compare's rip-relative memory
 # operand. The read is `movq g(%rip), %rN` on both targets, so the fold and its
 # spelling are target-independent and both are checked on both targets.
@@ -3008,10 +3052,12 @@ check_vt_derived_stride() {
     assert_regex_count_eq "$_fast" \
         '^[[:space:]]+movq %r[a-z0-9]+, 16\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$' 1 \
         vt-derived-stride
-    # The cursor keeps its own literal step; the counter keeps its unit one.
+    # The cursor keeps its own literal step. LFTR-SUM retires the unit counter
+    # onto it (the exit test compares the cursor against a preheader end), so
+    # no unit step survives in the fast region.
     assert_matches "$_fast" '^[[:space:]]+addq \$3, %r[a-z0-9]+$' \
         vt-derived-stride
-    assert_matches "$_fast" '^[[:space:]]+addq \$1, %r[a-z0-9]+$' \
+    assert_regex_count_eq "$_fast" '^[[:space:]]+addq \$1, %r[a-z0-9]+$' 0 \
         vt-derived-stride
 }
 
@@ -3355,6 +3401,7 @@ check_loadcse_forward
 check_switch_dispatch_scavenge
 check_cmp_fold_load
 check_global_cmp_mem_fold
+check_global_add_mem_fold
 check_global_len_fold
 check_rmw_mem_operand_fold
 check_alu_mem_operand_tie

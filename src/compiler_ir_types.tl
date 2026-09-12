@@ -687,13 +687,33 @@
   (args CompilerIrCallArgs)
   (slots CompilerIrCAbiReturnSlotSeq))
 
+;; The imported descriptor owns a snapshot of the selected, checked TLCI row;
+;; none of its fields is a mapped-image address or loader registry handle.
+(defstruct CompilerIrImportedSpmdCall
+  (package-owner String)
+  (package-version String)
+  (canonical-helper String)
+  (signature String)
+  (abi String)
+  (backend String)
+  (lanes i64)
+  (args String)
+  (result String)
+  (index-param i64)
+  (link-symbol String))
+
+(defenum CompilerIrSpmdCallOrigin
+  (Private)
+  (Imported (Box CompilerIrImportedSpmdCall)))
+
 (defstruct CompilerIrInstrSpmdCallPayload
   (callee i64)
   (backend CompilerIrSpmdBackend)
   (lanes i64)
   (active-mask CompilerIrValue)
   (args CompilerIrSpmdCallArgSeq)
-  (result CompilerIrSpmdCallResult))
+  (result CompilerIrSpmdCallResult)
+  (origin CompilerIrSpmdCallOrigin))
 
 ;; Internal scalarized view of a source descriptor handle. This is deliberately
 ;; NOT an AstType: String and compatibility DynArray values remain one-word
@@ -1076,6 +1096,23 @@
   [active-mask : CompilerIrValue]
   [args : CompilerIrSpmdCallArgSeq]
   [result : CompilerIrSpmdCallResult]) : CompilerIrInstr
+  (ir-instr-spmd-call-with-origin
+    callee
+    backend
+    lanes
+    active-mask
+    args
+    result
+    CompilerIrSpmdCallOrigin.Private))
+
+(define (ir-instr-spmd-call-with-origin
+  [callee : i64]
+  [backend : CompilerIrSpmdBackend]
+  [lanes : i64]
+  [active-mask : CompilerIrValue]
+  [args : CompilerIrSpmdCallArgSeq]
+  [result : CompilerIrSpmdCallResult]
+  [origin : CompilerIrSpmdCallOrigin]) : CompilerIrInstr
   (CompilerIrInstr.SpmdCall
     (box
       (CompilerIrInstrSpmdCallPayload
@@ -1084,7 +1121,200 @@
         lanes
         active-mask
         args
-        result))))
+        result
+        origin))))
+
+;; Compare segments without assembling temporary strings on every optimizer
+;; integrity pass. The imported catalog is immutable; successful verification
+;; should not change the optimizer's allocation schedule or generated assembly.
+(define (compiler-ir-spmd-call-segment-eq-at?
+  [text : String]
+  [start : i64]
+  [segment : String]) : bool
+  (let
+    [length : i64 (string.string-length segment)]
+    [text-length : i64 (string.string-length text)]
+    [index : i64 0]
+    (if (or (< start 0) (> (+ start length) text-length))
+      false
+      (begin
+        (while (and
+          (< index length)
+          (=
+            (string.string-ref text (+ start index))
+            (string.string-ref segment index)))
+          (set! index (+ index 1)))
+        (= index length)))))
+
+(define (compiler-ir-spmd-call-signature-args-end
+  [signature : String]
+  [args : (& args CompilerIrSpmdCallArgSeq)]
+  [bases : i64]
+  [index : i64]
+  [position : i64]) : i64
+  (if (>= index args.len)
+    position
+    (match (array-ref args.slots index)
+      [(CompilerIrSpmdCallArg.Arg _ _ ty)
+        (let
+          [type-name : String (compiler-ir-type-name bases (clone ty))]
+          [next : i64 (+ position 1 (string.string-length type-name))]
+          (if (and
+            (compiler-ir-spmd-call-segment-eq-at?
+              (compiler-ir-global-shared-view signature)
+              position
+              " ")
+            (compiler-ir-spmd-call-segment-eq-at?
+              (compiler-ir-global-shared-view signature)
+              (+ position 1)
+              (compiler-ir-global-shared-view type-name)))
+            (compiler-ir-spmd-call-signature-args-end
+              (compiler-ir-global-shared-view signature)
+              args
+              bases
+              (+ index 1)
+              next)
+            -1))])))
+
+(define (compiler-ir-spmd-call-signature-valid?
+  [signature : String]
+  [payload : (& payload CompilerIrInstrSpmdCallPayload)]) : bool
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [end : i64
+      (compiler-ir-spmd-call-signature-args-end
+        (compiler-ir-global-shared-view signature)
+        (& payload.args)
+        bases
+        0
+        3)]
+    [result-type : String
+      (match payload.result
+        [(CompilerIrSpmdCallResult.Unit) "unit"]
+        [(CompilerIrSpmdCallResult.Value _ _ ty)
+          (compiler-ir-type-name bases (clone ty))])]
+    (and
+      (compiler-ir-spmd-call-segment-eq-at?
+        (compiler-ir-global-shared-view signature)
+        0
+        "(->")
+      (compiler-ir-spmd-call-segment-eq-at?
+        (compiler-ir-global-shared-view signature)
+        end
+        " ")
+      (compiler-ir-spmd-call-segment-eq-at?
+        (compiler-ir-global-shared-view signature)
+        (+ end 1)
+        (compiler-ir-global-shared-view result-type))
+      (compiler-ir-spmd-call-segment-eq-at?
+        (compiler-ir-global-shared-view signature)
+        (+ end 1 (string.string-length result-type))
+        ")")
+      (=
+        (string.string-length signature)
+        (+ end 2 (string.string-length result-type))))))
+
+(define (compiler-ir-spmd-call-args-code-valid-from?
+  [code : String]
+  [args : (& args CompilerIrSpmdCallArgSeq)]
+  [index : i64]) : bool
+  (if (>= index args.len)
+    true
+    (match (array-ref args.slots index)
+      [(CompilerIrSpmdCallArg.Arg class _ _)
+        (and
+          (=
+            (string.string-ref code index)
+            (match class
+              [(CompilerIrSpmdValueClass.Uniform) 'u']
+              [_ 'v']))
+          (compiler-ir-spmd-call-args-code-valid-from?
+            (compiler-ir-global-shared-view code)
+            args
+            (+ index 1)))])))
+
+;; Return an empty error for a valid selected imported row. This deliberately
+;; uses only the owned IR descriptor and call payload, never loader/TLCI state.
+(define (compiler-ir-spmd-call-descriptor-error
+  [payload : CompilerIrInstrSpmdCallPayload]) : String
+  (match payload.origin
+    [(CompilerIrSpmdCallOrigin.Private) ""]
+    [(CompilerIrSpmdCallOrigin.Imported selected-box)
+      (let
+        [selected : CompilerIrImportedSpmdCall
+          (compiler-ir-box-shared-view selected-box)]
+        [backend : String
+          (match payload.backend
+            [(CompilerIrSpmdBackend.Scalar) "scalar"]
+            [(CompilerIrSpmdBackend.Avx2) "avx2"]
+            [(CompilerIrSpmdBackend.Avx512) "avx512"])]
+        (if (and
+          (> (string.string-length selected.package-owner) 0)
+          (> (string.string-length selected.package-version) 0)
+          (> (string.string-length selected.canonical-helper) 0)
+          (compiler-ir-spmd-call-signature-valid?
+            (compiler-ir-global-shared-view selected.signature)
+            (& payload))
+          (string.eq selected.abi "spmd-call-v1")
+          (string.eq selected.backend backend)
+          (or
+            (and (string.eq backend "scalar") (= payload.lanes 1))
+            (and
+              (string.eq backend "avx512")
+              (or
+                (= payload.lanes 8)
+                (= payload.lanes 16)
+                (= payload.lanes 32)
+                (= payload.lanes 64))))
+          (= selected.lanes payload.lanes)
+          (= (string.string-length selected.args) payload.args.len)
+          (compiler-ir-spmd-call-args-code-valid-from?
+            (compiler-ir-global-shared-view selected.args)
+            (& payload.args)
+            0)
+          (string.eq
+            selected.result
+            (match payload.result
+              [(CompilerIrSpmdCallResult.Unit) "unit"]
+              [(CompilerIrSpmdCallResult.Value _ class _)
+                (match class
+                  [(CompilerIrSpmdValueClass.Uniform) "u"]
+                  [_ "v"])]))
+          (or
+            (= selected.index-param -1)
+            (and
+              (>= selected.index-param 0)
+              (< selected.index-param payload.args.len)
+              (match (array-ref payload.args.slots selected.index-param)
+                [(CompilerIrSpmdCallArg.Arg class _ ty)
+                  (and
+                    (match class
+                      [(CompilerIrSpmdValueClass.Varying) true]
+                      [_ false])
+                    (match ty
+                      [(ast.AstType.I64) true]
+                      [_ false]))])))
+          (=
+            (string.string-length selected.link-symbol)
+            (+
+              4
+              (string.string-length (compiler-ir-symbol-text payload.callee))))
+          (compiler-ir-spmd-call-segment-eq-at?
+            (compiler-ir-global-shared-view selected.link-symbol)
+            0
+            "_tl_")
+          (compiler-ir-spmd-call-segment-eq-at?
+            (compiler-ir-global-shared-view selected.link-symbol)
+            4
+            (compiler-ir-symbol-text payload.callee)))
+          ""
+          (str_cat.str-cat
+            "IR SPMD catalog descriptor mismatch for package "
+            selected.package-owner
+            "@"
+            selected.package-version
+            " helper "
+            selected.canonical-helper)))]))
 
 (defstruct CompilerIrInstrSeq
   (slots (__tl_dyn-array CompilerIrInstr))
@@ -1104,6 +1334,12 @@
 
 (defenum CompilerIrParam
   (Param String ast.AstType i64))
+
+;; The control-byte prefix cannot occur in a source identifier. Keep hidden
+;; ABI parameters distinct from user parameters even when users name one
+;; `__sret`; optimizer ownership proofs must not rely on a spellable name.
+(define (compiler-ir-hidden-sret-param-name) : String
+  "\x01__sret")
 
 (defstruct CompilerIrParamSeq
   (slots (__tl_dyn-array CompilerIrParam))
@@ -3337,7 +3573,8 @@
           (compiler-ir-box-field-shared-view payload-box active-mask)]
         [args (compiler-ir-box-field-shared-view payload-box args)]
         [result (compiler-ir-box-field-shared-view payload-box result)]
-        (ir-instr-spmd-call
+        [origin (compiler-ir-box-field-shared-view payload-box origin)]
+        (ir-instr-spmd-call-with-origin
           (compiler-ir-symbol-clone callee)
           (compiler-ir-clone-spmd-backend backend)
           lanes
@@ -3345,7 +3582,8 @@
           (compiler-ir-clone-spmd-call-arg-seq
             (compiler-ir-global-shared-view pools)
             args)
-          (compiler-ir-clone-spmd-call-result pools result)))]
+          (compiler-ir-clone-spmd-call-result pools result)
+          (clone origin)))]
     [(CompilerIrInstr.TailCall name args ty)
       (CompilerIrInstr.TailCall
         (compiler-ir-symbol-clone name)

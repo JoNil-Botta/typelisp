@@ -1363,7 +1363,12 @@
 (defenum LowerSpmdInlineHelper
   (No)
   (Some i64 ast.AstParamList ast.AstType ast.AstExpr)
-  (Imported ci.InternId ast.AstType (Box ast.AstImportedSpmdCallableList)))
+  (Imported
+    String
+    String
+    ci.InternId
+    ast.AstType
+    (Box ast.AstImportedSpmdCallableList)))
 
 (defstruct LowerFunctionBodyIndex
   (ids lower_i64_i64_map.Map)
@@ -4794,7 +4799,7 @@
   ;; the exact linker symbol independently, per SPEC 4.4.5.
   (match (ast.ast-extern-metadata-imported-spmd
     (lower-global-shared-view metadata))
-    [(ast.AstImportedSpmdMetadata.Package canonical-name _)
+    [(ast.AstImportedSpmdMetadata.Package _ _ canonical-name _)
       (lower-derived-symbol-id
         (compiler-lower-state-intern-id-str lower-state canonical-name))]
     [(ast.AstImportedSpmdMetadata.No)
@@ -10358,9 +10363,18 @@
         (lower-box-shared-view metadata))
         [(ast.AstImportedSpmdMetadata.No)
           (ResultLowerSpmdInlineHelper.Ok (LowerSpmdInlineHelper.No))]
-        [(ast.AstImportedSpmdMetadata.Package canonical-name callables)
+        [(ast.AstImportedSpmdMetadata.Package
+            owner
+            version
+            canonical-name
+            callables)
           (ResultLowerSpmdInlineHelper.Ok
-            (LowerSpmdInlineHelper.Imported canonical-name ty callables))])]
+            (LowerSpmdInlineHelper.Imported
+              owner
+              version
+              canonical-name
+              ty
+              callables))])]
     [(ast.AstDecl.Unsafe inner-box)
       (let
         [inner : ast.AstDecl (lower-box-shared-view inner-box)]
@@ -10949,7 +10963,7 @@
                   rewritten-args
                   body
                   origin))]
-            [(LowerSpmdInlineHelper.Imported _ _ _)
+            [(LowerSpmdInlineHelper.Imported _ _ _ _ _)
               (lower-spmd-preserve-call ctx func rewritten-args)]
             [(LowerSpmdInlineHelper.No)
               (match (lower-spmd-inline-expr
@@ -26610,7 +26624,7 @@
                                   (if structural-sret?
                                     (ir.compiler-ir-param-seq-prepend
                                       (ir.CompilerIrParam.Param
-                                        "__sret"
+                                        (ir.compiler-ir-hidden-sret-param-name)
                                         (ast.AstType.U64)
                                         1)
                                       source)
@@ -42909,6 +42923,8 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [index : String]
+  [owner : String]
+  [version : String]
   [canonical-name : ci.InternId]
   [fn-ty : ast.AstType]
   [callables : ast.AstImportedSpmdCallableList]
@@ -42981,7 +42997,7 @@
                   (tc_core.tc-context-pools (lower-global-shared-view ctx))
                   canonical-name
                   (& callables)
-                  signature
+                  (string.copy signature)
                   (ir.CompilerIrSpmdBackend.Scalar)
                   1
                   args-code
@@ -43005,7 +43021,14 @@
                       (lower-imported-spmd-result-varying?
                         (& imported-interns)
                         specialization)
-                      origin)
+                      origin
+                      (lower-imported-spmd-call-origin
+                        (& imported-interns)
+                        owner
+                        version
+                        canonical-name
+                        signature
+                        specialization))
                       [(ResultLowerExpr.Err message)
                         (LowerMaybeSpmdCall.Err message)]
                       [(ResultLowerExpr.Ok lowered)
@@ -43147,7 +43170,8 @@
                                 call-args
                                 result-ty
                                 result-varying
-                                origin)
+                                origin
+                                ir.CompilerIrSpmdCallOrigin.Private)
                                 [(ResultLowerExpr.Ok lowered)
                                   (match lowered
                                     [(LowerExpr.Expr call-state value ty)
@@ -43166,13 +43190,20 @@
                   [(ResultLowerCallArgs.Err message)
                     (LowerMaybeSpmdCall.Err message)])
                 (LowerMaybeSpmdCall.No))]
-            [(LowerSpmdInlineHelper.Imported canonical-name fn-ty callables)
+            [(LowerSpmdInlineHelper.Imported
+                owner
+                version
+                canonical-name
+                fn-ty
+                callables)
               (lower-imported-spmd-scalar-call
                 ctx
                 state
                 env
                 type-env
                 index
+                owner
+                version
                 canonical-name
                 fn-ty
                 (lower-box-shared-view callables)
@@ -52945,7 +52976,12 @@
                           (if (< result 0)
                             arg-lanes
                             result)))))]
-                [(LowerSpmdInlineHelper.Imported canonical-name fn-ty callables)
+                [(LowerSpmdInlineHelper.Imported
+                    _
+                    _
+                    canonical-name
+                    fn-ty
+                    callables)
                   (lower-imported-spmd-direct-call-result-lanes
                     ctx
                     function-state
@@ -55560,7 +55596,7 @@
                   (lower-spmd-helper-out-of-line?
                     (lower-global-shared-view ctx)
                     body)]
-                [(LowerSpmdInlineHelper.Imported _ _ _) true]
+                [(LowerSpmdInlineHelper.Imported _ _ _ _ _) true]
                 [(LowerSpmdInlineHelper.No) false])]
             [(ResultLowerSpmdInlineHelper.Err _) false])
           (lower-spmd-expr-list-has-out-of-line-call?
@@ -56757,7 +56793,7 @@
                   function-state
                   previous)
                 result)))]
-        [(LowerSpmdInlineHelper.Imported _ _ _) false]
+        [(LowerSpmdInlineHelper.Imported _ _ _ _ _) false]
         [(LowerSpmdInlineHelper.No) false])]
     [(ResultLowerSpmdInlineHelper.Err _) false]))
 
@@ -57234,7 +57270,7 @@
                             type-env
                             numeric-context
                             args)]))))]
-              [(LowerSpmdInlineHelper.Imported _ _ _)
+              [(LowerSpmdInlineHelper.Imported _ _ _ _ _)
                 (lower-spmd-numeric-failure-in-expr-list
                   ctx
                   function-state
@@ -66836,6 +66872,28 @@
         (string.substring link-symbol 4 (- link-symbol-len 4)))
       (ci.intern-id-value link-symbol-id))))
 
+(define (lower-imported-spmd-call-origin
+  [interns : (& interns ci.InternCompatState)]
+  [owner : String]
+  [version : String]
+  [canonical-name : ci.InternId]
+  [signature : String]
+  [item : ast.AstImportedSpmdSpecialization]) : ir.CompilerIrSpmdCallOrigin
+  (ir.CompilerIrSpmdCallOrigin.Imported
+    (box
+      (ir.CompilerIrImportedSpmdCall
+        owner
+        version
+        (ci.intern-compat-state-id-str interns canonical-name)
+        signature
+        (ci.intern-compat-state-id-str interns item.abi)
+        (ci.intern-compat-state-id-str interns item.backend)
+        item.lanes
+        (ci.intern-compat-state-id-str interns item.args)
+        (ci.intern-compat-state-id-str interns item.result)
+        item.index-param
+        (ci.intern-compat-state-id-str interns item.symbol)))))
+
 (define (lower-imported-spmd-backend-name [backend : ir.CompilerIrSpmdBackend]) : String
   (match backend
     [(ir.CompilerIrSpmdBackend.Scalar) "scalar"]
@@ -68627,19 +68685,21 @@
   [call-args : ir.CompilerIrSpmdCallArgSeq]
   [result-ty : ast.AstType]
   [result-varying : bool]
-  [expr : ast.AstExpr]) : ResultLowerExpr
+  [expr : ast.AstExpr]
+  [origin : ir.CompilerIrSpmdCallOrigin]) : ResultLowerExpr
   (if (tc_core.tc-type-eq
     (lower-global-shared-view result-ty)
     (ast.AstType.Unit))
     (let
       [instr : ir.CompilerIrInstr
-        (ir.ir-instr-spmd-call
+        (ir.ir-instr-spmd-call-with-origin
           hidden-name
           backend
           lanes
           active-mask
           call-args
-          (ir.CompilerIrSpmdCallResult.Unit))]
+          (ir.CompilerIrSpmdCallResult.Unit)
+          (clone origin))]
       (ResultLowerExpr.Ok
         (LowerExpr.Expr
           (lower-state-emit-at-expr ctx state instr expr)
@@ -68653,7 +68713,7 @@
               (lower-global-shared-view result-ty)
               result-varying)]
           [instr : ir.CompilerIrInstr
-            (ir.ir-instr-spmd-call
+            (ir.ir-instr-spmd-call-with-origin
               hidden-name
               backend
               lanes
@@ -68662,7 +68722,8 @@
               (ir.CompilerIrSpmdCallResult.Value
                 result-var
                 result-class
-                (lower-global-shared-view result-ty)))]
+                (lower-global-shared-view result-ty))
+              (clone origin))]
           [call-state : LowerState
             (lower-state-emit-at-expr ctx allocated instr expr)]
           (if (or
@@ -68692,7 +68753,8 @@
   [call-args : ir.CompilerIrSpmdCallArgSeq]
   [result-ty : ast.AstType]
   [result-varying : bool]
-  [expr : ast.AstExpr]) : ResultLowerExpr
+  [expr : ast.AstExpr]
+  [origin : ir.CompilerIrSpmdCallOrigin]) : ResultLowerExpr
   (match (lower-masked-active-mask-value state active-mask lanes)
     [(LowerExpr.Expr mask-state mask _)
       (lower-avx512-emit-spmd-call
@@ -68705,7 +68767,8 @@
         call-args
         result-ty
         result-varying
-        expr)]))
+        expr
+        origin)]))
 
 (define (lower-avx512-uniform-spmd-call
   [ctx : tc_core.TcContext]
@@ -68744,6 +68807,8 @@
   [expr : ast.AstExpr]
   [func : ast.AstExpr]
   [args : ast.AstExprList]
+  [owner : String]
+  [version : String]
   [canonical-name : ci.InternId]
   [fn-ty : ast.AstType]
   [callables : ast.AstImportedSpmdCallableList]) : ResultLowerExpr
@@ -68838,7 +68903,7 @@
                           (lower-global-shared-view ctx))
                         canonical-name
                         (& callables)
-                        signature
+                        (string.copy signature)
                         (ir.CompilerIrSpmdBackend.Avx512)
                         lanes
                         args-code
@@ -68863,7 +68928,14 @@
                             (lower-imported-spmd-result-varying?
                               (& imported-interns)
                               specialization)
-                            expr)])))])))])]
+                            expr
+                            (lower-imported-spmd-call-origin
+                              (& imported-interns)
+                              owner
+                              version
+                              canonical-name
+                              signature
+                              specialization))])))])))])]
     [_
       (ResultLowerExpr.Err
         (box
@@ -69045,7 +69117,8 @@
                                     abi-call-args
                                     result-ty
                                     result-varying
-                                    expr)]
+                                    expr
+                                    ir.CompilerIrSpmdCallOrigin.Private)]
                                 [(ResultLowerFunction.Err message)
                                   (ResultLowerExpr.Err message)]))]))]
                     [(ResultLowerSpmdCallArgs.Err message)
@@ -69053,7 +69126,12 @@
             [(tc_core.ResultTcType.Err message)
               (ResultLowerExpr.Err
                 (box (lower-diagnostic-at-expr ctx expr message)))])]
-        [(LowerSpmdInlineHelper.Imported canonical-name fn-ty callables)
+        [(LowerSpmdInlineHelper.Imported
+            owner
+            version
+            canonical-name
+            fn-ty
+            callables)
           (if (lower-mode-avx2?
             (lower-state-mode (lower-global-shared-view state)))
             (ResultLowerExpr.Err
@@ -69080,6 +69158,8 @@
               expr
               func
               args
+              owner
+              version
               canonical-name
               fn-ty
               (lower-box-shared-view callables)))]
@@ -76194,7 +76274,10 @@
           (ir.compiler-ir-param-builder-to-seq builder)))]
     (if leading-sret?
       (ir.compiler-ir-param-seq-prepend
-        (ir.CompilerIrParam.Param "__sret" (ast.AstType.U64) (- source-start 1))
+        (ir.CompilerIrParam.Param
+          (ir.compiler-ir-hidden-sret-param-name)
+          (ast.AstType.U64)
+          (- source-start 1))
         source)
       source)))
 
@@ -76441,7 +76524,10 @@
   [sret-var : i64]) : ir.CompilerIrParamSeq
   (ir.compiler-ir-param-seq-append-one
     params
-    (ir.CompilerIrParam.Param "__sret" (ast.AstType.U64) sret-var)))
+    (ir.CompilerIrParam.Param
+      (ir.compiler-ir-hidden-sret-param-name)
+      (ast.AstType.U64)
+      sret-var)))
 
 (define (lower-supported-function-param-type?
   [ctx : tc_core.TcContext]
@@ -76699,7 +76785,7 @@
                               (if structural-sret?
                                 (ir.compiler-ir-param-seq-prepend
                                   (ir.CompilerIrParam.Param
-                                    "__sret"
+                                    (ir.compiler-ir-hidden-sret-param-name)
                                     (ast.AstType.U64)
                                     (- source-start 1))
                                   source)
@@ -78153,7 +78239,10 @@
       (if leading-sret?
         (ir.compiler-ir-param-builder-push!
           (&mut builder)
-          (ir.CompilerIrParam.Param "__sret" (ast.AstType.U64) 0))
+          (ir.CompilerIrParam.Param
+            (ir.compiler-ir-hidden-sret-param-name)
+            (ast.AstType.U64)
+            0))
         unit)
       (lower-dispatch-physical-param-list-into!
         ctx

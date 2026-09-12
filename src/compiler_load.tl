@@ -209,7 +209,7 @@
 
 (defenum CompilerLoadPackageSpmdInterface
   (Unavailable)
-  (Available tlci.TlciSpmdCallables))
+  (Available String tlci.TlciSpmdCallables))
 
 (defenum ResultCompilerLoadPackageSpmdInterface
   (Ok CompilerLoadPackageSpmdInterface)
@@ -12798,6 +12798,7 @@
                       metadata.package-version))
                   (ResultCompilerLoadPackageSpmdInterface.Ok
                     (CompilerLoadPackageSpmdInterface.Available
+                      (string.copy metadata.package-version)
                       metadata.spmd-callables))))])]))))
 
 (define (compiler-load-imported-spmd-specializations
@@ -12870,14 +12871,18 @@
           module)
         (ci.intern-str name))]
     [callables : ast.AstImportedSpmdCallableList
-      (match interface
+      (match (clone interface)
         [(CompilerLoadPackageSpmdInterface.Unavailable)
           (ast.ast-imported-spmd-callable-list-new)]
-        [(CompilerLoadPackageSpmdInterface.Available items)
+        [(CompilerLoadPackageSpmdInterface.Available _ items)
           (compiler-load-imported-spmd-callables-for
             (string.copy canonical-name)
             items)])]
     (ast.AstImportedSpmdMetadata.Package
+      (string.copy package-owner)
+      (match interface
+        [(CompilerLoadPackageSpmdInterface.Available version _) version]
+        [(CompilerLoadPackageSpmdInterface.Unavailable) ""])
       (ci.intern-id-from-renderable
         (ci.intern-generated-canonical-name canonical-name))
       (box callables))))
@@ -13335,8 +13340,9 @@
       out)))
 
 (define (compiler-load-dependency-surface-interface
+  [version : String]
   [spmd-callables : tlci.TlciSpmdCallables]) : CompilerLoadPackageSpmdInterface
-  (CompilerLoadPackageSpmdInterface.Available spmd-callables))
+  (CompilerLoadPackageSpmdInterface.Available version spmd-callables))
 
 (define (compiler-load-dependency-surface-final-module-id
   [decls : ast.AstDeclList]
@@ -13525,7 +13531,9 @@
                     merged-seen
                     ""
                     cbi.compiler-builtin-id-fix-empty
-                    (compiler-load-dependency-surface-interface spmd-callables))
+                    (compiler-load-dependency-surface-interface
+                      entry.version
+                      spmd-callables))
                     [(ResultCompilerLoadWithPaths.Err _)
                       CompilerLoadDependencySurfaceImport.Unavailable]
                     [(ResultCompilerLoadWithPaths.Ok
@@ -19626,12 +19634,17 @@
         "spmd_fixture"
         (ci.intern "helper")
         (CompilerLoadPackageSpmdInterface.Available
+          "1.0.0"
           (tlci.tlci-spmd-callables-push
             (tlci.tlci-spmd-callables-empty)
             callable)))]
     (match metadata
       [(ast.AstImportedSpmdMetadata.No) false]
-      [(ast.AstImportedSpmdMetadata.Package canonical-name callables-box)
+      [(ast.AstImportedSpmdMetadata.Package
+          owner
+          version
+          canonical-name
+          callables-box)
         (let
           [callables : ast.AstImportedSpmdCallableList
             (ast.ast-imported-spmd-callable-list-box-shared-view callables-box)]
@@ -19648,6 +19661,8 @@
               0
               (ast.ast-imported-spmd-specialization-fallback))]
           (and
+            (string.eq owner "spmd_fixture")
+            (string.eq version "1.0.0")
             (string.eq (ci.intern-id-str canonical-name) "spmd_fixture/helper")
             (= (ast.ast-imported-spmd-callable-list-len (& callables)) 1)
             (string.eq

@@ -510,11 +510,9 @@ tl_panic_at:
     je .Lf13_if_else.1
 .Lf13_if_then.0:
     movq (%r10), %r8
-    movq %r8, 96(%rsp)
+    movq %r8, %r10
     movq 112(%rsp), %r8
-    subq $1, %r8
-    movq 96(%rsp), %r10
-    movzbq (%r10,%r8,1), %r9
+    movzbq -1(%r10,%r8,1), %r9
     movq %r9, 56(%rsp)
     movzbq 56(%rsp), %r8
     cmpq $10, %r8
@@ -649,10 +647,9 @@ _tl_helper_helper_helper_opaque:
     .type _tl_helper_helper_helper,@function
 _tl_helper_helper_helper:
 .Lf19_entry:
-    movl $38, %r9d
-    movq _tl_shared_shared_shared(%rip), %r8
-    addq %r8, %r9
-    movq %r9, %rdi
+    movl $38, %r8d
+    addq _tl_shared_shared_shared(%rip), %r8
+    movq %r8, %rdi
     movl $1, %esi
     jmp _tl_helper_helper_helper_opaque
     .size _tl_helper_helper_helper, . - _tl_helper_helper_helper

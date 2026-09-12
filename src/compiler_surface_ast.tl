@@ -1209,7 +1209,7 @@
         [markers : i64 (codec.surface-ast-read-i64! reader)]
         (if (or (= markers 0) (= markers 1))
           (if (= tag 0)
-            (ast.AstDeclMeta (box (ast.AstDeclMetaValue.Runtime markers)))
+            (ast.ast-decl-meta-runtime-with-aggregate-markers markers)
             (surface-ast-read-comptime-decl-meta! reader markers))
           (begin
             (codec.surface-ast-reader-fail!
@@ -1247,7 +1247,8 @@
   compiler-surface-selftest
   (define (surface-ast-decl-meta-roundtrip-ok?
     [meta : ast.AstDeclMeta]
-    [comptime? : bool]) : bool
+    [comptime? : bool]
+    [expected-markers : i64]) : bool
     (let
       [intern-state : ci.InternCompatState
         (ci.intern-compat-state-capture-active)]
@@ -1268,15 +1269,18 @@
               bytes
               structural-session
               (__tl_make-array i64 0))]
+          [before : arena.ArenaMark (arena.mark)]
           [decoded : ast.AstDeclMeta (surface-ast-read-decl-meta! (& reader))]
+          [after : arena.ArenaMark (arena.mark)]
           (and
             (codec.surface-ast-reader-valid? (& reader))
             (= (codec.surface-ast-reader-offset (& reader)) byte-count)
+            (or comptime? (!= expected-markers 0) (arena.mark-eq? before after))
             (match (__tl-box-place decoded.value)
               [(ast.AstDeclMetaValue.Runtime markers)
-                (and (= markers 1) (not comptime?))]
+                (and (= markers expected-markers) (not comptime?))]
               [(ast.AstDeclMetaValue.Comptime _ markers)
-                (and (= markers 1) comptime?)])))))))
+                (and (= markers expected-markers) comptime?)])))))))
 
 (cfg
   compiler-surface-selftest
@@ -1330,12 +1334,18 @@
   (define (surface-ast-decl-meta-tests-ok?) : bool
     (and
       (surface-ast-decl-meta-roundtrip-ok?
+        (ast.ast-decl-meta-runtime-shared-view)
+        false
+        0)
+      (surface-ast-decl-meta-roundtrip-ok?
         (ast.AstDeclMeta (box (ast.AstDeclMetaValue.Runtime 1)))
-        false)
+        false
+        1)
       (surface-ast-decl-meta-roundtrip-ok?
         (ast.AstDeclMeta
           (box (ast.AstDeclMetaValue.Comptime ast.AstGeneratedDeclMeta.No 1)))
-        true)
+        true
+        1)
       (surface-ast-decl-meta-invalid-flags-ok?)
       (surface-ast-old-schema-rejected?))))
 

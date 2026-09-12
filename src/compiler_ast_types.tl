@@ -5179,7 +5179,7 @@
 
 ;; Keep the per-declaration metadata field pointer-sized. An inline tagged
 ;; AstDeclMeta adds both a tag and a payload word to every AstDecl slot, while
-;; only compile-time declarations need storage for the tagged state.
+;; only compile-time or marked declarations need their own tagged storage.
 (defstruct AstDeclMeta
   (value (Box AstDeclMetaValue)))
 
@@ -5188,6 +5188,13 @@
 
 (define (ast-decl-meta-runtime-shared-view) : AstDeclMeta
   (ast-global-shared-view ast-decl-meta-runtime))
+
+;; Parsing and surface hydration share the same allocation rule: the ordinary
+;; unmarked runtime declaration uses the singleton metadata box.
+(define (ast-decl-meta-runtime-with-aggregate-markers [markers : i64]) : AstDeclMeta
+  (if (= markers 0)
+    (ast-decl-meta-runtime-shared-view)
+    (AstDeclMeta (box (AstDeclMetaValue.Runtime markers)))))
 
 (defenum AstTestIgnoreReason
   (No)
@@ -7931,14 +7938,18 @@
     inner))
 
 (define (ast-decl-with-aggregate-markers [inner : AstDecl] [markers : i64]) : AstDecl
-  (ast-decl-with-meta
-    (match (__tl-box-place
-      (__tl-project-field (ast-decl-meta (ast-global-shared-view inner)) value))
-      [(AstDeclMetaValue.Runtime _)
-        (AstDeclMeta (box (AstDeclMetaValue.Runtime markers)))]
-      [(AstDeclMetaValue.Comptime generated _)
-        (AstDeclMeta (box (AstDeclMetaValue.Comptime generated markers)))])
-    inner))
+  (if (= markers (ast-decl-aggregate-markers (ast-global-shared-view inner)))
+    inner
+    (ast-decl-with-meta
+      (match (__tl-box-place
+        (__tl-project-field
+          (ast-decl-meta (ast-global-shared-view inner))
+          value))
+        [(AstDeclMetaValue.Runtime _)
+          (ast-decl-meta-runtime-with-aggregate-markers markers)]
+        [(AstDeclMetaValue.Comptime generated _)
+          (AstDeclMeta (box (AstDeclMetaValue.Comptime generated markers)))])
+      inner)))
 
 (define (ast-decl-unwrapped [decl : AstDecl]) : AstDecl
   (let
@@ -11627,14 +11638,14 @@
   (test
     compiler-ast-aggregate-marker-wrappers
     (let
+      [unmarked : AstDecl
+        (ast-decl-def-struct-id
+          (ci.intern-generated-name "Marked")
+          AstStructRepr.Default
+          AstStructCleanup.No
+          (ast-field-def-list-new))]
       [marked : AstDecl
-        (ast-decl-with-aggregate-markers
-          (ast-decl-def-struct-id
-            (ci.intern-generated-name "Marked")
-            AstStructRepr.Default
-            AstStructCleanup.No
-            (ast-field-def-list-new))
-          1)]
+        (ast-decl-with-aggregate-markers (ast-place-shared-view unmarked) 1)]
       [comptime-decl : AstDecl
         (ast-decl-comptime-decl (ast-place-shared-view marked))]
       [generated-decl : AstDecl
@@ -11643,11 +11654,36 @@
           (ast-place-shared-view marked))]
       [unsafe-decl : AstDecl
         (ast-decl-unsafe (ast-place-shared-view comptime-decl))]
+      [cleared-comptime : AstDecl
+        (ast-decl-with-aggregate-markers
+          (ast-place-shared-view generated-decl)
+          0)]
+      [before : arena.ArenaMark (arena.mark)]
+      [same-runtime : AstDecl (ast-decl-with-aggregate-markers unmarked 0)]
+      [same-marked : AstDecl
+        (ast-decl-with-aggregate-markers (ast-place-shared-view marked) 1)]
+      [same-comptime : AstDecl
+        (ast-decl-with-aggregate-markers
+          (ast-place-shared-view generated-decl)
+          1)]
+      [same-unsafe : AstDecl
+        (ast-decl-with-aggregate-markers (ast-place-shared-view unsafe-decl) 1)]
+      [cleared-runtime : AstDecl
+        (ast-decl-with-aggregate-markers (ast-place-shared-view marked) 0)]
+      [after : arena.ArenaMark (arena.mark)]
       (unless
         (and
+          (arena.mark-eq? before after)
+          (not (ast-decl-must-use? same-runtime))
+          (ast-decl-must-use? same-marked)
+          (ast-decl-must-use? same-comptime)
+          (ast-decl-must-use? same-unsafe)
+          (not (ast-decl-must-use? cleared-runtime))
+          (not (ast-decl-must-use? (ast-place-shared-view cleared-comptime)))
+          (ast-decl-comptime-only? cleared-comptime)
           (ast-decl-must-use? marked)
           (ast-decl-must-use? comptime-decl)
           (ast-decl-must-use? generated-decl)
           (ast-decl-must-use? (ast-place-shared-view unsafe-decl))
           (ast-decl-comptime-only? unsafe-decl))
-        (io.panic "aggregate marker lost through declaration wrapper")))))
+        (io.panic "aggregate marker wrapper semantics or allocation changed")))))

@@ -51,12 +51,20 @@
         [(comptime.TypeInfo.DynArray _)
           `(let
             [shared-ref (& ,place)]
-            (__tl-compiler-owned-shared-view-dyn-ref-as shared-ref ,value-ty))]
+            (unsafe
+              (ptr-read
+                (ptr-cast
+                  (__tl_array-data (array shared-ref))
+                  : (Ptr ,value-ty)))))]
         [(comptime.TypeInfo.Builtin kind)
           (if (string.eq kind "string")
             `(let
               [shared-ref (& ,place)]
-              (__tl-compiler-owned-shared-view-dyn-ref-as shared-ref ,value-ty))
+              (unsafe
+                (ptr-read
+                  (ptr-cast
+                    (__tl_array-data (array shared-ref))
+                    : (Ptr ,value-ty)))))
             `(unsafe
               (ptr-read (ptr-addr-of ,place))))]
         [_
@@ -2356,13 +2364,17 @@
         [stored-semantic : i64
           (ast-expr-semantic-node-from-span-slot
             inner-slot
-            (__tl-compiler-owned-shared-view-dyn-ref-as
-              (& pool.canonical-span-records)
-              (__tl_dyn-array AstExprCanonicalSpanRecord))
+            (unsafe
+              (ptr-read
+                (ptr-cast
+                  (__tl_array-data (array (& pool.canonical-span-records)))
+                  : (Ptr (__tl_dyn-array AstExprCanonicalSpanRecord)))))
             pool.canonical-span-count
-            (__tl-compiler-owned-shared-view-dyn-ref-as
-              (& pool.respan-records)
-              (__tl_dyn-array AstExprReSpan))
+            (unsafe
+              (ptr-read
+                (ptr-cast
+                  (__tl_array-data (array (& pool.respan-records)))
+                  : (Ptr (__tl_dyn-array AstExprReSpan)))))
             pool.respan-count)]
         [semantic : i64
           (if (>= stored-semantic 0)
@@ -2451,13 +2463,17 @@
         [semantic : i64
           (ast-expr-semantic-node-from-span-slot
             inner-slot
-            (__tl-compiler-owned-shared-view-dyn-ref-as
-              (& pool.canonical-span-records)
-              (__tl_dyn-array AstExprCanonicalSpanRecord))
+            (unsafe
+              (ptr-read
+                (ptr-cast
+                  (__tl_array-data (array (& pool.canonical-span-records)))
+                  : (Ptr (__tl_dyn-array AstExprCanonicalSpanRecord)))))
             pool.canonical-span-count
-            (__tl-compiler-owned-shared-view-dyn-ref-as
-              (& pool.respan-records)
-              (__tl_dyn-array AstExprReSpan))
+            (unsafe
+              (ptr-read
+                (ptr-cast
+                  (__tl_array-data (array (& pool.respan-records)))
+                  : (Ptr (__tl_dyn-array AstExprReSpan)))))
             pool.respan-count)]
         (ast-expr-span-slot-set-in-bases!
           pool.span-slot-segment-bases
@@ -3771,9 +3787,11 @@
     ty-node-pool-count
     node-pool-base-arena
     ty-node-pool-exhausted
-    (__tl-compiler-owned-shared-view-dyn-ref-as
-      (& ty-node-dedup-slots)
-      (__tl_dyn-array i64))
+    (unsafe
+      (ptr-read
+        (ptr-cast
+          (__tl_array-data (array (& ty-node-dedup-slots)))
+          : (Ptr (__tl_dyn-array i64)))))
     ty-node-dedup-count
     ty-node-pool-storage-arena
     ty-node-pool-segment-count))
@@ -3830,15 +3848,19 @@
     (set! ast-node-span-slot-segment-bases expr-pool.span-slot-segment-bases)
     (set!
       ast-node-canonical-span-records
-      (__tl-compiler-owned-shared-view-dyn-ref-as
-        expr-pool.canonical-span-records
-        (__tl_dyn-array AstExprCanonicalSpanRecord)))
+      (unsafe
+        (ptr-read
+          (ptr-cast
+            (__tl_array-data (array expr-pool.canonical-span-records))
+            : (Ptr (__tl_dyn-array AstExprCanonicalSpanRecord))))))
     (set! ast-node-canonical-span-count expr-pool.canonical-span-count)
     (set!
       ast-node-respan-records
-      (__tl-compiler-owned-shared-view-dyn-ref-as
-        expr-pool.respan-records
-        (__tl_dyn-array AstExprReSpan)))
+      (unsafe
+        (ptr-read
+          (ptr-cast
+            (__tl_array-data (array expr-pool.respan-records))
+            : (Ptr (__tl_dyn-array AstExprReSpan))))))
     (set! ast-node-respan-count expr-pool.respan-count)
     (set! ast-node-span-records-monotonic? expr-pool.span-records-monotonic?)
     (set! ty-node-pool-segment-bases type-pool.segment-bases)
@@ -3850,9 +3872,11 @@
     (set! ty-node-dedup-capacity (array-length type-pool.dedup-slots))
     (set!
       ty-node-dedup-slots
-      (__tl-compiler-owned-shared-view-dyn-ref-as
-        type-pool.dedup-slots
-        (__tl_dyn-array i64)))
+      (unsafe
+        (ptr-read
+          (ptr-cast
+            (__tl_array-data (array type-pool.dedup-slots))
+            : (Ptr (__tl_dyn-array i64))))))
     ;; A context install is the only generation boundary that can replace the
     ;; table outside `ty-node-dedup-grow!`; derive the hot pointer from the
     ;; newly installed descriptor while its base arena is still owned here.
@@ -3877,12 +3901,16 @@
 (define (ast-node-pool-context-shared-view
   [pools : (& pools AstNodePoolContext)]) : AstNodePoolContext
   (AstNodePoolContext
-    (__tl-compiler-owned-shared-view-dyn-ref-as
-      pools.expr-pool
-      (__tl_dyn-array AstExprNodePoolState))
-    (__tl-compiler-owned-shared-view-dyn-ref-as
-      pools.type-pool
-      (__tl_dyn-array AstTypeNodePoolState))
+    (unsafe
+      (ptr-read
+        (ptr-cast
+          (__tl_array-data (array pools.expr-pool))
+          : (Ptr (__tl_dyn-array AstExprNodePoolState)))))
+    (unsafe
+      (ptr-read
+        (ptr-cast
+          (__tl_array-data (array pools.type-pool))
+          : (Ptr (__tl_dyn-array AstTypeNodePoolState)))))
     pools.owner-arena))
 
 ;; Pool snapshots can retain different state cells while sharing the same
@@ -4301,12 +4329,26 @@
 ;: Only meaningful while `ast-node-pool-has-active-context?` holds.
 (define (ast-node-pool-context-active-live) : AstNodePoolContext
   (AstNodePoolContext
-    (__tl-compiler-owned-shared-view-dyn-ref-as
-      (& (__tl-project-field-name ast-node-pool-active-context "expr-pool"))
-      (__tl_dyn-array AstExprNodePoolState))
-    (__tl-compiler-owned-shared-view-dyn-ref-as
-      (& (__tl-project-field-name ast-node-pool-active-context "type-pool"))
-      (__tl_dyn-array AstTypeNodePoolState))
+    (unsafe
+      (ptr-read
+        (ptr-cast
+          (__tl_array-data
+            (array
+              (&
+                (__tl-project-field-name
+                  ast-node-pool-active-context
+                  "expr-pool"))))
+          : (Ptr (__tl_dyn-array AstExprNodePoolState)))))
+    (unsafe
+      (ptr-read
+        (ptr-cast
+          (__tl_array-data
+            (array
+              (&
+                (__tl-project-field-name
+                  ast-node-pool-active-context
+                  "type-pool"))))
+          : (Ptr (__tl_dyn-array AstTypeNodePoolState)))))
     (__tl-project-field-name ast-node-pool-active-context "owner-arena")))
 
 (define (ast-node-pool-active-context-expr-cell-address) : u64
@@ -8679,9 +8721,11 @@
   [node : AstExpr]) : i64
   (let
     [pool-cell : (__tl_dyn-array AstExprNodePoolState)
-      (__tl-compiler-owned-shared-view-dyn-ref-as
-        remap.dest-pools.expr-pool
-        (__tl_dyn-array AstExprNodePoolState))]
+      (unsafe
+        (ptr-read
+          (ptr-cast
+            (__tl_array-data (array remap.dest-pools.expr-pool))
+            : (Ptr (__tl_dyn-array AstExprNodePoolState)))))]
     [current-base-arena : i64
       (__tl-project-field (array-ref pool-cell 0) base-arena)]
     [id : i64

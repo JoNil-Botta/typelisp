@@ -346,7 +346,11 @@
       (ptr->int
         (ptr-cast
           (__tl_array-data
-            (__tl-compiler-owned-shared-view-dyn-ref-as buf (__tl_dyn-array u8)))
+            (unsafe
+              (ptr-read
+                (ptr-cast
+                  (__tl_array-data (array buf))
+                  : (Ptr (__tl_dyn-array u8))))))
           : (Ptr u8)))
       : i64)))
 
@@ -357,9 +361,11 @@
       (ptr->int
         (ptr-cast
           (__tl_array-data
-            (__tl-compiler-owned-shared-view-dyn-ref-as
-              buf
-              (__tl_dyn-array u64)))
+            (unsafe
+              (ptr-read
+                (ptr-cast
+                  (__tl_array-data (array buf))
+                  : (Ptr (__tl_dyn-array u64))))))
           : (Ptr u8)))
       : i64)))
 
@@ -370,9 +376,11 @@
       (ptr->int
         (ptr-cast
           (__tl_array-data
-            (__tl-compiler-owned-shared-view-dyn-ref-as
-              buf
-              (__tl_dyn-array i64)))
+            (unsafe
+              (ptr-read
+                (ptr-cast
+                  (__tl_array-data (array buf))
+                  : (Ptr (__tl_dyn-array i64))))))
           : (Ptr u8)))
       : i64)))
 
@@ -383,9 +391,11 @@
       (ptr->int
         (ptr-cast
           (__tl_array-data
-            (__tl-compiler-owned-shared-view-dyn-ref-as
-              buf
-              (__tl_dyn-array i32)))
+            (unsafe
+              (ptr-read
+                (ptr-cast
+                  (__tl_array-data (array buf))
+                  : (Ptr (__tl_dyn-array i32))))))
           : (Ptr u8)))
       : i64)))
 
@@ -396,9 +406,11 @@
       (ptr->int
         (ptr-cast
           (__tl_array-data
-            (__tl-compiler-owned-shared-view-dyn-ref-as
-              buf
-              (__tl_dyn-array String)))
+            (unsafe
+              (ptr-read
+                (ptr-cast
+                  (__tl_array-data (array buf))
+                  : (Ptr (__tl_dyn-array String))))))
           : (Ptr u8)))
       : i64)))
 
@@ -409,9 +421,11 @@
       (ptr->int
         (ptr-cast
           (__tl_array-data
-            (__tl-compiler-owned-shared-view-dyn-ref-as
-              buf
-              (__tl_dyn-array thread-i64-vec.Vec)))
+            (unsafe
+              (ptr-read
+                (ptr-cast
+                  (__tl_array-data (array buf))
+                  : (Ptr (__tl_dyn-array thread-i64-vec.Vec))))))
           : (Ptr u8)))
       : i64)))
 

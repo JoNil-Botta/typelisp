@@ -86,6 +86,8 @@
   (let
     [left : f64 (stdlib.math.f64-from-bits a)]
     [right : f64 (stdlib.math.f64-from-bits b)]
+    [self-equal : bool
+      (<= (bit-and (cast a : u64) 0x7fffffffffffffff) 0x7ff0000000000000)]
     [expected : i64
       (expected-mask
         (cast a : u64)
@@ -95,7 +97,17 @@
     (set! eval-count 0)
     (let
       [actual : i64 (mask-f64 left right)]
-      (if (or (!= actual expected) (!= eval-count 12))
+      ;; Keep the minimized same-variable regression: optimizers must not
+      ;; assume reflexive equality or non-strict ordering for possible NaNs.
+      (if (or
+        (!= actual expected)
+        (!= eval-count 12)
+        (!= (= left left) self-equal)
+        (!= (!= left left) (not self-equal))
+        (< left left)
+        (> left left)
+        (!= (<= left left) self-equal)
+        (!= (>= left left) self-equal))
         false
         (let
           [op : i64 0]
@@ -150,12 +162,23 @@
   (let
     [left : f32 (stdlib.math.f32-from-bits a)]
     [right : f32 (stdlib.math.f32-from-bits b)]
+    [self-equal : bool (<= (bit-and (cast a : u64) 0x7fffffff) 0x7f800000)]
     [expected : i64
       (expected-mask (cast a : u64) (cast b : u64) 0x80000000 0x7f800000)]
     (set! eval-count 0)
     (let
       [actual : i64 (mask-f32 left right)]
-      (if (or (!= actual expected) (!= eval-count 12))
+      ;; Keep the minimized same-variable regression: optimizers must not
+      ;; assume reflexive equality or non-strict ordering for possible NaNs.
+      (if (or
+        (!= actual expected)
+        (!= eval-count 12)
+        (!= (= left left) self-equal)
+        (!= (!= left left) (not self-equal))
+        (< left left)
+        (> left left)
+        (!= (<= left left) self-equal)
+        (!= (>= left left) self-equal))
         false
         (let
           [op : i64 0]

@@ -49636,7 +49636,7 @@ g:
                             (compiler_backend.compiler-backend-string-contains?
                               (owned_view.compiler-owned-shared-view
                                 compare-return)
-                              "%rax"))]
+                              "    movl $0, %eax\n    jp 1f\n    setb %al\n1:\n"))]
                         [(compiler_backend.ResultCompilerBackend.Err _) false])]
                     [(compiler_backend.ResultCompilerBackend.Err _) false])]
                 [(compiler_backend.ResultCompilerBackend.Err _) false])]

@@ -42115,8 +42115,77 @@ g:
           (owned_view.compiler-owned-shared-view exhausted-param)
           "    movsd %xmm0, %xmm3\n")))))
 
+;; Refs #7820. Exhaust every address-exposure mask for eight live groups.
+;; Compare the actual operand route used by copies/calls, so a legacy second
+;; word cannot alias either word of a different address-exposed pair.
+(define (compiler-backend-mixed-group-stack-homes-ok?) : bool
+  (let
+    [state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [groups : compiler_liveness.CompilerLiveI64Set
+      (compiler_liveness.compiler-live-set-empty)]
+    [slots : (__tl_dyn-array String) (__tl_make-array String 16)]
+    [index : i64 0]
+    [mask : i64 0]
+    (begin
+      (while (< index 8)
+        (begin
+          (set!
+            groups
+            (compiler_liveness.compiler-live-set-insert groups index))
+          (set! index (+ index 1))))
+      (while (< mask 256)
+        (let
+          [addressable : compiler_liveness.CompilerLiveI64Set
+            (compiler_liveness.compiler-live-set-empty)]
+          (begin
+            (set! index 0)
+            (while (< index 8)
+              (begin
+                (when
+                  (not (= (bit-and mask (shl 1 index)) 0))
+                  (set!
+                    addressable
+                    (compiler_liveness.compiler-live-set-insert
+                      addressable
+                      index)))
+                (set! index (+ index 1))))
+            (compiler_backend.compiler-backend-group-vars-enable!
+              (owned_view.compiler-owned-shared-view state)
+              (owned_view.compiler-owned-shared-view groups)
+              addressable)
+            (set! index 0)
+            (while (< index 16)
+              (begin
+                (match (compiler_backend.compiler-backend-group-word-operand-with-backend-state
+                  (compiler_regalloc.compiler-reg-assignment-table-empty)
+                  (/ index 2)
+                  (% index 2)
+                  8
+                  (owned_view.compiler-owned-shared-view state))
+                  [(compiler_backend.ResultCompilerBackend.Ok operand)
+                    (let
+                      [previous : i64 0]
+                      (begin
+                        (while (< previous index)
+                          (begin
+                            (when
+                              (string.eq
+                                (owned_view.compiler-owned-shared-view operand)
+                                (array-ref slots previous))
+                              (return false))
+                            (set! previous (+ previous 1))))
+                        (set! (array-ref slots index) operand)))]
+                  [(compiler_backend.ResultCompilerBackend.Err _)
+                    (return false)])
+                (set! index (+ index 1))))
+            (set! mask (+ mask 1)))))
+      true)))
+
 (define (compiler-backend-stack-args-ok?) : bool
   (and
+    (compiler-backend-mixed-group-stack-homes-ok?)
     (compiler-backend-stack-int-args-ok?)
     (compiler-backend-stack-f64-args-ok?)
     (compiler-backend-stack-mixed-args-ok?)

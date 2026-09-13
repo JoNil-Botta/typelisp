@@ -32,6 +32,17 @@ copy only their address. The native `loop_carried_enum_payload_snapshot` and
 at every optimization level. Address generation uses `lower-emit-gep`, also
 shared by byte-offset projections through `lower-gep-byte`.
 
+Address-exposed register groups own contiguous stack pairs indexed by final
+variable ID. In a function that exposes any group address, all group second
+words use that canonical pair region; mixing a one-word-stride map with
+exposed pairs aliases distinct live values. Ordinary first words remain in
+the scalar slots. A zero-storage addressable-group bitmap proves that a
+function can retain the compact second-word map, preserving ordinary-only
+code generation. The existing two-words-per-variable frame reservation covers
+both modes. The backend's exhaustive mixed-exposure test checks operand
+disjointness, and `mixed_group_stack_homes.tl` checks writes across real calls
+at opt0/1/2 on both native targets.
+
 Affine folding keeps one mutable fact table per function: local vreg IDs index
 compact binding slots, and only live bindings are scanned for key/base
 invalidation. Every block starts with empty facts; the cumulative 512-binding
@@ -83,6 +94,38 @@ do not allocate. Generated-declaration reuse in `compiler_specialize.tl` compare
 these semantic flags even when the aggregates have identical ABI. The existing
 AST wrapper, surface roundtrip, and specialization selftests guard these rules;
 serialized metadata changes also require a surface-AST schema version change.
+
+`Module` and `Decls` macro output share `macro-wrap-generated-decls` in
+`compiler_typecheck_core.tl`. Ordinary generated imports carry namespace effects
+without a visible declaration name; retain their generated metadata so the
+fixed-point walk resolves them through the canonical loader before typechecking.
+Materialization uses the loader's existing module/item classifier. Complete
+in-memory programs retain their provided module identity without becoming file
+requests. Generated import spans and declaration paths both refer to the macro
+call site; materialization failures preserve the dependency diagnostic and add
+that call site as a structured related location.
+
+Macro surface searches borrow declaration records while inspecting their module,
+name and kind. A rejected candidate must not clone signature or parameter-list
+payloads. `compiler-load-surface-decl-list-borrow-at` ties the view to its source
+list; the owning accessor remains available for retained payloads. A selected
+macro call result copies its parameter and return-type payloads before leaving
+the borrowed view. Summary reset must not invalidate that retained signature.
+The surface-macro smoke test checks first/last/missing names, interner identity,
+and retained selection across summary destruction.
+
+The loader's path-aware namespace validators serve source imports and the
+completed macro expansion. They run at the expansion boundary, after generated
+imports have become canonical markers. Dotted-alias keys combine the importer
+module and explicit alias; values are canonical expected module identities.
+Repeated same-module bindings are idempotent. Empty generated aliases are
+unqualified markers, not dotted names. Selected/wildcard imports share the
+loader's unqualified-name collision rule. At the completed expansion boundary,
+that traversal also requires selected items to exist; loading alone cannot
+assume declaration generators have finished. Errors use the marker's physical
+path and span. Each scan uses temporary maps that are not cached; composite-key
+interning is published to the job's intern owner before handoff. The generated
+import runtime fixtures and interleaved loader-state smoke guard these contracts.
 
 Handwritten runtime, startup, and direct-object x86-64 code is covered by the
 closed [compiler-owned executable template registry](compiler-x64-executable-templates.md).

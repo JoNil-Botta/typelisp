@@ -4,6 +4,8 @@
 (import stdlib.fs)
 (import stdlib.fs_rooted_linux as rooted)
 (import stdlib.io)
+(import stdlib.hash)
+(import stdlib.profile)
 (import stdlib.string)
 
 (define (result-code [result : rooted.FsLinuxRootedResult]) : i64
@@ -900,6 +902,289 @@
             42
             status))))))
 
+;; Cursor tests share publication's acquired-file helpers and typed outcomes.
+(define (rewind-reader [reader : (&mut reader rooted.FsLinuxRootedReadFile)]) : bool
+  (rooted.linux-rooted-result-ok?
+    (rooted.linux-rooted-read-file-rewind!
+      reader
+      rooted.linux-rooted-never-cancelled)))
+
+(define (read-text-is?
+  [reader : (&mut reader rooted.FsLinuxRootedReadFile)]
+  [count : i64]
+  [expected : (& expected str)]) : bool
+  (let
+    [read : rooted.FsLinuxRootedReadResult
+      (rooted.linux-rooted-read-file-chunk!
+        reader
+        count
+        rooted.linux-rooted-never-cancelled)]
+    [ok : bool
+      (rooted.linux-rooted-result-ok?
+        (rooted.linux-rooted-read-operation (& read)))]
+    [eof : bool (rooted.linux-rooted-read-eof? (& read))]
+    [text : String (byte_buf.to-string (rooted.linux-rooted-read-bytes read))]
+    (and
+      ok
+      (= eof (= (string-length expected) 0))
+      (string.eq (& text) expected))))
+
+(define (read-payload-hash
+  [reader : (&mut reader rooted.FsLinuxRootedReadFile)]) : i64
+  (let
+    [read : rooted.FsLinuxRootedReadResult
+      (rooted.linux-rooted-read-file-chunk!
+        reader
+        8
+        rooted.linux-rooted-never-cancelled)]
+    [ok : bool
+      (rooted.linux-rooted-result-ok?
+        (rooted.linux-rooted-read-operation (& read)))]
+    [text : String (byte_buf.to-string (rooted.linux-rooted-read-bytes read))]
+    (if (and ok (string.eq (& text) "payload") (read-text-is? reader 1 ""))
+      (hash.string-key (& text))
+      -1)))
+
+(define (rewind-allocation-free?
+  [reader : (&mut reader rooted.FsLinuxRootedReadFile)]) : bool
+  (begin
+    (rooted.linux-rooted-test-reset!)
+    (profile.alloc-reset-peak)
+    (let
+      [before-total : i64 (profile.alloc-total)]
+      [before-live : i64 (profile.alloc-live)]
+      [index : i64 0]
+      [ok : bool true]
+      (begin
+        (while (< index 128)
+          (begin
+            (if (not (rewind-reader reader))
+              (set! ok false)
+              unit)
+            (set! index (+ index 1))))
+        (let
+          [after-total : i64 (profile.alloc-total)]
+          [after-live : i64 (profile.alloc-live)]
+          [peak : i64 (profile.alloc-peak)]
+          [kind : i64 1]
+          (begin
+            (while (< kind rooted.fs-linux-rooted-syscall-kind-lseek)
+              (begin
+                (if (not (= (rooted.linux-rooted-test-call-count kind) 0))
+                  (set! ok false)
+                  unit)
+                (set! kind (+ kind 1))))
+            (and
+              ok
+              (= after-total before-total)
+              (= after-live before-live)
+              (= peak before-live)
+              (=
+                (rooted.linux-rooted-test-call-count
+                  rooted.fs-linux-rooted-syscall-kind-lseek)
+                128))))))))
+
+(define (rewind-basics [root : (& root rooted.FsLinuxRootedDirectory)]) : bool
+  (with
+    ([reader
+        (rooted.linux-rooted-reopen-file
+          root
+          "payload"
+          rooted.linux-rooted-never-cancelled)
+        rooted.cleanup-linux-rooted-read-file])
+    (and
+      (rooted.linux-rooted-read-file-open? (& reader))
+      (rewind-reader (&mut reader))
+      (read-text-is? (&mut reader) 2 "pa")
+      (rewind-reader (&mut reader))
+      (= (read-payload-hash (&mut reader)) (hash.string-key "payload"))
+      (rewind-reader (&mut reader))
+      (= (read-payload-hash (&mut reader)) (hash.string-key "payload"))
+      (rewind-allocation-free? (&mut reader))
+      (read-text-is? (&mut reader) 8 "payload")
+      (read-text-is? (&mut reader) 1 ""))))
+
+(define (rewind-empty [root : (& root rooted.FsLinuxRootedDirectory)]) : bool
+  (with
+    ([reader
+        (rooted.linux-rooted-reopen-file
+          root
+          "empty"
+          rooted.linux-rooted-never-cancelled)
+        rooted.cleanup-linux-rooted-read-file])
+    (and
+      (rooted.linux-rooted-read-file-open? (& reader))
+      (rewind-reader (&mut reader))
+      (read-text-is? (&mut reader) 1 "")
+      (rewind-reader (&mut reader))
+      (read-text-is? (&mut reader) 1 ""))))
+
+(define (rewind-fault-is?
+  [reader : (&mut reader rooted.FsLinuxRootedReadFile)]
+  [injected : i64]
+  [expected : i64]) : bool
+  (begin
+    (rooted.linux-rooted-test-reset!)
+    (rooted.linux-rooted-test-fail-on!
+      rooted.fs-linux-rooted-syscall-kind-lseek
+      1
+      injected)
+    (let
+      [code : i64
+        (result-code
+          (rooted.linux-rooted-read-file-rewind!
+            reader
+            rooted.linux-rooted-never-cancelled))]
+      [calls : i64
+        (rooted.linux-rooted-test-call-count
+          rooted.fs-linux-rooted-syscall-kind-lseek)]
+      (begin
+        (rooted.linux-rooted-test-reset!)
+        (and
+          (= code expected)
+          (= calls 1)
+          (rooted.linux-rooted-read-file-open? reader)
+          (rewind-reader reader)
+          (read-text-is? reader 8 "payload"))))))
+
+;; Poison only valid allocated state, retaining its descriptor for exact-once
+;; cleanup. No arbitrary pointer or out-of-lifetime access is exercised.
+(define (rewind-poisoned-live?
+  [reader : (&mut reader rooted.FsLinuxRootedReadFile)]) : bool
+  (unsafe
+    (let
+      [saved : rooted.FsLinuxRootedHandleState
+        (rooted.linux-rooted-state-read reader.state)]
+      (begin
+        (rooted.linux-rooted-test-reset!)
+        (rooted.linux-rooted-state-write!
+          reader.state
+          (rooted.FsLinuxRootedHandleState
+            saved.fd
+            rooted.LinuxRootedIoFailure
+            saved.close))
+        (let
+          [code : i64
+            (result-code
+              (rooted.linux-rooted-read-file-rewind!
+                reader
+                rooted.linux-rooted-never-cancelled))]
+          [calls : i64
+            (rooted.linux-rooted-test-call-count
+              rooted.fs-linux-rooted-syscall-kind-lseek)]
+          (begin
+            (rooted.linux-rooted-state-write! reader.state saved)
+            (and (= code 14) (= calls 0) (rewind-reader reader))))))))
+
+(define (rewind-faults [root : (& root rooted.FsLinuxRootedDirectory)]) : bool
+  (with
+    ([reader
+        (rooted.linux-rooted-reopen-file
+          root
+          "payload"
+          rooted.linux-rooted-never-cancelled)
+        rooted.cleanup-linux-rooted-read-file])
+    (and
+      (rooted.linux-rooted-read-file-open? (& reader))
+      (read-text-is? (&mut reader) 2 "pa")
+      (begin
+        (rooted.linux-rooted-test-reset!)
+        (and
+          (=
+            (result-code
+              (rooted.linux-rooted-read-file-rewind! (&mut reader) cancel-now))
+            9)
+          (=
+            (rooted.linux-rooted-test-call-count
+              rooted.fs-linux-rooted-syscall-kind-lseek)
+            0)
+          (read-text-is? (&mut reader) 8 "yload")))
+      (rewind-fault-is? (&mut reader) 5 8)
+      (rewind-fault-is? (&mut reader) 9 8)
+      (rewind-fault-is? (&mut reader) 22 7)
+      (rewind-fault-is? (&mut reader) 4 9)
+      (rewind-fault-is? (&mut reader) -7 8)
+      (rewind-poisoned-live? (&mut reader))
+      (rooted.linux-rooted-result-ok?
+        (rooted.linux-rooted-read-file-close! (&mut reader)))
+      (begin
+        (rooted.linux-rooted-test-reset!)
+        (and
+          (=
+            (result-code
+              (rooted.linux-rooted-read-file-rewind!
+                (&mut reader)
+                rooted.linux-rooted-never-cancelled))
+            14)
+          (=
+            (rooted.linux-rooted-test-call-count
+              rooted.fs-linux-rooted-syscall-kind-lseek)
+            0)
+          (=
+            (rooted.linux-rooted-test-call-count
+              rooted.fs-linux-rooted-syscall-kind-close)
+            0))))))
+
+(define (rewind-retained-identity
+  [root : (& root rooted.FsLinuxRootedDirectory)]) : bool
+  (with
+    ([reader
+        (rooted.linux-rooted-reopen-file
+          root
+          "payload"
+          rooted.linux-rooted-never-cancelled)
+        rooted.cleanup-linux-rooted-read-file])
+    (and
+      (rooted.linux-rooted-read-file-open? (& reader))
+      (= (read-payload-hash (&mut reader)) (hash.string-key "payload"))
+      (rooted.linux-rooted-result-ok?
+        (rooted.linux-rooted-rename-replace
+          root
+          "payload"
+          root
+          "moved"
+          rooted.linux-rooted-never-cancelled))
+      (rooted.linux-rooted-result-ok?
+        (create-text root "payload" "replacement"))
+      (rewind-reader (&mut reader))
+      (= (read-payload-hash (&mut reader)) (hash.string-key "payload"))
+      (rooted.linux-rooted-result-ok?
+        (rooted.linux-rooted-unlink-entry
+          root
+          "moved"
+          rooted.linux-rooted-never-cancelled))
+      (rewind-reader (&mut reader))
+      (= (read-payload-hash (&mut reader)) (hash.string-key "payload"))
+      (with
+        ([replacement
+            (rooted.linux-rooted-reopen-file
+              root
+              "payload"
+              rooted.linux-rooted-never-cancelled)
+            rooted.cleanup-linux-rooted-read-file])
+        (read-text-is? (&mut replacement) 16 "replacement")))))
+
+(define (scenario-rewind [root-path : (& root-path str)]) : i64
+  (with
+    ([root
+        (rooted.linux-rooted-open-root
+          root-path
+          rooted.linux-rooted-never-cancelled)
+        rooted.cleanup-linux-rooted-directory])
+    (cond
+      [(not (rooted.linux-rooted-directory-open? (& root))) 10]
+      [(not
+          (rooted.linux-rooted-result-ok?
+            (create-text (& root) "payload" "payload")))
+        11]
+      [(not (rooted.linux-rooted-result-ok? (create-text (& root) "empty" "")))
+        12]
+      [(not (rewind-basics (& root))) 13]
+      [(not (rewind-empty (& root))) 14]
+      [(not (rewind-faults (& root))) 15]
+      [(not (rewind-retained-identity (& root))) 16]
+      [else 42])))
+
 (define (main) : i64
   (if (< (io.arg-count) 3)
     2
@@ -925,5 +1210,6 @@
                 (& destination-path)
                 (& moved-source-path)
                 (& moved-destination-path))))]
+        [(string.eq (& scenario) "rewind") (scenario-rewind (& source-path))]
         [(string.eq (& scenario) "faults") (scenario-faults (& source-path))]
         [else 4]))))

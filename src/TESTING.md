@@ -39,6 +39,16 @@ pointer/length pairs as name identity across scratch/region reset: address
 equality is only a fast path while both live operands are in scope. Interning
 must own/canonicalize any spelling that survives its source arena.
 
+## Borrowed macro surface searches
+
+The typecheck smoke suite's surface-macro provider covers first/last/missing
+names, a non-macro function with a larger signature, and distinct intern IDs.
+It retains a selected macro signature across destruction of the loader's
+summary arena, then checks its parameter and return type. Read-only candidates
+must use borrowed declarations; selected signatures must own their payloads.
+The complete inline batch and `windows_param_preassign_backend.tl` exercise the
+compiler-sized search workload that exposed copying during failed lookups.
+
 ## Compiler arena ownership
 
 Literal classification and contextual numeric checking must read expression
@@ -1172,6 +1182,22 @@ needs another imported module, add the dependency to the owning manifest row so
 the CI runner exercises the same import graph reviewers see locally. The
 same script also owns host-specific backend/compiler-driver fixture checks that
 are too low-level for a manifest row.
+
+Generated import regressions must exercise both `Module` and `Decls` output.
+An import has namespace effects even without a visible declaration name; the
+canonical generated wrapper must preserve the metadata that causes the macro
+walk to load it. The `decls_generated_imports` and
+`decls_generated_import_nested` native rows cover aliases, empty dependencies,
+repeated generation, selected/wildcard imports, selected items emitted by an
+imported declaration macro, target conditionals and nested macro imports. `generated_import_alias_scopes` retains same-alias repetition and
+independent module scopes. The structured call-site smoke loads an imported
+provider whose quote line differs from the caller line, checking missing
+imports, alias conflicts, and missing selected items from newly loaded and
+already loaded modules. Wildcard/selected collision controls reject unused
+bindings, while repeated selections remain idempotent. The missing and conflicting
+import controls in the safety corpus must fail even when no
+generated binding is used. Run affected fixtures at opt0/1/2; an unused missing
+import that compiles successfully is not evidence of valid expansion.
 
 For Windows import-only regressions that fail before a native executable is
 linked, use the published stage0 directly from PowerShell:

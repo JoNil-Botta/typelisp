@@ -553,6 +553,12 @@ loopcarried_phi_home|tests/integration/loopcarried_phi_home.tl|42|-|-|-
 ssa_fixed_handle_values|tests/integration/ssa_fixed_handle_values.tl|42|-|-|stdlib/string.tl
 ssa_nominal_one_word|tests/integration/ssa_nominal_one_word.tl|42|-|-|-
 loop_carried_memory_aggregate_move|tests/integration/loop_carried_memory_aggregate_move.tl|42|-|-|-
+loop_carried_enum_payload_snapshot_opt0|tests/integration/loop_carried_enum_payload_snapshot.tl|42|-|-|-|opt-level:0+stage-stdlib
+loop_carried_enum_payload_snapshot_opt1|tests/integration/loop_carried_enum_payload_snapshot.tl|42|-|-|-|opt-level:1+stage-stdlib
+loop_carried_enum_payload_snapshot_opt2|tests/integration/loop_carried_enum_payload_snapshot.tl|42|-|-|-|opt-level:2+stage-stdlib
+loop_carried_raw_read_snapshot_opt0|tests/integration/loop_carried_raw_read_snapshot.tl|42|-|-|-|opt-level:0+stage-stdlib
+loop_carried_raw_read_snapshot_opt1|tests/integration/loop_carried_raw_read_snapshot.tl|42|-|-|-|opt-level:1+stage-stdlib
+loop_carried_raw_read_snapshot_opt2|tests/integration/loop_carried_raw_read_snapshot.tl|42|-|-|-|opt-level:2+stage-stdlib
 register_resident_reference|tests/integration/register_resident_reference.tl|95|-|-|-
 register_float_aggregate_f64|tests/integration/register_float_aggregate_f64.tl|42|-|-|-
 register_float_aggregate_f32|tests/integration/register_float_aggregate_f32.tl|42|-|-|-

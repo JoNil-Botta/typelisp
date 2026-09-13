@@ -792,7 +792,7 @@
 (define compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers : i64
   -1)
 (define compiler-builtin-ctfe-ids : (__tl_dyn-array i64)
-  (__tl_make-array i64 293))
+  (__tl_make-array i64 294))
 
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
@@ -804,7 +804,7 @@
   (let
     [metadata : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     [ids : (__tl_dyn-array i64) (__tl_make-array i64 320)]
-    [ctfe-ids : (__tl_dyn-array i64) (__tl_make-array i64 293)]
+    [ctfe-ids : (__tl_dyn-array i64) (__tl_make-array i64 294)]
     [i : i64 0]
     (begin
       (set! (array-ref metadata 0) -1)
@@ -816,7 +816,7 @@
           (set! (array-ref ids i) -1)
           (set! i (+ i 1))))
       (set! i 0)
-      (while (< i 293)
+      (while (< i 294)
         (begin
           (set! (array-ref ctfe-ids i) -1)
           (set! i (+ i 1))))
@@ -891,7 +891,7 @@
 (define (state-capture-ctfe-ids! [state : (&mut state CompilerBuiltinIdsState)]) : unit
   (let
     [i : i64 0]
-    (while (< i 293)
+    (while (< i 294)
       (begin
         (set! (array-ref state.ctfe-ids i) (compiler-builtin-ctfe-ref i))
         (set! i (+ i 1))))))
@@ -899,7 +899,7 @@
 (define (state-install-ctfe-ids! [state : (& state CompilerBuiltinIdsState)]) : unit
   (let
     [i : i64 0]
-    (while (< i 293)
+    (while (< i 294)
       (begin
         (compiler-builtin-ctfe-set! i (array-ref state.ctfe-ids i))
         (set! i (+ i 1))))))
@@ -1739,7 +1739,7 @@
 (define (compiler-builtin-clear-ctfe-ids!) : unit
   (let
     [index : i64 0]
-    (while (< index 293)
+    (while (< index 294)
       (begin
         (compiler-builtin-ctfe-set! index -1)
         (set! index (+ index 1))))))
@@ -2091,7 +2091,8 @@
     ;; Inline-test declaration metadata. Append-only so parser syntax remains
     ;; source-provenance-aware without renumbering any shipped CTFE name.
     (compiler-builtin-load-ctfe-id! insert-missing 291 ":ignore")
-    (compiler-builtin-load-ctfe-id! insert-missing 292 ":slow")))
+    (compiler-builtin-load-ctfe-id! insert-missing 292 ":slow")
+    (compiler-builtin-load-ctfe-id! insert-missing 293 ":must-use")))
 
 (define (compiler-builtin-load! [insert-missing : bool]) : unit
   (begin
@@ -3343,6 +3344,9 @@
         (ci.intern-source-slice "expr-lambda1" 0 12))
       (= (compiler-builtin-ctfe-ref 291) (ci.intern-source-slice ":ignore" 0 7))
       (= (compiler-builtin-ctfe-ref 292) (ci.intern-source-slice ":slow" 0 5))
+      (=
+        (compiler-builtin-ctfe-ref 293)
+        (ci.intern-source-slice ":must-use" 0 9))
       (not
         (=
           (compiler-builtin-ctfe-ref 219)
@@ -3382,7 +3386,11 @@
       (not
         (=
           (compiler-builtin-ctfe-ref 292)
-          (ci.intern-generated-canonical-name ":slow"))))))
+          (ci.intern-generated-canonical-name ":slow")))
+      (not
+        (=
+          (compiler-builtin-ctfe-ref 293)
+          (ci.intern-generated-canonical-name ":must-use"))))))
 
 (cfg
   test
@@ -3413,6 +3421,7 @@
           (compiler-builtin-ctfe-set! 290 -1)
           (compiler-builtin-ctfe-set! 291 -1)
           (compiler-builtin-ctfe-set! 292 -1)
+          (compiler-builtin-ctfe-set! 293 -1)
           (state-install! snapshot)
           (unless
             (compiler-builtin-parser-syntax-ids-current-ok?)

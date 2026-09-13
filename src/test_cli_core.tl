@@ -3226,73 +3226,13 @@
             1)]))
     0))
 
-(defstruct TltestCfgNames
-  (slots (__tl_dyn-array String))
-  (values (__tl_dyn-array i64))
-  (len i64))
-
-(define (tltest-cfg-env-count [cfgs : sym_i64_env.SymI64Env]) : i64
-  (match (sym_i64_env.sym-i64-view cfgs)
-    [(sym_i64_env.SymI64ViewNil) 0]
-    [(sym_i64_env.SymI64ViewBind _ _ rest) (+ 1 (tltest-cfg-env-count rest))]))
-
-(define (tltest-cfg-names-fill!
-  [cfgs : sym_i64_env.SymI64Env]
-  [slots : (__tl_dyn-array String)]
-  [values : (__tl_dyn-array i64)]
-  [index : i64]) : unit
-  (match (sym_i64_env.sym-i64-view cfgs)
-    [(sym_i64_env.SymI64ViewNil) unit]
-    [(sym_i64_env.SymI64ViewBind key value rest)
-      (begin
-        ;; These names outlive per-file intern-persistent arena retirement.
-        (set!
-          (array-ref slots index)
-          (string.copy (cfg_core.compiler-cfg-name key)))
-        (set! (array-ref values index) value)
-        (tltest-cfg-names-fill! rest slots values (+ index 1)))]))
-
-(define (tltest-cfg-names-from-env [cfgs : sym_i64_env.SymI64Env]) : TltestCfgNames
-  (let
-    [count : i64
-      (tltest-cfg-env-count (owned_view.compiler-owned-shared-view cfgs))]
-    [slots : (__tl_dyn-array String) (__tl_make-array String count)]
-    [values : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    (begin
-      (tltest-cfg-names-fill!
-        cfgs
-        (owned_view.compiler-owned-shared-view slots)
-        (owned_view.compiler-owned-shared-view values)
-        0)
-      (TltestCfgNames slots values count))))
-
-(define (tltest-cfg-names-to-env [names : TltestCfgNames]) : sym_i64_env.SymI64Env
-  (let
-    [env : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
-    [index : i64 names.len]
-    (begin
-      (while (> index 0)
-        (begin
-          (set! index (- index 1))
-          (set!
-            env
-            (cfg_core.compiler-cfg-bind
-              env
-              (owned_view.compiler-owned-array-element-shared-view
-                names.slots
-                index)
-              (owned_view.compiler-owned-array-element-shared-view
-                names.values
-                index)))))
-      env)))
-
 (define (tltest-inline-typecheck-package-source-scoped
   [source : String]
   [roots : cli_svec.Vec]
   [manifest-dir : String]
   [package-owner : String]
   [deps : compiler_load.CompilerPkgDeps]
-  [cfg-names : TltestCfgNames]
+  [cfg-names : cfg_core.CompilerCfgSnapshot]
   [cache-scope-prefix : String]) : i64
   (let
     [home : arena.Arena (arena.current)]
@@ -3315,7 +3255,7 @@
               manifest-dir
               package-owner
               deps
-              (tltest-cfg-names-to-env cfg-names)
+              (cfg_core.compiler-cfg-snapshot-to-env cfg-names)
               cache-scope-prefix)]
           [retired : ast.AstNodePoolContext
             (ast.ast-node-pool-context-capture-active)]
@@ -3348,7 +3288,8 @@
     [count : i64 (cli_svec.len (& sources))]
     [cursor : i64 index]
     [status : i64 0]
-    [cfg-names : TltestCfgNames (tltest-cfg-names-from-env cfgs)]
+    [cfg-names : cfg_core.CompilerCfgSnapshot
+      (cfg_core.compiler-cfg-snapshot-from-env cfgs)]
     (begin
       (while (and (= status 0) (< cursor count))
         (let

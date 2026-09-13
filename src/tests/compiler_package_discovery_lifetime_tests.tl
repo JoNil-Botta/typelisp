@@ -18,7 +18,6 @@
 (import compiler_owned_view as owned_view)
 (import doc_test)
 (import sym_i64_env)
-(import test_cli_core)
 (import tlci_core as tlci)
 (import tlci_loader)
 
@@ -280,15 +279,15 @@
             17)
           "discovery-retained-zero"
           0)]
-      [snapshot : test_cli_core.TltestCfgNames
-        (test_cli_core.tltest-cfg-names-from-env cfgs)]
+      [snapshot : cfg_core.CompilerCfgSnapshot
+        (cfg_core.compiler-cfg-snapshot-from-env cfgs)]
       (begin
         (driver.compiler-driver-reset-file-state!)
         (ci.intern-persistent-arena-reset!)
         (discovery-test-reuse-storage!)
         (let
           [restored : sym_i64_env.SymI64Env
-            (test_cli_core.tltest-cfg-names-to-env snapshot)]
+            (cfg_core.compiler-cfg-snapshot-to-env snapshot)]
           [value-key : i64
             (cfg_core.compiler-cfg-key-id
               (cfg_core.compiler-cfg-key-from-name-id

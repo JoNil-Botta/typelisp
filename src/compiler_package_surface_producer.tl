@@ -372,7 +372,7 @@
                 (sym_i64_env.sym-i64-empty))
               (with-scratch
                 (package-surface-capture-abort!
-                  (string.concat "retained " "diagnostic")))
+                  (string.copy "retained diagnostic")))
               (unless
                 (match (package-surface-capture-take)
                   [(ResultPackageSurfacePayloads.Err message)

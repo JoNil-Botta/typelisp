@@ -75,6 +75,18 @@ for later native-code certification.
 
 ### Package direct-object routing
 
+Before runtime lowering, `build-package-tlci-capture-exports` records callable
+metadata as canonical TLCI text, sorted macro identities as owned strings, and
+the complete generated transformer source. `TlciNativeMacroCaptures` contains
+AST body and parameter references, so it stays inside that capture operation.
+Later TLCI finishing reads only the captured text/catalog and checked surface;
+it must not revisit source declarations or dereference source intern IDs.
+The native producer's capture-based adapter and
+`embedded-native-emit-package-source` share one native compilation and image
+emission implementation. Runtime diagnostics and checked-surface failures still
+precede deferred export metadata errors. The export lifetime tests destroy and
+reuse the original parser/interner storage before emitting both target images.
+
 `build-package-prepare-runtime` in `build_cli_core.tl` owns package route
 selection through `BuildPackageDirectObjectRequest`: target, artifact kind,
 backend mode, debug policy, resource policy, strict policy, and loaded inputs.

@@ -115,8 +115,45 @@ sed '/^  \[prepared : ResultBuildPackagePreparedRuntime\]$/a\
 if check_prepared_runtime_boundary "$WORK/retained-frontend.tl"; then
     fail "prepared runtime guard accepted a retained frontend graph"
 fi
+# Export finishing cannot keep or revisit the parsed frontend. The capture
+# belongs before the one runtime preparation and transfers only text/catalogs.
+check_package_export_boundary() {
+    awk '
+        /^[[:space:]]*\(define \(/ {
+            mode = ""
+            if ($0 ~ /\(build-package-tlci-text-with-surface$/) { mode = "finish"; finish += 1 }
+            if ($0 ~ /\(build-package-finish-fresh-artifacts-with-surface$/) { mode = "pipeline"; pipeline += 1 }
+        }
+        mode == "finish" {
+            if ($0 ~ /AstDecl|AstNode|TlciNativeMacroCaptures|build-package-tlci-(callable|macro)-collector|embedded-native-emit-package$/) forbidden += 1
+            if ($0 ~ /embedded-native-emit-package-source/) source_emit += 1
+        }
+        mode == "pipeline" {
+            if ($0 ~ /\(build-package-tlci-capture-exports$/) { capture += 1; if (prepared) forbidden += 1 }
+            if ($0 ~ /\(build-package-prepare-runtime$/) prepared += 1
+        }
+        END { exit !(finish == 1 && pipeline == 1 && source_emit == 1 && capture == 1 && prepared == 1 && forbidden == 0) }
+    ' "$1"
+}
+check_package_export_boundary src/build_cli_core.tl || fail "package export finishing retains the parsed frontend"
+sed '/^[[:space:]]*\[exports : ResultBuildPackageTlciExports\]$/a\
+    [decls : ast.AstDeclList]' \
+    src/build_cli_core.tl > "$WORK/retained-export-frontend.tl"
+if check_package_export_boundary "$WORK/retained-export-frontend.tl"; then
+    fail "package export guard accepted frontend inputs to finishing"
+fi
+sed 's/embedded-native-emit-package-source$/embedded-native-emit-package/' \
+    src/build_cli_core.tl > "$WORK/recaptured-export-source.tl"
+if check_package_export_boundary "$WORK/recaptured-export-source.tl"; then
+    fail "package export guard accepted native capture during finishing"
+fi
+sed 's/(build-package-tlci-capture-exports$/(uncaptured-package-exports/' \
+    src/build_cli_core.tl > "$WORK/uncaptured-export-source.tl"
+if check_package_export_boundary "$WORK/uncaptured-export-source.tl"; then
+    fail "package export guard accepted missing capture before runtime"
+fi
 if [ "${1:-}" = --boundary-self-test ]; then
-    echo "package direct-object and prepared-runtime boundaries: owner and mutation checks passed"
+    echo "package object, runtime and export boundaries: owner and mutation checks passed"
     exit 0
 fi
 

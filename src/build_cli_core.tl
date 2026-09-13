@@ -5113,13 +5113,49 @@
               (ResultBuildPackageTlciSourceInputs.Ok
                 (BuildPackageTlciSourceInputs source-set digest))])]))))
 
+;; Only canonical text and owned catalog strings cross runtime lowering. Native
+;; captures themselves contain AST pool indices and must remain inside capture.
+(defenum ResultBuildPackageTlciExports
+  (Ok String (__tl_dyn-array String) String)
+  (Err String))
+
+(define (build-package-tlci-capture-exports
+  [manifest : load.CompilerPkgManifest]
+  [mode : backend.CompilerBackendMode]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
+  [source-set : package_source_core.PackageSourceSet]) : ResultBuildPackageTlciExports
+  (let
+    [collector : BuildPackageTlciCallableCollector
+      (build-package-tlci-callable-collector
+        (owned_view.compiler-owned-shared-view source-set)
+        (owned_view.compiler-owned-shared-view manifest)
+        mode
+        (owned_view.compiler-owned-shared-view decls)
+        (owned_view.compiler-owned-shared-view paths))]
+    [macro-collector : BuildPackageTlciMacroCollector
+      (build-package-tlci-macro-collector
+        source-set
+        (owned_view.compiler-owned-shared-view manifest)
+        decls
+        paths)]
+    [names : (__tl_dyn-array String) macro-collector.names]
+    (if (> (string.string-length collector.error) 0)
+      (ResultBuildPackageTlciExports.Err collector.error)
+      (ResultBuildPackageTlciExports.Ok
+        (tlci.tlci-metadata-emit
+          (build-package-tlci-metadata manifest collector.items))
+        (owned_view.compiler-owned-shared-view names)
+        (if (= (array-length names) 0)
+          ""
+          (compiler_tlci_native_producer.embedded-native-source
+            names
+            (& macro-collector.captures)))))))
+
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-tlci-text-with-surface
-    [manifest : load.CompilerPkgManifest]
-    [mode : backend.CompilerBackendMode]
-    [decls : ast.AstDeclList]
-    [paths : ast.AstDeclPathList]
+    [exports : ResultBuildPackageTlciExports]
     [producer-identity : String]
     [source-inputs : BuildPackageTlciSourceInputs]
     [surface : package_surface.PackageSurfacePayloads]) : ResultBuildPackageTlciText
@@ -5130,53 +5166,43 @@
             "build: failed to pack package frontend surface: "
             message))]
       [(tlci.ResultTlciAuxBytes.Ok rodata)
-        (let
-          [collector : BuildPackageTlciCallableCollector
-            (build-package-tlci-callable-collector
-              (owned_view.compiler-owned-shared-view source-inputs.source-set)
-              (owned_view.compiler-owned-shared-view manifest)
-              mode
-              (owned_view.compiler-owned-shared-view decls)
-              (owned_view.compiler-owned-shared-view paths))]
-          [macro-collector : BuildPackageTlciMacroCollector
-            (build-package-tlci-macro-collector
-              (owned_view.compiler-owned-shared-view source-inputs.source-set)
-              (owned_view.compiler-owned-shared-view manifest)
-              (owned_view.compiler-owned-shared-view decls)
-              (owned_view.compiler-owned-shared-view paths))]
-          [macro-names : (__tl_dyn-array String) macro-collector.names]
-          (if (> (string.string-length collector.error) 0)
-            (ResultBuildPackageTlciText.Err collector.error)
-            (let
-              [metadata : tlci.TlciMetadata
-                (build-package-tlci-metadata manifest collector.items)]
-              (if (= (array-length macro-names) 0)
-                (match (tlci.tlci-emit-image
-                  (build-package-tlci-image metadata producer-identity rodata))
-                  [(tlci.ResultTlciBytes.Err message)
-                    (ResultBuildPackageTlciText.Err
-                      (str_cat.str-cat
-                        "build: failed to emit package tlci: "
-                        message))]
-                  [(tlci.ResultTlciBytes.Ok bytes)
-                    (ResultBuildPackageTlciText.Ok
-                      (tlci.tlci-bytes->string bytes 0 (array-length bytes)))])
-                (match (compiler_tlci_native_producer.embedded-native-emit-package
-                  (tlci.tlci-metadata-emit metadata)
-                  producer-identity
-                  (cfg windows true false)
-                  rodata
-                  macro-names
-                  (& macro-collector.captures))
-                  [(compiler_tlci_native_producer.ResultProducerBytes.Err
-                      message)
-                    (ResultBuildPackageTlciText.Err
-                      (str_cat.str-cat
-                        "build: failed to emit package tlci: "
-                        message))]
-                  [(compiler_tlci_native_producer.ResultProducerBytes.Ok bytes)
-                    (ResultBuildPackageTlciText.Ok
-                      (tlci.tlci-bytes->string bytes 0 (array-length bytes)))])))))])))
+        (match exports
+          [(ResultBuildPackageTlciExports.Err message)
+            (ResultBuildPackageTlciText.Err message)]
+          [(ResultBuildPackageTlciExports.Ok metadata-text names native-source)
+            (if (= (array-length names) 0)
+              (match (tlci.tlci-metadata-parse metadata-text)
+                [(tlci.ResultTlciMetadata.Err message)
+                  (ResultBuildPackageTlciText.Err
+                    (str_cat.str-cat
+                      "build: captured package metadata rejected: "
+                      message))]
+                [(tlci.ResultTlciMetadata.Ok metadata)
+                  (match (tlci.tlci-emit-image
+                    (build-package-tlci-image metadata producer-identity rodata))
+                    [(tlci.ResultTlciBytes.Err message)
+                      (ResultBuildPackageTlciText.Err
+                        (str_cat.str-cat
+                          "build: failed to emit package tlci: "
+                          message))]
+                    [(tlci.ResultTlciBytes.Ok bytes)
+                      (ResultBuildPackageTlciText.Ok
+                        (tlci.tlci-bytes->string bytes 0 (array-length bytes)))])])
+              (match (compiler_tlci_native_producer.embedded-native-emit-package-source
+                metadata-text
+                producer-identity
+                (cfg windows true false)
+                rodata
+                names
+                native-source)
+                [(compiler_tlci_native_producer.ResultProducerBytes.Err message)
+                  (ResultBuildPackageTlciText.Err
+                    (str_cat.str-cat
+                      "build: failed to emit package tlci: "
+                      message))]
+                [(compiler_tlci_native_producer.ResultProducerBytes.Ok bytes)
+                  (ResultBuildPackageTlciText.Ok
+                    (tlci.tlci-bytes->string bytes 0 (array-length bytes)))]))])])))
 
 (define (build-package-runtime-fingerprint-path [artifact-path : String]) : String
   (str_cat.str-cat artifact-path ".runtime-inputs"))
@@ -7357,6 +7383,13 @@
           (build_run_core.source-tool-target-name target))
         seen)
       (let
+        [exports : ResultBuildPackageTlciExports
+          (build-package-tlci-capture-exports
+            (owned_view.compiler-owned-shared-view manifest)
+            mode
+            (owned_view.compiler-owned-shared-view decls)
+            source-paths
+            (owned_view.compiler-owned-shared-view source-inputs.source-set))]
         [prepared : ResultBuildPackagePreparedRuntime
           (build-package-prepare-runtime
             (build-package-direct-object-default-request
@@ -7387,10 +7420,7 @@
                   1)]
               [(package_surface.ResultPackageSurfacePayloads.Ok surface)
                 (match (build-package-tlci-text-with-surface
-                  manifest
-                  mode
-                  (owned_view.compiler-owned-shared-view decls)
-                  source-paths
+                  exports
                   (owned_view.compiler-owned-shared-view producer-identity)
                   source-inputs
                   surface)

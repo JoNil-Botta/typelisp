@@ -83,8 +83,13 @@ retirement, preserving composite-prefix status and clone observations. Cfg snaps
 `sym-i64-copy` detaches the import environment's backing chain while its symbol
 IDs remain valid. Linker strings are deep-copied into the caller's arena.
 
-Runtime lowering shares the ordinary/PIC checked-pool handoff. Complete object
-bytes, side assembly, diagnostics, export source and encoded checked surfaces
+Runtime lowering shares the ordinary/PIC checked-pool handoff. Both ordinary
+functions and generated package SPMD specializations escape through
+`lower-function-seq-escape-to-ir-arena` before checked frontend retirement.
+The generated specialization path must retain complete parameter, block and
+instruction storage, even when no ordinary function contains an SPMD call.
+Complete object bytes, side assembly, diagnostics, export source and encoded
+checked surfaces
 belong to the enclosing arena before scope release. Release restores parent
 selectors in that arena, then destroys only child-owned storage, including the
 backend's private lazy/representation arenas. It is idempotent so early loader

@@ -13,11 +13,12 @@
 (import compiler_backend as backend)
 (import compiler_owned_view as owned_view)
 
-(define (runtime-owner-smoke-for-route
+(define (runtime-owner-smoke-for-route-and-entry
   [source : String]
   [target : backend.CompilerBackendTarget]
   [level : i64]
-  [direct-object : bool]) : String
+  [direct-object : bool]
+  [emit-entry : bool]) : String
   (let
     [home : arena.Arena (arena.current)]
     (with-scratch
@@ -57,7 +58,7 @@
                           target
                           (backend.CompilerBackendMode.Scalar)
                           level
-                          true
+                          emit-entry
                           false)
                           [(driver.ResultCompilerDriverPackageRuntime.Object
                               _
@@ -81,7 +82,7 @@
                           true
                           (backend.CompilerBackendMode.Scalar)
                           level
-                          true
+                          emit-entry
                           false))
                         [(driver.ResultCompilerDriver.Ok asm _)
                           (in-arena home (string.copy asm))]
@@ -98,6 +99,18 @@
                 (owned_view.compiler-owned-shared-view scope))
               (driver.compiler-driver-package-runtime-scope-release! scope)))
           result)))))
+
+(define (runtime-owner-smoke-for-route
+  [source : String]
+  [target : backend.CompilerBackendTarget]
+  [level : i64]
+  [direct-object : bool]) : String
+  (runtime-owner-smoke-for-route-and-entry
+    source
+    target
+    level
+    direct-object
+    true))
 
 (define (runtime-owner-smoke-for
   [source : String]
@@ -310,3 +323,35 @@
       (unless
         (< (- (profile.alloc-live) before) 1048576)
         (io.panic "direct object jobs retained private side-backend arenas")))))
+
+(test
+  package-runtime-spmd-callable-ir-survives-frontend-retirement
+  (let
+    [source : String
+      "(define (helper [x : i64] [scale : i64]) (:spmd-callable (specialization (lanes 8) (args varying uniform) (result varying) (index-param 0))) : i64 (+ x scale))"]
+    [level : i64 0]
+    (while (< level 3)
+      (let
+        [linux : String
+          (runtime-owner-smoke-for-route-and-entry
+            (string.copy source)
+            backend.CompilerBackendTarget.Linux
+            level
+            false
+            false)]
+        [windows : String
+          (runtime-owner-smoke-for-route-and-entry
+            (string.copy source)
+            backend.CompilerBackendTarget.Windows
+            level
+            false
+            false)]
+        [next : String (runtime-owner-smoke "(define (main) : i64 42)")]
+        (begin
+          (unless
+            (and
+              (string.contains linux "spmd_pkg_")
+              (string.contains windows "spmd_pkg_")
+              (string.contains next "main:"))
+            (io.panic "package SPMD function lost its retained IR storage"))
+          (set! level (+ level 1)))))))

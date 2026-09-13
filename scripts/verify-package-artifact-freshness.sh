@@ -218,6 +218,24 @@ sed 's/(arena.Arena (compiler-driver-state-surface-arena state))/(arena.current)
 if check_driver_checked_handoff "$WORK/temporary-checked-handoff.tl"; then
     fail "checked handoff guard accepted bookkeeping in a retiring arena"
 fi
+# Generated package specializations bypass ordinary function lowering. Their
+# complete IR must cross the same canonical retention boundary.
+check_package_spmd_ir_owner() {
+    awk '
+        /^\(define \(/ {
+            active = ($0 ~ /\(lower-spmd-package-callable-functions$/)
+            if (active) found += 1
+        }
+        active && $0 ~ /\(lower-function-seq-escape-to-ir-arena functions\)/ { retained += 1 }
+        END { exit !(found == 1 && retained == 1) }
+    ' "$1"
+}
+check_package_spmd_ir_owner src/compiler_lower.tl || fail "package SPMD functions bypass retained IR ownership"
+sed 's/(lower-function-seq-escape-to-ir-arena functions)/(unowned-package-functions functions)/' \
+    src/compiler_lower.tl > "$WORK/unowned-spmd-functions.tl"
+if check_package_spmd_ir_owner "$WORK/unowned-spmd-functions.tl"; then
+    fail "package SPMD guard accepted frontend-owned IR"
+fi
 if [ "${1:-}" = --boundary-self-test ]; then
     echo "package and driver ownership boundaries: owner and mutation checks passed"
     exit 0

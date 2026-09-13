@@ -66357,8 +66357,8 @@
 ;; itself), while `it-hash-words` checks 7,6,...,0 and only the narrowest one is.
 ;; This peephole reorders each block before the fact walk: the run's
 ;; minimum-offset and maximum-offset checks move to the run's FIRST check
-;; position, together with the index arithmetic they read. Nothing is deleted
-;; here and no instruction, var, or label is created -- the two checks are the
+;; position, together with the index and length arithmetic they read. Nothing
+;; is deleted here and no instruction, var, or label is created -- the two checks are the
 ;; run's own instructions with their own ok-labels -- and the fact walk then
 ;; retires the rest.
 ;;
@@ -66393,7 +66393,7 @@
   (Some i64 i64 i64))
 
 ;; Positions in this block that must move ahead of the run for a check to be
-;; evaluated there: the index's defining Add/Sub/Cast/Mov chain, ascending, -1
+;; evaluated there: an operand's defining Add/Sub/Cast/Mov chain, ascending, -1
 ;; for an unused slot. `No` when the chain is longer than two links or reads a
 ;; value the run itself defines.
 (defenum OptBoundsDomChain
@@ -66481,28 +66481,31 @@
     [(OptBoundsDomChain.No) false]
     [(OptBoundsDomChain.Some _ _) true]))
 
-(define (opt-bounds-dom-check-index
-  [instrs : ir.CompilerIrInstrSeq]
-  [pos : i64]) : ir.CompilerIrValue
-  (match (ir.compiler-ir-instr-seq-ref instrs pos)
-    [(ir.CompilerIrInstr.BoundsCheck idx _ _) idx]
-    [_ (ir.CompilerIrValue.Unit)]))
-
 (define (opt-bounds-dom-check-movable?
   [instrs : ir.CompilerIrInstrSeq]
   [first : i64]
   [pos : i64]) : bool
-  (opt-bounds-dom-chain-ok?
-    (opt-bounds-dom-move-chain
-      (compiler-opt-global-shared-view instrs)
-      first
-      (opt-bounds-dom-check-index (compiler-opt-global-shared-view instrs) pos)
-      3)))
+  (match (ir.compiler-ir-instr-seq-ref
+    (compiler-opt-global-shared-view instrs)
+    pos)
+    [(ir.CompilerIrInstr.BoundsCheck idx len _)
+      ;; Canonical equality of the run's lengths does not make each raw
+      ;; length operand available at the first check (#7145).
+      (and
+        (opt-bounds-dom-chain-ok?
+          (opt-bounds-dom-move-chain
+            (compiler-opt-global-shared-view instrs)
+            first
+            idx
+            3))
+        (opt-bounds-dom-chain-ok?
+          (opt-bounds-dom-move-chain instrs first len 3)))]
+    [_ false]))
 
 ;; The run headed by the check at `start`: its members are the later checks of
 ;; the same (base, length) reached without crossing a barrier. Answers `Some`
 ;; only for a run of three or more whose brackets are not already its first two
-;; checks and whose index arithmetic can move.
+;; checks and whose index and length arithmetic can move.
 (define (opt-bounds-dom-run-from
   [type-segment-bases : i64]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
@@ -66665,7 +66668,7 @@
           (set! (array-ref moved b) true)
           unit))]))
 
-;; Rebuild the block with the two bracket checks (and the marked index
+;; Rebuild the block with the two bracket checks (and the marked operand
 ;; arithmetic) hoisted to the run's first check position. Marked defs keep their
 ;; relative order, so an operand defined by another marked def still precedes it;
 ;; every other marked-def operand was proven to live ahead of the run.
@@ -66721,6 +66724,28 @@
           (set! pos (+ pos 1))))
       (ir.compiler-ir-instr-builder-to-seq builder))))
 
+(define (opt-bounds-dom-widen-mark-check!
+  [instrs : ir.CompilerIrInstrSeq]
+  [first : i64]
+  [pos : i64]
+  [moved : (__tl_dyn-array bool)]) : unit
+  (match (ir.compiler-ir-instr-seq-ref
+    (compiler-opt-global-shared-view instrs)
+    pos)
+    [(ir.CompilerIrInstr.BoundsCheck idx len _)
+      (begin
+        (opt-bounds-dom-widen-mark!
+          (compiler-opt-global-shared-view moved)
+          (opt-bounds-dom-move-chain
+            (compiler-opt-global-shared-view instrs)
+            first
+            idx
+            3))
+        (opt-bounds-dom-widen-mark!
+          moved
+          (opt-bounds-dom-move-chain instrs first len 3)))]
+    [_ unit]))
+
 (define (opt-bounds-dom-widen-run
   [instrs : ir.CompilerIrInstrSeq]
   [first : i64]
@@ -66730,25 +66755,17 @@
     [moved : (__tl_dyn-array bool)
       (__tl_make-array bool (ir.compiler-ir-instr-seq-count instrs))]
     [_mark-min : unit
-      (opt-bounds-dom-widen-mark!
-        (compiler-opt-global-shared-view moved)
-        (opt-bounds-dom-move-chain
-          (compiler-opt-global-shared-view instrs)
-          first
-          (opt-bounds-dom-check-index
-            (compiler-opt-global-shared-view instrs)
-            min-pos)
-          3))]
+      (opt-bounds-dom-widen-mark-check!
+        (compiler-opt-global-shared-view instrs)
+        first
+        min-pos
+        (compiler-opt-global-shared-view moved))]
     [_mark-max : unit
-      (opt-bounds-dom-widen-mark!
-        (compiler-opt-global-shared-view moved)
-        (opt-bounds-dom-move-chain
-          (compiler-opt-global-shared-view instrs)
-          first
-          (opt-bounds-dom-check-index
-            (compiler-opt-global-shared-view instrs)
-            max-pos)
-          3))]
+      (opt-bounds-dom-widen-mark-check!
+        (compiler-opt-global-shared-view instrs)
+        first
+        max-pos
+        (compiler-opt-global-shared-view moved))]
     (opt-bounds-dom-widen-rebuild instrs first min-pos max-pos moved)))
 
 ;; Widen every run of this block, one rewrite at a time. `fuel` bounds the

@@ -284,6 +284,15 @@ tracked with deterministic executed-instruction baselines under
 
 ## CLI
 
+Inline-test harness construction prunes runtime declarations before typechecking.
+An unresolved dotted name may be an imported member or a projection from global
+storage, so reachability retains both the final member and the first source
+component. The normal fixed point then retains a referenced global's initializer
+dependencies. Hygiene and module qualification are normalized against the captured
+intern session; dotted projections must not consult another installed pool.
+Unrelated globals remain pruned. The global-field inline fixture and harness
+retention test guard this boundary.
+
 ```text
 Synopsis:
     typelisp - A typed Lisp/Scheme dialect with x86_64 backend

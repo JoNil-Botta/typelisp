@@ -619,3 +619,6 @@ float_comparisons_embedded|tests/integration/float_comparisons.tl|0|-|-|stdlib/m
 float_comparisons_source_opt0|tests/integration/float_comparisons.tl|0|-|-|stdlib/math.tl|opt-level:0+stage-stdlib
 float_comparisons_source_opt1|tests/integration/float_comparisons.tl|0|-|-|stdlib/math.tl|opt-level:1+stage-stdlib
 float_comparisons_source_opt2|tests/integration/float_comparisons.tl|0|-|-|stdlib/math.tl|opt-level:2+stage-stdlib
+decls_generated_imports|tests/integration/decls_generated_imports.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl decls_generated_import_macro_dep.tl
+decls_generated_import_nested|tests/integration/decls_generated_import_nested.tl|42|-|-|decls_generated_import_dep.tl
+generated_import_alias_scopes|tests/integration/generated_import_alias_scopes.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl

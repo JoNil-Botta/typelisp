@@ -4855,6 +4855,7 @@
           (compiler_ast_types.ast-decl-path-list-with-modules paths modules)
           (compiler-driver-lower-mode-for-target target mode)
           (owned_view.compiler-owned-shared-view stdlib-roots)
+          (owned_view.compiler-owned-shared-view cfgs)
           (compiler_load.compiler-load-prelude-cache-key
             "typecheck-prefix-lower"
             stdlib-roots
@@ -4941,6 +4942,7 @@
           (compiler_ast_types.ast-decl-path-list-with-modules paths modules)
           (compiler-driver-lower-mode-for-target target mode)
           (owned_view.compiler-owned-shared-view stdlib-roots)
+          (owned_view.compiler-owned-shared-view cfgs)
           (compiler_load.compiler-load-prelude-cache-key
             "typecheck-prefix-lower"
             stdlib-roots
@@ -5194,6 +5196,7 @@
                   modules)
                 (compiler-driver-lower-mode-for-target target mode)
                 (owned_view.compiler-owned-shared-view stdlib-roots)
+                (owned_view.compiler-owned-shared-view cfgs)
                 (compiler_load.compiler-load-prelude-cache-key
                   "typecheck-prefix-lower"
                   (owned_view.compiler-owned-shared-view stdlib-roots)
@@ -5549,6 +5552,7 @@
                   modules)
                 (compiler-driver-lower-mode-for-target target mode)
                 (owned_view.compiler-owned-shared-view stdlib-roots)
+                (owned_view.compiler-owned-shared-view cfgs)
                 (compiler_load.compiler-load-prelude-cache-key
                   "typecheck-prefix-lower"
                   (owned_view.compiler-owned-shared-view stdlib-roots)
@@ -5930,7 +5934,8 @@
   [emit-entry : bool]
   [crt-entry : bool]
   [decls : compiler_ast_types.AstDeclList]
-  [paths : compiler_ast_types.AstDeclPathList]) : ResultCompilerDriver
+  [paths : compiler_ast_types.AstDeclPathList]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriver
   (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
     (owned_view.compiler-owned-shared-view input-path)
     (compiler-driver-lower-package-loaded
@@ -5939,7 +5944,8 @@
       target
       mode
       decls
-      paths)
+      paths
+      (owned_view.compiler-owned-shared-view cfgs))
     target
     has-target
     mode
@@ -5953,13 +5959,15 @@
   [target : compiler_backend.CompilerBackendTarget]
   [mode : compiler_backend.CompilerBackendMode]
   [decls : compiler_ast_types.AstDeclList]
-  [paths : compiler_ast_types.AstDeclPathList]) : ResultCompilerDriverLowered
+  [paths : compiler_ast_types.AstDeclPathList]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (match (compiler_lower.lower-compiler-program-with-decl-paths-mode-and-package
     input-path
     (compiler_ast_types.ast-program decls)
     paths
     (compiler-driver-lower-mode-for-target target mode)
-    package-name)
+    package-name
+    (owned_view.compiler-owned-shared-view cfgs))
     [(compiler_lower.ResultCompilerLower.Ok program spans)
       (compiler-driver-lowered-from-active-pools program spans)]
     [(compiler_lower.ResultCompilerLower.Err diag)
@@ -5974,7 +5982,8 @@
   [emit-entry : bool]
   [crt-entry : bool]
   [decls : compiler_ast_types.AstDeclList]
-  [paths : compiler_ast_types.AstDeclPathList]) : ResultCompilerDriverPackageRuntime
+  [paths : compiler_ast_types.AstDeclPathList]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverPackageRuntime
   (compiler-driver-emit-lowered-result-package-runtime-with-level-mode-entry-and-crt
     (owned_view.compiler-owned-shared-view input-path)
     (compiler-driver-lower-package-loaded
@@ -5983,7 +5992,8 @@
       target
       mode
       decls
-      paths)
+      paths
+      (owned_view.compiler-owned-shared-view cfgs))
     target
     mode
     opt-level

@@ -12786,6 +12786,9 @@
             ""
             cbi.compiler-builtin-id-fix-empty
             request
+            ;; This internal Clone request uses the closed core-macro prelude,
+            ;; whose source-language cfg set is explicitly empty.
+            (lower-source-language-cfgs)
             entry-path)]
         (begin
           (unsafe
@@ -80729,6 +80732,7 @@
   [paths : ast.AstDeclPathList]
   [mode : CompilerLowerMode]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]) : ResultCompilerLower
   (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
     lower-state
@@ -80740,6 +80744,7 @@
     paths
     mode
     stdlib-roots
+    (lower-global-shared-view cfgs)
     cache-scope
     (ast.ast-node-pool-context-capture-active)
     (ci.intern-source-name-session-capture-active-handle)
@@ -80752,6 +80757,7 @@
   [paths : ast.AstDeclPathList]
   [mode : CompilerLowerMode]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]) : ResultCompilerLower
   (lower-compiler-program-with-decl-paths-mode-cache-and-state
     (compiler-lower-state-new)
@@ -80760,6 +80766,7 @@
     paths
     mode
     stdlib-roots
+    (lower-global-shared-view cfgs)
     cache-scope))
 
 (define (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
@@ -80772,6 +80779,7 @@
   [paths : ast.AstDeclPathList]
   [mode : CompilerLowerMode]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]
@@ -80904,7 +80912,7 @@
                         source-names
                         job-state
                         (lower-global-shared-view stdlib-roots)
-                        (lower-source-language-cfgs)
+                        (lower-global-shared-view cfgs)
                         macro-intern-state)]
                     (begin
                       (ci.intern-compat-state-capture-from-globals!
@@ -81080,6 +81088,7 @@
   [paths : ast.AstDeclPathList]
   [mode : CompilerLowerMode]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerLower
@@ -81093,6 +81102,7 @@
     paths
     mode
     stdlib-roots
+    (lower-global-shared-view cfgs)
     cache-scope
     pools
     source-names
@@ -81107,6 +81117,7 @@
   [paths : ast.AstDeclPathList]
   [mode : CompilerLowerMode]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerLower
@@ -81119,6 +81130,7 @@
     paths
     mode
     stdlib-roots
+    (lower-global-shared-view cfgs)
     cache-scope
     pools
     source-names))
@@ -81129,6 +81141,7 @@
   [paths : ast.AstDeclPathList]
   [mode : CompilerLowerMode]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]) : ResultCompilerLower
   (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names
@@ -81137,6 +81150,7 @@
     paths
     mode
     stdlib-roots
+    (lower-global-shared-view cfgs)
     cache-scope
     pools
     (ci.intern-source-name-session-capture-active-handle)))
@@ -81155,6 +81169,7 @@
       paths
       mode
       (svec.new)
+      (lower-source-language-cfgs)
       (tc_core.tc-prefix-default-cache-scope))))
 
 (define (lower-compiler-program-with-decl-paths-mode-and-package
@@ -81162,7 +81177,8 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [mode : CompilerLowerMode]
-  [package-name : String]) : ResultCompilerLower
+  [package-name : String]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLower
   (let
     [state : CompilerLowerState (compiler-lower-state-new)]
     (begin
@@ -81174,6 +81190,7 @@
         paths
         mode
         (svec.new)
+        (lower-global-shared-view cfgs)
         (tc_core.tc-prefix-default-cache-scope)))))
 
 (define (lower-compiler-program [program : ast.AstProgram]) : ResultCompilerLower
@@ -81790,6 +81807,7 @@
                   paths
                   mode
                   (lower-global-shared-view stdlib-roots)
+                  (lower-global-shared-view cfgs)
                   (load.compiler-load-prelude-cache-key
                     "typecheck-prefix-lower"
                     stdlib-roots

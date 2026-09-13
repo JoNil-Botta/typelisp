@@ -3247,7 +3247,8 @@
   [emit-entry : bool]
   [crt-entry : bool]
   [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]) : ResultBuildPackagePreparedRuntime
+  [paths : ast.AstDeclPathList]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultBuildPackagePreparedRuntime
   (if (and
     (build-package-kind-supports-direct-object? kind target)
     ;; Structured object images do not carry source-line/unwind debug records.
@@ -3272,7 +3273,8 @@
           emit-entry
           crt-entry
           decls
-          paths)
+          paths
+          (owned_view.compiler-owned-shared-view cfgs))
           [(compiler_driver_core.ResultCompilerDriverPackageRuntime.Object
               image
               asm
@@ -3316,7 +3318,8 @@
             target
             mode
             decls
-            paths)
+            paths
+            (owned_view.compiler-owned-shared-view cfgs))
           mode
           opt-level
           false
@@ -6385,7 +6388,8 @@
   [crt-entry : bool]
   [decls : ast.AstDeclList]
   [owned-paths : ast.AstDeclPathList]
-  [asm-path : String]) : build_run_core.SourceToolCommandStatus
+  [asm-path : String]
+  [cfgs : sym_i64_env.SymI64Env]) : build_run_core.SourceToolCommandStatus
   (match (compiler_driver_core.compiler-driver-emit-package-loaded
     ""
     name
@@ -6396,7 +6400,8 @@
     emit-entry
     crt-entry
     (owned_view.compiler-owned-shared-view decls)
-    (owned_view.compiler-owned-shared-view owned-paths))
+    (owned_view.compiler-owned-shared-view owned-paths)
+    (owned_view.compiler-owned-shared-view cfgs))
     [(compiler_driver_core.ResultCompilerDriver.Err diag advisories)
       (begin
         (compiler_driver_core.compiler-driver-print-advisories (& advisories))
@@ -6560,7 +6565,8 @@
   [tlci-text : String]
   [object-text : String]
   [side-assembly : BuildPackageSideAssembly]
-  [announce : bool]) : i64
+  [announce : bool]
+  [cfgs : sym_i64_env.SymI64Env]) : i64
   (let
     [fingerprint-path : String
       (build-package-runtime-fingerprint-path
@@ -6662,7 +6668,8 @@
                                   (owned_view.compiler-owned-shared-view
                                     owned-paths)
                                   (owned_view.compiler-owned-shared-view
-                                    stage.asm))]
+                                    stage.asm)
+                                  (owned_view.compiler-owned-shared-view cfgs))]
                               [(BuildPackageSideAssembly.Prepared asm)
                                 (build-package-write-assembly
                                   (owned_view.compiler-owned-shared-view
@@ -6838,7 +6845,8 @@
   [link-inputs : build_run_core.SourceToolLinkInputs]
   [tlci-path : String]
   [tlci-text : String]
-  [announce : bool]) : i64
+  [announce : bool]
+  [cfgs : sym_i64_env.SymI64Env]) : i64
   (match (build-package-try-prepare-direct-runtime
     (owned_view.compiler-owned-shared-view name)
     kind
@@ -6848,7 +6856,8 @@
     emit-entry
     crt-entry
     (owned_view.compiler-owned-shared-view decls)
-    (owned_view.compiler-owned-shared-view owned-paths))
+    (owned_view.compiler-owned-shared-view owned-paths)
+    (owned_view.compiler-owned-shared-view cfgs))
     [(ResultBuildPackagePreparedRuntime.DirectObject object-text side-assembly)
       (build-package-finish-direct-fresh-artifacts
         name
@@ -6871,7 +6880,8 @@
         tlci-text
         (owned_view.compiler-owned-shared-view object-text)
         (owned_view.compiler-owned-shared-view side-assembly)
-        announce)]
+        announce
+        (owned_view.compiler-owned-shared-view cfgs))]
     [(ResultBuildPackagePreparedRuntime.Assembly asm _)
       (build-package-finish-assembly-fresh-artifacts
         name
@@ -6905,7 +6915,8 @@
         emit-entry
         crt-entry
         decls
-        owned-paths)
+        owned-paths
+        (owned_view.compiler-owned-shared-view cfgs))
         [(compiler_driver_core.ResultCompilerDriver.Err diag advisories)
           (begin
             (compiler_driver_core.compiler-driver-print-advisories
@@ -6945,7 +6956,8 @@
   [emit-entry : bool]
   [crt-entry : bool]
   [decls : ast.AstDeclList]
-  [owned-paths : ast.AstDeclPathList]) : ResultBuildPackagePreparedRuntime
+  [owned-paths : ast.AstDeclPathList]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultBuildPackagePreparedRuntime
   (match (build-package-try-prepare-direct-runtime
     (owned_view.compiler-owned-shared-view name)
     kind
@@ -6955,7 +6967,8 @@
     emit-entry
     crt-entry
     (owned_view.compiler-owned-shared-view decls)
-    (owned_view.compiler-owned-shared-view owned-paths))
+    (owned_view.compiler-owned-shared-view owned-paths)
+    (owned_view.compiler-owned-shared-view cfgs))
     [(ResultBuildPackagePreparedRuntime.Unavailable category)
       (match (compiler_driver_core.compiler-driver-emit-package-loaded
         ""
@@ -6967,7 +6980,8 @@
         emit-entry
         crt-entry
         decls
-        owned-paths)
+        owned-paths
+        (owned_view.compiler-owned-shared-view cfgs))
         [(compiler_driver_core.ResultCompilerDriver.Err diag advisories)
           (begin
             (compiler_driver_core.compiler-driver-print-advisories
@@ -7011,7 +7025,8 @@
     [artifact-path : String]
     [link-inputs : build_run_core.SourceToolLinkInputs]
     [tlci-path : String]
-    [announce : bool]) : i64
+    [announce : bool]
+    [cfgs : sym_i64_env.SymI64Env]) : i64
     (begin
       (package_surface.package-surface-capture-start!
         (package_surface.package-surface-identity-key
@@ -7032,7 +7047,8 @@
             emit-entry
             crt-entry
             (owned_view.compiler-owned-shared-view decls)
-            (owned_view.compiler-owned-shared-view owned-paths))]
+            (owned_view.compiler-owned-shared-view owned-paths)
+            (owned_view.compiler-owned-shared-view cfgs))]
         (match (owned_view.compiler-owned-shared-view prepared)
           [(ResultBuildPackagePreparedRuntime.Err message)
             (begin
@@ -7082,7 +7098,8 @@
                       link-inputs
                       tlci-path
                       tlci-text
-                      announce)])])])))))
+                      announce
+                      (owned_view.compiler-owned-shared-view cfgs))])])])))))
 
 (define (build-package-doctest-paths
   [owner : String]
@@ -7265,7 +7282,8 @@
                 artifact-path
                 effective-link-inputs
                 tlci-path
-                announce))])])))
+                announce
+                (owned_view.compiler-owned-shared-view compile-cfgs)))])])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)

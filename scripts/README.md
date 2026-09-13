@@ -89,7 +89,10 @@ group when aggregate RSS crosses the same ceiling; neither path uses
 `RLIMIT_AS` or treats virtual reservations as resident memory.
 
 `run-memory-bounded.sh` gives gates one fail-closed interface to those Linux
-backends and the Windows Job Object wrapper. Its stable key/value record
+backends and the Windows Job Object wrapper. The Windows helper tests retain a
+one-second timeout classification case and separately check descendant cleanup
+with delayed child creation and a ten-second bounded startup/cleanup deadline.
+Its stable key/value record
 distinguishes command failure, timeout, memory termination, wrapper/setup
 failure, and success. `verify-embedded-stdlib-tlci-resources.sh` applies an
 8192 MiB cap to the production image build, matched opt1/opt2 compiler builds,

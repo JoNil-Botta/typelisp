@@ -731,3 +731,4 @@ thread_sync_typed_safe_control_ok|check-ok|tests/safety/thread_sync_typed_safe_c
 
 # Enabled generated cfg imports must resolve before checking even if unused.
 generated_cfg_missing_module_import_reject|check-fail|tests/safety/generated_cfg_missing_module_import_reject.tl|-|cannot read import
+generated_cfg_invalid_predicate_reject|check-fail|tests/safety/generated_cfg_invalid_predicate_reject.tl|-|cfg not expects exactly one predicate

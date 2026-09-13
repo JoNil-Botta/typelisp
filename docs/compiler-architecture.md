@@ -32,6 +32,23 @@ copy only their address. The native `loop_carried_enum_payload_snapshot` and
 at every optimization level. Address generation uses `lower-emit-gep`, also
 shared by byte-offset projections through `lower-gep-byte`.
 
+Scalar register planning owns its temporary liveness and greedy-allocation
+storage in a separate arena. Its escape boundary copies retained assignments,
+intervals, eligibility bits and split records into the caller's arena, including
+rematerialized String/Bytes values through the canonical IR value copier. The
+original type view retains its job-owned representation index and profiling
+metrics; the trace journal is copied before the planning arena is destroyed.
+Typed scalar reconstruction of split records makes an added owned payload or
+variant require an explicit update to that boundary.
+
+Eligibility calculation, rematerialization interval selection, stack coloring
+and final scavenger interval selection each reclaim their analysis temporaries
+after copying their small result. Final scavenger intervals still describe the
+final emitted IR at instruction precision. Call-hole retry context retains its
+edge-precise liveness while candidate rewrites still consume it. These lifetimes
+bound overlapping analyses within a large function; the existing function and
+assembly-stream arenas continue to bound accumulation across functions.
+
 The compiler also has a pure, versioned incremental-query identity layer. It
 canonicalizes typed source, logical-name, dependency, package/stdlib,
 configuration, macro/comptime, target, and ordered-child inputs into a bounded

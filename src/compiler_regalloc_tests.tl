@@ -23963,3 +23963,89 @@
       (compiler-regalloc-self-test)
       42
       "regalloc call-span census fixture result")))
+
+(cfg
+  test
+  (test
+    compiler-reg-returned-plan-profile-owner
+    (let
+      [state : profile_state.CompilerProfileState
+        (profile_state.compiler-profile-state-new)]
+      [metrics : profile_state.CompilerProfileMetrics
+        (profile_state.compiler-profile-state-metrics state)]
+      [func : ir.CompilerIrFunction (compiler-reg-liveness-handle-phi-fixture)]
+      [types : reg.CompilerRegVarTypes
+        (reg.compiler-reg-function-var-types-with-metrics
+          (owned_view.compiler-owned-shared-view func)
+          (owned_view.compiler-owned-shared-view metrics))]
+      [plan : reg.CompilerRegPlan
+        (reg.compiler-reg-plan-function-scalar-forced-spill-with-types
+          (ast.ast-node-pool-reader-type-segment-bases)
+          cabi.CompilerRegTargetAbi.Linux
+          func
+          (- 0 1)
+          false
+          types
+          (reg.compiler-reg-assignment-table-make 0))]
+      (begin
+        (test.assert-i64-eq
+          (reg.compiler-reg-liveness-census-baseline-count
+            (owned_view.compiler-owned-shared-view metrics))
+          1
+          "planning records baseline liveness in the caller's owner")
+        (test.assert-i64-eq
+          (reg.compiler-reg-liveness-census-edge-precise-count
+            (owned_view.compiler-owned-shared-view metrics))
+          1
+          "planning records edge-precise liveness in the caller's owner")
+        (match plan
+          [(reg.CompilerRegPlan.Plan _ _ _ returned-types _ _)
+            (reg.compiler-reg-liveness-census-reset! returned-types.metrics)])
+        (test.assert-i64-eq
+          (reg.compiler-reg-liveness-census-baseline-count
+            (owned_view.compiler-owned-shared-view metrics))
+          0
+          "reset through the returned plan reaches the original owner")
+        (test.assert-i64-eq
+          (reg.compiler-reg-liveness-census-edge-precise-count
+            (owned_view.compiler-owned-shared-view metrics))
+          0
+          "returned plan does not carry a cloned metrics owner")))))
+
+(cfg
+  test
+  (test
+    compiler-reg-retained-plan-survives-later-planning
+    (let
+      [first : reg.CompilerRegPlan
+        (reg.compiler-reg-plan-function-scalar-for-abi
+          cabi.CompilerRegTargetAbi.Linux
+          (compiler-reg-trace-fixture-function))]
+      [saved : reg.CompilerRegAssignmentTable
+        (clone
+          (reg.compiler-reg-plan-assignments
+            (owned_view.compiler-owned-shared-view first)))]
+      [round : i64 0]
+      (begin
+        (test.assert-true
+          (reg.compiler-reg-assignment-table-prefix-eq?
+            (owned_view.compiler-owned-shared-view saved)
+            (reg.compiler-reg-plan-assignments
+              (owned_view.compiler-owned-shared-view first))
+            9
+            0)
+          "fixture has comparable register/spill homes")
+        (while (< round 32)
+          (let
+            [_later : reg.CompilerRegPlan
+              (reg.compiler-reg-plan-function-scalar-for-abi
+                cabi.CompilerRegTargetAbi.Windows
+                (compiler-reg-trace-fixture-function))]
+            (set! round (+ round 1))))
+        (test.assert-true
+          (reg.compiler-reg-assignment-table-prefix-eq?
+            saved
+            (reg.compiler-reg-plan-assignments first)
+            9
+            0)
+          "retained plan keeps its homes after later analysis arenas retire")))))

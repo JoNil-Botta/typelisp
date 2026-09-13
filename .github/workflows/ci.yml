@@ -100,6 +100,24 @@ jobs:
           sudo swapon /typelisp-swap
           free -h
 
+      - name: Enable Linux kernel memory limits
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # The full backend memory witnesses require MemoryMax and
+          # MemorySwapMax=0. An RSS watchdog cannot establish that contract.
+          bounded_uid=$(id -u)
+          sudo systemctl start "user@${bounded_uid}.service"
+          export XDG_RUNTIME_DIR="/run/user/${bounded_uid}"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR}/bus"
+          printf 'XDG_RUNTIME_DIR=%s\nDBUS_SESSION_BUS_ADDRESS=%s\n' \
+            "$XDG_RUNTIME_DIR" "$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
+          . scripts/lib-linux-memory-limit.sh
+          linux_memory_limit_systemd_available || {
+            echo 'Kernel-enforced, swap-disabled backend memory limits are unavailable' >&2
+            exit 1
+          }
+
       - name: CI verification
         shell: bash
         env:
@@ -127,6 +145,17 @@ jobs:
           name: ci-compiler-artifacts-${{ runner.os }}
           path: target/ci-compiler-artifacts/*.tsv
           if-no-files-found: error
+
+      - name: Upload backend memory evidence
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-memory-${{ runner.os }}
+          path: |
+            target/build-invariance/backend-memory/*.memory
+            target/build-invariance/backend-memory/*.stdout
+            target/build-invariance/backend-memory/*.stderr
+          if-no-files-found: warn
 
       - name: Upload TLCI native route stress evidence
         if: always()

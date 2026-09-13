@@ -6,6 +6,7 @@
 ;; %rsp/%rbp reserved and admit caller-saved integer/XMM registers only for
 ;; values that cannot be clobbered by call emission.
 (import stdlib.io)
+(import stdlib.arena)
 (import stdlib.comptime)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -8184,19 +8185,20 @@
   [func : ir.CompilerIrFunction]
   [types : CompilerRegVarTypes]
   [target-abi : cabi.CompilerRegTargetAbi]) : live.CompilerLiveI64Set
-  (match (compiler-reg-global-shared-view func)
-    [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
-      (compiler-reg-ineligible-memory
-        (compiler-reg-global-shared-view blocks)
-        (compiler-reg-call-arg-vars-blocks-scalar
-          type-segment-bases
-          blocks
-          (compiler-reg-ineligible-non-scalars
-            (compiler-reg-global-shared-view types)
-            (live.compiler-live-set-empty)
-            true)
-          types
-          target-abi))]))
+  (with-scratch
+    (match (compiler-reg-global-shared-view func)
+      [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+        (compiler-reg-ineligible-memory
+          (compiler-reg-global-shared-view blocks)
+          (compiler-reg-call-arg-vars-blocks-scalar
+            type-segment-bases
+            blocks
+            (compiler-reg-ineligible-non-scalars
+              (compiler-reg-global-shared-view types)
+              (live.compiler-live-set-empty)
+              true)
+            types
+            target-abi))])))
 
 ;; SIMD/AVX register planning shares the integer GP allocation quality of the
 ;; scalar path: a value live across a call is NOT force-spilled. The SIMD integer
@@ -39619,7 +39621,198 @@
 ;; read the edge-precise index. The call-hole split mints its carriers in a
 ;; function that still contains every one of its calls, so it forces them to
 ;; memory with `cold-split?` FALSE and both gates keep their real inputs.
+;; Result copies below are the ownership boundary for temporary scalar planning.
+;; Caller-owned type/representation/profile state retains its original identity.
+(defmacro (compiler-reg-owned-copy-array
+  [T : type]
+  [source : Expr]
+  [count : Expr]
+  [copy-item : Expr]) : Expr
+  `(let
+    [items : (__tl_dyn-array ,T) ,source]
+    [n : i64 ,count]
+    [out : (__tl_dyn-array ,T) (__tl_make-array ,T n)]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (set!
+            (array-ref out i)
+            (,copy-item (compiler-reg-global-array-element-shared-view items i)))
+          (set! i (+ i 1))))
+      out)))
+
+(define (compiler-reg-owned-copy-words [items : (__tl_dyn-array i64)]) : (__tl_dyn-array
+    i64)
+  (let
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 (array-length items))]
+    (begin
+      (compiler-reg-copy-i64-array!
+        (compiler-reg-global-shared-view out)
+        items
+        0)
+      out)))
+
+;; Typed scalar reconstruction makes these escape copies fail to compile if
+;; a record gains an owned payload. New variants also require an explicit arm.
+;; A shallow copy of a future String/array field would outlive the plan arena.
+(define (compiler-reg-owned-copy-i64 [value : i64]) : i64
+  value)
+
+(define (compiler-reg-owned-copy-interval [item : CompilerRegInterval]) : CompilerRegInterval
+  (CompilerRegInterval
+    (compiler-reg-owned-copy-i64 item.var)
+    (compiler-reg-owned-copy-i64 item.start)
+    (compiler-reg-owned-copy-i64 item.end)))
+
+(define (compiler-reg-owned-copy-region [item : CompilerRegCallRegion]) : CompilerRegCallRegion
+  (match item
+    [(CompilerRegCallRegion a b c d e)
+      (CompilerRegCallRegion
+        (compiler-reg-owned-copy-i64 a)
+        (compiler-reg-owned-copy-i64 b)
+        (compiler-reg-owned-copy-i64 c)
+        (compiler-reg-owned-copy-i64 d)
+        (compiler-reg-owned-copy-i64 e))]))
+
+(define (compiler-reg-owned-copy-eviction [item : CompilerRegCallEvict]) : CompilerRegCallEvict
+  (match item
+    [(CompilerRegCallEvict a b c)
+      (CompilerRegCallEvict
+        (compiler-reg-owned-copy-i64 a)
+        (compiler-reg-owned-copy-i64 b)
+        (compiler-reg-owned-copy-i64 c))]))
+
+(define (compiler-reg-owned-copy-occupant [item : CompilerRegOccupantSplit]) : CompilerRegOccupantSplit
+  (match item
+    [(CompilerRegOccupantSplit a b c d e)
+      (CompilerRegOccupantSplit
+        (compiler-reg-owned-copy-i64 a)
+        (compiler-reg-owned-copy-i64 b)
+        (compiler-reg-owned-copy-i64 c)
+        (compiler-reg-owned-copy-i64 d)
+        (compiler-reg-owned-copy-i64 e))]))
+
+(define (compiler-reg-owned-copy-set [set : live.CompilerLiveI64Set]) : live.CompilerLiveI64Set
+  (live.CompilerLiveI64Set
+    (live.compiler-live-set-copy-with-capacity
+      (compiler-reg-global-shared-view set)
+      (live.compiler-live-set-word-count set))))
+
+(define (compiler-reg-owned-copy-call-split [split : CompilerRegCallSplit]) : CompilerRegCallSplit
+  (match split
+    [(CompilerRegCallSplit shadows regs regions evictions)
+      (CompilerRegCallSplit
+        (compiler-reg-owned-copy-set shadows)
+        (compiler-reg-owned-copy-words regs)
+        (CompilerRegCallRegionSeq
+          (compiler-reg-owned-copy-array
+            CompilerRegCallRegion
+            regions.slots
+            regions.len
+            compiler-reg-owned-copy-region)
+          regions.len)
+        (CompilerRegCallEvictSeq
+          (compiler-reg-owned-copy-array
+            CompilerRegCallEvict
+            evictions.slots
+            evictions.len
+            compiler-reg-owned-copy-eviction)
+          evictions.len))]))
+
+(define (compiler-reg-owned-copy-split [split : CompilerRegSplitPlan]) : CompilerRegSplitPlan
+  (CompilerRegSplitPlan
+    (compiler-reg-owned-copy-words split.piece-of)
+    (compiler-reg-owned-copy-words split.piece-start)
+    (compiler-reg-owned-copy-words split.piece-end)
+    (compiler-reg-owned-copy-words split.piece-reg)
+    (compiler-reg-owned-copy-words split.piece-writeback)
+    (compiler-reg-owned-copy-array
+      CompilerRegOccupantSplit
+      (compiler-reg-global-shared-view split.occupant-split)
+      (array-length split.occupant-split)
+      compiler-reg-owned-copy-occupant)
+    (compiler-reg-owned-copy-words split.coalesce-parents)))
+
+(define (compiler-reg-owned-copy-plan
+  [plan : CompilerRegPlan]
+  [types : CompilerRegVarTypes]) : CompilerRegPlan
+  (match plan
+    [(CompilerRegPlan.Plan assignments ineligible intervals _ calls split)
+      (let
+        [copied : CompilerRegAssignmentTable
+          (compiler-reg-assignment-table-copy-with-capacity
+            (& assignments)
+            (array-length assignments.present))]
+        [i : i64 0]
+        (begin
+          (while (< i (array-length copied.present))
+            (begin
+              (when
+                (not (= (array-ref copied.present i) 0))
+                (match (compiler-reg-global-array-element-shared-view
+                  copied.items
+                  i)
+                  [(CompilerRegLocation.Remat value)
+                    (set!
+                      (array-ref copied.items i)
+                      (CompilerRegLocation.Remat
+                        (ir.compiler-ir-clone-value value)))]
+                  [_ unit]))
+              (set! i (+ i 1))))
+          (CompilerRegPlan.Plan
+            copied
+            (compiler-reg-owned-copy-set ineligible)
+            (CompilerRegIntervalSeq
+              (compiler-reg-owned-copy-array
+                CompilerRegInterval
+                intervals.slots
+                intervals.len
+                compiler-reg-owned-copy-interval)
+              intervals.len)
+            types
+            (compiler-reg-owned-copy-call-split calls)
+            (compiler-reg-owned-copy-split split))))]))
+
 (define (compiler-reg-plan-function-scalar-forced-spill-with-types
+  [type-segment-bases : i64]
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [func : ir.CompilerIrFunction]
+  [forced-spill-from : i64]
+  [cold-split? : bool]
+  [type-info : CompilerRegVarTypes]
+  [forced-assignments : CompilerRegAssignmentTable]) : CompilerRegPlan
+  (let
+    [home : i64 (arena.tl_arena_current)]
+    [scratch : i64 (arena.tl_arena_make_small)]
+    [_enter : unit
+      (unsafe
+        (arena.tl_arena_set scratch))]
+    [raw : CompilerRegPlan
+      (compiler-reg-plan-function-scalar-forced-spill-with-types-in-current-arena
+        type-segment-bases
+        target-abi
+        func
+        forced-spill-from
+        cold-split?
+        (compiler-reg-global-shared-view type-info)
+        forced-assignments)]
+    [_home : unit
+      (unsafe
+        (arena.tl_arena_set home))]
+    [result : CompilerRegPlan (compiler-reg-owned-copy-plan raw type-info)]
+    (begin
+      (when
+        compiler-reg-debug-trace-homes
+        (set!
+          compiler-reg-trace-reasons
+          (compiler-reg-owned-copy-words
+            (compiler-reg-global-shared-view compiler-reg-trace-reasons))))
+      (unsafe
+        (arena.tl_arena_destroy scratch))
+      result)))
+
+(define (compiler-reg-plan-function-scalar-forced-spill-with-types-in-current-arena
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
   [func : ir.CompilerIrFunction]
@@ -43894,6 +44087,29 @@
 ;; therefore withheld from every sharing mechanism (the scalar walk and its
 ;; phi/mov webs) and land in the private dense slots below, one fresh slot each.
 (define (compiler-reg-color-stack-slots-with-stack-only
+  [type-segment-bases : i64]
+  [plan : CompilerRegPlan]
+  [group-vars : live.CompilerLiveI64Set]
+  [params : ir.CompilerIrParamSeq]
+  [blocks : ir.CompilerIrBlockList]
+  [vars : i64]
+  [slot-candidate-vars : i64]
+  [identity-pinned : live.CompilerLiveI64Set]
+  [stack-only? : bool]) : CompilerRegColoring
+  (with-scratch
+    (compiler-reg-color-stack-slots-with-stack-only-in-current-arena
+      type-segment-bases
+      plan
+      group-vars
+      params
+      blocks
+      vars
+      slot-candidate-vars
+      identity-pinned
+      stack-only?)))
+
+;; Only the result-owning wrapper above calls this analysis implementation.
+(define (compiler-reg-color-stack-slots-with-stack-only-in-current-arena
   [type-segment-bases : i64]
   [plan : CompilerRegPlan]
   [group-vars : live.CompilerLiveI64Set]
@@ -54091,15 +54307,17 @@
           type-segment-bases
           (compiler-reg-global-shared-view func)
           (compiler-reg-global-shared-view type-info))]
-      [liveness-handle : CompilerRegLivenessHandle
-        (compiler-reg-liveness-handle-make
-          (compiler-reg-global-shared-view func)
-          false
-          (compiler-reg-global-shared-view type-info.metrics))]
-      [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
-      (match (compiler-reg-live-interval-selection
-        (compiler-reg-global-shared-view func)
-        liveness)
+      (match (with-scratch
+        (let
+          [liveness-handle : CompilerRegLivenessHandle
+            (compiler-reg-liveness-handle-make
+              (compiler-reg-global-shared-view func)
+              false
+              (compiler-reg-global-shared-view type-info.metrics))]
+          [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
+          (compiler-reg-live-interval-selection
+            (compiler-reg-global-shared-view func)
+            liveness)))
         [(CompilerRegIntervalSelection.Selection intervals interval-index)
           (let
             [coalesce : CompilerRegCoalesceMap

@@ -20,7 +20,8 @@ usage: scripts/check-build-invariance.sh
 
 Requires TYPELISP_BIN to point at CI's converged Linux opt2-built stage4
 compiler. Builds one opt1 compiler from src/main.tl, then compares emitted
-assembly for a fixed corpus.
+assembly for a fixed corpus. The same fresh opt1 compiler must also compile
+the complete codegen smoke and build backend-tests at opt2 within 8 GiB.
 EOF
 }
 
@@ -181,6 +182,75 @@ build_opt1_compiler() {
         echo "[build-invariance] opt1 compiler is not executable: $opt1_bin" >&2
         exit 1
     fi
+}
+
+check_backend_memory_report() {
+    if ! awk -F= '
+        $1 == "schema_version" { schema = $2 }
+        $1 == "host" { host = $2 }
+        $1 == "backend" { backend = $2 }
+        $1 == "reason" { reason = $2 }
+        $1 == "exit_code" { code = $2; have_code = 1 }
+        $1 == "limit_bytes" { limit = $2 }
+        $1 == "peak_memory_bytes" { peak = $2 }
+        END {
+            exit !(schema == 1 && host == "linux" &&
+                backend == "systemd-user-cgroup" &&
+                reason == "success" && have_code && code == 0 &&
+                limit == 8589934592 && peak ~ /^[0-9]+$/ &&
+                peak + 0 > 0 && peak + 0 < limit + 0)
+        }
+    ' "$1"; then
+        echo "[build-invariance] backend memory report lacks successful enforced headroom: $1" >&2
+        exit 1
+    fi
+}
+
+check_backend_memory() {
+    memory_dir="$WORKDIR/backend-memory"
+    mkdir -p "$memory_dir"
+    echo "[build-invariance] complete backend fixtures: enforced 8192 MiB process-tree cap"
+    if ! ci_timing_run backend-memory codegen-smoke \
+        run_with_heartbeat_capture \
+        "bounded opt2 codegen smoke" \
+        "$memory_dir/codegen-smoke.stdout" "$memory_dir/codegen-smoke.stderr" \
+        env TYPELISP_LINUX_MEMORY_LIMIT_BACKEND=systemd-user-cgroup \
+        "$ROOT/scripts/run-memory-bounded.sh" \
+        --limit-mib 8192 --report "$memory_dir/codegen-smoke.memory" \
+        --timeout-seconds 600 -- \
+        "$OPT1_COMPILER" compile src/tests/compiler_codegen_smoke_suite.tl \
+        -o "$memory_dir/codegen-smoke.s" \
+        --target linux-x86_64 --cfg linux --cfg unix --cfg target-linux --cfg os-linux \
+        --stdlib-root stdlib --stdlib-root src --opt-level 2; then
+        print_log_pair "bounded codegen smoke failed" \
+            "$memory_dir/codegen-smoke.stdout" "$memory_dir/codegen-smoke.stderr"
+        exit 1
+    fi
+    check_backend_memory_report "$memory_dir/codegen-smoke.memory"
+    if ! ci_timing_run backend-memory backend-tests \
+        run_with_heartbeat_capture \
+        "bounded opt2 backend-tests build" \
+        "$memory_dir/backend-tests.stdout" "$memory_dir/backend-tests.stderr" \
+        env TYPELISP_LINUX_MEMORY_LIMIT_BACKEND=systemd-user-cgroup \
+        "$ROOT/scripts/run-memory-bounded.sh" \
+        --limit-mib 8192 --report "$memory_dir/backend-tests.memory" \
+        --timeout-seconds 600 -- \
+        "$OPT1_COMPILER" build src/compiler_backend_tests.tl \
+        -o "$memory_dir/backend-tests" --target linux-x86_64 --opt-level 2 \
+        --stdlib-root stdlib --stdlib-root src; then
+        print_log_pair "bounded backend-tests build failed" \
+            "$memory_dir/backend-tests.stdout" "$memory_dir/backend-tests.stderr"
+        exit 1
+    fi
+    check_backend_memory_report "$memory_dir/backend-tests.memory"
+    if [ ! -s "$memory_dir/codegen-smoke.s" ] || \
+       [ ! -s "$memory_dir/backend-tests" ] || \
+       [ ! -s "$memory_dir/codegen-smoke.memory" ] || \
+       [ ! -s "$memory_dir/backend-tests.memory" ]; then
+        echo "[build-invariance] backend memory gate did not publish complete outputs/reports" >&2
+        exit 1
+    fi
+    cat "$memory_dir/codegen-smoke.memory" "$memory_dir/backend-tests.memory"
 }
 
 write_corpus() {
@@ -561,6 +631,11 @@ OPT2_STAGE4="$COMPILER"
 construction_end=$(date +%s)
 construction_seconds=$((construction_end - construction_start))
 echo "[build-invariance] compiler construction: ${construction_seconds}s"
+
+# Reuse the compiler just built above. The full fixtures stay at opt2 and the
+# fail-closed wrapper records each process-tree peak; no extra compiler build
+# or reduced stress corpus is needed for the ownership regression.
+check_backend_memory
 
 CORPUS="$WORKDIR/corpus.txt"
 LEFT_DIR="$WORKDIR/compare/opt1-built"

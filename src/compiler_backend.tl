@@ -83100,26 +83100,27 @@
           ;; segment rows give the occupancy table the allocator's own notion of
           ;; where a register actually carries a live value, instead of a hull
           ;; that saturates every register in a merged body.
-          (if (compiler-backend-assignments-have-register-home?
-            (compiler-backend-global-shared-view scavenge-assignments))
-            (let
-              [scavenge-func : compiler_ir_types.CompilerIrFunction
-                (compiler_ir_types.CompilerIrFunction.Function
-                  (compiler-backend-global-shared-view name)
-                  (compiler-backend-global-shared-view emit-params)
-                  (compiler-backend-global-shared-view ret-ty)
-                  scratch-vars
-                  (compiler-backend-global-shared-view emit-blocks-list))]
-              (compiler_regalloc.compiler-reg-live-interval-selection-with-live-in
-                (compiler-backend-global-shared-view scavenge-func)
-                (compiler_liveness.compiler-live-analyze-function
-                  (compiler-backend-global-shared-view scavenge-func))
-                false))
-            (compiler_regalloc.CompilerRegIntervalSelection.Selection
-              (compiler_regalloc.compiler-reg-interval-seq-empty)
-              (compiler_regalloc.compiler-reg-interval-index-build
+          (with-scratch
+            (if (compiler-backend-assignments-have-register-home?
+              (compiler-backend-global-shared-view scavenge-assignments))
+              (let
+                [scavenge-func : compiler_ir_types.CompilerIrFunction
+                  (compiler_ir_types.CompilerIrFunction.Function
+                    (compiler-backend-global-shared-view name)
+                    (compiler-backend-global-shared-view emit-params)
+                    (compiler-backend-global-shared-view ret-ty)
+                    scratch-vars
+                    (compiler-backend-global-shared-view emit-blocks-list))]
+                (compiler_regalloc.compiler-reg-live-interval-selection-with-live-in
+                  (compiler-backend-global-shared-view scavenge-func)
+                  (compiler_liveness.compiler-live-analyze-function
+                    (compiler-backend-global-shared-view scavenge-func))
+                  false))
+              (compiler_regalloc.CompilerRegIntervalSelection.Selection
                 (compiler_regalloc.compiler-reg-interval-seq-empty)
-                0)))]
+                (compiler_regalloc.compiler-reg-interval-index-build
+                  (compiler_regalloc.compiler-reg-interval-seq-empty)
+                  0))))]
         [scavenge-intervals : compiler_regalloc.CompilerRegIntervalSeq
           (match (compiler-backend-global-shared-view scavenge-selection)
             [(compiler_regalloc.CompilerRegIntervalSelection.Selection hulls _)

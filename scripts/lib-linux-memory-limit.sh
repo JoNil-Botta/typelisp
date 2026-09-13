@@ -50,6 +50,11 @@ linux_memory_limit_run_systemd() {
     _linux_memory_limit_bytes=$1
     shift
 
+    # A metrics destination belongs to this invocation, not to its workload.
+    # The bounded runner's explicit sampler re-establishes its own destination
+    # from an argument; ordinary nested helpers must choose a fresh one.
+    set -- env -u TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE "$@"
+
     # Transient user services inherit the user manager's environment, not the
     # invoking gate's exports. Prepend one --setenv=name option per valid
     # environment name; omitting `=value` asks systemd-run to copy the exact
@@ -82,8 +87,11 @@ linux_memory_limit_run_systemd() {
     # descendant that an outer wait4(2) measurement can cover. Preserve the
     # larger in-cgroup process-group sample when the bounded runner supplies
     # one; direct callers still get the systemd evidence.
-    _linux_memory_limit_systemd_stderr="$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE.systemd-stderr"
-    rm -f "$_linux_memory_limit_systemd_stderr"
+    _linux_memory_limit_systemd_stderr=$(mktemp \
+        "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE.systemd-stderr.XXXXXX") || {
+        echo "Linux memory limiting failed to create invocation stderr evidence" >&2
+        return 2
+    }
     _linux_memory_limit_status=0
     LC_ALL=C SYSTEMD_COLORS=0 systemd-run \
         --user \
@@ -225,6 +233,7 @@ linux_memory_limit_run_watchdog() {
         gate=$1
         shift
         while [ ! -e "$gate" ]; do sleep 0.01; done
+        unset TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE
         exec "$@"
     ' sh "$_linux_memory_limit_gate" "$@" &
     _linux_memory_limit_pid=$!

@@ -4315,6 +4315,11 @@ All operators are prefix functions (or special forms):
 | `>=` | integer integer → bool | Greater than or equal |
 
 - Float comparisons use the same operators; type checking disambiguates.
+- For `f32` and `f64`, a NaN in either operand makes `=`, `<`, `<=`, `>`,
+  and `>=` false, and makes `!=` true. Positive and negative zero compare
+  equal; infinities follow their numeric ordering. Each operand is evaluated
+  exactly once. Floating exception flags and signaling-NaN payload/quieting
+  behavior are outside this comparison contract.
 - String equality uses `(string-eq s1 s2)` or `(string=? s1 s2)`.
 
 ### 5.6 `(if cond then else)` — conditional

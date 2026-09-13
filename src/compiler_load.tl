@@ -452,6 +452,12 @@
   [index : i64]) : CompilerLoadSurfaceDecl
   (clone (array-ref decls.slots index)))
 
+;; Read-only searches borrow candidates; retained payloads use the owning accessor.
+(define (compiler-load-surface-decl-list-borrow-at
+  [decls : (& decls CompilerLoadSurfaceDeclList)]
+  [index : i64]) : (& decls CompilerLoadSurfaceDecl)
+  (& (array-ref decls.slots index)))
+
 (define (compiler-load-surface-summary-list-empty) : CompilerLoadSurfaceSummaryList
   (CompilerLoadSurfaceSummaryList
     (__tl_make-array CompilerLoadSurfaceSummary 0)

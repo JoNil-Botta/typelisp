@@ -16283,11 +16283,11 @@
             [else (+ vars 4)]))
         vars))))
 
-;; Reserve a contiguous group region for stack-resident register-group vars.
-;; Each var gets two adjacent words in the region so taking the address of a
-;; group value exposes a real aggregate byte layout: word0 at base, word1 at
-;; base+8. The ordinary var slot remains reserved for non-group values; group
-;; stack accesses use compiler-backend-group-word{0,1}-slot.
+;; Reserve enough space for either group-home mode. Functions with exposed
+;; group addresses need the canonical pair region, with word0 at base and
+;; word1 at base+8. Every second word uses that region in a mixed function;
+;; ordinary first words keep their scalar slots. Without exposed groups the
+;; compact second-word map also fits this unchanged reservation.
 (define (compiler-backend-frame-slots-with-groups
   [vars : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -22886,12 +22886,16 @@
               [(ResultCompilerBackend.Err m) (ResultCompilerBackend.Err m)])]
           [(ResultCompilerBackend.Err m) (ResultCompilerBackend.Err m)]))]))
 
-;; Legacy stack-slot offsets for an ordinary group var with no register home:
-;; word0 reuses the var's ordinary slot, and word1 lives in the second group
-;; region below the callee-save area.
+;; An ordinary group keeps word0 in its scalar var slot. Functions without
+;; address-exposed groups can retain the compact second-word region. Once any
+;; group exposes its address, every word1 must instead use the canonical pair
+;; region: mixing the one-word and two-word strides aliases distinct values.
 (define (compiler-backend-group-legacy-word0-slot [var : i64]) : i64
   (- 0 (* 8 (+ var 1))))
 
+;; Precondition: the function's addressable-group bitmap has no storage. A
+;; retained nonempty bitmap can conservatively select canonical pair slots;
+;; only zero words prove that no exposed pair can overlap this compact map.
 (define (compiler-backend-group-legacy-word1-slot
   [var : i64]
   [vars : i64]
@@ -22905,8 +22909,10 @@
         (compiler-backend-frame-slots vars assignments backend-state)
         (+ var 1)))))
 
-;; Stack-slot offsets for an address-exposed group var's two words when it has
-;; no register home. The pair lives in a dedicated contiguous region below the
+;; Canonical pair offsets for a group var without a register home. In functions
+;; with exposed groups, both storage modes use word1; exposed values also use
+;; word0 here.
+;; The pair lives in a dedicated contiguous region below the
 ;; ordinary var/callee-save region so `AddrOf group-var` plus `Gep 8` reaches
 ;; word1. `frame-slots` depends only on the allocator plan, so this base is
 ;; stable across body emission.
@@ -23241,21 +23247,26 @@
           (if (compiler-backend-group-var? backend-state var)
             (compiler-backend-frame-offset-with-backend-state
               backend-state
-              (if (compiler-backend-addressable-group-var? backend-state var)
-                (if (= index 0)
+              (if (= index 0)
+                (if (compiler-backend-addressable-group-var? backend-state var)
                   (compiler-backend-group-word0-slot
                     var
                     vars
                     assignments
                     backend-state)
-                  (compiler-backend-group-word1-slot
+                  (compiler-backend-group-legacy-word0-slot var))
+                (if (=
+                  (compiler_liveness.compiler-live-set-word-count
+                    (compiler-backend-function-state-live-set
+                      (compiler-backend-state-function-state backend-state)
+                      compiler-backend-function-live-set-addressable-group-vars))
+                  0)
+                  (compiler-backend-group-legacy-word1-slot
                     var
                     vars
                     assignments
-                    backend-state))
-                (if (= index 0)
-                  (compiler-backend-group-legacy-word0-slot var)
-                  (compiler-backend-group-legacy-word1-slot
+                    backend-state)
+                  (compiler-backend-group-word1-slot
                     var
                     vars
                     assignments

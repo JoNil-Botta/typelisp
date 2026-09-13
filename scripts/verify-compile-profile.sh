@@ -2026,6 +2026,10 @@ if [ "$NL_HOST_OS" = windows ]; then
     # capacity, and 737,280 physical payload bytes.
     # #5407's semantic completion provider measured 26,662 used nodes and 27
     # segments on the pre-ownership mainline tree.
+    # #7452's closed direct-object fallback types cross to 31 segments: the
+    # authoritative Windows CI probe measured 30,725 used nodes, 31,744
+    # capacity, and 761,856 physical payload bytes. The other three AST pool
+    # boundaries remain unchanged.
     # #7348's aggregate marker metadata and generated replay add type structure
     # to the compiler source graph. Windows CI run 34727532440 on a6096578
     # measured 30,724 used nodes: 31 segments, 31,744 capacity, and 761,856

@@ -190,3 +190,41 @@
               (return true)
               (set! cursor binding.parent))))
         false))))
+
+;; Copy reachable bindings into the current arena while retaining symbol IDs.
+;; The destination must remain within the same interner lifetime. Unlike a
+;; shared view or clone of the handle, this owns independent backing storage.
+(define (sym-i64-copy [source : SymI64Env]) : SymI64Env
+  (let
+    [cursor : SymI64Env (sym-i64-shared-view (& source))]
+    [count : i64 0]
+    (begin
+      (while (>= cursor.head 0)
+        (match (sym-i64-view (sym-i64-shared-view (& cursor)))
+          [(SymI64ViewNil) unit]
+          [(SymI64ViewBind _ _ rest)
+            (begin
+              (set! count (+ count 1))
+              (set! cursor rest))]))
+      (let
+        [bindings : (__tl_dyn-array SymI64Binding)
+          (__tl_make-array SymI64Binding count)]
+        [index : i64 0]
+        [out : SymI64Env (sym-i64-empty)]
+        (begin
+          (set! cursor source)
+          (while (< index count)
+            (match (sym-i64-view (sym-i64-shared-view (& cursor)))
+              [(SymI64ViewNil) unit]
+              [(SymI64ViewBind key value rest)
+                (begin
+                  (set! (array-ref bindings index) (SymI64Binding key value -1))
+                  (set! index (+ index 1))
+                  (set! cursor rest))]))
+          (while (> index 0)
+            (begin
+              (set! index (- index 1))
+              (let
+                [binding : SymI64Binding (array-ref bindings index)]
+                (set! out (sym-i64-bind-id out binding.key binding.value)))))
+          out)))))

@@ -187,6 +187,17 @@
 (define (surface-typecheck-facts-current) : SurfaceTypecheckFacts
   (surface-typecheck-facts-installed-shared-view))
 
+;; Transfer the installed publication into the caller's current arena before
+;; its source frontend is retired. Keep both activation and composite status;
+;; prefix rebasing still belongs to macro expansion/typechecking. The caller
+;; must clear the publication before releasing the destination owner.
+(define (surface-typecheck-facts-retain-current!) : unit
+  (if surface-typecheck-facts-installed
+    (set!
+      (array-ref surface-typecheck-facts-installed-value 0)
+      (clone (surface-typecheck-facts-installed-shared-view)))
+    unit))
+
 (define (surface-typecheck-facts-composite-active?) : bool
   (and
     surface-typecheck-facts-installed

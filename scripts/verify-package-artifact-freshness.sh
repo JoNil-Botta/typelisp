@@ -45,6 +45,202 @@ fail() {
     exit 1
 }
 
+# Package ELF preparation translates artifact kind and delegates to the shared
+# source/package capability owner. Keep serializer decisions out of this seam.
+check_direct_object_boundary() {
+    awk '
+        /^\(define \(build-package-render-linux-direct-object$/ { active = 1; found += 1; next }
+        active && /^\(/ { active = 0 }
+        active {
+            if ($0 ~ /build_run_core[.]source-tool-render-linux-direct-object/) calls += 1
+            if ($0 ~ /compiler_object_elf[.]|compiler-object-symbol-list-contains[?]|\(cond|\(if/) forbidden += 1
+        }
+        END { exit !(found == 1 && calls == 1 && forbidden == 0) }
+    ' "$1"
+}
+
+check_direct_object_boundary src/build_cli_core.tl || fail "package ELF route bypasses shared capability owner"
+sed 's/build_run_core.source-tool-render-linux-direct-object/unowned-renderer/' \
+    src/build_cli_core.tl > "$WORK/bypassed-owner.tl"
+if check_direct_object_boundary "$WORK/bypassed-owner.tl"; then
+    fail "package ELF boundary guard accepted a bypassed owner"
+fi
+sed '/^  (build_run_core.source-tool-render-linux-direct-object$/a\
+    (compiler_object_elf.compiler-object-elf-image-supported? image)' \
+    src/build_cli_core.tl > "$WORK/duplicated-capability.tl"
+if check_direct_object_boundary "$WORK/duplicated-capability.tl"; then
+    fail "package ELF boundary guard accepted duplicated capability checks"
+fi
+
+# Route selection may read source declarations; artifact emission consumes the
+# resulting route and one lowered program, with no source frontend to revisit.
+check_package_lowered_route() {
+    awk '
+        /^[[:space:]]*\(define \(/ {
+            mode = ""; route_lower = 0
+            if ($0 ~ /\(build-package-(try-prepare-direct-runtime|prepare-owned-runtime)$/) { mode = "prepare"; prepare += 1 }
+            if ($0 ~ /\(build-package-(emit-preflighted-runtime|emit-assembly-fallback)$/) { mode = "emit"; emit += 1 }
+        }
+        mode == "prepare" {
+            if ($0 ~ /compiler-driver-(lower-package-loaded|package-runtime-lower)/) { lower_calls += 1; route_lower += 1 }
+            if ($0 ~ /\(build-package-direct-object-preflight$/) { policy_calls += 1; if (route_lower) forbidden += 1 }
+            if ($0 ~ /\(build-package-emit-preflighted-runtime$/) handoff += 1
+        }
+        mode == "emit" {
+            if ($0 ~ /AstDecl|AstNode|compiler-driver-(lower|load|emit)-package/) forbidden += 1
+            if ($0 ~ /\[lowered : compiler_driver_core.ResultCompilerDriverLowered\]/) inputs += 1
+        }
+        END { exit !(prepare == 2 && emit == 2 && lower_calls == 2 && policy_calls == 2 && handoff == 2 && inputs == 2 && forbidden == 0) }
+    ' "$1"
+}
+check_package_lowered_route src/build_cli_core.tl || fail "package emission does not consume one lowered result"
+sed 's/compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt$/compiler-driver-emit-package-loaded/' \
+    src/build_cli_core.tl > "$WORK/relowered-fallback.tl"
+if check_package_lowered_route "$WORK/relowered-fallback.tl"; then
+    fail "package route guard accepted lowering inside assembly fallback"
+fi
+sed '/^[[:space:]]*\[lowered : compiler_driver_core.ResultCompilerDriverLowered\]$/a\
+  [decls : ast.AstDeclList]' \
+    src/build_cli_core.tl > "$WORK/frontend-in-emission.tl"
+if check_package_lowered_route "$WORK/frontend-in-emission.tl"; then
+    fail "package route guard accepted source declarations in emission"
+fi
+
+# Artifact finishing consumes complete byte/text outputs. It cannot accept a
+# frontend graph or invoke preparation again after the checked surface capture.
+check_prepared_runtime_boundary() {
+    awk '
+        /^[[:space:]]*\(define \(/ {
+            mode = ""
+            if ($0 ~ /\(build-package-finish-prepared-runtime$/) { mode = "finish"; finish += 1 }
+            if ($0 ~ /\(build-package-finish-direct-fresh-artifacts$/) { mode = "direct"; direct += 1 }
+            if ($0 ~ /\(build-package-finish-fresh-artifacts-with-surface$/) { mode = "capture"; capture += 1 }
+        }
+        mode == "finish" || mode == "direct" {
+            if ($0 ~ /AstDecl|AstNode|CompilerIr|build-package-prepare(-owned)?-runtime|compiler-driver-(emit|lower)-package|compiler-driver-package-runtime-lower/) forbidden += 1
+        }
+        mode == "finish" && $0 ~ /\(match prepared$/ { consume += 1 }
+        mode == "capture" {
+            if (handoff) {
+                if ($0 ~ /^[[:space:]]*prepared$/) passed += 1
+                handoff = 0
+            }
+            if ($0 ~ /\(build-package-prepare-owned-runtime$/) prepare += 1
+            if ($0 ~ /\(build-package-finish-prepared-runtime$/) { finish_call += 1; handoff = 1 }
+        }
+        END { exit !(finish == 1 && direct == 1 && capture == 1 && forbidden == 0 && consume == 1 && prepare == 1 && finish_call == 1 && passed == 1) }
+    ' "$1"
+}
+
+check_prepared_runtime_boundary src/build_cli_core.tl || fail "package artifact finishing does not consume one prepared runtime"
+sed 's/(match prepared$/(match (build-package-prepare-runtime request)/' \
+    src/build_cli_core.tl > "$WORK/reprepared-runtime.tl"
+if check_prepared_runtime_boundary "$WORK/reprepared-runtime.tl"; then
+    fail "prepared runtime guard accepted preparation inside artifact finishing"
+fi
+sed '/^[[:space:]]*(build-package-finish-prepared-runtime$/ { n; s/^[[:space:]]*prepared$/                      (build-package-prepare-runtime request)/; }' \
+    src/build_cli_core.tl > "$WORK/reprepared-handoff.tl"
+if check_prepared_runtime_boundary "$WORK/reprepared-handoff.tl"; then
+    fail "prepared runtime guard accepted repeated preparation at handoff"
+fi
+sed '/^  \[prepared : ResultBuildPackagePreparedRuntime\]$/a\
+  [decls : ast.AstDeclList]' \
+    src/build_cli_core.tl > "$WORK/retained-frontend.tl"
+if check_prepared_runtime_boundary "$WORK/retained-frontend.tl"; then
+    fail "prepared runtime guard accepted a retained frontend graph"
+fi
+# Export finishing cannot keep or revisit the parsed frontend. The capture
+# belongs before the one runtime preparation and transfers only text/catalogs.
+check_package_export_boundary() {
+    awk '
+        /^[[:space:]]*\(define \(/ {
+            mode = ""
+            if ($0 ~ /\(build-package-tlci-text-with-surface$/) { mode = "finish"; finish += 1 }
+            if ($0 ~ /\(build-package-finish-fresh-artifacts-with-surface$/) { mode = "pipeline"; pipeline += 1 }
+        }
+        mode == "finish" {
+            if ($0 ~ /AstDecl|AstNode|TlciNativeMacroCaptures|build-package-tlci-(callable|macro)-collector|embedded-native-emit-package$/) forbidden += 1
+            if ($0 ~ /embedded-native-emit-package-source/) source_emit += 1
+        }
+        mode == "pipeline" {
+            if ($0 ~ /\(build-package-tlci-capture-exports$/) { capture += 1; if (prepared) forbidden += 1 }
+            if ($0 ~ /\(build-package-prepare-owned-runtime$/) prepared += 1
+            if ($0 ~ /\(package_surface[.]package-surface-capture-take/) taken += 1
+            if ($0 ~ /compiler-driver-package-runtime-scope-release!/) { released += 1; if (!taken) forbidden += 1 }
+            if ($0 ~ /\(build-package-tlci-text-with-surface$/ && !released) forbidden += 1
+        }
+        END { exit !(finish == 1 && pipeline == 1 && source_emit == 1 && capture == 1 && prepared == 1 && taken == 1 && released == 1 && forbidden == 0) }
+    ' "$1"
+}
+check_package_export_boundary src/build_cli_core.tl || fail "package export finishing retains the parsed frontend"
+sed '/^[[:space:]]*\[exports : ResultBuildPackageTlciExports\]$/a\
+    [decls : ast.AstDeclList]' \
+    src/build_cli_core.tl > "$WORK/retained-export-frontend.tl"
+if check_package_export_boundary "$WORK/retained-export-frontend.tl"; then
+    fail "package export guard accepted frontend inputs to finishing"
+fi
+sed 's/embedded-native-emit-package-source$/embedded-native-emit-package/' \
+    src/build_cli_core.tl > "$WORK/recaptured-export-source.tl"
+if check_package_export_boundary "$WORK/recaptured-export-source.tl"; then
+    fail "package export guard accepted native capture during finishing"
+fi
+sed 's/(build-package-tlci-capture-exports$/(uncaptured-package-exports/' \
+    src/build_cli_core.tl > "$WORK/uncaptured-export-source.tl"
+if check_package_export_boundary "$WORK/uncaptured-export-source.tl"; then
+    fail "package export guard accepted missing capture before runtime"
+fi
+# Checked lowering has one owner for pool adoption, error cleanup and arena
+# restoration. Source and PIC routes must share it with package retirement.
+check_driver_checked_handoff() {
+    awk '
+        /^\(define \(/ {
+            route = 0; owner = 0
+            if ($0 ~ /\(compiler-driver-(load-and-lower-(escaping|pic-image)-with-state-and-retirement|package-runtime-lower)$/) { route = 1; routes += 1 }
+            if ($0 ~ /\(compiler-driver-state-(begin|finish)-checked-lower!$/) { owner = 1; owners += 1 }
+        }
+        route {
+            if ($0 ~ /compiler-driver-state-begin-checked-lower!/) begin_calls += 1
+            if ($0 ~ /compiler-driver-state-finish-checked-lower!/) finish_calls += 1
+            if ($0 ~ /compiler-lower-checked-dest-pools-(use|clear|abort-uncommitted)!|compiler-driver-state-adopt-pools!/) forbidden += 1
+        }
+        owner && $0 ~ /\(arena[.]Arena \(compiler-driver-state-surface-arena state\)\)/ { retained += 1 }
+        END { exit !(routes == 3 && owners == 2 && begin_calls == 3 && finish_calls == 3 && retained == 2 && forbidden == 0) }
+    ' "$1"
+}
+check_driver_checked_handoff src/compiler_driver_core.tl || fail "driver paths duplicate checked-pool ownership"
+sed 's/(compiler-driver-state-finish-checked-lower!$/(unowned-checked-finish/' \
+    src/compiler_driver_core.tl > "$WORK/bypassed-checked-handoff.tl"
+if check_driver_checked_handoff "$WORK/bypassed-checked-handoff.tl"; then
+    fail "checked handoff guard accepted a bypassed finish owner"
+fi
+sed 's/(arena.Arena (compiler-driver-state-surface-arena state))/(arena.current)/' \
+    src/compiler_driver_core.tl > "$WORK/temporary-checked-handoff.tl"
+if check_driver_checked_handoff "$WORK/temporary-checked-handoff.tl"; then
+    fail "checked handoff guard accepted bookkeeping in a retiring arena"
+fi
+# Generated package specializations bypass ordinary function lowering. Their
+# complete IR must cross the same canonical retention boundary.
+check_package_spmd_ir_owner() {
+    awk '
+        /^\(define \(/ {
+            active = ($0 ~ /\(lower-spmd-package-callable-functions$/)
+            if (active) found += 1
+        }
+        active && $0 ~ /\(lower-function-seq-escape-to-ir-arena functions\)/ { retained += 1 }
+        END { exit !(found == 1 && retained == 1) }
+    ' "$1"
+}
+check_package_spmd_ir_owner src/compiler_lower.tl || fail "package SPMD functions bypass retained IR ownership"
+sed 's/(lower-function-seq-escape-to-ir-arena functions)/(unowned-package-functions functions)/' \
+    src/compiler_lower.tl > "$WORK/unowned-spmd-functions.tl"
+if check_package_spmd_ir_owner "$WORK/unowned-spmd-functions.tl"; then
+    fail "package SPMD guard accepted frontend-owned IR"
+fi
+if [ "${1:-}" = --boundary-self-test ]; then
+    echo "package and driver ownership boundaries: owner and mutation checks passed"
+    exit 0
+fi
+
 assert_contains() {
     file=$1
     text=$2

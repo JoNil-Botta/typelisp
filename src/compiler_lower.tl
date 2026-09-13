@@ -68464,7 +68464,7 @@
                   ir.CompilerIrSpmdBackend.Scalar)]
               [count : i64
                 (ast.ast-spmd-specialization-list-len (& specializations))]
-              (lower-spmd-package-specializations-from
+              (match (lower-spmd-package-specializations-from
                 ctx
                 top-env
                 type-cache
@@ -68480,7 +68480,16 @@
                 spans
                 names
                 mode
-                (ir.compiler-ir-function-builder-with-capacity count)))))])))
+                (ir.compiler-ir-function-builder-with-capacity count))
+                [(ResultLowerFunction.Err message)
+                  (ResultLowerFunction.Err message)]
+                [(ResultLowerFunction.Ok functions next-spans)
+                  ;; Generated package functions bypass lower-function-escaping.
+                  ;; Their parameters, blocks and instructions need the same
+                  ;; retained IR owner before checked frontend retirement.
+                  (ResultLowerFunction.Ok
+                    (lower-function-seq-escape-to-ir-arena functions)
+                    next-spans)]))))])))
 
 (define (lower-avx512-emit-spmd-call
   [ctx : tc_core.TcContext]

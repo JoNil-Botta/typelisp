@@ -52,6 +52,11 @@
         (export-test-paths rest))]))
 
 (define (export-test-capture [source : String]) : build.ResultBuildPackageTlciExports
+  (export-test-capture-with-mode source (backend.CompilerBackendMode.Scalar)))
+
+(define (export-test-capture-with-mode
+  [source : String]
+  [mode : backend.CompilerBackendMode]) : build.ResultBuildPackageTlciExports
   (let
     [home : arena.Arena (arena.current)]
     [home-pools : ast.AstNodePoolContext
@@ -97,7 +102,7 @@
                       home
                       (build.build-package-tlci-capture-exports
                         manifest
-                        (backend.CompilerBackendMode.Scalar)
+                        mode
                         decls
                         paths
                         sources)))])])]
@@ -235,3 +240,21 @@
                             (string.eq specialization.args "vu")
                             (= specialization.index-param 0))))))]))
             (io.panic "retired callable metadata lost its resolved signature"))]))))
+
+(test
+  package-export-error-survives-capture-and-frontend-retirement
+  (let
+    [exports : build.ResultBuildPackageTlciExports
+      (export-test-capture-with-mode
+        "(module capture.macros)\n(define (helper [x : i64]) (:spmd-callable (specialization (lanes 8) (args varying) (result varying) (index-param 0))) : i64 x)"
+        (backend.CompilerBackendMode.Avx2))]
+    (begin
+      (export-test-reuse!)
+      (match exports
+        [(build.ResultBuildPackageTlciExports.Err message)
+          (unless
+            (string.eq
+              message
+              "build: :spmd-callable is not supported with --backend-mode avx2")
+            (io.panic "retired package export diagnostic changed"))]
+        [_ (io.panic "unsupported package export unexpectedly captured")]))))

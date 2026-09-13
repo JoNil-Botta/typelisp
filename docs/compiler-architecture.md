@@ -136,6 +136,18 @@ closed [compiler-owned executable template registry](compiler-x64-executable-tem
 It records mutation-sensitive source identities and typed control/frame events
 for later native-code certification.
 
+Expression node IDs belong to an AST pool. Literal analysis in
+`compiler_typecheck_core.tl` snapshots the context's expression owner for its
+read-only walk and shares the AST unspanner with other structural consumers. The
+scalar owner accessor borrows the context field directly; it must not copy the
+complete pool aggregate merely to read its segment-base token.
+An unrelated installed pool must not change literal classification, contextual
+numeric types, or retained source provenance. The explicit compatibility route follows
+its selected pool; macro-capable walks must resolve their owner again after a
+possible pool install. The `tc-literal-expression-pool-isolation` inline test
+covers colliding IDs, nested source views, expansion wrappers, and contextual
+overflow rejection.
+
 ### Package direct-object routing
 
 Package route preflight reads live declarations once, before lowering.

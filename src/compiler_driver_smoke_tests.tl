@@ -1193,6 +1193,15 @@
     (unless
       (compiler-driver-reader-context-smoke-ok?)
       (io.panic "compiler-driver: reader context isolation failed"))
+    42))
+
+;; The reader-context smoke intentionally exercises low-level pool/reader
+;; switching. Keep this end-to-end frontend sequence in its own suite child,
+;; while all A/B cfg jobs remain in one process to test their isolation.
+(define (compiler-driver-generated-cfg-smoke-main) : i64
+  (begin
+    (cbi.compiler-builtin-reset!)
+    (cbi.compiler-builtin-initialize-for-parse!)
     (unless
       (compiler-driver-generated-cfg-isolation-ok?)
       (io.panic "compiler-driver: generated cfg isolation failed"))

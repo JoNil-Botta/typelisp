@@ -72,6 +72,8 @@
       (begin
         (cbi.compiler-builtin-initialize-for-parse!)
         (compiler_driver_smoke_tests.compiler-driver-reader-context-smoke-main))]
+    [(string.eq name "driver-generated-cfg")
+      (compiler_driver_smoke_tests.compiler-driver-generated-cfg-smoke-main)]
     [(string.eq name "driver-typecheck-cache-owner")
       (if (compiler_driver_smoke_tests.compiler-driver-typecheck-cache-owner-smoke-ok?)
         42
@@ -126,6 +128,9 @@
       (compiler-smoke-suite-require-child
         "driver-reader-context"
         "compiler smoke suite: compiler_driver_reader_context_smoke failed")
+      (compiler-smoke-suite-require-child
+        "driver-generated-cfg"
+        "compiler smoke suite: generated cfg isolation failed")
       (compiler-smoke-suite-require-child
         "driver-typecheck-cache-owner"
         "compiler smoke suite: typecheck cache owner isolation failed")

@@ -18,7 +18,7 @@ in [`../scripts/README.md`](../scripts/README.md).
 `Decls` and `Module` macros, including nested expansion and inactive missing
 imports. Both native manifests run it at every optimization level. Also run it
 with `--cfg generated-cfg-feature` to exercise the opposite custom branch.
-The consolidated codegen suite's `driver-reader-context` child alternates custom
+The consolidated codegen suite's `driver-generated-cfg` child alternates custom
 flags and Linux/Windows targets across two reusable driver states, checks that
 B leaves A's intern/pool counts intact, and reuses A after changing its flags.
 Keep that test on the canonical driver path; a cfg string in a cache key alone

@@ -2031,8 +2031,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # measured 30,724 used nodes: 31 segments, 31,744 capacity, and 761,856
     # physical payload bytes. The node width remains 24 bytes; the other three
     # selfhost pool boundaries retain their exact pins.
+    # PR #7808's generated-import consolidation returns this boundary to 30
+    # segments. Windows CI run 34741138729 at 189bb75b measured 30,712 used
+    # nodes, 30,720 capacity and 737,280 physical payload bytes. Keep the exact
+    # family assertion; this refresh reduces its retained-capacity pin.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool macro_expand 31 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool macro_expand 30 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # #6828's dense flag-exit/BCE storage declarations cross the next type-pool
     # typecheck boundary: the authoritative Windows probe measured 9,221 used

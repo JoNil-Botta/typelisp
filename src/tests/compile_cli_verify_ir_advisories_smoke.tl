@@ -84,7 +84,7 @@
         (cli.compile-cli-reject-windows-batch-artifact-on-ir-verification
           (windows.ResultCompilerWindowsBatchArtifact.Assembly
             (text_buf.empty)
-            "unused"
+            backend.CompilerDirectObjectFallbackReason.ForcedAssembly
             (advisories "assembly" ""))
           "verify-assembly"))]
     [windows-err : bool

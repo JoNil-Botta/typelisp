@@ -2,7 +2,72 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_intern as ci)
 (import sym_i64_env)
+(import stdlib.string)
+(import compiler_owned_view as owned_view)
 (cfg test (import stdlib.test))
+
+;; Snapshot bindings retain source order, duplicate shadowing and zero values.
+;; Restoring re-interns names in the active destination session; raw cfg IDs
+;; never cross the owner boundary.
+(defstruct CompilerCfgSnapshot
+  (slots (__tl_dyn-array String))
+  (values (__tl_dyn-array i64))
+  (len i64))
+
+(define (compiler-cfg-env-binding-count [cfgs : sym_i64_env.SymI64Env]) : i64
+  (match (sym_i64_env.sym-i64-view cfgs)
+    [(sym_i64_env.SymI64ViewNil) 0]
+    [(sym_i64_env.SymI64ViewBind _ _ rest)
+      (+ 1 (compiler-cfg-env-binding-count rest))]))
+
+(define (compiler-cfg-snapshot-fill!
+  [cfgs : sym_i64_env.SymI64Env]
+  [slots : (__tl_dyn-array String)]
+  [values : (__tl_dyn-array i64)]
+  [index : i64]) : unit
+  (match (sym_i64_env.sym-i64-view cfgs)
+    [(sym_i64_env.SymI64ViewNil) unit]
+    [(sym_i64_env.SymI64ViewBind key value rest)
+      (begin
+        ;; Snapshot names outlive the originating interner and its persistent arena.
+        (set! (array-ref slots index) (string.copy (compiler-cfg-name key)))
+        (set! (array-ref values index) value)
+        (compiler-cfg-snapshot-fill! rest slots values (+ index 1)))]))
+
+(define (compiler-cfg-snapshot-from-env [cfgs : sym_i64_env.SymI64Env]) : CompilerCfgSnapshot
+  (let
+    [count : i64
+      (compiler-cfg-env-binding-count
+        (owned_view.compiler-owned-shared-view cfgs))]
+    [slots : (__tl_dyn-array String) (__tl_make-array String count)]
+    [values : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    (begin
+      (compiler-cfg-snapshot-fill!
+        cfgs
+        (owned_view.compiler-owned-shared-view slots)
+        (owned_view.compiler-owned-shared-view values)
+        0)
+      (CompilerCfgSnapshot slots values count))))
+
+(define (compiler-cfg-snapshot-to-env [names : CompilerCfgSnapshot]) : sym_i64_env.SymI64Env
+  (let
+    [env : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
+    [index : i64 names.len]
+    (begin
+      (while (> index 0)
+        (begin
+          (set! index (- index 1))
+          (set!
+            env
+            (compiler-cfg-bind
+              env
+              (owned_view.compiler-owned-array-element-shared-view
+                names.slots
+                index)
+              (owned_view.compiler-owned-array-element-shared-view
+                names.values
+                index)))))
+      env)))
 
 (defstruct CompilerCfgKey
   (value i64))

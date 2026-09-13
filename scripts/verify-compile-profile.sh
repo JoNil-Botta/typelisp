@@ -2031,6 +2031,11 @@ if [ "$NL_HOST_OS" = windows ]; then
     # measured 30,724 used nodes: 31 segments, 31,744 capacity, and 761,856
     # physical payload bytes. The node width remains 24 bytes; the other three
     # selfhost pool boundaries retain their exact pins.
+    # PR #7808 on main 0e672d6a used 30,712 nodes (run 34741138729).
+    # After main's affine-table change #7800, run 34744653544 tested merge
+    # adc852ce (4484b66e + 9c05981c) and used 30,747 nodes: 31 segments,
+    # 31,744 capacity and 761,856 payload bytes. Pin the combined source graph;
+    # the earlier 30-segment result cannot describe this different input.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 31 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

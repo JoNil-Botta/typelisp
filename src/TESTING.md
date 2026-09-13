@@ -87,19 +87,35 @@ owned keys/values, and every capacity growth in that same dedicated arena.
 Restore the caller's active arena after each operation, but never reclaim the
 dedicated arena until its complete required lifetime ends.
 
-`compiler-load-provenance-arena` in
-[`compiler_load.tl`](compiler_load.tl) is the process-lifetime positive example:
-the embedded-module provenance set and equivalence/catalog caches allocate and
-regrow there, while resets clear their logical bindings without resetting the
-arena. Its integer keys must be interned through the owning
-`CompilerLoadSessionState`; an explicitly targeted load operation must not use
-an unrelated compatibility table that another job installed. The load
-self-test proves this with colliding A/B IDs and an installed decoy whose pool
-length and table identity remain unchanged. A dedicated arena is not
-automatically never-reset;
-`tc-hygiene-module-env-cache-arena` in
-[`compiler_typecheck_core.tl`](compiler_typecheck_core.tl) only needs to cross
-scratch rewinds and therefore has an explicit phase reset/teardown.
+Standalone load sessions give embedded provenance and dotted-path payloads
+separate session-owned arenas. These survive caller scratch rewinds, and their
+reset boundaries clear the dependent maps/slots before releasing storage. Path
+lookups copy both hits and misses into the caller's arena. Explicit provenance
+operations use the intern domain bound to their `CompilerLoadSessionState`; an
+installed decoy must not change that identity. The load self-test exercises
+colliding A/B IDs and an installed decoy whose pool length and table identity
+remain unchanged.
+
+`test --batch` and package test entries own their compiler pool context, load
+session and serial typecheck job. Their common finish boundary consumes the
+scalar result, clears aliases while the entry is alive, retires private storage,
+restores the parent selectors, then destroys the entry owner. A reusable cache
+reset is insufficient here: aggregate-layout payloads normally wait for another
+lookup, and empty-env resets can recreate the scoped-environment arena. Terminal
+job retirement releases those owners after the last reset.
+`test_cli_entry_memory_smoke.tl` exercises twelve ordinary inline entries in
+one process and checks retained bytes after four warm-up entries. The small
+leaf still compiles and executes its test each time; all eight measured entries
+must retain at most 1 MiB in total. Both native manifests cover this resource
+boundary, and the original main implementation fails its retained-byte check.
+`test_cli_entry_state_smoke.tl` checks parent selectors and explicit intern
+bindings after success/error scalar results, and verifies copied cache hits and
+misses survive cache reset after the caller scratch arena has been destroyed.
+Macro hygiene retirement requires no active root; the debug runtime permits that explicit
+retirement while continuing to reject ordinary reset/destroy of protected roots.
+`scripts/verify-compiler-arena-debug.sh` builds a test-enabled emitter (which
+contains the optional debug templates) and checks all fifteen native fixture
+operations on each CI host, including grown-owner retirement and invalid handles.
 
 For a regression test of retained mid-walk state, exercise the invalidating
 sequence rather than only testing insertion and lookup in one context:

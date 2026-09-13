@@ -41,6 +41,8 @@
   -1)
 (define compiler-builtin-id-tl-arena-debug-assert-pool-install : i64
   -1)
+(define compiler-builtin-id-tl-arena-debug-retire-protected : i64
+  -1)
 (define compiler-builtin-id-tl-thread-entry-ptr : i64
   -1)
 (define compiler-builtin-id-tl-thread-init : i64
@@ -803,7 +805,7 @@
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [metadata : (__tl_dyn-array i64) (__tl_make-array i64 4)]
-    [ids : (__tl_dyn-array i64) (__tl_make-array i64 320)]
+    [ids : (__tl_dyn-array i64) (__tl_make-array i64 321)]
     [ctfe-ids : (__tl_dyn-array i64) (__tl_make-array i64 294)]
     [i : i64 0]
     (begin
@@ -811,7 +813,7 @@
       (set! (array-ref metadata 1) -1)
       (set! (array-ref metadata 2) -1)
       (set! (array-ref metadata 3) 0)
-      (while (< i 320)
+      (while (< i 321)
         (begin
           (set! (array-ref ids i) -1)
           (set! i (+ i 1))))
@@ -1301,6 +1303,7 @@
     (state-set! state 318 compiler-builtin-id-tl-mem-copy8-fwd)
     ;; Append-only reset-aware slot for the compiler-private aligned allocator.
     (state-set! state 319 compiler-builtin-id-tl-alloc-aligned)
+    (state-set! state 320 compiler-builtin-id-tl-arena-debug-retire-protected)
     (state-capture-ctfe-ids! state)))
 
 (define (state-capture) : CompilerBuiltinIdsState
@@ -1360,6 +1363,9 @@
     (set! compiler-builtin-id-tl-mem-copy-fwd (state-ref state 317))
     (set! compiler-builtin-id-tl-mem-copy8-fwd (state-ref state 318))
     (set! compiler-builtin-id-tl-alloc-aligned (state-ref state 319))
+    (set!
+      compiler-builtin-id-tl-arena-debug-retire-protected
+      (state-ref state 320))
     (set! compiler-builtin-id-string-length (state-ref state 44))
     (set! compiler-builtin-id-length (state-ref state 45))
     (set! compiler-builtin-id-string-eq (state-ref state 46))
@@ -2130,6 +2136,11 @@
     (set!
       compiler-builtin-id-tl-arena-poison-enable
       (compiler-builtin-resolve-name insert-missing "tl_arena_poison_enable"))
+    (set!
+      compiler-builtin-id-tl-arena-debug-retire-protected
+      (compiler-builtin-resolve-name
+        insert-missing
+        "tl_arena_debug_retire_protected"))
     (set!
       compiler-builtin-id-tl-arena-debug-protect-never-reset
       (compiler-builtin-resolve-name
@@ -3574,18 +3585,20 @@
         compiler-builtin-id-tl-arena-poison-enable
         compiler-builtin-id-tl-thread-entry-ptr
         compiler-builtin-id-tl-thread-init)
-      (compiler-builtin-id-any2?
+      (compiler-builtin-id-any3?
         name-id
         compiler-builtin-id-tl-arena-debug-protect-never-reset
-        compiler-builtin-id-tl-arena-debug-assert-pool-install))))
+        compiler-builtin-id-tl-arena-debug-assert-pool-install
+        compiler-builtin-id-tl-arena-debug-retire-protected))))
 
 (define (compiler-builtin-backend-runtime-arena-debug-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)
-    (compiler-builtin-id-any2?
+    (compiler-builtin-id-any3?
       name-id
       compiler-builtin-id-tl-arena-debug-protect-never-reset
-      compiler-builtin-id-tl-arena-debug-assert-pool-install)))
+      compiler-builtin-id-tl-arena-debug-assert-pool-install
+      compiler-builtin-id-tl-arena-debug-retire-protected)))
 
 (define (compiler-builtin-backend-runtime-atomic-id? [name-id : i64]) : bool
   (begin

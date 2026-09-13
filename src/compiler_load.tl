@@ -820,7 +820,9 @@
   ;; is itself an arena-backed handle, so reading this record preserves the
   ;; session identity without a reference-typed temporary during bootstrap.
   (owner-arena i64)
-  (shared-address u64))
+  (shared-address u64)
+  (dotted-path-cache-owner-arena (__tl_dyn-array i64))
+  (embedded-provenance-owner-arena (__tl_dyn-array i64)))
 
 ;; Per-source traversal data stays explicit without widening the hot recursive
 ;; declaration-loader call for each independently owned field.
@@ -957,7 +959,9 @@
         (compiler-load-session-state-bool-cell standalone-reset-safe)
         (compiler-load-session-state-i64-cell 0)
         (arena.tl_arena_current)
-        0)]
+        0
+        (compiler-load-session-state-i64-cell 0)
+        (compiler-load-session-state-i64-cell 0))]
     [cell : (__tl_dyn-array CompilerLoadSessionState) (__tl_make-array initial)]
     [address : u64
       (unsafe
@@ -2690,42 +2694,25 @@
 ;; The owning session's intern table gives these ids meaning: embedded source
 ;; and byte-identical disk source may use the catalog, while modified or
 ;; otherwise untrusted roots must expand from their own source.
-(define compiler-load-provenance-arena-handle : i64
-  0)
-
-(define (compiler-load-provenance-arena-handle-value) : i64
-  compiler-load-provenance-arena-handle)
-
-;: Compatibility arena for standalone embedded-provenance adapters. Explicit
-;: compiler sessions allocate their bindings in their owned intern-persistent
-;: arena so the next entry reset reclaims them without affecting another job.
-(define (compiler-load-provenance-arena) : i64
-  (begin
-    (if (= compiler-load-provenance-arena-handle 0)
-      (begin
-        (set! compiler-load-provenance-arena-handle (arena.tl_arena_make_small))
-        (ast.compiler-arena-debug-protect-never-reset!
-          compiler-load-provenance-arena-handle))
-      unit)
-    ;; Re-enter the root-tracked newest segment after an overflow. Selecting
-    ;; the full root again would fork an unreachable sibling chain.
-    (let
-      [head : i64
-        (unsafe
-          (ptr-read
-            (ptr-offset
-              (int->ptr compiler-load-provenance-arena-handle : (Ptr i64))
-              7)))]
-      (if (= head 0)
-        compiler-load-provenance-arena-handle
-        head))))
+(define (compiler-load-session-state-provenance-arena-value
+  [state : CompilerLoadSessionState]) : i64
+  (if (array-ref state.intern-state-ready 0)
+    (ci.intern-compat-state-persistent-arena-current-head
+      (array-ref state.intern-state 0))
+    (array-ref state.embedded-provenance-owner-arena 0)))
 
 (define (compiler-load-session-state-embedded-provenance-arena
   [state : CompilerLoadSessionState]) : i64
   (if (array-ref state.intern-state-ready 0)
     (ci.intern-compat-state-persistent-arena-current-head
       (array-ref state.intern-state 0))
-    (compiler-load-provenance-arena)))
+    (begin
+      (if (= (array-ref state.embedded-provenance-owner-arena 0) 0)
+        (set!
+          (array-ref state.embedded-provenance-owner-arena 0)
+          (arena.tl_arena_make_small))
+        unit)
+      (array-ref state.embedded-provenance-owner-arena 0))))
 
 (define (compiler-load-session-state-embedded-module-ids-shared-view
   [state : CompilerLoadSessionState]) : sym_i64_env.SymI64Env
@@ -2748,7 +2735,15 @@
     (set!
       (array-ref state.embedded-stdlib-provenance.equivalence-cache 0)
       (sym_i64_env.sym-i64-empty))
-    (set! (array-ref state.embedded-stdlib-provenance.noted 0) false)))
+    (set! (array-ref state.embedded-stdlib-provenance.noted 0) false)
+    (let
+      [owner : i64 (array-ref state.embedded-provenance-owner-arena 0)]
+      (begin
+        (set! (array-ref state.embedded-provenance-owner-arena 0) 0)
+        (if (> owner 0)
+          (unsafe
+            (arena.tl_arena_destroy owner))
+          unit)))))
 
 (define (compiler-load-session-state-note-embedded-module!
   [state : CompilerLoadSessionState]
@@ -3598,9 +3593,20 @@
     unit
     (begin
       (set! (array-ref state.dotted-path-cache-ready index) false)
+      (set! (array-ref state.dotted-path-cache-values index) "")
       (compiler-load-session-state-dotted-path-cache-clear-ready!
         state
         (+ index 1)))))
+
+(define (compiler-load-session-state-dotted-path-arena-ensure!
+  [state : CompilerLoadSessionState]) : i64
+  (begin
+    (if (= (array-ref state.dotted-path-cache-owner-arena 0) 0)
+      (set!
+        (array-ref state.dotted-path-cache-owner-arena 0)
+        (arena.tl_arena_make_small))
+      unit)
+    (array-ref state.dotted-path-cache-owner-arena 0)))
 
 (define (compiler-load-session-state-dotted-path-cache-reset!
   [state : CompilerLoadSessionState]) : unit
@@ -3608,6 +3614,14 @@
     (compiler-load-session-state-dotted-path-cache-clear-ready!
       (compiler-load-session-state-shared-view (& state))
       0)
+    (let
+      [owner : i64 (array-ref state.dotted-path-cache-owner-arena 0)]
+      (begin
+        (set! (array-ref state.dotted-path-cache-owner-arena 0) 0)
+        (if (> owner 0)
+          (unsafe
+            (arena.tl_arena_destroy owner))
+          unit)))
     (set!
       (array-ref state.dotted-path-cache-generation 0)
       (ci.intern-generation))))
@@ -3683,21 +3697,25 @@
       module-id)
       [(CompilerLoadSomeString path) path]
       [(CompilerLoadNoString)
-        ;; Cache values must never point into an arena a caller can rewind
-        ;; (a top-level `with-arena` can mark/reset the pool base arena, and
-        ;; the next request would read the freed path back on a cache hit),
-        ;; so allocate them in the never-reset provenance arena.
-        (in-arena
-          (arena.Arena (compiler-load-provenance-arena))
-          (let
-            [path : String
-              (compiler-load-dotted-module-path-uncached module-name)]
-            (begin
-              (compiler-load-session-state-dotted-path-cache-store!
-                (compiler-load-session-state-shared-view (& state))
-                module-id
-                (string.copy path))
-              path)))])))
+        ;; Cache payloads own a generation independent of caller scratch.
+        ;; Both hit and miss paths copy results into the caller's arena before
+        ;; a later cache generation can retire this private storage.
+        (let
+          [retained : String
+            (in-arena
+              (arena.Arena
+                (compiler-load-session-state-dotted-path-arena-ensure!
+                  (compiler-load-session-state-shared-view (& state))))
+              (let
+                [path : String
+                  (compiler-load-dotted-module-path-uncached module-name)]
+                (begin
+                  (compiler-load-session-state-dotted-path-cache-store!
+                    (compiler-load-session-state-shared-view (& state))
+                    module-id
+                    (string.copy path))
+                  path)))]
+          (string.copy retained))])))
 
 (define (compiler-load-dotted-module-path-id
   [module-id : i64]

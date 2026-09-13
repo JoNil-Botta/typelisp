@@ -240,8 +240,8 @@
 ;; The table outlives every lowering/optimizer scratch arena and every intern
 ;; floor reset -- an id handed to the backend must still render -- so its slots,
 ;; its map and its copies of the spellings are bound in a dedicated arena that
-;; is created once and only grows. This is the `compiler-load-provenance-arena`
-;; pattern from CONTRIBUTING.md's compiler arena ownership rule.
+;; is created once and only grows. This follows CONTRIBUTING.md's
+;; full-lifetime compiler arena ownership rule.
 (define compiler-ir-label-arena-handle : i64
   0)
 

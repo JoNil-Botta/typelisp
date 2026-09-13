@@ -3116,6 +3116,7 @@
             (ast.ast-program decls)
             paths
             (tc_core.tc-global-shared-view roots)
+            (tc_core.tc-global-shared-view cfgs)
             (tc_api.compiler-typecheck-prefix-cache-scope
               "typecheck-generated-import-call-site"
               roots

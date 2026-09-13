@@ -126,7 +126,10 @@ only an identity key and cannot replace those semantic inputs.
 Declaration-producing macro expansion threads that environment through scratch
 generations and reparses both `Decls` and `Module` output with that same
 environment. Generated predicates use the canonical parser evaluator;
-constructing an empty dispatch would silently drop enabled declarations. Syntax
+constructing an empty dispatch would silently drop enabled declarations.
+Owned package preparation passes its re-interned cfg environment through runtime
+lowering before the scope retires; object/assembly finishing consumes the
+prepared result and does not reconstruct or reevaluate cfg. Syntax
 head classification does not evaluate predicates and may use the cfg-free
 keyword table. The lowerer's closed core-macro Clone handoff supplies its explicit
 empty source-language cfg set. The `generated_cfg` native fixture and interleaved

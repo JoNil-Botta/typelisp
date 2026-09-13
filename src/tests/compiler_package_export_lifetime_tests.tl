@@ -192,3 +192,46 @@
                 false)
               (export-test-emit-ok? metadata names source true))
             (io.panic "captured native source retained frontend references"))]))))
+
+(test
+  package-export-callable-metadata-survives-frontend-retirement
+  (let
+    [exports : build.ResultBuildPackageTlciExports
+      (export-test-capture
+        "(module capture.macros)\n(define (helper [x : i64] [scale : i64]) (:spmd-callable (specialization (lanes 8) (args varying uniform) (result varying) (index-param 0))) : i64 (+ x scale))")]
+    (begin
+      (export-test-reuse!)
+      (match exports
+        [(build.ResultBuildPackageTlciExports.Err message) (io.panic message)]
+        [(build.ResultBuildPackageTlciExports.Ok metadata names source)
+          (unless
+            (and
+              (= (array-length names) 0)
+              (string.eq source "")
+              (match (tlci.tlci-metadata-parse metadata)
+                [(tlci.ResultTlciMetadata.Err _) false]
+                [(tlci.ResultTlciMetadata.Ok parsed)
+                  (and
+                    (string.eq parsed.version "v2")
+                    (= (tlci.tlci-spmd-callables-len parsed.spmd-callables) 1)
+                    (let
+                      [callable : tlci.TlciSpmdCallable
+                        (tlci.tlci-spmd-callables-ref parsed.spmd-callables 0)]
+                      (and
+                        (string.eq callable.name "capture.macros/helper")
+                        (string.eq callable.signature "(-> i64 i64 i64)")
+                        (=
+                          (tlci.tlci-spmd-specializations-len
+                            callable.specializations)
+                          1)
+                        (let
+                          [specialization : tlci.TlciSpmdSpecialization
+                            (tlci.tlci-spmd-specializations-ref
+                              callable.specializations
+                              0)]
+                          (and
+                            (string.eq specialization.backend "scalar")
+                            (= specialization.lanes 1)
+                            (string.eq specialization.args "vu")
+                            (= specialization.index-param 0))))))]))
+            (io.panic "retired callable metadata lost its resolved signature"))]))))

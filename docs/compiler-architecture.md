@@ -79,6 +79,15 @@ requests. Generated import spans and declaration paths both refer to the macro
 call site; materialization failures preserve the dependency diagnostic and add
 that call site as a structured related location.
 
+Macro surface searches borrow declaration records while inspecting their module,
+name and kind. A rejected candidate must not clone signature or parameter-list
+payloads. `compiler-load-surface-decl-list-borrow-at` ties the view to its source
+list; the owning accessor remains available for retained payloads. A selected
+macro call result copies its parameter and return-type payloads before leaving
+the borrowed view. Summary reset must not invalidate that retained signature.
+The surface-macro smoke test checks first/last/missing names, interner identity,
+and retained selection across summary destruction.
+
 The loader's path-aware namespace validators serve source imports and the
 completed macro expansion. They run at the expansion boundary, after generated
 imports have become canonical markers. Dotted-alias keys combine the importer

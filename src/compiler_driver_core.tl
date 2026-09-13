@@ -1,5 +1,6 @@
 ;; compiler_driver_core.tl - Import-aware selfhost compiler driver helpers.
 (import compiler_owned_view as owned_view)
+(import compiler_surface_facts as surface_facts)
 (import stdlib.arena)
 (import stdlib.byte_buf)
 (import stdlib.io)
@@ -31,7 +32,6 @@
   embedded-stdlib-tlci
   (import compiler_surface_identity as surface_identity))
 (cfg embedded-stdlib-tlci (import compiler_surface_ast as surface_ast))
-(cfg embedded-stdlib-tlci (import compiler_surface_facts))
 (cfg embedded-stdlib-tlci (import compiler_surface_hydrate))
 (cfg
   embedded-stdlib-tlci
@@ -138,10 +138,11 @@
     i64
     compiler_backend.CompilerBackendState))
 
-(define (compiler-driver-state-new-from-pools-and-arena
+(define (compiler-driver-state-new-from-pools-arena-and-load-session
   [expr-pool : compiler_ast_types.AstExprNodePoolState]
   [type-pool : compiler_ast_types.AstTypeNodePoolState]
-  [pool-arena : i64]) : CompilerDriverState
+  [pool-arena : i64]
+  [load-session : compiler_load.CompilerLoadSessionState]) : CompilerDriverState
   (let
     [expr-cell : (__tl_dyn-array compiler_ast_types.AstExprNodePoolState)
       (__tl_make-array compiler_ast_types.AstExprNodePoolState 1)]
@@ -221,7 +222,7 @@
                 0))
             builtin-cell
             lower-cell
-            (compiler_load.compiler-load-session-state-new)
+            load-session
             typecheck-state
             backend-state
             (compiler_typecheck_core.tc-prefix-snapshot-cache-state-new)
@@ -275,7 +276,8 @@
       (compiler-driver-detached-compat-pools-shared-view))
     unit))
 
-(define (compiler-driver-state-new-for-compile) : CompilerDriverState
+(define (compiler-driver-state-new-for-compile-with-load-session
+  [load-session : compiler_load.CompilerLoadSessionState]) : CompilerDriverState
   (let
     [pool-arena : i64 (compiler_ast_types.ast-node-pool-arena-make)]
     [pools : compiler_ast_types.AstNodePoolContext
@@ -284,10 +286,11 @@
         compiler-driver-compile-type-pool-initial-capacity
         pool-arena)]
     [state : CompilerDriverState
-      (compiler-driver-state-new-from-pools-and-arena
+      (compiler-driver-state-new-from-pools-arena-and-load-session
         (owned_view.compiler-owned-array-element-shared-view pools.expr-pool 0)
         (owned_view.compiler-owned-array-element-shared-view pools.type-pool 0)
-        (compiler_ast_types.ast-node-pool-context-base-arena pools))]
+        (compiler_ast_types.ast-node-pool-context-base-arena pools)
+        load-session)]
     (begin
       (cbi.state-capture-from-globals! (&mut (array-ref state.builtin-ids 0)))
       (compiler_lower.compiler-lower-arena-state-capture-from-globals!
@@ -297,6 +300,10 @@
               state.lower-state-address
               0))))
       state)))
+
+(define (compiler-driver-state-new-for-compile) : CompilerDriverState
+  (compiler-driver-state-new-for-compile-with-load-session
+    (compiler_load.compiler-load-session-state-new)))
 
 (define (compiler-driver-state-session-cache-enabled?
   [state : CompilerDriverState]) : bool
@@ -4190,10 +4197,9 @@
                     hydration)
                   (let
                     [ast : surface_ast.SurfaceAstHydration hydration.ast]
-                    [facts : compiler_surface_facts.SurfaceTypecheckFacts
+                    [facts : surface_facts.SurfaceTypecheckFacts
                       hydration.facts]
-                    (if (compiler_surface_facts.surface-typecheck-facts-publish!
-                      facts)
+                    (if (surface_facts.surface-typecheck-facts-publish! facts)
                       (CompilerDriverPreludeSurface.Ok
                         ast.decls
                         ast.paths
@@ -5145,9 +5151,22 @@
       (match (owned_view.compiler-owned-shared-view lowered)
         [(compiler_lower.ResultCompilerLower.Err _)
           (if release-source-pools?
-            (compiler-driver-state-adopt-pools!
-              (owned_view.compiler-owned-shared-view state)
-              (compiler-driver-state-new-checked-lower-pools))
+            (begin
+              ;; Before first commit the original source is live; after final
+              ;; commit the adopted checked pool is live. Reuse the canonical
+              ;; replacement owner to release that storage, including when its
+              ;; arena is current. Rollover abort has already destroyed both
+              ;; generations, so that path must not inspect the stale context.
+              (if (or dest-committed? (not frontend-released?))
+                (compiler-driver-state-release-owned-pool-arena-if-uncached!
+                  (owned_view.compiler-owned-shared-view state))
+                (compiler-driver-state-adopt-pools!
+                  (owned_view.compiler-owned-shared-view state)
+                  (compiler-driver-state-new-checked-lower-pools)))
+              (set!
+                result-pools
+                (compiler-driver-state-pool-context
+                  (owned_view.compiler-owned-shared-view state))))
             unit)]
         [(compiler_lower.ResultCompilerLower.Ok _ _) unit])]
     (in-arena
@@ -5897,6 +5916,281 @@
         false
         false))))
 
+;; Compatibility selector assignments can allocate aggregate descriptors.
+;; Publish every restored carrier in the enclosing owner's arena, never in the
+;; frontend/job arena that the caller is about to retire.
+(define (compiler-driver-restore-parent-session!
+  [home : arena.Arena]
+  [parent : compiler_load.CompilerLoadSessionState]
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [interns : ci.InternCompatState]
+  [builtins : cbi.CompilerBuiltinIdsState]) : unit
+  (in-arena
+    home
+    (begin
+      (ci.intern-compat-state-install! interns)
+      (compiler_ast_types.ast-node-pool-context-install! pools)
+      (if (array-ref parent.intern-state-ready 0)
+        (compiler_load.compiler-load-session-state-use-with-intern-state!
+          (owned_view.compiler-owned-shared-view parent)
+          (compiler_load.compiler-load-session-state-interns parent))
+        (compiler_load.compiler-load-session-state-use! parent))
+      (compiler_typecheck_core.compiler-typecheck-reset-intern-owned-state!)
+      (compiler-driver-reset-analysis-state!)
+      (cbi.state-install! (& builtins)))))
+
+;; This scope's carrier belongs to the outer package-job scratch arena. Its
+;; frontend and pool arenas can be retired while that carrier remains live.
+(defstruct CompilerDriverPackageRuntimeScope
+  (state CompilerDriverState)
+  (frontend-arena (__tl_dyn-array i64))
+  (home arena.Arena)
+  (home-pools compiler_ast_types.AstNodePoolContext)
+  (home-interns ci.InternCompatState)
+  (home-builtins cbi.CompilerBuiltinIdsState)
+  (parent compiler_load.CompilerLoadSessionState)
+  (home-profile-pool i64)
+  (home-profile-surface i64)
+  (job arena.Arena)
+  (released (__tl_dyn-array bool)))
+
+(define (compiler-driver-package-runtime-scope-new [home : arena.Arena]) : CompilerDriverPackageRuntimeScope
+  (let
+    [home-pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-capture-active)]
+    [home-interns : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [home-builtins : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
+    [parent : compiler_load.CompilerLoadSessionState
+      (compiler_load.compiler-load-active-session-state-shared-view)]
+    [home-profile-pool : i64
+      (array-ref compiler-driver-active-state-pool-arena 0)]
+    [home-profile-surface : i64
+      (array-ref compiler-driver-active-state-surface-arena 0)]
+    [_reset-analysis : unit (compiler-driver-reset-analysis-state!)]
+    [state : CompilerDriverState
+      (compiler-driver-state-new-for-compile-with-load-session
+        (compiler_load.compiler-load-session-state-new-for-package-child
+          (owned_view.compiler-owned-shared-view parent)))]
+    [frontend : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    (begin
+      (set! (array-ref frontend 0) (arena.tl_arena_make))
+      (compiler-driver-state-install-pools!
+        (owned_view.compiler-owned-shared-view state))
+      (compiler-driver-state-install-interns!
+        (owned_view.compiler-owned-shared-view state))
+      (compiler_load.compiler-load-session-state-use!
+        (owned_view.compiler-owned-shared-view state.load-session))
+      (compiler_typecheck_core.compiler-typecheck-reset-intern-owned-state!)
+      (CompilerDriverPackageRuntimeScope
+        state
+        frontend
+        home
+        home-pools
+        home-interns
+        home-builtins
+        parent
+        home-profile-pool
+        home-profile-surface
+        (arena.current)
+        (__tl_make-array bool 1)))))
+
+;; Call while the package-job carrier arena is current, after every escaped
+;; output has been copied to home and before native export compilation begins.
+(define (compiler-driver-package-runtime-scope-release!
+  [scope : CompilerDriverPackageRuntimeScope]) : unit
+  (if (array-ref scope.released 0)
+    unit
+    (in-arena
+      scope.job
+      (begin
+        (set! (array-ref scope.released 0) true)
+        (let
+          [state : CompilerDriverState
+            (owned_view.compiler-owned-shared-view scope.state)]
+          (begin
+            (compiler-driver-retire-lowered-source-arena!)
+            (compiler-driver-retire-frontend-arena!)
+            (compiler-driver-state-release-file-state!
+              (owned_view.compiler-owned-shared-view state))
+            (compiler-driver-state-prefix-cache-clear!
+              (owned_view.compiler-owned-shared-view state))
+            (compiler_backend.compiler-backend-state-release-final-arenas!
+              (compiler-driver-state-backend
+                (owned_view.compiler-owned-shared-view state)))
+            (compiler_load.compiler-load-session-state-dependency-surfaces-release!
+              (owned_view.compiler-owned-shared-view state.load-session))
+            (compiler_load.compiler-load-transfer-frontend-handoff!)
+            (let
+              [retired : compiler_ast_types.AstNodePoolContext
+                (compiler-driver-state-pool-context
+                  (owned_view.compiler-owned-shared-view state))]
+              [intern-arena : i64
+                (ci.intern-compat-state-persistent-arena
+                  (& (array-ref state.intern-state 0)))]
+              (begin
+                (compiler-driver-restore-parent-session!
+                  scope.home
+                  scope.parent
+                  scope.home-pools
+                  scope.home-interns
+                  scope.home-builtins)
+                (set!
+                  (array-ref compiler-driver-active-state-pool-arena 0)
+                  scope.home-profile-pool)
+                (set!
+                  (array-ref compiler-driver-active-state-surface-arena 0)
+                  scope.home-profile-surface)
+                (compiler_ast_types.ast-node-pool-context-destroy-storage!
+                  (owned_view.compiler-owned-shared-view retired))
+                (unsafe
+                  (begin
+                    (arena.tl_arena_destroy
+                      (compiler_ast_types.ast-node-pool-context-base-arena
+                        retired))
+                    (arena.tl_arena_destroy intern-arena)
+                    (arena.tl_arena_destroy state.surface-arena)
+                    (unless
+                      (= (array-ref scope.frontend-arena 0) 0)
+                      (arena.tl_arena_destroy
+                        (array-ref scope.frontend-arena 0)))))
+                (set! (array-ref scope.frontend-arena 0) 0)))))))))
+
+;; Serial loading can update the live pool/interner carriers even when a
+;; later import fails. Capture immediately after load, before matching its
+;; result; cleanup must own the last live generation on both exits.
+(define (compiler-driver-package-runtime-capture-frontend!
+  [scope : CompilerDriverPackageRuntimeScope]) : unit
+  (let
+    [state : CompilerDriverState
+      (owned_view.compiler-owned-shared-view scope.state)]
+    (begin
+      (compiler-driver-state-adopt-pools!
+        (owned_view.compiler-owned-shared-view state)
+        (compiler_ast_types.ast-node-pool-context-capture-active))
+      (compiler-driver-state-capture-active-interns!
+        (owned_view.compiler-owned-shared-view state))
+      (compiler-driver-state-capture-active-builtins! state))))
+
+(define (compiler-driver-package-runtime-load
+  [scope : CompilerDriverPackageRuntimeScope]
+  [path : String]
+  [roots : svec.Vec]
+  [manifest-dir : String]
+  [deps : compiler_load.CompilerPkgDeps]
+  [emit-entry : bool]
+  [cfgs : sym_i64_env.SymI64Env]) : compiler_load.ResultCompilerLoadWithPaths
+  (let
+    [loaded : compiler_load.ResultCompilerLoadWithPaths
+      (in-arena
+        (arena.Arena (array-ref scope.frontend-arena 0))
+        (compiler-driver-load-package-file-with-runtime-cfg
+          path
+          roots
+          manifest-dir
+          deps
+          emit-entry
+          cfgs))]
+    (begin
+      (compiler-driver-package-runtime-capture-frontend! scope)
+      loaded)))
+
+(define (compiler-driver-package-runtime-lower
+  [scope : CompilerDriverPackageRuntimeScope]
+  [package-name : String]
+  [target : compiler_backend.CompilerBackendTarget]
+  [mode : compiler_backend.CompilerBackendMode]
+  [decls : compiler_ast_types.AstDeclList]
+  [paths : compiler_ast_types.AstDeclPathList]) : ResultCompilerDriverLowered
+  (let
+    [state : CompilerDriverState
+      (owned_view.compiler-owned-shared-view scope.state)]
+    [pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-capture-active)]
+    [_capture : unit
+      (begin
+        ;; Package-owned paths and export preparation can intern additional
+        ;; identities after loading. Publish that final frontend cursor before
+        ;; generation installs the explicit job interner.
+        (compiler-driver-package-runtime-capture-frontend!
+          (owned_view.compiler-owned-shared-view scope))
+        ;; Hydrated dependency facts include frontend-owned observation arrays.
+        ;; Keep their complete publication live through generation/macro source
+        ;; retirement; file-state reset clears it before this arena is destroyed.
+        (in-arena
+          (arena.Arena
+            (compiler-driver-state-surface-arena
+              (owned_view.compiler-owned-shared-view state)))
+          (surface_facts.surface-typecheck-facts-retain-current!))
+        (compiler-driver-state-install-lower-arenas!
+          (owned_view.compiler-owned-shared-view state))
+        (compiler_lower.compiler-lower-state-set-spmd-package!
+          (compiler-driver-state-owned-lower-state
+            (owned_view.compiler-owned-shared-view state))
+          package-name)
+        (compiler_load.compiler-load-transfer-frontend-handoff!))]
+    [source-names : ci.InternSourceNameSessionHandle
+      (compiler-driver-state-entry-source-name-session
+        (owned_view.compiler-owned-shared-view state))]
+    [_route : unit
+      (begin
+        (set!
+          compiler-driver-pending-frontend-return-arena
+          (__tl-project-field scope.home handle))
+        (unsafe
+          (arena.tl_arena_set (array-ref scope.frontend-arena 0))))]
+    [handoff : CompilerDriverCheckedLowerHandoff
+      (compiler-driver-state-begin-checked-lower!
+        (owned_view.compiler-owned-shared-view state)
+        (owned_view.compiler-owned-shared-view pools)
+        (array-ref scope.frontend-arena 0))]
+    [raw : compiler_lower.ResultCompilerLower
+      (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
+        (compiler-driver-state-owned-lower-state
+          (owned_view.compiler-owned-shared-view state))
+        (owned_view.compiler-owned-shared-view state.load-session)
+        (owned_view.compiler-owned-shared-view state.typecheck-prefix-cache)
+        (owned_view.compiler-owned-shared-view state.typecheck-state)
+        ""
+        (compiler_ast_types.ast-program decls)
+        paths
+        (compiler-driver-lower-mode-for-target target mode)
+        (svec.new)
+        (compiler_typecheck_core.tc-prefix-default-cache-scope)
+        (owned_view.compiler-owned-shared-view pools)
+        source-names
+        (compiler-driver-state-owned-interns
+          (owned_view.compiler-owned-shared-view state))
+        (compiler-driver-state-owned-builtins
+          (owned_view.compiler-owned-shared-view state)))]
+    [checked : CompilerDriverCheckedLowerResult
+      (compiler-driver-state-finish-checked-lower!
+        (owned_view.compiler-owned-shared-view state)
+        pools
+        handoff
+        raw)]
+    [_frontend : unit
+      (begin
+        (unless
+          checked.frontend-released
+          (set!
+            compiler-driver-pending-retired-frontend-arena
+            (array-ref scope.frontend-arena 0)))
+        (set! (array-ref scope.frontend-arena 0) 0)
+        (unsafe
+          (arena.tl_arena_set compiler-driver-pending-frontend-return-arena)))]
+    (match checked.lowered
+      [(compiler_lower.ResultCompilerLower.Ok program spans)
+        (compiler-driver-state-retain-lowered-types!
+          state
+          program
+          spans
+          checked.pools)]
+      [(compiler_lower.ResultCompilerLower.Err diag)
+        (ResultCompilerDriverLowered.Err
+          diag
+          (compiler-driver-state-advisories state))])))
+
 (define (compiler-driver-lower-package-loaded
   [input-path : String]
   [package-name : String]
@@ -5994,7 +6288,7 @@
             (arena.tl_arena_current))]
         [interns : ci.InternCompatState (ci.intern-compat-state-new)]
         [state : compiler_load.CompilerLoadSessionState
-          (compiler_load.compiler-load-session-state-new-for-package-discovery
+          (compiler_load.compiler-load-session-state-new-for-package-child
             (owned_view.compiler-owned-shared-view parent))]
         [_install-pools : unit
           (compiler_ast_types.ast-node-pool-context-install! pools)]
@@ -6039,19 +6333,12 @@
           ;; No declarations escape, so the reader's origin prefix is empty.
           ;; The normal handoff now releases all scan capacity as well.
           (compiler_load.compiler-load-transfer-frontend-handoff!)
-          (in-arena
+          (compiler-driver-restore-parent-session!
             home
-            (begin
-              (ci.intern-compat-state-install! home-interns)
-              (compiler_ast_types.ast-node-pool-context-install! home-pools)
-              (if (array-ref parent.intern-state-ready 0)
-                (compiler_load.compiler-load-session-state-use-with-intern-state!
-                  (owned_view.compiler-owned-shared-view parent)
-                  (compiler_load.compiler-load-session-state-interns parent))
-                (compiler_load.compiler-load-session-state-use! parent))
-              (compiler_typecheck_core.compiler-typecheck-reset-intern-owned-state!)
-              (compiler-driver-reset-analysis-state!)
-              (cbi.state-install! (& home-builtins))))
+            parent
+            home-pools
+            home-interns
+            home-builtins)
           (compiler_load.compiler-load-dependency-surface-list-destroy-storage!
             (owned_view.compiler-owned-array-element-shared-view
               state.dependency-surfaces.fragments

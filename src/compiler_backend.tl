@@ -1241,6 +1241,29 @@
       (set! data.has-representations true)
       (compiler-backend-state-data-set! state data))))
 
+;; Terminal release for a driver that will immediately destroy the backend
+;; carrier owner. Emitted bytes/text must already belong to the caller. The
+;; emission arena and owner arena are borrowed here and are never destroyed.
+;; The backend state must not be used for another emission after this call.
+(define (compiler-backend-state-release-final-arenas!
+  [state : CompilerBackendState]) : unit
+  (let
+    [data : CompilerBackendStateData (compiler-backend-state-data state)]
+    [representations : i64 data.representation-arena]
+    [tables : i64 data.lazy-table-arena]
+    (begin
+      (set! data.has-representations false)
+      (set! data.representation-arena 0)
+      (set! data.representation-mark 0)
+      (set! data.lazy-table-arena 0)
+      (compiler-backend-state-data-set! state data)
+      (unsafe
+        (begin
+          (unless
+            (= representations 0)
+            (arena.tl_arena_destroy representations))
+          (unless (= tables 0) (arena.tl_arena_destroy tables)))))))
+
 (define (compiler-backend-state-prepare-representation-arena!
   [state : CompilerBackendState]) : arena.Arena
   (let

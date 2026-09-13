@@ -6,6 +6,12 @@
 ;; produce the package artifact selected by manifest kind.
 (import compiler_owned_view as owned_view)
 (import stdlib.fs)
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (import stdlib.arena))
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (import compiler_cfg_core as cfg_core))
 (import stdlib.byte_buf)
 (import stdlib.env)
 (import stdlib.io)
@@ -7368,7 +7374,46 @@
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (build-package-prepare-owned-runtime
+    [scope : compiler_driver_core.CompilerDriverPackageRuntimeScope]
+    [request : BuildPackageDirectObjectRequest]) : ResultBuildPackagePreparedRuntime
+    (let
+      [preflight : BuildPackageDirectObjectPreflight
+        (build-package-direct-object-preflight
+          request.kind
+          request.target
+          request.mode
+          request.debug-info
+          request.path-budget
+          request.linux-budget-override
+          (owned_view.compiler-owned-shared-view request.decls)
+          (& request.paths))]
+      [lowered : compiler_driver_core.ResultCompilerDriverLowered
+        (compiler_driver_core.compiler-driver-package-runtime-lower
+          scope
+          request.name
+          request.target
+          request.mode
+          request.decls
+          request.paths)]
+      [prepared : ResultBuildPackagePreparedRuntime
+        (build-package-emit-preflighted-runtime
+          request.kind
+          request.target
+          request.opt-level
+          request.mode
+          request.emit-entry
+          request.crt-entry
+          preflight
+          lowered)]
+      (if request.require-direct-object
+        (build-package-require-direct-object prepared)
+        prepared))))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-finish-fresh-artifacts-with-surface
+    [scope : compiler_driver_core.CompilerDriverPackageRuntimeScope]
     [manifest : load.CompilerPkgManifest]
     [source-inputs : BuildPackageTlciSourceInputs]
     [seen : sym_i64_env.SymI64Env]
@@ -7399,7 +7444,7 @@
           source-inputs.digest
           (owned_view.compiler-owned-shared-view producer-identity)
           (build_run_core.source-tool-target-name target))
-        seen)
+        (sym_i64_env.sym-i64-copy seen))
       (let
         [exports : ResultBuildPackageTlciExports
           (build-package-tlci-capture-exports
@@ -7409,7 +7454,8 @@
             source-paths
             (owned_view.compiler-owned-shared-view source-inputs.source-set))]
         [prepared : ResultBuildPackagePreparedRuntime
-          (build-package-prepare-runtime
+          (build-package-prepare-owned-runtime
+            (owned_view.compiler-owned-shared-view scope)
             (build-package-direct-object-default-request
               (owned_view.compiler-owned-shared-view name)
               kind
@@ -7420,15 +7466,24 @@
               crt-entry
               (owned_view.compiler-owned-shared-view decls)
               (owned_view.compiler-owned-shared-view owned-paths)))]
+        [_abort : unit
+          (match (owned_view.compiler-owned-shared-view prepared)
+            [(ResultBuildPackagePreparedRuntime.Err message)
+              (package_surface.package-surface-capture-abort!
+                (owned_view.compiler-owned-shared-view message))]
+            [_ unit])]
+        [captured : package_surface.ResultPackageSurfacePayloads
+          (package_surface.package-surface-capture-take)]
+        [_release : unit
+          (compiler_driver_core.compiler-driver-package-runtime-scope-release!
+            scope)]
         (match (owned_view.compiler-owned-shared-view prepared)
           [(ResultBuildPackagePreparedRuntime.Err message)
             (begin
-              (package_surface.package-surface-capture-abort!
-                (owned_view.compiler-owned-shared-view message))
               (io.print-error message)
               1)]
           [_
-            (match (package_surface.package-surface-capture-take)
+            (match captured
               [(package_surface.ResultPackageSurfacePayloads.Err message)
                 (begin
                   (io.print-error
@@ -7573,6 +7628,69 @@
     [emit-entry : bool]
     [compile-cfgs : sym_i64_env.SymI64Env]
     [announce : bool]) : i64
+    (let
+      [home : arena.Arena (arena.current)]
+      [cfg-names : cfg_core.CompilerCfgSnapshot
+        (cfg_core.compiler-cfg-snapshot-from-env compile-cfgs)]
+      (with-scratch
+        (let
+          [scope : compiler_driver_core.CompilerDriverPackageRuntimeScope
+            (compiler_driver_core.compiler-driver-package-runtime-scope-new
+              home)]
+          [status : i64
+            (in-arena
+              home
+              (build-package-emit-one-in-runtime-scope
+                (owned_view.compiler-owned-shared-view scope)
+                manifest-path
+                manifest
+                target
+                opt-level
+                profile
+                mode
+                stdlib-roots
+                producer-identity
+                entry-path
+                manifest-dir
+                kind
+                asm-path
+                obj-path
+                artifact-path
+                tlci-path
+                manifest-link-inputs
+                dep-link-inputs
+                emit-entry
+                (cfg_core.compiler-cfg-snapshot-to-env cfg-names)
+                announce))]
+          (begin
+            (compiler_driver_core.compiler-driver-package-runtime-scope-release!
+              scope)
+            status))))))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (build-package-emit-one-in-runtime-scope
+    [scope : compiler_driver_core.CompilerDriverPackageRuntimeScope]
+    [manifest-path : String]
+    [manifest : load.CompilerPkgManifest]
+    [target : backend.CompilerBackendTarget]
+    [opt-level : i64]
+    [profile : BuildProfile]
+    [mode : backend.CompilerBackendMode]
+    [stdlib-roots : cli_svec.Vec]
+    [producer-identity : String]
+    [entry-path : String]
+    [manifest-dir : String]
+    [kind : load.CompilerPkgKind]
+    [asm-path : String]
+    [obj-path : String]
+    [artifact-path : String]
+    [tlci-path : String]
+    [manifest-link-inputs : build_run_core.SourceToolLinkInputs]
+    [dep-link-inputs : build_run_core.SourceToolLinkInputs]
+    [emit-entry : bool]
+    [compile-cfgs : sym_i64_env.SymI64Env]
+    [announce : bool]) : i64
     (match (build-package-tlci-source-inputs
       manifest-path
       (owned_view.compiler-owned-shared-view producer-identity))
@@ -7581,7 +7699,8 @@
           (io.print-error message)
           1)]
       [(ResultBuildPackageTlciSourceInputs.Ok source-inputs)
-        (match (compiler_driver_core.compiler-driver-load-package-file-with-runtime-cfg
+        (match (compiler_driver_core.compiler-driver-package-runtime-load
+          (owned_view.compiler-owned-shared-view scope)
           (owned_view.compiler-owned-shared-view entry-path)
           (owned_view.compiler-owned-shared-view stdlib-roots)
           (owned_view.compiler-owned-shared-view manifest-dir)
@@ -7609,11 +7728,12 @@
                   (owned_view.compiler-owned-shared-view decls)
                   (build_run_core.source-tool-link-inputs-empty))]
               [effective-link-inputs : build_run_core.SourceToolLinkInputs
-                (build_run_core.source-tool-link-inputs-merge
+                (clone
                   (build_run_core.source-tool-link-inputs-merge
-                    manifest-link-inputs
-                    metadata-link-inputs)
-                  dep-link-inputs)]
+                    (build_run_core.source-tool-link-inputs-merge
+                      manifest-link-inputs
+                      metadata-link-inputs)
+                    dep-link-inputs))]
               [crt-entry : bool
                 (and
                   emit-entry
@@ -7622,6 +7742,7 @@
                     (owned_view.compiler-owned-shared-view
                       effective-link-inputs)))]
               (build-package-finish-fresh-artifacts-with-surface
+                scope
                 (owned_view.compiler-owned-shared-view manifest)
                 source-inputs
                 seen

@@ -21,7 +21,7 @@ Compilation is one whole program per executable with import-graph dedup
 codegen'd once into archives; an in-process session cache warms compiler
 pools across compiles within one process (batch and LSP paths).
 
-The ordinary and PIC driver paths share checked-pool ownership through
+The ordinary, PIC and owned package driver paths share checked-pool ownership through
 `compiler-driver-state-begin-checked-lower!` and
 `compiler-driver-state-finish-checked-lower!`. The handoff records its original
 allocation arena, source-pool owner and destination pools in the driver's
@@ -71,6 +71,36 @@ and runnable/failure metadata. Ordinary
 payloads require the loader's pool-aware compaction or an explicitly owned
 pool lifetime.
 
+Package runtime emission uses `CompilerDriverPackageRuntimeScope`: its carrier
+lives in an outer job arena, while source pools, parser allocations, interner,
+analysis state and derived dependency surfaces have explicit temporary owners.
+The child loader borrows the parent's admitted catalog. After every load result,
+including failed imports, the driver captures the live pool/interner/builtin
+state before cleanup can inspect it. It captures again after path/export
+preparation, before generation installs that explicit interner. Published
+dependency facts are copied into the retained runtime state before source
+retirement, preserving composite-prefix status and clone observations. Cfg snapshots re-intern copied names;
+`sym-i64-copy` detaches the import environment's backing chain while its symbol
+IDs remain valid. Linker strings are deep-copied into the caller's arena.
+
+Runtime lowering shares the ordinary/PIC checked-pool handoff. Complete object
+bytes, side assembly, diagnostics, export source and encoded checked surfaces
+belong to the enclosing arena before scope release. Release restores parent
+selectors in that arena, then destroys only child-owned storage, including the
+backend's private lazy/representation arenas. It is idempotent so early loader
+errors and the final artifact path share one cleanup owner. The backend's
+terminal release API forbids later emission through that state and never
+releases its borrowed emission or carrier arenas. Native export compilation
+starts only after runtime cleanup. A failed checked lower releases a still-live
+source/checked pool before replacement; a rollover abort must not revisit its
+already destroyed original context.
+
+The runtime lifetime tests cover repeated checked errors, macro errors, failed
+imports after a successful import, parent restoration, and emission at all
+optimization levels for both targets. The copied environment test destroys the
+source arena and checks duplicate bindings, zero values and snapshot isolation.
+These focused contracts complement complete package build and platform gates.
+
 The compiler also has a pure, versioned incremental-query identity layer. It
 canonicalizes typed source, logical-name, dependency, package/stdlib,
 configuration, macro/comptime, target, and ordered-child inputs into a bounded
@@ -105,8 +135,8 @@ emission implementation. Runtime diagnostics and checked-surface failures still
 precede deferred export metadata errors. The export lifetime tests destroy and
 reuse the original parser/interner storage before emitting both target images.
 
-`build-package-prepare-runtime` in `build_cli_core.tl` owns package route
-selection through `BuildPackageDirectObjectRequest`: target, artifact kind,
+`build-package-prepare-runtime` and its owned-scope adapter in
+`build_cli_core.tl` share package route selection through `BuildPackageDirectObjectRequest`: target, artifact kind,
 backend mode, debug policy, resource policy, strict policy, and loaded inputs.
 Its result contains object bytes and complete side assembly, valid fallback
 assembly with a closed `CompilerDirectObjectFallbackReason`, or a diagnostic.

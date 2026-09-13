@@ -77,20 +77,20 @@ fi
 check_package_lowered_route() {
     awk '
         /^[[:space:]]*\(define \(/ {
-            mode = ""
-            if ($0 ~ /\(build-package-try-prepare-direct-runtime$/) { mode = "prepare"; prepare += 1 }
+            mode = ""; route_lower = 0
+            if ($0 ~ /\(build-package-(try-prepare-direct-runtime|prepare-owned-runtime)$/) { mode = "prepare"; prepare += 1 }
             if ($0 ~ /\(build-package-(emit-preflighted-runtime|emit-assembly-fallback)$/) { mode = "emit"; emit += 1 }
         }
         mode == "prepare" {
-            if ($0 ~ /compiler-driver-lower-package-loaded/) lower_calls += 1
-            if ($0 ~ /\(build-package-direct-object-preflight$/) { policy_calls += 1; if (lower_calls) forbidden += 1 }
+            if ($0 ~ /compiler-driver-(lower-package-loaded|package-runtime-lower)/) { lower_calls += 1; route_lower += 1 }
+            if ($0 ~ /\(build-package-direct-object-preflight$/) { policy_calls += 1; if (route_lower) forbidden += 1 }
             if ($0 ~ /\(build-package-emit-preflighted-runtime$/) handoff += 1
         }
         mode == "emit" {
             if ($0 ~ /AstDecl|AstNode|compiler-driver-(lower|load|emit)-package/) forbidden += 1
             if ($0 ~ /\[lowered : compiler_driver_core.ResultCompilerDriverLowered\]/) inputs += 1
         }
-        END { exit !(prepare == 1 && emit == 2 && lower_calls == 1 && policy_calls == 1 && handoff == 1 && inputs == 2 && forbidden == 0) }
+        END { exit !(prepare == 2 && emit == 2 && lower_calls == 2 && policy_calls == 2 && handoff == 2 && inputs == 2 && forbidden == 0) }
     ' "$1"
 }
 check_package_lowered_route src/build_cli_core.tl || fail "package emission does not consume one lowered result"
@@ -117,7 +117,7 @@ check_prepared_runtime_boundary() {
             if ($0 ~ /\(build-package-finish-fresh-artifacts-with-surface$/) { mode = "capture"; capture += 1 }
         }
         mode == "finish" || mode == "direct" {
-            if ($0 ~ /AstDecl|AstNode|CompilerIr|build-package-prepare-runtime|compiler-driver-(emit|lower)-package/) forbidden += 1
+            if ($0 ~ /AstDecl|AstNode|CompilerIr|build-package-prepare(-owned)?-runtime|compiler-driver-(emit|lower)-package|compiler-driver-package-runtime-lower/) forbidden += 1
         }
         mode == "finish" && $0 ~ /\(match prepared$/ { consume += 1 }
         mode == "capture" {
@@ -125,7 +125,7 @@ check_prepared_runtime_boundary() {
                 if ($0 ~ /^[[:space:]]*prepared$/) passed += 1
                 handoff = 0
             }
-            if ($0 ~ /\(build-package-prepare-runtime$/) prepare += 1
+            if ($0 ~ /\(build-package-prepare-owned-runtime$/) prepare += 1
             if ($0 ~ /\(build-package-finish-prepared-runtime$/) { finish_call += 1; handoff = 1 }
         }
         END { exit !(finish == 1 && direct == 1 && capture == 1 && forbidden == 0 && consume == 1 && prepare == 1 && finish_call == 1 && passed == 1) }
@@ -164,9 +164,12 @@ check_package_export_boundary() {
         }
         mode == "pipeline" {
             if ($0 ~ /\(build-package-tlci-capture-exports$/) { capture += 1; if (prepared) forbidden += 1 }
-            if ($0 ~ /\(build-package-prepare-runtime$/) prepared += 1
+            if ($0 ~ /\(build-package-prepare-owned-runtime$/) prepared += 1
+            if ($0 ~ /\(package_surface[.]package-surface-capture-take/) taken += 1
+            if ($0 ~ /compiler-driver-package-runtime-scope-release!/) { released += 1; if (!taken) forbidden += 1 }
+            if ($0 ~ /\(build-package-tlci-text-with-surface$/ && !released) forbidden += 1
         }
-        END { exit !(finish == 1 && pipeline == 1 && source_emit == 1 && capture == 1 && prepared == 1 && forbidden == 0) }
+        END { exit !(finish == 1 && pipeline == 1 && source_emit == 1 && capture == 1 && prepared == 1 && taken == 1 && released == 1 && forbidden == 0) }
     ' "$1"
 }
 check_package_export_boundary src/build_cli_core.tl || fail "package export finishing retains the parsed frontend"
@@ -192,7 +195,7 @@ check_driver_checked_handoff() {
     awk '
         /^\(define \(/ {
             route = 0; owner = 0
-            if ($0 ~ /\(compiler-driver-load-and-lower-(escaping|pic-image)-with-state-and-retirement$/) { route = 1; routes += 1 }
+            if ($0 ~ /\(compiler-driver-(load-and-lower-(escaping|pic-image)-with-state-and-retirement|package-runtime-lower)$/) { route = 1; routes += 1 }
             if ($0 ~ /\(compiler-driver-state-(begin|finish)-checked-lower!$/) { owner = 1; owners += 1 }
         }
         route {
@@ -201,7 +204,7 @@ check_driver_checked_handoff() {
             if ($0 ~ /compiler-lower-checked-dest-pools-(use|clear|abort-uncommitted)!|compiler-driver-state-adopt-pools!/) forbidden += 1
         }
         owner && $0 ~ /\(arena[.]Arena \(compiler-driver-state-surface-arena state\)\)/ { retained += 1 }
-        END { exit !(routes == 2 && owners == 2 && begin_calls == 2 && finish_calls == 2 && retained == 2 && forbidden == 0) }
+        END { exit !(routes == 3 && owners == 2 && begin_calls == 3 && finish_calls == 3 && retained == 2 && forbidden == 0) }
     ' "$1"
 }
 check_driver_checked_handoff src/compiler_driver_core.tl || fail "driver paths duplicate checked-pool ownership"

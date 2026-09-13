@@ -968,10 +968,10 @@
     standalone-reset-safe
     (compiler-load-dependency-catalog-registry-new)))
 
-;; Discovery owns fresh parse caches and hydrated surfaces, but borrows the
+;; A package child owns fresh parse caches and hydrated surfaces, but borrows the
 ;; enclosing package's admitted images. Its teardown must release only those
 ;; derived surfaces, never the enclosing catalog or its executable mappings.
-(define (compiler-load-session-state-new-for-package-discovery
+(define (compiler-load-session-state-new-for-package-child
   [parent : CompilerLoadSessionState]) : CompilerLoadSessionState
   (let
     [state : CompilerLoadSessionState

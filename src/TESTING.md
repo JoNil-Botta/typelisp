@@ -39,6 +39,20 @@ pointer/length pairs as name identity across scratch/region reset: address
 equality is only a fast path while both live operands are in scope. Interning
 must own/canonicalize any spelling that survives its source arena.
 
+## Vector reduction source ownership
+
+The backend smoke checks AVX2 i64 min/max with both ordinary and explicit
+planned scratch homes. It checks the scalar destination and forbids writes to
+the source's XMM/YMM family; checking only the reduction result missed #7821.
+The scratch-vreg smoke keeps the source live through a second reduction and
+through a coalesced phi home. It checks the mask role against source, destination
+and sibling homes on SysV and Win64. A full allocatable-XMM-pressure fixture
+requires the mask's full-width save/restore, and call-adjacent spill fixtures
+require independent reloads without overwriting the retained stack source.
+The source and call fixtures run in both normal and modeled-scratch modes.
+Preserve both the source-ownership and signed-comparison checks when changing
+horizontal reduction emission.
+
 ## Borrowed macro surface searches
 
 The typecheck smoke suite's surface-macro provider covers first/last/missing

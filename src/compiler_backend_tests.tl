@@ -22624,6 +22624,7 @@ g:
     (compiler_ast_types.AstType.I64)
     ""
     ""
+    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -23962,6 +23963,534 @@ g:
       "%zmm")
     (compiler-backend-shuffle-vector-check-reduction-ok?)))
 
+;; The reduction result alone cannot detect a write through the source alias.
+;; Keep the full source family read-only in both late and planned emission.
+(define (compiler-backend-avx2-i64-reduce-source-case-ok?
+  [op : compiler_ir_types.CompilerIrVectorReduceOp]
+  [planned : bool]
+  [spilled : bool]
+  [compare : String]) : bool
+  (match (compiler_backend.compiler-backend-emit-avx2-vector-reduce
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (if spilled
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Spill -64))
+        (compiler-backend-vector-reduce-direct-assignments
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r12)))
+      (compiler-backend-vector-reduce-direct-assignments
+        (compiler_regalloc.CompilerRegLocation.Register
+          compiler_abi.compiler-reg-id-r12)))
+    1
+    op
+    (compiler_ir_types.CompilerIrValue.Var 0)
+    4
+    (compiler_ast_types.AstType.I64)
+    (if planned
+      "%xmm10"
+      "")
+    (if planned
+      "%xmm11"
+      "")
+    (if planned
+      "%xmm12"
+      "")
+    (compiler_diagnostic.compiler-diagnostic-at-start "" "")
+    (compiler_backend.compiler-backend-state-new
+      (ci.intern-compat-state-capture-active)))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view asm)
+          compare)
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            ", %xmm6\n"))
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            ", %ymm6\n"))
+        (if spilled
+          (and
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    vmovdqu -64(%rbp), %ymm14\n")
+            (not
+              (compiler_backend.compiler-backend-string-contains?
+                (owned_view.compiler-owned-shared-view asm)
+                ", -64(%rbp)\n")))
+          true)
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          (if planned
+            "    vmovq %xmm10, %r12\n"
+            "    vmovq %xmm2, %r12\n")))]
+    [_ false]))
+
+(define (compiler-backend-avx2-i64-reduce-storage-cases-ok? [spilled : bool]) : bool
+  (and
+    (cfg
+      scratch-vreg
+      true
+      (compiler-backend-avx2-i64-reduce-source-case-ok?
+        (compiler_ir_types.CompilerIrVectorReduceOp.Min)
+        false
+        spilled
+        "    vpcmpgtq %xmm3, %xmm2, %xmm4\n    vpblendvb %xmm4, %xmm3, %xmm2, %xmm2\n"))
+    (cfg
+      scratch-vreg
+      true
+      (compiler-backend-avx2-i64-reduce-source-case-ok?
+        (compiler_ir_types.CompilerIrVectorReduceOp.Max)
+        false
+        spilled
+        "    vpcmpgtq %xmm2, %xmm3, %xmm4\n    vpblendvb %xmm4, %xmm3, %xmm2, %xmm2\n"))
+    (compiler-backend-avx2-i64-reduce-source-case-ok?
+      (compiler_ir_types.CompilerIrVectorReduceOp.Min)
+      true
+      spilled
+      "    vpcmpgtq %xmm11, %xmm10, %xmm12\n    vpblendvb %xmm12, %xmm11, %xmm10, %xmm10\n")
+    (compiler-backend-avx2-i64-reduce-source-case-ok?
+      (compiler_ir_types.CompilerIrVectorReduceOp.Max)
+      true
+      spilled
+      "    vpcmpgtq %xmm10, %xmm11, %xmm12\n    vpblendvb %xmm12, %xmm11, %xmm10, %xmm10\n")))
+
+(define (compiler-backend-avx2-i64-reduce-source-ok?) : bool
+  (compiler-backend-avx2-i64-reduce-storage-cases-ok? false))
+
+(define (compiler-backend-avx2-i64-reduce-spilled-source-ok?) : bool
+  (compiler-backend-avx2-i64-reduce-storage-cases-ok? true))
+
+(define (compiler-backend-i64-reduce-live-source-blocks
+  [op : compiler_ir_types.CompilerIrVectorReduceOp]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler-backend-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.VectorReduce
+          1
+          op
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          4
+          (compiler_ast_types.AstType.I64))
+        (compiler-backend-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.VectorReduce
+            2
+            (compiler_ir_types.CompilerIrVectorReduceOp.Sum)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-seq-empty))))
+    compiler_ir_types.CompilerIrBlockList.Nil))
+
+(define (compiler-backend-i64-reduce-mask-plan-case-ok?
+  [_abi : compiler_abi.CompilerRegTargetAbi]
+  [_op : compiler_ir_types.CompilerIrVectorReduceOp]) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [result : compiler_regalloc.CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi
+          _abi
+          "reduce_live_source_mask"
+          (compiler-backend-i64-reduce-live-source-blocks _op)
+          3
+          (compiler_regalloc.compiler-reg-assignments-prepend
+            (compiler_regalloc.CompilerRegAssignment
+              2
+              (compiler_regalloc.CompilerRegLocation.Spill -16))
+            (compiler-backend-scratch-vreg-reduce-test-assignments)))]
+      [acc : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view result)
+          0)]
+      [sibling : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view result)
+          1)]
+      [mask : String
+        (compiler-backend-scratch-test-register
+          (owned_view.compiler-owned-shared-view result)
+          2)]
+      (and
+        (=
+          (compiler-backend-scratch-test-plan-count
+            (owned_view.compiler-owned-shared-view result))
+          5)
+        (=
+          (compiler-backend-scratch-test-success-count
+            (owned_view.compiler-owned-shared-view result))
+          5)
+        (not (string.eq (owned_view.compiler-owned-shared-view mask) ""))
+        (not
+          (compiler-backend-scratch-test-registers-overlap?
+            (owned_view.compiler-owned-shared-view acc)
+            (owned_view.compiler-owned-shared-view mask)))
+        (not
+          (compiler-backend-scratch-test-registers-overlap?
+            (owned_view.compiler-owned-shared-view sibling)
+            (owned_view.compiler-owned-shared-view mask)))
+        (not
+          (compiler-backend-scratch-test-registers-overlap?
+            (owned_view.compiler-owned-shared-view mask)
+            "%ymm6"))
+        (not (compiler-backend-scratch-test-registers-overlap? mask "%xmm2"))
+        (match result
+          [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
+            (match (__tl-project-field
+              (__tl-project-field (array-ref plan.items 2) requirement)
+              role)
+              [(compiler_regalloc.CompilerRegScratchRole.VectorReduceMask) true]
+              [_ false])])))
+    true))
+
+(define (compiler-backend-i64-reduce-mask-plan-ok?) : bool
+  (and
+    (compiler-backend-i64-reduce-mask-plan-case-ok?
+      (compiler_abi.CompilerRegTargetAbi.Linux)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Min))
+    (compiler-backend-i64-reduce-mask-plan-case-ok?
+      (compiler_abi.CompilerRegTargetAbi.Linux)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Max))
+    (compiler-backend-i64-reduce-mask-plan-case-ok?
+      (compiler_abi.CompilerRegTargetAbi.Windows)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Min))
+    (compiler-backend-i64-reduce-mask-plan-case-ok?
+      (compiler_abi.CompilerRegTargetAbi.Windows)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Max))))
+
+;; Keep every allocatable XMM family live across the first reduction. XMM0/1
+;; carry scalars; XMM14/15 remain reserved spill temporaries. A modeled scratch
+;; selection must preserve all three borrowed homes, including the mask role.
+(define (compiler-backend-i64-reduce-pressure-assignments [index : i64]) : compiler_regalloc.CompilerRegAssignmentTable
+  (if (= index 29)
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        index
+        (cond
+          [(< index 2)
+            (compiler_regalloc.CompilerRegLocation.Register
+              (compiler_abi.compiler-abi-xmm-register-id index))]
+          [(< index 14)
+            (compiler_regalloc.CompilerRegLocation.Register
+              (compiler_abi.compiler-abi-vector-register-id index))]
+          [(= index 14)
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-r12)]
+          [else
+            (compiler_regalloc.CompilerRegLocation.Spill (* -8 (- index 14)))]))
+      (compiler-backend-i64-reduce-pressure-assignments (+ index 1)))))
+
+(define (compiler-backend-i64-reduce-pressure-tail [index : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (if (= index 14)
+    (compiler-backend-test-instr-seq-prepend
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.Some
+          (compiler_ir_types.CompilerIrValue.Var 14)))
+      (compiler_ir_types.compiler-ir-instr-seq-empty))
+    (compiler-backend-test-instr-seq-prepend
+      (if (< index 2)
+        (compiler_ir_types.CompilerIrInstr.Mov
+          (+ index 15)
+          (compiler_ir_types.CompilerIrValue.Var index)
+          (compiler_ast_types.AstType.F64))
+        (compiler_ir_types.CompilerIrInstr.VectorReduce
+          (+ index 15)
+          (compiler_ir_types.CompilerIrVectorReduceOp.Sum)
+          (compiler_ir_types.CompilerIrValue.Var index)
+          4
+          (compiler_ast_types.AstType.I64)))
+      (compiler-backend-i64-reduce-pressure-tail (+ index 1)))))
+
+(define (compiler-backend-i64-reduce-pressure-case-ok?
+  [_target : compiler_backend.CompilerBackendTarget]
+  [_op : compiler_ir_types.CompilerIrVectorReduceOp]) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [instrs : compiler_ir_types.CompilerIrInstrSeq
+        (compiler-backend-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.VectorReduce
+            14
+            _op
+            (compiler_ir_types.CompilerIrValue.Var 6)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler-backend-i64-reduce-pressure-tail 0))]
+      [assignments : compiler_regalloc.CompilerRegAssignmentTable
+        (compiler-backend-i64-reduce-pressure-assignments 0)]
+      [result : compiler_regalloc.CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi
+          (compiler_backend.compiler-backend-target-abi _target)
+          "i64_reduce_mask_pressure"
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "entry")
+              (owned_view.compiler-owned-shared-view instrs))
+            compiler_ir_types.CompilerIrBlockList.Nil)
+          29
+          (owned_view.compiler-owned-shared-view assignments))]
+      [plan : compiler_regalloc.CompilerRegScratchPlan
+        (match result
+          [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ scratch)
+            scratch])]
+      [mask : i64
+        (compiler_regalloc.compiler-reg-scratch-plan-register
+          (owned_view.compiler-owned-shared-view plan)
+          0
+          2)]
+      [state : compiler_backend.CompilerBackendState
+        (compiler_backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active))]
+      [_mode : unit
+        (compiler_backend.compiler-backend-set-current-mode!
+          (compiler_backend.compiler-backend-state-function-state state)
+          (compiler_backend.CompilerBackendMode.Avx2))]
+      [_slot : unit
+        (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
+          (compiler_backend.compiler-backend-state-function-state state)
+          -1024)]
+      (and
+        (compiler_regalloc.compiler-reg-scratch-plan-preserve?
+          (owned_view.compiler-owned-shared-view plan)
+          0
+          0)
+        (compiler_regalloc.compiler-reg-scratch-plan-preserve?
+          (owned_view.compiler-owned-shared-view plan)
+          0
+          1)
+        (compiler_regalloc.compiler-reg-scratch-plan-preserve? plan 0 2)
+        (match (compiler-backend-emit-test-instrs-target-with-backend-state
+          instrs
+          assignments
+          29
+          _target
+          state)
+          [(compiler_backend.ResultCompilerBackend.Ok asm)
+            (let
+              [ymm : String
+                (compiler_backend.compiler-backend-vector-home-to-reg
+                  mask
+                  "ymm")]
+              (and
+                (compiler_backend.compiler-backend-string-contains?
+                  (owned_view.compiler-owned-shared-view asm)
+                  (str_cat.str-cat
+                    "    vmovdqu "
+                    (owned_view.compiler-owned-shared-view ymm)
+                    ", -1152(%rbp)\n"))
+                (compiler_backend.compiler-backend-string-contains?
+                  asm
+                  (str_cat.str-cat "    vmovdqu -1152(%rbp), " ymm "\n"))))]
+          [_ false])))
+    true))
+
+(define (compiler-backend-i64-reduce-pressure-ok?) : bool
+  (and
+    (compiler-backend-i64-reduce-pressure-case-ok?
+      (compiler_backend.CompilerBackendTarget.Linux)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Min))
+    (compiler-backend-i64-reduce-pressure-case-ok?
+      (compiler_backend.CompilerBackendTarget.Linux)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Max))
+    (compiler-backend-i64-reduce-pressure-case-ok?
+      (compiler_backend.CompilerBackendTarget.Windows)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Min))
+    (compiler-backend-i64-reduce-pressure-case-ok?
+      (compiler_backend.CompilerBackendTarget.Windows)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Max))))
+
+(define (compiler-backend-i64-reduce-coalesced-blocks
+  [op : compiler_ir_types.CompilerIrVectorReduceOp]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler-backend-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "join"))
+        (compiler_ir_types.compiler-ir-instr-seq-empty)))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "join")
+        (compiler-backend-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Phi
+            3
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-seq-empty))
+            (compiler_ast_types.AstType.I64))
+          (compiler-backend-test-instr-seq-prepend
+            (compiler_ir_types.CompilerIrInstr.VectorReduce
+              1
+              op
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              4
+              (compiler_ast_types.AstType.I64))
+            (compiler-backend-test-instr-seq-prepend
+              (compiler_ir_types.CompilerIrInstr.VectorReduce
+                2
+                (compiler_ir_types.CompilerIrVectorReduceOp.Sum)
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                4
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-seq-empty)))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (compiler-backend-i64-reduce-coalesced-case-ok?
+  [_abi : compiler_abi.CompilerRegTargetAbi]
+  [_op : compiler_ir_types.CompilerIrVectorReduceOp]) : bool
+  (cfg
+    scratch-vreg
+    (match (compiler-backend-scratch-test-result-for-abi
+      _abi
+      "reduce_coalesced_source"
+      (compiler-backend-i64-reduce-coalesced-blocks _op)
+      4
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          3
+          (compiler_regalloc.CompilerRegLocation.Register
+            (compiler_abi.compiler-abi-vector-register-id 6)))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            2
+            (compiler_regalloc.CompilerRegLocation.Spill -16))
+          (compiler-backend-vector-reduce-direct-assignments
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-r12)))))
+      [(compiler_regalloc.CompilerRegScratchPlanResult.Result _ plan)
+        (let
+          [acc : i64
+            (compiler_regalloc.compiler-reg-scratch-plan-register
+              (owned_view.compiler-owned-shared-view plan)
+              4
+              0)]
+          [sibling : i64
+            (compiler_regalloc.compiler-reg-scratch-plan-register
+              (owned_view.compiler-owned-shared-view plan)
+              4
+              1)]
+          [mask : i64
+            (compiler_regalloc.compiler-reg-scratch-plan-register plan 4 2)]
+          (and
+            (not (= mask compiler_abi.compiler-reg-id-invalid))
+            (not (compiler_regalloc.compiler-reg-registers-overlap? mask acc))
+            (not
+              (compiler_regalloc.compiler-reg-registers-overlap? mask sibling))
+            (not
+              (compiler_regalloc.compiler-reg-registers-overlap?
+                mask
+                (compiler_abi.compiler-abi-vector-register-id 6)))))])
+    true))
+
+(define (compiler-backend-i64-reduce-coalesced-ok?) : bool
+  (and
+    (compiler-backend-i64-reduce-coalesced-case-ok?
+      (compiler_abi.CompilerRegTargetAbi.Linux)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Min))
+    (compiler-backend-i64-reduce-coalesced-case-ok?
+      (compiler_abi.CompilerRegTargetAbi.Linux)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Max))
+    (compiler-backend-i64-reduce-coalesced-case-ok?
+      (compiler_abi.CompilerRegTargetAbi.Windows)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Min))
+    (compiler-backend-i64-reduce-coalesced-case-ok?
+      (compiler_abi.CompilerRegTargetAbi.Windows)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Max))))
+
+(define (compiler-backend-i64-reduce-call-instrs
+  [op : compiler_ir_types.CompilerIrVectorReduceOp]) : compiler_ir_types.CompilerIrInstrSeq
+  (compiler-backend-test-instr-seq-prepend
+    (compiler_ir_types.CompilerIrInstr.Call
+      3
+      (ci.intern "side_effect")
+      compiler_ir_types.CompilerIrCallArgs.Nil
+      (compiler_ast_types.AstType.I64))
+    (compiler-backend-test-instr-seq-prepend
+      (compiler_ir_types.CompilerIrInstr.VectorReduce
+        1
+        op
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        4
+        (compiler_ast_types.AstType.I64))
+      (compiler-backend-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.Call
+          4
+          (ci.intern "side_effect")
+          compiler_ir_types.CompilerIrCallArgs.Nil
+          (compiler_ast_types.AstType.I64))
+        (compiler-backend-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.VectorReduce
+            2
+            (compiler_ir_types.CompilerIrVectorReduceOp.Sum)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.compiler-ir-instr-seq-empty))))))
+
+(define (compiler-backend-i64-reduce-call-assignments [index : i64]) : compiler_regalloc.CompilerRegAssignmentTable
+  (if (= index 5)
+    (compiler_regalloc.compiler-reg-assignment-table-empty)
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        index
+        (cond
+          [(= index 0) (compiler_regalloc.CompilerRegLocation.Spill -64)]
+          [(= index 1)
+            (compiler_regalloc.CompilerRegLocation.Register
+              compiler_abi.compiler-reg-id-r12)]
+          [else (compiler_regalloc.CompilerRegLocation.Spill (* -8 index))]))
+      (compiler-backend-i64-reduce-call-assignments (+ index 1)))))
+
+(define (compiler-backend-i64-reduce-call-case-ok?
+  [target : compiler_backend.CompilerBackendTarget]
+  [op : compiler_ir_types.CompilerIrVectorReduceOp]) : bool
+  (match (compiler-backend-emit-test-instrs-target-with-backend-state
+    (compiler-backend-i64-reduce-call-instrs op)
+    (compiler-backend-i64-reduce-call-assignments 0)
+    5
+    target
+    (compiler_backend.compiler-backend-state-new
+      (ci.intern-compat-state-capture-active)))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (=
+          (compiler_backend.compiler-backend-string-count
+            (owned_view.compiler-owned-shared-view asm)
+            "call _tl_side_effect")
+          2)
+        (=
+          (compiler_backend.compiler-backend-string-count
+            (owned_view.compiler-owned-shared-view asm)
+            "    vmovdqu -64(%rbp), %ymm14\n")
+          2)
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            ", -64(%rbp)\n")))]
+    [_ false]))
+
+(define (compiler-backend-i64-reduce-call-ok?) : bool
+  (and
+    (compiler-backend-i64-reduce-call-case-ok?
+      (compiler_backend.CompilerBackendTarget.Linux)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Min))
+    (compiler-backend-i64-reduce-call-case-ok?
+      (compiler_backend.CompilerBackendTarget.Linux)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Max))
+    (compiler-backend-i64-reduce-call-case-ok?
+      (compiler_backend.CompilerBackendTarget.Windows)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Min))
+    (compiler-backend-i64-reduce-call-case-ok?
+      (compiler_backend.CompilerBackendTarget.Windows)
+      (compiler_ir_types.CompilerIrVectorReduceOp.Max))))
+
 (define (compiler-backend-avx2-vector-reduce-ok?) : bool
   (and
     (compiler-backend-avx2-reduce-asm-contains?
@@ -24236,6 +24765,7 @@ g:
     (compiler_ast_types.AstType.I64)
     ""
     ""
+    ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-state-new
       (ci.intern-compat-state-capture-active)))
@@ -24276,6 +24806,7 @@ g:
     (compiler_ir_types.CompilerIrValue.Var 0)
     4
     (compiler_ast_types.AstType.I64)
+    ""
     ""
     ""
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
@@ -50438,6 +50969,7 @@ g:
             (compiler_ast_types.AstType.I64)
             "%xmm14"
             "%xmm15"
+            ""
             (owned_view.compiler-owned-shared-view diag)
             backend-state)
             [(compiler_backend.ResultCompilerBackend.Ok avx2)
@@ -50451,6 +50983,7 @@ g:
                 (compiler_ast_types.AstType.I64)
                 "%xmm14"
                 "%xmm15"
+                ""
                 (owned_view.compiler-owned-shared-view diag)
                 backend-state)
                 [(compiler_backend.ResultCompilerBackend.Ok avx512)
@@ -58211,6 +58744,12 @@ b_keep:
 
 (define (compiler-backend-self-test) : i64
   (if (and
+    (compiler-backend-avx2-i64-reduce-source-ok?)
+    (compiler-backend-avx2-i64-reduce-spilled-source-ok?)
+    (compiler-backend-i64-reduce-mask-plan-ok?)
+    (compiler-backend-i64-reduce-pressure-ok?)
+    (compiler-backend-i64-reduce-coalesced-ok?)
+    (compiler-backend-i64-reduce-call-ok?)
     (compiler-backend-lazy-table-storage-ok?)
     (compiler-backend-resetting-entry-live-session-guard-ok?)
     (compiler-backend-inline-aggregate-global-shape-ok?)
@@ -58623,6 +59162,12 @@ b_keep:
 ;; independent of legacy direct-emitter coverage.
 (define (compiler-backend-scratch-vreg-self-test) : i64
   (if (and
+    (compiler-backend-avx2-i64-reduce-source-ok?)
+    (compiler-backend-avx2-i64-reduce-spilled-source-ok?)
+    (compiler-backend-i64-reduce-mask-plan-ok?)
+    (compiler-backend-i64-reduce-pressure-ok?)
+    (compiler-backend-i64-reduce-coalesced-ok?)
+    (compiler-backend-i64-reduce-call-ok?)
     (compiler-backend-scratch-vreg-call-target-plan-ok?)
     (compiler-backend-scratch-vreg-switch-plan-ok?)
     (compiler-backend-scratch-vreg-aggregate-plan-ok?)

@@ -14,6 +14,7 @@
 (import (vector.vector String) as svec)
 (import (option.option i64) as option_i64)
 (import compiler_check_core as check_core)
+(import compiler_cfg_core as cfg_core)
 (import compiler_builtin_ids as cbi)
 (import compiler_load as cload)
 (import compiler_typecheck_api as tc_api)
@@ -8988,6 +8989,7 @@
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]) : ResultCompilerCheckWithSemanticIndex
   (let
     [job-state : tc.TcJobState (tc.tc-serial-job-state)]
@@ -9003,6 +9005,7 @@
         (ast.ast-program decls)
         paths
         stdlib-roots
+        (owned_view.compiler-owned-shared-view cfgs)
         cache-scope)
         [(tc.ResultCompilerTypecheckChecked.Ok summary ctx env checked-paths)
           (let
@@ -9093,6 +9096,7 @@
   [prelude-paths : ast.AstDeclPathList]
   [loaded : cload.ResultCompilerLoadWithPaths]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]) : ResultCompilerCheckWithSemanticIndex
   (match loaded
     [(cload.ResultCompilerLoadWithPaths.Ok
@@ -9110,6 +9114,7 @@
             prelude-paths
             (ast.ast-decl-path-list-with-modules entry-paths entry-modules))
           stdlib-roots
+          (owned_view.compiler-owned-shared-view cfgs)
           cache-scope))]
     [(cload.ResultCompilerLoadWithPaths.Err diag)
       (begin
@@ -9228,6 +9233,7 @@
             prelude-paths
             loaded
             stdlib-roots
+            (owned_view.compiler-owned-shared-view cfgs)
             cache-scope)))]))
 
 ;; Return current-buffer records whenever recovery establishes safe identities.
@@ -13671,6 +13677,58 @@
           false)]
       [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
 
+;; Rechecking the same source under alternating cfg inputs must invalidate the
+;; typecheck prefix and preserve the editor's complete semantic result.
+(define (compiler-check-semantic-index-generated-cfg-one-ok? [enabled : bool]) : bool
+  (let
+    [cfgs : sym_i64_env.SymI64Env
+      (if enabled
+        (cfg_core.compiler-cfg-enable
+          (check_core.compiler-check-language-cfgs)
+          "semantic-feature")
+        (check_core.compiler-check-language-cfgs))]
+    [source : String
+      "(defmacro (emit-configured) : Decls
+  (let [head : Expr (expr-var \"cfg\")]
+    `(begin
+      (,head semantic-feature (define (enabled-answer) : i64 42))
+      (,head (not semantic-feature) (define (disabled-answer) : i64 42)))))
+(emit-configured)
+(define (main) : i64
+  (cfg semantic-feature (enabled-answer) (disabled-answer)))"]
+    [owners-before : i64 (compiler-semantic-source-index-live-owner-count)]
+    [complete : bool
+      (match (compiler-check-source-index-with-roots-and-cfg
+        "src/tests/generated_cfg_semantic.tl"
+        source
+        (svec.new)
+        cfgs)
+        [(ResultCompilerCheckWithSemanticIndex.Ok _ index)
+          (begin
+            (compiler-semantic-source-index-release! (&mut index))
+            true)]
+        [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+          (begin
+            (compiler-semantic-source-index-release! (&mut partial))
+            false)]
+        [(ResultCompilerCheckWithSemanticIndex.Err _) false])]
+    (and
+      complete
+      (= owners-before (compiler-semantic-source-index-live-owner-count)))))
+
+(define (compiler-check-semantic-index-generated-cfg-ok?) : bool
+  (begin
+    (unless
+      (compiler-check-semantic-index-generated-cfg-one-ok? true)
+      (io.panic "semantic-index: enabled generated cfg failed"))
+    (unless
+      (compiler-check-semantic-index-generated-cfg-one-ok? false)
+      (io.panic "semantic-index: disabled generated cfg failed"))
+    (unless
+      (compiler-check-semantic-index-generated-cfg-one-ok? true)
+      (io.panic "semantic-index: repeated generated cfg failed"))
+    true))
+
 (define (compiler-check-semantic-index-ok?) : bool
   (let
     [base-start : i64 (compiler-semantic-index-smoke-timing-start)]
@@ -13683,7 +13741,10 @@
           0
           1))]
     [macro-start : i64 (compiler-semantic-index-smoke-timing-start)]
-    [macro-ok : bool (compiler-check-semantic-index-macro-call-sites-ok?)]
+    [macro-ok : bool
+      (and
+        (compiler-check-semantic-index-macro-call-sites-ok?)
+        (compiler-check-semantic-index-generated-cfg-ok?))]
     [macro-timing-ok : bool
       (compiler-semantic-index-smoke-timing-record
         "semantic-macro-call-sites"

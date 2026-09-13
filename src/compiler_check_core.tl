@@ -188,6 +188,7 @@
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]
   [job-state : tc.TcJobState]) : ResultCompilerCheck
   (begin
@@ -199,6 +200,7 @@
       (ast.ast-program (owned_view.compiler-owned-shared-view decls))
       (owned_view.compiler-owned-shared-view paths)
       (owned_view.compiler-owned-shared-view stdlib-roots)
+      (owned_view.compiler-owned-shared-view cfgs)
       (owned_view.compiler-owned-shared-view cache-scope)
       (ast.ast-node-pool-context-capture-active))
       [(tc.ResultCompilerTypecheck.Ok summary)
@@ -222,12 +224,14 @@
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]) : ResultCompilerCheck
   (compiler-check-program-with-paths-cache-and-job-state
     (owned_view.compiler-owned-shared-view path)
     decls
     paths
     stdlib-roots
+    (owned_view.compiler-owned-shared-view cfgs)
     cache-scope
     (tc.tc-serial-job-state)))
 
@@ -237,6 +241,7 @@
   [prelude-paths : ast.AstDeclPathList]
   [loaded : compiler_load.ResultCompilerLoadWithPaths]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]
   [job-state : tc.TcJobState]) : ResultCompilerCheck
   (match loaded
@@ -256,6 +261,7 @@
             prelude-paths
             (ast.ast-decl-path-list-with-modules entry-paths entry-modules))
           stdlib-roots
+          (owned_view.compiler-owned-shared-view cfgs)
           cache-scope
           job-state))]
     [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
@@ -271,6 +277,7 @@
   [prelude-paths : ast.AstDeclPathList]
   [loaded : compiler_load.ResultCompilerLoadWithPaths]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]) : ResultCompilerCheck
   (compiler-check-loaded-with-prelude-cache-and-job-state
     path
@@ -278,6 +285,7 @@
     prelude-paths
     loaded
     stdlib-roots
+    (owned_view.compiler-owned-shared-view cfgs)
     cache-scope
     (tc.tc-serial-job-state)))
 
@@ -326,6 +334,7 @@
             prelude-paths
             loaded
             (owned_view.compiler-owned-shared-view stdlib-roots)
+            (owned_view.compiler-owned-shared-view cfgs)
             cache-scope
             job-state)))]))
 
@@ -333,6 +342,7 @@
   [path : String]
   [loaded : compiler_load.ResultCompilerLoadWithPaths]
   [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope : String]) : ResultCompilerCheckWithPaths
   (match loaded
     [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
@@ -346,6 +356,7 @@
             decls
             (owned_view.compiler-owned-shared-view owned-paths)
             (owned_view.compiler-owned-shared-view stdlib-roots)
+            (owned_view.compiler-owned-shared-view cfgs)
             cache-scope)
             [(ResultCompilerCheck.Ok summary advisories)
               (ResultCompilerCheckWithPaths.Ok summary owned-paths advisories)]
@@ -421,6 +432,7 @@
             prelude-paths
             loaded
             (owned_view.compiler-owned-shared-view stdlib-roots)
+            (owned_view.compiler-owned-shared-view cfgs)
             (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
               "typecheck-prefix-check"
               (owned_view.compiler-owned-shared-view stdlib-roots)
@@ -486,6 +498,7 @@
         emit-entry
         (owned_view.compiler-owned-shared-view cfgs))
       (owned_view.compiler-owned-shared-view stdlib-roots)
+      (owned_view.compiler-owned-shared-view cfgs)
       (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
         "typecheck-prefix-check"
         (owned_view.compiler-owned-shared-view stdlib-roots)
@@ -601,6 +614,7 @@
                 (ast.ast-decl-list-box-shared-view decls-box)
                 (ast.ast-decl-path-list-new)
                 (svec.new)
+                (compiler-check-language-cfgs)
                 (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
                   "typecheck-prefix-check"
                   (svec.new)

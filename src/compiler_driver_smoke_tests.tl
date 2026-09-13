@@ -1094,14 +1094,118 @@
                     (compiler_diagnostic.compiler-diagnostic-box-shared-view
                       diag))))]))))))
 
+;; Reuse two real compile states with different target/custom cfg sets. Main's
+;; source cfg selects names that exist only in the matching generated branch,
+;; so successful compilation proves selection rather than just parsing syntax.
+(define (compiler-driver-generated-cfg-job-ok?
+  [state : compiler_driver_core.CompilerDriverState]
+  [target : compiler_backend.CompilerBackendTarget]
+  [enabled : bool]) : bool
+  (begin
+    (compiler-driver-reader-context-smoke-prepare-state!
+      (owned_view.compiler-owned-shared-view state))
+    (let
+      [cfgs : sym_i64_env.SymI64Env
+        (if enabled
+          (compiler_cfg_core.compiler-cfg-enable-with-intern-state
+            (compiler_cfg_core.compiler-cfg-empty)
+            "generated-cfg-feature"
+            (compiler_driver_core.compiler-driver-state-owned-interns-mut
+              (owned_view.compiler-owned-shared-view state)))
+          (compiler_cfg_core.compiler-cfg-empty))]
+      (match (compiler_driver_core.compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
+        state
+        "tests/integration/generated_cfg.tl"
+        target
+        true
+        (compiler-driver-pic-smoke-roots)
+        0
+        compiler_backend.CompilerBackendMode.Scalar
+        cfgs)
+        [(compiler_driver_core.ResultCompilerDriverBuffer.Ok _ _) true]
+        [(compiler_driver_core.ResultCompilerDriverBuffer.Err diagnostic _)
+          (compiler-driver-reader-context-smoke-fail
+            (compiler_diagnostic.compiler-diagnostic-render
+              (compiler_diagnostic.compiler-diagnostic-box-shared-view
+                diagnostic)))]))))
+
+(define (compiler-driver-generated-cfg-isolation-ok?) : bool
+  (let
+    [state-a : compiler_driver_core.CompilerDriverState
+      (compiler_driver_core.compiler-driver-state-new-for-compile)]
+    [state-b : compiler_driver_core.CompilerDriverState
+      (compiler_driver_core.compiler-driver-state-new-for-compile)]
+    [a-enabled : bool
+      (compiler-driver-generated-cfg-job-ok?
+        (owned_view.compiler-owned-shared-view state-a)
+        compiler_backend.CompilerBackendTarget.Linux
+        true)]
+    [a-intern : ci.InternCompatState
+      (compiler_driver_core.compiler-driver-state-owned-interns
+        (owned_view.compiler-owned-shared-view state-a))]
+    [a-table : i64 (ci.intern-compat-state-table-id a-intern)]
+    [a-count : i64 (ci.intern-compat-state-pool-len a-intern)]
+    [a-pools : compiler_ast_types.AstNodePoolContext
+      (compiler_driver_core.compiler-driver-state-pool-context
+        (owned_view.compiler-owned-shared-view state-a))]
+    [a-exprs : i64 (compiler_ast_types.ast-node-pool-context-expr-len a-pools)]
+    [a-types : i64 (compiler_ast_types.ast-node-pool-context-type-len a-pools)]
+    [b-disabled : bool
+      (compiler-driver-generated-cfg-job-ok?
+        (owned_view.compiler-owned-shared-view state-b)
+        compiler_backend.CompilerBackendTarget.Windows
+        false)]
+    [a-unchanged : bool
+      (let
+        [intern : ci.InternCompatState
+          (compiler_driver_core.compiler-driver-state-owned-interns
+            (owned_view.compiler-owned-shared-view state-a))]
+        [pools : compiler_ast_types.AstNodePoolContext
+          (compiler_driver_core.compiler-driver-state-pool-context
+            (owned_view.compiler-owned-shared-view state-a))]
+        (and
+          (= (ci.intern-compat-state-table-id intern) a-table)
+          (= (ci.intern-compat-state-pool-len intern) a-count)
+          (= (compiler_ast_types.ast-node-pool-context-expr-len pools) a-exprs)
+          (= (compiler_ast_types.ast-node-pool-context-type-len pools) a-types)))]
+    [a-reused : bool
+      (compiler-driver-generated-cfg-job-ok?
+        (owned_view.compiler-owned-shared-view state-a)
+        compiler_backend.CompilerBackendTarget.Linux
+        true)]
+    [a-disabled : bool
+      (compiler-driver-generated-cfg-job-ok?
+        state-a
+        compiler_backend.CompilerBackendTarget.Linux
+        false)]
+    [b-enabled : bool
+      (compiler-driver-generated-cfg-job-ok?
+        state-b
+        compiler_backend.CompilerBackendTarget.Windows
+        true)]
+    (and a-enabled b-disabled a-unchanged a-reused a-disabled b-enabled)))
+
 (define (compiler-driver-reader-context-smoke-main) : i64
   (begin
     (cbi.compiler-builtin-reset!)
     (cbi.compiler-builtin-initialize-for-parse!)
     (unless (compiler-driver-construction-arena-scope-ok?) (return 2))
-    (if (compiler-driver-reader-context-smoke-ok?)
-      42
-      1)))
+    (unless
+      (compiler-driver-reader-context-smoke-ok?)
+      (io.panic "compiler-driver: reader context isolation failed"))
+    42))
+
+;; The reader-context smoke intentionally exercises low-level pool/reader
+;; switching. Keep this end-to-end frontend sequence in its own suite child,
+;; while all A/B cfg jobs remain in one process to test their isolation.
+(define (compiler-driver-generated-cfg-smoke-main) : i64
+  (begin
+    (cbi.compiler-builtin-reset!)
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (unless
+      (compiler-driver-generated-cfg-isolation-ok?)
+      (io.panic "compiler-driver: generated cfg isolation failed"))
+    42))
 
 ;; A batch reset advances the owned intern generation before the next loader
 ;; pass. Lazy aliases recorded by that loader must already carry the new

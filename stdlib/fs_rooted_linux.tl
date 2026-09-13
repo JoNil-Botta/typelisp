@@ -19,6 +19,8 @@
 ;# `linux-rooted-read-file-into!` accepts an exclusive initialized byte view so
 ;# a read loop can retain one caller-owned buffer and receive only scalar
 ;# operation/count/EOF metadata without allocating per read.
+;# `linux-rooted-read-file-rewind!` resets that same acquired file to offset
+;# zero without allocation or reopening its path; it does not freeze contents.
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
@@ -192,6 +194,10 @@
 ;: Linux x86-64 `fstat` syscall number.
 (define fs-linux-rooted-syscall-fstat : i64
   5)
+
+;: Linux x86-64 `lseek` syscall number.
+(define fs-linux-rooted-syscall-lseek : i64
+  8)
 
 ;: Linux x86-64 `fsync` syscall number.
 (define fs-linux-rooted-syscall-fsync : i64
@@ -436,6 +442,10 @@
 (define fs-linux-rooted-syscall-kind-reopen-directory : i64
   16)
 
+;: Fault-injection ID for retained-file rewind via `lseek`.
+(define fs-linux-rooted-syscall-kind-lseek : i64
+  17)
+
 ;: Sentinel distinct from every valid raw syscall result.
 (define fs-linux-rooted-no-injection : i64
   -9223372036854775808)
@@ -524,6 +534,10 @@
     0))
 (cfg
   fs-rooted-linux-test-hooks
+  (define fs-linux-rooted-test-lseek-calls : i64
+    0))
+(cfg
+  fs-rooted-linux-test-hooks
   (define fs-linux-rooted-test-read-max : i64
     0))
 (cfg
@@ -564,13 +578,15 @@
       (set! fs-linux-rooted-test-rmdirat-calls 0)
       (set! fs-linux-rooted-test-directory-fsync-calls 0)
       (set! fs-linux-rooted-test-reopen-directory-calls 0)
+      (set! fs-linux-rooted-test-lseek-calls 0)
       (set! fs-linux-rooted-test-read-max 0)
       (set! fs-linux-rooted-test-mkdir-race-enabled false)
       (set! fs-linux-rooted-test-mkdir-race-ok false)
       (set! fs-linux-rooted-test-after-mkdir-pause-ms 0))))
 
 ;: Inject `errno-code` (zero means a zero-progress return) for one numbered
-;: syscall attempt of `kind`.
+;: syscall attempt of `kind`. A negative code injects a positive raw result,
+;: including defensive unexpected-offset coverage for rewind.
 (cfg
   fs-rooted-linux-test-hooks
   (define (linux-rooted-test-fail-on!
@@ -650,6 +666,8 @@
         fs-linux-rooted-test-directory-fsync-calls]
       [(= kind fs-linux-rooted-syscall-kind-reopen-directory)
         fs-linux-rooted-test-reopen-directory-calls]
+      [(= kind fs-linux-rooted-syscall-kind-lseek)
+        fs-linux-rooted-test-lseek-calls]
       [else 0])))
 
 ;: Record one syscall attempt and return an injected raw result or the sentinel.
@@ -755,6 +773,12 @@
                 fs-linux-rooted-test-reopen-directory-calls
                 (+ fs-linux-rooted-test-reopen-directory-calls 1))
               fs-linux-rooted-test-reopen-directory-calls)]
+          [(= kind fs-linux-rooted-syscall-kind-lseek)
+            (begin
+              (set!
+                fs-linux-rooted-test-lseek-calls
+                (+ fs-linux-rooted-test-lseek-calls 1))
+              fs-linux-rooted-test-lseek-calls)]
           [else 0])]
       (if (and
         (= kind fs-linux-rooted-test-fail-kind)
@@ -1018,6 +1042,21 @@
           -38
           (unsafe
             (syscall fs-linux-rooted-syscall-fchmod fd (cast mode : i64))))))))
+
+;: Raw Linux `lseek(fd, 0, SEEK_SET)` with the rooted boundary's errno and
+;: fault-injection contract. The legacy I/O wrapper normalizes away errno.
+(unsafe
+  (define (linux-rooted-raw-rewind [fd : i64]) : i64
+    (let
+      [injected : i64
+        (linux-rooted-injected-result fs-linux-rooted-syscall-kind-lseek)]
+      (if (not (= injected fs-linux-rooted-no-injection))
+        injected
+        (cfg
+          windows
+          -38
+          (unsafe
+            (syscall fs-linux-rooted-syscall-lseek fd 0 0)))))))
 
 ;: Raw Linux `read`, optionally bounded by the focused short-read hook.
 (unsafe
@@ -1865,6 +1904,32 @@
                     (linux-rooted-state-new fd LinuxRootedOk))
                   (linux-rooted-failed-read-file-after-close kind-result fd)))))]))))
 
+;: Reset a live acquired regular file to absolute offset zero with one checked
+;: lseek. Liveness and cancellation rejection perform no host access and leave
+;: the cursor unchanged. Host errors use the existing rooted taxonomy; a
+;: nonzero returned offset is IoFailure. After a host failure this API promises
+;: no cursor position; a successful rewind is required before restarting reads.
+;: The descriptor stays owned and open on failure. This operation allocates no
+;: storage, performs no pathname lookup/read, and does not verify content
+;: stability or strengthen the original acquisition guarantee.
+(define (linux-rooted-read-file-rewind!
+  [file : (&mut file FsLinuxRootedReadFile)]
+  [cancel-check : (-> bool)]) : FsLinuxRootedResult
+  (unsafe
+    (let
+      [state : FsLinuxRootedHandleState (linux-rooted-state-read file.state)]
+      (cond
+        [(or (< state.fd 0) (not (linux-rooted-result-ok? state.result)))
+          LinuxRootedClosed]
+        [(cancel-check) LinuxRootedCancelled]
+        [else
+          (let
+            [raw : i64 (linux-rooted-raw-rewind state.fd)]
+            (cond
+              [(= raw 0) LinuxRootedOk]
+              [(< raw 0) (linux-rooted-result-from-raw raw)]
+              [else LinuxRootedIoFailure]))]))))
+
 ;: Capture exact length metadata from the retained descriptor and recheck that
 ;: it still names a regular file.
 (define (linux-rooted-read-file-metadata
@@ -2512,6 +2577,10 @@
         fs-linux-rooted-syscall-read
         0
         "x86-64 read syscall number")
+      (test.assert-i64-eq
+        fs-linux-rooted-syscall-lseek
+        8
+        "x86-64 lseek syscall number")
       (test.assert-i64-eq
         fs-linux-rooted-syscall-unlinkat
         263

@@ -72363,12 +72363,196 @@
         59]
       [else 42])))
 
+;; The post-prune literal pass also receives non-SSA IR. A phi-only mutable
+;; local must retain every reaching definition, including parameter definitions
+;; and non-Mov writers. More writes than the frame size must not overflow the
+;; pass's compact candidate array. This is the reduced #7679 accumulator shape.
+(define (opt-uniform-phi-mutable-overwrite [kind : i64] [writes : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (let
+    [out : compiler_ir_types.CompilerIrInstrBuilder
+      (compiler_ir_types.compiler-ir-instr-builder-with-capacity (+ writes 2))]
+    [index : i64 0]
+    (begin
+      (cond
+        [(= kind 1)
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            (&mut out)
+            (compiler_ir_types.CompilerIrInstr.UnOp
+              1
+              (compiler_ir_types.CompilerIrUnOp.Not)
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ast_types.AstType.Bool)))]
+        [(= kind 2)
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            (&mut out)
+            (compiler_ir_types.CompilerIrInstr.CallIndirect
+              1
+              (compiler_ir_types.CompilerIrValue.Function
+                (opt-test-symbol "opaque"))
+              (compiler_ir_types.CompilerIrCallArgs.Nil)
+              (compiler_ast_types.AstType.Bool)))]
+        [(= kind 3)
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            (&mut out)
+            (compiler_ir_types.CompilerIrInstr.Phi
+              1
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                (compiler_ir_types.CompilerIrValue.Bool false)
+                (compiler_ir_types.compiler-ir-label "entry")
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty))
+              (compiler_ast_types.AstType.Bool)))]
+        [else
+          (while (< index writes)
+            (begin
+              (compiler_ir_types.compiler-ir-instr-builder-push!
+                (&mut out)
+                (compiler_ir_types.CompilerIrInstr.Mov
+                  1
+                  (compiler_ir_types.CompilerIrValue.Bool false)
+                  (compiler_ast_types.AstType.Bool)))
+              (set! index (+ index 1))))])
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut out)
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "join")))
+      (compiler_ir_types.compiler-ir-instr-builder-to-seq out))))
+
+(define (opt-uniform-phi-mutable-function
+  [kind : i64]
+  [writes : i64]
+  [array? : bool]) : compiler_ir_types.CompilerIrFunction
+  (let
+    [params : compiler_ir_types.CompilerIrParamSeq
+      (compiler_ir_types.compiler-ir-param-seq-prepend
+        (compiler_ir_types.CompilerIrParam.Param
+          "cond"
+          (compiler_ast_types.AstType.Bool)
+          0)
+        (if (= kind 4)
+          (compiler_ir_types.compiler-ir-param-seq-prepend
+            (compiler_ir_types.CompilerIrParam.Param
+              "value"
+              (compiler_ast_types.AstType.Bool)
+              1)
+            (compiler_ir_types.compiler-ir-param-seq-empty))
+          (compiler_ir_types.compiler-ir-param-seq-empty)))]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (if (= kind 4)
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.compiler-ir-label "overwrite")
+                (compiler_ir_types.compiler-ir-label "keep")))
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Mov
+                1
+                (compiler_ir_types.CompilerIrValue.Bool true)
+                (compiler_ast_types.AstType.Bool))
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.compiler-ir-label "overwrite")
+                (compiler_ir_types.compiler-ir-label "keep")))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "overwrite")
+            (opt-uniform-phi-mutable-overwrite kind writes))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "keep")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "join"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "join")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    2
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                      (compiler_ir_types.CompilerIrValue.Var 1)
+                      (compiler_ir_types.compiler-ir-label "overwrite")
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+                        (compiler_ir_types.CompilerIrValue.Var 1)
+                        (compiler_ir_types.compiler-ir-label "keep")
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+                    (compiler_ast_types.AstType.Bool))
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 2)))))
+              (compiler_ir_types.CompilerIrBlockList.Nil)))))]
+    (compiler_ir_types.CompilerIrFunction.Function
+      (opt-test-symbol "uniform-phi-mutable")
+      params
+      (compiler_ast_types.AstType.Bool)
+      3
+      (if array?
+        (compiler_ir_types.compiler-ir-block-list-compact blocks)
+        blocks))))
+
+(define (opt-uniform-phi-mutable-preserved?
+  [kind : i64]
+  [writes : i64]
+  [array? : bool]) : bool
+  (let
+    [before : compiler_ir_types.CompilerIrFunction
+      (opt-uniform-phi-mutable-function kind writes array?)]
+    (match (compiler_optimize.opt-late-uniform-phi-function-rewrite
+      (compiler_optimize.compiler-opt-global-shared-view before))
+      [(compiler_optimize.OptLateRewriteResult.Result after changed)
+        (and
+          (not changed)
+          (compiler_optimize.opt-function-eq
+            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+            before
+            after))])))
+
+(define (compiler-optimize-late-uniform-phi-mutable-self-test) : i64
+  (begin
+    (compiler-optimize-self-test-require!
+      "late phi: conditional mutable literal"
+      (opt-uniform-phi-mutable-preserved? 0 1 false))
+    (compiler-optimize-self-test-require!
+      "late phi: compact blocks and more definitions than frame"
+      (opt-uniform-phi-mutable-preserved? 0 65 true))
+    (compiler-optimize-self-test-require!
+      "late phi: nonliteral redefinition"
+      (opt-uniform-phi-mutable-preserved? 1 1 true))
+    (compiler-optimize-self-test-require!
+      "late phi: indirect-call redefinition"
+      (opt-uniform-phi-mutable-preserved? 2 1 false))
+    (compiler-optimize-self-test-require!
+      "late phi: multiply defined phi destination"
+      (opt-uniform-phi-mutable-preserved? 3 1 true))
+    (compiler-optimize-self-test-require!
+      "late phi: entry parameter is a definition"
+      (opt-uniform-phi-mutable-preserved? 4 1 false))
+    (match (compiler_optimize.opt-late-uniform-phi-function-rewrite
+      (opt-uniform-phi-mutable-function 0 0 true))
+      [(compiler_optimize.OptLateRewriteResult.Result after changed)
+        (let
+          [blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-function-blocks after)]
+          (compiler-optimize-self-test-require!
+            "late phi: single literal still forwards"
+            (and
+              changed
+              (=
+                (opt-count-phi-blocks
+                  (compiler_optimize.compiler-opt-global-shared-view blocks))
+                0)
+              (= (opt-count-mov-dst-blocks blocks 1) 0))))])
+    42))
+
 ;; Returns 42 only when a phi whose surviving inputs all name one value folds to
 ;; a `Mov` of that value, a self-reference on the back edge does not block it,
 ;; disagreeing inputs keep the phi, and a chain of such phis collapses whole in
 ;; a single cleanup sweep and a single pipeline run.
 (define (compiler-optimize-uniform-phi-self-test) : i64
   (let
+    [_mutable : i64 (compiler-optimize-late-uniform-phi-mutable-self-test)]
     [bool-uniform : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-cfg-simplify-blocks
         (opt-uniform-phi-diamond-blocks

@@ -329,7 +329,9 @@ Compiler-development builds expose three opt-in `typelisp compile` diagnostics:
   input's `.ir` path).
 - `--dump-ir after-<pass>` writes every function snapshot observed immediately
   after the named optimizer pass. Pass names use the trace spelling, including
-  `fold`, `ssa`, `gvn`, `licm`, `global_gvn`, and `dce`.
+  `fold`, `ssa`, `gvn`, `licm`, `global_gvn`, `dce`, and the post-prune
+  `uniform_phi`. A last per-function observation is not necessarily the final
+  program: later whole-program or post-prune rewrites must also be inspected.
 - `--trace-passes` writes one
   `optimizer-pass|<function>|<pass>|blocks=<n>|instructions=<n>` record per
   observed boundary to stderr.

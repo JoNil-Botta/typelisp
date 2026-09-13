@@ -1868,15 +1868,28 @@
       (tc_core.macro-hygiene-global-source-name-id-or session name-id name-id)]
     [source-names : ci.InternSourceNameSessionHandle
       (cis.intern-structural-session-handle-source-names session)]
-    (if (and
-      (cis.intern-structural-session-source-name-component-valid?
-        session
-        source-id)
-      (ci.intern-source-name-session-handle-qualified? source-names source-id))
-      (ci.intern-source-name-session-handle-qualified-base-id
+    (if (cis.intern-structural-session-source-name-component-valid?
+      session
+      source-id)
+      (if (ci.intern-source-name-session-handle-qualified?
         source-names
         source-id)
-      source-id)))
+        (ci.intern-source-name-session-handle-qualified-base-id
+          source-names
+          source-id)
+        source-id)
+      (match (cis.intern-structural-session-record-for-raw session source-id)
+        [(cis.InternMaybeStructuralRecord.Some record)
+          (cond
+            [(= record.kind (ci.intern-structural-kind-pair)) record.right-id]
+            [(= record.kind (ci.intern-structural-kind-triple))
+              (cis.intern-structural-key-raw
+                (cis.intern-structural-session-composite-pair-key
+                  session
+                  record.middle-id
+                  record.right-id))]
+            [else source-id])]
+        [(cis.InternMaybeStructuralRecord.No) source-id]))))
 
 (define (tltest-reach-name-dot-leaf-id
   [session : cis.InternStructuralSessionHandle]
@@ -1923,9 +1936,9 @@
   [name-id : i64]) : tltest_name_map.Map
   (let
     [marked : tltest_name_map.Map (tltest-reach-mark-name-id names name-id)]
-    [base-id : i64 (tc_core.tc-qualified-name-base-id name-id)]
+    [base-id : i64 (tltest-reach-name-source-base-id session name-id)]
     [with-slash-base : tltest_name_map.Map
-      (if (tc_core.tc-name-qualified-id? session name-id)
+      (if (not (= base-id name-id))
         (tltest-reach-mark-name-id marked base-id)
         marked)]
     [with-root : tltest_name_map.Map
@@ -1944,12 +1957,12 @@
   [name-id : i64]) : bool
   (let
     [key-id : i64 (csym.compiler-symbol-name-id-key name-id)]
-    [base-id : i64 (tc_core.tc-qualified-name-base-id name-id)]
+    [base-id : i64 (tltest-reach-name-source-base-id session name-id)]
     [leaf-id : i64 (tltest-reach-name-dot-leaf-id session name-id)]
     (or
       (tltest_name_map.contains? (& names) key-id)
       (and
-        (tc_core.tc-name-qualified-id? session name-id)
+        (not (= base-id name-id))
         (tltest_name_map.contains?
           (& names)
           (csym.compiler-symbol-name-id-key base-id)))
@@ -3713,6 +3726,60 @@
   (if (tltest-global-field-reachability-self-test?)
     unit
     (io.panic "test CLI global field root reachability mismatch")))
+
+(define (tltest-structural-field-reachability-self-test?) : bool
+  (let
+    [_builtin-init : unit (cbi.compiler-builtin-initialize-for-parse!)]
+    [owner-state : ci.InternCompatState (ci.intern-compat-state-new)]
+    [root-id : i64
+      (ci.intern-compat-state-intern (&mut owner-state) "structural-field-root")]
+    [field-id : i64
+      (ci.intern-compat-state-intern
+        (&mut owner-state)
+        "structural-field-root.nested.value")]
+    [module-id : i64
+      (ci.intern-compat-state-intern (&mut owner-state) "field-module")]
+    [dead-id : i64
+      (ci.intern-compat-state-intern (&mut owner-state) "unrelated-field-root")]
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle
+          (ci.intern-source-name-session-from-state owner-state)))]
+    [pair-id : i64
+      (cis.intern-structural-key-raw
+        (cis.intern-structural-session-composite-pair-key
+          session
+          module-id
+          field-id))]
+    [triple-id : i64
+      (cis.intern-structural-key-raw
+        (cis.intern-structural-session-composite-triple-key
+          session
+          module-id
+          module-id
+          field-id))]
+    [owner-id : i64
+      (cis.intern-structural-key-raw
+        (cis.intern-structural-session-composite-pair-key
+          session
+          module-id
+          root-id))]
+    [marked : tltest_name_map.Map
+      (tltest-reach-mark-source-name
+        session
+        (tltest_name_map.with-capacity 8)
+        pair-id)]
+    (and
+      (= (tltest-reach-name-source-base-id session pair-id) field-id)
+      (= (tltest-reach-name-source-base-id session triple-id) pair-id)
+      (tltest-reachable-name-marked? session (& marked) owner-id)
+      (not (tltest-reachable-name-marked? session (& marked) dead-id)))))
+
+(test
+  test-cli-inline-harness-keeps-structural-global-field-roots
+  (if (tltest-structural-field-reachability-self-test?)
+    unit
+    (io.panic "test CLI structural field owner reachability mismatch")))
 
 (define (tltest-generated-runtime-reachability-self-test?) : bool
   (let

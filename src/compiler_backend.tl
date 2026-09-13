@@ -1180,6 +1180,43 @@
               (ptr-cast (__tl_array-data cell) : (Ptr CompilerBackendStateData))))
           : i64)))))
 
+;; Complete results use emission-arena; these private tables have no result
+;; consumer. Unpublish their views before retiring the one-shot backend state.
+;; The caller retains its intern capability, metrics and advisory sink.
+(define (compiler-backend-state-retire-owned-storage!
+  [state : CompilerBackendState]) : unit
+  (let
+    [data : CompilerBackendStateData (compiler-backend-state-data state)]
+    [lazy-owner : i64 data.lazy-table-arena]
+    [representation-owner : i64 data.representation-arena]
+    (begin
+      (set! data.lazy-table-arena 0)
+      (set! data.slot-cache-values (__tl_make-array String 0))
+      (set! data.slot-cache-epochs (__tl_make-array i64 0))
+      (set! data.frame-offset-cache-values (__tl_make-array String 0))
+      (set! data.frame-offset-cache-epochs (__tl_make-array i64 0))
+      (set! data.immediate-cache-values (__tl_make-array String 0))
+      (set! data.immediate-cache-epochs (__tl_make-array i64 0))
+      (set! data.function-state-address 0)
+      (set! data.stream-state-address 0)
+      (set!
+        data.representations
+        (compiler_ir_types.compiler-ir-representation-index-empty))
+      (set! data.has-representations false)
+      (set! data.representation-arena 0)
+      (set! data.representation-mark 0)
+      (compiler-backend-state-data-set! state data)
+      (if (> lazy-owner 0)
+        (unsafe
+          (arena.tl_arena_destroy lazy-owner))
+        unit)
+      (if (and
+        (> representation-owner 0)
+        (not (= representation-owner lazy-owner)))
+        (unsafe
+          (arena.tl_arena_destroy representation-owner))
+        unit))))
+
 (define (compiler-backend-state-new [intern-state : ci.InternCompatState]) : CompilerBackendState
   (compiler-backend-state-new-with-metrics
     intern-state
@@ -88517,6 +88554,10 @@
       (compiler-backend-runtime-index-calls?
         (compiler-backend-global-shared-view index)
         cbi.compiler-builtin-id-tl-arena-debug-protect-never-reset)]
+    [calls-arena-debug-retire : bool
+      (compiler-backend-runtime-index-calls?
+        (compiler-backend-global-shared-view index)
+        cbi.compiler-builtin-id-tl-arena-debug-retire-protected)]
     [calls-arena-debug-pool-install : bool
       (compiler-backend-runtime-index-calls?
         (compiler-backend-global-shared-view index)
@@ -88557,7 +88598,10 @@
           (not defines-profile-alloc-reset-peak)
           (or extern-profile-alloc-reset-peak calls-profile-alloc-reset-peak)))]
     [needs-arena-debug : bool
-      (or calls-arena-debug-protect calls-arena-debug-pool-install)]
+      (or
+        calls-arena-debug-protect
+        calls-arena-debug-pool-install
+        calls-arena-debug-retire)]
     [needs-tlci-macro-entry : bool
       (let
         [call-id : i64 index.tlci-macro-entry-call-id]
@@ -93454,6 +93498,10 @@
         (compiler-backend-plan-provides-id?
           plan
           cbi.compiler-builtin-id-tl-arena-debug-protect-never-reset)]
+      [(string.eq name "tl_arena_debug_retire_protected")
+        (compiler-backend-plan-provides-id?
+          plan
+          cbi.compiler-builtin-id-tl-arena-debug-retire-protected)]
       [(string.eq name "tl_arena_debug_assert_pool_install")
         (compiler-backend-plan-provides-id?
           plan

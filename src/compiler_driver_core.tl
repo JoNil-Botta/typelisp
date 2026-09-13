@@ -485,7 +485,8 @@
         2
         (owned_view.compiler-owned-shared-view phase)
         "load-provenance"
-        (compiler_load.compiler-load-provenance-arena-handle-value))
+        (compiler_load.compiler-load-session-state-provenance-arena-value
+          (compiler_load.compiler-load-serial-test-session-state)))
       (allocation_profile.compiler-allocation-profile-control!
         2
         (owned_view.compiler-owned-shared-view phase)
@@ -2782,20 +2783,25 @@
         (ci.intern-compat-state-capture-active)
         (profile_state.compiler-profile-state-metrics
           (owned_view.compiler-owned-shared-view profile-state)))]
-    (compiler-driver-emit-lowered-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
-      (compiler_ast_types.ast-node-pool-reader-context-current)
-      input-path
-      program
-      spans
-      target
-      has-target
-      (compiler_backend.CompilerBackendMode.Scalar)
-      opt-level
-      true
-      false
-      profile-state
-      backend-state
-      (compiler_typecheck_core.tc-serial-job-state))))
+    [result : ResultCompilerDriver
+      (compiler-driver-emit-lowered-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
+        (compiler_ast_types.ast-node-pool-reader-context-current)
+        input-path
+        program
+        spans
+        target
+        has-target
+        (compiler_backend.CompilerBackendMode.Scalar)
+        opt-level
+        true
+        false
+        profile-state
+        backend-state
+        (compiler_typecheck_core.tc-serial-job-state))]
+    (begin
+      (compiler_backend.compiler-backend-state-retire-owned-storage!
+        backend-state)
+      result)))
 
 ;; The lowered IR functions live in a dedicated arena
 ;; (lower-ir-arena); at opt levels >= 1 the optimizer deep-clones every
@@ -3240,20 +3246,25 @@
         (ci.intern-compat-state-capture-active)
         (profile_state.compiler-profile-state-metrics
           (owned_view.compiler-owned-shared-view profile-state)))]
-    (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
-      pools
-      input-path
-      program
-      spans
-      target
-      has-target
-      mode
-      opt-level
-      emit-entry
-      crt-entry
-      (profile_state.compiler-profile-state-shared-view profile-state)
-      backend-state
-      (compiler_typecheck_core.tc-serial-job-state))))
+    [result : ResultCompilerDriverObject
+      (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
+        pools
+        input-path
+        program
+        spans
+        target
+        has-target
+        mode
+        opt-level
+        emit-entry
+        crt-entry
+        (profile_state.compiler-profile-state-shared-view profile-state)
+        backend-state
+        (compiler_typecheck_core.tc-serial-job-state))]
+    (begin
+      (compiler_backend.compiler-backend-state-retire-owned-storage!
+        backend-state)
+      result)))
 
 (define (compiler-driver-emit-lowered-package-runtime-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
   [pools : compiler_ast_types.AstNodePoolContext]
@@ -3435,6 +3446,8 @@
                                           (profile_state.compiler-profile-state-shared-view
                                             profile-state)
                                           "backend.side-assembly"))
+                                      (compiler_backend.compiler-backend-state-retire-owned-storage!
+                                        side-backend-state)
                                       (ResultCompilerDriverPackageRuntime.Object
                                         image
                                         asm
@@ -3449,6 +3462,8 @@
                                           (profile_state.compiler-profile-state-shared-view
                                             profile-state)
                                           "backend.side-assembly"))
+                                      (compiler_backend.compiler-backend-state-retire-owned-storage!
+                                        side-backend-state)
                                       (ResultCompilerDriverPackageRuntime.Err
                                         (box
                                           (compiler_diagnostic.compiler-diagnostic-with-fallback-path

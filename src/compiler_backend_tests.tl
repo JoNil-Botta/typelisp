@@ -28004,12 +28004,10 @@ g:
               [(compiler_backend.ResultBackendRuntimePlan.Err _) false])))]
       [(compiler_backend.ResultBackendRuntimePlan.Err _) false])))
 
-(define (compiler-backend-arena-debug-runtime-plan-ok?) : bool
+(define (compiler-backend-arena-debug-runtime-plan-for-id-ok? [debug-id : i64]) : bool
   (let
-    [protect-id : i64
-      cbi.compiler-builtin-id-tl-arena-debug-protect-never-reset]
-    [local-protect-id : i64
-      (ci.intern "compiler-arena-debug-plan-local-protect")]
+    [local-debug-id : i64
+      (ci.intern "compiler-arena-debug-plan-local-operation")]
     [functions : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
@@ -28023,7 +28021,7 @@ g:
               (compiler-backend-test-instr-seq-prepend
                 (compiler_ir_types.CompilerIrInstr.Call
                   0
-                  local-protect-id
+                  local-debug-id
                   (compiler_ir_types.CompilerIrCallArgs.One
                     (compiler_ir_types.CompilerIrValue.I64 1))
                   (compiler_ast_types.AstType.Unit))
@@ -28036,16 +28034,16 @@ g:
     [externs : compiler_ir_types.CompilerIrExternSeq
       (compiler_ir_types.compiler-ir-extern-seq1
         (compiler_ir_types.CompilerIrExtern.Extern
-          local-protect-id
-          local-protect-id
-          "compiler-arena-debug-plan-local-protect"
+          local-debug-id
+          local-debug-id
+          "compiler-arena-debug-plan-local-operation"
           (compiler_ast_types.ast-ty-func
             (compiler_ast_types.ast-type-cons
               (compiler_ast_types.AstType.I64)
               (compiler_ast_types.ast-type-list-new))
             (compiler_ast_types.AstType.Unit))
           (compiler_ast_types.AstExternAbi.C)
-          protect-id
+          debug-id
           (compiler_ast_types.ast-extern-link-input-list-new)
           false))]
     (match (compiler_backend.compiler-backend-runtime-plan-for
@@ -28064,13 +28062,21 @@ g:
               (& features))
             (compiler_backend.compiler-backend-plan-provides-id?
               (owned_view.compiler-owned-shared-view plan)
-              protect-id)
+              debug-id)
             (compiler_backend.compiler-backend-plan-provides-id?
               plan
               cbi.compiler-builtin-id-tl-arena-debug-assert-pool-install)
-            (compiler_backend.compiler-backend-runtime-helper-core-id?
-              protect-id)))]
+            (compiler_backend.compiler-backend-runtime-helper-core-id? debug-id)))]
       [(compiler_backend.ResultBackendRuntimePlan.Err _) false])))
+
+(define (compiler-backend-arena-debug-runtime-plan-ok?) : bool
+  (and
+    (compiler-backend-arena-debug-runtime-plan-for-id-ok?
+      cbi.compiler-builtin-id-tl-arena-debug-protect-never-reset)
+    (compiler-backend-arena-debug-runtime-plan-for-id-ok?
+      cbi.compiler-builtin-id-tl-arena-debug-assert-pool-install)
+    (compiler-backend-arena-debug-runtime-plan-for-id-ok?
+      cbi.compiler-builtin-id-tl-arena-debug-retire-protected)))
 
 (define (compiler-backend-runtime-prelude-test-function [name : String]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function

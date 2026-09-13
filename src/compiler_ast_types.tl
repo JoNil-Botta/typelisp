@@ -94,6 +94,19 @@
     (tl_arena_debug_protect_never_reset _handle)
     unit))
 
+(cfg
+  compiler-arena-debug
+  (extern (tl_arena_debug_retire_protected [handle : i64]) : unit (:symbol "tl_arena_debug_retire_protected")))
+
+;; Only an explicit terminal owner boundary may call this after unpublishing
+;; every retained view. Ordinary destroy/reset remains forbidden in debug mode.
+(define (compiler-arena-retire-protected-owner! [handle : i64]) : unit
+  (cfg
+    (all compiler-arena-debug (not stage0-seed-bootstrap))
+    (tl_arena_debug_retire_protected handle)
+    (unsafe
+      (arena.tl_arena_destroy handle))))
+
 (define (compiler-arena-debug-assert-pool-install! [_handle : i64]) : unit
   (cfg
     (all compiler-arena-debug (not stage0-seed-bootstrap))

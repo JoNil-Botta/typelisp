@@ -639,6 +639,27 @@ tl_arena_debug_protect_never_reset:
     subq $40, %rsp
     call tl_arena_debug_protect_abort
 
+    .globl tl_arena_debug_retire_protected
+tl_arena_debug_retire_protected:
+    testq %rcx, %rcx
+    jz .L_tl_arena_debug_protect_win_invalid
+    leaq .L_tl_arena_debug_roots(%rip), %r8
+    xorq %rdx, %rdx
+.L_tl_arena_debug_retire_win_find:
+    cmpq $4096, %rdx
+    jae .L_tl_arena_debug_protect_win_invalid
+    cmpq %rcx, (%r8,%rdx,8)
+    je .L_tl_arena_debug_retire_win_found
+    incq %rdx
+    jmp .L_tl_arena_debug_retire_win_find
+.L_tl_arena_debug_retire_win_found:
+    cmpq %rcx, 40(%rcx)
+    jne .L_tl_arena_debug_protect_win_invalid
+    testq $8, 48(%rcx)
+    jz .L_tl_arena_debug_protect_win_invalid
+    andq $-9, 48(%rcx)
+    jmp tl_arena_destroy
+
     .globl tl_arena_debug_assert_pool_install
 tl_arena_debug_assert_pool_install:
     testq %rcx, %rcx

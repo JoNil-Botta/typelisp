@@ -2558,6 +2558,51 @@
     (tc-unused-unsafe-tracking-clear! (tc-job-state-unused-unsafe state))
     (tc-spmd-inline-helper-stack-reset-for-job! state)))
 
+;; Terminal job boundary. Every checked result and macro snapshot has already
+;; been consumed. Unlike a reusable file reset, this releases storage whose
+;; lazy replacement would otherwise wait for a next lookup that never occurs.
+(define (tc-job-state-retire-owned-storage! [job : TcJobState]) : unit
+  (let
+    [state : TcMacroState (tc-job-state-macro-state job)]
+    [layout-address : i64 (tc-job-state-agg-layout-cache-address job)]
+    (begin
+      (when
+        (> (tc-macro-state-slot-address state tc-macro-state-slot-walk) 0)
+        (unless
+          (= (tc-macro-walk-field state macro-hygiene-env-root-depth) 0)
+          (io.panic "typecheck: cannot retire an active macro hygiene owner")))
+      (tc-job-state-reset-advisories! job)
+      (tc-job-state-release-scratch-arenas! job)
+      (tc-checked-let-binding-facts-finish!
+        (tc-job-state-checked-let-binding-facts job))
+      (tc-inlay-hint-string-arena-release-for-state!
+        (tc-job-state-inlay-hints job))
+      (if (> layout-address 0)
+        (tc-agg-layout-cache-storage-reset-for-state!
+          (TcAggLayoutCacheState layout-address))
+        unit)
+      (if (> (tc-macro-state-slot-address state tc-macro-state-slot-clone) 0)
+        (tc-clone-root-collection-abort! job)
+        unit)
+      (if (>
+        (tc-macro-state-slot-address state tc-macro-state-slot-module-env)
+        0)
+        (tc-hygiene-module-env-cache-release! state)
+        unit)
+      (if (>
+        (tc-macro-state-slot-address state tc-macro-state-slot-proof-reuse)
+        0)
+        (tc-macro-proof-qualified-reset-for-state! state)
+        unit)
+      (if (> (tc-macro-state-slot-address state tc-macro-state-slot-walk) 0)
+        (begin
+          (macro-live-symbols-clear! state)
+          (macro-hygiene-env-storage-retire! state))
+        unit)
+      ;; Empty-env construction in the preceding cache clears can lazily
+      ;; recreate this owner. It must be the final typechecker operation.
+      (tc-job-state-release-type-env-scoped-state! job))))
+
 ;; Scratch destruction is a lifetime boundary, not a generic cache reset.
 ;; Lowering performs internal file-state resets while a caller still owns an
 ;; outer region mark, so result boundaries invoke this operation explicitly.
@@ -110312,6 +110357,25 @@
 
 (define (macro-hygiene-env-reset! [state : TcMacroState]) : unit
   (tc-macro-walk-set! state macro-hygiene-env-slot-count 0))
+
+(define (macro-hygiene-env-storage-retire! [state : TcMacroState]) : unit
+  (let
+    [data : TcMacroWalkStateData (tc-macro-walk-state-data state)]
+    [storage : i64 data.macro-hygiene-env-storage-arena]
+    (begin
+      (unless
+        (= data.macro-hygiene-env-root-depth 0)
+        (io.panic "typecheck: cannot retire an active macro hygiene owner"))
+      (set! data.macro-hygiene-env-kinds (__tl_make-array i64 0))
+      (set! data.macro-hygiene-env-keys (__tl_make-array i64 0))
+      (set! data.macro-hygiene-env-values (__tl_make-array i64 0))
+      (set! data.macro-hygiene-env-parents (__tl_make-array i64 0))
+      (set! data.macro-hygiene-env-slot-count 0)
+      (set! data.macro-hygiene-env-storage-arena 0)
+      (tc-macro-walk-state-data-set! state data)
+      (if (> storage 0)
+        (ast.compiler-arena-retire-protected-owner! storage)
+        unit))))
 
 (define (macro-hygiene-env-root-begin! [state : TcMacroState]) : unit
   (begin

@@ -160,7 +160,7 @@
 ;;
 ;; The session therefore owns an arena, and that arena is created once and
 ;; NEVER destroyed or reset -- the same shape, and for the same reason, as
-;; `compiler-load-provenance-arena`. Two consequences are deliberate:
+;; `compiler-ir-label-arena`. Two consequences are deliberate:
 ;;
 ;; * Nothing allocated here can ever dangle, whatever a later packet does to
 ;;   the arenas around it. The bug being fixed is a dangling read; an owner

@@ -773,7 +773,8 @@ EOF
 # This compiler-only debug fixture needs the current-tree
 # `compiler-arena-debug` cfg plus multiple expected exits and stderr streams.
 # The seed-backed integration manifest cannot express that matrix; the runtime
-# emitter tests cover both targets and this source is the native matrix driver.
+# emitter tests cover both targets; verify-compiler-arena-debug.sh runs this
+# native matrix on each host in CI.
 compiler_cfg_native_fixture_cases() {
     cat <<'EOF'
 compiler_arena_debug

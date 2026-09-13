@@ -5023,7 +5023,8 @@
     (tltest-stdlib-env-fixture-self-test?)
     (io.panic "test CLI stdlib/env fixture routing mismatch")))
 
-(define (tltest-run-harness-in-temp
+(define (tltest-run-harness-in-temp-with-lower-state
+  [lower-state : lower.CompilerLowerState]
   [source : String]
   [entry-path : String]
   [program : ast.AstProgram]
@@ -5049,7 +5050,8 @@
         (owned_view.compiler-owned-shared-view source)
         target)]
     [legacy-roots : cli_svec.Vec (clone roots)]
-    (match (lower.lower-compiler-program-with-decl-paths-mode-cache
+    (match (lower.lower-compiler-program-with-decl-paths-mode-cache-and-state
+      lower-state
       entry-path
       program
       paths
@@ -5144,6 +5146,36 @@
           (if inline-harness
             2
             1))])))
+
+(define (tltest-run-harness-in-temp
+  [source : String]
+  [entry-path : String]
+  [program : ast.AstProgram]
+  [paths : ast.AstDeclPathList]
+  [roots : cli_svec.Vec]
+  [target : compiler_backend.CompilerBackendTarget]
+  [opt-level : i64]
+  [inline-harness : bool]
+  [temp-dir : String]) : i64
+  (let
+    [lower-state : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    [status : i64
+      (tltest-run-harness-in-temp-with-lower-state
+        lower-state
+        source
+        entry-path
+        program
+        paths
+        roots
+        target
+        opt-level
+        inline-harness
+        temp-dir)]
+    (begin
+      (lower.compiler-lower-state-reset! lower-state)
+      (lower.compiler-lower-arena-state-release!
+        (lower.compiler-lower-state-arenas lower-state))
+      status)))
 
 (define (tltest-run-direct-with-entry
   [source : String]
@@ -5757,20 +5789,80 @@
             (ResultTestPackageTotals.Err 1))]))
     (ResultTestPackageTotals.Ok 0 0)))
 
-(define (tltest-package-finish-entry
-  [entry-arena : arena.Arena]
-  [entry-result : i64]) : i64
-  ;; Reset while the entry arena remains alive but allocation has returned to
-  ;; the parent. Compiler globals may still inspect entry-owned state while
-  ;; installing their replacement state.
+;; A test entry borrows its inputs from the caller and owns every temporary
+;; compiler carrier. Serial selectors are a scoped compatibility bridge: they
+;; are restored before the entry owner is destroyed, including failure exits.
+(defstruct TlTestEntry
+  (owner arena.Arena)
+  (parent-load compiler_load.CompilerLoadSessionState)
+  (parent-default compiler_load.CompilerLoadSessionState)
+  (parent-job tc_core.TcJobState))
+
+(define (tltest-entry-new) : TlTestEntry
+  (let
+    [owner : arena.Arena (arena.make)]
+    [parent-load : compiler_load.CompilerLoadSessionState
+      (compiler_load.compiler-load-serial-test-session-state)]
+    [parent-default : compiler_load.CompilerLoadSessionState
+      (compiler_load.compiler-load-global-array-element-shared-view
+        compiler_load.compiler-load-default-session-state
+        0)]
+    [parent-job : tc_core.TcJobState (tc_core.tc-serial-job-state)]
+    [entry-load : compiler_load.CompilerLoadSessionState
+      (in-arena
+        owner
+        (compiler_load.compiler-load-standalone-session-state-new))]
+    [entry-job : tc_core.TcJobState (in-arena owner (tc_core.tc-job-state-new))]
+    [pools : ast.AstNodePoolContext
+      (driver.compiler-driver-state-new-checked-lower-pools)]
+    (begin
+      (set!
+        (array-ref compiler_load.compiler-load-default-session-state 0)
+        (owned_view.compiler-owned-shared-view entry-load))
+      (compiler_load.compiler-load-session-state-use!
+        (owned_view.compiler-owned-shared-view entry-load))
+      (compiler_load.compiler-load-session-cache-enable!)
+      (compiler_load.compiler-load-session-program-cache-disable!)
+      (set!
+        (array-ref tc_core.tc-serial-job-state-cell 0)
+        (owned_view.compiler-owned-shared-view entry-job))
+      (ast.ast-node-pool-context-install! pools)
+      (TlTestEntry owner parent-load parent-default parent-job))))
+
+(define (tltest-entry-finish [entry : TlTestEntry] [result : i64]) : i64
   (begin
-    (driver.compiler-driver-reset-file-state!)
-    (compiler_load.compiler-load-session-fresh-reset!)
-    (compiler_load.compiler-load-session-cache-enable!)
-    (compiler_load.compiler-load-session-program-cache-disable!)
+    (in-arena
+      entry.owner
+      (let
+        [pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        (begin
+          ;; Reset walkers can inspect entry-owned values. Their replacement
+          ;; empty carriers also belong here; no selector retains them below.
+          (driver.compiler-driver-reset-file-state!)
+          (compiler_load.compiler-load-session-state-dotted-path-cache-reset!
+            (compiler_load.compiler-load-serial-test-session-state))
+          (compiler_load.compiler-load-session-fresh-reset!)
+          (tc_core.tc-job-state-retire-owned-storage!
+            (tc_core.tc-serial-job-state))
+          (driver.compiler-driver-state-destroy-uncommitted-pools! pools))))
+    (set!
+      (array-ref tc_core.tc-serial-job-state-cell 0)
+      (owned_view.compiler-owned-shared-view entry.parent-job))
+    (set!
+      (array-ref compiler_load.compiler-load-default-session-state 0)
+      (owned_view.compiler-owned-shared-view entry.parent-default))
+    (if (array-ref entry.parent-load.intern-state-ready 0)
+      (compiler_load.compiler-load-session-state-use-with-intern-state!
+        (owned_view.compiler-owned-shared-view entry.parent-load)
+        (owned_view.compiler-owned-array-element-shared-view
+          entry.parent-load.intern-state
+          0))
+      (compiler_load.compiler-load-session-state-use!
+        (owned_view.compiler-owned-shared-view entry.parent-load)))
     (unsafe
-      (arena.destroy entry-arena))
-    entry-result))
+      (arena.destroy entry.owner))
+    result))
 
 (define (tltest-package-run-integration-source-isolated-count
   [source : String]
@@ -5783,10 +5875,10 @@
   [package-owner : String]
   [deps : compiler_load.CompilerPkgDeps]) : i64
   (let
-    [entry-arena : arena.Arena (arena.make)]
+    [entry : TlTestEntry (tltest-entry-new)]
     [entry-result : i64
       (in-arena
-        entry-arena
+        entry.owner
         (begin
           (driver.compiler-driver-reset-file-state!)
           (match (tltest-package-run-integration-source
@@ -5803,7 +5895,7 @@
             [(ResultTestPackageTotals.Failed _ tests _)
               (- 0 (+ tltest-failed-count-offset tests))]
             [(ResultTestPackageTotals.Ok _ tests) tests])))]
-    (tltest-package-finish-entry entry-arena entry-result)))
+    (tltest-entry-finish entry entry-result)))
 
 (define (tltest-package-run-source
   [source : String]
@@ -5865,10 +5957,10 @@
   [package-owner : String]
   [deps : compiler_load.CompilerPkgDeps]) : i64
   (let
-    [entry-arena : arena.Arena (arena.make)]
+    [entry : TlTestEntry (tltest-entry-new)]
     [entry-result : i64
       (in-arena
-        entry-arena
+        entry.owner
         (begin
           (driver.compiler-driver-reset-file-state!)
           (match (tltest-package-run-source
@@ -5885,7 +5977,7 @@
             [(ResultTestPackageTotals.Failed _ tests _)
               (- 0 (+ tltest-failed-count-offset tests))]
             [(ResultTestPackageTotals.Ok _ tests) tests])))]
-    (tltest-package-finish-entry entry-arena entry-result)))
+    (tltest-entry-finish entry entry-result)))
 
 (define (tltest-package-run-sources-from
   [sources : cli_svec.Vec]
@@ -6444,39 +6536,21 @@
       (string.int->string test-count)
       " test(s)\n")))
 
-(define (tltest-batch-finish-entry
-  [entry-arena : arena.Arena]
-  [entry-result : i64]) : i64
-  ;; Reset while the entry arena is still alive but allocation has returned to
-  ;; the parent. Reset walkers may inspect the entry's globals; replacement
-  ;; empty state must outlive destruction of the entry arena.
-  (begin
-    (driver.compiler-driver-reset-file-state!)
-    ;; A cache floor may still retain the just-finished entry's compiler state.
-    ;; Retire the complete session before destroying that entry arena so long
-    ;; batches cannot accumulate floors or retain pointers into reclaimed pages.
-    (compiler_load.compiler-load-session-fresh-reset!)
-    (compiler_load.compiler-load-session-cache-enable!)
-    (compiler_load.compiler-load-session-program-cache-disable!)
-    (unsafe
-      (arena.destroy entry-arena))
-    entry-result))
-
 (define (tltest-run-batch-check-path
   [source : String]
   [roots : cli_svec.Vec]
   [backend-target : compiler_backend.CompilerBackendTarget]) : i64
   (let
-    [entry-arena : arena.Arena (arena.make)]
+    [entry : TlTestEntry (tltest-entry-new)]
     [entry-result : i64
       (in-arena
-        entry-arena
+        entry.owner
         (match (tltest-check-file-source source roots backend-target)
           [(ResultTestFileCheck.Err status) (- 0 status)]
           [(ResultTestFileCheck.Failed count)
             (- 0 (+ tltest-failed-count-offset count))]
           [(ResultTestFileCheck.Ok count) count]))]
-    (tltest-batch-finish-entry entry-arena entry-result)))
+    (tltest-entry-finish entry entry-result)))
 
 (define (tltest-run-batch-check-paths-from
   [paths : cli_svec.Vec]
@@ -6572,10 +6646,10 @@
   ;; and captured child output inside one destroyable arena. Only the scalar
   ;; test count crosses the boundary.
   (let
-    [entry-arena : arena.Arena (arena.make)]
+    [entry : TlTestEntry (tltest-entry-new)]
     [entry-result : i64
       (in-arena
-        entry-arena
+        entry.owner
         (match (tltest-run-file-source
           source
           target
@@ -6586,7 +6660,7 @@
           [(ResultTestFileCheck.Failed count)
             (- 0 (+ tltest-failed-count-offset count))]
           [(ResultTestFileCheck.Ok count) count]))]
-    (tltest-batch-finish-entry entry-arena entry-result)))
+    (tltest-entry-finish entry entry-result)))
 
 (define (tltest-run-batch-run-paths
   [paths : cli_svec.Vec]

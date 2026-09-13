@@ -266,7 +266,8 @@
             "HostSmokePair"
             pair-id
             (compiler_ctfe.CtfeReflectCleanup.No)
-            fields)
+            fields
+            0)
           pair-id))
       (compiler_ctfe.ctfe-reflect-info-list-push-id
         infos
@@ -276,7 +277,8 @@
           "HostSmokeChoice"
           choice-id
           (compiler_ctfe.CtfeReflectCleanup.No)
-          variants)
+          variants
+          0)
         choice-id))))
 
 (define (comptime-host-smoke-commit-result!) : bool

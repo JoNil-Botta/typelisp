@@ -21,6 +21,17 @@ Compilation is one whole program per executable with import-graph dedup
 codegen'd once into archives; an in-process session cache warms compiler
 pools across compiles within one process (batch and LSP paths).
 
+Memory-class aggregate expressions carry addresses into inline storage.
+`lower-local-assignment-value` gives a loop-carried memory-class local its own
+inline storage before rebinding it. The source can arrive through a field,
+enum payload, fixed-array projection, conditional merge, or nested loop; the
+copy must not depend on incomplete address-provenance tracking. Otherwise a
+later call can overwrite a retained result slot even at opt0. Raw pointers
+copy only their address. The native `loop_carried_enum_payload_snapshot` and
+`loop_carried_raw_read_snapshot` fixtures guard this boundary on both targets
+at every optimization level. Address generation uses `lower-emit-gep`, also
+shared by byte-offset projections through `lower-gep-byte`.
+
 Affine folding keeps one mutable fact table per function: local vreg IDs index
 compact binding slots, and only live bindings are scanned for key/base
 invalidation. Every block starts with empty facts; the cumulative 512-binding
@@ -39,10 +50,31 @@ independent of cache storage: callers supply authority-checked package-relative
 paths and nominal compiler/child identities, while event capture, invalidation,
 result serialization, and reuse policy remain separate compiler services.
 
+Aggregate declaration markers live in `AstDeclMeta` in
+[`compiler_ast_types.tl`](../src/compiler_ast_types.tl), separate from runtime
+layout. Parsing and surface hydration share its runtime metadata constructor;
+unmarked runtime declarations reuse the singleton, and unchanged marker updates
+do not allocate. Generated-declaration reuse in `compiler_specialize.tl` compares
+these semantic flags even when the aggregates have identical ABI. The existing
+AST wrapper, surface roundtrip, and specialization selftests guard these rules;
+serialized metadata changes also require a surface-AST schema version change.
+
 Handwritten runtime, startup, and direct-object x86-64 code is covered by the
 closed [compiler-owned executable template registry](compiler-x64-executable-templates.md).
 It records mutation-sensitive source identities and typed control/frame events
 for later native-code certification.
+
+Expression node IDs belong to an AST pool. Literal analysis in
+`compiler_typecheck_core.tl` snapshots the context's expression owner for its
+read-only walk and shares the AST unspanner with other structural consumers. The
+scalar owner accessor borrows the context field directly; it must not copy the
+complete pool aggregate merely to read its segment-base token.
+An unrelated installed pool must not change literal classification, contextual
+numeric types, or retained source provenance. The explicit compatibility route follows
+its selected pool; macro-capable walks must resolve their owner again after a
+possible pool install. The `tc-literal-expression-pool-isolation` inline test
+covers colliding IDs, nested source views, expansion wrappers, and contextual
+overflow rejection.
 
 ## Performance gates
 

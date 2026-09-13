@@ -512,6 +512,84 @@
         (lsp-transcript-frame exit))]
     (lsp-transcript-run input)))
 
+(define (lsp-memory-reinstall-smoke-ok?) : bool
+  (let
+    [first-owner : i64 (arena.tl_arena_make)]
+    [_install-first : unit
+      (lsp_frame_core.lsp-frame-memory-install! "old\nlast" first-owner)]
+    [line : io.StdinRead (lsp_frame_core.lsp-frame-memory-read-line)]
+    [tail : io.StdinRead (lsp_frame_core.lsp-frame-memory-read-bytes 20)]
+    [_write-first : unit
+      (begin
+        (lsp_frame_core.lsp-frame-memory-stdout-append! "old output")
+        (lsp_frame_core.lsp-frame-memory-stderr-append! "old error"))]
+    [first-ok : bool
+      (and
+        (string.eq
+          (byte_buf.to-string
+            (io.stdin-read-buffer (owned_view.compiler-owned-shared-view line)))
+          "old")
+        (string.eq
+          (byte_buf.to-string
+            (io.stdin-read-buffer (owned_view.compiler-owned-shared-view tail)))
+          "last")
+        (io.stdin-read-eof? tail)
+        (=
+          (owned_view.compiler-owned-shared-view
+            lsp_frame_core.lsp-frame-memory-state).input-offset
+          8))]
+    [_reset-first : unit (lsp_frame_core.lsp-frame-memory-reset!)]
+    [_destroy-first : unit
+      (unsafe
+        (arena.tl_arena_destroy first-owner))]
+    [reset-ok : bool
+      (and
+        (not
+          (owned_view.compiler-owned-shared-view
+            lsp_frame_core.lsp-frame-memory-state).active)
+        (=
+          (owned_view.compiler-owned-shared-view
+            lsp_frame_core.lsp-frame-memory-state).owner.handle
+          0)
+        (=
+          (owned_view.compiler-owned-shared-view
+            lsp_frame_core.lsp-frame-memory-state).input-offset
+          0)
+        (not
+          (owned_view.compiler-owned-shared-view
+            lsp_frame_core.lsp-frame-memory-state).eof))]
+    [second-owner : i64 (arena.tl_arena_make)]
+    [_install-second : unit
+      (lsp_frame_core.lsp-frame-memory-install! "new\n" second-owner)]
+    [clean-output : bool
+      (and
+        (string.eq
+          (owned_view.compiler-owned-shared-view
+            lsp_frame_core.lsp-frame-memory-state).stdout
+          "")
+        (string.eq
+          (owned_view.compiler-owned-shared-view
+            lsp_frame_core.lsp-frame-memory-state).stderr
+          ""))]
+    [second-line : io.StdinRead (lsp_frame_core.lsp-frame-memory-read-line)]
+    [second-ok : bool
+      (and
+        (string.eq
+          (byte_buf.to-string
+            (io.stdin-read-buffer
+              (owned_view.compiler-owned-shared-view second-line)))
+          "new")
+        (not (io.stdin-read-eof? second-line))
+        (=
+          (owned_view.compiler-owned-shared-view
+            lsp_frame_core.lsp-frame-memory-state).owner.handle
+          second-owner))]
+    [_reset-second : unit (lsp_frame_core.lsp-frame-memory-reset!)]
+    [_destroy-second : unit
+      (unsafe
+        (arena.tl_arena_destroy second-owner))]
+    (and first-ok reset-ok clean-output second-ok)))
+
 (define (lsp-transcript-reset-leakage-smoke-ok?) : bool
   (let
     [path : String "target/lsp_transcript_reset_missing.tl"]
@@ -545,7 +623,9 @@
       (lsp-transcript-result-contains? second failure)
       (= missing.status 0)
       (lsp-transcript-result-contains? missing unreadable)
-      (not lsp_frame_core.lsp-frame-memory-active)
+      (not
+        (owned_view.compiler-owned-shared-view
+          lsp_frame_core.lsp-frame-memory-state).active)
       (= lsp_frame_core.lsp-document-cache-arena 0)
       ;; Every transcript retires its standalone compiler arena. Its cold
       ;; spanned parse sidecars must be truncated before that arena is gone.
@@ -647,7 +727,9 @@
       (= result.status 0)
       (string.eq result.stdout "")
       (string.eq result.stderr "")
-      (not lsp_frame_core.lsp-frame-memory-active))))
+      (not
+        (owned_view.compiler-owned-shared-view
+          lsp_frame_core.lsp-frame-memory-state).active))))
 
 (define (lsp-inlay-smoke-ok?) : bool
   (let
@@ -2952,6 +3034,7 @@
     (if (not (= base-result 42))
       base-result
       (begin
+        (unless (lsp-memory-reinstall-smoke-ok?) (return 53))
         (unless (lsp-completion-smoke-ok?) (return 6))
         (unless (lsp-inlay-smoke-ok?) (return 7))
         (unless (lsp-inlay-transcript-smoke-ok?) (return 44))

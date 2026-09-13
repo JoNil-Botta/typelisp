@@ -21,6 +21,14 @@ Compilation is one whole program per executable with import-graph dedup
 codegen'd once into archives; an in-process session cache warms compiler
 pools across compiles within one process (batch and LSP paths).
 
+The serial in-memory LSP transport keeps its arena handle, input snapshot,
+cursor, EOF flag and captured output in one `LspFrameMemoryState`. Install and
+reset replace the complete value. The transcript runner copies captured output
+into its caller's arena, saves the transport handle, clears the installed state,
+then destroys the session and transport arenas. No transport field may remain
+globally reachable after its owner is destroyed. The LSP frame smoke covers
+teardown followed by reinstall after consuming input and writing both outputs.
+
 Memory-class aggregate expressions carry addresses into inline storage.
 `lower-local-assignment-value` gives a loop-carried memory-class local its own
 inline storage before rebinding it. The source can arrive through a field,

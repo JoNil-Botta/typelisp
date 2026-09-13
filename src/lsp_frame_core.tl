@@ -489,119 +489,118 @@
 ;; memory transport without plumbing transport arguments through every request
 ;; handler. Stdio remains the default and the transcript wrapper always clears
 ;; this handle before its session arena is retired.
-(define lsp-frame-memory-active : bool
-  false)
-(define lsp-frame-memory-arena : i64
-  0)
-(define lsp-frame-memory-input : String
-  "")
-(define lsp-frame-memory-input-offset : i64
-  0)
-(define lsp-frame-memory-eof : bool
-  false)
-(define lsp-frame-memory-stdout : String
-  "")
-(define lsp-frame-memory-stderr : String
-  "")
+(defstruct LspFrameMemoryState
+  (active bool)
+  (owner arena.Arena)
+  (input String)
+  (input-offset i64)
+  (eof bool)
+  (stdout String)
+  (stderr String))
+
+(define lsp-frame-memory-state : LspFrameMemoryState
+  (LspFrameMemoryState false (arena.Arena 0) "" 0 false "" ""))
 
 (define (lsp-frame-memory-reset!) : unit
-  (begin
-    (set! lsp-frame-memory-active false)
-    (set! lsp-frame-memory-arena 0)
-    (set! lsp-frame-memory-input "")
-    (set! lsp-frame-memory-input-offset 0)
-    (set! lsp-frame-memory-eof false)
-    (set! lsp-frame-memory-stdout "")
-    (set! lsp-frame-memory-stderr "")))
+  (set!
+    lsp-frame-memory-state
+    (LspFrameMemoryState false (arena.Arena 0) "" 0 false "" "")))
 
 (define (lsp-frame-memory-install!
   [input : (& input str)]
   [transport-arena : i64]) : unit
-  (begin
+  (set!
+    lsp-frame-memory-state
     (in-arena
       (arena.Arena transport-arena)
-      (begin
-        (set! lsp-frame-memory-input (string.copy input))
-        (set! lsp-frame-memory-arena transport-arena)))
-    (set! lsp-frame-memory-input-offset 0)
-    (set! lsp-frame-memory-eof false)
-    (set! lsp-frame-memory-stdout "")
-    (set! lsp-frame-memory-stderr "")
-    (set! lsp-frame-memory-active true)))
+      (LspFrameMemoryState
+        true
+        (arena.Arena transport-arena)
+        (string.copy input)
+        0
+        false
+        ""
+        ""))))
 
 (define (lsp-frame-memory-stdout-append! [text : String]) : unit
   (in-arena
-    (arena.Arena lsp-frame-memory-arena)
+    lsp-frame-memory-state.owner
     (set!
-      lsp-frame-memory-stdout
-      (str_cat.str-cat-scoped lsp-frame-memory-stdout text))))
+      lsp-frame-memory-state.stdout
+      (str_cat.str-cat-scoped lsp-frame-memory-state.stdout text))))
 
 (define (lsp-frame-memory-stderr-append! [text : String]) : unit
   (in-arena
-    (arena.Arena lsp-frame-memory-arena)
+    lsp-frame-memory-state.owner
     (set!
-      lsp-frame-memory-stderr
-      (str_cat.str-cat-scoped lsp-frame-memory-stderr text))))
+      lsp-frame-memory-state.stderr
+      (str_cat.str-cat-scoped lsp-frame-memory-state.stderr text))))
 
 (define (lsp-frame-memory-read-line) : io.StdinRead
   (let
-    [n : i64 (string.string-length lsp-frame-memory-input)]
-    [start : i64 lsp-frame-memory-input-offset]
-    (if (or lsp-frame-memory-eof (>= start n))
+    [n : i64 (string.string-length lsp-frame-memory-state.input)]
+    [start : i64 lsp-frame-memory-state.input-offset]
+    (if (or lsp-frame-memory-state.eof (>= start n))
       (begin
-        (set! lsp-frame-memory-eof true)
+        (set! lsp-frame-memory-state.eof true)
         (io.StdinRead (byte_buf.new) true))
       (let
         [end : i64 start]
         [found-newline : bool false]
         (begin
           (while (and (< end n) (not found-newline))
-            (if (= (string.string-ref lsp-frame-memory-input end) '\n')
+            (if (= (string.string-ref lsp-frame-memory-state.input end) '\n')
               (set! found-newline true)
               (set! end (+ end 1))))
           (if found-newline
             (begin
-              (set! lsp-frame-memory-input-offset (+ end 1))
+              (set! lsp-frame-memory-state.input-offset (+ end 1))
               (io.StdinRead
                 (byte_buf.from-string
-                  (string.substring lsp-frame-memory-input start (- end start)))
+                  (string.substring
+                    lsp-frame-memory-state.input
+                    start
+                    (- end start)))
                 false))
             (begin
-              (set! lsp-frame-memory-input-offset n)
-              (set! lsp-frame-memory-eof true)
+              (set! lsp-frame-memory-state.input-offset n)
+              (set! lsp-frame-memory-state.eof true)
               (io.StdinRead
                 (byte_buf.from-string
-                  (string.substring lsp-frame-memory-input start (- n start)))
+                  (string.substring
+                    lsp-frame-memory-state.input
+                    start
+                    (- n start)))
                 true))))))))
 
 (define (lsp-frame-memory-read-bytes [count : i64]) : io.StdinRead
   (let
-    [n : i64 (string.string-length lsp-frame-memory-input)]
-    [start : i64 lsp-frame-memory-input-offset]
-    [available : i64 (- n lsp-frame-memory-input-offset)]
+    [n : i64 (string.string-length lsp-frame-memory-state.input)]
+    [start : i64 lsp-frame-memory-state.input-offset]
+    [available : i64 (- n lsp-frame-memory-state.input-offset)]
     [take : i64
       (if (< available count)
         available
         count)]
-    [next : i64 (+ lsp-frame-memory-input-offset take)]
+    [next : i64 (+ lsp-frame-memory-state.input-offset take)]
     [short : bool (< available count)]
     (begin
-      (set! lsp-frame-memory-input-offset next)
+      (set! lsp-frame-memory-state.input-offset next)
       (if short
-        (set! lsp-frame-memory-eof true)
+        (set! lsp-frame-memory-state.eof true)
         unit)
       (io.StdinRead
         (byte_buf.from-string
-          (string.substring lsp-frame-memory-input start take))
-        lsp-frame-memory-eof))))
+          (string.substring lsp-frame-memory-state.input start take))
+        lsp-frame-memory-state.eof))))
 
 (define (lsp-frame-input-read-line) : io.StdinRead
-  (if lsp-frame-memory-active
+  (if lsp-frame-memory-state.active
     (lsp-frame-memory-read-line)
     (io.stdin-read-line)))
 
 (define (lsp-frame-input-read-bytes [count : i64]) : io.StdinRead
-  (if lsp-frame-memory-active
+  (if lsp-frame-memory-state.active
     (lsp-frame-memory-read-bytes count)
     (io.stdin-read-bytes count)))
 
@@ -673,17 +672,17 @@
               (LspFrameRead.Ok payload)))]))))
 
 (define (lsp-frame-stdout-write [text : String]) : unit
-  (if lsp-frame-memory-active
+  (if lsp-frame-memory-state.active
     (lsp-frame-memory-stdout-append! text)
     (io.stdout-write (byte_buf.str-as-bytes (& text)))))
 
 (define (lsp-frame-stderr-write [text : String]) : unit
-  (if lsp-frame-memory-active
+  (if lsp-frame-memory-state.active
     (lsp-frame-memory-stderr-append! text)
     (io.stderr-write (byte_buf.str-as-bytes (& text)))))
 
 (define (lsp-frame-stdout-flush) : unit
-  (if lsp-frame-memory-active
+  (if lsp-frame-memory-state.active
     unit
     (io.stdout-flush)))
 
@@ -17613,9 +17612,9 @@
     [_restore-enclosing : unit
       (unsafe
         (arena.tl_arena_set enclosing))]
-    [captured-stdout : String (string.copy (& lsp-frame-memory-stdout))]
-    [captured-stderr : String (string.copy (& lsp-frame-memory-stderr))]
-    [transport-head : i64 lsp-frame-memory-arena]
+    [captured-stdout : String (string.copy (& lsp-frame-memory-state.stdout))]
+    [captured-stderr : String (string.copy (& lsp-frame-memory-state.stderr))]
+    [transport-head : i64 lsp-frame-memory-state.owner.handle]
     [_fresh-after : unit (lsp-frame-fresh-session-reset!)]
     [_destroy-session : unit
       (unsafe

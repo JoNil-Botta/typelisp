@@ -905,12 +905,44 @@
 ;; lowering is incremental. Direct ELF/COFF callers consume this result before
 ;; choosing an object artifact; internal object-image consumers that do not
 ;; link the image retain their existing lower-level contract.
+(defenum CompilerBackendObjectAbiContext
+  (Call)
+  (FunctionEntry)
+  (FunctionReturn))
+
+;; A closed route vocabulary shared by object emitters and package callers.
+;; Context is target/kind enums or a numeric resource bound, never a path or
+;; user-controlled symbol.
+(defenum CompilerDirectObjectArtifactKind
+  (Bin)
+  (StaticLib))
+
+(defenum CompilerDirectObjectFallbackReason
+  (ArtifactKindUnavailable
+    CompilerBackendTarget
+    CompilerDirectObjectArtifactKind)
+  (DebugMetadata)
+  (BackendMode)
+  (PrivateSpmdAbi)
+  (ResourceBudget i64 i64)
+  (UnsupportedSemantics)
+  (UnsupportedAbi CompilerBackendTarget CompilerBackendObjectAbiContext)
+  (ObjectEncoding)
+  (UnsupportedCoffImage)
+  (ObjectFixup)
+  (ObjectRelocation)
+  (MissingEntrySymbol)
+  (MissingRuntimeEntry)
+  (EmptyTextSection)
+  (TargetMismatch)
+  (ForcedAssembly))
+
 (defenum CompilerBackendObjectEligibility
   (Eligible)
-  (Unsupported String))
+  (Unsupported CompilerDirectObjectFallbackReason))
 
-(define (compiler-backend-object-unsupported-semantics-category) : String
-  "unsupported-object-semantics")
+(define (compiler-backend-object-unsupported-semantics-category) : CompilerDirectObjectFallbackReason
+  CompilerDirectObjectFallbackReason.UnsupportedSemantics)
 
 (defenum CompilerBackendSwitchValidation
   (Ok)
@@ -1208,6 +1240,29 @@
       (set! data.representations representations)
       (set! data.has-representations true)
       (compiler-backend-state-data-set! state data))))
+
+;; Terminal release for a driver that will immediately destroy the backend
+;; carrier owner. Emitted bytes/text must already belong to the caller. The
+;; emission arena and owner arena are borrowed here and are never destroyed.
+;; The backend state must not be used for another emission after this call.
+(define (compiler-backend-state-release-final-arenas!
+  [state : CompilerBackendState]) : unit
+  (let
+    [data : CompilerBackendStateData (compiler-backend-state-data state)]
+    [representations : i64 data.representation-arena]
+    [tables : i64 data.lazy-table-arena]
+    (begin
+      (set! data.has-representations false)
+      (set! data.representation-arena 0)
+      (set! data.representation-mark 0)
+      (set! data.lazy-table-arena 0)
+      (compiler-backend-state-data-set! state data)
+      (unsafe
+        (begin
+          (unless
+            (= representations 0)
+            (arena.tl_arena_destroy representations))
+          (unless (= tables 0) (arena.tl_arena_destroy tables)))))))
 
 (define (compiler-backend-state-prepare-representation-arena!
   [state : CompilerBackendState]) : arena.Arena
@@ -16248,11 +16303,11 @@
             [else (+ vars 4)]))
         vars))))
 
-;; Reserve a contiguous group region for stack-resident register-group vars.
-;; Each var gets two adjacent words in the region so taking the address of a
-;; group value exposes a real aggregate byte layout: word0 at base, word1 at
-;; base+8. The ordinary var slot remains reserved for non-group values; group
-;; stack accesses use compiler-backend-group-word{0,1}-slot.
+;; Reserve enough space for either group-home mode. Functions with exposed
+;; group addresses need the canonical pair region, with word0 at base and
+;; word1 at base+8. Every second word uses that region in a mixed function;
+;; ordinary first words keep their scalar slots. Without exposed groups the
+;; compact second-word map also fits this unchanged reservation.
 (define (compiler-backend-frame-slots-with-groups
   [vars : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -22872,12 +22927,16 @@
               [(ResultCompilerBackend.Err m) (ResultCompilerBackend.Err m)])]
           [(ResultCompilerBackend.Err m) (ResultCompilerBackend.Err m)]))]))
 
-;; Legacy stack-slot offsets for an ordinary group var with no register home:
-;; word0 reuses the var's ordinary slot, and word1 lives in the second group
-;; region below the callee-save area.
+;; An ordinary group keeps word0 in its scalar var slot. Functions without
+;; address-exposed groups can retain the compact second-word region. Once any
+;; group exposes its address, every word1 must instead use the canonical pair
+;; region: mixing the one-word and two-word strides aliases distinct values.
 (define (compiler-backend-group-legacy-word0-slot [var : i64]) : i64
   (- 0 (* 8 (+ var 1))))
 
+;; Precondition: the function's addressable-group bitmap has no storage. A
+;; retained nonempty bitmap can conservatively select canonical pair slots;
+;; only zero words prove that no exposed pair can overlap this compact map.
 (define (compiler-backend-group-legacy-word1-slot
   [var : i64]
   [vars : i64]
@@ -22891,8 +22950,10 @@
         (compiler-backend-frame-slots vars assignments backend-state)
         (+ var 1)))))
 
-;; Stack-slot offsets for an address-exposed group var's two words when it has
-;; no register home. The pair lives in a dedicated contiguous region below the
+;; Canonical pair offsets for a group var without a register home. In functions
+;; with exposed groups, both storage modes use word1; exposed values also use
+;; word0 here.
+;; The pair lives in a dedicated contiguous region below the
 ;; ordinary var/callee-save region so `AddrOf group-var` plus `Gep 8` reaches
 ;; word1. `frame-slots` depends only on the allocator plan, so this base is
 ;; stable across body emission.
@@ -23227,21 +23288,26 @@
           (if (compiler-backend-group-var? backend-state var)
             (compiler-backend-frame-offset-with-backend-state
               backend-state
-              (if (compiler-backend-addressable-group-var? backend-state var)
-                (if (= index 0)
+              (if (= index 0)
+                (if (compiler-backend-addressable-group-var? backend-state var)
                   (compiler-backend-group-word0-slot
                     var
                     vars
                     assignments
                     backend-state)
-                  (compiler-backend-group-word1-slot
+                  (compiler-backend-group-legacy-word0-slot var))
+                (if (=
+                  (compiler_liveness.compiler-live-set-word-count
+                    (compiler-backend-function-state-live-set
+                      (compiler-backend-state-function-state backend-state)
+                      compiler-backend-function-live-set-addressable-group-vars))
+                  0)
+                  (compiler-backend-group-legacy-word1-slot
                     var
                     vars
                     assignments
-                    backend-state))
-                (if (= index 0)
-                  (compiler-backend-group-legacy-word0-slot var)
-                  (compiler-backend-group-legacy-word1-slot
+                    backend-state)
+                  (compiler-backend-group-word1-slot
                     var
                     vars
                     assignments
@@ -83124,26 +83190,29 @@
           ;; segment rows give the occupancy table the allocator's own notion of
           ;; where a register actually carries a live value, instead of a hull
           ;; that saturates every register in a merged body.
-          (if (compiler-backend-assignments-have-register-home?
-            (compiler-backend-global-shared-view scavenge-assignments))
-            (let
-              [scavenge-func : compiler_ir_types.CompilerIrFunction
-                (compiler_ir_types.CompilerIrFunction.Function
-                  (compiler-backend-global-shared-view name)
-                  (compiler-backend-global-shared-view emit-params)
-                  (compiler-backend-global-shared-view ret-ty)
-                  scratch-vars
-                  (compiler-backend-global-shared-view emit-blocks-list))]
-              (compiler_regalloc.compiler-reg-live-interval-selection-with-live-in
-                (compiler-backend-global-shared-view scavenge-func)
-                (compiler_liveness.compiler-live-analyze-function
-                  (compiler-backend-global-shared-view scavenge-func))
-                false))
-            (compiler_regalloc.CompilerRegIntervalSelection.Selection
-              (compiler_regalloc.compiler-reg-interval-seq-empty)
-              (compiler_regalloc.compiler-reg-interval-index-build
+          (compiler_regalloc.compiler-reg-with-analysis-scratch
+            scratch-vars
+            (compiler-backend-global-shared-view emit-blocks-list)
+            (if (compiler-backend-assignments-have-register-home?
+              (compiler-backend-global-shared-view scavenge-assignments))
+              (let
+                [scavenge-func : compiler_ir_types.CompilerIrFunction
+                  (compiler_ir_types.CompilerIrFunction.Function
+                    (compiler-backend-global-shared-view name)
+                    (compiler-backend-global-shared-view emit-params)
+                    (compiler-backend-global-shared-view ret-ty)
+                    scratch-vars
+                    (compiler-backend-global-shared-view emit-blocks-list))]
+                (compiler_regalloc.compiler-reg-live-interval-selection-with-live-in
+                  (compiler-backend-global-shared-view scavenge-func)
+                  (compiler_liveness.compiler-live-analyze-function
+                    (compiler-backend-global-shared-view scavenge-func))
+                  false))
+              (compiler_regalloc.CompilerRegIntervalSelection.Selection
                 (compiler_regalloc.compiler-reg-interval-seq-empty)
-                0)))]
+                (compiler_regalloc.compiler-reg-interval-index-build
+                  (compiler_regalloc.compiler-reg-interval-seq-empty)
+                  0))))]
         [scavenge-intervals : compiler_regalloc.CompilerRegIntervalSeq
           (match (compiler-backend-global-shared-view scavenge-selection)
             [(compiler_regalloc.CompilerRegIntervalSelection.Selection hulls _)
@@ -93926,34 +93995,90 @@
           (set! index (+ index 1))))
       true)))
 
-(defenum CompilerBackendObjectAbiContext
-  (Call)
-  (FunctionEntry)
-  (FunctionReturn))
-
 ;; Object-only ordinary-call lowering predates the shared ABI planner. Keep its
 ;; diagnostic vocabulary fixed and bounded: no user-controlled symbol text is
 ;; copied into a fallback category consumed by batch manifests and drivers.
 (define (compiler-backend-object-unsupported-abi-category
   [target : CompilerBackendTarget]
-  [context : CompilerBackendObjectAbiContext]) : String
-  (match target
-    [(CompilerBackendTarget.Linux)
-      (match context
-        [(CompilerBackendObjectAbiContext.Call)
-          "unsupported-object-abi:linux-x86_64:call"]
-        [(CompilerBackendObjectAbiContext.FunctionEntry)
-          "unsupported-object-abi:linux-x86_64:function-entry"]
-        [(CompilerBackendObjectAbiContext.FunctionReturn)
-          "unsupported-object-abi:linux-x86_64:function-return"])]
-    [(CompilerBackendTarget.Windows)
-      (match context
-        [(CompilerBackendObjectAbiContext.Call)
-          "unsupported-object-abi:windows-x86_64:call"]
-        [(CompilerBackendObjectAbiContext.FunctionEntry)
-          "unsupported-object-abi:windows-x86_64:function-entry"]
-        [(CompilerBackendObjectAbiContext.FunctionReturn)
-          "unsupported-object-abi:windows-x86_64:function-return"])]))
+  [context : CompilerBackendObjectAbiContext]) : CompilerDirectObjectFallbackReason
+  (CompilerDirectObjectFallbackReason.UnsupportedAbi target context))
+
+(define (compiler-direct-object-fallback-category
+  [reason : CompilerDirectObjectFallbackReason]) : String
+  (match reason
+    [(CompilerDirectObjectFallbackReason.ArtifactKindUnavailable _ _)
+      "artifact-kind-unavailable"]
+    [(CompilerDirectObjectFallbackReason.DebugMetadata) "debug-metadata"]
+    [(CompilerDirectObjectFallbackReason.BackendMode) "backend-mode"]
+    [(CompilerDirectObjectFallbackReason.PrivateSpmdAbi) "private-spmd-abi"]
+    [(CompilerDirectObjectFallbackReason.ResourceBudget _ _) "resource-budget"]
+    [(CompilerDirectObjectFallbackReason.UnsupportedSemantics)
+      "unsupported-object-semantics"]
+    [(CompilerDirectObjectFallbackReason.UnsupportedAbi target context)
+      (match target
+        [(CompilerBackendTarget.Linux)
+          (match context
+            [(CompilerBackendObjectAbiContext.Call)
+              "unsupported-object-abi:linux-x86_64:call"]
+            [(CompilerBackendObjectAbiContext.FunctionEntry)
+              "unsupported-object-abi:linux-x86_64:function-entry"]
+            [(CompilerBackendObjectAbiContext.FunctionReturn)
+              "unsupported-object-abi:linux-x86_64:function-return"])]
+        [(CompilerBackendTarget.Windows)
+          (match context
+            [(CompilerBackendObjectAbiContext.Call)
+              "unsupported-object-abi:windows-x86_64:call"]
+            [(CompilerBackendObjectAbiContext.FunctionEntry)
+              "unsupported-object-abi:windows-x86_64:function-entry"]
+            [(CompilerBackendObjectAbiContext.FunctionReturn)
+              "unsupported-object-abi:windows-x86_64:function-return"])])]
+    [(CompilerDirectObjectFallbackReason.ObjectEncoding)
+      "unsupported-object-encoding"]
+    [(CompilerDirectObjectFallbackReason.UnsupportedCoffImage)
+      "unsupported-coff-image"]
+    [(CompilerDirectObjectFallbackReason.ObjectFixup)
+      "unsupported-object-fixup"]
+    [(CompilerDirectObjectFallbackReason.ObjectRelocation)
+      "unsupported-external-relocation"]
+    [(CompilerDirectObjectFallbackReason.MissingEntrySymbol)
+      "missing-entry-symbol"]
+    [(CompilerDirectObjectFallbackReason.MissingRuntimeEntry)
+      "missing-runtime-entry"]
+    [(CompilerDirectObjectFallbackReason.EmptyTextSection) "empty-text-section"]
+    [(CompilerDirectObjectFallbackReason.TargetMismatch) "target-mismatch"]
+    [(CompilerDirectObjectFallbackReason.ForcedAssembly) "forced-assembly"]))
+
+(define (compiler-direct-object-fallback-context
+  [reason : CompilerDirectObjectFallbackReason]) : String
+  (match reason
+    [(CompilerDirectObjectFallbackReason.ArtifactKindUnavailable target kind)
+      (str_cat.str-cat
+        "target="
+        (match target
+          [(CompilerBackendTarget.Linux) "linux-x86_64"]
+          [(CompilerBackendTarget.Windows) "windows-x86_64"])
+        "|kind="
+        (match kind
+          [(CompilerDirectObjectArtifactKind.Bin) "bin"]
+          [(CompilerDirectObjectArtifactKind.StaticLib) "staticlib"]))]
+    [(CompilerDirectObjectFallbackReason.ResourceBudget count limit)
+      (str_cat.str-cat
+        "owned-paths="
+        (string.int->string count)
+        "|limit="
+        (string.int->string limit))]
+    [_ ""]))
+
+(define (compiler-direct-object-fallback-transcript
+  [reason : CompilerDirectObjectFallbackReason]) : String
+  (let
+    [category : String
+      (compiler-direct-object-fallback-category
+        (owned_view.compiler-owned-shared-view reason))]
+    [context : String (compiler-direct-object-fallback-context reason)]
+    (if (string.eq context "")
+      category
+      (str_cat.str-cat category "|" context))))
 
 (define (compiler-backend-object-abi-capacity [target : CompilerBackendTarget]) : i64
   (match target

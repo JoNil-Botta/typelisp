@@ -2,6 +2,7 @@
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 . "$ROOT/scripts/lib-build-invariance-batch.sh"
+mkdir -p "$ROOT/target/exp"
 WORKDIR=$(mktemp -d "$ROOT/target/exp/build-invariance-batch.XXXXXX")
 trap 'rm -rf "$WORKDIR"' EXIT HUP INT TERM
 mkdir -p "$WORKDIR/left" "$WORKDIR/right"

@@ -5018,9 +5018,11 @@
 (define (tc-context-expr-bases [ctx : TcContext]) : i64
   (if (ast.ast-node-pool-compat-context-active?)
     (ast.ast-node-pool-active-expr-segment-bases)
-    (let
-      [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
-      (ast.ast-node-pool-context-expr-segment-bases pools))))
+    ;; This query returns one scalar. Borrow the owning field in place instead
+    ;; of materializing the complete pool aggregate through tc-context-pools.
+    (match ctx
+      [(TcContext _ _ _ _ _ _ pools _ _)
+        (ast.ast-node-pool-context-expr-segment-bases (& pools))])))
 
 ;; The typechecker receives an already-loaded program and so does not know the
 ;; source path; it builds diagnostics with an empty path (the CLI driver stamps

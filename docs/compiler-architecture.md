@@ -36,7 +36,9 @@ for later native-code certification.
 
 Expression node IDs belong to an AST pool. Literal analysis in
 `compiler_typecheck_core.tl` snapshots the context's expression owner for its
-read-only walk and shares the AST unspanner with other structural consumers.
+read-only walk and shares the AST unspanner with other structural consumers. The
+scalar owner accessor borrows the context field directly; it must not copy the
+complete pool aggregate merely to read its segment-base token.
 An unrelated installed pool must not change literal classification, contextual
 numeric types, or retained source provenance. The explicit compatibility route follows
 its selected pool; macro-capable walks must resolve their owner again after a

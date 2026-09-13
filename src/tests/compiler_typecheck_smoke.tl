@@ -3732,6 +3732,7 @@
   "(module tc_surface_macro_provider)
 (defmacro (first) : Expr `0)
 (define value : i64 1)
+(define (wide [p0 : i64] [p1 : i64] [p2 : i64] [p3 : i64] [p4 : i64] [p5 : i64] [p6 : i64] [p7 : i64] [p8 : i64] [p9 : i64] [p10 : i64] [p11 : i64] [p12 : i64] [p13 : i64] [p14 : i64] [p15 : i64]) : i64 p0)
 (defmacro (hook [value : i64]) : i64 `(+ ,value 1))
 (defmacro (last) : Expr `42)")
 

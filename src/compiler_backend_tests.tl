@@ -24027,59 +24027,40 @@ g:
             "    vmovq %xmm2, %r12\n")))]
     [_ false]))
 
-(define (compiler-backend-avx2-i64-reduce-source-ok?) : bool
+(define (compiler-backend-avx2-i64-reduce-storage-cases-ok? [spilled : bool]) : bool
   (and
     (cfg
       scratch-vreg
       true
-      (and
-        (compiler-backend-avx2-i64-reduce-source-case-ok?
-          (compiler_ir_types.CompilerIrVectorReduceOp.Min)
-          false
-          false
-          "    vpcmpgtq %xmm3, %xmm2, %xmm4\n    vpblendvb %xmm4, %xmm3, %xmm2, %xmm2\n")
-        (compiler-backend-avx2-i64-reduce-source-case-ok?
-          (compiler_ir_types.CompilerIrVectorReduceOp.Max)
-          false
-          false
-          "    vpcmpgtq %xmm2, %xmm3, %xmm4\n    vpblendvb %xmm4, %xmm3, %xmm2, %xmm2\n")))
+      (compiler-backend-avx2-i64-reduce-source-case-ok?
+        (compiler_ir_types.CompilerIrVectorReduceOp.Min)
+        false
+        spilled
+        "    vpcmpgtq %xmm3, %xmm2, %xmm4\n    vpblendvb %xmm4, %xmm3, %xmm2, %xmm2\n"))
+    (cfg
+      scratch-vreg
+      true
+      (compiler-backend-avx2-i64-reduce-source-case-ok?
+        (compiler_ir_types.CompilerIrVectorReduceOp.Max)
+        false
+        spilled
+        "    vpcmpgtq %xmm2, %xmm3, %xmm4\n    vpblendvb %xmm4, %xmm3, %xmm2, %xmm2\n"))
     (compiler-backend-avx2-i64-reduce-source-case-ok?
       (compiler_ir_types.CompilerIrVectorReduceOp.Min)
       true
-      false
+      spilled
       "    vpcmpgtq %xmm11, %xmm10, %xmm12\n    vpblendvb %xmm12, %xmm11, %xmm10, %xmm10\n")
     (compiler-backend-avx2-i64-reduce-source-case-ok?
       (compiler_ir_types.CompilerIrVectorReduceOp.Max)
       true
-      false
+      spilled
       "    vpcmpgtq %xmm10, %xmm11, %xmm12\n    vpblendvb %xmm12, %xmm11, %xmm10, %xmm10\n")))
 
+(define (compiler-backend-avx2-i64-reduce-source-ok?) : bool
+  (compiler-backend-avx2-i64-reduce-storage-cases-ok? false))
+
 (define (compiler-backend-avx2-i64-reduce-spilled-source-ok?) : bool
-  (and
-    (cfg
-      scratch-vreg
-      true
-      (and
-        (compiler-backend-avx2-i64-reduce-source-case-ok?
-          (compiler_ir_types.CompilerIrVectorReduceOp.Min)
-          false
-          true
-          "    vpcmpgtq %xmm3, %xmm2, %xmm4\n    vpblendvb %xmm4, %xmm3, %xmm2, %xmm2\n")
-        (compiler-backend-avx2-i64-reduce-source-case-ok?
-          (compiler_ir_types.CompilerIrVectorReduceOp.Max)
-          false
-          true
-          "    vpcmpgtq %xmm2, %xmm3, %xmm4\n    vpblendvb %xmm4, %xmm3, %xmm2, %xmm2\n")))
-    (compiler-backend-avx2-i64-reduce-source-case-ok?
-      (compiler_ir_types.CompilerIrVectorReduceOp.Min)
-      true
-      true
-      "    vpcmpgtq %xmm11, %xmm10, %xmm12\n    vpblendvb %xmm12, %xmm11, %xmm10, %xmm10\n")
-    (compiler-backend-avx2-i64-reduce-source-case-ok?
-      (compiler_ir_types.CompilerIrVectorReduceOp.Max)
-      true
-      true
-      "    vpcmpgtq %xmm10, %xmm11, %xmm12\n    vpblendvb %xmm12, %xmm11, %xmm10, %xmm10\n")))
+  (compiler-backend-avx2-i64-reduce-storage-cases-ok? true))
 
 (define (compiler-backend-i64-reduce-live-source-blocks
   [op : compiler_ir_types.CompilerIrVectorReduceOp]) : compiler_ir_types.CompilerIrBlockList
@@ -24104,16 +24085,16 @@ g:
     compiler_ir_types.CompilerIrBlockList.Nil))
 
 (define (compiler-backend-i64-reduce-mask-plan-case-ok?
-  [abi : compiler_abi.CompilerRegTargetAbi]
-  [op : compiler_ir_types.CompilerIrVectorReduceOp]) : bool
+  [_abi : compiler_abi.CompilerRegTargetAbi]
+  [_op : compiler_ir_types.CompilerIrVectorReduceOp]) : bool
   (cfg
     scratch-vreg
     (let
       [result : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi
-          abi
+          _abi
           "reduce_live_source_mask"
-          (compiler-backend-i64-reduce-live-source-blocks op)
+          (compiler-backend-i64-reduce-live-source-blocks _op)
           3
           (compiler_regalloc.compiler-reg-assignments-prepend
             (compiler_regalloc.CompilerRegAssignment
@@ -24224,8 +24205,8 @@ g:
       (compiler-backend-i64-reduce-pressure-tail (+ index 1)))))
 
 (define (compiler-backend-i64-reduce-pressure-case-ok?
-  [target : compiler_backend.CompilerBackendTarget]
-  [op : compiler_ir_types.CompilerIrVectorReduceOp]) : bool
+  [_target : compiler_backend.CompilerBackendTarget]
+  [_op : compiler_ir_types.CompilerIrVectorReduceOp]) : bool
   (cfg
     scratch-vreg
     (let
@@ -24233,7 +24214,7 @@ g:
         (compiler-backend-test-instr-seq-prepend
           (compiler_ir_types.CompilerIrInstr.VectorReduce
             14
-            op
+            _op
             (compiler_ir_types.CompilerIrValue.Var 6)
             4
             (compiler_ast_types.AstType.I64))
@@ -24242,7 +24223,7 @@ g:
         (compiler-backend-i64-reduce-pressure-assignments 0)]
       [result : compiler_regalloc.CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result-for-abi
-          (compiler_backend.compiler-backend-target-abi target)
+          (compiler_backend.compiler-backend-target-abi _target)
           "i64_reduce_mask_pressure"
           (compiler_ir_types.compiler-ir-block-cons
             (compiler_ir_types.CompilerIrBlock.Block
@@ -24285,7 +24266,7 @@ g:
           instrs
           assignments
           29
-          target
+          _target
           state)
           [(compiler_backend.ResultCompilerBackend.Ok asm)
             (let
@@ -24359,14 +24340,14 @@ g:
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
 (define (compiler-backend-i64-reduce-coalesced-case-ok?
-  [abi : compiler_abi.CompilerRegTargetAbi]
-  [op : compiler_ir_types.CompilerIrVectorReduceOp]) : bool
+  [_abi : compiler_abi.CompilerRegTargetAbi]
+  [_op : compiler_ir_types.CompilerIrVectorReduceOp]) : bool
   (cfg
     scratch-vreg
     (match (compiler-backend-scratch-test-result-for-abi
-      abi
+      _abi
       "reduce_coalesced_source"
-      (compiler-backend-i64-reduce-coalesced-blocks op)
+      (compiler-backend-i64-reduce-coalesced-blocks _op)
       4
       (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment

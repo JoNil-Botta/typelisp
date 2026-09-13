@@ -15066,6 +15066,117 @@
     42
     "a constant-offset run against one length keeps only its two bracketing checks with the widest bracket hoisted to the run's front, while a store between the checks blocks the reordering, two lengths bracket nothing, and an offset below the run needs a dominating nonnegative fact"))
 
+;; #7145: equivalent lengths can have distinct definitions inside the run.
+;; Both bracket operands must be available after widening, in either order.
+(define (opt-bounds-run-length-chain-blocks [links : i64] [descending : bool]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [builder : compiler_ir_types.CompilerIrInstrBuilder
+      (compiler_ir_types.compiler-ir-instr-builder-with-capacity 20)]
+    [at : i64 0]
+    (begin
+      (while (< at 3)
+        (let
+          [offset : i64
+            (if descending
+              (- 2 at)
+              at)]
+          [idx : i64 (+ 4 at)]
+          [length : i64 (+ 8 (* at 4))]
+          [link : i64 1]
+          (begin
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (opt-bounds-run-add idx offset))
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (compiler_ir_types.CompilerIrInstr.Cast
+                length
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ast_types.AstType.I64)
+                (compiler_ast_types.AstType.U64)))
+            (while (< link links)
+              (begin
+                (compiler_ir_types.compiler-ir-instr-builder-push!
+                  (&mut builder)
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    (+ length link)
+                    (compiler_ir_types.CompilerIrValue.Var
+                      (- (+ length link) 1))
+                    (compiler_ast_types.AstType.U64)))
+                (set! link (+ link 1))))
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (opt-bounds-run-check
+                (compiler_ir_types.CompilerIrValue.Var idx)
+                (compiler_ir_types.CompilerIrValue.Var (- (+ length links) 1))
+                (str_cat.str-cat "length_chain_ok" (string.int->string at))))
+            (set! at (+ at 1)))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (opt-bounds-run-append
+            (compiler_ir_types.compiler-ir-instr-builder-to-seq builder)
+            (opt-bounds-run-return)))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-bounds-run-length-chain-verified?
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (compiler_optimize.opt-verify-ok?
+    (compiler_optimize.opt-verify-function
+      (compiler_ir_types.CompilerIrFunction.Function
+        (opt-test-symbol "bounds-length-chain")
+        (opt-bounds-dom-test-params)
+        (compiler_ast_types.AstType.I64)
+        20
+        blocks))))
+
+(define (opt-bounds-run-length-chain-ok? [links : i64] [descending : bool]) : bool
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-bounds-run-length-chain-blocks links descending)]
+    [input-ok : bool
+      (opt-bounds-run-length-chain-verified?
+        (compiler_ir_types.compiler-ir-global-shared-view blocks))]
+    [next : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-bounds-dom-blocks-with-context
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.opt-cfg-context-build
+          (compiler_ir_types.compiler-ir-global-shared-view blocks))
+        (opt-bounds-dom-test-params)
+        20
+        blocks)]
+    (and
+      input-ok
+      (opt-bounds-run-length-chain-verified?
+        (compiler_ir_types.compiler-ir-global-shared-view next))
+      (=
+        (compiler_optimize.opt-count-bounds-blocks next)
+        (if (> links 2)
+          3
+          2)))))
+
+(test
+  bounds-dom-run-length-dependencies
+  (begin
+    (test.assert-true
+      (opt-bounds-run-length-chain-ok? 1 false)
+      "increasing brackets move their length casts before use")
+    (test.assert-true
+      (opt-bounds-run-length-chain-ok? 1 true)
+      "decreasing brackets move their length casts before use")
+    (test.assert-true
+      (opt-bounds-run-length-chain-ok? 2 false)
+      "length cast/move chains preserve dependency order")
+    (test.assert-true
+      (opt-bounds-run-length-chain-ok? 2 true)
+      "decreasing cast/move chains preserve dependency order")
+    (test.assert-true
+      (opt-bounds-run-length-chain-ok? 3 false)
+      "over-budget length chains refuse widening")
+    (test.assert-true
+      (opt-bounds-run-length-chain-ok? 3 true)
+      "decreasing over-budget length chains refuse widening")))
+
 ;; --- stride runs (BDOM-2) ----------------------------------------------------
 ;;
 ;; The words of one record, `idx * c + k` for 0 <= k < c, checked in SEPARATE

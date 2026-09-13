@@ -22,7 +22,11 @@ The consolidated codegen suite's `driver-reader-context` child alternates custom
 flags and Linux/Windows targets across two reusable driver states, checks that
 B leaves A's intern/pool counts intact, and reuses A after changing its flags.
 Keep that test on the canonical driver path; a cfg string in a cache key alone
-does not supply predicates to macro expansion.
+does not supply predicates to macro expansion. The semantic-index macro checks
+also alternate the same source's cfg set and verify complete results and owner
+release. The fixture's inline test covers harness expansion, and the existing
+public CLI package build/run smoke emits target-conditional Module declarations
+through the package preparation and object/assembly paths.
 
 ## Intern-ID provenance
 

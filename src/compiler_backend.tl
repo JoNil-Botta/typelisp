@@ -12243,6 +12243,7 @@
   [elem-ty : compiler_ast_types.AstType]
   [planned-acc-xmm : String]
   [planned-scratch-xmm : String]
+  [planned-mask-xmm : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok?
@@ -12270,6 +12271,7 @@
       elem-ty
       planned-acc-xmm
       planned-scratch-xmm
+      planned-mask-xmm
       instr-diag
       backend-state)))
 
@@ -21703,7 +21705,8 @@
   [xmm : String]
   [elem-ty : compiler_ast_types.AstType]
   [acc-xmm : String]
-  [scratch-xmm : String]) : String
+  [scratch-xmm : String]
+  [mask-xmm : String]) : String
   (match (compiler-backend-global-shared-view elem-ty)
     [(compiler_ast_types.AstType.F32)
       (str_cat.str-cat
@@ -21861,9 +21864,9 @@
               ", "
               lane-compare-right
               ", "
-              (compiler-backend-global-shared-view xmm)
+              (compiler-backend-global-shared-view mask-xmm)
               "\n    vpblendvb "
-              xmm
+              mask-xmm
               ", "
               scratch-xmm
               ", "
@@ -21930,6 +21933,7 @@
   [elem-ty : compiler_ast_types.AstType]
   [planned-acc-xmm : String]
   [planned-scratch-xmm : String]
+  [planned-mask-xmm : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (compiler-backend-avx2-shape-ok?
@@ -21972,26 +21976,44 @@
                     (compiler-backend-vector-reg-lower-xmm
                       (compiler-backend-global-shared-view ymm))]
                   [acc-xmm : String
-                    (if (> (string.string-length planned-acc-xmm) 0)
+                    (compiler-backend-planned-or-scavenge-xmm-reg
                       planned-acc-xmm
-                      (compiler-backend-scavenge-xmm-reg
-                        dst
-                        (compiler-backend-one-exclude
-                          (compiler-backend-global-shared-view
-                            planned-scratch-xmm))
-                        1
-                        "%xmm2"
-                        backend-state))]
+                      dst
+                      (compiler-backend-three-exclude
+                        (compiler-backend-global-shared-view xmm)
+                        (compiler-backend-global-shared-view planned-mask-xmm)
+                        (compiler-backend-global-shared-view
+                          planned-scratch-xmm))
+                      3
+                      "%xmm2"
+                      backend-state)]
                   [scratch-xmm : String
-                    (if (> (string.string-length planned-scratch-xmm) 0)
+                    (compiler-backend-planned-or-scavenge-xmm-reg
                       planned-scratch-xmm
-                      (compiler-backend-scavenge-xmm-reg
+                      dst
+                      (compiler-backend-three-exclude
+                        (compiler-backend-global-shared-view xmm)
+                        (compiler-backend-global-shared-view planned-mask-xmm)
+                        (compiler-backend-global-shared-view acc-xmm))
+                      3
+                      "%xmm3"
+                      backend-state)]
+                  [mask-xmm : String
+                    (if (compiler_regalloc.compiler-reg-vector-reduce-mask-scratch?
+                      op
+                      lanes
+                      (compiler-backend-global-shared-view elem-ty))
+                      (compiler-backend-planned-or-scavenge-xmm-reg
+                        planned-mask-xmm
                         dst
-                        (compiler-backend-one-exclude
-                          (compiler-backend-global-shared-view acc-xmm))
-                        1
-                        "%xmm3"
-                        backend-state))]
+                        (compiler-backend-three-exclude
+                          (compiler-backend-global-shared-view xmm)
+                          (compiler-backend-global-shared-view acc-xmm)
+                          (compiler-backend-global-shared-view scratch-xmm))
+                        3
+                        "%xmm4"
+                        backend-state)
+                      "")]
                   (if (= (string.string-length xmm) 0)
                     (ResultCompilerBackend.Err
                       (box
@@ -22009,7 +22031,8 @@
                           xmm
                           (compiler-backend-global-shared-view elem-ty)
                           (compiler-backend-global-shared-view acc-xmm)
-                          scratch-xmm)
+                          scratch-xmm
+                          mask-xmm)
                         (compiler-backend-vector-reduce-store-scalar
                           (compiler-backend-global-shared-view assignments)
                           dst
@@ -55904,6 +55927,7 @@
           (compiler-backend-global-shared-view elem-ty)
           planned-scratch0
           planned-scratch1
+          planned-scratch2
           instr-diag
           ctx.backend-state)]
       [(compiler_ir_types.CompilerIrInstr.VectorCompare payload-box)

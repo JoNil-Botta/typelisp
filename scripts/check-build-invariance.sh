@@ -209,24 +209,8 @@ check_backend_memory_report() {
 check_backend_memory() {
     memory_dir="$WORKDIR/backend-memory"
     mkdir -p "$memory_dir"
+    backend_memory_codegen_count=0
     echo "[build-invariance] complete backend fixtures: enforced 8192 MiB process-tree cap"
-    if ! ci_timing_run backend-memory codegen-smoke \
-        run_with_heartbeat_capture \
-        "bounded opt2 codegen smoke" \
-        "$memory_dir/codegen-smoke.stdout" "$memory_dir/codegen-smoke.stderr" \
-        env TYPELISP_LINUX_MEMORY_LIMIT_BACKEND=systemd-user-cgroup \
-        "$ROOT/scripts/run-memory-bounded.sh" \
-        --limit-mib 8192 --report "$memory_dir/codegen-smoke.memory" \
-        --timeout-seconds 600 -- \
-        "$OPT1_COMPILER" compile src/tests/compiler_codegen_smoke_suite.tl \
-        -o "$memory_dir/codegen-smoke.s" \
-        --target linux-x86_64 --cfg linux --cfg unix --cfg target-linux --cfg os-linux \
-        --stdlib-root stdlib --stdlib-root src --opt-level 2; then
-        print_log_pair "bounded codegen smoke failed" \
-            "$memory_dir/codegen-smoke.stdout" "$memory_dir/codegen-smoke.stderr"
-        exit 1
-    fi
-    check_backend_memory_report "$memory_dir/codegen-smoke.memory"
     if ! ci_timing_run backend-memory backend-tests \
         run_with_heartbeat_capture \
         "bounded opt2 backend-tests build" \
@@ -243,14 +227,12 @@ check_backend_memory() {
         exit 1
     fi
     check_backend_memory_report "$memory_dir/backend-tests.memory"
-    if [ ! -s "$memory_dir/codegen-smoke.s" ] || \
-       [ ! -s "$memory_dir/backend-tests" ] || \
-       [ ! -s "$memory_dir/codegen-smoke.memory" ] || \
+    if [ ! -s "$memory_dir/backend-tests" ] || \
        [ ! -s "$memory_dir/backend-tests.memory" ]; then
         echo "[build-invariance] backend memory gate did not publish complete outputs/reports" >&2
         exit 1
     fi
-    cat "$memory_dir/codegen-smoke.memory" "$memory_dir/backend-tests.memory"
+    cat "$memory_dir/backend-tests.memory"
 }
 
 write_corpus() {
@@ -421,22 +403,41 @@ run_batch_chunk() {
     fi
     batch_started=$(date +%s%3N)
     echo "[build-invariance] $batch_label"
+    set -- "$batch_compiler" compile --batch "$batch_chunk_path" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --backend-mode scalar \
+        --opt-level "$batch_opt_level" \
+        --stdlib-root stdlib --stdlib-root src
+    batch_memory_report=
+    if [ "$batch_compiler_label" = opt1-built ] && \
+       [ "$batch_opt_level" -eq 2 ] && [ "$batch_entries" -eq 1 ] && \
+       [ "$(awk -F'|' 'NR == 1 { print $3; exit }' "$batch_case_chunk")" = src/tests/compiler_codegen_smoke_suite.tl ]; then
+        # This existing singleton already compiles the complete stress corpus.
+        # Add enforcement to that invocation instead of compiling it twice.
+        batch_memory_report="$WORKDIR/backend-memory/codegen-smoke.memory"
+        batch_stdout="$WORKDIR/backend-memory/codegen-smoke.stdout"
+        batch_stderr="$WORKDIR/backend-memory/codegen-smoke.stderr"
+        set -- env TYPELISP_LINUX_MEMORY_LIMIT_BACKEND=systemd-user-cgroup \
+            "$ROOT/scripts/run-memory-bounded.sh" \
+            --limit-mib 8192 --report "$batch_memory_report" \
+            --timeout-seconds 600 -- "$@"
+    fi
     if ! ci_timing_run "$batch_timing_label" compile \
         run_with_heartbeat_capture \
         "$batch_label" \
         "$batch_stdout" \
         "$batch_stderr" \
-        "$batch_compiler" compile --batch "$batch_chunk_path" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        --backend-mode scalar \
-        --opt-level "$batch_opt_level" \
-        --stdlib-root stdlib \
-        --stdlib-root src; then
+        "$@"; then
         print_log_pair "$batch_label failed" "$batch_stdout" "$batch_stderr"
         echo "[build-invariance] $batch_label cases:" >&2
         print_batch_cases "$batch_case_chunk"
         exit 1
+    fi
+    if [ -n "$batch_memory_report" ]; then
+        check_backend_memory_report "$batch_memory_report"
+        backend_memory_codegen_count=$((backend_memory_codegen_count + 1))
+        cat "$batch_memory_report"
     fi
     verify_batch_outputs "$batch_compiler_label" "$batch_case_chunk" "$batch_stdout" "$batch_stderr"
     batch_finished=$(date +%s%3N)
@@ -657,6 +658,10 @@ prepare_compile_batches "opt2-built" "$RIGHT_DIR"
 batch_setup_end=$(date +%s)
 batch_comparison_start=$batch_setup_end
 run_batched_comparison
+if [ "$backend_memory_codegen_count" -ne 1 ]; then
+    echo "[build-invariance] expected exactly one bounded complete codegen smoke, got $backend_memory_codegen_count" >&2
+    exit 1
+fi
 batch_comparison_end=$(date +%s)
 sentinel_start=$batch_comparison_end
 run_batch_sentinels "opt1-built" "$OPT1_COMPILER"

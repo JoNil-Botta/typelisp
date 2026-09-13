@@ -1500,6 +1500,19 @@ embedded compiler image, or a reusable compiler reference must add a ledger
 row and either publish validated metadata or state the independent assertion
 that makes reuse unsound.
 
+Within each Linux build-invariance chunk, identical compile-input paths at the
+same optimization level share one fresh output from that chunk's compiler.
+The original logical case records still drive every opt1-built/opt2-built byte
+comparison. The plan is reconstructed and checked before invocation; existing
+outputs fail rather than acting as cache hits. Alias copies require a nonempty
+regular canonical output and exact byte equality. Source-set and compiler
+digests must remain unchanged through the gate. Reuse never crosses chunks or
+compiler identities, and all four independently timed selfhost compiles and
+both compilers' standalone sentinels remain mandatory. The 64-entry limit counts
+logical cases, including aliases. Run `scripts/verify-build-invariance-batch.sh`
+for the planner, boundary, ownership and fresh-output failure checks; both CI
+hosts run these helper checks even though build invariance itself is Linux-only.
+
 `verify-tlci-native-route-stress.sh` additionally appends successful or failed
 `native-compile` and `source-compile` rows with their real process statuses, plus
 successful `native-main-backend` and `source-main-backend` aggregates. Together

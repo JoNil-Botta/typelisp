@@ -125477,6 +125477,7 @@
   [module-id : i64]
   [call-id : i64]
   [context : ast.AstMaybeModuleName]
+  [cfgs : sym_i64_env.SymI64Env]
   [decl-path : String]) : ResultMacroDeclExpansion
   (let
     [call-expr : ast.AstExpr
@@ -125575,7 +125576,8 @@
                                     [(ResultMacroValueEnv.Ok value macro-env)
                                       (let
                                         [parse-dispatch : sym_i64_env.SymI64Env
-                                          (parser.compiler-parse-dispatch-env)]
+                                          (parser.compiler-parse-dispatch-env-from-cfg
+                                            (tc-global-shared-view cfgs))]
                                         (match (macro-decls-from-ctfe-value
                                           (tc-context-structural-session
                                             call-ctx)
@@ -125703,6 +125705,7 @@
   [context : ast.AstMaybeModuleName]
   [alias : ast.AstMaybeImportAlias]
   [span : ast.AstSourceSpan]
+  [cfgs : sym_i64_env.SymI64Env]
   [decl-path : String]) : ResultMacroDeclExpansion
   (let
     [call-expr : ast.AstExpr
@@ -125873,7 +125876,8 @@
                                               macro-env)
                                             (let
                                               [parse-dispatch : sym_i64_env.SymI64Env
-                                                (parser.compiler-parse-dispatch-env)]
+                                                (parser.compiler-parse-dispatch-env-from-cfg
+                                                  (tc-global-shared-view cfgs))]
                                               (match (macro-module-decls-from-ctfe-value
                                                 (tc-context-structural-session
                                                   call-ctx)
@@ -125973,6 +125977,7 @@
   [module : String]
   [module-id : i64]
   [decl : ast.AstDecl]
+  [cfgs : sym_i64_env.SymI64Env]
   [decl-path : String]) : ResultMacroDeclExpansion
   (let
     [site-state : TcMacroCallSiteState
@@ -126006,6 +126011,7 @@
                   (tc-global-shared-view context)
                   (tc-global-shared-view alias)
                   (ast.ast-source-span-box-shared-view span)
+                  (tc-global-shared-view cfgs)
                   (tc-global-shared-view decl-path)))]
             [(ast.AstImportKind.MacroDecls call-id context)
               (begin
@@ -126020,6 +126026,7 @@
                   module-id
                   call-id
                   (tc-global-shared-view context)
+                  (tc-global-shared-view cfgs)
                   (tc-global-shared-view decl-path)))]
             [_
               (macro-single-decl-expansion
@@ -126254,6 +126261,7 @@
   [module : String]
   [module-id : i64]
   [decl : ast.AstDecl]
+  [cfgs : sym_i64_env.SymI64Env]
   [decl-path : String]) : ResultMacroDeclExpansion
   (macro-expand-decl-with-path-in-generation
     ctx
@@ -126263,6 +126271,7 @@
     module
     module-id
     decl
+    (tc-global-shared-view cfgs)
     decl-path
     false))
 
@@ -126278,6 +126287,7 @@
   [module : String]
   [module-id : i64]
   [decl : ast.AstDecl]
+  [cfgs : sym_i64_env.SymI64Env]
   [decl-path : String]) : ResultMacroDeclExpansion
   (macro-expand-decl-with-path-in-generation
     ctx
@@ -126287,6 +126297,7 @@
     module
     module-id
     decl
+    (tc-global-shared-view cfgs)
     decl-path
     true))
 
@@ -126298,6 +126309,7 @@
   [module : String]
   [module-id : i64]
   [decl : ast.AstDecl]
+  [cfgs : sym_i64_env.SymI64Env]
   [decl-path : String]
   [splice? : bool]) : ResultMacroDeclExpansion
   (if (not
@@ -126316,6 +126328,7 @@
         module
         module-id
         decl
+        (tc-global-shared-view cfgs)
         decl-path))
     (let
       [macro-state : TcMacroState
@@ -126365,6 +126378,7 @@
           module
           module-id
           decl
+          (tc-global-shared-view cfgs)
           decl-path)]
       [_profile-fired : bool
         (cfg
@@ -129147,6 +129161,7 @@
                             (tc-global-shared-view cur-module)
                             cur-module-id
                             (tc-global-shared-view decl)
+                            (tc-global-shared-view cfgs)
                             (tc-global-shared-view decl-path))
                             [(ResultMacroDeclExpansion.Ok
                                 expanded
@@ -129796,6 +129811,7 @@
                                 (tc-global-shared-view cur-module)
                                 cur-module-id
                                 decl
+                                (tc-global-shared-view cfgs)
                                 decl-path)]
                             [(ResultTcEnv.Err message)
                               (ResultMacroDeclExpansion.Err

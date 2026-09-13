@@ -1860,19 +1860,75 @@
 ;; Source calls may carry module qualification or an import-alias dot path.
 ;; Runtime declarations use the bare source ID, so retain that parsed leaf ID
 ;; alongside the full structural identity without reconstructing any spelling.
-(define (tltest-reach-name-dot-leaf-id
+(define (tltest-reach-name-source-base-id
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]) : i64
   (let
     [source-id : i64
       (tc_core.macro-hygiene-global-source-name-id-or session name-id name-id)]
-    [base-id : i64 (tc_core.tc-qualified-name-base-id source-id)]
+    [source-names : ci.InternSourceNameSessionHandle
+      (cis.intern-structural-session-handle-source-names session)]
+    (if (cis.intern-structural-session-source-name-component-valid?
+      session
+      source-id)
+      (if (ci.intern-source-name-session-handle-qualified?
+        source-names
+        source-id)
+        (ci.intern-source-name-session-handle-qualified-base-id
+          source-names
+          source-id)
+        source-id)
+      (match (cis.intern-structural-session-record-for-raw session source-id)
+        [(cis.InternMaybeStructuralRecord.Some record)
+          (cond
+            [(= record.kind (ci.intern-structural-kind-pair)) record.right-id]
+            [(= record.kind (ci.intern-structural-kind-triple))
+              (cis.intern-structural-key-raw
+                (cis.intern-structural-session-composite-pair-key
+                  session
+                  record.middle-id
+                  record.right-id))]
+            [else source-id])]
+        [(cis.InternMaybeStructuralRecord.No) source-id]))))
+
+(define (tltest-reach-name-dot-leaf-id
+  [session : cis.InternStructuralSessionHandle]
+  [name-id : i64]) : i64
+  (let
+    [base-id : i64 (tltest-reach-name-source-base-id session name-id)]
+    [source-names : ci.InternSourceNameSessionHandle
+      (cis.intern-structural-session-handle-source-names session)]
     (if (and
-      (>= base-id 0)
-      (< base-id (ci.intern-capacity))
-      (ci.intern-dotted? base-id))
-      (ci.intern-dotted-final-id base-id)
+      (cis.intern-structural-session-source-name-component-valid?
+        session
+        base-id)
+      (ci.intern-source-name-session-handle-dotted? source-names base-id))
+      (ci.intern-source-name-session-handle-dotted-final-id
+        source-names
+        base-id)
       base-id)))
+
+;; Before typechecking, a dotted name can project from global storage rather
+;; than name an imported member. Retain its first source component as a possible
+;; owner; keeping only the final leaf drops the global and its initializer.
+(define (tltest-reach-mark-dotted-root
+  [session : cis.InternStructuralSessionHandle]
+  [names : tltest_name_map.Map]
+  [name-id : i64]) : tltest_name_map.Map
+  (let
+    [source-names : ci.InternSourceNameSessionHandle
+      (cis.intern-structural-session-handle-source-names session)]
+    (if (and
+      (cis.intern-structural-session-source-name-component-valid?
+        session
+        name-id)
+      (ci.intern-source-name-session-handle-dotted? source-names name-id))
+      (tltest-reach-mark-name-id
+        names
+        (ci.intern-source-name-session-handle-leading-dot-id
+          source-names
+          name-id))
+      names)))
 
 (define (tltest-reach-mark-source-name
   [session : cis.InternStructuralSessionHandle]
@@ -1880,15 +1936,20 @@
   [name-id : i64]) : tltest_name_map.Map
   (let
     [marked : tltest_name_map.Map (tltest-reach-mark-name-id names name-id)]
-    [base-id : i64 (tc_core.tc-qualified-name-base-id name-id)]
+    [base-id : i64 (tltest-reach-name-source-base-id session name-id)]
     [with-slash-base : tltest_name_map.Map
-      (if (tc_core.tc-name-qualified-id? session name-id)
+      (if (not (= base-id name-id))
         (tltest-reach-mark-name-id marked base-id)
         marked)]
+    [with-root : tltest_name_map.Map
+      (tltest-reach-mark-dotted-root
+        session
+        with-slash-base
+        (tltest-reach-name-source-base-id session name-id))]
     [leaf-id : i64 (tltest-reach-name-dot-leaf-id session name-id)]
     (if (= leaf-id base-id)
-      with-slash-base
-      (tltest-reach-mark-name-id with-slash-base leaf-id))))
+      with-root
+      (tltest-reach-mark-name-id with-root leaf-id))))
 
 (define (tltest-reachable-name-marked?
   [session : cis.InternStructuralSessionHandle]
@@ -1896,12 +1957,12 @@
   [name-id : i64]) : bool
   (let
     [key-id : i64 (csym.compiler-symbol-name-id-key name-id)]
-    [base-id : i64 (tc_core.tc-qualified-name-base-id name-id)]
+    [base-id : i64 (tltest-reach-name-source-base-id session name-id)]
     [leaf-id : i64 (tltest-reach-name-dot-leaf-id session name-id)]
     (or
       (tltest_name_map.contains? (& names) key-id)
       (and
-        (tc_core.tc-name-qualified-id? session name-id)
+        (not (= base-id name-id))
         (tltest_name_map.contains?
           (& names)
           (csym.compiler-symbol-name-id-key base-id)))
@@ -3095,6 +3156,7 @@
                     pruned-paths
                     (owned_view.compiler-owned-shared-view tests))
                   (owned_view.compiler-owned-shared-view legacy-roots)
+                  (owned_view.compiler-owned-shared-view cfgs)
                   (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
                     cache-scope-prefix
                     (owned_view.compiler-owned-shared-view legacy-roots)
@@ -3226,62 +3288,54 @@
             1)]))
     0))
 
-(defstruct TltestCfgNames
-  (slots (__tl_dyn-array String))
-  (values (__tl_dyn-array i64))
-  (len i64))
-
-(define (tltest-cfg-env-count [cfgs : sym_i64_env.SymI64Env]) : i64
-  (match (sym_i64_env.sym-i64-view cfgs)
-    [(sym_i64_env.SymI64ViewNil) 0]
-    [(sym_i64_env.SymI64ViewBind _ _ rest) (+ 1 (tltest-cfg-env-count rest))]))
-
-(define (tltest-cfg-names-fill!
-  [cfgs : sym_i64_env.SymI64Env]
-  [slots : (__tl_dyn-array String)]
-  [values : (__tl_dyn-array i64)]
-  [index : i64]) : unit
-  (match (sym_i64_env.sym-i64-view cfgs)
-    [(sym_i64_env.SymI64ViewNil) unit]
-    [(sym_i64_env.SymI64ViewBind key value rest)
+(define (tltest-inline-typecheck-package-source-scoped
+  [source : String]
+  [roots : cli_svec.Vec]
+  [manifest-dir : String]
+  [package-owner : String]
+  [deps : compiler_load.CompilerPkgDeps]
+  [cfg-names : cfg_core.CompilerCfgSnapshot]
+  [cache-scope-prefix : String]) : i64
+  (let
+    [home : arena.Arena (arena.current)]
+    (with-scratch
       (begin
-        (set! (array-ref slots index) (cfg_core.compiler-cfg-name key))
-        (set! (array-ref values index) value)
-        (tltest-cfg-names-fill! rest slots values (+ index 1)))]))
-
-(define (tltest-cfg-names-from-env [cfgs : sym_i64_env.SymI64Env]) : TltestCfgNames
-  (let
-    [count : i64
-      (tltest-cfg-env-count (owned_view.compiler-owned-shared-view cfgs))]
-    [slots : (__tl_dyn-array String) (__tl_make-array String count)]
-    [values : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    (begin
-      (tltest-cfg-names-fill!
-        cfgs
-        (owned_view.compiler-owned-shared-view slots)
-        (owned_view.compiler-owned-shared-view values)
-        0)
-      (TltestCfgNames slots values count))))
-
-(define (tltest-cfg-names-to-env [names : TltestCfgNames]) : sym_i64_env.SymI64Env
-  (let
-    [env : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
-    [index : i64 names.len]
-    (begin
-      (while (> index 0)
-        (begin
-          (set! index (- index 1))
-          (set!
-            env
-            (cfg_core.compiler-cfg-bind
-              env
-              (owned_view.compiler-owned-array-element-shared-view
-                names.slots
-                index)
-              (owned_view.compiler-owned-array-element-shared-view
-                names.values
-                index)))))
-      env)))
+        (tltest-inline-clear-load-only-caches!)
+        (driver.compiler-driver-reset-file-state!)
+        (compiler_load.compiler-load-session-state-dependency-surfaces-release!
+          (compiler_load.compiler-load-active-session-state-shared-view))
+        (ci.intern-persistent-arena-reset!)
+        (compiler_load.compiler-load-transfer-frontend-handoff!)
+        (let
+          [pools : ast.AstNodePoolContext
+            (driver.compiler-driver-state-new-checked-lower-pools)]
+          [_install : unit (ast.ast-node-pool-context-install! pools)]
+          [status : i64
+            (tltest-inline-typecheck-package-source-with-cfg
+              source
+              roots
+              manifest-dir
+              package-owner
+              deps
+              (cfg_core.compiler-cfg-snapshot-to-env cfg-names)
+              cache-scope-prefix)]
+          [retired : ast.AstNodePoolContext
+            (ast.ast-node-pool-context-capture-active)]
+          (begin
+            ;; Retire all references before returning pool storage. Replacement
+            ;; session/cache carriers must live outside the entry scratch arena.
+            (in-arena
+              home
+              (begin
+                (tltest-inline-clear-load-only-caches!)
+                (driver.compiler-driver-reset-file-state!)
+                (compiler_load.compiler-load-session-state-dependency-surfaces-release!
+                  (compiler_load.compiler-load-active-session-state-shared-view))
+                (driver.compiler-driver-state-destroy-uncommitted-pools!
+                  retired)
+                (ci.intern-persistent-arena-reset!)
+                (compiler_load.compiler-load-transfer-frontend-handoff!)))
+            status))))))
 
 (define (tltest-inline-typecheck-package-sources-from
   [sources : cli_svec.Vec]
@@ -3296,7 +3350,8 @@
     [count : i64 (cli_svec.len (& sources))]
     [cursor : i64 index]
     [status : i64 0]
-    [cfg-names : TltestCfgNames (tltest-cfg-names-from-env cfgs)]
+    [cfg-names : cfg_core.CompilerCfgSnapshot
+      (cfg_core.compiler-cfg-snapshot-from-env cfgs)]
     (begin
       (while (and (= status 0) (< cursor count))
         (let
@@ -3306,33 +3361,16 @@
               (owned_view.compiler-owned-shared-view source))]
           (begin
             (if has-inline-tests
-              (begin
-                (tltest-inline-clear-load-caches!)
-                (set!
-                  status
-                  ;; Match package `test --check`: isolate each inline preflight
-                  ;; source so package builds do not retain every loaded/test AST
-                  ;; until the end of the package. The full file reset refreshes
-                  ;; interns, so rebuild cfg ids from the saved string snapshot.
-                  (with-scratch
-                    (begin
-                      (tltest-inline-clear-load-only-caches!)
-                      (driver.compiler-driver-reset-file-state!)
-                      (tltest-inline-typecheck-package-source-with-cfg
-                        (owned_view.compiler-owned-shared-view source)
-                        (owned_view.compiler-owned-shared-view roots)
-                        (owned_view.compiler-owned-shared-view manifest-dir)
-                        (owned_view.compiler-owned-shared-view package-owner)
-                        (owned_view.compiler-owned-shared-view deps)
-                        (tltest-cfg-names-to-env
-                          (owned_view.compiler-owned-shared-view cfg-names))
-                        (owned_view.compiler-owned-shared-view
-                          cache-scope-prefix)))))
-                ;; The reset inside `with-scratch` installs a scratch-owned
-                ;; active-session wrapper. Restore it in the enclosing arena
-                ;; before the post-entry cache clear dereferences the wrapper.
-                (compiler_load.compiler-load-default-session-use!)
-                (tltest-inline-clear-load-caches!))
+              (set!
+                status
+                (tltest-inline-typecheck-package-source-scoped
+                  (owned_view.compiler-owned-shared-view source)
+                  (owned_view.compiler-owned-shared-view roots)
+                  (owned_view.compiler-owned-shared-view manifest-dir)
+                  (owned_view.compiler-owned-shared-view package-owner)
+                  (owned_view.compiler-owned-shared-view deps)
+                  (owned_view.compiler-owned-shared-view cfg-names)
+                  (owned_view.compiler-owned-shared-view cache-scope-prefix)))
               (set! status 0))
             (if (= status 0)
               unit
@@ -3604,6 +3642,121 @@
   (if (tltest-vector-builders-self-test?)
     unit
     (io.panic "test CLI vector builder order mismatch")))
+
+(define (tltest-global-field-reachability-self-test?) : bool
+  (let
+    [_builtin-init : unit (cbi.compiler-builtin-initialize-for-parse!)]
+    [seed : i64 (ci.intern "field-root-seed")]
+    [owner : i64 (ci.intern "field-root-owner")]
+    [dead : i64 (ci.intern "field-root-unrelated")]
+    [field : i64 (ci.intern "field-root-owner.nested.value")]
+    [unit-expr : i64
+      (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Unit)))]
+    [decls : ast.AstDeclList
+      (ast.ast-decl-cons
+        (ast.ast-decl-def-id seed (ast.AstMaybeType.No) unit-expr)
+        (ast.ast-decl-cons
+          (ast.ast-decl-def-id
+            owner
+            (ast.AstMaybeType.No)
+            (ast.ast-node-push (ast.AstExpr.Var seed)))
+          (ast.ast-decl-cons
+            (ast.ast-decl-def-id dead (ast.AstMaybeType.No) unit-expr)
+            (ast.ast-decl-cons
+              (ast.ast-decl-test-id
+                (ci.intern "uses-global-field-root")
+                (ast.ast-node-push (ast.AstExpr.Var field))
+                (ast.ast-source-span 1 1 1 1))
+              (ast.ast-decl-list-new)))))]
+    [paths : ast.AstDeclPathList
+      (ast.ast-decl-root-path-cons
+        "field-root.tl"
+        (ast.ast-decl-root-path-cons
+          "field-root.tl"
+          (ast.ast-decl-root-path-cons
+            "field-root.tl"
+            (ast.ast-decl-root-path-cons
+              "field-root.tl"
+              (ast.ast-decl-path-list-new)))))]
+    (match (tltest-build-harness "field-root.tl" decls paths)
+      [(InlineHarness.Harness program _ count)
+        (match program
+          [(ast.AstProgram.Program harness-decls-box)
+            (let
+              [kept : ast.AstDeclList
+                (ast.ast-decl-list-box-shared-view harness-decls-box)]
+              (and
+                (= count 1)
+                (tltest-decl-list-has-name?
+                  (owned_view.compiler-owned-shared-view kept)
+                  "field-root-owner")
+                (tltest-decl-list-has-name?
+                  (owned_view.compiler-owned-shared-view kept)
+                  "field-root-seed")
+                (not
+                  (tltest-decl-list-has-name?
+                    (owned_view.compiler-owned-shared-view kept)
+                    "field-root-unrelated"))))])])))
+
+(test
+  test-cli-inline-harness-keeps-global-field-roots
+  (if (tltest-global-field-reachability-self-test?)
+    unit
+    (io.panic "test CLI global field root reachability mismatch")))
+
+(define (tltest-structural-field-reachability-self-test?) : bool
+  (let
+    [_builtin-init : unit (cbi.compiler-builtin-initialize-for-parse!)]
+    [owner-state : ci.InternCompatState (ci.intern-compat-state-new)]
+    [root-id : i64
+      (ci.intern-compat-state-intern (&mut owner-state) "structural-field-root")]
+    [field-id : i64
+      (ci.intern-compat-state-intern
+        (&mut owner-state)
+        "structural-field-root.nested.value")]
+    [module-id : i64
+      (ci.intern-compat-state-intern (&mut owner-state) "field-module")]
+    [dead-id : i64
+      (ci.intern-compat-state-intern (&mut owner-state) "unrelated-field-root")]
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle
+          (ci.intern-source-name-session-from-state owner-state)))]
+    [pair-id : i64
+      (cis.intern-structural-key-raw
+        (cis.intern-structural-session-composite-pair-key
+          session
+          module-id
+          field-id))]
+    [triple-id : i64
+      (cis.intern-structural-key-raw
+        (cis.intern-structural-session-composite-triple-key
+          session
+          module-id
+          module-id
+          field-id))]
+    [owner-id : i64
+      (cis.intern-structural-key-raw
+        (cis.intern-structural-session-composite-pair-key
+          session
+          module-id
+          root-id))]
+    [marked : tltest_name_map.Map
+      (tltest-reach-mark-source-name
+        session
+        (tltest_name_map.with-capacity 8)
+        pair-id)]
+    (and
+      (= (tltest-reach-name-source-base-id session pair-id) field-id)
+      (= (tltest-reach-name-source-base-id session triple-id) pair-id)
+      (tltest-reachable-name-marked? session (& marked) owner-id)
+      (not (tltest-reachable-name-marked? session (& marked) dead-id)))))
+
+(test
+  test-cli-inline-harness-keeps-structural-global-field-roots
+  (if (tltest-structural-field-reachability-self-test?)
+    unit
+    (io.panic "test CLI structural field owner reachability mismatch")))
 
 (define (tltest-generated-runtime-reachability-self-test?) : bool
   (let
@@ -4501,6 +4654,7 @@
       (tltest-program-with-print-runtime program target)
       (tltest-paths-with-print-runtime target harness-paths)
       (owned_view.compiler-owned-shared-view legacy-roots)
+      (tltest-cfgs target)
       (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
         "typecheck-prefix-test-cli"
         (owned_view.compiler-owned-shared-view legacy-roots)
@@ -4547,6 +4701,7 @@
       (tltest-paths-with-print-runtime target harness-paths)
       (lower.CompilerLowerMode.Scalar)
       (owned_view.compiler-owned-shared-view legacy-roots)
+      (tltest-cfgs target)
       (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
         "typecheck-prefix-test-cli"
         (owned_view.compiler-owned-shared-view legacy-roots)
@@ -4824,6 +4979,7 @@
                 paths
                 (lower.CompilerLowerMode.Scalar)
                 (owned_view.compiler-owned-shared-view roots)
+                (tltest-cfgs target)
                 (tltest-typecheck-cache-scope roots target))
                 [(lower.ResultCompilerLower.Ok _ _) true]
                 [(lower.ResultCompilerLower.Err diag)
@@ -4864,6 +5020,7 @@
       (tltest-program-with-print-runtime program target)
       (tltest-paths-with-print-runtime target paths)
       (owned_view.compiler-owned-shared-view legacy-roots)
+      (tltest-cfgs target)
       (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
         "typecheck-prefix-test-cli"
         (owned_view.compiler-owned-shared-view legacy-roots)
@@ -5055,6 +5212,7 @@
       paths
       (lower.CompilerLowerMode.Scalar)
       (owned_view.compiler-owned-shared-view legacy-roots)
+      (tltest-cfgs target)
       (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
         "typecheck-prefix-test-cli"
         (owned_view.compiler-owned-shared-view legacy-roots)
@@ -5207,6 +5365,7 @@
       (ast.ast-program decls)
       paths
       (owned_view.compiler-owned-shared-view legacy-roots)
+      (tltest-cfgs target)
       (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
         "typecheck-prefix-test-cli"
         (owned_view.compiler-owned-shared-view legacy-roots)
@@ -5302,13 +5461,14 @@
       found)))
 
 (define (tltest-source-has-inline-tests? [source : String]) : bool
-  (let
-    [text : String (byte_buf.to-string (io.read-file source))]
-    (tltest-source-has-inline-tests-from
-      (owned_view.compiler-owned-shared-view text)
-      0
-      (string.string-length text)
-      true)))
+  (with-scratch
+    (let
+      [text : String (byte_buf.to-string (io.read-file source))]
+      (tltest-source-has-inline-tests-from
+        (owned_view.compiler-owned-shared-view text)
+        0
+        (string.string-length text)
+        true))))
 
 (define (tltest-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -5659,6 +5819,7 @@
           (ast.ast-program decls)
           paths
           (owned_view.compiler-owned-shared-view legacy-roots)
+          (tltest-cfgs target)
           (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
             "typecheck-prefix-test-cli"
             (owned_view.compiler-owned-shared-view legacy-roots)

@@ -2419,6 +2419,7 @@
         program
         paths
         (tc_core.tc-global-shared-view stdlib-roots)
+        (tc_core.tc-global-shared-view cfgs)
         (tc_api.compiler-typecheck-prefix-cache-scope
           "typecheck-prefix-smoke"
           stdlib-roots
@@ -2555,6 +2556,7 @@
         (ast.ast-program decls)
         paths
         (tc_core.tc-global-shared-view stdlib-roots)
+        (tc_core.tc-global-shared-view cfgs)
         (tc_api.compiler-typecheck-prefix-cache-scope
           "typecheck-prefix-smoke"
           stdlib-roots
@@ -3434,6 +3436,7 @@
             (ast.ast-program decls)
             (ast.ast-decl-path-list-with-modules paths modules)
             (tc_core.tc-global-shared-view roots)
+            (tc_core.tc-global-shared-view cfgs)
             "typecheck-generated-import-state-threading"
             (tc_core.tc-global-shared-view pools))]
         [(load.ResultCompilerLoadWithPaths.Err diag)
@@ -3455,6 +3458,7 @@
               "target/tc_state_controlled_failure.tl"
               (ast.ast-decl-path-list-new))
             (tc_core.tc-global-shared-view roots)
+            (tc_core.tc-global-shared-view cfgs)
             "typecheck-controlled-failure-state-threading"
             (tc_core.tc-global-shared-view pools))]
         [(parser.ResultAstProgramDiagnostic.Err diag)
@@ -3579,6 +3583,7 @@
             (ast.ast-program decls)
             paths
             (tc_core.tc-global-shared-view roots)
+            (tc_core.tc-global-shared-view cfgs)
             (tc_api.compiler-typecheck-prefix-cache-scope
               "typecheck-specialized-import-path-smoke"
               (tc_core.tc-global-shared-view roots)
@@ -3640,6 +3645,7 @@
             (ast.ast-program decls)
             (ast.ast-decl-path-list-with-modules paths modules)
             roots
+            (tc_core.tc-global-shared-view cfgs)
             "typecheck-macro-transitive-dependency-state"
             pools)]
         [(load.ResultCompilerLoadWithPaths.Err diag)
@@ -6575,6 +6581,7 @@
               (ast.ast-program decls)
               paths
               (tc_core.tc-global-shared-view roots)
+              (tc_core.tc-global-shared-view cfgs)
               (tc_api.compiler-typecheck-prefix-cache-scope
                 "proof-reuse-smoke"
                 (tc_core.tc-global-shared-view roots)
@@ -6649,6 +6656,7 @@
               (ast.ast-program decls)
               paths
               (tc_core.tc-global-shared-view roots)
+              (tc_core.tc-global-shared-view cfgs)
               (tc_api.compiler-typecheck-prefix-cache-scope
                 "proof-reuse-smoke"
                 (tc_core.tc-global-shared-view roots)

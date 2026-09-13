@@ -32,6 +32,16 @@ copy only their address. The native `loop_carried_enum_payload_snapshot` and
 at every optimization level. Address generation uses `lower-emit-gep`, also
 shared by byte-offset projections through `lower-gep-byte`.
 
+Affine folding keeps one mutable fact table per function: local vreg IDs index
+compact binding slots, and only live bindings are scanned for key/base
+invalidation. Every block starts with empty facts; the cumulative 512-binding
+budget also clears facts without freeing or replacing their backing storage.
+Invalidation does not refund that budget. No caller retains an older environment
+snapshot, and the table dies before the function's optimizer arena is rewound.
+The affine storage reference/growth tests and optimizer smoke driver protect
+these rules. Reuse the existing generated core vectors for compact payloads;
+do not allocate wide records for every possible local ID or rebuild cons chains.
+
 The compiler also has a pure, versioned incremental-query identity layer. It
 canonicalizes typed source, logical-name, dependency, package/stdlib,
 configuration, macro/comptime, target, and ordered-child inputs into a bounded

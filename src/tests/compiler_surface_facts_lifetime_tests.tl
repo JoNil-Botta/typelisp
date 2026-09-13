@@ -1,0 +1,47 @@
+(import stdlib.arena)
+(import stdlib.io)
+(import compiler_surface_facts as surface_facts)
+
+(test
+  surface-facts-publication-outlives-source-frontend
+  (let
+    [home : arena.Arena (arena.current)]
+    (begin
+      (surface_facts.surface-typecheck-facts-clear!)
+      (with-scratch
+        (let
+          [facts : surface_facts.SurfaceTypecheckFacts
+            (surface_facts.SurfaceTypecheckFacts
+              2
+              3
+              1
+              1
+              1
+              (__tl_make-array 7)
+              (__tl_make-array 11)
+              (__tl_make-array 0))]
+          (begin
+            (unless
+              (surface_facts.surface-typecheck-facts-publish-composite! facts)
+              (io.panic "source composite facts must be valid"))
+            (in-arena
+              home
+              (surface_facts.surface-typecheck-facts-retain-current!)))))
+      (with-scratch
+        (let
+          [reuse : (__tl_dyn-array i64) (__tl_make-array i64 1048576)]
+          (set! (array-ref reuse 0) 7797)))
+      (let
+        [facts : surface_facts.SurfaceTypecheckFacts
+          (surface_facts.surface-typecheck-facts-current)]
+        (begin
+          (unless
+            (and
+              (surface_facts.surface-typecheck-facts-active?)
+              (surface_facts.surface-typecheck-facts-composite-active?)
+              (surface_facts.surface-typecheck-facts-valid? facts)
+              (= (array-ref facts.clone-decl-keys 0) 7)
+              (= (array-ref facts.clone-root-keys 0) 11)
+              (= (array-ref facts.clone-call-indices 0) 0))
+            (io.panic "retired frontend invalidated its published facts"))
+          (surface_facts.surface-typecheck-facts-clear!))))))

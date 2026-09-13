@@ -1511,7 +1511,7 @@
                 (ResultCompileCliWindowsBatchEntry.Ok
                   "assembly"
                   assembly-path
-                  category))
+                  (backend.compiler-direct-object-fallback-category category)))
               (ResultCompileCliWindowsBatchEntry.Err write-status))))]
       [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Err
           diag

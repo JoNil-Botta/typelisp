@@ -69070,6 +69070,443 @@
       while-result
       ssa-result)))
 
+;; A deliberately simple reference model scans every possible local key. It
+;; shares no dense indices, compaction, or storage with the production table.
+(define (opt-affine-test-record-eq?
+  [left : compiler_optimize.OptAffineRec]
+  [right : compiler_optimize.OptAffineRec]) : bool
+  (match left
+    [(compiler_optimize.OptAffineRec.No)
+      (match right
+        [(compiler_optimize.OptAffineRec.No) true]
+        [_ false])]
+    [(compiler_optimize.OptAffineRec.AddC base value)
+      (match right
+        [(compiler_optimize.OptAffineRec.AddC other-base other-value)
+          (and (= base other-base) (= value other-value))]
+        [_ false])]
+    [(compiler_optimize.OptAffineRec.MulC base value index)
+      (match right
+        [(compiler_optimize.OptAffineRec.MulC
+            other-base
+            other-value
+            other-index)
+          (and (= base other-base) (= value other-value) (= index other-index))]
+        [_ false])]))
+
+(define (opt-affine-test-record-base?
+  [rec : compiler_optimize.OptAffineRec]
+  [var : i64]) : bool
+  (match rec
+    [(compiler_optimize.OptAffineRec.No) false]
+    [(compiler_optimize.OptAffineRec.AddC base _) (= base var)]
+    [(compiler_optimize.OptAffineRec.MulC base _ _) (= base var)]))
+
+(define (compiler-optimize-affine-env-reference-self-test) : i64
+  (let
+    [frame : i64 33]
+    [env : compiler_optimize.OptAffineEnv
+      (compiler_optimize.opt-affine-env-new frame)]
+    [expected : (__tl_dyn-array compiler_optimize.OptAffineRec)
+      (__tl_make-array compiler_optimize.OptAffineRec frame)]
+    [binds : i64 0]
+    [expected-binds : i64 0]
+    [seed : i64 5731]
+    [step : i64 0]
+    [index : i64 0]
+    (begin
+      (while (< step 4096)
+        (begin
+          (set! seed (bit-and (+ (* seed 1103515245) 12345) 2147483647))
+          (let
+            [dst : i64 (% seed frame)]
+            [base : i64 (% (shr seed 7) frame)]
+            [rec : compiler_optimize.OptAffineRec
+              (cond
+                [(= (bit-and seed 7) 0) (compiler_optimize.OptAffineRec.No)]
+                [(= (bit-and seed 1) 0)
+                  (compiler_optimize.OptAffineRec.AddC base (- seed 1073741824))]
+                [else
+                  (compiler_optimize.OptAffineRec.MulC
+                    base
+                    (- seed 1073741824)
+                    step)])]
+            (begin
+              (match (compiler_optimize.opt-affine-env-bind-def
+                (compiler_optimize.compiler-opt-global-shared-view env)
+                binds
+                dst
+                (compiler_optimize.compiler-opt-global-shared-view rec))
+                [(compiler_optimize.OptAffineStep.Result next count)
+                  (begin
+                    (set! env next)
+                    (set! binds count))])
+              (set! index 0)
+              (while (< index frame)
+                (begin
+                  (when
+                    (or
+                      (= index dst)
+                      (opt-affine-test-record-base?
+                        (array-ref expected index)
+                        dst))
+                    (set!
+                      (array-ref expected index)
+                      (compiler_optimize.OptAffineRec.No)))
+                  (set! index (+ index 1))))
+              (match rec
+                [(compiler_optimize.OptAffineRec.No) unit]
+                [_
+                  (when
+                    (not
+                      (opt-affine-test-record-base?
+                        (compiler_optimize.compiler-opt-global-shared-view rec)
+                        dst))
+                    (if (>= expected-binds 512)
+                      (begin
+                        (set! index 0)
+                        (while (< index frame)
+                          (begin
+                            (set!
+                              (array-ref expected index)
+                              (compiler_optimize.OptAffineRec.No))
+                            (set! index (+ index 1))))
+                        (set! expected-binds 0))
+                      (begin
+                        (set! (array-ref expected dst) rec)
+                        (set! expected-binds (+ expected-binds 1)))))])
+              (when (!= binds expected-binds) (return 1))
+              (set! index 0)
+              (while (< index frame)
+                (begin
+                  (when
+                    (not
+                      (opt-affine-test-record-eq?
+                        (compiler_optimize.opt-affine-env-lookup
+                          (compiler_optimize.compiler-opt-global-shared-view
+                            env)
+                          index)
+                        (array-ref expected index)))
+                    (return 2))
+                  (set! index (+ index 1))))))
+          ;; A new block must see no facts from its predecessor. The backing
+          ;; arrays can be reused, but neither live records nor count survive.
+          (when
+            (= (% step 997) 996)
+            (begin
+              (set!
+                env
+                (compiler_optimize.opt-affine-env-clear
+                  (compiler_optimize.compiler-opt-global-shared-view env)))
+              (set! binds 0)
+              (set! expected-binds 0)
+              (set! index 0)
+              (while (< index frame)
+                (begin
+                  (set!
+                    (array-ref expected index)
+                    (compiler_optimize.OptAffineRec.No))
+                  (set! index (+ index 1))))))
+          (set! step (+ step 1))))
+      42)))
+
+(define (compiler-optimize-affine-env-boundary-self-test) : i64
+  (let
+    [env : compiler_optimize.OptAffineEnv
+      (compiler_optimize.opt-affine-env-new 1100)]
+    [other : compiler_optimize.OptAffineEnv
+      (compiler_optimize.opt-affine-env-new 4)]
+    [empty : compiler_optimize.OptAffineEnv (init)]
+    [binds : i64 0]
+    [index : i64 1]
+    (begin
+      (when
+        (not
+          (opt-affine-test-record-eq?
+            (compiler_optimize.opt-affine-env-lookup
+              (compiler_optimize.opt-affine-env-clear empty)
+              0)
+            (compiler_optimize.OptAffineRec.No)))
+        (return 9))
+      (while (<= index 512)
+        (begin
+          (match (compiler_optimize.opt-affine-env-bind-def
+            (compiler_optimize.compiler-opt-global-shared-view env)
+            binds
+            index
+            (compiler_optimize.OptAffineRec.AddC 0 index))
+            [(compiler_optimize.OptAffineStep.Result next count)
+              (begin
+                (set! env next)
+                (set! binds count))])
+          (set! index (+ index 1))))
+      (when (!= binds 512) (return 1))
+      (set! index 1)
+      (while (<= index 512)
+        (begin
+          (when
+            (not
+              (opt-affine-test-record-eq?
+                (compiler_optimize.opt-affine-env-lookup
+                  (compiler_optimize.compiler-opt-global-shared-view env)
+                  index)
+                (compiler_optimize.OptAffineRec.AddC 0 index)))
+            (return 2))
+          (set! index (+ index 1))))
+      ;; Purging a live key and declining a self-reference do not refund the
+      ;; cumulative bind budget. The next successful attempt clears everything
+      ;; and is itself omitted, exactly as the former cons table did.
+      (match (compiler_optimize.opt-affine-env-bind-def
+        (compiler_optimize.compiler-opt-global-shared-view env)
+        binds
+        256
+        (compiler_optimize.OptAffineRec.No))
+        [(compiler_optimize.OptAffineStep.Result next count)
+          (begin
+            (set! env next)
+            (set! binds count))])
+      (match (compiler_optimize.opt-affine-env-bind-def
+        (compiler_optimize.compiler-opt-global-shared-view env)
+        binds
+        900
+        (compiler_optimize.OptAffineRec.AddC 900 1))
+        [(compiler_optimize.OptAffineStep.Result next count)
+          (begin
+            (set! env next)
+            (set! binds count))])
+      (when (!= binds 512) (return 3))
+      (match (compiler_optimize.opt-affine-env-bind-def
+        (compiler_optimize.compiler-opt-global-shared-view env)
+        binds
+        513
+        (compiler_optimize.OptAffineRec.AddC 0 513))
+        [(compiler_optimize.OptAffineStep.Result next count)
+          (begin
+            (set! env next)
+            (set! binds count))])
+      (when (!= binds 0) (return 4))
+      (set! index 0)
+      (while (< index 1100)
+        (begin
+          (when
+            (not
+              (opt-affine-test-record-eq?
+                (compiler_optimize.opt-affine-env-lookup
+                  (compiler_optimize.compiler-opt-global-shared-view env)
+                  index)
+                (compiler_optimize.OptAffineRec.No)))
+            (return 5))
+          (set! index (+ index 1))))
+      (match (compiler_optimize.opt-affine-env-bind-def
+        (compiler_optimize.compiler-opt-global-shared-view env)
+        binds
+        1099
+        (compiler_optimize.OptAffineRec.MulC 1098 -7 23))
+        [(compiler_optimize.OptAffineStep.Result next count)
+          (begin
+            (set! env next)
+            (set! binds count))])
+      (when
+        (or
+          (!= binds 1)
+          (not
+            (opt-affine-test-record-eq?
+              (compiler_optimize.opt-affine-env-lookup
+                (compiler_optimize.compiler-opt-global-shared-view env)
+                1099)
+              (compiler_optimize.OptAffineRec.MulC 1098 -7 23))))
+        (return 6))
+      (when
+        (or
+          (not
+            (opt-affine-test-record-eq?
+              (compiler_optimize.opt-affine-env-lookup
+                (compiler_optimize.compiler-opt-global-shared-view env)
+                -1)
+              (compiler_optimize.OptAffineRec.No)))
+          (not
+            (opt-affine-test-record-eq?
+              (compiler_optimize.opt-affine-env-lookup
+                (compiler_optimize.compiler-opt-global-shared-view env)
+                9223372036854775807)
+              (compiler_optimize.OptAffineRec.No))))
+        (return 7))
+      (match (compiler_optimize.opt-affine-env-bind-def
+        (compiler_optimize.compiler-opt-global-shared-view other)
+        0
+        1
+        (compiler_optimize.OptAffineRec.AddC 0 99))
+        [(compiler_optimize.OptAffineStep.Result next _) (set! other next)])
+      (set!
+        env
+        (compiler_optimize.opt-affine-env-clear
+          (compiler_optimize.compiler-opt-global-shared-view env)))
+      (if (and
+        (opt-affine-test-record-eq?
+          (compiler_optimize.opt-affine-env-lookup env 1099)
+          (compiler_optimize.OptAffineRec.No))
+        (opt-affine-test-record-eq?
+          (compiler_optimize.opt-affine-env-lookup other 1)
+          (compiler_optimize.OptAffineRec.AddC 0 99)))
+        42
+        8))))
+
+(test
+  affine-env-reference
+  (test.assert-true
+    (= (compiler-optimize-affine-env-reference-self-test) 42)
+    "dense affine facts match full-domain reference invalidation and cap/reset traces"))
+
+(test
+  affine-env-growth-cap-isolation
+  (test.assert-true
+    (= (compiler-optimize-affine-env-boundary-self-test) 42)
+    "growth, exact 512-bind policy, sparse occupancy, missing keys and independent function storage"))
+
+;; Exercise the table through real instruction walks: wrapping constants,
+;; pre-SSA base redefinition, and reuse across two candidate blocks. Run both
+;; 64-bit signedness variants because records retain the same bit patterns.
+(define (opt-affine-storage-integration-check [ty : compiler_ast_types.AstType]) : i64
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-affine-fold-blocks
+        10
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "first")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                1
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.I64 9223372036854775807)
+                (compiler_optimize.compiler-opt-global-shared-view ty))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                2
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_optimize.compiler-opt-global-shared-view ty))
+              (compiler_ir_types.CompilerIrInstr.Mov
+                0
+                (compiler_ir_types.CompilerIrValue.I64 17)
+                (compiler_optimize.compiler-opt-global-shared-view ty))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                3
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.I64 2)
+                (compiler_optimize.compiler-opt-global-shared-view ty))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                4
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.CompilerIrValue.I64 3)
+                (compiler_optimize.compiler-opt-global-shared-view ty))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                7
+                (compiler_ir_types.CompilerIrBinOp.Mul)
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.I64 -9223372036854775808)
+                (compiler_optimize.compiler-opt-global-shared-view ty))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                8
+                (compiler_ir_types.CompilerIrBinOp.Mul)
+                (compiler_ir_types.CompilerIrValue.Var 7)
+                (compiler_ir_types.CompilerIrValue.I64 -1)
+                (compiler_optimize.compiler-opt-global-shared-view ty))
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "second"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "second")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.BinOp
+                  5
+                  (compiler_ir_types.CompilerIrBinOp.Add)
+                  (compiler_ir_types.CompilerIrValue.Var 4)
+                  (compiler_ir_types.CompilerIrValue.I64 1)
+                  (compiler_optimize.compiler-opt-global-shared-view ty))
+                (compiler_ir_types.CompilerIrInstr.BinOp
+                  6
+                  (compiler_ir_types.CompilerIrBinOp.Add)
+                  (compiler_ir_types.CompilerIrValue.Var 5)
+                  (compiler_ir_types.CompilerIrValue.I64 1)
+                  ty)
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 6)))))
+            (compiler_ir_types.CompilerIrBlockList.Nil))))]
+    [first : compiler_ir_types.CompilerIrBlock
+      (opt-affine-test-first-block
+        (compiler_optimize.compiler-opt-global-shared-view blocks))]
+    (begin
+      (when
+        (not
+          (opt-affine-test-binop-shape?
+            (compiler_optimize.compiler-opt-global-shared-view first)
+            1
+            2
+            false
+            0
+            -9223372036854775808))
+        (return 1))
+      ;; Redefining base 0 must invalidate both earlier add records.
+      (when
+        (not
+          (opt-affine-test-binop-shape?
+            (compiler_optimize.compiler-opt-global-shared-view first)
+            3
+            3
+            false
+            1
+            2))
+        (return 2))
+      (when
+        (not
+          (opt-affine-test-binop-shape?
+            (compiler_optimize.compiler-opt-global-shared-view first)
+            4
+            4
+            false
+            1
+            5))
+        (return 3))
+      (when
+        (not
+          (opt-affine-test-binop-shape? first 6 8 true 0 -9223372036854775808))
+        (return 4))
+      (match (compiler_optimize.opt-cfg-find-block
+        blocks
+        (compiler_ir_types.compiler-ir-label "second"))
+        [(compiler_optimize.OptMaybeBlock.No) 5]
+        [(compiler_optimize.OptMaybeBlock.Some second)
+          (if (and
+            (opt-affine-test-binop-shape?
+              (compiler_optimize.compiler-opt-global-shared-view second)
+              0
+              5
+              false
+              4
+              1)
+            (opt-affine-test-binop-shape? second 1 6 false 4 2))
+            42
+            6)]))))
+
+(define (compiler-optimize-affine-storage-integration-self-test) : i64
+  (let
+    [signed-result : i64
+      (opt-affine-storage-integration-check (compiler_ast_types.AstType.I64))]
+    (if (= signed-result 42)
+      (opt-affine-storage-integration-check (compiler_ast_types.AstType.U64))
+      signed-result)))
+
+(test
+  affine-storage-integration
+  (test.assert-true
+    (= (compiler-optimize-affine-storage-integration-self-test) 42)
+    "signed/unsigned wrapping, base redefinition and candidate-block isolation"))
+
 (define (compiler-optimize-affine-self-test) : i64
   (let
     [lcg : compiler_ir_types.CompilerIrBlockList

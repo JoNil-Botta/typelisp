@@ -747,3 +747,4 @@ module_generated_wildcard_selected_conflict_reject|check-fail|tests/safety/modul
 # Enabled generated cfg imports must resolve before checking even if unused.
 generated_cfg_missing_module_import_reject|check-fail|tests/safety/generated_cfg_missing_module_import_reject.tl|-|cannot read import
 generated_cfg_invalid_predicate_reject|check-fail|tests/safety/generated_cfg_invalid_predicate_reject.tl|-|cfg not expects exactly one predicate
+generated_cfg_missing_decls_import_reject|check-fail|tests/safety/generated_cfg_missing_decls_import_reject.tl|-|cannot read import

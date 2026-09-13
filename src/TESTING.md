@@ -27,6 +27,9 @@ also alternate the same source's cfg set and verify complete results and owner
 release. The fixture's inline test covers harness expansion, and the existing
 public CLI package build/run smoke emits target-conditional Module declarations
 through the package preparation and object/assembly paths.
+The paired `generated_cfg_missing_decls_import_reject.tl` and
+`generated_cfg_missing_module_import_reject.tl` safety fixtures require enabled,
+unused generated imports to reach the resolver for both result kinds.
 
 ## Intern-ID provenance
 

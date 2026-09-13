@@ -305,6 +305,8 @@ format_registry_state_safe_reject|check-fail|tests/safety/format_registry_state_
 format_registry_register_safe_reject|check-fail|tests/safety/format_registry_register_safe_reject.tl|-|format_writer_core/format-writer-register requires unsafe context
 fs_rooted_linux_state_read_reject|check-fail|tests/safety/fs_rooted_linux_state_read_reject.tl|-|linux-rooted-state-read requires unsafe context
 fs_rooted_linux_raw_close_reject|check-fail|tests/safety/fs_rooted_linux_raw_close_reject.tl|-|linux-rooted-raw-close requires unsafe context
+fs_rooted_linux_raw_rewind_reject|check-fail|tests/safety/fs_rooted_linux_raw_rewind_reject.tl|-|linux-rooted-raw-rewind requires unsafe context
+fs_rooted_linux_rewind_shared_borrow_reject|check-fail|tests/safety/fs_rooted_linux_rewind_shared_borrow_reject.tl|-|argument 1 type mismatch: expected (&mut file
 fs_rooted_linux_capability_copy_reject|check-fail|tests/safety/fs_rooted_linux_capability_copy_reject.tl|-|cleanup-required resource already has a cleanup owner
 fs_rooted_linux_reopen_directory_copy_reject|check-fail|tests/safety/fs_rooted_linux_reopen_directory_copy_reject.tl|-|cleanup-required resource already has a cleanup owner
 fs_rooted_linux_read_capability_copy_reject|check-fail|tests/safety/fs_rooted_linux_read_capability_copy_reject.tl|-|cleanup-required resource already has a cleanup owner

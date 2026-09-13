@@ -6,9 +6,7 @@
 ;; produce the package artifact selected by manifest kind.
 (import compiler_owned_view as owned_view)
 (import stdlib.fs)
-(cfg
-  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (import stdlib.arena))
+(import stdlib.arena)
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (import compiler_cfg_core as cfg_core))
@@ -5144,6 +5142,44 @@
   (Err String))
 
 (define (build-package-tlci-capture-exports
+  [manifest : load.CompilerPkgManifest]
+  [mode : backend.CompilerBackendMode]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
+  [source-set : package_source_core.PackageSourceSet]) : ResultBuildPackageTlciExports
+  (let
+    [home : arena.Arena (arena.current)]
+    (with-scratch
+      (match (build-package-tlci-collect-exports
+        manifest
+        mode
+        decls
+        paths
+        source-set)
+        [(ResultBuildPackageTlciExports.Err message)
+          (in-arena
+            home
+            (ResultBuildPackageTlciExports.Err (string.copy message)))]
+        [(ResultBuildPackageTlciExports.Ok metadata names native-source)
+          (in-arena
+            home
+            (let
+              [count : i64 (array-length names)]
+              [copied : (__tl_dyn-array String) (__tl_make-array String count)]
+              [index : i64 0]
+              (begin
+                (while (< index count)
+                  (begin
+                    (set!
+                      (array-ref copied index)
+                      (string.copy (array-ref names index)))
+                    (set! index (+ index 1))))
+                (ResultBuildPackageTlciExports.Ok
+                  (string.copy metadata)
+                  copied
+                  (string.copy native-source)))))]))))
+
+(define (build-package-tlci-collect-exports
   [manifest : load.CompilerPkgManifest]
   [mode : backend.CompilerBackendMode]
   [decls : ast.AstDeclList]

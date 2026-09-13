@@ -728,3 +728,16 @@ sync_generated_raw_alias_safe_reject|check-fail|tests/safety/sync_generated_raw_
 sync_generated_mutex_raw_safe_reject|check-fail|tests/safety/sync_generated_mutex_raw_safe_reject.tl|-|mutex_alias/load-raw requires unsafe context
 thread_sync_raw_explicit_unsafe_ok|check-ok|tests/safety/thread_sync_raw_explicit_unsafe_ok.tl|-|-
 thread_sync_typed_safe_control_ok|check-ok|tests/safety/thread_sync_typed_safe_control_ok.tl|-|-
+decls_generated_missing_import_reject|check-fail|tests/safety/decls_generated_missing_import_reject.tl|-|compiler-load: cannot read import tests/safety/nonexistent_decls_generated_dependency.tl
+decls_generated_conflicting_import_reject|check-fail|tests/safety/decls_generated_conflicting_import_reject.tl|-|ambiguous import alias 'dep'
+module_generated_conflicting_import_reject|check-fail|tests/safety/module_generated_conflicting_import_reject.tl|-|ambiguous import alias 'dep'
+generated_import_alias_source_first_reject|check-fail|tests/safety/generated_import_alias_source_first_reject.tl|-|ambiguous import alias 'dep'
+generated_import_alias_source_last_reject|check-fail|tests/safety/generated_import_alias_source_last_reject.tl|-|ambiguous import alias 'dep'
+generated_import_alias_empty_reject|check-fail|tests/safety/generated_import_alias_empty_reject.tl|-|ambiguous import alias 'dep'
+decls_generated_missing_selected_import_reject|check-fail|tests/safety/decls_generated_missing_selected_import_reject.tl|-|has no selected item 'missing'
+decls_generated_selected_conflict_reject|check-fail|tests/safety/decls_generated_selected_conflict_reject.tl|-|ambiguous unqualified import
+decls_generated_wildcard_conflict_reject|check-fail|tests/safety/decls_generated_wildcard_conflict_reject.tl|-|ambiguous unqualified import
+decls_generated_wildcard_selected_conflict_reject|check-fail|tests/safety/decls_generated_wildcard_selected_conflict_reject.tl|-|ambiguous unqualified import
+module_generated_selected_conflict_reject|check-fail|tests/safety/module_generated_selected_conflict_reject.tl|-|ambiguous unqualified import
+module_generated_wildcard_conflict_reject|check-fail|tests/safety/module_generated_wildcard_conflict_reject.tl|-|ambiguous unqualified import
+module_generated_wildcard_selected_conflict_reject|check-fail|tests/safety/module_generated_wildcard_selected_conflict_reject.tl|-|ambiguous unqualified import

@@ -1,0 +1,1 @@
+;; A distinct empty module has a distinct canonical identity.

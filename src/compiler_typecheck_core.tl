@@ -105844,6 +105844,14 @@
   [macro-name-id : i64]
   [span : ast.AstSourceSpan]) : ast.AstDecl
   (match (tc-global-shared-view decl)
+    [(ast.AstDecl.Import
+        meta
+        (ast.AstImportSpec.Spec kind path expected alias _))
+      ;; Generated declaration paths belong to the requesting expansion. Keep
+      ;; the import span in that same source file, even for an imported macro.
+      (ast.AstDecl.Import
+        meta
+        (ast.AstImportSpec.Spec kind path expected alias (box span)))]
     [(ast.AstDecl.Def meta name maybe-ty expr-id)
       (ast.AstDecl.Def
         meta
@@ -105902,6 +105910,9 @@
             span)))]
     [_ decl]))
 
+;; Module and Decls output share this wrapper. Imports have namespace effects
+;; despite having no visible declaration name: their generated metadata makes
+;; the fixed-point walker resolve and materialize them before typechecking.
 (define (macro-wrap-generated-decl
   [decl : ast.AstDecl]
   [generator : String]
@@ -105955,57 +105966,6 @@
               (ast.ast-decl-list-push
                 (&mut out)
                 (macro-wrap-generated-decl
-                  decl
-                  (tc-global-shared-view generator)
-                  (tc-global-shared-view key)
-                  path-id
-                  origin-path-id
-                  macro-name-id
-                  span))
-              (set! cursor rest))]))
-      out)))
-
-(define (macro-wrap-generated-decl-decls
-  [decl : ast.AstDecl]
-  [generator : String]
-  [key : String]
-  [path-id : i64]
-  [origin-path-id : i64]
-  [macro-name-id : i64]
-  [span : ast.AstSourceSpan]) : ast.AstDecl
-  (let
-    [framed : ast.AstDecl
-      (macro-expansion-wrap-decl decl path-id origin-path-id macro-name-id span)]
-    (match (spec.gen-decl-visible-name (tc-global-shared-view framed))
-      [(spec.SpecMaybeString.Some item)
-        (ast.ast-decl-comptime-decl-with-meta
-          (macro-generated-meta generator item key)
-          framed)]
-      [(spec.SpecMaybeString.None) framed])))
-
-(define (macro-wrap-generated-decls-decls
-  [decls : ast.AstDeclList]
-  [generator : String]
-  [key : String]
-  [path : String]
-  [origin-path-id : i64]
-  [span : ast.AstSourceSpan]) : ast.AstDeclList
-  (let
-    [count : i64 (ast.ast-decl-list-len (& decls))]
-    [cursor : ast.AstDeclList decls]
-    [out : ast.AstDeclList (ast.ast-decl-list-with-capacity count)]
-    [path-id : i64 (ci.intern path)]
-    [macro-name-id : i64 (ci.intern (tc-global-shared-view generator))]
-    [done : bool false]
-    (begin
-      (while (not done)
-        (match (ast.ast-decl-list-step (tc-global-shared-view cursor))
-          [(ast.AstDeclListStep.Nil) (set! done true)]
-          [(ast.AstDeclListStep.Cons decl rest)
-            (begin
-              (ast.ast-decl-list-push
-                (&mut out)
-                (macro-wrap-generated-decl-decls
                   decl
                   (tc-global-shared-view generator)
                   (tc-global-shared-view key)
@@ -125173,7 +125133,6 @@
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [orig-decls : ast.AstDeclList]
-  [module : String]
   [module-id : i64]
   [target-module : String]
   [target-module-id : i64]
@@ -125252,32 +125211,22 @@
                       (tc-global-shared-view call-expr)
                       (tc-global-shared-view identity))))]
               [_
-                (match (macro-check-generated-import-collisions
-                  (tc-global-shared-view orig-decls)
-                  (tc-global-shared-view generated-body)
-                  (tc-global-shared-view module)
-                  alias
-                  identity)
-                  [CompilerNoString
-                    (let
-                      [expanded : ast.AstDeclList
-                        (macro-module-replay-marker-decls
-                          (tc-global-shared-view target-module)
-                          target-module-id
-                          module-id
-                          (tc-global-shared-view alias)
-                          (tc-global-shared-view span)
-                          (tc-global-shared-view generated-body)
-                          (tc-global-shared-view existing-body))]
-                      (ResultMacroDeclExpansion.Ok
-                        (tc-global-shared-view expanded)
-                        (macro-paths-for-decls
-                          (tc-context-macro-state (tc-global-shared-view ctx))
-                          (tc-global-shared-view expanded)
-                          (tc-global-shared-view decl-path))))]
-                  [(CompilerSomeString message)
-                    (ResultMacroDeclExpansion.Err
-                      (box (macro-generated-import-diag span message)))])])
+                (let
+                  [expanded : ast.AstDeclList
+                    (macro-module-replay-marker-decls
+                      (tc-global-shared-view target-module)
+                      target-module-id
+                      module-id
+                      (tc-global-shared-view alias)
+                      (tc-global-shared-view span)
+                      (tc-global-shared-view generated-body)
+                      (tc-global-shared-view existing-body))]
+                  (ResultMacroDeclExpansion.Ok
+                    (tc-global-shared-view expanded)
+                    (macro-paths-for-decls
+                      (tc-context-macro-state (tc-global-shared-view ctx))
+                      (tc-global-shared-view expanded)
+                      (tc-global-shared-view decl-path))))])
             (let
               [generated-key-body : ast.AstDeclList
                 (macro-decls-filter-generated-key
@@ -125287,125 +125236,84 @@
                 (tc-global-shared-view existing-body)
                 (tc-global-shared-view generated-key-body))
                 [(MacroGeneratedTargetReplay.ReplayCompatible)
-                  (match (macro-check-generated-import-collisions
-                    (tc-global-shared-view orig-decls)
-                    (tc-global-shared-view generated-body)
-                    (tc-global-shared-view module)
-                    (tc-global-shared-view alias)
-                    (tc-global-shared-view identity))
-                    [CompilerNoString
-                      (let
-                        [expanded : ast.AstDeclList
-                          (macro-module-replay-marker-decls
-                            (tc-global-shared-view target-module)
-                            target-module-id
-                            module-id
-                            (tc-global-shared-view alias)
-                            (tc-global-shared-view span)
-                            (tc-global-shared-view generated-body)
-                            (tc-global-shared-view existing-body))]
-                        (ResultMacroDeclExpansion.Ok
-                          (tc-global-shared-view expanded)
-                          (macro-paths-for-decls
-                            (tc-context-macro-state (tc-global-shared-view ctx))
-                            (tc-global-shared-view expanded)
-                            (tc-global-shared-view decl-path))))]
-                    [(CompilerSomeString message)
-                      (ResultMacroDeclExpansion.Err
-                        (box (macro-generated-import-diag span message)))])]
+                  (let
+                    [expanded : ast.AstDeclList
+                      (macro-module-replay-marker-decls
+                        (tc-global-shared-view target-module)
+                        target-module-id
+                        module-id
+                        (tc-global-shared-view alias)
+                        (tc-global-shared-view span)
+                        (tc-global-shared-view generated-body)
+                        (tc-global-shared-view existing-body))]
+                    (ResultMacroDeclExpansion.Ok
+                      (tc-global-shared-view expanded)
+                      (macro-paths-for-decls
+                        (tc-context-macro-state (tc-global-shared-view ctx))
+                        (tc-global-shared-view expanded)
+                        (tc-global-shared-view decl-path))))]
                 [(MacroGeneratedTargetReplay.ReplayAppendMissing)
-                  (match (macro-check-generated-import-collisions
-                    (tc-global-shared-view orig-decls)
-                    (tc-global-shared-view generated-body)
-                    (tc-global-shared-view module)
-                    (tc-global-shared-view alias)
-                    (tc-global-shared-view identity))
-                    [CompilerNoString
-                      (let
-                        [expanded : ast.AstDeclList
-                          (macro-module-replay-marker-decls
-                            target-module
-                            target-module-id
-                            module-id
-                            (tc-global-shared-view alias)
-                            (tc-global-shared-view span)
-                            (tc-global-shared-view generated-body)
-                            (tc-global-shared-view existing-body))]
-                        (ResultMacroDeclExpansion.Ok
-                          (tc-global-shared-view expanded)
-                          (macro-paths-for-decls
-                            (tc-context-macro-state (tc-global-shared-view ctx))
-                            (tc-global-shared-view expanded)
-                            (tc-global-shared-view decl-path))))]
-                    [(CompilerSomeString message)
-                      (ResultMacroDeclExpansion.Err
-                        (box (macro-generated-import-diag span message)))])]
+                  (let
+                    [expanded : ast.AstDeclList
+                      (macro-module-replay-marker-decls
+                        target-module
+                        target-module-id
+                        module-id
+                        (tc-global-shared-view alias)
+                        (tc-global-shared-view span)
+                        (tc-global-shared-view generated-body)
+                        (tc-global-shared-view existing-body))]
+                    (ResultMacroDeclExpansion.Ok
+                      (tc-global-shared-view expanded)
+                      (macro-paths-for-decls
+                        (tc-context-macro-state (tc-global-shared-view ctx))
+                        (tc-global-shared-view expanded)
+                        (tc-global-shared-view decl-path))))]
                 [(MacroGeneratedTargetReplay.ReplayIncompatible)
                   (ResultMacroDeclExpansion.Err
                     (box
                       (macro-module-incompatible-output-diag call-expr identity)))]
                 [(MacroGeneratedTargetReplay.NoReplay)
-                  (match (macro-check-generated-import-collisions
-                    orig-decls
-                    generated-body
-                    (tc-global-shared-view module)
-                    alias
-                    identity)
-                    [CompilerNoString
-                      (let
-                        [expanded : ast.AstDeclList
-                          (macro-decl-list-append
-                            materialized
-                            (ast.ast-decl-list-prepend-builder
-                              (ast.ast-decl-module-id module-id)
-                              (macro-module-import-marker-decls
-                                target-module
-                                target-module-id
-                                alias
-                                span)))]
-                        (ResultMacroDeclExpansion.Ok
-                          (tc-global-shared-view expanded)
-                          (macro-paths-for-decls
-                            (tc-context-macro-state (tc-global-shared-view ctx))
-                            (tc-global-shared-view expanded)
-                            (tc-global-shared-view decl-path))))]
-                    [(CompilerSomeString message)
-                      (ResultMacroDeclExpansion.Err
-                        (box (macro-generated-import-diag span message)))])])))]
+                  (let
+                    [expanded : ast.AstDeclList
+                      (macro-decl-list-append
+                        materialized
+                        (ast.ast-decl-list-prepend-builder
+                          (ast.ast-decl-module-id module-id)
+                          (macro-module-import-marker-decls
+                            target-module
+                            target-module-id
+                            alias
+                            span)))]
+                    (ResultMacroDeclExpansion.Ok
+                      (tc-global-shared-view expanded)
+                      (macro-paths-for-decls
+                        (tc-context-macro-state (tc-global-shared-view ctx))
+                        (tc-global-shared-view expanded)
+                        (tc-global-shared-view decl-path))))])))]
         [(MacroMaybeDeclList.No)
-          (match (macro-check-generated-import-collisions
-            orig-decls
-            generated-body
-            module
-            alias
-            identity)
-            [CompilerNoString
-              (let
-                [expanded : ast.AstDeclList
-                  (macro-decl-list-append
-                    materialized
-                    (ast.ast-decl-list-prepend-builder
-                      (ast.ast-decl-module-id module-id)
-                      (macro-module-import-marker-decls
-                        target-module
-                        target-module-id
-                        alias
-                        span)))]
-                (ResultMacroDeclExpansion.Ok
-                  (tc-global-shared-view expanded)
-                  (macro-paths-for-decls
-                    (tc-context-macro-state (tc-global-shared-view ctx))
-                    (tc-global-shared-view expanded)
-                    (tc-global-shared-view decl-path))))]
-            [(CompilerSomeString message)
-              (ResultMacroDeclExpansion.Err
-                (box (macro-generated-import-diag span message)))])]))))
+          (let
+            [expanded : ast.AstDeclList
+              (macro-decl-list-append
+                materialized
+                (ast.ast-decl-list-prepend-builder
+                  (ast.ast-decl-module-id module-id)
+                  (macro-module-import-marker-decls
+                    target-module
+                    target-module-id
+                    alias
+                    span)))]
+            (ResultMacroDeclExpansion.Ok
+              (tc-global-shared-view expanded)
+              (macro-paths-for-decls
+                (tc-context-macro-state (tc-global-shared-view ctx))
+                (tc-global-shared-view expanded)
+                (tc-global-shared-view decl-path))))]))))
 
 (define (macro-expand-module-generated-decls
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [orig-decls : ast.AstDeclList]
-  [module : String]
   [module-id : i64]
   [alias : ast.AstMaybeImportAlias]
   [span : ast.AstSourceSpan]
@@ -125479,7 +125387,6 @@
                         ctx
                         top-env
                         orig-decls
-                        module
                         module-id
                         target-module
                         target-module-id
@@ -125537,7 +125444,6 @@
                     ctx
                     top-env
                     orig-decls
-                    (tc-global-shared-view module)
                     module-id
                     target-module
                     target-module-id
@@ -125721,7 +125627,7 @@
                                                   contextual-generated
                                                   module-id)]
                                               [wrapped : ast.AstDeclList
-                                                (macro-wrap-generated-decls-decls
+                                                (macro-wrap-generated-decls
                                                   flattened-generated
                                                   (macro-decl-name-display
                                                     (tc-global-shared-view
@@ -125998,7 +125904,6 @@
                                                     (tc-global-shared-view ctx)
                                                     top-env
                                                     orig-decls
-                                                    module
                                                     module-id
                                                     alias
                                                     span
@@ -126738,20 +126643,6 @@
                         (MacroMaybeGeneratedModuleExtension.Some summary marker)])]))]
             [CompilerNoString MacroMaybeGeneratedModuleExtension.No])]
         [_ MacroMaybeGeneratedModuleExtension.No])]))
-
-(define (macro-generated-import-diag
-  [span : ast.AstSourceSpan]
-  [message : String]) : cdiag.CompilerDiagnostic
-  (tc-canonical-diagnostic
-    (cdiag.compiler-diagnostic-from-ast-span "" span message)))
-
-(define (macro-check-generated-import-collisions
-  [_all-decls : ast.AstDeclList]
-  [_generated-body : ast.AstDeclList]
-  [_import-module : String]
-  [_alias : ast.AstMaybeImportAlias]
-  [_identity : String]) : csym.CompilerMaybeString
-  CompilerNoString)
 
 ;; Macro-expansion skip analysis. Once any module defines
 ;; a macro, `has-defmacro` forces the full macro-expand walk over EVERY decl in
@@ -129698,11 +129589,12 @@
                             [_capture-before-load : unit
                               (tc-context-capture-active-pools!
                                 (tc-global-shared-view cur-ctx))]
-                            (match (macro-materialize-generated-import
+                            (match (macro-materialize-generated-import-with-provenance
                               (tc-global-shared-view load-state)
                               (tc-global-shared-view decl)
                               (tc-global-shared-view decl-path)
                               decl-owner-id
+                              decl-provenance-id
                               (tc-global-shared-view cur-module)
                               cur-module-id
                               (tc-global-shared-view cur-materialize-seen)
@@ -130732,6 +130624,66 @@
   (tc-canonical-diagnostic
     (cdiag.compiler-diagnostic-from-ast-span path span message)))
 
+;; The macro walk also handles complete in-memory programs and generated
+;; modules. Their module markers are authoritative members of this job's seen
+;; set, but have no parsed-file surface. Do not turn such a provided module
+;; back into a filesystem request. File-backed modules still use the loader's
+;; source-path/summary authority check, even when their module name is seen.
+(define (macro-materialize-provided-module?
+  [load-state : cload.CompilerLoadSessionState]
+  [expected : ast.AstMaybeModuleName]
+  [seen : sym_i64_env.SymI64Env]) : bool
+  (match expected
+    [(ast.AstMaybeModuleName.Some module-id)
+      (and
+        (cload.compiler-load-seen-module-contains? seen "" module-id)
+        (match (cload.compiler-load-session-state-surface-summary-find-module
+          load-state
+          module-id)
+          [(CompilerLoadNoSurfaceSummary) true]
+          [(CompilerLoadSomeSurfaceSummary _) false]))]
+    [(ast.AstMaybeModuleName.No) false]))
+
+;; Classification is shared with ordinary source imports. A known in-memory
+;; module already has its identity, so filesystem prefix probing must not
+;; reinterpret a dotted module name as a selected item from another module.
+(define (macro-resolve-generated-import
+  [load-state : cload.CompilerLoadSessionState]
+  [decl-path : String]
+  [import-root : String]
+  [kind : ast.AstImportKind]
+  [import-path : String]
+  [expected : ast.AstMaybeModuleName]
+  [alias : ast.AstMaybeImportAlias]
+  [seen : sym_i64_env.SymI64Env]
+  [stdlib-roots : svec.Vec]) : cload.ResultCompilerLoadResolvedImport
+  (if (macro-materialize-provided-module? load-state expected seen)
+    (match (cload.compiler-load-resolve-import-spec-with-roots
+      decl-path
+      import-root
+      (tc-global-shared-view kind)
+      (tc-global-shared-view import-path)
+      (tc-global-shared-view expected)
+      stdlib-roots)
+      [(cload.ResultPkgResolve.Ok resolved)
+        (cload.ResultCompilerLoadResolvedImport.Ok
+          (cload.CompilerLoadResolvedImport
+            resolved
+            kind
+            import-path
+            expected
+            alias))]
+      [(cload.ResultPkgResolve.Err message)
+        (cload.ResultCompilerLoadResolvedImport.Err message)])
+    (cload.compiler-load-resolve-import-spec-with-roots-classified
+      decl-path
+      import-root
+      kind
+      import-path
+      expected
+      alias
+      stdlib-roots)))
+
 (define (macro-materialize-generated-import-with-provenance
   [load-state : cload.CompilerLoadSessionState]
   [decl : ast.AstDecl]
@@ -130763,34 +130715,51 @@
         _)
       (let
         [import-root : String (cload.compiler-load-dirname decl-path)]
-        (match (cload.compiler-load-resolve-import-spec-with-roots
+        (match (macro-resolve-generated-import
+          (tc-global-shared-view load-state)
           (tc-global-shared-view decl-path)
           (tc-global-shared-view import-root)
           kind
           (tc-global-shared-view import-path)
           expected
+          alias
+          (tc-global-shared-view seen)
           (tc-global-shared-view stdlib-roots))
-          [(cload.ResultPkgResolve.Ok resolved)
+          [(cload.ResultCompilerLoadResolvedImport.Ok import)
             (let
+              [resolved : String import.resolved]
+              [kind : ast.AstImportKind import.kind]
+              [import-path : String import.module-name]
+              [expected : ast.AstMaybeModuleName import.expected-module]
+              [alias : ast.AstMaybeImportAlias import.alias]
               [resolved-path-id : i64
                 (cload.compiler-load-resolved-path-id-for-generated-import-with-state
                   (tc-global-shared-view load-state)
                   (tc-global-shared-view resolved)
                   expected)]
-              (match (cload.compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-state-and-pools
+              (match (if (macro-materialize-provided-module?
                 (tc-global-shared-view load-state)
-                (tc-global-shared-view resolved)
-                resolved-path-id
-                seen
-                stdlib-roots
-                kind
-                import-path
-                expected
-                import-root
-                cfgs
-                pools
-                (tc-global-shared-view module)
-                module-id)
+                (tc-global-shared-view expected)
+                (tc-global-shared-view seen))
+                (cload.ResultCompilerLoadWithPaths.Ok
+                  (ast.ast-decl-list-new)
+                  (ast.ast-decl-path-list-new)
+                  (ast.ast-decl-module-list-new)
+                  (tc-global-shared-view seen))
+                (cload.compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-state-and-pools
+                  (tc-global-shared-view load-state)
+                  (tc-global-shared-view resolved)
+                  resolved-path-id
+                  seen
+                  stdlib-roots
+                  kind
+                  import-path
+                  expected
+                  import-root
+                  cfgs
+                  pools
+                  (tc-global-shared-view module)
+                  module-id))
                 [(cload.ResultCompilerLoadWithPaths.Ok
                     imported-decls
                     imported-paths
@@ -130844,8 +130813,21 @@
                       materialized-paths
                       next-seen))]
                 [(cload.ResultCompilerLoadWithPaths.Err diag)
-                  (ResultMacroMaterializeImport.Err diag)]))]
-          [(cload.ResultPkgResolve.Err message)
+                  ;; Keep the dependency's primary error and attach the actual
+                  ;; generated import site, including for a nonexistent file.
+                  (ResultMacroMaterializeImport.Err
+                    (box
+                      (cdiag.compiler-diagnostic-with-secondary-if-new
+                        (cdiag.compiler-diagnostic-box-shared-view diag)
+                        (cdiag.CompilerDiagnosticSpan
+                          decl-path
+                          (ast.ast-source-span-start-line span)
+                          (ast.ast-source-span-start-col span)
+                          (ast.ast-source-span-end-line span)
+                          (ast.ast-source-span-end-col span))
+                        (CompilerDiagnosticSomeString
+                          "generated import requested here"))))]))]
+          [(cload.ResultCompilerLoadResolvedImport.Err message)
             (ResultMacroMaterializeImport.Err
               (box (macro-materialize-import-diagnostic decl-path span message)))]))]))
 
@@ -130874,6 +130856,34 @@
     stdlib-roots
     cfgs
     pools))
+
+;; Validate once after the fixed-point walk, when every generated import has
+;; become a canonical alias marker and each declaration has its physical path.
+;; Source and generated declarations therefore obey the same loader policy.
+(define (macro-check-expanded-imports [result : ResultMacroExpand]) : ResultMacroExpand
+  (match result
+    [(ResultMacroExpand.Ok program paths)
+      (match (tc-global-shared-view program)
+        [(ast.AstProgram.Program boxed-decls)
+          (let
+            [decls : ast.AstDeclList
+              (ast.ast-decl-list-box-shared-view boxed-decls)]
+            (match (cload.compiler-load-check-dotted-import-aliases-with-paths
+              ""
+              (ast.ast-place-shared-view decls)
+              (ast.ast-place-shared-view paths))
+              [(cload.ResultCompilerLoadAliasCheck.Ok)
+                (match (cload.compiler-load-check-expanded-unqualified-imports
+                  ""
+                  (ast.ast-place-shared-view decls)
+                  (ast.ast-place-shared-view paths))
+                  [(cload.ResultCompilerLoadAliasCheck.Ok)
+                    (ResultMacroExpand.Ok program paths)]
+                  [(cload.ResultCompilerLoadAliasCheck.Err diag)
+                    (ResultMacroExpand.Err diag)])]
+              [(cload.ResultCompilerLoadAliasCheck.Err diag)
+                (ResultMacroExpand.Err diag)]))])]
+    [(ResultMacroExpand.Err diag) (ResultMacroExpand.Err diag)]))
 
 (define (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state-and-intern-state
   [load-state : cload.CompilerLoadSessionState]
@@ -131002,7 +131012,13 @@
             (tc-global-shared-view paths)
             (ast.ast-place-shared-view pools)
             (tc-global-shared-view macro-result))]
-        (match stable-macro-result
+        [checked-macro-result : ResultMacroExpand
+          (macro-check-expanded-imports stable-macro-result)]
+        ;; The canonical alias rule interns composite namespace keys. Publish
+        ;; those mutations to this job's owner before normalization uses it.
+        [_capture-import-validation-interns : unit
+          (ci.intern-compat-state-capture-from-globals! (&mut intern-state))]
+        (match checked-macro-result
           [(ResultMacroExpand.Ok expanded expanded-paths)
             (begin
               (cfg

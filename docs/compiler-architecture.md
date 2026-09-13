@@ -59,6 +59,29 @@ these semantic flags even when the aggregates have identical ABI. The existing
 AST wrapper, surface roundtrip, and specialization selftests guard these rules;
 serialized metadata changes also require a surface-AST schema version change.
 
+`Module` and `Decls` macro output share `macro-wrap-generated-decls` in
+`compiler_typecheck_core.tl`. Ordinary generated imports carry namespace effects
+without a visible declaration name; retain their generated metadata so the
+fixed-point walk resolves them through the canonical loader before typechecking.
+Materialization uses the loader's existing module/item classifier. Complete
+in-memory programs retain their provided module identity without becoming file
+requests. Generated import spans and declaration paths both refer to the macro
+call site; materialization failures preserve the dependency diagnostic and add
+that call site as a structured related location.
+
+The loader's path-aware namespace validators serve source imports and the
+completed macro expansion. They run at the expansion boundary, after generated
+imports have become canonical markers. Dotted-alias keys combine the importer
+module and explicit alias; values are canonical expected module identities.
+Repeated same-module bindings are idempotent. Empty generated aliases are
+unqualified markers, not dotted names. Selected/wildcard imports share the
+loader's unqualified-name collision rule. At the completed expansion boundary,
+that traversal also requires selected items to exist; loading alone cannot
+assume declaration generators have finished. Errors use the marker's physical
+path and span. Each scan uses temporary maps that are not cached; composite-key
+interning is published to the job's intern owner before handoff. The generated
+import runtime fixtures and interleaved loader-state smoke guard these contracts.
+
 Handwritten runtime, startup, and direct-object x86-64 code is covered by the
 closed [compiler-owned executable template registry](compiler-x64-executable-templates.md).
 It records mutation-sensitive source identities and typed control/frame events

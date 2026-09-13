@@ -3026,6 +3026,137 @@
         (diagnostic.compiler-diagnostic-render
           (diagnostic.compiler-diagnostic-box-shared-view diag)))]))
 
+;; A load failure keeps its dependency primary and one actionable import site.
+(define (compiler-typecheck-smoke-generated-import-location-ok?
+  [diag : diagnostic.CompilerDiagnostic]
+  [dependency-path : String]
+  [request-path : String]
+  [request-line : i64]
+  [request-col : i64]) : bool
+  (let
+    [primary : diagnostic.CompilerDiagnosticSpan
+      (diagnostic.compiler-diagnostic-primary-span diag)]
+    [labels : diagnostic.CompilerDiagnosticLabelList
+      (diagnostic.compiler-diagnostic-secondary-spans diag)]
+    (and
+      (string.eq primary.path dependency-path)
+      (= (diagnostic.compiler-diagnostic-label-list-count labels) 1)
+      (let
+        [label : diagnostic.CompilerDiagnosticLabel
+          (diagnostic.compiler-diagnostic-label-list-get labels 0)]
+        [span : diagnostic.CompilerDiagnosticSpan label.span]
+        (and
+          (string.eq span.path request-path)
+          (= span.start-line request-line)
+          (= span.start-col request-col)
+          (match label.label
+            [(CompilerDiagnosticSomeString text)
+              (string.eq text "generated import requested here")]
+            [CompilerDiagnosticNoString false]))))))
+
+;; The provider quote and caller deliberately have different line numbers.
+;; Exercise the real loader so a provider span cannot be paired with the caller
+;; path by the expansion's declaration-path lane.
+(define (compiler-typecheck-smoke-generated-import-call-site-ok? [mode : i64]) : bool
+  (let
+    [entry : String "target/tc_generated_import_caller.tl"]
+    [roots : svec.Vec (svec.new)]
+    [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
+    (begin
+      (compiler-typecheck-smoke-write-text
+        "target/tc_generated_import_left.tl"
+        "(define answer : i64 14)")
+      (compiler-typecheck-smoke-write-text
+        "target/tc_generated_import_right.tl"
+        "(define answer : i64 15)")
+      (compiler-typecheck-smoke-write-text
+        "target/tc_generated_import_provider.tl"
+        (if (= mode 1)
+          "(module tc_generated_import_provider)
+(defmacro (emit-imports) : Decls
+  `(begin
+    (import tc_generated_import_left as dep)
+    (import tc_generated_import_right as dep)))"
+          (if (= mode 0)
+            "(module tc_generated_import_provider)
+(defmacro (emit-imports) : Decls
+  `(import tc_generated_import_missing_dependency))"
+            "(module tc_generated_import_provider)
+(defmacro (emit-imports) : Decls
+  `(import tc_generated_import_left.missing as unused))")))
+      (compiler-typecheck-smoke-write-text
+        (tc_core.tc-global-shared-view entry)
+        (if (= mode 3)
+          "(import tc_generated_import_provider as provider)
+
+(import tc_generated_import_left as existing)
+
+;; The selected module was already loaded before this request.
+(provider.emit-imports)
+
+(define (main) : i64 42)"
+          "(import tc_generated_import_provider as provider)
+
+(define prior : i64 1)
+
+;; The generated import is requested on the next line.
+(provider.emit-imports)
+
+(define (main) : i64 42)"))
+      (tc_api.compiler-typecheck-reset-load-session!)
+      (match (load.compiler-load-file-with-paths-and-roots-cfg
+        (tc_core.tc-global-shared-view entry)
+        (sym_i64_env.sym-i64-empty)
+        (tc_core.tc-global-shared-view roots)
+        (tc_core.tc-global-shared-view cfgs))
+        [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+          (match (tc_api.typecheck-compiler-program-with-paths-cache
+            (ast.ast-program decls)
+            paths
+            (tc_core.tc-global-shared-view roots)
+            (tc_api.compiler-typecheck-prefix-cache-scope
+              "typecheck-generated-import-call-site"
+              roots
+              cfgs))
+            [(tc_core.ResultCompilerTypecheck.Err diagnostics)
+              (let
+                [first : diagnostic.CompilerDiagnostic
+                  (diagnostic.compiler-diagnostic-list-first
+                    (diagnostic.compiler-diagnostic-list-box-shared-view
+                      diagnostics))]
+                (if (not (= mode 0))
+                  (let
+                    [span : diagnostic.CompilerDiagnosticSpan
+                      (diagnostic.compiler-diagnostic-primary-span first)]
+                    (and
+                      (string.eq span.path entry)
+                      (= span.start-line 6)
+                      (= span.start-col 1)
+                      (string.eq
+                        (diagnostic.compiler-diagnostic-message first)
+                        (if (= mode 1)
+                          "compiler-load: ambiguous import alias 'dep' between 'tc_generated_import_left' and 'tc_generated_import_right'; use distinct aliases or qualified access"
+                          "compiler-load: module 'tc_generated_import_left' has no selected item 'missing'"))))
+                  (compiler-typecheck-smoke-generated-import-location-ok?
+                    first
+                    "target/tc_generated_import_missing_dependency.tl"
+                    entry
+                    6
+                    1)))]
+            [(tc_core.ResultCompilerTypecheck.Ok _) false])]
+        [(load.ResultCompilerLoadWithPaths.Err _) false]))))
+
+(define (compiler-typecheck-smoke-generated-provided-module-ok?) : bool
+  (match (tc_api.typecheck-compiler-source
+    "(module generated.provided)
+(define (answer) : i64 42)
+(module main)
+(defmacro (emit) : Decls `(import generated.provided as p))
+(emit)
+(define (main) : i64 (p.answer))")
+    [(tc_core.ResultCompilerTypecheck.Ok _) true]
+    [(tc_core.ResultCompilerTypecheck.Err _) false]))
+
 (define (compiler-typecheck-smoke-generated-import-state-run
   [state : load.CompilerLoadSessionState]
   [generated-import : ast.AstDecl]
@@ -3089,23 +3220,34 @@
                   (tc_core.tc-global-shared-view cfgs)
                   (tc_core.tc-global-shared-view pools))
                   [(tc_core.ResultMacroMaterializeImport.Err diag)
-                    (CompilerTypecheckGeneratedImportStateSnapshot
-                      (diagnostic.compiler-diagnostic-message
-                        (__tl-box-place diag))
-                      (load.compiler-load-session-state-program-cache-hit-count-value
-                        state)
-                      (load.compiler-load-session-state-program-cache-miss-count-value
-                        state)
-                      (load.compiler-load-session-state-program-cache-store-count-value
-                        state)
-                      (match (sym_i64_env.sym-i64-view first-seen)
-                        [(sym_i64_env.SymI64ViewNil) false]
-                        [(sym_i64_env.SymI64ViewBind _ _ _) true])
-                      (match (load.compiler-load-session-state-surface-summary-find-module
-                        state
-                        (ci.intern "tc_state_dep"))
-                        [(CompilerLoadSomeSurfaceSummary _) true]
-                        [(CompilerLoadNoSurfaceSummary) false]))]
+                    (begin
+                      (if (compiler-typecheck-smoke-generated-import-location-ok?
+                        (diagnostic.compiler-diagnostic-box-shared-view
+                          (tc_core.tc-global-shared-view diag))
+                        "target/tc_state_missing.tl"
+                        "target/tc_state_entry.tl"
+                        1
+                        1)
+                        unit
+                        (io.panic
+                          "typecheck: generated import lost dependency or import-site location"))
+                      (CompilerTypecheckGeneratedImportStateSnapshot
+                        (diagnostic.compiler-diagnostic-message
+                          (__tl-box-place diag))
+                        (load.compiler-load-session-state-program-cache-hit-count-value
+                          state)
+                        (load.compiler-load-session-state-program-cache-miss-count-value
+                          state)
+                        (load.compiler-load-session-state-program-cache-store-count-value
+                          state)
+                        (match (sym_i64_env.sym-i64-view first-seen)
+                          [(sym_i64_env.SymI64ViewNil) false]
+                          [(sym_i64_env.SymI64ViewBind _ _ _) true])
+                        (match (load.compiler-load-session-state-surface-summary-find-module
+                          state
+                          (ci.intern "tc_state_dep"))
+                          [(CompilerLoadSomeSurfaceSummary _) true]
+                          [(CompilerLoadNoSurfaceSummary) false])))]
                   [(tc_core.ResultMacroMaterializeImport.Ok _ _ _)
                     (io.panic
                       "typecheck: generated missing import unexpectedly loaded")])]
@@ -6973,6 +7115,24 @@
     (unless
       (compiler-typecheck-smoke-generated-import-state-isolation-ok?)
       (io.panic "typecheck: generated import state isolation smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-generated-import-call-site-ok? 0)
+      (io.panic "typecheck: generated missing import call-site smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-generated-import-call-site-ok? 1)
+      (io.panic "typecheck: generated alias conflict call-site smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-generated-import-call-site-ok? 2)
+      (io.panic
+        "typecheck: generated missing selected import call-site smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-generated-import-call-site-ok? 3)
+      (io.panic
+        "typecheck: generated preloaded selected import call-site smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-generated-provided-module-ok?)
+      (io.panic
+        "typecheck: generated provided dotted-module import smoke failed"))
     (unless
       (compiler-typecheck-smoke-generated-import-state-threading-ok?)
       (io.panic "typecheck: generated import state threading smoke failed"))

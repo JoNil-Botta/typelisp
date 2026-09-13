@@ -249,16 +249,6 @@
   (Ok)
   (Err (Box cdiag.CompilerDiagnostic)))
 
-(defstruct CompilerLoadImportAliasCollision
-  (alias String)
-  (first-import String)
-  (second-import String)
-  (span ast.AstSourceSpan))
-
-(defenum CompilerLoadMaybeImportAliasCollision
-  (No)
-  (Some CompilerLoadImportAliasCollision))
-
 (defstruct CompilerLoadUnqualifiedImportState
   (source-ids load_i64_i64_map.Map)
   (source-modules load_i64_i64_map.Map))
@@ -5505,87 +5495,107 @@
   [alias-id : i64]) : i64
   (ci.intern-composite-pair-id module-id alias-id))
 
-(define (compiler-load-duplicate-dotted-import-alias-loop
+(define (compiler-load-import-alias-collision-result
+  [path : String]
+  [span : ast.AstSourceSpan]
+  [alias : i64]
+  [first-module : i64]
+  [second-module : i64]) : ResultCompilerLoadAliasCheck
+  (ResultCompilerLoadAliasCheck.Err
+    (box
+      (cdiag.compiler-diagnostic-from-ast-span
+        path
+        span
+        (str_cat.str-cat
+          "compiler-load: ambiguous import alias '"
+          (str_cat.str-cat
+            (ci.intern-str alias)
+            (str_cat.str-cat
+              "' between '"
+              (str_cat.str-cat
+                (ci.intern-str first-module)
+                (str_cat.str-cat
+                  "' and '"
+                  (str_cat.str-cat
+                    (ci.intern-str second-module)
+                    "'; use distinct aliases or qualified access"))))))))))
+
+;; Parsed sources and fully expanded programs share this namespace rule. The
+;; expected module is the loader's canonical identity; paths are diagnostic
+;; provenance, never alias identities. Temporary bindings live for this scan.
+(define (compiler-load-check-dotted-import-aliases-with-paths
+  [fallback-path : String]
   [decls : ast.AstDeclList]
-  [current-module : i64]
-  [seen : sym_i64_env.SymI64Env]) : CompilerLoadMaybeImportAliasCollision
-  (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) (CompilerLoadMaybeImportAliasCollision.No)]
-    [(ast.AstDeclListStep.Cons decl rest)
-      (let
-        [rest : ast.AstDeclList rest]
-        (match decl
-          [(ast.AstDecl.Module name)
-            (compiler-load-duplicate-dotted-import-alias-loop rest name seen)]
-          [(ast.AstDecl.Import
-              decl-meta
-              (ast.AstImportSpec.Spec
-                (ast.AstImportKind.Module)
-                import-name
-                _
-                (ast.AstMaybeImportAlias.Some alias)
-                span))
-            (let
-              [key : i64
-                (compiler-load-dotted-import-alias-key current-module alias)]
-              ;; Re-importing the same module under the same alias is
-              ;; idempotent; only a different module under a repeated alias is
-              ;; ambiguous.
-              (if (sym_i64_env.sym-i64-contains-id seen key)
-                (if (=
-                  (sym_i64_env.sym-i64-lookup-id-or seen key -1)
-                  (ci.intern
-                    (owned_view.compiler-owned-shared-view import-name)))
-                  (compiler-load-duplicate-dotted-import-alias-loop
-                    rest
-                    current-module
-                    seen)
-                  (CompilerLoadMaybeImportAliasCollision.Some
-                    (CompilerLoadImportAliasCollision
-                      (ci.intern-str alias)
-                      (ci.intern-str
-                        (sym_i64_env.sym-i64-lookup-id-or seen key -1))
-                      import-name
-                      (__tl-box-place span))))
-                (compiler-load-duplicate-dotted-import-alias-loop
-                  rest
-                  current-module
-                  (sym_i64_env.sym-i64-bind-id seen key (ci.intern import-name)))))]
-          [_
-            (compiler-load-duplicate-dotted-import-alias-loop
-              rest
-              current-module
-              seen)]))]))
+  [paths : ast.AstDeclPathList]) : ResultCompilerLoadAliasCheck
+  (let
+    [seen : load_i64_i64_map.Map (load_i64_i64_map.with-capacity 64)]
+    [current-module : i64
+      (compiler-load-decls-source-module-id (ast.ast-place-shared-view decls))]
+    [count : i64 (ast.ast-decl-list-len (& decls))]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [decl : ast.AstDecl
+            (ast.ast-array-shared-view decls.slots (+ decls.offset index))]
+          (begin
+            (match decl
+              [(ast.AstDecl.Module name) (set! current-module name)]
+              [(ast.AstDecl.Import
+                  _
+                  (ast.AstImportSpec.Spec
+                    (ast.AstImportKind.Module)
+                    import-name
+                    expected
+                    (ast.AstMaybeImportAlias.Some alias)
+                    span))
+                ;; An empty generated-module marker means unqualified import,
+                ;; not a user-visible dotted alias. Its names have their own
+                ;; collision policy; distinct unqualified modules are valid.
+                (unless
+                  (= alias cbi.compiler-builtin-id-fix-empty)
+                  (let
+                    [key : i64
+                      (compiler-load-dotted-import-alias-key
+                        current-module
+                        alias)]
+                    [source-module : i64
+                      (match expected
+                        [(ast.AstMaybeModuleName.Some name) name]
+                        [(ast.AstMaybeModuleName.No) (ci.intern import-name)])]
+                    (match (load_i64_i64_map.get (& seen) key)
+                      [(load_i64_i64_map.LookupFound prior)
+                        ;; Re-importing one module under the same alias is
+                        ;; idempotent, including replayed generated imports.
+                        (unless
+                          (= prior source-module)
+                          (return
+                            (compiler-load-import-alias-collision-result
+                              (ast.ast-decl-path-list-get
+                                (& paths)
+                                index
+                                fallback-path)
+                              (__tl-box-place span)
+                              alias
+                              prior
+                              source-module)))]
+                      [(load_i64_i64_map.LookupMissing)
+                        (load_i64_i64_map.insert-ref!
+                          (&mut seen)
+                          key
+                          source-module)])))]
+              [_ unit])
+            (set! index (+ index 1)))))
+      (ResultCompilerLoadAliasCheck.Ok))))
 
 (define (compiler-load-check-dotted-import-aliases
   [path : String]
   [decls : ast.AstDeclList]
   [_source-module : String]) : ResultCompilerLoadAliasCheck
-  (match (compiler-load-duplicate-dotted-import-alias-loop
-    (ast.ast-place-shared-view decls)
-    (compiler-load-decls-source-module-id decls)
-    (sym_i64_env.sym-i64-empty))
-    [(CompilerLoadMaybeImportAliasCollision.No)
-      (ResultCompilerLoadAliasCheck.Ok)]
-    [(CompilerLoadMaybeImportAliasCollision.Some collision)
-      (ResultCompilerLoadAliasCheck.Err
-        (box
-          (cdiag.compiler-diagnostic-from-ast-span
-            path
-            collision.span
-            (str_cat.str-cat
-              "compiler-load: ambiguous import alias '"
-              (str_cat.str-cat
-                collision.alias
-                (str_cat.str-cat
-                  "' between '"
-                  (str_cat.str-cat
-                    collision.first-import
-                    (str_cat.str-cat
-                      "' and '"
-                      (str_cat.str-cat
-                        collision.second-import
-                        "'; use distinct aliases or qualified access")))))))))]))
+  (compiler-load-check-dotted-import-aliases-with-paths
+    path
+    decls
+    (ast.ast-decl-path-list-new)))
 
 (define (compiler-load-unqualified-import-note
   [state : (&mut state CompilerLoadUnqualifiedImportState)]
@@ -5835,10 +5845,11 @@
           collision.span
           message)))))
 
-(define (compiler-load-check-unqualified-import-collisions
+(define (compiler-load-check-unqualified-imports
   [fallback-path : String]
   [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]) : ResultCompilerLoadAliasCheck
+  [paths : ast.AstDeclPathList]
+  [require-selected-items : bool]) : ResultCompilerLoadAliasCheck
   (let
     [state : CompilerLoadUnqualifiedImportState
       (CompilerLoadUnqualifiedImportState
@@ -5888,22 +5899,55 @@
                     (ast.AstMaybeModuleName.Some source-module)
                     (ast.AstMaybeImportAlias.Some alias)
                     span))
-                (match (compiler-load-unqualified-import-note
-                  (&mut state)
-                  cur-module
-                  alias
-                  source-module
-                  source-item
-                  path
-                  (__tl-box-place span))
-                  [(CompilerLoadUnqualifiedImportStep.Ok) unit]
-                  [(CompilerLoadUnqualifiedImportStep.Collision collision)
+                (begin
+                  (when
+                    (and
+                      require-selected-items
+                      (not
+                        (compiler-load-selected-item-present?
+                          (ast.AstImportKind.ModuleItem source-item)
+                          (ast.AstMaybeModuleName.Some source-module)
+                          (ast.ast-place-shared-view decls))))
                     (return
-                      (compiler-load-unqualified-import-collision-result
-                        collision))])]
+                      (ResultCompilerLoadAliasCheck.Err
+                        (box
+                          (cdiag.compiler-diagnostic-from-ast-span
+                            (owned_view.compiler-owned-shared-view path)
+                            (__tl-box-place span)
+                            (compiler-load-missing-selected-item-message
+                              (ci.intern-str source-module)
+                              (ast.AstImportKind.ModuleItem source-item)))))))
+                  (match (compiler-load-unqualified-import-note
+                    (&mut state)
+                    cur-module
+                    alias
+                    source-module
+                    source-item
+                    path
+                    (__tl-box-place span))
+                    [(CompilerLoadUnqualifiedImportStep.Ok) unit]
+                    [(CompilerLoadUnqualifiedImportStep.Collision collision)
+                      (return
+                        (compiler-load-unqualified-import-collision-result
+                          collision))]))]
               [_ unit])
             (set! index (+ index 1)))))
       (ResultCompilerLoadAliasCheck.Ok))))
+
+;; Loading checks namespace collisions while declarations may still contain
+;; generators. Only the completed expansion can require every selected item to
+;; be present in the final declaration view, including previously loaded modules.
+(define (compiler-load-check-unqualified-import-collisions
+  [fallback-path : String]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]) : ResultCompilerLoadAliasCheck
+  (compiler-load-check-unqualified-imports fallback-path decls paths false))
+
+(define (compiler-load-check-expanded-unqualified-imports
+  [fallback-path : String]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]) : ResultCompilerLoadAliasCheck
+  (compiler-load-check-unqualified-imports fallback-path decls paths true))
 
 (define (compiler-load-session-state-surface-summary-owner-arena
   [state : (& state CompilerLoadSessionState)]) : i64

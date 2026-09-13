@@ -1860,19 +1860,62 @@
 ;; Source calls may carry module qualification or an import-alias dot path.
 ;; Runtime declarations use the bare source ID, so retain that parsed leaf ID
 ;; alongside the full structural identity without reconstructing any spelling.
-(define (tltest-reach-name-dot-leaf-id
+(define (tltest-reach-name-source-base-id
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]) : i64
   (let
     [source-id : i64
       (tc_core.macro-hygiene-global-source-name-id-or session name-id name-id)]
-    [base-id : i64 (tc_core.tc-qualified-name-base-id source-id)]
+    [source-names : ci.InternSourceNameSessionHandle
+      (cis.intern-structural-session-handle-source-names session)]
     (if (and
-      (>= base-id 0)
-      (< base-id (ci.intern-capacity))
-      (ci.intern-dotted? base-id))
-      (ci.intern-dotted-final-id base-id)
+      (cis.intern-structural-session-source-name-component-valid?
+        session
+        source-id)
+      (ci.intern-source-name-session-handle-qualified? source-names source-id))
+      (ci.intern-source-name-session-handle-qualified-base-id
+        source-names
+        source-id)
+      source-id)))
+
+(define (tltest-reach-name-dot-leaf-id
+  [session : cis.InternStructuralSessionHandle]
+  [name-id : i64]) : i64
+  (let
+    [base-id : i64 (tltest-reach-name-source-base-id session name-id)]
+    [source-names : ci.InternSourceNameSessionHandle
+      (cis.intern-structural-session-handle-source-names session)]
+    (if (and
+      (cis.intern-structural-session-source-name-component-valid?
+        session
+        base-id)
+      (ci.intern-source-name-session-handle-dotted? source-names base-id))
+      (ci.intern-source-name-session-handle-dotted-final-id
+        source-names
+        base-id)
       base-id)))
+
+;; Before typechecking, a dotted name can project from global storage rather
+;; than name an imported member. Retain its first source component as a possible
+;; owner; keeping only the final leaf drops the global and its initializer.
+(define (tltest-reach-mark-dotted-root
+  [session : cis.InternStructuralSessionHandle]
+  [names : tltest_name_map.Map]
+  [name-id : i64]) : tltest_name_map.Map
+  (let
+    [source-names : ci.InternSourceNameSessionHandle
+      (cis.intern-structural-session-handle-source-names session)]
+    (if (and
+      (cis.intern-structural-session-source-name-component-valid?
+        session
+        name-id)
+      (ci.intern-source-name-session-handle-dotted? source-names name-id))
+      (tltest-reach-mark-name-id
+        names
+        (ci.intern-source-name-session-handle-leading-dot-id
+          source-names
+          name-id))
+      names)))
 
 (define (tltest-reach-mark-source-name
   [session : cis.InternStructuralSessionHandle]
@@ -1885,10 +1928,15 @@
       (if (tc_core.tc-name-qualified-id? session name-id)
         (tltest-reach-mark-name-id marked base-id)
         marked)]
+    [with-root : tltest_name_map.Map
+      (tltest-reach-mark-dotted-root
+        session
+        with-slash-base
+        (tltest-reach-name-source-base-id session name-id))]
     [leaf-id : i64 (tltest-reach-name-dot-leaf-id session name-id)]
     (if (= leaf-id base-id)
-      with-slash-base
-      (tltest-reach-mark-name-id with-slash-base leaf-id))))
+      with-root
+      (tltest-reach-mark-name-id with-root leaf-id))))
 
 (define (tltest-reachable-name-marked?
   [session : cis.InternStructuralSessionHandle]
@@ -3604,6 +3652,67 @@
   (if (tltest-vector-builders-self-test?)
     unit
     (io.panic "test CLI vector builder order mismatch")))
+
+(define (tltest-global-field-reachability-self-test?) : bool
+  (let
+    [_builtin-init : unit (cbi.compiler-builtin-initialize-for-parse!)]
+    [seed : i64 (ci.intern "field-root-seed")]
+    [owner : i64 (ci.intern "field-root-owner")]
+    [dead : i64 (ci.intern "field-root-unrelated")]
+    [field : i64 (ci.intern "field-root-owner.nested.value")]
+    [unit-expr : i64
+      (ast.ast-node-push (ast.AstExpr.Literal (ast.AstLiteral.Unit)))]
+    [decls : ast.AstDeclList
+      (ast.ast-decl-cons
+        (ast.ast-decl-def-id seed (ast.AstMaybeType.No) unit-expr)
+        (ast.ast-decl-cons
+          (ast.ast-decl-def-id
+            owner
+            (ast.AstMaybeType.No)
+            (ast.ast-node-push (ast.AstExpr.Var seed)))
+          (ast.ast-decl-cons
+            (ast.ast-decl-def-id dead (ast.AstMaybeType.No) unit-expr)
+            (ast.ast-decl-cons
+              (ast.ast-decl-test-id
+                (ci.intern "uses-global-field-root")
+                (ast.ast-node-push (ast.AstExpr.Var field))
+                (ast.ast-source-span 1 1 1 1))
+              (ast.ast-decl-list-new)))))]
+    [paths : ast.AstDeclPathList
+      (ast.ast-decl-root-path-cons
+        "field-root.tl"
+        (ast.ast-decl-root-path-cons
+          "field-root.tl"
+          (ast.ast-decl-root-path-cons
+            "field-root.tl"
+            (ast.ast-decl-root-path-cons
+              "field-root.tl"
+              (ast.ast-decl-path-list-new)))))]
+    (match (tltest-build-harness "field-root.tl" decls paths)
+      [(InlineHarness.Harness program _ count)
+        (match program
+          [(ast.AstProgram.Program harness-decls-box)
+            (let
+              [kept : ast.AstDeclList
+                (ast.ast-decl-list-box-shared-view harness-decls-box)]
+              (and
+                (= count 1)
+                (tltest-decl-list-has-name?
+                  (owned_view.compiler-owned-shared-view kept)
+                  "field-root-owner")
+                (tltest-decl-list-has-name?
+                  (owned_view.compiler-owned-shared-view kept)
+                  "field-root-seed")
+                (not
+                  (tltest-decl-list-has-name?
+                    (owned_view.compiler-owned-shared-view kept)
+                    "field-root-unrelated"))))])])))
+
+(test
+  test-cli-inline-harness-keeps-global-field-roots
+  (if (tltest-global-field-reachability-self-test?)
+    unit
+    (io.panic "test CLI global field root reachability mismatch")))
 
 (define (tltest-generated-runtime-reachability-self-test?) : bool
   (let

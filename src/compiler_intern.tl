@@ -5017,6 +5017,20 @@
           semantic-names))]
     (intern-semantic-name-view-first-dot (& names) id)))
 
+(define (intern-source-name-session-handle-leading-dot-id
+  [handle : InternSourceNameSessionHandle]
+  [id : i64]) : i64
+  (let
+    [names : InternSemanticNameView
+      (unsafe
+        (__tl-project-field
+          (ptr-read
+            (int->ptr
+              (cast handle.address : u64)
+              : (Ptr InternSourceNameSession)))
+          semantic-names))]
+    (intern-semantic-name-view-leading-dot-id (& names) id)))
+
 (define (intern-source-name-session-handle-dotted-final-id
   [handle : InternSourceNameSessionHandle]
   [id : i64]) : i64
@@ -5927,6 +5941,19 @@
             state-a
             (intern-compat-state-qualified-base-id state-a qualified-id))
           "module.name")
+        (set! ok false))
+      ;; The captured owner is not the installed compatibility pool. Dotted
+      ;; root projections must read that owner, just like final-leaf queries.
+      (unless
+        (intern-private-string-eq
+          (intern-compat-state-str
+            state-a
+            (intern-source-name-session-handle-leading-dot-id
+              persistent-handle
+              (intern-source-name-session-handle-qualified-base-id
+                persistent-handle
+                qualified-id)))
+          "module")
         (set! ok false))
       (unless
         (intern-private-string-eq

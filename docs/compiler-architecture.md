@@ -90,14 +90,16 @@ selectors in that arena, then destroys only child-owned storage, including the
 backend's private lazy/representation arenas. It is idempotent so early loader
 errors and the final artifact path share one cleanup owner. The backend's
 terminal release API forbids later emission through that state and never
-releases its borrowed emission or carrier arenas. Native export compilation
-starts only after runtime cleanup. A failed checked lower releases a still-live
-source/checked pool before replacement; a rollover abort must not revisit its
-already destroyed original context.
+releases its borrowed emission or carrier arenas. Linux direct-object emission
+also releases its temporary side-assembly backend after rendering; that state
+has private lazy storage separate from the runtime scope's primary backend.
+Native export compilation starts only after runtime cleanup. A failed checked
+lower releases a still-live source/checked pool before replacement; a rollover
+abort must not revisit its already destroyed original context.
 
 The runtime lifetime tests cover repeated checked errors, macro errors, failed
-imports after a successful import, parent restoration, and emission at all
-optimization levels for both targets. The copied environment test destroys the
+imports after a successful import, parent restoration, bounded direct-object
+side-backend retention, and emission at all optimization levels for both targets. The copied environment test destroys the
 source arena and checks duplicate bindings, zero values and snapshot isolation.
 These focused contracts complement complete package build and platform gates.
 

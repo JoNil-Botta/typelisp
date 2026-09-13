@@ -3427,48 +3427,54 @@
                                   (compiler-driver-profile-start-phase
                                     (profile_state.compiler-profile-state-shared-view
                                       profile-state)))
-                                (match (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
-                                  side-backend-state
-                                  pools
-                                  optimized
-                                  target
-                                  mode
-                                  optimized-spans
-                                  emit-entry
-                                  crt-entry
-                                  (profile_state.compiler-profile-state-shared-view
-                                    profile-state))
-                                  [(compiler_backend.ResultCompilerBackend.Ok
-                                      asm)
-                                    (begin
-                                      (cfg
-                                        compile-profile
-                                        (compiler-driver-profile-finish-phase
-                                          (profile_state.compiler-profile-state-shared-view
-                                            profile-state)
-                                          "backend.side-assembly"))
-                                      (ResultCompilerDriverPackageRuntime.Object
-                                        image
-                                        asm
-                                        (compiler-driver-advisories-for-job
-                                          typecheck-state)))]
-                                  [(compiler_backend.ResultCompilerBackend.Err
-                                      diag)
-                                    (begin
-                                      (cfg
-                                        compile-profile
-                                        (compiler-driver-profile-finish-phase
-                                          (profile_state.compiler-profile-state-shared-view
-                                            profile-state)
-                                          "backend.side-assembly"))
-                                      (ResultCompilerDriverPackageRuntime.Err
-                                        (box
-                                          (compiler_diagnostic.compiler-diagnostic-with-fallback-path
-                                            (owned_view.compiler-owned-box-shared-view
-                                              diag)
-                                            input-path))
-                                        (compiler-driver-advisories-for-job
-                                          typecheck-state)))]))))]
+                                (let
+                                  [side-result : compiler_backend.ResultCompilerBackend
+                                    (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+                                      side-backend-state
+                                      pools
+                                      optimized
+                                      target
+                                      mode
+                                      optimized-spans
+                                      emit-entry
+                                      crt-entry
+                                      (profile_state.compiler-profile-state-shared-view
+                                        profile-state))]
+                                  [_release-side-state : unit
+                                    (compiler_backend.compiler-backend-state-release-final-arenas!
+                                      side-backend-state)]
+                                  (match side-result
+                                    [(compiler_backend.ResultCompilerBackend.Ok
+                                        asm)
+                                      (begin
+                                        (cfg
+                                          compile-profile
+                                          (compiler-driver-profile-finish-phase
+                                            (profile_state.compiler-profile-state-shared-view
+                                              profile-state)
+                                            "backend.side-assembly"))
+                                        (ResultCompilerDriverPackageRuntime.Object
+                                          image
+                                          asm
+                                          (compiler-driver-advisories-for-job
+                                            typecheck-state)))]
+                                    [(compiler_backend.ResultCompilerBackend.Err
+                                        diag)
+                                      (begin
+                                        (cfg
+                                          compile-profile
+                                          (compiler-driver-profile-finish-phase
+                                            (profile_state.compiler-profile-state-shared-view
+                                              profile-state)
+                                            "backend.side-assembly"))
+                                        (ResultCompilerDriverPackageRuntime.Err
+                                          (box
+                                            (compiler_diagnostic.compiler-diagnostic-with-fallback-path
+                                              (owned_view.compiler-owned-box-shared-view
+                                                diag)
+                                              input-path))
+                                          (compiler-driver-advisories-for-job
+                                            typecheck-state)))])))))]
                         [(compiler_backend.ResultCompilerBackendObject.Err diag)
                           (begin
                             (cfg

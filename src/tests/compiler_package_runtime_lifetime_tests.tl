@@ -13,10 +13,11 @@
 (import compiler_backend as backend)
 (import compiler_owned_view as owned_view)
 
-(define (runtime-owner-smoke-for
+(define (runtime-owner-smoke-for-route
   [source : String]
   [target : backend.CompilerBackendTarget]
-  [level : i64]) : String
+  [level : i64]
+  [direct-object : bool]) : String
   (let
     [home : arena.Arena (arena.current)]
     (with-scratch
@@ -49,15 +50,39 @@
                           (backend.CompilerBackendMode.Scalar)
                           (owned_view.compiler-owned-box-shared-view decls-box)
                           (ast.ast-decl-path-list-new))]
-                      (match (driver.compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
-                        ""
-                        lowered
-                        target
-                        true
-                        (backend.CompilerBackendMode.Scalar)
-                        level
-                        true
-                        false)
+                      (match (if direct-object
+                        (match (driver.compiler-driver-emit-lowered-result-package-runtime-with-level-mode-entry-and-crt
+                          ""
+                          lowered
+                          target
+                          (backend.CompilerBackendMode.Scalar)
+                          level
+                          true
+                          false)
+                          [(driver.ResultCompilerDriverPackageRuntime.Object
+                              _
+                              asm
+                              advisories)
+                            (driver.ResultCompilerDriver.Ok asm advisories)]
+                          [(driver.ResultCompilerDriverPackageRuntime.Assembly
+                              _
+                              _
+                              _)
+                            (io.panic
+                              "lifetime fixture requires direct object emission")]
+                          [(driver.ResultCompilerDriverPackageRuntime.Err
+                              diag
+                              advisories)
+                            (driver.ResultCompilerDriver.Err diag advisories)])
+                        (driver.compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
+                          ""
+                          lowered
+                          target
+                          true
+                          (backend.CompilerBackendMode.Scalar)
+                          level
+                          true
+                          false))
                         [(driver.ResultCompilerDriver.Ok asm _)
                           (in-arena home (string.copy asm))]
                         [(driver.ResultCompilerDriver.Err diag _)
@@ -73,6 +98,12 @@
                 (owned_view.compiler-owned-shared-view scope))
               (driver.compiler-driver-package-runtime-scope-release! scope)))
           result)))))
+
+(define (runtime-owner-smoke-for
+  [source : String]
+  [target : backend.CompilerBackendTarget]
+  [level : i64]) : String
+  (runtime-owner-smoke-for-route source target level false))
 
 (define (runtime-owner-smoke [source : String]) : String
   (runtime-owner-smoke-for source (backend.CompilerBackendTarget.Linux) 0))
@@ -245,3 +276,37 @@
           (string.contains bad "absent_runtime")
           (= table (ci.intern-active-table-id)))
         (io.panic "failed package import did not restore live loader ownership")))))
+
+(test
+  package-runtime-direct-object-releases-side-backend
+  (let
+    [source : String "(define (main) : i64 42)"]
+    [warm : String
+      (runtime-owner-smoke-for-route
+        (string.copy source)
+        backend.CompilerBackendTarget.Linux
+        0
+        true)]
+    [before : i64 (profile.alloc-live)]
+    [index : i64 0]
+    (begin
+      (unless
+        (string.contains warm "main:")
+        (io.panic "direct object side assembly must survive runtime cleanup"))
+      (while (< index 8)
+        (begin
+          (unless
+            (string.contains
+              (runtime-owner-smoke-for-route
+                (string.copy source)
+                backend.CompilerBackendTarget.Linux
+                0
+                true)
+              "main:")
+            (io.panic "repeated direct object emission lost side assembly"))
+          (set! index (+ index 1))))
+      ;; Includes retained object images, assembly and restored parent state.
+      ;; Eight unretired side-backend arenas pushed this fixture above 1 MiB.
+      (unless
+        (< (- (profile.alloc-live) before) 1048576)
+        (io.panic "direct object jobs retained private side-backend arenas")))))

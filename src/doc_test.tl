@@ -13,6 +13,7 @@
 ;; source path, the fence's source line, the example index, and the rendered
 ;; diagnostic when one is available.
 (import compiler_owned_view as owned_view)
+(import stdlib.arena)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.process)
@@ -62,6 +63,73 @@
 
 (defenum DocTestExtraction
   (Extraction doc_example_vec.Vec doc_error_vec.Vec))
+
+;; Extraction contains only scalar locations, expectations and owned strings.
+;; Copy live rows explicitly; vector capacity can include uninitialized slots.
+(define (doc-test-extraction-copy [extraction : DocTestExtraction]) : DocTestExtraction
+  (match extraction
+    [(DocTestExtraction.Extraction examples errors)
+      (let
+        [out-examples : doc_example_vec.Vec (doc_example_vec.new)]
+        [out-errors : doc_error_vec.Vec (doc_error_vec.new)]
+        [index : i64 0]
+        (begin
+          (while (< index (doc_example_vec.len (& examples)))
+            (begin
+              (match (doc-test-example-list-ref
+                (owned_view.compiler-owned-shared-view examples)
+                index)
+                [(DocTestExample.Example ordinal line expectation code)
+                  (doc_example_vec.push-ref!
+                    (&mut out-examples)
+                    (DocTestExample.Example
+                      ordinal
+                      line
+                      (match expectation
+                        [(DocTestExpectation.Pass) (DocTestExpectation.Pass)]
+                        [(DocTestExpectation.Error) (DocTestExpectation.Error)]
+                        [(DocTestExpectation.Run status stdout stderr)
+                          (DocTestExpectation.Run
+                            status
+                            (string.copy stdout)
+                            (string.copy stderr))])
+                      (string.copy code)))])
+              (set! index (+ index 1))))
+          (set! index 0)
+          (while (< index (doc_error_vec.len (& errors)))
+            (begin
+              (match (doc-test-error-list-ref
+                (owned_view.compiler-owned-shared-view errors)
+                index)
+                [(DocTestError.Error line message)
+                  (doc_error_vec.push-ref!
+                    (&mut out-errors)
+                    (DocTestError.Error line (string.copy message)))])
+              (set! index (+ index 1))))
+          (DocTestExtraction.Extraction out-examples out-errors)))]))
+
+;; Package discovery tolerates a path disappearing before checking, as before.
+;; The source bytes and line/fence scanner are disposable; only extracted code,
+;; runnable output expectations and errors survive into compiler typechecking.
+(define (doc-test-extract-package-file-text [path : String]) : DocTestExtraction
+  (let
+    [home : arena.Arena (arena.current)]
+    (with-scratch
+      (match (io.try-read-file (& path))
+        [(io.ErrIoBytes _)
+          (in-arena
+            home
+            (DocTestExtraction.Extraction
+              (doc_example_vec.new)
+              (doc_error_vec.new)))]
+        [(io.OkIoBytes contents)
+          (let
+            [extraction : DocTestExtraction
+              (doc-test-extract-source (byte_buf.to-string contents))]
+            (in-arena
+              home
+              (doc-test-extraction-copy
+                (owned_view.compiler-owned-shared-view extraction))))]))))
 
 (defenum DocTestMaybeString
   (No)
@@ -2194,7 +2262,22 @@
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
-  (match (doc-test-extract-source source)
+  (doc-test-typecheck-package-extraction-with-roots-and-cfg
+    path
+    (doc-test-extract-source source)
+    stdlib-roots
+    manifest-dir
+    deps
+    cfgs))
+
+(define (doc-test-typecheck-package-extraction-with-roots-and-cfg
+  [path : String]
+  [extraction : DocTestExtraction]
+  [stdlib-roots : doc_svec.Vec]
+  [manifest-dir : String]
+  [deps : compiler_load.CompilerPkgDeps]
+  [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
+  (match extraction
     [(DocTestExtraction.Extraction examples errors)
       (DocTestRunReport.Report
         (doc-test-example-list-count
@@ -2360,17 +2443,13 @@
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
-  (match (io.try-read-file (& path))
-    [(io.ErrIoBytes _)
-      (DocTestRunReport.Report 0 (doc-test-run-failure-list-empty))]
-    [(io.OkIoBytes contents)
-      (doc-test-typecheck-package-source-with-roots-and-cfg
-        path
-        (byte_buf.to-string contents)
-        stdlib-roots
-        manifest-dir
-        deps
-        cfgs)]))
+  (doc-test-typecheck-package-extraction-with-roots-and-cfg
+    (owned_view.compiler-owned-shared-view path)
+    (doc-test-extract-package-file-text path)
+    stdlib-roots
+    manifest-dir
+    deps
+    cfgs))
 
 (define (doc-test-typecheck-package-paths-with-roots
   [paths : ast.AstDeclPathList]

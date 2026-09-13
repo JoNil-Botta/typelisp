@@ -7457,20 +7457,20 @@
   [manifest-dir : String]
   [deps : load.CompilerPkgDeps]
   [emit-entry : bool]) : i64
-  (match (compiler_driver_core.compiler-driver-load-package-file-with-runtime
+  (match (compiler_driver_core.compiler-driver-load-package-paths-with-runtime
     entry-path
     target
     (owned_view.compiler-owned-shared-view stdlib-roots)
     (owned_view.compiler-owned-shared-view manifest-dir)
     (owned_view.compiler-owned-shared-view deps)
     emit-entry)
-    [(load.ResultCompilerLoadWithPaths.Err diag)
+    [(compiler_driver_core.ResultCompilerDriverPackagePaths.Err diag)
       (begin
         (io.print-error
           (compiler_driver_core.compiler-driver-render-source-diagnostic
             (owned_view.compiler-owned-box-shared-view diag)))
         1)]
-    [(load.ResultCompilerLoadWithPaths.Ok _ paths _ _)
+    [(compiler_driver_core.ResultCompilerDriverPackagePaths.Ok paths)
       (build-doctest-typecheck-package-paths
         (build-package-doctest-paths owner paths)
         stdlib-roots

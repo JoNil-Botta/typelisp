@@ -21,6 +21,45 @@ Compilation is one whole program per executable with import-graph dedup
 codegen'd once into archives; an in-process session cache warms compiler
 pools across compiles within one process (batch and LSP paths).
 
+Package inline-test preflight owns AST/type pools and scratch storage per
+source file. Its cfg-name snapshot owns copied strings across per-file intern
+retirement. Pool-backed caches and derived dependency surfaces are cleared
+before the pools are destroyed; replacement session carriers live in the
+enclosing arena. The scalar scan for inline tests also releases its file text.
+
+Package doctest discovery uses a separate frontend lifetime through
+`compiler-driver-load-package-paths-with-runtime`. Earlier frontend consumers
+must be finished: discovery resets reader origins and analysis caches, while
+the caller retains manifest/root/dependency strings and its admitted catalog.
+The temporary load session
+borrows the enclosing package's admitted dependency catalog and owns its parsed
+AST/type pools, interner, caches, and hydrated dependency surfaces. It copies
+ordered path strings or a diagnostic into the caller's arena before restoring
+the enclosing session, interner and builtin state and releasing those temporary
+owners. The serial parser advances the active interner's scalar cursor, so this
+load session uses the serial adapter that captures that live cursor. Binding an
+explicit pre-parse interner snapshot here can silently omit imported modules.
+Returned paths use absent owner/provenance IDs (`-1`): the builtin for the empty
+spelling is itself an intern ID and cannot cross this
+boundary. Releasing the borrowed catalog would invalidate the enclosing
+package's native mappings and is forbidden.
+
+After discovery, package doctest file reading and fence extraction use another
+scratch lifetime. Only live example/error rows, including runnable output
+expectations, are copied into the checker arena. Source bytes, line buffers,
+and fence-scanner temporaries are released before typechecking. Both source
+and file callers share the same extracted-example checker, preserving order,
+counts, diagnostics, and the existing adjacent-path deduplication rule.
+
+The lifetime tests in
+[`compiler_package_discovery_lifetime_tests.tl`](../src/tests/compiler_package_discovery_lifetime_tests.tl)
+exercise arena reuse, path and diagnostic ownership, session restoration,
+subsequent checking, target changes, cfg snapshots, admitted native mappings,
+and runnable/failure metadata. Ordinary
+`clone` is not a valid way to escape flat-node compiler ASTs: their pool-backed
+payloads require the loader's pool-aware compaction or an explicitly owned
+pool lifetime.
+
 The compiler also has a pure, versioned incremental-query identity layer. It
 canonicalizes typed source, logical-name, dependency, package/stdlib,
 configuration, macro/comptime, target, and ordered-child inputs into a bounded

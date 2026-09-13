@@ -272,6 +272,19 @@ fi
     >"$WORKDIR/verify.stdout" 2>"$WORKDIR/verify.stderr"
 test -s "$WORKDIR/optimizer_fold.s"
 
+# #7145: the source-level hash loop exercises distinct, equivalent length
+# operands in a widened bounds-check run. Verify both supported target routes;
+# native manifests separately execute its empty/short/full-loop cases.
+for HASH_TARGET in linux-x86_64 windows-x86_64; do
+    "$COMPILER" compile "$ROOT/tests/integration/hash_length_chain.tl" \
+        --verify-ir --opt-level 2 --target "$HASH_TARGET" \
+        -o "$WORKDIR/hash-length-chain-$HASH_TARGET.s" \
+        --stdlib-root "$ROOT/stdlib" \
+        >"$WORKDIR/hash-length-chain-$HASH_TARGET.stdout" \
+        2>"$WORKDIR/hash-length-chain-$HASH_TARGET.stderr"
+    test -s "$WORKDIR/hash-length-chain-$HASH_TARGET.s"
+done
+
 if "$COMPILER" compile "$SOURCE" \
     --dump-ir after-no-such-pass \
     --opt-level 2 \

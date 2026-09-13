@@ -71,8 +71,52 @@ sed '/^  (build_run_core.source-tool-render-linux-direct-object$/a\
 if check_direct_object_boundary "$WORK/duplicated-capability.tl"; then
     fail "package ELF boundary guard accepted duplicated capability checks"
 fi
+
+# Artifact finishing consumes complete byte/text outputs. It cannot accept a
+# frontend graph or invoke preparation again after the checked surface capture.
+check_prepared_runtime_boundary() {
+    awk '
+        /^[[:space:]]*\(define \(/ {
+            mode = ""
+            if ($0 ~ /\(build-package-finish-prepared-runtime$/) { mode = "finish"; finish += 1 }
+            if ($0 ~ /\(build-package-finish-direct-fresh-artifacts$/) { mode = "direct"; direct += 1 }
+            if ($0 ~ /\(build-package-finish-fresh-artifacts-with-surface$/) { mode = "capture"; capture += 1 }
+        }
+        mode == "finish" || mode == "direct" {
+            if ($0 ~ /AstDecl|AstNode|CompilerIr|build-package-prepare-runtime|compiler-driver-(emit|lower)-package/) forbidden += 1
+        }
+        mode == "finish" && $0 ~ /\(match prepared$/ { consume += 1 }
+        mode == "capture" {
+            if (handoff) {
+                if ($0 ~ /^[[:space:]]*prepared$/) passed += 1
+                handoff = 0
+            }
+            if ($0 ~ /\(build-package-prepare-runtime$/) prepare += 1
+            if ($0 ~ /\(build-package-finish-prepared-runtime$/) { finish_call += 1; handoff = 1 }
+        }
+        END { exit !(finish == 1 && direct == 1 && capture == 1 && forbidden == 0 && consume == 1 && prepare == 1 && finish_call == 1 && passed == 1) }
+    ' "$1"
+}
+
+check_prepared_runtime_boundary src/build_cli_core.tl || fail "package artifact finishing does not consume one prepared runtime"
+sed 's/(match prepared$/(match (build-package-prepare-runtime request)/' \
+    src/build_cli_core.tl > "$WORK/reprepared-runtime.tl"
+if check_prepared_runtime_boundary "$WORK/reprepared-runtime.tl"; then
+    fail "prepared runtime guard accepted preparation inside artifact finishing"
+fi
+sed '/^[[:space:]]*(build-package-finish-prepared-runtime$/ { n; s/^[[:space:]]*prepared$/                      (build-package-prepare-runtime request)/; }' \
+    src/build_cli_core.tl > "$WORK/reprepared-handoff.tl"
+if check_prepared_runtime_boundary "$WORK/reprepared-handoff.tl"; then
+    fail "prepared runtime guard accepted repeated preparation at handoff"
+fi
+sed '/^  \[prepared : ResultBuildPackagePreparedRuntime\]$/a\
+  [decls : ast.AstDeclList]' \
+    src/build_cli_core.tl > "$WORK/retained-frontend.tl"
+if check_prepared_runtime_boundary "$WORK/retained-frontend.tl"; then
+    fail "prepared runtime guard accepted a retained frontend graph"
+fi
 if [ "${1:-}" = --boundary-self-test ]; then
-    echo "package direct-object boundary: owner and mutation checks passed"
+    echo "package direct-object and prepared-runtime boundaries: owner and mutation checks passed"
     exit 0
 fi
 

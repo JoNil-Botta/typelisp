@@ -39,7 +39,7 @@ for later native-code certification.
 `build-package-prepare-runtime` in `build_cli_core.tl` owns package route
 selection through `BuildPackageDirectObjectRequest`: target, artifact kind,
 backend mode, debug policy, resource policy, strict policy, and loaded inputs.
-Its result contains object bytes and side-assembly state, valid fallback
+Its result contains object bytes and complete side assembly, valid fallback
 assembly with a closed `CompilerDirectObjectFallbackReason`, or a diagnostic.
 Callers must not recheck eligibility or infer the route from diagnostic text.
 The strict helper rejects every fallback before external tools or publication.
@@ -53,8 +53,15 @@ rendered centrally in `compiler_backend.tl`, without parsing serializer errors.
 The package freshness gate checks the shared ELF boundary, including mutations
 that bypass it; inline tests cover policy combinations and malformed images.
 
-Preparation lowers and optimizes once. Fallbacks retain assembly, without
-retaining the object image. Future archive export summaries must be derived at
+The fresh-artifact pipeline prepares the runtime once for checked-surface
+capture, then passes that same result to artifact finishing. Finishers accept
+bytes and text, not AST/IR inputs; they cannot lower again or regenerate side
+assembly. The package COFF request always asks for side assembly, and a missing
+side artifact is an internal error. The freshness gate rejects mutations that
+restore preparation or frontend inputs at this boundary.
+
+Fallbacks retain assembly, without retaining the object image. Future archive
+export summaries must be derived at
 the successful-image boundary before compiler arenas retire, then returned as
 bounded owned data alongside bytes. This preserves the route contract while
 the backend migrates to shared machine records; it does not broaden object

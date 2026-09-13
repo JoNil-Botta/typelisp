@@ -141,6 +141,31 @@ The affine storage reference/growth tests and optimizer smoke driver protect
 these rules. Reuse the existing generated core vectors for compact payloads;
 do not allocate wide records for every possible local ID or rebuild cons chains.
 
+Register analyses share one ownership budget: the conservative number of
+32-bit-set words per instruction is compared against 32,768 words (256 KiB),
+using division to avoid multiplication overflow. Small analyses allocate in the
+existing function/planning arena. Larger scalar register plans own temporary
+liveness and greedy-allocation storage in a separate arena. Its escape boundary
+copies retained assignments,
+intervals, eligibility bits and split records into the caller's arena, including
+rematerialized String/Bytes values through the canonical IR value copier. The
+original type view retains its job-owned representation index and profiling
+metrics; the trace journal is copied before the planning arena is destroyed.
+Typed scalar reconstruction of split records makes an added owned payload or
+variant require an explicit update to that boundary.
+
+Eligibility calculation, rematerialization interval selection, stack coloring
+and final scavenger interval selection use that same budget to reclaim large
+analysis temporaries after copying their small result. The budget selects only
+allocation lifetime; it never reduces analysis precision or optimizer work.
+Avoid unconditional arenas for small analyses: measured per-self-compile arena
+creation grew over tenfold and materially regressed ordinary compile time.
+Final scavenger intervals still describe the
+final emitted IR at instruction precision. Call-hole retry context retains its
+edge-precise liveness while candidate rewrites still consume it. These lifetimes
+bound overlapping analyses within a large function; the existing function and
+assembly-stream arenas continue to bound accumulation across functions.
+
 The compiler also has a pure, versioned incremental-query identity layer. It
 canonicalizes typed source, logical-name, dependency, package/stdlib,
 configuration, macro/comptime, target, and ordered-child inputs into a bounded

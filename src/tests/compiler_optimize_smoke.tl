@@ -3568,6 +3568,10 @@
       (compiler_optimize_tests.compiler-optimize-affine-env-boundary-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-affine-storage-integration-self-test"
+      (compiler_optimize_tests.compiler-optimize-affine-storage-integration-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-affine-self-test"
       (compiler_optimize_tests.compiler-optimize-affine-self-test)
       42)

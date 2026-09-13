@@ -69332,7 +69332,7 @@
               (compiler_optimize.OptAffineRec.No))))
         (return 7))
       (match (compiler_optimize.opt-affine-env-bind-def
-        other
+        (compiler_optimize.compiler-opt-global-shared-view other)
         0
         1
         (compiler_optimize.OptAffineRec.AddC 0 99))
@@ -69362,6 +69362,150 @@
   (test.assert-true
     (= (compiler-optimize-affine-env-boundary-self-test) 42)
     "growth, exact 512-bind policy, sparse occupancy, missing keys and independent function storage"))
+
+;; Exercise the table through real instruction walks: wrapping constants,
+;; pre-SSA base redefinition, and reuse across two candidate blocks. Run both
+;; 64-bit signedness variants because records retain the same bit patterns.
+(define (opt-affine-storage-integration-check [ty : compiler_ast_types.AstType]) : i64
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-affine-fold-blocks
+        10
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "first")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                1
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.I64 9223372036854775807)
+                (compiler_optimize.compiler-opt-global-shared-view ty))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                2
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_optimize.compiler-opt-global-shared-view ty))
+              (compiler_ir_types.CompilerIrInstr.Mov
+                0
+                (compiler_ir_types.CompilerIrValue.I64 17)
+                (compiler_optimize.compiler-opt-global-shared-view ty))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                3
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.I64 2)
+                (compiler_optimize.compiler-opt-global-shared-view ty))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                4
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.CompilerIrValue.I64 3)
+                (compiler_optimize.compiler-opt-global-shared-view ty))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                7
+                (compiler_ir_types.CompilerIrBinOp.Mul)
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.I64 -9223372036854775808)
+                (compiler_optimize.compiler-opt-global-shared-view ty))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                8
+                (compiler_ir_types.CompilerIrBinOp.Mul)
+                (compiler_ir_types.CompilerIrValue.Var 7)
+                (compiler_ir_types.CompilerIrValue.I64 -1)
+                (compiler_optimize.compiler-opt-global-shared-view ty))
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "second"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "second")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.BinOp
+                  5
+                  (compiler_ir_types.CompilerIrBinOp.Add)
+                  (compiler_ir_types.CompilerIrValue.Var 4)
+                  (compiler_ir_types.CompilerIrValue.I64 1)
+                  (compiler_optimize.compiler-opt-global-shared-view ty))
+                (compiler_ir_types.CompilerIrInstr.BinOp
+                  6
+                  (compiler_ir_types.CompilerIrBinOp.Add)
+                  (compiler_ir_types.CompilerIrValue.Var 5)
+                  (compiler_ir_types.CompilerIrValue.I64 1)
+                  ty)
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 6)))))
+            (compiler_ir_types.CompilerIrBlockList.Nil))))]
+    [first : compiler_ir_types.CompilerIrBlock
+      (opt-affine-test-first-block
+        (compiler_optimize.compiler-opt-global-shared-view blocks))]
+    (begin
+      (when
+        (not
+          (opt-affine-test-binop-shape?
+            (compiler_optimize.compiler-opt-global-shared-view first)
+            1
+            2
+            false
+            0
+            -9223372036854775808))
+        (return 1))
+      ;; Redefining base 0 must invalidate both earlier add records.
+      (when
+        (not
+          (opt-affine-test-binop-shape?
+            (compiler_optimize.compiler-opt-global-shared-view first)
+            3
+            3
+            false
+            1
+            2))
+        (return 2))
+      (when
+        (not
+          (opt-affine-test-binop-shape?
+            (compiler_optimize.compiler-opt-global-shared-view first)
+            4
+            4
+            false
+            1
+            5))
+        (return 3))
+      (when
+        (not
+          (opt-affine-test-binop-shape? first 6 8 true 0 -9223372036854775808))
+        (return 4))
+      (match (compiler_optimize.opt-cfg-find-block
+        blocks
+        (compiler_ir_types.compiler-ir-label "second"))
+        [(compiler_optimize.OptMaybeBlock.No) 5]
+        [(compiler_optimize.OptMaybeBlock.Some second)
+          (if (and
+            (opt-affine-test-binop-shape?
+              (compiler_optimize.compiler-opt-global-shared-view second)
+              0
+              5
+              false
+              4
+              1)
+            (opt-affine-test-binop-shape? second 1 6 false 4 2))
+            42
+            6)]))))
+
+(define (compiler-optimize-affine-storage-integration-self-test) : i64
+  (let
+    [signed-result : i64
+      (opt-affine-storage-integration-check (compiler_ast_types.AstType.I64))]
+    (if (= signed-result 42)
+      (opt-affine-storage-integration-check (compiler_ast_types.AstType.U64))
+      signed-result)))
+
+(test
+  affine-storage-integration
+  (test.assert-true
+    (= (compiler-optimize-affine-storage-integration-self-test) 42)
+    "signed/unsigned wrapping, base redefinition and candidate-block isolation"))
 
 (define (compiler-optimize-affine-self-test) : i64
   (let

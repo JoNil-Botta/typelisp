@@ -83100,7 +83100,9 @@
           ;; segment rows give the occupancy table the allocator's own notion of
           ;; where a register actually carries a live value, instead of a hull
           ;; that saturates every register in a merged body.
-          (with-scratch
+          (compiler_regalloc.compiler-reg-with-analysis-scratch
+            scratch-vars
+            (compiler-backend-global-shared-view emit-blocks-list)
             (if (compiler-backend-assignments-have-register-home?
               (compiler-backend-global-shared-view scavenge-assignments))
               (let

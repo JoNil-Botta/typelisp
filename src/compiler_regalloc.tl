@@ -8180,14 +8180,40 @@
 ;; prologue/epilogue, or a runtime helper that push/pops them) preserves across
 ;; the call. The scalar zero-call extension is layered on later and separately
 ;; rejects any interval spanning a modeled caller-clobber point.
+;; Register analyses run inside an existing function/planning owner. Avoid
+;; extra arena creation and result cloning for small liveness snapshots; large
+;; snapshots still need an independent lifetime before later analyses begin.
+;; Count 32-bit-set words per instruction conservatively and compare by division
+;; so the estimate cannot overflow. This selects ownership only, never analysis
+;; precision, optimizer work, or register-allocation policy.
+(define (compiler-reg-analysis-needs-scratch?
+  [vars : i64]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (let
+    [words : i64
+      (if (> vars 0)
+        (+ (/ vars 32) 1)
+        1)]
+    (> (ir.compiler-ir-block-list-instruction-count blocks) (/ 32768 words))))
+
+(defmacro (compiler-reg-with-analysis-scratch
+  [vars : Expr]
+  [blocks : Expr]
+  [body : Expr]) : Expr
+  `(if (compiler-reg-analysis-needs-scratch? ,vars ,blocks)
+    (with-scratch ,body)
+    ,body))
+
 (define (compiler-reg-ineligible-vars-non-params
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]
   [types : CompilerRegVarTypes]
   [target-abi : cabi.CompilerRegTargetAbi]) : live.CompilerLiveI64Set
-  (with-scratch
-    (match (compiler-reg-global-shared-view func)
-      [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+  (match (compiler-reg-global-shared-view func)
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+      (compiler-reg-with-analysis-scratch
+        vars
+        (compiler-reg-global-shared-view blocks)
         (compiler-reg-ineligible-memory
           (compiler-reg-global-shared-view blocks)
           (compiler-reg-call-arg-vars-blocks-scalar
@@ -8198,7 +8224,7 @@
               (live.compiler-live-set-empty)
               true)
             types
-            target-abi))])))
+            target-abi)))]))
 
 ;; SIMD/AVX register planning shares the integer GP allocation quality of the
 ;; scalar path: a value live across a call is NOT force-spilled. The SIMD integer
@@ -39624,6 +39650,8 @@
 ;; Result copies below are the ownership boundary for temporary scalar planning.
 ;; Caller-owned type/representation/profile state retains its original identity.
 (defmacro (compiler-reg-owned-copy-array
+  ;; The type operand is spliced into generated array types.
+  ;; lint-allow: unused-variable
   [T : type]
   [source : Expr]
   [count : Expr]
@@ -39782,24 +39810,49 @@
   [cold-split? : bool]
   [type-info : CompilerRegVarTypes]
   [forced-assignments : CompilerRegAssignmentTable]) : CompilerRegPlan
+  (match (compiler-reg-global-shared-view func)
+    [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+      (if (compiler-reg-analysis-needs-scratch?
+        vars
+        (compiler-reg-global-shared-view blocks))
+        (compiler-reg-plan-function-scalar-forced-spill-with-types-in-scratch
+          type-segment-bases
+          target-abi
+          func
+          forced-spill-from
+          cold-split?
+          type-info
+          forced-assignments)
+        (compiler-reg-plan-function-scalar-forced-spill-with-types-in-current-arena
+          type-segment-bases
+          target-abi
+          func
+          forced-spill-from
+          cold-split?
+          type-info
+          forced-assignments))]))
+
+(define (compiler-reg-plan-function-scalar-forced-spill-with-types-in-scratch
+  [type-segment-bases : i64]
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [func : ir.CompilerIrFunction]
+  [forced-spill-from : i64]
+  [cold-split? : bool]
+  [type-info : CompilerRegVarTypes]
+  [forced-assignments : CompilerRegAssignmentTable]) : CompilerRegPlan
   (let
-    [home : i64 (arena.tl_arena_current)]
-    [scratch : i64 (arena.tl_arena_make_small)]
-    [_enter : unit
-      (unsafe
-        (arena.tl_arena_set scratch))]
+    [scratch : arena.Arena (arena.Arena (arena.tl_arena_make_small))]
     [raw : CompilerRegPlan
-      (compiler-reg-plan-function-scalar-forced-spill-with-types-in-current-arena
-        type-segment-bases
-        target-abi
-        func
-        forced-spill-from
-        cold-split?
-        (compiler-reg-global-shared-view type-info)
-        forced-assignments)]
-    [_home : unit
-      (unsafe
-        (arena.tl_arena_set home))]
+      (in-arena
+        scratch
+        (compiler-reg-plan-function-scalar-forced-spill-with-types-in-current-arena
+          type-segment-bases
+          target-abi
+          func
+          forced-spill-from
+          cold-split?
+          (compiler-reg-global-shared-view type-info)
+          forced-assignments))]
     [result : CompilerRegPlan (compiler-reg-owned-copy-plan raw type-info)]
     (begin
       (when
@@ -39812,7 +39865,11 @@
             (owned_view.compiler-owned-place-shared-view
               compiler-reg-trace-reasons))))
       (unsafe
-        (arena.tl_arena_destroy scratch))
+        ;; The retained plan payloads and trace journal have been copied into
+        ;; the caller above. The caller's type/profile owner was never moved.
+        ;; No scratch-backed handle is used after this audited escape boundary.
+        ;; lint-allow: raw-arena-op
+        (arena.tl_arena_destroy (arena.raw-handle scratch)))
       result)))
 
 (define (compiler-reg-plan-function-scalar-forced-spill-with-types-in-current-arena
@@ -44099,7 +44156,9 @@
   [slot-candidate-vars : i64]
   [identity-pinned : live.CompilerLiveI64Set]
   [stack-only? : bool]) : CompilerRegColoring
-  (with-scratch
+  (compiler-reg-with-analysis-scratch
+    vars
+    (compiler-reg-global-shared-view blocks)
     (compiler-reg-color-stack-slots-with-stack-only-in-current-arena
       type-segment-bases
       plan
@@ -54310,7 +54369,9 @@
           type-segment-bases
           (compiler-reg-global-shared-view func)
           (compiler-reg-global-shared-view type-info))]
-      (match (with-scratch
+      (match (compiler-reg-with-analysis-scratch
+        vars
+        (compiler-reg-global-shared-view blocks)
         (let
           [liveness-handle : CompilerRegLivenessHandle
             (compiler-reg-liveness-handle-make

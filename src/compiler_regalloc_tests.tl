@@ -23966,14 +23966,13 @@
 
 (cfg
   test
-  (test
-    compiler-reg-returned-plan-profile-owner
+  (define (compiler-reg-check-returned-plan-profile-owner
+    [func : ir.CompilerIrFunction]) : unit
     (let
       [state : profile_state.CompilerProfileState
         (profile_state.compiler-profile-state-new)]
       [metrics : profile_state.CompilerProfileMetrics
         (profile_state.compiler-profile-state-metrics state)]
-      [func : ir.CompilerIrFunction (compiler-reg-liveness-handle-phi-fixture)]
       [types : reg.CompilerRegVarTypes
         (reg.compiler-reg-function-var-types-with-metrics
           (owned_view.compiler-owned-shared-view func)
@@ -24015,6 +24014,20 @@
 (cfg
   test
   (test
+    compiler-reg-returned-plan-profile-owner
+    (begin
+      (compiler-reg-check-returned-plan-profile-owner
+        (compiler-reg-liveness-handle-phi-fixture))
+      ;; The same phi analysis crosses the scratch budget with an unused
+      ;; frame suffix. Its returned metrics must still refer to the caller.
+      (compiler-reg-check-returned-plan-profile-owner
+        (match (compiler-reg-liveness-handle-phi-fixture)
+          [(ir.CompilerIrFunction.Function symbol params result _ blocks)
+            (ir.CompilerIrFunction.Function symbol params result 262144 blocks)])))))
+
+(cfg
+  test
+  (test
     compiler-reg-retained-plan-survives-later-planning
     (let
       [first : reg.CompilerRegPlan
@@ -24049,3 +24062,89 @@
             9
             0)
           "retained plan keeps its homes after later analysis arenas retire")))))
+
+;; Widen only the unused frame suffix: identical live vregs must keep their
+;; homes when auxiliary liveness storage crosses its scratch-owner budget.
+(cfg
+  test
+  (define (compiler-reg-analysis-owner-fixture [vars : i64]) : ir.CompilerIrFunction
+    (match (compiler-reg-trace-fixture-function)
+      [(ir.CompilerIrFunction.Function symbol params result _ blocks)
+        (ir.CompilerIrFunction.Function symbol params result vars blocks)])))
+
+(cfg
+  test
+  (define (compiler-reg-analysis-owner-homes-ok?
+    [abi : cabi.CompilerRegTargetAbi]) : bool
+    (let
+      [_trace-on : unit (reg.compiler-reg-debug-set-trace-homes! true)]
+      [small : reg.CompilerRegPlan
+        (reg.compiler-reg-plan-function-scalar-for-abi
+          abi
+          (compiler-reg-analysis-owner-fixture 9))]
+      [first-reason : i64 (reg.compiler-reg-trace-reason-at 0)]
+      [sixth-reason : i64 (reg.compiler-reg-trace-reason-at 5)]
+      [below : reg.CompilerRegPlan
+        (reg.compiler-reg-plan-function-scalar-for-abi
+          abi
+          (compiler-reg-analysis-owner-fixture 87359))]
+      [above : reg.CompilerRegPlan
+        (reg.compiler-reg-plan-function-scalar-for-abi
+          abi
+          (compiler-reg-analysis-owner-fixture 87360))]
+      ;; Force another scratch lifetime before reading the first escaped plan.
+      [again : reg.CompilerRegPlan
+        (reg.compiler-reg-plan-function-scalar-for-abi
+          abi
+          (compiler-reg-analysis-owner-fixture 87360))]
+      [_trace-off : unit (reg.compiler-reg-debug-set-trace-homes! false)]
+      (and
+        (= first-reason (reg.compiler-reg-trace-reason-at 0))
+        (= sixth-reason (reg.compiler-reg-trace-reason-at 5))
+        (reg.compiler-reg-assignment-table-prefix-eq?
+          (reg.compiler-reg-plan-assignments
+            (owned_view.compiler-owned-shared-view small))
+          (reg.compiler-reg-plan-assignments below)
+          9
+          0)
+        (reg.compiler-reg-assignment-table-prefix-eq?
+          (reg.compiler-reg-plan-assignments small)
+          (reg.compiler-reg-plan-assignments
+            (owned_view.compiler-owned-shared-view above))
+          9
+          0)
+        (reg.compiler-reg-assignment-table-prefix-eq?
+          (reg.compiler-reg-plan-assignments above)
+          (reg.compiler-reg-plan-assignments again)
+          9
+          0)))))
+
+(cfg
+  test
+  (test
+    compiler-reg-analysis-owner-boundary-homes
+    (begin
+      (match (compiler-reg-trace-fixture-function)
+        [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+          (begin
+            (test.assert-i64-eq
+              (ir.compiler-ir-block-list-instruction-count
+                (owned_view.compiler-owned-shared-view blocks))
+              12
+              "fixture keeps the exact ownership-budget boundary")
+            (test.assert-true
+              (not
+                (reg.compiler-reg-analysis-needs-scratch?
+                  87359
+                  (owned_view.compiler-owned-shared-view blocks)))
+              "lower boundary uses the existing owner")
+            (test.assert-true
+              (reg.compiler-reg-analysis-needs-scratch? 87360 blocks)
+              "upper boundary uses an independent scratch owner"))])
+      (test.assert-true
+        (compiler-reg-analysis-owner-homes-ok? cabi.CompilerRegTargetAbi.Linux)
+        "Linux homes survive both ownership paths and later planning")
+      (test.assert-true
+        (compiler-reg-analysis-owner-homes-ok?
+          cabi.CompilerRegTargetAbi.Windows)
+        "Windows homes survive both ownership paths and later planning"))))

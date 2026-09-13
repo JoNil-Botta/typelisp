@@ -560,6 +560,9 @@ borrowed_enum_inline_struct_payload|tests/integration/borrowed_enum_inline_struc
 register_group_try|tests/integration/register_group_try.tl|42|-|-|-
 register_resident_enum16|tests/integration/register_resident_enum16.tl|42|-|-|-
 register_resident_reference|tests/integration/register_resident_reference.tl|95|-|-|-
+mixed_group_stack_homes_opt0|tests/integration/mixed_group_stack_homes.tl|42|-|-|stdlib/io.tl|opt-level:0+stage-stdlib
+mixed_group_stack_homes_opt1|tests/integration/mixed_group_stack_homes.tl|42|-|-|stdlib/io.tl|opt-level:1+stage-stdlib
+mixed_group_stack_homes_opt2|tests/integration/mixed_group_stack_homes.tl|42|-|-|stdlib/io.tl|opt-level:2+stage-stdlib
 register_float_aggregate_f64|tests/integration/register_float_aggregate_f64.tl|42|-|-|-
 register_float_aggregate_f32|tests/integration/register_float_aggregate_f32.tl|42|-|-|-
 struct_match_pattern|tests/integration/struct_match_pattern.tl|42|-|-|struct_match_pattern_geom.tl
@@ -620,3 +623,6 @@ float_comparisons_embedded|tests/integration/float_comparisons.tl|0|-|-|stdlib/m
 float_comparisons_source_opt0|tests/integration/float_comparisons.tl|0|-|-|stdlib/math.tl|opt-level:0+stage-stdlib
 float_comparisons_source_opt1|tests/integration/float_comparisons.tl|0|-|-|stdlib/math.tl|opt-level:1+stage-stdlib
 float_comparisons_source_opt2|tests/integration/float_comparisons.tl|0|-|-|stdlib/math.tl|opt-level:2+stage-stdlib
+decls_generated_imports|tests/integration/decls_generated_imports.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl decls_generated_import_macro_dep.tl
+decls_generated_import_nested|tests/integration/decls_generated_import_nested.tl|42|-|-|decls_generated_import_dep.tl
+generated_import_alias_scopes|tests/integration/generated_import_alias_scopes.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl

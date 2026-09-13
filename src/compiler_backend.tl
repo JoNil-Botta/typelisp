@@ -21696,6 +21696,39 @@
             elem-ty
             backend-state))))))
 
+;; The upper-half extraction must not overwrite the source's lower half.
+;; A dying source can be the accumulator only when extraction stages through
+;; the distinct sibling first. Keep operand order unchanged for the fixed FP
+;; horizontal tree, including NaNs and signed zero.
+(define (compiler-backend-vector-reduce-halves-asm
+  [extract : String]
+  [mnemonic : String]
+  [source : String]
+  [source-low : String]
+  [acc : String]
+  [scratch : String]) : String
+  (let
+    [upper : String
+      (if (string.eq source-low acc)
+        scratch
+        acc)]
+    (str_cat.str-cat
+      "    "
+      extract
+      " $1, "
+      source
+      ", "
+      (compiler-backend-global-shared-view upper)
+      "\n    "
+      mnemonic
+      " "
+      upper
+      ", "
+      source-low
+      ", "
+      acc
+      "\n")))
+
 (define (compiler-backend-avx2-vector-reduce-horizontal-asm
   [op : compiler_ir_types.CompilerIrVectorReduceOp]
   [mnemonic : String]
@@ -21707,20 +21740,13 @@
   (match (compiler-backend-global-shared-view elem-ty)
     [(compiler_ast_types.AstType.F32)
       (str_cat.str-cat
-        (str_cat.str-cat
-          "    vextractf128 $1, "
-          ymm
-          ", "
-          (compiler-backend-global-shared-view acc-xmm)
-          "\n    "
+        (compiler-backend-vector-reduce-halves-asm
+          "vextractf128"
           (compiler-backend-global-shared-view mnemonic)
-          " "
+          (compiler-backend-global-shared-view ymm)
+          (compiler-backend-global-shared-view xmm)
           (compiler-backend-global-shared-view acc-xmm)
-          ", "
-          xmm
-          ", "
-          (compiler-backend-global-shared-view acc-xmm)
-          "\n")
+          (compiler-backend-global-shared-view scratch-xmm))
         (str_cat.str-cat
           "    vshufps $78, "
           (compiler-backend-global-shared-view acc-xmm)
@@ -21754,20 +21780,13 @@
           "\n"))]
     [(compiler_ast_types.AstType.F64)
       (str_cat.str-cat
-        (str_cat.str-cat
-          "    vextractf128 $1, "
-          ymm
-          ", "
-          (compiler-backend-global-shared-view acc-xmm)
-          "\n    "
+        (compiler-backend-vector-reduce-halves-asm
+          "vextractf128"
           (compiler-backend-global-shared-view mnemonic)
-          " "
+          (compiler-backend-global-shared-view ymm)
+          (compiler-backend-global-shared-view xmm)
           (compiler-backend-global-shared-view acc-xmm)
-          ", "
-          xmm
-          ", "
-          (compiler-backend-global-shared-view acc-xmm)
-          "\n")
+          (compiler-backend-global-shared-view scratch-xmm))
         (str_cat.str-cat
           "    vunpckhpd "
           (compiler-backend-global-shared-view acc-xmm)
@@ -21786,20 +21805,13 @@
       (match op
         [(compiler_ir_types.CompilerIrVectorReduceOp.Sum)
           (str_cat.str-cat
-            (str_cat.str-cat
-              "    vextracti128 $1, "
-              ymm
-              ", "
-              (compiler-backend-global-shared-view acc-xmm)
-              "\n    "
+            (compiler-backend-vector-reduce-halves-asm
+              "vextracti128"
               (compiler-backend-global-shared-view mnemonic)
-              " "
-              (compiler-backend-global-shared-view acc-xmm)
-              ", "
+              (compiler-backend-global-shared-view ymm)
               (compiler-backend-global-shared-view xmm)
-              ", "
               (compiler-backend-global-shared-view acc-xmm)
-              "\n")
+              (compiler-backend-global-shared-view scratch-xmm))
             (str_cat.str-cat
               "    vpsrldq $8, "
               (compiler-backend-global-shared-view acc-xmm)
@@ -21874,20 +21886,13 @@
               ""))])]
     [(compiler_ast_types.AstType.I32)
       (str_cat.str-cat
-        (str_cat.str-cat
-          "    vextracti128 $1, "
-          ymm
-          ", "
-          (compiler-backend-global-shared-view acc-xmm)
-          "\n    "
+        (compiler-backend-vector-reduce-halves-asm
+          "vextracti128"
           (compiler-backend-global-shared-view mnemonic)
-          " "
+          (compiler-backend-global-shared-view ymm)
+          (compiler-backend-global-shared-view xmm)
           (compiler-backend-global-shared-view acc-xmm)
-          ", "
-          xmm
-          ", "
-          (compiler-backend-global-shared-view acc-xmm)
-          "\n")
+          (compiler-backend-global-shared-view scratch-xmm))
         (str_cat.str-cat
           "    vpsrldq $8, "
           (compiler-backend-global-shared-view acc-xmm)
@@ -22059,19 +22064,15 @@
   [acc-ymm : String]
   [scratch-xmm : String]) : String
   (str_cat.str-cat
-    "    vextracti64x4 $1, "
-    zmm
-    ", "
-    (compiler-backend-global-shared-view acc-ymm)
-    "\n    "
-    (compiler-backend-global-shared-view mnemonic)
-    " "
-    (compiler-backend-global-shared-view acc-ymm)
-    ", "
-    ymm
-    ", "
-    (compiler-backend-global-shared-view acc-ymm)
-    "\n    vextracti128 $1, "
+    (compiler-backend-vector-reduce-halves-asm
+      "vextracti64x4"
+      (compiler-backend-global-shared-view mnemonic)
+      zmm
+      ymm
+      (compiler-backend-global-shared-view acc-ymm)
+      (compiler-backend-xmm-to-ymm
+        (compiler-backend-global-shared-view scratch-xmm)))
+    "    vextracti128 $1, "
     acc-ymm
     ", "
     (compiler-backend-global-shared-view scratch-xmm)
@@ -22125,20 +22126,14 @@
   (match (compiler-backend-global-shared-view elem-ty)
     [(compiler_ast_types.AstType.F32)
       (str_cat.str-cat
-        (str_cat.str-cat
-          "    vextractf32x8 $1, "
-          (compiler-backend-global-shared-view zmm)
-          ", "
-          (compiler-backend-global-shared-view acc-ymm)
-          "\n    "
+        (compiler-backend-vector-reduce-halves-asm
+          "vextractf32x8"
           (compiler-backend-global-shared-view mnemonic)
-          " "
-          (compiler-backend-global-shared-view acc-ymm)
-          ", "
+          (compiler-backend-global-shared-view zmm)
           (compiler-backend-global-shared-view ymm)
-          ", "
           (compiler-backend-global-shared-view acc-ymm)
-          "\n")
+          (compiler-backend-xmm-to-ymm
+            (compiler-backend-global-shared-view scratch-xmm)))
         (str_cat.str-cat
           "    vextractf128 $1, "
           (compiler-backend-global-shared-view acc-ymm)
@@ -22187,20 +22182,14 @@
           "\n"))]
     [(compiler_ast_types.AstType.F64)
       (str_cat.str-cat
-        (str_cat.str-cat
-          "    vextractf64x4 $1, "
-          (compiler-backend-global-shared-view zmm)
-          ", "
-          (compiler-backend-global-shared-view acc-ymm)
-          "\n    "
+        (compiler-backend-vector-reduce-halves-asm
+          "vextractf64x4"
           (compiler-backend-global-shared-view mnemonic)
-          " "
-          (compiler-backend-global-shared-view acc-ymm)
-          ", "
+          (compiler-backend-global-shared-view zmm)
           (compiler-backend-global-shared-view ymm)
-          ", "
           (compiler-backend-global-shared-view acc-ymm)
-          "\n")
+          (compiler-backend-xmm-to-ymm
+            (compiler-backend-global-shared-view scratch-xmm)))
         (str_cat.str-cat
           "    vextractf128 $1, "
           (compiler-backend-global-shared-view acc-ymm)
@@ -22232,20 +22221,14 @@
           "\n"))]
     [(compiler_ast_types.AstType.I64)
       (str_cat.str-cat
-        (str_cat.str-cat
-          "    vextracti64x4 $1, "
-          (compiler-backend-global-shared-view zmm)
-          ", "
-          (compiler-backend-global-shared-view acc-ymm)
-          "\n    "
+        (compiler-backend-vector-reduce-halves-asm
+          "vextracti64x4"
           (compiler-backend-global-shared-view mnemonic)
-          " "
-          (compiler-backend-global-shared-view acc-ymm)
-          ", "
+          (compiler-backend-global-shared-view zmm)
           (compiler-backend-global-shared-view ymm)
-          ", "
           (compiler-backend-global-shared-view acc-ymm)
-          "\n")
+          (compiler-backend-xmm-to-ymm
+            (compiler-backend-global-shared-view scratch-xmm)))
         (str_cat.str-cat
           "    vextracti128 $1, "
           (compiler-backend-global-shared-view acc-ymm)
@@ -22278,20 +22261,14 @@
           ""))]
     [(compiler_ast_types.AstType.I32)
       (str_cat.str-cat
-        (str_cat.str-cat
-          "    vextracti64x4 $1, "
-          (compiler-backend-global-shared-view zmm)
-          ", "
-          (compiler-backend-global-shared-view acc-ymm)
-          "\n    "
+        (compiler-backend-vector-reduce-halves-asm
+          "vextracti64x4"
           (compiler-backend-global-shared-view mnemonic)
-          " "
-          (compiler-backend-global-shared-view acc-ymm)
-          ", "
+          (compiler-backend-global-shared-view zmm)
           (compiler-backend-global-shared-view ymm)
-          ", "
           (compiler-backend-global-shared-view acc-ymm)
-          "\n")
+          (compiler-backend-xmm-to-ymm
+            (compiler-backend-global-shared-view scratch-xmm)))
         (str_cat.str-cat
           "    vextracti128 $1, "
           (compiler-backend-global-shared-view acc-ymm)

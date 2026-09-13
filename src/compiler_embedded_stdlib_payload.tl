@@ -17,6 +17,10 @@
 
 (include-str-lzss payload-comptime "../stdlib/comptime.tl")
 
+(include-str-lzss
+  payload-concurrency-registry
+  "../stdlib/concurrency_registry.tl")
+
 (include-str-lzss payload-core-macros "../stdlib/core_macros.tl")
 
 (include-str-lzss payload-crypto-sha1-git "../stdlib/crypto_sha1_git.tl")
@@ -155,6 +159,8 @@
       (compiler-embedded-stdlib-payload-copy payload-cpu)]
     [(string.eq suffix "comptime.tl")
       (compiler-embedded-stdlib-payload-copy payload-comptime)]
+    [(string.eq suffix "concurrency_registry.tl")
+      (compiler-embedded-stdlib-payload-copy payload-concurrency-registry)]
     [(string.eq suffix "core_macros.tl")
       (compiler-embedded-stdlib-payload-copy payload-core-macros)]
     [(string.eq suffix "crypto_sha1_git.tl")

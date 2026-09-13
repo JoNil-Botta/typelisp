@@ -285,6 +285,20 @@ have an explicit compile-coverage decision. Staged cases cover integration
 drivers whose imports need temporary sibling names, such as the text buffer and
 symbol-table drivers.
 
+### Scalar floating-point comparisons
+
+Scalar `f32`/`f64` comparison predicates are selected once by
+`compiler-backend-float-compare-reg-asm`, including register, memory, fallback,
+and bool-return routes. An unordered `ucomiss`/`ucomisd` sets ZF, PF, and CF:
+`=`/`<`/`<=` must exclude PF, while `!=` must include it. The current result
+initialization and parity branch write only the planned result register and
+preserve the comparison flags until `setcc`; integer-only flags reuse must not
+absorb this sequence. Keep the exact sequence and register/spill/return tests
+in `compiler_backend_tests.tl` together with
+`tests/integration/float_comparisons.tl`'s integer-bit oracle, both-operand NaN
+matrix, and evaluation counters. Native manifests exercise source opt0/1/2
+and embedded stdlib through the bootstrapped compiler on both hosts.
+
 ### Cross-Target Codegen Parity
 
 Use [`../scripts/check-codegen-target-parity.sh`](../scripts/check-codegen-target-parity.sh)

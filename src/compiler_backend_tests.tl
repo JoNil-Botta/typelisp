@@ -7052,12 +7052,14 @@
 (define fr-keep : (-> i64 i64 i64) fr-lt)
 (define (main) : i64 0)")
 
-;; The boolean materialises in every case (`setcc` and `movzb` both survive).
+;; The boolean materialises in every case. Integers retain `movzb`; floats
+;; initialize the result and guard `setcc` with their unordered parity branch.
 ;; `reused?` says whether the branch then reads the comparison's own flags with
 ;; `jcc` and spends no `test`, or falls back to re-deriving them.
 (define (compiler-backend-flags-reuse-body-ok?
   [source : String]
   [setcc : String]
+  [materialize : String]
   [jcc : String]
   [reused? : bool]) : bool
   (match (compiler-backend-emit-source-opt2-for-target
@@ -7073,7 +7075,7 @@
             setcc)
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view body)
-            "    movzbq ")
+            materialize)
           (if reused?
             (and
               (compiler_backend.compiler-backend-string-contains?
@@ -7093,26 +7095,31 @@
     (compiler-backend-flags-reuse-body-ok?
       (string.copy (& compiler-backend-flags-reuse-lt-source))
       "    setl "
+      "    movzbq "
       "    jge "
       true)
     (compiler-backend-flags-reuse-body-ok?
       (string.copy (& compiler-backend-flags-reuse-ult-source))
       "    setb "
+      "    movzbq "
       "    jae "
       true)
     (compiler-backend-flags-reuse-body-ok?
       (string.copy (& compiler-backend-flags-reuse-neg-source))
       "    setl "
+      "    movzbq "
       "    jl "
       true)
     (compiler-backend-flags-reuse-body-ok?
       (string.copy (& compiler-backend-flags-reuse-f64-source))
       "    setb "
+      "    jp 1f\n"
       ""
       false)
     (compiler-backend-flags-reuse-body-ok?
       (string.copy (& compiler-backend-flags-reuse-gap-source))
       "    setl "
+      "    movzbq "
       ""
       false)))
 
@@ -36790,6 +36797,51 @@ g:
         [(compiler_backend.ResultCompilerBackend.Err _) false])]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+;; Exact whole sequences prove PF handling and absence of unplanned clobbers.
+(define (compiler-backend-float-unordered-sequence-ok?
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [tail : String]) : bool
+  (and
+    (string.eq
+      (compiler_backend.compiler-backend-float-compare-reg-asm
+        (owned_view.compiler-owned-shared-view op)
+        (compiler_ast_types.AstType.F64)
+        "%xmm2"
+        "%xmm3"
+        "%r12")
+      (str_cat.str-cat
+        "    ucomisd %xmm3, %xmm2\n"
+        (owned_view.compiler-owned-shared-view tail)))
+    (string.eq
+      (compiler_backend.compiler-backend-float-compare-reg-asm
+        op
+        (compiler_ast_types.AstType.F32)
+        "%xmm2"
+        "-24(%rbp)"
+        "%r12")
+      (str_cat.str-cat "    ucomiss -24(%rbp), %xmm2\n" tail))))
+
+(define (compiler-backend-float-unordered-sequences-ok?) : bool
+  (and
+    (compiler-backend-float-unordered-sequence-ok?
+      (compiler_ir_types.CompilerIrBinOp.Eq)
+      "    movl $0, %r12d\n    jp 1f\n    sete %r12b\n1:\n")
+    (compiler-backend-float-unordered-sequence-ok?
+      (compiler_ir_types.CompilerIrBinOp.Ne)
+      "    movl $1, %r12d\n    jp 1f\n    setne %r12b\n1:\n")
+    (compiler-backend-float-unordered-sequence-ok?
+      (compiler_ir_types.CompilerIrBinOp.Lt)
+      "    movl $0, %r12d\n    jp 1f\n    setb %r12b\n1:\n")
+    (compiler-backend-float-unordered-sequence-ok?
+      (compiler_ir_types.CompilerIrBinOp.Le)
+      "    movl $0, %r12d\n    jp 1f\n    setbe %r12b\n1:\n")
+    (compiler-backend-float-unordered-sequence-ok?
+      (compiler_ir_types.CompilerIrBinOp.Gt)
+      "    seta %r12b\n    movzbq %r12b, %r12\n")
+    (compiler-backend-float-unordered-sequence-ok?
+      (compiler_ir_types.CompilerIrBinOp.Ge)
+      "    setae %r12b\n    movzbq %r12b, %r12\n")))
+
 (define (compiler-backend-direct-float-compare-asm
   [ty : compiler_ast_types.AstType]) : compiler_backend.ResultCompilerBackend
   (compiler_backend.compiler-backend-emit-binop-with-plan
@@ -36851,7 +36903,7 @@ g:
                 "    setb %r12b\n")
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view f64-asm)
-                "    movzbq %r12b, %r12\n")
+                "    movl $0, %r12d\n    jp 1f\n    setb %r12b\n1:\n")
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view f32-asm)
                 "    ucomiss %xmm3, %xmm2\n")
@@ -36860,7 +36912,7 @@ g:
                 "    setb %r12b\n")
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view f32-asm)
-                "    movzbq %r12b, %r12\n")
+                "    movl $0, %r12d\n    jp 1f\n    setb %r12b\n1:\n")
               (not
                 (compiler_backend.compiler-backend-string-contains?
                   (owned_view.compiler-owned-shared-view f64-asm)
@@ -36948,7 +37000,7 @@ g:
                 "    setb %r8b\n")
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view f64-asm)
-                "    movzbq %r8b, %r8\n")
+                "    movl $0, %r8d\n    jp 1f\n    setb %r8b\n1:\n")
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view f32-asm)
                 "    ucomiss %xmm4, %xmm3\n")
@@ -36957,7 +37009,7 @@ g:
                 "    setb %r8b\n")
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view f32-asm)
-                "    movzbq %r8b, %r8\n")
+                "    movl $0, %r8d\n    jp 1f\n    setb %r8b\n1:\n")
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view f64-asm)
                 "    movq %r8, -16(%rbp)\n")
@@ -37096,7 +37148,7 @@ g:
                 "    setb %r12b\n")
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view cmp-asm)
-                "    movzbq %r12b, %r12\n")
+                "    movl $0, %r12d\n    jp 1f\n    setb %r12b\n1:\n")
               (not
                 (compiler_backend.compiler-backend-string-contains?
                   (owned_view.compiler-owned-shared-view arith-asm)
@@ -37299,7 +37351,7 @@ g:
                 "    setb %al\n")
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view home-asm)
-                "    movzbq %al, %rax\n")
+                "    movl $0, %eax\n    jp 1f\n    setb %al\n1:\n")
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view spill-asm)
                 "    movsd -24(%rbp), %xmm2\n")
@@ -49584,7 +49636,7 @@ g:
                             (compiler_backend.compiler-backend-string-contains?
                               (owned_view.compiler-owned-shared-view
                                 compare-return)
-                              "%rax"))]
+                              "    movl $0, %eax\n    jp 1f\n    setb %al\n1:\n"))]
                         [(compiler_backend.ResultCompilerBackend.Err _) false])]
                     [(compiler_backend.ResultCompilerBackend.Err _) false])]
                 [(compiler_backend.ResultCompilerBackend.Err _) false])]
@@ -58377,6 +58429,9 @@ b_keep:
         (compiler-backend-f32-literal-binop-ok?)
         (compiler-backend-direct-float-arith-home-ok?)
         (compiler-backend-spill-float-arith-home-ok?)
+        (if (compiler-backend-float-unordered-sequences-ok?)
+          true
+          (io.panic "backend: unordered float comparison sequences"))
         (compiler-backend-direct-float-compare-home-ok?)
         (compiler-backend-spill-float-compare-home-ok?)
         (compiler-backend-fallback-float-binop-home-ok?)

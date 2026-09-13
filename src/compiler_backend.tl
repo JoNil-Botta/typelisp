@@ -29717,15 +29717,38 @@
     rhs-operand
     ", "
     lhs-reg
-    "\n    "
-    (compiler-backend-float-compare-setcc op)
-    " "
-    (compiler-backend-reg-part (string.copy dst-home) 1)
-    "\n    movzbq "
-    (compiler-backend-reg-part (string.copy dst-home) 1)
-    ", "
-    dst-home
-    "\n"))
+    "\n"
+    ;; UCOMIS sets ZF/PF/CF for unordered operands. Above/above-equal
+    ;; already reject that case; the other predicates must inspect PF.
+    ;; MOV preserves those flags and its 32-bit destination clears the
+    ;; upper half. Only the planned result register is written: no hidden
+    ;; byte scratch, operand reload, or second operand evaluation is needed.
+    (if (match (compiler-backend-global-shared-view op)
+      [(compiler_ir_types.CompilerIrBinOp.Gt) true]
+      [(compiler_ir_types.CompilerIrBinOp.Ge) true]
+      [_ false])
+      (str_cat.str-cat
+        "    "
+        (compiler-backend-float-compare-setcc op)
+        " "
+        (compiler-backend-reg-part (string.copy dst-home) 1)
+        "\n    movzbq "
+        (compiler-backend-reg-part (string.copy dst-home) 1)
+        ", "
+        dst-home
+        "\n")
+      (str_cat.str-cat
+        "    movl $"
+        (match (compiler-backend-global-shared-view op)
+          [(compiler_ir_types.CompilerIrBinOp.Ne) "1"]
+          [_ "0"])
+        ", "
+        (compiler-backend-reg-part (string.copy dst-home) 4)
+        "\n    jp 1f\n    "
+        (compiler-backend-float-compare-setcc op)
+        " "
+        (compiler-backend-reg-part dst-home 1)
+        "\n1:\n"))))
 
 (define (compiler-backend-emit-float-binop-direct
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]

@@ -88,12 +88,10 @@
   (Ok backend.CompilerBackendTarget)
   (Err String))
 
-(defenum BuildPackageSideAssembly
-  (Regenerate)
-  (Prepared String))
-
+;; Complete outputs from one runtime preparation. Artifact finishing has no
+;; AST inputs and cannot regenerate assembly or invoke the compiler again.
 (defenum ResultBuildPackagePreparedRuntime
-  (DirectObject String BuildPackageSideAssembly)
+  (DirectObject String String)
   (Assembly String backend.CompilerDirectObjectFallbackReason)
   (Err String))
 
@@ -3704,9 +3702,7 @@
                   (& advisories))
                 (match (build-package-render-linux-direct-object kind image)
                   [(build_run_core.ResultSourceToolLinuxDirectObject.Ok object)
-                    (ResultBuildPackagePreparedRuntime.DirectObject
-                      object
-                      (BuildPackageSideAssembly.Prepared asm))]
+                    (ResultBuildPackagePreparedRuntime.DirectObject object asm)]
                   [(build_run_core.ResultSourceToolLinuxDirectObject.Fallback
                       reason)
                     (ResultBuildPackagePreparedRuntime.Assembly asm reason)]))]
@@ -3753,14 +3749,11 @@
                   (& advisories))
                 (match side-assembly
                   [(compiler_windows_coff_core.CompilerWindowsBatchSideAssembly.None)
-                    (ResultBuildPackagePreparedRuntime.DirectObject
-                      object
-                      BuildPackageSideAssembly.Regenerate)]
+                    (ResultBuildPackagePreparedRuntime.Err
+                      "build: package COFF preparation omitted required side assembly")]
                   [(compiler_windows_coff_core.CompilerWindowsBatchSideAssembly.Some
                       asm)
-                    (ResultBuildPackagePreparedRuntime.DirectObject
-                      object
-                      (BuildPackageSideAssembly.Prepared asm))]))]
+                    (ResultBuildPackagePreparedRuntime.DirectObject object asm)]))]
             [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Assembly
                 asm
                 category
@@ -6808,39 +6801,6 @@
                   (io.error-message error)))])
           build_run_core.SourceToolCommandStatus.Ok))]))
 
-(define (build-package-write-side-assembly
-  [name : String]
-  [target : backend.CompilerBackendTarget]
-  [opt-level : i64]
-  [mode : backend.CompilerBackendMode]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [decls : ast.AstDeclList]
-  [owned-paths : ast.AstDeclPathList]
-  [asm-path : String]) : build_run_core.SourceToolCommandStatus
-  (match (compiler_driver_core.compiler-driver-emit-package-loaded
-    ""
-    name
-    target
-    true
-    opt-level
-    mode
-    emit-entry
-    crt-entry
-    (owned_view.compiler-owned-shared-view decls)
-    (owned_view.compiler-owned-shared-view owned-paths))
-    [(compiler_driver_core.ResultCompilerDriver.Err diag advisories)
-      (begin
-        (compiler_driver_core.compiler-driver-print-advisories (& advisories))
-        (build_run_core.SourceToolCommandStatus.Err
-          (compiler_driver_core.compiler-driver-render-source-diagnostic
-            (owned_view.compiler-owned-box-shared-view diag))))]
-    [(compiler_driver_core.ResultCompilerDriver.Ok asm advisories)
-      (begin
-        (compiler_driver_core.compiler-driver-print-advisories (& advisories))
-        (compiler_driver_core.compiler-driver-release-lower-arenas-after-emit!)
-        (build-package-write-assembly asm-path asm target))]))
-
 (define (build-package-announce-freshness
   [artifact-path : String]
   [tlci-path : String]
@@ -6979,10 +6939,6 @@
   [profile : BuildProfile]
   [mode : backend.CompilerBackendMode]
   [producer-identity : String]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [decls : ast.AstDeclList]
-  [owned-paths : ast.AstDeclPathList]
   [output-dir : String]
   [asm-path : String]
   [obj-path : String]
@@ -6991,7 +6947,7 @@
   [tlci-path : String]
   [tlci-text : String]
   [object-text : String]
-  [side-assembly : BuildPackageSideAssembly]
+  [side-assembly : String]
   [announce : bool]) : i64
   (let
     [fingerprint-path : String
@@ -7081,26 +7037,10 @@
                       (let
                         [asm-status : build_run_core.SourceToolCommandStatus
                           (if runtime-dirty
-                            (match side-assembly
-                              [(BuildPackageSideAssembly.Regenerate)
-                                (build-package-write-side-assembly
-                                  name
-                                  target
-                                  opt-level
-                                  mode
-                                  emit-entry
-                                  crt-entry
-                                  (owned_view.compiler-owned-shared-view decls)
-                                  (owned_view.compiler-owned-shared-view
-                                    owned-paths)
-                                  (owned_view.compiler-owned-shared-view
-                                    stage.asm))]
-                              [(BuildPackageSideAssembly.Prepared asm)
-                                (build-package-write-assembly
-                                  (owned_view.compiler-owned-shared-view
-                                    stage.asm)
-                                  asm
-                                  target)])
+                            (build-package-write-assembly
+                              (owned_view.compiler-owned-shared-view stage.asm)
+                              side-assembly
+                              target)
                             build_run_core.SourceToolCommandStatus.Ok)]
                         (match asm-status
                           [(build_run_core.SourceToolCommandStatus.Err message)
@@ -7252,6 +7192,7 @@
                           announce))]))])))])))
 
 (define (build-package-finish-prepared-runtime
+  [prepared : ResultBuildPackagePreparedRuntime]
   [name : String]
   [kind : load.CompilerPkgKind]
   [target : backend.CompilerBackendTarget]
@@ -7259,10 +7200,6 @@
   [profile : BuildProfile]
   [mode : backend.CompilerBackendMode]
   [producer-identity : String]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [decls : ast.AstDeclList]
-  [owned-paths : ast.AstDeclPathList]
   [output-dir : String]
   [asm-path : String]
   [obj-path : String]
@@ -7271,17 +7208,7 @@
   [tlci-path : String]
   [tlci-text : String]
   [announce : bool]) : i64
-  (match (build-package-prepare-runtime
-    (build-package-direct-object-default-request
-      (owned_view.compiler-owned-shared-view name)
-      kind
-      target
-      opt-level
-      mode
-      emit-entry
-      crt-entry
-      (owned_view.compiler-owned-shared-view decls)
-      (owned_view.compiler-owned-shared-view owned-paths)))
+  (match prepared
     [(ResultBuildPackagePreparedRuntime.DirectObject object-text side-assembly)
       (build-package-finish-direct-fresh-artifacts
         name
@@ -7291,10 +7218,6 @@
         profile
         mode
         producer-identity
-        emit-entry
-        crt-entry
-        decls
-        owned-paths
         output-dir
         asm-path
         obj-path
@@ -7365,9 +7288,11 @@
         (match (build-package-require-direct-object
           (ResultBuildPackagePreparedRuntime.DirectObject
             "object"
-            BuildPackageSideAssembly.Regenerate))
-          [(ResultBuildPackagePreparedRuntime.DirectObject object _)
-            (string.eq object "object")]
+            "side assembly"))
+          [(ResultBuildPackagePreparedRuntime.DirectObject object assembly)
+            (and
+              (string.eq object "object")
+              (string.eq assembly "side assembly"))]
           [_ false])
         (match (build-package-require-direct-object
           (ResultBuildPackagePreparedRuntime.Err "diagnostic"))
@@ -7475,6 +7400,7 @@
                       1)]
                   [(ResultBuildPackageTlciText.Ok tlci-text)
                     (build-package-finish-prepared-runtime
+                      prepared
                       name
                       kind
                       target
@@ -7482,10 +7408,6 @@
                       profile
                       mode
                       producer-identity
-                      emit-entry
-                      crt-entry
-                      decls
-                      owned-paths
                       output-dir
                       asm-path
                       obj-path

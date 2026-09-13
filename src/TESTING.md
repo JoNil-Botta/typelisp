@@ -1403,9 +1403,15 @@ TYPELISP_BIN=$tl ./scripts/check-codegen-target-parity.sh
 scripts/ci-verify.sh
 ```
 
-`scripts/check-tl-lint.sh` runs one batched `typelisp lint --check` over tracked
-TypeLisp source units and fails CI on any finding. Plain `typelisp lint
-<file.tl>` remains warn-only for reviewable cleanup slices.
+`scripts/check-tl-lint.sh` checks each selected tracked TypeLisp source unit
+once, in batches of at most 32 files by default, and fails CI on any finding.
+Batches split at `src/` boundaries: all files receive the normal, redundant-name
+and supported name-case rules; only tracked compiler/tooling sources receive
+`--deprecated-string-concat` in that same invocation. The concat rejection
+probe remains independent. `TYPELISP_LINT_BATCH_SIZE` must be a positive integer.
+`sh scripts/test-tl-lint-gate.sh` checks exact file/rule coverage, batch bounds,
+legacy capability paths and failure propagation on both CI hosts. Plain
+`typelisp lint <file.tl>` remains warn-only for reviewable cleanup slices.
 
 Run the tests that match the layer you touched. On non-Linux platforms, scripts
 that require native `as`/`ld` either no-op by design or should be run through a

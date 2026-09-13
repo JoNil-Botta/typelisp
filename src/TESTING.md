@@ -12,6 +12,22 @@ bootstrap/fixpoint gate [#47](https://github.com/JoNil-Botta/typelisp/issues/47)
 The gate/tool classification and canonical script entry points are documented
 in [`../scripts/README.md`](../scripts/README.md).
 
+## Generated cfg declarations
+
+`tests/integration/generated_cfg.tl` constructs conditional syntax in both
+`Decls` and `Module` macros, including nested expansion and inactive missing
+imports. Both native manifests run it at every optimization level. Also run it
+with `--cfg generated-cfg-feature` to exercise the opposite custom branch.
+The consolidated codegen suite's `driver-generated-cfg` child alternates custom
+flags and Linux/Windows targets across two reusable driver states, checks that
+B leaves A's intern/pool counts intact, and reuses A after changing its flags.
+Keep that test on the canonical driver path; a cfg string in a cache key alone
+does not supply predicates to macro expansion. The semantic-index macro checks
+also alternate the same source's cfg set and verify complete results and owner
+release. The fixture's inline test covers harness expansion, and the existing
+public CLI package build/run smoke emits target-conditional Module declarations
+through the package preparation and object/assembly paths.
+
 ## Intern-ID provenance
 
 Name ids in `AstDecl`, `AstExpr`, patterns, parameters, fields, and nominal

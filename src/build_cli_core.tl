@@ -3779,7 +3779,8 @@
   [emit-entry : bool]
   [crt-entry : bool]
   [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]) : ResultBuildPackagePreparedRuntime
+  [paths : ast.AstDeclPathList]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultBuildPackagePreparedRuntime
   (let
     [preflight : BuildPackageDirectObjectPreflight
       (build-package-direct-object-preflight
@@ -3798,7 +3799,8 @@
         target
         mode
         decls
-        paths)]
+        paths
+        (owned_view.compiler-owned-shared-view cfgs))]
     (build-package-emit-preflighted-runtime
       kind
       target
@@ -7352,7 +7354,8 @@
       (io.panic "strict direct-object route failed"))))
 
 (define (build-package-prepare-runtime
-  [request : BuildPackageDirectObjectRequest]) : ResultBuildPackagePreparedRuntime
+  [request : BuildPackageDirectObjectRequest]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultBuildPackagePreparedRuntime
   (let
     [prepared : ResultBuildPackagePreparedRuntime
       (build-package-try-prepare-direct-runtime
@@ -7367,7 +7370,8 @@
         request.emit-entry
         request.crt-entry
         request.decls
-        request.paths)]
+        request.paths
+        (owned_view.compiler-owned-shared-view cfgs))]
     (if request.require-direct-object
       (build-package-require-direct-object prepared)
       prepared)))
@@ -7376,7 +7380,8 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-prepare-owned-runtime
     [scope : compiler_driver_core.CompilerDriverPackageRuntimeScope]
-    [request : BuildPackageDirectObjectRequest]) : ResultBuildPackagePreparedRuntime
+    [request : BuildPackageDirectObjectRequest]
+    [cfgs : sym_i64_env.SymI64Env]) : ResultBuildPackagePreparedRuntime
     (let
       [preflight : BuildPackageDirectObjectPreflight
         (build-package-direct-object-preflight
@@ -7395,7 +7400,8 @@
           request.target
           request.mode
           request.decls
-          request.paths)]
+          request.paths
+          (owned_view.compiler-owned-shared-view cfgs))]
       [prepared : ResultBuildPackagePreparedRuntime
         (build-package-emit-preflighted-runtime
           request.kind
@@ -7451,7 +7457,8 @@
     [artifact-path : String]
     [link-inputs : build_run_core.SourceToolLinkInputs]
     [tlci-path : String]
-    [announce : bool]) : i64
+    [announce : bool]
+    [cfgs : sym_i64_env.SymI64Env]) : i64
     (begin
       (package_surface.package-surface-capture-start!
         (package_surface.package-surface-identity-key
@@ -7481,7 +7488,8 @@
               emit-entry
               crt-entry
               (owned_view.compiler-owned-shared-view decls)
-              (owned_view.compiler-owned-shared-view owned-paths)))]
+              (owned_view.compiler-owned-shared-view owned-paths))
+            (owned_view.compiler-owned-shared-view cfgs))]
         [_abort : unit
           (match (owned_view.compiler-owned-shared-view prepared)
             [(ResultBuildPackagePreparedRuntime.Err message)
@@ -7719,7 +7727,7 @@
           (owned_view.compiler-owned-shared-view manifest-dir)
           (owned_view.compiler-owned-shared-view manifest.deps)
           emit-entry
-          compile-cfgs)
+          (owned_view.compiler-owned-shared-view compile-cfgs))
           [(load.ResultCompilerLoadWithPaths.Err diag)
             (begin
               (io.print-error
@@ -7780,7 +7788,8 @@
                 artifact-path
                 effective-link-inputs
                 tlci-path
-                announce))])])))
+                announce
+                (owned_view.compiler-owned-shared-view compile-cfgs)))])])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)

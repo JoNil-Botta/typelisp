@@ -50,7 +50,10 @@
                           target
                           (backend.CompilerBackendMode.Scalar)
                           (owned_view.compiler-owned-box-shared-view decls-box)
-                          (ast.ast-decl-path-list-new))]
+                          (ast.ast-decl-path-list-new)
+                          (driver.compiler-driver-target-cfgs
+                            target
+                            (cfg_core.compiler-cfg-empty)))]
                       (match (if direct-object
                         (match (driver.compiler-driver-emit-lowered-result-package-runtime-with-level-mode-entry-and-crt
                           ""

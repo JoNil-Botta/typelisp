@@ -14463,6 +14463,71 @@
   [set : (__tl_dyn-array bool)]) : bool
   (opt-verify-param-def-set-from params set 0))
 
+;; Whole-function definition multiplicity, shared by transformations that
+;; substitute one value for a vreg. Count parameters and every defining opcode
+;; through the verifier's canonical destination classifier; loop-only scalar
+;; classifiers omit indirect calls, selects and other legitimate definitions.
+(define (opt-def-counts-instrs!
+  [defs : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]) : unit
+  (let
+    [count : i64
+      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [dst : i64
+            (match (opt-instr-def-var
+              (ir.compiler-ir-instr-seq-ref
+                (compiler-opt-global-shared-view instrs)
+                index))
+              [(option_i64.Some var) var]
+              [(option_i64.None) (- 0 1)])]
+          (begin
+            (if (and (>= dst 0) (< dst (array-length defs)))
+              (set! (array-ref defs dst) (+ (array-ref defs dst) 1))
+              unit)
+            (set! index (+ index 1)))))
+      unit)))
+
+;; A parameter is defined once, at entry.
+(define (opt-def-counts-params!
+  [defs : (__tl_dyn-array i64)]
+  [params : ir.CompilerIrParamSeq]) : unit
+  (let
+    [count : i64
+      (ir.compiler-ir-param-seq-count (compiler-opt-global-shared-view params))]
+    [at : i64 0]
+    (begin
+      (while (< at count)
+        (begin
+          (match (ir.compiler-ir-param-seq-ref
+            (compiler-opt-global-shared-view params)
+            at)
+            [(ir.CompilerIrParam.Param _ _ index)
+              (if (and (>= index 0) (< index (array-length defs)))
+                (set! (array-ref defs index) (+ (array-ref defs index) 1))
+                unit)])
+          (set! at (+ at 1))))
+      unit)))
+
+(define (opt-def-counts-blocks!
+  [defs : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-def-counts-blocks! defs (ir.compiler-ir-block-seq-to-list seq))]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match (compiler-opt-global-shared-view block)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-def-counts-instrs!
+              (compiler-opt-global-shared-view defs)
+              (compiler-opt-global-shared-view instrs))])
+        (opt-def-counts-blocks! defs (compiler-opt-box-shared-view rest)))]))
+
 (define (opt-verify-instr-def-seq-from
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
@@ -173458,7 +173523,11 @@
     [_ false]))
 
 ;; `folded` slots: 0 unbound, 1 bound, 2 bound on approval -- a literal mov that
-;; is kept only if stage 2 finds no reader outside a phi input.
+;; is kept only if stage 2 finds no reader outside a phi input -- and 3 blocked
+;; by multiple definitions. Late IR is not necessarily SSA: inlining can exceed
+;; the SSA construction budget or retain an unrenamable local. A binding may
+;; enter `bound` only once, so its frame-sized storage cannot overflow when one
+;; mutable local has many assignments.
 (define (opt-late-uniform-phi-bind!
   [dst : i64]
   [value : ir.CompilerIrValue]
@@ -173471,7 +173540,8 @@
   (if (and
     (opt-late-uniform-phi-literal? (compiler-opt-global-shared-view value))
     (>= dst 0)
-    (< dst (array-length folded)))
+    (< dst (array-length folded))
+    (= (array-ref folded dst) 0))
     (begin
       (set! (array-ref folded dst) state)
       (set! (array-ref env-slots dst) (OptSccpValue.Const value ty))
@@ -174044,6 +174114,27 @@
 ;; to pay for the CFG simplify, the DCE that cleans up after it, and the verify
 ;; that gates the pair -- slot 2 how many entries `bound` holds, and slot 3
 ;; whether any var reached a phi input, which is the mov rule's precondition.
+;; Reuse the future binding-state array for definition counts. Once this
+;; scan completes, only singly defined destinations can become literal facts.
+;; A parameter is its entry definition even when the body later reassigns it.
+(define (opt-late-uniform-phi-init-definitions!
+  [params : ir.CompilerIrParamSeq]
+  [blocks : ir.CompilerIrBlockList]
+  [folded : (__tl_dyn-array i64)]) : unit
+  (let
+    [index : i64 0]
+    (begin
+      (opt-def-counts-params! (compiler-opt-global-shared-view folded) params)
+      (opt-def-counts-blocks! (compiler-opt-global-shared-view folded) blocks)
+      (while (< index (array-length folded))
+        (begin
+          (set!
+            (array-ref folded index)
+            (if (> (array-ref folded index) 1)
+              3
+              0))
+          (set! index (+ index 1)))))))
+
 (define (opt-late-uniform-phi-round [func : ir.CompilerIrFunction]) : OptLateRewriteResult
   (match (compiler-opt-global-shared-view func)
     [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
@@ -174068,6 +174159,11 @@
               (compiler-opt-global-shared-view env-slots)
               cap
               0)]
+          [_definitions : unit
+            (opt-late-uniform-phi-init-definitions!
+              (compiler-opt-global-shared-view params)
+              (compiler-opt-global-shared-view blocks)
+              (compiler-opt-global-shared-view folded))]
           [_phis : unit
             (opt-late-uniform-phi-scan-blocks!
               (compiler-opt-global-shared-view blocks)
@@ -174213,6 +174309,11 @@
                           uniform-func
                           uniform-changed)
                         (let
+                          [observed : ir.CompilerIrFunction
+                            (compiler-opt-debug-observe-function
+                              type-segment-bases
+                              "uniform_phi"
+                              uniform-func)]
                           [changed : bool
                             (or
                               reset-changed
@@ -174231,7 +174332,7 @@
                                 (if changed
                                   (ir.compiler-ir-clone-function
                                     (compiler-opt-global-shared-view pools)
-                                    uniform-func)
+                                    observed)
                                   func)]
                               [_restore : unit
                                 (unsafe
@@ -179219,65 +179320,6 @@
 (define (opt-pure-call-single-def? [defs : (__tl_dyn-array i64)] [var : i64]) : bool
   (and (>= var 0) (< var (array-length defs)) (= (array-ref defs var) 1)))
 
-(define (opt-pure-call-def-counts-instrs!
-  [defs : (__tl_dyn-array i64)]
-  [instrs : ir.CompilerIrInstrSeq]) : unit
-  (let
-    [count : i64
-      (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))]
-    [index : i64 0]
-    (begin
-      (while (< index count)
-        (let
-          [dst : i64
-            (opt-bce-mb-instr-seq-dst-or
-              (compiler-opt-global-shared-view instrs)
-              index
-              (- 0 1))]
-          (begin
-            (if (and (>= dst 0) (< dst (array-length defs)))
-              (set! (array-ref defs dst) (+ (array-ref defs dst) 1))
-              unit)
-            (set! index (+ index 1)))))
-      unit)))
-
-;; A parameter is defined once, at entry.
-(define (opt-pure-call-def-counts-params!
-  [defs : (__tl_dyn-array i64)]
-  [params : ir.CompilerIrParamSeq]) : unit
-  (let
-    [count : i64
-      (ir.compiler-ir-param-seq-count (compiler-opt-global-shared-view params))]
-    [at : i64 0]
-    (begin
-      (while (< at count)
-        (begin
-          (match (ir.compiler-ir-param-seq-ref
-            (compiler-opt-global-shared-view params)
-            at)
-            [(ir.CompilerIrParam.Param _ _ index)
-              (if (and (>= index 0) (< index (array-length defs)))
-                (set! (array-ref defs index) (+ (array-ref defs index) 1))
-                unit)])
-          (set! at (+ at 1))))
-      unit)))
-
-(define (opt-pure-call-def-counts!
-  [defs : (__tl_dyn-array i64)]
-  [blocks : ir.CompilerIrBlockList]) : unit
-  (match blocks
-    [(ir.CompilerIrBlockList.Nil) unit]
-    [(ir.CompilerIrBlockList.Array seq)
-      (opt-pure-call-def-counts! defs (ir.compiler-ir-block-seq-to-list seq))]
-    [(ir.CompilerIrBlockList.Cons block rest)
-      (begin
-        (match (compiler-opt-global-shared-view block)
-          [(ir.CompilerIrBlock.Block _ instrs)
-            (opt-pure-call-def-counts-instrs!
-              (compiler-opt-global-shared-view defs)
-              (compiler-opt-global-shared-view instrs))])
-        (opt-pure-call-def-counts! defs (compiler-opt-box-shared-view rest)))]))
-
 ;; Every argument var, after copy resolution, is single-def (a literal always
 ;; qualifies).
 (define (opt-pure-call-value-stable?
@@ -179679,11 +179721,11 @@
             (opt_i64_i64_map.with-capacity (+ (* 2 frame) 16))]
           [defs : (__tl_dyn-array i64) (__tl_make-array i64 (+ frame 1))]
           [_defs-params : unit
-            (opt-pure-call-def-counts-params!
+            (opt-def-counts-params!
               (compiler-opt-global-shared-view defs)
               (compiler-opt-global-shared-view params))]
           [_defs : unit
-            (opt-pure-call-def-counts!
+            (opt-def-counts-blocks!
               (compiler-opt-global-shared-view defs)
               (compiler-opt-global-shared-view blocks))]
           [builder : ir.CompilerIrBlockBuilder

@@ -42,6 +42,14 @@ The affine storage reference/growth tests and optimizer smoke driver protect
 these rules. Reuse the existing generated core vectors for compact payloads;
 do not allocate wide records for every possible local ID or rebuild cons chains.
 
+Optimizer substitutions must prove their per-variable definition requirements;
+late IR may still contain mutable locals when SSA construction declines a
+function. `opt-def-counts-*` counts entry parameters and all destinations through
+the verifier's canonical instruction classifier. The post-prune uniform-phi
+pass uses those counts before forwarding literals and admits each destination
+once into its frame-sized worklist. Its `uniform_phi` observation is available
+through pass tracing and `--dump-ir after-uniform_phi`.
+
 The compiler also has a pure, versioned incremental-query identity layer. It
 canonicalizes typed source, logical-name, dependency, package/stdlib,
 configuration, macro/comptime, target, and ordered-child inputs into a bounded

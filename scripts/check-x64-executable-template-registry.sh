@@ -37,7 +37,7 @@ count_matches 9 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_ru
 count_matches 24 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
 count_matches 30 '\.globl' src/compiler_backend_runtime_windows.tl
 count_matches 44 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
-count_matches 97 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
+count_matches 98 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
 count_matches 46 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
 
 # All target-owned executable byte helpers carry closed IDs.  Windows has two

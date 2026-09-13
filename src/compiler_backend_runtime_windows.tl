@@ -1805,7 +1805,10 @@ tl_region_reset:
     testq %r13, %r13
     jz .L_tl_region_reset_win_invalid
     testq $8, 48(%r13)
-    jnz tl_arena_debug_reset_abort
+    jz .L_tl_region_reset_win_mark_debug_guard_done
+    subq $32, %rsp
+    call tl_arena_debug_reset_abort
+.L_tl_region_reset_win_mark_debug_guard_done:
     movq %r13, %r11
     movq 56(%r11), %r13
 ")

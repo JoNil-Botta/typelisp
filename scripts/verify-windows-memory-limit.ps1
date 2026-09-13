@@ -15,8 +15,22 @@ if (Test-Path -LiteralPath $Workdir) {
 }
 New-Item -ItemType Directory -Path $Workdir | Out-Null
 
-function Fail([string]$Message) {
+function Fail([string]$Message, [object]$Case = $null) {
     [Console]::Error.WriteLine($Message)
+    if ($null -ne $Case) {
+        [Console]::Error.WriteLine("bounded case exit=$($Case.Status)")
+        $Case.Report.GetEnumerator() | Sort-Object Name | ForEach-Object {
+            [Console]::Error.WriteLine("report $($_.Name)=$($_.Value)")
+        }
+        foreach ($path in @($Case.Stdout, $Case.Stderr)) {
+            [Console]::Error.WriteLine("--- $path (first 40 lines)")
+            if (Test-Path -LiteralPath $path -PathType Leaf) {
+                Get-Content -LiteralPath $path -TotalCount 40 | ForEach-Object {
+                    [Console]::Error.WriteLine($_)
+                }
+            }
+        }
+    }
     exit 1
 }
 
@@ -115,28 +129,43 @@ if (-not (Select-String -LiteralPath $memory.Stderr -SimpleMatch 'memory limit e
     Fail 'memory-limit rejection did not emit its specific diagnostic'
 }
 
-# Timeout must terminate the whole job, including a sleeping descendant. The
-# child writes its PID before the parent waits so cleanup can be checked after
-# the wrapper returns.
+function Assert-Timeout([object]$Case) {
+    if ($Case.Status -ne 124 -or $Case.Report.reason -ne 'timeout' -or
+        $Case.Report.exit_code -ne '124') {
+        Fail "timeout status was not distinguished: exit=$($Case.Status) reason=$($Case.Report.reason)" $Case
+    }
+}
+
+# Keep the short deadline independent of PowerShell startup progress: timing
+# out before the command initializes is still a valid timeout.
+$shortTimeout = Invoke-BoundedCase 'timeout-classification' 512 1 @(
+    'powershell.exe', '-NoProfile', '-Command', 'Start-Sleep -Seconds 30')
+Assert-Timeout $shortTimeout
+
+# Descendant cleanup needs an actual child to observe. Give this separate case
+# a bounded startup allowance, and deliberately delay child creation beyond the
+# short case's deadline. The original one-second fixture could kill a cold
+# PowerShell before it published its child PID (#7809).
+# The child still outlives the cleanup deadline, so only job termination can
+# satisfy the subsequent liveness assertion. There are no command retries.
 $pidFile = Join-Path $Workdir 'timeout-child.pid'
 $escapedPidFile = $pidFile.Replace("'", "''")
 $timeoutScript = @"
+Start-Sleep -Seconds 2
 `$child = Start-Process powershell.exe -PassThru -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 30')
 [IO.File]::WriteAllText('$escapedPidFile', [string]`$child.Id)
 Wait-Process -Id `$child.Id
 "@
-$timeout = Invoke-BoundedCase 'timeout-cleanup' 512 1 @(
+$timeout = Invoke-BoundedCase 'timeout-cleanup' 512 10 @(
     'powershell.exe', '-NoProfile', '-Command', $timeoutScript)
-if ($timeout.Status -ne 124 -or $timeout.Report.reason -ne 'timeout') {
-    Fail "timeout status was not distinguished: exit=$($timeout.Status) reason=$($timeout.Report.reason)"
-}
+Assert-Timeout $timeout
 if (-not (Test-Path -LiteralPath $pidFile -PathType Leaf)) {
-    Fail 'timeout fixture did not publish its child PID'
+    Fail 'timeout fixture did not publish its child PID within the startup allowance' $timeout
 }
 $childPid = [int](Get-Content -LiteralPath $pidFile -Raw)
 Start-Sleep -Milliseconds 100
 if (Get-Process -Id $childPid -ErrorAction SilentlyContinue) {
-    Fail "timed-out job left child process $childPid alive"
+    Fail "timed-out job left child process $childPid alive" $timeout
 }
 
 $wrapperFailure = Invoke-BoundedCase 'wrapper-failure' 512 30 @(
@@ -146,4 +175,4 @@ if ($wrapperFailure.Status -ne 2 -or
     Fail "wrapper/setup failure was not distinguished: exit=$($wrapperFailure.Status) reason=$($wrapperFailure.Report.reason)"
 }
 
-[Console]::Out.WriteLine('Windows memory-limit helper self-tests passed')
+[Console]::Out.WriteLine('Windows memory-limit helper self-tests passed (short timeout and delayed descendant cleanup)')

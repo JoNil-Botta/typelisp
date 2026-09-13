@@ -916,8 +916,9 @@
     (__tl_make-array (sym_i64_env.sym-i64-empty))
     (compiler-load-session-state-bool-cell false)))
 
-(define (compiler-load-session-state-new-with-standalone-reset-safety
-  [standalone-reset-safe : bool]) : CompilerLoadSessionState
+(define (compiler-load-session-state-new-with-reset-safety-and-catalog
+  [standalone-reset-safe : bool]
+  [catalog : CompilerLoadDependencyCatalogRegistry]) : CompilerLoadSessionState
   (let
     [surface-summaries : (__tl_dyn-array CompilerLoadSurfaceSummaryList)
       (__tl_make-array (compiler-load-surface-summary-list-empty))]
@@ -952,7 +953,7 @@
         lazy-import-skip-record-count
         lazy-qualified-observer
         (compiler-load-embedded-stdlib-provenance-state-new)
-        (compiler-load-dependency-catalog-registry-new)
+        catalog
         (compiler-load-dependency-surface-state-new)
         (compiler-load-session-state-bool-cell false)
         (__tl_make-array ci.InternCompatState 1)
@@ -971,6 +972,28 @@
       (set! canonical.shared-address address)
       (set! (array-ref cell 0) canonical)
       (compiler-load-global-array-element-shared-view cell 0))))
+
+(define (compiler-load-session-state-new-with-standalone-reset-safety
+  [standalone-reset-safe : bool]) : CompilerLoadSessionState
+  (compiler-load-session-state-new-with-reset-safety-and-catalog
+    standalone-reset-safe
+    (compiler-load-dependency-catalog-registry-new)))
+
+;; A package child owns fresh parse caches and hydrated surfaces, but borrows the
+;; enclosing package's admitted images. Its teardown must release only those
+;; derived surfaces, never the enclosing catalog or its executable mappings.
+(define (compiler-load-session-state-new-for-package-child
+  [parent : CompilerLoadSessionState]) : CompilerLoadSessionState
+  (let
+    [state : CompilerLoadSessionState
+      (compiler-load-session-state-new-with-reset-safety-and-catalog
+        true
+        (owned_view.compiler-owned-shared-view parent.dependency-catalog))]
+    (begin
+      (compiler-load-session-state-set-dependency-tlci-force-source!
+        (compiler-load-session-state-shared-view (& state))
+        (compiler-load-session-state-dependency-tlci-force-source? parent))
+      state)))
 
 (define (compiler-load-session-state-new) : CompilerLoadSessionState
   (compiler-load-session-state-new-with-standalone-reset-safety false))
@@ -1207,33 +1230,19 @@
             message
             first-error))])))
 
-(define (compiler-load-session-state-dependency-catalog-release!
-  [state : CompilerLoadSessionState]) : ResultCompilerLoadDependencyCatalogUnit
+;; Retire only derived frontend views; admitted catalog mappings stay live.
+;; Call after clearing typecheck/prefix references, in the arena that should
+;; own the replacement empty session carriers.
+(define (compiler-load-session-state-dependency-surfaces-release!
+  [state : CompilerLoadSessionState]) : unit
   (let
-    [registry : CompilerLoadDependencyCatalogRegistry
-      (owned_view.compiler-owned-shared-view state.dependency-catalog)]
     [surface-state : CompilerLoadDependencySurfaceState
       (owned_view.compiler-owned-shared-view state.dependency-surfaces)]
-    [items : CompilerLoadDependencyCatalogList
-      (owned_view.compiler-owned-array-element-shared-view registry.entries 0)]
-    [owner : i64 (array-ref registry.owner-arena 0)]
-    [error : String (compiler-load-dependency-catalog-release-from! items 0 "")]
     (begin
       (compiler-load-dependency-surface-list-destroy-storage!
         (owned_view.compiler-owned-array-element-shared-view
           surface-state.fragments
           0))
-      (if (> owner 0)
-        (unsafe
-          (arena.tl_arena_destroy owner))
-        unit)
-      (set! (array-ref registry.owner-arena 0) 0)
-      (set!
-        (array-ref registry.entries 0)
-        (compiler-load-dependency-catalog-empty-list))
-      (set!
-        (array-ref registry.generation 0)
-        (+ (array-ref registry.generation 0) 1))
       (set!
         (array-ref surface-state.fragments 0)
         (compiler-load-dependency-surface-list-empty))
@@ -1250,7 +1259,31 @@
       (set! (array-ref surface-state.surface-decl-count 0) 0)
       (set! (array-ref surface-state.surface-provenance-count 0) 0)
       (set! (array-ref surface-state.macro-skip-count 0) 0)
-      (set! (array-ref surface-state.typecheck-skip-count 0) 0)
+      (set! (array-ref surface-state.typecheck-skip-count 0) 0))))
+
+(define (compiler-load-session-state-dependency-catalog-release!
+  [state : CompilerLoadSessionState]) : ResultCompilerLoadDependencyCatalogUnit
+  (let
+    [registry : CompilerLoadDependencyCatalogRegistry
+      (owned_view.compiler-owned-shared-view state.dependency-catalog)]
+    [items : CompilerLoadDependencyCatalogList
+      (owned_view.compiler-owned-array-element-shared-view registry.entries 0)]
+    [owner : i64 (array-ref registry.owner-arena 0)]
+    [error : String (compiler-load-dependency-catalog-release-from! items 0 "")]
+    (begin
+      (compiler-load-session-state-dependency-surfaces-release!
+        (owned_view.compiler-owned-shared-view state))
+      (if (> owner 0)
+        (unsafe
+          (arena.tl_arena_destroy owner))
+        unit)
+      (set! (array-ref registry.owner-arena 0) 0)
+      (set!
+        (array-ref registry.entries 0)
+        (compiler-load-dependency-catalog-empty-list))
+      (set!
+        (array-ref registry.generation 0)
+        (+ (array-ref registry.generation 0) 1))
       (if (= (string.string-length error) 0)
         ResultCompilerLoadDependencyCatalogUnit.Ok
         (ResultCompilerLoadDependencyCatalogUnit.Err error)))))
@@ -11258,8 +11291,18 @@
   [path : String]
   [cfgs : sym_i64_env.SymI64Env]) : parser.ResultAstProgramDiagnostic
   (let
-    [source : String (compiler-load-read-file-text (string.copy path))]
-    (compiler-load-parse-source-diagnostic-escaping path source cfgs)))
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [result : parser.ResultAstProgramDiagnostic
+      (compiler-load-parse-file-diagnostic-detached-with-pools
+        path
+        cfgs
+        (ast.ast-place-shared-view pools))]
+    ;; Serial package loading reads the compatibility pools after this boundary.
+    ;; Publish the compacted destination before traversing imports; the parser's
+    ;; temporary pools and arena have already been retired by the shared helper.
+    (begin
+      (ast.ast-node-pool-context-install! pools)
+      result)))
 
 (define (compiler-load-parse-file-diagnostic-escaping-with-pools
   [path : String]

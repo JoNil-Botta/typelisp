@@ -2030,6 +2030,11 @@ if [ "$NL_HOST_OS" = windows ]; then
     # authoritative Windows CI probe measured 30,725 used nodes, 31,744
     # capacity, and 761,856 physical payload bytes. The other three AST pool
     # boundaries remain unchanged.
+    # #7348's aggregate marker metadata and generated replay add type structure
+    # to the compiler source graph. Windows CI run 34727532440 on a6096578
+    # measured 30,724 used nodes: 31 segments, 31,744 capacity, and 761,856
+    # physical payload bytes. The node width remains 24 bytes; the other three
+    # selfhost pool boundaries retain their exact pins.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 31 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

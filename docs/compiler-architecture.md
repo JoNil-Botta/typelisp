@@ -101,6 +101,17 @@ optimization levels for both targets. The copied environment test destroys the
 source arena and checks duplicate bindings, zero values and snapshot isolation.
 These focused contracts complement complete package build and platform gates.
 
+Memory-class aggregate expressions carry addresses into inline storage.
+`lower-local-assignment-value` gives a loop-carried memory-class local its own
+inline storage before rebinding it. The source can arrive through a field,
+enum payload, fixed-array projection, conditional merge, or nested loop; the
+copy must not depend on incomplete address-provenance tracking. Otherwise a
+later call can overwrite a retained result slot even at opt0. Raw pointers
+copy only their address. The native `loop_carried_enum_payload_snapshot` and
+`loop_carried_raw_read_snapshot` fixtures guard this boundary on both targets
+at every optimization level. Address generation uses `lower-emit-gep`, also
+shared by byte-offset projections through `lower-gep-byte`.
+
 The compiler also has a pure, versioned incremental-query identity layer. It
 canonicalizes typed source, logical-name, dependency, package/stdlib,
 configuration, macro/comptime, target, and ordered-child inputs into a bounded
@@ -108,6 +119,15 @@ binary transcript and exact SHA-256 fingerprint. The layer is relocatable and
 independent of cache storage: callers supply authority-checked package-relative
 paths and nominal compiler/child identities, while event capture, invalidation,
 result serialization, and reuse policy remain separate compiler services.
+
+Aggregate declaration markers live in `AstDeclMeta` in
+[`compiler_ast_types.tl`](../src/compiler_ast_types.tl), separate from runtime
+layout. Parsing and surface hydration share its runtime metadata constructor;
+unmarked runtime declarations reuse the singleton, and unchanged marker updates
+do not allocate. Generated-declaration reuse in `compiler_specialize.tl` compares
+these semantic flags even when the aggregates have identical ABI. The existing
+AST wrapper, surface roundtrip, and specialization selftests guard these rules;
+serialized metadata changes also require a surface-AST schema version change.
 
 Handwritten runtime, startup, and direct-object x86-64 code is covered by the
 closed [compiler-owned executable template registry](compiler-x64-executable-templates.md).

@@ -22849,27 +22849,15 @@
               [(ResultCompilerBackend.Err m) (ResultCompilerBackend.Err m)])]
           [(ResultCompilerBackend.Err m) (ResultCompilerBackend.Err m)]))]))
 
-;; Legacy stack-slot offsets for an ordinary group var with no register home:
-;; word0 reuses the var's ordinary slot, and word1 lives in the second group
-;; region below the callee-save area.
+;; An ordinary group keeps word0 in its scalar var slot. Both ordinary and
+;; address-exposed groups use the canonical per-var pair slot for word1:
+;; a separate one-word-stride map would overlap another var's exposed pair.
 (define (compiler-backend-group-legacy-word0-slot [var : i64]) : i64
   (- 0 (* 8 (+ var 1))))
 
-(define (compiler-backend-group-legacy-word1-slot
-  [var : i64]
-  [vars : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [backend-state : CompilerBackendState]) : i64
-  (-
-    0
-    (*
-      8
-      (+
-        (compiler-backend-frame-slots vars assignments backend-state)
-        (+ var 1)))))
-
-;; Stack-slot offsets for an address-exposed group var's two words when it has
-;; no register home. The pair lives in a dedicated contiguous region below the
+;; Canonical pair offsets for a group var without a register home. Word1 is
+;; shared by both storage modes; address-exposed values also use word0 here.
+;; The pair lives in a dedicated contiguous region below the
 ;; ordinary var/callee-save region so `AddrOf group-var` plus `Gep 8` reaches
 ;; word1. `frame-slots` depends only on the allocator plan, so this base is
 ;; stable across body emission.
@@ -23204,25 +23192,19 @@
           (if (compiler-backend-group-var? backend-state var)
             (compiler-backend-frame-offset-with-backend-state
               backend-state
-              (if (compiler-backend-addressable-group-var? backend-state var)
-                (if (= index 0)
+              (if (= index 0)
+                (if (compiler-backend-addressable-group-var? backend-state var)
                   (compiler-backend-group-word0-slot
                     var
                     vars
                     assignments
                     backend-state)
-                  (compiler-backend-group-word1-slot
-                    var
-                    vars
-                    assignments
-                    backend-state))
-                (if (= index 0)
-                  (compiler-backend-group-legacy-word0-slot var)
-                  (compiler-backend-group-legacy-word1-slot
-                    var
-                    vars
-                    assignments
-                    backend-state))))
+                  (compiler-backend-group-legacy-word0-slot var))
+                (compiler-backend-group-word1-slot
+                  var
+                  vars
+                  assignments
+                  backend-state)))
             (compiler-backend-slot-with-backend-state
               backend-state
               (+ var index))))])))

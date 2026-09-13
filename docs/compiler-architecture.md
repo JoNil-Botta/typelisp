@@ -32,6 +32,16 @@ copy only their address. The native `loop_carried_enum_payload_snapshot` and
 at every optimization level. Address generation uses `lower-emit-gep`, also
 shared by byte-offset projections through `lower-gep-byte`.
 
+Every stack-homed register group owns one canonical two-word region indexed
+by its final variable ID. Address-exposed groups use both contiguous words;
+ordinary groups retain their first word in the scalar slot and use the same
+canonical second-word slot. Mixing a one-word-stride second-word map with
+address-exposed pairs aliases distinct live values. The backend's exhaustive
+mixed-exposure test checks operand disjointness, and
+`mixed_group_stack_homes.tl` checks writes across real calls at opt0/1/2 on
+both native targets. The existing two-words-per-variable frame reservation
+covers both layouts.
+
 Affine folding keeps one mutable fact table per function: local vreg IDs index
 compact binding slots, and only live bindings are scanned for key/base
 invalidation. Every block starts with empty facts; the cumulative 512-binding

@@ -514,9 +514,9 @@
 
 (define (lsp-memory-reinstall-smoke-ok?) : bool
   (let
-    [first-owner : i64 (arena.tl_arena_make)]
+    [first-owner : arena.Arena (arena.make)]
     [_install-first : unit
-      (lsp_frame_core.lsp-frame-memory-install! "old\nlast" first-owner)]
+      (lsp_frame_core.lsp-frame-memory-install! "old\nlast" first-owner.handle)]
     [line : io.StdinRead (lsp_frame_core.lsp-frame-memory-read-line)]
     [tail : io.StdinRead (lsp_frame_core.lsp-frame-memory-read-bytes 20)]
     [_write-first : unit
@@ -534,16 +534,34 @@
             (io.stdin-read-buffer (owned_view.compiler-owned-shared-view tail)))
           "last")
         (io.stdin-read-eof? tail)
+        (string.eq
+          (owned_view.compiler-owned-shared-view
+            lsp_frame_core.lsp-frame-memory-state).stdout
+          "old output")
+        (string.eq
+          (owned_view.compiler-owned-shared-view
+            lsp_frame_core.lsp-frame-memory-state).stderr
+          "old error")
         (=
           (owned_view.compiler-owned-shared-view
             lsp_frame_core.lsp-frame-memory-state).input-offset
           8))]
     [_reset-first : unit (lsp_frame_core.lsp-frame-memory-reset!)]
-    [_destroy-first : unit
-      (unsafe
-        (arena.tl_arena_destroy first-owner))]
+    [_destroy-first : unit (arena.destroy-safe! first-owner)]
     [reset-ok : bool
       (and
+        (string.eq
+          (owned_view.compiler-owned-shared-view
+            lsp_frame_core.lsp-frame-memory-state).input
+          "")
+        (string.eq
+          (owned_view.compiler-owned-shared-view
+            lsp_frame_core.lsp-frame-memory-state).stdout
+          "")
+        (string.eq
+          (owned_view.compiler-owned-shared-view
+            lsp_frame_core.lsp-frame-memory-state).stderr
+          "")
         (not
           (owned_view.compiler-owned-shared-view
             lsp_frame_core.lsp-frame-memory-state).active)
@@ -558,9 +576,9 @@
         (not
           (owned_view.compiler-owned-shared-view
             lsp_frame_core.lsp-frame-memory-state).eof))]
-    [second-owner : i64 (arena.tl_arena_make)]
+    [second-owner : arena.Arena (arena.make)]
     [_install-second : unit
-      (lsp_frame_core.lsp-frame-memory-install! "new\n" second-owner)]
+      (lsp_frame_core.lsp-frame-memory-install! "new\n" second-owner.handle)]
     [clean-output : bool
       (and
         (string.eq
@@ -583,11 +601,9 @@
         (=
           (owned_view.compiler-owned-shared-view
             lsp_frame_core.lsp-frame-memory-state).owner.handle
-          second-owner))]
+          second-owner.handle))]
     [_reset-second : unit (lsp_frame_core.lsp-frame-memory-reset!)]
-    [_destroy-second : unit
-      (unsafe
-        (arena.tl_arena_destroy second-owner))]
+    [_destroy-second : unit (arena.destroy-safe! second-owner)]
     (and first-ok reset-ok clean-output second-ok)))
 
 (define (lsp-transcript-reset-leakage-smoke-ok?) : bool

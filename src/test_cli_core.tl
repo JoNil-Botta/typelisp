@@ -1864,8 +1864,17 @@
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]) : i64
   (let
+    ;; The initial syntax unwrap must use this owner too: a compatibility
+    ;; classifier can mistake a colliding installed-pool ID for a macro global.
     [source-id : i64
-      (tc_core.macro-hygiene-global-source-name-id-or session name-id name-id)]
+      (if (cis.intern-structural-session-source-name-component-valid?
+        session
+        name-id)
+        name-id
+        (cis.intern-structural-session-syntax-source-name-id-or
+          session
+          name-id
+          name-id))]
     [source-names : ci.InternSourceNameSessionHandle
       (cis.intern-structural-session-handle-source-names session)]
     (if (cis.intern-structural-session-source-name-component-valid?
@@ -3780,6 +3789,49 @@
   (if (tltest-structural-field-reachability-self-test?)
     unit
     (io.panic "test CLI structural field owner reachability mismatch")))
+
+(define (tltest-inactive-field-owner-self-test?) : bool
+  (let
+    [home : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [decoy : ci.InternCompatState (ci.intern-compat-state-new)]
+    [decoy-id : i64
+      (ci.intern-compat-state-intern
+        (&mut decoy)
+        "__tl_macro_global$probe/foreign")]
+    [owner : ci.InternCompatState (ci.intern-compat-state-new)]
+    [index : i64 0]
+    [_fill : unit
+      (while (< (ci.intern-compat-state-pool-len (& owner)) decoy-id)
+        (begin
+          (ci.intern-compat-state-intern
+            (&mut owner)
+            (string.int->string index))
+          (set! index (+ index 1))))]
+    [field-id : i64 (ci.intern-compat-state-intern (&mut owner) "owner.field")]
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle
+          (ci.intern-source-name-session-from-state owner)))]
+    (begin
+      (unless (= decoy-id field-id) (io.panic "probe setup IDs differ"))
+      (ci.intern-compat-state-install! decoy)
+      (unless
+        (and
+          (ci.intern-qualified? field-id)
+          (ci.intern-macro-global-name-id? field-id))
+        (io.panic "probe setup decoy not classified"))
+      (let
+        [valid : bool
+          (= (tltest-reach-name-source-base-id session field-id) field-id)]
+        (begin
+          (ci.intern-compat-state-install! home)
+          valid)))))
+
+(test
+  test-cli-inline-harness-normalizes-inactive-field-owner
+  (if (tltest-inactive-field-owner-self-test?)
+    unit
+    (io.panic "test CLI field owner normalization consulted the installed pool")))
 
 (define (tltest-generated-runtime-reachability-self-test?) : bool
   (let

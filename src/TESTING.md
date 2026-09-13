@@ -20,6 +20,8 @@ fields, initializer dependencies, imported helpers and hygienic macro references
 Run it at all optimization levels, alongside the harness retention test in
 `test_cli_core.tl`, which also proves unrelated globals remain pruned. The intern
 source-session tests exercise dotted-root lookup through an inactive owner.
+The harness normalization regression installs a colliding macro-global decoy
+pool and checks that the captured owner still determines the source name.
 
 Name ids in `AstDecl`, `AstExpr`, patterns, parameters, fields, and nominal
 `AstType` nodes are owned by one `InternCompatState` table. Parsed token slices,

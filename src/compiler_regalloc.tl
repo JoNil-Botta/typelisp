@@ -39807,7 +39807,10 @@
         (set!
           compiler-reg-trace-reasons
           (compiler-reg-owned-copy-words
-            (compiler-reg-global-shared-view compiler-reg-trace-reasons))))
+            ;; This is a global place. Keep its view independent of the
+            ;; temporary reference cell used by the borrowed-inline seed bridge.
+            (owned_view.compiler-owned-place-shared-view
+              compiler-reg-trace-reasons))))
       (unsafe
         (arena.tl_arena_destroy scratch))
       result)))

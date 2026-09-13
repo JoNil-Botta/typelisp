@@ -271,14 +271,16 @@ assert_surface_route() {
     macro_skipped=$6
     typecheck_skipped=$7
     decls=$8
+    [ "$(grep -Fc 'dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=3|' "$file")" -eq 1 ] ||
+        fail "$label dependency runtime observation is missing or duplicated"
     if ! grep -F \
-        "dependency-tlci-verification|phase=finished|requests=-1|entries=3" \
+        "dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=3" \
         "$file" |
         grep -F "|surface-enabled=$enabled|surface-fragments=3|surface-hits=$hits|surface-fallbacks=$fallbacks|" |
         grep -F "|surface-decls=$decls|surface-macro-skipped=$macro_skipped|surface-typecheck-skipped=$typecheck_skipped" \
             >/dev/null; then
         grep -F \
-            "dependency-tlci-verification|phase=finished|requests=-1|entries=3" \
+            "dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=3" \
             "$file" >&2 || true
         fail "$label dependency surface route mismatch"
     fi

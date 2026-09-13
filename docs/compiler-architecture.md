@@ -102,6 +102,18 @@ Native export compilation starts only after runtime cleanup. A failed checked
 lower releases a still-live source/checked pool before replacement; a rollover
 abort must not revisit its already destroyed original context.
 
+Dependency verification records `runtime-finished` from the runtime child's
+load session immediately before its first release. Surface hydration and skip
+counters belong to that child and cannot be read from the restored parent.
+The later `finished` record describes the parent's admitted catalog before
+mapping release. Verification must retain both boundaries without extending
+frontend storage lifetimes or treating cleared parent counters as runtime work.
+The package surface capture's fixed state cell survives those lifetimes too.
+Its expanded AST payload is consumed before frontend retirement; encoded bytes
+and copied error text belong to the result arena selected when capture starts.
+Taking a result detaches its value before clearing the cell, so both success
+and failure can leave an inactive state after the former result arena retires.
+
 The runtime lifetime tests cover repeated checked errors, macro errors, failed
 imports after a successful import, parent restoration, bounded direct-object
 side-backend retention, and emission at all optimization levels for both targets. The copied environment test destroys the

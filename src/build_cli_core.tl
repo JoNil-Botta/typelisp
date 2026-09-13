@@ -7410,6 +7410,22 @@
         (build-package-require-direct-object prepared)
         prepared))))
 
+;; Observe the runtime child while its derived frontend surfaces are live.
+;; The later catalog-finish report belongs to the restored parent, which owns
+;; admitted mappings but did not perform this runtime's surface hydration.
+(define (build-package-runtime-scope-release!
+  [scope : compiler_driver_core.CompilerDriverPackageRuntimeScope]) : unit
+  (begin
+    (cfg
+      dependency-tlci-verification
+      (unless
+        (array-ref scope.released 0)
+        (compiler_dependency_tlci.compiler-dependency-tlci-verification-record!
+          (owned_view.compiler-owned-shared-view scope.state.load-session)
+          "runtime-finished"
+          -1)))
+    (compiler_driver_core.compiler-driver-package-runtime-scope-release! scope)))
+
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-finish-fresh-artifacts-with-surface
@@ -7474,9 +7490,7 @@
             [_ unit])]
         [captured : package_surface.ResultPackageSurfacePayloads
           (package_surface.package-surface-capture-take)]
-        [_release : unit
-          (compiler_driver_core.compiler-driver-package-runtime-scope-release!
-            scope)]
+        [_release : unit (build-package-runtime-scope-release! scope)]
         (match (owned_view.compiler-owned-shared-view prepared)
           [(ResultBuildPackagePreparedRuntime.Err message)
             (begin
@@ -7663,8 +7677,7 @@
                 (cfg_core.compiler-cfg-snapshot-to-env cfg-names)
                 announce))]
           (begin
-            (compiler_driver_core.compiler-driver-package-runtime-scope-release!
-              scope)
+            (build-package-runtime-scope-release! scope)
             status))))))
 
 (cfg

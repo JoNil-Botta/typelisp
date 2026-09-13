@@ -157,6 +157,10 @@ check_package_export_boundary() {
             mode = ""
             if ($0 ~ /\(build-package-tlci-text-with-surface$/) { mode = "finish"; finish += 1 }
             if ($0 ~ /\(build-package-finish-fresh-artifacts-with-surface$/) { mode = "pipeline"; pipeline += 1 }
+            if ($0 ~ /\(build-package-runtime-scope-release!$/) { mode = "release"; release_owner += 1 }
+        }
+        mode == "release" {
+            if ($0 ~ /compiler_driver_core[.]compiler-driver-package-runtime-scope-release!/) release_call += 1
         }
         mode == "finish" {
             if ($0 ~ /AstDecl|AstNode|TlciNativeMacroCaptures|build-package-tlci-(callable|macro)-collector|embedded-native-emit-package$/) forbidden += 1
@@ -166,10 +170,10 @@ check_package_export_boundary() {
             if ($0 ~ /\(build-package-tlci-capture-exports$/) { capture += 1; if (prepared) forbidden += 1 }
             if ($0 ~ /\(build-package-prepare-owned-runtime$/) prepared += 1
             if ($0 ~ /\(package_surface[.]package-surface-capture-take/) taken += 1
-            if ($0 ~ /compiler-driver-package-runtime-scope-release!/) { released += 1; if (!taken) forbidden += 1 }
+            if ($0 ~ /build-package-runtime-scope-release!/) { released += 1; if (!taken) forbidden += 1 }
             if ($0 ~ /\(build-package-tlci-text-with-surface$/ && !released) forbidden += 1
         }
-        END { exit !(finish == 1 && pipeline == 1 && source_emit == 1 && capture == 1 && prepared == 1 && taken == 1 && released == 1 && forbidden == 0) }
+        END { exit !(finish == 1 && pipeline == 1 && source_emit == 1 && capture == 1 && prepared == 1 && taken == 1 && released == 1 && release_owner == 1 && release_call == 1 && forbidden == 0) }
     ' "$1"
 }
 check_package_export_boundary src/build_cli_core.tl || fail "package export finishing retains the parsed frontend"
@@ -188,6 +192,11 @@ sed 's/(build-package-tlci-capture-exports$/(uncaptured-package-exports/' \
     src/build_cli_core.tl > "$WORK/uncaptured-export-source.tl"
 if check_package_export_boundary "$WORK/uncaptured-export-source.tl"; then
     fail "package export guard accepted missing capture before runtime"
+fi
+sed 's/compiler_driver_core[.]compiler-driver-package-runtime-scope-release!/missing-runtime-release!/' \
+    src/build_cli_core.tl > "$WORK/unreleased-runtime-source.tl"
+if check_package_export_boundary "$WORK/unreleased-runtime-source.tl"; then
+    fail "package export guard accepted a wrapper without runtime release"
 fi
 # Checked lowering has one owner for pool adoption, error cleanup and arena
 # restoration. Source and PIC routes must share it with package retirement.

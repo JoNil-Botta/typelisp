@@ -139,22 +139,45 @@ elif ! grep -q '^lint: 0 finding(s)$' "$NAME_CASE_PROBE_STDOUT"; then
 fi
 
 count=$(wc -l < "$FILES" | tr -d ' ')
-LINT_BATCH_SIZE=${TYPELISP_LINT_BATCH_SIZE:-32}
+LINT_BATCH_SIZE=${TYPELISP_LINT_BATCH_SIZE-32}
+case "$LINT_BATCH_SIZE" in
+    '' | *[!0-9]*)
+        echo "TYPELISP_LINT_BATCH_SIZE must be a positive integer" >&2
+        exit 2 ;;
+esac
+if ! [ "$LINT_BATCH_SIZE" -gt 0 ] 2>/dev/null; then
+    echo "TYPELISP_LINT_BATCH_SIZE must be a positive integer" >&2
+    exit 2
+fi
+src_concat_count=$(awk '/^src\// { count++ } END { print count + 0 }' "$FILES")
+if [ "$src_concat_count" -eq 0 ]; then
+    echo "src deprecated-concat lint selected no tracked TypeLisp files" >&2
+    exit 1
+fi
 echo "Linting TypeLisp sources for $count file(s) in batches of $LINT_BATCH_SIZE."
 
 # Keep lint processes bounded. The lint command checks each explicit source
 # independently, so chunking preserves coverage while releasing compiler heap
 # state between batches on memory-constrained CI hosts. Materialize the same
-# ordered xargs-style chunks so opt-in timing can attribute individual outliers.
+# ordered chunks so opt-in timing can attribute individual outliers. Split at
+# src/ boundaries as well as the size bound: compiler sources receive the union
+# of normal and deprecated-concat rules in one parse/traversal, while the other
+# source units retain their existing opt-in rule scope. Refs #7826.
 LINT_CHUNK_DIR="$WORKDIR/chunks"
 rm -rf "$LINT_CHUNK_DIR"
 mkdir -p "$LINT_CHUNK_DIR"
 awk -v outdir="$LINT_CHUNK_DIR" -v size="$LINT_BATCH_SIZE" '
     {
-        chunk = int((NR - 1) / size) + 1
-        path = sprintf("%s/lint.%04d.txt", outdir, chunk)
+        source_rules = ($0 ~ /^src\//)
+        if (count == 0 || count == size || source_rules != previous_rules) {
+            if (count != 0) close(path)
+            chunk++
+            count = 0
+            path = sprintf("%s/lint.%04d.txt", outdir, chunk)
+        }
         print $0 >> path
-        if (NR % size == 0) close(path)
+        count++
+        previous_rules = source_rules
     }
 ' "$FILES"
 
@@ -162,14 +185,21 @@ awk -v outdir="$LINT_CHUNK_DIR" -v size="$LINT_BATCH_SIZE" '
 : > "$STDERR"
 lint_status=0
 lint_chunk_index=0
+src_concat_chunk_index=0
 for lint_chunk in "$LINT_CHUNK_DIR"/lint.*.txt; do
     [ -f "$lint_chunk" ] || continue
     lint_chunk_index=$((lint_chunk_index + 1))
     set --
+    src_rules=0
     while IFS= read -r lint_source; do
         [ -n "$lint_source" ] || continue
         set -- "$@" "$lint_source"
+        case "$lint_source" in src/*) src_rules=1 ;; esac
     done < "$lint_chunk"
+    if [ "$src_rules" -eq 1 ]; then
+        set -- --deprecated-string-concat --stdlib-root "$ROOT/stdlib" "$@"
+        src_concat_chunk_index=$((src_concat_chunk_index + 1))
+    fi
     if [ "$NAME_CASE_CURRENT" -eq 1 ]; then
         set -- --name-case "$@"
     fi
@@ -212,84 +242,11 @@ fi
 
 echo "TypeLisp lint check passed for $count file(s); 0 finding(s)."
 
-# Keep compiler/tooling sources on the current String construction surface.
-# Other repository trees own their migration rules separately (for example,
-# verify-stdlib.sh runs check-stdlib-concat-lint.sh), so scope this opt-in rule
-# to the tracked src/**/*.tl set instead of changing fixture semantics.
-SRC_CONCAT_FILES="$WORKDIR/src-concat-files.txt"
-SRC_CONCAT_CHUNK_DIR="$WORKDIR/src-concat-chunks"
-SRC_CONCAT_STDOUT="$WORKDIR/src-concat.stdout"
-SRC_CONCAT_STDERR="$WORKDIR/src-concat.stderr"
+# The source pass above includes the concat rule. Keep its independent negative
+# control so a dropped opt-in flag cannot make a clean corpus falsely pass.
 SRC_CONCAT_PROBE="$WORKDIR/src-concat-probe.tl"
 SRC_CONCAT_PROBE_STDOUT="$WORKDIR/src-concat-probe.stdout"
 SRC_CONCAT_PROBE_STDERR="$WORKDIR/src-concat-probe.stderr"
-
-git ls-files -- 'src/*.tl' | LC_ALL=C sort > "$SRC_CONCAT_FILES"
-if [ ! -s "$SRC_CONCAT_FILES" ]; then
-    echo "src deprecated-concat lint selected no tracked TypeLisp files" >&2
-    exit 1
-fi
-if grep -v '^src/.*\.tl$' "$SRC_CONCAT_FILES" >/dev/null 2>&1; then
-    echo "src deprecated-concat lint selected a path outside src/**/*.tl" >&2
-    exit 1
-fi
-
-rm -rf "$SRC_CONCAT_CHUNK_DIR"
-mkdir -p "$SRC_CONCAT_CHUNK_DIR"
-awk -v outdir="$SRC_CONCAT_CHUNK_DIR" -v size="$LINT_BATCH_SIZE" '
-    {
-        chunk = int((NR - 1) / size) + 1
-        path = sprintf("%s/lint.%04d.txt", outdir, chunk)
-        print $0 >> path
-        if (NR % size == 0) close(path)
-    }
-' "$SRC_CONCAT_FILES"
-
-: > "$SRC_CONCAT_STDOUT"
-: > "$SRC_CONCAT_STDERR"
-src_concat_status=0
-src_concat_chunk_index=0
-for lint_chunk in "$SRC_CONCAT_CHUNK_DIR"/lint.*.txt; do
-    [ -f "$lint_chunk" ] || continue
-    set --
-    while IFS= read -r lint_source; do
-        [ -n "$lint_source" ] || continue
-        set -- "$@" "$lint_source"
-    done < "$lint_chunk"
-    [ "$#" -gt 0 ] || continue
-    src_concat_chunk_index=$((src_concat_chunk_index + 1))
-    if ci_timing_run "src-concat-chunk-$src_concat_chunk_index" lint \
-        "$COMPILER" lint \
-            --format flat \
-            --check \
-            --deprecated-string-concat \
-            --stdlib-root "$ROOT/stdlib" \
-            "$@" >> "$SRC_CONCAT_STDOUT" 2>> "$SRC_CONCAT_STDERR"; then
-        :
-    else
-        chunk_status=$?
-        [ "$src_concat_status" -ne 0 ] || src_concat_status=$chunk_status
-    fi
-done
-
-if [ "$src_concat_chunk_index" -eq 0 ]; then
-    echo "src deprecated-concat lint produced no non-empty batches" >&2
-    exit 1
-fi
-if [ "$src_concat_status" -ne 0 ]; then
-    echo "src deprecated-concat lint failed:" >&2
-    if [ -s "$SRC_CONCAT_STDERR" ]; then
-        echo "stderr:" >&2
-        sed 's/^/  /' "$SRC_CONCAT_STDERR" >&2 || true
-    fi
-    if [ -s "$SRC_CONCAT_STDOUT" ]; then
-        echo "stdout:" >&2
-        sed 's/^/  /' "$SRC_CONCAT_STDOUT" >&2 || true
-    fi
-    exit 1
-fi
-
-src_concat_count=$(wc -l < "$SRC_CONCAT_FILES" | tr -d ' ')
 
 # Exercise the complete opt-in command so an accidentally dropped flag cannot
 # turn the zero-finding source corpus into a false-green gate.

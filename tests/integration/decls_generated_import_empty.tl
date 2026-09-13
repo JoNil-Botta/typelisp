@@ -1,0 +1,1 @@
+;; An empty generated dependency still has to resolve through the loader.

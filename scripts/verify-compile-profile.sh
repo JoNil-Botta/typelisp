@@ -2026,8 +2026,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # capacity, and 737,280 physical payload bytes.
     # #5407's semantic completion provider measured 26,662 used nodes and 27
     # segments on the pre-ownership mainline tree.
+    # #7666's owned discovery result/session surface crosses to 31 segments:
+    # Windows CI run 34727531056 at 8d78edcd measured 30,723 used nodes,
+    # 31,744 capacity, and 761,856 physical payload bytes. Keep the exact
+    # segment boundary; no resource limit or pool-family check is relaxed.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool macro_expand 30 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool macro_expand 31 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # #6828's dense flag-exit/BCE storage declarations cross the next type-pool
     # typecheck boundary: the authoritative Windows probe measured 9,221 used

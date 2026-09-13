@@ -3245,7 +3245,10 @@
     [(sym_i64_env.SymI64ViewNil) unit]
     [(sym_i64_env.SymI64ViewBind key value rest)
       (begin
-        (set! (array-ref slots index) (cfg_core.compiler-cfg-name key))
+        ;; These names outlive per-file intern-persistent arena retirement.
+        (set!
+          (array-ref slots index)
+          (string.copy (cfg_core.compiler-cfg-name key)))
         (set! (array-ref values index) value)
         (tltest-cfg-names-fill! rest slots values (+ index 1)))]))
 
@@ -3283,6 +3286,55 @@
                 index)))))
       env)))
 
+(define (tltest-inline-typecheck-package-source-scoped
+  [source : String]
+  [roots : cli_svec.Vec]
+  [manifest-dir : String]
+  [package-owner : String]
+  [deps : compiler_load.CompilerPkgDeps]
+  [cfg-names : TltestCfgNames]
+  [cache-scope-prefix : String]) : i64
+  (let
+    [home : arena.Arena (arena.current)]
+    (with-scratch
+      (begin
+        (tltest-inline-clear-load-only-caches!)
+        (driver.compiler-driver-reset-file-state!)
+        (compiler_load.compiler-load-session-state-dependency-surfaces-release!
+          (compiler_load.compiler-load-active-session-state-shared-view))
+        (ci.intern-persistent-arena-reset!)
+        (compiler_load.compiler-load-transfer-frontend-handoff!)
+        (let
+          [pools : ast.AstNodePoolContext
+            (driver.compiler-driver-state-new-checked-lower-pools)]
+          [_install : unit (ast.ast-node-pool-context-install! pools)]
+          [status : i64
+            (tltest-inline-typecheck-package-source-with-cfg
+              source
+              roots
+              manifest-dir
+              package-owner
+              deps
+              (tltest-cfg-names-to-env cfg-names)
+              cache-scope-prefix)]
+          [retired : ast.AstNodePoolContext
+            (ast.ast-node-pool-context-capture-active)]
+          (begin
+            ;; Retire all references before returning pool storage. Replacement
+            ;; session/cache carriers must live outside the entry scratch arena.
+            (in-arena
+              home
+              (begin
+                (tltest-inline-clear-load-only-caches!)
+                (driver.compiler-driver-reset-file-state!)
+                (compiler_load.compiler-load-session-state-dependency-surfaces-release!
+                  (compiler_load.compiler-load-active-session-state-shared-view))
+                (driver.compiler-driver-state-destroy-uncommitted-pools!
+                  retired)
+                (ci.intern-persistent-arena-reset!)
+                (compiler_load.compiler-load-transfer-frontend-handoff!)))
+            status))))))
+
 (define (tltest-inline-typecheck-package-sources-from
   [sources : cli_svec.Vec]
   [index : i64]
@@ -3306,33 +3358,16 @@
               (owned_view.compiler-owned-shared-view source))]
           (begin
             (if has-inline-tests
-              (begin
-                (tltest-inline-clear-load-caches!)
-                (set!
-                  status
-                  ;; Match package `test --check`: isolate each inline preflight
-                  ;; source so package builds do not retain every loaded/test AST
-                  ;; until the end of the package. The full file reset refreshes
-                  ;; interns, so rebuild cfg ids from the saved string snapshot.
-                  (with-scratch
-                    (begin
-                      (tltest-inline-clear-load-only-caches!)
-                      (driver.compiler-driver-reset-file-state!)
-                      (tltest-inline-typecheck-package-source-with-cfg
-                        (owned_view.compiler-owned-shared-view source)
-                        (owned_view.compiler-owned-shared-view roots)
-                        (owned_view.compiler-owned-shared-view manifest-dir)
-                        (owned_view.compiler-owned-shared-view package-owner)
-                        (owned_view.compiler-owned-shared-view deps)
-                        (tltest-cfg-names-to-env
-                          (owned_view.compiler-owned-shared-view cfg-names))
-                        (owned_view.compiler-owned-shared-view
-                          cache-scope-prefix)))))
-                ;; The reset inside `with-scratch` installs a scratch-owned
-                ;; active-session wrapper. Restore it in the enclosing arena
-                ;; before the post-entry cache clear dereferences the wrapper.
-                (compiler_load.compiler-load-default-session-use!)
-                (tltest-inline-clear-load-caches!))
+              (set!
+                status
+                (tltest-inline-typecheck-package-source-scoped
+                  (owned_view.compiler-owned-shared-view source)
+                  (owned_view.compiler-owned-shared-view roots)
+                  (owned_view.compiler-owned-shared-view manifest-dir)
+                  (owned_view.compiler-owned-shared-view package-owner)
+                  (owned_view.compiler-owned-shared-view deps)
+                  (owned_view.compiler-owned-shared-view cfg-names)
+                  (owned_view.compiler-owned-shared-view cache-scope-prefix)))
               (set! status 0))
             (if (= status 0)
               unit
@@ -5302,13 +5337,14 @@
       found)))
 
 (define (tltest-source-has-inline-tests? [source : String]) : bool
-  (let
-    [text : String (byte_buf.to-string (io.read-file source))]
-    (tltest-source-has-inline-tests-from
-      (owned_view.compiler-owned-shared-view text)
-      0
-      (string.string-length text)
-      true)))
+  (with-scratch
+    (let
+      [text : String (byte_buf.to-string (io.read-file source))]
+      (tltest-source-has-inline-tests-from
+        (owned_view.compiler-owned-shared-view text)
+        0
+        (string.string-length text)
+        true))))
 
 (define (tltest-string-prefix? [text : String] [prefix : String]) : bool
   (let

@@ -360,13 +360,24 @@
     ast.AstLifetimeList
     ast.AstStructRepr
     ast.AstStructCleanup
+    i64
     ast.AstFieldDefList)
   (CompilerLoadSurfaceEnumSignature
     ast.AstLifetimeList
     ast.AstEnumCleanup
+    i64
     ast.AstVariantDefList)
   (CompilerLoadSurfaceMacroSignature ast.AstMacroParamList ast.AstType i64)
   (CompilerLoadSurfaceDispatchSignature ast.AstDispatchVariantList))
+
+(define (compiler-load-surface-signature-must-use?
+  [signature : CompilerLoadSurfaceSignature]) : bool
+  (match signature
+    [(CompilerLoadSurfaceStructSignature _ _ _ markers _)
+      (not (= (bit-and markers 1) 0))]
+    [(CompilerLoadSurfaceEnumSignature _ _ markers _)
+      (not (= (bit-and markers 1) 0))]
+    [_ false]))
 
 (defstruct CompilerLoadSurfaceDecl
   (kind CompilerLoadSurfaceDeclKind)
@@ -6917,7 +6928,7 @@
   (or
     (= decl.name name)
     (match decl.signature
-      [(CompilerLoadSurfaceEnumSignature _ _ variants)
+      [(CompilerLoadSurfaceEnumSignature _ _ _ variants)
         (compiler-load-lazy-surface-variant-direct-name? variants name)]
       [_ false])))
 
@@ -9553,6 +9564,7 @@
               (ast.ast-lifetime-list-new)
               repr
               cleanup
+              (ast.ast-decl-meta-aggregate-markers decl-meta)
               fields)
             (CompilerLoadSurfaceMacroOther)
             has-cleanup
@@ -9583,7 +9595,12 @@
             (CompilerLoadSurfaceStruct)
             name
             module-id
-            (CompilerLoadSurfaceStructSignature lifetimes repr cleanup fields)
+            (CompilerLoadSurfaceStructSignature
+              lifetimes
+              repr
+              cleanup
+              (ast.ast-decl-meta-aggregate-markers decl-meta)
+              fields)
             (CompilerLoadSurfaceMacroOther)
             has-cleanup
             false
@@ -9610,6 +9627,7 @@
             (CompilerLoadSurfaceEnumSignature
               (ast.ast-lifetime-list-new)
               cleanup
+              (ast.ast-decl-meta-aggregate-markers decl-meta)
               variants)
             (CompilerLoadSurfaceMacroOther)
             has-cleanup
@@ -9634,7 +9652,11 @@
             (CompilerLoadSurfaceEnum)
             name
             module-id
-            (CompilerLoadSurfaceEnumSignature lifetimes cleanup variants)
+            (CompilerLoadSurfaceEnumSignature
+              lifetimes
+              cleanup
+              (ast.ast-decl-meta-aggregate-markers decl-meta)
+              variants)
             (CompilerLoadSurfaceMacroOther)
             has-cleanup
             false
@@ -15250,6 +15272,21 @@
             (set! index (+ index 1)))))
       false)))
 
+(define (compiler-load-surface-decl-must-use?
+  [decls : (& decls CompilerLoadSurfaceDeclList)]
+  [name : String]) : bool
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index (compiler-load-surface-decl-list-count decls))
+        (let
+          [decl : CompilerLoadSurfaceDecl
+            (compiler-load-surface-decl-list-at decls index)]
+          (if (string.eq (ci.intern-str decl.name) name)
+            (return (compiler-load-surface-signature-must-use? decl.signature))
+            (set! index (+ index 1)))))
+      false)))
+
 (define (compiler-load-surface-macro-result-count
   [decls : (& decls CompilerLoadSurfaceDeclList)]
   [result-code : i64]) : i64
@@ -15284,8 +15321,8 @@
 (define (pub [x : i64]) (:export-symbol \"pub\") : i64 x)
 (extern (foreign [x : i64]) : i64)
 (unsafe (extern (danger [x : i64]) : i64))
-(defstruct Resource (:cleanup close-resource) (fd i64 (:cleanup close-fd)))
-(defenum Maybe (:cleanup close-maybe) (None) (Some i64 (:cleanup close-i64)))
+(defstruct Resource (:cleanup close-resource) (:must-use) (fd i64 (:cleanup close-fd)))
+(defenum Maybe (:cleanup close-maybe) (:must-use) (None) (Some i64 (:cleanup close-i64)))
 (defmacro (expr-m [x : Expr]) : Expr x)
 (defmacro (module-m [T : type]) : Module (expr-unit))
 (defmacro (decls-m [T : type]) : Decls (expr-unit))
@@ -15363,6 +15400,9 @@
       (compiler-load-surface-decl-unsafe? decls "danger")
       (compiler-load-surface-decl-cleanup? decls "Resource")
       (compiler-load-surface-decl-cleanup? decls "Maybe")
+      (compiler-load-surface-decl-must-use? decls "Resource")
+      (compiler-load-surface-decl-must-use? decls "Maybe")
+      (not (compiler-load-surface-decl-must-use? decls "value"))
       (compiler-load-surface-decl-generated? decls "generated-value")
       (= (compiler-load-surface-macro-result-count decls 1) 1)
       (= (compiler-load-surface-macro-result-count decls 2) 1)

@@ -1380,7 +1380,7 @@
             ty))
           [(ctfe_support.CtfeMaybeReflectInfo.Some info)
             (match info
-              [(ctfe_support.CtfeReflectInfo.Struct _ _ _ _ _ fields)
+              [(ctfe_support.CtfeReflectInfo.Struct _ _ _ _ _ fields _)
                 (if (= kind 0)
                   (match (ctfe_support.ctfe-reflect-field-name-at fields index)
                     [(ctfe_support.ResultCtfeNameLookup.Ok name)
@@ -1395,7 +1395,7 @@
                     [(ctfe_support.ResultCtfeNameLookup.Err _)
                       tlci.tlci-host-callback-status-bad-request])
                   tlci.tlci-host-callback-status-bad-request)]
-              [(ctfe_support.CtfeReflectInfo.Enum _ _ _ _ _ variants)
+              [(ctfe_support.CtfeReflectInfo.Enum _ _ _ _ _ variants _)
                 (if (= kind 1)
                   (match (ctfe_support.ctfe-reflect-variant-name-at
                     variants
@@ -1446,7 +1446,7 @@
                   infos
                   ty)
                   [(ctfe_support.CtfeMaybeReflectInfo.Some
-                      (ctfe_support.CtfeReflectInfo.Struct _ _ _ _ _ fields))
+                      (ctfe_support.CtfeReflectInfo.Struct _ _ _ _ _ fields _))
                     (ctfe_support.ctfe-reflect-field-list-count fields)]
                   [_ -3])]
               [(= kind 1)
@@ -1455,7 +1455,7 @@
                   infos
                   ty)
                   [(ctfe_support.CtfeMaybeReflectInfo.Some
-                      (ctfe_support.CtfeReflectInfo.Enum _ _ _ _ _ variants))
+                      (ctfe_support.CtfeReflectInfo.Enum _ _ _ _ _ variants _))
                     (ctfe_support.ctfe-reflect-variant-list-count variants)]
                   [_ -3])]
               [(= kind 2)
@@ -1464,7 +1464,7 @@
                   infos
                   ty)
                   [(ctfe_support.CtfeMaybeReflectInfo.Some
-                      (ctfe_support.CtfeReflectInfo.Enum _ _ _ _ _ variants))
+                      (ctfe_support.CtfeReflectInfo.Enum _ _ _ _ _ variants _))
                     (match (ctfe_support.ctfe-reflect-variant-payloads-at
                       variants
                       index)
@@ -1518,7 +1518,7 @@
                 infos
                 ty)
                 [(ctfe_support.CtfeMaybeReflectInfo.Some
-                    (ctfe_support.CtfeReflectInfo.Struct _ _ _ _ _ fields))
+                    (ctfe_support.CtfeReflectInfo.Struct _ _ _ _ _ fields _))
                   (match (ctfe_support.ctfe-reflect-field-type-at
                     fields
                     pools
@@ -1540,7 +1540,7 @@
                 infos
                 ty)
                 [(ctfe_support.CtfeMaybeReflectInfo.Some
-                    (ctfe_support.CtfeReflectInfo.Enum _ _ _ _ _ variants))
+                    (ctfe_support.CtfeReflectInfo.Enum _ _ _ _ _ variants _))
                   (match (ctfe_support.ctfe-reflect-variant-payloads-at
                     variants
                     first-index)
@@ -6993,11 +6993,11 @@
                     ty))
                   [(ctfe_support.CtfeMaybeReflectInfo.Some info)
                     (match info
-                      [(ctfe_support.CtfeReflectInfo.Struct _ _ _ _ cleanup _)
+                      [(ctfe_support.CtfeReflectInfo.Struct _ _ _ _ cleanup _ _)
                         (match cleanup
                           [(ctfe_support.CtfeReflectCleanup.No) false]
                           [(ctfe_support.CtfeReflectCleanup.Fn _ _) true])]
-                      [(ctfe_support.CtfeReflectInfo.Enum _ _ _ _ cleanup _)
+                      [(ctfe_support.CtfeReflectInfo.Enum _ _ _ _ cleanup _ _)
                         (match cleanup
                           [(ctfe_support.CtfeReflectCleanup.No) false]
                           [(ctfe_support.CtfeReflectCleanup.Fn _ _) true])])]
@@ -7050,9 +7050,16 @@
                     (let
                       [cleanup : ctfe_support.CtfeReflectCleanup
                         (match info
-                          [(ctfe_support.CtfeReflectInfo.Struct _ _ _ _ value _)
+                          [(ctfe_support.CtfeReflectInfo.Struct
+                              _
+                              _
+                              _
+                              _
+                              value
+                              _
+                              _)
                             value]
-                          [(ctfe_support.CtfeReflectInfo.Enum _ _ _ _ value _)
+                          [(ctfe_support.CtfeReflectInfo.Enum _ _ _ _ value _ _)
                             value])]
                       (match cleanup
                         [(ctfe_support.CtfeReflectCleanup.Fn

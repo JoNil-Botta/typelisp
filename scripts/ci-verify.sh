@@ -743,6 +743,7 @@ else
         -File scripts/windows-integration-linker-self-test.ps1
 fi
 run_with_compiler "$STAGE2_BIN" "stage2 native integration corpus" scripts/verify-integration.sh
+run_with_compiler "$STAGE2_BIN" "stage2 must-use metadata and ABI/codegen" scripts/verify-must-use-abi.sh
 if [ "$HOST_OS" = linux ]; then
     run_with_compiler "$STAGE2_BIN" "stage2 regalloc/backend asm shape gates" scripts/verify-asm-shape-gates.sh
     run_with_compiler "$STAGE2_BIN" "stage2 Git SHA-1 fixed-round/wipe asm shape gate" scripts/verify-crypto-sha1-git-shape.sh

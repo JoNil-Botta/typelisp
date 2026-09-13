@@ -3560,6 +3560,14 @@
       (compiler_optimize_tests.compiler-optimize-unroll-mb-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-affine-env-reference-self-test"
+      (compiler_optimize_tests.compiler-optimize-affine-env-reference-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-affine-env-boundary-self-test"
+      (compiler_optimize_tests.compiler-optimize-affine-env-boundary-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-affine-self-test"
       (compiler_optimize_tests.compiler-optimize-affine-self-test)
       42)

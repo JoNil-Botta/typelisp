@@ -60,6 +60,22 @@ for kind in text stage; do
     grep -F 'child stderr marker' "$WORKDIR/dead-$kind.log" >/dev/null
 done
 
+# Observation errors must stop immediately, not become a misleading timeout.
+if (
+    find() { echo 'fixture directory observation error' >&2; return 23; }
+    kill() { return 0; }
+    sleep() { echo 'unexpected poll after observation error' >&2; exit 99; }
+    wait_for_package_lock_stage "$WORKDIR/empty" 999999 dead
+) > "$WORKDIR/observation-error.log" 2>&1; then
+    fail 'directory observation error was accepted'
+fi
+grep -F 'fixture directory observation error' "$WORKDIR/observation-error.log" >/dev/null
+grep -F 'could not inspect staging files' "$WORKDIR/observation-error.log" >/dev/null
+grep -F 'child stderr marker' "$WORKDIR/observation-error.log" >/dev/null
+if grep -F 'unexpected poll' "$WORKDIR/observation-error.log" >/dev/null; then
+    fail 'directory observation error entered another poll'
+fi
+
 # Exercise the unchanged 600 x 0.1s timeout without spending a minute per case.
 # Only the clock and process-liveness observations are replaced here.
 for kind in text stage; do

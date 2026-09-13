@@ -4,8 +4,11 @@
 
 package_lock_wait_ready() {
     if [ "$_wait_kind" = stage ]; then
-        _wait_stage=$(find "$_wait_path" -maxdepth 1 -type f -name 'typelisp.lock.stage.*' -print -quit)
-        [ -n "$_wait_stage" ]
+        if _wait_stage=$(find "$_wait_path" -maxdepth 1 -type f -name 'typelisp.lock.stage.*' -print -quit); then
+            [ -n "$_wait_stage" ]
+        else
+            package_lock_wait_failure "$_wait_label could not inspect staging files in $_wait_path"
+        fi
     else
         [ -f "$_wait_path" ] && grep -F -- "$_wait_text" "$_wait_path" >/dev/null
     fi

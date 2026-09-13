@@ -1437,7 +1437,8 @@ The package-lock CLI fixtures wait for exact staging/commit observations with a
 60-second bound, rechecking the file predicate after a writer terminates to avoid
 a publication/exit race. Readiness does not replace the final child exit-status,
 lock-content, conflict-diagnostic or stage-cleanup assertions. Premature exit and
-timeout print the captured child logs. `sh scripts/test-package-lock-wait.sh`
+timeout print the captured child logs; a staging-directory observation error
+fails immediately with those same diagnostics. `sh scripts/test-package-lock-wait.sh`
 exercises both publication races, unsuccessful writers and the unchanged timeout;
 it is a required gate on Linux and Windows. Refs #7828.
 

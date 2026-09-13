@@ -21,6 +21,17 @@ Compilation is one whole program per executable with import-graph dedup
 codegen'd once into archives; an in-process session cache warms compiler
 pools across compiles within one process (batch and LSP paths).
 
+The ordinary and PIC driver paths share checked-pool ownership through
+`compiler-driver-state-begin-checked-lower!` and
+`compiler-driver-state-finish-checked-lower!`. The handoff records its original
+allocation arena, source-pool owner and destination pools in the driver's
+retained surface arena. Generation or macro compaction may retire the source
+arena before lowering returns, so bookkeeping must not live there. Finishing
+copies failure diagnostics to retained storage, adopts committed pools or
+destroys unused destinations, restores a live allocation arena and clears the
+lowerer's handoff. Callers consume the returned result and pool context;
+they must not duplicate these release and adoption decisions.
+
 Package inline-test preflight owns AST/type pools and scratch storage per
 source file. Its cfg-name snapshot owns copied strings across per-file intern
 retirement. Pool-backed caches and derived dependency surfaces are cleared

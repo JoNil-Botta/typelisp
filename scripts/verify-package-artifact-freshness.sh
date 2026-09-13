@@ -152,8 +152,37 @@ sed 's/(build-package-tlci-capture-exports$/(uncaptured-package-exports/' \
 if check_package_export_boundary "$WORK/uncaptured-export-source.tl"; then
     fail "package export guard accepted missing capture before runtime"
 fi
+# Checked lowering has one owner for pool adoption, error cleanup and arena
+# restoration. Source and PIC routes must share it with package retirement.
+check_driver_checked_handoff() {
+    awk '
+        /^\(define \(/ {
+            route = 0; owner = 0
+            if ($0 ~ /\(compiler-driver-load-and-lower-(escaping|pic-image)-with-state-and-retirement$/) { route = 1; routes += 1 }
+            if ($0 ~ /\(compiler-driver-state-(begin|finish)-checked-lower!$/) { owner = 1; owners += 1 }
+        }
+        route {
+            if ($0 ~ /compiler-driver-state-begin-checked-lower!/) begin_calls += 1
+            if ($0 ~ /compiler-driver-state-finish-checked-lower!/) finish_calls += 1
+            if ($0 ~ /compiler-lower-checked-dest-pools-(use|clear|abort-uncommitted)!|compiler-driver-state-adopt-pools!/) forbidden += 1
+        }
+        owner && $0 ~ /\(arena[.]Arena \(compiler-driver-state-surface-arena state\)\)/ { retained += 1 }
+        END { exit !(routes == 2 && owners == 2 && begin_calls == 2 && finish_calls == 2 && retained == 2 && forbidden == 0) }
+    ' "$1"
+}
+check_driver_checked_handoff src/compiler_driver_core.tl || fail "driver paths duplicate checked-pool ownership"
+sed 's/(compiler-driver-state-finish-checked-lower!$/(unowned-checked-finish/' \
+    src/compiler_driver_core.tl > "$WORK/bypassed-checked-handoff.tl"
+if check_driver_checked_handoff "$WORK/bypassed-checked-handoff.tl"; then
+    fail "checked handoff guard accepted a bypassed finish owner"
+fi
+sed 's/(arena.Arena (compiler-driver-state-surface-arena state))/(arena.current)/' \
+    src/compiler_driver_core.tl > "$WORK/temporary-checked-handoff.tl"
+if check_driver_checked_handoff "$WORK/temporary-checked-handoff.tl"; then
+    fail "checked handoff guard accepted bookkeeping in a retiring arena"
+fi
 if [ "${1:-}" = --boundary-self-test ]; then
-    echo "package object, runtime and export boundaries: owner and mutation checks passed"
+    echo "package and driver ownership boundaries: owner and mutation checks passed"
     exit 0
 fi
 

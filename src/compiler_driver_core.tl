@@ -5004,6 +5004,160 @@
     cfgs
     (profile_state.compiler-profile-state-new)))
 
+;; This bookkeeping lives in the retained state surface, never in a source
+;; arena that checked generation or macro compaction may retire mid-call.
+(defstruct CompilerDriverCheckedLowerHandoff
+  (dest-pools compiler_ast_types.AstNodePoolContext)
+  (entry-arena i64)
+  (source-pools-arena i64))
+
+(defstruct CompilerDriverCheckedLowerResult
+  (lowered compiler_lower.ResultCompilerLower)
+  (pools compiler_ast_types.AstNodePoolContext)
+  (committed bool)
+  (frontend-released bool))
+
+(define (compiler-driver-state-begin-checked-lower!
+  [state : CompilerDriverState]
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [frontend-arena : i64]) : CompilerDriverCheckedLowerHandoff
+  (let
+    [release-source-pools? : bool
+      (compiler-driver-state-can-release-checked-lower-source-pools?
+        (owned_view.compiler-owned-shared-view state))]
+    [dest-pools : compiler_ast_types.AstNodePoolContext
+      (if release-source-pools?
+        (compiler-driver-state-new-checked-lower-pools)
+        pools)]
+    [_profile-checked-storage : unit
+      (begin
+        (compiler-driver-allocation-profile-pool-storage-snapshot!
+          "checked-pool"
+          (owned_view.compiler-owned-shared-view dest-pools))
+        (cfg
+          compile-profile
+          (compiler_lower.compiler-lower-profile-pools
+            "checked_pool"
+            (owned_view.compiler-owned-shared-view dest-pools))
+          unit))]
+    [entry-arena : i64 (arena.tl_arena_current)]
+    ;; Preserve the exact pool owner from its context. The active allocation
+    ;; arena can instead be the distinct frontend owner; it is not a substitute
+    ;; for the pool's stable root handle.
+    [source-pools-arena : i64
+      (compiler_ast_types.ast-node-pool-context-base-arena pools)]
+    [_clear-source-floors : unit
+      (if release-source-pools?
+        (compiler_load.compiler-load-session-state-floors-set!
+          (owned_view.compiler-owned-shared-view state.load-session)
+          0
+          0
+          0)
+        unit)]
+    [_arm-release : unit
+      (if release-source-pools?
+        (compiler_lower.compiler-lower-checked-dest-pools-use!
+          (compiler-driver-state-owned-lower-state
+            (owned_view.compiler-owned-shared-view state))
+          (owned_view.compiler-owned-shared-view dest-pools)
+          source-pools-arena
+          (compiler_ast_types.ast-node-pool-context-expr-storage-arena pools)
+          (compiler_ast_types.ast-node-pool-context-type-storage-arena pools)
+          frontend-arena)
+        (compiler_lower.compiler-lower-checked-dest-pools-clear!
+          (compiler-driver-state-owned-lower-state
+            (owned_view.compiler-owned-shared-view state))))]
+    (in-arena
+      (arena.Arena (compiler-driver-state-surface-arena state))
+      (CompilerDriverCheckedLowerHandoff
+        dest-pools
+        entry-arena
+        source-pools-arena))))
+
+(define (compiler-driver-state-finish-checked-lower!
+  [state : CompilerDriverState]
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [handoff : CompilerDriverCheckedLowerHandoff]
+  [lowered-raw : compiler_lower.ResultCompilerLower]) : CompilerDriverCheckedLowerResult
+  (let
+    [release-source-pools? : bool
+      (compiler-driver-state-can-release-checked-lower-source-pools?
+        (owned_view.compiler-owned-shared-view state))]
+    [dest-pools : compiler_ast_types.AstNodePoolContext handoff.dest-pools]
+    [entry-arena : i64 handoff.entry-arena]
+    [source-pools-arena : i64 handoff.source-pools-arena]
+    [lowered : compiler_lower.ResultCompilerLower
+      (match (owned_view.compiler-owned-shared-view lowered-raw)
+        [(compiler_lower.ResultCompilerLower.Ok program spans)
+          (compiler_lower.ResultCompilerLower.Ok program spans)]
+        [(compiler_lower.ResultCompilerLower.Err diag)
+          (compiler_lower.ResultCompilerLower.Err
+            (compiler-driver-diagnostic-copy-to-state-surface
+              (owned_view.compiler-owned-shared-view state)
+              diag))])]
+    [dest-committed? : bool
+      (compiler_lower.compiler-lower-checked-dest-pools-committed?
+        (compiler-driver-state-owned-lower-state
+          (owned_view.compiler-owned-shared-view state)))]
+    [frontend-released? : bool
+      (compiler_lower.compiler-lower-checked-frontend-released?
+        (compiler-driver-state-owned-lower-state
+          (owned_view.compiler-owned-shared-view state)))]
+    [result-pools : compiler_ast_types.AstNodePoolContext
+      (if dest-committed?
+        (compiler_lower.compiler-lower-checked-dest-pools-current
+          (compiler-driver-state-owned-lower-state
+            (owned_view.compiler-owned-shared-view state)))
+        pools)]
+    [_adopt-dest : unit
+      (if dest-committed?
+        (compiler-driver-state-adopt-pools!
+          (owned_view.compiler-owned-shared-view state)
+          (owned_view.compiler-owned-shared-view result-pools))
+        unit)]
+    [_destroy-unused-dest : unit
+      (if (and release-source-pools? (not dest-committed?))
+        (begin
+          (compiler_lower.compiler-lower-checked-dest-pools-abort-uncommitted!
+            (compiler-driver-state-owned-lower-state
+              (owned_view.compiler-owned-shared-view state)))
+          (compiler-driver-state-destroy-uncommitted-pools! dest-pools))
+        unit)]
+    [_restore-entry-arena : unit
+      (if release-source-pools?
+        (unsafe
+          (arena.tl_arena_set
+            (if frontend-released?
+              compiler-driver-pending-frontend-return-arena
+              (if (and dest-committed? (= entry-arena source-pools-arena))
+                (compiler_ast_types.ast-node-pool-context-base-arena
+                  result-pools)
+                entry-arena))))
+        unit)]
+    [_clear-release : unit
+      (compiler_lower.compiler-lower-checked-dest-pools-clear!
+        (compiler-driver-state-owned-lower-state
+          (owned_view.compiler-owned-shared-view state)))]
+    ;; A failed lower may already have retired source or checked storage.
+    ;; Re-own a live empty context before outer batch/file cleanup can inspect
+    ;; or release the state again. Refs #5448.
+    [_own-error-pools : unit
+      (match (owned_view.compiler-owned-shared-view lowered)
+        [(compiler_lower.ResultCompilerLower.Err _)
+          (if release-source-pools?
+            (compiler-driver-state-adopt-pools!
+              (owned_view.compiler-owned-shared-view state)
+              (compiler-driver-state-new-checked-lower-pools))
+            unit)]
+        [(compiler_lower.ResultCompilerLower.Ok _ _) unit])]
+    (in-arena
+      (arena.Arena (compiler-driver-state-surface-arena state))
+      (CompilerDriverCheckedLowerResult
+        lowered
+        result-pools
+        dest-committed?
+        frontend-released?))))
+
 (define (compiler-driver-load-and-lower-escaping-with-state-and-retirement
   [state : CompilerDriverState]
   [input-path : String]
@@ -5137,53 +5291,13 @@
             [source-names : ci.InternSourceNameSessionHandle
               (compiler-driver-state-entry-source-name-session
                 (owned_view.compiler-owned-shared-view state))]
-            [dest-pools : compiler_ast_types.AstNodePoolContext
-              (if release-source-pools?
-                (compiler-driver-state-new-checked-lower-pools)
-                pools)]
-            [_profile-checked-storage : unit
-              (begin
-                (compiler-driver-allocation-profile-pool-storage-snapshot!
-                  "checked-pool"
-                  (owned_view.compiler-owned-shared-view dest-pools))
-                (cfg
-                  compile-profile
-                  (compiler_lower.compiler-lower-profile-pools
-                    "checked_pool"
-                    (owned_view.compiler-owned-shared-view dest-pools))
-                  unit))]
-            [entry-arena : i64 (arena.tl_arena_current)]
-            ;; Release the source pools from the newest segment of their arena
-            ;; chain, not the make() root handle: the chain is reachable only from
-            ;; its head, so destroying the root leaks every overflow segment (the
-            ;; whole-program parsed AST), which accumulates across batch entries.
-            [source-pools-arena : i64
-              (compiler_ast_types.ast-node-pool-context-base-arena pools)]
-            [_clear-source-floors : unit
-              (if release-source-pools?
-                (compiler_load.compiler-load-session-state-floors-set!
-                  (owned_view.compiler-owned-shared-view state.load-session)
-                  0
-                  0
-                  0)
-                unit)]
-            [_arm-release : unit
-              (if release-source-pools?
-                (compiler_lower.compiler-lower-checked-dest-pools-use!
-                  (compiler-driver-state-owned-lower-state
-                    (owned_view.compiler-owned-shared-view state))
-                  (owned_view.compiler-owned-shared-view dest-pools)
-                  source-pools-arena
-                  (compiler_ast_types.ast-node-pool-context-expr-storage-arena
-                    pools)
-                  (compiler_ast_types.ast-node-pool-context-type-storage-arena
-                    pools)
-                  (if route-source-allocations?
-                    frontend-arena
-                    0))
-                (compiler_lower.compiler-lower-checked-dest-pools-clear!
-                  (compiler-driver-state-owned-lower-state
-                    (owned_view.compiler-owned-shared-view state))))]
+            [checked-handoff : CompilerDriverCheckedLowerHandoff
+              (compiler-driver-state-begin-checked-lower!
+                (owned_view.compiler-owned-shared-view state)
+                (owned_view.compiler-owned-shared-view pools)
+                (if route-source-allocations?
+                  frontend-arena
+                  0))]
             [lowered-raw : compiler_lower.ResultCompilerLower
               (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
                 (compiler-driver-state-owned-lower-state
@@ -5209,60 +5323,16 @@
                   (owned_view.compiler-owned-shared-view state))
                 (compiler-driver-state-owned-builtins
                   (owned_view.compiler-owned-shared-view state)))]
-            [lowered : compiler_lower.ResultCompilerLower
-              (match (owned_view.compiler-owned-shared-view lowered-raw)
-                [(compiler_lower.ResultCompilerLower.Ok program spans)
-                  (compiler_lower.ResultCompilerLower.Ok program spans)]
-                [(compiler_lower.ResultCompilerLower.Err diag)
-                  (compiler_lower.ResultCompilerLower.Err
-                    (compiler-driver-diagnostic-copy-to-state-surface
-                      (owned_view.compiler-owned-shared-view state)
-                      diag))])]
-            [dest-committed? : bool
-              (compiler_lower.compiler-lower-checked-dest-pools-committed?
-                (compiler-driver-state-owned-lower-state
-                  (owned_view.compiler-owned-shared-view state)))]
-            [frontend-released? : bool
-              (compiler_lower.compiler-lower-checked-frontend-released?
-                (compiler-driver-state-owned-lower-state
-                  (owned_view.compiler-owned-shared-view state)))]
-            [result-pools : compiler_ast_types.AstNodePoolContext
-              (if dest-committed?
-                (compiler_lower.compiler-lower-checked-dest-pools-current
-                  (compiler-driver-state-owned-lower-state
-                    (owned_view.compiler-owned-shared-view state)))
-                pools)]
-            [_adopt-dest : unit
-              (if dest-committed?
-                (compiler-driver-state-adopt-pools!
-                  (owned_view.compiler-owned-shared-view state)
-                  (owned_view.compiler-owned-shared-view result-pools))
-                unit)]
-            [_destroy-unused-dest : unit
-              (if (and release-source-pools? (not dest-committed?))
-                (begin
-                  (compiler_lower.compiler-lower-checked-dest-pools-abort-uncommitted!
-                    (compiler-driver-state-owned-lower-state
-                      (owned_view.compiler-owned-shared-view state)))
-                  (compiler-driver-state-destroy-uncommitted-pools! dest-pools))
-                unit)]
-            [_restore-entry-arena : unit
-              (if release-source-pools?
-                (unsafe
-                  (arena.tl_arena_set
-                    (if frontend-released?
-                      compiler-driver-pending-frontend-return-arena
-                      (if (and
-                        dest-committed?
-                        (= entry-arena source-pools-arena))
-                        (compiler_ast_types.ast-node-pool-context-base-arena
-                          result-pools)
-                        entry-arena))))
-                unit)]
-            [_clear-release : unit
-              (compiler_lower.compiler-lower-checked-dest-pools-clear!
-                (compiler-driver-state-owned-lower-state
-                  (owned_view.compiler-owned-shared-view state)))]
+            [checked : CompilerDriverCheckedLowerResult
+              (compiler-driver-state-finish-checked-lower!
+                (owned_view.compiler-owned-shared-view state)
+                (owned_view.compiler-owned-shared-view pools)
+                checked-handoff
+                lowered-raw)]
+            [lowered : compiler_lower.ResultCompilerLower checked.lowered]
+            [dest-committed? : bool checked.committed]
+            [frontend-released? : bool checked.frontend-released]
+            [result-pools : compiler_ast_types.AstNodePoolContext checked.pools]
             (match lowered
               [(compiler_lower.ResultCompilerLower.Ok program spans)
                 (begin
@@ -5338,17 +5408,6 @@
                         (compiler-driver-state-typecheck state)))))]
               [(compiler_lower.ResultCompilerLower.Err diag)
                 (begin
-                  ;; A lower-phase failure can leave the state's checked pool
-                  ;; storage already retired by the checked-lower choreography
-                  ;; (the rollover/commit paths retire source storage during
-                  ;; macro expansion). Re-own a fresh, live pool context so the
-                  ;; batch/file release path never retires that dead storage
-                  ;; again. Refs #5448.
-                  (if release-source-pools?
-                    (compiler-driver-state-adopt-pools!
-                      (owned_view.compiler-owned-shared-view state)
-                      (compiler-driver-state-new-checked-lower-pools))
-                    unit)
                   (cfg
                     compile-profile
                     (compiler-driver-profile-finish-phase
@@ -5494,51 +5553,11 @@
             [release-source-pools? : bool
               (compiler-driver-state-can-release-checked-lower-source-pools?
                 (owned_view.compiler-owned-shared-view state))]
-            [dest-pools : compiler_ast_types.AstNodePoolContext
-              (if release-source-pools?
-                (compiler-driver-state-new-checked-lower-pools)
-                pools)]
-            [_profile-checked-storage : unit
-              (begin
-                (compiler-driver-allocation-profile-pool-storage-snapshot!
-                  "checked-pool"
-                  (owned_view.compiler-owned-shared-view dest-pools))
-                (cfg
-                  compile-profile
-                  (compiler_lower.compiler-lower-profile-pools
-                    "checked_pool"
-                    (owned_view.compiler-owned-shared-view dest-pools))
-                  unit))]
-            [entry-arena : i64 (arena.tl_arena_current)]
-            ;; Release the source pools from the newest segment of their arena
-            ;; chain, not the make() root handle: the chain is reachable only from
-            ;; its head, so destroying the root leaks every overflow segment (the
-            ;; whole-program parsed AST), which accumulates across batch entries.
-            [source-pools-arena : i64
-              (compiler_ast_types.ast-node-pool-context-base-arena pools)]
-            [_clear-source-floors : unit
-              (if release-source-pools?
-                (compiler_load.compiler-load-session-state-floors-set!
-                  (owned_view.compiler-owned-shared-view state.load-session)
-                  0
-                  0
-                  0)
-                unit)]
-            [_arm-release : unit
-              (if release-source-pools?
-                (compiler_lower.compiler-lower-checked-dest-pools-use!
-                  (compiler-driver-state-owned-lower-state
-                    (owned_view.compiler-owned-shared-view state))
-                  (owned_view.compiler-owned-shared-view dest-pools)
-                  source-pools-arena
-                  (compiler_ast_types.ast-node-pool-context-expr-storage-arena
-                    pools)
-                  (compiler_ast_types.ast-node-pool-context-type-storage-arena
-                    pools)
-                  0)
-                (compiler_lower.compiler-lower-checked-dest-pools-clear!
-                  (compiler-driver-state-owned-lower-state
-                    (owned_view.compiler-owned-shared-view state))))]
+            [checked-handoff : CompilerDriverCheckedLowerHandoff
+              (compiler-driver-state-begin-checked-lower!
+                (owned_view.compiler-owned-shared-view state)
+                (owned_view.compiler-owned-shared-view pools)
+                0)]
             [lowered-raw : compiler_lower.ResultCompilerLower
               (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
                 (compiler-driver-state-owned-lower-state
@@ -5564,52 +5583,15 @@
                   (owned_view.compiler-owned-shared-view state))
                 (compiler-driver-state-owned-builtins
                   (owned_view.compiler-owned-shared-view state)))]
-            [lowered : compiler_lower.ResultCompilerLower
-              (match (owned_view.compiler-owned-shared-view lowered-raw)
-                [(compiler_lower.ResultCompilerLower.Ok program spans)
-                  (compiler_lower.ResultCompilerLower.Ok program spans)]
-                [(compiler_lower.ResultCompilerLower.Err diag)
-                  (compiler_lower.ResultCompilerLower.Err
-                    (compiler-driver-diagnostic-copy-to-state-surface
-                      (owned_view.compiler-owned-shared-view state)
-                      diag))])]
-            [dest-committed? : bool
-              (compiler_lower.compiler-lower-checked-dest-pools-committed?
-                (compiler-driver-state-owned-lower-state
-                  (owned_view.compiler-owned-shared-view state)))]
-            [result-pools : compiler_ast_types.AstNodePoolContext
-              (if dest-committed?
-                (compiler_lower.compiler-lower-checked-dest-pools-current
-                  (compiler-driver-state-owned-lower-state
-                    (owned_view.compiler-owned-shared-view state)))
-                pools)]
-            [_adopt-dest : unit
-              (if dest-committed?
-                (compiler-driver-state-adopt-pools!
-                  (owned_view.compiler-owned-shared-view state)
-                  (owned_view.compiler-owned-shared-view result-pools))
-                unit)]
-            [_destroy-unused-dest : unit
-              (if (and release-source-pools? (not dest-committed?))
-                (begin
-                  (compiler_lower.compiler-lower-checked-dest-pools-abort-uncommitted!
-                    (compiler-driver-state-owned-lower-state
-                      (owned_view.compiler-owned-shared-view state)))
-                  (compiler-driver-state-destroy-uncommitted-pools! dest-pools))
-                unit)]
-            [_restore-entry-arena : unit
-              (if release-source-pools?
-                (unsafe
-                  (arena.tl_arena_set
-                    (if (and dest-committed? (= entry-arena source-pools-arena))
-                      (compiler_ast_types.ast-node-pool-context-base-arena
-                        result-pools)
-                      entry-arena)))
-                unit)]
-            [_clear-release : unit
-              (compiler_lower.compiler-lower-checked-dest-pools-clear!
-                (compiler-driver-state-owned-lower-state
-                  (owned_view.compiler-owned-shared-view state)))]
+            [checked : CompilerDriverCheckedLowerResult
+              (compiler-driver-state-finish-checked-lower!
+                (owned_view.compiler-owned-shared-view state)
+                (owned_view.compiler-owned-shared-view pools)
+                checked-handoff
+                lowered-raw)]
+            [lowered : compiler_lower.ResultCompilerLower checked.lowered]
+            [dest-committed? : bool checked.committed]
+            [result-pools : compiler_ast_types.AstNodePoolContext checked.pools]
             (match lowered
               [(compiler_lower.ResultCompilerLower.Ok program spans)
                 (begin
@@ -5657,16 +5639,6 @@
                           (owned_view.compiler-owned-shared-view state))))))]
               [(compiler_lower.ResultCompilerLower.Err diag)
                 (begin
-                  ;; See the matching note in
-                  ;; compiler-driver-load-and-lower-escaping-with-state-and-retirement:
-                  ;; a lower-phase failure can leave checked pool storage
-                  ;; already retired; re-own a live context before release.
-                  ;; Refs #5448.
-                  (if release-source-pools?
-                    (compiler-driver-state-adopt-pools!
-                      (owned_view.compiler-owned-shared-view state)
-                      (compiler-driver-state-new-checked-lower-pools))
-                    unit)
                   (cfg
                     compile-profile
                     (compiler-driver-profile-finish-phase

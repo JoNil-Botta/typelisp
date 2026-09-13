@@ -41,6 +41,16 @@ must own/canonicalize any spelling that survives its source arena.
 
 ## Compiler arena ownership
 
+Literal classification and contextual numeric checking must read expression
+children from the caller's pool. The `tc-literal-expression-pool-isolation`
+inline test in `compiler_typecheck_core.tl` gives three pools identical node IDs
+but different literal kinds and source positions, installs an unrelated owner,
+and checks integer/f32 results plus f32 overflow rejection. It also checks
+the explicit compatibility-pool route and the canonical/sparse-view span
+oracle. Keep those owner and source-view checks when changing literal walkers or
+their lowering callers; an unwrapped literal alone cannot detect a wrong-pool
+read.
+
 Compiler state must be allocated in an owner whose lifetime covers every state
 transition that can occur before the last use. Use these operational classes:
 

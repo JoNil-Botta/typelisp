@@ -5018,9 +5018,11 @@
 (define (tc-context-expr-bases [ctx : TcContext]) : i64
   (if (ast.ast-node-pool-compat-context-active?)
     (ast.ast-node-pool-active-expr-segment-bases)
-    (let
-      [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
-      (ast.ast-node-pool-context-expr-segment-bases pools))))
+    ;; This query returns one scalar. Borrow the owning field in place instead
+    ;; of materializing the complete pool aggregate through tc-context-pools.
+    (match ctx
+      [(TcContext _ _ _ _ _ _ pools _ _)
+        (ast.ast-node-pool-context-expr-segment-bases (& pools))])))
 
 ;; The typechecker receives an already-loaded program and so does not know the
 ;; source path; it builds diagnostics with an empty path (the CLI driver stamps
@@ -39384,40 +39386,42 @@
     [(ast.AstLiteral.Float text) (tc-float-literal-f64-type text)]
     [_ (ResultTcType.Ok (tc-literal-type lit))]))
 
-(define (tc-float-literal-expr? [expr : ast.AstExpr]) : bool
-  (match (tc-global-shared-view expr)
-    [(ast.AstExpr.Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-float-literal-expr? inner))]
-    [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (tc-float-literal-expr? (ast.ast-node-get inner-box))]
+;; These predicates only inspect syntax: the canonical AST unspanner follows
+;; the caller's expression owner and may erase expansion wrappers without
+;; executing a macro. Contextual validation below retains diagnostic spans.
+(define (tc-float-literal-expr? [ctx : TcContext] [expr : ast.AstExpr]) : bool
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (tc-context-expr-bases ctx)
+    expr)
     [(ast.AstExpr.Literal lit)
       (match (tc-global-shared-view lit)
         [(ast.AstLiteral.Float _) true]
         [_ false])]
     [_ false]))
 
-(define (tc-float-literal-expr-with-expected
+(define (tc-float-literal-expr-with-expected-with-bases
+  [structural-session : cis.InternStructuralSessionHandle]
+  [expr-bases : i64]
   [expr : ast.AstExpr]
   [expected : ast.AstType]) : ResultTcType
   (match (tc-global-shared-view expr)
     [(ast.AstExpr.Spanned inner-box span)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (match (tc-float-literal-expr-with-expected
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (match (tc-float-literal-expr-with-expected-with-bases
+          structural-session
+          expr-bases
           (tc-global-shared-view inner)
           (tc-global-shared-view expected))
           [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
           [(ResultTcType.Err message)
-            (tc-locate-spanned-error
-              (cis.InternStructuralSessionHandle 0)
-              inner
-              span
-              message)]))]
+            (tc-locate-spanned-error structural-session inner span message)]))]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (tc-float-literal-expr-with-expected
-        (ast.ast-node-get inner-box)
+      (tc-float-literal-expr-with-expected-with-bases
+        structural-session
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases inner-box)
         expected)]
     [(ast.AstExpr.Literal lit)
       (match lit
@@ -39430,14 +39434,20 @@
         [(ast.AstLiteral.Unit) (ResultTcType.Ok (ast.AstType.Unit))])]
     [_ (ResultTcType.Ok (ast.AstType.F64))]))
 
-(define (tc-integer-literal-expr? [expr : ast.AstExpr]) : bool
-  (match expr
-    [(ast.AstExpr.Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-integer-literal-expr? inner))]
-    [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (tc-integer-literal-expr? (ast.ast-node-get inner-box))]
+(define (tc-float-literal-expr-with-expected
+  [ctx : TcContext]
+  [expr : ast.AstExpr]
+  [expected : ast.AstType]) : ResultTcType
+  (tc-float-literal-expr-with-expected-with-bases
+    (tc-context-structural-session ctx)
+    (tc-context-expr-bases ctx)
+    expr
+    expected))
+
+(define (tc-integer-literal-expr? [ctx : TcContext] [expr : ast.AstExpr]) : bool
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (tc-context-expr-bases ctx)
+    expr)
     [(ast.AstExpr.Literal lit)
       (match lit
         [(ast.AstLiteral.Int _ _) true]
@@ -39495,6 +39505,174 @@
     (tc-context-expr-bases (tc-global-shared-view ctx))
     expr
     expected))
+
+(cfg
+  test
+  (define (tc-literal-pool-test-root
+    [pools : ast.AstNodePoolContext]
+    [literal : ast.AstLiteral]
+    [line : i64]) : i64
+    (let
+      [leaf : i64
+        (ast.ast-node-pool-context-expr-push
+          (tc-global-shared-view pools)
+          (ast.AstExpr.Literal literal))]
+      [original : i64
+        (ast.ast-expr-source-view-with-pools
+          (tc-global-shared-view pools)
+          leaf
+          (ast.ast-source-span line 3 line 9))]
+      [expanded : i64
+        (ast.ast-node-pool-context-expr-push
+          (tc-global-shared-view pools)
+          (ast.AstExpr.MacroExpansion original 0 0))]
+      (ast.ast-expr-source-view-with-pools
+        pools
+        expanded
+        (ast.ast-source-span (+ line 10) 5 (+ line 10) 11)))))
+
+(cfg
+  test
+  (define (tc-literal-pool-test-context [pools : ast.AstNodePoolContext]) : TcContext
+    (tc-context-new
+      (ast.ast-program (ast.ast-decl-list-new))
+      (csym.compiler-symbols-empty)
+      (csym.compiler-registries-empty)
+      ""
+      cbi.compiler-builtin-id-fix-empty
+      pools)))
+
+(test
+  tc-literal-expression-pool-isolation
+  (let
+    [pools-a : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [pools-b : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [pools-c : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [root-a : i64
+      (tc-literal-pool-test-root
+        (tc-global-shared-view pools-a)
+        (ast.AstLiteral.Int 17 "17")
+        7)]
+    [root-b : i64
+      (tc-literal-pool-test-root
+        (tc-global-shared-view pools-b)
+        (ast.AstLiteral.Float "3.5")
+        41)]
+    [root-c : i64
+      (tc-literal-pool-test-root
+        (tc-global-shared-view pools-c)
+        (ast.AstLiteral.Float "1e100")
+        83)]
+    [ctx-a : TcContext
+      (tc-literal-pool-test-context (tc-global-shared-view pools-a))]
+    [ctx-b : TcContext
+      (tc-literal-pool-test-context (tc-global-shared-view pools-b))]
+    [ctx-c : TcContext
+      (tc-literal-pool-test-context (tc-global-shared-view pools-c))]
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [owned-ok? : bool false]
+    [compat-ok? : bool false]
+    [integer-ok? : bool false]
+    (begin
+      ;; All roots have identical integer ids. The installed integer pool must
+      ;; not turn the other owners' float syntax into an integer literal.
+      (ast.ast-node-pool-context-install! (tc-global-shared-view pools-a))
+      (set!
+        owned-ok?
+        (and
+          (= root-a root-b)
+          (= root-a root-c)
+          (tc-float-literal-expr?
+            (tc-global-shared-view ctx-b)
+            (tc-context-expr-get (tc-global-shared-view ctx-b) root-b))
+          (not
+            (tc-integer-literal-expr?
+              (tc-global-shared-view ctx-b)
+              (tc-context-expr-get (tc-global-shared-view ctx-b) root-b)))
+          (match (tc-float-literal-expr-with-expected
+            (tc-global-shared-view ctx-b)
+            (tc-context-expr-get (tc-global-shared-view ctx-b) root-b)
+            (ast.AstType.F32))
+            [(ResultTcType.Ok ty) (tc-type-eq ty (ast.AstType.F32))]
+            [_ false])
+          ;; Literal validation returns raw errors; the diagnostic boundary
+          ;; attaches locations. Check rejection and retained provenance
+          ;; separately rather than decoding raw text as a located diagnostic.
+          (match (tc-float-literal-expr-with-expected
+            (tc-global-shared-view ctx-c)
+            (tc-context-expr-get (tc-global-shared-view ctx-c) root-c)
+            (ast.AstType.F32))
+            [(ResultTcType.Err message)
+              (string.eq
+                message
+                "typecheck: non-finite f32 literal is not supported")]
+            [_ false])
+          (match (ast.ast-node-pool-context-expr-canonical-span pools-c root-c)
+            [(ast.AstMaybeSourceSpan.Some span)
+              (and
+                (= (ast.ast-source-span-start-line span) 83)
+                (= (ast.ast-source-span-start-col span) 3))]
+            [_ false])
+          (match (ast.ast-node-pool-context-expr-view-span pools-c root-c)
+            [(ast.AstMaybeSourceSpan.Some span)
+              (and
+                (= (ast.ast-source-span-start-line span) 93)
+                (= (ast.ast-source-span-start-col span) 5))]
+            [_ false])
+          (ast.ast-node-pool-context-expr-span-oracle-ok? pools-c)))
+      (ast.ast-node-pool-context-install! (tc-global-shared-view pools-b))
+      (set!
+        integer-ok?
+        (and
+          (tc-integer-literal-expr?
+            (tc-global-shared-view ctx-a)
+            (tc-context-expr-get (tc-global-shared-view ctx-a) root-a))
+          (not
+            (tc-float-literal-expr?
+              (tc-global-shared-view ctx-a)
+              (tc-context-expr-get (tc-global-shared-view ctx-a) root-a)))
+          (match (tc-integer-literal-expr-with-expected
+            (tc-global-shared-view ctx-a)
+            (tc-context-expr-get (tc-global-shared-view ctx-a) root-a)
+            (ast.AstType.I64))
+            [(ResultTcType.Ok ty) (tc-type-eq ty (ast.AstType.I64))]
+            [_ false])
+          (not
+            (tc-integer-literal-expr?
+              (tc-global-shared-view ctx-a)
+              (ast.AstExpr.Literal (ast.AstLiteral.Bool true))))
+          (not
+            (tc-float-literal-expr?
+              (tc-global-shared-view ctx-a)
+              (ast.AstExpr.Literal (ast.AstLiteral.Bool true))))))
+      ;; The explicit compatibility route intentionally selects its installed
+      ;; owner, even when the context argument names a different pool.
+      (ast.ast-node-pool-compat-context-use! (tc-global-shared-view pools-b))
+      (set!
+        compat-ok?
+        (and
+          (tc-float-literal-expr?
+            (tc-global-shared-view ctx-a)
+            (tc-context-expr-get (tc-global-shared-view ctx-a) root-b))
+          (not
+            (tc-integer-literal-expr?
+              (tc-global-shared-view ctx-a)
+              (tc-context-expr-get (tc-global-shared-view ctx-a) root-b)))
+          (match (tc-float-literal-expr-with-expected
+            (tc-global-shared-view ctx-a)
+            (tc-context-expr-get (tc-global-shared-view ctx-a) root-b)
+            (ast.AstType.F32))
+            [(ResultTcType.Ok ty) (tc-type-eq ty (ast.AstType.F32))]
+            [_ false])))
+      (ast.ast-node-pool-compat-context-clear!)
+      (ast.ast-node-pool-context-install! saved)
+      (unless
+        (and owned-ok? integer-ok? compat-ok?)
+        (io.panic
+          "typecheck: literal owner, contextual type, or source provenance changed")))))
 
 (define (tc-binop-types-from-left
   [ctx : TcContext]
@@ -39556,7 +39734,9 @@
   [right : ast.AstExpr]) : ResultTcBinOpTypes
   (match (tc-expr (tc-global-shared-view ctx) env (tc-global-shared-view left))
     [(ResultTcType.Ok left-ty)
-      (if (tc-float-literal-expr? (tc-global-shared-view left))
+      (if (tc-float-literal-expr?
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view left))
         (match (tc-expr
           (tc-global-shared-view ctx)
           env
@@ -39566,6 +39746,7 @@
               (tc-type-strip-region (tc-global-shared-view right-actual))
               (ast.AstType.F32))
               (match (tc-float-literal-expr-with-expected
+                (tc-global-shared-view ctx)
                 (tc-global-shared-view left)
                 (ast.AstType.F32))
                 [(ResultTcType.Ok _)
@@ -39573,7 +39754,9 @@
                 [(ResultTcType.Err message) (ResultTcBinOpTypes.Err message)])
               (tc-binop-types-from-left ctx env op left-ty right))]
           [(ResultTcType.Err message) (ResultTcBinOpTypes.Err message)])
-        (if (tc-integer-literal-expr? (tc-global-shared-view left))
+        (if (tc-integer-literal-expr?
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view left))
           (match (tc-expr
             (tc-global-shared-view ctx)
             env
@@ -40496,10 +40679,14 @@
               [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
         [_ (tc-expr (tc-global-shared-view ctx) env expr)])]
     [_
-      (if (tc-integer-literal-expr? (tc-global-shared-view expr))
+      (if (tc-integer-literal-expr?
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view expr))
         (tc-integer-literal-expr-with-expected ctx expr expected)
-        (if (tc-float-literal-expr? (tc-global-shared-view expr))
-          (tc-float-literal-expr-with-expected expr expected)
+        (if (tc-float-literal-expr?
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view expr))
+          (tc-float-literal-expr-with-expected ctx expr expected)
           (tc-expr-result-with-expected-or-actual
             (tc-global-shared-view ctx)
             env

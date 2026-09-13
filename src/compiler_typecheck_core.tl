@@ -109273,7 +109273,7 @@
 
 (define (macro-collect-surface-decl-name
   [state : TcMacroState]
-  [decl : cload.CompilerLoadSurfaceDecl]
+  [decl : (& decl cload.CompilerLoadSurfaceDecl)]
   [acc : TcNameIdList]) : TcNameIdList
   (match decl.kind
     [(CompilerLoadSurfaceMacro)
@@ -109302,7 +109302,7 @@
             out
             (macro-collect-surface-decl-name
               state
-              (cload.compiler-load-surface-decl-list-at decls index)
+              (cload.compiler-load-surface-decl-list-borrow-at (& decls) index)
               out))
           (set! index (+ index 1))))
       out)))
@@ -109413,7 +109413,7 @@
       (csym.compiler-symbol-module-key-id-by-id module-id name-id))))
 
 (define (macro-surface-decl-macro-in-module?
-  [decl : cload.CompilerLoadSurfaceDecl]
+  [decl : (& decl cload.CompilerLoadSurfaceDecl)]
   [target-module-id : i64]
   [base-id : i64]) : bool
   (and
@@ -109432,7 +109432,7 @@
     (begin
       (while (< index (cload.compiler-load-surface-decl-list-count decls))
         (if (macro-surface-decl-macro-in-module?
-          (cload.compiler-load-surface-decl-list-at decls index)
+          (cload.compiler-load-surface-decl-list-borrow-at (& decls) index)
           target-module-id
           base-id)
           (return true)
@@ -109479,8 +109479,8 @@
     (begin
       (while (< index (cload.compiler-load-surface-decl-list-count decls))
         (let
-          [decl : cload.CompilerLoadSurfaceDecl
-            (cload.compiler-load-surface-decl-list-at decls index)]
+          [decl : (& decls cload.CompilerLoadSurfaceDecl)
+            (cload.compiler-load-surface-decl-list-borrow-at (& decls) index)]
           (if (and
             (= decl.module target-module-id)
             (match decl.kind
@@ -109693,7 +109693,7 @@
 
 (define (macro-surface-decl-call-decl-in-module
   [state : TcMacroState]
-  [decl : cload.CompilerLoadSurfaceDecl]
+  [decl : (& decl cload.CompilerLoadSurfaceDecl)]
   [target-module-id : i64]
   [base-id : i64]) : MacroMaybeDecl
   (if (and
@@ -109710,8 +109710,8 @@
             decl.name
             decl.module
             -1
-            params
-            ret
+            (clone params)
+            (clone ret)
             (ast.ast-node-get body-box)))]
       [_ (MacroMaybeDecl.No)])
     (MacroMaybeDecl.No)))
@@ -109727,7 +109727,7 @@
       (while (< index (cload.compiler-load-surface-decl-list-count decls))
         (match (macro-surface-decl-call-decl-in-module
           state
-          (cload.compiler-load-surface-decl-list-at decls index)
+          (cload.compiler-load-surface-decl-list-borrow-at (& decls) index)
           target-module-id
           base-id)
           [(MacroMaybeDecl.Some

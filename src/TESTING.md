@@ -65,6 +65,16 @@ pointer/length pairs as name identity across scratch/region reset: address
 equality is only a fast path while both live operands are in scope. Interning
 must own/canonicalize any spelling that survives its source arena.
 
+## Borrowed macro surface searches
+
+The typecheck smoke suite's surface-macro provider covers first/last/missing
+names, a non-macro function with a larger signature, and distinct intern IDs.
+It retains a selected macro signature across destruction of the loader's
+summary arena, then checks its parameter and return type. Read-only candidates
+must use borrowed declarations; selected signatures must own their payloads.
+The complete inline batch and `windows_param_preassign_backend.tl` exercise the
+compiler-sized search workload that exposed copying during failed lookups.
+
 ## Compiler arena ownership
 
 Literal classification and contextual numeric checking must read expression

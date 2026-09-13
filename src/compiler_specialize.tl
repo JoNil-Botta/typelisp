@@ -3023,6 +3023,13 @@
             (string.eq a-reason b-reason)]
           [_ false])])))
 
+;; Generated identity permits reuse only when declaration semantics agree.
+;; Marker flags affect nominal semantics even though they do not affect ABI.
+(define (gen-aggregate-markers-eq? [a : ast.AstDeclMeta] [b : ast.AstDeclMeta]) : bool
+  (=
+    (ast.ast-decl-meta-aggregate-markers a)
+    (ast.ast-decl-meta-aggregate-markers b)))
+
 (define (gen-decl-eq? [a : ast.AstDecl] [b : ast.AstDecl]) : bool
   (match a
     [(ast.AstDecl.Def decl-meta a-name a-ty a-value-box)
@@ -3057,44 +3064,47 @@
                 (gen-expr-eq? a-body b-body)
                 (gen-fn-metadata-eq? a-metadata b-metadata)))]
           [_ false]))]
-    [(ast.AstDecl.DefEnum decl-meta a-name a-cleanup a-variants)
+    [(ast.AstDecl.DefEnum a-meta a-name a-cleanup a-variants)
       (match b
-        [(ast.AstDecl.DefEnum decl-meta b-name b-cleanup b-variants)
+        [(ast.AstDecl.DefEnum b-meta b-name b-cleanup b-variants)
           (and
+            (gen-aggregate-markers-eq? a-meta b-meta)
             (= a-name b-name)
             (gen-enum-cleanup-eq? a-cleanup b-cleanup)
             (gen-variant-list-eq? a-variants b-variants))]
         [_ false])]
     [(ast.AstDecl.DefEnumLifetimes
-        decl-meta
+        a-meta
         a-name
         a-lifetimes
         a-cleanup
         a-variants)
       (match b
         [(ast.AstDecl.DefEnumLifetimes
-            decl-meta
+            b-meta
             b-name
             b-lifetimes
             b-cleanup
             b-variants)
           (and
+            (gen-aggregate-markers-eq? a-meta b-meta)
             (= a-name b-name)
             (ctfe.ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
             (gen-enum-cleanup-eq? a-cleanup b-cleanup)
             (gen-variant-list-eq? a-variants b-variants))]
         [_ false])]
-    [(ast.AstDecl.DefStruct decl-meta a-name a-repr a-cleanup a-fields)
+    [(ast.AstDecl.DefStruct a-meta a-name a-repr a-cleanup a-fields)
       (match b
-        [(ast.AstDecl.DefStruct decl-meta b-name b-repr b-cleanup b-fields)
+        [(ast.AstDecl.DefStruct b-meta b-name b-repr b-cleanup b-fields)
           (and
+            (gen-aggregate-markers-eq? a-meta b-meta)
             (= a-name b-name)
             (gen-struct-repr-eq? a-repr b-repr)
             (gen-struct-cleanup-eq? a-cleanup b-cleanup)
             (gen-field-list-eq? a-fields b-fields))]
         [_ false])]
     [(ast.AstDecl.DefStructLifetimes
-        decl-meta
+        a-meta
         a-name
         a-lifetimes
         a-repr
@@ -3102,13 +3112,14 @@
         a-fields)
       (match b
         [(ast.AstDecl.DefStructLifetimes
-            _
+            b-meta
             b-name
             b-lifetimes
             b-repr
             b-cleanup
             b-fields)
           (and
+            (gen-aggregate-markers-eq? a-meta b-meta)
             (= a-name b-name)
             (ctfe.ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
             (gen-struct-repr-eq? a-repr b-repr)
@@ -3456,39 +3467,47 @@
               (spec-owner-expr-get owner b-body-box))
             (gen-fn-metadata-eq-with-owner owner env a-metadata b-metadata))]
         [_ false])]
-    [(ast.AstDecl.DefEnum _ a-name a-cleanup a-variants)
+    [(ast.AstDecl.DefEnum a-meta a-name a-cleanup a-variants)
       (match b
-        [(ast.AstDecl.DefEnum _ b-name b-cleanup b-variants)
+        [(ast.AstDecl.DefEnum b-meta b-name b-cleanup b-variants)
           (and
+            (gen-aggregate-markers-eq? a-meta b-meta)
             (= a-name b-name)
             (gen-enum-cleanup-eq? a-cleanup b-cleanup)
             (gen-variant-list-eq-with-owner owner env a-variants b-variants))]
         [_ false])]
-    [(ast.AstDecl.DefEnumLifetimes _ a-name a-lifetimes a-cleanup a-variants)
+    [(ast.AstDecl.DefEnumLifetimes
+        a-meta
+        a-name
+        a-lifetimes
+        a-cleanup
+        a-variants)
       (match b
         [(ast.AstDecl.DefEnumLifetimes
-            _
+            b-meta
             b-name
             b-lifetimes
             b-cleanup
             b-variants)
           (and
+            (gen-aggregate-markers-eq? a-meta b-meta)
             (= a-name b-name)
             (ctfe.ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
             (gen-enum-cleanup-eq? a-cleanup b-cleanup)
             (gen-variant-list-eq-with-owner owner env a-variants b-variants))]
         [_ false])]
-    [(ast.AstDecl.DefStruct _ a-name a-repr a-cleanup a-fields)
+    [(ast.AstDecl.DefStruct a-meta a-name a-repr a-cleanup a-fields)
       (match b
-        [(ast.AstDecl.DefStruct _ b-name b-repr b-cleanup b-fields)
+        [(ast.AstDecl.DefStruct b-meta b-name b-repr b-cleanup b-fields)
           (and
+            (gen-aggregate-markers-eq? a-meta b-meta)
             (= a-name b-name)
             (gen-struct-repr-eq? a-repr b-repr)
             (gen-struct-cleanup-eq? a-cleanup b-cleanup)
             (gen-field-list-eq-with-owner owner env a-fields b-fields))]
         [_ false])]
     [(ast.AstDecl.DefStructLifetimes
-        _
+        a-meta
         a-name
         a-lifetimes
         a-repr
@@ -3496,13 +3515,14 @@
         a-fields)
       (match b
         [(ast.AstDecl.DefStructLifetimes
-            _
+            b-meta
             b-name
             b-lifetimes
             b-repr
             b-cleanup
             b-fields)
           (and
+            (gen-aggregate-markers-eq? a-meta b-meta)
             (= a-name b-name)
             (ctfe.ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
             (gen-struct-repr-eq? a-repr b-repr)
@@ -3782,7 +3802,11 @@
     (gen-key-exprs-with-owner owner args env (ctfe.ctfe-fuel-limit))))
 
 (define (gen-decl-runtime-template [decl : ast.AstDecl]) : ast.AstDecl
-  (ast.ast-decl-with-meta (ast.ast-decl-meta-runtime-shared-view) decl))
+  ;; Strip generation provenance, not the aggregate's semantic marker flags.
+  (ast.ast-decl-with-meta
+    (ast.ast-decl-meta-runtime-with-aggregate-markers
+      (ast.ast-decl-aggregate-markers (ast.ast-place-shared-view decl)))
+    decl))
 
 (define (gen-rewrite-generated-decl-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -3794,8 +3818,7 @@
   [item : String]
   [args : ast.AstExprList]
   [meta-key : String]) : ResultGenDecl
-  (match (gen-decl-visible-name-id
-    (gen-decl-runtime-template (ast.ast-place-shared-view decl)))
+  (match (gen-decl-visible-name-id (ast.ast-place-shared-view decl))
     [(SpecMaybeId.None)
       (ResultGenDecl.Err
         (box
@@ -11284,6 +11307,93 @@
     1
     "String"))
 
+(define (compiler-generated-decl-marker-pair-ok?
+  [first : String]
+  [second : String]
+  [reuse? : bool]
+  [marked? : bool]) : bool
+  (match (compiler-generated-decl-pair
+    (str_cat.str-cat first "\n" second)
+    0
+    "marker-family"
+    "Marked"
+    "same-key"
+    1
+    "same-key")
+    [(parser.ResultAstProgram.Err _) false]
+    [(parser.ResultAstProgram.Ok program)
+      (match (ast.ast-place-shared-view program)
+        [(ast.AstProgram.Program decls-box)
+          (let
+            [decls : ast.AstDeclList
+              (ast.ast-decl-list-box-shared-view decls-box)]
+            [equal? : bool
+              (gen-decl-eq?
+                (ast.ast-decl-list-ref (ast.ast-place-shared-view decls) 0)
+                (ast.ast-decl-list-ref decls 1))]
+            (and
+              (= equal? reuse?)
+              (match (compiler-specialize-program program)
+                [(ResultSpecProgram.Ok normalized)
+                  (and
+                    reuse?
+                    (match normalized
+                      [(ast.AstProgram.Program normalized-box)
+                        (let
+                          [normalized-decls : ast.AstDeclList
+                            (ast.ast-decl-list-box-shared-view normalized-box)]
+                          (and
+                            (= (ast.ast-decl-list-len (& normalized-decls)) 1)
+                            (=
+                              (ast.ast-decl-must-use?
+                                (ast.ast-decl-list-ref normalized-decls 0))
+                              marked?)))]))]
+                [(ResultSpecProgram.Err diag)
+                  (let
+                    [value : cdiag.CompilerDiagnostic
+                      (cdiag.compiler-diagnostic-box-shared-view diag)]
+                    (and
+                      (not reuse?)
+                      (string.eq
+                        (cdiag.compiler-diagnostic-message value)
+                        "generated-decl: duplicate generated key for Marked has incompatible payload")))])))])]))
+
+(define (compiler-generated-decl-marker-forms-ok?
+  [unmarked : String]
+  [marked : String]) : bool
+  (and
+    (compiler-generated-decl-marker-pair-ok?
+      (string.copy unmarked)
+      (string.copy unmarked)
+      true
+      false)
+    (compiler-generated-decl-marker-pair-ok?
+      (string.copy marked)
+      (string.copy marked)
+      true
+      true)
+    (compiler-generated-decl-marker-pair-ok?
+      (string.copy unmarked)
+      (string.copy marked)
+      false
+      false)
+    (compiler-generated-decl-marker-pair-ok? marked unmarked false false)))
+
+(define (compiler-generated-decl-markers-distinct-ok?) : bool
+  (and
+    (compiler-generated-decl-marker-forms-ok?
+      "(defstruct Marked (value i64))"
+      "(defstruct Marked (:must-use) (value i64))")
+    (compiler-generated-decl-marker-forms-ok?
+      "(defenum Marked (None) (Some i64))"
+      "(defenum Marked (:must-use) (None) (Some i64))")
+    (compiler-generated-decl-marker-forms-ok?
+      "(defstruct Marked (:lifetimes a) (value (& a i64)))"
+      "(defstruct Marked (:lifetimes a) (:must-use) (value (& a i64)))")
+    (compiler-generated-decl-marker-forms-ok?
+      "(defenum Marked (:lifetimes a) (None) (Some (& a i64)))"
+      "(defenum Marked (:lifetimes a) (:must-use) (None) (Some (& a i64)))")))
+
 (define (compiler-generated-decl-reuse-ok?) : bool
   (match (compiler-generated-decl-reuse-program)
     [(parser.ResultAstProgram.Ok program)
@@ -11711,6 +11821,7 @@
     (unless (compiler-specialize-boxed-tails-ok?) (return 0))
     (unless (compiler-specialize-reflection-string-param-ok?) (return 0))
     (unless (compiler-generated-decl-reuse-ok?) (return 0))
+    (unless (compiler-generated-decl-markers-distinct-ok?) (return 0))
     (unless (compiler-generated-decl-function-reuse-ok?) (return 0))
     (unless (compiler-generated-decl-incompatible-rejected?) (return 0))
     (unless (compiler-generated-decl-incompatible-note-ok?) (return 0))
@@ -11723,6 +11834,16 @@
       (compiler-specialize-generated-symbol-records-growth-ok?)
       (return 0))
     1))
+
+(cfg
+  test
+  (test
+    specialize-generated-aggregate-markers
+    (begin
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (test.assert-true
+        (compiler-generated-decl-markers-distinct-ok?)
+        "generated aggregate marker preservation, reuse, and conflicts"))))
 
 (cfg
   test

@@ -9937,9 +9937,7 @@
   [meta : AstDeclMeta]) : AstDeclMeta
   (match (__tl-box-place meta.value)
     [(AstDeclMetaValue.Runtime markers)
-      (if (= markers 0)
-        (ast-global-shared-view ast-decl-meta-runtime)
-        (AstDeclMeta (box (AstDeclMetaValue.Runtime markers))))]
+      (ast-decl-meta-runtime-with-aggregate-markers markers)]
     [(AstDeclMetaValue.Comptime generated markers)
       (AstDeclMeta
         (box

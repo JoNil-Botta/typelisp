@@ -29,6 +29,15 @@ independent of cache storage: callers supply authority-checked package-relative
 paths and nominal compiler/child identities, while event capture, invalidation,
 result serialization, and reuse policy remain separate compiler services.
 
+Aggregate declaration markers live in `AstDeclMeta` in
+[`compiler_ast_types.tl`](../src/compiler_ast_types.tl), separate from runtime
+layout. Parsing and surface hydration share its runtime metadata constructor;
+unmarked runtime declarations reuse the singleton, and unchanged marker updates
+do not allocate. Generated-declaration reuse in `compiler_specialize.tl` compares
+these semantic flags even when the aggregates have identical ABI. The existing
+AST wrapper, surface roundtrip, and specialization selftests guard these rules;
+serialized metadata changes also require a surface-AST schema version change.
+
 Handwritten runtime, startup, and direct-object x86-64 code is covered by the
 closed [compiler-owned executable template registry](compiler-x64-executable-templates.md).
 It records mutation-sensitive source identities and typed control/frame events

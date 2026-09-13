@@ -1068,7 +1068,8 @@ idempotent only when the new output is structurally the same declaration
 after normalizing spans, doc comments, and non-semantic formatting; the
 compiler reuses the existing declaration and does not create a second
 namespace item. Repeating the same identity with a different declaration
-kind, signature, field/variant shape, body, or namespace effects is an
+kind, signature, field/variant shape, aggregate markers such as `:must-use`,
+body, or namespace effects is an
 incompatible-duplicate diagnostic. Different generated identities that bind
 the same visible value/type/constructor/variant name are ordinary duplicate
 namespace errors, with the generated keys included in the diagnostic.

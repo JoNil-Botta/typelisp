@@ -339,7 +339,9 @@ Compiler-development builds expose three opt-in `typelisp compile` diagnostics:
   input's `.ir` path).
 - `--dump-ir after-<pass>` writes every function snapshot observed immediately
   after the named optimizer pass. Pass names use the trace spelling, including
-  `fold`, `ssa`, `gvn`, `licm`, `global_gvn`, and `dce`.
+  `fold`, `ssa`, `gvn`, `licm`, `global_gvn`, `dce`, and the post-prune
+  `uniform_phi`. A last per-function observation is not necessarily the final
+  program: later whole-program or post-prune rewrites must also be inspected.
 - `--trace-passes` writes one
   `optimizer-pass|<function>|<pass>|blocks=<n>|instructions=<n>` record per
   observed boundary to stderr.
@@ -503,6 +505,36 @@ Completed regalloc census harnesses for move traffic, call spans, and emergency
 scavenging are preserved under
 [`../scripts/attic/`](../scripts/attic/README.md). They are historical
 reproduction tools, not current CI gates.
+
+Register-plan ownership has source-local inline tests in
+`compiler_regalloc_tests.tl`. `compiler-reg-returned-plan-profile-owner` checks
+that resetting metrics through a returned plan reaches the caller's original
+owner on both sides of the scratch budget.
+`compiler-reg-retained-plan-survives-later-planning` preserves a Linux
+plan across repeated Windows planning calls and compares its retained homes to
+an independent snapshot. `compiler-reg-analysis-owner-boundary-homes` widens
+only unused frame space across the budget boundary; Linux and Windows homes
+and post-plan trace reasons must match the small fixture after the scratch
+owner retires. The native register-allocation smoke also needs
+`--cfg test` to exercise its post-plan trace journal and liveness-census checks;
+that flag alone does not run source-local inline test declarations.
+
+The Linux build-invariance gate reuses its freshly built opt1 compiler for two
+complete opt2 workloads: the existing singleton batch compilation of
+`compiler_codegen_smoke_suite.tl` and a standalone build of
+`compiler_backend_tests.tl`. The codegen assembly still participates in the
+ordinary opt1-built/opt2-built byte comparison; it is not compiled again just
+to measure memory. The gate requires exactly one bounded codegen invocation.
+Each runs through
+`scripts/run-memory-bounded.sh` with an 8 GiB process-tree limit, requires the
+`systemd-user-cgroup` backend with swap disabled, and fails if enforcement,
+compilation, or its machine-readable report is unavailable. Linux CI starts
+the runner's user manager and verifies this backend before running the gates. The
+stress function, optimization level and ordinary invariance corpus remain
+intact. Reports and command logs are retained in
+`target/build-invariance/backend-memory/` and uploaded by Linux CI; large
+assembly/executable outputs remain local. The memory gate selects the hard
+backend explicitly; the wrapper's RSS fallback cannot satisfy this regression.
 
 `scripts/measure-instruction-counts.sh` is the Linux-only dynamic instruction
 counter for local deterministic performance measurements. It builds TypeLisp

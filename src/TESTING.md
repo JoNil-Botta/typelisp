@@ -1433,6 +1433,14 @@ TYPELISP_BIN=$tl ./scripts/check-codegen-target-parity.sh
 scripts/ci-verify.sh
 ```
 
+The package-lock CLI fixtures wait for exact staging/commit observations with a
+60-second bound, rechecking the file predicate after a writer terminates to avoid
+a publication/exit race. Readiness does not replace the final child exit-status,
+lock-content, conflict-diagnostic or stage-cleanup assertions. Premature exit and
+timeout print the captured child logs. `sh scripts/test-package-lock-wait.sh`
+exercises both publication races, unsuccessful writers and the unchanged timeout;
+it is a required gate on Linux and Windows. Refs #7828.
+
 `scripts/check-tl-lint.sh` runs one batched `typelisp lint --check` over tracked
 TypeLisp source units and fails CI on any finding. Plain `typelisp lint
 <file.tl>` remains warn-only for reviewable cleanup slices.

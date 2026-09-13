@@ -576,6 +576,7 @@ run_with_compiler "$STAGE2_BIN" "TypeLisp source lint" scripts/check-tl-lint.sh
 # The freshly bootstrapped compiler (and the programs it builds) must depend on
 # no C runtime: kernel32 only on Windows, nothing dynamic on Linux.
 run_with_compiler "$STAGE2_BIN" "no-libc dependency guard" scripts/verify-no-libc.sh
+run_gate "package-lock writer observation self-tests" sh scripts/test-package-lock-wait.sh
 run_with_compiler "$STAGE2_BIN" "stage2 cli build/run and chooser smoke" scripts/verify-selfhost-cli-build-run.sh
 run_with_compiler "$STAGE2_BIN" "stage2 public tool surface" scripts/verify-public-tools.sh
 run_with_compiler "$STAGE2_BIN" "IR observability golden" scripts/verify-ir-observability.sh

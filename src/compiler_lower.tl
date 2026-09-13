@@ -31403,6 +31403,7 @@
             [(tc_core.ResultTcType.Err message)
               (if (and
                 (tc_core.tc-integer-literal-expr?
+                  (lower-global-shared-view ctx)
                   (lower-global-shared-view then-branch))
                 (tc_core.tc-integer-type? (lower-global-shared-view else-ty)))
                 (match (tc_core.tc-integer-literal-expr-with-expected
@@ -31419,6 +31420,7 @@
                     (tc_core.ResultTcType.Err literal-message)])
                 (if (and
                   (tc_core.tc-integer-literal-expr?
+                    (lower-global-shared-view ctx)
                     (lower-global-shared-view else-branch))
                   (tc_core.tc-integer-type? (lower-global-shared-view then-ty)))
                   (match (tc_core.tc-integer-literal-expr-with-expected
@@ -31770,7 +31772,9 @@
   ;; The type checker contextually adopts i64 for a bare integer index. Do not
   ;; let the syntax-only result cache reintroduce the default i32 type and a
   ;; narrowing/sign-extension pair after that checked decision.
-  (if (tc_core.tc-integer-literal-expr? (lower-global-shared-view index))
+  (if (tc_core.tc-integer-literal-expr?
+    (lower-global-shared-view ctx)
+    (lower-global-shared-view index))
     (tc_core.ResultTcType.Ok (ast.AstType.I64))
     (match (lower-expr-result-type-fast
       ctx
@@ -32683,7 +32687,9 @@
   [type-env : tc_core.TcTypeEnv]
   [expr : ast.AstExpr]
   [origin : ast.AstExpr]) : ResultLowerExpr
-  (if (tc_core.tc-integer-literal-expr? (lower-global-shared-view expr))
+  (if (tc_core.tc-integer-literal-expr?
+    (lower-global-shared-view ctx)
+    (lower-global-shared-view expr))
     (lower-expr-with-type ctx state env type-env expr origin (ast.AstType.I64))
     (lower-expr ctx state env type-env expr)))
 
@@ -52840,8 +52846,12 @@
                 (lower-global-shared-view ctx)
                 cast-ty-id)))]
         (if (or
-          (tc_core.tc-integer-literal-expr? (lower-global-shared-view inner))
-          (tc_core.tc-float-literal-expr? (lower-global-shared-view inner)))
+          (tc_core.tc-integer-literal-expr?
+            (lower-global-shared-view ctx)
+            (lower-global-shared-view inner))
+          (tc_core.tc-float-literal-expr?
+            (lower-global-shared-view ctx)
+            (lower-global-shared-view inner)))
           (lower-masked-vector-expr-lanes-with-locals
             ctx
             function-state
@@ -56827,8 +56837,12 @@
                 (lower-global-shared-view ctx)
                 cast-ty-id)))]
         (if (or
-          (tc_core.tc-integer-literal-expr? (lower-global-shared-view inner))
-          (tc_core.tc-float-literal-expr? (lower-global-shared-view inner)))
+          (tc_core.tc-integer-literal-expr?
+            (lower-global-shared-view ctx)
+            (lower-global-shared-view inner))
+          (tc_core.tc-float-literal-expr?
+            (lower-global-shared-view ctx)
+            (lower-global-shared-view inner)))
           (LowerMaybeSpmdNumericFailure.No)
           (match (tc_core.tc-expr
             (lower-global-shared-view ctx)

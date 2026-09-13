@@ -516,6 +516,8 @@ run_batch_sentinels() {
 run_batched_comparison() {
     left_batches="$WORKDIR/batches/opt1-built"
     right_batches="$WORKDIR/batches/opt2-built"
+    build_invariance_require_coverage "$CORPUS" "$left_batches"
+    build_invariance_require_coverage "$CORPUS" "$right_batches"
     left_chunk_count=$(find "$left_batches" -type f -name 'entries.*.txt' | wc -l | tr -d ' ')
     right_chunk_count=$(find "$right_batches" -type f -name 'entries.*.txt' | wc -l | tr -d ' ')
     if [ "$left_chunk_count" -eq 0 ] || [ "$left_chunk_count" -ne "$right_chunk_count" ]; then

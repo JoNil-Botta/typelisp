@@ -55,6 +55,41 @@ build_invariance_require_plan() {
     rm -f "$_bib_require_entries.expected" "$_bib_require_aliases.expected"
 }
 
+# Compare the multiset of executed logical records with the complete prepared
+# inventory, and that inventory with the authoritative corpus. Counts alone
+# cannot detect a duplicated chunk substituted for a missing one.
+build_invariance_require_coverage() {
+    _bib_coverage_corpus=$1
+    _bib_coverage_root=$2
+    _bib_coverage_cases="$_bib_coverage_root/cases.txt"
+    if ! awk -F '|' 'NF != 3 || $1 == "" || seen[$1]++ { exit 1 }
+        { count++ } END { if (count == 0) exit 1 }' \
+        "$_bib_coverage_corpus"; then
+        echo "[build-invariance] malformed or duplicate corpus case" >&2
+        return 1
+    fi
+    LC_ALL=C sort "$_bib_coverage_corpus" > "$_bib_coverage_root/coverage.corpus"
+    awk -F '|' '{ print $1 "|" $2 "|" $5 }' "$_bib_coverage_cases" |
+        LC_ALL=C sort > "$_bib_coverage_root/coverage.prepared"
+    if ! cmp -s "$_bib_coverage_root/coverage.corpus" "$_bib_coverage_root/coverage.prepared"; then
+        echo "[build-invariance] prepared inventory differs from corpus" >&2
+        return 1
+    fi
+    : > "$_bib_coverage_root/coverage.chunks"
+    for _bib_coverage_opt in 1 2; do
+        for _bib_coverage_chunk in "$_bib_coverage_root/opt$_bib_coverage_opt/chunks"/cases.*.txt; do
+            [ -f "$_bib_coverage_chunk" ] || continue
+            cat "$_bib_coverage_chunk" >> "$_bib_coverage_root/coverage.chunks" || return 1
+        done
+    done
+    LC_ALL=C sort "$_bib_coverage_cases" > "$_bib_coverage_root/coverage.expected"
+    LC_ALL=C sort "$_bib_coverage_root/coverage.chunks" > "$_bib_coverage_root/coverage.actual"
+    if ! cmp -s "$_bib_coverage_root/coverage.expected" "$_bib_coverage_root/coverage.actual"; then
+        echo "[build-invariance] chunk coverage differs from prepared inventory" >&2
+        return 1
+    fi
+}
+
 build_invariance_copy_aliases() {
     _bib_alias_file=$1
     while IFS='|' read -r _bib_original _bib_alias; do

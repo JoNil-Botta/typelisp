@@ -1341,7 +1341,9 @@ that makes reuse unsound.
 Within each Linux build-invariance chunk, identical compile-input paths at the
 same optimization level share one fresh output from that chunk's compiler.
 The original logical case records still drive every opt1-built/opt2-built byte
-comparison. The plan is reconstructed and checked before invocation; existing
+comparison. The complete chunk inventory must match the corpus, including
+multiplicity, so a duplicated chunk cannot replace a missing one. The plan is
+reconstructed and checked before invocation; existing
 outputs fail rather than acting as cache hits. Alias copies require a nonempty
 regular canonical output and exact byte equality. Source-set and compiler
 digests must remain unchanged through the gate. Reuse never crosses chunks or

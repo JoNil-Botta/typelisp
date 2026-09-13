@@ -3627,26 +3627,22 @@
       (io.panic "typed package direct-object route table failed"))))
 
 (define (build-package-emit-assembly-fallback
-  [name : String]
   [target : backend.CompilerBackendTarget]
   [opt-level : i64]
   [mode : backend.CompilerBackendMode]
   [emit-entry : bool]
   [crt-entry : bool]
-  [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
+  [lowered : compiler_driver_core.ResultCompilerDriverLowered]
   [reason : backend.CompilerDirectObjectFallbackReason]) : ResultBuildPackagePreparedRuntime
-  (match (compiler_driver_core.compiler-driver-emit-package-loaded
+  (match (compiler_driver_core.compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
     ""
-    name
+    lowered
     target
     true
-    opt-level
     mode
+    opt-level
     emit-entry
-    crt-entry
-    decls
-    paths)
+    crt-entry)
     [(compiler_driver_core.ResultCompilerDriver.Err diag advisories)
       (begin
         (compiler_driver_core.compiler-driver-print-advisories (& advisories))
@@ -3658,41 +3654,29 @@
         (compiler_driver_core.compiler-driver-print-advisories (& advisories))
         (ResultBuildPackagePreparedRuntime.Assembly asm reason))]))
 
-(define (build-package-try-prepare-direct-runtime
-  [name : String]
+;; Route policy is resolved while source declarations are live. Emission owns
+;; one lowered result and cannot re-enter package loading or lowering.
+(define (build-package-emit-preflighted-runtime
   [kind : load.CompilerPkgKind]
   [target : backend.CompilerBackendTarget]
   [opt-level : i64]
   [mode : backend.CompilerBackendMode]
-  [debug-info : bool]
-  [path-budget : i64]
-  [linux-budget-override : bool]
   [emit-entry : bool]
   [crt-entry : bool]
-  [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]) : ResultBuildPackagePreparedRuntime
-  (match (build-package-direct-object-preflight
-    kind
-    target
-    mode
-    debug-info
-    path-budget
-    linux-budget-override
-    (owned_view.compiler-owned-shared-view decls)
-    (& paths))
+  [preflight : BuildPackageDirectObjectPreflight]
+  [lowered : compiler_driver_core.ResultCompilerDriverLowered]) : ResultBuildPackagePreparedRuntime
+  (match preflight
     [(BuildPackageDirectObjectPreflight.Eligible)
       (match target
         [(backend.CompilerBackendTarget.Linux)
-          (match (compiler_driver_core.compiler-driver-emit-package-loaded-runtime
+          (match (compiler_driver_core.compiler-driver-emit-lowered-result-package-runtime-with-level-mode-entry-and-crt
             ""
-            name
+            lowered
             target
-            opt-level
             mode
+            opt-level
             emit-entry
-            crt-entry
-            decls
-            paths)
+            crt-entry)
             [(compiler_driver_core.ResultCompilerDriverPackageRuntime.Object
                 image
                 asm
@@ -3729,13 +3713,7 @@
           ;; intentional, stable fallback rather than a compilation failure.
           (match (compiler_windows_coff_core.compiler-windows-batch-emit-lowered-result
             ""
-            (compiler_driver_core.compiler-driver-lower-package-loaded
-              ""
-              name
-              target
-              mode
-              decls
-              paths)
+            lowered
             mode
             opt-level
             false
@@ -3775,15 +3753,55 @@
                     (owned_view.compiler-owned-box-shared-view diag))))])])]
     [(BuildPackageDirectObjectPreflight.Fallback reason)
       (build-package-emit-assembly-fallback
-        name
         target
         opt-level
         mode
         emit-entry
         crt-entry
-        decls
-        paths
+        lowered
         reason)]))
+
+(define (build-package-try-prepare-direct-runtime
+  [name : String]
+  [kind : load.CompilerPkgKind]
+  [target : backend.CompilerBackendTarget]
+  [opt-level : i64]
+  [mode : backend.CompilerBackendMode]
+  [debug-info : bool]
+  [path-budget : i64]
+  [linux-budget-override : bool]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]) : ResultBuildPackagePreparedRuntime
+  (let
+    [preflight : BuildPackageDirectObjectPreflight
+      (build-package-direct-object-preflight
+        kind
+        target
+        mode
+        debug-info
+        path-budget
+        linux-budget-override
+        (owned_view.compiler-owned-shared-view decls)
+        (& paths))]
+    [lowered : compiler_driver_core.ResultCompilerDriverLowered
+      (compiler_driver_core.compiler-driver-lower-package-loaded
+        ""
+        name
+        target
+        mode
+        decls
+        paths)]
+    (build-package-emit-preflighted-runtime
+      kind
+      target
+      opt-level
+      mode
+      emit-entry
+      crt-entry
+      preflight
+      lowered)))
 
 (define (build-package-graph-node-artifact-paths
   [node : BuildPackageGraphNode]

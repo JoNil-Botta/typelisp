@@ -72,6 +72,40 @@ if check_direct_object_boundary "$WORK/duplicated-capability.tl"; then
     fail "package ELF boundary guard accepted duplicated capability checks"
 fi
 
+# Route selection may read source declarations; artifact emission consumes the
+# resulting route and one lowered program, with no source frontend to revisit.
+check_package_lowered_route() {
+    awk '
+        /^[[:space:]]*\(define \(/ {
+            mode = ""
+            if ($0 ~ /\(build-package-try-prepare-direct-runtime$/) { mode = "prepare"; prepare += 1 }
+            if ($0 ~ /\(build-package-(emit-preflighted-runtime|emit-assembly-fallback)$/) { mode = "emit"; emit += 1 }
+        }
+        mode == "prepare" {
+            if ($0 ~ /compiler-driver-lower-package-loaded/) lower_calls += 1
+            if ($0 ~ /\(build-package-direct-object-preflight$/) { policy_calls += 1; if (lower_calls) forbidden += 1 }
+            if ($0 ~ /\(build-package-emit-preflighted-runtime$/) handoff += 1
+        }
+        mode == "emit" {
+            if ($0 ~ /AstDecl|AstNode|compiler-driver-(lower|load|emit)-package/) forbidden += 1
+            if ($0 ~ /\[lowered : compiler_driver_core.ResultCompilerDriverLowered\]/) inputs += 1
+        }
+        END { exit !(prepare == 1 && emit == 2 && lower_calls == 1 && policy_calls == 1 && handoff == 1 && inputs == 2 && forbidden == 0) }
+    ' "$1"
+}
+check_package_lowered_route src/build_cli_core.tl || fail "package emission does not consume one lowered result"
+sed 's/compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt$/compiler-driver-emit-package-loaded/' \
+    src/build_cli_core.tl > "$WORK/relowered-fallback.tl"
+if check_package_lowered_route "$WORK/relowered-fallback.tl"; then
+    fail "package route guard accepted lowering inside assembly fallback"
+fi
+sed '/^[[:space:]]*\[lowered : compiler_driver_core.ResultCompilerDriverLowered\]$/a\
+  [decls : ast.AstDeclList]' \
+    src/build_cli_core.tl > "$WORK/frontend-in-emission.tl"
+if check_package_lowered_route "$WORK/frontend-in-emission.tl"; then
+    fail "package route guard accepted source declarations in emission"
+fi
+
 # Artifact finishing consumes complete byte/text outputs. It cannot accept a
 # frontend graph or invoke preparation again after the checked surface capture.
 check_prepared_runtime_boundary() {

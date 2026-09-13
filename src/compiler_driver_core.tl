@@ -5897,33 +5897,6 @@
         false
         false))))
 
-(define (compiler-driver-emit-package-loaded
-  [input-path : String]
-  [package-name : String]
-  [target : compiler_backend.CompilerBackendTarget]
-  [has-target : bool]
-  [opt-level : i64]
-  [mode : compiler_backend.CompilerBackendMode]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [decls : compiler_ast_types.AstDeclList]
-  [paths : compiler_ast_types.AstDeclPathList]) : ResultCompilerDriver
-  (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
-    (owned_view.compiler-owned-shared-view input-path)
-    (compiler-driver-lower-package-loaded
-      input-path
-      package-name
-      target
-      mode
-      decls
-      paths)
-    target
-    has-target
-    mode
-    opt-level
-    emit-entry
-    crt-entry))
-
 (define (compiler-driver-lower-package-loaded
   [input-path : String]
   [package-name : String]
@@ -5941,31 +5914,6 @@
       (compiler-driver-lowered-from-active-pools program spans)]
     [(compiler_lower.ResultCompilerLower.Err diag)
       (ResultCompilerDriverLowered.Err diag (compiler-driver-serial-advisories))]))
-
-(define (compiler-driver-emit-package-loaded-runtime
-  [input-path : String]
-  [package-name : String]
-  [target : compiler_backend.CompilerBackendTarget]
-  [opt-level : i64]
-  [mode : compiler_backend.CompilerBackendMode]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [decls : compiler_ast_types.AstDeclList]
-  [paths : compiler_ast_types.AstDeclPathList]) : ResultCompilerDriverPackageRuntime
-  (compiler-driver-emit-lowered-result-package-runtime-with-level-mode-entry-and-crt
-    (owned_view.compiler-owned-shared-view input-path)
-    (compiler-driver-lower-package-loaded
-      input-path
-      package-name
-      target
-      mode
-      decls
-      paths)
-    target
-    mode
-    opt-level
-    emit-entry
-    crt-entry))
 
 (define (compiler-driver-load-package-file-with-runtime-cfg
   [input-path : String]

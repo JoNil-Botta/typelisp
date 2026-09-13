@@ -86,6 +86,13 @@ for later native-code certification.
 
 ### Package direct-object routing
 
+Package route preflight reads live declarations once, before lowering.
+`build-package-emit-preflighted-runtime` then consumes the chosen route and one
+`ResultCompilerDriverLowered`. Linux object emission, Windows batch emission,
+and assembly fallback share that boundary; none accepts source declarations or
+re-enters lowering. The driver provides lowered-result emitters, with no second
+package-specific load/lower wrapper chain.
+
 Before runtime lowering, `build-package-tlci-capture-exports` records callable
 metadata as canonical TLCI text, sorted macro identities as owned strings, and
 the complete generated transformer source. `TlciNativeMacroCaptures` contains

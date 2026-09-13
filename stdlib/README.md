@@ -337,7 +337,12 @@ Vec bang place macros as available yet.
   called directly in a loop over one retained view. Both readers report
   positive short progress separately from zero-byte EOF, reject requests above
   the view or one-MiB ceiling before I/O, and support descriptor metadata and
-  exact-length checks. File
+  exact-length checks. `linux-rooted-read-file-rewind!` exclusively borrows a
+  live read capability and resets the same acquired file to offset zero without
+  allocation or reopening its pathname. Cancellation/liveness rejection leaves
+  the cursor unchanged; host failures promise no cursor position and retain
+  descriptor ownership. Rewinding does not freeze contents or verify stability.
+  File
   finish writes an exact promised byte count with partial-write/EINTR handling,
   applies `0644` or `0755`, optionally flushes, and closes exactly once.
   Descriptor-relative `renameat` provides atomic replace-existing publication;

@@ -3,7 +3,7 @@ set -eu
 
 # verify-fs-rooted-linux.sh - adversarial native checks for the private Linux
 # rooted staging, publication, and reusable-read backend. refs #7221, #7409,
-# #7550, #7653
+# #7550, #7653, #7662
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -440,6 +440,13 @@ run_expect publication-faults 42 \
     fail "injected unlink failure removed its target"
 [ -d "$WORKDIR/publication-faults/rmdir-fault" ] ||
     fail "injected rmdir failure removed its target"
+
+mkdir -p "$WORKDIR/read-rewind-data"
+run_expect retained-read-rewind 42 "$PUBLICATION_BIN" rewind "$WORKDIR/read-rewind-data"
+[ "$(cat "$WORKDIR/read-rewind-data/payload")" = replacement ] ||
+    fail "rewind changed the replacement pathname contents"
+[ ! -e "$WORKDIR/read-rewind-data/moved" ] ||
+    fail "rewind retained-identity fixture did not unlink the original entry"
 
 mkdir -p "$WORKDIR/read-into-data"
 run_expect caller-owned-read 42 "$READ_INTO_BIN" "$WORKDIR/read-into-data"

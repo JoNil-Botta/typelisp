@@ -6022,6 +6022,121 @@
       target
       (compiler_parse_core.compiler-cfg-empty))))
 
+(defenum ResultCompilerDriverPackagePaths
+  (Ok compiler_ast_types.AstDeclPathList)
+  (Err (Box compiler_diagnostic.CompilerDiagnostic)))
+
+;; Only copied strings cross the discovery boundary. Interned ownership and
+;; provenance ids belong to the retiring session, and are deliberately absent.
+(define (compiler-driver-copy-package-discovery-paths
+  [paths : compiler_ast_types.AstDeclPathList]) : compiler_ast_types.AstDeclPathList
+  (match (compiler_ast_types.ast-decl-path-list-step paths)
+    [(compiler_ast_types.AstDeclPathListStep.Nil)
+      (compiler_ast_types.ast-decl-path-list-new)]
+    [(compiler_ast_types.AstDeclPathListStep.Cons path rest)
+      (compiler_ast_types.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
+        (string.copy path)
+        -1
+        -1
+        (compiler-driver-copy-package-discovery-paths rest))]))
+
+;; Serial preflight boundary: callers retain manifest/root/dependency strings,
+;; while discovery owns every parsed node, interned name and derived surface.
+;; Restore the enclosing session before freeing the temporary owners so the
+;; following doctest (including inline worker fallback) starts with live state.
+(define (compiler-driver-load-package-paths-with-runtime
+  [input-path : String]
+  [target : compiler_backend.CompilerBackendTarget]
+  [stdlib-roots : svec.Vec]
+  [manifest-dir : String]
+  [deps : compiler_load.CompilerPkgDeps]
+  [emit-entry : bool]) : ResultCompilerDriverPackagePaths
+  (let
+    [home : arena.Arena (arena.current)]
+    [parent : compiler_load.CompilerLoadSessionState
+      (compiler_load.compiler-load-active-session-state-shared-view)]
+    [home-pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-capture-active)]
+    [home-interns : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [home-builtins : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
+    (with-scratch
+      (let
+        [pools : compiler_ast_types.AstNodePoolContext
+          (compiler_ast_types.ast-node-pool-context-new-with-capacities-in-arena
+            1
+            1
+            (arena.tl_arena_current))]
+        [interns : ci.InternCompatState (ci.intern-compat-state-new)]
+        [state : compiler_load.CompilerLoadSessionState
+          (compiler_load.compiler-load-session-state-new-for-package-discovery
+            (owned_view.compiler-owned-shared-view parent))]
+        [_install-pools : unit
+          (compiler_ast_types.ast-node-pool-context-install! pools)]
+        [_install-interns : unit
+          (ci.intern-compat-state-install!
+            (owned_view.compiler-owned-shared-view interns))]
+        [_install-session
+          : unit
+          ;; This boundary uses the serial loader, whose parser advances the
+          ;; active interner cursor. Capture that live owner through the serial
+          ;; session adapter instead of retaining a pre-parse scalar snapshot.
+          (compiler_load.compiler-load-session-state-use!
+            (owned_view.compiler-owned-shared-view state))]
+        [_reset-intern-caches : unit
+          (compiler_typecheck_core.compiler-typecheck-reset-intern-owned-state!)]
+        [_reset-analysis : unit (compiler-driver-reset-analysis-state!)]
+        [result : ResultCompilerDriverPackagePaths
+          (match (compiler-driver-load-package-file-with-runtime
+            input-path
+            target
+            stdlib-roots
+            manifest-dir
+            deps
+            emit-entry)
+            [(compiler_load.ResultCompilerLoadWithPaths.Ok _ paths _ _)
+              (in-arena
+                home
+                (ResultCompilerDriverPackagePaths.Ok
+                  (compiler-driver-copy-package-discovery-paths paths)))]
+            [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
+              (in-arena
+                home
+                (ResultCompilerDriverPackagePaths.Err
+                  (box
+                    (compiler_diagnostic.compiler-diagnostic-copy
+                      (owned_view.compiler-owned-box-shared-view diag)))))])]
+        [retired-pools : compiler_ast_types.AstNodePoolContext
+          (compiler_ast_types.ast-node-pool-context-capture-active)]
+        [intern-arena : i64 (ci.intern-persistent-arena-handle)]
+        (begin
+          (compiler_load.compiler-load-session-reset-pools!)
+          ;; No declarations escape, so the reader's origin prefix is empty.
+          ;; The normal handoff now releases all scan capacity as well.
+          (compiler_load.compiler-load-transfer-frontend-handoff!)
+          (in-arena
+            home
+            (begin
+              (ci.intern-compat-state-install! home-interns)
+              (compiler_ast_types.ast-node-pool-context-install! home-pools)
+              (if (array-ref parent.intern-state-ready 0)
+                (compiler_load.compiler-load-session-state-use-with-intern-state!
+                  (owned_view.compiler-owned-shared-view parent)
+                  (compiler_load.compiler-load-session-state-interns parent))
+                (compiler_load.compiler-load-session-state-use! parent))
+              (compiler_typecheck_core.compiler-typecheck-reset-intern-owned-state!)
+              (compiler-driver-reset-analysis-state!)
+              (cbi.state-install! (& home-builtins))))
+          (compiler_load.compiler-load-dependency-surface-list-destroy-storage!
+            (owned_view.compiler-owned-array-element-shared-view
+              state.dependency-surfaces.fragments
+              0))
+          (compiler_ast_types.ast-node-pool-context-destroy-storage!
+            retired-pools)
+          (unsafe
+            (arena.tl_arena_destroy intern-arena))
+          result)))))
+
 (define (compiler-driver-load-package-file-with-runtime-owned-cfg
   [input-path : String]
   [stdlib-roots : svec.Vec]

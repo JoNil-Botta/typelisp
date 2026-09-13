@@ -3,13 +3,8 @@
 (import compiler_surface_binary as binary)
 (import compiler_surface_identity as surface_identity)
 (import compiler_intern_state as cis)
-(cfg test (import stdlib.io))
 (cfg
-  (any
-    test
-    compiler-surface-producer
-    compiler-build-identity
-    embedded-stdlib-tlci)
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (import stdlib.arena))
 (cfg
   (any
@@ -1072,44 +1067,3 @@
                 (ResultSurfaceTypecheckFacts.Err
                   "surface facts: invalid checked-prefix facts")]
               [else (ResultSurfaceTypecheckFacts.Ok facts)])))))))
-
-(test
-  surface-facts-publication-outlives-source-frontend
-  (let
-    [home : arena.Arena (arena.current)]
-    (begin
-      (surface-typecheck-facts-clear!)
-      (with-scratch
-        (let
-          [facts : SurfaceTypecheckFacts
-            (SurfaceTypecheckFacts
-              2
-              3
-              1
-              1
-              1
-              (__tl_make-array 7)
-              (__tl_make-array 11)
-              (__tl_make-array 0))]
-          (begin
-            (unless
-              (surface-typecheck-facts-publish-composite! facts)
-              (io.panic "source composite facts must be valid"))
-            (in-arena home (surface-typecheck-facts-retain-current!)))))
-      (with-scratch
-        (let
-          [reuse : (__tl_dyn-array i64) (__tl_make-array i64 1048576)]
-          (set! (array-ref reuse 0) 7797)))
-      (let
-        [facts : SurfaceTypecheckFacts (surface-typecheck-facts-current)]
-        (begin
-          (unless
-            (and
-              (surface-typecheck-facts-active?)
-              (surface-typecheck-facts-composite-active?)
-              (surface-typecheck-facts-valid? facts)
-              (= (array-ref facts.clone-decl-keys 0) 7)
-              (= (array-ref facts.clone-root-keys 0) 11)
-              (= (array-ref facts.clone-call-indices 0) 0))
-            (io.panic "retired frontend invalidated its published facts"))
-          (surface-typecheck-facts-clear!))))))

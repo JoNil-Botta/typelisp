@@ -117,6 +117,10 @@
               (cbi.state-install! (& home-builtins))))
           (ast.ast-node-pool-context-destroy-storage! retired-pools)
           (unsafe
+            ;; The opaque interner owns this arena; its active state has been
+            ;; restored above. This test intentionally invalidates all of its
+            ;; names, which must not be reachable from the retained export DTO.
+            ;; lint-allow: raw-arena-op
             (arena.tl_arena_destroy intern-arena))
           result)))))
 

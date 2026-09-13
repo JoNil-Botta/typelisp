@@ -77956,9 +77956,50 @@
   ;; var == base * c, defined at instruction index idx of the current block
   (MulC i64 i64 i64))
 
+;; The pass owns one mutable table for its complete function walk. No older
+;; environment is retained: block boundaries and the cumulative bind cap clear
+;; only occupied slots, while backing storage remains in the function arena.
+;; Local vreg IDs index a narrow slot+1 table (zero means absent); full records
+;; occupy a compact vector rather than one wide slot per possible vreg. The
+;; domain is the same function-local frame used by the exact use-count array.
+(defstruct OptAffineBinding
+  (dst i64)
+  (rec OptAffineRec))
+
+(import (vector.vector OptAffineBinding core) as opt_affine_binding_vec)
+
+(defstruct OptAffineState
+  (indices (__tl_dyn-array i64))
+  (bindings opt_affine_binding_vec.Vec))
+
 (defenum OptAffineEnv
-  (Nil)
-  (Cons i64 OptAffineRec (Box OptAffineEnv)))
+  (Dense (Box OptAffineState)))
+
+(define (opt-affine-env-new [frame : i64]) : OptAffineEnv
+  (OptAffineEnv.Dense
+    (box
+      (OptAffineState (__tl_make-array i64 frame) (opt_affine_binding_vec.new)))))
+
+(define (opt-affine-env-clear [env : OptAffineEnv]) : OptAffineEnv
+  (match env
+    [(OptAffineEnv.Dense state)
+      (begin
+        (let
+          [content : (&mut state OptAffineState) (&mut (__tl-box-place state))]
+          [count : i64 (opt_affine_binding_vec.len (& content.bindings))]
+          [index : i64 0]
+          (begin
+            (while (< index count)
+              (let
+                [binding : OptAffineBinding
+                  (compiler-opt-borrowed-array-element-shared-view
+                    (opt_affine_binding_vec.slots (& content.bindings))
+                    index)]
+                (begin
+                  (set! (array-ref content.indices binding.dst) 0)
+                  (set! index (+ index 1)))))
+            (set! content.bindings.len 0)))
+        (OptAffineEnv.Dense state))]))
 
 (defenum OptAffineStep
   (Result OptAffineEnv i64))
@@ -77995,11 +78036,24 @@
 
 (define (opt-affine-env-lookup [env : OptAffineEnv] [var : i64]) : OptAffineRec
   (match env
-    [(OptAffineEnv.Nil) (OptAffineRec.No)]
-    [(OptAffineEnv.Cons key rec rest)
-      (if (= key var)
-        rec
-        (opt-affine-env-lookup (compiler-opt-box-shared-view rest) var))]))
+    [(OptAffineEnv.Dense state)
+      (let
+        [indices : (__tl_dyn-array i64)
+          (compiler-opt-box-field-shared-view state indices)]
+        (if (or (< var 0) (>= var (array-length indices)))
+          (OptAffineRec.No)
+          (let
+            [slot : i64 (- (array-ref indices var) 1)]
+            (if (< slot 0)
+              (OptAffineRec.No)
+              (let
+                [bindings : opt_affine_binding_vec.Vec
+                  (compiler-opt-box-field-shared-view state bindings)]
+                [binding : OptAffineBinding
+                  (compiler-opt-borrowed-array-element-shared-view
+                    (opt_affine_binding_vec.slots (& bindings))
+                    slot)]
+                binding.rec)))))]))
 
 (define (opt-affine-rec-mentions? [rec : OptAffineRec] [var : i64]) : bool
   (match rec
@@ -78011,14 +78065,42 @@
 ;; describe the var's PREVIOUS value once it is redefined.
 (define (opt-affine-env-purge [env : OptAffineEnv] [var : i64]) : OptAffineEnv
   (match env
-    [(OptAffineEnv.Nil) (OptAffineEnv.Nil)]
-    [(OptAffineEnv.Cons key rec rest)
-      (let
-        [tail : OptAffineEnv
-          (opt-affine-env-purge (compiler-opt-box-shared-view rest) var)]
-        (if (or (= key var) (opt-affine-rec-mentions? rec var))
-          tail
-          (OptAffineEnv.Cons key rec (box tail))))]))
+    [(OptAffineEnv.Dense state)
+      (begin
+        (let
+          [content : (&mut state OptAffineState) (&mut (__tl-box-place state))]
+          [count : i64 (opt_affine_binding_vec.len (& content.bindings))]
+          [read : i64 0]
+          [write : i64 0]
+          (begin
+            (while (< read count)
+              (let
+                [binding : OptAffineBinding
+                  (compiler-opt-borrowed-array-element-shared-view
+                    (opt_affine_binding_vec.slots (& content.bindings))
+                    read)]
+                (begin
+                  (if (or
+                    (= binding.dst var)
+                    (opt-affine-rec-mentions?
+                      (compiler-opt-global-shared-view binding.rec)
+                      var))
+                    (set! (array-ref content.indices binding.dst) 0)
+                    (begin
+                      (when
+                        (!= write read)
+                        (begin
+                          (opt_affine_binding_vec.set-ref!
+                            (&mut content.bindings)
+                            write
+                            binding)
+                          (set!
+                            (array-ref content.indices binding.dst)
+                            (+ write 1))))
+                      (set! write (+ write 1))))
+                  (set! read (+ read 1)))))
+            (set! content.bindings.len write)))
+        (OptAffineEnv.Dense state))]))
 
 ;; Bind after the dst's def: purge stale records first, skip self-referential
 ;; records, and reset the env past the cap so blocks stay linear.
@@ -78035,10 +78117,32 @@
         (if (opt-affine-rec-mentions? rec dst)
           (OptAffineStep.Result purged binds)
           (if (>= binds (opt-affine-env-cap))
-            (OptAffineStep.Result (OptAffineEnv.Nil) 0)
-            (OptAffineStep.Result
-              (OptAffineEnv.Cons dst rec (box purged))
-              (+ binds 1))))])))
+            (OptAffineStep.Result (opt-affine-env-clear purged) 0)
+            (match purged
+              [(OptAffineEnv.Dense state)
+                (let
+                  [content : (&mut state OptAffineState)
+                    (&mut (__tl-box-place state))]
+                  ;; Out-of-domain IDs have no use-count slot either. Decline
+                  ;; a fact rather than size storage from a sparse/global ID.
+                  [in-domain? : bool
+                    (and (>= dst 0) (< dst (array-length content.indices)))]
+                  (begin
+                    (when
+                      in-domain?
+                      (let
+                        [slot : i64
+                          (opt_affine_binding_vec.len (& content.bindings))]
+                        (begin
+                          (opt_affine_binding_vec.push-ref!
+                            (&mut content.bindings)
+                            (OptAffineBinding dst rec))
+                          (set! (array-ref content.indices dst) (+ slot 1)))))
+                    (OptAffineStep.Result
+                      (OptAffineEnv.Dense state)
+                      (if in-domain?
+                        (+ binds 1)
+                        binds))))])))])))
 
 (define (opt-affine-use-count [uses : (__tl_dyn-array i64)] [var : i64]) : i64
   (if (and (>= var 0) (< var (array-length uses)))
@@ -78354,6 +78458,7 @@
 
 (define (opt-affine-fold-blocks-walk!
   [uses : (__tl_dyn-array i64)]
+  [env : OptAffineEnv]
   [blocks : ir.CompilerIrBlockList]) : unit
   (match blocks
     [(ir.CompilerIrBlockList.Nil) unit]
@@ -78371,12 +78476,18 @@
                 instrs
                 (compiler-opt-global-shared-view uses)
                 0
-                (OptAffineEnv.Nil)
+                (opt-affine-env-clear (compiler-opt-global-shared-view env))
                 0)
               unit)])
-        (opt-affine-fold-blocks-walk! uses (compiler-opt-box-shared-view rest)))]
+        (opt-affine-fold-blocks-walk!
+          uses
+          env
+          (compiler-opt-box-shared-view rest)))]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-affine-fold-blocks-walk! uses (ir.compiler-ir-block-seq-to-list seq))]))
+      (opt-affine-fold-blocks-walk!
+        uses
+        env
+        (ir.compiler-ir-block-seq-to-list seq))]))
 
 ;; Entry: rewrites the (freshly fold-rebuilt, exclusively owned) blocks in
 ;; place and returns them; a function with no two-candidate block is untouched.
@@ -78388,6 +78499,7 @@
         (opt-collect-blocks-uses-array
           frame
           (compiler-opt-global-shared-view blocks))
+        (opt-affine-env-new frame)
         (compiler-opt-global-shared-view blocks))
       blocks)
     blocks))

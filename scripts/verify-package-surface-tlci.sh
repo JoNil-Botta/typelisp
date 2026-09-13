@@ -474,20 +474,23 @@ fi
 assert_catalog_state trusted "$WORKDIR/native.err" 0 3
 assert_surface_route trusted "$WORKDIR/native.err" 1 3 0 \
     "$TRUSTED_PREFIX_SKIPPED" "$TRUSTED_PREFIX_SKIPPED" 21
-# The package build and its isolated doctest worker each load the dependency
-# closure.  Profile rows are emitted by both contexts into this shared log.
-assert_profile_eq dependency_tlci_catalog_hits 18 "$WORKDIR/native.err"
+# The runtime is prepared once, including its side assembly. The prior second
+# lowering duplicated these dispatches and catalog hits. One preparation has
+# nine catalog lookups, eight native dispatches (including the first shell
+# probe), and two interpreted shell calls with one learned-cache hit. Exact
+# per-macro rows and native/source artifact/diagnostic parity remain checked.
+assert_profile_eq dependency_tlci_catalog_hits 9 "$WORKDIR/native.err"
 assert_profile_eq dependency_tlci_catalog_misses 0 "$WORKDIR/native.err"
 assert_profile_eq dependency_tlci_load_failures 0 "$WORKDIR/native.err"
-assert_profile_eq dependency_tlci_native_dispatches 15 "$WORKDIR/native.err"
-assert_profile_eq dependency_tlci_native_expr_results 8 "$WORKDIR/native.err"
-assert_profile_eq dependency_tlci_direct_expr_results 8 "$WORKDIR/native.err"
-assert_profile_eq dependency_tlci_native_module_results 2 "$WORKDIR/native.err"
-assert_profile_eq dependency_tlci_native_decls_results 4 "$WORKDIR/native.err"
+assert_profile_eq dependency_tlci_native_dispatches 8 "$WORKDIR/native.err"
+assert_profile_eq dependency_tlci_native_expr_results 4 "$WORKDIR/native.err"
+assert_profile_eq dependency_tlci_direct_expr_results 4 "$WORKDIR/native.err"
+assert_profile_eq dependency_tlci_native_module_results 1 "$WORKDIR/native.err"
+assert_profile_eq dependency_tlci_native_decls_results 2 "$WORKDIR/native.err"
 assert_profile_eq dependency_tlci_parameter_name_lookups 0 "$WORKDIR/native.err"
-assert_profile_eq dependency_tlci_interpreted_fallbacks 4 "$WORKDIR/native.err"
+assert_profile_eq dependency_tlci_interpreted_fallbacks 2 "$WORKDIR/native.err"
 assert_profile_eq dependency_tlci_shell_learns 1 "$WORKDIR/native.err"
-assert_profile_eq dependency_tlci_shell_cache_hits 3 "$WORKDIR/native.err"
+assert_profile_eq dependency_tlci_shell_cache_hits 1 "$WORKDIR/native.err"
 assert_profile_eq dependency_tlci_direct_shell_env_folds 1 "$WORKDIR/native.err"
 assert_macro_row trusted base.src.lib/typed-add 2 2 "$WORKDIR/native.err"
 assert_macro_row trusted left.src.lib/adjust 1 1 "$WORKDIR/native.err"
@@ -525,12 +528,12 @@ assert_surface_route forced-source "$WORKDIR/source.err" 0 0 \
     "$FORCED_SOURCE_FALLBACKS" 0 0 0
 assert_profile_eq dependency_tlci_catalog_hits 0 "$WORKDIR/source.err"
 assert_profile_eq dependency_tlci_catalog_misses 0 "$WORKDIR/source.err"
-assert_profile_eq dependency_tlci_load_failures 18 "$WORKDIR/source.err"
+assert_profile_eq dependency_tlci_load_failures 9 "$WORKDIR/source.err"
 assert_profile_eq dependency_tlci_native_dispatches 0 "$WORKDIR/source.err"
 assert_profile_eq dependency_tlci_native_expr_results 0 "$WORKDIR/source.err"
 assert_profile_eq dependency_tlci_native_module_results 0 "$WORKDIR/source.err"
 assert_profile_eq dependency_tlci_native_decls_results 0 "$WORKDIR/source.err"
-assert_profile_eq dependency_tlci_interpreted_fallbacks 18 "$WORKDIR/source.err"
+assert_profile_eq dependency_tlci_interpreted_fallbacks 9 "$WORKDIR/source.err"
 assert_profile_eq dependency_tlci_shell_learns 0 "$WORKDIR/source.err"
 assert_profile_eq dependency_tlci_shell_cache_hits 0 "$WORKDIR/source.err"
 assert_macro_row forced-source base.src.lib/typed-add 2 2 "$WORKDIR/source.err"

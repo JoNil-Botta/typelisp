@@ -7,6 +7,7 @@
 (cfg test (import compiler_allocation_profile as allocation_profile))
 (import stdlib.arena)
 (import stdlib.string)
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (cfg compile-profile (import stdlib.profile))
 
@@ -59,7 +60,7 @@
     (begin
       (while (< index times)
         (begin
-          (set! out (string.append (string.copy out) out))
+          (set! out (str_cat.str-cat (string.copy out) out))
           (set! index (+ index 1))))
       out)))
 
@@ -204,7 +205,7 @@
       (reader.sexpr-node-pool-release!)
       (let
         [body : String (scan-doubled-source "1 (2 3) \"bytes\" " 9)]
-        [source : String (string.append "(0 " (string.append body " 4)"))]
+        [source : String (str_cat.str-cat "(0 " body " 4)")]
         [caller : i64 (arena.tl_arena_current)]
         [wide-ok : bool (scan-reader-wide-ok? (string.copy source))]
         [budget-ok : bool
@@ -216,7 +217,7 @@
                 (reader.sexpr-builder-base-arena-handle-value)))
             (* 176 1024))]
         [error-ok : bool
-          (match (reader.result (lex.lex (string.append "(" source)))
+          (match (reader.result (lex.lex (str_cat.str-cat "(" source)))
             [(reader.ResultSexpr.Ok _) false]
             [(reader.ResultSexpr.Err message)
               (and
@@ -275,7 +276,7 @@
     (lex.spanned-token-buffer-release!)
     (let
       [source : String
-        (string.append
+        (str_cat.str-cat
           (scan-doubled-source "(atom 0x7b 'q' \"bytes\" 1.5)\n" 9)
           "\"unterminated")]
       [caller : i64 (arena.tl_arena_current)]

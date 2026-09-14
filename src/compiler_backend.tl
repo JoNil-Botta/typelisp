@@ -98690,16 +98690,18 @@
 
 ;; Common sink for classified records. Descriptor-specific RMW recognition
 ;; happens before this boundary; flags-next is the accepted instruction fact.
-;; Callers pass a stable walk handle and that same walk's len/flags-reg places.
+;; Callers pass a stable walk handle, its captured insertion index, and that
+;; same walk's len/flags-reg places. RMW recognition never changes walk.len.
 ;; Splicing the places avoids an extra mutable-reference alias in the hot path.
 (defmacro (compiler-backend-peephole-records-append!
   [walk : Expr]
+  [index : Expr]
   [record : Expr]
   [flags-next : Expr]
   [length-place : Expr]
   [flags-place : Expr]) : Expr
   `(let
-    [record-index : i64 (__tl-project-field-name ,walk "len")]
+    [record-index : i64 ,index]
     (begin
       (unless
         (< record-index (array-length (__tl-project-field-name ,walk "lines")))
@@ -98730,6 +98732,7 @@
         (compiler-backend-peephole-rmw-note-alu! walk (& line) index))
       (compiler-backend-peephole-records-append!
         walk
+        index
         (compiler-backend-peephole-line-record line)
         flags-next
         walk.len
@@ -99410,6 +99413,7 @@
         [(not (string.eq ry ""))
           (compiler-backend-peephole-records-append!
             walk
+            walk.len
             (compiler-backend-peephole-reused-register-record
               ry
               (compiler-backend-global-shared-view line))

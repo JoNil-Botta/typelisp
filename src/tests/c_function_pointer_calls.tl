@@ -236,3 +236,39 @@
 (unsafe (lambda ([x : i64]) : i64 (f x))))"
         "requires unsafe")
       "creating a closure in unsafe scope does not authorize its future calls")))
+
+(test
+  c-function-assignment-and-branch-identity
+  (begin
+    (test.assert-true
+      (c-function-call-error?
+        "(define (ordinary [x : i64]) : i64 x)
+(define (bad [f : (CFunc non-null (-> i64 i64))]) : i64 (begin (set! f ordinary) 0))"
+        "type mismatch")
+      "assignment cannot replace a C pointer with a descriptor")
+    (test.assert-true
+      (c-function-call-error?
+        "(extern entry : (CFunc non-null (-> i64 i64)))
+(define saved : (-> i64 i64) entry)"
+        "type mismatch")
+      "global annotation cannot erase the native representation")
+    (test.assert-true
+      (c-function-call-error?
+        "(define (bad [f : (CFunc non-null (-> i64 i64))]) : (-> i64 i64) f)"
+        "type mismatch")
+      "helper return cannot erase the native representation")
+    (test.assert-true
+      (c-function-call-error?
+        "(define (bad [a : (CFunc non-null (-> i64 i64))] [b : (CFunc non-null (-> bool i64))]) : i64 (let [f (if true a b)] 0))"
+        "if branches must match")
+      "branch join cannot alias different signatures")
+    (test.assert-true
+      (c-function-call-error?
+        "(define (bad [a : (CFunc non-null (-> i64 i64))] [b : (CFunc unsafe-non-null (-> i64 i64))]) : i64 (let [f (if true a b)] 0))"
+        "if branches must match")
+      "branch join cannot erase unsafe call effects")
+    (test.assert-true
+      (c-function-call-error?
+        "(define (bad) : (CFunc non-null (-> i64 i64)) (unsafe (cast 42 : (CFunc non-null (-> i64 i64)))))"
+        "cast")
+      "unsafe numeric casts cannot manufacture callable values")))

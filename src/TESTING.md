@@ -1229,6 +1229,10 @@ The `c_function_pointer_flow` row uses a native C provider from
 through a higher-order resolver, globals, an imported relay, struct and enum
 fields, and an escaping closure. It checks the provider's resolver counter to
 catch repeated evaluation and passes a pointer-containing struct back to C.
+The `c_function_pointer_publication` row uses a writer thread to fill a pointer
+table and publish a sequentially consistent ready flag. The reader calls through
+assigned and branch-selected entries after acquiring ready and before joining the
+writer; no atomic pointer loads or integer callable casts are used.
 The `c_function_pointer_null` row requires exit 134, empty stdout and the exact
 null diagnostic even when the checked result is unused. Both rows belong to
 both target manifests; assembly generation alone does not replace their native

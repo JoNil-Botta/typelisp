@@ -632,3 +632,5 @@ test_cli_entry_memory|src/tests/test_cli_entry_memory_smoke.tl|42|@tests/integra
 test_cli_entry_state|src/tests/test_cli_entry_state_smoke.tl|42|-|-|-
 c_function_pointer_flow|tests/integration/c_function_pointer_flow.tl|0|-|-|c_function_pointer_dep.tl benchmarks/c_function_pointer_flow/baseline.c
 c_function_pointer_null|tests/integration/c_function_pointer_null.tl|134|-|-|-|expected-stderr:tl: null C function pointer\n
+
+c_function_pointer_publication|tests/integration/c_function_pointer_publication.tl|0|-|-|c_function_pointer_dep.tl benchmarks/c_function_pointer_flow/baseline.c stdlib/thread.tl

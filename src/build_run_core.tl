@@ -1483,7 +1483,7 @@
     "(extern (unused-direct [value : i64]) : i64
   (:symbol \"typelisp_unused_direct\"))
 (extern unused-data (:symbol \"typelisp_unused_data\") : i64)
-(extern unused-fnptr (:symbol \"typelisp_unused_fnptr\") : (-> i64 i64))
+(extern unused-fnptr (:symbol \"typelisp_unused_fnptr\") : (CFunc non-null (-> i64 i64)))
 (define (main) : i64 0)"
     (backend.CompilerBackendTarget.Windows))
     [(backend.ResultCompilerBackendObject.Ok image)

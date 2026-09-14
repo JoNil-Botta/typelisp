@@ -22,6 +22,11 @@ result shape; its second operand records nullability and the unsafe-call effect.
 The AST node keeps the existing 24-byte stride, while the runtime value is one
 8-byte code address. Copying or storing that address must preserve the complete
 `CFunc` type. A zero initializer is valid only for nullable modes.
+Surface AST schema 10 records the pooled signature and all four modes; the
+encode/hydrate selftest checks those facts after compaction and intern reset.
+The reader records C signature references from pool nodes and inline types, then
+validates them against the completed destination pool before publishing hydration.
+A signature must reference an in-range `Func`, never a scalar or another `CFunc`.
 
 Backend signature recovery reads `CFunc`'s pooled signature through the explicit
 type-segment bases, using the same reader as extern signatures. Losing the

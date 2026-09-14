@@ -2,6 +2,7 @@
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
 (import compiler_surface_ast_codec_core as codec)
+(import compiler_owned_view as owned_view)
 (import stdlib.test)
 
 (define (c-function-codec-session) : cis.InternStructuralSessionHandle
@@ -97,3 +98,48 @@
     (test.assert-true
       (c-function-codec-invalid 17 0 false)
       "truncated mode rejected")))
+
+(define (c-function-codec-reference-valid? [signature : i64]) : bool
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 1)]
+    [scalar : i64
+      (ast.ast-node-pool-context-type-push
+        (owned_view.compiler-owned-shared-view pools)
+        ast.AstType.I64)]
+    [_function : i64
+      (ast.ast-node-pool-context-type-push
+        (owned_view.compiler-owned-shared-view pools)
+        (ast.AstType.Func (box (ast.ast-type-list-new)) scalar))]
+    [_pointer : i64
+      (ast.ast-node-pool-context-type-push
+        (owned_view.compiler-owned-shared-view pools)
+        (ast.AstType.CFunc 1 ast.AstCFunctionMode.NonNull))]
+    [reader : codec.SurfaceAstReader
+      (codec.surface-ast-reader-new
+        (c-function-codec-bytes signature 1 true)
+        (c-function-codec-session)
+        (__tl_make-array i64 0))]
+    [_decoded : ast.AstType (codec.surface-ast-read-type! (& reader))]
+    (begin
+      (codec.surface-ast-validate-c-function-signatures! (& reader) pools)
+      (codec.surface-ast-reader-valid? (& reader)))))
+
+(test
+  c-function-codec-signature-references
+  (begin
+    (test.assert-true
+      (c-function-codec-reference-valid? 1)
+      "function signature accepted")
+    (test.assert-false
+      (c-function-codec-reference-valid? 0)
+      "scalar signature rejected")
+    (test.assert-false
+      (c-function-codec-reference-valid? 2)
+      "CFunc signature alias rejected")
+    (test.assert-false
+      (c-function-codec-reference-valid? 3)
+      "one-past-pool signature rejected")
+    (test.assert-false
+      (c-function-codec-reference-valid? 9223372036854775807)
+      "large signature rejected")))

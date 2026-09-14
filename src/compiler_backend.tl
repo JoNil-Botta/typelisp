@@ -98690,21 +98690,26 @@
 
 ;; Common sink for classified records. Descriptor-specific RMW recognition
 ;; happens before this boundary; flags-next is the accepted instruction fact.
+;; Callers pass a stable walk handle and that same walk's len/flags-reg places.
+;; Splicing the places avoids an extra mutable-reference alias in the hot path.
 (defmacro (compiler-backend-peephole-records-append!
   [walk : Expr]
   [record : Expr]
-  [flags-next : Expr]) : Expr
+  [flags-next : Expr]
+  [length-place : Expr]
+  [flags-place : Expr]) : Expr
   `(let
-    [record-walk ,walk]
-    [record-index : i64 record-walk.len]
+    [record-index : i64 (__tl-project-field-name ,walk "len")]
     (begin
       (unless
-        (< record-index (array-length record-walk.lines))
-        (compiler-backend-peephole-records-grow! record-walk))
-      (set! (array-ref record-walk.lines record-index) ,record)
-      (set! (array-ref record-walk.live record-index) 1)
-      (set! record-walk.flags-reg ,flags-next)
-      (set! record-walk.len (+ record-index 1)))))
+        (< record-index (array-length (__tl-project-field-name ,walk "lines")))
+        (compiler-backend-peephole-records-grow! ,walk))
+      (set!
+        (array-ref (__tl-project-field-name ,walk "lines") record-index)
+        ,record)
+      (set! (array-ref (__tl-project-field-name ,walk "live") record-index) 1)
+      (set! ,flags-place ,flags-next)
+      (set! ,length-place (+ record-index 1)))))
 
 (define (compiler-backend-peephole-records-push!
   [walk : (&mut walk CompilerBackendPeepholeWalkState)]
@@ -98726,7 +98731,9 @@
       (compiler-backend-peephole-records-append!
         walk
         (compiler-backend-peephole-line-record line)
-        flags-next))))
+        flags-next
+        walk.len
+        walk.flags-reg))))
 
 ;; True iff the line [start,end) is a label (non-blank after leading spaces and
 ;; ends in ':'). Mirrors the label arm of line-clears-owners?.
@@ -99406,7 +99413,9 @@
             (compiler-backend-peephole-reused-register-record
               ry
               (compiler-backend-global-shared-view line))
-            -1)]
+            -1
+            walk.len
+            walk.flags-reg)]
         [else
           (compiler-backend-peephole-records-push!
             walk

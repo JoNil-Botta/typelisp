@@ -151,6 +151,16 @@ both modes. The backend's exhaustive mixed-exposure test checks operand
 disjointness, and `mixed_group_stack_homes.tl` checks writes across real calls
 at opt0/1/2 on both native targets.
 
+CFG rows and ordered optimizer integer collections share the existing dense
+`OptLabelSet` storage. Its name reflects the original label-set users;
+`opt-label-cons` preserves duplicates, while `opt-label-add` applies membership
+semantics. Backing slot zero records the high-water length, so extending a
+retained prefix or tail copies before writing and preserves sibling views.
+Storage grows by element count, including for sparse IDs and negative values.
+Logical traversal stays newest-first; CSR emission reads physical slots in
+oldest-first order directly, without constructing reversed intermediate lists.
+The integer-sequence and CSR tests cover growth, branches, duplicates and offsets.
+
 Affine folding keeps one mutable fact table per function: local vreg IDs index
 compact binding slots, and only live bindings are scanned for key/base
 invalidation. Every block starts with empty facts; the cumulative 512-binding

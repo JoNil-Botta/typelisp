@@ -474,6 +474,24 @@
   (All)
   (Any))
 
+;; C ABI, call effect and nullability belong to the canonical value type.
+;; A nullable value can be stored, but only a checked non-null value is callable.
+(defenum AstCFunctionMode
+  (Nullable)
+  (NonNull)
+  (UnsafeNullable)
+  (UnsafeNonNull))
+
+(define (ast-c-function-mode-key [mode : AstCFunctionMode]) : i64
+  (match mode
+    [(AstCFunctionMode.Nullable) 0]
+    [(AstCFunctionMode.NonNull) 1]
+    [(AstCFunctionMode.UnsafeNullable) 2]
+    [(AstCFunctionMode.UnsafeNonNull) 3]))
+
+(define (ast-c-function-mode-eq? [a : AstCFunctionMode] [b : AstCFunctionMode]) : bool
+  (= (ast-c-function-mode-key a) (ast-c-function-mode-key b)))
+
 (defenum AstType
   (I64)
   (I32)
@@ -515,7 +533,11 @@
   (MutPtr i64)
   ;; Borrowed, unsized contiguous view. Source syntax and runtime semantics are
   ;; intentionally added in a later packet; this node is kept internal here.
-  (Slice i64))
+  (Slice i64)
+  ;; The signature id names a Func node used only for its parameter/result
+  ;; structure. The wrapper is never equivalent to an ordinary Func value.
+  ;; Keeping two scalar operands preserves the existing AstType node footprint.
+  (CFunc i64 AstCFunctionMode))
 
 (defstruct AstTypeList
   (slots (__tl_dyn-array i64))
@@ -3418,6 +3440,8 @@
     [(AstType.Var name) (hash.combine 31 name)]
     [(AstType.VarArgs name lifetimes)
       (ty-lifetime-list-hash (& (deref lifetimes)) (hash.combine 32 name))]
+    [(AstType.CFunc signature mode)
+      (hash.combine (hash.combine 38 signature) (ast-c-function-mode-key mode))]
     [(AstType.Ptr inner) (hash.combine 33 inner)]
     [(AstType.MutPtr inner) (hash.combine 34 inner)]
     [(AstType.Slice elem) (hash.combine 37 elem)]))
@@ -3614,6 +3638,13 @@
             (ty-lifetime-list-eq?
               (& (deref a-lifetimes))
               (& (deref b-lifetimes))))]
+        [_ false])]
+    [(AstType.CFunc a-signature a-mode)
+      (match b
+        [(AstType.CFunc b-signature b-mode)
+          (and
+            (= a-signature b-signature)
+            (ast-c-function-mode-eq? a-mode b-mode))]
         [_ false])]
     [(AstType.Ptr a-inner)
       (match b
@@ -5460,6 +5491,22 @@
 
 (define (ast-type-cons [head : AstType] [rest : AstTypeList]) : AstTypeList
   (ast-type-list-cons-id (ast-node-pool-reader-type-push head) rest))
+
+(define (ast-ty-c-func
+  [args : AstTypeList]
+  [ret : AstType]
+  [mode : AstCFunctionMode]) : AstType
+  (AstType.CFunc (ast-node-pool-reader-type-push (ast-ty-func args ret)) mode))
+
+(define (ast-ty-c-func-with-pools
+  [pools : AstNodePoolContext]
+  [args : AstTypeList]
+  [ret : AstType]
+  [mode : AstCFunctionMode]) : AstType
+  (let
+    [signature : AstType
+      (ast-ty-func-with-pools (ast-global-shared-view pools) args ret)]
+    (AstType.CFunc (ast-node-pool-context-type-push pools signature) mode)))
 
 (define (ast-ty-func [args : AstTypeList] [ret : AstType]) : AstType
   (AstType.Func (box args) (ast-node-pool-reader-type-push ret)))
@@ -8916,6 +8963,8 @@
         (box
           (ast-compaction-remap-lifetime-list
             (ast-lifetime-list-box-shared-view lifetimes))))]
+    [(AstType.CFunc signature mode)
+      (AstType.CFunc (ast-compaction-remap-type-id remap signature) mode)]
     [(AstType.Ptr elem) (AstType.Ptr (ast-compaction-remap-type-id remap elem))]
     [(AstType.MutPtr elem)
       (AstType.MutPtr (ast-compaction-remap-type-id remap elem))]
@@ -10289,6 +10338,7 @@
     [(AstType.Enum _) 24]
     [(AstType.Struct _) 25]
     [(AstType.Var _) 26]
+    [(AstType.CFunc _ _) 38]
     [(AstType.Ptr _) 27]
     [(AstType.MutPtr _) 28]
     [(AstType.Box _) 31]
@@ -10698,6 +10748,15 @@
               (ast-lifetime-list-box-shared-view a-lifetimes)
               (ast-lifetime-list-box-shared-view b-lifetimes)))]
         [_ false])]
+    [(AstType.CFunc a-signature a-mode)
+      (match b
+        [(AstType.CFunc b-signature b-mode)
+          (and
+            (ast-c-function-mode-eq? a-mode b-mode)
+            (ast-type-eq?
+              (ast-node-pool-reader-type-get a-signature)
+              (ast-node-pool-reader-type-get b-signature)))]
+        [_ false])]
     [(AstType.Ptr a-elem)
       (match b
         [(AstType.Ptr b-elem)
@@ -10973,6 +11032,16 @@
             (ast-lifetime-list-eq?
               (ast-lifetime-list-box-shared-view a-lifetimes)
               (ast-lifetime-list-box-shared-view b-lifetimes)))]
+        [_ false])]
+    [(AstType.CFunc a-signature a-mode)
+      (match b
+        [(AstType.CFunc b-signature b-mode)
+          (and
+            (ast-c-function-mode-eq? a-mode b-mode)
+            (ast-type-eq-with-seg-bases?
+              seg-bases
+              (ast-type-segment-bases-get seg-bases a-signature)
+              (ast-type-segment-bases-get seg-bases b-signature)))]
         [_ false])]
     [(AstType.Ptr a-elem)
       (match b

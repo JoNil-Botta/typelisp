@@ -15541,49 +15541,6 @@
       name-id)
     (tc-bind-unsafe-id env (tc-module-name-id-by-id alias-id name-id) ty)))
 
-(define (tc-bind-import-alias-value-c-abi-fnptr-id
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [alias-id : i64]
-  [importer-module-id : i64]
-  [source-module-id : i64]
-  [import-unqualified : bool]
-  [name-id : i64]
-  [ty : ast.AstType]) : TcTypeEnv
-  (begin
-    (tc-unqualified-import-note-value!
-      ctx
-      env
-      alias-id
-      importer-module-id
-      source-module-id
-      import-unqualified
-      name-id)
-    (tc-bind-c-abi-fnptr-id env (tc-module-name-id-by-id alias-id name-id) ty)))
-
-(define (tc-bind-import-alias-value-unsafe-c-abi-fnptr-id
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [alias-id : i64]
-  [importer-module-id : i64]
-  [source-module-id : i64]
-  [import-unqualified : bool]
-  [name-id : i64]
-  [ty : ast.AstType]) : TcTypeEnv
-  (begin
-    (tc-unqualified-import-note-value!
-      ctx
-      env
-      alias-id
-      importer-module-id
-      source-module-id
-      import-unqualified
-      name-id)
-    (tc-bind-unsafe-c-abi-fnptr-id
-      env
-      (tc-module-name-id-by-id alias-id name-id)
-      ty)))
-
 (define (tc-struct-cleanup-function-type [struct-ty : ast.AstType]) : ast.AstType
   (tc-fn1 struct-ty (ast.AstType.Unit)))
 
@@ -37518,18 +37475,10 @@
                       name
                       (tc-global-shared-view ty))
                     (ResultTcEnv.Ok
-                      (if (tc-extern-value-c-abi-fnptr?
-                        extern-ctx
-                        kind
-                        (tc-global-shared-view ty))
-                        (tc-bind-unsafe-c-abi-fnptr-id
-                          env
-                          (tc-module-name-id-by-id module-id name)
-                          ty)
-                        (tc-bind-unsafe-id
-                          env
-                          (tc-module-name-id-by-id module-id name)
-                          ty))))]
+                      (tc-bind-unsafe-id
+                        env
+                        (tc-module-name-id-by-id module-id name)
+                        ty)))]
                 [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
           [_ (ResultTcEnv.Ok env)]))]
     [(ast.AstDecl.Def decl-meta name _ _)
@@ -37592,15 +37541,7 @@
                 name
                 (tc-global-shared-view ty))
               (ResultTcEnv.Ok
-                (if (tc-extern-value-c-abi-fnptr?
-                  extern-ctx
-                  kind
-                  (tc-global-shared-view ty))
-                  (tc-bind-c-abi-fnptr-id
-                    env
-                    (tc-module-name-id-by-id module-id name)
-                    ty)
-                  (tc-bind-id env (tc-module-name-id-by-id module-id name) ty))))]
+                (tc-bind-id env (tc-module-name-id-by-id module-id name) ty)))]
           [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
     [(ast.AstDecl.DefEnum decl-meta name cleanup variants)
       (let
@@ -38146,28 +38087,15 @@
               (match (tc-import-alias-source-value-type env module name)
                 [(ResultTcType.Ok ty)
                   (ResultTcEnv.Ok
-                    (if (tc-extern-value-c-abi-fnptr?
-                      extern-ctx
-                      kind
-                      (tc-global-shared-view ty))
-                      (tc-bind-import-alias-value-unsafe-c-abi-fnptr-id
-                        ctx
-                        env
-                        alias
-                        importer-module
-                        module
-                        import-unqualified
-                        name
-                        ty)
-                      (tc-bind-import-alias-value-unsafe-id
-                        ctx
-                        env
-                        alias
-                        importer-module
-                        module
-                        import-unqualified
-                        name
-                        ty)))]
+                    (tc-bind-import-alias-value-unsafe-id
+                      ctx
+                      env
+                      alias
+                      importer-module
+                      module
+                      import-unqualified
+                      name
+                      ty))]
                 [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
           [_ (ResultTcEnv.Ok env)]))]
     [(ast.AstDecl.Def decl-meta name _ _)
@@ -38222,28 +38150,15 @@
         (match (tc-import-alias-source-value-type env module name)
           [(ResultTcType.Ok ty)
             (ResultTcEnv.Ok
-              (if (tc-extern-value-c-abi-fnptr?
-                extern-ctx
-                kind
-                (tc-global-shared-view ty))
-                (tc-bind-import-alias-value-c-abi-fnptr-id
-                  ctx
-                  env
-                  alias
-                  importer-module
-                  module
-                  import-unqualified
-                  name
-                  ty)
-                (tc-bind-import-alias-value-id
-                  ctx
-                  env
-                  alias
-                  importer-module
-                  module
-                  import-unqualified
-                  name
-                  ty)))]
+              (tc-bind-import-alias-value-id
+                ctx
+                env
+                alias
+                importer-module
+                module
+                import-unqualified
+                name
+                ty))]
           [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
     [(ast.AstDecl.DefEnum decl-meta name cleanup variants)
       (let
@@ -38493,48 +38408,26 @@
       (let
         [source-name : i64 (tc-module-name-id-by-id target-module item)]
         [unsafe-binding : bool (tc-binding-unsafe-id? env source-name)]
-        [c-abi-fnptr-binding : bool
-          (tc-binding-c-abi-fnptr-id? env source-name)]
         (ResultTcEnv.Ok
           (if unsafe-binding
-            (if c-abi-fnptr-binding
-              (tc-bind-import-alias-value-unsafe-c-abi-fnptr-id
-                ctx
-                env
-                importer-module
-                importer-module
-                target-module
-                true
-                alias
-                ty)
-              (tc-bind-import-alias-value-unsafe-id
-                ctx
-                env
-                importer-module
-                importer-module
-                target-module
-                true
-                alias
-                ty))
-            (if c-abi-fnptr-binding
-              (tc-bind-import-alias-value-c-abi-fnptr-id
-                ctx
-                env
-                importer-module
-                importer-module
-                target-module
-                true
-                alias
-                ty)
-              (tc-bind-import-alias-value-id
-                ctx
-                env
-                importer-module
-                importer-module
-                target-module
-                true
-                alias
-                ty)))))]
+            (tc-bind-import-alias-value-unsafe-id
+              ctx
+              env
+              importer-module
+              importer-module
+              target-module
+              true
+              alias
+              ty)
+            (tc-bind-import-alias-value-id
+              ctx
+              env
+              importer-module
+              importer-module
+              target-module
+              true
+              alias
+              ty))))]
     [(ResultTcType.Err _)
       (let
         [symbols (tc-context-symbols ctx)]
@@ -39027,13 +38920,7 @@
           [(ast.AstDecl.Extern decl-meta name kind _ _)
             (match (tc-top-decl-type (tc-global-shared-view ctx) inner)
               [(ResultTcType.Ok ty)
-                (ResultTcEnv.Ok
-                  (if (tc-extern-value-c-abi-fnptr?
-                    (tc-global-shared-view ctx)
-                    kind
-                    (tc-global-shared-view ty))
-                    (tc-bind-unsafe-c-abi-fnptr-id env name ty)
-                    (tc-bind-unsafe-id env name ty)))]
+                (ResultTcEnv.Ok (tc-bind-unsafe-id env name ty))]
               [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
           [_ (ResultTcEnv.Ok env)]))]
     [(ast.AstDecl.Def decl-meta name _ _)
@@ -39075,14 +38962,7 @@
         (match (tc-top-decl-type
           (tc-global-shared-view ctx)
           (tc-global-shared-view decl))
-          [(ResultTcType.Ok ty)
-            (ResultTcEnv.Ok
-              (if (tc-extern-value-c-abi-fnptr?
-                (tc-global-shared-view ctx)
-                kind
-                (tc-global-shared-view ty))
-                (tc-bind-c-abi-fnptr-id env name ty)
-                (tc-bind-id env name ty)))]
+          [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind-id env name ty))]
           [(ResultTcType.Err message) (ResultTcEnv.Err message)])
         (ResultTcEnv.Ok env))]
     [(ast.AstDecl.DefEnum decl-meta name cleanup variants)
@@ -44779,20 +44659,6 @@
   (match (ast.ast-expr-unspan func)
     [(ast.AstExpr.Var name) (tc-call-extern-abi-for-name-id ctx name)]
     [_ (TcMaybeExternAbi.No)]))
-
-(define (tc-c-abi-fnptr-type? [ty : ast.AstType]) : bool
-  (match (tc-type-strip-region ty)
-    [(ast.AstType.Func _ _) true]
-    [_ false]))
-
-(define (tc-extern-value-c-abi-fnptr?
-  [ctx : TcContext]
-  [kind : ast.AstExternKind]
-  [ty : ast.AstType]) : bool
-  (match kind
-    [(ast.AstExternKind.Value)
-      (tc-c-abi-fnptr-type? (tc-resolve-type (tc-global-shared-view ctx) ty))]
-    [(ast.AstExternKind.Function) false]))
 
 (define (tc-name-base-eq? [name : String] [base : String]) : bool
   (if (string.eq name base)

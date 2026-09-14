@@ -1255,7 +1255,7 @@
 ;; caller consumes the token array immediately (lex -> read -> parse,
 ;; sequentially per module) and never lexes again while one is live, so a
 ;; single program-lifetime buffer backs them all. The backing allocations live
-;; in one dedicated arena that is created on first growth and never reset, so a
+;; in a dedicated arena replaced on growth, so a
 ;; grow while a transient driver arena is active cannot leave this global
 ;; pointing at reclaimed storage. A caller that can prove no parse is in flight
 ;; may retire that arena outright with `spanned-token-buffer-release!`; the next
@@ -1290,29 +1290,41 @@
 
 ;; Install a larger buffer holding at least `required` slots, preserving the
 ;; first `used` records. `in-arena` restores the caller before the copy so the
-;; copy cannot extend the storage arena; the stored root remains stable if the
-;; allocation grows its physical segment chain.
+;; copy cannot extend the storage arena. Only the current buffer survives:
+;; superseded geometric capacities are retired after the live prefix is moved.
+;; No consumer receives this array until scanning ends, and token payloads are
+;; owned outside this arena (see the release contract below).
 (define (spanned-token-buffer-grow-to! [required : i64] [used : i64]) : unit
   (let
     [old-storage-arena : i64 lex-spanned-token-buffer-arena]
-    [storage-root : i64
-      (if (= old-storage-arena 0)
-        (arena.tl_arena_make)
-        old-storage-arena)]
+    [caller-arena : i64 (arena.tl_arena_current)]
+    [storage-root : i64 (arena.tl_arena_make)]
     [new-buffer : (__tl_dyn-array token.SpannedToken)
       (in-arena
         (arena.Arena storage-root)
         (__tl_make-array
           token.SpannedToken
           (spanned-token-buffer-next-capacity required)))]
-    [j : i64 0]
     (begin
-      (while (< j used)
-        (begin
-          (set! (array-ref new-buffer j) (array-ref lex-spanned-token-buffer j))
-          (set! j (+ j 1))))
+      ;; Fresh disjoint storage; initialized inline records move as bytes.
+      ;; `used` is the completed scanner prefix, excluding the next token.
+      (unsafe
+        (string.string-runtime-copy-bytes!
+          (ptr-cast (__tl_array-data new-buffer) : (MutPtr u8))
+          (ptr-cast (__tl_array-data lex-spanned-token-buffer) : (Ptr u8))
+          (cast
+            (-
+              (ptr->int (ptr-offset (__tl_array-data new-buffer) used))
+              (ptr->int (__tl_array-data new-buffer)))
+            : i64)))
       (set! lex-spanned-token-buffer-arena storage-root)
-      (set! lex-spanned-token-buffer new-buffer))))
+      (set! lex-spanned-token-buffer new-buffer)
+      (unless
+        (= old-storage-arena 0)
+        (unsafe
+          (begin
+            (arena.tl_arena_destroy old-storage-arena)
+            (arena.tl_arena_set caller-arena)))))))
 
 (define (spanned-token-buffer-ensure! [required : i64] [used : i64]) : unit
   (if (> required (array-length lex-spanned-token-buffer))

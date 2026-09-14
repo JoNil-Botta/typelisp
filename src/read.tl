@@ -109,10 +109,12 @@
 ;; is transient (consumed into AstExpr, spans copied out by value, then dead),
 ;; so the pool is reset per program parse (see compiler_parse_core.tl). Start
 ;; empty and retain geometrically grown storage: small compile commands should
-;; not construct 262,144 enum slots before argv dispatch. Growth uses one
-;; dedicated arena per pool, created on first growth and never reset, keeping
-;; the long-lived global valid across transient driver arenas. The unspanned
-;; pool's arena can additionally be retired outright once a load has finished
+;; not construct 262,144 enum slots before argv dispatch. Dedicated storage
+;; keeps the globals valid across transient driver arenas. The unspanned node
+;; and builder arrays grow in independent owners: replacing one must not copy
+;; or allocate the other's retained high-water capacity. Superseded capacities
+;; are retired after their live prefix moves. Both unspanned owners can
+;; additionally be retired outright once a load has finished
 ;; (`sexpr-node-pool-release!`); the spanned pool's cannot, because its origin
 ;; records outlive parsing.
 (define sp-node-pool-slots : (__tl_dyn-array SpannedSexpr)
@@ -133,6 +135,8 @@
   (__tl_make-array Sexpr 0))
 (define sexpr-node-pool-base-arena : i64
   0)
+(define sexpr-builder-base-arena : i64
+  0)
 (define sexpr-node-pool-count : i64
   0)
 (define sexpr-builder-slots : (__tl_dyn-array Sexpr)
@@ -151,8 +155,8 @@
 
 ;; Permanent zero-length replacements installed by `sexpr-node-pool-release!`.
 ;; Both are materialized once during global initialization, in the process
-;; entry arena, so the pool globals still name live storage after the shared
-;; growth arena is unmapped and the next push grows from zero into a fresh
+;; entry arena, so the pool globals still name live storage after their
+;; growth arenas are unmapped and the next push grows from zero into a fresh
 ;; arena. The spanned pool cannot be released outright because its origin
 ;; records outlive parsing; its sentinels above support the exact-prefix
 ;; transfer performed at load handoff instead.
@@ -166,6 +170,9 @@
 
 (define (sexpr-node-pool-base-arena-handle-value) : i64
   sexpr-node-pool-base-arena)
+
+(define (sexpr-builder-base-arena-handle-value) : i64
+  sexpr-builder-base-arena)
 
 ;; Source symbols remain ids from lexer through reader and parser. Consumers
 ;; request display text explicitly only when diagnostics or data formats need it.
@@ -231,31 +238,60 @@
           (set! sp-node-pool-base-arena storage-root)
           (set! sp-node-pool-slots new-slots))))))
 
-(define (sexpr-node-pool-grow!) : unit
+(define (sexpr-storage-grow! [builder-storage? : bool]) : unit
   (let
-    [old-cap : i64 (array-length sexpr-node-pool-slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
+    [old-slots : (__tl_dyn-array Sexpr)
+      (unsafe
+        (if builder-storage?
+          (ptr-read (ptr-addr-of sexpr-builder-slots))
+          (ptr-read (ptr-addr-of sexpr-node-pool-slots))))]
+    [old-capacity : i64 (array-length old-slots)]
+    [capacity : i64
+      (if (= old-capacity 0)
         1024
-        (* old-cap 2))]
-    [base-arena : i64 sexpr-node-pool-base-arena]
-    [storage-root : i64
-      (if (= base-arena 0)
-        (arena.tl_arena_make)
-        base-arena)]
-    (in-arena
-      (arena.Arena storage-root)
-      (let
-        [new-slots : (__tl_dyn-array Sexpr) (__tl_make-array Sexpr new-cap)]
-        [len : i64 sexpr-node-pool-count]
-        [i : i64 0]
+        (* old-capacity 2))]
+    [used : i64
+      (if builder-storage?
+        sexpr-builder-count
+        sexpr-node-pool-count)]
+    [old-arena : i64
+      (if builder-storage?
+        sexpr-builder-base-arena
+        sexpr-node-pool-base-arena)]
+    [caller-arena : i64 (arena.tl_arena_current)]
+    [storage-root : i64 (arena.tl_arena_make)]
+    [new-slots : (__tl_dyn-array Sexpr)
+      (in-arena (arena.Arena storage-root) (__tl_make-array Sexpr capacity))]
+    (begin
+      ;; Child links and pending builders retain indices, not array addresses.
+      ;; Literal payloads belong to source/interner owners. Moving these inline
+      ;; records therefore leaves every index and payload valid, including
+      ;; values already copied out by a caller before this push triggers growth.
+      (unsafe
+        (string.string-runtime-copy-bytes!
+          (ptr-cast (__tl_array-data new-slots) : (MutPtr u8))
+          (ptr-cast (__tl_array-data old-slots) : (Ptr u8))
+          (cast
+            (-
+              (ptr->int (ptr-offset (__tl_array-data new-slots) used))
+              (ptr->int (__tl_array-data new-slots)))
+            : i64)))
+      (if builder-storage?
         (begin
-          (while (< i len)
-            (begin
-              (set! (array-ref new-slots i) (sexpr-node-pool-shared-view i))
-              (set! i (+ i 1))))
+          (set! sexpr-builder-base-arena storage-root)
+          (set! sexpr-builder-slots new-slots))
+        (begin
           (set! sexpr-node-pool-base-arena storage-root)
-          (set! sexpr-node-pool-slots new-slots))))))
+          (set! sexpr-node-pool-slots new-slots)))
+      (unless
+        (= old-arena 0)
+        (unsafe
+          (begin
+            (arena.tl_arena_destroy old-arena)
+            (arena.tl_arena_set caller-arena)))))))
+
+(define (sexpr-node-pool-grow!) : unit
+  (sexpr-storage-grow! false))
 
 (define (sp-builder-grow!) : unit
   (let
@@ -284,29 +320,7 @@
           (set! sp-builder-slots new-slots))))))
 
 (define (sexpr-builder-grow!) : unit
-  (let
-    [old-cap : i64 (array-length sexpr-builder-slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1024
-        (* old-cap 2))]
-    [base-arena : i64 sexpr-node-pool-base-arena]
-    [storage-root : i64
-      (if (= base-arena 0)
-        (arena.tl_arena_make)
-        base-arena)]
-    (in-arena
-      (arena.Arena storage-root)
-      (let
-        [new-slots : (__tl_dyn-array Sexpr) (__tl_make-array Sexpr new-cap)]
-        [i : i64 0]
-        (begin
-          (while (< i sexpr-builder-count)
-            (begin
-              (set! (array-ref new-slots i) (sexpr-builder-shared-view i))
-              (set! i (+ i 1))))
-          (set! sexpr-node-pool-base-arena storage-root)
-          (set! sexpr-builder-slots new-slots))))))
+  (sexpr-storage-grow! true))
 
 (define (sp-node-push [node : SpannedSexpr]) : i64
   (begin
@@ -468,9 +482,8 @@
     (sexpr-node-pool-truncate! 0)
     (set! sexpr-builder-count 0)))
 
-;; Unmap the unspanned pool's shared growth arena and reinstall zero-length
-;; slot arrays. Both `sexpr-node-pool-slots` and `sexpr-builder-slots` grow
-;; into `sexpr-node-pool-base-arena`, so both are reinstalled here.
+;; Unmap both unspanned storage owners and reinstall zero-length slot arrays.
+;; Either array may have grown first, so release must handle either owner alone.
 ;;
 ;; No-dangling argument:
 ;;
@@ -493,10 +506,11 @@
 ;; Callers must only prove that no read/parse is in flight. Later pushes are
 ;; fine: the pool regrows geometrically from zero.
 (define (sexpr-node-pool-release!) : unit
-  (if (= sexpr-node-pool-base-arena 0)
+  (if (and (= sexpr-node-pool-base-arena 0) (= sexpr-builder-base-arena 0))
     unit
     (let
       [retire-arena : i64 sexpr-node-pool-base-arena]
+      [retire-builder-arena : i64 sexpr-builder-base-arena]
       [retained-arena : i64 (arena.tl_arena_current)]
       (begin
         ;; The sentinels remain owned by their permanent globals. Reinstall
@@ -513,9 +527,13 @@
         (set! sexpr-node-pool-count 0)
         (set! sexpr-builder-count 0)
         (set! sexpr-node-pool-base-arena 0)
+        (set! sexpr-builder-base-arena 0)
         (unsafe
           (begin
-            (arena.tl_arena_destroy retire-arena)
+            (unless (= retire-arena 0) (arena.tl_arena_destroy retire-arena))
+            (unless
+              (= retire-builder-arena 0)
+              (arena.tl_arena_destroy retire-builder-arena))
             (arena.tl_arena_set retained-arena)))))))
 
 (define (sexpr-node-pool-release-regrow-ok?) : bool

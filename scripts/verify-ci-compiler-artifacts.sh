@@ -703,4 +703,120 @@ awk -F '\t' -v OFS='\t' '
 expect_failure hosted-trace-unowned 'unexpected or ledger-only record' \
     validate_hosted_trace "$HOSTED_TRACE_UNOWNED" "$HOST"
 
+# Transfer complete bundles between independent checkout roots. The original
+# root becomes unavailable, so accidentally following its absolute paths fails.
+# Exercise both a binary and a digest manifest without rewriting metadata.
+verify_relocated_handoff() (
+    relocation_kind=$1
+    relocation_spelling=$2
+    relocation_parent="$WORKDIR/relocation-$relocation_kind-$relocation_spelling"
+    relocation_from="$relocation_parent/producer checkout"
+    relocation_to="$relocation_parent/consumer checkout"
+    mkdir -p "$relocation_from/fixture/src" "$relocation_from/fixture/stdlib"
+    cp "$SOURCE/input.tl" "$relocation_from/fixture/src/input.tl"
+    cp "$STDLIB/input.tl" "$relocation_from/fixture/stdlib/input.tl"
+    cp "$PRODUCER" "$relocation_from/fixture/producer"
+    chmod +x "$relocation_from/fixture/producer"
+    printf '%s\n' payload > "$relocation_from/fixture/payload file.bin"
+    WORKDIR=$relocation_from
+    PRODUCER="$WORKDIR/fixture/producer"
+    OUTPUT="$WORKDIR/fixture/output file.bin"
+    METADATA="$WORKDIR/fixture/handoff.meta"
+    PATH_FILE="$WORKDIR/fixture/handoff.path"
+    KIND=$relocation_kind
+    unset TYPELISP_CI_COMPILER_ARTIFACT_TRACE
+    if [ "$KIND" = compiler-binary ]; then
+        cp "$WORKDIR/fixture/payload file.bin" "$OUTPUT"
+    else
+        ci_compiler_artifact_write_files_manifest "$WORKDIR" "$OUTPUT" \
+            "$WORKDIR/fixture/payload file.bin"
+    fi
+    relocation_producer=$PRODUCER
+    relocation_output=$OUTPUT
+    if [ "$relocation_spelling" = relative ]; then
+        relocation_producer=fixture/producer
+        relocation_output='fixture/output file.bin'
+    fi
+    [ "$(pwd)" != "$WORKDIR" ] || exit 1
+    ci_compiler_artifact_publish \
+        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$relocation_producer" \
+        "$TARGET" "$CFG" "$OPT" "$PROFILE" "$SOURCE_ROOTS" \
+        "$STDLIB_ROOTS" "$ENVIRONMENT" "$KIND" "$relocation_output" "$ARGV"
+    [ "$(cat "$PATH_FILE")" = '{root}/fixture/output file.bin' ] || {
+        echo "handoff output path is not checkout-relative" >&2
+        exit 1
+    }
+    mkdir -p "$relocation_to"
+    cp -R "$relocation_from/." "$relocation_to/"
+    mv "$relocation_from" "$relocation_parent/unavailable"
+    WORKDIR=$relocation_to
+    PRODUCER="$WORKDIR/fixture/producer"
+    OUTPUT="$WORKDIR/fixture/output file.bin"
+    METADATA="$WORKDIR/fixture/handoff.meta"
+    PATH_FILE="$WORKDIR/fixture/handoff.path"
+    require_fixture
+    [ "$CI_COMPILER_ARTIFACT_PATH" = "$OUTPUT" ] || exit 1
+    if [ "$relocation_spelling" = relative ]; then
+        PRODUCER=fixture/producer
+        require_fixture
+        [ "$CI_COMPILER_ARTIFACT_PATH" = "$OUTPUT" ] || exit 1
+        PRODUCER="$WORKDIR/fixture/producer"
+    fi
+    cmp "$METADATA" "$relocation_parent/unavailable/fixture/handoff.meta"
+    if [ "$KIND" = assembly-set-manifest ]; then
+        ci_compiler_artifact_verify_sha256_manifest "$WORKDIR" "$OUTPUT"
+        printf '%s\n' corrupt >> "$WORKDIR/fixture/payload file.bin"
+        expect_failure relocated-manifest-corruption 'manifest artifact digest mismatch' \
+            ci_compiler_artifact_verify_sha256_manifest "$WORKDIR" "$OUTPUT"
+    fi
+    cp "$OUTPUT" "$OUTPUT.base"
+    printf '%s\n' corrupt >> "$OUTPUT"
+    expect_failure relocated-output 'output_sha256 mismatch' require_fixture
+    mv "$OUTPUT.base" "$OUTPUT"
+    cp "$PRODUCER" "$PRODUCER.base"
+    printf '%s\n' '# changed producer' >> "$PRODUCER"
+    expect_failure relocated-producer 'producer_sha256 mismatch' require_fixture
+    mv "$PRODUCER.base" "$PRODUCER"
+    cp "$WORKDIR/fixture/src/input.tl" "$WORKDIR/fixture/input.base"
+    printf '%s\n' '; changed source' >> "$WORKDIR/fixture/src/input.tl"
+    expect_failure relocated-source 'source_set_sha256 mismatch' require_fixture
+    mv "$WORKDIR/fixture/input.base" "$WORKDIR/fixture/src/input.tl"
+    relocation_token=$TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN
+    TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN=another-run
+    expect_failure relocated-run 'run_token mismatch' require_fixture
+    TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN=$relocation_token
+    mv "$OUTPUT" "$OUTPUT.base"
+    expect_failure relocated-missing 'handoff artifact is missing or empty' require_fixture
+    mv "$OUTPUT.base" "$OUTPUT"
+    printf '%s\n' '{root}/fixture/output file.bin' '{root}/extra' > "$PATH_FILE"
+    expect_failure relocated-multiple-paths 'exactly one path' require_fixture
+    printf '%s\n%s' '{root}/fixture/output file.bin' unterminated > "$PATH_FILE"
+    expect_failure relocated-trailing-bytes 'exactly one path' require_fixture
+    printf '%s' '{root}/fixture/output file.bin' > "$PATH_FILE"
+    expect_failure relocated-unterminated-path 'exactly one path' require_fixture
+    printf '%s\n' '{root-bad}/fixture/output file.bin' > "$PATH_FILE"
+    expect_failure relocated-malformed-path 'handoff artifact is missing or empty' require_fixture
+    # Existing absolute-path handoffs remain accepted in their own checkout.
+    printf '%s\n' "$OUTPUT" > "$PATH_FILE"
+    require_fixture
+)
+verify_relocated_handoff compiler-binary absolute
+verify_relocated_handoff assembly-set-manifest absolute
+verify_relocated_handoff compiler-binary relative
+verify_relocated_handoff assembly-set-manifest relative
+
+# An output outside the declared checkout remains an absolute handoff. Source
+# provenance still belongs to WORKDIR; relocation must not silently rebase it.
+publish_fixture
+EXTERNAL_OUTPUT="$ROOT/target/ci-compiler-artifact-external.bin"
+cp "$OUTPUT" "$EXTERNAL_OUTPUT"
+ci_compiler_artifact_publish \
+    "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$PRODUCER" \
+    "$TARGET" "$CFG" "$OPT" "$PROFILE" "$SOURCE_ROOTS" \
+    "$STDLIB_ROOTS" "$ENVIRONMENT" "$KIND" "$EXTERNAL_OUTPUT" "$ARGV"
+[ "$(cat "$PATH_FILE")" = "$EXTERNAL_OUTPUT" ] || exit 1
+require_fixture
+[ "$CI_COMPILER_ARTIFACT_PATH" = "$EXTERNAL_OUTPUT" ] || exit 1
+rm -f "$EXTERNAL_OUTPUT"
+
 echo "CI compiler artifact handoff self-tests passed"

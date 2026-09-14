@@ -489,6 +489,13 @@
     [(AstCFunctionMode.UnsafeNullable) 2]
     [(AstCFunctionMode.UnsafeNonNull) 3]))
 
+(define (ast-c-function-mode-name [mode : AstCFunctionMode]) : String
+  (match mode
+    [(AstCFunctionMode.Nullable) "nullable"]
+    [(AstCFunctionMode.NonNull) "non-null"]
+    [(AstCFunctionMode.UnsafeNullable) "unsafe-nullable"]
+    [(AstCFunctionMode.UnsafeNonNull) "unsafe-non-null"]))
+
 (define (ast-c-function-mode-eq? [a : AstCFunctionMode] [b : AstCFunctionMode]) : bool
   (= (ast-c-function-mode-key a) (ast-c-function-mode-key b)))
 

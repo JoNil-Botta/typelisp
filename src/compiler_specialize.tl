@@ -1480,6 +1480,12 @@
         (spec-type-list-key (ast.ast-type-list-box-shared-view args))
         "_to_"
         (spec-type-key (ast.ty-node-get ret)))]
+    [(ast.AstType.CFunc signature mode)
+      (str_cat.str-cat
+        "cfn_"
+        (ast.ast-c-function-mode-name mode)
+        "_"
+        (spec-type-key (ast.ty-node-get signature)))]
     [(ast.AstType.Tuple elems)
       (str_cat.str-cat
         "tuple_"
@@ -1614,6 +1620,12 @@
           (ast.ast-type-list-box-shared-view args))
         "_to_"
         (spec-type-key-with-owner owner (spec-owner-type-get owner ret)))]
+    [(ast.AstType.CFunc signature mode)
+      (str_cat.str-cat
+        "cfn_"
+        (ast.ast-c-function-mode-name mode)
+        "_"
+        (spec-type-key-with-owner owner (spec-owner-type-get owner signature)))]
     [(ast.AstType.Tuple elems)
       (str_cat.str-cat
         "tuple_"
@@ -2016,6 +2028,17 @@
           -119
           (spec-structural-key-raw arg-key)
           (spec-structural-key-raw ret-key)))]
+    [(ast.AstType.CFunc signature mode)
+      (let
+        [signature-key : SpecStructuralKey
+          (spec-type-structural-key-with-owner
+            owner
+            (spec-owner-type-get owner signature))]
+        (spec-structural-node-with-owner
+          owner
+          -138
+          (spec-structural-key-raw signature-key)
+          (ast.ast-c-function-mode-key mode)))]
     [(ast.AstType.Tuple elems)
       (let
         [elem-key : SpecStructuralKey
@@ -4807,6 +4830,15 @@
           owner
           (spec-owner-type-get owner elem)
           subs))]
+    [(ast.AstType.CFunc signature mode)
+      (ast.AstType.CFunc
+        (ast.ast-node-pool-context-type-push
+          (spec-owner-pools owner)
+          (spec-substitute-type-with-owner
+            owner
+            (spec-owner-type-get owner signature)
+            subs))
+        mode)]
     [(ast.AstType.Ptr elem)
       (ast.ast-ty-ptr-with-pools
         (spec-owner-pools owner)

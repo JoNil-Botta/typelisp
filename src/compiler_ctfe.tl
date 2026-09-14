@@ -4059,6 +4059,16 @@
           (ast.ast-place-shared-view pools)
           infos
           (ast.ast-node-pool-context-type-get pools elem)))]
+    [(ast.AstType.CFunc signature mode)
+      (let
+        [resolved : ast.AstType
+          (ctfe-reflect-resolve-type-with-pools
+            (ast.ast-place-shared-view pools)
+            infos
+            (ast.ast-node-pool-context-type-get pools signature))]
+        (ast.AstType.CFunc
+          (ast.ast-node-pool-context-type-push pools resolved)
+          mode))]
     [(ast.AstType.Ptr elem)
       (ast.ast-ty-ptr-with-pools
         (ast.ast-place-shared-view pools)
@@ -4251,6 +4261,15 @@
           (ast.ast-place-shared-view pools)
           infos
           (ast.ast-node-pool-context-type-get pools ret)))]
+    [(ast.AstType.CFunc signature mode)
+      (str_cat.str-cat
+        "cfn_"
+        (ast.ast-c-function-mode-name mode)
+        "_"
+        (ctfe-type-key-with-reflections-and-pools
+          (ast.ast-place-shared-view pools)
+          infos
+          (ast.ast-node-pool-context-type-get pools signature)))]
     [(ast.AstType.Tuple elems)
       (str_cat.str-cat
         "tuple_"
@@ -4391,6 +4410,7 @@
     [(ast.AstType.ExprList) "expr-list"]
     [(ast.AstType.Unit) "unit"]
     [(ast.AstType.Never) "never"]
+    [(ast.AstType.CFunc _ _) "c-function"]
     [(ast.AstType.Func _ _) "function"]
     [(ast.AstType.Tuple _) "tuple"]
     [(ast.AstType.Array _ _) "array"]
@@ -4980,6 +5000,7 @@
     [(ast.AstType.Bytes) -1]
     [(ast.AstType.Expr) -1]
     [(ast.AstType.ExprList) -1]
+    [(ast.AstType.CFunc _ _) 8]
     [(ast.AstType.Func _ _) 8]
     [(ast.AstType.Tuple _) 8]
     [(ast.AstType.Array elem count)
@@ -5077,6 +5098,7 @@
     [(ast.AstType.Bytes) -1]
     [(ast.AstType.Expr) -1]
     [(ast.AstType.ExprList) -1]
+    [(ast.AstType.CFunc _ _) 8]
     [(ast.AstType.Func _ _) 8]
     [(ast.AstType.Tuple _) 8]
     [(ast.AstType.Array elem _)
@@ -11948,6 +11970,18 @@
           (ctfe-ty-get env ret)
           env)
         env)]
+    [(ast.AstType.CFunc signature mode)
+      (ctfe-type-syntax-call-id
+        (ctfe-materialize-generated-name-id "CFunc")
+        (ast.ast-expr-cons
+          (ctfe-type-syntax-name-id
+            (ctfe-materialize-generated-name-id
+              (ast.ast-c-function-mode-name mode))
+            env)
+          (ast.ast-expr-cons
+            (ctfe-type-to-expr (ctfe-ty-get env signature) env)
+            (ast.ast-expr-list-new)))
+        env)]
     [(ast.AstType.Tuple elems)
       (ctfe-type-syntax-call-id
         (ctfe-builtin-ref 175)
@@ -12571,6 +12605,15 @@
         [(ResultCtfeQuoteType.Ok quoted next-fuel)
           (ResultCtfeQuoteType.Ok
             (ast.ast-ty-box-with-pools (ctfe-env-pools env) quoted)
+            next-fuel)]
+        [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
+    [(ast.AstType.CFunc signature mode)
+      (match (ctfe-quote-type (ctfe-ty-get env signature) env origin fuel)
+        [(ResultCtfeQuoteType.Ok quoted next-fuel)
+          (ResultCtfeQuoteType.Ok
+            (ast.AstType.CFunc
+              (ast.ast-node-pool-context-type-push (ctfe-env-pools env) quoted)
+              mode)
             next-fuel)]
         [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
     [(ast.AstType.Ptr elem)
@@ -16394,6 +16437,16 @@
               env
               (ctfe-ty-get env a-ret)
               (ctfe-ty-get env b-ret)))]
+        [_ false])]
+    [(ast.AstType.CFunc a-signature a-mode)
+      (match b
+        [(ast.AstType.CFunc b-signature b-mode)
+          (and
+            (ast.ast-c-function-mode-eq? a-mode b-mode)
+            (ctfe-type-eq-in-env
+              env
+              (ctfe-ty-get env a-signature)
+              (ctfe-ty-get env b-signature)))]
         [_ false])]
     [(ast.AstType.Tuple a-elems)
       (match b

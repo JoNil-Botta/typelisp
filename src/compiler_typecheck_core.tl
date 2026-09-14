@@ -16697,6 +16697,13 @@
         " "
         (tc-type-render (ast.ty-node-get ret))
         ")")]
+    [(ast.AstType.CFunc signature mode)
+      (str_cat.str-cat
+        "(CFunc "
+        (ast.ast-c-function-mode-name mode)
+        " "
+        (tc-type-render (ast.ty-node-get signature))
+        ")")]
     [(ast.AstType.Tuple elems)
       (str_cat.str-cat
         "(Tuple "
@@ -31616,6 +31623,15 @@
               (ast.ast-type-list-box-shared-view b-args))
             (tc-type-eq (ast.ty-node-get a-ret) (ast.ty-node-get b-ret)))]
         [_ false])]
+    [(ast.AstType.CFunc a-signature a-mode)
+      (match b
+        [(ast.AstType.CFunc b-signature b-mode)
+          (and
+            (ast.ast-c-function-mode-eq? a-mode b-mode)
+            (tc-type-eq
+              (ast.ty-node-get a-signature)
+              (ast.ty-node-get b-signature)))]
+        [_ false])]
     [(ast.AstType.Tuple a-elems)
       (match b
         [(ast.AstType.Tuple b-elems)
@@ -33220,6 +33236,7 @@
     ;; Function values are represented by the function type only. Capturing
     ;; closures carry a separate environment and remain a later issue.
     [(ast.AstType.Func _ _) (TcMoveKind.Copyable)]
+    [(ast.AstType.CFunc _ _) (TcMoveKind.Copyable)]
     [(ast.AstType.Ptr _) (TcMoveKind.Copyable)]
     [(ast.AstType.MutPtr _) (TcMoveKind.Copyable)]
     ;; Shared references are handles and remain Copyable independent of their
@@ -63247,6 +63264,8 @@
       (ResultTcLayoutInfo.Err
         "typecheck: slice has no by-value layout; use a borrowed slice reference")]
     [(ast.AstType.Box _)
+      (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info))]
+    [(ast.AstType.CFunc _ _)
       (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info))]
     [(ast.AstType.Ptr _)
       (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info))]
@@ -107744,6 +107763,29 @@
                     sret)
                   span))]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+    [(ast.AstType.CFunc signature mode)
+      (match (macro-type-to-spanned-sexpr
+        session
+        (ast.ty-node-get signature)
+        span
+        origin)
+        [(ResultMacroSexpr.Ok signature-sexpr)
+          (ResultMacroSexpr.Ok
+            (reader.spanned-sexpr-list-from-builder
+              (reader.spanned-sexpr-builder-push
+                (reader.spanned-sexpr-builder-push
+                  (reader.spanned-sexpr-builder-push
+                    (reader.spanned-sexpr-builder-new)
+                    (macro-spanned-symbol-id
+                      (ci.intern-generated-name "CFunc")
+                      span))
+                  (macro-spanned-symbol-id
+                    (ci.intern-generated-name
+                      (ast.ast-c-function-mode-name mode))
+                    span))
+                signature-sexpr)
+              span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstType.Struct name)
       (ResultMacroSexpr.Ok

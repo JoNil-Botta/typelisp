@@ -476,6 +476,11 @@
             out
             context
             (ast.ast-lifetime-list-box-shared-view lifetimes)))]
+      [(ast.AstType.CFunc signature mode)
+        (begin
+          (surface-ast-write-i64! out 38)
+          (surface-ast-write-i64! out signature)
+          (surface-ast-write-i64! out (ast.ast-c-function-mode-key mode)))]
       [(ast.AstType.Ptr elem)
         (begin
           (surface-ast-write-i64! out 33)
@@ -551,6 +556,25 @@
         (ast.AstType.VarArgs
           (surface-ast-read-name! reader)
           (box (surface-ast-read-lifetime-list! reader)))]
+      [(= tag 38)
+        (let
+          [signature : i64 (surface-ast-read-i64! reader)]
+          [mode : i64 (surface-ast-read-i64! reader)]
+          (cond
+            [(or (< signature 0) (< mode 0) (> mode 3))
+              (begin
+                (surface-ast-reader-fail!
+                  reader
+                  "surface ast: invalid C function type")
+                ast.AstType.Unit)]
+            [(= mode 0)
+              (ast.AstType.CFunc signature ast.AstCFunctionMode.Nullable)]
+            [(= mode 1)
+              (ast.AstType.CFunc signature ast.AstCFunctionMode.NonNull)]
+            [(= mode 2)
+              (ast.AstType.CFunc signature ast.AstCFunctionMode.UnsafeNullable)]
+            [else
+              (ast.AstType.CFunc signature ast.AstCFunctionMode.UnsafeNonNull)]))]
       [(= tag 33) (ast.AstType.Ptr (surface-ast-read-i64! reader))]
       [(= tag 34) (ast.AstType.MutPtr (surface-ast-read-i64! reader))]
       [(= tag 36) (ast.AstType.Slice (surface-ast-read-i64! reader))]

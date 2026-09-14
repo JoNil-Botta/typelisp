@@ -418,3 +418,18 @@ explanations. The checked-in ownership and construction-site inventory is in
 Disposable measurements and diagnostics belong under `target/exp/<name>/`;
 `typelisp clean --experiments` removes that subtree at the nearest package root
 without touching bootstrap or package build outputs.
+
+## Async process ownership
+
+Async process start reserves a generation-tagged, boxed registry authority before
+preparing descriptors or spawning. Reserved entries own no native resources;
+cleanup releases their slots without issuing a wait or close. Successful exec
+moves the reservation authority to the returned child and publishes its PID and
+capture descriptors while holding the registry lock. The lock is never held
+across native process operations. Cloned or fabricated boxes cannot claim either
+reserved or live entries because their identities do not match. The Linux process
+fault gate covers full capacity before spawn, failure cleanup, concurrent
+reservation reuse, cloned reservations, reverse waits and stale live tokens.
+A separate mode of the same fixture runs concurrent native starts, failed execs
+and waits without the single-threaded fault hooks; both modes check descriptor
+and child cleanup.

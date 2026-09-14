@@ -4,6 +4,8 @@
 (import stdlib.process_runtime)
 (import stdlib.profile)
 (import stdlib.test)
+(import stdlib.thread)
+(import (thread.handle i64) as reservation_thread)
 (import tests.integration.process_runtime_linux_hooks as process_linux_test_hooks)
 
 (define process-fd-scan-limit : i64
@@ -996,7 +998,198 @@
           allocated
           baseline-fds)))))
 
-(define (main) : i64
+;; Capacity failure must precede prepare/vfork, not reap an unregistered child.
+(define (registry-sleep-command) : process.ProcessCommand
+  (process.command "/usr/bin/sleep" (process.args-single "1")))
+
+(define (assert-registry-exhausted [result : process.ResultProcessChild]) : unit
+  (match result
+    [(process.ErrProcessChild error)
+      (begin
+        (test.assert-true
+          (process.error-spawn-failed? (clone error))
+          "registry error is spawn failure")
+        (assert-string-owned-eq
+          (process.error-message error)
+          "process: child capability registry exhausted"
+          "registry exhaustion diagnostic"))]
+    [(process.OkProcessChild child)
+      (with
+        ([unexpected child process.cleanup-process-child])
+        (io.panic "full registry unexpectedly started child"))]))
+
+(define (run-registry-exhaustion [baseline-fds : i64]) : unit
+  (begin
+    (with
+      ([a
+          (child-or-panic (process.start (registry-sleep-command)) "registry a")
+          process.cleanup-process-child]
+        [b
+          (child-or-panic (process.start (registry-sleep-command)) "registry b")
+          process.cleanup-process-child]
+        [c
+          (child-or-panic (process.start (registry-sleep-command)) "registry c")
+          process.cleanup-process-child]
+        [d
+          (child-or-panic (process.start (registry-sleep-command)) "registry d")
+          process.cleanup-process-child])
+      (let
+        [occupied-fds : i64 (linux-test-open-fd-count process-fd-scan-limit)]
+        (begin
+          (process_linux_test_hooks.reset!)
+          (assert-registry-exhausted
+            (process.start
+              (process.command "/usr/bin/sleep" (process.args-single "1"))))
+          (let
+            [kind : i64 1]
+            (while (< kind 16)
+              (begin
+                (test.assert-i64-eq
+                  (process_linux_test_hooks.call-count kind)
+                  0
+                  "exhausted start performs no process syscall")
+                (set! kind (+ kind 1)))))
+          (test.assert-i64-eq
+            (linux-test-open-fd-count process-fd-scan-limit)
+            occupied-fds
+            "exhaustion preserves descriptors")
+          (assert-output-ok
+            (process.wait (&mut b))
+            0
+            ""
+            ""
+            "free one registry slot")
+          (with
+            ([replacement
+                (child-or-panic (process.start (true-command)) "registry reuse")
+                process.cleanup-process-child])
+            (assert-output-ok
+              (process.wait (&mut replacement))
+              0
+              ""
+              ""
+              "reuse one released slot")))))
+    (assert-no-resource-growth baseline-fds "registry exhaustion cleanup")))
+
+;; Workers reserve without spawning, so hooks remain single-threaded. Only
+;; atomics coordinate the barrier; the registry's own lock owns slot state.
+(define reservation-ready : i64
+  0)
+(define reservation-release : i64
+  0)
+
+(define (reservation-worker) : i64
+  (match (unsafe
+    (process_runtime.process-runtime-child-reserve))
+    [(process_runtime.ProcessRuntimeChildRegistryExhausted)
+      (begin
+        (unsafe
+          (atomic-fetch-add! (ptr-addr-of reservation-ready) 1))
+        1)]
+    [(process_runtime.ProcessRuntimeChildReserved child)
+      (with
+        ([reserved child process_runtime.cleanup-process-runtime-child])
+        (begin
+          ;; A structural clone must not cancel the real reserved authority.
+          (with
+            ([copy
+                (clone reserved)
+                process_runtime.cleanup-process-runtime-child])
+            unit)
+          (unsafe
+            (atomic-fetch-add! (ptr-addr-of reservation-ready) 1))
+          (while (=
+            (unsafe
+              (atomic-load (ptr-addr-of reservation-release)))
+            0)
+            (begin
+              (unsafe
+                (syscall 24))
+              unit))
+          42))]))
+
+(define (spawn-reservation-worker) : reservation_thread.Handle
+  (match (reservation_thread.spawn
+    (lambda () : i64
+      (reservation-worker)))
+    [(reservation_thread.I64SpawnOk worker) worker]
+    [(reservation_thread.I64SpawnErr _)
+      (io.panic "reservation worker spawn failed")]))
+
+(define (run-concurrent-reservation-round) : unit
+  (begin
+    (unsafe
+      (atomic-store! (ptr-addr-of reservation-ready) 0))
+    (unsafe
+      (atomic-store! (ptr-addr-of reservation-release) 0))
+    (let
+      [a : reservation_thread.Handle (spawn-reservation-worker)]
+      [b : reservation_thread.Handle (spawn-reservation-worker)]
+      [c : reservation_thread.Handle (spawn-reservation-worker)]
+      [d : reservation_thread.Handle (spawn-reservation-worker)]
+      [deadline : i64 (+ (profile.now-ticks) 5000000000)]
+      (begin
+        (while (and
+          (<
+            (unsafe
+              (atomic-load (ptr-addr-of reservation-ready)))
+            4)
+          (< (profile.now-ticks) deadline))
+          (begin
+            (unsafe
+              (syscall 24))
+            unit))
+        (test.assert-i64-eq
+          (unsafe
+            (atomic-load (ptr-addr-of reservation-ready)))
+          4
+          "all reservation workers reached barrier")
+        (match (unsafe
+          (process_runtime.process-runtime-child-reserve))
+          [(process_runtime.ProcessRuntimeChildRegistryExhausted) unit]
+          [(process_runtime.ProcessRuntimeChildReserved child)
+            (with
+              ([unexpected child process_runtime.cleanup-process-runtime-child])
+              (io.panic "concurrent reservations did not fill unique slots"))])
+        (unsafe
+          (atomic-store! (ptr-addr-of reservation-release) 1))
+        (test.assert-i64-eq
+          (reservation_thread.join-value-or (reservation_thread.join a) -1)
+          42
+          "reservation worker a")
+        (test.assert-i64-eq
+          (reservation_thread.join-value-or (reservation_thread.join b) -1)
+          42
+          "reservation worker b")
+        (test.assert-i64-eq
+          (reservation_thread.join-value-or (reservation_thread.join c) -1)
+          42
+          "reservation worker c")
+        (test.assert-i64-eq
+          (reservation_thread.join-value-or (reservation_thread.join d) -1)
+          42
+          "reservation worker d")))))
+
+(define (run-concurrent-reservation-reuse [baseline-fds : i64]) : unit
+  (begin
+    (run-concurrent-reservation-round)
+    (run-concurrent-reservation-round)
+    (assert-no-resource-growth baseline-fds "concurrent reservation reuse")
+    (with
+      ([child
+          (child-or-panic
+            (process.start (true-command))
+            "post-reservation native start")
+          process.cleanup-process-child])
+      (assert-output-ok
+        (process.wait (&mut child))
+        0
+        ""
+        ""
+        "native start after reservation reuse"))
+    (assert-no-resource-growth baseline-fds "post-reservation native cleanup")))
+
+(define (fault-main) : i64
   (let
     [baseline-fds : i64 (linux-test-open-fd-count process-fd-scan-limit)]
     (begin
@@ -1008,6 +1201,80 @@
       (run-capture-faults baseline-fds)
       (run-async-and-inherited-faults baseline-fds)
       (run-child-capability-safety baseline-fds)
+      (run-registry-exhaustion baseline-fds)
+      (run-concurrent-reservation-reuse baseline-fds)
       (run-stress 20 baseline-fds)
       (run-metrics baseline-fds)
       42)))
+
+;; Run without process-linux-test-hooks: its fault counters are intentionally
+;; single-threaded, whereas this exercises native publication and claiming.
+(define (native-child-worker) : i64
+  (let
+    [iteration : i64 0]
+    (begin
+      (while (< iteration 32)
+        (begin
+          (match (process.start (missing-command))
+            [(process.ErrProcessChild error)
+              (test.assert-true
+                (process.error-spawn-failed? error)
+                "concurrent failed exec returns spawn error")]
+            [(process.OkProcessChild child)
+              (with
+                ([unexpected child process.cleanup-process-child])
+                (io.panic "missing concurrent executable started"))])
+          (with
+            ([child
+                (child-or-panic
+                  (process.start (true-command))
+                  "concurrent start")
+                process.cleanup-process-child])
+            (assert-output-ok
+              (process.wait (&mut child))
+              0
+              ""
+              ""
+              "concurrent wait"))
+          (set! iteration (+ iteration 1))))
+      42)))
+
+(define (spawn-native-child-worker) : reservation_thread.Handle
+  (match (reservation_thread.spawn
+    (lambda () : i64
+      (native-child-worker)))
+    [(reservation_thread.I64SpawnOk worker) worker]
+    [(reservation_thread.I64SpawnErr _)
+      (io.panic "native child worker spawn failed")]))
+
+(define (native-concurrency-main) : i64
+  (let
+    [baseline-fds : i64 (linux-test-open-fd-count process-fd-scan-limit)]
+    [a : reservation_thread.Handle (spawn-native-child-worker)]
+    [b : reservation_thread.Handle (spawn-native-child-worker)]
+    [c : reservation_thread.Handle (spawn-native-child-worker)]
+    [d : reservation_thread.Handle (spawn-native-child-worker)]
+    (begin
+      (test.assert-i64-eq
+        (reservation_thread.join-value-or (reservation_thread.join a) -1)
+        42
+        "native worker a")
+      (test.assert-i64-eq
+        (reservation_thread.join-value-or (reservation_thread.join b) -1)
+        42
+        "native worker b")
+      (test.assert-i64-eq
+        (reservation_thread.join-value-or (reservation_thread.join c) -1)
+        42
+        "native worker c")
+      (test.assert-i64-eq
+        (reservation_thread.join-value-or (reservation_thread.join d) -1)
+        42
+        "native worker d")
+      (assert-no-resource-growth baseline-fds "concurrent native child cleanup")
+      (io.println
+        "process-linux-concurrency workers=4 starts=128 failed-execs=128 zombies=0")
+      42)))
+
+(define (main) : i64
+  (cfg process-child-concurrency-test (native-concurrency-main) (fault-main)))

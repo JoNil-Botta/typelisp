@@ -1513,3 +1513,22 @@ Linux environment.
 - Prefer naming conventions and representative examples in docs and comments;
   avoid maintaining long file lists that will go stale.
 - Run the focused tests for the layer touched, plus `typelisp fmt --check`.
+
+
+## Linux async process reservation
+
+`scripts/verify-process-runtime-linux.sh` builds and runs two modes of
+`tests/integration/process_runtime_linux_failures.tl` through the assembly fallback.
+The fault mode enables `process-linux-test-hooks`, reducing registry capacity to
+four. It holds four child capabilities, verifies exhaustion returns the typed
+spawn error before any process syscall, and checks slot reuse and cleanup. Four
+threads also reserve all slots concurrently, reject cloned authority, and release
+and reuse the reservations. Existing syscall faults, reverse waits and stale
+capability checks remain in the same mode.
+
+The `process-child-concurrency-test` mode does not enable fault hooks: their
+counters are deliberately single-threaded. Four threads each perform 32 failed
+execs and 32 successful starts/waits against the native runtime. The final check
+requires unchanged descriptor count and no remaining children. Both modes must
+exit 42 with the exact metrics line and empty stderr; a compiler or runtime
+failure in either fails the gate.

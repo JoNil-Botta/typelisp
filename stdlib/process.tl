@@ -1096,6 +1096,9 @@
 
 ;: Start a command without waiting for process completion. The returned child
 ;: owns captured-output descriptors until it is passed to `wait`.
+;: Linux reserves bounded child-registry capacity before preparing or spawning.
+;: If capacity is exhausted, return `ProcessSpawnFailed` without starting a
+;: child or waiting for one; waiting/dropping existing children frees capacity.
 (define (start [command : ProcessCommand]) : ResultProcessChild
   (let
     [validation : ProcessMaybeString (command-validation-error command)]

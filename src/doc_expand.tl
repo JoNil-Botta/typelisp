@@ -302,6 +302,13 @@
         " "
         (doc-ast-type-id-source ctx ret)
         ")")]
+    [(ast.AstType.CFunc signature mode)
+      (doc-cat5
+        "(CFunc "
+        (ast.ast-c-function-mode-name mode)
+        " "
+        (doc-ast-type-id-source ctx signature)
+        ")")]
     [(ast.AstType.Tuple elems-box)
       (doc-cat3
         "(Tuple "

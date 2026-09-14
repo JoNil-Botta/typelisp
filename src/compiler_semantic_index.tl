@@ -3442,6 +3442,10 @@
         (compiler-semantic-walk-type!
           (owned_view.compiler-owned-shared-view state)
           (tc.tc-context-type-get state.ctx ret)))]
+    [(ast.AstType.CFunc signature _)
+      (compiler-semantic-walk-type!
+        (owned_view.compiler-owned-shared-view state)
+        (tc.tc-context-type-get state.ctx signature))]
     [(ast.AstType.Tuple items)
       (compiler-semantic-walk-type-list!
         state

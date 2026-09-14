@@ -175,37 +175,7 @@ assert_occurrences() {
     fi
 }
 
-wait_for_package_lock_stage() {
-    _wait_root=$1
-    _wait_pid=$2
-    _wait_label=$3
-    _wait_attempt=0
-    while [ "$_wait_attempt" -lt 600 ]; do
-        _wait_stage=$(find "$_wait_root" -maxdepth 1 -type f -name 'typelisp.lock.stage.*' -print -quit)
-        [ -z "$_wait_stage" ] || return 0
-        kill -0 "$_wait_pid" 2>/dev/null || fail "$_wait_label exited before publishing its staging file"
-        sleep 0.1
-        _wait_attempt=$((_wait_attempt + 1))
-    done
-    fail "$_wait_label did not publish a staging file within 60s"
-}
-
-wait_for_package_lock_text() {
-    _wait_path=$1
-    _wait_text=$2
-    _wait_pid=$3
-    _wait_label=$4
-    _wait_attempt=0
-    while [ "$_wait_attempt" -lt 600 ]; do
-        if [ -f "$_wait_path" ] && grep -F -- "$_wait_text" "$_wait_path" >/dev/null; then
-            return 0
-        fi
-        kill -0 "$_wait_pid" 2>/dev/null || fail "$_wait_label exited before committing the expected lock"
-        sleep 0.1
-        _wait_attempt=$((_wait_attempt + 1))
-    done
-    fail "$_wait_label did not commit the expected lock within 60s"
-}
+. "$ROOT/scripts/lib-package-lock-test-wait.sh"
 
 generated_path() {
     if command -v cygpath >/dev/null 2>&1; then

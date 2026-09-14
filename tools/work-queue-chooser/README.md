@@ -1,5 +1,43 @@
 # TypeLisp work-queue chooser
 
+Fetch the complete open queue before applying eligibility filters:
+
+```sh
+mkdir -p target/exp/work-queue
+sh scripts/fetch-work-queue.sh > target/exp/work-queue/raw.json &&
+jq '.issues |= map(select(any(.labels[]; .name=="ready-for-implementation" or .name=="needs-research")))' \
+  target/exp/work-queue/raw.json > target/exp/work-queue/eligible.json &&
+typelisp run tools/work-queue-chooser/chooser.tl --stdlib-root stdlib \
+  < target/exp/work-queue/eligible.json
+```
+
+The fetch wrapper requires authenticated `gh` and `jq`. Its optional argument
+is an `OWNER/REPO` (default `JoNil-Botta/typelisp`). It emits one unfiltered
+`{"prs":[...],"issues":[...]}` document only after both list requests succeed
+and validate. PR records retain number, title, body, head/base branches, draft
+state, labels and check rollups; issue records retain number, title and labels.
+Claimed PRs and drafts remain in the raw queue. Keep the raw capture when
+investigating selection; filtering first can hide dependencies or claims.
+
+`gh list` paginates up to its requested limit. The wrapper starts at 1,000 PRs
+and 10,000 issues, doubles a reached limit, and retries up to four requests per
+lane. A still-reached limit fails with pagination guidance; it never certifies
+that an exactly full result is complete. API errors, malformed records,
+duplicate IDs and extra JSON documents also fail with no snapshot on stdout.
+Do not invoke the chooser after a failed fetch. An empty repository is valid
+fetch output; the current chooser's empty-queue behavior is described below.
+
+These are two live GitHub list observations, not an atomic repository snapshot.
+Recheck issue/PR activity immediately before claiming work. The wrapper does
+not infer readiness, change labels, recover stale claims or implement the
+remaining scheduling policy in #7768. The current chooser still needs caller
+checks for review claims, draft-inclusive backpressure, blocked work and #8's
+horizons. Repository fetch regression tests run without credentials or network:
+
+```sh
+sh scripts/test-fetch-work-queue.sh
+```
+
 `chooser.tl` reads a combined GitHub queue payload from stdin:
 
 ```json

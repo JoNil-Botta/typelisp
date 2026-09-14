@@ -87,3 +87,38 @@
     (table.entry 41)))"
         "init cannot create a non-null C function pointer")
       "zero-filled aggregate arrays cannot manufacture checked code pointers")))
+
+(test
+  c-function-extern-signature-admission
+  (begin
+    (test.assert-true
+      (c-function-call-checks?
+        "(extern (resolve) : (CFunc non-null (-> i64 i64)) (:abi c))
+(define (factory [resolver : (-> (CFunc non-null (-> i64 i64)))]) : (CFunc non-null (-> i64 i64)) (resolver))
+(define saved : (CFunc non-null (-> i64 i64)) (factory resolve))
+(defstruct Table (entry (CFunc non-null (-> i64 i64))))
+(define (main) : i64 (let [table : Table (Table saved)] (+ (saved 41) (table.entry 41))))")
+      "higher-order resolver result retains C ABI through a global")
+    (test.assert-true
+      (c-function-call-checks?
+        "(extern (resolve) : (CFunc nullable (-> i64 i64)) (:abi c))
+(extern (install [f : (CFunc nullable (-> i64 i64))]) : unit (:abi c))
+(define (main) : unit (install (resolve)))")
+      "nullable C pointers can pass through native parameters and results")
+    (test.assert-true
+      (c-function-call-checks?
+        "(extern entry : (CFunc non-null (-> i64 i64)))
+(define (main) : i64 (entry 41))")
+      "external data symbol retains explicit C callable type")
+    (test.assert-true
+      (c-function-call-error?
+        "(extern (resolve) : (CFunc non-null (-> (Slice i64) i64)) (:abi c))"
+        "extern ABI c does not support return type")
+      "nested C signature must use supported ABI types")
+    (test.assert-true
+      (c-function-call-error?
+        "(extern (resolve) : (CFunc unsafe-non-null (-> i64 i64)))
+(define saved : (CFunc unsafe-non-null (-> i64 i64)) (resolve))
+(define (main) : i64 (saved 41))"
+        "requires unsafe")
+      "external result's unsafe effect survives global storage")))

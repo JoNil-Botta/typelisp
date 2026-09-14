@@ -37896,6 +37896,7 @@
     [(ast.AstType.U8) true]
     [(ast.AstType.Bool) true]
     [(ast.AstType.Char) true]
+    [(ast.AstType.CFunc _ _) true]
     [(ast.AstType.Ptr _) true]
     [(ast.AstType.MutPtr _) true]
     [_ false]))
@@ -40793,6 +40794,28 @@
           (tc_core.tc-resolve-type
             (lower-global-shared-view ctx)
             (lower-global-shared-view fn-ty)))
+          [(ast.AstType.CFunc _ _)
+            (match (lower-var-or-nullary-variant-id
+              (lower-global-shared-view ctx)
+              state
+              env
+              type-env
+              source-id
+              (lower-global-shared-view fn-ty))
+              [(ResultLowerExpr.Ok lowered)
+                (match lowered
+                  [(LowerExpr.Expr value-state value _)
+                    (lower-indirect-c-abi-call
+                      ctx
+                      value-state
+                      env
+                      type-env
+                      fn-ty
+                      value
+                      args
+                      result-ty
+                      origin)])]
+              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
           [(ast.AstType.Func param-types _)
             (match (lower-direct-call-param-types
               (lower-global-shared-view ctx)
@@ -40999,54 +41022,65 @@
   [args : ast.AstExprList]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
-  (match (lower-indirect-call-args-with-writebacks
-    (lower-global-shared-view ctx)
-    state
-    env
-    type-env
-    args
-    (lower-global-shared-view func-ty))
-    [(ResultLowerCallArgs.Ok args-state values writebacks)
-      (match (tc_core.tc-type-strip-region
-        (tc_core.tc-resolve-type (lower-global-shared-view ctx) func-ty))
-        [(ast.AstType.Func param-types _)
-          (match (lower-internal-indirect-call-values
-            (lower-global-shared-view ctx)
-            args-state
-            func-value
-            values
-            (tc_core.tc-resolve-type-list
+  (if (lower-c-function-type? (lower-global-shared-view func-ty))
+    (lower-indirect-c-abi-call
+      ctx
+      state
+      env
+      type-env
+      func-ty
+      func-value
+      args
+      result-ty
+      origin)
+    (match (lower-indirect-call-args-with-writebacks
+      (lower-global-shared-view ctx)
+      state
+      env
+      type-env
+      args
+      (lower-global-shared-view func-ty))
+      [(ResultLowerCallArgs.Ok args-state values writebacks)
+        (match (tc_core.tc-type-strip-region
+          (tc_core.tc-resolve-type (lower-global-shared-view ctx) func-ty))
+          [(ast.AstType.Func param-types _)
+            (match (lower-internal-indirect-call-values
               (lower-global-shared-view ctx)
-              (lower-box-shared-view param-types))
-            result-ty
-            origin)
-            [(ResultLowerExpr.Ok lowered)
-              (match lowered
-                [(LowerExpr.Expr call-state call-value call-ty)
-                  (ResultLowerExpr.Ok
-                    (LowerExpr.Expr
-                      (lower-apply-arg-writebacks ctx call-state writebacks)
-                      call-value
-                      call-ty))])]
-            [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
-        [_
-          (match (lower-indirect-call-values
-            (lower-global-shared-view ctx)
-            args-state
-            func-value
-            values
-            result-ty
-            origin)
-            [(ResultLowerExpr.Ok lowered)
-              (match lowered
-                [(LowerExpr.Expr call-state call-value call-ty)
-                  (ResultLowerExpr.Ok
-                    (LowerExpr.Expr
-                      (lower-apply-arg-writebacks ctx call-state writebacks)
-                      call-value
-                      call-ty))])]
-            [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
-    [(ResultLowerCallArgs.Err message) (ResultLowerExpr.Err message)]))
+              args-state
+              func-value
+              values
+              (tc_core.tc-resolve-type-list
+                (lower-global-shared-view ctx)
+                (lower-box-shared-view param-types))
+              result-ty
+              origin)
+              [(ResultLowerExpr.Ok lowered)
+                (match lowered
+                  [(LowerExpr.Expr call-state call-value call-ty)
+                    (ResultLowerExpr.Ok
+                      (LowerExpr.Expr
+                        (lower-apply-arg-writebacks ctx call-state writebacks)
+                        call-value
+                        call-ty))])]
+              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+          [_
+            (match (lower-indirect-call-values
+              (lower-global-shared-view ctx)
+              args-state
+              func-value
+              values
+              result-ty
+              origin)
+              [(ResultLowerExpr.Ok lowered)
+                (match lowered
+                  [(LowerExpr.Expr call-state call-value call-ty)
+                    (ResultLowerExpr.Ok
+                      (LowerExpr.Expr
+                        (lower-apply-arg-writebacks ctx call-state writebacks)
+                        call-value
+                        call-ty))])]
+              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
+      [(ResultLowerCallArgs.Err message) (ResultLowerExpr.Err message)])))
 
 (define (lower-indirect-c-abi-call
   [ctx : tc_core.TcContext]
@@ -42144,9 +42178,9 @@
     (lower-global-shared-view ctx)
     lookup-name-id)
     ;; A top-level value cell remains mutable through `set!`. Even when its
-    ;; declared type is a function, the symbol names DATA holding the current
-    ;; closure descriptor, not executable code. Lower the variable read first
-    ;; so calls observe the latest stored value.
+    ;; declared type is callable, the symbol names DATA holding the current
+    ;; callable value. Lower the variable read first so calls observe the latest
+    ;; stored value; indirect dispatch selects C code or a closure from its type.
     (match (lower-lookup-type-id
       (lower-global-shared-view ctx)
       (lower-state-type-cache (lower-global-shared-view state))
@@ -43153,13 +43187,10 @@
               (match lowered-func
                 [(LowerExpr.Expr func-state func-value func-ty)
                   (if (lower-function-type? (lower-global-shared-view func-ty))
-                    (if (or
-                      (lower-c-function-type?
-                        (lower-global-shared-view func-ty))
-                      (tc_core.tc-expr-c-abi-fnptr?
-                        (lower-global-shared-view ctx)
-                        type-env
-                        func))
+                    (if (tc_core.tc-expr-c-abi-fnptr?
+                      (lower-global-shared-view ctx)
+                      type-env
+                      func)
                       (lower-indirect-c-abi-call
                         (lower-global-shared-view ctx)
                         func-state
@@ -43197,9 +43228,7 @@
               (match (tc_core.tc-lookup-id type-env raw-name)
                 [(tc_core.ResultTcType.Ok fn-ty)
                   (if (lower-function-type? (lower-global-shared-view fn-ty))
-                    (if (or
-                      (lower-c-function-type? (lower-global-shared-view fn-ty))
-                      (tc_core.tc-binding-c-abi-fnptr-id? type-env raw-name))
+                    (if (tc_core.tc-binding-c-abi-fnptr-id? type-env raw-name)
                       (lower-indirect-c-abi-call
                         (lower-global-shared-view ctx)
                         state
@@ -43648,12 +43677,10 @@
           (match lowered-func
             [(LowerExpr.Expr func-state func-value func-ty)
               (if (lower-function-type? (lower-global-shared-view func-ty))
-                (if (or
-                  (lower-c-function-type? (lower-global-shared-view func-ty))
-                  (tc_core.tc-expr-c-abi-fnptr?
-                    (lower-global-shared-view ctx)
-                    type-env
-                    func))
+                (if (tc_core.tc-expr-c-abi-fnptr?
+                  (lower-global-shared-view ctx)
+                  type-env
+                  func)
                   (lower-indirect-c-abi-call
                     (lower-global-shared-view ctx)
                     func-state

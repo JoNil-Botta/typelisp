@@ -73726,6 +73726,12 @@
     [(ast.AstType.Char) true]
     [(ast.AstType.Unit) true]
     [(ast.AstType.Never) true]
+    [(ast.AstType.CFunc signature _)
+      (match (tc-check-extern-c-abi
+        (tc-global-shared-view ctx)
+        (tc-context-type-get (tc-global-shared-view ctx) signature))
+        [(ResultTcUnit.Ok) true]
+        [(ResultTcUnit.Err _) false])]
     [(ast.AstType.Func _ _) true]
     [(ast.AstType.Ptr _) true]
     [(ast.AstType.MutPtr _) true]
@@ -84431,6 +84437,7 @@
     [(ast.AstType.Never) true]
     [(ast.AstType.Expr) true]
     [(ast.AstType.ExprList) true]
+    [(ast.AstType.CFunc _ _) true]
     [(ast.AstType.Func _ _) true]
     [(ast.AstType.Ptr _) true]
     [(ast.AstType.MutPtr _) true]

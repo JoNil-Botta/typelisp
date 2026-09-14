@@ -8863,11 +8863,24 @@
   [rodata : (__tl_dyn-array u8)]
   [names : (__tl_dyn-array String)]
   [captures : (& captures TlciNativeMacroCaptures)]) : ResultProducerBytes
+  (embedded-native-emit-package-source
+    metadata-text
+    build-hash
+    windows-target
+    rodata
+    (owned_view.compiler-owned-shared-view names)
+    (embedded-native-source names captures)))
+
+;; The source string is the complete transformer input. Callers may capture it
+;; while source AST pools are live and compile it after those pools are retired.
+(define (embedded-native-emit-package-source
+  [metadata-text : String]
+  [build-hash : String]
+  [windows-target : bool]
+  [rodata : (__tl_dyn-array u8)]
+  [names : (__tl_dyn-array String)]
+  [source : String]) : ResultProducerBytes
   (let
-    [source : String
-      (embedded-native-source
-        (owned_view.compiler-owned-shared-view names)
-        captures)]
     [target : compiler_backend.CompilerBackendTarget
       (if windows-target
         (compiler_backend.CompilerBackendTarget.Windows)

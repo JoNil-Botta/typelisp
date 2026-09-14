@@ -23040,6 +23040,14 @@
             (&mut builder)
             (opt-inline-literal-scan-fixture-block index))
           (set! index (+ index 1))))
+      ;; Poison spare capacity: a capacity-sized scan must fail even when the
+      ;; live sequence is empty. Only builder.len blocks belong to the input.
+      (while (< index (array-length builder.slots))
+        (begin
+          (set!
+            (array-ref builder.slots index)
+            (opt-inline-literal-scan-fixture-block (- 0 100)))
+          (set! index (+ index 1))))
       (compiler_ir_types.CompilerIrBlockSeq builder.slots builder.len))))
 
 (define (opt-inline-literal-scan-case? [count : i64] [var : i64]) : bool

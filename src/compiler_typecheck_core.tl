@@ -47672,6 +47672,42 @@
               result))
           (ResultTcType.Err message))])))
 
+(define (tc-call-c-function-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : ast.AstExpr]
+  [args : ast.AstExprList]
+  [signature : i64]
+  [mode : ast.AstCFunctionMode]) : ResultTcType
+  (if (ast.ast-c-function-mode-nullable? mode)
+    (ResultTcType.Err
+      (tc-locate-error-at-expr
+        func
+        "typecheck: nullable C function pointer must be checked before calling"))
+    (match (if (ast.ast-c-function-mode-unsafe? mode)
+      (tc-require-unsafe (tc-global-shared-view ctx) env "C function pointer")
+      ResultTcUnit.Ok)
+      [(ResultTcUnit.Err message) (ResultTcType.Err message)]
+      [(ResultTcUnit.Ok)
+        (let
+          [signature-type : ast.AstType (ast.ty-node-get signature)]
+          (match (tc-check-extern-c-abi
+            (tc-global-shared-view ctx)
+            (tc-global-shared-view signature-type))
+            [(ResultTcUnit.Err message) (ResultTcType.Err message)]
+            [(ResultTcUnit.Ok)
+              (match signature-type
+                [(ast.AstType.Func params result)
+                  (tc-call-function-type-normal
+                    ctx
+                    env
+                    func
+                    args
+                    (ast.ast-type-list-box-shared-view params)
+                    (ast.ty-node-get result)
+                    true)]
+                [_ (ResultTcType.Err "typecheck: invalid C function signature")])]))])))
+
 (define (tc-call-expr-ordinary
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -47703,6 +47739,8 @@
           (tc-global-shared-view func))
           [(ResultTcType.Ok fn-ty)
             (match (tc-global-shared-view fn-ty)
+              [(ast.AstType.CFunc signature mode)
+                (tc-call-c-function-type ctx env func args signature mode)]
               [(ast.AstType.Func params ret)
                 (tc-call-function-type
                   ctx
@@ -47713,6 +47751,8 @@
                   (ast.ty-node-get ret))]
               [(ast.AstType.Region _ inner)
                 (match (ast.ty-node-get inner)
+                  [(ast.AstType.CFunc signature mode)
+                    (tc-call-c-function-type ctx env func args signature mode)]
                   [(ast.AstType.Func params ret)
                     (match (tc-check-call-args-with-message
                       (tc-global-shared-view ctx)
@@ -47977,6 +48017,8 @@
         (match (tc-call-target-expr-id (tc-global-shared-view ctx) env func-id)
           [(ResultTcType.Ok fn-ty)
             (match (tc-global-shared-view fn-ty)
+              [(ast.AstType.CFunc signature mode)
+                (tc-call-c-function-type ctx env func args signature mode)]
               [(ast.AstType.Func params ret)
                 (tc-call-function-type
                   ctx
@@ -47987,6 +48029,8 @@
                   (ast.ty-node-get ret))]
               [(ast.AstType.Region _ inner)
                 (match (ast.ty-node-get inner)
+                  [(ast.AstType.CFunc signature mode)
+                    (tc-call-c-function-type ctx env func args signature mode)]
                   [(ast.AstType.Func params ret)
                     (match (tc-check-call-args-with-message
                       (tc-global-shared-view ctx)
@@ -70518,6 +70562,11 @@
         [(ast.AstType.String) ResultTcUnit.Ok]
         [(ast.AstType.Ptr _) ResultTcUnit.Ok]
         [(ast.AstType.MutPtr _) ResultTcUnit.Ok]
+        [(ast.AstType.CFunc _ mode)
+          (if (ast.ast-c-function-mode-nullable? mode)
+            ResultTcUnit.Ok
+            (ResultTcUnit.Err
+              "typecheck: init cannot create a non-null C function pointer"))]
         [(ast.AstType.DynArray elem)
           (let
             [elem-ty : ast.AstType

@@ -24996,8 +24996,14 @@
       (lower-disarm-move-aware-resource-name state env name)]
     [_ state]))
 
+(define (lower-c-function-type? [ty : ast.AstType]) : bool
+  (match (tc_core.tc-type-strip-region ty)
+    [(ast.AstType.CFunc _ _) true]
+    [_ false]))
+
 (define (lower-function-type? [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region ty)
+    [(ast.AstType.CFunc _ _) true]
     [(ast.AstType.Func _ _) true]
     [_ false]))
 
@@ -30936,6 +30942,18 @@
                   (ResultLowerExpr.Ok
                     (LowerExpr.Expr null-state null-value expr-ty))])]
             [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+        [(ast.AstType.CFunc _ mode)
+          (if (ast.ast-c-function-mode-nullable? mode)
+            (lower-init-scalar
+              ctx
+              state
+              (ir.CompilerIrValue.I64 0)
+              expr-ty
+              origin)
+            (ResultLowerExpr.Err
+              (box
+                (lower-diagnostic
+                  "lower: init cannot create a non-null C function pointer"))))]
         [(ast.AstType.DynArray elem)
           (lower-make-array-from-len
             (lower-global-shared-view ctx)
@@ -41044,6 +41062,29 @@
     (tc_core.tc-resolve-type
       (lower-global-shared-view ctx)
       (lower-global-shared-view func-ty)))
+    [(ast.AstType.CFunc signature _)
+      (let
+        [signature-type : ast.AstType
+          (tc_core.tc-context-type-get (lower-global-shared-view ctx) signature)]
+        (match (lower-global-shared-view signature-type)
+          [(ast.AstType.Func _ _)
+            (lower-indirect-c-abi-call
+              ctx
+              state
+              env
+              type-env
+              signature-type
+              func-value
+              args
+              result-ty
+              origin)]
+          [_
+            (ResultLowerExpr.Err
+              (box
+                (lower-diagnostic-at-expr
+                  ctx
+                  origin
+                  "lower: invalid C function signature")))]))]
     [(ast.AstType.Func param-types _)
       (match (lower-c-abi-args-as
         (lower-global-shared-view ctx)
@@ -43112,10 +43153,13 @@
               (match lowered-func
                 [(LowerExpr.Expr func-state func-value func-ty)
                   (if (lower-function-type? (lower-global-shared-view func-ty))
-                    (if (tc_core.tc-expr-c-abi-fnptr?
-                      (lower-global-shared-view ctx)
-                      type-env
-                      func)
+                    (if (or
+                      (lower-c-function-type?
+                        (lower-global-shared-view func-ty))
+                      (tc_core.tc-expr-c-abi-fnptr?
+                        (lower-global-shared-view ctx)
+                        type-env
+                        func))
                       (lower-indirect-c-abi-call
                         (lower-global-shared-view ctx)
                         func-state
@@ -43153,7 +43197,9 @@
               (match (tc_core.tc-lookup-id type-env raw-name)
                 [(tc_core.ResultTcType.Ok fn-ty)
                   (if (lower-function-type? (lower-global-shared-view fn-ty))
-                    (if (tc_core.tc-binding-c-abi-fnptr-id? type-env raw-name)
+                    (if (or
+                      (lower-c-function-type? (lower-global-shared-view fn-ty))
+                      (tc_core.tc-binding-c-abi-fnptr-id? type-env raw-name))
                       (lower-indirect-c-abi-call
                         (lower-global-shared-view ctx)
                         state
@@ -43602,10 +43648,12 @@
           (match lowered-func
             [(LowerExpr.Expr func-state func-value func-ty)
               (if (lower-function-type? (lower-global-shared-view func-ty))
-                (if (tc_core.tc-expr-c-abi-fnptr?
-                  (lower-global-shared-view ctx)
-                  type-env
-                  func)
+                (if (or
+                  (lower-c-function-type? (lower-global-shared-view func-ty))
+                  (tc_core.tc-expr-c-abi-fnptr?
+                    (lower-global-shared-view ctx)
+                    type-env
+                    func))
                   (lower-indirect-c-abi-call
                     (lower-global-shared-view ctx)
                     func-state
@@ -45386,6 +45434,7 @@
         [(ast.AstType.String) true]
         [(ast.AstType.Ptr _) true]
         [(ast.AstType.MutPtr _) true]
+        [(ast.AstType.CFunc _ mode) (ast.ast-c-function-mode-nullable? mode)]
         [(ast.AstType.Tuple elems)
           (lower-init-default-share-safe-type-list?
             ctx

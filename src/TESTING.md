@@ -50,9 +50,9 @@ must own/canonicalize any spelling that survives its source arena.
 
 ## Peephole reload records
 
-`src/tests/compiler_peephole_register_record_tests.tl` compares direct reload
-records with the free-form parser for all 196 tracked-register pairs, each with
-and without a final newline. It checks every compact record field, including
+`src/tests/compiler_peephole_register_record_tests.tl` compares constructed reload
+descriptors and their compact records with the free-form parser for all 196 tracked-register pairs, each with
+and without a final newline. It checks every descriptor and compact record field, including
 the exact output bytes, packed span, inert memory/frame facts, and candidate
 sentinels. Its complete peephole example checks repeated reload elimination,
 source clobbering, selection of another mirror, call invalidation, and an

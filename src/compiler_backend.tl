@@ -97461,14 +97461,23 @@
       newline
       true)))
 
-;; Reload reuse selects canonical tracked registers on both sides. The
-;; replacement is emitted immediately, so no pair-rule descriptor is needed:
-;; publish the final compact record directly. Neither register can be rsp/rbp,
-;; hence the move has no stack effect, memory access, or dead-store candidate.
-(define (compiler-backend-peephole-reused-register-record
+;; Reload reuse selects canonical tracked GP registers on both sides. Publish
+;; the replacement's descriptor at construction instead of parsing its rendered
+;; bytes. The normal record builder remains the sole descriptor-to-record path.
+(define (compiler-backend-peephole-reused-register-line
   [source : String]
-  [destination : CompilerBackendPeepholeLine]) : CompilerBackendPeepholeLineRecord
+  [destination : CompilerBackendPeepholeLine]) : CompilerBackendPeepholeLine
   (let
+    [source-len : i64 (string.string-length source)]
+    [source-reg : i64
+      (compiler-backend-peephole-reg-index-range
+        (unsafe
+          (string-data source))
+        0
+        source-len)]
+    [destination-reg : i64
+      (compiler-backend-peephole-desc-op-dst-reg
+        (compiler-backend-global-shared-view destination))]
     [text : String
       (str_cat.str-cat
         "    movq "
@@ -97476,26 +97485,38 @@
         ", "
         (compiler-backend-peephole-line-op-dst-text
           (compiler-backend-global-shared-view destination)))]
-    (CompilerBackendPeepholeLineRecord
+    [end : i64 (string.string-length text)]
+    (CompilerBackendPeepholeLine
       (compiler-backend-global-shared-view text)
-      (shl
-        (string.string-length text)
-        compiler-backend-peephole-record-span-shift)
+      (unsafe
+        (string-data text))
+      (shl end compiler-backend-peephole-desc-pack-shift)
+      (bit-or 4 (shl 4 compiler-backend-peephole-desc-pack-shift))
       (bit-or
-        compiler-backend-sweep-line-kind-instruction
         (bit-or
-          compiler-backend-peephole-record-owned-bit
+          compiler-backend-peephole-desc-flag-owned
+          compiler-backend-peephole-desc-flag-movq)
+        (bit-or
+          compiler-backend-peephole-desc-flag-clears-owners
           (bit-or
-            compiler-backend-peephole-record-sweep-inert-bit
-            (bit-or
-              (shl 8 compiler-backend-peephole-record-width-shift)
-              (if (compiler-backend-peephole-desc-newline?
-                (compiler-backend-global-shared-view destination))
-                compiler-backend-peephole-record-newline-bit
-                0)))))
-      compiler-backend-sweep-no-candidate
-      compiler-backend-sweep-no-candidate
-      0)))
+            compiler-backend-peephole-desc-flag-has-operands
+            (if (compiler-backend-peephole-desc-newline?
+              (compiler-backend-global-shared-view destination))
+              compiler-backend-peephole-desc-flag-newline
+              0))))
+      9
+      (+ 9 source-len)
+      (+ 11 source-len)
+      (compiler-backend-peephole-owner-key-unknown)
+      (compiler-backend-peephole-owner-key-unknown)
+      (bit-or
+        compiler-backend-peephole-op-register-flag
+        (shl
+          compiler-backend-peephole-op-register-flag
+          compiler-backend-peephole-desc-op-flags-dst-shift))
+      (bit-or
+        (+ source-reg 1)
+        (shl (+ destination-reg 1) compiler-backend-peephole-desc-reg-dst-shift)))))
 
 (define (compiler-backend-peephole-empty-line) : CompilerBackendPeepholeLine
   (CompilerBackendPeepholeLine
@@ -98688,31 +98709,6 @@
           (+ ms ml)
           (- (string.string-length text) (+ ms ml)))))))
 
-;; Common sink for classified records. Descriptor-specific RMW recognition
-;; happens before this boundary; flags-next is the accepted instruction fact.
-;; Callers pass a stable walk handle, its captured insertion index, and that
-;; same walk's len/flags-reg places. RMW recognition never changes walk.len.
-;; Splicing the places avoids an extra mutable-reference alias in the hot path.
-(defmacro (compiler-backend-peephole-records-append!
-  [walk : Expr]
-  [index : Expr]
-  [record : Expr]
-  [flags-next : Expr]
-  [length-place : Expr]
-  [flags-place : Expr]) : Expr
-  `(let
-    [record-index : i64 ,index]
-    (begin
-      (unless
-        (< record-index (array-length (__tl-project-field-name ,walk "lines")))
-        (compiler-backend-peephole-records-grow! ,walk))
-      (set!
-        (array-ref (__tl-project-field-name ,walk "lines") record-index)
-        ,record)
-      (set! (array-ref (__tl-project-field-name ,walk "live") record-index) 1)
-      (set! ,flags-place ,flags-next)
-      (set! ,length-place (+ record-index 1)))))
-
 (define (compiler-backend-peephole-records-push!
   [walk : (&mut walk CompilerBackendPeepholeWalkState)]
   [line : CompilerBackendPeepholeLine]) : unit
@@ -98730,13 +98726,15 @@
           (bit-and line.flags compiler-backend-peephole-desc-flag-single-dest)
           0)
         (compiler-backend-peephole-rmw-note-alu! walk (& line) index))
-      (compiler-backend-peephole-records-append!
-        walk
-        index
-        (compiler-backend-peephole-line-record line)
-        flags-next
-        walk.len
-        walk.flags-reg))))
+      (unless
+        (< index (array-length walk.lines))
+        (compiler-backend-peephole-records-grow! walk))
+      (set!
+        (array-ref walk.lines index)
+        (compiler-backend-peephole-line-record line))
+      (set! (array-ref walk.live index) 1)
+      (set! walk.flags-reg flags-next)
+      (set! walk.len (+ index 1)))))
 
 ;; True iff the line [start,end) is a label (non-blank after leading spaces and
 ;; ends in ':'). Mirrors the label arm of line-clears-owners?.
@@ -99411,15 +99409,11 @@
         [dst-owns unit]
         [src-mirrors-dst unit]
         [(not (string.eq ry ""))
-          (compiler-backend-peephole-records-append!
+          (compiler-backend-peephole-records-push!
             walk
-            walk.len
-            (compiler-backend-peephole-reused-register-record
+            (compiler-backend-peephole-reused-register-line
               ry
-              (compiler-backend-global-shared-view line))
-            -1
-            walk.len
-            walk.flags-reg)]
+              (compiler-backend-global-shared-view line)))]
         [else
           (compiler-backend-peephole-records-push!
             walk

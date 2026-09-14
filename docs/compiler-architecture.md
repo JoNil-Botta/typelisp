@@ -5,17 +5,15 @@ This page describes the compiler pipeline and command-line surface. Run
 
 ## Architecture
 
-Peephole reload reuse publishes its generated register-to-register move directly
-as a compact line record. The existing owner lookup proves both operands are
-tracked GP registers, excluding `%rsp` and `%rbp`; the record therefore has no
-memory, frame, or dead-store facts. The original load still drives the owner
-transition. This replacement is already accepted and emitted, so it bypasses
-pending pair matching and cannot become an RMW middle instruction. Its record
-uses the same append, deletion-mask, and flags-state boundary as parsed lines.
-Free-form input and other replacement families retain their classifiers. This
-is a final-rewrite adapter, not an additional instruction selector; creation-time
-records for function emission must also survive frame rollback and scratch
-retirement before replacing those classifiers.
+Peephole reload reuse constructs the descriptor for its generated
+register-to-register move from the accepted rewrite facts. The owner lookup
+proves both operands are tracked GP registers, excluding `%rsp` and `%rbp`.
+The original load still drives owner transfer; the replacement uses the existing
+record builder and append path. Its rendered bytes are never sent back through
+the free-form classifier. Other input and replacement families retain their
+classifiers. This is a final-rewrite adapter, not an additional instruction
+selector; creation-time records for function emission must also survive frame
+rollback and scratch retirement before replacing those classifiers.
 
 ```
 Source (.tl)

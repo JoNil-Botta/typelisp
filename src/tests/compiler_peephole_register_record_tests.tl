@@ -5,6 +5,22 @@
 (import compiler_abi as abi)
 (import compiler_intern as intern)
 
+(define (register-record-descriptors-equal?
+  [a : backend.CompilerBackendPeepholeLine]
+  [b : backend.CompilerBackendPeepholeLine]) : bool
+  (and
+    (string.eq a.src b.src)
+    (= a.span b.span)
+    (= a.mnemonic b.mnemonic)
+    (= a.flags b.flags)
+    (= a.op-src-start b.op-src-start)
+    (= a.op-src-end b.op-src-end)
+    (= a.op-dst-start b.op-dst-start)
+    (= a.op-src-key b.op-src-key)
+    (= a.op-dst-key b.op-dst-key)
+    (= a.op-flags b.op-flags)
+    (= a.regs b.regs)))
+
 (test
   register-reload-record-preserves-owner-transitions
   (let
@@ -72,10 +88,13 @@
                               (backend.compiler-backend-global-shared-view
                                 destination))
                             newline?)]
-                        [direct-record : backend.CompilerBackendPeepholeLineRecord
-                          (backend.compiler-backend-peephole-reused-register-record
+                        [direct : backend.CompilerBackendPeepholeLine
+                          (backend.compiler-backend-peephole-reused-register-line
                             (backend.compiler-backend-global-shared-view source)
                             load)]
+                        [direct-record : backend.CompilerBackendPeepholeLineRecord
+                          (backend.compiler-backend-peephole-line-record
+                            (backend.compiler-backend-global-shared-view direct))]
                         [parsed : backend.CompilerBackendPeepholeLine
                           (backend.compiler-backend-peephole-owned-line
                             state
@@ -92,6 +111,7 @@
                         (begin
                           (unless
                             (and
+                              (register-record-descriptors-equal? direct parsed)
                               (string.eq direct-record.src parsed-record.src)
                               (= direct-record.span parsed-record.span)
                               (= direct-record.meta parsed-record.meta)

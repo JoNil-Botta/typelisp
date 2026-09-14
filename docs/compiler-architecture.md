@@ -34,7 +34,9 @@ parameter list here can pass a wide aggregate's transport metadata as ordinary
 register arguments. The migrated native C ABI fixtures cover register, memory
 and hidden-result shapes through both direct and stored code pointers.
 
-`lower-indirect-call` owns typed dispatch to the C ABI lowering path. Global
+`lower-indirect-call` owns typed dispatch to the C ABI lowering path. Every
+indirect call site uses that dispatcher; lexical provenance flags cannot choose
+a different calling convention for the same type. Global
 cells and external data symbols must first load their current value; neither the
 cell address nor a C code address may enter closure-descriptor dispatch.
 `tc-source-type-policy-ok` validates every source `CFunc` through the shared C

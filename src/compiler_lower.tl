@@ -43249,30 +43249,16 @@
               (match lowered-func
                 [(LowerExpr.Expr func-state func-value func-ty)
                   (if (lower-function-type? (lower-global-shared-view func-ty))
-                    (if (tc_core.tc-expr-c-abi-fnptr?
+                    (lower-indirect-call
                       (lower-global-shared-view ctx)
+                      func-state
+                      env
                       type-env
-                      func)
-                      (lower-indirect-c-abi-call
-                        (lower-global-shared-view ctx)
-                        func-state
-                        env
-                        type-env
-                        func-ty
-                        func-value
-                        args
-                        result-ty
-                        origin)
-                      (lower-indirect-call
-                        (lower-global-shared-view ctx)
-                        func-state
-                        env
-                        type-env
-                        func-ty
-                        func-value
-                        args
-                        result-ty
-                        origin))
+                      func-ty
+                      func-value
+                      args
+                      result-ty
+                      origin)
                     (ResultLowerExpr.Err
                       (box
                         (lower-diagnostic-at-expr
@@ -43290,27 +43276,16 @@
               (match (tc_core.tc-lookup-id type-env raw-name)
                 [(tc_core.ResultTcType.Ok fn-ty)
                   (if (lower-function-type? (lower-global-shared-view fn-ty))
-                    (if (tc_core.tc-binding-c-abi-fnptr-id? type-env raw-name)
-                      (lower-indirect-c-abi-call
-                        (lower-global-shared-view ctx)
-                        state
-                        env
-                        type-env
-                        fn-ty
-                        (ir.CompilerIrValue.Var local-id)
-                        args
-                        result-ty
-                        origin)
-                      (lower-indirect-call
-                        (lower-global-shared-view ctx)
-                        state
-                        env
-                        type-env
-                        fn-ty
-                        (ir.CompilerIrValue.Var local-id)
-                        args
-                        result-ty
-                        origin))
+                    (lower-indirect-call
+                      (lower-global-shared-view ctx)
+                      state
+                      env
+                      type-env
+                      fn-ty
+                      (ir.CompilerIrValue.Var local-id)
+                      args
+                      result-ty
+                      origin)
                     (ResultLowerExpr.Err
                       (box
                         (lower-diagnostic-at-expr
@@ -43749,30 +43724,16 @@
           (match lowered-func
             [(LowerExpr.Expr func-state func-value func-ty)
               (if (lower-function-type? (lower-global-shared-view func-ty))
-                (if (tc_core.tc-expr-c-abi-fnptr?
+                (lower-indirect-call
                   (lower-global-shared-view ctx)
+                  func-state
+                  env
                   type-env
-                  func)
-                  (lower-indirect-c-abi-call
-                    (lower-global-shared-view ctx)
-                    func-state
-                    env
-                    type-env
-                    func-ty
-                    func-value
-                    args
-                    result-ty
-                    origin)
-                  (lower-indirect-call
-                    (lower-global-shared-view ctx)
-                    func-state
-                    env
-                    type-env
-                    func-ty
-                    func-value
-                    args
-                    result-ty
-                    origin))
+                  func-ty
+                  func-value
+                  args
+                  result-ty
+                  origin)
                 (ResultLowerExpr.Err
                   (box
                     (lower-diagnostic-at-expr

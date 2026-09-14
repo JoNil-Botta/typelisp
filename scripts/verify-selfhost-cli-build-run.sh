@@ -2201,6 +2201,32 @@ assert_status work-queue-chooser "$status" 0
 assert_empty work-queue-chooser "$WORKDIR/work-queue-chooser.err"
 assert_contains work-queue-chooser "$WORKDIR/work-queue-chooser.out" "research/triage issue #7: Fallback issue"
 
+set +e
+# cli-gate-case selfhost-cli-work-queue-claimed direct "$COMPILER"
+"$COMPILER" run "$ROOT/tools/work-queue-chooser/chooser.tl" --stdlib-root "$ROOT/stdlib" \
+    < "$ROOT/tools/work-queue-chooser/fixtures/claimed-wait.json" \
+    > "$WORKDIR/work-queue-claimed.out" 2> "$WORKDIR/work-queue-claimed.err"
+status=$?
+set -e
+assert_status work-queue-claimed "$status" 0
+assert_empty work-queue-claimed "$WORKDIR/work-queue-claimed.err"
+printf '%s\n' \
+    "wait: review claims; review-claimed: 1; recheck when PR labels, checks, draft/base state, or issue readiness change" \
+    | cmp - "$WORKDIR/work-queue-claimed.out" \
+    || fail "work-queue-claimed expected exactly one stable wait line"
+
+set +e
+# cli-gate-case selfhost-cli-work-queue-invalid-labels direct "$COMPILER"
+"$COMPILER" run "$ROOT/tools/work-queue-chooser/chooser.tl" --stdlib-root "$ROOT/stdlib" \
+    < "$ROOT/tools/work-queue-chooser/fixtures/malformed-labels.json" \
+    > "$WORKDIR/work-queue-invalid-labels.out" 2> "$WORKDIR/work-queue-invalid-labels.err"
+status=$?
+set -e
+assert_status work-queue-invalid-labels "$status" 1
+assert_empty work-queue-invalid-labels "$WORKDIR/work-queue-invalid-labels.out"
+assert_contains work-queue-invalid-labels "$WORKDIR/work-queue-invalid-labels.err" \
+    "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots"
+
 run_cli_command_surface_matrix
 assert_cli_surface_timing_rows
 

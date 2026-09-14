@@ -45583,6 +45583,7 @@
   (VectorPrefixWork1)
   (VectorReduceAccumulator)
   (VectorReduceScratch)
+  (VectorReduceMask)
   (FloatCastValueXmm)
   (FloatCastValueGp)
   (FloatCastScratchGp)
@@ -46373,6 +46374,22 @@
             word)]
         [_ false]))))
 
+;; AVX2 i64 min/max needs a third family for its comparison mask. The
+;; reduction source is an input, never an implicit scratch home (#7821).
+(define (compiler-reg-vector-reduce-mask-scratch?
+  [op : ir.CompilerIrVectorReduceOp]
+  [lanes : i64]
+  [elem-ty : ast.AstType]) : bool
+  (and
+    (= lanes 4)
+    (match elem-ty
+      [(ast.AstType.I64) true]
+      [_ false])
+    (match op
+      [(ir.CompilerIrVectorReduceOp.Min) true]
+      [(ir.CompilerIrVectorReduceOp.Max) true]
+      [_ false])))
+
 (define (compiler-reg-scratch-vreg-slots-with-groups
   [_type-segment-bases : i64]
   [_abi : cabi.CompilerRegTargetAbi]
@@ -46786,7 +46803,10 @@
                 2
                 4)]
             [_ 4]))]
-      [(ir.CompilerIrInstr.VectorReduce _ _ _ _ _) 2]
+      [(ir.CompilerIrInstr.VectorReduce _ op _ lanes elem-ty)
+        (if (compiler-reg-vector-reduce-mask-scratch? op lanes elem-ty)
+          3
+          2)]
       [_ 0])
     0))
 
@@ -48805,9 +48825,10 @@
       (CompilerRegScratchRequirement
         point
         ordinal
-        (if (= ordinal 0)
-          (CompilerRegScratchRole.VectorReduceAccumulator)
-          (CompilerRegScratchRole.VectorReduceScratch))
+        (cond
+          [(= ordinal 0) (CompilerRegScratchRole.VectorReduceAccumulator)]
+          [(= ordinal 1) (CompilerRegScratchRole.VectorReduceScratch)]
+          [else (CompilerRegScratchRole.VectorReduceMask)])
         (compiler-reg-scratch-xmm-constraint
           (compiler-reg-global-shared-view assignments)
           instr)
@@ -50618,6 +50639,7 @@
       (io.print-error "vector-reduce")]
     [(CompilerRegScratchRole.VectorReduceScratch)
       (io.print-error "vector-reduce")]
+    [(CompilerRegScratchRole.VectorReduceMask) (io.print-error "vector-reduce")]
     [(CompilerRegScratchRole.FloatCastValueXmm) (io.print-error "float-cast")]
     [(CompilerRegScratchRole.FloatCastValueGp) (io.print-error "float-cast")]
     [(CompilerRegScratchRole.FloatCastScratchGp) (io.print-error "float-cast")]

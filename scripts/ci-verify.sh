@@ -193,6 +193,7 @@ run_gate "x64 executable template registry coverage" scripts/check-x64-executabl
 # verification uses the branch-built compiler because compression is part of
 # the new loader surface.
 run_gate "CI timing helper self-tests" scripts/verify-ci-timing.sh
+run_gate "work queue fetch boundary self-tests" sh scripts/test-fetch-work-queue.sh
 run_gate \
     "cross-mode differential oracle self-tests" \
     scripts/verify-cross-mode-differential.sh \

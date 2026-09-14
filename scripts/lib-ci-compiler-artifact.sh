@@ -79,9 +79,11 @@ ci_compiler_artifact_normalized_path() {
 # Return through a scalar so a manifest does not fork a shell for every file.
 ci_compiler_artifact_resolve_path() {
     case "$2" in
+        '') CI_COMPILER_ARTIFACT_RESOLVED_PATH= ;;
         '{root}') CI_COMPILER_ARTIFACT_RESOLVED_PATH=$1 ;;
         '{root}/'*) CI_COMPILER_ARTIFACT_RESOLVED_PATH="$1/${2#'{root}/'}" ;;
-        *) CI_COMPILER_ARTIFACT_RESOLVED_PATH=$2 ;;
+        /* | [A-Za-z]:[/\\]*) CI_COMPILER_ARTIFACT_RESOLVED_PATH=$2 ;;
+        *) CI_COMPILER_ARTIFACT_RESOLVED_PATH="$1/$2" ;;
     esac
 }
 
@@ -448,6 +450,13 @@ ci_compiler_artifact_publish() {
     _cica_pub_output=$5
     _cica_pub_argv=$6
 
+    # Relative invocation paths belong to the declared checkout, not the
+    # caller's incidental working directory. Publish their normalized identity.
+    ci_compiler_artifact_resolve_path "$_cica_pub_root" "$_cica_pub_producer"
+    _cica_pub_producer=$CI_COMPILER_ARTIFACT_RESOLVED_PATH
+    ci_compiler_artifact_resolve_path "$_cica_pub_root" "$_cica_pub_output"
+    _cica_pub_output=$CI_COMPILER_ARTIFACT_RESOLVED_PATH
+
     _cica_pub_run_token=${TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN:-}
     [ -n "$_cica_pub_run_token" ] || {
         ci_compiler_artifact_error "same-run token is unset"
@@ -609,6 +618,9 @@ ci_compiler_artifact_require() {
     _cica_req_ignored_output=$6
     _cica_req_argv=$7
     : "$_cica_req_ignored_output"
+
+    ci_compiler_artifact_resolve_path "$_cica_req_root" "$_cica_req_producer"
+    _cica_req_producer=$CI_COMPILER_ARTIFACT_RESOLVED_PATH
 
     [ -s "$_cica_req_metadata" ] || {
         ci_compiler_artifact_error \

@@ -708,7 +708,8 @@ expect_failure hosted-trace-unowned 'unexpected or ledger-only record' \
 # Exercise both a binary and a digest manifest without rewriting metadata.
 verify_relocated_handoff() (
     relocation_kind=$1
-    relocation_parent="$WORKDIR/relocation-$relocation_kind"
+    relocation_spelling=$2
+    relocation_parent="$WORKDIR/relocation-$relocation_kind-$relocation_spelling"
     relocation_from="$relocation_parent/producer checkout"
     relocation_to="$relocation_parent/consumer checkout"
     mkdir -p "$relocation_from/fixture/src" "$relocation_from/fixture/stdlib"
@@ -730,10 +731,17 @@ verify_relocated_handoff() (
         ci_compiler_artifact_write_files_manifest "$WORKDIR" "$OUTPUT" \
             "$WORKDIR/fixture/payload file.bin"
     fi
+    relocation_producer=$PRODUCER
+    relocation_output=$OUTPUT
+    if [ "$relocation_spelling" = relative ]; then
+        relocation_producer=fixture/producer
+        relocation_output='fixture/output file.bin'
+    fi
+    [ "$(pwd)" != "$WORKDIR" ] || exit 1
     ci_compiler_artifact_publish \
-        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$PRODUCER" \
+        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$relocation_producer" \
         "$TARGET" "$CFG" "$OPT" "$PROFILE" "$SOURCE_ROOTS" \
-        "$STDLIB_ROOTS" "$ENVIRONMENT" "$KIND" "$OUTPUT" "$ARGV"
+        "$STDLIB_ROOTS" "$ENVIRONMENT" "$KIND" "$relocation_output" "$ARGV"
     [ "$(cat "$PATH_FILE")" = '{root}/fixture/output file.bin' ] || {
         echo "handoff output path is not checkout-relative" >&2
         exit 1
@@ -748,6 +756,12 @@ verify_relocated_handoff() (
     PATH_FILE="$WORKDIR/fixture/handoff.path"
     require_fixture
     [ "$CI_COMPILER_ARTIFACT_PATH" = "$OUTPUT" ] || exit 1
+    if [ "$relocation_spelling" = relative ]; then
+        PRODUCER=fixture/producer
+        require_fixture
+        [ "$CI_COMPILER_ARTIFACT_PATH" = "$OUTPUT" ] || exit 1
+        PRODUCER="$WORKDIR/fixture/producer"
+    fi
     cmp "$METADATA" "$relocation_parent/unavailable/fixture/handoff.meta"
     if [ "$KIND" = assembly-set-manifest ]; then
         ci_compiler_artifact_verify_sha256_manifest "$WORKDIR" "$OUTPUT"
@@ -786,8 +800,10 @@ verify_relocated_handoff() (
     printf '%s\n' "$OUTPUT" > "$PATH_FILE"
     require_fixture
 )
-verify_relocated_handoff compiler-binary
-verify_relocated_handoff assembly-set-manifest
+verify_relocated_handoff compiler-binary absolute
+verify_relocated_handoff assembly-set-manifest absolute
+verify_relocated_handoff compiler-binary relative
+verify_relocated_handoff assembly-set-manifest relative
 
 # An output outside the declared checkout remains an absolute handoff. Source
 # provenance still belongs to WORKDIR; relocation must not silently rebase it.

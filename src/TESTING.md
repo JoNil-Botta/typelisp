@@ -1312,23 +1312,23 @@ the artifact.
 
 ### CI expectations
 
-Pull requests get Linux and Windows coverage from the single self-hosted
-verification gate `scripts/ci-verify.sh` (wired in
-[`../.github/workflows/ci.yml`](../.github/workflows/ci.yml)). Both jobs first
-build a fresh `src/main.tl` binary from the published stage0 compiler and
-smoke-test public `compile`, `build`, `run`, package build, staticlib build, and
-the work-queue chooser through `typelisp run`. The Linux job then bootstraps a
-compile-only stage1 compiler and runs deterministic assembly, the selfhost
-compile manifest, borrowed-str source checks, the safety corpus, native
-integration manifests, standalone examples, and stdlib modules/fixtures through
-that bootstrapped artifact. Command-tier gates such as public-tool host-action
-coverage, stdlib documentation, doctests, inline tests, docs Pages build,
-native link generated programs, and the external selfhost corpus use their
-explicit seed/fresh-cli fallback or skip paths until #1662 and related resource
-blockers are closed. The Windows job runs host-supported gates against the
-published stage0 compiler, verifies the fresh CLI build/run smoke, runs the
-Windows bootstrap stage2/stage3 fixpoint when staged runtime symbols are present,
-and explicitly skips the Linux-only src/docs checks.
+Pull requests get Linux and Windows coverage from the self-hosted verification
+entry point `scripts/ci-verify.sh` (wired in
+[`../.github/workflows/ci.yml`](../.github/workflows/ci.yml)). Each host fetches
+the published seed unless `TYPELISP_BIN` supplies one, then bootstraps the full
+`src/main.tl` CLI. The normal proof compares stage2/stage3 assembly, with a
+stage3/stage4 fallback when needed. All downstream gates receive the converged
+compiler, including public tools, inline tests, doctests and native integration.
+The previous bootstrap generation is retained for the cross-mode differential.
+
+Configured and mutation proofs retain their independent builds: the separate
+scratch-vreg/TLCI mutation bootstrap must converge and prove its changed macro
+runs through the embedded native route. Other specialized producer roles and
+validated handoffs are inventoried below. Both hosts must run every applicable
+gate. Linux-only obligations include build invariance, instruction counts and
+Linux runtime boundaries; Windows executes its native link/run gates. A missing
+compiler capability or required tool fails verification, rather than selecting
+a fallback that silently omits required coverage.
 
 CI sets `TYPELISP_CI_TIMING=1` for that serial verification flow. Each host
 uploads one compact `ci-timing-<host>` TSV artifact with columns `gate`,
@@ -1374,8 +1374,10 @@ Published handoff `.path` files use the same literal `{root}/...` representation
 as metadata and digest manifests for checkout-owned outputs. Consumers resolve
 that prefix against their checkout before validating the unchanged metadata,
 producer, source set, output digest and run token. A path file must contain
-exactly one newline-terminated path. Existing absolute paths remain supported;
-external outputs do not become portable. Consumers use the absolute
+exactly one newline-terminated path. Relative producer and output arguments
+resolve against the declared checkout, independently of the caller's working
+directory. Existing absolute paths remain supported; external outputs do not
+become portable. Consumers use the absolute
 `CI_COMPILER_ARTIFACT_PATH` returned by successful validation, rather than
 executing the path-file text. The relocation tests move binary and manifest
 bundles between roots containing spaces, make the old root unavailable, and

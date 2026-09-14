@@ -155,7 +155,7 @@ is no `export` form).
 (defstruct Pair (fst i64) (snd i64))
 (extern (foreign-add [a : i64] [b : i64]) : i64)
 (extern (printf [fmt : (Ptr u8)] ...) : i32 (:symbol "printf"))
-(extern foreign-add-ptr (:symbol "foreign_add_ptr") : (-> i64 i64))
+(extern foreign-add-ptr (:symbol "foreign_add_ptr") : (CFunc non-null (-> i64 i64)))
 (import stdlib.string)
 ```
 
@@ -169,7 +169,10 @@ fields/payloads at the recursive edge.
 local name; `(:symbol "...")` binds an exact foreign symbol (without the
 `_tl_` prefix used for ordinary TypeLisp declarations). Function-head externs
 are direct external functions; bare-name externs are external data symbols,
-and a bare function type is a raw C function pointer called with the C ABI.
+and a `CFunc` data type holds a raw C function pointer called with the C ABI.
+Native pointer data and native function-pointer results require an explicit
+`CFunc` type. Nullable pointers must pass `c-fn-check` before invocation;
+unsafe pointer modes also require an `unsafe` call context.
 C varargs are declared with bare `...` (any C ABI tail) or `[arg : ...T]`
 (homogeneous tail).
 

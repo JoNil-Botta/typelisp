@@ -11487,7 +11487,7 @@
     [source : String
       "(import stdlib.arena)
 (import stdlib.string)
-(extern raw-fn (:symbol \"semantic_index_raw_fn\") : (-> i64 i64))
+(extern raw-fn (:symbol \"semantic_index_raw_fn\") : (CFunc non-null (-> i64 i64)))
 (define (read-ref [value : (& owner i64)]) : i64 1)
 (define (read-owned [value : String]) : i64 1)
 (define (probe [n : i64]) : i64
@@ -11587,7 +11587,7 @@
               (>= taken-index 0)
               (string.eq
                 (compiler-semantic-source-index-get (& index) raw-index).resolved-type
-                "(-> i64 i64)"))]
+                "(CFunc non-null (-> i64 i64))"))]
           (begin
             (compiler-semantic-source-index-release! (&mut index))
             (and ok (= (compiler-semantic-source-index-len (& index)) 0))))]

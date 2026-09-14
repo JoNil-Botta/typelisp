@@ -39,6 +39,9 @@ indirect call site uses that dispatcher; lexical provenance flags cannot choose
 a different calling convention for the same type. Global
 cells and external data symbols must first load their current value; neither the
 cell address nor a C code address may enter closure-descriptor dispatch.
+Checked bindings retain the complete type; their replay record stores only arena
+owner and phase transitions. Argument compatibility compares types directly,
+without a separate syntax walk to infer a raw pointer provenance.
 `tc-source-type-policy-ok` validates every source `CFunc` through the shared C
 ABI checker and then visits its signature through the existing source policy.
 This covers unused parameters, fields, lambda types, initializers and nested

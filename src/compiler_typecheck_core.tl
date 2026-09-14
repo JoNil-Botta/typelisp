@@ -216,8 +216,7 @@
 (defstruct TcCheckedLetBindingTransition
   (arena-owner-kind i64)
   ;; -1 means that the initializer did not produce an arena phase token.
-  (phase-owner-id i64)
-  (raw-c-fnptr bool))
+  (phase-owner-id i64))
 
 (defstruct TcCheckedLetBindingFact
   (declaration-ordinal i64)
@@ -1680,8 +1679,7 @@
   [right : TcCheckedLetBindingTransition]) : bool
   (and
     (= left.arena-owner-kind right.arena-owner-kind)
-    (= left.phase-owner-id right.phase-owner-id)
-    (= left.raw-c-fnptr right.raw-c-fnptr)))
+    (= left.phase-owner-id right.phase-owner-id)))
 
 (define (tc-checked-let-binding-fact-state-release-storage!
   [state : TcCheckedLetBindingFactState]) : unit
@@ -1928,9 +1926,9 @@
     [c : TcCheckedLetBindingFactState
       (tc-job-state-checked-let-binding-facts job-c)]
     [ordinary : TcCheckedLetBindingTransition
-      (TcCheckedLetBindingTransition 1 -1 false)]
+      (TcCheckedLetBindingTransition 1 -1)]
     [special : TcCheckedLetBindingTransition
-      (TcCheckedLetBindingTransition 2 91 true)]
+      (TcCheckedLetBindingTransition 2 91)]
     (begin
       (tc-checked-let-binding-facts-begin! a)
       (tc-checked-let-binding-facts-begin! b)
@@ -44680,8 +44678,7 @@
             args
             resolved-params
             allow-region-args
-            (ast.AstMaybeType.Some (tc-global-shared-view target))
-            false)
+            (ast.AstMaybeType.Some (tc-global-shared-view target)))
             [(ResultTcUnit.Ok) (ResultTcType.Ok target)]
             [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
       [(ResultTcLifetimeSubst.Err message) (ResultTcType.Err message)])))
@@ -44702,8 +44699,7 @@
   [params : ast.AstTypeList]
   [ret : ast.AstType]
   [lifetimes : ast.AstLifetimeList]
-  [allow-region-args : bool]
-  [c-abi-args : bool]) : ResultTcType
+  [allow-region-args : bool]) : ResultTcType
   (match (tc-infer-call-lifetime-subst
     (tc-global-shared-view ctx)
     env
@@ -44729,8 +44725,7 @@
           args
           resolved-params
           allow-region-args
-          (ast.AstMaybeType.No)
-          c-abi-args)
+          (ast.AstMaybeType.No))
           [(ResultTcUnit.Ok)
             (ResultTcType.Ok (tc-tag-active-region env resolved-ret))]
           [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
@@ -44798,111 +44793,6 @@
     [(ast.AstExternKind.Value)
       (tc-c-abi-fnptr-type? (tc-resolve-type (tc-global-shared-view ctx) ty))]
     [(ast.AstExternKind.Function) false]))
-
-(define (tc-expr-list-last-c-abi-fnptr?
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [exprs : ast.AstExprList]) : bool
-  (if (ast.ast-expr-list-empty? (& exprs))
-    false
-    (tc-expr-c-abi-fnptr?
-      (tc-global-shared-view ctx)
-      env
-      (tc-context-expr-get
-        (tc-global-shared-view ctx)
-        (ast.ast-expr-list-get (& exprs) (- exprs.len 1) 0)))))
-
-(define (tc-hygiene-c-abi-fnptr-binding?
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [name-id : i64]) : bool
-  (let
-    [source-name-id : i64
-      (macro-hygiene-global-source-name-id-or
-        (tc-context-structural-session ctx)
-        name-id
-        -1)]
-    [module-id : i64
-      (if (macro-hygiene-global-id? (tc-context-structural-session ctx) name-id)
-        (macro-hygiene-global-module-id
-          (tc-context-structural-session ctx)
-          name-id)
-        (let
-          [qualified-module-id : i64 (ci.intern-qualified-module-id name-id)]
-          (if (< qualified-module-id 0)
-            cbi.compiler-builtin-id-fix-empty
-            qualified-module-id)))]
-    (if (< source-name-id 0)
-      false
-      (if (and
-        (macro-hygiene-global-legacy-id?
-          (tc-context-structural-session ctx)
-          name-id)
-        (csym.compiler-symbol-root-module-id? module-id))
-        (tc-binding-c-abi-fnptr-id? env source-name-id)
-        (match (tc-hygiene-definition-env-id
-          ctx
-          env
-          (macro-decl-module-display module-id)
-          module-id)
-          [(ResultTcEnv.Ok def-env)
-            (tc-binding-c-abi-fnptr-persistent-id? def-env source-name-id)]
-          [(ResultTcEnv.Err _) false])))))
-
-(define (tc-expr-c-abi-fnptr?
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [expr : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan expr)
-    [(ast.AstExpr.Var name)
-      (if (tc-hygiene-global-name-id? (tc-context-structural-session ctx) name)
-        (tc-hygiene-c-abi-fnptr-binding? ctx env name)
-        (tc-binding-c-abi-fnptr-id? env name))]
-    [(ast.AstExpr.Ann inner-box _)
-      (let
-        [inner : ast.AstExpr
-          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
-        (tc-expr-c-abi-fnptr? ctx env inner))]
-    [(ast.AstExpr.Let let-box)
-      (match (ast.ast-let-box-shared-view let-box)
-        [(ast.AstLet.Let bindings body-box)
-          (let
-            [body : ast.AstExpr
-              (tc-context-expr-get (tc-global-shared-view ctx) body-box)]
-            (match (tc-let-bindings-for-body
-              (tc-global-shared-view ctx)
-              env
-              (tc-global-shared-view bindings)
-              body-box
-              (tc-global-shared-view body))
-              [(ResultTcEnv.Ok next-env)
-                (tc-expr-c-abi-fnptr? ctx next-env body)]
-              [(ResultTcEnv.Err _) false]))])]
-    [(ast.AstExpr.Begin exprs) (tc-expr-list-last-c-abi-fnptr? ctx env exprs)]
-    [(ast.AstExpr.If _ then-box else-box)
-      (let
-        [then-branch : ast.AstExpr
-          (tc-context-expr-get (tc-global-shared-view ctx) then-box)]
-        [else-branch : ast.AstExpr
-          (tc-context-expr-get (tc-global-shared-view ctx) else-box)]
-        (and
-          (tc-expr-c-abi-fnptr? (tc-global-shared-view ctx) env then-branch)
-          (tc-expr-c-abi-fnptr? ctx env else-branch)))]
-    [(ast.AstExpr.Call func-box _)
-      (let
-        [func : ast.AstExpr
-          (tc-context-expr-get (tc-global-shared-view ctx) func-box)]
-        (match (tc-call-extern-abi
-          (tc-global-shared-view ctx)
-          (tc-global-shared-view func))
-          ;; A C-ABI call that returns a function value returns a raw C
-          ;; function pointer. The caller separately establishes that the
-          ;; expression's type is a function before recording this provenance.
-          [(TcMaybeExternAbi.Some _) true]
-          ;; Preserve the provenance through factories reached via an already
-          ;; raw C function pointer as well.
-          [(TcMaybeExternAbi.No) (tc-expr-c-abi-fnptr? ctx env func)]))]
-    [_ false]))
 
 (define (tc-name-base-eq? [name : String] [base : String]) : bool
   (if (string.eq name base)
@@ -45401,7 +45291,7 @@
       (tc-bind-arena-phase-token env name owner-id)]
     [(TcMaybeNameId.No) env]))
 
-(define (tc-bind-c-abi-fnptr-if-needed-id
+(define (tc-bind-initialized-value-id
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : i64]
@@ -45427,14 +45317,7 @@
         owner-env
         name
         (tc-global-shared-view init))]
-    (if (and
-      (tc-c-abi-fnptr-type? (tc-global-shared-view ty))
-      (tc-expr-c-abi-fnptr?
-        (tc-global-shared-view ctx)
-        (tc-global-shared-view env)
-        (tc-global-shared-view init)))
-      (tc-bind-c-abi-fnptr-id phase-env name ty)
-      (tc-bind-id phase-env name ty))))
+    (tc-bind-id phase-env name ty)))
 
 (define (tc-bind-checked-let-transition-id
   [ctx : TcContext]
@@ -45460,9 +45343,7 @@
       (if (>= transition.phase-owner-id 0)
         (tc-bind-arena-phase-token owner-env name transition.phase-owner-id)
         owner-env)]
-    (if transition.raw-c-fnptr
-      (tc-bind-c-abi-fnptr-id phase-env name (tc-global-shared-view ty))
-      (tc-bind-id phase-env name (tc-global-shared-view ty)))))
+    (tc-bind-id phase-env name (tc-global-shared-view ty))))
 
 (define (tc-checked-let-binding-apply
   [ctx : TcContext]
@@ -45502,39 +45383,11 @@
       (if (>= phase-owner-id 0)
         (tc-bind-arena-phase-token owner-env name phase-owner-id)
         owner-env)]
-    [raw-c-fnptr : bool
-      (and
-        (tc-c-abi-fnptr-type? (tc-global-shared-view ty))
-        (tc-expr-c-abi-fnptr?
-          (tc-global-shared-view ctx)
-          (tc-global-shared-view env)
-          (tc-global-shared-view init)))]
     [transition : TcCheckedLetBindingTransition
-      (TcCheckedLetBindingTransition owner-kind phase-owner-id raw-c-fnptr)]
+      (TcCheckedLetBindingTransition owner-kind phase-owner-id)]
     (TcCheckedLetBindingApplied
-      (if raw-c-fnptr
-        (tc-bind-c-abi-fnptr-id phase-env name (tc-global-shared-view ty))
-        (tc-bind-id phase-env name (tc-global-shared-view ty)))
+      (tc-bind-id phase-env name (tc-global-shared-view ty))
       transition)))
-
-(define (tc-raw-c-fnptr-flow-ok
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [expr : ast.AstExpr]
-  [expected : ast.AstType]
-  [c-abi-position : bool]) : ResultTcUnit
-  (if (and
-    (not c-abi-position)
-    (tc-c-abi-fnptr-type? (tc-global-shared-view expected))
-    (tc-expr-c-abi-fnptr?
-      (tc-global-shared-view ctx)
-      env
-      (tc-global-shared-view expr)))
-    (ResultTcUnit.Err
-      (tc-locate-error-at-expr
-        expr
-        "typecheck: raw C function pointer cannot be used as a TypeLisp function value"))
-    ResultTcUnit.Ok))
 
 (define (tc-call-varargs-tail-args
   [func : ast.AstExpr]
@@ -45690,16 +45543,9 @@
           (tc-global-shared-view params)
           abi)
           [(ResultTcTypeList.Ok expanded-params)
-            (tc-call-function-type-normal
-              ctx
-              env
-              func
-              args
-              expanded-params
-              ret
-              true)]
+            (tc-call-function-type-normal ctx env func args expanded-params ret)]
           [(ResultTcTypeList.Err message) (ResultTcType.Err message)])
-        (tc-call-function-type-normal ctx env func args params ret true))]
+        (tc-call-function-type-normal ctx env func args params ret))]
     [(TcMaybeExternAbi.No)
       (tc-call-function-type-normal
         (tc-global-shared-view ctx)
@@ -45707,8 +45553,7 @@
         (tc-global-shared-view func)
         args
         params
-        ret
-        (tc-expr-c-abi-fnptr? ctx env func))]))
+        ret)]))
 
 (define (tc-thread-name-last-dot [name : String]) : i64
   (let
@@ -47205,8 +47050,7 @@
   [func : ast.AstExpr]
   [args : ast.AstExprList]
   [params : ast.AstTypeList]
-  [ret : ast.AstType]
-  [c-abi-args : bool]) : ResultTcType
+  [ret : ast.AstType]) : ResultTcType
   (let
     [allow-region-args : bool
       (tc-call-region-args-allowed-for-func
@@ -47242,8 +47086,7 @@
               (tc-global-shared-view args)
               (tc-global-shared-view params)
               allow-region-args
-              (tc-global-shared-view constructor-target)
-              c-abi-args)
+              (tc-global-shared-view constructor-target))
               [(ResultTcUnit.Ok)
                 (match constructor-target
                   [(ast.AstMaybeType.Some target) (ResultTcType.Ok target)]
@@ -47274,8 +47117,7 @@
                     (TcArityMessage.Detailed
                       (tc-global-shared-view func)
                       (tc-global-shared-view args)
-                      (tc-global-shared-view params))
-                    c-abi-args)
+                      (tc-global-shared-view params)))
                   (tc-check-call-args-with-message
                     (tc-global-shared-view ctx)
                     env
@@ -47286,8 +47128,7 @@
                     (TcArityMessage.Detailed
                       (tc-global-shared-view func)
                       (tc-global-shared-view args)
-                      (tc-global-shared-view params))
-                    c-abi-args))
+                      (tc-global-shared-view params))))
                   [(ResultTcUnit.Ok)
                     (match (tc-check-thread-safe-spawn-call
                       (tc-global-shared-view ctx)
@@ -47322,8 +47163,7 @@
                   params
                   ret
                   lifetimes
-                  allow-region-args
-                  c-abi-args)))])))))
+                  allow-region-args)))])))))
 
 (define (tc-check-call-args-with-message
   [ctx : TcContext]
@@ -47332,8 +47172,7 @@
   [params : ast.AstTypeList]
   [allow-region-args : bool]
   [constructor-target : ast.AstMaybeType]
-  [arity-msg : TcArityMessage]
-  [c-abi-args : bool]) : ResultTcUnit
+  [arity-msg : TcArityMessage]) : ResultTcUnit
   (match (tc-normalize-dotted-local-field-expr-list!
     (tc-global-shared-view ctx)
     env
@@ -47348,7 +47187,6 @@
         allow-region-args
         constructor-target
         arity-msg
-        c-abi-args
         false)]
     [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
 
@@ -47359,8 +47197,7 @@
   [params : ast.AstTypeList]
   [allow-region-args : bool]
   [constructor-target : ast.AstMaybeType]
-  [arity-msg : TcArityMessage]
-  [c-abi-args : bool]) : ResultTcUnit
+  [arity-msg : TcArityMessage]) : ResultTcUnit
   (match (tc-normalize-dotted-local-field-expr-list!
     (tc-global-shared-view ctx)
     env
@@ -47375,7 +47212,6 @@
         allow-region-args
         constructor-target
         arity-msg
-        c-abi-args
         true)]
     [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
 
@@ -47417,7 +47253,6 @@
   [allow-region-args : bool]
   [constructor-target : ast.AstMaybeType]
   [arity-msg : TcArityMessage]
-  [c-abi-args : bool]
   [thread-spawn-args : bool]) : ResultTcUnit
   (if (>= index args.len)
     (if (>= index (ast.ast-type-list-len params))
@@ -47487,76 +47322,60 @@
                                   index))))])]
                     (match expect-result
                       [(ResultTcUnit.Ok)
-                        (match (tc-raw-c-fnptr-flow-ok
-                          (tc-global-shared-view ctx)
-                          env
-                          (tc-global-shared-view effective-arg)
-                          (tc-global-shared-view want)
-                          c-abi-args)
-                          [(ResultTcUnit.Ok)
-                            ;; Outside an active allocation scope, region values
-                            ;; cross a call only through an explicitly
-                            ;; region-bearing formal after lifetime substitution.
-                            ;; Plain constructor fields retain the legacy escape
-                            ;; rejection even when the result has other lifetimes.
-                            (if (and
-                              (tc-type-contains-any-region
-                                (tc-global-shared-view got))
-                              (not allow-region-args)
-                              (not
-                                (tc-type-contains-any-region
-                                  (tc-global-shared-view want)))
-                              (not
-                                (tc-type-regions-all-atomic-arena-owners?
-                                  env
-                                  (tc-global-shared-view got)))
-                              (not
-                                (tc-type-contains-reference?
-                                  (tc-global-shared-view got))))
-                              (ResultTcUnit.Err
-                                (tc-region-call-arg-error effective-arg))
-                              (match (tc-global-shared-view constructor-target)
-                                [(ast.AstMaybeType.Some target)
-                                  (match (tc-ensure-cleanup-resource-not-stored-expr
-                                    (tc-global-shared-view ctx)
+                        (if (and
+                          (tc-type-contains-any-region
+                            (tc-global-shared-view got))
+                          (not allow-region-args)
+                          (not
+                            (tc-type-contains-any-region
+                              (tc-global-shared-view want)))
+                          (not
+                            (tc-type-regions-all-atomic-arena-owners?
+                              env
+                              (tc-global-shared-view got)))
+                          (not
+                            (tc-type-contains-reference?
+                              (tc-global-shared-view got))))
+                          (ResultTcUnit.Err
+                            (tc-region-call-arg-error effective-arg))
+                          (match (tc-global-shared-view constructor-target)
+                            [(ast.AstMaybeType.Some target)
+                              (match (tc-ensure-cleanup-resource-not-stored-expr
+                                (tc-global-shared-view ctx)
+                                env
+                                effective-arg)
+                                [(ResultTcUnit.Ok)
+                                  (match (tc-ensure-region-value-can-flow-into
                                     env
-                                    effective-arg)
+                                    target
+                                    got
+                                    "constructor result")
                                     [(ResultTcUnit.Ok)
-                                      (match (tc-ensure-region-value-can-flow-into
+                                      (tc-check-call-args-with-message-at
+                                        ctx
                                         env
-                                        target
-                                        got
-                                        "constructor result")
-                                        [(ResultTcUnit.Ok)
-                                          (tc-check-call-args-with-message-at
-                                            ctx
-                                            env
-                                            args
-                                            params
-                                            (+ index 1)
-                                            allow-region-args
-                                            constructor-target
-                                            arity-msg
-                                            c-abi-args
-                                            thread-spawn-args)]
-                                        [(ResultTcUnit.Err message)
-                                          (ResultTcUnit.Err message)])]
+                                        args
+                                        params
+                                        (+ index 1)
+                                        allow-region-args
+                                        constructor-target
+                                        arity-msg
+                                        thread-spawn-args)]
                                     [(ResultTcUnit.Err message)
                                       (ResultTcUnit.Err message)])]
-                                [(ast.AstMaybeType.No)
-                                  (tc-check-call-args-with-message-at
-                                    ctx
-                                    env
-                                    args
-                                    params
-                                    (+ index 1)
-                                    allow-region-args
-                                    constructor-target
-                                    arity-msg
-                                    c-abi-args
-                                    thread-spawn-args)]))]
-                          [(ResultTcUnit.Err message)
-                            (ResultTcUnit.Err message)])]
+                                [(ResultTcUnit.Err message)
+                                  (ResultTcUnit.Err message)])]
+                            [(ast.AstMaybeType.No)
+                              (tc-check-call-args-with-message-at
+                                ctx
+                                env
+                                args
+                                params
+                                (+ index 1)
+                                allow-region-args
+                                constructor-target
+                                arity-msg
+                                thread-spawn-args)]))]
                       [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
                 [(ResultTcType.Err message) (ResultTcUnit.Err message)]))]
           [(ResultTcExpr.Err message)
@@ -47569,8 +47388,7 @@
   [args : ast.AstExprList]
   [params : ast.AstTypeList]
   [allow-region-args : bool]
-  [constructor-target : ast.AstMaybeType]
-  [c-abi-args : bool]) : ResultTcUnit
+  [constructor-target : ast.AstMaybeType]) : ResultTcUnit
   (tc-check-call-args-with-message
     ctx
     env
@@ -47578,8 +47396,7 @@
     (tc-global-shared-view params)
     allow-region-args
     constructor-target
-    (TcArityMessage.Detailed func args params)
-    c-abi-args))
+    (TcArityMessage.Detailed func args params)))
 
 (defenum TcDirectLambdaCheck
   (No)
@@ -47713,8 +47530,7 @@
                     func
                     args
                     (ast.ast-type-list-box-shared-view params)
-                    (ast.ty-node-get result)
-                    true)]
+                    (ast.ty-node-get result))]
                 [_ (ResultTcType.Err "typecheck: invalid C function signature")])]))])))
 
 (define (tc-call-expr-ordinary
@@ -47774,8 +47590,7 @@
                       (TcArityMessage.Detailed
                         (tc-global-shared-view func)
                         (tc-global-shared-view args)
-                        (ast.ast-type-list-box-shared-view params))
-                      (tc-expr-c-abi-fnptr? ctx env func))
+                        (ast.ast-type-list-box-shared-view params)))
                       [(ResultTcUnit.Ok)
                         (ResultTcType.Ok
                           (tc-tag-active-region env (ast.ty-node-get ret)))]
@@ -48052,8 +47867,7 @@
                       (TcArityMessage.Detailed
                         (tc-global-shared-view func)
                         (tc-global-shared-view args)
-                        (ast.ast-type-list-box-shared-view params))
-                      (tc-expr-c-abi-fnptr? ctx env func))
+                        (ast.ast-type-list-box-shared-view params)))
                       [(ResultTcUnit.Ok)
                         (ResultTcType.Ok
                           (tc-tag-active-region env (ast.ty-node-get ret)))]
@@ -50558,7 +50372,7 @@
                         [(ResultTcUnit.Ok)
                           (tc-let-bindings-at
                             (tc-global-shared-view ctx)
-                            (tc-bind-c-abi-fnptr-if-needed-id
+                            (tc-bind-initialized-value-id
                               (tc-global-shared-view ctx)
                               env
                               name
@@ -52217,7 +52031,7 @@
                                                   binding-ty)
                                                 applied.transition)
                                               applied.env))
-                                          (tc-bind-c-abi-fnptr-if-needed-id
+                                          (tc-bind-initialized-value-id
                                             (tc-global-shared-view ctx)
                                             (tc-global-shared-view env)
                                             name
@@ -52273,7 +52087,7 @@
                                           (tc-global-shared-view binding-ty)
                                           applied.transition)
                                         applied.env))
-                                    (tc-bind-c-abi-fnptr-if-needed-id
+                                    (tc-bind-initialized-value-id
                                       (tc-global-shared-view ctx)
                                       (tc-global-shared-view env)
                                       name
@@ -86459,7 +86273,7 @@
                     (tc-move-check-let-bindings-at
                       (tc-global-shared-view ctx)
                       expr-bases
-                      (tc-bind-c-abi-fnptr-if-needed-id
+                      (tc-bind-initialized-value-id
                         (tc-global-shared-view ctx)
                         (tc-global-shared-view env)
                         name
@@ -87517,7 +87331,7 @@
                         (tc-move-check-loop-let-bindings-at
                           (tc-global-shared-view ctx)
                           expr-bases
-                          (tc-bind-c-abi-fnptr-if-needed-id
+                          (tc-bind-initialized-value-id
                             (tc-global-shared-view ctx)
                             (tc-global-shared-view env)
                             name
@@ -90578,7 +90392,7 @@
           (tc-move-result-let-binding-facts-at
             (tc-global-shared-view ctx)
             expr-bases
-            (tc-bind-c-abi-fnptr-if-needed-id
+            (tc-bind-initialized-value-id
               (tc-global-shared-view ctx)
               env
               name
@@ -97141,7 +96955,7 @@
                       (tc-borrow-check-let-bindings-at
                         (tc-global-shared-view ctx)
                         expr-bases
-                        (tc-bind-c-abi-fnptr-if-needed-id
+                        (tc-bind-initialized-value-id
                           (tc-global-shared-view ctx)
                           (tc-global-shared-view env)
                           name

@@ -31740,7 +31740,7 @@
               (lower-let-bindings-type-env-fast-at
                 (lower-global-shared-view ctx)
                 (sym_i64_env.sym-i64-bind-id env name-id 0)
-                (tc_core.tc-bind-c-abi-fnptr-if-needed-id
+                (tc_core.tc-bind-initialized-value-id
                   ctx
                   type-env
                   name-id
@@ -49040,7 +49040,7 @@
                       [(LowerAlloc.Alloc allocated var-id)
                         (let
                           [next-type-env : tc_core.TcTypeEnv
-                            (tc_core.tc-bind-c-abi-fnptr-if-needed-id
+                            (tc_core.tc-bind-initialized-value-id
                               (lower-global-shared-view ctx)
                               type-env
                               name-id

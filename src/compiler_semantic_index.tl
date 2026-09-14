@@ -3641,9 +3641,9 @@
               [(ast.AstMaybeType.No) unit])
             (CompilerSemanticBindResult
               bound.scope
-              ;; Apply the successful checker's retained arena-owner, arena-phase,
-              ;; and raw C-function-pointer decision without inspecting or
-              ;; typechecking the initializer again.
+              ;; Apply retained arena-owner and arena-phase transitions without
+              ;; inspecting or typechecking the initializer again. The binding
+              ;; type carries the C calling convention and pointer mode.
               (tc.tc-bind-checked-let-transition-id
                 (owned_view.compiler-owned-shared-view ctx)
                 env

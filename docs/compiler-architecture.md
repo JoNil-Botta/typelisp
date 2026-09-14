@@ -23,6 +23,12 @@ The AST node keeps the existing 24-byte stride, while the runtime value is one
 8-byte code address. Copying or storing that address must preserve the complete
 `CFunc` type. A zero initializer is valid only for nullable modes.
 
+Backend signature recovery reads `CFunc`'s pooled signature through the explicit
+type-segment bases, using the same reader as extern signatures. Losing the
+parameter list here can pass a wide aggregate's transport metadata as ordinary
+register arguments. The migrated native C ABI fixtures cover register, memory
+and hidden-result shapes through both direct and stored code pointers.
+
 `lower-indirect-call` owns typed dispatch to the C ABI lowering path. Global
 cells and external data symbols must first load their current value; neither the
 cell address nor a C code address may enter closure-descriptor dispatch.

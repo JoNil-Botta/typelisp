@@ -64,3 +64,23 @@
   (let [resolver : (-> (-> i64 i64)) (select true)]
     (let [entry : (-> i64 i64) (resolver)] (entry 41))))")
     "both-extern branches still cannot become an ordinary resolver value"))
+
+(test
+  c-function-pointer-legacy-data-declaration
+  (test.assert-true
+    (c-function-pointer-erasure-rejected?
+      "(extern entry : (-> i64 i64))
+(define (main) : i64 (entry 41))")
+    "native code-pointer data requires an explicit CFunc type"))
+
+(test
+  c-function-pointer-ordinary-function-control
+  (test.assert-true
+    (match (tc_api.typecheck-compiler-source
+      "(define (increment [x : i64]) : i64 (+ x 1))
+(define (relay [f : (-> i64 i64)]) : (-> i64 i64) f)
+(define saved : (-> i64 i64) (relay increment))
+(define (main) : i64 (saved 41))")
+      [(tc_core.ResultCompilerTypecheck.Ok _) true]
+      [(tc_core.ResultCompilerTypecheck.Err _) false])
+    "ordinary TypeLisp higher-order functions remain ordinary callable values"))

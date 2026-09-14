@@ -270,11 +270,13 @@
     [(ThreadJoinErr _) fallback]))
 
 ;: Backend-owned Windows entry pointer passed only to unsafe CreateThread.
-;: The callable must remain plain because TypeLisp cannot pass an unsafe
-;: callable as an FFI function-pointer argument (#7742).
+;: Its explicit unsafe C pointer type permits passage to CreateThread while
+;: preserving the unsafe-call effect through aliases and stored values (#7742).
 (cfg
   windows
-  (extern thread-windows-entry (:symbol "tl_thread_entry_ptr") : (-> i64 i64)))
+  (extern thread-windows-entry (:symbol "tl_thread_entry_ptr") : (CFunc
+    unsafe-non-null
+    (-> i64 i64))))
 
 ;: Linux runtime hook that installs this thread's default arena TLS slot.
 (cfg
@@ -296,7 +298,7 @@
     (extern (thread-windows-create-thread
       [security : i64]
       [stack-size : i64]
-      [entry : (-> i64 i64)]
+      [entry : (CFunc unsafe-non-null (-> i64 i64))]
       [context : i64]
       [flags : i32]
       [thread-id : i64]) : i64 (:symbol "CreateThread"))))

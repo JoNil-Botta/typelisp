@@ -73858,6 +73858,20 @@
       [(ResultTcUnit.Ok)
         (tc-check-extern-native-signature-args-at ctx args (+ index 1))])))
 
+(define (tc-raw-c-function-pointer-type-message) : String
+  "typecheck: raw C function pointer requires an explicit CFunc type")
+
+(define (tc-check-extern-native-result-type
+  [ctx : TcContext]
+  [ty : ast.AstType]) : ResultTcUnit
+  (let
+    [resolved : ast.AstType
+      (tc-type-strip-region (tc-resolve-type (tc-global-shared-view ctx) ty))]
+    (match (tc-global-shared-view resolved)
+      [(ast.AstType.Func _ _)
+        (ResultTcUnit.Err (tc-raw-c-function-pointer-type-message))]
+      [_ (tc-check-extern-native-value-type ctx resolved)])))
+
 ;; Default native declarations include private runtime contracts that are not
 ;; ordinary C signatures. Still validate explicit C callable types and borrowed
 ;; Slice boundaries regardless of whether the declaration writes `:abi c`.
@@ -73870,7 +73884,7 @@
         0)
         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]
         [(ResultTcUnit.Ok)
-          (tc-check-extern-native-value-type
+          (tc-check-extern-native-result-type
             (tc-global-shared-view ctx)
             (tc-context-type-get ctx ret))])]
     [_ ResultTcUnit.Ok]))
@@ -73901,16 +73915,23 @@
         (tc-global-shared-view ctx)
         (ast.ast-type-list-box-shared-view args))
         [(ResultTcUnit.Ok)
-          (if (tc-extern-abi-value-type-ok? ctx (ast.ty-node-get ret))
-            ResultTcUnit.Ok
-            (ResultTcUnit.Err
-              (tc-extern-abi-unsupported-message "return" (ast.ty-node-get ret))))]
+          (match (tc-type-strip-region (ast.ty-node-get ret))
+            [(ast.AstType.Func _ _)
+              (ResultTcUnit.Err (tc-raw-c-function-pointer-type-message))]
+            [_
+              (if (tc-extern-abi-value-type-ok? ctx (ast.ty-node-get ret))
+                ResultTcUnit.Ok
+                (ResultTcUnit.Err
+                  (tc-extern-abi-unsupported-message
+                    "return"
+                    (ast.ty-node-get ret))))])]
         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
     [_ (ResultTcUnit.Err "typecheck: extern must have function type")]))
 
 (define (tc-check-extern-value-c-abi [ctx : TcContext] [ty : ast.AstType]) : ResultTcUnit
-  (match (tc-global-shared-view ty)
-    [(ast.AstType.Func _ _) (tc-check-extern-c-abi ctx ty)]
+  (match (tc-type-strip-region (tc-global-shared-view ty))
+    [(ast.AstType.Func _ _)
+      (ResultTcUnit.Err (tc-raw-c-function-pointer-type-message))]
     [_
       (if (tc-extern-abi-value-type-ok? ctx (tc-global-shared-view ty))
         ResultTcUnit.Ok

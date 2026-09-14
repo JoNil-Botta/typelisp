@@ -2783,16 +2783,12 @@ Defines a named function.
 Declares an external symbol to link against. The function-head form writes fixed
 parameters directly on the extern head and uses the return type after `:`; it is
 a direct external function declaration. The bare-name form declares an external
-data symbol whose value is loaded when the name is used. If that bare-name type
-is a function type, the loaded value is a raw C function pointer and calling the
-name or a local copy of that value emits an indirect C ABI call through the
-loaded pointer. Raw C function-pointer values are ABI-distinct from ordinary
-TypeLisp function and closure descriptor values. A direct C-ABI extern call
-whose declared return type is a function type likewise returns a raw C function
-pointer; that provenance is retained through local bindings, annotations,
-`begin`, and branches whose alternatives are both raw C function pointers. This
-supports validated dynamic symbol resolvers without treating the returned
-address as an ordinary TypeLisp callable.
+data symbol whose value is loaded when the name is used. Native code-pointer
+data and native code-pointer results require an explicit `CFunc` type. A plain
+`(-> ...)` in either position is rejected with a migration diagnostic, because
+ordinary TypeLisp functions and closure descriptors use a different runtime
+representation. Direct extern functions still use their function-head syntax;
+their code-pointer results must name `CFunc` explicitly.
 
 An explicit C function-pointer type is `(CFunc mode (-> argument-types... result-type))`.
 Modes are `nullable`, `non-null`, `unsafe-nullable`, and `unsafe-non-null`.
@@ -2841,7 +2837,7 @@ For bare-name external data declarations, metadata appears before the `:`:
 
 ```lisp test=ignore name=extern-value-and-function-pointer reason="requires native symbols"
 (extern foreign-counter (:symbol "foreign_counter") : i64)
-(extern foreign-add-ptr (:symbol "foreign_add_ptr") : (-> i64 i64))
+(extern foreign-add-ptr (:symbol "foreign_add_ptr") : (CFunc non-null (-> i64 i64)))
 (define (main) : i64 (+ foreign-counter (foreign-add-ptr 35)))
 ```
 

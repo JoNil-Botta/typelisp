@@ -632,3 +632,4 @@ c_function_pointer_flow|tests/integration/c_function_pointer_flow.tl|0|-|-|c_fun
 c_function_pointer_null|tests/integration/c_function_pointer_null.tl|134|-|-|-|expected-stderr:tl: null C function pointer\n
 
 c_function_pointer_publication|tests/integration/c_function_pointer_publication.tl|0|-|-|c_function_pointer_dep.tl benchmarks/c_function_pointer_flow/baseline.c stdlib/thread.tl
+c_function_pointer_kind|tests/integration/c_function_pointer_kind.tl|42|-|-|-

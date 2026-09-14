@@ -272,3 +272,25 @@
         "(define (bad) : (CFunc non-null (-> i64 i64)) (unsafe (cast 42 : (CFunc non-null (-> i64 i64)))))"
         "cast")
       "unsafe numeric casts cannot manufacture callable values")))
+
+(test
+  c-function-macro-kind-boundary
+  (begin
+    (test.assert-true
+      (c-function-call-error?
+        "(defmacro (answer [T : type (:kind function)]) : Expr `42)
+(define (main) : i64 (answer (CFunc non-null (-> i64 i64))))"
+        "kind")
+      "CFunc does not satisfy the ordinary function kind")
+    (test.assert-true
+      (c-function-call-error?
+        "(defmacro (answer [T : type (:kind c-function)]) : Expr `42)
+(define (main) : i64 (answer (-> i64 i64)))"
+        "kind")
+      "ordinary function does not satisfy the C function kind")
+    (test.assert-true
+      (c-function-call-error?
+        "(defmacro (answer [T : type (:kind c-function)]) : Expr (expr-int (function-param-count T)))
+(define (main) : i64 (answer (CFunc non-null (-> i64 i64))))"
+        "requires function")
+      "ordinary function reflection is not silently widened to C pointers")))

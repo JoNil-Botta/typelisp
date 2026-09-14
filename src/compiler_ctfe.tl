@@ -11972,11 +11972,10 @@
         env)]
     [(ast.AstType.CFunc signature mode)
       (ctfe-type-syntax-call-id
-        (ctfe-materialize-generated-name-id "CFunc")
+        (ctfe-builtin-ref 295)
         (ast.ast-expr-cons
           (ctfe-type-syntax-name-id
-            (ctfe-materialize-generated-name-id
-              (ast.ast-c-function-mode-name mode))
+            (ctfe-builtin-ref (+ 296 (ast.ast-c-function-mode-key mode)))
             env)
           (ast.ast-expr-cons
             (ctfe-type-to-expr (ctfe-ty-get env signature) env)
@@ -12404,6 +12403,52 @@
         [_ (ctfe-type-expr-error origin)]))
     (ctfe-type-expr-error origin)))
 
+(define (ctfe-expr-c-function-type
+  [args : ast.AstExprList]
+  [origin : ast.AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfeQuoteType
+  (if (= args.len 2)
+    (let
+      [mode-expr : ast.AstExpr
+        (ctfe-expr-unspan
+          env
+          (ctfe-ast-get env (ast.ast-expr-list-get (& args) 0 0)))]
+      [mode : i64
+        (match mode-expr
+          [(ast.AstExpr.Var name)
+            (cond
+              [(= name (ctfe-builtin-ref 296)) 0]
+              [(= name (ctfe-builtin-ref 297)) 1]
+              [(= name (ctfe-builtin-ref 298)) 2]
+              [(= name (ctfe-builtin-ref 299)) 3]
+              [else -1])]
+          [_ -1])]
+      (if (< mode 0)
+        (ctfe-type-expr-error origin)
+        (match (ctfe-expr-to-type
+          (ctfe-ast-get env (ast.ast-expr-list-get (& args) 1 0))
+          (clone origin)
+          (ctfe-env-shared-view (& env))
+          fuel)
+          [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)]
+          [(ResultCtfeQuoteType.Ok shape next-fuel)
+            (match shape
+              [(ast.AstType.Func params result)
+                (ResultCtfeQuoteType.Ok
+                  (ast.AstType.CFunc
+                    (ast.ast-node-pool-context-type-push
+                      (ctfe-env-pools env)
+                      (ast.AstType.Func params result))
+                    (cond
+                      [(= mode 0) ast.AstCFunctionMode.Nullable]
+                      [(= mode 1) ast.AstCFunctionMode.NonNull]
+                      [(= mode 2) ast.AstCFunctionMode.UnsafeNullable]
+                      [else ast.AstCFunctionMode.UnsafeNonNull]))
+                  next-fuel)]
+              [_ (ctfe-type-expr-error origin)])])))
+    (ctfe-type-expr-error origin)))
+
 (define (ctfe-expr-to-type
   [expr : ast.AstExpr]
   [origin : ast.AstExpr]
@@ -12426,6 +12471,8 @@
                 (ctfe-expr-resolved-nominal-type args origin env fuel false)]
               [(= name (ctfe-builtin-ref 176))
                 (ctfe-expr-func-type args origin env fuel)]
+              [(= name (ctfe-builtin-ref 295))
+                (ctfe-expr-c-function-type args origin env fuel)]
               [(= name (ctfe-builtin-ref 109))
                 (ctfe-expr-array-type args origin env fuel)]
               [(or

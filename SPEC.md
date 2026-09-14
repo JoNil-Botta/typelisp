@@ -5601,10 +5601,14 @@ diagnostic names the primitive and the expected kind, for example
 
 - Builtins: `i64`, `i32`, `i16`, `i8`, `u64`, `u32`, `u16`, `u8`, `f64`,
   `f32`, `bool`, `char`, `string`, `unit`, `never`.
-- Shapes: `array`, `dyn-array`, `box`, `function`, `tuple`, `struct`, `enum`,
+- Shapes: `array`, `dyn-array`, `box`, `function`, `c-function`, `tuple`, `struct`, `enum`,
   `slice`.
 - Reserved/partial shapes: `str`, `ptr`, `mut-ptr`, `ref`, `mut-ref`,
   `region`, `type-var`.
+
+`CFunc` reports `c-function`; its `type-key` retains the signature and mode.
+The `function-param-count`, `function-param-type`, and `function-return-type`
+operations require ordinary TypeLisp function types and reject `CFunc`.
 
 Reserved/partial shapes are classified by `type-kind` and `type-key`.
 `reference-element-type` additionally exposes the referent of shared and mutable
@@ -8853,7 +8857,7 @@ macro-type-kind ::= "i64" | "i32" | "i16" | "i8"
                   | "u64" | "u32" | "u16" | "u8"
                   | "f64" | "f32" | "bool" | "char"
                   | "string" | "unit" | "never"
-                  | "array" | "dyn-array" | "box" | "function" | "tuple"
+                  | "array" | "dyn-array" | "box" | "function" | "c-function" | "tuple"
                   | "struct" | "enum" | "slice" | "str" | "ptr" | "mut-ptr"
                   | "ref" | "mut-ref" | "region" | "type-var"
 macro-result-type ::= type

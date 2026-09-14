@@ -79415,6 +79415,7 @@
     [(string.eq kind "region") (shl 1 26)]
     [(string.eq kind "type-var") (shl 1 27)]
     [(string.eq kind "box") (shl 1 28)]
+    [(string.eq kind "c-function") (shl 1 30)]
     [else (shl 1 29)]))
 
 (define (tc-macro-abstract-kind-list-mask-from

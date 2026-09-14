@@ -4853,7 +4853,8 @@
       (= name-id (cbi.compiler-builtin-ctfe-ref 232))
       (= name-id (cbi.compiler-builtin-ctfe-ref 233))
       (= name-id (cbi.compiler-builtin-ctfe-ref 132))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 281)))))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 281))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 294)))))
 
 (define (parse-ast-macro-type-kind-error
   [operand-name : String]

@@ -29277,6 +29277,15 @@
         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]
         [(ResultTcUnit.Ok)
           (match (tc-resolve-type (tc-global-shared-view ctx) ty)
+            [(ast.AstType.CFunc signature _)
+              (let
+                [shape : ast.AstType
+                  (tc-context-type-get (tc-global-shared-view ctx) signature)]
+                (match (tc-check-extern-c-abi
+                  (tc-global-shared-view ctx)
+                  (tc-global-shared-view shape))
+                  [(ResultTcUnit.Ok) (tc-source-type-policy-ok ctx shape)]
+                  [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
             [(ast.AstType.Func args ret)
               (tc-source-function-type-policy-ok
                 ctx

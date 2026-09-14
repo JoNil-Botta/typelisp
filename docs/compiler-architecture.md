@@ -37,6 +37,10 @@ and hidden-result shapes through both direct and stored code pointers.
 `lower-indirect-call` owns typed dispatch to the C ABI lowering path. Global
 cells and external data symbols must first load their current value; neither the
 cell address nor a C code address may enter closure-descriptor dispatch.
+`tc-source-type-policy-ok` validates every source `CFunc` through the shared C
+ABI checker and then visits its signature through the existing source policy.
+This covers unused parameters, fields, lambda types, initializers and nested
+annotations without a second declaration or expression traversal.
 `tc-check-extern-native-signature` checks explicit C pointer signatures and
 borrowed-Slice boundaries even on default native declarations. The broader
 explicit-C ABI checker remains separate because private runtime declarations

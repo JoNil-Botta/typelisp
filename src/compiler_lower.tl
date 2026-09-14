@@ -32942,6 +32942,67 @@
 ;; Keeping their lowering helpers adjacent makes the shared representation rule
 ;; visible: pointers are scalar values, while pointee aggregates and register
 ;; groups still use the ordinary storage helpers on reads and writes.
+(define (lower-c-fn-check-call
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [args : ast.AstExprList]
+  [result-ty : ast.AstType]) : ResultLowerExpr
+  (if (= args.len 1)
+    (match (lower-expr
+      (lower-global-shared-view ctx)
+      state
+      env
+      type-env
+      (lower-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0)))
+      [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]
+      [(ResultLowerExpr.Ok lowered)
+        (match lowered
+          [(LowerExpr.Expr value-state value _)
+            (match (lower-emit-binop
+              value-state
+              ir.CompilerIrBinOp.Eq
+              (lower-global-shared-view value)
+              (ir.CompilerIrValue.I64 0)
+              (ast.AstType.Bool))
+              [(LowerExpr.Expr condition-state condition _)
+                (match (lower-state-fresh-label condition-state "c_fn_null")
+                  [(LowerLabel.Label fail-state fail-label)
+                    (match (lower-state-fresh-label fail-state "c_fn_checked")
+                      [(LowerLabel.Label labels-state checked-label)
+                        (let
+                          [fail-start : LowerState
+                            (lower-state-finish-block
+                              (lower-state-emit
+                                labels-state
+                                (ir.CompilerIrInstr.Branch
+                                  condition
+                                  fail-label
+                                  checked-label))
+                              fail-label)]
+                          (match (lower-state-alloc-var fail-start)
+                            [(LowerAlloc.Alloc allocated ignored)
+                              (begin
+                                (cbi.compiler-builtin-refresh!)
+                                (ResultLowerExpr.Ok
+                                  (LowerExpr.Expr
+                                    (lower-state-finish-block
+                                      (lower-state-emit
+                                        (lower-state-emit
+                                          allocated
+                                          (ir.CompilerIrInstr.Call
+                                            ignored
+                                            cbi.compiler-builtin-id-tl-c-fn-null-abort
+                                            (ir.CompilerIrCallArgs.Nil)
+                                            (ast.AstType.Never)))
+                                        (ir.CompilerIrInstr.Jump checked-label))
+                                      checked-label)
+                                    value
+                                    result-ty)))]))])])])])])
+    (ResultLowerExpr.Err
+      (box (lower-diagnostic "lower: c-fn-check expects exactly one argument")))))
+
 (define (lower-ptr-null-expr [state : LowerState] [expr-ty : ast.AstType]) : ResultLowerExpr
   (match (lower-materialize state (ir.CompilerIrValue.I64 0) (ast.AstType.U64))
     [(ResultLowerExpr.Ok lowered)
@@ -43552,6 +43613,16 @@
                             type-env
                             args
                             origin)]
+                        [(and
+                            builtin-available
+                            (cbi.compiler-builtin-c-fn-check-id? name-id))
+                          (lower-c-fn-check-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            args
+                            result-ty)]
                         [(and
                             builtin-available
                             (cbi.compiler-builtin-lower-clone-id? name-id))

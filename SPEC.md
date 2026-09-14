@@ -2794,6 +2794,22 @@ pointer; that provenance is retained through local bindings, annotations,
 supports validated dynamic symbol resolvers without treating the returned
 address as an ordinary TypeLisp callable.
 
+An explicit C function-pointer type is `(CFunc mode (-> argument-types... result-type))`.
+Modes are `nullable`, `non-null`, `unsafe-nullable`, and `unsafe-non-null`.
+These values are one-word C code addresses, distinct from ordinary function
+values. Nullable values cannot be called. `(c-fn-check value)` evaluates its
+operand once and returns the corresponding non-null type, retaining the exact
+signature and unsafe-call effect. A null operand terminates with status 134 and
+`tl: null C function pointer`; a non-null operand is returned unchanged. Checking
+an already non-null value is permitted. Calling an unsafe mode still requires
+an explicit `(unsafe ...)` at the call site.
+
+`ptr-null?` can select a recovery branch before checked conversion; it does not
+implicitly refine a variable's type. `c-fn-check` accepts exactly one typed C
+function pointer, rejects ordinary functions and integers, and can be shadowed
+by a source binding. Numeric `cast`, raw pointer casts and integer-to-pointer
+conversion do not establish typed C callability.
+
 The name is a TypeLisp identifier used for source lookup; it defaults to the
 target C ABI and uses the local name as the external linker symbol unless
 metadata overrides it.
@@ -6332,6 +6348,7 @@ The unsafe operation set:
 |------|-------|-----------|-------|
 | `(ptr-null : (Ptr T))` / `(ptr-null : (MutPtr T))` | Yes | returns the requested raw pointer type | Constructs a typed null pointer. |
 | `(ptr-null : (CFunc mode signature))` | Yes | returns the requested `CFunc` type | Requires `nullable` or `unsafe-nullable` mode; the other modes reject null construction even inside `unsafe`. |
+| `(c-fn-check f)` | Yes | `CFunc` -> corresponding non-null `CFunc` | Evaluates `f` once; exits with status 134 and a null C function pointer diagnostic if zero. Preserves signature and unsafe-call effect. |
 | `(ptr-null? p)` | Yes | raw pointer or `CFunc` -> `bool` | Does not dereference or call `p`; does not refine its type. |
 | `(ptr-read p)` | Unsafe | `(Ptr T)` or `(MutPtr T)` -> `T` | Reads `sizeof(T)` bytes at `p`; alignment, validity, initialization, and lifetime are caller obligations. |
 | `(ptr-write! p value)` | Unsafe | `(MutPtr T)` and `T` -> `unit` | Writes `sizeof(T)` bytes; writing through `(Ptr T)` is rejected. |

@@ -178,3 +178,40 @@
         "(define (invoke [f : (CFunc nullable (-> i64 i64))]) : i64 (if (ptr-null? f) 0 (f 41)))"
         "nullable C function pointer must be checked")
       "a boolean test alone does not silently refine stored callable types")))
+
+(test
+  c-function-checked-conversion
+  (begin
+    (test.assert-true
+      (c-function-call-checks?
+        "(define (invoke [f : (CFunc nullable (-> i64 i64))]) : i64 ((c-fn-check f) 41))")
+      "checked safe C pointer can be called")
+    (test.assert-true
+      (c-function-call-checks?
+        "(define (invoke [f : (CFunc unsafe-nullable (-> i64 i64))]) : i64 (let [checked : (CFunc unsafe-non-null (-> i64 i64)) (c-fn-check f)] (unsafe (checked 41))))")
+      "checking preserves unsafe effect and does not itself call")
+    (test.assert-true
+      (c-function-call-error?
+        "(define (invoke [f : (CFunc unsafe-nullable (-> i64 i64))]) : i64 ((c-fn-check f) 41))"
+        "requires unsafe")
+      "checked conversion cannot erase unsafe-call effect")
+    (test.assert-true
+      (c-function-call-error?
+        "(define (main) : i64 (c-fn-check 42))"
+        "requires a typed C function pointer")
+      "integers cannot become callable")
+    (test.assert-true
+      (c-function-call-error?
+        "(define (main) : i64 (c-fn-check))"
+        "expects exactly one argument")
+      "checked conversion requires one operand")
+    (test.assert-true
+      (c-function-call-error?
+        "(define (main) : i64 (c-fn-check 1 2))"
+        "expects exactly one argument")
+      "checked conversion rejects extra operands")
+    (test.assert-true
+      (c-function-call-checks?
+        "(define (c-fn-check [x : i64]) : i64 x)
+(define (main) : i64 (c-fn-check 41))")
+      "source function shadows the builtin")))

@@ -49613,6 +49613,36 @@
 ;; result is the argument's type, stripped of any inner-region tag (the copy
 ;; lands in the enclosing arena, not the source's region). Unsupported types are
 ;; rejected here so no heap-backed value silently lowers as a shallow handle copy.
+(define (tc-c-fn-check-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : ast.AstExprList]) : ResultTcType
+  (if (= args.len 1)
+    (match (tc-expr-id
+      (tc-global-shared-view ctx)
+      env
+      (ast.ast-expr-list-get (& args) 0 0))
+      [(ResultTcType.Ok ty)
+        (match (tc-type-strip-region
+          (tc-resolve-type (tc-global-shared-view ctx) ty))
+          [(ast.AstType.CFunc signature mode)
+            (match (tc-check-extern-c-abi
+              (tc-global-shared-view ctx)
+              (tc-context-type-get ctx signature))
+              [(ResultTcUnit.Err message) (ResultTcType.Err message)]
+              [(ResultTcUnit.Ok)
+                (ResultTcType.Ok
+                  (ast.AstType.CFunc
+                    signature
+                    (if (ast.ast-c-function-mode-unsafe? mode)
+                      ast.AstCFunctionMode.UnsafeNonNull
+                      ast.AstCFunctionMode.NonNull)))])]
+          [_
+            (ResultTcType.Err
+              "typecheck: c-fn-check requires a typed C function pointer")])]
+      [(ResultTcType.Err message) (ResultTcType.Err message)])
+    (ResultTcType.Err "typecheck: c-fn-check expects exactly one argument")))
+
 (define (tc-clone-call
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -50378,6 +50408,14 @@
                       env
                       name-id))
                   (tc-float-bitcast-call ctx env name-id args)]
+                [(and
+                    (cbi.compiler-builtin-c-fn-check-id? name-id)
+                    (not
+                      (tc-source-value-bound-id?
+                        (tc-global-shared-view ctx)
+                        env
+                        name-id)))
+                  (tc-c-fn-check-call ctx env args)]
                 [(and
                     (cbi.compiler-builtin-typecheck-clone-id? name-id)
                     (not

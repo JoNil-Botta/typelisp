@@ -7,6 +7,10 @@
 (import compiler_intern as ci)
 (cfg test (import stdlib.test))
 
+(define compiler-builtin-id-c-fn-check : i64
+  -1)
+(define compiler-builtin-id-tl-c-fn-null-abort : i64
+  -1)
 (define compiler-builtin-generation : i64
   -1)
 (define compiler-builtin-table-id : i64
@@ -805,7 +809,7 @@
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [metadata : (__tl_dyn-array i64) (__tl_make-array i64 4)]
-    [ids : (__tl_dyn-array i64) (__tl_make-array i64 321)]
+    [ids : (__tl_dyn-array i64) (__tl_make-array i64 323)]
     [ctfe-ids : (__tl_dyn-array i64) (__tl_make-array i64 294)]
     [i : i64 0]
     (begin
@@ -813,7 +817,7 @@
       (set! (array-ref metadata 1) -1)
       (set! (array-ref metadata 2) -1)
       (set! (array-ref metadata 3) 0)
-      (while (< i 321)
+      (while (< i 323)
         (begin
           (set! (array-ref ids i) -1)
           (set! i (+ i 1))))
@@ -1304,6 +1308,8 @@
     ;; Append-only reset-aware slot for the compiler-private aligned allocator.
     (state-set! state 319 compiler-builtin-id-tl-alloc-aligned)
     (state-set! state 320 compiler-builtin-id-tl-arena-debug-retire-protected)
+    (state-set! state 321 compiler-builtin-id-c-fn-check)
+    (state-set! state 322 compiler-builtin-id-tl-c-fn-null-abort)
     (state-capture-ctfe-ids! state)))
 
 (define (state-capture) : CompilerBuiltinIdsState
@@ -1360,6 +1366,8 @@
     (set! compiler-builtin-id-tl-array-fill8 (state-ref state 40))
     (set! compiler-builtin-id-tl-array-zero (state-ref state 41))
     (set! compiler-builtin-id-tl-mem-fill8 (state-ref state 316))
+    (set! compiler-builtin-id-c-fn-check (state-ref state 321))
+    (set! compiler-builtin-id-tl-c-fn-null-abort (state-ref state 322))
     (set! compiler-builtin-id-tl-mem-copy-fwd (state-ref state 317))
     (set! compiler-builtin-id-tl-mem-copy8-fwd (state-ref state 318))
     (set! compiler-builtin-id-tl-alloc-aligned (state-ref state 319))
@@ -2310,6 +2318,12 @@
     (set!
       compiler-builtin-id-tl-array-zero
       (compiler-builtin-resolve-name insert-missing "tl_array_zero"))
+    (set!
+      compiler-builtin-id-c-fn-check
+      (compiler-builtin-resolve-name insert-missing "c-fn-check"))
+    (set!
+      compiler-builtin-id-tl-c-fn-null-abort
+      (compiler-builtin-resolve-name insert-missing "tl_c_fn_null_abort"))
     (set!
       compiler-builtin-id-tl-mem-fill8
       (compiler-builtin-resolve-name insert-missing "tl_mem_fill8"))
@@ -4119,3 +4133,36 @@
     (or
       (compiler-builtin-typecheck-string-eq-id? name-id)
       (compiler-builtin-typecheck-string-to-int-id? name-id))))
+
+(define (compiler-builtin-c-fn-check-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-c-fn-check)))
+
+(cfg
+  test
+  (test
+    compiler-builtin-c-fn-check-reset
+    (begin
+      (ci.intern-reset!)
+      (compiler-builtin-reset!)
+      (compiler-builtin-initialize-for-parse!)
+      (compiler-builtin-refresh!)
+      (let
+        [snapshot : CompilerBuiltinIdsState (state-capture)]
+        [check-id : i64 compiler-builtin-id-c-fn-check]
+        [abort-id : i64 compiler-builtin-id-tl-c-fn-null-abort]
+        (begin
+          (set! compiler-builtin-id-c-fn-check -1)
+          (set! compiler-builtin-id-tl-c-fn-null-abort -1)
+          (state-install! snapshot)
+          (if (and
+            (compiler-builtin-c-fn-check-id? check-id)
+            (= compiler-builtin-id-tl-c-fn-null-abort abort-id)
+            (= (state-ref snapshot 321) check-id)
+            (= (state-ref snapshot 322) abort-id)
+            (string.eq (ci.intern-str check-id) "c-fn-check")
+            (string.eq (ci.intern-str abort-id) "tl_c_fn_null_abort"))
+            unit
+            (io.panic
+              "compiler C function check builtin identity lifecycle failed")))))))

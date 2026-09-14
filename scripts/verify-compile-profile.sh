@@ -4161,4 +4161,9 @@ assert_lower_row "module_local_view.lookups"
 assert_lower_row "module_local_view.hits"
 assert_lower_row "module_local_view.entries"
 
+echo "[compile-profile] scan scratch allocation regression"
+"$COMPILER" test src/tests/scan_storage_growth.tl \
+    --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) \
+    --cfg compile-profile --opt-level 2 --stdlib-root stdlib --stdlib-root src
+
 echo "[compile-profile] ok"

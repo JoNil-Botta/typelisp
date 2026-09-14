@@ -3888,11 +3888,14 @@ move-only values and as copies for copyable values:
   caller. Returning from a `with` owner scope is still rejected when it would
   bypass required cleanup.
 - `set!` right-hand sides. Assigning a move-only value into a definitely moved
-  or definitely uninitialized local moves the value into that slot. Assigning
-  over an initialized move-only slot is rejected in v1: there is no implicit
-  drop, destructor, or replacement cleanup. Whole-place assignment to an
-  ordinary non-cleanup-owning global instead replaces that permanent place's
-  stored value; it does not move the previous value out or run cleanup.
+  or definitely uninitialized local moves the value into that slot. An
+  initialized ordinary non-Copy arena-owned value may also be overwritten;
+  its old storage becomes unreachable until arena reclamation. Assignment does
+  not implicitly run cleanup or a destructor. Overwriting an initialized
+  cleanup-owning slot remains rejected without the required ownership transfer
+  or discharge. Whole-place assignment to an ordinary non-cleanup-owning
+  global replaces that permanent place's stored value; it does not move the
+  previous value out or run cleanup.
   Cleanup-owning global replacement remains rejected without explicit cleanup
   transfer. In every case, the right-hand side is checked independently and
   cannot move a non-Copy value out of another global.
@@ -4073,6 +4076,23 @@ move-out continues to use `(array-ref place literal-index)`.
 Move-while-borrowed and assignment-while-borrowed diagnostics are produced by
 the borrow checker (section 3.10), not by move checking. `str` borrowing and
 the owned/borrowed text distinction are specified in section 3.11.
+
+An ordinary move-only local can be replaced without an implicit cleanup:
+
+```lisp test=check name=move-ordinary-local-overwrite
+(define (replace-owned-local) : i64
+  (let [owner : (Box i64) (box 1)]
+    (begin
+      (set! owner (box 42))
+      (deref owner))))
+```
+
+The old box storage is reclaimed with its arena. The compiler's
+[`compiler-typecheck-move-ordinary-overwrite-source` and
+`compiler-typecheck-move-cleanup-overwrite-source` regression fixtures](src/compiler_typecheck.tl)
+check ordinary field replacement and rejection of initialized cleanup-owning
+replacement, respectively. The right-hand-side move checks and live-borrow
+restrictions still apply to either kind of assignment.
 
 ```lisp test=check name=move-copyable-scalar-reuse
 (define (copyable-scalar [x : i64]) : i64

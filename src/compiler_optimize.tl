@@ -32553,13 +32553,12 @@
         [name : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
           (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
-        (let
-          [next : opt_i64_i64_map.Map out]
-          (begin
-            (opt_i64_i64_map.insert-ref! (&mut next) name 1)
-            (opt-licm-header-admit-all
-              (compiler-opt-global-shared-view rest)
-              next))))]))
+        [next : opt_i64_i64_map.Map out]
+        (begin
+          (opt_i64_i64_map.insert-ref! (&mut next) name 1)
+          (opt-licm-header-admit-all
+            (compiler-opt-global-shared-view rest)
+            next)))]))
 
 ;; The best not-yet-picked id: the highest count, the lowest id among equals;
 ;; -1 when every id is picked.
@@ -32576,28 +32575,27 @@
         [name : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
           (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
-        (let
-          [count : i64
-            (match (opt_i64_i64_map.get (& counts) name)
-              [(opt_i64_i64_map.LookupFound seen) seen]
-              [(opt_i64_i64_map.LookupMissing) 0])]
-          [better? : bool
-            (and
-              (not (opt_i64_i64_map.contains? (& picked) name))
-              (or
-                (< best 0)
-                (> count best-count)
-                (and (= count best-count) (< name best))))]
-          (opt-licm-header-admit-best
-            (compiler-opt-global-shared-view counts)
-            (compiler-opt-global-shared-view picked)
-            (compiler-opt-global-shared-view rest)
-            (if better?
-              name
-              best)
-            (if better?
-              count
-              best-count))))]))
+        [count : i64
+          (match (opt_i64_i64_map.get (& counts) name)
+            [(opt_i64_i64_map.LookupFound seen) seen]
+            [(opt_i64_i64_map.LookupMissing) 0])]
+        [better? : bool
+          (and
+            (not (opt_i64_i64_map.contains? (& picked) name))
+            (or
+              (< best 0)
+              (> count best-count)
+              (and (= count best-count) (< name best))))]
+        (opt-licm-header-admit-best
+          (compiler-opt-global-shared-view counts)
+          (compiler-opt-global-shared-view picked)
+          (compiler-opt-global-shared-view rest)
+          (if better?
+            name
+            best)
+          (if better?
+            count
+            best-count)))]))
 
 (define (opt-licm-header-admit-pick
   [counts : opt_i64_i64_map.Map]
@@ -76104,14 +76102,13 @@
         [head : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
           (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
-        (let
-          [tail : OptLabelSet
-            (opt-loop-bce-i64-list-remove
-              (compiler-opt-global-shared-view rest)
-              value)]
-          (if (= head value)
-            tail
-            (opt-label-cons head tail))))]))
+        [tail : OptLabelSet
+          (opt-loop-bce-i64-list-remove
+            (compiler-opt-global-shared-view rest)
+            value)]
+        (if (= head value)
+          tail
+          (opt-label-cons head tail)))]))
 
 (define (opt-loop-bce-index-increment-step
   [type-segment-bases : i64]
@@ -155791,24 +155788,23 @@
         [id : i64 (array-ref integer-items integer-count)]
         [rest : OptLabelSet
           (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
-        (let
-          [next : opt_i64_i64_map.Map (compiler-opt-global-shared-view out)]
-          (begin
-            ;; `seen` is what makes a missing initializer a refusal rather than a
-            ;; silent pass: the backend's startup store is the one cell write the
-            ;; IR does not carry, so an initializer this walk never saw is a
-            ;; writer it never checked.
-            (if (and
-              (not (opt_i64_i64_map.contains? (& bad) id))
-              (opt_i64_i64_map.contains? (& seen) id))
-              (opt_i64_i64_map.insert-ref! (&mut next) id 1)
-              unit)
-            (opt-global-frozen-admit
-              cand
-              bad
-              seen
-              (compiler-opt-global-shared-view rest)
-              next))))]))
+        [next : opt_i64_i64_map.Map (compiler-opt-global-shared-view out)]
+        (begin
+          ;; `seen` is what makes a missing initializer a refusal rather than a
+          ;; silent pass: the backend's startup store is the one cell write the
+          ;; IR does not carry, so an initializer this walk never saw is a
+          ;; writer it never checked.
+          (if (and
+            (not (opt_i64_i64_map.contains? (& bad) id))
+            (opt_i64_i64_map.contains? (& seen) id))
+            (opt_i64_i64_map.insert-ref! (&mut next) id 1)
+            unit)
+          (opt-global-frozen-admit
+            cand
+            bad
+            seen
+            (compiler-opt-global-shared-view rest)
+            next)))]))
 
 ;; Build the frozen set, or decline. `disq` is the program's `GlobalAddr` set
 ;; unioned with its `Store` targets, both already computed for the global cell
@@ -169336,13 +169332,12 @@
           [name : i64 (array-ref integer-items integer-count)]
           [rest : OptLabelSet
             (opt-label-tail (OptLabelSet.Dense integer-items integer-count))]
-          (let
-            [next : opt_i64_i64_map.Map (compiler-opt-global-shared-view out)]
-            (begin
-              (opt_i64_i64_map.insert-ref! (&mut next) name 1)
-              (opt-global-cell-refs-add
-                (compiler-opt-global-shared-view rest)
-                (compiler-opt-global-shared-view next)))))])))
+          [next : opt_i64_i64_map.Map (compiler-opt-global-shared-view out)]
+          (begin
+            (opt_i64_i64_map.insert-ref! (&mut next) name 1)
+            (opt-global-cell-refs-add
+              (compiler-opt-global-shared-view rest)
+              (compiler-opt-global-shared-view next))))])))
 
 (define (opt-global-cell-scan-block-by-id [index : OptCfgIndex] [id : i64]) : OptGlobalCellScan
   (match (opt-cfg-index-block index id)

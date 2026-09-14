@@ -23524,6 +23524,8 @@
     [(ast.AstType.Slice elem)
       (tc-type-needs-resolution-id-for-state? state elem)]
     [(ast.AstType.Box elem) (tc-type-needs-resolution-id-for-state? state elem)]
+    [(ast.AstType.CFunc signature _)
+      (tc-type-needs-resolution-id-for-state? state signature)]
     [(ast.AstType.Ptr elem) (tc-type-needs-resolution-id-for-state? state elem)]
     [(ast.AstType.MutPtr elem)
       (tc-type-needs-resolution-id-for-state? state elem)]
@@ -28415,6 +28417,7 @@
   ;; job-owned predicate only for composite shapes that the old resolver would
   ;; otherwise rebuild unconditionally.
   (match (tc-global-shared-view ty)
+    [(ast.AstType.CFunc _ _) (tc-resolve-type-composite ctx ty)]
     [(ast.AstType.Func _ _) (tc-resolve-type-composite ctx ty)]
     [(ast.AstType.Tuple _) (tc-resolve-type-composite ctx ty)]
     [(ast.AstType.Array _ _) (tc-resolve-type-composite ctx ty)]
@@ -28461,6 +28464,11 @@
           (tc-global-shared-view ctx)
           (ast.ast-type-list-box-shared-view args))
         (tc-resolve-type (tc-global-shared-view ctx) (ast.ty-node-get ret)))]
+    [(ast.AstType.CFunc signature mode)
+      (ast.AstType.CFunc
+        (ast.ast-node-pool-reader-type-push
+          (tc-resolve-type ctx (ast.ty-node-get signature)))
+        mode)]
     [(ast.AstType.Tuple elems)
       (ast.ast-ty-tuple
         (tc-resolve-type-list ctx (ast.ast-type-list-box-shared-view elems)))]

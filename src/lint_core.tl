@@ -2409,6 +2409,8 @@
           ret
           (owned_view.compiler-owned-shared-view alias)
           (owned_view.compiler-owned-shared-view module-name)))]
+    [(ast.AstType.CFunc signature _)
+      (lint-type-id-uses-import? signature alias module-name)]
     [(ast.AstType.Tuple items)
       (lint-type-list-uses-import?
         (owned_view.compiler-owned-box-shared-view items)

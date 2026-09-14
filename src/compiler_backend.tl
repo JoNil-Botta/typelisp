@@ -19797,6 +19797,7 @@
     [(compiler_ast_types.AstType.Never) 0]
     [(compiler_ast_types.AstType.Expr) 0]
     [(compiler_ast_types.AstType.ExprList) 0]
+    [(compiler_ast_types.AstType.CFunc _ _) 8]
     [(compiler_ast_types.AstType.Func _ _) 8]
     [(compiler_ast_types.AstType.Tuple _) 8]
     [(compiler_ast_types.AstType.Array _ _) 8]

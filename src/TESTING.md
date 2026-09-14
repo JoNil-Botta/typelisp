@@ -1370,6 +1370,19 @@ digest for every validated handoff. The final CI gate rejects missing,
 duplicate, wrong-role, wrong-host, or unowned records and requires every member
 of a reuse group to have the same provenance key and output digest.
 
+Published handoff `.path` files use the same literal `{root}/...` representation
+as metadata and digest manifests for checkout-owned outputs. Consumers resolve
+that prefix against their checkout before validating the unchanged metadata,
+producer, source set, output digest and run token. A path file must contain
+exactly one newline-terminated path. Existing absolute paths remain supported;
+external outputs do not become portable. Consumers use the absolute
+`CI_COMPILER_ARTIFACT_PATH` returned by successful validation, rather than
+executing the path-file text. The relocation tests move binary and manifest
+bundles between roots containing spaces, make the old root unavailable, and
+reject changed inputs, payloads, run tokens and malformed path files. This
+same-run portability does not authorize cross-run cache reuse or replace the
+complete coverage aggregate required by #7766.
+
 The current exact reuse groups are the converged bootstrap compiler, the
 selfhost compile-manifest assembly set, the canonical embedded-stdlib TLCI
 image bundle, Linux build-invariance's opt1 reference assembly, the

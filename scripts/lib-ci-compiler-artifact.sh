@@ -73,6 +73,18 @@ ci_compiler_artifact_normalized_path() {
     esac
 }
 
+# Metadata, digest manifests and handoff paths share the same checkout-relative
+# representation. Resolve only the literal prefix; never evaluate path text.
+# External absolute paths retain their standalone, non-relocatable meaning.
+# Return through a scalar so a manifest does not fork a shell for every file.
+ci_compiler_artifact_resolve_path() {
+    case "$2" in
+        '{root}') CI_COMPILER_ARTIFACT_RESOLVED_PATH=$1 ;;
+        '{root}/'*) CI_COMPILER_ARTIFACT_RESOLVED_PATH="$1/${2#'{root}/'}" ;;
+        *) CI_COMPILER_ARTIFACT_RESOLVED_PATH=$2 ;;
+    esac
+}
+
 ci_compiler_artifact_producer_identity() {
     _cica_identity_compiler=$1
     _cica_identity=$(
@@ -299,13 +311,9 @@ ci_compiler_artifact_verify_sha256_manifest() {
                 "malformed artifact digest manifest: $_cica_verify_manifest"
             return 1
         }
-        case "$_cica_verify_path" in
-            '{root}') _cica_verify_file=$_cica_verify_root ;;
-            '{root}/'*)
-                _cica_verify_file="$_cica_verify_root/${_cica_verify_path#'{root}/'}"
-                ;;
-            *) _cica_verify_file=$_cica_verify_path ;;
-        esac
+        ci_compiler_artifact_resolve_path \
+            "$_cica_verify_root" "$_cica_verify_path"
+        _cica_verify_file=$CI_COMPILER_ARTIFACT_RESOLVED_PATH
         if [ ! -s "$_cica_verify_file" ]; then
             ci_compiler_artifact_error \
                 "manifest artifact is missing or empty: $_cica_verify_path"
@@ -527,7 +535,7 @@ ci_compiler_artifact_publish() {
         printf 'output_path=%s\n' "$_cica_pub_output_path"
         printf 'output_sha256=%s\n' "$_cica_pub_output_sha"
     } > "$_cica_pub_metadata_tmp"
-    printf '%s\n' "$_cica_pub_output" > "$_cica_pub_path_tmp"
+    printf '%s\n' "$_cica_pub_output_path" > "$_cica_pub_path_tmp"
     # Metadata is the commit marker for the two-file handoff.  Removing an old
     # marker and publishing it last ensures an interrupted update leaves either
     # the prior pair (before this block) or an unusable path-only half-pair.
@@ -612,12 +620,20 @@ ci_compiler_artifact_require() {
             "handoff path file is missing or empty: $_cica_req_path_file"
         return 1
     }
-    if [ "$(wc -l < "$_cica_req_path_file" | tr -d ' ')" -ne 1 ]; then
-        ci_compiler_artifact_error \
-            "handoff path file must contain exactly one path: $_cica_req_path_file"
-        return 1
-    fi
-    _cica_req_output=$(sed -n '1p' "$_cica_req_path_file")
+    # Require one complete line and EOF, including no unterminated second line.
+    # Builtin reads preserve spaces/backslashes without per-handoff subprocesses.
+    {
+        if ! IFS= read -r _cica_req_output_path ||
+            IFS= read -r _cica_req_extra_path ||
+            [ -n "$_cica_req_extra_path" ]; then
+            ci_compiler_artifact_error \
+                "handoff path file must contain exactly one path: $_cica_req_path_file"
+            return 1
+        fi
+    } < "$_cica_req_path_file"
+    ci_compiler_artifact_resolve_path \
+        "$_cica_req_root" "$_cica_req_output_path"
+    _cica_req_output=$CI_COMPILER_ARTIFACT_RESOLVED_PATH
     [ -s "$_cica_req_output" ] || {
         ci_compiler_artifact_error \
             "handoff artifact is missing or empty: $_cica_req_output"

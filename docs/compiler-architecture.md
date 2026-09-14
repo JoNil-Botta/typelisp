@@ -138,6 +138,18 @@ side-backend retention, and emission at all optimization levels for both targets
 source arena and checks duplicate bindings, zero values and snapshot isolation.
 These focused contracts complement complete package build and platform gates.
 
+Test batches and package tests isolate each file in a `TlTestEntry`. The frame
+installs its own AST/type pools, load session and serial typecheck job while
+borrowing paths and package metadata from its caller. Lowering and one-shot
+emission retain explicit state until their output has been consumed, then
+release private indexes and operand/representation tables. Complete backend
+results remain in their outer emission arena. The entry finish operation clears
+aliases before freeing pools, retires all job-owned cache payloads, restores
+parent selectors and destroys the entry arena on both success and diagnostic
+returns. This lifetime applies to every ordered entry; it does not split or
+restart the batch compiler.
+
+
 Memory-class aggregate expressions carry addresses into inline storage.
 `lower-local-assignment-value` gives a loop-carried memory-class local its own
 inline storage before rebinding it. The source can arrive through a field,

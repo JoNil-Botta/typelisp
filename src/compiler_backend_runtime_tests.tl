@@ -550,6 +550,11 @@
             "debug Windows reset fails through the stable operation abort")
           (test.assert-true
             (compiler-backend-runtime-test-contains?
+              (& windows-full-functions)
+              "testq $8, 48(%r13)\n    jz .L_tl_region_reset_win_mark_debug_guard_done\n    subq $32, %rsp\n    call tl_arena_debug_reset_abort\n.L_tl_region_reset_win_mark_debug_guard_done:")
+            "debug Windows marked reset calls abort with aligned shadow space")
+          (test.assert-true
+            (compiler-backend-runtime-test-contains?
               (& linux-full-functions)
               "lock cmpxchgq %rcx, 48(%r9)")
             "debug mode preserves the atomic 1/3 lock protocol"))

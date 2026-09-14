@@ -2,7 +2,6 @@
 ;; The cold-load/typecheck/encode entry belongs to tools/embedded-stdlib-tlci.
 (import compiler_ast_types as ast)
 (import compiler_surface_identity as surface_identity)
-(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as surface_svec)

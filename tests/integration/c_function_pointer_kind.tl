@@ -7,6 +7,9 @@
 (defmacro (c-empty [T : type (:kind c-function)]) : Expr
   `(init : ,T))
 
+(defmacro (c-null [T : type (:kind c-function)]) : Expr
+  `(ptr-null : ,T))
+
 (define (safe-empty) : (CFunc nullable (-> i64 i64))
   (c-empty (CFunc nullable (-> i64 i64))))
 
@@ -15,6 +18,8 @@
 
 (define (main) : i64
   (if (and
+    (ptr-null? (c-null (CFunc nullable (-> i64 i64))))
+    (ptr-null? (c-null (CFunc unsafe-nullable (-> i64 i64))))
     (ptr-null? (safe-empty))
     (ptr-null? (unsafe-empty))
     (=

@@ -37871,25 +37871,19 @@
                     ty))]
               [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
           [(ast.AstDecl.Extern decl-meta name kind _ _)
-            (let
-              [extern-ctx : TcContext
-                (tc-context-with-module-id
-                  (tc-global-shared-view ctx)
-                  (tc-env-key-name-text module)
-                  module)]
-              (match (tc-import-alias-source-value-type env module name)
-                [(ResultTcType.Ok ty)
-                  (ResultTcEnv.Ok
-                    (tc-bind-import-alias-value-unsafe-id
-                      ctx
-                      env
-                      alias
-                      importer-module
-                      module
-                      import-unqualified
-                      name
-                      ty))]
-                [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
+            (match (tc-import-alias-source-value-type env module name)
+              [(ResultTcType.Ok ty)
+                (ResultTcEnv.Ok
+                  (tc-bind-import-alias-value-unsafe-id
+                    ctx
+                    env
+                    alias
+                    importer-module
+                    module
+                    import-unqualified
+                    name
+                    ty))]
+              [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
           [_ (ResultTcEnv.Ok env)]))]
     [(ast.AstDecl.Def decl-meta name _ _)
       (match (tc-import-alias-source-value-type env module name)
@@ -37934,25 +37928,19 @@
               ty))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
     [(ast.AstDecl.Extern decl-meta name kind _ _)
-      (let
-        [extern-ctx : TcContext
-          (tc-context-with-module-id
-            (tc-global-shared-view ctx)
-            (tc-env-key-name-text module)
-            module)]
-        (match (tc-import-alias-source-value-type env module name)
-          [(ResultTcType.Ok ty)
-            (ResultTcEnv.Ok
-              (tc-bind-import-alias-value-id
-                ctx
-                env
-                alias
-                importer-module
-                module
-                import-unqualified
-                name
-                ty))]
-          [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
+      (match (tc-import-alias-source-value-type env module name)
+        [(ResultTcType.Ok ty)
+          (ResultTcEnv.Ok
+            (tc-bind-import-alias-value-id
+              ctx
+              env
+              alias
+              importer-module
+              module
+              import-unqualified
+              name
+              ty))]
+        [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
     [(ast.AstDecl.DefEnum decl-meta name cleanup variants)
       (let
         [scoped-name-id : i64 (tc-module-name-id-by-id module name)]

@@ -7217,7 +7217,7 @@
   "c-fn-check ptr-null ptr-read ptr-write! ptr-offset ptr-cast ptr->int int->ptr ptr-null? ptr-addr-of array-ref tuple-ref deref string-data string-from-bytes program-argc program-argv program-envp cpuid-eax cpuid-ebx cpuid-ecx cpuid-edx xgetbv syscall box array tuple")
 
 (define (lsp-completion-types) : String
-  "i64 i32 i16 i8 u64 u32 u16 u8 f64 f32 bool char String str unit never Array Tuple Box Ptr MutPtr")
+  "i64 i32 i16 i8 u64 u32 u16 u8 f64 f32 bool char String str unit never Array Tuple CFunc Box Ptr MutPtr")
 
 (define (lsp-split-spaces [s : String]) : lsp_svec.Vec
   (let
@@ -9486,6 +9486,10 @@
       (lsp-hover-markdown
         "(Tuple A B ...)"
         "Fixed-size tuple of the given element types.")]
+    [(string.eq name "CFunc")
+      (lsp-hover-markdown
+        "(CFunc mode (-> Arg ... Result))"
+        "Raw C function pointer retaining its signature and call effect. Modes: nullable, non-null, unsafe-nullable, unsafe-non-null. Use c-fn-check before calling a nullable value; unsafe modes require an unsafe context.")]
     [(string.eq name "Box")
       (lsp-hover-markdown
         "(Box T)"

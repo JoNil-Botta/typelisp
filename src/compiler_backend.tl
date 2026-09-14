@@ -97461,6 +97461,42 @@
       newline
       true)))
 
+;; Reload reuse selects canonical tracked registers on both sides. The
+;; replacement is emitted immediately, so no pair-rule descriptor is needed:
+;; publish the final compact record directly. Neither register can be rsp/rbp,
+;; hence the move has no stack effect, memory access, or dead-store candidate.
+(define (compiler-backend-peephole-reused-register-record
+  [source : String]
+  [destination : CompilerBackendPeepholeLine]) : CompilerBackendPeepholeLineRecord
+  (let
+    [text : String
+      (str_cat.str-cat
+        "    movq "
+        source
+        ", "
+        (compiler-backend-peephole-line-op-dst-text
+          (compiler-backend-global-shared-view destination)))]
+    (CompilerBackendPeepholeLineRecord
+      (compiler-backend-global-shared-view text)
+      (shl
+        (string.string-length text)
+        compiler-backend-peephole-record-span-shift)
+      (bit-or
+        compiler-backend-sweep-line-kind-instruction
+        (bit-or
+          compiler-backend-peephole-record-owned-bit
+          (bit-or
+            compiler-backend-peephole-record-sweep-inert-bit
+            (bit-or
+              (shl 8 compiler-backend-peephole-record-width-shift)
+              (if (compiler-backend-peephole-desc-newline?
+                (compiler-backend-global-shared-view destination))
+                compiler-backend-peephole-record-newline-bit
+                0)))))
+      compiler-backend-sweep-no-candidate
+      compiler-backend-sweep-no-candidate
+      0)))
+
 (define (compiler-backend-peephole-empty-line) : CompilerBackendPeepholeLine
   (CompilerBackendPeepholeLine
     ""
@@ -98652,6 +98688,24 @@
           (+ ms ml)
           (- (string.string-length text) (+ ms ml)))))))
 
+;; Common sink for classified records. Descriptor-specific RMW recognition
+;; happens before this boundary; flags-next is the accepted instruction fact.
+(defmacro (compiler-backend-peephole-records-append!
+  [walk : Expr]
+  [record : Expr]
+  [flags-next : Expr]) : Expr
+  `(let
+    [record-walk ,walk]
+    [record-index : i64 record-walk.len]
+    (begin
+      (unless
+        (< record-index (array-length record-walk.lines))
+        (compiler-backend-peephole-records-grow! record-walk))
+      (set! (array-ref record-walk.lines record-index) ,record)
+      (set! (array-ref record-walk.live record-index) 1)
+      (set! record-walk.flags-reg ,flags-next)
+      (set! record-walk.len (+ record-index 1)))))
+
 (define (compiler-backend-peephole-records-push!
   [walk : (&mut walk CompilerBackendPeepholeWalkState)]
   [line : CompilerBackendPeepholeLine]) : unit
@@ -98669,15 +98723,10 @@
           (bit-and line.flags compiler-backend-peephole-desc-flag-single-dest)
           0)
         (compiler-backend-peephole-rmw-note-alu! walk (& line) index))
-      (unless
-        (< index (array-length walk.lines))
-        (compiler-backend-peephole-records-grow! walk))
-      (set!
-        (array-ref walk.lines index)
-        (compiler-backend-peephole-line-record line))
-      (set! (array-ref walk.live index) 1)
-      (set! walk.flags-reg flags-next)
-      (set! walk.len (+ index 1)))))
+      (compiler-backend-peephole-records-append!
+        walk
+        (compiler-backend-peephole-line-record line)
+        flags-next))))
 
 ;; True iff the line [start,end) is a label (non-blank after leading spaces and
 ;; ends in ':'). Mirrors the label arm of line-clears-owners?.
@@ -99352,19 +99401,12 @@
         [dst-owns unit]
         [src-mirrors-dst unit]
         [(not (string.eq ry ""))
-          (compiler-backend-peephole-records-push!
+          (compiler-backend-peephole-records-append!
             walk
-            (compiler-backend-peephole-owned-line
-              (CompilerBackendState walk.backend-state-address)
-              (CompilerBackendStreamState walk.stream-address)
-              (str_cat.str-cat
-                "    movq "
-                ry
-                ", "
-                (compiler-backend-peephole-line-op-dst-text
-                  (compiler-backend-global-shared-view line)))
-              (compiler-backend-peephole-desc-newline?
-                (compiler-backend-global-shared-view line))))]
+            (compiler-backend-peephole-reused-register-record
+              ry
+              (compiler-backend-global-shared-view line))
+            -1)]
         [else
           (compiler-backend-peephole-records-push!
             walk

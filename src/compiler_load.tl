@@ -130,6 +130,9 @@
 (define (compiler-load-reader-sexpr-pool-arena-handle) : i64
   (reader.sexpr-node-pool-base-arena-handle-value))
 
+(define (compiler-load-reader-sexpr-builder-arena-handle) : i64
+  (reader.sexpr-builder-base-arena-handle-value))
+
 ;; Retire the frontend scanning storage once a whole-program load has returned
 ;; its `ast.AstDeclList`. Both owners are pure scan scratch whose contents were
 ;; already copied out by value; see the no-dangling arguments at their release

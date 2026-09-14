@@ -517,6 +517,11 @@
       (allocation_profile.compiler-allocation-profile-control!
         2
         (owned_view.compiler-owned-shared-view phase)
+        "reader-sexpr-builder"
+        (compiler_load.compiler-load-reader-sexpr-builder-arena-handle))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        (owned_view.compiler-owned-shared-view phase)
         "typecheck-aggregate-layout-cache"
         (compiler_typecheck_core.tc-agg-layout-cache-storage-arena-handle-value-for-job
           typecheck-state))
@@ -1786,6 +1791,15 @@
 
 (cfg
   compile-profile
+  (define (compiler-driver-profile-sexpr-bytes) : i64
+    (+
+      (compiler-driver-profile-arena-bytes
+        (compiler_load.compiler-load-reader-sexpr-pool-arena-handle))
+      (compiler-driver-profile-arena-bytes
+        (compiler_load.compiler-load-reader-sexpr-builder-arena-handle)))))
+
+(cfg
+  compile-profile
   (define (compiler-driver-profile-owner-delta [owner : i64] [start : i64]) : i64
     (compiler-driver-profile-nonnegative
       (- (compiler-driver-profile-arena-bytes owner) start))))
@@ -1821,8 +1835,7 @@
       (compiler-driver-profile-set!
         (profile_state.compiler-profile-state-shared-view state)
         compiler-driver-load-profile-sexpr-start-metric
-        (compiler-driver-profile-arena-bytes
-          (compiler_load.compiler-load-reader-sexpr-pool-arena-handle)))
+        (compiler-driver-profile-sexpr-bytes))
       (compiler-driver-profile-set!
         (profile_state.compiler-profile-state-shared-view state)
         compiler-driver-load-profile-origin-start-metric
@@ -1900,11 +1913,12 @@
             (profile_state.compiler-profile-state-shared-view state)
             compiler-driver-load-profile-token-start-metric))]
       [sexprs : i64
-        (compiler-driver-profile-owner-delta
-          (compiler_load.compiler-load-reader-sexpr-pool-arena-handle)
-          (compiler-driver-profile-value
-            (profile_state.compiler-profile-state-shared-view state)
-            compiler-driver-load-profile-sexpr-start-metric))]
+        (compiler-driver-profile-nonnegative
+          (-
+            (compiler-driver-profile-sexpr-bytes)
+            (compiler-driver-profile-value
+              (profile_state.compiler-profile-state-shared-view state)
+              compiler-driver-load-profile-sexpr-start-metric)))]
       [origins : i64
         (compiler-driver-profile-owner-delta
           (compiler_load.compiler-load-reader-node-pool-arena-handle)

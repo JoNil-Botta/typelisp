@@ -30,6 +30,19 @@ Compilation is one whole program per executable with import-graph dedup
 codegen'd once into archives; an in-process session cache warms compiler
 pools across compiles within one process (batch and LSP paths).
 
+Lexer tokens and unspanned reader nodes are scan scratch. Their geometric
+growth replaces dedicated storage after moving the live prefix, then retires
+the superseded owner and restores the caller's active arena. Token storage is
+not published until scanning returns. Unspanned reader children and pending
+builders retain indices rather than array addresses. Each reader array has its
+own owner so growing one cannot repeatedly allocate the other's capacity. The
+reader scratch profile row sums both owners. Token and reader literal payloads
+remain in their source/interner owners. Growth therefore preserves records and
+indices without retaining all previous capacities. The separate spanned reader
+pool also owns declaration/member origins and must follow its existing retained
+origin handoff instead. Whole-load scan release still empties all scan scratch
+owners, while reusable sessions retain only their current capacities.
+
 The ordinary, PIC and owned package driver paths share checked-pool ownership through
 `compiler-driver-state-begin-checked-lower!` and
 `compiler-driver-state-finish-checked-lower!`. The handoff records its original

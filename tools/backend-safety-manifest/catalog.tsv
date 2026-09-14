@@ -209,6 +209,7 @@ reg_scratch_role	VectorPrefixWork0	scratch_role	src/compiler_regalloc_tests.tl	c
 reg_scratch_role	VectorPrefixWork1	scratch_role	src/compiler_regalloc_tests.tl	checked
 reg_scratch_role	VectorReduceAccumulator	scratch_role	src/compiler_regalloc_tests.tl	checked
 reg_scratch_role	VectorReduceScratch	scratch_role	src/compiler_regalloc_tests.tl	checked
+reg_scratch_role	VectorReduceMask	scratch_role	src/compiler_backend_tests.tl	checked
 reg_scratch_role	FloatCastValueXmm	scratch_role	src/compiler_regalloc_tests.tl	checked
 reg_scratch_role	FloatCastValueGp	scratch_role	src/compiler_regalloc_tests.tl	checked
 reg_scratch_role	FloatCastScratchGp	scratch_role	src/compiler_regalloc_tests.tl	checked

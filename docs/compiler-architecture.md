@@ -16,6 +16,21 @@ Source (.tl)
     ↓  target tools → native executable
 ```
 
+`AstType.CFunc` separates a native code address from an ordinary TypeLisp
+function/closure descriptor. Its pooled `Func` operand records only argument and
+result shape; its second operand records nullability and the unsafe-call effect.
+The AST node keeps the existing 24-byte stride, while the runtime value is one
+8-byte code address. Copying or storing that address must preserve the complete
+`CFunc` type. A zero initializer is valid only for nullable modes.
+
+`lower-indirect-call` owns typed dispatch to the C ABI lowering path. Global
+cells and external data symbols must first load their current value; neither the
+cell address nor a C code address may enter closure-descriptor dispatch.
+`tc-check-extern-native-signature` checks explicit C pointer signatures and
+borrowed-Slice boundaries even on default native declarations. The broader
+explicit-C ABI checker remains separate because private runtime declarations
+also use native contracts outside the ordinary C signature subset.
+
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask
 scratch family: its second comparison must not write through the source's XMM

@@ -113,7 +113,7 @@
     (test.assert-true
       (c-function-call-error?
         "(extern (resolve) : (CFunc non-null (-> (Slice i64) i64)) (:abi c))"
-        "extern ABI c does not support return type")
+        "extern ABI c does not support parameter type")
       "nested C signature must use supported ABI types")
     (test.assert-true
       (c-function-call-error?
@@ -122,3 +122,28 @@
 (define (main) : i64 (saved 41))"
         "requires unsafe")
       "external result's unsafe effect survives global storage")))
+
+(test
+  c-function-implicit-extern-validates-signature
+  (begin
+    (test.assert-true
+      (c-function-call-error?
+        "(extern (resolve) : (CFunc non-null (-> (Slice i64) i64)))"
+        "extern ABI c does not support parameter type")
+      "implicit ABI cannot hide an invalid returned C signature")
+    (test.assert-true
+      (c-function-call-error?
+        "(extern (install [f : (CFunc nullable (-> i64 (Slice i64)))]) : unit)"
+        "extern ABI c does not support return type")
+      "implicit ABI cannot hide an invalid parameter C signature")
+    (test.assert-true
+      (c-function-call-error?
+        "(extern (resolve) : (CFunc unsafe-nullable (-> (CFunc non-null (-> (Slice i64) i64)))))"
+        "extern ABI c does not support return type")
+      "validation reaches nested C resolver signatures")
+    (test.assert-true
+      (c-function-call-checks?
+        "(extern (resolve) : (CFunc nullable (-> i64 i64)))
+(extern (install [f : (CFunc nullable (-> i64 i64))]) : unit)
+(define (main) : unit (install (resolve)))")
+      "valid default-ABI C pointer parameters and results remain accepted")))

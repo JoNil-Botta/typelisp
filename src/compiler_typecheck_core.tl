@@ -73785,32 +73785,50 @@
 (define (tc-extern-native-slice-ref-unsupported-message) : String
   "typecheck: extern/native Slice references are unsupported; use pointer+length")
 
-(define (tc-check-extern-native-slice-ref-args-at
+(define (tc-check-extern-native-value-type [ctx : TcContext] [ty : ast.AstType]) : ResultTcUnit
+  (let
+    [resolved : ast.AstType
+      (tc-type-strip-region (tc-resolve-type (tc-global-shared-view ctx) ty))]
+    (match (tc-global-shared-view resolved)
+      [(ast.AstType.CFunc signature _)
+        (tc-check-extern-c-abi
+          (tc-global-shared-view ctx)
+          (tc-context-type-get ctx signature))]
+      [_
+        (if (tc-extern-native-slice-ref-type? ctx resolved)
+          (ResultTcUnit.Err (tc-extern-native-slice-ref-unsupported-message))
+          ResultTcUnit.Ok)])))
+
+(define (tc-check-extern-native-signature-args-at
   [ctx : TcContext]
   [args : (& args ast.AstTypeList)]
   [index : i64]) : ResultTcUnit
   (if (>= index (ast.ast-type-list-len args))
     ResultTcUnit.Ok
-    (let
-      [head : ast.AstType
-        (ast.ty-node-get
-          (ast.ast-type-list-get args index (ast.ast-type-id-fallback)))]
-      (if (tc-extern-native-slice-ref-type? (tc-global-shared-view ctx) head)
-        (ResultTcUnit.Err (tc-extern-native-slice-ref-unsupported-message))
-        (tc-check-extern-native-slice-ref-args-at ctx args (+ index 1))))))
+    (match (tc-check-extern-native-value-type
+      (tc-global-shared-view ctx)
+      (tc-context-type-get
+        (tc-global-shared-view ctx)
+        (ast.ast-type-list-get args index (ast.ast-type-id-fallback))))
+      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]
+      [(ResultTcUnit.Ok)
+        (tc-check-extern-native-signature-args-at ctx args (+ index 1))])))
 
-(define (tc-check-extern-native-slice-ref [ctx : TcContext] [ty : ast.AstType]) : ResultTcUnit
+;; Default native declarations include private runtime contracts that are not
+;; ordinary C signatures. Still validate explicit C callable types and borrowed
+;; Slice boundaries regardless of whether the declaration writes `:abi c`.
+(define (tc-check-extern-native-signature [ctx : TcContext] [ty : ast.AstType]) : ResultTcUnit
   (match (tc-type-strip-region (tc-resolve-type (tc-global-shared-view ctx) ty))
     [(ast.AstType.Func args ret)
-      (match (tc-check-extern-native-slice-ref-args-at
+      (match (tc-check-extern-native-signature-args-at
         (tc-global-shared-view ctx)
         (__tl-box-place args)
         0)
         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]
         [(ResultTcUnit.Ok)
-          (if (tc-extern-native-slice-ref-type? ctx (ast.ty-node-get ret))
-            (ResultTcUnit.Err (tc-extern-native-slice-ref-unsupported-message))
-            ResultTcUnit.Ok)])]
+          (tc-check-extern-native-value-type
+            (tc-global-shared-view ctx)
+            (tc-context-type-get ctx ret))])]
     [_ ResultTcUnit.Ok]))
 
 (define (tc-check-extern-arg-abi [ctx : TcContext] [args : ast.AstTypeList]) : ResultTcUnit
@@ -73882,7 +73900,7 @@
           (tc-resolve-type (tc-global-shared-view ctx) ty)]
         (match kind
           [(ast.AstExternKind.Function)
-            (match (tc-check-extern-native-slice-ref
+            (match (tc-check-extern-native-signature
               (tc-global-shared-view ctx)
               (tc-global-shared-view resolved))
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]

@@ -124,9 +124,8 @@
   ;; an additive splice. Explicit layers fuse that shrinking candidate-name
   ;; list into the tail of `unsafe-flags`: [flags x capacity, live count,
   ;; names x capacity]. The existing `ids` map recovers each value slot. This
-  ;; keeps the hot cache record at its original width.
+  ;; avoids a separate candidate-name array in the hot cache record.
   (unsafe-flags (__tl_dyn-array i64))
-  (c-abi-fnptr-flags (__tl_dyn-array i64))
   (shadow-flags (__tl_dyn-array i64))
   (scan-through bool)
   (partial bool)
@@ -455,7 +454,6 @@
 (defenum TcTypeEnvScopedMarkerKind
   (None)
   (UnsafeDecl)
-  (CAbiFnptr)
   (DefaultBoundary)
   (Region)
   (UnsafeContext)
@@ -620,7 +618,7 @@
 
 (defenum TcTypeEnvScopedLookup
   (Missing)
-  (Found ast.AstType bool bool TcTypeEnvScopedMarkerKind i64 i64))
+  (Found ast.AstType bool TcTypeEnvScopedMarkerKind i64 i64))
 
 (defenum TcTypeEnvScopedMarkerLookup
   (Missing)
@@ -11524,8 +11522,8 @@
     (ptr-read ,cache-ptr)))
 
 ;; Physical byte offsets in TcTypeEnvCache after the four-word chain prefix:
-;; ids=32 (the map is inline and 24 bytes), values=56, sidecar arrays=64/72/80,
-;; flags=88/89, and rest/below=96/104. Keep these literals paired with the
+;; ids=32 (the map is inline and 24 bytes), values=56, sidecar arrays=64/72,
+;; flags=80/81, and rest/below=88/96. Keep these literals paired with the
 ;; raw-layout smoke and
 ;; cache behavior tests; `offset-of` currently treats the inline map as one word
 ;; and therefore under-reports every following field.
@@ -11670,15 +11668,15 @@
             (tc-type-env-cache-ptr store-handle (tc-type-env-cache-index head))]
           (TcTypeEnvView.Cache
             cache-ptr
-            (tc-type-env-cache-field-at cache-ptr 88 bool)
-            (tc-type-env-cache-field-at cache-ptr 89 bool)
+            (tc-type-env-cache-field-at cache-ptr 80 bool)
+            (tc-type-env-cache-field-at cache-ptr 81 bool)
             (TcTypeEnv
               store-handle
-              (tc-type-env-cache-field-at cache-ptr 96 i64)
+              (tc-type-env-cache-field-at cache-ptr 88 i64)
               env.abi-pad)
             (TcTypeEnv
               store-handle
-              (tc-type-env-cache-field-at cache-ptr 104 i64)
+              (tc-type-env-cache-field-at cache-ptr 96 i64)
               env.abi-pad)))])))
 
 (define (tc-empty-env) : TcTypeEnv
@@ -12408,7 +12406,7 @@
   (= key (tc-unsafe-decl-marker-id name-id)))
 
 ;; Environment keys are either interner ids or packed nonnegative composite
-;; ids. Negative odd/even ids form disjoint, allocation-free marker namespaces.
+;; ids. Negative odd ids form an allocation-free unsafe declaration marker namespace.
 (define (tc-unsafe-decl-marker-id [name-id : i64]) : i64
   (- 0 (+ (* name-id 2) 1)))
 
@@ -12432,67 +12430,8 @@
         unit)
       next-env)))
 
-(define (tc-c-abi-fnptr-marker-key-id? [key : i64] [name-id : i64]) : bool
-  (= key (tc-c-abi-fnptr-marker-id name-id)))
-
-(define (tc-c-abi-fnptr-marker-id [name-id : i64]) : i64
-  (- 0 (+ (* name-id 2) 2)))
-
-(define (tc-bind-c-abi-fnptr-id
-  [env : TcTypeEnv]
-  [name-id : i64]
-  [ty : ast.AstType]) : TcTypeEnv
-  (let
-    [next-env : TcTypeEnv
-      (tc-env-compact-local-if-threshold
-        (tc-bind-raw-id
-          (tc-bind-raw-id
-            env
-            (tc-c-abi-fnptr-marker-id name-id)
-            (ast.AstType.Unit))
-          name-id
-          ty))]
-    (begin
-      (if (tc-type-env-scoped-runtime-active? next-env)
-        (tc-type-env-scoped-runtime-mark-latest-flags-id!
-          next-env
-          name-id
-          tc-type-env-scoped-flag-c-abi-fnptr)
-        unit)
-      next-env)))
-
-(define (tc-bind-unsafe-c-abi-fnptr-id
-  [env : TcTypeEnv]
-  [name-id : i64]
-  [ty : ast.AstType]) : TcTypeEnv
-  (let
-    [next-env : TcTypeEnv
-      (tc-env-compact-local-if-threshold
-        (tc-bind-raw-id
-          (tc-bind-raw-id
-            (tc-bind-raw-id
-              env
-              (tc-c-abi-fnptr-marker-id name-id)
-              (ast.AstType.Unit))
-            (tc-unsafe-decl-marker-id name-id)
-            (ast.AstType.Unit))
-          name-id
-          ty))]
-    (begin
-      (if (tc-type-env-scoped-runtime-active? next-env)
-        (tc-type-env-scoped-runtime-mark-latest-flags-id!
-          next-env
-          name-id
-          (bit-or
-            tc-type-env-scoped-flag-unsafe
-            tc-type-env-scoped-flag-c-abi-fnptr))
-        unit)
-      next-env)))
-
 (define tc-type-env-scoped-flag-unsafe : i64
   1)
-(define tc-type-env-scoped-flag-c-abi-fnptr : i64
-  2)
 (define tc-type-env-scoped-flag-marker : i64
   4)
 
@@ -12505,7 +12444,6 @@
   (match kind
     [(TcTypeEnvScopedMarkerKind.None) 0]
     [(TcTypeEnvScopedMarkerKind.UnsafeDecl) 1]
-    [(TcTypeEnvScopedMarkerKind.CAbiFnptr) 2]
     [(TcTypeEnvScopedMarkerKind.DefaultBoundary) 3]
     [(TcTypeEnvScopedMarkerKind.Region) 4]
     [(TcTypeEnvScopedMarkerKind.UnsafeContext) 5]
@@ -12518,7 +12456,6 @@
   (cond
     [(= tag 0) TcTypeEnvScopedMarkerKind.None]
     [(= tag 1) TcTypeEnvScopedMarkerKind.UnsafeDecl]
-    [(= tag 2) TcTypeEnvScopedMarkerKind.CAbiFnptr]
     [(= tag 3) TcTypeEnvScopedMarkerKind.DefaultBoundary]
     [(= tag 4) TcTypeEnvScopedMarkerKind.Region]
     [(= tag 5) TcTypeEnvScopedMarkerKind.UnsafeContext]
@@ -12536,10 +12473,6 @@
 
 (define (tc-type-env-scoped-flag? [flags : i64] [flag : i64]) : bool
   (not (= (bit-and flags flag) 0)))
-
-(define (tc-type-env-scoped-slot-c-abi-fnptr?
-  [slot : (& slot TcTypeEnvScopedSlot)]) : bool
-  (tc-type-env-scoped-flag? slot.flags tc-type-env-scoped-flag-c-abi-fnptr))
 
 ;; Each scoped stack has a unique per-job epoch, so nested carriers can
 ;; overwrite that job's dense entries safely; restoring an older carrier lazily
@@ -12801,9 +12734,6 @@
       (TcTypeEnvScopedLookup.Found
         slot.ty
         (tc-type-env-scoped-flag? slot.flags tc-type-env-scoped-flag-unsafe)
-        (tc-type-env-scoped-flag?
-          slot.flags
-          tc-type-env-scoped-flag-c-abi-fnptr)
         (tc-type-env-scoped-marker-kind-from-tag slot.marker-kind-tag)
         slot.scope-depth
         slot.generation))))
@@ -13070,13 +13000,9 @@
 (define (tc-type-env-scoped-visible-bind-flags
   [rest-env : TcTypeEnv]
   [name-id : i64]) : i64
-  (bit-or
-    (if (tc-binding-unsafe-marker-head-id? rest-env name-id)
-      tc-type-env-scoped-flag-unsafe
-      0)
-    (if (tc-c-abi-fnptr-marker-near-id? rest-env name-id 3)
-      tc-type-env-scoped-flag-c-abi-fnptr
-      0)))
+  (if (tc-binding-unsafe-marker-head-id? rest-env name-id)
+    tc-type-env-scoped-flag-unsafe
+    0))
 
 (define (tc-type-env-scoped-stack-push-visible-bind!
   [stack : (&mut stack TcTypeEnvScopedStack)]
@@ -13260,7 +13186,7 @@
     (ast.AstType.Var name-id)
     TcTypeEnvScopedMarkerKind.AtomicArenaOwner))
 
-(define (tc-type-env-scoped-sidecar-bind-unsafe-c-abi-fnptr-id
+(define (tc-type-env-scoped-sidecar-bind-unsafe-id
   [sidecar : TcTypeEnvScopedSidecar]
   [name-id : i64]
   [ty : ast.AstType]) : TcTypeEnvScopedSidecar
@@ -13270,11 +13196,6 @@
     (begin
       (tc-type-env-scoped-stack-bind-marker-id!
         (&mut next.stack)
-        (tc-c-abi-fnptr-marker-id name-id)
-        (ast.AstType.Unit)
-        TcTypeEnvScopedMarkerKind.CAbiFnptr)
-      (tc-type-env-scoped-stack-bind-marker-id!
-        (&mut next.stack)
         (tc-unsafe-decl-marker-id name-id)
         (ast.AstType.Unit)
         TcTypeEnvScopedMarkerKind.UnsafeDecl)
@@ -13282,9 +13203,7 @@
         (&mut next.stack)
         name-id
         ty
-        (bit-or
-          tc-type-env-scoped-flag-unsafe
-          tc-type-env-scoped-flag-c-abi-fnptr))
+        tc-type-env-scoped-flag-unsafe)
       next)))
 
 ;; The scoped stack owns local bindings. The persistent env is an immutable
@@ -13437,16 +13356,13 @@
     (tc-global-shared-view carrier)
     (tc-type-env-scoped-sidecar-bind-atomic-arena-owner carrier.sidecar name-id)))
 
-(define (tc-type-env-scoped-carrier-bind-unsafe-c-abi-fnptr-id
+(define (tc-type-env-scoped-carrier-bind-unsafe-id
   [carrier : TcTypeEnvScopedCarrier]
   [name-id : i64]
   [ty : ast.AstType]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     (tc-global-shared-view carrier)
-    (tc-type-env-scoped-sidecar-bind-unsafe-c-abi-fnptr-id
-      carrier.sidecar
-      name-id
-      ty)))
+    (tc-type-env-scoped-sidecar-bind-unsafe-id carrier.sidecar name-id ty)))
 
 (define (tc-type-env-scoped-carrier-lookup-id
   [carrier : TcTypeEnvScopedCarrier]
@@ -13523,33 +13439,13 @@
     [(ResultTcTypeUnsafe.Ok _ unsafe) unsafe]
     [(ResultTcTypeUnsafe.Err _) false]))
 
-(define (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
-  [carrier : TcTypeEnvScopedCarrier]
-  [name-id : i64]) : bool
-  (let
-    [sidecar : TcTypeEnvScopedSidecar (tc-global-shared-view carrier.sidecar)]
-    [stack : TcTypeEnvScopedStack (tc-global-shared-view sidecar.stack)]
-    [index : i64 (tc-type-env-scoped-stack-lookup-index stack name-id)]
-    (if (>= index 0)
-      (let
-        [slot : TcTypeEnvScopedSlot
-          (tc-global-array-element-shared-view stack.slots index)]
-        (tc-type-env-scoped-slot-c-abi-fnptr? slot))
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-env-profile-note-scoped-tail-fallback))
-        (tc-binding-c-abi-fnptr-persistent-id?
-          (tc-type-env-scoped-sidecar-persistent sidecar)
-          name-id)))))
-
 (define (tc-type-env-scoped-carrier-marker-type
   [carrier : TcTypeEnvScopedCarrier]
   [name-id : i64]) : ast.AstMaybeType
   (match (tc-type-env-scoped-sidecar-lookup-id
     (tc-global-shared-view carrier.sidecar)
     name-id)
-    [(TcTypeEnvScopedLookup.Found ty _ _ _ _ _) (ast.AstMaybeType.Some ty)]
+    [(TcTypeEnvScopedLookup.Found ty _ _ _ _) (ast.AstMaybeType.Some ty)]
     [(TcTypeEnvScopedLookup.Missing)
       (tc-env-marker-type
         (tc-type-env-scoped-sidecar-persistent carrier.sidecar)
@@ -14079,135 +13975,11 @@
         unit)
       next-env)))
 
-(define (tc-c-abi-fnptr-marker-near-id?
-  [env : TcTypeEnv]
-  [name-id : i64]
-  [remaining : i64]) : bool
-  (let
-    [store-handle : i64 env.store]
-    [head : i64 env.head]
-    [left : i64 remaining]
-    [done : bool false]
-    [found : bool false]
-    (begin
-      (while (and (> left 0) (not done))
-        (cond
-          [(= head -1) (set! done true)]
-          [(< head -1)
-            (let
-              [cache : TcTypeEnvCache
-                (tc-type-env-cache-at
-                  (tc-type-env-cache-ptr
-                    store-handle
-                    (tc-type-env-cache-index head)))]
-              (set! head cache.rest))]
-          [else
-            (let
-              [binding-ptr : (Ptr TcTypeEnvBinding)
-                (tc-type-env-binding-ptr store-handle head)]
-              [key : i64 (tc-type-env-binding-name-at binding-ptr)]
-              (cond
-                [(tc-c-abi-fnptr-marker-key-id? key name-id)
-                  (begin
-                    (set! found true)
-                    (set! done true))]
-                [(= key name-id) (set! done true)]
-                [else
-                  (begin
-                    (set! head (tc-type-env-binding-parent-at binding-ptr))
-                    (set! left (- left 1)))]))]))
-      found)))
-
 ;; `name-id` is the lookup key already selected by the caller. Module/import
 ;; bindings use structural keys, while local bindings use raw interner ids.
 ;; Do not normalize it with `tc-env-name-key-id` here: a qualified raw id and
 ;; its structural key are distinct storage domains, and the marker is stored
 ;; beside the value under the selected domain.
-(define (tc-binding-c-abi-fnptr-persistent-id?
-  [env : TcTypeEnv]
-  [name-id : i64]) : bool
-  (let
-    [store-handle : i64 env.store]
-    [head : i64 env.head]
-    (cond
-      [(= head -1) false]
-      [(< head -1)
-        (let
-          [node-addr : i64 (tc-type-env-cache-index head)]
-          (if (>= (tc-chain-node-depth node-addr) 0)
-            (let
-              [ref : i64 (tc-chain-resolve store-handle node-addr name-id)]
-              (if (>= ref 0)
-                (=
-                  (array-ref
-                    (__tl-project-field
-                      (tc-chain-ref-cache store-handle ref)
-                      c-abi-fnptr-flags)
-                    (tc-chain-ref-slot ref))
-                  1)
-                false))
-            (let
-              [cache : TcTypeEnvCache
-                (tc-type-env-cache-at
-                  (tc-type-env-cache-ptr store-handle node-addr))]
-              [ids : tc_i64_i64_map.Map cache.ids]
-              [index : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
-              (if (>= index 0)
-                (= (array-ref cache.c-abi-fnptr-flags index) 1)
-                (if cache.partial
-                  (tc-binding-c-abi-fnptr-persistent-id?
-                    (TcTypeEnv store-handle cache.below env.abi-pad)
-                    name-id)
-                  false)))))]
-      [else
-        (let
-          [binding-ptr : (Ptr TcTypeEnvBinding)
-            (tc-type-env-binding-ptr store-handle head)]
-          [rest : TcTypeEnv
-            (TcTypeEnv
-              store-handle
-              (tc-type-env-binding-parent-at binding-ptr)
-              env.abi-pad)]
-          (if (= (tc-type-env-binding-name-at binding-ptr) name-id)
-            (tc-c-abi-fnptr-marker-near-id? rest name-id 3)
-            (tc-binding-c-abi-fnptr-persistent-id? rest name-id)))])))
-
-(define (tc-binding-c-abi-fnptr-id? [env : TcTypeEnv] [name-id : i64]) : bool
-  (if (tc-type-env-scoped-runtime-active? env)
-    (let
-      [carrier : TcTypeEnvScopedCarrier
-        (tc-type-env-scoped-runtime-current env)]
-      [index : i64
-        (tc-type-env-scoped-carrier-lookup-index
-          (tc-global-shared-view carrier)
-          name-id)]
-      [scoped : bool
-        (if (>= index 0)
-          (tc-type-env-scoped-slot-c-abi-fnptr?
-            (array-ref
-              (__tl-project-field
-                (__tl-project-field (__tl-project-field carrier sidecar) stack)
-                slots)
-              index))
-          (begin
-            (cfg
-              compile-profile
-              (compiler-tc-env-profile-note-scoped-tail-fallback))
-            (tc-binding-c-abi-fnptr-persistent-id?
-              (__tl-project-field
-                (__tl-project-field carrier sidecar)
-                persistent)
-              name-id)))]
-      (begin
-        (cfg
-          tc-env-scoped-dual-verify
-          (if (= scoped (tc-binding-c-abi-fnptr-persistent-id? env name-id))
-            unit
-            (io.panic
-              "typecheck: scoped C ABI fnptr lookup diverged from persistent env")))
-        scoped))
-    (tc-binding-c-abi-fnptr-persistent-id? env name-id)))
-
 (define (tc-binding-unsafe-marker-head-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (let
     [head : i64 env.head]
@@ -14423,13 +14195,11 @@
   [ids : (&mut ids tc_i64_i64_map.Map)]
   [values : (&mut values (__tl_dyn-array ast.AstType))]
   [unsafe-flags : (&mut unsafe-flags (__tl_dyn-array i64))]
-  [c-abi-fnptr-flags : (&mut c-abi-fnptr-flags (__tl_dyn-array i64))]
   [shadow-flags : (&mut shadow-flags (__tl_dyn-array i64))]
   [name-id : i64]
   [next : i64]
   [ty : ast.AstType]
   [unsafe : bool]
-  [c-abi-fnptr : bool]
   [sidecar-flags : i64]
   [position : i64]) : bool
   (if (tc_i64_i64_map.insert-if-absent-ref! ids name-id next)
@@ -14442,11 +14212,6 @@
           1
           0))
       (set!
-        (array-ref c-abi-fnptr-flags next)
-        (if c-abi-fnptr
-          1
-          0))
-      (set!
         (array-ref shadow-flags next)
         (+ sidecar-flags (* position tc-env-cache-sidecar-position-scale)))
       true)
@@ -14456,7 +14221,6 @@
   [ids : (&mut ids tc_i64_i64_map.Map)]
   [values : (&mut values (__tl_dyn-array ast.AstType))]
   [unsafe-flags : (&mut unsafe-flags (__tl_dyn-array i64))]
-  [c-abi-fnptr-flags : (&mut c-abi-fnptr-flags (__tl_dyn-array i64))]
   [shadow-flags : (&mut shadow-flags (__tl_dyn-array i64))]
   [lifetime-id : i64]
   [next : i64]
@@ -14483,7 +14247,6 @@
         (begin
           (set! (array-ref values next) ty)
           (set! (array-ref unsafe-flags next) 0)
-          (set! (array-ref c-abi-fnptr-flags next) 0)
           (set!
             (array-ref shadow-flags next)
             (+
@@ -14500,7 +14263,6 @@
   [values : (&mut values (__tl_dyn-array ast.AstType))]
   [track-resolution : bool]
   [unsafe-flags : (&mut unsafe-flags (__tl_dyn-array i64))]
-  [c-abi-fnptr-flags : (&mut c-abi-fnptr-flags (__tl_dyn-array i64))]
   [shadow-flags : (&mut shadow-flags (__tl_dyn-array i64))]
   [above-boundary : bool]) : tc_i64_i64_map.Map
   (let
@@ -14549,13 +14311,11 @@
                   (&mut cur-ids)
                   values
                   unsafe-flags
-                  c-abi-fnptr-flags
                   shadow-flags
                   name-id
                   next
                   (tc-global-shared-view ty)
                   (tc-binding-unsafe-marker-head-id? rest-env name-id)
-                  (tc-c-abi-fnptr-marker-near-id? rest-env name-id 3)
                   (tc-env-cache-binding-sidecar-flags
                     rest-env
                     name-id
@@ -14593,7 +14353,6 @@
                     (&mut cur-ids)
                     values
                     unsafe-flags
-                    c-abi-fnptr-flags
                     shadow-flags
                     marker-lifetime-id
                     next
@@ -14630,7 +14389,6 @@
   [values : (&mut values (__tl_dyn-array ast.AstType))]
   [track-resolution : bool]
   [unsafe-flags : (&mut unsafe-flags (__tl_dyn-array i64))]
-  [c-abi-fnptr-flags : (&mut c-abi-fnptr-flags (__tl_dyn-array i64))]
   [shadow-flags : (&mut shadow-flags (__tl_dyn-array i64))]
   [above-boundary : bool]) : tc_i64_i64_map.Map
   (let
@@ -14677,13 +14435,11 @@
                   (&mut cur-ids)
                   values
                   unsafe-flags
-                  c-abi-fnptr-flags
                   shadow-flags
                   name-id
                   next
                   (tc-global-shared-view ty)
                   (tc-binding-unsafe-marker-head-id? rest-env name-id)
-                  (tc-c-abi-fnptr-marker-near-id? rest-env name-id 3)
                   (tc-env-cache-binding-sidecar-flags
                     rest-env
                     name-id
@@ -14721,7 +14477,6 @@
                     (&mut cur-ids)
                     values
                     unsafe-flags
-                    c-abi-fnptr-flags
                     shadow-flags
                     marker-lifetime-id
                     next
@@ -15164,7 +14919,6 @@
           (if scan-through
             capacity
             (+ (* capacity 2) 1)))]
-      [c-abi-fnptr-flags : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
       [shadow-flags : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
       [ids : tc_i64_i64_map.Map
         (tc-env-cache-fill
@@ -15173,7 +14927,6 @@
           (&mut values)
           (not scan-through)
           (&mut unsafe-flags)
-          (&mut c-abi-fnptr-flags)
           (&mut shadow-flags)
           true)]
       [node : TcTypeEnv
@@ -15189,7 +14942,6 @@
               ids
               values
               unsafe-flags
-              c-abi-fnptr-flags
               shadow-flags
               scan-through
               false
@@ -15232,7 +14984,6 @@
           (if scan-through
             capacity
             (+ (* capacity 2) 1)))]
-      [c-abi-fnptr-flags : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
       [shadow-flags : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
       [ids : tc_i64_i64_map.Map
         (tc-env-cache-fill-prefix
@@ -15242,7 +14993,6 @@
           (&mut values)
           (not scan-through)
           (&mut unsafe-flags)
-          (&mut c-abi-fnptr-flags)
           (&mut shadow-flags)
           true)]
       [node : TcTypeEnv
@@ -15258,7 +15008,6 @@
               ids
               values
               unsafe-flags
-              c-abi-fnptr-flags
               shadow-flags
               scan-through
               true
@@ -19268,8 +19017,7 @@
             (begin
               (cfg compile-profile (compiler-tc-env-profile-note-lookup))
               (match (tc-type-env-scoped-stack-lookup-id-at sidecar.stack index)
-                [(TcTypeEnvScopedLookup.Found ty _ _ _ _ _)
-                  (ResultTcType.Ok ty)]
+                [(TcTypeEnvScopedLookup.Found ty _ _ _ _) (ResultTcType.Ok ty)]
                 [(TcTypeEnvScopedLookup.Missing)
                   (ResultTcType.Err
                     "typecheck: scoped lookup index unexpectedly missing")])))
@@ -20925,7 +20673,7 @@
         [ids : tc_i64_i64_map.Map
           (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
         [sidecar-flags : (__tl_dyn-array i64)
-          (tc-type-env-cache-field-at cache-ptr 80 (__tl_dyn-array i64))]
+          (tc-type-env-cache-field-at cache-ptr 72 (__tl_dyn-array i64))]
         (match (tc_i64_i64_map.get (& ids) name-id)
           [(tc_i64_i64_map.LookupFound index)
             (not (= (bit-and (array-ref sidecar-flags index) sidecar-flag) 0))]
@@ -21349,7 +21097,7 @@
     [ids : tc_i64_i64_map.Map
       (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
     [sidecar-flags : (__tl_dyn-array i64)
-      (tc-type-env-cache-field-at cache-ptr 80 (__tl_dyn-array i64))]
+      (tc-type-env-cache-field-at cache-ptr 72 (__tl_dyn-array i64))]
     [ordinary-index : i64 (tc_i64_i64_map.get-value-or (& ids) lifetime-id -1)]
     [marker-index : i64
       (tc_i64_i64_map.get-value-or
@@ -21432,7 +21180,7 @@
         [ids : tc_i64_i64_map.Map
           (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
         [sidecar-flags : (__tl_dyn-array i64)
-          (tc-type-env-cache-field-at cache-ptr 80 (__tl_dyn-array i64))]
+          (tc-type-env-cache-field-at cache-ptr 72 (__tl_dyn-array i64))]
         (if scan-through
           (match (tc_i64_i64_map.get (& ids) name-id)
             [(tc_i64_i64_map.LookupFound index)
@@ -34263,8 +34011,41 @@
         0)
       (TcSpmdEnv merged left-len))))
 
+(define (tc-type-env-cache-raw-fields-match? [env : TcTypeEnv]) : bool
+  (let
+    [cache-ptr : (Ptr TcTypeEnvCache)
+      (tc-type-env-cache-ptr env.store (tc-type-env-cache-index env.head))]
+    [cache : TcTypeEnvCache (tc-type-env-cache-at cache-ptr)]
+    [raw-shadow : (__tl_dyn-array i64)
+      (tc-type-env-cache-field-at cache-ptr 72 (__tl_dyn-array i64))]
+    (and
+      (unsafe
+        (=
+          (ptr->int (__tl_array-data raw-shadow))
+          (ptr->int (__tl_array-data cache.shadow-flags))))
+      (= (tc-type-env-cache-field-at cache-ptr 80 bool) cache.scan-through)
+      (= (tc-type-env-cache-field-at cache-ptr 81 bool) cache.partial)
+      (= (tc-type-env-cache-field-at cache-ptr 88 i64) cache.rest)
+      (= (tc-type-env-cache-field-at cache-ptr 96 i64) cache.below))))
+
+(define (tc-type-env-cache-raw-fields-smoke?) : bool
+  (let
+    [base : TcTypeEnv
+      (tc-env-with-cache
+        (tc-bind-id
+          (tc-empty-env)
+          (ci.intern "raw-cache-base")
+          (ast.AstType.I64)))]
+    [layer : TcTypeEnv
+      (tc-env-with-cache-layer-over-explicit
+        (tc-bind-id base (ci.intern "raw-cache-layer") (ast.AstType.Bool)))]
+    (and
+      (tc-type-env-cache-raw-fields-match? base)
+      (tc-type-env-cache-raw-fields-match? layer))))
+
 (define (tc-type-env-raw-layout-smoke?) : bool
   (and
+    (tc-type-env-cache-raw-fields-smoke?)
     (= (comptime (offset-of (type TcTypeEnvBinding) name-id)) 0)
     (= (comptime (offset-of (type TcTypeEnvBinding) ty)) 8)
     (= (comptime (offset-of (type TcTypeEnvBinding) parent)) 32)
@@ -34832,29 +34613,63 @@
         [_ false])
       (not (tc-lifetime-visible-id? below-base (ci.intern "global"))))))
 
-(define (tc-type-env-local-cache-c-abi-fnptr-smoke?) : bool
+(define (tc-type-env-c-function-value-shape? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.CFunc signature mode)
+      (and
+        (= (ast.ast-c-function-mode-key mode) 1)
+        (tc-type-eq (ast.ty-node-get signature) (tc-fn0 (ast.AstType.I64))))]
+    [_ false]))
+
+(define (tc-type-env-has-c-function-value? [env : TcTypeEnv] [name-id : i64]) : bool
+  (match (tc-lookup-unsafe-key-id env name-id)
+    [(ResultTcTypeUnsafe.Ok ty _) (tc-type-env-c-function-value-shape? ty)]
+    [_ false]))
+
+(define (tc-type-env-scoped-has-c-function-value?
+  [carrier : TcTypeEnvScopedCarrier]
+  [name-id : i64]) : bool
+  (let
+    [index : i64
+      (tc-type-env-scoped-carrier-lookup-index
+        (tc-global-shared-view carrier)
+        name-id)]
+    (if (>= index 0)
+      (match (tc-type-env-scoped-stack-lookup-id-at carrier.sidecar.stack index)
+        [(TcTypeEnvScopedLookup.Found ty _ _ _ _)
+          (tc-type-env-c-function-value-shape? ty)]
+        [_ false])
+      (match (tc-lookup-unsafe-persistent-key-id
+        (tc-type-env-scoped-sidecar-persistent carrier.sidecar)
+        name-id
+        name-id)
+        [(ResultTcTypeUnsafe.Ok ty _) (tc-type-env-c-function-value-shape? ty)]
+        [_ false]))))
+
+(define (tc-type-env-local-cache-c-function-smoke?) : bool
   (let
     [base : TcTypeEnv (tc-env-with-cache (tc-empty-env))]
-    [callback-ty : ast.AstType (tc-fn0 (ast.AstType.I64))]
+    [callback-ty : ast.AstType
+      (ast.ast-ty-c-func
+        (ast.ast-type-list-new)
+        (ast.AstType.I64)
+        ast.AstCFunctionMode.NonNull)]
     [marked : TcTypeEnv
-      (tc-bind-c-abi-fnptr-id
+      (tc-bind-id
         base
         (ci.intern "callback")
         (tc-global-shared-view callback-ty))]
     [both : TcTypeEnv
-      (tc-bind-unsafe-c-abi-fnptr-id
-        marked
-        (ci.intern "danger-callback")
-        callback-ty)]
+      (tc-bind-unsafe-id marked (ci.intern "danger-callback") callback-ty)]
     [deep : TcTypeEnv
       (tc-type-env-bind-many both (+ (* (tc-local-cache-threshold) 2) 8))]
     (and
-      (tc-binding-c-abi-fnptr-id? deep (ci.intern "callback"))
+      (tc-type-env-has-c-function-value? deep (ci.intern "callback"))
       (not (tc-binding-unsafe-id? deep (ci.intern "callback")))
-      (tc-binding-c-abi-fnptr-id? deep (ci.intern "danger-callback"))
+      (tc-type-env-has-c-function-value? deep (ci.intern "danger-callback"))
       (tc-binding-unsafe-id? deep (ci.intern "danger-callback"))
       (match (tc-lookup-unsafe-id deep (ci.intern "danger-callback"))
-        [(ResultTcTypeUnsafe.Ok (ast.AstType.Func _ _) unsafe) unsafe]
+        [(ResultTcTypeUnsafe.Ok (ast.AstType.CFunc _ _) unsafe) unsafe]
         [_ false]))))
 
 (cfg
@@ -35009,7 +34824,7 @@
 
 (cfg
   test
-  (define (tc-type-env-c-abi-fnptr-selected-key-smoke?) : bool
+  (define (tc-type-env-c-function-selected-key-smoke?) : bool
     (let
       [module-id : i64 (ci.intern "selected-key-module")]
       [name-id : i64 (ci.intern "selected-key-callback")]
@@ -35020,10 +34835,14 @@
         (tc-env-name-key-id (cis.InternStructuralSessionHandle 0) qualified-id)]
       [local-id : i64 (ci.intern "selected-key-local")]
       [layer-id : i64 (ci.intern "selected-key-layer")]
-      [callback-ty : ast.AstType (tc-fn0 (ast.AstType.I64))]
+      [callback-ty : ast.AstType
+        (ast.ast-ty-c-func
+          (ast.ast-type-list-new)
+          (ast.AstType.I64)
+          ast.AstCFunctionMode.NonNull)]
       [structural-base : TcTypeEnv
         (tc-env-with-cache
-          (tc-bind-c-abi-fnptr-id
+          (tc-bind-id
             (tc-empty-env)
             structural-key
             (tc-global-shared-view callback-ty)))]
@@ -35032,13 +34851,13 @@
           (tc-bind-id structural-base layer-id (ast.AstType.Bool)))]
       [qualified-raw : TcTypeEnv
         (tc-env-with-cache
-          (tc-bind-c-abi-fnptr-id
+          (tc-bind-id
             (tc-empty-env)
             qualified-id
             (tc-global-shared-view callback-ty)))]
       [local-raw : TcTypeEnv
         (tc-env-with-cache
-          (tc-bind-c-abi-fnptr-id
+          (tc-bind-id
             (tc-empty-env)
             local-id
             (tc-global-shared-view callback-ty)))]
@@ -35046,7 +34865,7 @@
         (tc-type-env-scoped-carrier-from-env
           (tc-global-shared-view structural-layer))]
       [scoped-carrier : TcTypeEnvScopedCarrier
-        (tc-type-env-scoped-carrier-bind-unsafe-c-abi-fnptr-id
+        (tc-type-env-scoped-carrier-bind-unsafe-id
           (tc-type-env-scoped-carrier-from-env (tc-empty-env))
           structural-key
           callback-ty)]
@@ -35055,11 +34874,11 @@
         (tc-type-env-scoped-runtime-enter! (tc-global-shared-view tail-carrier))]
       [runtime-ok : bool
         (and
-          (tc-binding-c-abi-fnptr-id?
+          (tc-type-env-has-c-function-value?
             (tc-global-shared-view structural-layer)
             structural-key)
           (not
-            (tc-binding-c-abi-fnptr-id?
+            (tc-type-env-has-c-function-value?
               (tc-global-shared-view structural-layer)
               qualified-id)))]
       (begin
@@ -35072,33 +34891,33 @@
           (tc-env-cache-explicit-head? (tc-global-shared-view structural-layer))
           (tc-type-env-cache-partial-head?
             (tc-global-shared-view structural-layer))
-          (tc-binding-c-abi-fnptr-id?
+          (tc-type-env-has-c-function-value?
             (tc-global-shared-view structural-layer)
             structural-key)
           (not
-            (tc-binding-c-abi-fnptr-id?
+            (tc-type-env-has-c-function-value?
               (tc-global-shared-view structural-layer)
               qualified-id))
-          (tc-binding-c-abi-fnptr-id?
+          (tc-type-env-has-c-function-value?
             (tc-global-shared-view qualified-raw)
             qualified-id)
           (not
-            (tc-binding-c-abi-fnptr-id?
+            (tc-type-env-has-c-function-value?
               (tc-global-shared-view qualified-raw)
               normalized-key))
-          (tc-binding-c-abi-fnptr-id? local-raw local-id)
-          (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
+          (tc-type-env-has-c-function-value? local-raw local-id)
+          (tc-type-env-scoped-has-c-function-value?
             (tc-global-shared-view tail-carrier)
             structural-key)
           (not
-            (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
+            (tc-type-env-scoped-has-c-function-value?
               (tc-global-shared-view tail-carrier)
               qualified-id))
-          (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
+          (tc-type-env-scoped-has-c-function-value?
             (tc-global-shared-view scoped-carrier)
             structural-key)
           (not
-            (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
+            (tc-type-env-scoped-has-c-function-value?
               (tc-global-shared-view scoped-carrier)
               qualified-id))
           runtime-ok)))))
@@ -35135,27 +34954,31 @@
   test
   (define (tc-type-env-explicit-cache-layering-flags-smoke?) : bool
     (let
-      [callback-ty : ast.AstType (tc-fn0 (ast.AstType.I64))]
+      [callback-ty : ast.AstType
+        (ast.ast-ty-c-func
+          (ast.ast-type-list-new)
+          (ast.AstType.I64)
+          ast.AstCFunctionMode.NonNull)]
       [base-callback-id : i64 (ci.intern "base-callback")]
       [danger-callback-id : i64 (ci.intern "danger-callback")]
       [base : TcTypeEnv
         (tc-env-with-cache
-          (tc-bind-c-abi-fnptr-id
+          (tc-bind-id
             (tc-empty-env)
             base-callback-id
             (tc-global-shared-view callback-ty)))]
       [layer-source : TcTypeEnv
-        (tc-bind-unsafe-c-abi-fnptr-id base danger-callback-id callback-ty)]
+        (tc-bind-unsafe-id base danger-callback-id callback-ty)]
       [layer : TcTypeEnv (tc-env-with-cache-layer-over-explicit layer-source)]
       (and
         (tc-env-cache-explicit-head? layer)
         (tc-type-env-cache-partial-head? layer)
-        (tc-binding-c-abi-fnptr-id? layer base-callback-id)
+        (tc-type-env-has-c-function-value? layer base-callback-id)
         (not (tc-binding-unsafe-id? layer base-callback-id))
-        (tc-binding-c-abi-fnptr-id? layer danger-callback-id)
+        (tc-type-env-has-c-function-value? layer danger-callback-id)
         (tc-binding-unsafe-id? layer danger-callback-id)
         (match (tc-lookup-unsafe-id layer danger-callback-id)
-          [(ResultTcTypeUnsafe.Ok (ast.AstType.Func _ _) unsafe) unsafe]
+          [(ResultTcTypeUnsafe.Ok (ast.AstType.CFunc _ _) unsafe) unsafe]
           [_ false])))))
 
 (cfg
@@ -35267,11 +35090,10 @@
                       [(TcTypeEnvScopedLookup.Found
                           (ast.AstType.Bool)
                           unsafe
-                          c-abi-fnptr
                           _
                           depth
                           _)
-                        (and (not unsafe) (not c-abi-fnptr) (= depth 1))]
+                        (and (not unsafe) (= depth 1))]
                       [_ false]))]
                 (begin
                   (tc-type-env-scoped-stack-restore! (&mut stack) outer)
@@ -35287,13 +35109,11 @@
                       [(TcTypeEnvScopedLookup.Found
                           (ast.AstType.I64)
                           unsafe
-                          c-abi-fnptr
                           marker-kind
                           depth
                           _)
                         (and
                           (not unsafe)
-                          (not c-abi-fnptr)
                           (tc-type-env-scoped-marker-kind-same?
                             marker-kind
                             TcTypeEnvScopedMarkerKind.None)
@@ -35317,15 +35137,14 @@
           (let
             [shadowed : bool
               (match (tc-type-env-scoped-stack-lookup-id stack name-id)
-                [(TcTypeEnvScopedLookup.Found (ast.AstType.Bool) _ _ _ _ _)
-                  true]
+                [(TcTypeEnvScopedLookup.Found (ast.AstType.Bool) _ _ _ _) true]
                 [_ false])]
             (begin
               (tc-type-env-scoped-stack-restore! (&mut stack) mark)
               (let
                 [restored : bool
                   (match (tc-type-env-scoped-stack-lookup-id stack name-id)
-                    [(TcTypeEnvScopedLookup.Found (ast.AstType.I64) _ _ _ _ _)
+                    [(TcTypeEnvScopedLookup.Found (ast.AstType.I64) _ _ _ _)
                       true]
                     [_ false])]
                 [repaired-index : i64
@@ -35336,7 +35155,7 @@
                     [(tc_i64_i64_map.LookupMissing) -1])]
                 [restored-again : bool
                   (match (tc-type-env-scoped-stack-lookup-id stack name-id)
-                    [(TcTypeEnvScopedLookup.Found (ast.AstType.I64) _ _ _ _ _)
+                    [(TcTypeEnvScopedLookup.Found (ast.AstType.I64) _ _ _ _)
                       true]
                     [_ false])]
                 (and shadowed restored (= repaired-index 0) restored-again)))))))))
@@ -35368,7 +35187,7 @@
               (ast.AstType.Bool)))
           (set!
             sidecar
-            (tc-type-env-scoped-sidecar-bind-unsafe-c-abi-fnptr-id
+            (tc-type-env-scoped-sidecar-bind-unsafe-id
               sidecar
               fn-id
               (ast.AstType.I64)))
@@ -35381,13 +35200,11 @@
                   [(TcTypeEnvScopedLookup.Found
                       (ast.AstType.Bool)
                       unsafe
-                      c-abi-fnptr
                       marker-kind
                       depth
                       generation)
                     (and
                       (not unsafe)
-                      (not c-abi-fnptr)
                       (tc-type-env-scoped-marker-kind-same?
                         marker-kind
                         TcTypeEnvScopedMarkerKind.None)
@@ -35400,15 +35217,10 @@
                   [(TcTypeEnvScopedLookup.Found
                       (ast.AstType.I64)
                       unsafe
-                      c-abi-fnptr
                       _
                       depth
                       generation)
-                    (and
-                      unsafe
-                      c-abi-fnptr
-                      (= depth 1)
-                      (= generation generation-before))]
+                    (and unsafe (= depth 1) (= generation generation-before))]
                   [_ false])
                 (match (tc-type-env-scoped-stack-marker-lookup
                   (tc-global-shared-view sidecar.stack)
@@ -35435,10 +35247,6 @@
                   fn-id)
                   [(ResultTcTypeUnsafe.Ok (ast.AstType.I64) unsafe) unsafe]
                   [_ false])
-                (tc-binding-c-abi-fnptr-id?
-                  (tc-type-env-scoped-sidecar-materialize
-                    (tc-global-shared-view sidecar))
-                  fn-id)
                 (match (tc-lookup-id
                   (tc-type-env-scoped-sidecar-materialize
                     (tc-global-shared-view sidecar))
@@ -35465,13 +35273,11 @@
                   [(TcTypeEnvScopedLookup.Found
                       (ast.AstType.I64)
                       unsafe
-                      c-abi-fnptr
                       marker-kind
                       depth
                       _)
                     (and
                       (not unsafe)
-                      (not c-abi-fnptr)
                       (tc-type-env-scoped-marker-kind-same?
                         marker-kind
                         TcTypeEnvScopedMarkerKind.None)
@@ -35593,7 +35399,7 @@
             (tc-type-env-scoped-carrier-push-region carrier _inner-id))
           (set!
             carrier
-            (tc-type-env-scoped-carrier-bind-unsafe-c-abi-fnptr-id
+            (tc-type-env-scoped-carrier-bind-unsafe-id
               carrier
               fn-id
               callback-ty))
@@ -35676,20 +35482,16 @@
                 (tc-binding-unsafe-id?
                   (tc-type-env-scoped-carrier-env (tc-global-shared-view deep))
                   fn-id)
-                (tc-binding-c-abi-fnptr-id?
-                  (tc-type-env-scoped-carrier-env (tc-global-shared-view deep))
-                  fn-id)
                 (match (tc-type-env-scoped-sidecar-lookup-id
                   (tc-global-shared-view deep-sidecar)
                   fn-id)
                   [(TcTypeEnvScopedLookup.Found
                       (ast.AstType.Func _ _)
                       unsafe
-                      c-abi-fnptr
                       _
                       _
                       _)
-                    (and unsafe c-abi-fnptr)]
+                    (and unsafe)]
                   [_ false])
                 (match (tc-type-env-scoped-stack-marker-lookup
                   (tc-global-shared-view deep-sidecar.stack)
@@ -35771,10 +35573,7 @@
       [unsafe-env : TcTypeEnv
         (tc-bind-unsafe-id runtime-env runtime-unsafe-id (ast.AstType.I64))]
       [c-abi-env : TcTypeEnv
-        (tc-bind-c-abi-fnptr-id
-          unsafe-env
-          runtime-callback-id
-          (tc-fn0 (ast.AstType.I64)))]
+        (tc-bind-id unsafe-env runtime-callback-id (tc-fn0 (ast.AstType.I64)))]
       [shadow-env : TcTypeEnv
         (tc-bind-id
           c-abi-env
@@ -35796,7 +35595,6 @@
           (match (tc-lookup-unsafe-id inner-env runtime-unsafe-id)
             [(ResultTcTypeUnsafe.Ok (ast.AstType.I64) unsafe) unsafe]
             [_ false])
-          (tc-binding-c-abi-fnptr-id? inner-env runtime-callback-id)
           (not
             (tc-default-builtin-unshadowed-id?
               inner-env
@@ -35821,7 +35619,6 @@
                 [(ResultTcType.Err _) true]
                 [_ false])
               (not (tc-name-bound-id? runtime-env runtime-unsafe-id))
-              (not (tc-binding-c-abi-fnptr-id? runtime-env runtime-callback-id))
               (tc-default-builtin-unshadowed-id?
                 runtime-env
                 cbi.compiler-builtin-id-tl-private-string-length))]
@@ -35982,7 +35779,7 @@
           (ast.AstType.I64)))
       (set!
         carrier
-        (tc-type-env-scoped-carrier-bind-unsafe-c-abi-fnptr-id
+        (tc-type-env-scoped-carrier-bind-unsafe-id
           carrier
           fn-id
           (tc-fn0 (ast.AstType.I64))))
@@ -36029,9 +35826,6 @@
           (tc-type-env-scoped-carrier-binding-unsafe-id?
             (tc-global-shared-view carrier)
             fn-id)
-          (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
-            (tc-global-shared-view carrier)
-            fn-id)
           (match (tc-lookup-id snapshot tail-only-id)
             [(ResultTcType.Ok (ast.AstType.String)) true]
             [_ false])
@@ -36039,7 +35833,6 @@
             [(ResultTcType.Ok (ast.AstType.Bool)) true]
             [_ false])
           (tc-binding-unsafe-id? snapshot fn-id)
-          (tc-binding-c-abi-fnptr-id? snapshot fn-id)
           (not
             (tc-default-builtin-unshadowed-id?
               (tc-type-env-scoped-carrier-env default-carrier)
@@ -36169,7 +35962,7 @@
     (tc-type-env-local-cache-depth-cap-smoke?)
     (tc-arena-phase-nested-structural-record-smoke?)
     (tc-type-env-local-cache-deep-scan-smoke?)
-    (tc-type-env-local-cache-c-abi-fnptr-smoke?)
+    (tc-type-env-local-cache-c-function-smoke?)
     (tc-type-env-local-cache-lambda-capture-smoke?)
     (tc-type-env-scoped-stack-smoke?)
     (tc-type-env-walker-api-smoke?)))
@@ -36198,7 +35991,7 @@
     (if (tc-type-env-explicit-cache-layering-marker-smoke?)
       unit
       (io.panic "typecheck: explicit env cache marker layering smoke failed"))
-    (if (tc-type-env-c-abi-fnptr-selected-key-smoke?)
+    (if (tc-type-env-c-function-selected-key-smoke?)
       unit
       (io.panic "typecheck: selected C ABI fnptr key smoke failed"))))
 
@@ -41175,7 +40968,7 @@
         [ids : tc_i64_i64_map.Map
           (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
         [shadow-flags : (__tl_dyn-array i64)
-          (tc-type-env-cache-field-at cache-ptr 80 (__tl_dyn-array i64))]
+          (tc-type-env-cache-field-at cache-ptr 72 (__tl_dyn-array i64))]
         (match (tc_i64_i64_map.get (& ids) name-id)
           [(tc_i64_i64_map.LookupFound index)
             (=

@@ -42,6 +42,11 @@ cell address nor a C code address may enter closure-descriptor dispatch.
 Checked bindings retain the complete type; their replay record stores only arena
 owner and phase transitions. Argument compatibility compares types directly,
 without a separate syntax walk to infer a raw pointer provenance.
+Environment caches and scoped lookup results likewise carry no raw-pointer flag.
+They preserve the complete stored type alongside independent unsafe-declaration
+and ownership markers. The cache raw-layout smoke checks the shadow-array
+address, flags and parent links against typed field access on full and layered
+caches; its explicit byte offsets must change with the cache record.
 `tc-source-type-policy-ok` validates every source `CFunc` through the shared C
 ABI checker and then visits its signature through the existing source policy.
 This covers unused parameters, fields, lambda types, initializers and nested

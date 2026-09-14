@@ -147,3 +147,34 @@
 (extern (install [f : (CFunc nullable (-> i64 i64))]) : unit)
 (define (main) : unit (install (resolve)))")
       "valid default-ABI C pointer parameters and results remain accepted")))
+
+(test
+  c-function-null-operations
+  (begin
+    (test.assert-true
+      (c-function-call-checks?
+        "(define (missing?) : bool (ptr-null? (ptr-null : (CFunc nullable (-> i64 i64)))))")
+      "safe nullable C pointer supports explicit null and null testing")
+    (test.assert-true
+      (c-function-call-checks?
+        "(define (missing?) : bool (ptr-null? (ptr-null : (CFunc unsafe-nullable (-> i64 i64)))))")
+      "testing an unsafe C pointer does not call it")
+    (test.assert-true
+      (c-function-call-checks?
+        "(define (missing? [f : (CFunc non-null (-> i64 i64))]) : bool (ptr-null? f))")
+      "null testing preserves the exact operand type")
+    (test.assert-true
+      (c-function-call-error?
+        "(define (empty) : (CFunc non-null (-> i64 i64)) (ptr-null : (CFunc non-null (-> i64 i64))))"
+        "ptr-null cannot create a non-null C function pointer")
+      "explicit null cannot fabricate a checked callable")
+    (test.assert-true
+      (c-function-call-error?
+        "(define (empty) : (CFunc unsafe-non-null (-> i64 i64)) (unsafe (ptr-null : (CFunc unsafe-non-null (-> i64 i64)))))"
+        "ptr-null cannot create a non-null C function pointer")
+      "unsafe scope cannot fabricate a non-null C pointer")
+    (test.assert-true
+      (c-function-call-error?
+        "(define (invoke [f : (CFunc nullable (-> i64 i64))]) : i64 (if (ptr-null? f) 0 (f 41)))"
+        "nullable C function pointer must be checked")
+      "a boolean test alone does not silently refine stored callable types")))

@@ -73527,6 +73527,11 @@
         [resolved : ast.AstType
           (tc-resolve-type (tc-global-shared-view ctx) (ast.ty-node-get ty-id))]
         (match (tc-global-shared-view resolved)
+          [(ast.AstType.CFunc _ mode)
+            (if (ast.ast-c-function-mode-nullable? mode)
+              (ResultTcType.Ok resolved)
+              (ResultTcType.Err
+                "typecheck: ptr-null cannot create a non-null C function pointer"))]
           [(ast.AstType.Ptr _) (ResultTcType.Ok resolved)]
           [(ast.AstType.MutPtr _) (ResultTcType.Ok resolved)]
           [_
@@ -73536,6 +73541,7 @@
       (match (tc-expr-id (tc-global-shared-view ctx) env inner-box)
         [(ResultTcType.Ok inner-ty)
           (match (tc-type-strip-region inner-ty)
+            [(ast.AstType.CFunc _ _) (ResultTcType.Ok (ast.AstType.Bool))]
             [(ast.AstType.Ptr _) (ResultTcType.Ok (ast.AstType.Bool))]
             [(ast.AstType.MutPtr _) (ResultTcType.Ok (ast.AstType.Bool))]
             [_

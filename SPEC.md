@@ -6331,7 +6331,8 @@ The unsafe operation set:
 | Form | Safe? | Type rule | Notes |
 |------|-------|-----------|-------|
 | `(ptr-null : (Ptr T))` / `(ptr-null : (MutPtr T))` | Yes | returns the requested raw pointer type | Constructs a typed null pointer. |
-| `(ptr-null? p)` | Yes | raw pointer -> `bool` | Does not dereference `p`. |
+| `(ptr-null : (CFunc mode signature))` | Yes | returns the requested `CFunc` type | Requires `nullable` or `unsafe-nullable` mode; the other modes reject null construction even inside `unsafe`. |
+| `(ptr-null? p)` | Yes | raw pointer or `CFunc` -> `bool` | Does not dereference or call `p`; does not refine its type. |
 | `(ptr-read p)` | Unsafe | `(Ptr T)` or `(MutPtr T)` -> `T` | Reads `sizeof(T)` bytes at `p`; alignment, validity, initialization, and lifetime are caller obligations. |
 | `(ptr-write! p value)` | Unsafe | `(MutPtr T)` and `T` -> `unit` | Writes `sizeof(T)` bytes; writing through `(Ptr T)` is rejected. |
 | `(ptr-offset p n)` | Unsafe | raw pointer and integer -> same raw pointer type | Adds `n * sizeof(T)` bytes. Negative offsets are allowed but unsafe. |
@@ -7814,6 +7815,12 @@ mutable, or valid for the requested type.
   supported targets.
 - Raw pointers are nullable and copyable. `ptr-null` creates a typed null
   pointer, and `ptr-null?` checks for null without dereferencing.
+- Typed C code pointers also support `ptr-null?`. `ptr-null` accepts
+  `(CFunc nullable (-> ...))` and `(CFunc unsafe-nullable (-> ...))`;
+  `init` produces the same zero value for these modes. Neither form can create
+  `non-null` or `unsafe-non-null` values. Testing a pointer does not call it or
+  remove its unsafe-call effect, and a boolean test does not implicitly change
+  a nullable variable's type.
 - Pointer equality, ordering, provenance, and bounds are otherwise
   unspecified. Only null testing is part of the safe surface.
 - `ptr-read`, `ptr-write!`, `ptr-offset`, `ptr-cast`, `ptr->int`,

@@ -22937,6 +22937,197 @@
       (+ (* 100 spent) code)
       (- 0 1))))
 
+;; The linked walk is the independent storage oracle until #5729 retires it.
+;; Assert all three counters: duplicate definitions must not stop traversal or
+;; discard the last literal, even though specialization then rejects the var.
+(defstruct OptInlineLiteralScanSnapshot
+  (definitions i64)
+  (literal i64)
+  (value i64))
+
+(define (opt-inline-literal-scan-snapshot
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [var : i64]) : OptInlineLiteralScanSnapshot
+  (let
+    [saved-count : i64
+      (array-ref compiler_optimize.opt-inline-checked-literal-scan 0)]
+    [saved-literal : i64
+      (array-ref compiler_optimize.opt-inline-checked-literal-scan 1)]
+    [saved-value : i64
+      (array-ref compiler_optimize.opt-inline-checked-literal-scan 2)]
+    (begin
+      (set! (array-ref compiler_optimize.opt-inline-checked-literal-scan 0) 0)
+      (set! (array-ref compiler_optimize.opt-inline-checked-literal-scan 1) 0)
+      (set! (array-ref compiler_optimize.opt-inline-checked-literal-scan 2) 0)
+      (compiler_optimize.opt-inline-checked-literal-scan-blocks! blocks var)
+      (let
+        [result : OptInlineLiteralScanSnapshot
+          (OptInlineLiteralScanSnapshot
+            (array-ref compiler_optimize.opt-inline-checked-literal-scan 0)
+            (array-ref compiler_optimize.opt-inline-checked-literal-scan 1)
+            (array-ref compiler_optimize.opt-inline-checked-literal-scan 2))]
+        (begin
+          (set!
+            (array-ref compiler_optimize.opt-inline-checked-literal-scan 0)
+            saved-count)
+          (set!
+            (array-ref compiler_optimize.opt-inline-checked-literal-scan 1)
+            saved-literal)
+          (set!
+            (array-ref compiler_optimize.opt-inline-checked-literal-scan 2)
+            saved-value)
+          result)))))
+
+(define (opt-inline-literal-scan-same?
+  [a : OptInlineLiteralScanSnapshot]
+  [b : OptInlineLiteralScanSnapshot]) : bool
+  (and
+    (= a.definitions b.definitions)
+    (= a.literal b.literal)
+    (= a.value b.value)))
+
+(define (opt-inline-literal-scan-fixture-block [index : i64]) : compiler_ir_types.CompilerIrBlock
+  (let
+    [instrs : compiler_ir_types.CompilerIrInstrBuilder
+      (compiler_ir_types.compiler-ir-instr-builder-with-capacity 1)]
+    (begin
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut instrs)
+        (compiler_ir_types.CompilerIrInstr.Mov
+          0
+          (compiler_ir_types.CompilerIrValue.I64 index)
+          (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut instrs)
+        (compiler_ir_types.CompilerIrInstr.Mov
+          7
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut instrs)
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          9223372036854775790
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ir_types.CompilerIrValue.I64 2)
+          (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut instrs)
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 0))))
+      (if (= (% index 2) 1)
+        (compiler_ir_types.compiler-ir-instr-builder-push!
+          (&mut instrs)
+          (compiler_ir_types.CompilerIrInstr.Mov
+            0
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ast_types.AstType.I64)))
+        unit)
+      (compiler_ir_types.CompilerIrBlock.Block
+        index
+        (compiler_ir_types.compiler-ir-instr-builder-to-seq instrs)))))
+
+(define (opt-inline-literal-scan-fixture [count : i64]) : compiler_ir_types.CompilerIrBlockSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrBlockBuilder
+      (compiler_ir_types.compiler-ir-block-builder-with-capacity 1)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (compiler_ir_types.compiler-ir-block-builder-push!
+            (&mut builder)
+            (opt-inline-literal-scan-fixture-block index))
+          (set! index (+ index 1))))
+      (compiler_ir_types.CompilerIrBlockSeq builder.slots builder.len))))
+
+(define (opt-inline-literal-scan-case? [count : i64] [var : i64]) : bool
+  (let
+    [seq : compiler_ir_types.CompilerIrBlockSeq
+      (opt-inline-literal-scan-fixture count)]
+    [linked : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-seq-to-list
+        (owned_view.compiler-owned-shared-view seq))]
+    [expected : OptInlineLiteralScanSnapshot
+      (opt-inline-literal-scan-snapshot
+        (owned_view.compiler-owned-shared-view linked)
+        var)]
+    [dense : OptInlineLiteralScanSnapshot
+      (opt-inline-literal-scan-snapshot
+        (compiler_ir_types.CompilerIrBlockList.Array
+          (owned_view.compiler-owned-shared-view seq))
+        var)]
+    [mixed : OptInlineLiteralScanSnapshot
+      (opt-inline-literal-scan-snapshot
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-inline-literal-scan-fixture-block (- 0 900))
+          (compiler_ir_types.CompilerIrBlockList.Array
+            (owned_view.compiler-owned-shared-view seq)))
+        var)]
+    [mixed-expected : OptInlineLiteralScanSnapshot
+      (opt-inline-literal-scan-snapshot
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-inline-literal-scan-fixture-block (- 0 900))
+          linked)
+        var)]
+    [wanted : OptInlineLiteralScanSnapshot
+      (if (= var 0)
+        (OptInlineLiteralScanSnapshot
+          (+ count (/ count 2))
+          (if (> count 0)
+            1
+            0)
+          (if (> count 0)
+            (- count 1)
+            0))
+        (OptInlineLiteralScanSnapshot
+          (if (or (= var 7) (= var 9223372036854775790) (= var (- 0 1)))
+            count
+            0)
+          0
+          0))]
+    [again : OptInlineLiteralScanSnapshot
+      (opt-inline-literal-scan-snapshot
+        (compiler_ir_types.CompilerIrBlockList.Array seq)
+        var)]
+    (and
+      (opt-inline-literal-scan-same?
+        (owned_view.compiler-owned-shared-view expected)
+        wanted)
+      (opt-inline-literal-scan-same?
+        (owned_view.compiler-owned-shared-view expected)
+        dense)
+      (opt-inline-literal-scan-same? expected again)
+      (opt-inline-literal-scan-same? mixed-expected mixed))))
+
+(define (compiler-optimize-inline-literal-dense-scan-self-test) : bool
+  (let
+    [count : i64 0]
+    [ok? : bool true]
+    (begin
+      (while (<= count 17)
+        (begin
+          (if (and
+            (opt-inline-literal-scan-case? count 0)
+            (opt-inline-literal-scan-case? count 7)
+            (opt-inline-literal-scan-case? count 9223372036854775790)
+            (opt-inline-literal-scan-case? count (- 0 1))
+            (opt-inline-literal-scan-case? count (- 0 7)))
+            unit
+            (set! ok? false))
+          (set! count (+ count 1))))
+      (and
+        ok?
+        (opt-inline-literal-scan-case? 65 0)
+        (opt-inline-literal-scan-case? 65 9223372036854775790)))))
+
+(test
+  inline-literal-dense-scan
+  (test.assert-true
+    (compiler-optimize-inline-literal-dense-scan-self-test)
+    "dense literal scans preserve all definition/literal counters, order, and retained inputs across linked, dense, and mixed block storage"))
+
 ;; --- INL-18: literal-argument specialization --------------------------------
 ;;
 ;; A FORWARDER: a body whose every exit is a direct tail call and which carries

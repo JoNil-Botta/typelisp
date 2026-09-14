@@ -192,6 +192,14 @@ The affine storage reference/growth tests and optimizer smoke driver protect
 these rules. Reuse the existing generated core vectors for compact payloads;
 do not allocate wide records for every possible local ID or rebuild cons chains.
 
+The checked inliner's literal-argument scan borrows dense block storage directly.
+It visits blocks and instructions in forward order without building linked
+copies. Its result includes every matching definition and the last integer
+literal, even after a duplicate makes specialization ineligible. Keep traversal
+separate from that admission decision; stopping the scan early changes its
+recorded result. This read-only path does not change block ownership or the
+remaining mixed block-list representation.
+
 Register analyses share one ownership budget: the conservative number of
 32-bit-set words per instruction is compared against 32,768 words (256 KiB),
 using division to avoid multiplication overflow. Small analyses allocate in the

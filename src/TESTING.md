@@ -1224,6 +1224,16 @@ the CI runner exercises the same import graph reviewers see locally. The
 same script also owns host-specific backend/compiler-driver fixture checks that
 are too low-level for a manifest row.
 
+The `c_function_pointer_flow` row uses a native C provider from
+`benchmarks/c_function_pointer_flow/baseline.c` to exercise typed code addresses
+through a higher-order resolver, globals, an imported relay, struct and enum
+fields, and an escaping closure. It checks the provider's resolver counter to
+catch repeated evaluation and passes a pointer-containing struct back to C.
+The `c_function_pointer_null` row requires exit 134, empty stdout and the exact
+null diagnostic even when the checked result is unused. Both rows belong to
+both target manifests; assembly generation alone does not replace their native
+execution checks.
+
 Generated import regressions must exercise both `Module` and `Decls` output.
 An import has namespace effects even without a visible declaration name; the
 canonical generated wrapper must preserve the metadata that causes the macro

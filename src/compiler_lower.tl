@@ -25382,6 +25382,7 @@
     [(ast.AstType.MutPtr _) true]
     [(ast.AstType.Ref _ _) true]
     [(ast.AstType.MutRef _ _) true]
+    [(ast.AstType.CFunc _ _) true]
     [(ast.AstType.Func _ _) true]
     [(ast.AstType.Tuple _) true]
     [(ast.AstType.Array _ _) true]

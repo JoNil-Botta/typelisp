@@ -215,3 +215,24 @@
         "(define (c-fn-check [x : i64]) : i64 x)
 (define (main) : i64 (c-fn-check 41))")
       "source function shadows the builtin")))
+
+(test
+  c-function-capture-preserves-effect
+  (begin
+    (test.assert-true
+      (c-function-call-checks?
+        "(define (make-call [f : (CFunc unsafe-non-null (-> i64 i64))]) : (-> i64 i64)
+(lambda ([x : i64]) : i64 (unsafe (f x))))")
+      "captured unsafe C pointer can be called inside an explicit unsafe body")
+    (test.assert-true
+      (c-function-call-error?
+        "(define (make-call [f : (CFunc unsafe-non-null (-> i64 i64))]) : (-> i64 i64)
+(lambda ([x : i64]) : i64 (f x)))"
+        "requires unsafe")
+      "closure capture cannot erase the call effect")
+    (test.assert-true
+      (c-function-call-error?
+        "(define (make-call [f : (CFunc unsafe-non-null (-> i64 i64))]) : (-> i64 i64)
+(unsafe (lambda ([x : i64]) : i64 (f x))))"
+        "requires unsafe")
+      "creating a closure in unsafe scope does not authorize its future calls")))

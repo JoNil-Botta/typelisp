@@ -628,3 +628,5 @@ decls_generated_import_nested|tests/integration/decls_generated_import_nested.tl
 generated_import_alias_scopes|tests/integration/generated_import_alias_scopes.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl
 test_cli_entry_memory|src/tests/test_cli_entry_memory_smoke.tl|42|@tests/integration/test_cli_entry_memory.stdout.expected|-|-|expected-stderr:@tests/integration/test_cli_entry_memory.stderr.expected
 test_cli_entry_state|src/tests/test_cli_entry_state_smoke.tl|42|-|-|-
+c_function_pointer_flow|tests/integration/c_function_pointer_flow.tl|0|-|-|c_function_pointer_dep.tl benchmarks/c_function_pointer_flow/baseline.c
+c_function_pointer_null|tests/integration/c_function_pointer_null.tl|134|-|-|-|expected-stderr:tl: null C function pointer\n

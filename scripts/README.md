@@ -4,6 +4,13 @@ The `scripts/` directory contains CI entry points, focused verification gates,
 bootstrap helpers, benchmarks, and optional local diagnostics. A filename
 prefix alone does not determine whether a script is required by CI.
 
+`fetch-work-queue.sh [OWNER/REPO]` is the optional GitHub worker-queue fetch
+wrapper. It requires `gh` and `jq`, retains complete raw open issue/PR state,
+and fails rather than silently accepting a reached list limit. See the
+[chooser caller contract](../tools/work-queue-chooser/README.md) for capture,
+filtering and selection. `test-fetch-work-queue.sh` checks the boundary using a
+local fake `gh`; it never authenticates or accesses the network.
+
 ## What is a CI gate?
 
 The workflow files are authoritative:

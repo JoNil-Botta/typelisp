@@ -24,9 +24,10 @@ native_link_detect_host
 # generation adds seven public declaration macros to the loaded prefix. Test
 # declaration metadata adds two source-visible declarations to that prefix.
 # Removing the generic shared-view bridge subtracts one on both hosts.
+# Refs #7817: two runtime view-owner selector declarations are visible on both hosts.
 case "$NL_HOST_OS" in
-    windows) TRUSTED_PREFIX_SKIPPED=223 ;;
-    *) TRUSTED_PREFIX_SKIPPED=218 ;;
+    windows) TRUSTED_PREFIX_SKIPPED=225 ;;
+    *) TRUSTED_PREFIX_SKIPPED=220 ;;
 esac
 
 COMPILER=${1:-${TYPELISP_BIN:-}}

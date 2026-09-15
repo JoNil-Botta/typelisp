@@ -8,7 +8,7 @@
 (import stdlib.arena)
 (import stdlib.io)
 (import stdlib.string)
-(import stdlib.runtime as runtime)
+(import stdlib.runtime)
 (import stdlib.profile)
 
 (define (entry-selectors-restored? [result : i64]) : bool
@@ -124,6 +124,21 @@
       (= parent.shared-address restored.shared-address)
       (string.eq view "view"))))
 
+;; A quiescent caller may not have initialized borrowed-view storage yet.
+(define (entry-restores-uninitialized-view-owner?) : bool
+  (let
+    [home : i64 (runtime.str-view-arena-current)]
+    [_clear : unit
+      (unsafe
+        (runtime.str-view-arena-use! 0))]
+    [entry : tltest.TlTestEntry (tltest.tltest-entry-new)]
+    [actual : i64 (tltest.tltest-entry-finish entry 0)]
+    [restored : i64 (runtime.str-view-arena-current)]
+    [_restore : unit
+      (unsafe
+        (runtime.str-view-arena-use! home))]
+    (and (= actual 0) (= restored 0))))
+
 (define (session-selection-does-not-retain?) : bool
   (let
     [home : load.CompilerLoadSessionState
@@ -150,6 +165,7 @@
         (entry-preserves-view 0)
         (entry-preserves-view 7)
         (entry-preserves-view -9)
+        (entry-restores-uninitialized-view-owner?)
         (session-selection-does-not-retain?)
         (entry-bound-load-restored?)
         (loader-cache-lifetime-ok?))

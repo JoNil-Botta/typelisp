@@ -13,7 +13,19 @@
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
 
-(define (main) : i64
+(defenum EntryMemoryWorkload
+  (Leaf)
+  (Heavy)
+  (Mixed))
+
+(defstruct EntryMemorySample
+  (warm-live i64)
+  (final-live i64))
+
+;; Shared by the small regression and the cross-host heavy measurement tool.
+;; Inputs/results belong to the caller; every compilation entry owns its own
+;; temporary storage. The first four entries warm fixed process-owned tables.
+(define (entry-memory-sample [workload : EntryMemoryWorkload] [count : i64]) : EntryMemorySample
   (let
     [index : i64 0]
     [warm-live : i64 0]
@@ -25,28 +37,47 @@
         compiler_backend.CompilerBackendTarget.Windows
         compiler_backend.CompilerBackendTarget.Linux)]
     (begin
+      (unless
+        (>= count 4)
+        (io.panic "test entry memory: fewer than four warmup entries"))
       (compiler_load.compiler-load-session-cache-enable!)
       (compiler_load.compiler-load-session-program-cache-disable!)
       (driver.compiler-driver-reset-file-state!)
-      (while (< index 12)
-        (begin
-          (unless
-            (=
-              (tltest.tltest-run-batch-run-path
-                "tests/inline/test_batch_retention_leaf.tl"
-                (owned_view.compiler-owned-shared-view target)
-                (owned_view.compiler-owned-shared-view roots)
-                1
-                backend-target)
-              1)
-            (io.panic
-              "test CLI entry memory: inline entry did not pass one test"))
-          (set! index (+ index 1))
-          (when (= index 4) (set! warm-live (profile.alloc-live)))))
+      (while (< index count)
+        (let
+          [leaf : bool
+            (match workload
+              [(EntryMemoryWorkload.Leaf) true]
+              [(EntryMemoryWorkload.Heavy) false]
+              [(EntryMemoryWorkload.Mixed) (= (% index 2) 1)])]
+          (begin
+            (unless
+              (=
+                (tltest.tltest-run-batch-run-path
+                  (if leaf
+                    "tests/inline/test_batch_retention_leaf.tl"
+                    "tests/inline/windows_param_preassign_backend.tl")
+                  (owned_view.compiler-owned-shared-view target)
+                  (owned_view.compiler-owned-shared-view roots)
+                  1
+                  backend-target)
+                (if leaf
+                  1
+                  2))
+              (io.panic "test CLI entry memory: inline entry count differs"))
+            (set! index (+ index 1))
+            (when (= index 4) (set! warm-live (profile.alloc-live))))))
+      (EntryMemorySample warm-live (profile.alloc-live)))))
+
+(define (main) : i64
+  (let
+    [sample : EntryMemorySample
+      (entry-memory-sample EntryMemoryWorkload.Leaf 12)]
+    (begin
       (unless
-        (> warm-live 0)
+        (> sample.warm-live 0)
         (io.panic "test CLI entry memory: allocation counters are inactive"))
       (unless
-        (= (profile.alloc-live) warm-live)
+        (= sample.final-live sample.warm-live)
         (io.panic "test CLI entry memory: retained bytes grow between entries"))
       42)))

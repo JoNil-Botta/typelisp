@@ -8,7 +8,7 @@
 ;; `AstDecl.Test`.
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
-(import stdlib.runtime as runtime)
+(import stdlib.runtime)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.process)
@@ -6015,9 +6015,6 @@
     [owner : arena.Arena (arena.make)]
     [parent-view-owner : i64 (runtime.str-view-arena-current)]
     [view-owner : arena.Arena (arena.make-atomic)]
-    [_view-install : unit
-      (unsafe
-        (runtime.str-view-arena-use! view-owner.handle))]
     [parent-load : compiler_load.CompilerLoadSessionState
       (compiler_load.compiler-load-serial-test-session-state)]
     [parent-default : compiler_load.CompilerLoadSessionState
@@ -6025,6 +6022,9 @@
         compiler_load.compiler-load-default-session-state
         0)]
     [parent-job : tc_core.TcJobState (tc_core.tc-serial-job-state)]
+    [_view-install : unit
+      (unsafe
+        (runtime.str-view-arena-use! view-owner.handle))]
     [entry-load : compiler_load.CompilerLoadSessionState
       (in-arena
         owner

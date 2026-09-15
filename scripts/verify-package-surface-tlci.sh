@@ -23,15 +23,16 @@ native_link_detect_host
 # dependency-free, however, so forced-source fallback happens only for the
 # root consumer on both hosts. Removing the generic shared-view bridge
 # subtracts one prelude declaration from both trusted and failure totals.
+# Refs #7817: two runtime view-owner selector declarations are visible on both hosts.
 case "$NL_HOST_OS" in
     windows)
-        TRUSTED_PREFIX_SKIPPED=228
-        FAILURE_PREFIX_SKIPPED=213
+        TRUSTED_PREFIX_SKIPPED=230
+        FAILURE_PREFIX_SKIPPED=215
         FORCED_SOURCE_FALLBACKS=1
         ;;
     *)
-        TRUSTED_PREFIX_SKIPPED=223
-        FAILURE_PREFIX_SKIPPED=208
+        TRUSTED_PREFIX_SKIPPED=225
+        FAILURE_PREFIX_SKIPPED=210
         FORCED_SOURCE_FALLBACKS=1
         ;;
 esac

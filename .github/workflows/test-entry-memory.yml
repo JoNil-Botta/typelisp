@@ -1,0 +1,86 @@
+name: Test Entry Memory
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'stdlib/**'
+      - 'tests/inline/windows_param_preassign_backend.tl'
+      - 'tests/inline/test_batch_retention_leaf.tl'
+      - 'tools/test-entry-memory/**'
+      - 'scripts/measure-test-entry-memory.sh'
+      - 'scripts/run-memory-bounded.sh'
+      - 'scripts/run-bounded-process.ps1'
+      - 'scripts/lib-native-link.sh'
+      - 'scripts/lib-ci-compiler-artifact.sh'
+      - '.github/workflows/test-entry-memory.yml'
+  workflow_dispatch:
+    inputs:
+      baseline_ref:
+        description: Baseline commit or branch for the same measurement harness
+        default: main
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-entry-memory-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Keep native Windows resource measurements independent of the sequential CI
+# job. Normal CI still runs its full bootstrap and small zero-growth guard.
+jobs:
+  memory:
+    name: Native Windows entry memory (${{ matrix.role }})
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        role: [baseline, candidate]
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TYPELISP_WINDOWS_LINK_REPRO: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/checkout@v4
+        if: matrix.role == 'baseline'
+        with:
+          ref: ${{ github.event.pull_request.base.sha || inputs.baseline_ref }}
+          path: target/exp/test-entry-memory-baseline
+      - name: Fetch seed
+        shell: bash
+        run: scripts/fetch-stage0.sh stage0-latest tools/stage0
+      - name: Measure fresh native test driver under 4 GiB
+        shell: bash
+        env:
+          MEASUREMENT_ROLE: ${{ matrix.role }}
+        run: |
+          output="$PWD/target/exp/test-entry-memory/$MEASUREMENT_ROLE"
+          mkdir -p "$output"
+          if [ "$MEASUREMENT_ROLE" = baseline ]; then
+            scripts/measure-test-entry-memory.sh tools/stage0/typelisp.exe "$output" \
+              --baseline-root "$PWD/target/exp/test-entry-memory-baseline" > "$output/run.log" 2>&1
+          else
+            scripts/measure-test-entry-memory.sh tools/stage0/typelisp.exe "$output" \
+              > "$output/run.log" 2>&1
+          fi
+          cat "$output/results.tsv"
+      - name: Preserve measurement evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-entry-memory-${{ matrix.role }}-${{ github.run_id }}
+          path: |
+            target/exp/test-entry-memory/${{ matrix.role }}/*.tsv
+            target/exp/test-entry-memory/${{ matrix.role }}/*.metrics
+            target/exp/test-entry-memory/${{ matrix.role }}/*.stdout
+            target/exp/test-entry-memory/${{ matrix.role }}/*.stderr
+            target/exp/test-entry-memory/${{ matrix.role }}/*.log
+            target/exp/test-entry-memory/${{ matrix.role }}/harness/*.tl
+          if-no-files-found: error

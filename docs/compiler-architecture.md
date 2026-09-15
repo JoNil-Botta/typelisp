@@ -195,6 +195,16 @@ Logical traversal stays newest-first; CSR emission reads physical slots in
 oldest-first order directly, without constructing reversed intermediate lists.
 The integer-sequence and CSR tests cover growth, branches, duplicates and offsets.
 
+Call-memory root scanning, summary accumulation and write predicates read the
+live prefix of dense block sequences directly through the block sequence accessor.
+These internal shallow reads require valid storage and an index below logical len.
+The instruction helpers remain authoritative for effects and provenance. Root
+updates retain forward order and both existing passes; unresolved candidates and
+successful predicates stop before reading later blocks. No scanner mutates block
+storage or consumes spare capacity. The linked/dense/mixed differential fixture
+covers retained inputs, delayed definitions, unstable bindings and early exits;
+this traversal optimization leaves the wider block-storage migration in #5729 open.
+
 Affine folding keeps one mutable fact table per function: local vreg IDs index
 compact binding slots, and only live bindings are scanned for key/base
 invalidation. Every block starts with empty facts; the cumulative 512-binding

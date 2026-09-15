@@ -33,6 +33,7 @@ ci_gate_ledger_load() {
             invalid=1
             exit 1
         }
+        { sub(/\r$/, "", $0) }
         NR == 1 { if ($0 != "# ci-gate-ledger-schema\t1") fail("expected schema version 1"); next }
         NR >= 2 && NR <= 4 {
             expected=(NR == 2 ? "all" : (NR == 3 ? "linux" : "windows"))
@@ -131,6 +132,7 @@ ci_gate_ledger_validate_bindings() (
             print "CI gate ledger: " message > "/dev/stderr"
             invalid=1
         }
+        { sub(/\r$/, "", $0) }
         FNR == NR {
             if (FNR > 5) ids[$1]=1
             next

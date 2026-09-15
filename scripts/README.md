@@ -85,7 +85,9 @@ sh scripts/ci-verify.sh --list-gates windows
 ```
 
 The TSV projection has `id`, `hosts` and `label` columns. The original `all`
-applicability remains visible in either host projection. Listing validates the
+applicability remains visible in either host projection. LF and CRLF catalogs
+produce the same LF output; the repository checkout pins this catalog to LF.
+Listing validates the
 entire catalog, including the other host's records, before emitting anything;
 it does not initialize targets, timing, traces, capabilities or the seed.
 It is an inventory report, not a successful verification or a shard executor.

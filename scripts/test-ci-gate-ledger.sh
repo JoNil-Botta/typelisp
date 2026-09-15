@@ -24,7 +24,12 @@ printf '%s\n' \
     'id\thosts\tlabel' 'first\tall\tFirst gate' \
     'linux-only\tlinux\tLinux gate' 'windows-only\twindows\tWindows gate' \
     | sed 's/\\t/\	/g' > "$WORKDIR/catalog.tsv"
+sed 's/$/\r/' "$WORKDIR/catalog.tsv" > "$WORKDIR/catalog-crlf.tsv"
 for host in linux windows; do
+    ci_gate_ledger_load "$WORKDIR/catalog.tsv" "$host"
+    expected_lf_rows=$CI_GATE_LEDGER_ROWS
+    ci_gate_ledger_load "$WORKDIR/catalog-crlf.tsv" "$host"
+    test "$CI_GATE_LEDGER_ROWS" = "$expected_lf_rows" || fail 'CRLF projection differs'
     ci_gate_ledger_load "$WORKDIR/catalog.tsv" "$host"
     ci_gate_ledger_enter first
     test "$CI_GATE_LEDGER_LABEL" = 'First gate' || fail 'label resolution'
@@ -132,6 +137,12 @@ awk '
     /^echo "CI verification passed"$/ {if (finish != 1 || position >= NR) exit 1; success++}
     END {if (finish != 1 || timing != 1 || success != 1) exit 1}
 ' "$ROOT/scripts/ci-verify.sh" || fail 'completion must guard both success signals'
+sed 's/$/\r/' "$ROOT/scripts/ci-gates.tsv" > "$WORKDIR/list-root/scripts/ci-gates.tsv"
+for host in linux windows; do
+    sh "$WORKDIR/list-root/scripts/ci-verify.sh" --list-gates "$host" > "$WORKDIR/crlf-list-$host.tsv"
+    cmp "$WORKDIR/expected-$host.tsv" "$WORKDIR/crlf-list-$host.tsv" || fail 'CRLF CLI projection mismatch'
+done
+ci_gate_ledger_validate_bindings "$WORKDIR/list-root/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh"
 expect_failure list-unsupported sh "$WORKDIR/list-root/scripts/ci-verify.sh" --list-gates unsupported
 cp "$WORKDIR/other-host.tsv" "$WORKDIR/list-root/scripts/ci-gates.tsv"
 expect_failure list-malformed sh "$WORKDIR/list-root/scripts/ci-verify.sh" --list-gates linux

@@ -185,6 +185,7 @@ validate_checked_in_inventory() {
     ci_gate_ledger_validate_bindings \
         "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" || return $?
     awk -F '\t' '
+        { sub(/\r$/, "", $0) }
         FNR == NR { if (FNR > 5) hosts[$3]=$2; next }
         {
             gate=$3

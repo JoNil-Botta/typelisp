@@ -25,6 +25,11 @@ planned homes through the shared preservation-aware scratch selector, so an
 occupied home receives the same save/restore contract as other scratch roles.
 AVX-512 native min/max and the other reduction shapes retain two scratch roles.
 
+The lowerer's checked expression dispatcher delegates complete families to
+focused helpers. The [expression-family ledger](compiler-lowering-dispatch.md)
+records routing, residual inline bodies and the state/evaluation/provenance
+contract for those boundaries.
+
 Compilation is one whole program per executable with import-graph dedup
 (each module typechecked once per program). Package dependencies are
 codegen'd once into archives; an in-process session cache warms compiler
@@ -204,6 +209,14 @@ snapshot, and the table dies before the function's optimizer arena is rewound.
 The affine storage reference/growth tests and optimizer smoke driver protect
 these rules. Reuse the existing generated core vectors for compact payloads;
 do not allocate wide records for every possible local ID or rebuild cons chains.
+
+The checked inliner's literal-argument scan borrows dense block storage directly.
+It visits blocks and instructions in forward order without building linked
+copies. Its result includes every matching definition and the last integer
+literal, even after a duplicate makes specialization ineligible. Keep traversal
+separate from that admission decision; stopping the scan early changes its
+recorded result. This read-only path does not change block ownership or the
+remaining mixed block-list representation.
 
 Register analyses share one ownership budget: the conservative number of
 32-bit-set words per instruction is compared against 32,768 words (256 KiB),

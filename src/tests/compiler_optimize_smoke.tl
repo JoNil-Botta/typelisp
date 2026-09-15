@@ -4730,6 +4730,12 @@
 (define (main) : i64
   (begin
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "dense literal scan differential"
+      (if (compiler_optimize_tests.compiler-optimize-inline-literal-dense-scan-self-test)
+        1
+        0)
+      1)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-runtime-call-identity-self-test"
       (compiler_optimize_tests.compiler-optimize-runtime-call-identity-self-test)
       42)

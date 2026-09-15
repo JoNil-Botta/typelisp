@@ -140362,9 +140362,20 @@
   (match blocks
     [(ir.CompilerIrBlockList.Nil) unit]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-inline-checked-literal-scan-blocks!
-        (ir.compiler-ir-block-seq-to-list seq)
-        var)]
+      ;; This scan borrows the ordered blocks and only updates its literal
+      ;; counters. Keep every definition, including ones after a duplicate;
+      ;; neither linked copies nor an early exit are needed.
+      (let
+        [index : i64 0]
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        (while (< index count)
+          (begin
+            (match (ir.compiler-ir-block-seq-ref
+              (compiler-opt-global-shared-view seq)
+              index)
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (opt-inline-checked-literal-scan-instrs! instrs 0 var)])
+            (set! index (+ index 1)))))]
     [(ir.CompilerIrBlockList.Cons block rest)
       (begin
         (match (compiler-opt-global-shared-view block)

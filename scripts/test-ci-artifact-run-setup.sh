@@ -10,7 +10,8 @@ trap 'exit 143' HUP TERM
 FIXTURE="$WORKDIR/checkout with spaces"
 mkdir -p "$FIXTURE/scripts" "$FIXTURE/perf" "$WORKDIR/bin"
 cp "$ROOT/scripts/ci-verify.sh" "$FIXTURE/scripts/"
-for library in lib-linux-entry lib-ci-timing lib-benchmark-ci-cases lib-ci-compiler-artifact; do
+cp "$ROOT/scripts/ci-gates.tsv" "$FIXTURE/scripts/"
+for library in lib-ci-gate-ledger lib-linux-entry lib-ci-timing lib-benchmark-ci-cases lib-ci-compiler-artifact; do
     cp "$ROOT/scripts/$library.sh" "$FIXTURE/scripts/"
 done
 cp "$ROOT/perf/benchmark-ci-cases.tsv" "$FIXTURE/perf/"

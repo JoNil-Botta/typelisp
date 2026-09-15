@@ -277,6 +277,15 @@ modules with dedicated smokes, #2651/#2671/#2657), plus
 
 ### Inline tests
 
+`compiler_optimize_tests.tl`'s `inline-literal-dense-scan` compares the inliner's
+complete definition/literal counters across linked, dense, and mixed block
+storage, with independent expected results. It covers empty sequences, builder
+growth, duplicate and nonliteral definitions, missing and boundary IDs, traversal
+order, and rescanning retained input. `compiler_optimize_smoke.tl` also invokes
+the differential fixture alongside the existing literal-specialization and
+tail-only literal-site workflows. Keep both the counter and admission coverage
+when changing this scanner.
+
 Top-level `(test name body...)` items are source-owned executable checks. Normal
 `check`, `compile`, `build`, and `run` ignore them. `typelisp test <file.tl>`
 loads the import graph, turns tests owned by the requested source into private

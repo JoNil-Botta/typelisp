@@ -1571,3 +1571,18 @@ execs and 32 successful starts/waits against the native runtime. The final check
 requires unchanged descriptor count and no remaining children. Both modes must
 exit 42 with the exact metrics line and empty stderr; a compiler or runtime
 failure in either fails the gate.
+
+### Test-entry retained storage
+
+`test_cli_entry_memory_smoke.tl` keeps the complete ordered twelve-entry batch,
+warms four entries, then requires exactly unchanged retained allocation through
+the remaining eight. It borrows stable roots/target just like the batch driver;
+there is no reporting or caller-scratch wrapper inside the measured interval.
+The guard covers both load-selector header copies and process-lived borrowed
+view records. Do not restore a tolerance that can hide linear growth.
+`test_cli_entry_state_smoke.tl` also checks allocation-free repeated selection,
+parent view survival for success/zero/error retirement, and restored load/job
+selectors, intern bindings and cache lifetimes. Both native target manifests
+retain these fixtures. Heavy/mixed 4/16/32 measurements under the Linux/Windows
+caps complement this small deterministic regression; they are not replaced by
+it.

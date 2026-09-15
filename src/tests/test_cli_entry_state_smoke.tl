@@ -8,6 +8,8 @@
 (import stdlib.arena)
 (import stdlib.io)
 (import stdlib.string)
+(import stdlib.runtime as runtime)
+(import stdlib.profile)
 
 (define (entry-selectors-restored? [result : i64]) : bool
   (let
@@ -95,11 +97,60 @@
       (string.eq miss "cache/caller/copy.tl")
       (= (array-ref state.dotted-path-cache-owner-arena 0) 0))))
 
+(define (entry-preserves-view [result : i64]) : bool
+  (let
+    [text : String "parent-view-survives"]
+    [view : (& text str) (string.slice-view (& text) 7 4)]
+    [parent-owner : i64 (runtime.str-view-arena-current)]
+    [parent : load.CompilerLoadSessionState
+      (load.compiler-load-serial-test-session-state)]
+    [entry : tltest.TlTestEntry (tltest.tltest-entry-new)]
+    [entry-owner : i64 (runtime.str-view-arena-current)]
+    [inside : bool
+      (let
+        [child : String "child-view"]
+        [child-view : (& child str) (string.slice-view (& child) 6 4)]
+        (and (string.eq child-view "view") (string.eq view "view")))]
+    [actual : i64 (tltest.tltest-entry-finish entry result)]
+    [restored : load.CompilerLoadSessionState
+      (load.compiler-load-serial-test-session-state)]
+    (and
+      (> parent-owner 0)
+      (> entry-owner 0)
+      (not (= entry-owner parent-owner))
+      inside
+      (= actual result)
+      (= parent-owner (runtime.str-view-arena-current))
+      (= parent.shared-address restored.shared-address)
+      (string.eq view "view"))))
+
+(define (session-selection-does-not-retain?) : bool
+  (let
+    [home : load.CompilerLoadSessionState
+      (load.compiler-load-serial-test-session-state)]
+    [next : load.CompilerLoadSessionState
+      (load.compiler-load-standalone-session-state-new)]
+    [before : i64 (profile.alloc-live)]
+    [index : i64 0]
+    (begin
+      (while (< index 128)
+        (begin
+          (load.compiler-load-session-state-use!
+            (owned_view.compiler-owned-shared-view next))
+          (load.compiler-load-session-state-use!
+            (owned_view.compiler-owned-shared-view home))
+          (set! index (+ index 1))))
+      (and (> before 0) (= before (profile.alloc-live))))))
+
 (define (main) : i64
   (begin
     (unless
       (and
         (entry-selectors-restored? 42)
+        (entry-preserves-view 0)
+        (entry-preserves-view 7)
+        (entry-preserves-view -9)
+        (session-selection-does-not-retain?)
         (entry-bound-load-restored?)
         (loader-cache-lifetime-ok?))
       (io.panic "test CLI entry state: lifetime boundary failed"))

@@ -1991,18 +1991,26 @@
 
 ;; Serial/test compatibility selector. Production call sites are migrated to
 ;; explicit state APIs incrementally; do not add new compile-job dependencies.
-(define compiler-load-active-session-state : CompilerLoadSessionState
-  (compiler-load-standalone-session-state-new))
+(define compiler-load-active-session-state-address : u64
+  (let
+    [state : CompilerLoadSessionState
+      (compiler-load-standalone-session-state-new)]
+    state.shared-address))
 
-;; Serial compatibility adapters intentionally share this process-lifetime
-;; state. Stage0 keeps its historical shallow read while the current compiler
-;; requires the equivalent operation to be visibly unsafe.
+;; A session constructor publishes one canonical header at shared-address.
+;; Its scalar fields remain fixed; mutations use the shared cells it owns.
+;; Select that header directly so installation/restoration never allocates a
+;; copied header in caller scratch. The selected owner must remain live until
+;; a different session is selected, including default/failed-entry resets.
 (define (compiler-load-active-session-state-shared-view) : CompilerLoadSessionState
-  (cfg
-    stage0-seed-bootstrap
-    compiler-load-active-session-state
-    (unsafe
-      (ptr-read (ptr-addr-of compiler-load-active-session-state)))))
+  (unsafe
+    (ptr-read
+      (int->ptr
+        compiler-load-active-session-state-address
+        : (Ptr CompilerLoadSessionState)))))
+
+(define (compiler-load-session-state-select! [state : CompilerLoadSessionState]) : unit
+  (set! compiler-load-active-session-state-address state.shared-address))
 
 (define (compiler-load-session-state-shared-view
   [state : (& state CompilerLoadSessionState)]) : CompilerLoadSessionState
@@ -2031,8 +2039,7 @@
 ;; after its driver arena is retired. Stateful driver paths install their own
 ;; session explicitly; legacy resets return to this process-lifetime owner.
 (define (compiler-load-default-session-use!) : unit
-  (set!
-    compiler-load-active-session-state
+  (compiler-load-session-state-select!
     (compiler-load-global-array-element-shared-view
       compiler-load-default-session-state
       0)))
@@ -2545,7 +2552,7 @@
 (define (compiler-load-session-state-use! [state : CompilerLoadSessionState]) : unit
   (begin
     (set! (array-ref state.intern-state-ready 0) false)
-    (set! compiler-load-active-session-state state)))
+    (compiler-load-session-state-select! state)))
 
 (define (compiler-load-session-state-use-with-intern-state!
   [state : CompilerLoadSessionState]
@@ -2553,7 +2560,7 @@
   (begin
     (set! (array-ref state.intern-state 0) intern-state)
     (set! (array-ref state.intern-state-ready 0) true)
-    (set! compiler-load-active-session-state state)))
+    (compiler-load-session-state-select! state)))
 
 ;; Read the interner that defines this session's id domain. Production driver
 ;; sessions bind an explicit owner before load starts; the active-table capture
@@ -2594,7 +2601,9 @@
 (define (compiler-load-session-cache-enable!) : unit
   (set!
     (array-ref
-      (__tl-project-field compiler-load-active-session-state cache-enabled)
+      (__tl-project-field
+        (compiler-load-active-session-state-shared-view)
+        cache-enabled)
       0)
     true))
 
@@ -2602,7 +2611,7 @@
   (set!
     (array-ref
       (__tl-project-field
-        compiler-load-active-session-state
+        (compiler-load-active-session-state-shared-view)
         program-cache-enabled)
       0)
     true))
@@ -2624,7 +2633,7 @@
     (set!
       (array-ref
         (__tl-project-field
-          compiler-load-active-session-state
+          (compiler-load-active-session-state-shared-view)
           program-cache-enabled)
         0)
       false)
@@ -2642,18 +2651,19 @@
 
 (define (compiler-load-session-cache-disable-for-test!) : unit
   (begin
-    (set!
-      compiler-load-active-session-state
+    (compiler-load-session-state-select!
       (compiler-load-standalone-session-state-new))
     (set!
       (array-ref
-        (__tl-project-field compiler-load-active-session-state cache-enabled)
+        (__tl-project-field
+          (compiler-load-active-session-state-shared-view)
+          cache-enabled)
         0)
       false)
     (set!
       (array-ref
         (__tl-project-field
-          compiler-load-active-session-state
+          (compiler-load-active-session-state-shared-view)
           program-cache-enabled)
         0)
       true)
@@ -2667,8 +2677,7 @@
 ;; this while allocating in the arena that will outlive the retired session.
 (define (compiler-load-session-fresh-reset!) : unit
   (begin
-    (set!
-      compiler-load-active-session-state
+    (compiler-load-session-state-select!
       (compiler-load-standalone-session-state-new))
     (compiler-load-session-reset-pools!)
     ;; Fresh sessions retire every cached AST owner, so no declaration-origin
@@ -2682,7 +2691,9 @@
 
 (define (compiler-load-session-cache-enabled?) : bool
   (array-ref
-    (__tl-project-field compiler-load-active-session-state cache-enabled)
+    (__tl-project-field
+      (compiler-load-active-session-state-shared-view)
+      cache-enabled)
     0))
 
 (define (compiler-load-session-state-embedded-stdlib-source-used?
@@ -2900,7 +2911,7 @@
     (set!
       (array-ref
         (__tl-project-field
-          compiler-load-active-session-state
+          (compiler-load-active-session-state-shared-view)
           surface-summary-load-depth)
         0)
       0)
@@ -2944,7 +2955,7 @@
     (set!
       (array-ref
         (__tl-project-field
-          compiler-load-active-session-state
+          (compiler-load-active-session-state-shared-view)
           surface-summary-load-depth)
         0)
       0)
@@ -19893,7 +19904,7 @@
 (define (compiler-load-session-explicit-cache-api-isolation-ok?) : bool
   (let
     [previous-state : CompilerLoadSessionState
-      (compiler-load-global-shared-view compiler-load-active-session-state)]
+      (compiler-load-active-session-state-shared-view)]
     [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
     [state-b : CompilerLoadSessionState (compiler-load-session-state-new)]
     [_select-b : unit
@@ -19978,7 +19989,7 @@
 (define (compiler-load-session-embedded-provenance-isolation-ok?) : bool
   (let
     [previous-state : CompilerLoadSessionState
-      (compiler-load-global-shared-view compiler-load-active-session-state)]
+      (compiler-load-active-session-state-shared-view)]
     [active-intern-before : ci.InternCompatState
       (ci.intern-compat-state-capture-active)]
     [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
@@ -20094,7 +20105,7 @@
               (compiler-load-session-state-embedded-stdlib-module-id?
                 (compiler-load-session-state-shared-view (& state-a))
                 "stdlib.state_active")))
-          (set! compiler-load-active-session-state previous-state)
+          (compiler-load-session-state-select! previous-state)
           (ci.intern-compat-state-install!
             (owned_view.compiler-owned-shared-view active-intern-before))
           ok)))))
@@ -20103,7 +20114,7 @@
   (let
     [home : arena.Arena (arena.current)]
     [previous-state : CompilerLoadSessionState
-      (compiler-load-global-shared-view compiler-load-active-session-state)]
+      (compiler-load-active-session-state-shared-view)]
     [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
     [state-b : CompilerLoadSessionState (compiler-load-session-state-new)]
     [_enable-a : unit
@@ -20348,7 +20359,7 @@
 (define (compiler-load-session-lazy-intern-isolation-ok?) : bool
   (let
     [previous-load-state : CompilerLoadSessionState
-      (compiler-load-global-shared-view compiler-load-active-session-state)]
+      (compiler-load-active-session-state-shared-view)]
     [previous-interns : ci.InternCompatState
       (ci.intern-compat-state-capture-active)]
     [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]

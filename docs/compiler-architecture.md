@@ -165,7 +165,21 @@ results remain in their outer emission arena. The entry finish operation clears
 aliases before freeing pools, retires all job-owned cache payloads, restores
 parent selectors and destroys the entry arena on both success and diagnostic
 returns. This lifetime applies to every ordered entry; it does not split or
-restart the batch compiler.
+restart the batch compiler. Borrowed `str`/`bytes` view descriptors use a
+separate entry-owned atomic arena, since their ordinary runtime owner is
+process-lived even when their referenced bytes are short-lived. The serial
+entry boundary saves/restores the previous runtime descriptor selector and
+retires the child records only after their consumers finish. Parent views keep
+their original owner; no concurrent thread may create views during this scoped
+compiler operation. Test executables run in separate processes.
+
+The serial load-session selector stores the canonical `shared-address` created
+by the session constructor. Installing or restoring a session must not copy
+its aggregate header into caller scratch. Scalar header fields remain fixed;
+mutable state lives in the owner's shared cells. Reset paths select a newly
+owned session before retiring old pools, and entry cleanup restores the parent
+before releasing child ownership. This is the same canonical-header invariant
+used by explicit session views, not an additional session cache.
 
 
 Memory-class aggregate expressions carry addresses into inline storage.

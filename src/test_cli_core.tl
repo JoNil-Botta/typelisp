@@ -8,6 +8,7 @@
 ;; `AstDecl.Test`.
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
+(import stdlib.runtime as runtime)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.process)
@@ -5997,8 +5998,14 @@
 ;; A test entry borrows its inputs from the caller and owns every temporary
 ;; compiler carrier. Serial selectors are a scoped compatibility bridge: they
 ;; are restored before the entry owner is destroyed, including failure exits.
+;; This is a serial compiler boundary: child test programs run in separate
+;; processes, and no concurrent thread may create borrowed runtime views during
+;; an entry. View records belong to this entry even when their bytes are static
+;; or borrowed from the parent; only scalar results cross its retirement.
 (defstruct TlTestEntry
   (owner arena.Arena)
+  (view-owner arena.Arena)
+  (parent-view-owner i64)
   (parent-load compiler_load.CompilerLoadSessionState)
   (parent-default compiler_load.CompilerLoadSessionState)
   (parent-job tc_core.TcJobState))
@@ -6006,6 +6013,11 @@
 (define (tltest-entry-new) : TlTestEntry
   (let
     [owner : arena.Arena (arena.make)]
+    [parent-view-owner : i64 (runtime.str-view-arena-current)]
+    [view-owner : arena.Arena (arena.make-atomic)]
+    [_view-install : unit
+      (unsafe
+        (runtime.str-view-arena-use! view-owner.handle))]
     [parent-load : compiler_load.CompilerLoadSessionState
       (compiler_load.compiler-load-serial-test-session-state)]
     [parent-default : compiler_load.CompilerLoadSessionState
@@ -6032,7 +6044,13 @@
         (array-ref tc_core.tc-serial-job-state-cell 0)
         (owned_view.compiler-owned-shared-view entry-job))
       (ast.ast-node-pool-context-install! pools)
-      (TlTestEntry owner parent-load parent-default parent-job))))
+      (TlTestEntry
+        owner
+        view-owner
+        parent-view-owner
+        parent-load
+        parent-default
+        parent-job))))
 
 (define (tltest-entry-finish [entry : TlTestEntry] [result : i64]) : i64
   (begin
@@ -6066,7 +6084,11 @@
       (compiler_load.compiler-load-session-state-use!
         (owned_view.compiler-owned-shared-view entry.parent-load)))
     (unsafe
+      (runtime.str-view-arena-use! entry.parent-view-owner))
+    (unsafe
       (arena.destroy entry.owner))
+    (unsafe
+      (arena.destroy entry.view-owner))
     result))
 
 (define (tltest-package-run-integration-source-isolated-count

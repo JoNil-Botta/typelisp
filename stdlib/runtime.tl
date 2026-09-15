@@ -1263,9 +1263,27 @@
         (unsafe
           (string-from-bytes (ptr-cast dst : (Ptr u8)) len))))))
 
-;: Cached process-lifetime arena used for borrowed string views.
+;: Borrowed-view descriptor owner. Ordinary programs lazily retain one atomic
+;: process-lifetime arena. The serial compiler may install a scoped owner when
+;: every view created in that scope is consumed before entry retirement.
 (define runtime-str-view-arena : i64
   0)
+
+;: Read the current descriptor owner without creating the lazy default arena.
+;: Zero means the default has not yet been initialized.
+(define (str-view-arena-current) : i64
+  runtime-str-view-arena)
+
+;: Compiler/runtime ownership hook for a serial, quiescent process. A nonzero
+;: owner must be a live atomic arena. No other thread may create borrowed views
+;: while the selector is replaced or its scoped owner can be retired. Preserve
+;: the previous selector, restore it before freeing the scoped arena, and prove
+;: that no descriptor allocated in that arena survives the scope. This selects
+;: descriptor storage only; it neither owns nor extends the referenced bytes.
+;: Zero is permitted when restoring an uninitialized default selector.
+(unsafe
+  (define (str-view-arena-use! [owner : i64]) : unit
+    (set! runtime-str-view-arena owner)))
 
 ;: Return the borrowed-view arena, creating it on first use.
 (define (str-view-arena-get) : i64

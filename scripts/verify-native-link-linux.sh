@@ -642,7 +642,7 @@ ffi_add7_ptr:
 EOF
     cat > "$_src" <<'EOF'
 (extern base (:symbol "ffi_base_value") : i64)
-(extern add7 (:symbol "ffi_add7_ptr") : (-> i64 i64))
+(extern add7 (:symbol "ffi_add7_ptr") : (CFunc non-null (-> i64 i64)))
 (define (main) : i64 (+ base (add7 5)))
 EOF
 

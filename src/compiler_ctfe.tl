@@ -4059,6 +4059,16 @@
           (ast.ast-place-shared-view pools)
           infos
           (ast.ast-node-pool-context-type-get pools elem)))]
+    [(ast.AstType.CFunc signature mode)
+      (let
+        [resolved : ast.AstType
+          (ctfe-reflect-resolve-type-with-pools
+            (ast.ast-place-shared-view pools)
+            infos
+            (ast.ast-node-pool-context-type-get pools signature))]
+        (ast.AstType.CFunc
+          (ast.ast-node-pool-context-type-push pools resolved)
+          mode))]
     [(ast.AstType.Ptr elem)
       (ast.ast-ty-ptr-with-pools
         (ast.ast-place-shared-view pools)
@@ -4251,6 +4261,15 @@
           (ast.ast-place-shared-view pools)
           infos
           (ast.ast-node-pool-context-type-get pools ret)))]
+    [(ast.AstType.CFunc signature mode)
+      (str_cat.str-cat
+        "cfn_"
+        (ast.ast-c-function-mode-name mode)
+        "_"
+        (ctfe-type-key-with-reflections-and-pools
+          (ast.ast-place-shared-view pools)
+          infos
+          (ast.ast-node-pool-context-type-get pools signature)))]
     [(ast.AstType.Tuple elems)
       (str_cat.str-cat
         "tuple_"
@@ -4391,6 +4410,7 @@
     [(ast.AstType.ExprList) "expr-list"]
     [(ast.AstType.Unit) "unit"]
     [(ast.AstType.Never) "never"]
+    [(ast.AstType.CFunc _ _) "c-function"]
     [(ast.AstType.Func _ _) "function"]
     [(ast.AstType.Tuple _) "tuple"]
     [(ast.AstType.Array _ _) "array"]
@@ -4980,6 +5000,7 @@
     [(ast.AstType.Bytes) -1]
     [(ast.AstType.Expr) -1]
     [(ast.AstType.ExprList) -1]
+    [(ast.AstType.CFunc _ _) 8]
     [(ast.AstType.Func _ _) 8]
     [(ast.AstType.Tuple _) 8]
     [(ast.AstType.Array elem count)
@@ -5077,6 +5098,7 @@
     [(ast.AstType.Bytes) -1]
     [(ast.AstType.Expr) -1]
     [(ast.AstType.ExprList) -1]
+    [(ast.AstType.CFunc _ _) 8]
     [(ast.AstType.Func _ _) 8]
     [(ast.AstType.Tuple _) 8]
     [(ast.AstType.Array elem _)
@@ -11948,6 +11970,17 @@
           (ctfe-ty-get env ret)
           env)
         env)]
+    [(ast.AstType.CFunc signature mode)
+      (ctfe-type-syntax-call-id
+        (ctfe-builtin-ref 295)
+        (ast.ast-expr-cons
+          (ctfe-type-syntax-name-id
+            (ctfe-builtin-ref (+ 296 (ast.ast-c-function-mode-key mode)))
+            env)
+          (ast.ast-expr-cons
+            (ctfe-type-to-expr (ctfe-ty-get env signature) env)
+            (ast.ast-expr-list-new)))
+        env)]
     [(ast.AstType.Tuple elems)
       (ctfe-type-syntax-call-id
         (ctfe-builtin-ref 175)
@@ -12370,6 +12403,52 @@
         [_ (ctfe-type-expr-error origin)]))
     (ctfe-type-expr-error origin)))
 
+(define (ctfe-expr-c-function-type
+  [args : ast.AstExprList]
+  [origin : ast.AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfeQuoteType
+  (if (= args.len 2)
+    (let
+      [mode-expr : ast.AstExpr
+        (ctfe-expr-unspan
+          env
+          (ctfe-ast-get env (ast.ast-expr-list-get (& args) 0 0)))]
+      [mode : i64
+        (match mode-expr
+          [(ast.AstExpr.Var name)
+            (cond
+              [(= name (ctfe-builtin-ref 296)) 0]
+              [(= name (ctfe-builtin-ref 297)) 1]
+              [(= name (ctfe-builtin-ref 298)) 2]
+              [(= name (ctfe-builtin-ref 299)) 3]
+              [else -1])]
+          [_ -1])]
+      (if (< mode 0)
+        (ctfe-type-expr-error origin)
+        (match (ctfe-expr-to-type
+          (ctfe-ast-get env (ast.ast-expr-list-get (& args) 1 0))
+          (clone origin)
+          (ctfe-env-shared-view (& env))
+          fuel)
+          [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)]
+          [(ResultCtfeQuoteType.Ok shape next-fuel)
+            (match shape
+              [(ast.AstType.Func params result)
+                (ResultCtfeQuoteType.Ok
+                  (ast.AstType.CFunc
+                    (ast.ast-node-pool-context-type-push
+                      (ctfe-env-pools env)
+                      (ast.AstType.Func params result))
+                    (cond
+                      [(= mode 0) ast.AstCFunctionMode.Nullable]
+                      [(= mode 1) ast.AstCFunctionMode.NonNull]
+                      [(= mode 2) ast.AstCFunctionMode.UnsafeNullable]
+                      [else ast.AstCFunctionMode.UnsafeNonNull]))
+                  next-fuel)]
+              [_ (ctfe-type-expr-error origin)])])))
+    (ctfe-type-expr-error origin)))
+
 (define (ctfe-expr-to-type
   [expr : ast.AstExpr]
   [origin : ast.AstExpr]
@@ -12392,6 +12471,8 @@
                 (ctfe-expr-resolved-nominal-type args origin env fuel false)]
               [(= name (ctfe-builtin-ref 176))
                 (ctfe-expr-func-type args origin env fuel)]
+              [(= name (ctfe-builtin-ref 295))
+                (ctfe-expr-c-function-type args origin env fuel)]
               [(= name (ctfe-builtin-ref 109))
                 (ctfe-expr-array-type args origin env fuel)]
               [(or
@@ -12571,6 +12652,15 @@
         [(ResultCtfeQuoteType.Ok quoted next-fuel)
           (ResultCtfeQuoteType.Ok
             (ast.ast-ty-box-with-pools (ctfe-env-pools env) quoted)
+            next-fuel)]
+        [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
+    [(ast.AstType.CFunc signature mode)
+      (match (ctfe-quote-type (ctfe-ty-get env signature) env origin fuel)
+        [(ResultCtfeQuoteType.Ok quoted next-fuel)
+          (ResultCtfeQuoteType.Ok
+            (ast.AstType.CFunc
+              (ast.ast-node-pool-context-type-push (ctfe-env-pools env) quoted)
+              mode)
             next-fuel)]
         [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
     [(ast.AstType.Ptr elem)
@@ -16394,6 +16484,16 @@
               env
               (ctfe-ty-get env a-ret)
               (ctfe-ty-get env b-ret)))]
+        [_ false])]
+    [(ast.AstType.CFunc a-signature a-mode)
+      (match b
+        [(ast.AstType.CFunc b-signature b-mode)
+          (and
+            (ast.ast-c-function-mode-eq? a-mode b-mode)
+            (ctfe-type-eq-in-env
+              env
+              (ctfe-ty-get env a-signature)
+              (ctfe-ty-get env b-signature)))]
         [_ false])]
     [(ast.AstType.Tuple a-elems)
       (match b

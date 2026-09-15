@@ -16,6 +16,46 @@ Source (.tl)
     ↓  target tools → native executable
 ```
 
+`AstType.CFunc` separates a native code address from an ordinary TypeLisp
+function/closure descriptor. Its pooled `Func` operand records only argument and
+result shape; its second operand records nullability and the unsafe-call effect.
+The AST node keeps the existing 24-byte stride, while the runtime value is one
+8-byte code address. Copying or storing that address must preserve the complete
+`CFunc` type. A zero initializer is valid only for nullable modes.
+Surface AST schema 10 records the pooled signature and all four modes; the
+encode/hydrate selftest checks those facts after compaction and intern reset.
+The reader records C signature references from pool nodes and inline types, then
+validates them against the completed destination pool before publishing hydration.
+A signature must reference an in-range `Func`, never a scalar or another `CFunc`.
+
+Backend signature recovery reads `CFunc`'s pooled signature through the explicit
+type-segment bases, using the same reader as extern signatures. Losing the
+parameter list here can pass a wide aggregate's transport metadata as ordinary
+register arguments. The migrated native C ABI fixtures cover register, memory
+and hidden-result shapes through both direct and stored code pointers.
+
+`lower-indirect-call` owns typed dispatch to the C ABI lowering path. Every
+indirect call site uses that dispatcher; lexical provenance flags cannot choose
+a different calling convention for the same type. Global
+cells and external data symbols must first load their current value; neither the
+cell address nor a C code address may enter closure-descriptor dispatch.
+Checked bindings retain the complete type; their replay record stores only arena
+owner and phase transitions. Argument compatibility compares types directly,
+without a separate syntax walk to infer a raw pointer provenance.
+Environment caches and scoped lookup results likewise carry no raw-pointer flag.
+They preserve the complete stored type alongside independent unsafe-declaration
+and ownership markers. The cache raw-layout smoke checks the shadow-array
+address, flags and parent links against typed field access on full and layered
+caches; its explicit byte offsets must change with the cache record.
+`tc-source-type-policy-ok` validates every source `CFunc` through the shared C
+ABI checker and then visits its signature through the existing source policy.
+This covers unused parameters, fields, lambda types, initializers and nested
+annotations without a second declaration or expression traversal.
+`tc-check-extern-native-signature` checks explicit C pointer signatures and
+borrowed-Slice boundaries even on default native declarations. The broader
+explicit-C ABI checker remains separate because private runtime declarations
+also use native contracts outside the ordinary C signature subset.
+
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask
 scratch family: its second comparison must not write through the source's XMM

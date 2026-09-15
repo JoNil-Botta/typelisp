@@ -24,7 +24,9 @@
   (y f64))
 
 (extern (pair-i64-make [seed : i64]) : PairI64 (:symbol "tl_cabi_pair_i64_make"))
-(extern pair-i64-maker (:symbol "tl_cabi_pair_i64_make_ptr") : (-> i64 PairI64))
+(extern pair-i64-maker (:symbol "tl_cabi_pair_i64_make_ptr") : (CFunc
+  non-null
+  (-> i64 PairI64)))
 (extern (mix-if-make [seed : i64]) : MixIF (:symbol "tl_cabi_mix_if_make"))
 (extern (mix-fi-make [seed : i64]) : MixFI (:symbol "tl_cabi_mix_fi_make"))
 (extern (pair-f64-make [seed : i64]) : PairF64 (:symbol "tl_cabi_pair_f64_make"))
@@ -32,7 +34,7 @@
 (define (main) : i64
   (let
     [pair : PairI64 (pair-i64-make 4)]
-    [pair-copy : (-> i64 PairI64) pair-i64-maker]
+    [pair-copy : (CFunc non-null (-> i64 PairI64)) pair-i64-maker]
     [pair-via-ptr : PairI64 (pair-copy 6)]
     [mix-if : MixIF (mix-if-make 5)]
     [mix-fi : MixFI (mix-fi-make 7)]

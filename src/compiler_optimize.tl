@@ -8376,6 +8376,16 @@
               (ast.ast-type-segment-bases-get type-segment-bases a-ret)
               (ast.ast-type-segment-bases-get type-segment-bases b-ret)))]
         [_ false])]
+    [(ast.AstType.CFunc a-signature a-mode)
+      (match (compiler-opt-global-shared-view b)
+        [(ast.AstType.CFunc b-signature b-mode)
+          (and
+            (ast.ast-c-function-mode-eq? a-mode b-mode)
+            (opt-type-eq
+              type-segment-bases
+              (ast.ast-type-segment-bases-get type-segment-bases a-signature)
+              (ast.ast-type-segment-bases-get type-segment-bases b-signature)))]
+        [_ false])]
     [(ast.AstType.Tuple a-items)
       (match (compiler-opt-global-shared-view b)
         [(ast.AstType.Tuple b-items)
@@ -8658,6 +8668,14 @@
           (opt-type-hash
             type-segment-bases
             (ast.ast-type-segment-bases-get type-segment-bases ret))))]
+    [(ast.AstType.CFunc signature mode)
+      (hash.combine
+        38
+        (hash.combine
+          (ast.ast-c-function-mode-key mode)
+          (opt-type-hash
+            type-segment-bases
+            (ast.ast-type-segment-bases-get type-segment-bases signature))))]
     [(ast.AstType.Tuple items)
       (hash.combine
         20
@@ -172120,6 +172138,7 @@
     [(ast.AstType.Never) 0]
     [(ast.AstType.Expr) 0]
     [(ast.AstType.ExprList) 0]
+    [(ast.AstType.CFunc _ _) 8]
     [(ast.AstType.Func _ _) 8]
     [(ast.AstType.Tuple _) 8]
     [(ast.AstType.Array _ _) 8]
@@ -175174,6 +175193,7 @@
     [(ast.AstType.Never) 0]
     [(ast.AstType.Expr) 0]
     [(ast.AstType.ExprList) 0]
+    [(ast.AstType.CFunc _ _) 8]
     [(ast.AstType.Func _ _) 8]
     [(ast.AstType.Tuple _) 8]
     [(ast.AstType.Array _ _) 8]

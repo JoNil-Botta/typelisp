@@ -7312,13 +7312,13 @@
 
 (define (compiler-lower-extern-value-fnptr-source) : String
   "(extern raw-value (:symbol \"tl_test_raw_value\") : i64)
-(extern raw-fn (:symbol \"tl_test_raw_fn\") : (-> i64 i64))
+(extern raw-fn (:symbol \"tl_test_raw_fn\") : (CFunc non-null (-> i64 i64)))
 (extern (direct-fn [x : i64]) : i64 (:symbol \"tl_test_direct_fn\"))
-(extern (resolve [name : (Ptr u8)]) : (-> i64 i64) (:symbol \"tl_test_resolve\"))
+(extern (resolve [name : (Ptr u8)]) : (CFunc non-null (-> i64 i64)) (:symbol \"tl_test_resolve\"))
 (define (main) : i64
   (let
-    [copied : (-> i64 i64) raw-fn]
-    [resolved : (-> i64 i64) (resolve (ptr-null : (Ptr u8)))]
+    [copied : (CFunc non-null (-> i64 i64)) raw-fn]
+    [resolved : (CFunc non-null (-> i64 i64)) (resolve (ptr-null : (Ptr u8)))]
     (+ raw-value (+ (raw-fn 41) (+ (copied 40) (+ (resolved 39) (direct-fn 1)))))))")
 
 (define (compiler-lower-extern-value-fnptr-shape-ok?) : bool
@@ -7376,16 +7376,16 @@
   (test.assert-true
     (compiler-lower-error-ok?
       (compiler-lower-extern-returned-fnptr-to-tl-param-source)
-      "typecheck: raw C function pointer cannot be used as a TypeLisp function value")
+      "typecheck: raw C function pointer requires an explicit CFunc type")
     "dynamically returned raw C function pointers cannot flow into TypeLisp callback positions"))
 
 (define (compiler-lower-c-abi-linux-tag-only-enum-source) : String
   "(defenum Status (Ready) (Done) (Failed))
 (extern (status-next [arg0 : Status]) : Status (:symbol \"tl_cabi_status_next\"))
-(extern status-score-ptr (:symbol \"tl_cabi_status_score_ptr\") : (->
+(extern status-score-ptr (:symbol \"tl_cabi_status_score_ptr\") : (CFunc non-null (->
   Status
   i64
-  i64))
+  i64)))
 (define (status-rank [s : Status]) : i64
   (match s
     [Ready 1]
@@ -7393,7 +7393,7 @@
     [Failed 3]))
 (define (main) : i64
   (let
-    [score-copy : (-> Status i64 i64) status-score-ptr]
+    [score-copy : (CFunc non-null (-> Status i64 i64)) status-score-ptr]
     [ready : Status (Ready)]
     [done : Status (status-next ready)]
     [failed : Status (status-next done)]
@@ -7432,7 +7432,7 @@
 (defstruct SmallBox (choice SmallChoice))
 (defenum WideChoice (None) (Some u64 u64))
 (extern (small-score [arg : SmallChoice]) : i64 (:symbol \"tl_cabi_small_score\"))
-(extern small-score-ptr (:symbol \"tl_cabi_small_score_ptr\") : (-> SmallChoice i64))
+(extern small-score-ptr (:symbol \"tl_cabi_small_score_ptr\") : (CFunc non-null (-> SmallChoice i64)))
 (extern (box-score [arg : SmallBox]) : i64 (:symbol \"tl_cabi_box_score\"))
 (extern (box-make [seed : i64]) : SmallBox (:symbol \"tl_cabi_box_make\"))
 (extern (wide-make [seed : u64]) : WideChoice (:symbol \"tl_cabi_wide_make\"))
@@ -7442,7 +7442,7 @@
     [(WideChoice.Some lo hi) (+ (cast lo : i64) (cast hi : i64))]))
 (define (main) : i64
   (let
-    [copy : (-> SmallChoice i64) small-score-ptr]
+    [copy : (CFunc non-null (-> SmallChoice i64)) small-score-ptr]
     [boxed : SmallBox (box-make 5)]
     [made : WideChoice (wide-make (cast 10 : u64))]
     (+ (small-score (SmallChoice.Some 11)) (+ (copy SmallChoice.None) (+ (box-score boxed) (wide-score made))))))")
@@ -7492,37 +7492,37 @@
 (defenum WideChoice (None) (Some u64 f64))
 (defenum ReturnChoice (None) (Pair u64 u64))
 (extern (status-pick [arg0 : Status] [arg1 : Status] [choose-second : i64]) : Status (:symbol \"tl_win64_status_pick\"))
-(extern status-pick-ptr (:symbol \"tl_win64_status_pick_ptr\") : (->
+(extern status-pick-ptr (:symbol \"tl_win64_status_pick_ptr\") : (CFunc non-null (->
   Status
   Status
   i64
-  Status))
+  Status)))
 (extern (small-score [arg : SmallChoice] [bias : i64]) : i64 (:symbol \"tl_win64_small_score\"))
-(extern small-scorer (:symbol \"tl_win64_small_score_ptr\") : (->
+(extern small-scorer (:symbol \"tl_win64_small_score_ptr\") : (CFunc non-null (->
   SmallChoice
   i64
-  i64))
+  i64)))
 (extern (wide-score [arg : WideChoice] [tag : u64]) : i64 (:symbol \"tl_win64_wide_score\"))
-(extern wide-scorer (:symbol \"tl_win64_wide_score_ptr\") : (->
+(extern wide-scorer (:symbol \"tl_win64_wide_score_ptr\") : (CFunc non-null (->
   WideChoice
   u64
-  i64))
+  i64)))
 (extern (return-choice-make [a : u32] [b : u32] [tag : u64]) : ReturnChoice (:symbol \"tl_win64_return_choice_make\"))
-(extern return-choice-maker (:symbol \"tl_win64_return_choice_make_ptr\") : (->
+(extern return-choice-maker (:symbol \"tl_win64_return_choice_make_ptr\") : (CFunc non-null (->
   u32
   u32
   u64
-  ReturnChoice))
+  ReturnChoice)))
 (define (return-score [r : ReturnChoice]) : i64
   (match r
     [ReturnChoice.None 0]
     [(ReturnChoice.Pair lo hi) (+ (cast lo : i64) (cast hi : i64))]))
 (define (main) : i64
   (let
-    [status-copy : (-> Status Status i64 Status) status-pick-ptr]
-    [small-copy : (-> SmallChoice i64 i64) small-scorer]
-    [wide-copy : (-> WideChoice u64 i64) wide-scorer]
-    [return-copy : (-> u32 u32 u64 ReturnChoice) return-choice-maker]
+    [status-copy : (CFunc non-null (-> Status Status i64 Status)) status-pick-ptr]
+    [small-copy : (CFunc non-null (-> SmallChoice i64 i64)) small-scorer]
+    [wide-copy : (CFunc non-null (-> WideChoice u64 i64)) wide-scorer]
+    [return-copy : (CFunc non-null (-> u32 u32 u64 ReturnChoice)) return-choice-maker]
     [picked : Status (status-pick (Ready) (Done) 1)]
     [picked-via-ptr : Status (status-copy (Ready) (Failed) 1)]
     [small-direct : i64 (small-score (SmallChoice.Some 11) 5)]

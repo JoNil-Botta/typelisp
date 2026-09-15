@@ -77,6 +77,16 @@ instead, which the sweep does not require to be reachable.
 The complete and current invocation order remains in `ci-verify.sh`; this table
 is a map, not a second manifest.
 
+Every `ci-verify.sh` invocation creates a fresh same-run artifact token and
+initializes `target/ci-compiler-artifacts/trace.tsv`, including local runs.
+Set `TYPELISP_CI_COMPILER_ARTIFACT_TRACE` to choose another destination;
+relative paths resolve against the checkout root, and an empty value uses the
+default. The trace is replaced at startup and checked for complete producer and
+consumer coverage at the end. Child gates inherit both token and trace.
+Standalone native-link verification can omit both variables; supplying only
+one remains an error. `test-ci-artifact-run-setup.sh` exercises actual CI startup
+through a probe child on both host branches before any compiler work.
+
 `verify-cross-mode-differential.sh` reads
 `tests/cross-mode/corpus.tsv` after its producer gates have run. It reuses the
 integration, TLCI, SPMD, Windows COFF, and same-run bootstrap artifacts instead

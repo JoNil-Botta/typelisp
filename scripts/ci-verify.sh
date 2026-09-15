@@ -50,17 +50,16 @@ esac
 
 # Same-run compiler reuse is fail-closed.  The token prevents a prior run's
 # path/metadata pair from being accepted even when it happens to name an
-# identical file, while the optional trace omits the token and stays diffable.
+# identical file. Every CI run owns a paired trace; the journal omits the token
+# and stays diffable. Standalone gates may still run without either setting.
 TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-$HOST_OS-$$"
-export TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN
-if [ -n "${TYPELISP_CI_COMPILER_ARTIFACT_TRACE:-}" ]; then
-    case "$TYPELISP_CI_COMPILER_ARTIFACT_TRACE" in
-        /* | [A-Za-z]:[/\\]*) ;;
-        *) TYPELISP_CI_COMPILER_ARTIFACT_TRACE="$ROOT/$TYPELISP_CI_COMPILER_ARTIFACT_TRACE" ;;
-    esac
-    export TYPELISP_CI_COMPILER_ARTIFACT_TRACE
-    ci_compiler_artifact_trace_init "$TYPELISP_CI_COMPILER_ARTIFACT_TRACE"
-fi
+TYPELISP_CI_COMPILER_ARTIFACT_TRACE="${TYPELISP_CI_COMPILER_ARTIFACT_TRACE:-$ROOT/target/ci-compiler-artifacts/trace.tsv}"
+case "$TYPELISP_CI_COMPILER_ARTIFACT_TRACE" in
+    /* | [A-Za-z]:[/\\]*) ;;
+    *) TYPELISP_CI_COMPILER_ARTIFACT_TRACE="$ROOT/$TYPELISP_CI_COMPILER_ARTIFACT_TRACE" ;;
+esac
+export TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN TYPELISP_CI_COMPILER_ARTIFACT_TRACE
+ci_compiler_artifact_trace_init "$TYPELISP_CI_COMPILER_ARTIFACT_TRACE"
 
 BENCHMARK_CORRECTNESS_CASES=
 OPT2_CORRECTNESS_CASES=
@@ -223,6 +222,7 @@ run_gate "build provenance helper self-tests" scripts/verify-build-provenance.sh
 run_gate \
     "CI compiler artifact provenance self-tests" \
     scripts/verify-ci-compiler-artifacts.sh
+run_gate "CI compiler artifact startup self-tests" sh scripts/test-ci-artifact-run-setup.sh
 # Keep current-mangling module/clone attribution pinned without making code
 # size itself a CI budget. Linked-object measurement remains an opt-in report.
 run_gate \
@@ -818,12 +818,10 @@ else
     echo "[ci-verify]   rooted Linux filesystem and process failure boundaries"
 fi
 
-if [ -n "${TYPELISP_CI_COMPILER_ARTIFACT_TRACE:-}" ]; then
-    run_gate \
-        "CI compiler artifact hosted trace completeness" \
-        scripts/verify-ci-compiler-artifacts.sh \
-        --trace "$TYPELISP_CI_COMPILER_ARTIFACT_TRACE" "$HOST_OS"
-fi
+run_gate \
+    "CI compiler artifact hosted trace completeness" \
+    scripts/verify-ci-compiler-artifacts.sh \
+    --trace "$TYPELISP_CI_COMPILER_ARTIFACT_TRACE" "$HOST_OS"
 
 if ci_timing_enabled; then
     ci_timing_record_verification_complete "$CI_VERIFY_STARTED_MS" 0

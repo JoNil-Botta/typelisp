@@ -148941,10 +148941,18 @@
           roots
           (compiler-opt-box-shared-view rest)))]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-call-memory-root-scan-blocks!
-        sources
-        roots
-        (ir.compiler-ir-block-seq-to-list seq))]))
+      (let
+        [index : i64 0]
+        (while (< index seq.len)
+          (begin
+            (match (ir.compiler-ir-block-seq-ref seq index)
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (opt-call-memory-root-scan-instrs!
+                  (compiler-opt-global-shared-view sources)
+                  roots
+                  instrs
+                  0)])
+            (set! index (+ index 1)))))]))
 
 (define (opt-call-memory-sources
   [params : ir.CompilerIrParamSeq]
@@ -149532,15 +149540,31 @@
                 elements
                 (compiler-opt-box-shared-view rest))])]
         [(ir.CompilerIrBlockList.Array seq)
-          (opt-call-memory-candidate-blocks
-            type-segment-bases
-            candidate
-            summaries
-            function-set
-            params
-            roots
-            elements
-            (ir.compiler-ir-block-seq-to-list seq))])]))
+          (let
+            [index : i64 0]
+            [out : OptCallMemoryCandidate candidate]
+            (begin
+              (while (< index seq.len)
+                (begin
+                  (match (compiler-opt-global-shared-view out)
+                    [(OptCallMemoryCandidate.Unresolved) (return out)]
+                    [_ unit])
+                  (match (ir.compiler-ir-block-seq-ref seq index)
+                    [(ir.CompilerIrBlock.Block _ instrs)
+                      (set!
+                        out
+                        (opt-call-memory-candidate-instrs
+                          type-segment-bases
+                          out
+                          (compiler-opt-global-shared-view summaries)
+                          (compiler-opt-global-shared-view function-set)
+                          (compiler-opt-global-shared-view params)
+                          (compiler-opt-global-shared-view roots)
+                          (compiler-opt-global-shared-view elements)
+                          instrs
+                          0))])
+                  (set! index (+ index 1))))
+              out))])]))
 
 (define (opt-call-memory-direct-needs-roots?
   [summaries : opt_i64_i64_map.Map]
@@ -149594,9 +149618,21 @@
               summaries
               (compiler-opt-box-shared-view rest)))])]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-call-memory-blocks-need-roots?
-        summaries
-        (ir.compiler-ir-block-seq-to-list seq))]))
+      (let
+        [index : i64 0]
+        (begin
+          (while (< index seq.len)
+            (begin
+              (match (ir.compiler-ir-block-seq-ref seq index)
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (when
+                    (opt-call-memory-instrs-need-roots?
+                      (compiler-opt-global-shared-view summaries)
+                      instrs
+                      0)
+                    (return true))])
+              (set! index (+ index 1))))
+          false))]))
 
 ;; Only a direct write instruction can consult the element map, so the type
 ;; environment and the classification walk it needs are built only for
@@ -149632,8 +149668,18 @@
             (opt-call-memory-blocks-write-memory?
               (compiler-opt-box-shared-view rest)))])]
     [(ir.CompilerIrBlockList.Array seq)
-      (opt-call-memory-blocks-write-memory?
-        (ir.compiler-ir-block-seq-to-list seq))]))
+      (let
+        [index : i64 0]
+        (begin
+          (while (< index seq.len)
+            (begin
+              (match (ir.compiler-ir-block-seq-ref seq index)
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (when
+                    (opt-call-memory-instrs-write-memory? instrs 0)
+                    (return true))])
+              (set! index (+ index 1))))
+          false))]))
 
 (define (opt-call-memory-function-candidate
   [type-segment-bases : i64]

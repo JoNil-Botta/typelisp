@@ -3511,6 +3511,9 @@
         (compiler_optimize_tests.compiler-optimize-licm-checked-root-self-test)
         42)
       unit)
+    (compiler_optimize_tests.compiler-optimize-self-test-require!
+      "compiler-optimize-call-memory-dense-scan-self-test"
+      (compiler_optimize_tests.compiler-optimize-call-memory-dense-scan-self-test))
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-call-memory-frame-roots-self-test"
       (compiler_optimize_tests.compiler-optimize-call-memory-frame-roots-self-test)

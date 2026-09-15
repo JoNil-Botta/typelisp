@@ -48,6 +48,16 @@ pointer/length pairs as name identity across scratch/region reset: address
 equality is only a fast path while both live operands are in scope. Interning
 must own/canonicalize any spelling that survives its source arena.
 
+## Call-memory block traversal
+
+The optimizer smoke and `call-memory-dense-scan` inline test compare linked,
+dense and mixed blocks across growth, empty inputs and retained rescans. They
+check the two forward root passes, single-source rejection, summary accumulation
+and call/write classification. Spare slots contain observable poison; an
+later write must not change an already true predicate or unresolved candidate.
+Visit-counter mutation probes verify the cutoff without relying on invalid IR. Keep these storage checks alongside the existing
+call-memory semantic fixtures when changing traversal or block representation.
+
 ## Vector reduction source ownership
 
 The backend smoke checks AVX2 i64 min/max with both ordinary and explicit

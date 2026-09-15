@@ -118,3 +118,45 @@ ci_gate_ledger_finish() {
         return 1
     fi
 }
+
+# Gate bindings deliberately use literal IDs, one command per logical line.
+# This is a check of that narrow convention, not a general shell interpreter.
+# Run in a subshell so validation cannot reset an active execution plan.
+ci_gate_ledger_validate_bindings() (
+    _ci_binding_catalog=$1
+    _ci_binding_source=$2
+    ci_gate_ledger_load "$_ci_binding_catalog" linux || exit 1
+    awk -F '\t' '
+        function fail(message) {
+            print "CI gate ledger: " message > "/dev/stderr"
+            invalid=1
+        }
+        FNR == NR {
+            if (FNR > 5) ids[$1]=1
+            next
+        }
+        {
+            line=continued $0
+            if (line ~ /\\$/) {
+                sub(/\\$/, "", line)
+                continued=line " "
+                next
+            }
+            continued=""
+            sub(/^[ \t]+/, "", line)
+            if (line !~ /^(run_gate|run_with_compiler)[ \t]+/) next
+            if (line == "run_gate \"$@\"") next
+            count=split(line, words, /[ \t]+/)
+            position=(words[1] == "run_gate" ? 2 : 3)
+            id=words[position]
+            if (!(id in ids)) fail("unknown or nonliteral execution binding: " id)
+            else if (count <= position) fail("execution binding has no command: " id)
+            else bound[id]++
+        }
+        END {
+            if (continued != "") fail("unterminated execution source continuation")
+            for (id in ids) if (!bound[id]) fail("missing execution binding: " id)
+            if (invalid) exit 1
+        }
+    ' "$_ci_binding_catalog" "$_ci_binding_source"
+)

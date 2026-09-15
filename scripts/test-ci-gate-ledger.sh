@@ -135,4 +135,9 @@ awk '
 expect_failure list-unsupported sh "$WORKDIR/list-root/scripts/ci-verify.sh" --list-gates unsupported
 cp "$WORKDIR/other-host.tsv" "$WORKDIR/list-root/scripts/ci-gates.tsv"
 expect_failure list-malformed sh "$WORKDIR/list-root/scripts/ci-verify.sh" --list-gates linux
+ci_gate_ledger_validate_bindings "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh"
+sed '/^run_gate cli-gate-inventory-and-ownership /d' "$ROOT/scripts/ci-verify.sh" > "$WORKDIR/missing-binding.sh"
+expect_failure missing-binding ci_gate_ledger_validate_bindings "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/missing-binding.sh"
+sed 's/^run_gate cli-gate-inventory-and-ownership /run_gate unknown-ledger-id /' "$ROOT/scripts/ci-verify.sh" > "$WORKDIR/unknown-binding.sh"
+expect_failure unknown-binding ci_gate_ledger_validate_bindings "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/unknown-binding.sh"
 printf '%s\n' 'CI gate ledger self-tests passed'

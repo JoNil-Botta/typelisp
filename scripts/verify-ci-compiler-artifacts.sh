@@ -5,6 +5,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 . "$ROOT/scripts/lib-ci-compiler-artifact.sh"
+. "$ROOT/scripts/lib-ci-gate-ledger.sh"
 
 TRACE_VALIDATION_FILE=
 TRACE_VALIDATION_HOST=
@@ -112,10 +113,8 @@ expect_failure() {
 
 validate_checked_in_inventory() {
     rows="$FIXTURE/inventory-rows.tsv"
-    gates="$FIXTURE/inventory-gates.txt"
     : > "$rows"
-    : > "$gates"
-    awk -F '\t' -v rows="$rows" -v gates="$gates" '
+    awk -F '\t' -v rows="$rows" '
     function fail(message) {
         print "CI compiler artifact inventory: " message > "/dev/stderr"
         failed = 1
@@ -165,7 +164,6 @@ validate_checked_in_inventory() {
                 fail("reuse group " group " has mismatched provenance fields")
         }
         print $0 > rows
-        print $3 > gates
         count++
     }
     END {
@@ -180,15 +178,23 @@ validate_checked_in_inventory() {
         }
         if (failed) exit 1
     }
-    ' "$INVENTORY"
+    ' "$INVENTORY" || return $?
 
-    LC_ALL=C sort -u "$gates" -o "$gates"
-    while IFS= read -r gate; do
-        grep -F "\"$gate\"" "$ROOT/scripts/ci-verify.sh" >/dev/null || {
-            echo "inventory gate is not wired through ci-verify.sh: $gate" >&2
-            exit 1
+    # Display names in the artifact inventory reference the canonical ledger;
+    # only literal execution IDs bind commands in the full runner.
+    ci_gate_ledger_validate_bindings \
+        "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" || return $?
+    awk -F '\t' '
+        FNR == NR { if (FNR > 5) hosts[$3]=$2; next }
+        {
+            gate=$3
+            if (!(gate in hosts) || (hosts[gate] != "all" && hosts[gate] != $4)) {
+                print "artifact inventory gate/host does not match CI gate ledger: " gate " / " $4 > "/dev/stderr"
+                failed=1
+            }
         }
-    done < "$gates"
+        END {if (failed) exit 1}
+    ' "$ROOT/scripts/ci-gates.tsv" "$rows" || return $?
 
     for group in \
         bootstrap-converged \
@@ -396,6 +402,21 @@ validate_hosted_trace() {
     ' "$INVENTORY" "$_trace_file"
 }
 
+validate_checked_in_inventory
+# Artifact gate references must remain valid when execution labels live in the
+# shared ledger. Check stale names and a valid-but-inapplicable host separately.
+CHECKED_IN_INVENTORY=$INVENTORY
+awk -F '\t' 'BEGIN {OFS=FS} $1 == 1 && !changed { $3="missing catalog gate"; changed=1 } {print}' \
+    "$CHECKED_IN_INVENTORY" > "$FIXTURE/stale-gate-inventory.tsv"
+INVENTORY="$FIXTURE/stale-gate-inventory.tsv"
+expect_failure stale-gate-reference 'artifact inventory gate/host does not match CI gate ledger' \
+    validate_checked_in_inventory
+awk -F '\t' 'BEGIN {OFS=FS} $3 == "Linux instruction-count baseline" {$4="windows"; changed=1} {print} END {if (!changed) exit 1}' \
+    "$CHECKED_IN_INVENTORY" > "$FIXTURE/wrong-host-inventory.tsv"
+INVENTORY="$FIXTURE/wrong-host-inventory.tsv"
+expect_failure wrong-gate-host 'artifact inventory gate/host does not match CI gate ledger' \
+    validate_checked_in_inventory
+INVENTORY=$CHECKED_IN_INVENTORY
 validate_checked_in_inventory
 validate_required_record_wiring \
     "$INVENTORY" \

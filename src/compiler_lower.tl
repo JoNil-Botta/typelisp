@@ -33534,6 +33534,183 @@
               expr-ty)])]
       [(ctfe.ResultCtfe.Err diag) (ResultLowerExpr.Err diag)])))
 
+;; Operand context determines how the child is lowered; both paths share the
+;; same fresh result and source-attributed emission after child lowering.
+(define (lower-unary-expr
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [op : ast.AstUnOp]
+  [inner-box : i64]
+  [origin : ast.AstExpr]
+  [expr-ty : ast.AstType]) : ResultLowerExpr
+  (let
+    [inner : ast.AstExpr
+      (lower-context-expr-get (lower-global-shared-view ctx) inner-box)]
+    (match (lower-unop-type-with-result
+      (lower-global-shared-view ctx)
+      type-env
+      op
+      (lower-global-shared-view inner)
+      expr-ty)
+      [(tc_core.ResultTcType.Ok result-ty)
+        (match (match (tc_core.tc-unop-contextual-operand-type
+          op
+          (lower-global-shared-view result-ty))
+          [(ast.AstMaybeType.No)
+            (lower-expr
+              (lower-global-shared-view ctx)
+              state
+              (lower-global-shared-view env)
+              type-env
+              inner)]
+          [(ast.AstMaybeType.Some operand-ty)
+            (lower-expr-expected
+              (lower-global-shared-view ctx)
+              (lower-global-shared-view state)
+              (lower-global-shared-view env)
+              type-env
+              (lower-global-shared-view inner)
+              operand-ty
+              inner)])
+          [(ResultLowerExpr.Ok lowered)
+            (match lowered
+              [(LowerExpr.Expr inner-state value _)
+                (match (lower-state-alloc-var inner-state)
+                  [(LowerAlloc.Alloc allocated var-id)
+                    (ResultLowerExpr.Ok
+                      (LowerExpr.Expr
+                        (lower-state-emit-at-expr
+                          ctx
+                          allocated
+                          (ir.CompilerIrInstr.UnOp
+                            var-id
+                            (lower-unop op)
+                            value
+                            (lower-global-shared-view result-ty))
+                          origin)
+                        (ir.CompilerIrValue.Var var-id)
+                        result-ty))])])]
+          [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+      [(tc_core.ResultTcType.Err message)
+        (ResultLowerExpr.Err
+          (box (lower-diagnostic-at-expr ctx origin message)))])))
+
+;; Logical operators lower through the existing conditional path. Other
+;; operators lower left then right, carrying the returned state forward once.
+(define (lower-binary-expr
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [op : ast.AstBinOp]
+  [left-box : i64]
+  [right-box : i64]
+  [origin : ast.AstExpr]
+  [expr-ty : ast.AstType]) : ResultLowerExpr
+  (let
+    [left : ast.AstExpr
+      (lower-context-expr-get (lower-global-shared-view ctx) left-box)]
+    [right : ast.AstExpr
+      (lower-context-expr-get (lower-global-shared-view ctx) right-box)]
+    (match op
+      [(ast.AstBinOp.And)
+        (lower-if
+          (lower-global-shared-view ctx)
+          state
+          (lower-global-shared-view env)
+          type-env
+          left
+          right
+          (ast.AstExpr.Literal (ast.AstLiteral.Bool false))
+          expr-ty)]
+      [(ast.AstBinOp.Or)
+        (lower-if
+          (lower-global-shared-view ctx)
+          state
+          (lower-global-shared-view env)
+          type-env
+          left
+          (ast.AstExpr.Literal (ast.AstLiteral.Bool true))
+          right
+          expr-ty)]
+      [_
+        (match (lower-binop-types-with-result
+          (lower-global-shared-view ctx)
+          type-env
+          op
+          (lower-global-shared-view left)
+          (lower-global-shared-view right)
+          expr-ty)
+          [(tc_core.ResultTcBinOpTypes.Ok binop-types)
+            (match binop-types
+              [(tc_core.TcBinOpTypes left-ty right-ty result-ty)
+                (match (lower-expr-expected
+                  (lower-global-shared-view ctx)
+                  state
+                  (lower-global-shared-view env)
+                  type-env
+                  (lower-global-shared-view left)
+                  (lower-global-shared-view left-ty)
+                  left)
+                  [(ResultLowerExpr.Ok left-lowered)
+                    (match left-lowered
+                      [(LowerExpr.Expr left-state left-value _)
+                        (match (lower-expr-expected
+                          (lower-global-shared-view ctx)
+                          left-state
+                          (lower-global-shared-view env)
+                          type-env
+                          (lower-global-shared-view right)
+                          (lower-global-shared-view right-ty)
+                          right)
+                          [(ResultLowerExpr.Ok right-lowered)
+                            (match right-lowered
+                              [(LowerExpr.Expr right-state right-value _)
+                                (if (and
+                                  (lower-binop-group-eq? op)
+                                  (lower-type-register-group?
+                                    (lower-global-shared-view ctx)
+                                    (lower-global-shared-view left-ty)))
+                                  (lower-group-equality
+                                    (lower-global-shared-view ctx)
+                                    right-state
+                                    op
+                                    left-value
+                                    right-value
+                                    left-ty
+                                    result-ty
+                                    origin)
+                                  (match (lower-state-alloc-var right-state)
+                                    [(LowerAlloc.Alloc allocated var-id)
+                                      (ResultLowerExpr.Ok
+                                        (LowerExpr.Expr
+                                          (lower-state-emit-at-expr
+                                            ctx
+                                            allocated
+                                            (ir.CompilerIrInstr.BinOp
+                                              var-id
+                                              (lower-binop
+                                                op
+                                                (lower-global-shared-view
+                                                  right-ty))
+                                              left-value
+                                              right-value
+                                              (if (ir.compiler-ir-binop-compare?
+                                                (lower-binop op right-ty))
+                                                left-ty
+                                                result-ty))
+                                            origin)
+                                          (ir.CompilerIrValue.Var var-id)
+                                          result-ty))]))])]
+                          [(ResultLowerExpr.Err message)
+                            (ResultLowerExpr.Err message)])])]
+                  [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
+          [(tc_core.ResultTcBinOpTypes.Err message)
+            (ResultLowerExpr.Err
+              (box (lower-diagnostic-at-expr ctx origin message)))])])))
+
 (define (lower-expr-with-type
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -33689,184 +33866,18 @@
           origin
           expr-ty))]
     [(ast.AstExpr.Unary op inner-box)
-      (let
-        [inner : ast.AstExpr
-          (lower-context-expr-get (lower-global-shared-view ctx) inner-box)]
-        (match (lower-unop-type-with-result
-          (lower-global-shared-view ctx)
-          type-env
-          op
-          (lower-global-shared-view inner)
-          expr-ty)
-          [(tc_core.ResultTcType.Ok result-ty)
-            (match (tc_core.tc-unop-contextual-operand-type
-              op
-              (lower-global-shared-view result-ty))
-              [(ast.AstMaybeType.No)
-                (match (lower-expr
-                  (lower-global-shared-view ctx)
-                  state
-                  (lower-global-shared-view env)
-                  type-env
-                  inner)
-                  [(ResultLowerExpr.Ok lowered)
-                    (match lowered
-                      [(LowerExpr.Expr inner-state value _)
-                        (match (lower-state-alloc-var inner-state)
-                          [(LowerAlloc.Alloc allocated var-id)
-                            (ResultLowerExpr.Ok
-                              (LowerExpr.Expr
-                                (lower-state-emit-at-expr
-                                  ctx
-                                  allocated
-                                  (ir.CompilerIrInstr.UnOp
-                                    var-id
-                                    (lower-unop op)
-                                    value
-                                    (lower-global-shared-view result-ty))
-                                  origin)
-                                (ir.CompilerIrValue.Var var-id)
-                                result-ty))])])]
-                  [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
-              [(ast.AstMaybeType.Some operand-ty)
-                (match (lower-expr-expected
-                  (lower-global-shared-view ctx)
-                  (lower-global-shared-view state)
-                  (lower-global-shared-view env)
-                  type-env
-                  (lower-global-shared-view inner)
-                  operand-ty
-                  inner)
-                  [(ResultLowerExpr.Ok lowered)
-                    (match lowered
-                      [(LowerExpr.Expr inner-state value _)
-                        (match (lower-state-alloc-var inner-state)
-                          [(LowerAlloc.Alloc allocated var-id)
-                            (ResultLowerExpr.Ok
-                              (LowerExpr.Expr
-                                (lower-state-emit-at-expr
-                                  ctx
-                                  allocated
-                                  (ir.CompilerIrInstr.UnOp
-                                    var-id
-                                    (lower-unop op)
-                                    value
-                                    (lower-global-shared-view result-ty))
-                                  origin)
-                                (ir.CompilerIrValue.Var var-id)
-                                result-ty))])])]
-                  [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
-          [(tc_core.ResultTcType.Err message)
-            (ResultLowerExpr.Err
-              (box (lower-diagnostic-at-expr ctx origin message)))]))]
+      (lower-unary-expr ctx state env type-env op inner-box origin expr-ty)]
     [(ast.AstExpr.Binary op left-box right-box)
-      ;; `and`/`or` short-circuit: desugar to a conditional branch so the right
-      ;; operand is evaluated only when the left does not already decide the
-      ;; result, matching the Rust lowerer in `src/lower.rs`:
-      ;; `(and a b)` -> `(if a b false)`, `(or a b)` -> `(if a true b)`. Every
-      ;; other binop evaluates both operands eagerly into an `CompilerIrInstr.BinOp`.
-      (let
-        [left : ast.AstExpr
-          (lower-context-expr-get (lower-global-shared-view ctx) left-box)]
-        [right : ast.AstExpr
-          (lower-context-expr-get (lower-global-shared-view ctx) right-box)]
-        (match op
-          [(ast.AstBinOp.And)
-            (lower-if
-              (lower-global-shared-view ctx)
-              state
-              (lower-global-shared-view env)
-              type-env
-              left
-              right
-              (ast.AstExpr.Literal (ast.AstLiteral.Bool false))
-              expr-ty)]
-          [(ast.AstBinOp.Or)
-            (lower-if
-              (lower-global-shared-view ctx)
-              state
-              (lower-global-shared-view env)
-              type-env
-              left
-              (ast.AstExpr.Literal (ast.AstLiteral.Bool true))
-              right
-              expr-ty)]
-          [_
-            (match (lower-binop-types-with-result
-              (lower-global-shared-view ctx)
-              type-env
-              op
-              (lower-global-shared-view left)
-              (lower-global-shared-view right)
-              expr-ty)
-              [(tc_core.ResultTcBinOpTypes.Ok binop-types)
-                (match binop-types
-                  [(tc_core.TcBinOpTypes left-ty right-ty result-ty)
-                    (match (lower-expr-expected
-                      (lower-global-shared-view ctx)
-                      state
-                      (lower-global-shared-view env)
-                      type-env
-                      (lower-global-shared-view left)
-                      (lower-global-shared-view left-ty)
-                      left)
-                      [(ResultLowerExpr.Ok left-lowered)
-                        (match left-lowered
-                          [(LowerExpr.Expr left-state left-value _)
-                            (match (lower-expr-expected
-                              (lower-global-shared-view ctx)
-                              left-state
-                              (lower-global-shared-view env)
-                              type-env
-                              (lower-global-shared-view right)
-                              (lower-global-shared-view right-ty)
-                              right)
-                              [(ResultLowerExpr.Ok right-lowered)
-                                (match right-lowered
-                                  [(LowerExpr.Expr right-state right-value _)
-                                    (if (and
-                                      (lower-binop-group-eq? op)
-                                      (lower-type-register-group?
-                                        (lower-global-shared-view ctx)
-                                        (lower-global-shared-view left-ty)))
-                                      (lower-group-equality
-                                        (lower-global-shared-view ctx)
-                                        right-state
-                                        op
-                                        left-value
-                                        right-value
-                                        left-ty
-                                        result-ty
-                                        origin)
-                                      (match (lower-state-alloc-var right-state)
-                                        [(LowerAlloc.Alloc allocated var-id)
-                                          (ResultLowerExpr.Ok
-                                            (LowerExpr.Expr
-                                              (lower-state-emit-at-expr
-                                                ctx
-                                                allocated
-                                                (ir.CompilerIrInstr.BinOp
-                                                  var-id
-                                                  (lower-binop
-                                                    op
-                                                    (lower-global-shared-view
-                                                      right-ty))
-                                                  left-value
-                                                  right-value
-                                                  (if (ir.compiler-ir-binop-compare?
-                                                    (lower-binop op right-ty))
-                                                    left-ty
-                                                    result-ty))
-                                                origin)
-                                              (ir.CompilerIrValue.Var var-id)
-                                              result-ty))]))])]
-                              [(ResultLowerExpr.Err message)
-                                (ResultLowerExpr.Err message)])])]
-                      [(ResultLowerExpr.Err message)
-                        (ResultLowerExpr.Err message)])])]
-              [(tc_core.ResultTcBinOpTypes.Err message)
-                (ResultLowerExpr.Err
-                  (box (lower-diagnostic-at-expr ctx origin message)))])]))]
+      (lower-binary-expr
+        ctx
+        state
+        env
+        type-env
+        op
+        left-box
+        right-box
+        origin
+        expr-ty)]
     [(ast.AstExpr.Call func-box args)
       (let
         [func : ast.AstExpr

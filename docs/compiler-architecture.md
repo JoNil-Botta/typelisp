@@ -25,6 +25,11 @@ planned homes through the shared preservation-aware scratch selector, so an
 occupied home receives the same save/restore contract as other scratch roles.
 AVX-512 native min/max and the other reduction shapes retain two scratch roles.
 
+The lowerer's checked expression dispatcher delegates complete families to
+focused helpers. The [expression-family ledger](compiler-lowering-dispatch.md)
+records routing, residual inline bodies and the state/evaluation/provenance
+contract for those boundaries.
+
 Compilation is one whole program per executable with import-graph dedup
 (each module typechecked once per program). Package dependencies are
 codegen'd once into archives; an in-process session cache warms compiler

@@ -108,6 +108,18 @@ oracle. Keep those owner and source-view checks when changing literal walkers or
 their lowering callers; an unwrapped literal alone cannot detect a wrong-pool
 read.
 
+The call-argument type memo keys a body fact by the immediate payload of the
+first source view under the argument's expansion wrappers, and both the owning
+and an unrelated pool can hold a valid view at the same ID. The
+`tc-call-arg-fact-key-pool-isolation` inline test builds two pools with seven
+colliding IDs, seeds distinct types under the owning and decoy-selected keys,
+and calls `tc-call-arg-expr-type` with an unchanged context and argument across
+pool installs in recording and consuming modes. It covers direct and nested
+views, expansion chains, a non-view whose decoy twin is a view, the explicit
+compatibility route, and a clear followed by a restarted recording. Run it at
+opt0/1/2. A key-only check is not enough: keep the seeded-fact phases, which
+show that a wrong owner selects another entry rather than merely missing.
+
 Compiler state must be allocated in an owner whose lifetime covers every state
 transition that can occur before the last use. Use these operational classes:
 

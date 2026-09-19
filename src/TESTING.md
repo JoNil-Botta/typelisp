@@ -1512,8 +1512,9 @@ digests must remain unchanged through the gate. Reuse never crosses chunks or
 compiler identities, and all four independently timed selfhost compiles and
 both compilers' standalone sentinels remain mandatory. The 64-entry limit counts
 logical cases, including aliases. Run `scripts/verify-build-invariance-batch.sh`
-for the planner, boundary, ownership and fresh-output failure checks; both CI
-hosts run these helper checks even though build invariance itself is Linux-only.
+for the planner, boundary, ownership and fresh-output failure checks. CI runs
+these helper checks on Linux only, like the gate they serve: the negative cases
+need real symbolic links, which Git Bash on the Windows runner cannot create.
 
 `verify-tlci-native-route-stress.sh` additionally appends successful or failed
 `native-compile` and `source-compile` rows with their real process statuses, plus

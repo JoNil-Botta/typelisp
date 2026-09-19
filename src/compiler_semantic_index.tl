@@ -3442,6 +3442,10 @@
         (compiler-semantic-walk-type!
           (owned_view.compiler-owned-shared-view state)
           (tc.tc-context-type-get state.ctx ret)))]
+    [(ast.AstType.CFunc signature _)
+      (compiler-semantic-walk-type!
+        (owned_view.compiler-owned-shared-view state)
+        (tc.tc-context-type-get state.ctx signature))]
     [(ast.AstType.Tuple items)
       (compiler-semantic-walk-type-list!
         state
@@ -3637,9 +3641,9 @@
               [(ast.AstMaybeType.No) unit])
             (CompilerSemanticBindResult
               bound.scope
-              ;; Apply the successful checker's retained arena-owner, arena-phase,
-              ;; and raw C-function-pointer decision without inspecting or
-              ;; typechecking the initializer again.
+              ;; Apply retained arena-owner and arena-phase transitions without
+              ;; inspecting or typechecking the initializer again. The binding
+              ;; type carries the C calling convention and pointer mode.
               (tc.tc-bind-checked-let-transition-id
                 (owned_view.compiler-owned-shared-view ctx)
                 env
@@ -11483,7 +11487,7 @@
     [source : String
       "(import stdlib.arena)
 (import stdlib.string)
-(extern raw-fn (:symbol \"semantic_index_raw_fn\") : (-> i64 i64))
+(extern raw-fn (:symbol \"semantic_index_raw_fn\") : (CFunc non-null (-> i64 i64)))
 (define (read-ref [value : (& owner i64)]) : i64 1)
 (define (read-owned [value : String]) : i64 1)
 (define (probe [n : i64]) : i64
@@ -11583,7 +11587,7 @@
               (>= taken-index 0)
               (string.eq
                 (compiler-semantic-source-index-get (& index) raw-index).resolved-type
-                "(-> i64 i64)"))]
+                "(CFunc non-null (-> i64 i64))"))]
           (begin
             (compiler-semantic-source-index-release! (&mut index))
             (and ok (= (compiler-semantic-source-index-len (& index)) 0))))]

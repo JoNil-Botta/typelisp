@@ -2375,6 +2375,8 @@
         (selfhost-lint-dead-type-list-refs
           (owned_view.compiler-owned-box-shared-view args)
           refs))]
+    [(ast.AstType.CFunc signature _)
+      (selfhost-lint-dead-type-id-refs signature refs)]
     [(ast.AstType.Tuple items)
       (selfhost-lint-dead-type-list-refs
         (owned_view.compiler-owned-box-shared-view items)

@@ -7,6 +7,10 @@
 (import compiler_intern as ci)
 (cfg test (import stdlib.test))
 
+(define compiler-builtin-id-c-fn-check : i64
+  -1)
+(define compiler-builtin-id-tl-c-fn-null-abort : i64
+  -1)
 (define compiler-builtin-generation : i64
   -1)
 (define compiler-builtin-table-id : i64
@@ -794,7 +798,7 @@
 (define compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers : i64
   -1)
 (define compiler-builtin-ctfe-ids : (__tl_dyn-array i64)
-  (__tl_make-array i64 294))
+  (__tl_make-array i64 300))
 
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
@@ -805,20 +809,20 @@
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [metadata : (__tl_dyn-array i64) (__tl_make-array i64 4)]
-    [ids : (__tl_dyn-array i64) (__tl_make-array i64 321)]
-    [ctfe-ids : (__tl_dyn-array i64) (__tl_make-array i64 294)]
+    [ids : (__tl_dyn-array i64) (__tl_make-array i64 323)]
+    [ctfe-ids : (__tl_dyn-array i64) (__tl_make-array i64 300)]
     [i : i64 0]
     (begin
       (set! (array-ref metadata 0) -1)
       (set! (array-ref metadata 1) -1)
       (set! (array-ref metadata 2) -1)
       (set! (array-ref metadata 3) 0)
-      (while (< i 321)
+      (while (< i 323)
         (begin
           (set! (array-ref ids i) -1)
           (set! i (+ i 1))))
       (set! i 0)
-      (while (< i 294)
+      (while (< i 300)
         (begin
           (set! (array-ref ctfe-ids i) -1)
           (set! i (+ i 1))))
@@ -893,7 +897,7 @@
 (define (state-capture-ctfe-ids! [state : (&mut state CompilerBuiltinIdsState)]) : unit
   (let
     [i : i64 0]
-    (while (< i 294)
+    (while (< i 300)
       (begin
         (set! (array-ref state.ctfe-ids i) (compiler-builtin-ctfe-ref i))
         (set! i (+ i 1))))))
@@ -901,7 +905,7 @@
 (define (state-install-ctfe-ids! [state : (& state CompilerBuiltinIdsState)]) : unit
   (let
     [i : i64 0]
-    (while (< i 294)
+    (while (< i 300)
       (begin
         (compiler-builtin-ctfe-set! i (array-ref state.ctfe-ids i))
         (set! i (+ i 1))))))
@@ -1304,6 +1308,8 @@
     ;; Append-only reset-aware slot for the compiler-private aligned allocator.
     (state-set! state 319 compiler-builtin-id-tl-alloc-aligned)
     (state-set! state 320 compiler-builtin-id-tl-arena-debug-retire-protected)
+    (state-set! state 321 compiler-builtin-id-c-fn-check)
+    (state-set! state 322 compiler-builtin-id-tl-c-fn-null-abort)
     (state-capture-ctfe-ids! state)))
 
 (define (state-capture) : CompilerBuiltinIdsState
@@ -1360,6 +1366,8 @@
     (set! compiler-builtin-id-tl-array-fill8 (state-ref state 40))
     (set! compiler-builtin-id-tl-array-zero (state-ref state 41))
     (set! compiler-builtin-id-tl-mem-fill8 (state-ref state 316))
+    (set! compiler-builtin-id-c-fn-check (state-ref state 321))
+    (set! compiler-builtin-id-tl-c-fn-null-abort (state-ref state 322))
     (set! compiler-builtin-id-tl-mem-copy-fwd (state-ref state 317))
     (set! compiler-builtin-id-tl-mem-copy8-fwd (state-ref state 318))
     (set! compiler-builtin-id-tl-alloc-aligned (state-ref state 319))
@@ -1745,7 +1753,7 @@
 (define (compiler-builtin-clear-ctfe-ids!) : unit
   (let
     [index : i64 0]
-    (while (< index 294)
+    (while (< index 300)
       (begin
         (compiler-builtin-ctfe-set! index -1)
         (set! index (+ index 1))))))
@@ -2098,7 +2106,13 @@
     ;; source-provenance-aware without renumbering any shipped CTFE name.
     (compiler-builtin-load-ctfe-id! insert-missing 291 ":ignore")
     (compiler-builtin-load-ctfe-id! insert-missing 292 ":slow")
-    (compiler-builtin-load-ctfe-id! insert-missing 293 ":must-use")))
+    (compiler-builtin-load-ctfe-id! insert-missing 293 ":must-use")
+    (compiler-builtin-load-ctfe-id! insert-missing 294 "c-function")
+    (compiler-builtin-load-ctfe-id! insert-missing 295 "CFunc")
+    (compiler-builtin-load-ctfe-id! insert-missing 296 "nullable")
+    (compiler-builtin-load-ctfe-id! insert-missing 297 "non-null")
+    (compiler-builtin-load-ctfe-id! insert-missing 298 "unsafe-nullable")
+    (compiler-builtin-load-ctfe-id! insert-missing 299 "unsafe-non-null")))
 
 (define (compiler-builtin-load! [insert-missing : bool]) : unit
   (begin
@@ -2310,6 +2324,12 @@
     (set!
       compiler-builtin-id-tl-array-zero
       (compiler-builtin-resolve-name insert-missing "tl_array_zero"))
+    (set!
+      compiler-builtin-id-c-fn-check
+      (compiler-builtin-resolve-name insert-missing "c-fn-check"))
+    (set!
+      compiler-builtin-id-tl-c-fn-null-abort
+      (compiler-builtin-resolve-name insert-missing "tl_c_fn_null_abort"))
     (set!
       compiler-builtin-id-tl-mem-fill8
       (compiler-builtin-resolve-name insert-missing "tl_mem_fill8"))
@@ -3358,6 +3378,22 @@
       (=
         (compiler-builtin-ctfe-ref 293)
         (ci.intern-source-slice ":must-use" 0 9))
+      (=
+        (compiler-builtin-ctfe-ref 294)
+        (ci.intern-source-slice "c-function" 0 10))
+      (= (compiler-builtin-ctfe-ref 295) (ci.intern-source-slice "CFunc" 0 5))
+      (=
+        (compiler-builtin-ctfe-ref 296)
+        (ci.intern-source-slice "nullable" 0 8))
+      (=
+        (compiler-builtin-ctfe-ref 297)
+        (ci.intern-source-slice "non-null" 0 8))
+      (=
+        (compiler-builtin-ctfe-ref 298)
+        (ci.intern-source-slice "unsafe-nullable" 0 15))
+      (=
+        (compiler-builtin-ctfe-ref 299)
+        (ci.intern-source-slice "unsafe-non-null" 0 15))
       (not
         (=
           (compiler-builtin-ctfe-ref 219)
@@ -3433,6 +3469,12 @@
           (compiler-builtin-ctfe-set! 291 -1)
           (compiler-builtin-ctfe-set! 292 -1)
           (compiler-builtin-ctfe-set! 293 -1)
+          (compiler-builtin-ctfe-set! 294 -1)
+          (compiler-builtin-ctfe-set! 295 -1)
+          (compiler-builtin-ctfe-set! 296 -1)
+          (compiler-builtin-ctfe-set! 297 -1)
+          (compiler-builtin-ctfe-set! 298 -1)
+          (compiler-builtin-ctfe-set! 299 -1)
           (state-install! snapshot)
           (unless
             (compiler-builtin-parser-syntax-ids-current-ok?)
@@ -4119,3 +4161,36 @@
     (or
       (compiler-builtin-typecheck-string-eq-id? name-id)
       (compiler-builtin-typecheck-string-to-int-id? name-id))))
+
+(define (compiler-builtin-c-fn-check-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-c-fn-check)))
+
+(cfg
+  test
+  (test
+    compiler-builtin-c-fn-check-reset
+    (begin
+      (ci.intern-reset!)
+      (compiler-builtin-reset!)
+      (compiler-builtin-initialize-for-parse!)
+      (compiler-builtin-refresh!)
+      (let
+        [snapshot : CompilerBuiltinIdsState (state-capture)]
+        [check-id : i64 compiler-builtin-id-c-fn-check]
+        [abort-id : i64 compiler-builtin-id-tl-c-fn-null-abort]
+        (begin
+          (set! compiler-builtin-id-c-fn-check -1)
+          (set! compiler-builtin-id-tl-c-fn-null-abort -1)
+          (state-install! snapshot)
+          (if (and
+            (compiler-builtin-c-fn-check-id? check-id)
+            (= compiler-builtin-id-tl-c-fn-null-abort abort-id)
+            (= (state-ref snapshot 321) check-id)
+            (= (state-ref snapshot 322) abort-id)
+            (string.eq (ci.intern-str check-id) "c-fn-check")
+            (string.eq (ci.intern-str abort-id) "tl_c_fn_null_abort"))
+            unit
+            (io.panic
+              "compiler C function check builtin identity lifecycle failed")))))))

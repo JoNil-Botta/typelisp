@@ -82,6 +82,8 @@
 (define surface-ast-magic : i64
   3544386045472754772)
 (define surface-ast-schema-version : i64
+  ;; 10: AstType tag 38 carries a C callable signature and nullability/effect mode.
+  ;;
   ;; 9: AstDecl metadata carries aggregate marker flags.
   ;;
   ;; 8: AstDecl.Test carries boxed ignore/slow declaration metadata.
@@ -116,7 +118,7 @@
   ;; requires TlciProducerIdentityAdmission.ExactMatch and degrades to re-parse),
   ;; so this is a deployment invariant rather than a format-compatibility one --
   ;; but the version still moves whenever the encoding shape does.
-  9)
+  10)
 
 (cfg
   (any
@@ -1307,6 +1309,54 @@
 
 (cfg
   compiler-surface-selftest
+  (define (surface-ast-c-function-reference-decode-ok? [signature : i64]) : bool
+    (let
+      [intern-state : ci.InternCompatState
+        (ci.intern-compat-state-capture-active)]
+      [session : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (ci.intern-source-name-session-handle-from-state intern-state))]
+      [context : codec.SurfaceAstWriteContext
+        (codec.surface-ast-write-context-new session 0 0)]
+      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+      (begin
+        (codec.surface-ast-write-i64! (&mut out) surface-ast-magic)
+        (codec.surface-ast-write-i64! (&mut out) surface-ast-schema-version)
+        (codec.surface-ast-write-i64! (&mut out) 0)
+        (codec.surface-ast-write-i64! (&mut out) 3)
+        (codec.surface-ast-write-i64! (&mut out) 0)
+        (codec.surface-ast-write-type!
+          (&mut out)
+          (&mut context)
+          ast.AstType.I64)
+        (codec.surface-ast-write-type!
+          (&mut out)
+          (&mut context)
+          (ast.AstType.Func (box (ast.ast-type-list-new)) 0))
+        (codec.surface-ast-write-type!
+          (&mut out)
+          (&mut context)
+          (ast.AstType.CFunc signature ast.AstCFunctionMode.NonNull))
+        ;; Empty declaration, path, module, and seen lists.
+        (codec.surface-ast-write-i64! (&mut out) 0)
+        (codec.surface-ast-write-i64! (&mut out) 0)
+        (codec.surface-ast-write-i64! (&mut out) 0)
+        (codec.surface-ast-write-i64! (&mut out) 0)
+        (match (surface-ast-decode
+          (byte_buf_core.byte-buf-builder-finish-array (& out))
+          session
+          (__tl_make-array i64 0)
+          (ast.ast-node-pool-context-new-with-capacities 4 1))
+          [(ResultSurfaceAstHydration.Ok _) (= signature 1)]
+          [(ResultSurfaceAstHydration.Err message)
+            (and
+              (not (= signature 1))
+              (surface_identity.surface-identity-string-eq?
+                message
+                "surface ast: C function signature must reference a function type"))])))))
+
+(cfg
+  compiler-surface-selftest
   (define (surface-ast-old-schema-rejected?) : bool
     (let
       [intern-state : ci.InternCompatState
@@ -1317,7 +1367,7 @@
       [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
       (begin
         (codec.surface-ast-write-i64! (&mut out) surface-ast-magic)
-        (codec.surface-ast-write-i64! (&mut out) 8)
+        (codec.surface-ast-write-i64! (&mut out) 9)
         (codec.surface-ast-write-i64! (&mut out) 0)
         (codec.surface-ast-write-i64! (&mut out) 0)
         (codec.surface-ast-write-i64! (&mut out) 0)
@@ -1347,7 +1397,12 @@
         true
         1)
       (surface-ast-decl-meta-invalid-flags-ok?)
-      (surface-ast-old-schema-rejected?))))
+      (surface-ast-old-schema-rejected?)
+      (surface-ast-c-function-reference-decode-ok? 1)
+      (surface-ast-c-function-reference-decode-ok? 0)
+      (surface-ast-c-function-reference-decode-ok? 2)
+      (surface-ast-c-function-reference-decode-ok? 3)
+      (surface-ast-c-function-reference-decode-ok? 9223372036854775807))))
 
 (cfg
   (any
@@ -2003,6 +2058,10 @@
           [modules : ast.AstDeclModuleList
             (surface-ast-read-modules! (& reader))]
           [seen : sym_i64_env.SymI64Env (surface-ast-read-seen! (& reader))]
+          [_c-signatures : unit
+            (codec.surface-ast-validate-c-function-signatures!
+              (& reader)
+              (owned_view.compiler-owned-shared-view pools))]
           (cond
             [(not (codec.surface-ast-reader-valid? (& reader)))
               (ResultSurfaceAstHydration.Err
@@ -2186,6 +2245,35 @@
 
 (cfg
   compiler-surface-selftest
+  (define (surface-ast-c-function-param-ok?
+    [pools : ast.AstNodePoolContext]
+    [params : (& params ast.AstParamList)]
+    [index : i64]
+    [mode : ast.AstCFunctionMode]) : bool
+    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+      [(ast.AstParam.Param _ (ast.AstType.CFunc signature actual-mode) false)
+        (and
+          (ast.ast-c-function-mode-eq? actual-mode mode)
+          (match (ast.ast-node-pool-context-type-get pools signature)
+            [(ast.AstType.Func args result)
+              (let
+                [items : ast.AstTypeList
+                  (ast.ast-type-list-box-shared-view args)]
+                (and
+                  (= (ast.ast-type-list-len (& items)) 1)
+                  (match (ast.ast-node-pool-context-type-get
+                    pools
+                    (ast.ast-type-list-get (& items) 0 -1))
+                    [(ast.AstType.I64) true]
+                    [_ false])
+                  (match (ast.ast-node-pool-context-type-get pools result)
+                    [(ast.AstType.Bool) true]
+                    [_ false])))]
+            [_ false]))]
+      [_ false])))
+
+(cfg
+  compiler-surface-selftest
   (define (surface-ast-tests-ok?) : bool
     (let
       [_reset : unit (ci.intern-reset!)]
@@ -2229,6 +2317,20 @@
           (ast.ast-source-span 40 1 40 8))]
       [borrow-lifetime-id : i64 (ci.intern "borrow-region")]
       [view-param-id : i64 (ci.intern "view")]
+      [nullable-param-id : i64 (ci.intern "nullable-entry")]
+      [nonnull-param-id : i64 (ci.intern "nonnull-entry")]
+      [unsafe-nullable-param-id : i64 (ci.intern "unsafe-nullable-entry")]
+      [unsafe-nonnull-param-id : i64 (ci.intern "unsafe-nonnull-entry")]
+      [c-signature : i64
+        (ast.ast-node-pool-context-type-push
+          (owned_view.compiler-owned-shared-view source-pools)
+          (ast.ast-ty-func-with-pools
+            (owned_view.compiler-owned-shared-view source-pools)
+            (ast.ast-type-cons-with-pools
+              (owned_view.compiler-owned-shared-view source-pools)
+              ast.AstType.I64
+              (ast.ast-type-list-new))
+            ast.AstType.Bool))]
       [slice-i64 : ast.AstType
         (ast.ast-ty-slice-with-pools
           (owned_view.compiler-owned-shared-view source-pools)
@@ -2286,7 +2388,7 @@
       [macro-param-slots : (__tl_dyn-array ast.AstMacroParam)
         (__tl_make-array ast.AstMacroParam 1)]
       [view-param-slots : (__tl_dyn-array ast.AstParam)
-        (__tl_make-array ast.AstParam 1)]
+        (__tl_make-array ast.AstParam 5)]
       [decl-slots : (__tl_dyn-array ast.AstDecl)
         (__tl_make-array ast.AstDecl 4)]
       [path-slots : (__tl_dyn-array String) (__tl_make-array String 4)]
@@ -2323,11 +2425,35 @@
             (owned_view.compiler-owned-shared-view borrowed-slice)
             false))
         (set!
+          (array-ref view-param-slots 1)
+          (ast.AstParam.Param
+            nullable-param-id
+            (ast.AstType.CFunc c-signature ast.AstCFunctionMode.Nullable)
+            false))
+        (set!
+          (array-ref view-param-slots 2)
+          (ast.AstParam.Param
+            nonnull-param-id
+            (ast.AstType.CFunc c-signature ast.AstCFunctionMode.NonNull)
+            false))
+        (set!
+          (array-ref view-param-slots 3)
+          (ast.AstParam.Param
+            unsafe-nullable-param-id
+            (ast.AstType.CFunc c-signature ast.AstCFunctionMode.UnsafeNullable)
+            false))
+        (set!
+          (array-ref view-param-slots 4)
+          (ast.AstParam.Param
+            unsafe-nonnull-param-id
+            (ast.AstType.CFunc c-signature ast.AstCFunctionMode.UnsafeNonNull)
+            false))
+        (set!
           (array-ref decl-slots 0)
           (ast.AstDecl.DefFn
             (ast.ast-decl-meta-runtime-shared-view)
             fn-id
-            (ast.AstParamList view-param-slots 1)
+            (ast.AstParamList view-param-slots 5)
             borrowed-slice
             combined-body
             ast.AstFnMetadata.No))
@@ -2493,7 +2619,31 @@
                                         (=
                                           (ast.ast-param-list-len
                                             (& hydrated-params))
-                                          1)
+                                          5)
+                                        (surface-ast-c-function-param-ok?
+                                          (owned_view.compiler-owned-shared-view
+                                            hydration.pools)
+                                          (& hydrated-params)
+                                          1
+                                          ast.AstCFunctionMode.Nullable)
+                                        (surface-ast-c-function-param-ok?
+                                          (owned_view.compiler-owned-shared-view
+                                            hydration.pools)
+                                          (& hydrated-params)
+                                          2
+                                          ast.AstCFunctionMode.NonNull)
+                                        (surface-ast-c-function-param-ok?
+                                          (owned_view.compiler-owned-shared-view
+                                            hydration.pools)
+                                          (& hydrated-params)
+                                          3
+                                          ast.AstCFunctionMode.UnsafeNullable)
+                                        (surface-ast-c-function-param-ok?
+                                          (owned_view.compiler-owned-shared-view
+                                            hydration.pools)
+                                          (& hydrated-params)
+                                          4
+                                          ast.AstCFunctionMode.UnsafeNonNull)
                                         (surface-ast-borrowed-slice-type-ok?
                                           (owned_view.compiler-owned-shared-view
                                             hydration.pools)

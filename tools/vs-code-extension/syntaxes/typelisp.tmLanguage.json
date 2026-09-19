@@ -84,7 +84,7 @@
     "builtins": {
       "comment": "Built-in intrinsic operations and constructors, recognised in head position.",
       "name": "support.function.builtin.typelisp",
-      "match": "(?<=\\()(ptr-addr-of|ptr-offset|ptr-write!|ptr-null\\?|ptr-null|ptr-read|ptr-cast|ptr->int|int->ptr|array-set!|array-ref|tuple-ref|struct-get|string-from-bytes|string-data|program-argc|program-argv|program-envp|cpuid-eax|cpuid-ebx|cpuid-ecx|cpuid-edx|xgetbv|syscall|box-get|box|array|tuple)(?=[\\s)])"
+      "match": "(?<=\\()(c-fn-check|ptr-addr-of|ptr-offset|ptr-write!|ptr-null\\?|ptr-null|ptr-read|ptr-cast|ptr->int|int->ptr|array-set!|array-ref|tuple-ref|struct-get|string-from-bytes|string-data|program-argc|program-argv|program-envp|cpuid-eax|cpuid-ebx|cpuid-ecx|cpuid-edx|xgetbv|syscall|box-get|box|array|tuple)(?=[\\s)])"
     },
     "operators": {
       "patterns": [
@@ -120,7 +120,7 @@
     "types": {
       "comment": "Built-in primitive and constructor types.",
       "name": "storage.type.typelisp",
-      "match": "(?<![\\w-])(i64|i32|i16|i8|u64|u32|u16|u8|f64|f32|bool|char|String|str|unit|never|Array|Tuple|Box|MutPtr|Ptr)(?![\\w-])"
+      "match": "(?<![\\w-])(i64|i32|i16|i8|u64|u32|u16|u8|f64|f32|bool|char|String|str|unit|never|Array|Tuple|CFunc|Box|MutPtr|Ptr)(?![\\w-])"
     },
     "definition-name": {
       "patterns": [

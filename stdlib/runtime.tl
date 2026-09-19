@@ -980,6 +980,13 @@
     (abort-write "tl: shift count out of range\n")
     (cfg compiler-backtrace (abort-exit 129) (os-exit 129))))
 
+;: Reject a null address at the checked C function-pointer boundary.
+(define (c-function-null-abort)
+  (:export-symbol "tl_c_fn_null_abort") : never
+  (begin
+    (abort-write "tl: null C function pointer\n")
+    (cfg compiler-backtrace (abort-exit 134) (os-exit 134))))
+
 ;: A compiler-emitted abort-site descriptor is four aligned, initialized
 ;: machine words: path-data pointer, path byte length, one-based line, and
 ;: one-based column. `site` must remain live for all four reads; `offset` must

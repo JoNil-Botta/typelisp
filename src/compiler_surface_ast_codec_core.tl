@@ -37,7 +37,8 @@
   (valid (__tl_dyn-array bool))
   (message (__tl_dyn-array String))
   (structural-session cis.InternStructuralSessionHandle)
-  (identity-remap (__tl_dyn-array i64)))
+  (identity-remap (__tl_dyn-array i64))
+  (c-function-signatures (__tl_dyn-array ast.AstTypeList)))
 
 (define surface-ast-max-count : i64
   8388608)
@@ -184,17 +185,23 @@
     [offset : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [valid : (__tl_dyn-array bool) (__tl_make-array bool 1)]
     [message : (__tl_dyn-array String) (__tl_make-array String 1)]
+    [c-function-signatures : (__tl_dyn-array ast.AstTypeList)
+      (__tl_make-array ast.AstTypeList 1)]
     (begin
       (set! (array-ref offset 0) 0)
       (set! (array-ref valid 0) true)
       (set! (array-ref message 0) "")
+      (set!
+        (array-ref c-function-signatures 0)
+        (ast.ast-type-list-with-capacity 0))
       (SurfaceAstReader
         bytes
         offset
         valid
         message
         structural-session
-        identity-remap))))
+        identity-remap
+        c-function-signatures))))
 
 (define (surface-ast-reader-valid? [reader : (& reader SurfaceAstReader)]) : bool
   (array-ref reader.valid 0))
@@ -238,6 +245,51 @@
         (begin
           (surface-ast-reader-fail! reader "surface ast: invalid boolean")
           false)])))
+
+;; Every read-type call records C signatures, including inline declaration and
+;; expression annotations. Validate after the complete destination pool exists;
+;; primitive decoding alone cannot distinguish an in-range non-function id.
+(define (surface-ast-record-c-function-signature!
+  [reader : (& reader SurfaceAstReader)]
+  [signature : i64]) : unit
+  (let
+    [signatures : ast.AstTypeList
+      (owned_view.compiler-owned-array-element-shared-view
+        reader.c-function-signatures
+        0)]
+    (begin
+      (ast.ast-type-list-push (&mut signatures) signature)
+      (set! (array-ref reader.c-function-signatures 0) signatures))))
+
+(define (surface-ast-validate-c-function-signatures!
+  [reader : (& reader SurfaceAstReader)]
+  [pools : ast.AstNodePoolContext]) : unit
+  (let
+    [signatures : ast.AstTypeList
+      (owned_view.compiler-owned-array-element-shared-view
+        reader.c-function-signatures
+        0)]
+    [count : i64 (ast.ast-node-pool-context-type-len pools)]
+    [index : i64 0]
+    (while (and
+      (surface-ast-reader-valid? reader)
+      (< index (ast.ast-type-list-len (& signatures))))
+      (let
+        [signature : i64 (ast.ast-type-list-get (& signatures) index -1)]
+        [valid : bool
+          (and
+            (>= signature 0)
+            (< signature count)
+            (match (ast.ast-node-pool-context-type-get pools signature)
+              [(ast.AstType.Func _ _) true]
+              [_ false]))]
+        (begin
+          (unless
+            valid
+            (surface-ast-reader-fail!
+              reader
+              "surface ast: C function signature must reference a function type"))
+          (set! index (+ index 1)))))))
 
 (define (surface-ast-count-valid? [count : i64]) : bool
   (and (>= count 0) (<= count surface-ast-max-count)))
@@ -476,6 +528,11 @@
             out
             context
             (ast.ast-lifetime-list-box-shared-view lifetimes)))]
+      [(ast.AstType.CFunc signature mode)
+        (begin
+          (surface-ast-write-i64! out 38)
+          (surface-ast-write-i64! out signature)
+          (surface-ast-write-i64! out (ast.ast-c-function-mode-key mode)))]
       [(ast.AstType.Ptr elem)
         (begin
           (surface-ast-write-i64! out 33)
@@ -551,6 +608,27 @@
         (ast.AstType.VarArgs
           (surface-ast-read-name! reader)
           (box (surface-ast-read-lifetime-list! reader)))]
+      [(= tag 38)
+        (let
+          [signature : i64 (surface-ast-read-i64! reader)]
+          [mode : i64 (surface-ast-read-i64! reader)]
+          [_record : unit
+            (surface-ast-record-c-function-signature! reader signature)]
+          (cond
+            [(or (< signature 0) (< mode 0) (> mode 3))
+              (begin
+                (surface-ast-reader-fail!
+                  reader
+                  "surface ast: invalid C function type")
+                ast.AstType.Unit)]
+            [(= mode 0)
+              (ast.AstType.CFunc signature ast.AstCFunctionMode.Nullable)]
+            [(= mode 1)
+              (ast.AstType.CFunc signature ast.AstCFunctionMode.NonNull)]
+            [(= mode 2)
+              (ast.AstType.CFunc signature ast.AstCFunctionMode.UnsafeNullable)]
+            [else
+              (ast.AstType.CFunc signature ast.AstCFunctionMode.UnsafeNonNull)]))]
       [(= tag 33) (ast.AstType.Ptr (surface-ast-read-i64! reader))]
       [(= tag 34) (ast.AstType.MutPtr (surface-ast-read-i64! reader))]
       [(= tag 36) (ast.AstType.Slice (surface-ast-read-i64! reader))]

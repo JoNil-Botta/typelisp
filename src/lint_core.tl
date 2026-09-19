@@ -2409,6 +2409,8 @@
           ret
           (owned_view.compiler-owned-shared-view alias)
           (owned_view.compiler-owned-shared-view module-name)))]
+    [(ast.AstType.CFunc signature _)
+      (lint-type-id-uses-import? signature alias module-name)]
     [(ast.AstType.Tuple items)
       (lint-type-list-uses-import?
         (owned_view.compiler-owned-box-shared-view items)
@@ -10036,6 +10038,8 @@
           (ast.ast-type-list-box-shared-view
             (owned_view.compiler-owned-shared-view args))
           state))]
+    [(ast.AstType.CFunc signature _)
+      (lint-unused-variable-type (ast.ty-node-get signature) state)]
     [(ast.AstType.Tuple items)
       (lint-unused-variable-type-list
         (ast.ast-type-list-box-shared-view
@@ -10216,10 +10220,12 @@
       bindings
       index
       (ast.ast-let-binding-fallback))
-      [(ast.AstLetBinding.Binding _ _ init)
+      [(ast.AstLetBinding.Binding _ maybe-ty init)
         (lint-unused-variable-quasiquote-let-bindings-at
           bindings
-          (lint-unused-variable-quasiquote-expr (ast.ast-node-get init) state)
+          (lint-unused-variable-quasiquote-expr
+            (ast.ast-node-get init)
+            (lint-unused-variable-maybe-type maybe-ty state))
           (+ index 1))])))
 
 (define (lint-unused-variable-quasiquote-match-arms
@@ -10269,6 +10275,13 @@
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
       (lint-unused-variable-quasiquote-expr (ast.ast-node-get inner-box) state)]
+    ;; Quoted type operands substitute type bindings during macro expansion.
+    [(ast.AstExpr.TypeLiteral ty-id)
+      (lint-unused-variable-type (ast.ty-node-get ty-id) state)]
+    [(ast.AstExpr.Init maybe-ty-id)
+      (lint-unused-variable-maybe-type
+        (ast.ast-maybe-type-from-id maybe-ty-id)
+        state)]
     [(ast.AstExpr.Unquote inner)
       (lint-unused-variable-expr
         (ast.ast-node-get inner)
@@ -10303,8 +10316,12 @@
             (lint-unused-variable-quasiquote-let-bindings bindings state))])]
     [(ast.AstExpr.Lambda lambda-box)
       (match (__tl-box-place lambda-box)
-        [(ast.AstLambda.Lambda _ _ body)
-          (lint-unused-variable-quasiquote-expr (ast.ast-node-get body) state)])]
+        [(ast.AstLambda.Lambda params ret body)
+          (lint-unused-variable-quasiquote-expr
+            (ast.ast-node-get body)
+            (lint-unused-variable-maybe-type
+              ret
+              (lint-unused-variable-param-types params state)))])]
     [(ast.AstExpr.Tuple exprs)
       (lint-unused-variable-quasiquote-expr-list exprs state)]
     [(ast.AstExpr.TupleRef tuple _)
@@ -10313,10 +10330,14 @@
       (lint-unused-variable-quasiquote-expr-list exprs state)]
     [(ast.AstExpr.DynArray exprs)
       (lint-unused-variable-quasiquote-expr-list exprs state)]
-    [(ast.AstExpr.FixedMakeArray _ len)
-      (lint-unused-variable-quasiquote-expr (ast.ast-node-get len) state)]
-    [(ast.AstExpr.MakeArray _ len)
-      (lint-unused-variable-quasiquote-expr (ast.ast-node-get len) state)]
+    [(ast.AstExpr.FixedMakeArray ty-id len)
+      (lint-unused-variable-quasiquote-expr
+        (ast.ast-node-get len)
+        (lint-unused-variable-type (ast.ty-node-get ty-id) state))]
+    [(ast.AstExpr.MakeArray ty-id len)
+      (lint-unused-variable-quasiquote-expr
+        (ast.ast-node-get len)
+        (lint-unused-variable-type (ast.ty-node-get ty-id) state))]
     [(ast.AstExpr.ArrayRef array index)
       (lint-unused-variable-quasiquote-expr
         (ast.ast-node-get index)
@@ -10359,10 +10380,14 @@
       (lint-unused-variable-quasiquote-expr-list exprs state)]
     [(ast.AstExpr.Set _ value)
       (lint-unused-variable-quasiquote-expr (ast.ast-node-get value) state)]
-    [(ast.AstExpr.Ann inner _)
-      (lint-unused-variable-quasiquote-expr (ast.ast-node-get inner) state)]
-    [(ast.AstExpr.Cast inner _)
-      (lint-unused-variable-quasiquote-expr (ast.ast-node-get inner) state)]
+    [(ast.AstExpr.Ann inner ty-id)
+      (lint-unused-variable-quasiquote-expr
+        (ast.ast-node-get inner)
+        (lint-unused-variable-type (ast.ty-node-get ty-id) state))]
+    [(ast.AstExpr.Cast inner ty-id)
+      (lint-unused-variable-quasiquote-expr
+        (ast.ast-node-get inner)
+        (lint-unused-variable-type (ast.ty-node-get ty-id) state))]
     [(ast.AstExpr.Borrow _ _ place)
       (lint-unused-variable-quasiquote-expr (ast.ast-node-get place) state)]
     [(ast.AstExpr.Match match-box)
@@ -10476,6 +10501,8 @@
       (lint-unused-variable-quasiquote-expr (ast.ast-node-get inner) state)]
     [(ast.AstExpr.Break) state]
     [(ast.AstExpr.Continue) state]
+    [(ast.AstExpr.PtrNull ty-id)
+      (lint-unused-variable-type (ast.ty-node-get ty-id) state)]
     [(ast.AstExpr.PtrNullCheck inner)
       (lint-unused-variable-quasiquote-expr (ast.ast-node-get inner) state)]
     [(ast.AstExpr.PtrAddrOf place)
@@ -10490,12 +10517,16 @@
       (lint-unused-variable-quasiquote-expr
         (ast.ast-node-get offset)
         (lint-unused-variable-quasiquote-expr (ast.ast-node-get ptr) state))]
-    [(ast.AstExpr.PtrCast ptr _)
-      (lint-unused-variable-quasiquote-expr (ast.ast-node-get ptr) state)]
+    [(ast.AstExpr.PtrCast ptr ty-id)
+      (lint-unused-variable-quasiquote-expr
+        (ast.ast-node-get ptr)
+        (lint-unused-variable-type (ast.ty-node-get ty-id) state))]
     [(ast.AstExpr.PtrToInt ptr)
       (lint-unused-variable-quasiquote-expr (ast.ast-node-get ptr) state)]
-    [(ast.AstExpr.IntToPtr value _)
-      (lint-unused-variable-quasiquote-expr (ast.ast-node-get value) state)]
+    [(ast.AstExpr.IntToPtr value ty-id)
+      (lint-unused-variable-quasiquote-expr
+        (ast.ast-node-get value)
+        (lint-unused-variable-type (ast.ty-node-get ty-id) state))]
     [(ast.AstExpr.StringData inner)
       (lint-unused-variable-quasiquote-expr (ast.ast-node-get inner) state)]
     [(ast.AstExpr.StringFromBytes ptr len)

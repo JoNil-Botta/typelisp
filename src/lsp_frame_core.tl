@@ -7214,10 +7214,10 @@
   "define lambda let if begin while set! return match foreach cond when unless and or with-arena with-escape with-scratch try unsafe quote quasiquote unquote ann init cast type defstruct defenum defmacro defdispatch import export extern module comptime include-str include-bin test spmd-reduce spmd-scan spmd-broadcast spmd-shuffle program-index program-count")
 
 (define (lsp-completion-builtins) : String
-  "ptr-null ptr-read ptr-write! ptr-offset ptr-cast ptr->int int->ptr ptr-null? ptr-addr-of array-ref tuple-ref deref string-data string-from-bytes program-argc program-argv program-envp cpuid-eax cpuid-ebx cpuid-ecx cpuid-edx xgetbv syscall box array tuple")
+  "c-fn-check ptr-null ptr-read ptr-write! ptr-offset ptr-cast ptr->int int->ptr ptr-null? ptr-addr-of array-ref tuple-ref deref string-data string-from-bytes program-argc program-argv program-envp cpuid-eax cpuid-ebx cpuid-ecx cpuid-edx xgetbv syscall box array tuple")
 
 (define (lsp-completion-types) : String
-  "i64 i32 i16 i8 u64 u32 u16 u8 f64 f32 bool char String str unit never Array Tuple Box Ptr MutPtr")
+  "i64 i32 i16 i8 u64 u32 u16 u8 f64 f32 bool char String str unit never Array Tuple CFunc Box Ptr MutPtr")
 
 (define (lsp-split-spaces [s : String]) : lsp_svec.Vec
   (let
@@ -9486,6 +9486,10 @@
       (lsp-hover-markdown
         "(Tuple A B ...)"
         "Fixed-size tuple of the given element types.")]
+    [(string.eq name "CFunc")
+      (lsp-hover-markdown
+        "(CFunc mode (-> Arg ... Result))"
+        "Raw C function pointer retaining its signature and call effect. Modes: nullable, non-null, unsafe-nullable, unsafe-non-null. Use c-fn-check before calling a nullable value; unsafe modes require an unsafe context.")]
     [(string.eq name "Box")
       (lsp-hover-markdown
         "(Box T)"
@@ -9561,14 +9565,18 @@
       (lsp-hover-markdown
         "deref : (-> (Box T | &T | &mut T) T)"
         "Project through a Box or safe reference place.")]
+    [(string.eq name "c-fn-check")
+      (lsp-hover-markdown
+        "c-fn-check : CFunc -> non-null CFunc"
+        "Checks once for null, exiting with status 134 on failure. Preserves the C signature and unsafe-call effect.")]
     [(string.eq name "ptr-null")
       (lsp-hover-markdown
         "ptr-null : (-> (Ptr T))"
-        "Null pointer of the given type.")]
+        "Null pointer of the given type. CFunc requires nullable or unsafe-nullable mode.")]
     [(string.eq name "ptr-null?")
       (lsp-hover-markdown
         "ptr-null? : (-> (Ptr T) bool)"
-        "Whether a pointer is null.")]
+        "Whether a raw pointer or CFunc is null. Does not call it or refine its type.")]
     [(string.eq name "ptr-read")
       (lsp-hover-markdown
         "ptr-read : (-> (Ptr T) i64 T)"

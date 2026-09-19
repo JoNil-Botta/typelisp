@@ -2030,9 +2030,9 @@
   "(extern (foreign-call [arg0 : i64]) : i64 (:abi c) (:symbol \"foreign_exact\"))
 (extern (unused-foreign-call [arg0 : i64]) : i64 (:symbol \"unused_foreign_exact\"))
 (extern unused-foreign-data (:symbol \"unused_foreign_data\") : i64)
-(extern unused-foreign-fn (:symbol \"unused_foreign_fn\") : (-> i64 i64))
+(extern unused-foreign-fn (:symbol \"unused_foreign_fn\") : (CFunc non-null (-> i64 i64)))
 (extern foreign-data (:symbol \"foreign_data_exact\") : i64)
-(extern foreign-fn (:symbol \"foreign_fn_exact\") : (-> i64 i64))
+(extern foreign-fn (:symbol \"foreign_fn_exact\") : (CFunc non-null (-> i64 i64)))
 (define answer : i64 40)
 (define greeting : String \"hi\")
 (define pi : f64 3.5)
@@ -3763,7 +3763,7 @@
   (a u64)
   (b u64))
 (extern (wide-make [a : u32] [b : u32] [c : u32] [d : u32] [tag : u64]) : Wide (:symbol \"tl_cabi_wide_make\"))
-(extern wide-maker (:symbol \"tl_cabi_wide_make_ptr\") : (-> u32 u32 u32 u32 u64 Wide))
+(extern wide-maker (:symbol \"tl_cabi_wide_make_ptr\") : (CFunc non-null (-> u32 u32 u32 u32 u64 Wide)))
 (define (wide-score [value : Wide]) : i64
   (+ (cast value.a : i64) (cast value.b : i64)))
 (define (main) : i64
@@ -3832,7 +3832,7 @@
   (a u64)
   (b f64))
 (extern (wide-arg-score [arg : WideArg] [tag : u64]) : i64 (:symbol \"tl_cabi_wide_arg_score\"))
-(extern wide-arg-scorer (:symbol \"tl_cabi_wide_arg_score_ptr\") : (-> WideArg u64 i64))
+(extern wide-arg-scorer (:symbol \"tl_cabi_wide_arg_score_ptr\") : (CFunc non-null (-> WideArg u64 i64)))
 (define (main) : i64
   (let
     [direct-arg : WideArg (WideArg (cast 10 : u64) 1.5)]
@@ -3888,37 +3888,37 @@
 (defenum WideChoice (None) (Some u64 f64))
 (defenum ReturnChoice (None) (Pair u64 u64))
 (extern (status-pick [arg0 : Status] [arg1 : Status] [choose-second : i64]) : Status (:symbol \"tl_win64_status_pick\"))
-(extern status-pick-ptr (:symbol \"tl_win64_status_pick_ptr\") : (->
+(extern status-pick-ptr (:symbol \"tl_win64_status_pick_ptr\") : (CFunc non-null (->
   Status
   Status
   i64
-  Status))
+  Status)))
 (extern (small-score [arg : SmallChoice] [bias : i64]) : i64 (:symbol \"tl_win64_small_score\"))
-(extern small-scorer (:symbol \"tl_win64_small_score_ptr\") : (->
+(extern small-scorer (:symbol \"tl_win64_small_score_ptr\") : (CFunc non-null (->
   SmallChoice
   i64
-  i64))
+  i64)))
 (extern (wide-score [arg : WideChoice] [tag : u64]) : i64 (:symbol \"tl_win64_wide_score\"))
-(extern wide-scorer (:symbol \"tl_win64_wide_score_ptr\") : (->
+(extern wide-scorer (:symbol \"tl_win64_wide_score_ptr\") : (CFunc non-null (->
   WideChoice
   u64
-  i64))
+  i64)))
 (extern (return-choice-make [a : u32] [b : u32] [tag : u64]) : ReturnChoice (:symbol \"tl_win64_return_choice_make\"))
-(extern return-choice-maker (:symbol \"tl_win64_return_choice_make_ptr\") : (->
+(extern return-choice-maker (:symbol \"tl_win64_return_choice_make_ptr\") : (CFunc non-null (->
   u32
   u32
   u64
-  ReturnChoice))
+  ReturnChoice)))
 (define (return-score [r : ReturnChoice]) : i64
   (match r
     [ReturnChoice.None 0]
     [(ReturnChoice.Pair lo hi) (+ (cast lo : i64) (cast hi : i64))]))
 (define (main) : i64
   (let
-    [status-copy : (-> Status Status i64 Status) status-pick-ptr]
-    [small-copy : (-> SmallChoice i64 i64) small-scorer]
-    [wide-copy : (-> WideChoice u64 i64) wide-scorer]
-    [return-copy : (-> u32 u32 u64 ReturnChoice) return-choice-maker]
+    [status-copy : (CFunc non-null (-> Status Status i64 Status)) status-pick-ptr]
+    [small-copy : (CFunc non-null (-> SmallChoice i64 i64)) small-scorer]
+    [wide-copy : (CFunc non-null (-> WideChoice u64 i64)) wide-scorer]
+    [return-copy : (CFunc non-null (-> u32 u32 u64 ReturnChoice)) return-choice-maker]
     [picked : Status (status-pick (Ready) (Done) 1)]
     [picked-via-ptr : Status (status-copy (Ready) (Failed) 1)]
     [small-direct : i64 (small-score (SmallChoice.Some 11) 5)]
@@ -4069,10 +4069,10 @@
   (inner InnerMem)
   (tail u64))
 (extern (wide-mem-score [arg0 : WideMem] [salt : u64]) : i64 (:symbol \"tl_cabi_wide_mem_score\"))
-(extern wide-mem-scorer (:symbol \"tl_cabi_wide_mem_score_ptr\") : (->
+(extern wide-mem-scorer (:symbol \"tl_cabi_wide_mem_score_ptr\") : (CFunc non-null (->
   WideMem
   u64
-  i64))
+  i64)))
 (extern (wide-mem-make [seed : u64]) : WideMem (:symbol \"tl_cabi_wide_mem_make\"))
 (extern (nested-mem-score [arg0 : NestedMem]) : i64 (:symbol \"tl_cabi_nested_mem_score\"))
 (define (main) : i64
@@ -4083,7 +4083,7 @@
       (NestedMem
         (InnerMem (cast 4 : u64) (cast 5 : u64))
         (cast 6 : u64))]
-    [score-copy : (-> WideMem u64 i64) wide-mem-scorer]
+    [score-copy : (CFunc non-null (-> WideMem u64 i64)) wide-mem-scorer]
     [direct : i64 (wide-mem-score wide (cast 7 : u64))]
     [via-ptr : i64 (score-copy wide (cast 8 : u64))]
     [made : WideMem (wide-mem-make (cast 9 : u64))]
@@ -4182,7 +4182,7 @@
 (defstruct MixIF (:repr c) (tag u64) (value f64))
 (defstruct PairF64 (:repr c) (x f64) (y f64))
 (extern (pair-i64-make [seed : i64]) : PairI64 (:symbol \"tl_cabi_pair_i64_make\"))
-(extern pair-i64-maker (:symbol \"tl_cabi_pair_i64_make_ptr\") : (-> i64 PairI64))
+(extern pair-i64-maker (:symbol \"tl_cabi_pair_i64_make_ptr\") : (CFunc non-null (-> i64 PairI64)))
 (extern (mix-if-make [seed : i64]) : MixIF (:symbol \"tl_cabi_mix_if_make\"))
 (extern (pair-f64-make [seed : i64]) : PairF64 (:symbol \"tl_cabi_pair_f64_make\"))
 (define (main) : i64
@@ -4414,7 +4414,7 @@
 
 (define (compiler-backend-extern-value-fnptr-source) : String
   "(extern raw-value (:symbol \"tl_test_raw_value\") : i64)
-(extern raw-fn (:symbol \"tl_test_raw_fn\") : (-> i64 i64))
+(extern raw-fn (:symbol \"tl_test_raw_fn\") : (CFunc non-null (-> i64 i64)))
 (extern (direct-fn [x : i64]) : i64 (:symbol \"tl_test_direct_fn\"))
 (define (main) : i64
   (+ raw-value (+ (raw-fn 41) (direct-fn 1))))")

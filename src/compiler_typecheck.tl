@@ -4845,10 +4845,10 @@
   "(defenum Status (Ready) (Done) (Failed))
 (extern (status-echo [arg0 : Status]) : Status (:abi c) (:symbol \"status_echo\"))
 (extern (status-varargs [arg0 : Status] [arg1 : ...Status]) : i64 (:abi c) (:symbol \"status_varargs\"))
-(extern status-echo-ptr (:symbol \"status_echo_ptr\") : (-> Status Status))
+(extern status-echo-ptr (:symbol \"status_echo_ptr\") : (CFunc non-null (-> Status Status)))
 (define (main) : i64
   (let
-    [copied : (-> Status Status) status-echo-ptr]
+    [copied : (CFunc non-null (-> Status Status)) status-echo-ptr]
     [echoed : Status (status-echo (Ready))]
     [copied-echoed : Status (copied echoed)]
     (status-varargs copied-echoed (Done) (Failed))))")
@@ -4896,9 +4896,9 @@
     (apply1 copied 41)))")
 
 (define (compiler-typecheck-extern-returned-raw-fnptr-source) : String
-  "(extern (resolve [name : (Ptr u8)]) : (-> i64 i64) (:symbol \"resolve\"))
+  "(extern (resolve [name : (Ptr u8)]) : (CFunc non-null (-> i64 i64)) (:symbol \"resolve\"))
 (define (main) : i64
-  (let [resolved : (-> i64 i64) (resolve (ptr-null : (Ptr u8)))]
+  (let [resolved : (CFunc non-null (-> i64 i64)) (resolve (ptr-null : (Ptr u8)))]
     (resolved 41)))")
 
 (define (compiler-typecheck-extern-returned-raw-fnptr-to-tl-param-source) : String
@@ -4936,10 +4936,10 @@
       (compiler-typecheck-extern-returned-raw-fnptr-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-extern-raw-fnptr-to-tl-param-source)
-      "typecheck: raw C function pointer cannot be used as a TypeLisp function value")
+      "typecheck: raw C function pointer requires an explicit CFunc type")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-extern-returned-raw-fnptr-to-tl-param-source)
-      "typecheck: raw C function pointer cannot be used as a TypeLisp function value")))
+      "typecheck: raw C function pointer requires an explicit CFunc type")))
 
 (define (compiler-typecheck-extern-abi-tests-ok?) : bool
   (and

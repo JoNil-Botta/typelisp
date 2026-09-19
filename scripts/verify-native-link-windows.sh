@@ -207,7 +207,7 @@ run_windows_link_smoke() {
 (extern (unused-direct [value : i64]) : i64
   (:symbol "typelisp_unused_direct"))
 (extern unused-data (:symbol "typelisp_unused_data") : i64)
-(extern unused-fnptr (:symbol "typelisp_unused_fnptr") : (-> i64 i64))
+(extern unused-fnptr (:symbol "typelisp_unused_fnptr") : (CFunc non-null (-> i64 i64)))
 (define (main) : i64
   42)
 EOF
@@ -588,7 +588,7 @@ assert_empty "$WORKDIR/run-link.stderr"
 LINK_FNPTR_SRC="$WORKDIR/link-fnptr-main.tl"
 cat > "$LINK_FNPTR_SRC" <<'EOF'
 (extern base (:symbol "ffi_base_value") : i64)
-(extern ffi_add7_ptr (:symbol "ffi_add7_ptr") : (-> i64 i64))
+(extern ffi_add7_ptr (:symbol "ffi_add7_ptr") : (CFunc non-null (-> i64 i64)))
 (define (main) : i64 (+ base (ffi_add7_ptr 5)))
 EOF
 LINK_FNPTR_BIN="$WORKDIR/link-fnptr-main.exe"

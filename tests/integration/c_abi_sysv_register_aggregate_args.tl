@@ -22,7 +22,9 @@
   (y f32))
 
 (extern (pair-score [arg0 : Pair] [salt : i64]) : i64 (:symbol "tl_cabi_pair_score"))
-(extern pair-scorer (:symbol "tl_cabi_pair_score_ptr") : (-> Pair i64 i64))
+(extern pair-scorer (:symbol "tl_cabi_pair_score_ptr") : (CFunc
+  non-null
+  (-> Pair i64 i64)))
 (extern (outer-score [arg0 : Outer]) : i64 (:symbol "tl_cabi_outer_score"))
 (extern (mixed-score [arg0 : Mixed] [scale : i64]) : i64 (:symbol "tl_cabi_mixed_score"))
 (extern (vec2-score [arg0 : Vec2] [salt : i64]) : i64 (:symbol "tl_cabi_vec2_score"))
@@ -34,7 +36,7 @@
     [outer : Outer (Outer (Inner 3) 21)]
     [mixed : Mixed (Mixed (cast 7 : u64) 2.5)]
     [vec : Vec2 (Vec2 1.5 2.25)]
-    [pair-copy : (-> Pair i64 i64) pair-scorer]
+    [pair-copy : (CFunc non-null (-> Pair i64 i64)) pair-scorer]
     [pair-result : i64 (pair-score pair 5)]
     [pair-via-ptr : i64 (pair-copy pair 6)]
     [outer-result : i64 (outer-score outer)]

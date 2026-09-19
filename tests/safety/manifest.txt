@@ -757,6 +757,16 @@ generated_import_alias_empty_reject|check-fail|tests/safety/generated_import_ali
 decls_generated_missing_selected_import_reject|check-fail|tests/safety/decls_generated_missing_selected_import_reject.tl|-|has no selected item 'missing'
 decls_generated_selected_conflict_reject|check-fail|tests/safety/decls_generated_selected_conflict_reject.tl|-|ambiguous unqualified import
 macro_operand_unbound_suggestion_reject|check-fail|tests/safety/macro_operand_unbound_suggestion_reject.tl|-|did you mean alpha?
+# Source selected imports of exports that only exist after the provider's
+# module-scope generator has run: accepted once generated, still rejected when
+# missing, at the import's own span, even from an already loaded module. The
+# Windows run path stages only the entry file, so the accepted case is checked
+# here and executed by the `source_selected_generated_export` native row.
+source_selected_generated_ok|check-ok|tests/safety/source_selected_generated_ok.tl|-|-
+source_selected_generated_missing_reject|check-fail|tests/safety/source_selected_generated_missing_reject.tl|-|module 'source_selected_generated_provider' has no selected item 'nothing'
+source_selected_generated_seen_missing_reject|check-fail|tests/safety/source_selected_generated_seen_missing_reject.tl|-|module 'source_selected_generated_provider' has no selected item 'nothing'
+source_selected_generated_seen_missing_span_reject|check-fail|tests/safety/source_selected_generated_seen_missing_reject.tl|-|source_selected_generated_seen_missing_reject.tl:3:1
+source_selected_plain_missing_reject|check-fail|tests/safety/source_selected_plain_missing_reject.tl|-|module 'decls_generated_conflict_left' has no selected item 'missing'
 decls_generated_wildcard_conflict_reject|check-fail|tests/safety/decls_generated_wildcard_conflict_reject.tl|-|ambiguous unqualified import
 decls_generated_wildcard_selected_conflict_reject|check-fail|tests/safety/decls_generated_wildcard_selected_conflict_reject.tl|-|ambiguous unqualified import
 module_generated_selected_conflict_reject|check-fail|tests/safety/module_generated_selected_conflict_reject.tl|-|ambiguous unqualified import

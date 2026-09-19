@@ -38266,9 +38266,19 @@
                       alias)
                       [(ResultTcEnv.Ok next-env) (set! cur-env next-env)]
                       [(ResultTcEnv.Err step-message)
-                        (begin
-                          (set! message step-message)
-                          (set! ok false))]))))]
+                        ;; A macro-expansion pass builds this environment over
+                        ;; the program as expanded so far. While the target
+                        ;; module still has a pending generator its exports are
+                        ;; not final, so the item may simply not exist yet: a
+                        ;; later pass binds it, and the completed expansion is
+                        ;; checked by the loader's selected-item validator.
+                        (if (cload.compiler-load-module-has-pending-generator?
+                          (tc-global-shared-view all-decls)
+                          target-module)
+                          unit
+                          (begin
+                            (set! message step-message)
+                            (set! ok false)))]))))]
             [(ast.AstDecl.Import
                 decl-meta
                 (ast.AstImportSpec.Spec

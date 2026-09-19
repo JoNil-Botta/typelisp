@@ -86714,13 +86714,25 @@
     0))
 
 ;; An arm that never completes normally cannot reach the join, so its moves,
-;; borrows and reinitializations say nothing about the code after it. An arm's
-;; value is its tail expression, so the arm cannot complete when its tail is a
-;; `return`, `break`, `continue`, a call whose callee fact returns `never`, or a
-;; branch whose every tail is one of those. Any other shape answers false, which
-;; keeps the arm in the join. Only the tail chain is walked, and only for an arm
-;; whose facts differ from the facts at branch entry: every other arm leaves the
-;; join unchanged whether or not it diverges.
+;; borrows and reinitializations say nothing about the code after it. That is
+;; exactly an arm of type `never`: a `return`, `break`, `continue`, a call to a
+;; `never` function, or a sequence or branch ending in those. The arm's recorded
+;; body fact answers it with one lookup. Only an arm whose facts differ from the
+;; facts at branch entry (or whose sibling reinitialized something) is asked:
+;; every other arm leaves the join unchanged whether or not it diverges.
+(define (tc-move-arm-diverges?
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [arm-id : i64]) : bool
+  (match (tc-body-type-fact-lookup
+    (tc-context-body-state (tc-global-shared-view ctx))
+    arm-id)
+    [(TcBodyTypeFact.Hit ty) (tc-never-type? ty)]
+    [(TcBodyTypeFact.Miss) (tc-move-tail-diverges? ctx expr-bases arm-id)]))
+
+;; Bodies checked without recorded facts (synthesized after source typecheck)
+;; fall back to the arm's tail chain. Any shape it does not recognize answers
+;; false, which keeps the arm in the join.
 (define (tc-move-tail-diverges?
   [ctx : TcContext]
   [expr-bases : i64]
@@ -86779,6 +86791,85 @@
           (tc-move-tail-diverges-arms-at? ctx expr-bases arms (+ index 1))
           false)])))
 
+;; The fallback walk runs only for bodies without recorded facts, which no
+;; source fixture reaches, so its shapes are checked on constructed nodes.
+(test
+  tc-move-tail-diverges-shapes
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 16 8)]
+    [value : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools)
+        (ast.AstExpr.Literal (ast.AstLiteral.Unit)))]
+    [returns : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools)
+        (ast.AstExpr.Return value))]
+    [breaks : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools)
+        ast.AstExpr.Break)]
+    [continues : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools)
+        ast.AstExpr.Continue)]
+    [ends-in-return : ast.AstExprList (ast.ast-expr-list-new)]
+    [return-then-value : ast.AstExprList (ast.ast-expr-list-new)]
+    [_fill : unit
+      (begin
+        (ast.ast-expr-list-push (&mut ends-in-return) value)
+        (ast.ast-expr-list-push (&mut ends-in-return) returns)
+        (ast.ast-expr-list-push (&mut return-then-value) returns)
+        (ast.ast-expr-list-push (&mut return-then-value) value))]
+    [tail-return : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools)
+        (ast.AstExpr.Begin ends-in-return))]
+    [tail-value : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools)
+        (ast.AstExpr.Begin return-then-value))]
+    [empty : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools)
+        (ast.AstExpr.Begin (ast.ast-expr-list-new)))]
+    [both-leave : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools)
+        (ast.AstExpr.If value tail-return breaks))]
+    [one-leaves : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools)
+        (ast.AstExpr.If value continues value))]
+    [spanned : i64
+      (ast.ast-expr-source-view-with-pools
+        (tc-global-shared-view pools)
+        both-leave
+        (ast.ast-source-span 3 1 3 9))]
+    [ctx : TcContext
+      (tc-literal-pool-test-context (tc-global-shared-view pools))]
+    [bases : i64 (tc-context-expr-bases (tc-global-shared-view ctx))]
+    (unless
+      (and
+        (tc-move-tail-diverges? (tc-global-shared-view ctx) bases returns)
+        (tc-move-tail-diverges? (tc-global-shared-view ctx) bases breaks)
+        (tc-move-tail-diverges? (tc-global-shared-view ctx) bases continues)
+        (tc-move-tail-diverges? (tc-global-shared-view ctx) bases tail-return)
+        (tc-move-tail-diverges? (tc-global-shared-view ctx) bases both-leave)
+        (tc-move-tail-diverges? (tc-global-shared-view ctx) bases spanned)
+        (not (tc-move-tail-diverges? (tc-global-shared-view ctx) bases value))
+        (not
+          (tc-move-tail-diverges? (tc-global-shared-view ctx) bases tail-value))
+        (not (tc-move-tail-diverges? (tc-global-shared-view ctx) bases empty))
+        (not
+          (tc-move-tail-diverges? (tc-global-shared-view ctx) bases one-leaves))
+        ;; Without recorded facts the arm query is the walk.
+        (tc-move-arm-diverges? (tc-global-shared-view ctx) bases both-leave)
+        (not
+          (tc-move-arm-diverges? (tc-global-shared-view ctx) bases one-leaves)))
+      (io.panic "typecheck: tail divergence shape was misjudged"))))
+
 ;; Whether an `if` arm must be left out of the join. An arm that kept the entry
 ;; facts only matters when the other arm removed one (a reinitialization), since
 ;; the union would otherwise put that fact back; its tail is not walked in any
@@ -86801,7 +86892,7 @@
       (tc-global-shared-view entry-paths))
     (tc-moved-facts-subset? entry other entry-paths other-paths))
     false
-    (tc-move-tail-diverges? ctx expr-bases arm-id)))
+    (tc-move-arm-diverges? ctx expr-bases arm-id)))
 
 ;; Reached only when an arm changed the entry facts. An arm that cannot reach
 ;; the join is replaced by its facts about active cleanup owners; the arms that
@@ -86870,7 +86961,7 @@
         (tc-global-shared-view arm-visible.paths)
         (tc-global-shared-view entry.paths))
       entry]
-    [(tc-move-tail-diverges? ctx expr-bases body-id)
+    [(tc-move-arm-diverges? ctx expr-bases body-id)
       (tc-moved-retain-active-cleanup-owners env arm-visible entry)]
     [else (tc-moved-union entry arm-visible)]))
 

@@ -3988,10 +3988,10 @@ remain available for moves confined to that iteration. These scalar rules do
 not relax the SPMD early-exit restrictions in section 5.15.
 
 Outside loop bodies the same divergence rule applies to `if` and `match`
-joins. A branch or arm that cannot complete normally (it ends in `return`,
-`break`, `continue`, or a direct call whose result type is `never`) does not
-reach the code after the join, so its moves, borrows, and reinitializations do
-not affect that code:
+joins. A branch or arm whose type is `never` (it ends in `return`, `break`,
+`continue`, or a call whose result type is `never`) cannot complete normally
+and does not reach the code after the join, so its moves, borrows, and
+reinitializations do not affect that code:
 
 ```lisp test=run name=move-diverging-branch exit=42 stdout=""
 (defstruct Token (id i64) (name String))
@@ -4017,11 +4017,9 @@ branch's state, including a reinitialization performed there. When both
 branches complete normally the join remains the conservative union of the
 moved places; when both diverge the code after the `if` is unreachable. A
 `match` joins the state before the match with every arm that can complete
-normally. Divergence is decided conservatively from the tail position of the
-branch: a `begin`, `unsafe`, or `let` body diverges when its last expression
-does, and a nested `if` or `match` when every branch does. Any other shape is
-treated as completing normally. A use after a move inside the diverging branch
-itself is still rejected.
+normally. A branch of any other type is treated as completing normally, even
+when it cannot in fact return (an endless loop, for example). A use after a
+move inside the diverging branch itself is still rejected.
 
 One fact survives a diverging branch: a move of an active non-move-aware `with`
 owner (section 5.19). The owner's cleanup runs on every `return`, `try`,

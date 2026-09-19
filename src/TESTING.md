@@ -79,6 +79,22 @@ field, `match` and loop `break` forms when changing either join. The join fast
 path runs for every branch in a self-compile; measure typecheck-only
 instruction counts on identical source when touching it.
 
+## Discarded speculative errors
+
+Macro operand capture type-probes each operand and keeps only a successful
+type; about a thousand probes fail during a self-compile and their errors are
+dropped. `tc-expr-discarding-errors` opens a job-owned suppression scope so such
+an error is not finalized with a near-miss scan over every visible name (2.7%
+of the self-compile before #7868). The `tc-unbound-suggestion-suppression-scope`
+inline test checks nesting, that only the owning job is silenced, that the memo
+is not filled with suppressed answers, and that the suggestion returns after the
+scope; `tc-expr-discarding-errors-balances-its-scope` checks both outcomes close
+the scope. `macro_operand_unbound_suggestion_reject` is the user-visible half: a
+name that fails the probe and then fails for real must still report "did you
+mean". Only a caller that drops the error unconditionally may use the wrapper;
+wrapping a path whose diagnostic can reach the user silently removes suggestions
+and only that safety row would notice.
+
 ## Vector reduction source ownership
 
 The backend smoke checks AVX2 i64 min/max with both ordinary and explicit

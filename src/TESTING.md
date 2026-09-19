@@ -1320,6 +1320,21 @@ import controls in the safety corpus must fail even when no
 generated binding is used. Run affected fixtures at opt0/1/2; an unused missing
 import that compiles successfully is not evidence of valid expansion.
 
+Source selected imports of generated exports are the mirror case. The
+`source_selected_generated_export` native row selects values, a function, a
+struct, an enum and its constructors that exist only after the provider's
+module-scope generators have run, through a direct generator, an imported
+declaration macro with operands, nested generation, a target-conditional
+generator, a repeated selection, and a qualified import of the same module
+placed after the selections. The `source_selected_generated_*` safety rows keep
+the rejections: a missing item from a generating module fails although unused,
+an already loaded generating module does not suppress that (the span row pins
+the import's own line), and `source_selected_plain_missing_reject` pins the
+unchanged load-time failure for a module without generators. The loader
+self-test loads a generating provider through both the source and the package
+walker. Deferring without the completed-expansion check would accept missing
+items, so keep both halves together.
+
 For Windows import-only regressions that fail before a native executable is
 linked, use the published stage0 directly from PowerShell:
 

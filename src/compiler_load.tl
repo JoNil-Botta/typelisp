@@ -10127,6 +10127,65 @@
         [(ast.AstMaybeModuleName.No) false])]
     [_ true]))
 
+;; A module-scope generator parses as an import whose kind carries the macro
+;; call. Until the fixed-point expansion has run it, the module's parsed
+;; declarations are not its final export set.
+(define (compiler-load-decl-pending-generator? [decl : ast.AstDecl]) : bool
+  (match (ast.ast-decl-unwrapped decl)
+    [(ast.AstDecl.Import _ (ast.AstImportSpec.Spec kind _ _ _ _))
+      (match kind
+        [(ast.AstImportKind.Macro _ _) true]
+        [(ast.AstImportKind.MacroDecls _ _) true]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-load-module-has-pending-generator?
+  [decls : ast.AstDeclList]
+  [target-module : i64]) : bool
+  (let
+    [count : i64 (ast.ast-decl-list-len (& decls))]
+    [cur-module : i64 cbi.compiler-builtin-id-fix-empty]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [decl : ast.AstDecl
+            (ast.ast-array-shared-view decls.slots (+ decls.offset index))]
+          (begin
+            (match (ast.ast-place-shared-view decl)
+              [(ast.AstDecl.Module next-module) (set! cur-module next-module)]
+              [_
+                (when
+                  (and
+                    (= cur-module target-module)
+                    (compiler-load-decl-pending-generator? decl))
+                  (return true))])
+            (set! index (+ index 1)))))
+      false)))
+
+;; Load-time policy for both the source and the package walker. A selected item
+;; missing from a module that still has a pending generator is not an error
+;; yet: `compiler-load-check-expanded-unqualified-imports` requires every
+;; selected item against the completed expansion, which always runs for a
+;; program that contains a generator. A module without generators has its final
+;; declarations now, so its missing items keep failing here.
+(define (compiler-load-selected-item-present-or-pending?
+  [kind : ast.AstImportKind]
+  [expected-module : ast.AstMaybeModuleName]
+  [decls : ast.AstDeclList]) : bool
+  (if (compiler-load-selected-item-present?
+    (owned_view.compiler-owned-shared-view kind)
+    (owned_view.compiler-owned-shared-view expected-module)
+    (ast.ast-place-shared-view decls))
+    true
+    (match kind
+      [(ast.AstImportKind.ModuleItem _)
+        (match expected-module
+          [(ast.AstMaybeModuleName.Some target-module)
+            (compiler-load-module-has-pending-generator? decls target-module)]
+          [(ast.AstMaybeModuleName.No) false])]
+      [_ false])))
+
 (define (compiler-load-expected-module-seen?
   [seen : sym_i64_env.SymI64Env]
   [expected-module : ast.AstMaybeModuleName]) : bool
@@ -10586,7 +10645,7 @@
                                     (sym_i64_env.sym-i64-shared-view (& seen))
                                     (owned_view.compiler-owned-shared-view
                                       validated-module))
-                                  (compiler-load-selected-item-present?
+                                  (compiler-load-selected-item-present-or-pending?
                                     (owned_view.compiler-owned-shared-view kind)
                                     (owned_view.compiler-owned-shared-view
                                       validated-module)
@@ -14026,7 +14085,7 @@
                                     (sym_i64_env.sym-i64-shared-view (& seen))
                                     (owned_view.compiler-owned-shared-view
                                       validated-module))
-                                  (compiler-load-selected-item-present?
+                                  (compiler-load-selected-item-present-or-pending?
                                     (owned_view.compiler-owned-shared-view kind)
                                     (owned_view.compiler-owned-shared-view
                                       validated-module)
@@ -16105,7 +16164,35 @@
 (import pkg.shared.*)
 (import pkg.shared.*)
 (define (main) : i64 value)")
+      ;; A module-scope generator leaves the parsed exports incomplete, so both
+      ;; walkers defer a selection from it (present or not) to the completed
+      ;; expansion instead of rejecting at load time.
+      (compiler-load-write-file-text
+        "target/cl_import_suffix_root/pkg/generated.tl"
+        "(module pkg.generated)
+(defmacro (emit-made) : Decls `(define made : i64 41))
+(emit-made)")
+      (compiler-load-write-file-text
+        "target/cl_import_suffix_generated.tl"
+        "(module suffix.generated)
+(import pkg.generated.made as chosen)
+(import pkg.generated.pending as unknown-yet)
+(define (main) : i64 chosen)")
       (and
+        (match (compiler-load-file-with-paths-and-roots
+          "target/cl_import_suffix_generated.tl"
+          (sym_i64_env.sym-i64-empty)
+          (ast.ast-place-shared-view roots))
+          [(ResultCompilerLoadWithPaths.Ok _ _ _ _) true]
+          [(ResultCompilerLoadWithPaths.Err _) false])
+        (match (compiler-load-package-file-with-paths-and-roots
+          "target/cl_import_suffix_generated.tl"
+          (sym_i64_env.sym-i64-empty)
+          (ast.ast-place-shared-view roots)
+          (owned_view.compiler-owned-shared-view root)
+          (compiler-pkg-deps-empty))
+          [(ResultCompilerLoadWithPaths.Ok _ _ _ _) true]
+          [(ResultCompilerLoadWithPaths.Err _) false])
         (match (compiler-load-file-with-paths-and-roots
           "target/cl_import_suffix_entry.tl"
           (sym_i64_env.sym-i64-empty)

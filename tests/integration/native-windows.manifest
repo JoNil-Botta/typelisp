@@ -285,6 +285,12 @@ control_flow|tests/integration/control_flow.tl|15|-|-|-
 scalar_while_break_continue|tests/integration/scalar_while_break_continue.tl|42|-|-|stdlib/string.tl
 tail_call_stack_args|tests/integration/tail_call_stack_args.tl|42|-|-|-
 tail_aggregate_return|tests/integration/tail_aggregate_return.tl|42|-|-|-
+aggregate_return_no_alloc|tests/integration/aggregate_return_no_alloc.tl|42|-|-|stdlib/profile.tl stdlib/string.tl
+aggregate_return_no_alloc_opt0|tests/integration/aggregate_return_no_alloc.tl|42|-|-|stdlib/profile.tl stdlib/string.tl|opt-level:0+stage-stdlib
+aggregate_return_no_alloc_opt2|tests/integration/aggregate_return_no_alloc.tl|42|-|-|stdlib/profile.tl stdlib/string.tl|opt-level:2+stage-stdlib
+tuple_inline_storage_lifetime|tests/integration/tuple_inline_storage_lifetime.tl|42|-|-|stdlib/string.tl
+tuple_inline_storage_lifetime_opt0|tests/integration/tuple_inline_storage_lifetime.tl|42|-|-|stdlib/string.tl|opt-level:0+stage-stdlib
+tuple_inline_storage_lifetime_opt2|tests/integration/tuple_inline_storage_lifetime.tl|42|-|-|stdlib/string.tl|opt-level:2+stage-stdlib
 tail_direct_mutual|tests/integration/tail_direct_mutual.tl|42|-|-|-
 tail_direct_stack_args|tests/integration/tail_direct_stack_args.tl|42|-|-|-
 tail_indirect_closure|tests/integration/tail_indirect_closure.tl|42|-|-|-

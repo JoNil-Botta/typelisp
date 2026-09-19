@@ -1266,6 +1266,82 @@
     (compiler-lower-slice-split-at-mode-shape-ok?
       (compiler_lower.CompilerLowerMode.WindowsScalar))))
 
+;; Tuple values are inline (#7070): building one, returning one through the
+;; register or sret path, and the CPUID result tuple never call `tl_alloc`.
+(define (compiler-lower-tuple-inline-storage-source) : String
+  "(define (wide [x : i64]) : (Tuple i64 i64 i64 i64)
+  (tuple x x x x))
+(define (pair [x : i64]) : (Tuple i64 i64)
+  (tuple x x))
+(define (local [x : i64]) : i64
+  (let
+    [t : (Tuple i64 i64 i64 i64) (tuple x x x x)]
+    (tuple-ref t 3)))
+(define (leaf) : i64
+  (let
+    [r : (Tuple i32 i32 i32 i32) (cpuid 0 0)]
+    (cast (tuple-ref r 0) : i64)))
+(define (main) : i64 (+ (local 1) (leaf)))")
+
+(define (compiler-lower-tuple-inline-storage-no-heap?
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : String]) : bool
+  (=
+    (lower-test-function-call-count
+      (compiler_ir_types.compiler-ir-global-shared-view functions)
+      name
+      "tl_alloc")
+    0))
+
+(define (compiler-lower-tuple-inline-storage-frame?
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : String]) : bool
+  (>
+    (lower-test-function-alloc-count
+      (compiler_ir_types.compiler-ir-global-shared-view functions)
+      name)
+    0))
+
+(define (compiler-lower-tuple-inline-storage-mode-ok?
+  [mode : compiler_lower.CompilerLowerMode]) : bool
+  (match (compiler_lower.lower-compiler-source-with-mode
+    (compiler-lower-tuple-inline-storage-source)
+    mode)
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (compiler-lower-tuple-inline-storage-no-heap?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "wide")
+            (compiler-lower-tuple-inline-storage-frame?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "wide")
+            (compiler-lower-tuple-inline-storage-no-heap?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "pair")
+            (compiler-lower-tuple-inline-storage-frame?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "pair")
+            (compiler-lower-tuple-inline-storage-no-heap?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "local")
+            (compiler-lower-tuple-inline-storage-frame?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "local")
+            (compiler-lower-tuple-inline-storage-no-heap?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "leaf")
+            (compiler-lower-tuple-inline-storage-frame? functions "leaf"))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-tuple-inline-storage-ok?) : bool
+  (and
+    (compiler-lower-tuple-inline-storage-mode-ok?
+      (compiler_lower.CompilerLowerMode.LinuxScalar))
+    (compiler-lower-tuple-inline-storage-mode-ok?
+      (compiler_lower.CompilerLowerMode.WindowsScalar))))
+
 (define (compiler-lower-mut-ref-array-access-source) : String
   "(define (len [a : (& a (__tl_dyn-array i64))]) : i64 (array-length a))
 (define (get [a : (& a (__tl_dyn-array i64))] [i : i64]) : i64 (array-ref a i))
@@ -18844,6 +18920,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-slice-split-at-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-tuple-inline-storage-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-boxed-helper-lists-ok?)

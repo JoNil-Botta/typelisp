@@ -585,8 +585,9 @@ Examples:
   different enums when uses are enum-qualified; duplicate variant names
   within the same enum are rejected.
 - Pattern matching via `match` (§5.13) is exhaustive and type-checked.
-- Enum values are heap-allocated when returned from functions (to avoid
-  variable-sized stack slots).
+- Returning an enum value never allocates. It is an ordinary by-value result,
+  transported in registers or written into caller-owned result storage
+  (sections 7.2 and 11).
 - Module-qualified imported variants use the same dotted member form, for
   example `json.Json.Null` through an alias or `pkg.json.Json.Null` through a
   visible full module path. `Color::Red` is not TypeLisp syntax.
@@ -619,8 +620,8 @@ Examples:
   `(set! (array-ref place index) value)`.
 - Dotted numeric segments such as `p.0` are not index sugar; use `tuple-ref`
   or `array-ref`.
-- Structs are heap-allocated when returned from functions (same rule as
-  enums).
+- Returning a struct never allocates (same rule as enums): the value is
+  transported in registers or written into caller-owned result storage.
 - Struct globals use ordinary global storage and support the same dotted
   projections as local and parameter roots.
 
@@ -4667,7 +4668,8 @@ fully typed replacement; unlike `array-take!`, it never synthesizes one.
   nullary variant name. It is not a fresh catch-all binding; use `_` for that.
 - The `_` wildcard matches any remaining value (used for exhaustiveness).
 - All arms must return the same type.
-- Enum values are heap-allocated on return from functions (see §3.5.1).
+- A `match` that produces an enum or other aggregate result does not allocate
+  it; aggregate results follow the return rule in §3.5.1.
 
 ### 5.14 `(lambda ([param : type] ...) [: ret_type] body...)` — anonymous function
 
@@ -7460,11 +7462,16 @@ low-level exception and carry no safety guarantees.
 
 ### 7.2 Heap
 
-- `ByteBuf` backing stores, dynamic-buffer element storage, and escaping
-  returned aggregates (enums, structs, strings, dynamic-buffer fat values)
-  are heap-allocated.
-- Non-escaping aggregate fat/inline storage is usually kept in the current
-  stack frame.
+- `ByteBuf` backing stores, string bytes produced by allocating string
+  operations, dynamic-buffer element storage, `box` payloads, and capturing
+  closure environments are heap-allocated by the operation that creates them.
+- Tuple, fixed-array, struct, and enum values are inline values. Constructing
+  one reserves storage in the current stack frame, and returning one never
+  allocates: a register-class result travels in the result registers, and a
+  memory-class result is written into caller-owned storage through a hidden
+  result pointer that the callee fully initializes before a normal return
+  (section 11). A returned aggregate is moved or copied under the ordinary
+  `Copyable`/`MoveOnly` rules; transport never clones it.
 - Allocation goes through `tl_alloc`, a backend-emitted bump allocator.
   Compiler-generated over-aligned storage may explicitly select the private
   `tl_alloc_aligned` entry described in §6.2; no source-level allocator API is
@@ -7971,9 +7978,11 @@ and not a general manual memory management feature.
   owned storage places or mutable references. Enum payloads are consumed by a
   by-value `match`; borrowing a scrutinee for non-consuming pattern
   inspection is governed by the borrow rules.
-- Returning an aggregate may heap-promote storage that would otherwise be
-  frame-local. This is storage placement for safety; ownership transfer is
-  still governed by the source-level move rules.
+- Returning an aggregate never allocates and never extends a lifetime. The
+  result is transported in registers or moved into caller-owned result storage
+  (section 7.2); ownership transfer is governed by the source-level move rules,
+  and no returned value may rely on hidden heap placement to outlive its
+  lexical owner.
 - Deep copying is an explicit owner-generated operation. In a nominal type's
   canonical module, `(gen-clone Point)` emits the ordinary public function
   `clone-point : (& Point) -> Point`; acronym-bearing names use deterministic

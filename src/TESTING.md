@@ -95,6 +95,13 @@ mean". Only a caller that drops the error unconditionally may use the wrapper;
 wrapping a path whose diagnostic can reach the user silently removes suggestions
 and only that safety row would notice.
 
+The opposite mistake, a new speculative caller that forgets the wrapper, is
+caught by `scripts/verify-compile-profile.sh`: it checks a nine-line program
+whose stdlib format macros discard 86 probe errors while compiling cleanly, and
+requires `typecheck.env.unbound_finalizers` to be positive (the fixture reaches
+the path) and every `typecheck.env.unbound_scans` row to be zero. Before #7868
+that program performed 12 scans.
+
 ## Vector reduction source ownership
 
 The backend smoke checks AVX2 i64 min/max with both ordinary and explicit

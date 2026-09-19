@@ -64,7 +64,9 @@ call-memory semantic fixtures when changing traversal or block representation.
 early `return`, `break`, `continue` or `never` call used to poison, next to the
 rejections that must survive: a move in an arm that completes normally, in both
 a diverging and a normal arm, inside the diverging arm itself, and before the
-branch. `move_diverging_reinit_other_arm_ok` keeps an arm that changes nothing
+branch. Two rows pin what is *not* divergence: an arm containing `try`, which
+may propagate but may also continue, and an arm whose only `return` belongs to
+a lambda defined in it. `move_diverging_reinit_other_arm_ok` keeps an arm that changes nothing
 but diverges opposite an arm that reinitializes; skipping unchanged arms
 unconditionally breaks it.
 

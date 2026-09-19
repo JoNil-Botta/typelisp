@@ -460,6 +460,8 @@ move_normal_arm_after_join_reject|check-fail|tests/safety/move_normal_arm_after_
 move_diverging_and_normal_arm_reject|check-fail|tests/safety/move_diverging_and_normal_arm_reject.tl|-|use of moved value `t`
 move_diverging_arm_reuse_reject|check-fail|tests/safety/move_diverging_arm_reuse_reject.tl|-|use of moved value `t`
 move_before_diverging_branch_reject|check-fail|tests/safety/move_before_diverging_branch_reject.tl|-|use of moved value `t`
+move_try_arm_after_join_reject|check-fail|tests/safety/move_try_arm_after_join_reject.tl|-|use of moved value `t`
+move_lambda_return_arm_after_join_reject|check-fail|tests/safety/move_lambda_return_arm_after_join_reject.tl|-|use of moved value `t`
 with_owner_move_in_returning_if_reject|check-fail|tests/safety/with_owner_move_in_returning_if_reject.tl|-|cleanup owner `h` moved before with scope exit
 with_owner_move_in_returning_match_reject|check-fail|tests/safety/with_owner_move_in_returning_match_reject.tl|-|cleanup owner `h` moved before with scope exit
 with_owner_field_move_in_returning_if_reject|check-fail|tests/safety/with_owner_field_move_in_returning_if_reject.tl|-|cleanup owner `h` moved before with scope exit

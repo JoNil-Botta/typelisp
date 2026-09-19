@@ -239,7 +239,11 @@ run_gate \
 # their output. CI only ever runs the success path, so the diagnostic for a
 # checkout git cannot resolve has no other coverage.
 run_gate build-provenance-helper-self-tests scripts/verify-build-provenance.sh
-run_gate build-invariance-batch-reuse-self-tests scripts/verify-build-invariance-batch.sh
+# The batch plan helper serves only the Linux build-invariance gate, and its
+# negative cases need real symbolic links, which Git Bash cannot create.
+if [ "$HOST_OS" = linux ]; then
+    run_gate build-invariance-batch-reuse-self-tests scripts/verify-build-invariance-batch.sh
+fi
 run_gate \
     ci-compiler-artifact-provenance-self-tests \
     scripts/verify-ci-compiler-artifacts.sh

@@ -80659,19 +80659,39 @@
                   (compiler-lower-state-profile lower-state)))
               (cfg compile-profile (compiler-lower-profile-start lower-state))
               (let
+                ;; The environment over the specialized declarations serves
+                ;; the reachability walk only: lowering keeps `names`, in which
+                ;; specialized instances stay private symbols. Its store grows
+                ;; in its owner arena, so give it one of its own and retire it
+                ;; as soon as the walk returns instead of carrying it to the
+                ;; end of lowering (22 MB on a self-compile, #7882).
+                [prune-names-arena : i64
+                  (if needs-specialization
+                    (arena.tl_arena_make)
+                    0)]
                 [prune-names : LowerNameEnv
                   (if needs-specialization
-                    (match (lower-global-shared-view specialized)
-                      [(ast.AstProgram.Program decls-box)
-                        (let
-                          [decls : ast.AstDeclList
-                            (lower-box-shared-view decls-box)]
-                          (lower-name-env-from-decls-with-state
-                            lower-state
-                            decls
-                            (lower-global-shared-view specialized-paths)
-                            (lower-global-shared-view entry-path)
-                            LowerNameEnv.Nil))])
+                    (let
+                      [enclosing : i64 (arena.tl_arena_current)]
+                      [_enter : unit
+                        (unsafe
+                          (arena.tl_arena_set prune-names-arena))]
+                      [built : LowerNameEnv
+                        (match (lower-global-shared-view specialized)
+                          [(ast.AstProgram.Program decls-box)
+                            (let
+                              [decls : ast.AstDeclList
+                                (lower-box-shared-view decls-box)]
+                              (lower-name-env-from-decls-with-state
+                                lower-state
+                                decls
+                                (lower-global-shared-view specialized-paths)
+                                (lower-global-shared-view entry-path)
+                                LowerNameEnv.Nil))])]
+                      [_leave : unit
+                        (unsafe
+                          (arena.tl_arena_set enclosing))]
+                      built)
                     names)]
                 ;; Typecheck remains complete and whole-program while lower,
                 ;; optimize, and codegen are gated on reachability. This up-front
@@ -80690,6 +80710,19 @@
                       _reach-paths
                       reach-keep-plan)
                     (begin
+                      (if (= prune-names-arena 0)
+                        unit
+                        (unsafe
+                          (arena.tl_arena_destroy prune-names-arena)))
+                      ;; The lowering metric slots are a fixed range shared with
+                      ;; the interner's, so this one fact is reported directly.
+                      (cfg
+                        compile-profile
+                        (compiler-lower-profile-counter
+                          "name_env.prune_arena_releases"
+                          (if (= prune-names-arena 0)
+                            0
+                            1)))
                       (cfg
                         compile-profile
                         (compiler-lower-profile-finish lower-state "prune"))

@@ -2194,6 +2194,21 @@ assert_profile_live_counter_at_least_in \
     1 \
     "$SPECIALIZATION_STDOUT" \
     "$SPECIALIZATION_STDERR"
+# The name environment over the specialized declarations serves pruning only.
+# It lives in its own arena, which is retired as soon as the reachability walk
+# returns; a program without specialization never creates one. Refs #7882.
+assert_profile_live_counter_eq_in \
+    "$SPECIALIZATION_STDERR" \
+    "lower.name_env.prune_arena_releases" \
+    1 \
+    "$SPECIALIZATION_STDOUT" \
+    "$SPECIALIZATION_STDERR"
+assert_profile_live_counter_eq_in \
+    "$CONCAT_STDERR" \
+    "lower.name_env.prune_arena_releases" \
+    0 \
+    "$CONCAT_STDOUT" \
+    "$CONCAT_STDERR"
 assert_profile_live_counter_eq_in \
     "$SPECIALIZATION_STDERR" \
     "lower.specialization.generated_text.materialized" \

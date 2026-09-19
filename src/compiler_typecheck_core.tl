@@ -16926,117 +16926,119 @@
 (define (tc-stdlib-comptime-type-display-name [name : String]) : String
   (str_cat.str-cat (tc-stdlib-comptime-module-name) "." name))
 
-(define tc-stdlib-comptime-syntax-type-cache-generation : i64
-  -1)
-(define tc-stdlib-comptime-expr-key-id-cache : i64
-  -1)
-(define tc-stdlib-comptime-expr-list-key-id-cache : i64
-  -1)
-(define tc-stdlib-comptime-expr-clause-key-id-cache : i64
-  -1)
-(define tc-stdlib-comptime-expr-clause-list-key-id-cache : i64
-  -1)
-(define tc-stdlib-comptime-expr-binding-clause-key-id-cache : i64
-  -1)
-(define tc-stdlib-comptime-expr-binding-clause-list-key-id-cache : i64
-  -1)
-(define tc-stdlib-comptime-pattern-key-id-cache : i64
-  -1)
-(define tc-stdlib-comptime-pattern-list-key-id-cache : i64
-  -1)
-(define tc-stdlib-comptime-match-arm-key-id-cache : i64
-  -1)
-(define tc-stdlib-comptime-match-arm-list-key-id-cache : i64
-  -1)
-
-(define (tc-stdlib-comptime-syntax-type-cache-refresh!) : unit
-  (begin
-    (set!
-      tc-stdlib-comptime-expr-key-id-cache
-      (tc-stdlib-comptime-type-key-id "Expr" cbi.compiler-builtin-id-fix-Expr))
-    (set!
-      tc-stdlib-comptime-expr-list-key-id-cache
-      (tc-stdlib-comptime-type-key-id
-        "ExprList"
-        cbi.compiler-builtin-id-fix-ExprList))
-    (set!
-      tc-stdlib-comptime-expr-clause-key-id-cache
-      (tc-stdlib-comptime-type-key-id
-        "ExprClause"
-        cbi.compiler-builtin-id-fix-ExprClause))
-    (set!
-      tc-stdlib-comptime-expr-clause-list-key-id-cache
-      (tc-stdlib-comptime-type-key-id
-        "ExprClauseList"
-        cbi.compiler-builtin-id-fix-ExprClauseList))
-    (set!
-      tc-stdlib-comptime-expr-binding-clause-key-id-cache
-      (tc-stdlib-comptime-type-key-id
-        "ExprBindingClause"
-        cbi.compiler-builtin-id-fix-ExprBindingClause))
-    (set!
-      tc-stdlib-comptime-expr-binding-clause-list-key-id-cache
-      (tc-stdlib-comptime-type-key-id
-        "ExprBindingClauseList"
-        cbi.compiler-builtin-id-fix-ExprBindingClauseList))
-    (set!
-      tc-stdlib-comptime-pattern-key-id-cache
-      (tc-stdlib-comptime-type-key-id
-        "Pattern"
-        cbi.compiler-builtin-id-fix-Pattern))
-    (set!
-      tc-stdlib-comptime-pattern-list-key-id-cache
-      (tc-stdlib-comptime-type-key-id
-        "PatternList"
-        cbi.compiler-builtin-id-fix-PatternList))
-    (set!
-      tc-stdlib-comptime-match-arm-key-id-cache
-      (tc-stdlib-comptime-type-key-id
-        "MatchArm"
-        cbi.compiler-builtin-id-fix-MatchArm))
-    (set!
-      tc-stdlib-comptime-match-arm-list-key-id-cache
-      (tc-stdlib-comptime-type-key-id
-        "MatchArmList"
-        cbi.compiler-builtin-id-fix-MatchArmList))
-    (set!
-      tc-stdlib-comptime-syntax-type-cache-generation
-      (ci.intern-generation))))
-
-(define (tc-stdlib-comptime-syntax-type-cache-ensure!) : unit
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    (if (=
-      tc-stdlib-comptime-syntax-type-cache-generation
-      (ci.intern-generation))
-      unit
-      (tc-stdlib-comptime-syntax-type-cache-refresh!))))
+;; A stdlib comptime syntax type is named by the module-qualified key of two
+;; builtin ids. That key is a structural composite pair, so its module and base
+;; are read straight back out of `canonical-id`: there is no table to look up and
+;; nothing to cache per intern generation or per job.
+(define (tc-stdlib-comptime-syntax-base-type [base-id : i64]) : ast.AstMaybeType
+  (cond
+    [(= base-id cbi.compiler-builtin-id-fix-Expr)
+      (ast.AstMaybeType.Some (ast.AstType.Expr))]
+    [(= base-id cbi.compiler-builtin-id-fix-ExprList)
+      (ast.AstMaybeType.Some (ast.AstType.ExprList))]
+    [(= base-id cbi.compiler-builtin-id-fix-ExprClause)
+      (ast.AstMaybeType.Some (tc-macro-expr-clause-type))]
+    [(= base-id cbi.compiler-builtin-id-fix-ExprClauseList)
+      (ast.AstMaybeType.Some (tc-macro-expr-clause-list-type))]
+    [(= base-id cbi.compiler-builtin-id-fix-ExprBindingClause)
+      (ast.AstMaybeType.Some (tc-macro-expr-binding-clause-type))]
+    [(= base-id cbi.compiler-builtin-id-fix-ExprBindingClauseList)
+      (ast.AstMaybeType.Some (tc-macro-expr-binding-clause-list-type))]
+    [(= base-id cbi.compiler-builtin-id-fix-Pattern)
+      (ast.AstMaybeType.Some (tc-macro-pattern-type))]
+    [(= base-id cbi.compiler-builtin-id-fix-PatternList)
+      (ast.AstMaybeType.Some (tc-macro-pattern-list-type))]
+    [(= base-id cbi.compiler-builtin-id-fix-MatchArm)
+      (ast.AstMaybeType.Some (tc-macro-match-arm-type))]
+    [(= base-id cbi.compiler-builtin-id-fix-MatchArmList)
+      (ast.AstMaybeType.Some (tc-macro-match-arm-list-type))]
+    [else (ast.AstMaybeType.No)]))
 
 (define (tc-stdlib-comptime-syntax-type-id [canonical-id : i64]) : ast.AstMaybeType
   (let
-    [_ : unit (tc-stdlib-comptime-syntax-type-cache-ensure!)]
-    (cond
-      [(= canonical-id tc-stdlib-comptime-expr-key-id-cache)
-        (ast.AstMaybeType.Some (ast.AstType.Expr))]
-      [(= canonical-id tc-stdlib-comptime-expr-list-key-id-cache)
-        (ast.AstMaybeType.Some (ast.AstType.ExprList))]
-      [(= canonical-id tc-stdlib-comptime-expr-clause-key-id-cache)
-        (ast.AstMaybeType.Some (tc-macro-expr-clause-type))]
-      [(= canonical-id tc-stdlib-comptime-expr-clause-list-key-id-cache)
-        (ast.AstMaybeType.Some (tc-macro-expr-clause-list-type))]
-      [(= canonical-id tc-stdlib-comptime-expr-binding-clause-key-id-cache)
-        (ast.AstMaybeType.Some (tc-macro-expr-binding-clause-type))]
-      [(= canonical-id tc-stdlib-comptime-expr-binding-clause-list-key-id-cache)
-        (ast.AstMaybeType.Some (tc-macro-expr-binding-clause-list-type))]
-      [(= canonical-id tc-stdlib-comptime-pattern-key-id-cache)
-        (ast.AstMaybeType.Some (tc-macro-pattern-type))]
-      [(= canonical-id tc-stdlib-comptime-pattern-list-key-id-cache)
-        (ast.AstMaybeType.Some (tc-macro-pattern-list-type))]
-      [(= canonical-id tc-stdlib-comptime-match-arm-key-id-cache)
-        (ast.AstMaybeType.Some (tc-macro-match-arm-type))]
-      [(= canonical-id tc-stdlib-comptime-match-arm-list-key-id-cache)
-        (ast.AstMaybeType.Some (tc-macro-match-arm-list-type))]
-      [else (ast.AstMaybeType.No)])))
+    [_ : unit (cbi.compiler-builtin-refresh!)]
+    (if (and
+      (csym.compiler-composite-pair-key-id? canonical-id)
+      (=
+        (csym.compiler-composite-pair-left-id canonical-id)
+        cbi.compiler-builtin-id-fix-stdlib_dot_comptime))
+      (tc-stdlib-comptime-syntax-base-type
+        (csym.compiler-composite-pair-right-id canonical-id))
+      (ast.AstMaybeType.No))))
+
+(cfg
+  test
+  (define (tc-stdlib-comptime-syntax-test-is?
+    [name-id : i64]
+    [want : ast.AstType]) : bool
+    (match (tc-stdlib-comptime-syntax-type-id
+      (tc-stdlib-comptime-type-key-id "" name-id))
+      [(ast.AstMaybeType.Some ty) (tc-type-eq ty want)]
+      [(ast.AstMaybeType.No) false])))
+
+(cfg
+  test
+  (define (tc-stdlib-comptime-syntax-test-none? [canonical-id : i64]) : bool
+    (match (tc-stdlib-comptime-syntax-type-id canonical-id)
+      [(ast.AstMaybeType.Some _) false]
+      [(ast.AstMaybeType.No) true])))
+
+;; The decomposition must agree with the key constructor for every syntax type
+;; and reject every other shape that carries one of the same ids.
+(test
+  tc-stdlib-comptime-syntax-type-id-decomposes-key
+  (unless
+    (and
+      (begin
+        (cbi.compiler-builtin-initialize-for-parse!)
+        true)
+      (tc-stdlib-comptime-syntax-test-is?
+        cbi.compiler-builtin-id-fix-Expr
+        (ast.AstType.Expr))
+      (tc-stdlib-comptime-syntax-test-is?
+        cbi.compiler-builtin-id-fix-ExprList
+        (ast.AstType.ExprList))
+      (tc-stdlib-comptime-syntax-test-is?
+        cbi.compiler-builtin-id-fix-ExprClause
+        (tc-macro-expr-clause-type))
+      (tc-stdlib-comptime-syntax-test-is?
+        cbi.compiler-builtin-id-fix-ExprClauseList
+        (tc-macro-expr-clause-list-type))
+      (tc-stdlib-comptime-syntax-test-is?
+        cbi.compiler-builtin-id-fix-ExprBindingClause
+        (tc-macro-expr-binding-clause-type))
+      (tc-stdlib-comptime-syntax-test-is?
+        cbi.compiler-builtin-id-fix-ExprBindingClauseList
+        (tc-macro-expr-binding-clause-list-type))
+      (tc-stdlib-comptime-syntax-test-is?
+        cbi.compiler-builtin-id-fix-Pattern
+        (tc-macro-pattern-type))
+      (tc-stdlib-comptime-syntax-test-is?
+        cbi.compiler-builtin-id-fix-PatternList
+        (tc-macro-pattern-list-type))
+      (tc-stdlib-comptime-syntax-test-is?
+        cbi.compiler-builtin-id-fix-MatchArm
+        (tc-macro-match-arm-type))
+      (tc-stdlib-comptime-syntax-test-is?
+        cbi.compiler-builtin-id-fix-MatchArmList
+        (tc-macro-match-arm-list-type))
+      ;; A bare base id, the right base under another module, a non-syntax base
+      ;; under the right module, a triple key and an invalid id are all misses.
+      (tc-stdlib-comptime-syntax-test-none? cbi.compiler-builtin-id-fix-Expr)
+      (tc-stdlib-comptime-syntax-test-none?
+        (tc-qualified-name-key-id
+          cbi.compiler-builtin-id-fix-stdlib
+          cbi.compiler-builtin-id-fix-Expr))
+      (tc-stdlib-comptime-syntax-test-none?
+        (tc-stdlib-comptime-type-key-id "" cbi.compiler-builtin-id-fix-string))
+      (tc-stdlib-comptime-syntax-test-none?
+        (csym.compiler-composite-triple-key-id
+          cbi.compiler-builtin-id-fix-stdlib_dot_comptime
+          cbi.compiler-builtin-id-fix-Expr
+          cbi.compiler-builtin-id-fix-Expr))
+      (tc-stdlib-comptime-syntax-test-none? -1))
+    (io.panic
+      "typecheck: stdlib comptime syntax type key decomposition disagrees")))
 
 (define (tc-stdlib-comptime-syntax-alias?
   [canonical-name : (& canonical-name str)]
@@ -26641,64 +26643,30 @@
   [start : i64]) : bool
   (string.is-string-prefix-at (& text) (& prefix) start))
 
-(define tc-comptime-helper-prefix-cache-generation : i64
-  -1)
-(define tc-comptime-helper-prefix-comptime-id : i64
-  -1)
-(define tc-comptime-helper-prefix-stdlib-comptime-id : i64
-  -1)
-(define tc-comptime-helper-prefix-string-id : i64
-  -1)
-(define tc-comptime-helper-prefix-stdlib-string-id : i64
-  -1)
-(define tc-comptime-helper-prefix-stdlib-id : i64
-  -1)
-
-(define (tc-comptime-helper-prefix-cache-ensure!) : unit
-  (if (= tc-comptime-helper-prefix-cache-generation (ci.intern-generation))
-    unit
-    (begin
-      (set!
-        tc-comptime-helper-prefix-comptime-id
-        cbi.compiler-builtin-id-fix-comptime)
-      (set!
-        tc-comptime-helper-prefix-stdlib-comptime-id
-        cbi.compiler-builtin-id-fix-stdlib_slash_comptime)
-      (set!
-        tc-comptime-helper-prefix-string-id
-        cbi.compiler-builtin-id-fix-string)
-      (set!
-        tc-comptime-helper-prefix-stdlib-string-id
-        cbi.compiler-builtin-id-fix-stdlib_slash_string)
-      (set!
-        tc-comptime-helper-prefix-stdlib-id
-        cbi.compiler-builtin-id-fix-stdlib)
-      (set! tc-comptime-helper-prefix-cache-generation (ci.intern-generation)))))
-
 (define (tc-comptime-helper-qualified-candidate-from-id?
   [name : String]
   [name-id : i64]
   [first-dot : i64]) : bool
   (if (<= first-dot 0)
     false
-    (begin
-      (tc-comptime-helper-prefix-cache-ensure!)
-      (let
-        [prefix-id : i64 (ci.intern-leading-dot-id name-id)]
-        (cond
-          [(or
-              (= prefix-id tc-comptime-helper-prefix-comptime-id)
-              (= prefix-id tc-comptime-helper-prefix-stdlib-comptime-id)
-              (= prefix-id tc-comptime-helper-prefix-string-id)
-              (= prefix-id tc-comptime-helper-prefix-stdlib-string-id))
-            true]
-          [(= prefix-id tc-comptime-helper-prefix-stdlib-id)
-            (or
-              (tc-string-prefix-at? name "comptime." (+ first-dot 1))
-              (tc-string-prefix-at? name "comptime/" (+ first-dot 1))
-              (tc-string-prefix-at? name "string." (+ first-dot 1))
-              (tc-string-prefix-at? name "string/" (+ first-dot 1)))]
-          [else false])))))
+    ;; The prefixes are builtin ids, which already follow the active intern
+    ;; table; mirroring them in generation-stamped cells added only state.
+    (let
+      [prefix-id : i64 (ci.intern-leading-dot-id name-id)]
+      (cond
+        [(or
+            (= prefix-id cbi.compiler-builtin-id-fix-comptime)
+            (= prefix-id cbi.compiler-builtin-id-fix-stdlib_slash_comptime)
+            (= prefix-id cbi.compiler-builtin-id-fix-string)
+            (= prefix-id cbi.compiler-builtin-id-fix-stdlib_slash_string))
+          true]
+        [(= prefix-id cbi.compiler-builtin-id-fix-stdlib)
+          (or
+            (tc-string-prefix-at? name "comptime." (+ first-dot 1))
+            (tc-string-prefix-at? name "comptime/" (+ first-dot 1))
+            (tc-string-prefix-at? name "string." (+ first-dot 1))
+            (tc-string-prefix-at? name "string/" (+ first-dot 1)))]
+        [else false]))))
 
 (define (tc-comptime-helper-qualified-lookup-key
   [env : TcTypeEnv]
@@ -135284,7 +135252,6 @@
       (tc-job-state-release-scratch-arenas! job-state)
       (tc-job-state-release-type-env-scoped-state! job-state)
       (ctfe_support.ctfe-builtin-reset!)
-      (set! tc-stdlib-comptime-syntax-type-cache-generation -1)
       (tc-clone-able-cache-reset-for-job! job-state)
       (tc-macro-helper-env-cache-reset! macro-state)
       (tc-macro-module-env-cache-clear! macro-state)
@@ -135384,8 +135351,6 @@
 (define (compiler-typecheck-reset-intern-owned-state!) : unit
   (begin
     (set! tc-signature-lifetime-marker-id-generation -1)
-    (set! tc-stdlib-comptime-syntax-type-cache-generation -1)
-    (set! tc-comptime-helper-prefix-cache-generation -1)
     (tc-source-dotted-alias-key-cache-reset!)
     (tc-source-dotted-full-path-key-cache-reset!)
     (tc-source-qualified-variant-key-cache-reset!)))

@@ -3993,11 +3993,23 @@ joins. A branch or arm that cannot complete normally (it ends in `return`,
 reach the code after the join, so its moves, borrows, and reinitializations do
 not affect that code:
 
-```lisp
-(if failed
-  (return (consume token)) ; does not reach the join
-  unit)
-(consume token)            ; accepted: `token` is still initialized here
+```lisp test=run name=move-diverging-branch exit=42 stdout=""
+(defstruct Token (id i64) (name String))
+
+(define (consume [t : Token]) : i64
+  t.id)
+
+(define (pick [failed : bool]) : i64
+  (let
+    [token : Token (Token 41 "t")]
+    (begin
+      (if failed
+        (return (consume token)) ; does not reach the join
+        unit)
+      (+ (consume token) 1))))   ; accepted: `token` is still initialized here
+
+(define (main) : i64
+  (pick false))
 ```
 
 When exactly one `if` branch diverges, the state after the `if` is the other

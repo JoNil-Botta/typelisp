@@ -2076,10 +2076,12 @@
       (let
         [maybe-span : tc.TcMaybeAstSourceSpan
           (match decl
-            [(ast.AstDecl.Def _ _ _ expr) (tc.tc-expr-id-maybe-span expr)]
-            [(ast.AstDecl.DefFn _ _ _ _ body _) (tc.tc-expr-id-maybe-span body)]
+            [(ast.AstDecl.Def _ _ _ expr)
+              (tc.tc-expr-id-maybe-span-installed expr)]
+            [(ast.AstDecl.DefFn _ _ _ _ body _)
+              (tc.tc-expr-id-maybe-span-installed body)]
             [(ast.AstDecl.DefMacro _ _ _ _ body)
-              (tc.tc-expr-id-maybe-span body)]
+              (tc.tc-expr-id-maybe-span-installed body)]
             [(ast.AstDecl.Unsafe inner)
               (match (compiler-semantic-decl-origin
                 decls
@@ -3668,7 +3670,7 @@
   [state : CompilerSemanticWalkState]
   [expr-id : i64]
   [fallback : i64]) : i64
-  (match (tc.tc-expr-id-maybe-span expr-id)
+  (match (tc.tc-expr-id-maybe-span-installed expr-id)
     [(tc.TcMaybeAstSourceSpan.Some span)
       (compiler-semantic-state-source-offset
         state
@@ -3680,7 +3682,7 @@
   [state : CompilerSemanticWalkState]
   [expr-id : i64]
   [fallback : i64]) : i64
-  (match (tc.tc-expr-id-maybe-span expr-id)
+  (match (tc.tc-expr-id-maybe-span-installed expr-id)
     [(tc.TcMaybeAstSourceSpan.Some span)
       (compiler-semantic-state-source-offset
         state

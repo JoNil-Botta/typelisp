@@ -20659,14 +20659,23 @@
   [state : LowerState]
   [value : ir.CompilerIrValue]
   [ty : ast.AstType]
-  [target-var : i64]) : ResultLowerExpr
+  [target-var : i64]
+  [place-read? : bool]) : ResultLowerExpr
   (if (and
-    (=
-      (lower-state-current-function-id (lower-global-shared-view state))
-      (lower-state-active-loop-function (lower-global-shared-view state)))
-    (<
-      target-var
-      (lower-state-active-loop-entry-var-limit (lower-global-shared-view state)))
+    (or
+      (and
+        place-read?
+        (tc_core.tc-type-copyable?
+          (lower-global-shared-view ctx)
+          (lower-global-shared-view ty)))
+      (and
+        (=
+          (lower-state-current-function-id (lower-global-shared-view state))
+          (lower-state-active-loop-function (lower-global-shared-view state)))
+        (<
+          target-var
+          (lower-state-active-loop-entry-var-limit
+            (lower-global-shared-view state)))))
     (lower-inline-aggregate-abi-copy-needed?
       (lower-global-shared-view ctx)
       (lower-global-shared-view state)
@@ -26491,13 +26500,16 @@
                     initial-env
                     type-env
                     (lower-global-shared-view body))
-                  (ResultLowerEnv.Ok
+                  (lower-proto-privatize-params-at
+                    (lower-global-shared-view ctx)
                     captured-state
                     (lower-bind-params
                       (lower-global-shared-view params)
                       source-start
                       initial-env)
-                    type-env))
+                    type-env
+                    (& params)
+                    0))
                   [(ResultLowerEnv.Ok bound-state bound-env bound-type-env)
                     (match (lower-tail-expr
                       (lower-global-shared-view ctx)
@@ -33325,7 +33337,7 @@
               (lower-global-shared-view type-env)
               (lower-global-shared-view value)
               (lower-global-shared-view target-ty)
-              value)
+              (lower-global-shared-view value))
               [(ResultLowerExpr.Ok lowered)
                 (match lowered
                   [(LowerExpr.Expr value-state value-ir _)
@@ -33341,7 +33353,10 @@
                           value-state
                           value-ir
                           (lower-global-shared-view target-ty)
-                          id)
+                          id
+                          (lower-let-init-place-read?
+                            (lower-global-shared-view ctx)
+                            (lower-global-shared-view value)))
                           [(ResultLowerExpr.Ok assignment)
                             (match assignment
                               [(LowerExpr.Expr assign-value-state assign-ir _)
@@ -34076,7 +34091,7 @@
                   type-env
                   (lower-global-shared-view value)
                   (lower-global-shared-view target-ty)
-                  value)
+                  (lower-global-shared-view value))
                   [(ResultLowerExpr.Ok lowered)
                     (match lowered
                       [(LowerExpr.Expr value-state value-ir _)
@@ -34092,7 +34107,10 @@
                               value-state
                               value-ir
                               (lower-global-shared-view target-ty)
-                              id)
+                              id
+                          (lower-let-init-place-read?
+                            (lower-global-shared-view ctx)
+                            (lower-global-shared-view value)))
                               [(ResultLowerExpr.Ok assignment)
                                 (match assignment
                                   [(LowerExpr.Expr
@@ -48899,7 +48917,7 @@
       (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
     [(ast.AstMaybeType.No) (tc_core.tc-type-without-regions init-ty)]))
 
-(define (lower-let-init
+(define (lower-let-init-raw
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
@@ -49000,6 +49018,61 @@
                         (box (lower-diagnostic-at-expr ctx init message)))]))])]
           [_ (lower-expr ctx state env type-env init)])
         (lower-expr ctx state env type-env init))]))
+
+;; PROTOTYPE (#7777): a Copyable memory-class aggregate read from a place is
+;; duplicated into private inline storage when it initializes a new binding.
+(define (lower-let-init-place-read? [ctx : tc_core.TcContext] [init : ast.AstExpr]) : bool
+  (match (ast.ast-expr-unspan (lower-global-shared-view init))
+    [(ast.AstExpr.Var _) true]
+    [(ast.AstExpr.TupleRef _ _) true]
+    [(ast.AstExpr.ArrayRef _ _) true]
+    [(ast.AstExpr.StructGet _ _) true]
+    [(ast.AstExpr.BoxGet _) true]
+    [(ast.AstExpr.PtrRead _) true]
+    [(ast.AstExpr.Unsafe values)
+      (if (= values.len 1)
+        (lower-let-init-place-read?
+          (lower-global-shared-view ctx)
+          (lower-context-expr-get
+            (lower-global-shared-view ctx)
+            (ast.ast-expr-list-get (& values) 0 0)))
+        false)]
+    [_ false]))
+
+(define (lower-let-init
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [maybe-ty : ast.AstMaybeType]
+  [init : ast.AstExpr]) : ResultLowerExpr
+  (let
+    [place-read? : bool
+      (lower-let-init-place-read?
+        (lower-global-shared-view ctx)
+        (lower-global-shared-view init))]
+    (match (lower-let-init-raw
+      (lower-global-shared-view ctx)
+      state
+      (lower-global-shared-view env)
+      (lower-global-shared-view type-env)
+      (lower-global-shared-view maybe-ty)
+      (lower-global-shared-view init))
+      [(ResultLowerExpr.Ok lowered)
+        (match lowered
+          [(LowerExpr.Expr next-state value value-ty)
+            (if (and
+              place-read?
+              (lower-inline-aggregate-abi-copy-needed?
+                (lower-global-shared-view ctx)
+                (lower-global-shared-view next-state)
+                (lower-global-shared-view value-ty))
+              (tc_core.tc-type-copyable?
+                (lower-global-shared-view ctx)
+                (lower-global-shared-view value-ty)))
+              (lower-copy-inline-aggregate-to-inline ctx next-state value value-ty)
+              (ResultLowerExpr.Ok (LowerExpr.Expr next-state value value-ty)))])]
+      [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])))
 
 (define (lower-let-bindings
   [ctx : tc_core.TcContext]
@@ -76152,6 +76225,75 @@
             params
             (+ index 1)))])))
 
+;; PROTOTYPE (#7777): a Copyable memory-class nominal by-value parameter gets
+;; private callee storage on entry. Rebinding a parameter to frame storage makes
+;; tail-call forwarding of the original range unsafe, so the range is cleared.
+(define (lower-proto-privatize-params-at
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [params : (& params ast.AstParamList)]
+  [index : i64]) : ResultLowerEnv
+  (if (>= index (ast.ast-param-list-len params))
+    (ResultLowerEnv.Ok state env type-env)
+    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+      [(ast.AstParam.Param name ty _)
+        (let
+          [param-ty : ast.AstType
+            (tc_core.tc-type-without-regions
+              (tc_core.tc-resolve-type (lower-global-shared-view ctx) ty))]
+          (if (and
+            (lower-type-inline-struct-or-enum?
+              (lower-global-shared-view ctx)
+              (lower-global-shared-view param-ty))
+            (lower-inline-aggregate-abi-copy-needed?
+              (lower-global-shared-view ctx)
+              (lower-global-shared-view state)
+              (lower-global-shared-view param-ty))
+            (tc_core.tc-type-copyable?
+              (lower-global-shared-view ctx)
+              (lower-global-shared-view param-ty)))
+            (let
+              [source-var : i64
+                (sym_i64_env.sym-i64-lookup-id-or
+                  env
+                  name
+                  (csym.compiler-symbols-missing-handle))]
+              (match (lower-copy-inline-aggregate-to-inline
+                (lower-global-shared-view ctx)
+                state
+                (ir.CompilerIrValue.Var source-var)
+                (lower-global-shared-view param-ty))
+                [(ResultLowerExpr.Ok copied)
+                  (match copied
+                    [(LowerExpr.Expr copy-state copy-value _)
+                      (match copy-value
+                        [(ir.CompilerIrValue.Var copy-var)
+                          (lower-proto-privatize-params-at
+                            ctx
+                            (lower-state-clear-tail-param-range copy-state)
+                            (sym_i64_env.sym-i64-bind-id env name copy-var)
+                            type-env
+                            params
+                            (+ index 1))]
+                        [_
+                          (lower-proto-privatize-params-at
+                            ctx
+                            copy-state
+                            env
+                            type-env
+                            params
+                            (+ index 1))])])]
+                [(ResultLowerExpr.Err message) (ResultLowerEnv.Err message)]))
+            (lower-proto-privatize-params-at
+              ctx
+              state
+              env
+              type-env
+              params
+              (+ index 1))))])))
+
 (define (lower-bind-params
   [params : ast.AstParamList]
   [idx : i64]
@@ -76691,13 +76833,16 @@
                   initial-env
                   type-env
                   (lower-global-shared-view body))
-                (ResultLowerEnv.Ok
+                (lower-proto-privatize-params-at
+                  (lower-global-shared-view ctx)
                   state
                   (lower-bind-params
                     (lower-global-shared-view params)
                     source-start
                     initial-env)
-                  type-env))
+                  type-env
+                  (& params)
+                  0))
                 [(ResultLowerEnv.Ok bound-state bound-env bound-type-env)
                   (match (lower-tail-expr
                     (lower-global-shared-view ctx)

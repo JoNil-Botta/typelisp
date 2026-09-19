@@ -84,7 +84,7 @@ sh scripts/ci-verify.sh --list-gates linux
 sh scripts/ci-verify.sh --list-gates windows
 ```
 
-The TSV projection has `id`, `hosts` and `label` columns. The original `all`
+The TSV projection has `id`, `hosts`, `label` and `needs` columns. The original `all`
 applicability remains visible in either host projection. LF and CRLF catalogs
 produce the same LF output; the repository checkout pins this catalog to LF.
 Listing validates the
@@ -97,9 +97,26 @@ duplicate, wrong-host and out-of-order gates fail; a command failure retains its
 exit status and poisons completion. Missing or active gates prevent both the
 verification-complete timing row and the final success message. Keep IDs stable
 when changing wording; preserve labels unless their timing consumers are updated.
+`needs` records what a gate consumes from earlier gates: `-`, a comma-separated
+list of gate IDs, or `*` on the closing gate, which needs everything before it.
+The final record must be that closing gate, and no other record may use `*`.
+`id@linux` / `id@windows` limits an edge to one host, and a host projection
+shows only the edges that apply there. A need must name an earlier gate that
+runs wherever the consumer does, so ledger order is a topological order by
+construction. The column is not an independent opinion:
+`ci_gate_ledger_validate_needs` (run by the ledger self-test and by the artifact
+inventory validation) requires every gate after `bootstrap-fixpoint` to need it,
+because `run_with_compiler` exports the converged compiler to all later gates;
+forbids needs and produced-compiler arguments before it; and requires the
+remaining edges to match the consume records of `ci-compiler-artifacts.tsv`
+exactly, in both directions and per host. A dependency that is not an artifact
+handoff (a directory one gate leaves for another, an exported variable) must
+first become an inventory record. The column describes the sequential runner;
+it does not yet authorize running gates apart, which #7766 still owns.
+
 A new gate needs one ledger row and an executable binding in the matching host
 position. Update the three declared counts intentionally; duplicate IDs/labels,
-invalid hosts, fields, counts and truncated records are rejected.
+invalid hosts, fields, needs, counts and truncated records are rejected.
 `test-ci-gate-ledger.sh` exercises these boundaries and the real listing CLI.
 
 Nested corpora, targets, optimization levels, compiler producers and artifact

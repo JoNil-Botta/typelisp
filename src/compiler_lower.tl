@@ -36363,7 +36363,9 @@
     (lower-global-shared-view ctx)
     (lower-global-shared-view result-ty))
     [(ast.AstType.Tuple elem-tys)
-      (match (lower-reserve-heap-storage
+      ;; A tuple literal is an ordinary inline value, like a fixed-array
+      ;; literal: constructing or returning one never allocates (#7070).
+      (match (lower-reserve-inline-storage
         state
         (lower-type-list-storage-size
           (lower-global-shared-view ctx)
@@ -44231,7 +44233,8 @@
     (lower-global-shared-view ctx)
     (lower-global-shared-view result-ty))
     [(ast.AstType.Tuple elem-tys)
-      (match (lower-reserve-heap-storage
+      ;; The CPUID result tuple is an ordinary inline value (#7070).
+      (match (lower-reserve-inline-storage
         state
         (lower-type-list-storage-size ctx (lower-box-shared-view elem-tys))
         (lower-global-shared-view result-ty))

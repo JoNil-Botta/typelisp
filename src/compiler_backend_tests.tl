@@ -44160,11 +44160,13 @@ g:
             "    movq %rax, %rcx\n    addq $8, %rcx\n")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+;; Tuple literals are inline frame values (#7070), so the fixed-size allocation
+;; these fast-path fixtures pin comes from an explicit `box`.
 (define (compiler-backend-inline-fast-alloc-source) : String
   "(define (main) : i64
   (let
-    [t : (Tuple bool i64) (tuple true 42)]
-    (tuple-ref t 1)))")
+    [b : (Box (Tuple bool i64)) (box (tuple true 42))]
+    (tuple-ref (deref b) 1)))")
 
 (define (compiler-backend-inline-fast-alloc-result-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-source-for-target
@@ -44174,13 +44176,13 @@ g:
       (and
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
-          "    testq $1, 48(%r8)\n    jnz .Lf0_allocentry_i0_v2_slow\n    movq 56(%r8), %r9\n")
+          "    testq $1, 48(%r8)\n    jnz .Lf0_allocentry_i9_v3_slow\n    movq 56(%r8), %r9\n")
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           "    movq 56(%r8), %r9\n    movq 16(%r9), %rax\n    leaq 16(%rax), %r8\n")
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
-          "    cmpq 64(%r9), %r8\n    ja .Lf0_allocentry_i0_v2_slow\n    movq %r8, 16(%r9)\n")
+          "    cmpq 64(%r9), %r8\n    ja .Lf0_allocentry_i9_v3_slow\n    movq %r8, 16(%r9)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
@@ -44364,17 +44366,17 @@ g:
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-inline-fast-alloc-multi-size-source) : String
-  "(define (make3 [x : i64]) : (Tuple i64 i64 i64)
-  (tuple x (+ x 1) (+ x 2)))
+  "(define (make3 [x : i64]) : (Box (Tuple i64 i64 i64))
+  (box (tuple x (+ x 1) (+ x 2))))
 
-(define (make5 [x : i64]) : (Tuple i64 i64 i64 i64 i64)
-  (tuple x (+ x 1) (+ x 2) (+ x 3) (+ x 4)))
+(define (make5 [x : i64]) : (Box (Tuple i64 i64 i64 i64 i64))
+  (box (tuple x (+ x 1) (+ x 2) (+ x 3) (+ x 4))))
 
 (define (main) : i64
   (let
-    [a : (Tuple i64 i64 i64) (make3 10)]
-    [b : (Tuple i64 i64 i64 i64 i64) (make5 20)]
-    (+ (tuple-ref a 2) (tuple-ref b 4))))")
+    [a : (Box (Tuple i64 i64 i64)) (make3 10)]
+    [b : (Box (Tuple i64 i64 i64 i64 i64)) (make5 20)]
+    (+ (tuple-ref (deref a) 2) (tuple-ref (deref b) 4))))")
 
 (define (compiler-backend-inline-fast-alloc-multi-size-target-ok?
   [target : compiler_backend.CompilerBackendTarget]) : bool
@@ -44691,8 +44693,9 @@ g:
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; Backend emit-shape coverage for local tuple construction/ref.
-;; `(tuple true 42)` allocates the tuple payload, materializes/stores the bool
-;; byte and i64 at their offsets, and `(tuple-ref t 1)` loads the i64 slot back.
+;; `(tuple true 42)` reserves inline frame storage without allocating (#7070),
+;; materializes/stores the bool byte and i64 at their offsets, and
+;; `(tuple-ref t 1)` loads the i64 slot back.
 (define (compiler-backend-tuple-source) : String
   "(define (main) : i64
   (let
@@ -44704,10 +44707,18 @@ g:
     (compiler-backend-tuple-source))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
-        (compiler_backend.backend-and8
-          (compiler-backend-string-contains-alloc-size?
+        (=
+          (compiler-backend-alloc-call-count
+            (owned_view.compiler-owned-shared-view asm))
+          0)
+        (not
+          (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
-            16)
+            "_allocentry_"))
+        (compiler_backend.backend-and8
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "(%rsp), %r8\n    movq %r8, ")
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
             "    movq $1,")

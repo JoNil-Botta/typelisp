@@ -53,7 +53,9 @@
         "{0}/{0}/{name}/{captured}"
         value
         (format.named name named-value))]
+    [before-first : i64 (profile.alloc-total)]
     [first : String (format.format arguments)]
+    [first-allocations : i64 (- (profile.alloc-total) before-first)]
     [second : String (format.format arguments)]
     [nested-arguments (format.args "<{}>" arguments)]
     [nested : String (format.format nested-arguments)]
@@ -75,8 +77,10 @@
     [text-result : format.FormatResult (format.writeln! text nested-arguments)]
     [rendered-text : String (text_buf.render text)]
     (if (and
-      (> construction-allocations 0)
-      (< construction-allocations 160)
+      ;; The retained package is an inline tuple (#7070): building it allocates
+      ;; nothing, while materializing a String proves the counter is live.
+      (= construction-allocations 0)
+      (> first-allocations 0)
       (= write-allocations 0)
       (= value-evaluations 1)
       (= fallback-hook-calls 1)

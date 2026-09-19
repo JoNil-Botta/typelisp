@@ -1054,7 +1054,10 @@
           (ast.AstStructCleanup.No)
           (ast.ast-field-def-list-new)))]
     [diag : cdiag.CompilerDiagnostic
-      (tc_core.tc-decl-diag decl "typecheck: policy fallback")]
+      (tc_core.tc-decl-diag
+        (ast.ast-node-pool-active-expr-segment-bases)
+        decl
+        "typecheck: policy fallback")]
     [message-ok : bool
       (string.eq
         (cdiag.compiler-diagnostic-message diag)
@@ -5944,10 +5947,12 @@
     [wrapped : i64 (ast.ast-expr-ann spanned-inner (ast.AstType.I64))]
     [diag : cdiag.CompilerDiagnostic
       (tc_core.tc-expr-diag
+        (ast.ast-node-pool-active-expr-segment-bases)
         (ast.ast-node-get wrapped)
         "typecheck: nested expression diagnostic")]
     [located : String
       (tc_core.tc-locate-error-at-expr
+        (ast.ast-node-pool-active-expr-segment-bases)
         (ast.ast-node-get (ast.ast-expr-return spanned-inner))
         "typecheck: nested located error")]
     [located-diag : cdiag.CompilerDiagnostic

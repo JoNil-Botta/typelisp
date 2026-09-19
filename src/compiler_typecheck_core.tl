@@ -5428,24 +5428,27 @@
     message))
 
 (define (tc-macro-framed-error-from-root
+  [expr-bases : i64]
   [expr : ast.AstExpr]
   [message : String]) : TcMaybeString
   (match expr
     [(ast.AstExpr.Spanned inner-id span)
-      (match (ast.ast-node-get inner-id)
+      (match (ast.ast-expr-segment-bases-get expr-bases inner-id)
         [(ast.AstExpr.MacroExpansion expanded provenance-id macro-name-id)
           (let
-            [expanded-expr : ast.AstExpr (ast.ast-node-get expanded)]
+            [expanded-expr : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases expanded)]
             [path-id : i64 (macro-expansion-invocation-path-id provenance-id)]
             [origin-path-id : i64
               (macro-expansion-origin-path-id provenance-id)]
             [inner-message : String
               (match (tc-macro-framed-error-from-root
+                expr-bases
                 (tc-global-shared-view expanded-expr)
                 (tc-global-shared-view message))
                 [(TcMaybeString.Some framed) framed]
                 [(TcMaybeString.No)
-                  (match (tc-expr-maybe-span expanded-expr)
+                  (match (tc-expr-maybe-span expr-bases expanded-expr)
                     [(TcMaybeAstSourceSpan.Some primary)
                       (tc-located-error primary message)]
                     [(TcMaybeAstSourceSpan.No) (tc-located-error span message)])])]
@@ -10869,18 +10872,22 @@
       (tc-lp-line "cache_misses" 13)
       (tc-lp-line "cache_bypasses" 14))))
 
-(define (tc-expr-diag [expr : ast.AstExpr] [message : String]) : cdiag.CompilerDiagnostic
+(define (tc-expr-diag
+  [expr-bases : i64]
+  [expr : ast.AstExpr]
+  [message : String]) : cdiag.CompilerDiagnostic
   (cond
     [(tc-macro-framed-error? message) (tc-macro-framed-error-diag message)]
     [(tc-rich-error? message) (tc-rich-error-diag message)]
     [(tc-located-error? message) (tc-located-error-diag message)]
     [else
       (match (tc-macro-framed-error-from-root
+        expr-bases
         (tc-global-shared-view expr)
         (tc-global-shared-view message))
         [(TcMaybeString.Some framed) (tc-macro-framed-error-diag framed)]
         [(TcMaybeString.No)
-          (match (tc-expr-maybe-span expr)
+          (match (tc-expr-maybe-span expr-bases expr)
             [(TcMaybeAstSourceSpan.Some span)
               (tc-canonical-diagnostic
                 (cdiag.compiler-diagnostic-from-ast-span "" span message))]
@@ -10906,28 +10913,40 @@
           with-context))]
     [(ast.AstGeneratedDeclMeta.No) diag]))
 
-(define (tc-decl-location-diag [decl : ast.AstDecl] [message : String]) : cdiag.CompilerDiagnostic
+(define (tc-decl-location-diag
+  [expr-bases : i64]
+  [decl : ast.AstDecl]
+  [message : String]) : cdiag.CompilerDiagnostic
   (match (tc-global-shared-view decl)
     [(ast.AstDecl.Def decl-meta _ _ expr-box)
       (let
-        [expr : ast.AstExpr (ast.ast-node-get expr-box)]
-        (tc-expr-diag expr message))]
+        [expr : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases expr-box)]
+        (tc-expr-diag expr-bases expr message))]
     [(ast.AstDecl.DefFn decl-meta _ _ _ body-box _)
       (let
-        [body : ast.AstExpr (ast.ast-node-get body-box)]
-        (tc-expr-diag body message))]
+        [body : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases body-box)]
+        (tc-expr-diag expr-bases body message))]
     [(ast.AstDecl.DefMacro decl-meta _ _ _ body-box)
       (let
-        [body : ast.AstExpr (ast.ast-node-get body-box)]
-        (tc-expr-diag body message))]
+        [body : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases body-box)]
+        (tc-expr-diag expr-bases body message))]
     [(ast.AstDecl.Test _ _ _ span)
       (tc-canonical-diagnostic
         (cdiag.compiler-diagnostic-from-ast-span "" span message))]
     [(ast.AstDecl.Unsafe inner-box)
-      (tc-decl-location-diag (ast.ast-decl-box-shared-view inner-box) message)]
+      (tc-decl-location-diag
+        expr-bases
+        (ast.ast-decl-box-shared-view inner-box)
+        message)]
     [_ (tc-diag-at-start message)]))
 
-(define (tc-decl-diag [decl : ast.AstDecl] [message : String]) : cdiag.CompilerDiagnostic
+(define (tc-decl-diag
+  [expr-bases : i64]
+  [decl : ast.AstDecl]
+  [message : String]) : cdiag.CompilerDiagnostic
   (cond
     [(tc-macro-framed-error? message) (tc-macro-framed-error-diag message)]
     [(tc-rich-error? message) (tc-rich-error-diag message)]
@@ -10935,14 +10954,15 @@
     [else
       (tc-generated-decl-diag
         (ast.ast-decl-generated-meta (tc-global-shared-view decl))
-        (tc-decl-location-diag decl message))]))
+        (tc-decl-location-diag expr-bases decl message))]))
 
 (define (tc-decl-diag-with-maybe-origin
+  [expr-bases : i64]
   [origin : parser.CompilerParseMaybeDeclSpan]
   [decl : ast.AstDecl]
   [message : String]) : cdiag.CompilerDiagnostic
   (let
-    [diag : cdiag.CompilerDiagnostic (tc-decl-diag decl message)]
+    [diag : cdiag.CompilerDiagnostic (tc-decl-diag expr-bases decl message)]
     (if (and
       (= (cdiag.compiler-diagnostic-line diag) 1)
       (= (cdiag.compiler-diagnostic-col diag) 1)
@@ -10961,60 +10981,86 @@
         [(parser.CompilerParseMaybeDeclSpan.None) diag])
       diag)))
 
-(define (tc-locate-error-at-expr [expr : ast.AstExpr] [message : String]) : String
+(define (tc-locate-error-at-expr
+  [expr-bases : i64]
+  [expr : ast.AstExpr]
+  [message : String]) : String
   (if (tc-encoded-error? message)
     message
-    (match (tc-expr-maybe-span expr)
+    (match (tc-expr-maybe-span expr-bases expr)
       [(TcMaybeAstSourceSpan.Some span)
         (if (tc-borrow-place-error-message? message)
           (tc-rich-borrow-place-error span message)
           (tc-located-error span message))]
       [(TcMaybeAstSourceSpan.No) message])))
 
-(define (tc-expr-id-maybe-span [expr-id : i64]) : TcMaybeAstSourceSpan
-  (tc-expr-maybe-span (ast.ast-node-get expr-id)))
+;; Diagnostic span resolution is a read-only walk: it cannot expand a macro or
+;; install a pool, so one expression segment-bases token covers the whole
+;; descent. Callers derive the token on their error path from the owning
+;; `TcContext` (`tc-context-expr-bases`) or reuse the token their own walk was
+;; given; a span must come from the pool that owns the failing node, never from
+;; whichever pool happens to be installed.
+(define (tc-expr-id-maybe-span [expr-bases : i64] [expr-id : i64]) : TcMaybeAstSourceSpan
+  (tc-expr-maybe-span
+    expr-bases
+    (ast.ast-expr-segment-bases-get expr-bases expr-id)))
 
-(define (tc-expr-maybe-span [expr : ast.AstExpr]) : TcMaybeAstSourceSpan
+;; Serial compatibility adapter for consumers that still walk the installed
+;; pool (the semantic index). Compile-job typecheck paths pass their owner's
+;; token to `tc-expr-id-maybe-span` instead.
+(define (tc-expr-id-maybe-span-installed [expr-id : i64]) : TcMaybeAstSourceSpan
+  (tc-expr-id-maybe-span (ast.ast-node-pool-active-expr-segment-bases) expr-id))
+
+(define (tc-expr-maybe-span [expr-bases : i64] [expr : ast.AstExpr]) : TcMaybeAstSourceSpan
   (match expr
     [(ast.AstExpr.Spanned _ span) (TcMaybeAstSourceSpan.Some span)]
-    [(ast.AstExpr.MacroExpansion inner _ _) (tc-expr-id-maybe-span inner)]
-    [(ast.AstExpr.Unary _ inner) (tc-expr-id-maybe-span inner)]
+    [(ast.AstExpr.MacroExpansion inner _ _)
+      (tc-expr-id-maybe-span expr-bases inner)]
+    [(ast.AstExpr.Unary _ inner) (tc-expr-id-maybe-span expr-bases inner)]
     [(ast.AstExpr.Lambda lambda-box)
       (match (__tl-box-place lambda-box)
-        [(ast.AstLambda.Lambda _ _ body) (tc-expr-id-maybe-span body)])]
-    [(ast.AstExpr.TupleRef target _) (tc-expr-id-maybe-span target)]
-    [(ast.AstExpr.FixedMakeArray _ size) (tc-expr-id-maybe-span size)]
-    [(ast.AstExpr.MakeArray _ size) (tc-expr-id-maybe-span size)]
-    [(ast.AstExpr.Set _ value) (tc-expr-id-maybe-span value)]
-    [(ast.AstExpr.Ann inner _) (tc-expr-id-maybe-span inner)]
-    [(ast.AstExpr.Cast inner _) (tc-expr-id-maybe-span inner)]
-    [(ast.AstExpr.Borrow _ _ inner) (tc-expr-id-maybe-span inner)]
-    [(ast.AstExpr.Box value) (tc-expr-id-maybe-span value)]
-    [(ast.AstExpr.BoxGet value) (tc-expr-id-maybe-span value)]
-    [(ast.AstExpr.BoxTake value) (tc-expr-id-maybe-span value)]
-    [(ast.AstExpr.Comptime inner) (tc-expr-id-maybe-span inner)]
-    [(ast.AstExpr.Quote inner) (tc-expr-id-maybe-span inner)]
-    [(ast.AstExpr.Quasiquote inner) (tc-expr-id-maybe-span inner)]
-    [(ast.AstExpr.Unquote inner) (tc-expr-id-maybe-span inner)]
-    [(ast.AstExpr.UnquoteSplicing inner) (tc-expr-id-maybe-span inner)]
-    [(ast.AstExpr.Try inner) (tc-expr-id-maybe-span inner)]
-    [(ast.AstExpr.Return inner) (tc-expr-id-maybe-span inner)]
-    [(ast.AstExpr.PtrNullCheck inner) (tc-expr-id-maybe-span inner)]
-    [(ast.AstExpr.PtrAddrOf inner) (tc-expr-id-maybe-span inner)]
-    [(ast.AstExpr.PtrRead inner) (tc-expr-id-maybe-span inner)]
-    [(ast.AstExpr.PtrCast inner _) (tc-expr-id-maybe-span inner)]
-    [(ast.AstExpr.PtrToInt inner) (tc-expr-id-maybe-span inner)]
-    [(ast.AstExpr.IntToPtr inner _) (tc-expr-id-maybe-span inner)]
-    [(ast.AstExpr.StringData inner) (tc-expr-id-maybe-span inner)]
-    [(ast.AstExpr.ArrayData inner) (tc-expr-id-maybe-span inner)]
-    [(ast.AstExpr.Xgetbv inner) (tc-expr-id-maybe-span inner)]
+        [(ast.AstLambda.Lambda _ _ body)
+          (tc-expr-id-maybe-span expr-bases body)])]
+    [(ast.AstExpr.TupleRef target _) (tc-expr-id-maybe-span expr-bases target)]
+    [(ast.AstExpr.FixedMakeArray _ size)
+      (tc-expr-id-maybe-span expr-bases size)]
+    [(ast.AstExpr.MakeArray _ size) (tc-expr-id-maybe-span expr-bases size)]
+    [(ast.AstExpr.Set _ value) (tc-expr-id-maybe-span expr-bases value)]
+    [(ast.AstExpr.Ann inner _) (tc-expr-id-maybe-span expr-bases inner)]
+    [(ast.AstExpr.Cast inner _) (tc-expr-id-maybe-span expr-bases inner)]
+    [(ast.AstExpr.Borrow _ _ inner) (tc-expr-id-maybe-span expr-bases inner)]
+    [(ast.AstExpr.Box value) (tc-expr-id-maybe-span expr-bases value)]
+    [(ast.AstExpr.BoxGet value) (tc-expr-id-maybe-span expr-bases value)]
+    [(ast.AstExpr.BoxTake value) (tc-expr-id-maybe-span expr-bases value)]
+    [(ast.AstExpr.Comptime inner) (tc-expr-id-maybe-span expr-bases inner)]
+    [(ast.AstExpr.Quote inner) (tc-expr-id-maybe-span expr-bases inner)]
+    [(ast.AstExpr.Quasiquote inner) (tc-expr-id-maybe-span expr-bases inner)]
+    [(ast.AstExpr.Unquote inner) (tc-expr-id-maybe-span expr-bases inner)]
+    [(ast.AstExpr.UnquoteSplicing inner)
+      (tc-expr-id-maybe-span expr-bases inner)]
+    [(ast.AstExpr.Try inner) (tc-expr-id-maybe-span expr-bases inner)]
+    [(ast.AstExpr.Return inner) (tc-expr-id-maybe-span expr-bases inner)]
+    [(ast.AstExpr.PtrNullCheck inner) (tc-expr-id-maybe-span expr-bases inner)]
+    [(ast.AstExpr.PtrAddrOf inner) (tc-expr-id-maybe-span expr-bases inner)]
+    [(ast.AstExpr.PtrRead inner) (tc-expr-id-maybe-span expr-bases inner)]
+    [(ast.AstExpr.PtrCast inner _) (tc-expr-id-maybe-span expr-bases inner)]
+    [(ast.AstExpr.PtrToInt inner) (tc-expr-id-maybe-span expr-bases inner)]
+    [(ast.AstExpr.IntToPtr inner _) (tc-expr-id-maybe-span expr-bases inner)]
+    [(ast.AstExpr.StringData inner) (tc-expr-id-maybe-span expr-bases inner)]
+    [(ast.AstExpr.ArrayData inner) (tc-expr-id-maybe-span expr-bases inner)]
+    [(ast.AstExpr.Xgetbv inner) (tc-expr-id-maybe-span expr-bases inner)]
     [_ (TcMaybeAstSourceSpan.No)]))
 
-(define (tc-expr-list-last-maybe-span [exprs : ast.AstExprList]) : TcMaybeAstSourceSpan
+(define (tc-expr-list-last-maybe-span
+  [expr-bases : i64]
+  [exprs : ast.AstExprList]) : TcMaybeAstSourceSpan
   (if (ast.ast-expr-list-empty? (& exprs))
     (TcMaybeAstSourceSpan.No)
     (tc-expr-maybe-span
-      (ast.ast-node-get (ast.ast-expr-list-get (& exprs) (- exprs.len 1) 0)))))
+      expr-bases
+      (ast.ast-expr-segment-bases-get
+        expr-bases
+        (ast.ast-expr-list-get (& exprs) (- exprs.len 1) 0)))))
 
 (define (tc-reference-escape-help) : String
   "return an owned clone, keep the reference inside its scope, or tie the returned reference lifetime to a parameter")
@@ -11130,10 +11176,11 @@
       (tc-rich-error-one-secondary primary message help primary secondary-label)]))
 
 (define (tc-rich-escape-at-expr
+  [expr-bases : i64]
   [expr : ast.AstExpr]
   [message : String]
   [secondary-label : String]) : String
-  (match (tc-expr-maybe-span expr)
+  (match (tc-expr-maybe-span expr-bases expr)
     [(TcMaybeAstSourceSpan.Some span)
       (let
         [help : String (tc-escape-help (tc-global-shared-view message))]
@@ -11145,13 +11192,21 @@
 ;; not carry a source span, but the unquoted vector expression does.  Use that
 ;; span so this diagnostic points to the user's borrowed-vector argument, not
 ;; only the macro's quasiquote body.
-(define (tc-vector-ref-rvalue-source-span [arg : ast.AstExpr]) : TcMaybeAstSourceSpan
-  (match (ast.ast-expr-unspan (tc-global-shared-view arg))
+(define (tc-vector-ref-rvalue-source-span
+  [expr-bases : i64]
+  [arg : ast.AstExpr]) : TcMaybeAstSourceSpan
+  (match (ast.ast-expr-unspan-with-segment-bases
+    expr-bases
+    (tc-global-shared-view arg))
     [(ast.AstExpr.ArrayRef array-box _)
-      (match (ast.ast-expr-unspan (ast.ast-node-get array-box))
+      (match (ast.ast-expr-unspan-with-segment-bases
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases array-box))
         [(ast.AstExpr.StructGet receiver-box field)
           (if (= field cbi.compiler-builtin-id-fix-slots)
-            (tc-expr-maybe-span (ast.ast-node-get receiver-box))
+            (tc-expr-maybe-span
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases receiver-box))
             (TcMaybeAstSourceSpan.No))]
         [_ (TcMaybeAstSourceSpan.No)])]
     [_ (TcMaybeAstSourceSpan.No)]))
@@ -11160,11 +11215,13 @@
 ;; move-only aggregate. Keep the sound confinement rejection, but make this
 ;; frequent vector-iteration shape actionable without changing diagnostics for
 ;; unrelated region values crossing a call boundary.
-(define (tc-region-call-arg-error [arg : ast.AstExpr]) : String
+(define (tc-region-call-arg-error [expr-bases : i64] [arg : ast.AstExpr]) : String
   (let
     [message : String
       "typecheck: cannot pass region-tagged value to function parameter; region value would escape"]
-    (match (tc-vector-ref-rvalue-source-span (tc-global-shared-view arg))
+    (match (tc-vector-ref-rvalue-source-span
+      expr-bases
+      (tc-global-shared-view arg))
       [(TcMaybeAstSourceSpan.Some span)
         (tc-rich-error-one-secondary
           span
@@ -11175,7 +11232,7 @@
           span
           "this by-value argument reads an aggregate through a shared reference")]
       [(TcMaybeAstSourceSpan.No)
-        (match (tc-expr-maybe-span arg)
+        (match (tc-expr-maybe-span expr-bases arg)
           [(TcMaybeAstSourceSpan.Some span)
             (tc-rich-error-one-secondary
               span
@@ -11201,6 +11258,7 @@
           (str_cat.str-cat "<id:" (string.int->string lifetime-name-id) ">"))))))
 
 (define (tc-spanned-escape-error
+  [expr-bases : i64]
   [session : cis.InternStructuralSessionHandle]
   [inner : ast.AstExpr]
   [span : ast.AstSourceSpan]
@@ -11212,7 +11270,7 @@
         (if (tc-diag-string-prefix?
           message
           "typecheck: region-tagged value cannot escape with-arena '")
-          (match (tc-expr-list-last-maybe-span body)
+          (match (tc-expr-list-last-maybe-span expr-bases body)
             [(TcMaybeAstSourceSpan.Some value-span)
               (TcMaybeString.Some
                 (tc-rich-error-one-secondary
@@ -11236,23 +11294,25 @@
       [(ast.AstExpr.Return value-box)
         (if (tc-escape-message? message)
           (let
-            [value : ast.AstExpr (ast.ast-node-get value-box)]
+            [value : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases value-box)]
             [help : String (tc-escape-help (tc-global-shared-view message))]
             (TcMaybeString.Some
               (tc-rich-error-with-maybe-secondary
                 span
                 message
                 help
-                (tc-expr-maybe-span value)
+                (tc-expr-maybe-span expr-bases value)
                 "returned value carries a lifetime or arena that cannot cross this boundary")))
           (TcMaybeString.No))]
       [(ast.AstExpr.Set name value-box)
         (if (tc-escape-message? message)
           (let
-            [value : ast.AstExpr (ast.ast-node-get value-box)]
+            [value : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases value-box)]
             [target : String (tc-env-key-name-text-for-session session name)]
             [help : String (tc-escape-help (tc-global-shared-view message))]
-            (match (tc-expr-maybe-span value)
+            (match (tc-expr-maybe-span expr-bases value)
               [(TcMaybeAstSourceSpan.Some value-span)
                 (TcMaybeString.Some
                   (tc-rich-error-two-secondaries
@@ -11283,14 +11343,15 @@
           [(ast.AstLet.Let _ body-box)
             (if (tc-escape-message? message)
               (let
-                [body : ast.AstExpr (ast.ast-node-get body-box)]
+                [body : ast.AstExpr
+                  (ast.ast-expr-segment-bases-get expr-bases body-box)]
                 [help : String (tc-escape-help (tc-global-shared-view message))]
                 (TcMaybeString.Some
                   (tc-rich-error-with-maybe-secondary
                     span
                     message
                     help
-                    (tc-expr-maybe-span body)
+                    (tc-expr-maybe-span expr-bases body)
                     "let result carries a lifetime that cannot outlive this binding scope")))
               (TcMaybeString.No))])]
       [(ast.AstExpr.Lambda lambda-box)
@@ -11298,18 +11359,20 @@
           [(ast.AstLambda.Lambda _ _ body-box)
             (if (tc-escape-message? message)
               (let
-                [body : ast.AstExpr (ast.ast-node-get body-box)]
+                [body : ast.AstExpr
+                  (ast.ast-expr-segment-bases-get expr-bases body-box)]
                 (TcMaybeString.Some
                   (tc-rich-error-with-maybe-secondary
                     span
                     message
                     (tc-closure-escape-help)
-                    (tc-expr-maybe-span body)
+                    (tc-expr-maybe-span expr-bases body)
                     "closure body captures a value whose lifetime cannot escape")))
               (TcMaybeString.No))])]
       [_ (TcMaybeString.No)])))
 
 (define (tc-expect-at-expr
+  [ctx : TcContext]
   [expr : ast.AstExpr]
   [actual : ast.AstType]
   [expected : ast.AstType]
@@ -11320,8 +11383,186 @@
     ResultTcUnit.Ok
     (ResultTcUnit.Err
       (tc-locate-error-at-expr
+        (tc-context-expr-bases (tc-global-shared-view ctx))
         expr
         (tc-type-mismatch-message actual expected message)))))
+
+;; Every span-bearing diagnostic builder below a typecheck error, rendered for
+;; one expression root through one expression segment-bases token.
+(define (tc-diagnostic-span-isolation-transcript
+  [expr-bases : i64]
+  [session : cis.InternStructuralSessionHandle]
+  [root-id : i64]) : String
+  (let
+    [root : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases root-id)]
+    [outer : ast.AstSourceSpan (ast.ast-source-span 1 1 1 2)]
+    [located : String
+      (tc-locate-error-at-expr
+        expr-bases
+        (tc-global-shared-view root)
+        "typecheck: span isolation")]
+    [expr-diag : cdiag.CompilerDiagnostic
+      (tc-expr-diag
+        expr-bases
+        (tc-global-shared-view root)
+        "typecheck: span isolation")]
+    [decl-diag : cdiag.CompilerDiagnostic
+      (tc-decl-diag
+        expr-bases
+        (ast.ast-decl-def-id
+          (ci.intern "span-isolation/decl")
+          (ast.AstMaybeType.No)
+          root-id)
+        "typecheck: span isolation")]
+    [escape : String
+      (match (tc-spanned-escape-error
+        expr-bases
+        session
+        (tc-global-shared-view root)
+        outer
+        "typecheck: reference value would escape lexical scope")
+        [(TcMaybeString.Some rich) rich]
+        [(TcMaybeString.No) "<no escape diagnostic>"])]
+    [escape-at : String
+      (tc-rich-escape-at-expr
+        expr-bases
+        (tc-global-shared-view root)
+        "typecheck: reference value would escape lexical scope"
+        "span isolation")]
+    [pattern : String
+      (tc-locate-match-pattern-error
+        expr-bases
+        (tc-global-shared-view root)
+        "typecheck: span isolation")]
+    (str_cat.str-cat
+      located
+      "\n"
+      (cdiag.compiler-diagnostic-render expr-diag)
+      "\n"
+      (cdiag.compiler-diagnostic-render decl-diag)
+      "\n"
+      escape
+      "\n"
+      escape-at
+      "\n"
+      pattern)))
+
+(define (tc-diagnostic-span-isolation-expect-message
+  [ctx : TcContext]
+  [root : ast.AstExpr]) : String
+  (match (tc-expect-at-expr
+    ctx
+    root
+    (ast.AstType.I64)
+    (ast.AstType.Bool)
+    "typecheck: span isolation")
+    [(ResultTcUnit.Err message) message]
+    [(ResultTcUnit.Ok) "<no mismatch>"]))
+
+;; Pools A and B hold the same numeric ids with different source spans. With B
+;; installed as a decoy, every diagnostic built for an A node must carry A's
+;; span, byte-identical to the serial rendering with A installed, and must
+;; leave B installed and both pools unchanged.
+(test
+  tc-diagnostic-span-pool-isolation
+  (let
+    [installed : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [pools-a : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [pools-b : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [name-id : i64 (ci.intern "span-isolation/value")]
+    [leaf-a : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools-a)
+        (ast.AstExpr.Var name-id))]
+    [leaf-b : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools-b)
+        (ast.AstExpr.Var name-id))]
+    [spanned-a : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools-a)
+        (ast.AstExpr.Spanned leaf-a (ast.ast-source-span 7 5 7 12)))]
+    [spanned-b : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools-b)
+        (ast.AstExpr.Spanned leaf-b (ast.ast-source-span 99 3 99 9)))]
+    [root-a : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools-a)
+        (ast.AstExpr.Return spanned-a))]
+    [root-b : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools-b)
+        (ast.AstExpr.Return spanned-b))]
+    [ctx-a : TcContext
+      (tc-context-new
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        (tc-global-shared-view pools-a))]
+    [session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx-a)]
+    [bases-a : i64 (ast.ast-node-pool-context-expr-segment-bases (& pools-a))]
+    [bases-b : i64 (ast.ast-node-pool-context-expr-segment-bases (& pools-b))]
+    [root-expr : ast.AstExpr (ast.ast-expr-segment-bases-get bases-a root-a)]
+    [_install-owner : unit
+      (ast.ast-node-pool-context-install! (tc-global-shared-view pools-a))]
+    [serial : String
+      (tc-diagnostic-span-isolation-transcript
+        (ast.ast-node-pool-active-expr-segment-bases)
+        session
+        root-a)]
+    [serial-expect : String
+      (tc-diagnostic-span-isolation-expect-message
+        (tc-global-shared-view ctx-a)
+        (tc-global-shared-view root-expr))]
+    [_install-decoy : unit
+      (ast.ast-node-pool-context-install! (tc-global-shared-view pools-b))]
+    [isolated : String
+      (tc-diagnostic-span-isolation-transcript bases-a session root-a)]
+    [isolated-expect : String
+      (tc-diagnostic-span-isolation-expect-message
+        (tc-global-shared-view ctx-a)
+        (tc-global-shared-view root-expr))]
+    [decoy : String
+      (tc-diagnostic-span-isolation-transcript bases-b session root-b)]
+    [owner-line? : bool
+      (match (tc-expr-id-maybe-span bases-a root-a)
+        [(TcMaybeAstSourceSpan.Some span)
+          (= (ast.ast-source-span-start-line span) 7)]
+        [(TcMaybeAstSourceSpan.No) false])]
+    [decoy-line? : bool
+      (match (tc-expr-id-maybe-span-installed root-b)
+        [(TcMaybeAstSourceSpan.Some span)
+          (= (ast.ast-source-span-start-line span) 99)]
+        [(TcMaybeAstSourceSpan.No) false])]
+    [decoy-still-installed? : bool
+      (ast.ast-node-pool-context-expr-installed?
+        (tc-global-shared-view pools-b))]
+    [ok? : bool
+      (and
+        (= root-a root-b)
+        owner-line?
+        decoy-line?
+        (string.eq serial isolated)
+        (string.eq serial-expect isolated-expect)
+        (not (string.eq isolated decoy))
+        (not (string.eq isolated-expect "<no mismatch>"))
+        decoy-still-installed?
+        (=
+          (ast.ast-node-pool-context-expr-len (tc-global-shared-view pools-a))
+          3)
+        (= (ast.ast-node-pool-context-expr-len pools-b) 3))]
+    (begin
+      (ast.ast-node-pool-context-install! installed)
+      (if ok?
+        unit
+        (io.panic "typecheck: diagnostic span pool isolation failed")))))
 
 (define (tc-type-env-binding-segment-capacity) : i64
   64)
@@ -31182,6 +31423,7 @@
                     (if (tc-source-decl-shape-origin-message?
                       (tc-global-shared-view message))
                       (tc-typecheck-diag-with-path
+                        (tc-context-expr-bases (tc-global-shared-view ctx))
                         (& decls)
                         decl
                         decl-path
@@ -39137,7 +39379,12 @@
           (tc-global-shared-view expected))
           [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
           [(ResultTcType.Err message)
-            (tc-locate-spanned-error structural-session inner span message)]))]
+            (tc-locate-spanned-error
+              expr-bases
+              structural-session
+              inner
+              span
+              message)]))]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
       (tc-float-literal-expr-with-expected-with-bases
         structural-session
@@ -39196,6 +39443,7 @@
           [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
           [(ResultTcType.Err message)
             (tc-locate-spanned-error
+              expr-bases
               (tc-context-structural-session ctx)
               inner
               span
@@ -40099,6 +40347,7 @@
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
 (define (tc-macro-expansion-result-with-frame
+  [ctx : TcContext]
   [inner : ast.AstExpr]
   [path-id : i64]
   [origin-path-id : i64]
@@ -40112,7 +40361,9 @@
         [located : String
           (if (tc-encoded-error? message)
             message
-            (match (tc-expr-maybe-span inner)
+            (match (tc-expr-maybe-span
+              (tc-context-expr-bases (tc-global-shared-view ctx))
+              inner)
               [(TcMaybeAstSourceSpan.Some primary)
                 (tc-located-error primary message)]
               [(TcMaybeAstSourceSpan.No) (tc-located-error span message)]))]
@@ -40138,6 +40389,7 @@
         (match (tc-global-shared-view inner)
           [(ast.AstExpr.MacroExpansion expanded provenance-id macro-name-id)
             (tc-macro-expansion-result-with-frame
+              (tc-global-shared-view ctx)
               (tc-context-expr-get (tc-global-shared-view ctx) expanded)
               (macro-expansion-invocation-path-id provenance-id)
               (macro-expansion-origin-path-id provenance-id)
@@ -41281,6 +41533,7 @@
     (ResultTcType.Err message)))
 
 (define (tc-locate-spanned-error
+  [expr-bases : i64]
   [session : cis.InternStructuralSessionHandle]
   [inner : ast.AstExpr]
   [span : ast.AstSourceSpan]
@@ -41288,6 +41541,7 @@
   (if (tc-borrow-place-error-message? (tc-global-shared-view message))
     (ResultTcType.Err (tc-rich-borrow-place-error span message))
     (match (tc-spanned-escape-error
+      expr-bases
       session
       (tc-global-shared-view inner)
       span
@@ -42790,6 +43044,7 @@
             (ResultTcType.Err (tc-located-error span message)))]
         [_
           (tc-locate-spanned-error
+            (tc-context-expr-bases (tc-global-shared-view ctx))
             (tc-context-structural-session ctx)
             inner
             span
@@ -42804,6 +43059,7 @@
           (tc-locate-integer-binop-error ctx env left-id right-id span message)]
         [_
           (tc-locate-spanned-error
+            (tc-context-expr-bases (tc-global-shared-view ctx))
             (tc-context-structural-session ctx)
             inner
             span
@@ -42822,6 +43078,7 @@
           (ResultTcType.Err (tc-located-error span message))]
         [_
           (tc-locate-spanned-error
+            (tc-context-expr-bases (tc-global-shared-view ctx))
             (tc-context-structural-session ctx)
             inner
             span
@@ -42831,12 +43088,14 @@
         [(ast.AstExpr.Set _ _) (ResultTcType.Err message)]
         [(ast.AstExpr.Spanned nested-box _)
           (tc-locate-spanned-error
+            (tc-context-expr-bases (tc-global-shared-view ctx))
             (tc-context-structural-session ctx)
             (tc-context-expr-get ctx nested-box)
             span
             message)]
         [_
           (tc-locate-spanned-error
+            (tc-context-expr-bases (tc-global-shared-view ctx))
             (tc-context-structural-session ctx)
             inner
             span
@@ -44732,6 +44991,7 @@
                           (tc-lifetime-subst-type subst canonical-want)]
                         (ResultTcLifetimeSubst.Err
                           (tc-locate-error-at-expr
+                            (tc-context-expr-bases (tc-global-shared-view ctx))
                             arg
                             (tc-type-mismatch-message-in-context
                               (tc-global-shared-view ctx)
@@ -44740,7 +45000,11 @@
                               required-want
                               (tc-call-argument-message-prefix ctx func index)))))])])]
             [(ResultTcType.Err message)
-              (ResultTcLifetimeSubst.Err (tc-locate-error-at-expr arg message))]))))))
+              (ResultTcLifetimeSubst.Err
+                (tc-locate-error-at-expr
+                  (tc-context-expr-bases (tc-global-shared-view ctx))
+                  arg
+                  message))]))))))
 
 (define (tc-call-lifetime-constructor-type
   [ctx : TcContext]
@@ -47403,6 +47667,8 @@
                         [(TcInferredTypeMatch.Mismatch actual)
                           (ResultTcUnit.Err
                             (tc-locate-error-at-expr
+                              (tc-context-expr-bases
+                                (tc-global-shared-view ctx))
                               arg
                               (tc-type-mismatch-message-in-context
                                 (tc-global-shared-view ctx)
@@ -47430,7 +47696,10 @@
                             (tc-type-contains-reference?
                               (tc-global-shared-view got))))
                           (ResultTcUnit.Err
-                            (tc-region-call-arg-error effective-arg))
+                            (tc-region-call-arg-error
+                              (tc-context-expr-bases
+                                (tc-global-shared-view ctx))
+                              effective-arg))
                           (match (tc-global-shared-view constructor-target)
                             [(ast.AstMaybeType.Some target)
                               (match (tc-ensure-cleanup-resource-not-stored-expr
@@ -47472,7 +47741,11 @@
                       [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
                 [(ResultTcType.Err message) (ResultTcUnit.Err message)]))]
           [(ResultTcExpr.Err message)
-            (ResultTcUnit.Err (tc-locate-error-at-expr arg message))])))))
+            (ResultTcUnit.Err
+              (tc-locate-error-at-expr
+                (tc-context-expr-bases (tc-global-shared-view ctx))
+                arg
+                message))])))))
 
 (define (tc-check-call-args
   [ctx : TcContext]
@@ -47601,6 +47874,7 @@
   (if (ast.ast-c-function-mode-nullable? mode)
     (ResultTcType.Err
       (tc-locate-error-at-expr
+        (tc-context-expr-bases (tc-global-shared-view ctx))
         func
         "typecheck: nullable C function pointer must be checked before calling"))
     (match (if (ast.ast-c-function-mode-unsafe? mode)
@@ -47755,14 +48029,17 @@
                     [(ResultTcType.Err message) (ResultTcType.Err message)])
                   (ResultTcType.Err
                     (tc-locate-error-at-expr
+                      (tc-context-expr-bases (tc-global-shared-view ctx))
                       owner-expr
                       "typecheck: arena.phase requires a direct arena owner")))
                 (ResultTcType.Err
                   (tc-locate-error-at-expr
+                    (tc-context-expr-bases (tc-global-shared-view ctx))
                     owner-expr
                     "typecheck: arena.phase requires a direct arena owner"))))
             (ResultTcType.Err
               (tc-locate-error-at-expr
+                (tc-context-expr-bases (tc-global-shared-view ctx))
                 owner-expr
                 "typecheck: arena.phase arena must be Arena")))]
         [(ResultTcType.Err message) (ResultTcType.Err message)]))
@@ -47783,7 +48060,7 @@
         env
         (tc-global-shared-view phase-expr))
         [(ResultTcType.Ok phase-ty)
-          (if (tc-arena-phase-type? ctx phase-ty)
+          (if (tc-arena-phase-type? (tc-global-shared-view ctx) phase-ty)
             (let
               [pid : i64
                 (tc-expr-var-name-id (tc-global-shared-view phase-expr))]
@@ -47795,6 +48072,8 @@
                         (if (tc-active-region-owned-by-arena-id? env owner)
                           (ResultTcType.Err
                             (tc-locate-error-at-expr
+                              (tc-context-expr-bases
+                                (tc-global-shared-view ctx))
                               phase-expr
                               "typecheck: arena.rewind-safe! cannot run inside the arena it rewinds"))
                           (ResultTcType.Ok (ast.AstType.Unit)))]
@@ -47802,14 +48081,17 @@
                   [(TcMaybeNameId.No)
                     (ResultTcType.Err
                       (tc-locate-error-at-expr
+                        (tc-context-expr-bases (tc-global-shared-view ctx))
                         phase-expr
                         "typecheck: arena.rewind-safe! requires a direct arena phase token"))])
                 (ResultTcType.Err
                   (tc-locate-error-at-expr
+                    (tc-context-expr-bases (tc-global-shared-view ctx))
                     phase-expr
                     "typecheck: arena.rewind-safe! requires a direct arena phase token"))))
             (ResultTcType.Err
               (tc-locate-error-at-expr
+                (tc-context-expr-bases (tc-global-shared-view ctx))
                 phase-expr
                 "typecheck: arena.rewind-safe! phase must be ArenaPhase")))]
         [(ResultTcType.Err message) (ResultTcType.Err message)]))
@@ -47875,6 +48157,7 @@
             (return
               (ResultTcType.Err
                 (tc-locate-error-at-expr
+                  (tc-context-expr-bases (tc-global-shared-view ctx))
                   (tc-global-shared-view owner-expr)
                   "typecheck: arena.destroy-safe! arena must be Arena"))))
           (let
@@ -47889,12 +48172,14 @@
                 (if (tc-active-region-owned-by-arena-id? env oid)
                   (ResultTcType.Err
                     (tc-locate-error-at-expr
+                      (tc-context-expr-bases (tc-global-shared-view ctx))
                       owner-expr
                       "typecheck: arena.destroy-safe! cannot run inside the arena it destroys"))
                   (ResultTcType.Ok (ast.AstType.Unit)))]
               [(TcMaybeNameId.No)
                 (ResultTcType.Err
                   (tc-locate-error-at-expr
+                    (tc-context-expr-bases (tc-global-shared-view ctx))
                     (tc-global-shared-view owner-expr)
                     "typecheck: arena.destroy-safe! requires a direct arena owner or branded local owner place"))])))]
       [(ResultTcType.Err message) (ResultTcType.Err message)])))
@@ -48066,6 +48351,7 @@
         ResultTcUnit.Ok
         (ResultTcUnit.Err
           (tc-locate-error-at-expr
+            (tc-context-expr-bases (tc-global-shared-view ctx))
             arg
             (tc-call-argument-expected-text-message
               ctx
@@ -48087,6 +48373,7 @@
         ResultTcUnit.Ok
         (ResultTcUnit.Err
           (tc-locate-error-at-expr
+            (tc-context-expr-bases (tc-global-shared-view ctx))
             arg
             (tc-call-argument-expected-text-message
               ctx
@@ -48103,11 +48390,12 @@
   [want : ast.AstType]
   [message : String]) : ResultTcUnit
   (match (tc-expr-with-expected-or-actual
-    ctx
+    (tc-global-shared-view ctx)
     env
     (tc-global-shared-view arg)
     (tc-global-shared-view want))
-    [(ResultTcType.Ok arg-ty) (tc-expect-at-expr arg arg-ty want message)]
+    [(ResultTcType.Ok arg-ty)
+      (tc-expect-at-expr (tc-global-shared-view ctx) arg arg-ty want message)]
     [(ResultTcType.Err message) (ResultTcUnit.Err message)]))
 
 (define (tc-one-string-handle-builtin-call
@@ -48350,6 +48638,7 @@
                   (ResultTcType.Ok (ast.AstType.Char))
                   (ResultTcType.Err
                     (tc-locate-error-at-expr
+                      (tc-context-expr-bases (tc-global-shared-view ctx))
                       index
                       (tc-call-argument-expected-text-message
                         ctx
@@ -48360,6 +48649,7 @@
               [(ResultTcType.Err message) (ResultTcType.Err message)])
             (ResultTcType.Err
               (tc-locate-error-at-expr
+                (tc-context-expr-bases (tc-global-shared-view ctx))
                 str
                 (tc-call-argument-expected-text-message
                   ctx
@@ -48418,6 +48708,7 @@
               (ast.ast-expr-list-get (& args) 0 0))]
           (ResultTcType.Err
             (tc-locate-error-at-expr
+              (tc-context-expr-bases (tc-global-shared-view ctx))
               arg
               (tc-call-argument-expected-text-message
                 ctx
@@ -48458,6 +48749,7 @@
             (ast.ast-expr-list-get (& args) 0 0))]
         (ResultTcType.Err
           (tc-locate-error-at-expr
+            (tc-context-expr-bases (tc-global-shared-view ctx))
             arg
             (tc-call-argument-expected-text-message
               ctx
@@ -49619,6 +49911,7 @@
             [_
               (ResultTcType.Err
                 (tc-locate-error-at-expr
+                  (tc-context-expr-bases (tc-global-shared-view ctx))
                   arg
                   "typecheck: __tl_float_sqrt expects f64 or f32"))])]
         [(ResultTcType.Err message) (ResultTcType.Err message)]))
@@ -49648,6 +49941,7 @@
               [_
                 (ResultTcType.Err
                   (tc-locate-error-at-expr
+                    (tc-context-expr-bases (tc-global-shared-view ctx))
                     arg
                     "typecheck: __tl_float_to_bits expects f64 or f32"))])
             (match (tc-type-strip-region
@@ -49657,6 +49951,7 @@
               [_
                 (ResultTcType.Err
                   (tc-locate-error-at-expr
+                    (tc-context-expr-bases (tc-global-shared-view ctx))
                     arg
                     "typecheck: __tl_float_from_bits expects u64 or u32"))]))]
         [(ResultTcType.Err message) (ResultTcType.Err message)]))
@@ -49879,6 +50174,7 @@
       [(TcSliceViewSourceInfo.Invalid)
         (ResultTcType.Err
           (tc-locate-error-at-expr
+            (tc-context-expr-bases (tc-global-shared-view ctx))
             source
             "typecheck: slice-view source must be a fixed array, dynamic array, or borrowed reference to one"))]
       [(TcSliceViewSourceInfo.Direct _)
@@ -49894,6 +50190,7 @@
                 (return
                   (ResultTcType.Err
                     (tc-locate-error-at-expr
+                      (tc-context-expr-bases (tc-global-shared-view ctx))
                       (tc-global-shared-view source)
                       message)))]))
           (match (tc-borrow-place
@@ -49919,11 +50216,16 @@
                           (tc-context-pools (tc-global-shared-view ctx))
                           source-element))))])]
             [(ResultTcBorrowPlace.Err message)
-              (ResultTcType.Err (tc-locate-error-at-expr source message))]))]
+              (ResultTcType.Err
+                (tc-locate-error-at-expr
+                  (tc-context-expr-bases (tc-global-shared-view ctx))
+                  source
+                  message))]))]
       [(TcSliceViewSourceInfo.Borrow lifetime source-mutable _)
         (if (and (tc-slice-call-mutable? kind) (not source-mutable))
           (ResultTcType.Err
             (tc-locate-error-at-expr
+              (tc-context-expr-bases (tc-global-shared-view ctx))
               source
               "typecheck: slice-mut-view requires a mutable borrowed source"))
           (ResultTcType.Ok
@@ -49957,6 +50259,7 @@
           (if (and (tc-slice-call-mutable? kind) (not source-mutable))
             (ResultTcType.Err
               (tc-locate-error-at-expr
+                (tc-context-expr-bases (tc-global-shared-view ctx))
                 source
                 "typecheck: slice-split-at-mut requires a mutable borrowed Slice"))
             (begin
@@ -49971,6 +50274,7 @@
                     (return
                       (ResultTcType.Err
                         (tc-locate-error-at-expr
+                          (tc-context-expr-bases (tc-global-shared-view ctx))
                           (tc-global-shared-view source)
                           message)))]))
               (match (tc-slice-view-result-type
@@ -49993,11 +50297,13 @@
         [_
           (ResultTcType.Err
             (tc-locate-error-at-expr
+              (tc-context-expr-bases (tc-global-shared-view ctx))
               source
               "typecheck: slice-split-at source must be a borrowed Slice"))])]
     [_
       (ResultTcType.Err
         (tc-locate-error-at-expr
+          (tc-context-expr-bases (tc-global-shared-view ctx))
           source
           "typecheck: slice-split-at source must be a borrowed Slice"))]))
 
@@ -50038,6 +50344,7 @@
                     (ResultTcType.Ok result-ty)
                     (ResultTcType.Err
                       (tc-locate-error-at-expr
+                        (tc-context-expr-bases (tc-global-shared-view ctx))
                         mid
                         (tc-call-argument-expected-text-message
                           ctx
@@ -50097,6 +50404,8 @@
                           (ResultTcType.Ok result-ty)
                           (ResultTcType.Err
                             (tc-locate-error-at-expr
+                              (tc-context-expr-bases
+                                (tc-global-shared-view ctx))
                               len
                               (tc-call-argument-expected-text-message
                                 ctx
@@ -50107,6 +50416,7 @@
                       [(ResultTcType.Err message) (ResultTcType.Err message)])
                     (ResultTcType.Err
                       (tc-locate-error-at-expr
+                        (tc-context-expr-bases (tc-global-shared-view ctx))
                         start
                         (tc-call-argument-expected-text-message
                           ctx
@@ -50397,14 +50707,18 @@
   (match maybe-ty
     [(ast.AstMaybeType.Some want)
       (match (tc-expect-in-context
-        ctx
+        (tc-global-shared-view ctx)
         env
         init-ty
         want
         (str_cat.str-cat "typecheck: let binding `" name "` type mismatch"))
         [(ResultTcUnit.Ok) ResultTcUnit.Ok]
         [(ResultTcUnit.Err message)
-          (ResultTcUnit.Err (tc-locate-error-at-expr init message))])]
+          (ResultTcUnit.Err
+            (tc-locate-error-at-expr
+              (tc-context-expr-bases (tc-global-shared-view ctx))
+              init
+              message))])]
     [(ast.AstMaybeType.No) ResultTcUnit.Ok]))
 
 (define (tc-let-binding-plain-bind-type
@@ -67290,10 +67604,13 @@
         [_ (ResultTcEnv.Err "typecheck: unsupported Box match pattern")])]
     [_ (tc-bind-scalar-match-pattern env scrut-ty pattern)]))
 
-(define (tc-locate-match-pattern-error [body : ast.AstExpr] [message : String]) : String
+(define (tc-locate-match-pattern-error
+  [expr-bases : i64]
+  [body : ast.AstExpr]
+  [message : String]) : String
   (if (tc-encoded-error? message)
     message
-    (match (tc-expr-maybe-span body)
+    (match (tc-expr-maybe-span expr-bases body)
       [(TcMaybeAstSourceSpan.Some span) (tc-located-error span message)]
       [(TcMaybeAstSourceSpan.No) message])))
 
@@ -67317,7 +67634,11 @@
               pattern)
               [(ResultTcEnv.Ok arm-env) (tc-expr ctx arm-env body)]
               [(ResultTcEnv.Err message)
-                (ResultTcType.Err (tc-locate-match-pattern-error body message))]))])]
+                (ResultTcType.Err
+                  (tc-locate-match-pattern-error
+                    (tc-context-expr-bases (tc-global-shared-view ctx))
+                    body
+                    message))]))])]
     (begin
       (tc-type-env-scoped-runtime-restore! saved)
       result)))
@@ -67365,7 +67686,11 @@
                             "typecheck: match arm result type mismatch"))])]
                   [(ResultTcType.Err message) (ResultTcType.Err message)])]
               [(ResultTcEnv.Err message)
-                (ResultTcType.Err (tc-locate-match-pattern-error body message))]))])]
+                (ResultTcType.Err
+                  (tc-locate-match-pattern-error
+                    (tc-context-expr-bases (tc-global-shared-view ctx))
+                    body
+                    message))]))])]
     (begin
       (tc-type-env-scoped-runtime-restore! saved)
       result)))
@@ -72451,6 +72776,7 @@
         (match (tc-global-shared-view inner)
           [(ast.AstExpr.MacroExpansion expanded provenance-id macro-name-id)
             (tc-macro-expansion-result-with-frame
+              (tc-global-shared-view ctx)
               (tc-context-expr-get (tc-global-shared-view ctx) expanded)
               (macro-expansion-invocation-path-id provenance-id)
               (macro-expansion-origin-path-id provenance-id)
@@ -74039,12 +74365,14 @@
       (str_cat.str-cat prefix " -> " name))))
 
 (define (tc-comptime-purity-error
+  [expr-bases : i64]
   [expr : ast.AstExpr]
   [chain : TcStringList]
   [name : String]
   [reason : String]) : ResultTcUnit
   (ResultTcUnit.Err
     (tc-locate-error-at-expr
+      expr-bases
       expr
       (str_cat.str-cat
         "typecheck: comptime purity rejects "
@@ -74271,6 +74599,7 @@
     (tc-string-list-add bound (tc-env-key-name-text name))))
 
 (define (tc-comptime-purity-reject-or-template-ok
+  [expr-bases : i64]
   [expr : ast.AstExpr]
   [chain : TcStringList]
   [template? : bool]
@@ -74278,7 +74607,7 @@
   [reason : String]) : ResultTcUnit
   (if template?
     ResultTcUnit.Ok
-    (tc-comptime-purity-error expr chain name reason)))
+    (tc-comptime-purity-error expr-bases expr chain name reason)))
 
 (define (tc-comptime-purity-reject-or-template-node
   [ctx : TcContext]
@@ -74302,7 +74631,7 @@
       seen
       true
       inner)
-    (tc-comptime-purity-error expr chain name reason)))
+    (tc-comptime-purity-error expr-bases expr chain name reason)))
 
 (define (tc-comptime-purity-reject-or-template-node2
   [ctx : TcContext]
@@ -74328,7 +74657,7 @@
       true
       left
       right)
-    (tc-comptime-purity-error expr chain name reason)))
+    (tc-comptime-purity-error expr-bases expr chain name reason)))
 
 (define (tc-comptime-purity-expr-list-mode
   [ctx : TcContext]
@@ -74937,7 +75266,7 @@
           (tc-global-shared-view seen)
           true
           exprs)
-        (tc-comptime-purity-error expr chain "unsafe" "unsafe block"))]
+        (tc-comptime-purity-error expr-bases expr chain "unsafe" "unsafe block"))]
     [(ast.AstExpr.Set _ value)
       (tc-comptime-purity-node-mode
         (tc-global-shared-view ctx)
@@ -75396,6 +75725,7 @@
     [(ast.AstExpr.Continue) ResultTcUnit.Ok]
     [(ast.AstExpr.PtrNull _)
       (tc-comptime-purity-reject-or-template-ok
+        expr-bases
         expr
         (tc-global-shared-view chain)
         template?
@@ -75552,6 +75882,7 @@
     [(ast.AstExpr.SpmdProgramCount) ResultTcUnit.Ok]
     [(ast.AstExpr.ProgramArgc)
       (tc-comptime-purity-reject-or-template-ok
+        expr-bases
         expr
         (tc-global-shared-view chain)
         template?
@@ -75559,6 +75890,7 @@
         "runtime process state")]
     [(ast.AstExpr.ProgramArgv)
       (tc-comptime-purity-reject-or-template-ok
+        expr-bases
         expr
         (tc-global-shared-view chain)
         template?
@@ -75566,6 +75898,7 @@
         "runtime process state")]
     [(ast.AstExpr.ProgramEnvp)
       (tc-comptime-purity-reject-or-template-ok
+        expr-bases
         expr
         (tc-global-shared-view chain)
         template?
@@ -75651,7 +75984,12 @@
           (tc-global-shared-view seen)
           true
           args)
-        (tc-comptime-purity-error expr chain "syscall" "host syscall"))]))
+        (tc-comptime-purity-error
+          expr-bases
+          expr
+          chain
+          "syscall"
+          "host syscall"))]))
 
 (define (tc-comptime-purity-var
   [ctx : TcContext]
@@ -75677,6 +76015,7 @@
           (tc-global-shared-view name)
           name-id)
         (tc-comptime-purity-error
+          expr-bases
           expr
           chain
           (tc-global-shared-view name)
@@ -75693,6 +76032,7 @@
           [(ResultTcTypeUnsafe.Ok _ unsafe?)
             (if unsafe?
               (tc-comptime-purity-error
+                expr-bases
                 expr
                 chain
                 (tc-global-shared-view name)
@@ -75751,12 +76091,14 @@
         (cond
           [(= kind (csym.compiler-symbol-kind-extern))
             (tc-comptime-purity-error
+              expr-bases
               expr
               chain
               (tc-global-shared-view name)
               (str_cat.str-cat "extern reference " name))]
           [(= kind (csym.compiler-symbol-kind-defdispatch))
             (tc-comptime-purity-error
+              expr-bases
               expr
               chain
               (tc-global-shared-view name)
@@ -75840,12 +76182,14 @@
     [(ast.AstDecl.DefMacro decl-meta _ _ _ _) ResultTcUnit.Ok]
     [(ast.AstDecl.Extern decl-meta name _ _ _)
       (tc-comptime-purity-error
+        expr-bases
         (ast.AstExpr.Var name)
         chain
         (tc-env-key-name-text name)
         (str_cat.str-cat "extern reference " (tc-env-key-name-text name)))]
     [(ast.AstDecl.DefDispatch decl-meta name _)
       (tc-comptime-purity-error
+        expr-bases
         (ast.AstExpr.Var name)
         chain
         (tc-env-key-name-text name)
@@ -79478,6 +79822,7 @@
                   name-id))]
             (ResultTcUnit.Err
               (tc-locate-error-at-expr
+                expr-bases
                 expr
                 (str_cat.str-cat
                   "typecheck: macro "
@@ -82345,7 +82690,9 @@
 (define (tc-move-origin-span [expr-bases : i64] [origin-id : i64]) : TcMaybeAstSourceSpan
   (if (= origin-id (tc-moved-no-origin-id))
     TcMaybeAstSourceSpan.No
-    (tc-expr-maybe-span (ast.ast-expr-segment-bases-get expr-bases origin-id))))
+    (tc-expr-maybe-span
+      expr-bases
+      (ast.ast-expr-segment-bases-get expr-bases origin-id))))
 
 (define (tc-move-rich-origin-message
   [expr-bases : i64]
@@ -82353,7 +82700,7 @@
   [message : String]
   [origin-id : i64]
   [origin-label : String]) : String
-  (match (tc-expr-maybe-span primary)
+  (match (tc-expr-maybe-span expr-bases primary)
     [(TcMaybeAstSourceSpan.Some primary-span)
       (match (tc-move-origin-span expr-bases origin-id)
         [(TcMaybeAstSourceSpan.Some origin-span)
@@ -82424,7 +82771,7 @@
     [message : String
       (tc-move-cleanup-owner-exit-message (tc-global-shared-view name))]
     [owner-label : String (tc-move-cleanup-owner-binding-label name)]
-    (match (tc-expr-maybe-span scope)
+    (match (tc-expr-maybe-span expr-bases scope)
       [(TcMaybeAstSourceSpan.Some primary-span)
         (match conflict
           [(TcMoveConflict.Some key move-origin-id)
@@ -84054,6 +84401,7 @@
         (if (tc-move-global-source-root? ctx env locals root-id)
           (TcMoveResult.Err
             (tc-locate-error-at-expr
+              expr-bases
               (tc-global-shared-view expr)
               (tc-move-global-source-message root-id)))
           (TcMoveResult.Ok moved))]
@@ -84263,7 +84611,10 @@
             (tc-global-shared-view locals)
             v-id))
           (TcMoveResult.Err
-            (tc-locate-error-at-expr init (tc-move-global-source-message v-id)))
+            (tc-locate-error-at-expr
+              expr-bases
+              init
+              (tc-move-global-source-message v-id)))
           (if (and
             (tc-moved-contains? (tc-global-shared-view locals) v-id)
             (tc-move-var-move-only-id?
@@ -84332,7 +84683,10 @@
             (tc-global-shared-view locals)
             v-id))
           (TcMoveResult.Err
-            (tc-locate-error-at-expr init (tc-move-global-source-message v-id)))
+            (tc-locate-error-at-expr
+              expr-bases
+              init
+              (tc-move-global-source-message v-id)))
           (if (and
             (tc-moved-contains? (tc-global-shared-view locals) v-id)
             (tc-move-var-move-only-id?
@@ -84672,6 +85026,7 @@
     (if closure-move-only
       (TcMoveResult.Err
         (tc-locate-error-at-expr
+          expr-bases
           (tc-global-shared-view expr)
           (tc-move-closure-escape-message)))
       (match (tc-move-check-global-result
@@ -84735,6 +85090,7 @@
     (if closure-move-only
       (TcMoveResult.Err
         (tc-locate-error-at-expr
+          expr-bases
           (tc-global-shared-view expr)
           (tc-move-closure-escape-message)))
       (match (tc-move-check-global-result
@@ -87290,6 +87646,7 @@
             [(TcMoveResult.Err message) (TcMoveResult.Err message)])]))
     (TcMoveResult.Err
       (tc-locate-error-at-expr
+        expr-bases
         call-expr
         (if (tc-slice-call-split? kind)
           "typecheck: slice-split-at expects exactly two arguments"
@@ -91154,7 +91511,10 @@
         locals
         (tc-global-shared-view expr))
         (ResultTcUnit.Err
-          (tc-locate-error-at-expr expr (tc-move-closure-escape-message)))
+          (tc-locate-error-at-expr
+            expr-bases
+            expr
+            (tc-move-closure-escape-message)))
         ResultTcUnit.Ok)]))
 
 (define (tc-move-check-result-match-arms-at
@@ -92011,7 +92371,10 @@
         (tc-closure-local-fact-code? rhs-code)
         (not (= target-code rhs-code))))
       (ResultTcUnit.Err
-        (tc-locate-error-at-expr rhs (tc-move-closure-escape-message)))
+        (tc-locate-error-at-expr
+          expr-bases
+          rhs
+          (tc-move-closure-escape-message)))
       ResultTcUnit.Ok)))
 
 ;; --- lexical borrow conflict checker ---------------------------------------
@@ -92087,7 +92450,7 @@
   [conflict-kind : TcMovedPathKind]
   [primary : ast.AstExpr]
   [message : String]) : String
-  (match (tc-expr-maybe-span primary)
+  (match (tc-expr-maybe-span expr-bases primary)
     [(TcMaybeAstSourceSpan.Some primary-span)
       (match (tc-borrow-check-conflict-origin
         borrowed
@@ -92095,6 +92458,7 @@
         conflict-kind)
         [(TcBorrowConflictOrigin.Some origin-id)
           (match (tc-expr-maybe-span
+            expr-bases
             (ast.ast-expr-segment-bases-get expr-bases origin-id))
             [(TcMaybeAstSourceSpan.Some origin-span)
               (tc-rich-error-one-secondary
@@ -92126,6 +92490,7 @@
         conflict-kind)
         [(TcBorrowConflictOrigin.Some origin-id)
           (match (tc-expr-maybe-span
+            expr-bases
             (ast.ast-expr-segment-bases-get expr-bases origin-id))
             [(TcMaybeAstSourceSpan.Some origin-span)
               (tc-rich-error-one-secondary
@@ -94487,7 +94852,7 @@
         ty
         false)]
     [(ResultTcExpr.Err message)
-      (TcBorrowCheckResult.Err (tc-locate-error-at-expr arg message))]))
+      (TcBorrowCheckResult.Err (tc-locate-error-at-expr expr-bases arg message))]))
 
 (define (tc-borrow-check-exprs-with-types
   [ctx : TcContext]
@@ -94901,7 +95266,8 @@
                     index
                     message)])])]
         [(ResultTcExpr.Err message)
-          (TcBorrowCheckResult.Err (tc-locate-error-at-expr head-expr message))]))))
+          (TcBorrowCheckResult.Err
+            (tc-locate-error-at-expr expr-bases head-expr message))]))))
 
 (define (tc-call-explicit-borrow-expr? [expr : ast.AstExpr]) : bool
   (match (ast.ast-expr-unspan expr)
@@ -94942,7 +95308,8 @@
                 arg))]
           [_ (TcBorrowCheckResult.Ok borrowed)])]
       [(ResultTcExpr.Err message)
-        (TcBorrowCheckResult.Err (tc-locate-error-at-expr arg message))])))
+        (TcBorrowCheckResult.Err
+          (tc-locate-error-at-expr expr-bases arg message))])))
 
 (define (tc-borrow-check-auto-borrowed-call-args
   [ctx : TcContext]
@@ -97854,6 +98221,7 @@
         [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))
     (TcBorrowCheckResult.Err
       (tc-locate-error-at-expr
+        expr-bases
         call-expr
         "typecheck: slice-view expects exactly three arguments"))))
 
@@ -97937,6 +98305,7 @@
         [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))
     (TcBorrowCheckResult.Err
       (tc-locate-error-at-expr
+        expr-bases
         call-expr
         "typecheck: slice-split-at expects exactly two arguments"))))
 
@@ -103341,8 +103710,12 @@
         (tc-context-expr-get (tc-global-shared-view ctx) inner-box))]
     [(ast.AstExpr.Call func-box _)
       (tc-expr-maybe-span
+        (tc-context-expr-bases (tc-global-shared-view ctx))
         (tc-context-expr-get (tc-global-shared-view ctx) func-box))]
-    [_ (tc-expr-maybe-span call-expr)]))
+    [_
+      (tc-expr-maybe-span
+        (tc-context-expr-bases (tc-global-shared-view ctx))
+        call-expr)]))
 
 (define (macro-diagnostic-with-expansion-site
   [ctx : TcContext]
@@ -107576,6 +107949,7 @@
 ;; incompatible repeat errors with the same diagnostic gen-normalize's registry
 ;; would produce.
 (define (macro-decls-splice-with-memo
+  [expr-bases : i64]
   [state : TcMacroState]
   [identity : String]
   [wrapped : ast.AstDeclList]
@@ -107605,7 +107979,10 @@
                 (macro-generated-decls-splice-first-item wrapped)
                 (macro-decls-generated-key identity))]
             [located : cdiag.CompilerDiagnostic
-              (tc-expr-diag call-expr (cdiag.compiler-diagnostic-message diag))]
+              (tc-expr-diag
+                expr-bases
+                call-expr
+                (cdiag.compiler-diagnostic-message diag))]
             (box
               (cdiag.compiler-diagnostic-with-primary-span
                 diag
@@ -119597,16 +119974,18 @@
               (ResultMacroCheck.Err
                 (box
                   (macro-diagnostic-with-active-path
-                    ctx
+                    (tc-global-shared-view ctx)
                     (tc-expr-diag
+                      (tc-context-expr-bases (tc-global-shared-view ctx))
                       arg
                       (macro-operand-mismatch-message resolved-expected actual))))))]
           [(ResultTcType.Err message)
             (ResultMacroCheck.Err
               (box
                 (macro-diagnostic-with-active-path
-                  ctx
+                  (tc-global-shared-view ctx)
                   (tc-expr-diag
+                    (tc-context-expr-bases (tc-global-shared-view ctx))
                     arg
                     (if (tc-encoded-error? message)
                       message
@@ -120291,7 +120670,9 @@
     [path-id : i64 (macro-active-decl-path-id (tc-global-shared-view ctx))]
     [out : i64
       (if record-caller-origin
-        (match (tc-expr-maybe-span (tc-global-shared-view arg-expr))
+        (match (tc-expr-maybe-span
+          (tc-context-expr-bases (tc-global-shared-view ctx))
+          (tc-global-shared-view arg-expr))
           [(TcMaybeAstSourceSpan.Some span)
             (tc-context-expr-push-cell-addresses
               expr-cell-address
@@ -123896,7 +124277,12 @@
                               out))]
                         [(ResultMacroExpr.Err diag) (ResultMacroCheck.Err diag)])]
                     [(ResultTcEnv.Err message)
-                      (ResultMacroCheck.Err (box (tc-expr-diag body message)))]))))))])))
+                      (ResultMacroCheck.Err
+                        (box
+                          (tc-expr-diag
+                            (tc-context-expr-bases (tc-global-shared-view ctx))
+                            body
+                            message)))]))))))])))
 
 (define (macro-expand-bindings
   [ctx : TcContext]
@@ -123975,6 +124361,7 @@
                 (ResultMacroLetBindingsBuild.Err
                   (box
                     (tc-expr-diag
+                      (tc-context-expr-bases (tc-global-shared-view ctx))
                       (tc-context-expr-get (tc-global-shared-view ctx) ninit)
                       message)))])]
           [(ResultMacroExpr.Err diag) (ResultMacroLetBindingsBuild.Err diag)])])))
@@ -124061,6 +124448,7 @@
                       (ResultMacroResourceBindingsBuild.Err
                         (box
                           (tc-expr-diag
+                            (tc-context-expr-bases (tc-global-shared-view ctx))
                             (tc-context-expr-get
                               (tc-global-shared-view ctx)
                               ninit)
@@ -124514,6 +124902,8 @@
                             (ResultMacroExpr.Err
                               (box
                                 (tc-expr-diag
+                                  (tc-context-expr-bases
+                                    (tc-global-shared-view ctx))
                                   (tc-context-expr-get
                                     (tc-global-shared-view ctx)
                                     nscrut)
@@ -124592,6 +124982,7 @@
                 (ResultMacroExpr.Err
                   (box
                     (tc-expr-diag
+                      (tc-context-expr-bases (tc-global-shared-view ctx))
                       (tc-context-expr-get (tc-global-shared-view ctx) nsource)
                       message)))])]
           [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
@@ -124655,6 +125046,7 @@
                 (ResultMacroExpr.Err
                   (box
                     (tc-expr-diag
+                      (tc-context-expr-bases (tc-global-shared-view ctx))
                       (tc-context-expr-get
                         (tc-global-shared-view ctx)
                         source-name)
@@ -124663,6 +125055,7 @@
             (ResultMacroExpr.Err
               (box
                 (tc-expr-diag
+                  (tc-context-expr-bases (tc-global-shared-view ctx))
                   (tc-context-expr-get (tc-global-shared-view ctx) source-name)
                   message)))]))]
     [(ast.AstExpr.Foreach fe-box)
@@ -126358,6 +126751,9 @@
                                                     (tc-global-shared-view
                                                       call-expr)))]
                                               (macro-decls-splice-with-memo
+                                                (tc-context-expr-bases
+                                                  (tc-global-shared-view
+                                                    call-ctx))
                                                 (tc-context-macro-state
                                                   (tc-global-shared-view
                                                     call-ctx))
@@ -130507,7 +130903,12 @@
                                 decl-path)]
                             [(ResultTcEnv.Err message)
                               (ResultMacroDeclExpansion.Err
-                                (box (tc-decl-diag decl message)))])
+                                (box
+                                  (tc-decl-diag
+                                    (tc-context-expr-bases
+                                      (tc-global-shared-view cur-ctx))
+                                    decl
+                                    message)))])
                             [(ResultMacroDeclExpansion.Ok
                                 expanded
                                 expanded-paths)
@@ -132727,6 +133128,7 @@
                           (tc-global-shared-view body-state))
                         (ResultTcUnit.Err
                           (tc-rich-escape-at-expr
+                            (tc-context-expr-bases (tc-global-shared-view ctx))
                             body
                             message
                             "function return type rejects this escaping value")))])]
@@ -134263,32 +134665,37 @@
     [else (tc-check-decls-with-paths-cold ctx top-env decls paths summary)]))
 
 (define (tc-typecheck-diag-with-maybe-origin-and-path
+  [expr-bases : i64]
   [origin : parser.CompilerParseMaybeDeclSpan]
   [decl : ast.AstDecl]
   [path : String]
   [message : String]) : cdiag.CompilerDiagnostic
   (let
     [diag : cdiag.CompilerDiagnostic
-      (tc-decl-diag-with-maybe-origin origin decl message)]
+      (tc-decl-diag-with-maybe-origin expr-bases origin decl message)]
     (cdiag.compiler-diagnostic-with-fallback-path diag path)))
 
 (define (tc-typecheck-diag-with-path
+  [expr-bases : i64]
   [decls : (& decls ast.AstDeclList)]
   [decl : ast.AstDecl]
   [path : String]
   [message : String]) : cdiag.CompilerDiagnostic
   (tc-typecheck-diag-with-maybe-origin-and-path
+    expr-bases
     (parser.compiler-parse-decl-origin-span decls 0)
     decl
     path
     message))
 
 (define (tc-typecheck-diag-with-rest-path
+  [expr-bases : i64]
   [rest : (& rest ast.AstDeclList)]
   [decl : ast.AstDecl]
   [path : String]
   [message : String]) : cdiag.CompilerDiagnostic
   (tc-typecheck-diag-with-maybe-origin-and-path
+    expr-bases
     (parser.compiler-parse-decl-origin-span-key-slot
       (parser.compiler-parse-decl-list-storage-key rest)
       (- rest.offset 1))
@@ -134616,6 +135023,8 @@
                               (cdiag.compiler-diagnostic-list-push!
                                 (&mut diagnostics)
                                 (tc-typecheck-diag-with-rest-path
+                                  (tc-context-expr-bases
+                                    (tc-global-shared-view ctx))
                                   (& rest)
                                   (tc-global-shared-view decl)
                                   (tc-global-shared-view decl-path)
@@ -134633,6 +135042,8 @@
                           (cdiag.compiler-diagnostic-list-push!
                             (&mut diagnostics)
                             (tc-typecheck-diag-with-rest-path
+                              (tc-context-expr-bases
+                                (tc-global-shared-view ctx))
                               (& rest)
                               (tc-global-shared-view decl)
                               (tc-global-shared-view decl-path)
@@ -134765,6 +135176,8 @@
                                 (let
                                   [decl-diag : cdiag.CompilerDiagnostic
                                     (tc-typecheck-diag-with-rest-path
+                                      (tc-context-expr-bases
+                                        (tc-global-shared-view ctx))
                                       (& rest)
                                       (tc-global-shared-view decl)
                                       (tc-global-shared-view decl-path)

@@ -98,6 +98,9 @@ ci_gate_ledger_load() {
             if (NR < 6 || total != counts["all"] || linux != counts["linux"] || windows != counts["windows"])
                 fail("catalog counts do not match complete records")
             if (closing != "" && closing_line != NR) fail("only the final gate may need every other gate: " closing)
+            # Without a closing gate nothing waits for the whole run, so a
+            # scheduler reading this column could report completeness early.
+            if (closing == "") fail("the final gate must need every other gate (*)")
             printf "%s", output
         }
     ' "$_ci_ledger_file") || return 1

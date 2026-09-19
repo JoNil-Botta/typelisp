@@ -99,6 +99,7 @@ verification-complete timing row and the final success message. Keep IDs stable
 when changing wording; preserve labels unless their timing consumers are updated.
 `needs` records what a gate consumes from earlier gates: `-`, a comma-separated
 list of gate IDs, or `*` on the closing gate, which needs everything before it.
+The final record must be that closing gate, and no other record may use `*`.
 `id@linux` / `id@windows` limits an edge to one host, and a host projection
 shows only the edges that apply there. A need must name an earlier gate that
 runs wherever the consumer does, so ledger order is a topological order by

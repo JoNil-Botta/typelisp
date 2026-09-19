@@ -75,7 +75,7 @@ expect_failure missing ci_gate_ledger_load "$WORKDIR/absent.tsv" linux
 expect_failure empty ci_gate_ledger_load "$WORKDIR/empty.tsv" linux
 # Each mutation starts with a complete valid catalog, then changes one boundary.
 for mutation in schema header id host label duplicate-id duplicate-label count fields truncated-tail truncated-record other-host \
-    need-forward need-self need-unknown need-syntax need-bad-host need-inapplicable-host need-host-gap need-duplicate need-empty closing-early; do
+    need-forward need-self need-unknown need-syntax need-bad-host need-inapplicable-host need-host-gap need-duplicate need-empty closing-early closing-missing; do
     case "$mutation" in
         schema) sed '1s/2/3/' "$WORKDIR/catalog.tsv" ;;
         header) sed '5s/label/name/' "$WORKDIR/catalog.tsv" ;;
@@ -101,6 +101,7 @@ for mutation in schema header id host label duplicate-id duplicate-label count f
         need-duplicate) sed '9s/^\(.*\)first,/\1first,first,/' "$WORKDIR/catalog.tsv" ;;
         need-empty) sed '7s/first$//' "$WORKDIR/catalog.tsv" ;;
         closing-early) sed '9s/first,linux-only@linux$/*/' "$WORKDIR/catalog.tsv" ;;
+        closing-missing) sed '10s/\*$/first/' "$WORKDIR/catalog.tsv" ;;
     esac > "$WORKDIR/$mutation.tsv"
     expect_failure "$mutation" ci_gate_ledger_load "$WORKDIR/$mutation.tsv" linux
     expect_failure "stale-after-$mutation" ci_gate_ledger_enter first

@@ -239,6 +239,11 @@ run_gate \
 # their output. CI only ever runs the success path, so the diagnostic for a
 # checkout git cannot resolve has no other coverage.
 run_gate build-provenance-helper-self-tests scripts/verify-build-provenance.sh
+# The batch plan helper serves only the Linux build-invariance gate, and its
+# negative cases need real symbolic links, which Git Bash cannot create.
+if [ "$HOST_OS" = linux ]; then
+    run_gate build-invariance-batch-reuse-self-tests scripts/verify-build-invariance-batch.sh
+fi
 run_gate \
     ci-compiler-artifact-provenance-self-tests \
     scripts/verify-ci-compiler-artifacts.sh
@@ -625,7 +630,7 @@ if [ "$HOST_OS" = linux ]; then
         required_gate_unavailable "build-invariance opt1 reference handoff" \
             "published assembly is missing or empty: $OPT2_REFERENCE_ASM"
     fi
-    CI_ARTIFACT_INVARIANCE_SOURCES='src,stdlib,tests/integration/native-linux.manifest,scripts/check-build-invariance.sh'
+    CI_ARTIFACT_INVARIANCE_SOURCES='src,stdlib,tests/integration/native-linux.manifest,scripts/check-build-invariance.sh,scripts/lib-build-invariance-batch.sh'
     CI_ARTIFACT_INVARIANCE_ARGV='compile src/main.tl -o {output} --target linux-x86_64 --cfg host-defaults --backend-mode scalar --opt-level 1 --stdlib-root stdlib --stdlib-root src'
     ci_compiler_artifact_publish \
         "$ROOT" "$OPT2_REFERENCE_METADATA_FILE" "$OPT2_REFERENCE_PATH_FILE" \

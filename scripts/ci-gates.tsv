@@ -1,6 +1,6 @@
 # ci-gate-ledger-schema	1
-# count	all	120
-# count	linux	117
+# count	all	121
+# count	linux	118
 # count	windows	105
 id	hosts	label
 cli-gate-inventory-and-ownership	all	CLI gate inventory and ownership
@@ -14,6 +14,7 @@ windows-job-object-memory-limit-helper-self-tests	windows	Windows Job Object mem
 semantic-index-benchmark-report-and-termination-self-tests	all	semantic-index benchmark report and termination self-tests
 embedded-stdlib-tlci-resource-verifier-self-tests	all	embedded stdlib TLCI resource verifier self-tests
 build-provenance-helper-self-tests	all	build provenance helper self-tests
+build-invariance-batch-reuse-self-tests	linux	build-invariance batch reuse self-tests
 ci-compiler-artifact-provenance-self-tests	all	CI compiler artifact provenance self-tests
 ci-compiler-artifact-startup-self-tests	all	CI compiler artifact startup self-tests
 selfhost-linked-size-attribution-parser-self-tests	all	selfhost linked-size attribution parser self-tests

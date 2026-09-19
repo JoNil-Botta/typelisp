@@ -13,6 +13,8 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 . "$ROOT/scripts/lib-ci-timing.sh"
+. "$ROOT/scripts/lib-build-invariance-batch.sh"
+. "$ROOT/scripts/lib-ci-compiler-artifact.sh"
 
 usage() {
     cat >&2 <<'EOF'
@@ -263,7 +265,6 @@ write_batch_chunks() {
         }
         function finish_chunk() {
             if (chunk_entries > 0) {
-                close(entries_path)
                 close(cases_path)
                 chunk_index += 1
                 chunk_entries = 0
@@ -271,7 +272,6 @@ write_batch_chunks() {
         }
         function start_chunk() {
             suffix = sprintf("%04d", chunk_index)
-            entries_path = chunk_dir "/entries." suffix ".txt"
             cases_path = chunk_dir "/cases." suffix ".txt"
         }
         $1 != "" {
@@ -281,7 +281,6 @@ write_batch_chunks() {
             if (chunk_entries == 0) {
                 start_chunk()
             }
-            print $3 "|" $4 >> entries_path
             print $0 >> cases_path
             chunk_entries += 1
             if (singleton($1, $2) || chunk_entries >= chunk_size) {
@@ -346,6 +345,12 @@ prepare_compile_batches() {
         [ -s "$cases" ] || continue
         chunks="$opt_dir/chunks"
         write_batch_chunks "$cases" "$chunks"
+        for case_chunk in "$chunks"/cases.*.txt; do
+            chunk_suffix=${case_chunk##*/cases.}
+            build_invariance_plan_chunk "$case_chunk" \
+                "$chunks/entries.$chunk_suffix" \
+                "$chunks/aliases.$chunk_suffix" "$opt_level" "$output_dir"
+        done
         entry_chunk_count=$(find "$chunks" -type f -name 'entries.*.txt' | wc -l | tr -d ' ')
         case_chunk_count=$(find "$chunks" -type f -name 'cases.*.txt' | wc -l | tr -d ' ')
         if [ "$entry_chunk_count" -eq 0 ] || [ "$entry_chunk_count" -ne "$case_chunk_count" ]; then
@@ -386,7 +391,22 @@ run_batch_chunk() {
     batch_case_chunk=$5
     batch_id=$6
     batch_entries=$7
-    batch_label="build-invariance $batch_compiler_label opt$batch_opt_level chunk $batch_id ($batch_entries case(s), serial)"
+    batch_logical_cases=$(wc -l < "$batch_case_chunk" | tr -d ' ')
+    batch_label="build-invariance $batch_compiler_label opt$batch_opt_level chunk $batch_id ($batch_entries compile(s), $batch_logical_cases case(s), serial)"
+
+    # Rebuild the plan from the authoritative logical records. An altered,
+    # omitted or cross-producer entry/alias cannot silently remove coverage.
+    batch_output_dir="$WORKDIR/compare/$batch_compiler_label"
+    batch_aliases="$(dirname "$batch_chunk_path")/aliases.${batch_chunk_path##*/entries.}"
+    build_invariance_require_plan "$batch_case_chunk" \
+        "$batch_chunk_path" "$batch_aliases" \
+        "$batch_opt_level" "$batch_output_dir"
+    while IFS='|' read -r fresh_name fresh_source fresh_input fresh_out fresh_opt; do
+        if [ -e "$fresh_out" ] || [ -L "$fresh_out" ]; then
+            echo "[build-invariance] output exists before compile: $fresh_out" >&2
+            exit 1
+        fi
+    done < "$batch_case_chunk"
 
     batch_stdout="${batch_chunk_path%.txt}.stdout"
     batch_stderr="${batch_chunk_path%.txt}.stderr"
@@ -439,11 +459,12 @@ run_batch_chunk() {
         backend_memory_codegen_count=$((backend_memory_codegen_count + 1))
         cat "$batch_memory_report"
     fi
+    build_invariance_copy_aliases "$batch_aliases"
     verify_batch_outputs "$batch_compiler_label" "$batch_case_chunk" "$batch_stdout" "$batch_stderr"
     batch_finished=$(date +%s%3N)
     batch_elapsed_ms=$((batch_finished - batch_started))
     printf '%s\t%s\t%s\t%s\t%s\n' \
-        "$batch_elapsed_ms" "$batch_compiler_label" "$batch_opt_level" "$batch_id" "$batch_entries" >> "$CHUNK_METRICS"
+        "$batch_elapsed_ms" "$batch_compiler_label" "$batch_opt_level" "$batch_id" "$batch_logical_cases" >> "$CHUNK_METRICS"
     echo "[build-invariance] $batch_label elapsed_ms=$batch_elapsed_ms"
 }
 
@@ -566,6 +587,8 @@ run_batch_sentinels() {
 run_batched_comparison() {
     left_batches="$WORKDIR/batches/opt1-built"
     right_batches="$WORKDIR/batches/opt2-built"
+    build_invariance_require_coverage "$CORPUS" "$left_batches"
+    build_invariance_require_coverage "$CORPUS" "$right_batches"
     left_chunk_count=$(find "$left_batches" -type f -name 'entries.*.txt' | wc -l | tr -d ' ')
     right_chunk_count=$(find "$right_batches" -type f -name 'entries.*.txt' | wc -l | tr -d ' ')
     if [ "$left_chunk_count" -eq 0 ] || [ "$left_chunk_count" -ne "$right_chunk_count" ]; then
@@ -593,7 +616,7 @@ run_batched_comparison() {
             right_entries=$(wc -l < "$right_chunk" | tr -d ' ')
             left_case_count=$(wc -l < "$left_cases" | tr -d ' ')
             right_case_count=$(wc -l < "$right_cases" | tr -d ' ')
-            if [ "$left_entries" -ne "$right_entries" ] || [ "$left_entries" -ne "$left_case_count" ] || [ "$left_entries" -ne "$right_case_count" ]; then
+            if [ "$left_entries" -eq 0 ] || [ "$left_entries" -ne "$right_entries" ] || [ "$left_case_count" -ne "$right_case_count" ]; then
                 echo "[build-invariance] malformed paired opt$opt_level batch chunk $chunk_id" >&2
                 exit 1
             fi
@@ -625,10 +648,14 @@ print_top_chunks() {
 }
 
 echo "[build-invariance] incoming opt2-built stage4 compiler: $COMPILER"
+SOURCE_INPUTS=src,stdlib,tests,scripts/check-build-invariance.sh,scripts/lib-build-invariance-batch.sh,scripts/lib-native-link.sh
+SOURCE_DIGEST=$(ci_compiler_artifact_source_set_digest "$ROOT" "$SOURCE_INPUTS")
+COMPILER_DIGEST=$(ci_compiler_artifact_sha256_file "$COMPILER")
 construction_start=$(date +%s)
 build_opt1_compiler
 OPT1_COMPILER="$WORKDIR/opt1/opt1$NL_BIN_EXT"
 OPT2_STAGE4="$COMPILER"
+OPT1_DIGEST=$(ci_compiler_artifact_sha256_file "$OPT1_COMPILER")
 construction_end=$(date +%s)
 construction_seconds=$((construction_end - construction_start))
 echo "[build-invariance] compiler construction: ${construction_seconds}s"
@@ -669,6 +696,13 @@ run_batch_sentinels "opt2-built" "$OPT2_STAGE4"
 sentinel_end=$(date +%s)
 corpus_end=$(date +%s)
 corpus_seconds=$((corpus_end - corpus_start))
+
+if [ "$SOURCE_DIGEST" != "$(ci_compiler_artifact_source_set_digest "$ROOT" "$SOURCE_INPUTS")" ] ||
+    [ "$COMPILER_DIGEST" != "$(ci_compiler_artifact_sha256_file "$COMPILER")" ] ||
+    [ "$OPT1_DIGEST" != "$(ci_compiler_artifact_sha256_file "$OPT1_COMPILER")" ]; then
+    echo "[build-invariance] source or compiler changed during comparison" >&2
+    exit 1
+fi
 
 echo "[build-invariance] batch setup: $((batch_setup_end - batch_setup_start))s"
 echo "[build-invariance] batched comparison: $((batch_comparison_end - batch_comparison_start))s"

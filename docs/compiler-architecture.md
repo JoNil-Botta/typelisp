@@ -167,6 +167,15 @@ parent selectors and destroys the entry arena on both success and diagnostic
 returns. This lifetime applies to every ordered entry; it does not split or
 restart the batch compiler.
 
+Mutable typecheck caches, indexes and traversal state belong to the compiler
+job's `TcJobState`, never to process-wide cells, so resetting or destroying one
+job cannot disturb another. A value that is a pure function of intern ids is
+not cached at all: a stdlib comptime syntax type is recognised by decomposing
+the structural module key of its canonical id, and comptime helper prefixes are
+compared with the builtin ids directly. Generation-stamped mirrors of such
+values only add state that must then be reset and isolated. The families that
+still await migration are tracked in #4960.
+
 
 Memory-class aggregate expressions carry addresses into inline storage.
 `lower-local-assignment-value` gives a loop-carried memory-class local its own

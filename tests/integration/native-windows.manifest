@@ -396,6 +396,10 @@ format_writer_capabilities|tests/integration/format_writer_capabilities.tl|42|-|
 format_file_writer|tests/integration/format_file_writer.tl|42|-|-|stdlib/byte_buf.tl stdlib/format.tl stdlib/format_writer_core.tl stdlib/fs.tl stdlib/io.tl stdlib/string.tl|stage-stdlib
 format_stdio_family|tests/integration/format_stdio_family.tl|42|print=7 line=8\nprint="o\\n" hex=0xff\n retained=value=0xff\n|-|stdlib/io.tl|stage-stdlib
 format_stdio_family_stderr|tests/integration/format_stdio_family.tl|42|-|debug|stdlib/io.tl|stage-stdlib+expected-stderr:error=9 line=10\nerror="e\\n" hex=0xFF\n retained=value=0xff\n
+format_stdio_empty_newline|tests/integration/format_stdio_empty_newline.tl|42|\no\n1\n\n|-|stdlib/io.tl|stage-stdlib
+format_stdio_empty_newline_stderr|tests/integration/format_stdio_empty_newline.tl|42|-|debug|stdlib/io.tl|stage-stdlib+expected-stderr:\ne\n2\n\n
+format_stdio_empty_newline_raw|tests/integration/format_stdio_empty_newline_raw.tl|42|-|-|stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/io.tl stdlib/env.tl stdlib/vector.tl stdlib/string.tl|stage-stdlib
+format_writeln_empty|tests/integration/format_writeln_empty.tl|42|-|-|stdlib/byte_buf.tl stdlib/format.tl stdlib/format_writer_core.tl stdlib/profile.tl stdlib/string.tl stdlib/text_buf.tl|stage-stdlib
 format_writer_error|tests/integration/format_writer_error.tl|42|-|-|stdlib/byte_buf.tl stdlib/format.tl stdlib/format_writer_core.tl stdlib/string.tl|stage-stdlib
 format_arguments|tests/integration/format_arguments.tl|42|-|-|stdlib/byte_buf.tl stdlib/format.tl stdlib/format_writer_core.tl stdlib/profile.tl stdlib/string.tl stdlib/text_buf.tl|stage-stdlib
 format_arguments_stdio|tests/integration/format_arguments_stdio.tl|42|value=direct\n|-|format_arguments_owner.tl stdlib/format.tl stdlib/io.tl stdlib/string.tl|expected-stderr:value=direct\n

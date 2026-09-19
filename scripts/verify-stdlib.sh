@@ -347,6 +347,10 @@ stdlib/tests/crypto_sha512_inline.tl|pass|-
 stdlib/tests/crypto_sha512_unsafe_adapter_reject.tl|fail|requires unsafe context
 stdlib/tests/env_api.tl|pass|-
 stdlib/tests/format_nonliteral_template_reject.tl|fail|format: template must be a string literal
+stdlib/tests/format_println_nonliteral_template_reject.tl|fail|format: template must be a string literal
+stdlib/tests/format_eprintln_nonliteral_template_reject.tl|fail|format: template must be a string literal
+stdlib/tests/format_writeln_nonliteral_template_reject.tl|fail|format: template must be a string literal
+stdlib/tests/format_writeln_missing_writer_reject.tl|fail|macro call has too few arguments
 stdlib/tests/format_bare_capture_reject.tl|fail|format: bare '_' is not a captured identifier
 stdlib/tests/format_duplicate_named_reject.tl|fail|format: duplicate named argument name
 stdlib/tests/format_debug_nominal_reject.tl|fail|format: Debug is not implemented for nominal type

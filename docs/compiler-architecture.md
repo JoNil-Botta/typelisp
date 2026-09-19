@@ -326,6 +326,12 @@ its selected pool; macro-capable walks must resolve their owner again after a
 possible pool install. The `tc-literal-expression-pool-isolation` inline test
 covers colliding IDs, nested source views, expansion wrappers, and contextual
 overflow rejection.
+The call-argument type memo follows the same rule: `tc-call-arg-fact-key` peels
+expansion wrappers through the caller context's expression owner, because the
+key indexes that context's body-fact table and a colliding view in another pool
+is a valid but different key. The key stays the immediate source-view payload,
+and an unwrapped view is keyed without reading any pool. The
+`tc-call-arg-fact-key-pool-isolation` inline test covers it.
 
 ### Package direct-object routing
 

@@ -44191,11 +44191,32 @@
 ;; the recording phase: the redundant walks it collapses run at the same program
 ;; point with the same environment as the walk that recorded the fact, so the
 ;; recorded type is exactly the type a re-walk would recompute.
-(define (tc-call-arg-fact-key [arg : ast.AstExpr]) : i64
+;;
+;; The key is the immediate payload id of the first source view under the
+;; argument's expansion wrappers, and it indexes the owning body's fact table.
+;; Peeling a wrapper reads a node, so the chain must be read from the caller's
+;; expression owner: an unrelated installed pool can hold another valid view at
+;; the same id and would select a different body fact. Peeling cannot expand a
+;; macro or install a pool, so one owner snapshot covers the whole chain. An
+;; unwrapped source view needs no read and takes no snapshot.
+(define (tc-call-arg-fact-key-with-bases [expr-bases : i64] [arg : ast.AstExpr]) : i64
   (match arg
     [(ast.AstExpr.Spanned inner-box _) inner-box]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (tc-call-arg-fact-key (ast.ast-node-get inner-box))]
+      (tc-call-arg-fact-key-with-bases
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+    [_ -1]))
+
+(define (tc-call-arg-fact-key [ctx : TcContext] [arg : ast.AstExpr]) : i64
+  (match arg
+    [(ast.AstExpr.Spanned inner-box _) inner-box]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (let
+        [expr-bases : i64 (tc-context-expr-bases ctx)]
+        (tc-call-arg-fact-key-with-bases
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)))]
     [_ -1]))
 
 (define (tc-call-arg-fact-lookup [state : TcBodyState] [key : i64]) : TcBodyTypeFact
@@ -44224,7 +44245,10 @@
   [env : TcTypeEnv]
   [arg : ast.AstExpr]) : ResultTcType
   (let
-    [key : i64 (tc-call-arg-fact-key (tc-global-shared-view arg))]
+    [key : i64
+      (tc-call-arg-fact-key
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view arg))]
     [state : TcBodyState (tc-context-body-state (tc-global-shared-view ctx))]
     (match (tc-call-arg-fact-lookup (tc-global-shared-view state) key)
       [(TcBodyTypeFact.Hit ty) (ResultTcType.Ok ty)]
@@ -44243,6 +44267,325 @@
                 unit)
               (ResultTcType.Ok ty))]
           [(ResultTcType.Err message) (ResultTcType.Err message)])])))
+
+(cfg
+  test
+  ;; Seven nodes with identical ids in every pool built here. `owner?` selects
+  ;; which payloads the colliding views and expansion wrappers point at, so the
+  ;; same copied argument names a different valid fact key in each pool:
+  ;;   id  owner                 decoy
+  ;;   0   Bool padding          Int 42
+  ;;   1   Int 17                Bool padding
+  ;;   2   view of 1             view of 0
+  ;;   3   view of 2 (nested)    view of 1
+  ;;   4   expansion of 3        expansion of 2
+  ;;   5   expansion of 4        expansion of 4
+  ;;   6   Unit (not a view)     view of 0
+  (define (tc-call-arg-fact-test-pool
+    [pools : ast.AstNodePoolContext]
+    [owner? : bool]) : i64
+    (let
+      [first : i64
+        (ast.ast-node-pool-context-expr-push
+          (tc-global-shared-view pools)
+          (if owner?
+            (ast.AstExpr.Literal (ast.AstLiteral.Bool true))
+            (ast.AstExpr.Literal (ast.AstLiteral.Int 42 "42"))))]
+      [second : i64
+        (ast.ast-node-pool-context-expr-push
+          (tc-global-shared-view pools)
+          (if owner?
+            (ast.AstExpr.Literal (ast.AstLiteral.Int 17 "17"))
+            (ast.AstExpr.Literal (ast.AstLiteral.Bool true))))]
+      [line : i64
+        (if owner?
+          7
+          41)]
+      [view : i64
+        (ast.ast-expr-source-view-with-pools
+          (tc-global-shared-view pools)
+          (if owner?
+            second
+            first)
+          (ast.ast-source-span line 3 line 5))]
+      [nested : i64
+        (ast.ast-expr-source-view-with-pools
+          (tc-global-shared-view pools)
+          (if owner?
+            view
+            second)
+          (ast.ast-source-span (+ line 1) 3 (+ line 1) 5))]
+      [expanded : i64
+        (ast.ast-node-pool-context-expr-push
+          (tc-global-shared-view pools)
+          (ast.AstExpr.MacroExpansion
+            (if owner?
+              nested
+              view)
+            0
+            0))]
+      [chained : i64
+        (ast.ast-node-pool-context-expr-push
+          (tc-global-shared-view pools)
+          (ast.AstExpr.MacroExpansion expanded 0 0))]
+      [tail : i64
+        (if owner?
+          (ast.ast-node-pool-context-expr-push
+            (tc-global-shared-view pools)
+            (ast.AstExpr.Literal (ast.AstLiteral.Unit)))
+          (ast.ast-expr-source-view-with-pools
+            (tc-global-shared-view pools)
+            first
+            (ast.ast-source-span (+ line 2) 3 (+ line 2) 5)))]
+      (if (and
+        (= first 0)
+        (= second 1)
+        (= view 2)
+        (= nested 3)
+        (= expanded 4)
+        (= chained 5)
+        (= tail 6))
+        tail
+        (io.panic "typecheck: call-argument fact fixture ids do not collide")))))
+
+(cfg
+  test
+  (define (tc-call-arg-fact-test-type-is?
+    [ctx : TcContext]
+    [env : TcTypeEnv]
+    [arg : ast.AstExpr]
+    [want : ast.AstType]) : bool
+    (match (tc-call-arg-expr-type
+      (tc-global-shared-view ctx)
+      (tc-global-shared-view env)
+      arg)
+      [(ResultTcType.Ok ty) (tc-type-eq ty want)]
+      [(ResultTcType.Err _) false])))
+
+(cfg
+  test
+  ;; The owner's expansion arguments select keys 1 and 2; read through the decoy
+  ;; they select key 0, whose seeded fact is Bool.
+  (define (tc-call-arg-fact-test-owning-facts?
+    [ctx : TcContext]
+    [env : TcTypeEnv]) : bool
+    (and
+      (tc-call-arg-fact-test-type-is?
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
+        (ast.AstExpr.MacroExpansion 2 0 0)
+        (ast.AstType.I64))
+      (tc-call-arg-fact-test-type-is?
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
+        (ast.AstExpr.MacroExpansion 3 0 0)
+        (ast.AstType.F64))
+      (tc-call-arg-fact-test-type-is?
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
+        (ast.AstExpr.MacroExpansion 5 0 0)
+        (ast.AstType.F64))
+      (tc-call-arg-fact-test-type-is?
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
+        (ast.AstExpr.Spanned 1 (ast.ast-source-span 7 3 7 5))
+        (ast.AstType.I64)))))
+
+(test
+  tc-call-arg-fact-key-pool-isolation
+  (let
+    [pools-a : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [pools-b : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [_tail-a : i64
+      (tc-call-arg-fact-test-pool (tc-global-shared-view pools-a) true)]
+    [_tail-b : i64
+      (tc-call-arg-fact-test-pool (tc-global-shared-view pools-b) false)]
+    [ctx-a : TcContext
+      (tc-literal-pool-test-context (tc-global-shared-view pools-a))]
+    [ctx-b : TcContext
+      (tc-literal-pool-test-context (tc-global-shared-view pools-b))]
+    [state : TcBodyState (tc-context-body-state (tc-global-shared-view ctx-a))]
+    [env : TcTypeEnv (tc-type-env-new)]
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [keys-ok? : bool false]
+    [compat-ok? : bool false]
+    [recording-ok? : bool false]
+    [consuming-ok? : bool false]
+    [cleared-ok? : bool false]
+    [restart-ok? : bool false]
+    (begin
+      ;; Every argument below is a copied owner-A expression. The unrelated
+      ;; installed pool holds other valid views at the same ids.
+      (ast.ast-node-pool-context-install! (tc-global-shared-view pools-b))
+      (set!
+        keys-ok?
+        (and
+          ;; A direct source view is its own immediate payload and reads no pool.
+          (=
+            (tc-call-arg-fact-key
+              (tc-global-shared-view ctx-a)
+              (ast.AstExpr.Spanned 1 (ast.ast-source-span 7 3 7 5)))
+            1)
+          (=
+            (tc-call-arg-fact-key
+              (tc-global-shared-view ctx-a)
+              (ast.AstExpr.MacroExpansion 2 0 0))
+            1)
+          ;; A nested view keys on its immediate payload, not the deepest leaf.
+          (=
+            (tc-call-arg-fact-key
+              (tc-global-shared-view ctx-a)
+              (ast.AstExpr.MacroExpansion 3 0 0))
+            2)
+          (=
+            (tc-call-arg-fact-key
+              (tc-global-shared-view ctx-a)
+              (ast.AstExpr.MacroExpansion 5 0 0))
+            2)
+          ;; The decoy holds a view where the owner holds a non-view.
+          (=
+            (tc-call-arg-fact-key
+              (tc-global-shared-view ctx-a)
+              (ast.AstExpr.MacroExpansion 6 0 0))
+            -1)
+          (=
+            (tc-call-arg-fact-key
+              (tc-global-shared-view ctx-a)
+              (ast.AstExpr.MacroExpansion 1 0 0))
+            -1)
+          (=
+            (tc-call-arg-fact-key
+              (tc-global-shared-view ctx-a)
+              (ast.AstExpr.Literal (ast.AstLiteral.Int 17 "17")))
+            -1)
+          ;; The decoy's own context selects the decoy's keys for the same ids.
+          (=
+            (tc-call-arg-fact-key
+              (tc-global-shared-view ctx-b)
+              (ast.AstExpr.MacroExpansion 2 0 0))
+            0)
+          (=
+            (tc-call-arg-fact-key
+              (tc-global-shared-view ctx-b)
+              (ast.AstExpr.MacroExpansion 5 0 0))
+            0)
+          (=
+            (tc-call-arg-fact-key
+              (tc-global-shared-view ctx-b)
+              (ast.AstExpr.MacroExpansion 6 0 0))
+            0)))
+      ;; The explicit compatibility route intentionally selects its installed
+      ;; owner, even when the context argument names a different pool.
+      (ast.ast-node-pool-compat-context-use! (tc-global-shared-view pools-b))
+      (set!
+        compat-ok?
+        (and
+          (=
+            (tc-call-arg-fact-key
+              (tc-global-shared-view ctx-a)
+              (ast.AstExpr.MacroExpansion 2 0 0))
+            0)
+          (=
+            (tc-call-arg-fact-key
+              (tc-global-shared-view ctx-a)
+              (ast.AstExpr.MacroExpansion 3 0 0))
+            1)
+          (=
+            (tc-call-arg-fact-key
+              (tc-global-shared-view ctx-a)
+              (ast.AstExpr.Spanned 1 (ast.ast-source-span 7 3 7 5)))
+            1)))
+      (ast.ast-node-pool-compat-context-clear!)
+      ;; Seed three valid keys with distinct types that inference cannot
+      ;; produce for these literals, so a hit is distinguishable from a re-walk
+      ;; and the decoy-selected key 0 from the owning keys 1 and 2.
+      (tc-body-type-fact-storage-start! (tc-global-shared-view state) 8)
+      (tc-body-type-facts-start-recording! (tc-global-shared-view state))
+      (tc-body-type-fact-record!
+        (tc-global-shared-view state)
+        0
+        (ast.AstType.Bool))
+      (tc-body-type-fact-record!
+        (tc-global-shared-view state)
+        1
+        (ast.AstType.I64))
+      (tc-body-type-fact-record!
+        (tc-global-shared-view state)
+        2
+        (ast.AstType.F64))
+      (set!
+        recording-ok?
+        (tc-call-arg-fact-test-owning-facts?
+          (tc-global-shared-view ctx-a)
+          (tc-global-shared-view env)))
+      (tc-body-type-facts-start-consuming! (tc-global-shared-view state))
+      ;; Installing the owner, then the decoy again, must not move the facts an
+      ;; unchanged context and argument select.
+      (ast.ast-node-pool-context-install! (tc-global-shared-view pools-a))
+      (set!
+        consuming-ok?
+        (tc-call-arg-fact-test-owning-facts?
+          (tc-global-shared-view ctx-a)
+          (tc-global-shared-view env)))
+      (ast.ast-node-pool-context-install! (tc-global-shared-view pools-b))
+      (set!
+        consuming-ok?
+        (and
+          consuming-ok?
+          (tc-call-arg-fact-test-owning-facts?
+            (tc-global-shared-view ctx-a)
+            (tc-global-shared-view env))))
+      ;; A cleared table misses: the argument is re-inferred from the owner's
+      ;; Int 17 rather than answered by a stale seeded fact, and nothing is
+      ;; recorded outside the recording phase.
+      (tc-body-type-facts-clear! (tc-global-shared-view state))
+      (set!
+        cleared-ok?
+        (and
+          (tc-call-arg-fact-test-type-is?
+            (tc-global-shared-view ctx-a)
+            (tc-global-shared-view env)
+            (ast.AstExpr.MacroExpansion 2 0 0)
+            (ast.AstType.I32))
+          (< (tc-body-type-fact-slot (tc-global-shared-view state) 0) 0)
+          (< (tc-body-type-fact-slot (tc-global-shared-view state) 1) 0)
+          (< (tc-body-type-fact-slot (tc-global-shared-view state) 2) 0)))
+      ;; A restarted recording stores the re-inferred type under the owning
+      ;; key, never under the decoy-selected one, and then serves it as a hit.
+      (tc-body-type-facts-start-recording! (tc-global-shared-view state))
+      (set!
+        restart-ok?
+        (and
+          (tc-call-arg-fact-test-type-is?
+            (tc-global-shared-view ctx-a)
+            (tc-global-shared-view env)
+            (ast.AstExpr.MacroExpansion 2 0 0)
+            (ast.AstType.I32))
+          (>= (tc-body-type-fact-slot (tc-global-shared-view state) 1) 0)
+          (< (tc-body-type-fact-slot (tc-global-shared-view state) 0) 0)
+          (match (tc-call-arg-fact-lookup (tc-global-shared-view state) 1)
+            [(TcBodyTypeFact.Hit ty) (tc-type-eq ty (ast.AstType.I32))]
+            [(TcBodyTypeFact.Miss) false])))
+      (tc-body-type-fact-storage-release! (tc-global-shared-view state))
+      (ast.ast-node-pool-context-install! saved)
+      (unless
+        keys-ok?
+        (io.panic
+          "typecheck: call-argument fact key followed an unrelated expression owner"))
+      (unless
+        compat-ok?
+        (io.panic
+          "typecheck: call-argument fact key ignored the explicit compatibility owner"))
+      (unless
+        (and recording-ok? consuming-ok?)
+        (io.panic
+          "typecheck: call-argument type came from another owner's body fact"))
+      (unless
+        (and cleared-ok? restart-ok?)
+        (io.panic
+          "typecheck: call-argument fact survived a clear or restarted under another key")))))
 
 ;; A formal that resolves to a type with no reference/region lifetimes and no
 ;; struct/enum lifetime arguments cannot contribute lifetime bindings to the

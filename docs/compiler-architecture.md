@@ -305,7 +305,13 @@ Repeated same-module bindings are idempotent. Empty generated aliases are
 unqualified markers, not dotted names. Selected/wildcard imports share the
 loader's unqualified-name collision rule. At the completed expansion boundary,
 that traversal also requires selected items to exist; loading alone cannot
-assume declaration generators have finished. Errors use the marker's physical
+assume declaration generators have finished. The load-time walkers follow the
+same rule from the other side: a selected item that is missing from a module
+whose parsed declarations still contain a module-scope generator
+(`compiler-load-module-has-pending-generator?`) is deferred rather than
+rejected, and each macro-expansion pass skips binding such a selection until a
+later pass has produced it. A module without generators has its final
+declarations at load time, so its missing items keep failing immediately. Errors use the marker's physical
 path and span. Each scan uses temporary maps that are not cached; composite-key
 interning is published to the job's intern owner before handoff. The generated
 import runtime fixtures and interleaved loader-state smoke guard these contracts.

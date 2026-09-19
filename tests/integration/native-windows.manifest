@@ -626,5 +626,6 @@ float_comparisons_source_opt2|tests/integration/float_comparisons.tl|0|-|-|stdli
 decls_generated_imports|tests/integration/decls_generated_imports.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl decls_generated_import_macro_dep.tl
 decls_generated_import_nested|tests/integration/decls_generated_import_nested.tl|42|-|-|decls_generated_import_dep.tl
 generated_import_alias_scopes|tests/integration/generated_import_alias_scopes.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl
+source_selected_generated_export|tests/integration/source_selected_generated_export.tl|42|-|-|source_selected_generated_dep.tl source_selected_generated_macro_dep.tl
 test_cli_entry_memory|src/tests/test_cli_entry_memory_smoke.tl|42|@tests/integration/test_cli_entry_memory.stdout.expected|-|-|expected-stderr:@tests/integration/test_cli_entry_memory.stderr.expected
 test_cli_entry_state|src/tests/test_cli_entry_state_smoke.tl|42|-|-|-

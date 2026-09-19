@@ -109,6 +109,7 @@ stdlib.math/log	1	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	d
 stdlib.math/pow	2	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
 stdlib.math/abs	1	fixed	expr	tests/integration/tlci_native_template_nodes.tl	ok	default	assembly
 stdlib.math/sqrt	1	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
+stdlib.math/mul-add	3	fixed	expr	tests/integration/stdlib_math_mul_add.tl	ok	default	assembly
 stdlib.msvc/msvc-shared-view	1	fixed	expr	tests/integration/tlci_identity_owned_views.tl	ok	default	assembly
 stdlib.msvc/msvc-array-element-shared-view	2	fixed	expr	tests/integration/tlci_identity_owned_views.tl	ok	default	assembly
 stdlib.msvc/msvc-box-shared-view	1	fixed	expr	tests/integration/tlci_identity_owned_views.tl	ok	default	assembly

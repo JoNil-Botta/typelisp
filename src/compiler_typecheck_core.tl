@@ -62521,6 +62521,14 @@
     [(TcInlineAggregateLayout.Struct _ align _) align]
     [(TcInlineAggregateLayout.Enum _ align _) align]))
 
+;; Register-resident word count of a resolved layout: 0 when the aggregate is
+;; not register-resident, else 1 or 2.
+(define (tc-inline-aggregate-layout-regwords [layout : TcInlineAggregateLayout]) : i64
+  (if (tc-inline-aggregate-layout-register-resident?
+    (tc-global-shared-view layout))
+    (/ (+ (tc-inline-aggregate-layout-size layout) 7) 8)
+    0))
+
 (define (tc-inline-aggregate-layout-field-offset-id
   [layout : TcInlineAggregateLayout]
   [name-id : i64]) : i64
@@ -63731,228 +63739,205 @@
         (set! (array-ref slots index) 0)
         (set! index (+ index 1))))))
 
-(define (tc-agg-size-cache-storage-ensure-for-state!
-  [state : TcAggScalarCacheState]) : unit
+;; The one allocation site of every aggregate scalar cache: a fixed array in
+;; the owning job's lifetime arena. Hand-written rather than generated because
+;; a declaration macro cannot emit `in-arena` yet (#7918).
+(define (tc-agg-scalar-cache-allocate [owner-arena : i64]) : (__tl_dyn-array
+    i64)
+  (in-arena
+    (arena.Arena owner-arena)
+    (__tl_make-array i64 tc-agg-scalar-cache-capacity)))
+
+;; One definition owns the lifecycle and the probe of every aggregate scalar
+;; cache (#7533). For a metric `m` it generates, with exactly the names the
+;; hand-written copies had:
+;;
+;;   tc-agg-m-cache-storage-ensure-for-state! / -for-job! / -ensure!
+;;       lazy allocation of the fixed array in the job's owner arena;
+;;   tc-agg-m-cache-ensure-for-state!
+;;       allocation plus the intern-table / reset-generation identity check
+;;       that clears a cache filled for another program;
+;;   tc-agg-m-cache-reset-for-state!
+;;       the explicit invalidation used at lower boundaries;
+;;   <probe> ctx name-id fallback
+;;       bounded key, value+1 decode (0 is a miss), and on a miss one layout
+;;       computation whose metric is stored only when the layout resolved.
+;;
+;; What stays outside on purpose: the metric itself is the separately written
+;; function `tc-inline-aggregate-layout-m : TcInlineAggregateLayout -> i64`,
+;; found by name and called directly (no function value in the hot path), the three arrays stay independent and
+;; lazy, and `TcAggScalarCacheStateData` keeps one `m-cache`,
+;; `m-intern-table-id` and `m-intern-generation` field per metric. A new metric
+;; is one more field triple, one metric function and one line below; the
+;; structural test `tc-agg-scalar-cache-protocol-is-defined-once` fails if the
+;; protocol is copied by hand instead.
+(defmacro (tc-agg-scalar-cache-protocol [metric : Expr] [probe : Expr]) : Decls
   (let
-    [data : TcAggScalarCacheStateData (tc-agg-scalar-cache-state-data state)]
-    (if (= (array-length data.size-cache) tc-agg-scalar-cache-capacity)
-      unit
-      (begin
-        (in-arena
-          (arena.Arena data.owner-arena)
-          (set!
-            data.size-cache
-            (__tl_make-array i64 tc-agg-scalar-cache-capacity)))
-        (tc-agg-scalar-cache-state-data-set! state data)))))
-
-(define (tc-agg-size-cache-storage-ensure-for-job! [job-state : TcJobState]) : unit
-  (tc-agg-size-cache-storage-ensure-for-state!
-    (tc-job-state-agg-scalar-caches job-state)))
-
-;; Serial/test compatibility adapter. Production batch prewarming supplies the
-;; CompilerDriverState-owned job explicitly.
-(define (tc-agg-size-cache-storage-ensure!) : unit
-  (tc-agg-size-cache-storage-ensure-for-job! (tc-serial-job-state)))
-
-(define (tc-agg-size-cache-ensure-for-state!
-  [state : TcAggScalarCacheState]
-  [intern-table-id : i64]
-  [intern-generation : i64]) : unit
-  (begin
-    (tc-agg-size-cache-storage-ensure-for-state! state)
-    (let
-      [data : TcAggScalarCacheStateData (tc-agg-scalar-cache-state-data state)]
-      (if (and
-        (= data.size-intern-table-id intern-table-id)
-        (= data.size-intern-generation intern-generation))
-        unit
+    [metric-text : String
+      (match metric
+        [(Expr.Var value) value]
+        [_
+          (comptime-error
+            "tc-agg-scalar-cache-protocol: metric must be a bare name")])]
+    ;; The metric is the separately written `TcInlineAggregateLayout -> i64`
+    ;; function `tc-inline-aggregate-layout-<metric>`, called directly.
+    [metric-of-layout : Expr
+      (comptime.expr-var
+        (comptime.string-append "tc-inline-aggregate-layout-" metric-text))]
+    [prefix : String
+      (comptime.string-append
+        "tc-agg-"
+        (comptime.string-append metric-text "-cache"))]
+    [storage-ensure-for-state : Expr
+      (comptime.expr-var
+        (comptime.string-append prefix "-storage-ensure-for-state!"))]
+    [storage-ensure-for-job : Expr
+      (comptime.expr-var
+        (comptime.string-append prefix "-storage-ensure-for-job!"))]
+    [storage-ensure : Expr
+      (comptime.expr-var (comptime.string-append prefix "-storage-ensure!"))]
+    [ensure-for-state : Expr
+      (comptime.expr-var (comptime.string-append prefix "-ensure-for-state!"))]
+    [reset-for-state : Expr
+      (comptime.expr-var (comptime.string-append prefix "-reset-for-state!"))]
+    ;; Field names are spliced into projections written inside the template,
+    ;; where `data` is the template's own (hygienically renamed) binding.
+    [slots-name : Expr
+      (comptime.expr-var (comptime.string-append metric-text "-cache"))]
+    [table-name : Expr
+      (comptime.expr-var
+        (comptime.string-append metric-text "-intern-table-id"))]
+    [generation-name : Expr
+      (comptime.expr-var
+        (comptime.string-append metric-text "-intern-generation"))]
+    `(begin
+      (define (,storage-ensure-for-state [state : TcAggScalarCacheState]) : unit
+        (let
+          [data : TcAggScalarCacheStateData
+            (tc-agg-scalar-cache-state-data state)]
+          (if (=
+            (array-length (__tl-project-field data ,slots-name))
+            tc-agg-scalar-cache-capacity)
+            unit
+            (begin
+              (__tl-project-set-field
+                data
+                ,slots-name
+                (tc-agg-scalar-cache-allocate
+                  (__tl-project-field data owner-arena)))
+              (tc-agg-scalar-cache-state-data-set! state data)))))
+      (define (,storage-ensure-for-job [job-state : TcJobState]) : unit
+        (,storage-ensure-for-state (tc-job-state-agg-scalar-caches job-state)))
+      ;; Serial/test compatibility adapter. Production batch prewarming
+      ;; supplies the CompilerDriverState-owned job explicitly.
+      (define (,storage-ensure) : unit
+        (,storage-ensure-for-job (tc-serial-job-state)))
+      (define (,ensure-for-state
+        [state : TcAggScalarCacheState]
+        [intern-table-id : i64]
+        [intern-generation : i64]) : unit
         (begin
-          (tc-agg-scalar-cache-clear! (&mut data.size-cache))
-          (set! data.size-intern-table-id intern-table-id)
-          (set! data.size-intern-generation intern-generation)
-          (tc-agg-scalar-cache-state-data-set! state data))))))
+          (,storage-ensure-for-state state)
+          (let
+            [data : TcAggScalarCacheStateData
+              (tc-agg-scalar-cache-state-data state)]
+            (if (and
+              (= (__tl-project-field data ,table-name) intern-table-id)
+              (= (__tl-project-field data ,generation-name) intern-generation))
+              unit
+              (let
+                ;; The array is a handle: clearing through this view clears
+                ;; the job's storage.
+                [stale : (__tl_dyn-array i64)
+                  (tc-global-shared-view (__tl-project-field data ,slots-name))]
+                (begin
+                  (tc-agg-scalar-cache-clear! (&mut stale))
+                  (__tl-project-set-field data ,table-name intern-table-id)
+                  (__tl-project-set-field
+                    data
+                    ,generation-name
+                    intern-generation)
+                  (tc-agg-scalar-cache-state-data-set! state data)))))))
+      (define (,reset-for-state [state : TcAggScalarCacheState]) : unit
+        (let
+          [data : TcAggScalarCacheStateData
+            (tc-agg-scalar-cache-state-data state)]
+          (begin
+            (__tl-project-set-field data ,table-name -1)
+            (__tl-project-set-field data ,generation-name -1)
+            (tc-agg-scalar-cache-state-data-set! state data))))
+      (define (,probe [ctx : TcContext] [name-id : i64] [fallback : i64]) : i64
+        (let
+          [state : TcAggScalarCacheState
+            (tc-job-state-agg-scalar-caches
+              (tc-context-job-state (tc-global-shared-view ctx)))]
+          [source-names : ci.InternSourceNameSessionHandle
+            (tc-context-source-names (tc-global-shared-view ctx))]
+          (begin
+            (,ensure-for-state
+              state
+              (ci.intern-source-name-session-handle-table-id source-names)
+              (ci.intern-source-name-session-handle-reset-generation
+                source-names))
+            (let
+              [key : i64 (tc-agg-scalar-cache-key-id name-id)]
+              (if (< key 0)
+                (match (tc-inline-aggregate-layout-for-with-stack
+                  ctx
+                  (tc-nominal-name-id-display name-id)
+                  name-id
+                  TcStringList.Nil)
+                  [(ResultTcInlineAggregateLayout.Ok layout)
+                    (,metric-of-layout layout)]
+                  [(ResultTcInlineAggregateLayout.Err _) fallback])
+                (let
+                  [data : TcAggScalarCacheStateData
+                    (tc-agg-scalar-cache-state-data state)]
+                  [slots : (__tl_dyn-array i64)
+                    (tc-global-shared-view
+                      (__tl-project-field data ,slots-name))]
+                  [cached : i64 (array-ref slots key)]
+                  (if (> cached 0)
+                    (- cached 1)
+                    (match (tc-inline-aggregate-layout-for-with-stack
+                      ctx
+                      (tc-nominal-name-id-display name-id)
+                      name-id
+                      TcStringList.Nil)
+                      [(ResultTcInlineAggregateLayout.Ok layout)
+                        (let
+                          [value : i64 (,metric-of-layout layout)]
+                          (begin
+                            (set! (array-ref slots key) (+ value 1))
+                            value))]
+                      [(ResultTcInlineAggregateLayout.Err _) fallback])))))))))))
 
 (define (tc-agg-scalar-cache-key-id [name-id : i64]) : i64
   (if (>= name-id tc-agg-scalar-cache-capacity)
     (- 0 1)
     name-id))
 
-(define (tc-inline-aggregate-size-cached
-  [ctx : TcContext]
-  [name-id : i64]
-  [fallback : i64]) : i64
-  (let
-    [state : TcAggScalarCacheState
-      (tc-job-state-agg-scalar-caches
-        (tc-context-job-state (tc-global-shared-view ctx)))]
-    [source-names : ci.InternSourceNameSessionHandle
-      (tc-context-source-names (tc-global-shared-view ctx))]
-    (begin
-      (tc-agg-size-cache-ensure-for-state!
-        state
-        (ci.intern-source-name-session-handle-table-id source-names)
-        (ci.intern-source-name-session-handle-reset-generation source-names))
-      (let
-        [key : i64 (tc-agg-scalar-cache-key-id name-id)]
-        (if (< key 0)
-          (match (tc-inline-aggregate-layout-for-with-stack
-            ctx
-            (tc-nominal-name-id-display name-id)
-            name-id
-            TcStringList.Nil)
-            [(ResultTcInlineAggregateLayout.Ok layout)
-              (tc-inline-aggregate-layout-size layout)]
-            [(ResultTcInlineAggregateLayout.Err _) fallback])
-          (let
-            [data : TcAggScalarCacheStateData
-              (tc-agg-scalar-cache-state-data state)]
-            [slots : (__tl_dyn-array i64)
-              (tc-global-shared-view data.size-cache)]
-            [cached : i64 (array-ref slots key)]
-            (if (> cached 0)
-              (- cached 1)
-              (match (tc-inline-aggregate-layout-for-with-stack
-                ctx
-                (tc-nominal-name-id-display name-id)
-                name-id
-                TcStringList.Nil)
-                [(ResultTcInlineAggregateLayout.Ok layout)
-                  (let
-                    [size : i64 (tc-inline-aggregate-layout-size layout)]
-                    (begin
-                      (set! (array-ref slots key) (+ size 1))
-                      size))]
-                [(ResultTcInlineAggregateLayout.Err _) fallback]))))))))
+;; Bare aggregate SIZE, ALIGN and register-resident WORD COUNT (the hot query
+;; for every aggregate construct / struct-get / copy). Lowering asks for all
+;; three on the same paths; rebuilding the full layout for any of them defeats
+;; the other two.
+(tc-agg-scalar-cache-protocol size tc-inline-aggregate-size-cached)
 
-;; Same arena-safe fixed cache for bare aggregate ALIGN queries. Lowering
-;; asks for alignment on the same hot aggregate paths as size; rebuilding the full
-;; layout here defeats the size/regword caches.
-(define (tc-agg-align-cache-storage-ensure-for-state!
-  [state : TcAggScalarCacheState]) : unit
-  (let
-    [data : TcAggScalarCacheStateData (tc-agg-scalar-cache-state-data state)]
-    (if (= (array-length data.align-cache) tc-agg-scalar-cache-capacity)
-      unit
-      (begin
-        (in-arena
-          (arena.Arena data.owner-arena)
-          (set!
-            data.align-cache
-            (__tl_make-array i64 tc-agg-scalar-cache-capacity)))
-        (tc-agg-scalar-cache-state-data-set! state data)))))
+(tc-agg-scalar-cache-protocol align tc-inline-aggregate-align-cached)
 
-(define (tc-agg-align-cache-storage-ensure-for-job! [job-state : TcJobState]) : unit
-  (tc-agg-align-cache-storage-ensure-for-state!
-    (tc-job-state-agg-scalar-caches job-state)))
+(tc-agg-scalar-cache-protocol regwords tc-inline-aggregate-regwords-cached-or)
 
-(define (tc-agg-align-cache-storage-ensure!) : unit
-  (tc-agg-align-cache-storage-ensure-for-job! (tc-serial-job-state)))
-
-(define (tc-agg-align-cache-ensure-for-state!
-  [state : TcAggScalarCacheState]
-  [intern-table-id : i64]
-  [intern-generation : i64]) : unit
-  (begin
-    (tc-agg-align-cache-storage-ensure-for-state! state)
-    (let
-      [data : TcAggScalarCacheStateData (tc-agg-scalar-cache-state-data state)]
-      (if (and
-        (= data.align-intern-table-id intern-table-id)
-        (= data.align-intern-generation intern-generation))
-        unit
-        (begin
-          (tc-agg-scalar-cache-clear! (&mut data.align-cache))
-          (set! data.align-intern-table-id intern-table-id)
-          (set! data.align-intern-generation intern-generation)
-          (tc-agg-scalar-cache-state-data-set! state data))))))
-
-(define (tc-inline-aggregate-align-cached
-  [ctx : TcContext]
-  [name-id : i64]
-  [fallback : i64]) : i64
-  (let
-    [state : TcAggScalarCacheState
-      (tc-job-state-agg-scalar-caches
-        (tc-context-job-state (tc-global-shared-view ctx)))]
-    [source-names : ci.InternSourceNameSessionHandle
-      (tc-context-source-names (tc-global-shared-view ctx))]
-    (begin
-      (tc-agg-align-cache-ensure-for-state!
-        state
-        (ci.intern-source-name-session-handle-table-id source-names)
-        (ci.intern-source-name-session-handle-reset-generation source-names))
-      (let
-        [key : i64 (tc-agg-scalar-cache-key-id name-id)]
-        (if (< key 0)
-          (match (tc-inline-aggregate-layout-for-with-stack
-            ctx
-            (tc-nominal-name-id-display name-id)
-            name-id
-            TcStringList.Nil)
-            [(ResultTcInlineAggregateLayout.Ok layout)
-              (tc-inline-aggregate-layout-align layout)]
-            [(ResultTcInlineAggregateLayout.Err _) fallback])
-          (let
-            [data : TcAggScalarCacheStateData
-              (tc-agg-scalar-cache-state-data state)]
-            [slots : (__tl_dyn-array i64)
-              (tc-global-shared-view data.align-cache)]
-            [cached : i64 (array-ref slots key)]
-            (if (> cached 0)
-              (- cached 1)
-              (match (tc-inline-aggregate-layout-for-with-stack
-                ctx
-                (tc-nominal-name-id-display name-id)
-                name-id
-                TcStringList.Nil)
-                [(ResultTcInlineAggregateLayout.Ok layout)
-                  (let
-                    [align : i64 (tc-inline-aggregate-layout-align layout)]
-                    (begin
-                      (set! (array-ref slots key) (+ align 1))
-                      align))]
-                [(ResultTcInlineAggregateLayout.Err _) fallback]))))))))
-
-;; Compile-time cache: memoize a bare aggregate's register-resident word count
-;; (0 = not register-resident, else 1 or 2). Same arena-safe intern-id keyed
-;; fixed array as the size cache; this is the hot query for every aggregate
-;; construct / struct-get / copy (lower-name-register-words). Encoded as
-;; words+1 (0 = uncached). Only fully-resolved layouts are cached.
-;; Same per-program keying as the size cache, so it is gated on
-;; intern-generation and explicitly invalidated at lower boundaries.
-(define (tc-agg-regwords-cache-storage-ensure-for-state!
-  [state : TcAggScalarCacheState]) : unit
-  (let
-    [data : TcAggScalarCacheStateData (tc-agg-scalar-cache-state-data state)]
-    (if (= (array-length data.regwords-cache) tc-agg-scalar-cache-capacity)
-      unit
-      (begin
-        (in-arena
-          (arena.Arena data.owner-arena)
-          (set!
-            data.regwords-cache
-            (__tl_make-array i64 tc-agg-scalar-cache-capacity)))
-        (tc-agg-scalar-cache-state-data-set! state data)))))
-
-(define (tc-agg-regwords-cache-storage-ensure-for-job! [job-state : TcJobState]) : unit
-  (tc-agg-regwords-cache-storage-ensure-for-state!
-    (tc-job-state-agg-scalar-caches job-state)))
-
-(define (tc-agg-regwords-cache-storage-ensure!) : unit
-  (tc-agg-regwords-cache-storage-ensure-for-job! (tc-serial-job-state)))
+;; An unresolved layout is not register-resident.
+(define (tc-inline-aggregate-regwords-cached [ctx : TcContext] [name-id : i64]) : i64
+  (tc-inline-aggregate-regwords-cached-or ctx name-id 0))
 
 (define (tc-agg-scalar-caches-reset-for-job! [job-state : TcJobState]) : unit
   (let
     [state : TcAggScalarCacheState (tc-job-state-agg-scalar-caches job-state)]
-    [data : TcAggScalarCacheStateData (tc-agg-scalar-cache-state-data state)]
     (begin
-      (set! data.size-intern-table-id -1)
-      (set! data.size-intern-generation -1)
-      (set! data.align-intern-table-id -1)
-      (set! data.align-intern-generation -1)
-      (set! data.regwords-intern-table-id -1)
-      (set! data.regwords-intern-generation -1)
-      (tc-agg-scalar-cache-state-data-set! state data))))
+      (tc-agg-size-cache-reset-for-state! state)
+      (tc-agg-align-cache-reset-for-state! state)
+      (tc-agg-regwords-cache-reset-for-state! state))))
 
 (define (tc-agg-layout-cache-reset-for-job! [job-state : TcJobState]) : unit
   (let
@@ -63975,78 +63960,6 @@
 
 (define (tc-agg-caches-reset!) : unit
   (tc-agg-caches-reset-for-job! (tc-serial-job-state)))
-
-(define (tc-agg-regwords-cache-ensure-for-state!
-  [state : TcAggScalarCacheState]
-  [intern-table-id : i64]
-  [intern-generation : i64]) : unit
-  (begin
-    (tc-agg-regwords-cache-storage-ensure-for-state! state)
-    (let
-      [data : TcAggScalarCacheStateData (tc-agg-scalar-cache-state-data state)]
-      (if (and
-        (= data.regwords-intern-table-id intern-table-id)
-        (= data.regwords-intern-generation intern-generation))
-        unit
-        (begin
-          (tc-agg-scalar-cache-clear! (&mut data.regwords-cache))
-          (set! data.regwords-intern-table-id intern-table-id)
-          (set! data.regwords-intern-generation intern-generation)
-          (tc-agg-scalar-cache-state-data-set! state data))))))
-
-(define (tc-inline-aggregate-regwords-compute [ctx : TcContext] [name-id : i64]) : i64
-  (match (tc-inline-aggregate-layout-for-with-stack
-    ctx
-    (tc-nominal-name-id-display name-id)
-    name-id
-    TcStringList.Nil)
-    [(ResultTcInlineAggregateLayout.Ok layout)
-      (if (tc-inline-aggregate-layout-register-resident?
-        (tc-global-shared-view layout))
-        (/ (+ (tc-inline-aggregate-layout-size layout) 7) 8)
-        0)]
-    [(ResultTcInlineAggregateLayout.Err _) 0]))
-
-(define (tc-inline-aggregate-regwords-cached [ctx : TcContext] [name-id : i64]) : i64
-  (let
-    [state : TcAggScalarCacheState
-      (tc-job-state-agg-scalar-caches
-        (tc-context-job-state (tc-global-shared-view ctx)))]
-    [source-names : ci.InternSourceNameSessionHandle
-      (tc-context-source-names (tc-global-shared-view ctx))]
-    (begin
-      (tc-agg-regwords-cache-ensure-for-state!
-        state
-        (ci.intern-source-name-session-handle-table-id source-names)
-        (ci.intern-source-name-session-handle-reset-generation source-names))
-      (let
-        [key : i64 (tc-agg-scalar-cache-key-id name-id)]
-        (if (< key 0)
-          (tc-inline-aggregate-regwords-compute ctx name-id)
-          (let
-            [data : TcAggScalarCacheStateData
-              (tc-agg-scalar-cache-state-data state)]
-            [slots : (__tl_dyn-array i64)
-              (tc-global-shared-view data.regwords-cache)]
-            [cached : i64 (array-ref slots key)]
-            (if (> cached 0)
-              (- cached 1)
-              (match (tc-inline-aggregate-layout-for-with-stack
-                ctx
-                (tc-nominal-name-id-display name-id)
-                name-id
-                TcStringList.Nil)
-                [(ResultTcInlineAggregateLayout.Ok layout)
-                  (let
-                    [words : i64
-                      (if (tc-inline-aggregate-layout-register-resident?
-                        (tc-global-shared-view layout))
-                        (/ (+ (tc-inline-aggregate-layout-size layout) 7) 8)
-                        0)]
-                    (begin
-                      (set! (array-ref slots key) (+ words 1))
-                      words))]
-                [(ResultTcInlineAggregateLayout.Err _) 0]))))))))
 
 ;; A struct/enum layout is "register-resident (1-word)" when it fits in a
 ;; single 8-byte machine word and is built only of word-class data. Such a value

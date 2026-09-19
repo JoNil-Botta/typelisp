@@ -14302,6 +14302,59 @@
     [(ResultCompilerOptimizeVerify.Ok) true]
     [(ResultCompilerOptimizeVerify.Err _) false]))
 
+(define opt-census-dup-var : i64
+  0)
+(define opt-census-dup-block : i64
+  0)
+(define opt-census-dup-pos : i64
+  0)
+
+(define (opt-census-verify-ok?
+  [name : i64]
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]
+  [result : ResultCompilerOptimizeVerify]) : bool
+  (opt-census-verify-ok-inner? name type-segment-bases func result))
+
+(define (opt-census-verify-ok-inner?
+  [name : i64]
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]
+  [result : ResultCompilerOptimizeVerify]) : bool
+  (match result
+    [(ResultCompilerOptimizeVerify.Ok) true]
+    [(ResultCompilerOptimizeVerify.Err message)
+      (begin
+        (io.print-error
+          (str_cat.str-cat
+            "verify-census|"
+            (ir.compiler-ir-symbol-text name)
+            "|"
+            message
+            "|dup-var="
+            (string.int->string opt-census-dup-var)
+            "|dup-block="
+            (string.int->string opt-census-dup-block)
+            "|dup-pos="
+            (string.int->string opt-census-dup-pos)
+            (if compiler-opt-debug-suppressed? "|suppressed" "|pipeline")
+            "\n"))
+        (if false
+          unit
+          (let
+            [state : OptDebugState
+              (compiler-opt-global-shared-view
+                compiler-opt-owned-state.debug-state)]
+            (io.print-error
+              (str_cat.str-cat
+                "verify-census-ir-begin\n"
+                (ir.compiler-ir-function-render
+                  state.structural-session
+                  type-segment-bases
+                  (compiler-opt-global-shared-view func))
+                "verify-census-ir-end\n"))))
+        false)]))
+
 (define (opt-verify-error-ok?
   [result : ResultCompilerOptimizeVerify]
   [want : String]) : bool
@@ -14699,7 +14752,12 @@
   (if (or (< var 0) (>= var (array-length items)))
     false
     (match (array-ref items var)
-      [(OptMaybeVarDef.Some _) false]
+      [(OptMaybeVarDef.Some _)
+        (begin
+          (set! opt-census-dup-var var)
+          (set! opt-census-dup-block block-id)
+          (set! opt-census-dup-pos pos)
+          false)]
       [(OptMaybeVarDef.No)
         (begin
           (set!
@@ -126619,6 +126677,123 @@
             unit))])
     func))
 
+(define (opt-census-kind-text
+  [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
+  [ty : ast.AstType]) : String
+  (if (opt-ssa-fixed-register-value-type? (compiler-opt-global-shared-view ty))
+    "fixed"
+    (match (ir.compiler-ir-representation-index-kind
+      type-segment-bases
+      (compiler-opt-global-shared-view representations)
+      (compiler-opt-global-shared-view ty))
+      [(ir.CompilerIrRepresentationKind.KnownOneWord) "one-word"]
+      [(ir.CompilerIrRepresentationKind.RegisterGroup _ _) "register-group"]
+      [(ir.CompilerIrRepresentationKind.Unknown) "unknown"])))
+
+(define (opt-census-note-def
+  [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
+  [facts : OptSsaFacts]
+  [var : i64]
+  [ty : ast.AstType]) : unit
+  (match (compiler-opt-global-shared-view facts)
+    [(OptSsaFacts.Facts counts _ _)
+      (if (> (opt-ssa-count counts var) 1)
+        (io.print-error
+          (str_cat.str-cat
+            "verify-census-var|"
+            (string.int->string var)
+            "|"
+            (opt-census-kind-text
+              type-segment-bases
+              (compiler-opt-global-shared-view representations)
+              (compiler-opt-global-shared-view ty))
+            (if (opt-ssa-candidate? (compiler-opt-global-shared-view facts) var)
+              "|candidate"
+              "|bad")
+            "\n"))
+        unit)]))
+
+(define (opt-census-instrs-from
+  [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
+  [facts : OptSsaFacts]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : unit
+  (if (>=
+    index
+    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
+    unit
+    (begin
+      (match (ir.compiler-ir-instr-seq-ref
+        (compiler-opt-global-shared-view instrs)
+        index)
+        [(ir.CompilerIrInstr.Mov dst _ ty)
+          (opt-census-note-def
+            type-segment-bases
+            (compiler-opt-global-shared-view representations)
+            (compiler-opt-global-shared-view facts)
+            dst
+            ty)]
+        [(ir.CompilerIrInstr.Load dst _ ty)
+          (opt-census-note-def
+            type-segment-bases
+            (compiler-opt-global-shared-view representations)
+            (compiler-opt-global-shared-view facts)
+            dst
+            ty)]
+        [(ir.CompilerIrInstr.Call dst _ _ ty)
+          (opt-census-note-def
+            type-segment-bases
+            (compiler-opt-global-shared-view representations)
+            (compiler-opt-global-shared-view facts)
+            dst
+            ty)]
+        [(ir.CompilerIrInstr.Phi dst _ ty)
+          (opt-census-note-def
+            type-segment-bases
+            (compiler-opt-global-shared-view representations)
+            (compiler-opt-global-shared-view facts)
+            dst
+            ty)]
+        [_ unit])
+      (opt-census-instrs-from
+        type-segment-bases
+        representations
+        facts
+        instrs
+        (+ index 1)))))
+
+(define (opt-census-blocks
+  [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
+  [facts : OptSsaFacts]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match (compiler-opt-global-shared-view block)
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (begin
+            (opt-census-instrs-from
+              type-segment-bases
+              (compiler-opt-global-shared-view representations)
+              (compiler-opt-global-shared-view facts)
+              instrs
+              0)
+            (opt-census-blocks
+              type-segment-bases
+              representations
+              facts
+              (compiler-opt-box-shared-view rest)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-census-blocks
+        type-segment-bases
+        representations
+        facts
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
 (define (optimize-function-once-with-summaries
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
@@ -127451,7 +127626,15 @@
                       ;; (falling back to its input on rejection), so a verified
                       ;; input stays verified across the chain.
                       [loop-cluster-verified? : bool
-                        (opt-verify-ok?
+                        (opt-census-verify-ok?
+                          name
+                          type-segment-bases
+                          (ir.CompilerIrFunction.Function
+                            name
+                            (compiler-opt-global-shared-view params)
+                            (compiler-opt-global-shared-view ret-ty)
+                            bit-test-frame
+                            (compiler-opt-global-shared-view switch-blocks))
                           (opt-verify-function-with-context
                             (ir.CompilerIrFunction.Function
                               name
@@ -127460,6 +127643,22 @@
                               bit-test-frame
                               (compiler-opt-global-shared-view switch-blocks))
                             (compiler-opt-global-shared-view switch-context)))]
+                      [_census-vars : unit
+                        (if loop-cluster-verified?
+                          unit
+                          (begin
+                            (opt-census-blocks
+                              type-segment-bases
+                              (compiler-opt-global-shared-view
+                                summaries.representations)
+                              (opt-ssa-facts-from-function-with-representations
+                                type-segment-bases
+                                (compiler-opt-global-shared-view
+                                  summaries.representations)
+                                (compiler-opt-global-shared-view params)
+                                (compiler-opt-global-shared-view switch-blocks))
+                              (compiler-opt-global-shared-view switch-blocks))
+                            (io.print-error "verify-census-vars-end\n")))]
                       [preheaders-result : OptFunctionCtxResult
                         (let
                           [preheaders-input : ir.CompilerIrFunction

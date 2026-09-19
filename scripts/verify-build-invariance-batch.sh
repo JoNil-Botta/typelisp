@@ -180,6 +180,10 @@ job|4096'; do
 done
 : > "$QUEUE"
 reject build_invariance_pool_init "$POOL.bad" 12288 "$QUEUE"
+# A final record without its newline would be validated but never run or counted.
+printf 'first|4096\nlast|4096' > "$QUEUE"
+reject build_invariance_pool_init "$POOL.bad" 12288 "$QUEUE"
+test ! -e "$POOL.bad"
 printf 'job|4096\n' > "$QUEUE"
 reject build_invariance_pool_init "$POOL.bad" 0 "$QUEUE"
 reject build_invariance_pool_init "$POOL.bad" '' "$QUEUE"

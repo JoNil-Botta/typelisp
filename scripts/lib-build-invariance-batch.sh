@@ -143,6 +143,13 @@ build_invariance_pool_require_queue() {
             return 2
             ;;
     esac
+    # Workers and the completeness check read the queue with `read` and `wc -l`,
+    # which both drop a final record that lacks its newline; awk below would
+    # still count it, so such a queue must not start a pool.
+    if [ -s "$_bib_queue" ] && [ -n "$(tail -c 1 "$_bib_queue")" ]; then
+        echo "[build-invariance] invalid pool queue: last record is not newline-terminated" >&2
+        return 2
+    fi
     awk -F '|' -v budget="$_bib_queue_budget" '
         function fail(message) {
             print "[build-invariance] invalid pool queue: " message > "/dev/stderr"

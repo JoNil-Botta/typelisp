@@ -2,15 +2,36 @@
 ;; module-scope generators have run (#7807). The qualified import of the same
 ;; module comes second on purpose: the selected imports must not depend on the
 ;; module having been seen already, and must not break it afterwards.
-(import source_selected_generated_dep.answer as answer)
-(import source_selected_generated_dep.twice as twice)
-(import source_selected_generated_dep.Pair as Pair)
-(import source_selected_generated_dep.Shape as Shape)
-(import source_selected_generated_dep.Line as Line)
-(import source_selected_generated_dep.Dot as Dot)
-(import source_selected_generated_dep.scaled as scaled)
-(import source_selected_generated_dep.deep as deep)
-(import source_selected_generated_dep.host-bias as host-bias)
+;; The `lint-allow` lines cover #7865: lint reports a selected import as
+;; unused even when its bare name is referenced.
+;; lint-allow: unused-import
+(import source_selected_generated_dep.answer)
+
+;; lint-allow: unused-import
+(import source_selected_generated_dep.twice)
+
+;; lint-allow: unused-import
+(import source_selected_generated_dep.Pair)
+
+;; lint-allow: unused-import
+(import source_selected_generated_dep.Shape)
+
+;; lint-allow: unused-import
+(import source_selected_generated_dep.Line)
+
+;; lint-allow: unused-import
+(import source_selected_generated_dep.Dot)
+
+;; lint-allow: unused-import
+(import source_selected_generated_dep.scaled)
+
+;; lint-allow: unused-import
+(import source_selected_generated_dep.deep)
+
+;; lint-allow: unused-import
+(import source_selected_generated_dep.host-bias)
+
+;; lint-allow: unused-import
 (import source_selected_generated_dep.answer as again)
 (import source_selected_generated_dep as dep)
 

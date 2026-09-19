@@ -494,6 +494,7 @@ thread_runtime|tests/integration/thread_runtime.tl|42|-|-|stdlib/arena.tl stdlib
 atomic_intrinsics_thread_counter|tests/integration/atomic_intrinsics_thread_counter.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 runtime_atomic_raw_pointer|tests/integration/runtime_atomic_raw_pointer.tl|42|-|-|stdlib/runtime.tl
 thread_safe_i64|tests/integration/thread_safe_i64.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
+env_thread_sync|tests/integration/env_thread_sync.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/env.tl stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/str_cat.tl stdlib/vector.tl stdlib/string.tl
 thread_safe_bool_unit|tests/integration/thread_safe_bool_unit.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 thread_safe_unit|tests/integration/thread_safe_unit.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 thread_safe_aggregate_capture|tests/integration/thread_safe_aggregate_capture.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl

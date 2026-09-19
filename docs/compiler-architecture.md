@@ -390,6 +390,15 @@ Generated code is compared with `clang -O2` using paired cases under
 tracked with deterministic executed-instruction baselines under
 [`../perf/`](../perf), avoiding wall-clock noise in required CI gates.
 
+Required verification has one top-level metadata authority,
+[`scripts/ci-gates.tsv`](../scripts/ci-gates.tsv), consumed by both full execution
+and host inventory listing. The runner binds stable IDs to commands and rejects
+incomplete or failed execution before reporting success. Nested compiler,
+corpus and artifact-provenance invariants stay in their existing owners; a
+metadata row alone does not establish them. See the
+[ledger boundary](../scripts/README.md#core-development-loop) before changing CI
+structure or introducing independent scheduling.
+
 ## CLI
 
 Inline-test harness construction prunes runtime declarations before typechecking.

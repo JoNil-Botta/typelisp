@@ -74,10 +74,41 @@ instead, which the sweep does not require to be reachable.
 | Check handwritten x86-64 template ownership | `check-x64-executable-template-registry.sh` pins every runtime/startup composition gate, all target-owned opaque byte helpers, structured contribution boundaries, and Windows data-only unwind relations. |
 | Check performance policy | `check-instruction-counts.sh`, `check-opt2-cli-regression.sh`, `check-build-invariance.sh`, `check-tlci-native-route-size.sh`, `analyze-ci-timing-trends.sh`, `bench.sh`, `run-optimization-benchmarks.sh` |
 
-The complete and current invocation order remains in `ci-verify.sh`; this table
-is a map, not a second manifest.
+`ci-gates.tsv` owns the stable top-level gate IDs, exact timing/display labels,
+host applicability and complete sequential order. `ci-verify.sh` binds those
+IDs to the existing commands and compiler/provenance setup. This table is a
+map, not another manifest. List either host without a compiler or side effects:
 
-Every `ci-verify.sh` invocation creates a fresh same-run artifact token and
+```sh
+sh scripts/ci-verify.sh --list-gates linux
+sh scripts/ci-verify.sh --list-gates windows
+```
+
+The TSV projection has `id`, `hosts` and `label` columns. The original `all`
+applicability remains visible in either host projection. LF and CRLF catalogs
+produce the same LF output; the repository checkout pins this catalog to LF.
+Listing validates the
+entire catalog, including the other host's records, before emitting anything;
+it does not initialize targets, timing, traces, capabilities or the seed.
+It is an inventory report, not a successful verification or a shard executor.
+
+The full runner resolves each ID against the next required ledger row. Unknown,
+duplicate, wrong-host and out-of-order gates fail; a command failure retains its
+exit status and poisons completion. Missing or active gates prevent both the
+verification-complete timing row and the final success message. Keep IDs stable
+when changing wording; preserve labels unless their timing consumers are updated.
+A new gate needs one ledger row and an executable binding in the matching host
+position. Update the three declared counts intentionally; duplicate IDs/labels,
+invalid hosts, fields, counts and truncated records are rejected.
+`test-ci-gate-ledger.sh` exercises these boundaries and the real listing CLI.
+
+Nested corpora, targets, optimization levels, compiler producers and artifact
+handoffs remain owned by their existing gates/manifests and provenance helpers.
+The ledger does not infer dependency independence or authorize concurrent
+execution; dependency records, balanced shards and mandatory shard aggregation
+remain in #7766. Workflow-level setup/checks/uploads remain in the workflow.
+
+Every full `ci-verify.sh` execution creates a fresh same-run artifact token and
 initializes `target/ci-compiler-artifacts/trace.tsv`, including local runs.
 Set `TYPELISP_CI_COMPILER_ARTIFACT_TRACE` to choose another destination;
 relative paths resolve against the checkout root, and an empty value uses the

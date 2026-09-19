@@ -20,3 +20,6 @@ tools/tlci-boundary-manifest/admission-stages.tsv text eol=lf
 # Windows as well as Linux; keep Git's autocrlf checkout from changing rows.
 docs/backend-safety-contract-manifest.tsv text eol=lf
 tools/backend-safety-manifest/*.tsv text eol=lf
+
+# The required CI gate ledger has canonical LF output on both hosts.
+scripts/ci-gates.tsv text eol=lf

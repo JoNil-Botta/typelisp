@@ -21,7 +21,7 @@
     (begin
       (if flag
         (let
-          [kept : i64 (+ (consume t) (try (risky true)))]
+          [_kept : i64 (+ (consume t) (try (risky true)))]
           unit)
         unit)
       (res.ok (consume t)))))

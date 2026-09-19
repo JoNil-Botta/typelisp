@@ -448,6 +448,22 @@ tuple_element_use_after_move_reject|check-fail|tests/safety/tuple_element_use_af
 tuple_partial_move_root_reject|check-fail|tests/safety/tuple_partial_move_root_reject.tl|-|use of moved value `pair`
 tuple_shared_element_move_reject|check-fail|tests/safety/tuple_shared_element_move_reject.tl|-|cannot move non-Copy value through shared reference
 tuple_match_pattern_borrow_escape_reject|check-fail|tests/safety/tuple_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
+# Branch joins: an arm that never completes normally does not reach the join,
+# but its moves of an active `with` owner still reach that scope's exit check.
+move_diverging_if_return_ok|run-exit|tests/safety/move_diverging_if_return_ok.tl|42|-
+move_diverging_match_return_ok|run-exit|tests/safety/move_diverging_match_return_ok.tl|42|-
+move_diverging_never_call_ok|run-exit|tests/safety/move_diverging_never_call_ok.tl|42|-
+move_diverging_nested_join_ok|run-exit|tests/safety/move_diverging_nested_join_ok.tl|42|-
+move_diverging_reinit_other_arm_ok|run-exit|tests/safety/move_diverging_reinit_other_arm_ok.tl|42|-
+move_diverging_loop_break_continue_ok|run-exit|tests/safety/move_diverging_loop_break_continue_ok.tl|42|-
+move_normal_arm_after_join_reject|check-fail|tests/safety/move_normal_arm_after_join_reject.tl|-|use of moved value `t`
+move_diverging_and_normal_arm_reject|check-fail|tests/safety/move_diverging_and_normal_arm_reject.tl|-|use of moved value `t`
+move_diverging_arm_reuse_reject|check-fail|tests/safety/move_diverging_arm_reuse_reject.tl|-|use of moved value `t`
+move_before_diverging_branch_reject|check-fail|tests/safety/move_before_diverging_branch_reject.tl|-|use of moved value `t`
+with_owner_move_in_returning_if_reject|check-fail|tests/safety/with_owner_move_in_returning_if_reject.tl|-|cleanup owner `h` moved before with scope exit
+with_owner_move_in_returning_match_reject|check-fail|tests/safety/with_owner_move_in_returning_match_reject.tl|-|cleanup owner `h` moved before with scope exit
+with_owner_field_move_in_returning_if_reject|check-fail|tests/safety/with_owner_field_move_in_returning_if_reject.tl|-|cleanup owner `h` moved before with scope exit
+with_owner_move_in_breaking_if_reject|check-fail|tests/safety/with_owner_move_in_breaking_if_reject.tl|-|cleanup owner `h` moved before with scope exit
 fixed_array_match_pattern_arity_reject|check-fail|tests/safety/fixed_array_match_pattern_arity_reject.tl|-|typecheck: pattern arity mismatch
 fixed_array_match_pattern_wrong_type_reject|check-fail|tests/safety/fixed_array_match_pattern_wrong_type_reject.tl|-|tuple match requires (tuple ...)
 fixed_array_match_pattern_refutable_nested_reject|check-fail|tests/safety/fixed_array_match_pattern_refutable_nested_reject.tl|-|requires binding, wildcard, or nested tuple, struct, or box pattern

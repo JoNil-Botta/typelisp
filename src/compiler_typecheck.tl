@@ -11627,6 +11627,87 @@
   (with ([h (FileHandle fd) cleanup-file-handle])
     h.fd))")
 
+(define (compiler-typecheck-move-diverging-if-source) : String
+  "(defstruct Token (id i64) (name String))
+(define (consume [t : Token]) : i64 t.id)
+(define (pick [flag : bool]) : i64
+  (let
+    [t : Token (Token 41 \"t\")]
+    (begin
+      (if flag (return (consume t)) unit)
+      (+ (consume t) 1))))")
+
+(define (compiler-typecheck-move-diverging-match-source) : String
+  "(defstruct Token (id i64) (name String))
+(defenum Mode (Fast) (Slow))
+(define (consume [t : Token]) : i64 t.id)
+(define (pick [mode : Mode]) : i64
+  (let
+    [t : Token (Token 41 \"t\")]
+    (begin
+      (match mode
+        [(Mode.Fast) (return (consume t))]
+        [(Mode.Slow) unit])
+      (+ (consume t) 1))))")
+
+(define (compiler-typecheck-move-diverging-reinit-source) : String
+  "(defstruct Token (id i64) (name String))
+(define (consume [t : Token]) : i64 t.id)
+(define (pick [flag : bool]) : i64
+  (let
+    [t : Token (Token 1 \"t\")]
+    [spent : i64 (consume t)]
+    (begin
+      (if flag (return spent) (set! t (Token 41 \"fresh\")))
+      (+ (consume t) spent))))")
+
+(define (compiler-typecheck-move-normal-arm-source) : String
+  "(defstruct Token (id i64) (name String))
+(define (consume [t : Token]) : i64 t.id)
+(define (pick [flag : bool]) : i64
+  (let
+    [t : Token (Token 41 \"t\")]
+    (begin
+      (if flag (begin (consume t) unit) unit)
+      (+ (consume t) 1))))")
+
+(define (compiler-typecheck-move-diverging-and-normal-arm-source) : String
+  "(defstruct Token (id i64) (name String))
+(define (consume [t : Token]) : i64 t.id)
+(define (pick [flag : bool]) : i64
+  (let
+    [t : Token (Token 41 \"t\")]
+    (begin
+      (if flag (return (consume t)) (begin (consume t) unit))
+      (+ (consume t) 1))))")
+
+(define (compiler-typecheck-move-with-cleanup-owner-returning-arm-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-handle [h : FileHandle]) : i64 0)
+(define (bad-with-cleanup-owner-returning-arm [flag : bool]) : i64
+  (with ([h (FileHandle 3) cleanup-file-handle])
+    (begin
+      (if flag (return (take-handle h)) unit)
+      7)))")
+
+(define (compiler-typecheck-move-with-cleanup-owner-returning-match-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defenum Mode (Fast) (Slow))
+(define (take-handle [h : FileHandle]) : i64 0)
+(define (bad-with-cleanup-owner-returning-match [mode : Mode]) : i64
+  (with ([h (FileHandle 3) cleanup-file-handle])
+    (begin
+      (match mode
+        [(Mode.Fast) (return (take-handle h))]
+        [(Mode.Slow) unit])
+      7)))")
+
 (define (compiler-typecheck-move-with-cleanup-owner-whole-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
 (defstruct FileHandle
@@ -12891,6 +12972,39 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-with-cleanup-owner-whole-source)
+        "typecheck: cleanup owner `h` moved before with scope exit")
+        unit
+        (set! ok false))
+      ;; A diverging arm leaves the join, but not the enclosing with scope's
+      ;; fallthrough-only owner check.
+      (if (compiler-typecheck-ok? (compiler-typecheck-move-diverging-if-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-diverging-match-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-move-diverging-reinit-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-normal-arm-source)
+        "typecheck: use of moved value `t`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-diverging-and-normal-arm-source)
+        "typecheck: use of moved value `t`")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-with-cleanup-owner-returning-arm-source)
+        "typecheck: cleanup owner `h` moved before with scope exit")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-move-with-cleanup-owner-returning-match-source)
         "typecheck: cleanup owner `h` moved before with scope exit")
         unit
         (set! ok false))

@@ -81177,6 +81177,7 @@
 ;;   1. Nothing ever writes through the shared map. Its full write surface is
 ;;      `tc-moved-add`, `tc-moved-add-value`, `tc-moved-add-partial-value`,
 ;;      `tc-moved-add-hidden-atomic-user`, `tc-moved-union-id-loop`,
+;;      `tc-moved-retain-owner-id-loop`,
 ;;      `tc-moved-clone-id-map` (which writes only into its own fresh map) and
 ;;      the two removers. Every inserting site takes private storage first via
 ;;      `tc-moved-id-map-own`. The removers need no guard: `remove-ref!` writes
@@ -82741,6 +82742,158 @@
       (tc-moved-paths with-paths)
       (tc-moved-union-id-loop (& a-hidden) 0 b-hidden)
       origins)))
+
+;; Branch joins compare an arm's state with the state at branch entry, and an
+;; arm that cannot reach the join is dropped from it (see `tc-move-join-if`).
+;; Origins are diagnostic payload, so only keys and exact path facts take part
+;; in the comparison; equal sizes make the one-directional test an equality.
+(define (tc-moved-id-map-keys-subset?
+  [a : (& a tc_i64_i64_map.Map)]
+  [b : (& b tc_i64_i64_map.Map)]) : bool
+  (let
+    [remaining : i64 (tc_i64_i64_map.len a)]
+    [cursor : i64 0]
+    [subset? : bool true]
+    (begin
+      (while (and subset? (> remaining 0))
+        (begin
+          (set! cursor (tc_i64_i64_map.next-occupied a cursor))
+          (match (tc_i64_i64_map.entry-at a cursor)
+            [(tc_i64_i64_map.EntrySome key _)
+              (if (tc_i64_i64_map.contains? b key)
+                unit
+                (set! subset? false))]
+            [(tc_i64_i64_map.EntryNone) unit])
+          (set! cursor (+ cursor 1))
+          (set! remaining (- remaining 1))))
+      subset?)))
+
+(define (tc-moved-path-facts-subset?
+  [a : TcMovedPathFacts]
+  [b : TcMovedPathFacts]) : bool
+  (if (tc-moved-path-facts-empty? a)
+    true
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head a)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest a)]
+      (if (tc-moved-path-facts-contains-exact-kind?
+        (tc-global-shared-view b)
+        fact.path
+        fact.kind)
+        (tc-moved-path-facts-subset?
+          (tc-moved-path-facts-box-shared-view rest)
+          b)
+        false))))
+
+(define (tc-moved-same-facts? [a : TcMovedSet] [b : TcMovedSet]) : bool
+  (let
+    [a-roots : tc_i64_i64_map.Map (tc-moved-roots (tc-global-shared-view a))]
+    [a-partials : tc_i64_i64_map.Map
+      (tc-moved-partials (tc-global-shared-view a))]
+    [a-hidden : tc_i64_i64_map.Map
+      (tc-moved-hidden-atomic-users (tc-global-shared-view a))]
+    [b-roots : tc_i64_i64_map.Map (tc-moved-roots (tc-global-shared-view b))]
+    [b-partials : tc_i64_i64_map.Map
+      (tc-moved-partials (tc-global-shared-view b))]
+    [b-hidden : tc_i64_i64_map.Map
+      (tc-moved-hidden-atomic-users (tc-global-shared-view b))]
+    (and
+      (= (tc_i64_i64_map.len (& a-roots)) (tc_i64_i64_map.len (& b-roots)))
+      (=
+        (tc_i64_i64_map.len (& a-partials))
+        (tc_i64_i64_map.len (& b-partials)))
+      (= (tc_i64_i64_map.len (& a-hidden)) (tc_i64_i64_map.len (& b-hidden)))
+      (=
+        (tc-moved-path-facts-len (tc-moved-paths (tc-global-shared-view a)))
+        (tc-moved-path-facts-len (tc-moved-paths (tc-global-shared-view b))))
+      (=
+        (tc-moved-param-storage-origins (tc-global-shared-view a))
+        (tc-moved-param-storage-origins (tc-global-shared-view b)))
+      (tc-moved-id-map-keys-subset? (& a-roots) (& b-roots))
+      (tc-moved-id-map-keys-subset? (& a-partials) (& b-partials))
+      (tc-moved-id-map-keys-subset? (& a-hidden) (& b-hidden))
+      (tc-moved-path-facts-subset?
+        (tc-moved-paths (tc-global-shared-view a))
+        (tc-moved-paths (tc-global-shared-view b))))))
+
+(define (tc-moved-retain-owner-id-loop
+  [env : TcTypeEnv]
+  [a : (& a tc_i64_i64_map.Map)]
+  [out : tc_i64_i64_map.Map]) : tc_i64_i64_map.Map
+  (let
+    [remaining : i64 (tc_i64_i64_map.len a)]
+    [cursor : i64 0]
+    [result : tc_i64_i64_map.Map out]
+    (begin
+      (while (> remaining 0)
+        (begin
+          (set! cursor (tc_i64_i64_map.next-occupied a cursor))
+          (match (tc_i64_i64_map.entry-at a cursor)
+            [(tc_i64_i64_map.EntrySome key value)
+              (if (tc-cleanup-owner-active-id? env key)
+                (begin
+                  (set! result (tc-moved-id-map-own result))
+                  (tc_i64_i64_map.insert-ref! (&mut result) key value))
+                unit)]
+            [(tc_i64_i64_map.EntryNone) unit])
+          (set! cursor (+ cursor 1))
+          (set! remaining (- remaining 1))))
+      result)))
+
+(define (tc-moved-retain-owner-path-loop
+  [env : TcTypeEnv]
+  [a : TcMovedPathFacts]
+  [out : TcMovedSet]) : TcMovedSet
+  (if (tc-moved-path-facts-empty? a)
+    out
+    (let
+      [fact : TcMovedPathFact (tc-moved-path-facts-head a)]
+      [rest : TcMovedPathFacts (tc-moved-path-facts-rest a)]
+      (tc-moved-retain-owner-path-loop
+        env
+        (tc-moved-path-facts-box-shared-view rest)
+        (if (tc-cleanup-owner-active-id? env fact.path.root)
+          (tc-moved-add-path-fact
+            out
+            fact.path
+            fact.kind
+            (tc-moved-path-fact-origin fact))
+          out)))))
+
+;; `kept` plus the facts of `dropped` whose root is a cleanup owner active in
+;; `env`. A `with` scope validates its non-move-aware owners only against the
+;; body's fallthrough state, while lowering runs the owner's cleanup on every
+;; `return`, `try`, `break` and `continue` that leaves the scope. A move of an
+;; active owner in an arm that leaves the scope must therefore still reach that
+;; fallthrough check, or the moved owner would be cleaned a second time.
+(define (tc-moved-retain-active-cleanup-owners
+  [env : TcTypeEnv]
+  [dropped : TcMovedSet]
+  [kept : TcMovedSet]) : TcMovedSet
+  (if (not (tc-cleanup-owner-markers-possible?))
+    kept
+    (let
+      [dropped-roots : tc_i64_i64_map.Map
+        (tc-moved-roots (tc-global-shared-view dropped))]
+      [dropped-partials : tc_i64_i64_map.Map
+        (tc-moved-partials (tc-global-shared-view dropped))]
+      [with-ids : TcMovedSet
+        (TcMovedSet
+          (tc-moved-retain-owner-id-loop
+            env
+            (& dropped-roots)
+            (tc-moved-roots (tc-global-shared-view kept)))
+          (tc-moved-retain-owner-id-loop
+            env
+            (& dropped-partials)
+            (tc-moved-partials (tc-global-shared-view kept)))
+          (tc-moved-paths (tc-global-shared-view kept))
+          (tc-moved-hidden-atomic-users (tc-global-shared-view kept))
+          (tc-moved-param-storage-origins (tc-global-shared-view kept)))]
+      (tc-moved-retain-owner-path-loop
+        env
+        (tc-moved-paths (tc-global-shared-view dropped))
+        with-ids))))
 
 (define (tc-move-var-move-only-id?
   [ctx : TcContext]
@@ -86546,6 +86699,84 @@
     (& arms)
     0))
 
+;; An arm that never completes normally cannot reach the join, so its moves,
+;; borrows and reinitializations say nothing about the code after it. The
+;; conservative syntactic flow summary of the loop layer decides that: it answers
+;; "normal" for anything it does not recognize, which keeps the arm in the join.
+;; Only an arm whose state differs from the state at branch entry can change the
+;; join, so the summary walk is skipped for the common arm that moves nothing.
+(define (tc-move-arm-diverges?
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [arm-id : i64]) : bool
+  (let
+    [flow : TcMoveLoopFlow
+      (tc-move-loop-flow-expr
+        ctx
+        expr-bases
+        env
+        (ast.ast-expr-segment-bases-get expr-bases arm-id))]
+    (not flow.normal)))
+
+;; Both arms normal, or both diverging (the code after the `if` is unreachable),
+;; keep the conservative may-move union. With exactly one diverging arm the join
+;; is the other arm's state, including its reinitializations, plus the diverging
+;; arm's facts about active cleanup owners.
+(define (tc-move-join-if
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [entry : TcMovedSet]
+  [then-moved : TcMovedSet]
+  [then-id : i64]
+  [else-moved : TcMovedSet]
+  [else-id : i64]) : TcMovedSet
+  (if (and
+    (tc-moved-same-facts?
+      (tc-global-shared-view then-moved)
+      (tc-global-shared-view entry))
+    (tc-moved-same-facts? (tc-global-shared-view else-moved) entry))
+    (tc-moved-union then-moved else-moved)
+    (let
+      [then-diverges? : bool
+        (tc-move-arm-diverges?
+          (tc-global-shared-view ctx)
+          expr-bases
+          (tc-global-shared-view env)
+          then-id)]
+      [else-diverges? : bool
+        (tc-move-arm-diverges?
+          (tc-global-shared-view ctx)
+          expr-bases
+          (tc-global-shared-view env)
+          else-id)]
+      (cond
+        [(and then-diverges? (not else-diverges?))
+          (tc-moved-retain-active-cleanup-owners env then-moved else-moved)]
+        [(and else-diverges? (not then-diverges?))
+          (tc-moved-retain-active-cleanup-owners env else-moved then-moved)]
+        [else (tc-moved-union then-moved else-moved)]))))
+
+;; A match joins the entry state with every arm, so a diverging arm contributes
+;; only its facts about cleanup owners active at the match. `arm-visible` has
+;; the arm's pattern bindings already removed; `arm-env` resolves its callees.
+(define (tc-move-join-match-arm
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [arm-env : TcTypeEnv]
+  [entry : TcMovedSet]
+  [arm-visible : TcMovedSet]
+  [body-id : i64]) : TcMovedSet
+  (if (or
+    (tc-moved-same-facts?
+      (tc-global-shared-view arm-visible)
+      (tc-global-shared-view entry))
+    (not (tc-move-arm-diverges? ctx expr-bases arm-env body-id)))
+    (tc-moved-union entry arm-visible)
+    (tc-moved-retain-active-cleanup-owners env arm-visible entry)))
+
 (define (tc-move-check-arms-at
   [ctx : TcContext]
   [expr-bases : i64]
@@ -86597,9 +86828,14 @@
                 [(TcMoveResult.Ok arm-moved)
                   (let
                     [visible-arm-moved : TcMovedSet
-                      (tc-moved-union
+                      (tc-move-join-match-arm
+                        (tc-global-shared-view ctx)
+                        expr-bases
+                        (tc-global-shared-view env)
+                        arm-env
                         (tc-global-shared-view moved)
-                        (tc-move-remove-bound-root-states arm-moved bound))]
+                        (tc-move-remove-bound-root-states arm-moved bound)
+                        body-box)]
                     (match (tc-move-check-arms-at
                       (tc-global-shared-view ctx)
                       expr-bases
@@ -87010,26 +87246,35 @@
             (ast.ast-expr-segment-bases-get expr-bases body-box))
           (tc-move-loop-flow-match-arms-at ctx expr-bases env arms (+ index 1)))])))
 
+(define (tc-move-func-type-diverges? [ctx : TcContext] [func-ty : ast.AstType]) : bool
+  (match (tc-resolve-type (tc-global-shared-view ctx) func-ty)
+    [(ast.AstType.Func _ ret)
+      (tc-never-type?
+        (tc-resolve-type (tc-global-shared-view ctx) (ast.ty-node-get ret)))]
+    [_ false]))
+
+;; The callee's recorded body fact covers qualified and imported callees such as
+;; `io.panic`, which the local environment does not bind; a bare local name
+;; without a fact falls back to the environment.
 (define (tc-move-loop-direct-call-diverges?
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
   [func-box : i64]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (ast.ast-expr-segment-bases-get expr-bases func-box))
-    [(ast.AstExpr.Var name-id)
-      (match (tc-lookup-id env name-id)
-        [(ResultTcType.Ok func-ty)
-          (match (tc-resolve-type (tc-global-shared-view ctx) func-ty)
-            [(ast.AstType.Func _ ret)
-              (tc-never-type?
-                (tc-resolve-type
-                  (tc-global-shared-view ctx)
-                  (ast.ty-node-get ret)))]
-            [_ false])]
-        [(ResultTcType.Err _) false])]
-    [_ false]))
+  (match (tc-body-type-fact-lookup
+    (tc-context-body-state (tc-global-shared-view ctx))
+    func-box)
+    [(TcBodyTypeFact.Hit func-ty) (tc-move-func-type-diverges? ctx func-ty)]
+    [(TcBodyTypeFact.Miss)
+      (match (ast.ast-expr-unspan-with-segment-bases
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases func-box))
+        [(ast.AstExpr.Var name-id)
+          (match (tc-lookup-id env name-id)
+            [(ResultTcType.Ok func-ty)
+              (tc-move-func-type-diverges? ctx func-ty)]
+            [(ResultTcType.Err _) false])]
+        [_ false])]))
 
 (define (tc-move-loop-flow-expr
   [ctx : TcContext]
@@ -88138,10 +88383,19 @@
                 (tc-global-shared-view env)
                 (tc-moved-clone (tc-global-shared-view locals))
                 (tc-moved-clone (tc-global-shared-view loop-carried))
-                (tc-moved-clone movedc)
+                (tc-moved-clone (tc-global-shared-view movedc))
                 else-branch-box)
                 [(TcMoveResult.Ok movede)
-                  (TcMoveResult.Ok (tc-moved-union movedt movede))]
+                  (TcMoveResult.Ok
+                    (tc-move-join-if
+                      (tc-global-shared-view ctx)
+                      expr-bases
+                      (tc-global-shared-view env)
+                      (tc-global-shared-view movedc)
+                      movedt
+                      then-branch-box
+                      movede
+                      else-branch-box))]
                 [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
             [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
         [(TcMoveResult.Err message) (TcMoveResult.Err message)])]

@@ -6482,6 +6482,36 @@ arguments without rendering the final text. `format.format` accepts either a
 literal template plus values or one retained Arguments package and returns the
 formatted text as a `String`; `format.write!`/`format.writeln!` accept the same
 two forms, stream into a mutable writer, and return `FormatResult`.
+The three newline forms also accept no template at all: `(io.println)`,
+`(io.eprintln)` and `(format.writeln! writer)` write exactly one LF byte
+(`0x0a`, never CRLF, on every target) through the same sink, error path and
+allocation policy as their template-bearing forms. Only the template is
+optional; `writeln!` still requires its writer, and `print`, `eprint` and
+`write!` still require a template.
+
+```lisp test=run name=format-empty-newline-forms exit=42 stdout="\na\n\n"
+(import stdlib.byte_buf)
+(import stdlib.format)
+(import stdlib.io)
+(import stdlib.string)
+
+(define (main) : i64
+  (let
+    [bytes : byte_buf.ByteBuf (byte_buf.with-capacity 4)]
+    [result : format.FormatResult (format.writeln! bytes)]
+    [text : String (byte_buf.to-string bytes)]
+    (begin
+      (io.println)
+      (io.println "a")
+      (io.println)
+      (match result
+        [(format.FormatOk)
+          (if (string.eq (& text) "\n")
+            42
+            1)]
+        [(format.FormatErr _) 2]))))
+```
+
 `stdout-write` and `stderr-write` provide lower-level
 borrowed-byte output, while `print-error`, `panic`, and `error` accept borrowed text. These
 are ordinary standard-library definitions; unimported uses are unbound source
@@ -6889,7 +6919,8 @@ fail as ambiguous. Programs must retain exactly one applicable spelling in
 each family they implement.
 
 `format.write! writer template ...` and `format.writeln!` accept a mutable
-nominal writer place. The writer's canonical owner module defines exactly one
+nominal writer place; `format.writeln! writer` without a template writes one
+LF and reports a failing writer exactly as the template-bearing form does. The writer's canonical owner module defines exactly one
 of `format-write-raw` or `format-write-raw-<NominalName>` with signature
 `(i64, String) -> i64`. Stateful writers additionally define the corresponding
 `format-writer-cell` or `format-writer-cell-<NominalName>` helper with signature

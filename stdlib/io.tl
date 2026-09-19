@@ -649,15 +649,36 @@
     [(stdlib.format.FormatErr _) (stdlib.io.platform-exit 134)]))
 
 ;: Format a literal template directly to stdout and append exactly one newline.
-(defmacro (println [template : comptime.Expr] [args : comptime.Expr ...]) : unit
-  `(match (stdlib.format.format-write-callback-dispatch
-    ,template
-    (__tl_format_arguments ,@args)
-    0
-    stdlib.io.format-stdout-write-raw
-    1)
-    [(stdlib.format.FormatOk) unit]
-    [(stdlib.format.FormatErr _) (stdlib.io.platform-exit 134)]))
+;:
+;: The operands are an optional literal template followed by its values. With
+;: no operands, `(println)` writes exactly one LF byte through the same sink.
+(defmacro (println [operands : comptime.Expr ...]) : unit
+  (let
+    [empty? : bool (= (comptime.expr-list-length operands) 0)]
+    [template : comptime.Expr
+      (if empty?
+        `""
+        (comptime.expr-list-nth operands 0))]
+    [index : i64 (comptime.expr-list-length operands)]
+    [args : comptime.ExprList (comptime.expr-list-empty)]
+    (begin
+      ;; The values are every operand after the template, in source order.
+      (while (> index 1)
+        (begin
+          (set! index (- index 1))
+          (set!
+            args
+            (comptime.expr-list-cons
+              (comptime.expr-list-nth operands index)
+              args))))
+      `(match (stdlib.format.format-write-callback-dispatch
+        ,template
+        (__tl_format_arguments ,@args)
+        0
+        stdlib.io.format-stdout-write-raw
+        1)
+        [(stdlib.format.FormatOk) unit]
+        [(stdlib.format.FormatErr _) (stdlib.io.platform-exit 134)]))))
 
 ;: Format a literal template directly to stderr without a combined String.
 (defmacro (eprint [template : comptime.Expr] [args : comptime.Expr ...]) : unit
@@ -671,15 +692,36 @@
     [(stdlib.format.FormatErr _) (stdlib.io.platform-exit 134)]))
 
 ;: Format a literal template directly to stderr and append exactly one newline.
-(defmacro (eprintln [template : comptime.Expr] [args : comptime.Expr ...]) : unit
-  `(match (stdlib.format.format-write-callback-dispatch
-    ,template
-    (__tl_format_arguments ,@args)
-    0
-    stdlib.io.format-stderr-write-raw
-    1)
-    [(stdlib.format.FormatOk) unit]
-    [(stdlib.format.FormatErr _) (stdlib.io.platform-exit 134)]))
+;:
+;: The operands are an optional literal template followed by its values. With
+;: no operands, `(eprintln)` writes exactly one LF byte through the same sink.
+(defmacro (eprintln [operands : comptime.Expr ...]) : unit
+  (let
+    [empty? : bool (= (comptime.expr-list-length operands) 0)]
+    [template : comptime.Expr
+      (if empty?
+        `""
+        (comptime.expr-list-nth operands 0))]
+    [index : i64 (comptime.expr-list-length operands)]
+    [args : comptime.ExprList (comptime.expr-list-empty)]
+    (begin
+      ;; The values are every operand after the template, in source order.
+      (while (> index 1)
+        (begin
+          (set! index (- index 1))
+          (set!
+            args
+            (comptime.expr-list-cons
+              (comptime.expr-list-nth operands index)
+              args))))
+      `(match (stdlib.format.format-write-callback-dispatch
+        ,template
+        (__tl_format_arguments ,@args)
+        0
+        stdlib.io.format-stderr-write-raw
+        1)
+        [(stdlib.format.FormatOk) unit]
+        [(stdlib.format.FormatErr _) (stdlib.io.platform-exit 134)]))))
 
 ;: Migration alias for `print`; it does not materialize a combined String.
 (defmacro (print-format [template : comptime.Expr] [args : comptime.Expr ...]) : unit

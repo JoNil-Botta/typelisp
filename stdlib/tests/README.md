@@ -319,6 +319,18 @@ Inline stdlib coverage:
   Formatter ABI across ByteBuf, TextBuf, FileHandle, stdout, and stderr;
   exactly-once/lvalue/rvalue/repeated formatting; zero final-String allocation
   for a preallocated literal sink; first-error retention; and newline behavior.
+  `tests/integration/format_stdio_empty_newline.tl`,
+  `format_stdio_empty_newline_raw.tl` and `format_writeln_empty.tl` cover the
+  zero-template forms `(io.println)`, `(io.eprintln)` and
+  `(format.writeln! writer)`: one LF per call on the right stream, a
+  preallocated ByteBuf and a TextBuf with no allocation, and the same first
+  `FormatErr` as the template-bearing form for a failing writer. The `_raw`
+  fixture runs itself as a child and compares the captured bytes, because the
+  Windows harness drops carriage returns before comparing manifest streams;
+  it is the row that proves LF rather than CRLF there. The
+  `format_{println,eprintln,writeln}_nonliteral_template_reject.tl` and
+  `format_writeln_missing_writer_reject.tl` package tests pin the unchanged
+  diagnostics of the nonempty forms.
   `tests/integration/format_arguments.tl` and `format_arguments_stdio.tl`
   additionally cover retained plan reuse, nesting, explicit named and lexical
   captures, hidden temporary owners, package lifetime rejection, allocation

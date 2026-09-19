@@ -740,8 +740,10 @@ decls_generated_missing_selected_import_reject|check-fail|tests/safety/decls_gen
 decls_generated_selected_conflict_reject|check-fail|tests/safety/decls_generated_selected_conflict_reject.tl|-|ambiguous unqualified import
 # Source selected imports of exports that only exist after the provider's
 # module-scope generator has run: accepted once generated, still rejected when
-# missing, at the import's own span, even from an already loaded module.
-source_selected_generated_ok|run-exit|tests/safety/source_selected_generated_ok.tl|42|-
+# missing, at the import's own span, even from an already loaded module. The
+# Windows run path stages only the entry file, so the accepted case is checked
+# here and executed by the `source_selected_generated_export` native row.
+source_selected_generated_ok|check-ok|tests/safety/source_selected_generated_ok.tl|-|-
 source_selected_generated_missing_reject|check-fail|tests/safety/source_selected_generated_missing_reject.tl|-|module 'source_selected_generated_provider' has no selected item 'nothing'
 source_selected_generated_seen_missing_reject|check-fail|tests/safety/source_selected_generated_seen_missing_reject.tl|-|module 'source_selected_generated_provider' has no selected item 'nothing'
 source_selected_generated_seen_missing_span_reject|check-fail|tests/safety/source_selected_generated_seen_missing_reject.tl|-|source_selected_generated_seen_missing_reject.tl:3:1

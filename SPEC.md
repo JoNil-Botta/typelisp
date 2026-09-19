@@ -4002,12 +4002,14 @@ not affect that code:
 
 When exactly one `if` branch diverges, the state after the `if` is the other
 branch's state, including a reinitialization performed there. When both
-branches complete normally, or both diverge, the join remains the conservative
-union of the moved places. A `match` joins the state before the match with
-every arm that can complete normally. Divergence is decided conservatively from
-the branch's syntax; a form the analysis does not recognize is treated as
-completing normally. A use after a move inside the diverging branch itself is
-still rejected.
+branches complete normally the join remains the conservative union of the
+moved places; when both diverge the code after the `if` is unreachable. A
+`match` joins the state before the match with every arm that can complete
+normally. Divergence is decided conservatively from the tail position of the
+branch: a `begin`, `unsafe`, or `let` body diverges when its last expression
+does, and a nested `if` or `match` when every branch does. Any other shape is
+treated as completing normally. A use after a move inside the diverging branch
+itself is still rejected.
 
 One fact survives a diverging branch: a move of an active non-move-aware `with`
 owner (section 5.19). The owner's cleanup runs on every `return`, `try`,

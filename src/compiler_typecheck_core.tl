@@ -614,7 +614,11 @@
   (visible-cache-address i64)
   (outlives-binding-cache-address i64)
   (outlives-lifetime-cache-address i64)
-  (unbound-near-miss-memo-address i64))
+  (unbound-near-miss-memo-address i64)
+  ;; Depth of speculative typechecks whose error the caller discards. While it
+  ;; is positive an unbound name gets no near-miss scan: the suggestion would be
+  ;; thrown away with the error (see `tc-unbound-suggestions-suppress-push!`).
+  (unbound-suggestion-suppress-depth i64))
 
 (defenum TcTypeEnvScopedLookup
   (Missing)
@@ -1495,7 +1499,8 @@
             (cast
               (unsafe
                 (ptr->int (__tl_array-data unbound-near-miss-memo)))
-              : i64)))
+              : i64)
+            0))
         state))))
 
 (define (tc-job-state-type-env-scoped-state-init! [job-state : TcJobState]) : TcTypeEnvScopedState
@@ -41756,6 +41761,48 @@
 ;; intern owner/generation, pool length, persistent environment identity, and
 ;; requested scope. Active scoped carriers bypass it because their mutable
 ;; stack contents are not fully represented by `env.store` and `env.head`.
+;; A speculative typecheck whose failure the caller discards (a macro operand
+;; probe) must not pay for a "did you mean" suggestion: finalizing one unbound
+;; name scans every visible name, about 7.5M instructions, and a self-compile
+;; discards about a thousand such errors. The depth lives in the job-owned scoped
+;; state reached through the environment, so no other job is affected and no
+;; signature has to carry it. Only a caller that drops the error unconditionally
+;; may open this scope; a reported diagnostic must keep its suggestion.
+(define (tc-unbound-suggestion-suppress-depth [env : TcTypeEnv]) : i64
+  (tc-type-env-scoped-state-field
+    (tc-type-env-scoped-state env)
+    unbound-suggestion-suppress-depth
+    i64))
+
+(define (tc-unbound-suggestion-suppress-depth-set!
+  [env : TcTypeEnv]
+  [depth : i64]) : unit
+  (let
+    [state : TcTypeEnvScopedState (tc-type-env-scoped-state env)]
+    (unsafe
+      (ptr-write!
+        (ptr-cast
+          (ptr-offset
+            (int->ptr (cast state.address : u64) : (Ptr u8))
+            (comptime
+              (offset-of
+                (type TcTypeEnvScopedStateData)
+                unbound-suggestion-suppress-depth)))
+          : (MutPtr i64))
+        depth))))
+
+(define (tc-unbound-suggestions-suppress-push! [env : TcTypeEnv]) : unit
+  (tc-unbound-suggestion-suppress-depth-set!
+    env
+    (+ (tc-unbound-suggestion-suppress-depth env) 1)))
+
+(define (tc-unbound-suggestions-suppress-pop! [env : TcTypeEnv]) : unit
+  (let
+    [depth : i64 (tc-unbound-suggestion-suppress-depth env)]
+    (if (> depth 0)
+      (tc-unbound-suggestion-suppress-depth-set! env (- depth 1))
+      (io.panic "typecheck: unbalanced unbound-suggestion suppression scope"))))
+
 (define (tc-unbound-near-miss-memo-for-env [env : TcTypeEnv]) : TcUnboundNearMissMemoState
   (unsafe
     (ptr-read
@@ -41855,6 +41902,22 @@
         (string.copy candidate)))))
 
 (define (tc-unbound-near-miss
+  [module-qualified : bool]
+  [module-id : i64]
+  [env : TcTypeEnv]
+  [wanted : String]
+  [wanted-id : i64]) : String
+  (cond
+    [(> (tc-unbound-suggestion-suppress-depth env) 0) ""]
+    [else
+      (tc-unbound-near-miss-unsuppressed
+        module-qualified
+        module-id
+        env
+        wanted
+        wanted-id)]))
+
+(define (tc-unbound-near-miss-unsuppressed
   [module-qualified : bool]
   [module-id : i64]
   [env : TcTypeEnv]
@@ -42473,6 +42536,68 @@
                 (io.panic
                   "typecheck: near-miss memo did not serve the updated result"))
               (ci.intern-reset!))))))))
+
+(cfg
+  test
+  (test
+    tc-unbound-suggestion-suppression-scope
+    (begin
+      (ci.intern-reset!)
+      (let
+        [job-a : TcJobState (tc-job-state-new)]
+        [job-b : TcJobState (tc-job-state-new)]
+        [alpha-id : i64 (ci.intern "alpha")]
+        [wanted-id : i64 (ci.intern "alphq")]
+        [env-a : TcTypeEnv
+          (tc-bind-id
+            (tc-empty-env-with-job-state job-a)
+            alpha-id
+            (ast.AstType.I64))]
+        [env-b : TcTypeEnv
+          (tc-bind-id
+            (tc-empty-env-with-job-state job-b)
+            alpha-id
+            (ast.AstType.I64))]
+        (begin
+          (unless
+            (string.eq
+              (tc-unbound-near-miss false -1 env-a "alphq" wanted-id)
+              "alpha")
+            (io.panic "typecheck: near-miss fixture did not suggest alpha"))
+          ;; Scopes nest; only the owning job is silenced, and a reported
+          ;; diagnostic outside every scope gets its suggestion back.
+          (tc-unbound-suggestions-suppress-push! env-a)
+          (tc-unbound-suggestions-suppress-push! env-a)
+          (unless
+            (and
+              (= (tc-unbound-suggestion-suppress-depth env-a) 2)
+              (= (tc-unbound-suggestion-suppress-depth env-b) 0)
+              (string.eq
+                (tc-unbound-near-miss false -1 env-a "alphq" wanted-id)
+                "")
+              (string.eq
+                (tc-unbound-near-miss false -1 env-b "alphq" wanted-id)
+                "alpha"))
+            (io.panic "typecheck: suppression scope leaked or did not suppress"))
+          (match (tc-unbound-suggestion false -1 env-a "alphq" wanted-id)
+            [(TcUnboundSuggestion.No) unit]
+            [_
+              (io.panic "typecheck: suppressed scope still built a suggestion")])
+          (tc-unbound-suggestions-suppress-pop! env-a)
+          (unless
+            (string.eq
+              (tc-unbound-near-miss false -1 env-a "alphq" wanted-id)
+              "")
+            (io.panic "typecheck: inner pop ended the outer suppression scope"))
+          (tc-unbound-suggestions-suppress-pop! env-a)
+          (unless
+            (and
+              (= (tc-unbound-suggestion-suppress-depth env-a) 0)
+              (string.eq
+                (tc-unbound-near-miss false -1 env-a "alphq" wanted-id)
+                "alpha"))
+            (io.panic "typecheck: suggestion did not return after the scope"))
+          (ci.intern-reset!))))))
 
 (defenum TcUnboundSuggestion
   (No)
@@ -119672,6 +119797,61 @@
         path-id
         (tc-context-type-push (tc-global-shared-view ctx) ty)))))
 
+;; Typecheck `expr` for a caller that keeps only a successful type and drops any
+;; error unseen. The suppression scope is closed on both outcomes before the
+;; result is inspected.
+(define (tc-expr-discarding-errors
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : ast.AstExpr]) : ResultTcType
+  (begin
+    (tc-unbound-suggestions-suppress-push! env)
+    (let
+      [result : ResultTcType (tc-expr ctx env expr)]
+      (begin
+        (tc-unbound-suggestions-suppress-pop! env)
+        result))))
+
+(test
+  tc-expr-discarding-errors-balances-its-scope
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [missing : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools)
+        (ast.AstExpr.Var (ci.intern "tc-discarding-scope-missing-name")))]
+    [literal : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools)
+        (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
+    [ctx : TcContext
+      (tc-literal-pool-test-context (tc-global-shared-view pools))]
+    [env : TcTypeEnv (tc-type-env-new)]
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [failed? : bool
+      (match (tc-expr-discarding-errors
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
+        (tc-context-expr-get (tc-global-shared-view ctx) missing))
+        [(ResultTcType.Err _) true]
+        [(ResultTcType.Ok _) false])]
+    [after-error : i64 (tc-unbound-suggestion-suppress-depth env)]
+    [succeeded? : bool
+      (match (tc-expr-discarding-errors
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
+        (tc-context-expr-get (tc-global-shared-view ctx) literal))
+        [(ResultTcType.Ok ty) (tc-type-eq ty (ast.AstType.Bool))]
+        [(ResultTcType.Err _) false])]
+    [after-success : i64 (tc-unbound-suggestion-suppress-depth env)]
+    (begin
+      (ast.ast-node-pool-context-install! saved)
+      (unless
+        (and failed? succeeded? (= after-error 0) (= after-success 0))
+        (io.panic
+          "typecheck: discarded-error probe left its suggestion scope open")))))
+
 (define (macro-captured-expr-produced-type
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -119686,7 +119866,7 @@
         ;; Publish those nodes first, then retain any expression/type children
         ;; appended by `tc-expr` before allocating the captured-type wrapper.
         (tc-context-install-pools! (tc-global-shared-view ctx))
-        (match (tc-expr
+        (match (tc-expr-discarding-errors
           (tc-global-shared-view ctx)
           (tc-global-shared-view env)
           (tc-global-shared-view arg))
@@ -119709,7 +119889,10 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [arg : ast.AstExpr]) : ast.AstType
-  (match (tc-expr (tc-global-shared-view ctx) (tc-global-shared-view env) arg)
+  (match (tc-expr-discarding-errors
+    (tc-global-shared-view ctx)
+    (tc-global-shared-view env)
+    arg)
     [(ResultTcType.Ok actual)
       (begin
         ;; Binding-clause initializers can append structural referent types

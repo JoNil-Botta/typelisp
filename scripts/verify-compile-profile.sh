@@ -254,6 +254,26 @@ assert_profile_counter_eq_in() {
     fi
 }
 
+# Unlike assert_profile_counter_eq_in, which accepts any one matching row, this
+# requires at least one row and rejects every row whose value differs.
+assert_profile_counter_all_eq_in() {
+    _file=$1
+    _phase=$2
+    _want=$3
+    _stdout=$4
+    _stderr=$5
+    if ! awk -F'|' -v phase="$_phase" -v want="$_want" '
+        $1 == "compile-profile" && $2 == phase {
+            rows += 1
+            if (($3 + 0) != want) bad += 1
+        }
+        END { exit (rows > 0 && bad == 0) ? 0 : 1 }
+    ' "$_file"; then
+        show_failure_logs "$_stdout" "$_stderr"
+        fail "expected every profile counter $_phase row to equal $_want"
+    fi
+}
+
 profile_counter_value_in() {
     _file=$1
     _phase=$2
@@ -2218,6 +2238,49 @@ assert_profile_live_counter_eq_in \
     1 \
     "$SPECIALIZATION_STDOUT" \
     "$SPECIALIZATION_STDERR"
+
+# A successful compile must not pay for "did you mean" suggestions (#7868).
+# Macro operand capture type-probes each operand and drops a failed probe. The
+# stdlib format macros below probe operands that only typecheck inside their
+# own templates, so this nine-line program discards dozens of unbound-name
+# errors while compiling cleanly. The finalizer still runs for each of them,
+# which proves the fixture reaches the path; none of them may scan the visible
+# names. Before #7868 this program performed 12 scans. A new speculative caller
+# that forgets `tc-expr-discarding-errors` makes unbound_scans positive here.
+DISCARDED_PROBE_SRC="$WORKDIR/discarded-probe.tl"
+DISCARDED_PROBE_STDOUT="$WORKDIR/discarded-probe.stdout"
+DISCARDED_PROBE_STDERR="$WORKDIR/discarded-probe.stderr"
+cat > "$DISCARDED_PROBE_SRC" <<'FIXTURE'
+(import stdlib.io)
+
+(define (main) : i64
+  (let
+    [count : i64 42]
+    (begin
+      (io.print-format "{}" count)
+      (io.println "")
+      0)))
+FIXTURE
+echo "[compile-profile] check discarded operand probes build no unbound-name suggestion"
+if ! "$PROFILE_BIN" check "$DISCARDED_PROBE_SRC" \
+    --stdlib-root . \
+    --stdlib-root stdlib \
+    > "$DISCARDED_PROBE_STDOUT" 2> "$DISCARDED_PROBE_STDERR"; then
+    show_failure_logs "$DISCARDED_PROBE_STDOUT" "$DISCARDED_PROBE_STDERR"
+    fail "discarded operand probe fixture check failed"
+fi
+assert_profile_counter_at_least_in \
+    "$DISCARDED_PROBE_STDERR" \
+    "typecheck.env.unbound_finalizers" \
+    1 \
+    "$DISCARDED_PROBE_STDOUT" \
+    "$DISCARDED_PROBE_STDERR"
+assert_profile_counter_all_eq_in \
+    "$DISCARDED_PROBE_STDERR" \
+    "typecheck.env.unbound_scans" \
+    0 \
+    "$DISCARDED_PROBE_STDOUT" \
+    "$DISCARDED_PROBE_STDERR"
 
 echo "[compile-profile] check macro detail fixture"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_macro_detail.tl \

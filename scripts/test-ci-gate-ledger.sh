@@ -19,10 +19,12 @@ expect_failure() {
 # A compact catalog exercises host projection and sequential execution without
 # copying the production list into the test. The real list is checked below.
 printf '%s\n' \
-    '# ci-gate-ledger-schema\t1' \
-    '# count\tall\t3' '# count\tlinux\t2' '# count\twindows\t2' \
-    'id\thosts\tlabel' 'first\tall\tFirst gate' \
-    'linux-only\tlinux\tLinux gate' 'windows-only\twindows\tWindows gate' \
+    '# ci-gate-ledger-schema\t2' \
+    '# count\tall\t5' '# count\tlinux\t4' '# count\twindows\t4' \
+    'id\thosts\tlabel\tneeds' 'first\tall\tFirst gate\t-' \
+    'linux-only\tlinux\tLinux gate\tfirst' 'windows-only\twindows\tWindows gate\tfirst' \
+    'shared\tall\tShared gate\tfirst,linux-only@linux' \
+    'closing\tall\tClosing gate\t*' \
     | sed 's/\\t/\	/g' > "$WORKDIR/catalog.tsv"
 sed 's/$/\r/' "$WORKDIR/catalog.tsv" > "$WORKDIR/catalog-crlf.tsv"
 for host in linux windows; do
@@ -35,6 +37,16 @@ for host in linux windows; do
     test "$CI_GATE_LEDGER_LABEL" = 'First gate' || fail 'label resolution'
     ci_gate_ledger_leave 0
     ci_gate_ledger_enter "$host-only"
+    test "$CI_GATE_LEDGER_LABEL" = "$(if [ "$host" = linux ]; then echo 'Linux gate'; else echo 'Windows gate'; fi)" || fail 'host label resolution'
+    test "$CI_GATE_LEDGER_NEEDS" = first || fail 'needs resolution'
+    ci_gate_ledger_leave 0
+    ci_gate_ledger_enter shared
+    # A host-qualified need is projected only onto its own host.
+    if [ "$host" = linux ]; then expected_needs=first,linux-only; else expected_needs=first; fi
+    test "$CI_GATE_LEDGER_NEEDS" = "$expected_needs" || fail "host need projection: $CI_GATE_LEDGER_NEEDS"
+    ci_gate_ledger_leave 0
+    ci_gate_ledger_enter closing
+    test "$CI_GATE_LEDGER_NEEDS" = '*' || fail 'closing needs resolution'
     ci_gate_ledger_leave 0
     ci_gate_ledger_finish
     expect_failure "duplicate-end-$host" ci_gate_ledger_enter first
@@ -62,20 +74,33 @@ expect_failure missing ci_gate_ledger_load "$WORKDIR/absent.tsv" linux
 : > "$WORKDIR/empty.tsv"
 expect_failure empty ci_gate_ledger_load "$WORKDIR/empty.tsv" linux
 # Each mutation starts with a complete valid catalog, then changes one boundary.
-for mutation in schema header id host label duplicate-id duplicate-label count fields truncated-tail truncated-record other-host; do
+for mutation in schema header id host label duplicate-id duplicate-label count fields truncated-tail truncated-record other-host \
+    need-forward need-self need-unknown need-syntax need-bad-host need-inapplicable-host need-host-gap need-duplicate need-empty closing-early; do
     case "$mutation" in
-        schema) sed '1s/1/2/' "$WORKDIR/catalog.tsv" ;;
+        schema) sed '1s/2/3/' "$WORKDIR/catalog.tsv" ;;
         header) sed '5s/label/name/' "$WORKDIR/catalog.tsv" ;;
         id) sed '6s/^first/Bad_ID/' "$WORKDIR/catalog.tsv" ;;
         host) sed '7s/linux\t/unix\t/' "$WORKDIR/catalog.tsv" ;;
         label) sed '6s/First gate/ First gate/' "$WORKDIR/catalog.tsv" ;;
         duplicate-id) sed '7s/^linux-only/first/' "$WORKDIR/catalog.tsv" ;;
         duplicate-label) sed '7s/Linux gate/First gate/' "$WORKDIR/catalog.tsv" ;;
-        count) sed '2s/3/4/' "$WORKDIR/catalog.tsv" ;;
+        count) sed '2s/5/6/' "$WORKDIR/catalog.tsv" ;;
         fields) sed '7s/$/\	extra/' "$WORKDIR/catalog.tsv" ;;
         truncated-tail) sed '$d' "$WORKDIR/catalog.tsv" ;;
         truncated-record) head -c -1 "$WORKDIR/catalog.tsv" ;;
         other-host) sed '8s/windows\t/invalid\t/' "$WORKDIR/catalog.tsv" ;;
+        # Needs: only earlier, distinct, known gates that run wherever the
+        # consumer does; one closing gate, and it must be last.
+        need-forward) sed '6s/-$/shared/' "$WORKDIR/catalog.tsv" ;;
+        need-self) sed '7s/first$/linux-only/' "$WORKDIR/catalog.tsv" ;;
+        need-unknown) sed '7s/first$/absent/' "$WORKDIR/catalog.tsv" ;;
+        need-syntax) sed '7s/first$/First/' "$WORKDIR/catalog.tsv" ;;
+        need-bad-host) sed '9s/@linux$/@macos/' "$WORKDIR/catalog.tsv" ;;
+        need-inapplicable-host) sed '8s/first$/first@linux/' "$WORKDIR/catalog.tsv" ;;
+        need-host-gap) sed '9s/@linux$//' "$WORKDIR/catalog.tsv" ;;
+        need-duplicate) sed '9s/^\(.*\)first,/\1first,first,/' "$WORKDIR/catalog.tsv" ;;
+        need-empty) sed '7s/first$//' "$WORKDIR/catalog.tsv" ;;
+        closing-early) sed '9s/first,linux-only@linux$/*/' "$WORKDIR/catalog.tsv" ;;
     esac > "$WORKDIR/$mutation.tsv"
     expect_failure "$mutation" ci_gate_ledger_load "$WORKDIR/$mutation.tsv" linux
     expect_failure "stale-after-$mutation" ci_gate_ledger_enter first
@@ -109,9 +134,9 @@ for host in linux windows; do
     test ! -e "$WORKDIR/list-root/target" || fail 'listing created target'
     test ! -e "$WORKDIR/must-not-exist" || fail 'listing initialized trace'
     ci_gate_ledger_load "$ROOT/scripts/ci-gates.tsv" "$host"
-    printf 'id\thosts\tlabel\n%s\n' "$CI_GATE_LEDGER_ROWS" > "$WORKDIR/expected-$host.tsv"
+    printf 'id\thosts\tlabel\tneeds\n%s\n' "$CI_GATE_LEDGER_ROWS" > "$WORKDIR/expected-$host.tsv"
     cmp "$WORKDIR/expected-$host.tsv" "$WORKDIR/list-$host.tsv" || fail 'CLI projection mismatch'
-    while IFS="$(printf '\t')" read -r gate_id gate_hosts gate_label; do
+    while IFS="$(printf '\t')" read -r gate_id gate_hosts gate_label gate_needs; do
         ci_gate_ledger_enter "$gate_id"
         test "$CI_GATE_LEDGER_LABEL" = "$gate_label" || fail 'production label mismatch'
         ci_gate_ledger_leave 0
@@ -151,4 +176,32 @@ sed '/^run_gate cli-gate-inventory-and-ownership /d' "$ROOT/scripts/ci-verify.sh
 expect_failure missing-binding ci_gate_ledger_validate_bindings "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/missing-binding.sh"
 sed 's/^run_gate cli-gate-inventory-and-ownership /run_gate unknown-ledger-id /' "$ROOT/scripts/ci-verify.sh" > "$WORKDIR/unknown-binding.sh"
 expect_failure unknown-binding ci_gate_ledger_validate_bindings "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/unknown-binding.sh"
+# The needs column must follow the runner and the artifact inventory in both
+# directions. Each mutation changes one production fact and must be rejected.
+INVENTORY="$ROOT/scripts/ci-compiler-artifacts.tsv"
+ci_gate_ledger_validate_needs "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" "$INVENTORY" bootstrap-fixpoint
+tab=$(printf '\t')
+sed "s/^\\(stage2-safety-corpus${tab}.*${tab}\\)bootstrap-fixpoint\$/\\1-/" "$ROOT/scripts/ci-gates.tsv" > "$WORKDIR/needs-missing-compiler.tsv"
+cmp -s "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/needs-missing-compiler.tsv" && fail 'compiler-need mutation did not apply'
+expect_failure needs-missing-compiler ci_gate_ledger_validate_needs "$WORKDIR/needs-missing-compiler.tsv" "$ROOT/scripts/ci-verify.sh" "$INVENTORY" bootstrap-fixpoint
+sed "s/^\\(stage2-deterministic-assembly${tab}.*${tab}\\)bootstrap-fixpoint,stage2-selfhost-compile-manifest\$/\\1bootstrap-fixpoint/" "$ROOT/scripts/ci-gates.tsv" > "$WORKDIR/needs-missing-artifact.tsv"
+cmp -s "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/needs-missing-artifact.tsv" && fail 'artifact-need mutation did not apply'
+expect_failure needs-missing-artifact ci_gate_ledger_validate_needs "$WORKDIR/needs-missing-artifact.tsv" "$ROOT/scripts/ci-verify.sh" "$INVENTORY" bootstrap-fixpoint
+sed "s/^\\(stage2-safety-corpus${tab}.*${tab}\\)bootstrap-fixpoint\$/\\1bootstrap-fixpoint,embedded-stdlib-tlci-image/" "$ROOT/scripts/ci-gates.tsv" > "$WORKDIR/needs-unjustified.tsv"
+cmp -s "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/needs-unjustified.tsv" && fail 'unjustified-need mutation did not apply'
+expect_failure needs-unjustified ci_gate_ledger_validate_needs "$WORKDIR/needs-unjustified.tsv" "$ROOT/scripts/ci-verify.sh" "$INVENTORY" bootstrap-fixpoint
+# A host-qualified edge must not be widened away: the Windows opt2 gate does not
+# consume the Linux-only build-invariance reference.
+sed 's/stage2-opt1-opt2-build-invariance@linux$/stage2-opt1-opt2-build-invariance/' "$ROOT/scripts/ci-gates.tsv" > "$WORKDIR/needs-widened-host.tsv"
+cmp -s "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/needs-widened-host.tsv" && fail 'host-widening mutation did not apply'
+expect_failure needs-widened-host ci_gate_ledger_load "$WORKDIR/needs-widened-host.tsv" windows
+# The inventory gaining a consumer the ledger does not know about is drift too.
+awk -F '\t' 'BEGIN {OFS=FS} {print} $2 == "manifest-deterministic-consumer" {$2="drifted-consumer"; $3="stage2 safety corpus"; print}' "$INVENTORY" > "$WORKDIR/inventory-new-consumer.tsv"
+expect_failure inventory-new-consumer ci_gate_ledger_validate_needs "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" "$WORKDIR/inventory-new-consumer.tsv" bootstrap-fixpoint
+# A harness gate that starts naming the produced compiler has moved behind it.
+sed 's|^run_gate ci-timing-helper-self-tests scripts/verify-ci-timing.sh$|run_gate ci-timing-helper-self-tests scripts/verify-ci-timing.sh "$STAGE2_BIN"|' "$ROOT/scripts/ci-verify.sh" > "$WORKDIR/early-compiler.sh"
+cmp -s "$ROOT/scripts/ci-verify.sh" "$WORKDIR/early-compiler.sh" && fail 'early-compiler mutation did not apply'
+expect_failure early-compiler ci_gate_ledger_validate_needs "$ROOT/scripts/ci-gates.tsv" "$WORKDIR/early-compiler.sh" "$INVENTORY" bootstrap-fixpoint
+expect_failure unknown-compiler-gate ci_gate_ledger_validate_needs "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" "$INVENTORY" absent-gate
+expect_failure missing-inventory ci_gate_ledger_validate_needs "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" "$WORKDIR/absent-inventory.tsv" bootstrap-fixpoint
 printf '%s\n' 'CI gate ledger self-tests passed'

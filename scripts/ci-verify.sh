@@ -20,7 +20,7 @@ if [ "${1:-}" = --list-gates ]; then
         exit 2
     fi
     ci_gate_ledger_load "$ROOT/scripts/ci-gates.tsv" "$2"
-    printf 'id\thosts\tlabel\n%s\n' "$CI_GATE_LEDGER_ROWS"
+    printf 'id\thosts\tlabel\tneeds\n%s\n' "$CI_GATE_LEDGER_ROWS"
     exit 0
 fi
 

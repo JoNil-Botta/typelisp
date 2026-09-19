@@ -1929,10 +1929,10 @@
 (defmacro (compiler-ir-instr-seq-empty? [instrs : Expr]) : Expr
   `(= (__tl-project-field-name ,instrs "len") 0))
 
-;; MUST stay on the checked array-ref path. `CompilerIrInstr` is an inline-by-value enum,
-;; so the raw `(ptr-read (ptr-offset (ptr-cast (__tl_array-data ...) :
-;; (Ptr CompilerIrInstr)) index))` form mis-scales the element stride and reads
-;; garbage; the array macro lowers with the correct element size.
+;; Internal shallow read: callers prove valid storage and index < logical len.
+;; compiler-ir-array-shared-view does not perform a bounds check. Preserve its
+;; inferred inline-enum element type/stride rather than rebuilding pointer casts
+;; at each consumer.
 (defmacro (compiler-ir-instr-seq-ref
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : CompilerIrInstr
@@ -2189,7 +2189,7 @@
 (defmacro (compiler-ir-block-seq-count [blocks : Expr]) : Expr
   `(__tl-project-field-name ,blocks "len"))
 
-;; MUST stay on the checked array-ref path (see compiler-ir-instr-seq-ref above).
+;; Same shallow-read and logical-len precondition as compiler-ir-instr-seq-ref.
 (defmacro (compiler-ir-block-seq-ref [blocks : Expr] [index : Expr]) : Expr
   `(compiler-ir-array-shared-view
     (__tl-project-field-name ,blocks "slots")

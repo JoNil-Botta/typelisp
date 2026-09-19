@@ -1,26 +1,26 @@
 # cli-gate-coverage-schema	1
 # cli-gate-coverage-counts	1
-# count	total	all	rows	529
-# count	total	all	annotations	529
+# count	total	all	rows	531
+# count	total	all	annotations	531
 # count	total	all	sources	3
-# count	total	all	source-sites	401
+# count	total	all	source-sites	403
 # count	total	all	expanded-cases	162
 # count	gate	public-tools	rows	333
 # count	gate	public-tools	source-sites	222
 # count	gate	public-tools	expanded-cases	127
-# count	gate	selfhost-cli	rows	91
-# count	gate	selfhost-cli	source-sites	90
+# count	gate	selfhost-cli	rows	93
+# count	gate	selfhost-cli	source-sites	92
 # count	gate	selfhost-cli	expanded-cases	17
 # count	gate	stage1-wrapper	rows	105
 # count	gate	stage1-wrapper	source-sites	89
 # count	gate	stage1-wrapper	expanded-cases	18
-# count	host	all	rows	403
+# count	host	all	rows	405
 # count	host	linux	rows	123
 # count	host	windows	rows	3
-# count	platform	linux	rows	526
-# count	platform	windows	rows	406
+# count	platform	linux	rows	528
+# count	platform	windows	rows	408
 # count	kind	delegated	rows	9
-# count	kind	direct	rows	56
+# count	kind	direct	rows	58
 # count	kind	wrapper	rows	464
 # count	process	compiler	rows	349
 # count	process	compiler+assembler+archiver	rows	1
@@ -35,7 +35,7 @@
 # count	process	compiler+git	rows	1
 # count	process	compiler+git+native-tools	rows	7
 # count	process	compiler+native-tools	rows	68
-# count	process	compiler+native-tools+program	rows	63
+# count	process	compiler+native-tools+program	rows	65
 # count	process	compiler+native-tools+programs	rows	5
 # count	process	compiler+native-tools+scratch-program	rows	1
 # count	process	gate-shell-process	rows	1
@@ -593,3 +593,5 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	selfhost-cli-repl-bom-crlf	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp repl	utf8-bom-help-and-exit-crlf-session	file:<workdir>/repl-bom-crlf.in	repository	compiler	inherited	0	contains:REPL-commands	empty	none	selfhost-cli-repl-bom-crlf	-
 1	selfhost-cli-repl-args	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp repl unexpected	unexpected-repl-argument	inherited	repository	compiler	inherited	1	empty	contains:repl-does-not-accept-arguments	none	selfhost-cli-repl-args	-
 1	selfhost-cli-work-queue-chooser	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp run tools/work-queue-chooser/chooser.tl --stdlib-root stdlib	one-unlabeled-fallback-issue	file:<workdir>/work-queue-chooser.json	repository	compiler+native-tools+program	inherited	0	contains:research-triage-issue-7	empty	temporary-build-and-execute	selfhost-cli-work-queue-chooser	-
+1	selfhost-cli-work-queue-claimed	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp run tools/work-queue-chooser/chooser.tl --stdlib-root stdlib	claimed-wait	file:tools/work-queue-chooser/fixtures/claimed-wait.json	repository	compiler+native-tools+program	inherited	0	one-line-wait:review-claims;count:1;recheck-trigger;no-review-action	empty	temporary-build-and-execute	selfhost-cli-work-queue-claimed	-
+1	selfhost-cli-work-queue-invalid-labels	selfhost-cli	scripts/verify-selfhost-cli-build-run.sh	direct	all	stage2/direct	typelisp run tools/work-queue-chooser/chooser.tl --stdlib-root stdlib	malformed-labels	file:tools/work-queue-chooser/fixtures/malformed-labels.json	repository	compiler+native-tools+program	inherited	1	empty	contains:invalid-input-prs-0-labels-string-name-contract	temporary-build-and-execute	selfhost-cli-work-queue-invalid-labels	-

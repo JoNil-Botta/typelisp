@@ -22937,6 +22937,205 @@
       (+ (* 100 spent) code)
       (- 0 1))))
 
+;; The linked walk is the independent storage oracle until #5729 retires it.
+;; Assert all three counters: duplicate definitions must not stop traversal or
+;; discard the last literal, even though specialization then rejects the var.
+(defstruct OptInlineLiteralScanSnapshot
+  (definitions i64)
+  (literal i64)
+  (value i64))
+
+(define (opt-inline-literal-scan-snapshot
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [var : i64]) : OptInlineLiteralScanSnapshot
+  (let
+    [saved-count : i64
+      (array-ref compiler_optimize.opt-inline-checked-literal-scan 0)]
+    [saved-literal : i64
+      (array-ref compiler_optimize.opt-inline-checked-literal-scan 1)]
+    [saved-value : i64
+      (array-ref compiler_optimize.opt-inline-checked-literal-scan 2)]
+    (begin
+      (set! (array-ref compiler_optimize.opt-inline-checked-literal-scan 0) 0)
+      (set! (array-ref compiler_optimize.opt-inline-checked-literal-scan 1) 0)
+      (set! (array-ref compiler_optimize.opt-inline-checked-literal-scan 2) 0)
+      (compiler_optimize.opt-inline-checked-literal-scan-blocks! blocks var)
+      (let
+        [result : OptInlineLiteralScanSnapshot
+          (OptInlineLiteralScanSnapshot
+            (array-ref compiler_optimize.opt-inline-checked-literal-scan 0)
+            (array-ref compiler_optimize.opt-inline-checked-literal-scan 1)
+            (array-ref compiler_optimize.opt-inline-checked-literal-scan 2))]
+        (begin
+          (set!
+            (array-ref compiler_optimize.opt-inline-checked-literal-scan 0)
+            saved-count)
+          (set!
+            (array-ref compiler_optimize.opt-inline-checked-literal-scan 1)
+            saved-literal)
+          (set!
+            (array-ref compiler_optimize.opt-inline-checked-literal-scan 2)
+            saved-value)
+          result)))))
+
+(define (opt-inline-literal-scan-same?
+  [a : OptInlineLiteralScanSnapshot]
+  [b : OptInlineLiteralScanSnapshot]) : bool
+  (and
+    (= a.definitions b.definitions)
+    (= a.literal b.literal)
+    (= a.value b.value)))
+
+(define (opt-inline-literal-scan-fixture-block [index : i64]) : compiler_ir_types.CompilerIrBlock
+  (let
+    [instrs : compiler_ir_types.CompilerIrInstrBuilder
+      (compiler_ir_types.compiler-ir-instr-builder-with-capacity 1)]
+    (begin
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut instrs)
+        (compiler_ir_types.CompilerIrInstr.Mov
+          0
+          (compiler_ir_types.CompilerIrValue.I64 index)
+          (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut instrs)
+        (compiler_ir_types.CompilerIrInstr.Mov
+          7
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut instrs)
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          9223372036854775790
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ir_types.CompilerIrValue.I64 2)
+          (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut instrs)
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 0))))
+      (if (= (% index 2) 1)
+        (compiler_ir_types.compiler-ir-instr-builder-push!
+          (&mut instrs)
+          (compiler_ir_types.CompilerIrInstr.Mov
+            0
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ast_types.AstType.I64)))
+        unit)
+      (compiler_ir_types.CompilerIrBlock.Block
+        index
+        (compiler_ir_types.compiler-ir-instr-builder-to-seq instrs)))))
+
+(define (opt-inline-literal-scan-fixture [count : i64]) : compiler_ir_types.CompilerIrBlockSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrBlockBuilder
+      (compiler_ir_types.compiler-ir-block-builder-with-capacity 1)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (compiler_ir_types.compiler-ir-block-builder-push!
+            (&mut builder)
+            (opt-inline-literal-scan-fixture-block index))
+          (set! index (+ index 1))))
+      ;; Poison spare capacity: a capacity-sized scan must fail even when the
+      ;; live sequence is empty. Only builder.len blocks belong to the input.
+      (while (< index (array-length builder.slots))
+        (begin
+          (set!
+            (array-ref builder.slots index)
+            (opt-inline-literal-scan-fixture-block (- 0 100)))
+          (set! index (+ index 1))))
+      (compiler_ir_types.CompilerIrBlockSeq builder.slots builder.len))))
+
+(define (opt-inline-literal-scan-case? [count : i64] [var : i64]) : bool
+  (let
+    [seq : compiler_ir_types.CompilerIrBlockSeq
+      (opt-inline-literal-scan-fixture count)]
+    [linked : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-seq-to-list
+        (owned_view.compiler-owned-shared-view seq))]
+    [expected : OptInlineLiteralScanSnapshot
+      (opt-inline-literal-scan-snapshot
+        (owned_view.compiler-owned-shared-view linked)
+        var)]
+    [dense : OptInlineLiteralScanSnapshot
+      (opt-inline-literal-scan-snapshot
+        (compiler_ir_types.CompilerIrBlockList.Array
+          (owned_view.compiler-owned-shared-view seq))
+        var)]
+    [mixed : OptInlineLiteralScanSnapshot
+      (opt-inline-literal-scan-snapshot
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-inline-literal-scan-fixture-block (- 0 900))
+          (compiler_ir_types.CompilerIrBlockList.Array
+            (owned_view.compiler-owned-shared-view seq)))
+        var)]
+    [mixed-expected : OptInlineLiteralScanSnapshot
+      (opt-inline-literal-scan-snapshot
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-inline-literal-scan-fixture-block (- 0 900))
+          linked)
+        var)]
+    [wanted : OptInlineLiteralScanSnapshot
+      (if (= var 0)
+        (OptInlineLiteralScanSnapshot
+          (+ count (/ count 2))
+          (if (> count 0)
+            1
+            0)
+          (if (> count 0)
+            (- count 1)
+            0))
+        (OptInlineLiteralScanSnapshot
+          (if (or (= var 7) (= var 9223372036854775790) (= var (- 0 1)))
+            count
+            0)
+          0
+          0))]
+    [again : OptInlineLiteralScanSnapshot
+      (opt-inline-literal-scan-snapshot
+        (compiler_ir_types.CompilerIrBlockList.Array seq)
+        var)]
+    (and
+      (opt-inline-literal-scan-same?
+        (owned_view.compiler-owned-shared-view expected)
+        wanted)
+      (opt-inline-literal-scan-same?
+        (owned_view.compiler-owned-shared-view expected)
+        dense)
+      (opt-inline-literal-scan-same? expected again)
+      (opt-inline-literal-scan-same? mixed-expected mixed))))
+
+(define (compiler-optimize-inline-literal-dense-scan-self-test) : bool
+  (let
+    [count : i64 0]
+    [ok? : bool true]
+    (begin
+      (while (<= count 17)
+        (begin
+          (if (and
+            (opt-inline-literal-scan-case? count 0)
+            (opt-inline-literal-scan-case? count 7)
+            (opt-inline-literal-scan-case? count 9223372036854775790)
+            (opt-inline-literal-scan-case? count (- 0 1))
+            (opt-inline-literal-scan-case? count (- 0 7)))
+            unit
+            (set! ok? false))
+          (set! count (+ count 1))))
+      (and
+        ok?
+        (opt-inline-literal-scan-case? 65 0)
+        (opt-inline-literal-scan-case? 65 9223372036854775790)))))
+
+(test
+  inline-literal-dense-scan
+  (test.assert-true
+    (compiler-optimize-inline-literal-dense-scan-self-test)
+    "dense literal scans preserve all definition/literal counters, order, and retained inputs across linked, dense, and mixed block storage"))
+
 ;; --- INL-18: literal-argument specialization --------------------------------
 ;;
 ;; A FORWARDER: a body whose every exit is a direct tail call and which carries
@@ -77792,6 +77991,431 @@
         (compiler_ir_types.compiler-ir-label "entry")
         instrs)
       (compiler_ir_types.CompilerIrBlockList.Nil))))
+
+;; Linked traversal is the independent oracle until #5729 retires that storage.
+;; The reversed first dependency needs the existing second root pass; the rest
+;; of the chain makes forward order observable rather than merely associative.
+(defstruct OptCallBlockScanSnapshot
+  (param-root i64)
+  (first-pass i64)
+  (first-root i64)
+  (last-root i64)
+  (poison-root i64)
+  (needs-roots bool)
+  (writes-memory bool)
+  (candidate i64))
+
+(define (opt-call-block-scan-same?
+  [a : OptCallBlockScanSnapshot]
+  [b : OptCallBlockScanSnapshot]) : bool
+  (and
+    (= a.param-root b.param-root)
+    (= a.first-pass b.first-pass)
+    (= a.first-root b.first-root)
+    (= a.last-root b.last-root)
+    (= a.poison-root b.poison-root)
+    (= a.needs-roots b.needs-roots)
+    (= a.writes-memory b.writes-memory)
+    (= a.candidate b.candidate)))
+
+(define (opt-call-block-scan-params) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "p"
+      (compiler_ast_types.ast-ty-mut-ref 0 (compiler_ast_types.AstType.I64))
+      0)
+    (compiler_ir_types.compiler-ir-param-seq-empty)))
+
+(define (opt-call-block-scan-fixture-block
+  [index : i64]
+  [count : i64]
+  [mode : i64]
+  [known : i64]
+  [unresolved : i64]) : compiler_ir_types.CompilerIrBlock
+  (let
+    [instrs : compiler_ir_types.CompilerIrInstrBuilder
+      (compiler_ir_types.compiler-ir-instr-builder-with-capacity 1)]
+    (begin
+      (compiler_ir_types.compiler-ir-instr-builder-push!
+        (&mut instrs)
+        (compiler_ir_types.CompilerIrInstr.Mov
+          (+ 10 index)
+          (compiler_ir_types.CompilerIrValue.Var
+            (if (= index 0)
+              11
+              (if (= index 1)
+                0
+                (+ 9 index))))
+          (compiler_ast_types.AstType.I64)))
+      (when
+        (= (+ index 1) count)
+        (match mode
+          [1
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut instrs)
+              (compiler_ir_types.CompilerIrInstr.StorePtr
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.I64 7)
+                (compiler_ast_types.AstType.I64)))]
+          [2
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut instrs)
+              (compiler_ir_types.CompilerIrInstr.Call
+                800
+                known
+                (compiler_ir_types.CompilerIrCallArgs.One
+                  (compiler_ir_types.CompilerIrValue.Var 0))
+                (compiler_ast_types.AstType.Unit)))]
+          [3
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut instrs)
+              (compiler_ir_types.CompilerIrInstr.TailCall
+                unresolved
+                (compiler_ir_types.CompilerIrCallArgs.Nil)
+                (compiler_ast_types.AstType.Unit)))]
+          [4
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut instrs)
+              (compiler_ir_types.CompilerIrInstr.CopyBytes
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                8))]
+          [5
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut instrs)
+              (compiler_ir_types.CompilerIrInstr.Store
+                known
+                (compiler_ir_types.CompilerIrValue.I64 7)
+                (compiler_ast_types.AstType.I64)))]
+          [6
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut instrs)
+              (compiler_ir_types.CompilerIrInstr.StoreOwned
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.I64 7)
+                (compiler_ast_types.AstType.I64)))]
+          [7
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut instrs)
+              (compiler_ir_types.CompilerIrInstr.Mov
+                10
+                (compiler_ir_types.CompilerIrValue.I64 0)
+                (compiler_ast_types.AstType.I64)))]
+          [_ unit]))
+      (compiler_ir_types.CompilerIrBlock.Block
+        index
+        (compiler_ir_types.compiler-ir-instr-builder-to-seq instrs)))))
+
+(define (opt-call-block-scan-fixture
+  [count : i64]
+  [mode : i64]
+  [known : i64]
+  [unresolved : i64]) : compiler_ir_types.CompilerIrBlockSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrBlockBuilder
+      (compiler_ir_types.compiler-ir-block-builder-with-capacity 1)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (compiler_ir_types.compiler-ir-block-builder-push!
+            (&mut builder)
+            (opt-call-block-scan-fixture-block
+              index
+              count
+              mode
+              known
+              unresolved))
+          (set! index (+ index 1))))
+      ;; Spare capacity is deliberately observable if a scanner ignores len.
+      (while (< index (array-length builder.slots))
+        (begin
+          (set!
+            (array-ref builder.slots index)
+            (compiler_ir_types.CompilerIrBlock.Block
+              999
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Mov
+                  0
+                  (compiler_ir_types.CompilerIrValue.I64 0)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstr.Alloc
+                  999
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstr.StorePtr
+                  (compiler_ir_types.CompilerIrValue.Var 9999)
+                  (compiler_ir_types.CompilerIrValue.I64 0)
+                  (compiler_ast_types.AstType.I64)))))
+          (set! index (+ index 1))))
+      (compiler_ir_types.CompilerIrBlockSeq builder.slots builder.len))))
+
+(define (opt-call-block-scan-root-code
+  [roots : (& roots compiler_optimize.OptLicmRootEnv)]
+  [var : i64]) : i64
+  (compiler_optimize.opt-licm-root-encode
+    (compiler_optimize.opt-licm-root-env-lookup roots var)))
+
+(define (opt-call-block-scan-snapshot
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [count : i64]
+  [known : i64]
+  [unresolved : i64]) : OptCallBlockScanSnapshot
+  (let
+    [params : compiler_ir_types.CompilerIrParamSeq (opt-call-block-scan-params)]
+    [sources : opt_i64_i64_map.Map
+      (compiler_optimize.opt-call-memory-sources
+        (owned_view.compiler-owned-shared-view params)
+        (owned_view.compiler-owned-shared-view blocks))]
+    [roots : compiler_optimize.OptLicmRootEnv
+      (compiler_optimize.opt-licm-root-env-with-capacity
+        1
+        (opt_i64_i64_map.with-capacity 1))]
+    [summaries : opt_i64_i64_map.Map (opt-call-memory-test-map known 1)]
+    [functions : opt_i64_i64_map.Map (opt-call-memory-test-map unresolved 1)]
+    [type-segment-bases : i64
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    (begin
+      (compiler_optimize.opt-licm-root-env-seed-params!
+        type-segment-bases
+        (&mut roots)
+        (owned_view.compiler-owned-shared-view params))
+      (compiler_optimize.opt-call-memory-root-scan-blocks!
+        (owned_view.compiler-owned-shared-view sources)
+        (&mut roots)
+        (owned_view.compiler-owned-shared-view blocks))
+      (let
+        [first : i64 (opt-call-block-scan-root-code (& roots) 10)]
+        (begin
+          (compiler_optimize.opt-call-memory-root-scan-blocks!
+            sources
+            (&mut roots)
+            (owned_view.compiler-owned-shared-view blocks))
+          (OptCallBlockScanSnapshot
+            (opt-call-block-scan-root-code (& roots) 0)
+            first
+            (opt-call-block-scan-root-code (& roots) 10)
+            (opt-call-block-scan-root-code (& roots) (+ 9 count))
+            (opt-call-block-scan-root-code (& roots) 999)
+            (compiler_optimize.opt-call-memory-blocks-need-roots?
+              (owned_view.compiler-owned-shared-view summaries)
+              (owned_view.compiler-owned-shared-view blocks))
+            (compiler_optimize.opt-call-memory-blocks-write-memory?
+              (owned_view.compiler-owned-shared-view blocks))
+            (compiler_optimize.opt-call-memory-candidate-code
+              (compiler_optimize.opt-call-memory-candidate-blocks
+                type-segment-bases
+                (compiler_optimize.OptCallMemoryCandidate.Known 8)
+                summaries
+                functions
+                params
+                roots
+                (opt_i64_i64_map.with-capacity 1)
+                blocks))))))))
+
+(define (opt-call-block-scan-case?
+  [count : i64]
+  [mode : i64]
+  [known : i64]
+  [unresolved : i64]) : bool
+  (let
+    [seq : compiler_ir_types.CompilerIrBlockSeq
+      (opt-call-block-scan-fixture count mode known unresolved)]
+    [linked : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-seq-to-list
+        (owned_view.compiler-owned-shared-view seq))]
+    [expected : OptCallBlockScanSnapshot
+      (opt-call-block-scan-snapshot
+        (owned_view.compiler-owned-shared-view linked)
+        count
+        known
+        unresolved)]
+    [actual : OptCallBlockScanSnapshot
+      (opt-call-block-scan-snapshot
+        (compiler_ir_types.CompilerIrBlockList.Array
+          (owned_view.compiler-owned-shared-view seq))
+        count
+        known
+        unresolved)]
+    [prefix : compiler_ir_types.CompilerIrBlock
+      (compiler_ir_types.CompilerIrBlock.Block
+        900
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Mov
+            0
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Store
+            known
+            (compiler_ir_types.CompilerIrValue.I64 9)
+            (compiler_ast_types.AstType.I64))))]
+    [mixed : OptCallBlockScanSnapshot
+      (opt-call-block-scan-snapshot
+        (compiler_ir_types.compiler-ir-block-cons
+          (owned_view.compiler-owned-shared-view prefix)
+          (compiler_ir_types.CompilerIrBlockList.Array
+            (owned_view.compiler-owned-shared-view seq)))
+        count
+        known
+        unresolved)]
+    [mixed-expected : OptCallBlockScanSnapshot
+      (opt-call-block-scan-snapshot
+        (compiler_ir_types.compiler-ir-block-cons prefix linked)
+        count
+        known
+        unresolved)]
+    [again : OptCallBlockScanSnapshot
+      (opt-call-block-scan-snapshot
+        (compiler_ir_types.CompilerIrBlockList.Array seq)
+        count
+        known
+        unresolved)]
+    [writes? : bool (and (> count 0) (or (= mode 1) (= mode 4) (= mode 6)))]
+    [needs? : bool (or writes? (and (> count 0) (= mode 2)))]
+    [summary : i64
+      (if (and (> count 0) (= mode 3))
+        -1
+        (bit-or
+          8
+          (if (and (> count 0) (= mode 5))
+            (compiler_optimize.opt-call-memory-global-bit)
+            (if needs?
+              1
+              0))))]
+    (and
+      (= expected.param-root 1)
+      (= expected.first-pass -1)
+      (=
+        expected.first-root
+        (if (and (>= count 2) (not (= mode 7)))
+          1
+          -1))
+      (=
+        expected.last-root
+        (if (>= count 2)
+          1
+          -1))
+      (= expected.poison-root -1)
+      (= expected.needs-roots needs?)
+      (= expected.writes-memory writes?)
+      (= expected.candidate summary)
+      (opt-call-block-scan-same?
+        (owned_view.compiler-owned-shared-view expected)
+        actual)
+      (opt-call-block-scan-same? expected again)
+      (opt-call-block-scan-same? mixed-expected mixed))))
+
+;; Later writes cannot replace an unresolved candidate or a true predicate.
+;; Disposable visit-counter mutation probes additionally verify the cutoff
+;; itself without relying on malformed IR or out-of-bounds internal reads.
+(define (opt-call-block-scan-tail-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.CompilerIrBlock.Block
+    999
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.Store
+        (opt-test-symbol "dense_call_memory_tail_global")
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64)))))
+
+(define (opt-call-block-scan-early-blocks
+  [first : compiler_ir_types.CompilerIrInstr]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [builder : compiler_ir_types.CompilerIrBlockBuilder
+      (compiler_ir_types.compiler-ir-block-builder-with-capacity 1)]
+    (begin
+      (compiler_ir_types.compiler-ir-block-builder-push!
+        (&mut builder)
+        (compiler_ir_types.CompilerIrBlock.Block 0 (opt-test-instrs first)))
+      (compiler_ir_types.compiler-ir-block-builder-push!
+        (&mut builder)
+        (opt-call-block-scan-tail-block))
+      (compiler_ir_types.CompilerIrBlockList.Array
+        (compiler_ir_types.CompilerIrBlockSeq builder.slots builder.len)))))
+
+(define (opt-call-block-scan-early-candidate
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [candidate : compiler_optimize.OptCallMemoryCandidate]
+  [unresolved : i64]) : i64
+  (compiler_optimize.opt-call-memory-candidate-code
+    (compiler_optimize.opt-call-memory-candidate-blocks
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      candidate
+      (opt_i64_i64_map.with-capacity 1)
+      (opt-call-memory-test-map unresolved 1)
+      (compiler_ir_types.compiler-ir-param-seq-empty)
+      (compiler_optimize.opt-licm-root-env-with-capacity
+        1
+        (opt_i64_i64_map.with-capacity 1))
+      (opt_i64_i64_map.with-capacity 1)
+      blocks)))
+
+(define (opt-call-block-scan-early-exits? [unresolved : i64]) : bool
+  (let
+    [writes : compiler_ir_types.CompilerIrBlockList
+      (opt-call-block-scan-early-blocks
+        (compiler_ir_types.CompilerIrInstr.StorePtr
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64)))]
+    [call : compiler_ir_types.CompilerIrBlockList
+      (opt-call-block-scan-early-blocks
+        (compiler_ir_types.CompilerIrInstr.TailCall
+          unresolved
+          (compiler_ir_types.CompilerIrCallArgs.Nil)
+          (compiler_ast_types.AstType.Unit)))]
+    (and
+      (compiler_optimize.opt-call-memory-blocks-need-roots?
+        (opt_i64_i64_map.with-capacity 1)
+        (owned_view.compiler-owned-shared-view writes))
+      (compiler_optimize.opt-call-memory-blocks-write-memory? writes)
+      (=
+        (opt-call-block-scan-early-candidate
+          call
+          (compiler_optimize.OptCallMemoryCandidate.Known 0)
+          unresolved)
+        -1)
+      (=
+        (opt-call-block-scan-early-candidate
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-call-block-scan-tail-block)
+            (compiler_ir_types.CompilerIrBlockList.Nil))
+          (compiler_optimize.OptCallMemoryCandidate.Unresolved)
+          unresolved)
+        -1))))
+
+(define (compiler-optimize-call-memory-dense-scan-self-test) : bool
+  (let
+    [known : i64 (opt-test-symbol "dense_call_memory_known")]
+    [unresolved : i64 (opt-test-symbol "dense_call_memory_unresolved")]
+    [count : i64 0]
+    (begin
+      (unless (opt-call-block-scan-early-exits? unresolved) (return false))
+      (while (<= count 17)
+        (let
+          [mode : i64 0]
+          (begin
+            (while (< mode 8)
+              (begin
+                (unless
+                  (opt-call-block-scan-case? count mode known unresolved)
+                  (return false))
+                (set! mode (+ mode 1))))
+            (set! count (+ count 1)))))
+      (let
+        [mode : i64 0]
+        (begin
+          (while (< mode 8)
+            (begin
+              (unless
+                (opt-call-block-scan-case? 65 mode known unresolved)
+                (return false))
+              (set! mode (+ mode 1))))
+          true)))))
+
+(test
+  call-memory-dense-scan
+  (test.assert-true
+    (compiler-optimize-call-memory-dense-scan-self-test)
+    "dense call-memory traversal preserves both root passes, summary accumulation, classification, order, live prefixes and retained linked/dense/mixed inputs"))
 
 (define (opt-call-memory-test-functions
   [wrapper : i64]

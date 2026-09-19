@@ -48,6 +48,16 @@ pointer/length pairs as name identity across scratch/region reset: address
 equality is only a fast path while both live operands are in scope. Interning
 must own/canonicalize any spelling that survives its source arena.
 
+## Call-memory block traversal
+
+The optimizer smoke and `call-memory-dense-scan` inline test compare linked,
+dense and mixed blocks across growth, empty inputs and retained rescans. They
+check the two forward root passes, single-source rejection, summary accumulation
+and call/write classification. Spare slots contain observable poison; an
+later write must not change an already true predicate or unresolved candidate.
+Visit-counter mutation probes verify the cutoff without relying on invalid IR. Keep these storage checks alongside the existing
+call-memory semantic fixtures when changing traversal or block representation.
+
 ## Vector reduction source ownership
 
 The backend smoke checks AVX2 i64 min/max with both ordinary and explicit
@@ -97,6 +107,18 @@ the explicit compatibility-pool route and the canonical/sparse-view span
 oracle. Keep those owner and source-view checks when changing literal walkers or
 their lowering callers; an unwrapped literal alone cannot detect a wrong-pool
 read.
+
+The call-argument type memo keys a body fact by the immediate payload of the
+first source view under the argument's expansion wrappers, and both the owning
+and an unrelated pool can hold a valid view at the same ID. The
+`tc-call-arg-fact-key-pool-isolation` inline test builds two pools with seven
+colliding IDs, seeds distinct types under the owning and decoy-selected keys,
+and calls `tc-call-arg-expr-type` with an unchanged context and argument across
+pool installs in recording and consuming modes. It covers direct and nested
+views, expansion chains, a non-view whose decoy twin is a view, the explicit
+compatibility route, and a clear followed by a restarted recording. Run it at
+opt0/1/2. A key-only check is not enough: keep the seeded-fact phases, which
+show that a wrong owner selects another entry rather than merely missing.
 
 Compiler state must be allocated in an owner whose lifetime covers every state
 transition that can occur before the last use. Use these operational classes:
@@ -276,6 +298,15 @@ modules with dedicated smokes, #2651/#2671/#2657), plus
 `decision` rows in the compile manifest.
 
 ### Inline tests
+
+`compiler_optimize_tests.tl`'s `inline-literal-dense-scan` compares the inliner's
+complete definition/literal counters across linked, dense, and mixed block
+storage, with independent expected results. It covers empty sequences, builder
+growth, duplicate and nonliteral definitions, missing and boundary IDs, traversal
+order, and rescanning retained input. `compiler_optimize_smoke.tl` also invokes
+the differential fixture alongside the existing literal-specialization and
+tail-only literal-site workflows. Keep both the counter and admission coverage
+when changing this scanner.
 
 Top-level `(test name body...)` items are source-owned executable checks. Normal
 `check`, `compile`, `build`, and `run` ignore them. `typelisp test <file.tl>`

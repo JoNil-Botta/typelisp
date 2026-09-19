@@ -1,7 +1,7 @@
 ;# work-queue-chooser/chooser.tl - TypeLisp work-queue chooser.
 ;#
 ;# Reads the combined `{"prs":[...],"issues":[...]}` JSON from stdin, classifies
-;# each entry, skips draft PRs and PRs whose checks are still pending/running,
+;# each entry, skips review-claimed/draft PRs and pending/running PR checks,
 ;# and issues an open PR already claims (the issue number appears as a 4+ digit
 ;# run in a PR branch name or title -- an issue someone is already working is
 ;# not work to hand to a second agent), weights the rest (PR review = 45;
@@ -253,16 +253,68 @@
           (set! i (+ i 1))))
       found)))
 
-;: Return the `labels` array of an issue, or an empty sequence when absent.
-(define (issue-label-list [item : json.Json]) : json.JsonSeq
+;: PR labels use GitHub's array of objects with string `name` fields. Validate
+;: every entry, including entries after a claim, before considering any lane.
+(define (pr-label-list-valid? [labels : json.JsonSeq]) : bool
+  (let
+    [name-key : String "name"]
+    [count : i64 (json.list-count (chooser-shared-view labels))]
+    [index : i64 0]
+    [valid : bool true]
+    (begin
+      (while (and valid (< index count))
+        (begin
+          (set!
+            valid
+            (match (json.list-get-index (chooser-shared-view labels) index)
+              [(json.JsonFound entry)
+                (match (json.object-get entry (& name-key))
+                  [(json.JsonFound name)
+                    (match name
+                      [(json.JsonString _) true]
+                      [_ false])]
+                  [(json.JsonMissing) false])]
+              [(json.JsonMissing) false]))
+          (set! index (+ index 1))))
+      valid)))
+
+;: Missing labels retain legacy snapshot compatibility; explicit malformed
+;: labels must not silently turn a reserved PR into an unclaimed candidate.
+(define (pr-labels-valid? [item : json.Json]) : bool
   (let
     [key : String "labels"]
     (match (json.object-get item (& key))
-      [(json.JsonFound found)
-        (match found
-          [(json.JsonArray entries) (__tl-box-place entries)]
-          [_ (json.list-empty)])]
-      [(json.JsonMissing) (json.list-empty)])))
+      [(json.JsonMissing) true]
+      [(json.JsonFound value)
+        (match value
+          [(json.JsonArray labels)
+            (pr-label-list-valid? (json.json-box-shared-view labels))]
+          [_ false])])))
+
+(define (pr-labels-error [prs : json.JsonSeq]) : String
+  (let
+    [count : i64 (json.list-count (chooser-shared-view prs))]
+    [index : i64 0]
+    [invalid-index : i64 -1]
+    (begin
+      (while (and (< invalid-index 0) (< index count))
+        (begin
+          (match (json.list-get-index (chooser-shared-view prs) index)
+            [(json.JsonFound item)
+              (unless (pr-labels-valid? item) (set! invalid-index index))]
+            [(json.JsonMissing) unit])
+          (set! index (+ index 1))))
+      (if (< invalid-index 0)
+        ""
+        (string.append
+          "Error: invalid input: prs["
+          (string.append
+            (string.int->string invalid-index)
+            "].labels must be an array of objects with string name fields; omit labels only for legacy snapshots"))))))
+
+;: Eligibility only. Keep the raw PR in linkage and backlog accounting.
+(define (pr-review-claimed? [item : json.Json]) : bool
+  (label-list-has? (json-field-array item "labels") "review-claimed"))
 
 ;: Return the lane-specific priority bonus for a label list. p0 takes
 ;: precedence over p1.
@@ -277,7 +329,7 @@
         triage-p1-priority-bonus)
       0)))
 
-;: Build a PR candidate (kind = review, no labels considered).
+;: Build an eligible PR candidate (kind = review, no priority-label bonuses).
 (define (pr-candidate [item : json.Json]) : Candidate
   (Candidate
     kind-pr
@@ -356,7 +408,8 @@
 ;: adding the priority bonus.
 (define (issue-candidate [item : json.Json]) : Candidate
   (let
-    [labels : json.JsonSeq (issue-label-list (chooser-shared-view item))]
+    [labels : json.JsonSeq
+      (json-field-array (chooser-shared-view item) "labels")]
     [ready : bool
       (label-list-has? (chooser-shared-view labels) "ready-for-implementation")]
     [bonus : i64 (label-list-priority-bonus labels ready)]
@@ -375,10 +428,10 @@
 ;: Return true when an issue carries the ready-for-implementation label, i.e. it
 ;: would classify as an implement candidate.
 (define (issue-ready? [item : json.Json]) : bool
-  (label-list-has? (issue-label-list item) "ready-for-implementation"))
+  (label-list-has? (json-field-array item "labels") "ready-for-implementation"))
 
 ;: Append a JSON array of PR objects as candidates, preserving source order.
-;: Draft and explicit non-main-base PRs are never eligible, and non-draft PRs
+;: Claimed, draft and explicit non-main-base PRs are never eligible; other PRs
 ;: whose checks are pending or running are skipped until they become terminal.
 (define (pr-candidates-into
   [items : json.JsonSeq]
@@ -391,6 +444,7 @@
         (match (json.list-get-index (chooser-shared-view items) i)
           [(json.JsonFound head)
             (if (and
+              (not (pr-review-claimed? (chooser-shared-view head)))
               (not (pr-draft? (chooser-shared-view head)))
               (pr-targets-main? (chooser-shared-view head))
               (pr-checks-complete? (chooser-shared-view head)))
@@ -578,6 +632,23 @@
           (set! i (+ i 1))))
       open)))
 
+;: Claims may explain an empty review lane at any backlog size. Count from the
+;: complete snapshot, not the filtered candidate sequence.
+(define (count-review-claimed-prs [items : json.JsonSeq]) : i64
+  (let
+    [count : i64 (json.list-count (chooser-shared-view items))]
+    [index : i64 0]
+    [claimed : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (json.list-get-index (chooser-shared-view items) index)
+            [(json.JsonFound item)
+              (when (pr-review-claimed? item) (set! claimed (+ claimed 1)))]
+            [(json.JsonMissing) unit])
+          (set! index (+ index 1))))
+      claimed)))
+
 ;: Count issue-lane exclusions that explain an empty saturated queue. A ready
 ;: issue is "held back" only when it would otherwise be eligible; research
 ;: issues report claimed exclusions.
@@ -629,6 +700,22 @@
               (string.append
                 (string.int->string counts.research-claimed)
                 " claimed"))))))))
+
+;: A claim is a state-change wait, not an input error or permission to steal
+;: another review. Preserve backlog details when implementation is held back.
+(define (review-claim-wait-line
+  [open-prs : i64]
+  [claimed-prs : i64]
+  [counts : SaturationCounts]) : String
+  (string.append
+    (if (> open-prs implement-pr-cap)
+      (saturation-line open-prs counts)
+      "wait: review claims")
+    (string.append
+      "; review-claimed: "
+      (string.append
+        (string.int->string claimed-prs)
+        "; recheck when PR labels, checks, draft/base state, or issue readiness change"))))
 
 ;: Build the full candidate sequence: PR candidates first, then issue
 ;: candidates. Ready-for-implementation issues are dropped once more than
@@ -689,6 +776,171 @@
             unit)
           (set! i (+ i 1))))
       found)))
+
+(cfg
+  test
+  (define (chooser-test-expect-action
+    [text : String]
+    [kind : i64]
+    [number : i64]) : unit
+    (match (choose-candidate text)
+      [(ChooserResult.Ok cand)
+        (begin
+          (test.assert-i64-eq cand.kind kind "selected lane")
+          (test.assert-i64-eq cand.number number "selected item"))]
+      [_ (io.panic "chooser fixture expected an action")])))
+
+(cfg
+  test
+  (define (chooser-test-expect-wait [text : String] [expected : String]) : unit
+    (match (choose-candidate text)
+      [(ChooserResult.Wait message)
+        (test.assert-true
+          (string.eq message expected)
+          "stable claim wait and recheck trigger")]
+      [_ (io.panic "chooser fixture expected a successful claim wait")])))
+
+(cfg
+  test
+  (define (chooser-test-expect-label-error [text : String] [expected : String]) : unit
+    (match (choose-candidate text)
+      [(ChooserResult.Err message)
+        (test.assert-true
+          (string.eq message expected)
+          "actionable malformed PR label diagnostic")]
+      [_ (io.panic "chooser fixture must reject malformed PR labels")])))
+
+(test
+  chooser-review-claim-removal-and-legacy-labels
+  (begin
+    (chooser-test-expect-wait
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"review-claimed\"}]}],\"issues\":[]}"
+      "wait: review claims; review-claimed: 1; recheck when PR labels, checks, draft/base state, or issue readiness change")
+    (chooser-test-expect-action
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[]}],\"issues\":[]}"
+      kind-pr
+      40)
+    (chooser-test-expect-action
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[]}],\"issues\":[]}"
+      kind-pr
+      40)
+    (chooser-test-expect-action
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"bug\"}]}],\"issues\":[]}"
+      kind-pr
+      40)
+    (chooser-test-expect-action
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"Review-claimed\"}]}],\"issues\":[]}"
+      kind-pr
+      40)
+    (chooser-test-expect-action
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"review-claimed \"}]}],\"issues\":[]}"
+      kind-pr
+      40)
+    (chooser-test-expect-action
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"\"}]}],\"issues\":[]}"
+      kind-pr
+      40)))
+
+(test
+  chooser-claimed-unclaimed-and-other-pr-rules
+  (chooser-test-expect-action
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":41,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[{\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\"}],\"labels\":[{\"name\":\"bug\"}]},{\"number\":42,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"p0\"},{\"name\":\"review-claimed\"}]},{\"number\":43,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}],\"labels\":[]},{\"number\":44,\"title\":\"Review\",\"isDraft\":true,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[]},{\"number\":45,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"stacked\",\"statusCheckRollup\":[],\"labels\":[]}],\"issues\":[]}"
+    kind-pr
+    41))
+
+(test
+  chooser-claimed-pr-keeps-linked-issues-reserved
+  (chooser-test-expect-wait
+    "{\"prs\":[{\"number\":40,\"title\":\"Fix #6001\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6000\",\"labels\":[{\"name\":\"review-claimed\"}]}],\"issues\":[{\"number\":6000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":6001,\"title\":\"Issue\",\"labels\":[]}]}"
+    "wait: review claims; review-claimed: 1; recheck when PR labels, checks, draft/base state, or issue readiness change"))
+
+(test
+  chooser-claimed-review-allows-unlinked-implementation
+  (chooser-test-expect-action
+    "{\"prs\":[{\"number\":40,\"title\":\"Fix #6001\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6000\",\"labels\":[{\"name\":\"review-claimed\"}]}],\"issues\":[{\"number\":6000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":7000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"
+    kind-ready
+    7000))
+
+(test
+  chooser-claimed-prs-keep-backpressure-and-linkage
+  (chooser-test-expect-wait
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6000\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":41,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6001\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":42,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6002\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":43,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6003\",\"labels\":[{\"name\":\"review-claimed\"}]}],\"issues\":[{\"number\":6000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":6001,\"title\":\"Issue\",\"labels\":[]},{\"number\":7000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"
+    "wait: queue saturated; review: 4 PRs in flight; implement: 1 ready issue held back; research/triage: 1 claimed; review-claimed: 4; recheck when PR labels, checks, draft/base state, or issue readiness change"))
+
+(test
+  chooser-claimed-cap-allows-unlinked-triage
+  (chooser-test-expect-action
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6000\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":41,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6001\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":42,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6002\",\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":43,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"headRefName\":\"issue-6003\",\"labels\":[{\"name\":\"review-claimed\"}]}],\"issues\":[{\"number\":7000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":7001,\"title\":\"Issue\",\"labels\":[]}]}"
+    kind-triage
+    7001))
+
+(test
+  chooser-review-claim-decodes-json-label-name
+  (chooser-test-expect-wait
+    "{\"prs\":[{\"number\":40,\"labels\":[{\"name\":\"review\\u002dclaimed\",\"color\":\"fff\"}]}],\"issues\":[]}"
+    "wait: review claims; review-claimed: 1; recheck when PR labels, checks, draft/base state, or issue readiness change"))
+
+(test
+  chooser-rejects-malformed-pr-label-data
+  (begin
+    (chooser-test-expect-label-error
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":null}],\"issues\":[]}"
+      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+    (chooser-test-expect-label-error
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":0}],\"issues\":[]}"
+      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+    (chooser-test-expect-label-error
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":true}],\"issues\":[]}"
+      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+    (chooser-test-expect-label-error
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":{}}],\"issues\":[]}"
+      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+    (chooser-test-expect-label-error
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":\"\"}],\"issues\":[]}"
+      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+    (chooser-test-expect-label-error
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[\"review-claimed\"]}],\"issues\":[]}"
+      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+    (chooser-test-expect-label-error
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[null]}],\"issues\":[]}"
+      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+    (chooser-test-expect-label-error
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{}]}],\"issues\":[]}"
+      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+    (chooser-test-expect-label-error
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[[]]}],\"issues\":[]}"
+      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+    (chooser-test-expect-label-error
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":null}]}],\"issues\":[]}"
+      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+    (chooser-test-expect-label-error
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":7}]}],\"issues\":[]}"
+      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+    (chooser-test-expect-label-error
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":false}]}],\"issues\":[]}"
+      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+    (chooser-test-expect-label-error
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":{}}]}],\"issues\":[]}"
+      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+    (chooser-test-expect-label-error
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":[]}]}],\"issues\":[]}"
+      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+    (chooser-test-expect-label-error
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"review-claimed\"},{}]}],\"issues\":[]}"
+      "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")))
+
+(test
+  chooser-validates-labels-before-other-pr-exclusions
+  (begin
+    (chooser-test-expect-label-error
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[]},{\"number\":41,\"title\":\"Review\",\"isDraft\":true,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{}]}],\"issues\":[{\"number\":7000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"
+      "Error: invalid input: prs[1].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+    (chooser-test-expect-label-error
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[]},{\"number\":41,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"stacked\",\"statusCheckRollup\":[],\"labels\":[{}]}],\"issues\":[{\"number\":7000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"
+      "Error: invalid input: prs[1].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
+    (chooser-test-expect-label-error
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[]},{\"number\":41,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}],\"labels\":[{}]}],\"issues\":[{\"number\":7000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"
+      "Error: invalid input: prs[1].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")))
 
 (test
   chooser-skips-incomplete-pr-checks
@@ -1020,8 +1272,8 @@
         (string.append ": " cand.title)))))
 
 ;: Choose one candidate from the input JSON. Invalid and genuinely empty input
-;: are errors; a valid queue emptied by the PR cap returns a successful wait
-;: signal with lane counts.
+;: are errors; a valid queue emptied by review claims or the PR cap returns a
+;: successful wait signal. Validate labels before building any candidates.
 (define (choose-candidate [text : String]) : ChooserResult
   (let
     [normalized : String (chooser-normalize-json-input text)]
@@ -1037,27 +1289,44 @@
             [issues : json.JsonSeq
               (json-field-array (chooser-shared-view root) "issues")]
             [open-prs : i64 (count-open-nondraft-prs (chooser-shared-view prs))]
-            [cands : CandSeq (build-candidates root)]
-            (if (= (cand-count cands) 0)
-              (if (> open-prs implement-pr-cap)
-                (ChooserResult.Wait
-                  (saturation-line open-prs (saturation-counts issues prs)))
-                (ChooserResult.Err
-                  "Error: no eligible candidates were provided"))
-              (match (random.system-seed)
-                [(random.ErrSystemSeed err)
-                  (ChooserResult.Err
-                    (match err
-                      [(random.RandomSystemSeedUnavailable message)
-                        (string.append "Error: " message)]))]
-                [(random.OkSystemSeed seed)
-                  (match (random.weighted-index
-                    (random.seed seed)
-                    (cand-weights cands))
-                    [(random.ErrRandomWeightedIndex message)
-                      (ChooserResult.Err (string.append "Error: " message))]
-                    [(random.OkRandomWeightedIndex _ index)
-                      (ChooserResult.Ok (cand-nth cands index))])])))
+            [label-error : String (pr-labels-error (chooser-shared-view prs))]
+            (if (> (string.string-length label-error) 0)
+              (ChooserResult.Err label-error)
+              (let
+                [cands : CandSeq (build-candidates root)]
+                (if (= (cand-count cands) 0)
+                  (let
+                    [claimed-prs : i64
+                      (count-review-claimed-prs (chooser-shared-view prs))]
+                    (cond
+                      [(> claimed-prs 0)
+                        (ChooserResult.Wait
+                          (review-claim-wait-line
+                            open-prs
+                            claimed-prs
+                            (saturation-counts issues prs)))]
+                      [(> open-prs implement-pr-cap)
+                        (ChooserResult.Wait
+                          (saturation-line
+                            open-prs
+                            (saturation-counts issues prs)))]
+                      [else
+                        (ChooserResult.Err
+                          "Error: no eligible candidates were provided")]))
+                  (match (random.system-seed)
+                    [(random.ErrSystemSeed err)
+                      (ChooserResult.Err
+                        (match err
+                          [(random.RandomSystemSeedUnavailable message)
+                            (string.append "Error: " message)]))]
+                    [(random.OkSystemSeed seed)
+                      (match (random.weighted-index
+                        (random.seed seed)
+                        (cand-weights cands))
+                        [(random.ErrRandomWeightedIndex message)
+                          (ChooserResult.Err (string.append "Error: " message))]
+                        [(random.OkRandomWeightedIndex _ index)
+                          (ChooserResult.Ok (cand-nth cands index))])])))))
           (ChooserResult.Err
             "Error: invalid input: expected top-level prs and issues arrays"))])))
 

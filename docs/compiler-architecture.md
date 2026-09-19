@@ -65,6 +65,11 @@ planned homes through the shared preservation-aware scratch selector, so an
 occupied home receives the same save/restore contract as other scratch roles.
 AVX-512 native min/max and the other reduction shapes retain two scratch roles.
 
+The lowerer's checked expression dispatcher delegates complete families to
+focused helpers. The [expression-family ledger](compiler-lowering-dispatch.md)
+records routing, residual inline bodies and the state/evaluation/provenance
+contract for those boundaries.
+
 Compilation is one whole program per executable with import-graph dedup
 (each module typechecked once per program). Package dependencies are
 codegen'd once into archives; an in-process session cache warms compiler
@@ -235,6 +240,16 @@ Logical traversal stays newest-first; CSR emission reads physical slots in
 oldest-first order directly, without constructing reversed intermediate lists.
 The integer-sequence and CSR tests cover growth, branches, duplicates and offsets.
 
+Call-memory root scanning, summary accumulation and write predicates read the
+live prefix of dense block sequences directly through the block sequence accessor.
+These internal shallow reads require valid storage and an index below logical len.
+The instruction helpers remain authoritative for effects and provenance. Root
+updates retain forward order and both existing passes; unresolved candidates and
+successful predicates stop before reading later blocks. No scanner mutates block
+storage or consumes spare capacity. The linked/dense/mixed differential fixture
+covers retained inputs, delayed definitions, unstable bindings and early exits;
+this traversal optimization leaves the wider block-storage migration in #5729 open.
+
 Affine folding keeps one mutable fact table per function: local vreg IDs index
 compact binding slots, and only live bindings are scanned for key/base
 invalidation. Every block starts with empty facts; the cumulative 512-binding
@@ -244,6 +259,14 @@ snapshot, and the table dies before the function's optimizer arena is rewound.
 The affine storage reference/growth tests and optimizer smoke driver protect
 these rules. Reuse the existing generated core vectors for compact payloads;
 do not allocate wide records for every possible local ID or rebuild cons chains.
+
+The checked inliner's literal-argument scan borrows dense block storage directly.
+It visits blocks and instructions in forward order without building linked
+copies. Its result includes every matching definition and the last integer
+literal, even after a duplicate makes specialization ineligible. Keep traversal
+separate from that admission decision; stopping the scan early changes its
+recorded result. This read-only path does not change block ownership or the
+remaining mixed block-list representation.
 
 Register analyses share one ownership budget: the conservative number of
 32-bit-set words per instruction is compared against 32,768 words (256 KiB),
@@ -343,6 +366,12 @@ its selected pool; macro-capable walks must resolve their owner again after a
 possible pool install. The `tc-literal-expression-pool-isolation` inline test
 covers colliding IDs, nested source views, expansion wrappers, and contextual
 overflow rejection.
+The call-argument type memo follows the same rule: `tc-call-arg-fact-key` peels
+expansion wrappers through the caller context's expression owner, because the
+key indexes that context's body-fact table and a colliding view in another pool
+is a valid but different key. The key stays the immediate source-view payload,
+and an unwrapped view is keyed without reading any pool. The
+`tc-call-arg-fact-key-pool-isolation` inline test covers it.
 
 ### Package direct-object routing
 
@@ -406,6 +435,15 @@ Generated code is compared with `clang -O2` using paired cases under
 [`../benchmarks/`](../benchmarks). Compiler and generated-code performance is
 tracked with deterministic executed-instruction baselines under
 [`../perf/`](../perf), avoiding wall-clock noise in required CI gates.
+
+Required verification has one top-level metadata authority,
+[`scripts/ci-gates.tsv`](../scripts/ci-gates.tsv), consumed by both full execution
+and host inventory listing. The runner binds stable IDs to commands and rejects
+incomplete or failed execution before reporting success. Nested compiler,
+corpus and artifact-provenance invariants stay in their existing owners; a
+metadata row alone does not establish them. See the
+[ledger boundary](../scripts/README.md#core-development-loop) before changing CI
+structure or introducing independent scheduling.
 
 ## CLI
 

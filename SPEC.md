@@ -2783,16 +2783,28 @@ Defines a named function.
 Declares an external symbol to link against. The function-head form writes fixed
 parameters directly on the extern head and uses the return type after `:`; it is
 a direct external function declaration. The bare-name form declares an external
-data symbol whose value is loaded when the name is used. If that bare-name type
-is a function type, the loaded value is a raw C function pointer and calling the
-name or a local copy of that value emits an indirect C ABI call through the
-loaded pointer. Raw C function-pointer values are ABI-distinct from ordinary
-TypeLisp function and closure descriptor values. A direct C-ABI extern call
-whose declared return type is a function type likewise returns a raw C function
-pointer; that provenance is retained through local bindings, annotations,
-`begin`, and branches whose alternatives are both raw C function pointers. This
-supports validated dynamic symbol resolvers without treating the returned
-address as an ordinary TypeLisp callable.
+data symbol whose value is loaded when the name is used. Native code-pointer
+data and native code-pointer results require an explicit `CFunc` type. A plain
+`(-> ...)` in either position is rejected with a migration diagnostic, because
+ordinary TypeLisp functions and closure descriptors use a different runtime
+representation. Direct extern functions still use their function-head syntax;
+their code-pointer results must name `CFunc` explicitly.
+
+An explicit C function-pointer type is `(CFunc mode (-> argument-types... result-type))`.
+Modes are `nullable`, `non-null`, `unsafe-nullable`, and `unsafe-non-null`.
+These values are one-word C code addresses, distinct from ordinary function
+values. Nullable values cannot be called. `(c-fn-check value)` evaluates its
+operand once and returns the corresponding non-null type, retaining the exact
+signature and unsafe-call effect. A null operand terminates with status 134 and
+`tl: null C function pointer`; a non-null operand is returned unchanged. Checking
+an already non-null value is permitted. Calling an unsafe mode still requires
+an explicit `(unsafe ...)` at the call site.
+
+`ptr-null?` can select a recovery branch before checked conversion; it does not
+implicitly refine a variable's type. `c-fn-check` accepts exactly one typed C
+function pointer, rejects ordinary functions and integers, and can be shadowed
+by a source binding. Numeric `cast`, raw pointer casts and integer-to-pointer
+conversion do not establish typed C callability.
 
 The name is a TypeLisp identifier used for source lookup; it defaults to the
 target C ABI and uses the local name as the external linker symbol unless
@@ -2825,7 +2837,7 @@ For bare-name external data declarations, metadata appears before the `:`:
 
 ```lisp test=ignore name=extern-value-and-function-pointer reason="requires native symbols"
 (extern foreign-counter (:symbol "foreign_counter") : i64)
-(extern foreign-add-ptr (:symbol "foreign_add_ptr") : (-> i64 i64))
+(extern foreign-add-ptr (:symbol "foreign_add_ptr") : (CFunc non-null (-> i64 i64)))
 (define (main) : i64 (+ foreign-counter (foreign-add-ptr 35)))
 ```
 
@@ -5629,10 +5641,14 @@ diagnostic names the primitive and the expected kind, for example
 
 - Builtins: `i64`, `i32`, `i16`, `i8`, `u64`, `u32`, `u16`, `u8`, `f64`,
   `f32`, `bool`, `char`, `string`, `unit`, `never`.
-- Shapes: `array`, `dyn-array`, `box`, `function`, `tuple`, `struct`, `enum`,
+- Shapes: `array`, `dyn-array`, `box`, `function`, `c-function`, `tuple`, `struct`, `enum`,
   `slice`.
 - Reserved/partial shapes: `str`, `ptr`, `mut-ptr`, `ref`, `mut-ref`,
   `region`, `type-var`.
+
+`CFunc` reports `c-function`; its `type-key` retains the signature and mode.
+The `function-param-count`, `function-param-type`, and `function-return-type`
+operations require ordinary TypeLisp function types and reject `CFunc`.
 
 Reserved/partial shapes are classified by `type-kind` and `type-key`.
 `reference-element-type` additionally exposes the referent of shared and mutable
@@ -6371,7 +6387,9 @@ The unsafe operation set:
 | Form | Safe? | Type rule | Notes |
 |------|-------|-----------|-------|
 | `(ptr-null : (Ptr T))` / `(ptr-null : (MutPtr T))` | Yes | returns the requested raw pointer type | Constructs a typed null pointer. |
-| `(ptr-null? p)` | Yes | raw pointer -> `bool` | Does not dereference `p`. |
+| `(ptr-null : (CFunc mode signature))` | Yes | returns the requested `CFunc` type | Requires `nullable` or `unsafe-nullable` mode; the other modes reject null construction even inside `unsafe`. |
+| `(c-fn-check f)` | Yes | `CFunc` -> corresponding non-null `CFunc` | Evaluates `f` once; exits with status 134 and a null C function pointer diagnostic if zero. Preserves signature and unsafe-call effect. |
+| `(ptr-null? p)` | Yes | raw pointer or `CFunc` -> `bool` | Does not dereference or call `p`; does not refine its type. |
 | `(ptr-read p)` | Unsafe | `(Ptr T)` or `(MutPtr T)` -> `T` | Reads `sizeof(T)` bytes at `p`; alignment, validity, initialization, and lifetime are caller obligations. |
 | `(ptr-write! p value)` | Unsafe | `(MutPtr T)` and `T` -> `unit` | Writes `sizeof(T)` bytes; writing through `(Ptr T)` is rejected. |
 | `(ptr-offset p n)` | Unsafe | raw pointer and integer -> same raw pointer type | Adds `n * sizeof(T)` bytes. Negative offsets are allowed but unsafe. |
@@ -7854,6 +7872,12 @@ mutable, or valid for the requested type.
   supported targets.
 - Raw pointers are nullable and copyable. `ptr-null` creates a typed null
   pointer, and `ptr-null?` checks for null without dereferencing.
+- Typed C code pointers also support `ptr-null?`. `ptr-null` accepts
+  `(CFunc nullable (-> ...))` and `(CFunc unsafe-nullable (-> ...))`;
+  `init` produces the same zero value for these modes. Neither form can create
+  `non-null` or `unsafe-non-null` values. Testing a pointer does not call it or
+  remove its unsafe-call effect, and a boolean test does not implicitly change
+  a nullable variable's type.
 - Pointer equality, ordering, provenance, and bounds are otherwise
   unspecified. Only null testing is part of the safe surface.
 - `ptr-read`, `ptr-write!`, `ptr-offset`, `ptr-cast`, `ptr->int`,
@@ -8873,7 +8897,7 @@ macro-type-kind ::= "i64" | "i32" | "i16" | "i8"
                   | "u64" | "u32" | "u16" | "u8"
                   | "f64" | "f32" | "bool" | "char"
                   | "string" | "unit" | "never"
-                  | "array" | "dyn-array" | "box" | "function" | "tuple"
+                  | "array" | "dyn-array" | "box" | "function" | "c-function" | "tuple"
                   | "struct" | "enum" | "slice" | "str" | "ptr" | "mut-ptr"
                   | "ref" | "mut-ref" | "region" | "type-var"
 macro-result-type ::= type

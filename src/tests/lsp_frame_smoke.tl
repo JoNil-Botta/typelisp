@@ -274,7 +274,14 @@
       (not (lsp-smoke-string-vec-contains? builtins "struct-get"))
       (not (lsp-smoke-string-vec-contains? builtins "array-set!"))
       (not (lsp-smoke-string-vec-contains? builtins "box-get"))
-      (lsp-smoke-string-vec-contains? types "i64"))))
+      (lsp-smoke-string-vec-contains? types "i64")
+      (lsp-smoke-string-vec-contains? types "CFunc")
+      (lsp-smoke-string-vec-contains? builtins "c-fn-check")
+      (>
+        (lsp-smoke-index-of
+          (lsp_frame_core.lsp-builtin-hover "CFunc")
+          "unsafe-nullable")
+        0))))
 
 (define (lsp-smoke-index-of
   [haystack : (& haystack str)]

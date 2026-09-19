@@ -16,24 +16,21 @@
   (WideSome u64 u64))
 
 (extern (small-score [arg : SmallChoice] [bias : i64]) : i64 (:symbol "tl_cabi_small_choice_score"))
-(extern small-scorer (:symbol "tl_cabi_small_choice_score_ptr") : (->
-  SmallChoice
-  i64
-  i64))
+(extern small-scorer (:symbol "tl_cabi_small_choice_score_ptr") : (CFunc
+  non-null
+  (-> SmallChoice i64 i64)))
 (extern (small-make [seed : i64] [make-some : i64]) : SmallChoice (:symbol "tl_cabi_small_choice_make"))
 (extern (wrapped-small-score [arg : WrappedSmall] [bias : i64]) : i64 (:symbol "tl_cabi_wrapped_small_score"))
 (extern (wrapped-small-make [seed : i64]) : WrappedSmall (:symbol "tl_cabi_wrapped_small_make"))
 (extern (float-score [arg : FloatChoice] [bias : i64]) : i64 (:symbol "tl_cabi_float_choice_score"))
-(extern float-scorer (:symbol "tl_cabi_float_choice_score_ptr") : (->
-  FloatChoice
-  i64
-  i64))
+(extern float-scorer (:symbol "tl_cabi_float_choice_score_ptr") : (CFunc
+  non-null
+  (-> FloatChoice i64 i64)))
 (extern (float-make [seed : f64] [make-some : i64]) : FloatChoice (:symbol "tl_cabi_float_choice_make"))
 (extern (wide-score [arg : WideChoice] [salt : u64]) : i64 (:symbol "tl_cabi_wide_choice_score"))
-(extern wide-scorer (:symbol "tl_cabi_wide_choice_score_ptr") : (->
-  WideChoice
-  u64
-  i64))
+(extern wide-scorer (:symbol "tl_cabi_wide_choice_score_ptr") : (CFunc
+  non-null
+  (-> WideChoice u64 i64)))
 (extern (wide-make [seed : u64]) : WideChoice (:symbol "tl_cabi_wide_choice_make"))
 
 (define (small-value [s : SmallChoice]) : i64
@@ -56,9 +53,9 @@
 
 (define (main) : i64
   (let
-    [small-copy : (-> SmallChoice i64 i64) small-scorer]
-    [float-copy : (-> FloatChoice i64 i64) float-scorer]
-    [wide-copy : (-> WideChoice u64 i64) wide-scorer]
+    [small-copy : (CFunc non-null (-> SmallChoice i64 i64)) small-scorer]
+    [float-copy : (CFunc non-null (-> FloatChoice i64 i64)) float-scorer]
+    [wide-copy : (CFunc non-null (-> WideChoice u64 i64)) wide-scorer]
     [small-direct : i64 (small-score (SmallSome 11) 5)]
     [small-via-ptr : i64 (small-copy (SmallNone) 7)]
     [small-made : SmallChoice (small-make 9 1)]

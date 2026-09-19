@@ -23,15 +23,16 @@ native_link_detect_host
 # dependency-free, however, so forced-source fallback happens only for the
 # root consumer on both hosts. Removing the generic shared-view bridge
 # subtracts one prelude declaration from both trusted and failure totals.
+# The checked C function-pointer null abort adds one runtime declaration.
 case "$NL_HOST_OS" in
     windows)
-        TRUSTED_PREFIX_SKIPPED=228
-        FAILURE_PREFIX_SKIPPED=213
+        TRUSTED_PREFIX_SKIPPED=229
+        FAILURE_PREFIX_SKIPPED=214
         FORCED_SOURCE_FALLBACKS=1
         ;;
     *)
-        TRUSTED_PREFIX_SKIPPED=223
-        FAILURE_PREFIX_SKIPPED=208
+        TRUSTED_PREFIX_SKIPPED=224
+        FAILURE_PREFIX_SKIPPED=209
         FORCED_SOURCE_FALLBACKS=1
         ;;
 esac

@@ -2442,6 +2442,9 @@
 (define (compiler-parse-tag-ty-slice) : i64
   140)
 
+(define (compiler-parse-tag-ty-c-func) : i64
+  141)
+
 (define (compiler-parse-tag-expr-if) : i64
   200)
 
@@ -3124,6 +3127,12 @@
       (set!
         out
         (compiler-parse-dispatch-bind out "->" (compiler-parse-tag-ty-func)))
+      (set!
+        out
+        (compiler-parse-dispatch-bind
+          out
+          "CFunc"
+          (compiler-parse-tag-ty-c-func)))
       (set!
         out
         (compiler-parse-dispatch-bind out "Tuple" (compiler-parse-tag-ty-tuple)))
@@ -3978,7 +3987,7 @@
           (<= tag (compiler-parse-tag-ty-bytes)))
         (and
           (>= tag (compiler-parse-tag-ty-func))
-          (<= tag (compiler-parse-tag-ty-slice)))))))
+          (<= tag (compiler-parse-tag-ty-c-func)))))))
 
 (define (parse-ast-lifetime-list
   [dispatch : sym_i64_env.SymI64Env]
@@ -4022,6 +4031,77 @@
   (match (reader.sexpr-view (compiler-parse-place-shared-view s))
     [(reader.SexprView.Nil) (ResultAstLifetimeList.Err message)]
     [_ (parse-ast-lifetime-list-result dispatch pools s message)]))
+
+(defenum ResultAstCFunctionMode
+  (Ok ast.AstCFunctionMode)
+  (Err String))
+
+(define (parse-ast-c-function-mode [node : reader.Sexpr]) : ResultAstCFunctionMode
+  (match (reader.sexpr-view node)
+    [(reader.SexprView.Sym name)
+      (let
+        [text : String (ci.intern-str (ci.intern-syntax-id-value name))]
+        (cond
+          [(string.eq
+              text
+              (ast.ast-c-function-mode-name ast.AstCFunctionMode.Nullable))
+            (ResultAstCFunctionMode.Ok ast.AstCFunctionMode.Nullable)]
+          [(string.eq
+              text
+              (ast.ast-c-function-mode-name ast.AstCFunctionMode.NonNull))
+            (ResultAstCFunctionMode.Ok ast.AstCFunctionMode.NonNull)]
+          [(string.eq
+              text
+              (ast.ast-c-function-mode-name ast.AstCFunctionMode.UnsafeNullable))
+            (ResultAstCFunctionMode.Ok ast.AstCFunctionMode.UnsafeNullable)]
+          [(string.eq
+              text
+              (ast.ast-c-function-mode-name ast.AstCFunctionMode.UnsafeNonNull))
+            (ResultAstCFunctionMode.Ok ast.AstCFunctionMode.UnsafeNonNull)]
+          [else
+            (ResultAstCFunctionMode.Err
+              "parse: CFunc mode must be nullable, non-null, unsafe-nullable, or unsafe-non-null")]))]
+    [_ (ResultAstCFunctionMode.Err "parse: CFunc mode must be a symbol")]))
+
+(define (parse-ast-c-function-type
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [rest : reader.Sexpr]) : ResultAstType
+  (match (reader.sexpr-view rest)
+    [(reader.SexprView.Cons mode-node signature-tail)
+      (match (parse-ast-c-function-mode mode-node)
+        [(ResultAstCFunctionMode.Err message) (ResultAstType.Err message)]
+        [(ResultAstCFunctionMode.Ok mode)
+          (match (reader.sexpr-view signature-tail)
+            [(reader.SexprView.Cons signature-node tail)
+              (match (reader.sexpr-view tail)
+                [(reader.SexprView.Nil)
+                  (match (parse-ast-type
+                    dispatch
+                    (compiler-parse-place-shared-view pools)
+                    signature-node)
+                    [(ResultAstType.Err message) (ResultAstType.Err message)]
+                    [(ResultAstType.Ok signature)
+                      (match (compiler-parse-place-shared-view signature)
+                        [(ast.AstType.Func _ _)
+                          (ResultAstType.Ok
+                            (ast.AstType.CFunc
+                              (ast.ast-node-pool-context-type-push
+                                pools
+                                signature)
+                              mode))]
+                        [_
+                          (ResultAstType.Err
+                            "parse: CFunc requires an explicit (-> ... result) signature")])])]
+                [_
+                  (ResultAstType.Err
+                    "parse: CFunc requires exactly a mode and a function signature")])]
+            [_
+              (ResultAstType.Err
+                "parse: CFunc requires exactly a mode and a function signature")])])]
+    [_
+      (ResultAstType.Err
+        "parse: CFunc requires exactly a mode and a function signature")]))
 
 (define (parse-ast-func-type-parts
   [dispatch : sym_i64_env.SymI64Env]
@@ -4258,6 +4338,8 @@
               [(= head-id (cbi.compiler-builtin-ctfe-ref 179))
                 (ResultAstType.Err
                   "parse: :consume has been removed; by-value parameters move non-Copy values")]
+              [(= tag (compiler-parse-tag-ty-c-func))
+                (parse-ast-c-function-type dispatch pools rest)]
               [(= tag (compiler-parse-tag-ty-func))
                 (match (parse-ast-func-type-parts
                   dispatch
@@ -4565,6 +4647,8 @@
                   (= tag (compiler-parse-tag-ty-ref))
                   (= tag (compiler-parse-tag-ty-mut-ref)))
                 (compiler-parse-semantic-reference-type-origin! dispatch rest)]
+              [(= tag (compiler-parse-tag-ty-c-func))
+                (compiler-parse-semantic-type-second-origin! dispatch rest)]
               [(= tag (compiler-parse-tag-ty-region))
                 (compiler-parse-semantic-type-second-origin! dispatch rest)]
               [else
@@ -4769,7 +4853,8 @@
       (= name-id (cbi.compiler-builtin-ctfe-ref 232))
       (= name-id (cbi.compiler-builtin-ctfe-ref 233))
       (= name-id (cbi.compiler-builtin-ctfe-ref 132))
-      (= name-id (cbi.compiler-builtin-ctfe-ref 281)))))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 281))
+      (= name-id (cbi.compiler-builtin-ctfe-ref 294)))))
 
 (define (parse-ast-macro-type-kind-error
   [operand-name : String]

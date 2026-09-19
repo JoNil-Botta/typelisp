@@ -19797,6 +19797,7 @@
     [(compiler_ast_types.AstType.Never) 0]
     [(compiler_ast_types.AstType.Expr) 0]
     [(compiler_ast_types.AstType.ExprList) 0]
+    [(compiler_ast_types.AstType.CFunc _ _) 8]
     [(compiler_ast_types.AstType.Func _ _) 8]
     [(compiler_ast_types.AstType.Tuple _) 8]
     [(compiler_ast_types.AstType.Array _ _) 8]
@@ -41630,6 +41631,16 @@
   [type-segment-bases : i64]
   [ty : compiler_ast_types.AstType]) : CompilerBackendMaybeSignature
   (match ty
+    [(compiler_ast_types.AstType.CFunc signature _)
+      (compiler-backend-program-index-extern-signature
+        type-segment-bases
+        (compiler_ast_types.ast-type-segment-bases-get
+          type-segment-bases
+          signature))]
+    [(compiler_ast_types.AstType.Region _ inner)
+      (compiler-backend-program-index-extern-signature
+        type-segment-bases
+        (compiler_ast_types.ast-type-segment-bases-get type-segment-bases inner))]
     [(compiler_ast_types.AstType.Func args ret-ty)
       (CompilerBackendMaybeSignature.Some
         (compiler_ir_types.compiler-ir-box-shared-view args)
@@ -63664,6 +63675,7 @@
               (compiler-backend-global-shared-view instr-diag))))])))
 
 (define (compiler-backend-indirect-call-param-types
+  [type-segment-bases : i64]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [func : compiler_ir_types.CompilerIrValue]
   [_functions : compiler_ir_types.CompilerIrFunctionSeq]
@@ -63681,10 +63693,12 @@
         (CompilerBackendGlobalTypeTable.Empty)
         func)
         [(compiler_regalloc.CompilerRegMaybeType.Some ty)
-          (match ty
-            [(compiler_ast_types.AstType.Func param-types _)
-              (compiler_ir_types.compiler-ir-box-shared-view param-types)]
-            [_ (compiler_ast_types.ast-type-list-new)])]
+          (match (compiler-backend-program-index-extern-signature
+            type-segment-bases
+            ty)
+            [(CompilerBackendMaybeSignature.Some param-types _) param-types]
+            [(CompilerBackendMaybeSignature.No)
+              (compiler_ast_types.ast-type-list-new)])]
         [(compiler_regalloc.CompilerRegMaybeType.No)
           (compiler_ast_types.ast-type-list-new)])]))
 
@@ -63731,6 +63745,7 @@
   (let
     [declared : compiler_ast_types.AstTypeList
       (compiler-backend-indirect-call-param-types
+        type-segment-bases
         (compiler-backend-global-shared-view types)
         (compiler-backend-global-shared-view func)
         (compiler-backend-global-shared-view functions)
@@ -64261,6 +64276,7 @@
   (let
     [declared-param-types : compiler_ast_types.AstTypeList
       (compiler-backend-indirect-call-param-types
+        type-segment-bases
         (compiler-backend-global-shared-view types)
         (compiler-backend-global-shared-view func)
         functions
@@ -64519,6 +64535,7 @@
   (let
     [declared-param-types : compiler_ast_types.AstTypeList
       (compiler-backend-indirect-call-param-types
+        type-segment-bases
         (compiler-backend-global-shared-view types)
         (compiler-backend-global-shared-view func)
         functions

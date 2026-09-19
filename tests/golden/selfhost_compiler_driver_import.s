@@ -33,6 +33,12 @@ _tl_shared_shared_shared:
 .L_tl_str_l29_1993323280_919009571:
     .quad .L_tl_str_data_l29_1993323280_919009571
     .quad 29
+.L_tl_str_data_l28_1477559504_963665205:
+    .string "tl: null C function pointer\n"
+    .balign 8
+.L_tl_str_l28_1477559504_963665205:
+    .quad .L_tl_str_data_l28_1477559504_963665205
+    .quad 28
 .L_tl_str_data_l1_59_59:
     .string ":"
     .balign 8
@@ -351,12 +357,25 @@ tl_shift_abort:
     jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
     .size tl_shift_abort, . - tl_shift_abort
 
+.globl tl_c_fn_null_abort
+    .type tl_c_fn_null_abort,@function
+tl_c_fn_null_abort:
+    subq $24, %rsp
+.Lf9_entry:
+    leaq .L_tl_str_l28_1477559504_963665205(%rip), %r8
+    movq %r8, %rdi
+    call _tl_stdlib_runtime_stdlib_runtime_abort_write
+    movl $134, %edi
+    addq $24, %rsp
+    jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
+    .size tl_c_fn_null_abort, . - tl_c_fn_null_abort
+
 .globl _tl_stdlib_runtime_stdlib_runtime_abort_write_site
     .type _tl_stdlib_runtime_stdlib_runtime_abort_write_site,@function
 _tl_stdlib_runtime_stdlib_runtime_abort_write_site:
     subq $136, %rsp
     movq %rdi, 120(%rsp)
-.Lf9_entry:
+.Lf10_entry:
     movq 120(%rsp), %r10
     movq (%r10), %r8
     movq %r8, 112(%rsp)
@@ -396,7 +415,7 @@ tl_oob_abort_at:
     movq %rdi, 88(%rsp)
     movq %rsi, 80(%rsp)
     movq %rdx, 72(%rsp)
-.Lf10_entry:
+.Lf11_entry:
     leaq .L_tl_str_l4_264904958_75213898(%rip), %r8
     movq %r8, %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write
@@ -427,7 +446,7 @@ tl_div_abort_at:
     movq %rdi, 88(%rsp)
     movq %rsi, 80(%rsp)
     movq %rdx, 72(%rsp)
-.Lf11_entry:
+.Lf12_entry:
     leaq .L_tl_str_l4_264904958_75213898(%rip), %r8
     movq %r8, %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write
@@ -459,7 +478,7 @@ tl_shift_abort_at:
     movq %rsi, 96(%rsp)
     movq %rdx, 88(%rsp)
     movq %rcx, 80(%rsp)
-.Lf12_entry:
+.Lf13_entry:
     leaq .L_tl_str_l4_264904958_75213898(%rip), %r8
     movq %r8, %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write
@@ -469,16 +488,16 @@ tl_shift_abort_at:
     movq %r8, %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write
     cmpq $0, 80(%rsp)
-    je .Lf12_if_else.1
-.Lf12_if_then.0:
+    je .Lf13_if_else.1
+.Lf13_if_then.0:
     movq 96(%rsp), %r8
     movq %r8, %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write_decimal
-    jmp .Lf12_if_merge.2
-.Lf12_if_else.1:
+    jmp .Lf13_if_merge.2
+.Lf13_if_else.1:
     movq 96(%rsp), %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write_signed_decimal
-.Lf12_if_merge.2:
+.Lf13_if_merge.2:
     leaq .L_tl_str_l7_56598913_2146427533(%rip), %r8
     movq %r8, %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write
@@ -498,7 +517,7 @@ tl_panic_at:
     subq $168, %rsp
     movq %rdi, 152(%rsp)
     movq %rsi, 144(%rsp)
-.Lf13_entry:
+.Lf14_entry:
     movq 144(%rsp), %r10
     movq 8(%r10), %r8
     movq %r8, 112(%rsp)
@@ -507,8 +526,8 @@ tl_panic_at:
     movzbq %r8b, %r8
     movq %r8, 104(%rsp)
     cmpq $0, 104(%rsp)
-    je .Lf13_if_else.1
-.Lf13_if_then.0:
+    je .Lf14_if_else.1
+.Lf14_if_then.0:
     movq (%r10), %r8
     movq %r8, %r10
     movq 112(%rsp), %r8
@@ -521,10 +540,10 @@ tl_panic_at:
     movq %r8, 136(%rsp)
     movzbq 136(%rsp), %r8
     movq %r8, 104(%rsp)
-    jmp .Lf13_if_merge.2
-.Lf13_if_else.1:
+    jmp .Lf14_if_merge.2
+.Lf14_if_else.1:
     movq $0, 104(%rsp)
-.Lf13_if_merge.2:
+.Lf14_if_merge.2:
     leaq .L_tl_str_l4_264904958_75213898(%rip), %r8
     movq %r8, %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write
@@ -536,16 +555,16 @@ tl_panic_at:
     movq 144(%rsp), %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write
     cmpq $0, 104(%rsp)
-    je .Lf13_if_else.4
-.Lf13_if_then.3:
+    je .Lf14_if_else.4
+.Lf14_if_then.3:
     movl $134, %edi
     addq $168, %rsp
     jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
-.Lf13_if_else.4:
+.Lf14_if_else.4:
     leaq .L_tl_str_l1_11_11(%rip), %r8
     movq %r8, %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write
-.Lf13_if_merge.5:
+.Lf14_if_merge.5:
     movl $134, %edi
     addq $168, %rsp
     jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
@@ -556,7 +575,7 @@ tl_panic_at:
 tl_abort_string:
     subq $24, %rsp
     movq %rdi, 8(%rsp)
-.Lf14_entry:
+.Lf15_entry:
     movq 8(%rsp), %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write
     movl $134, %edi
@@ -570,23 +589,23 @@ tl_array_fill8:
     movq %rdi, -8(%rsp)
     movq %rsi, -16(%rsp)
     movq %rdx, -24(%rsp)
-.Lf15_entry:
+.Lf16_entry:
     movq -8(%rsp), %r8
     movq %r8, -32(%rsp)
     movq $0, -40(%rsp)
-.Lf15_while_header.0:
+.Lf16_while_header.0:
     movq -16(%rsp), %r8
     cmpq %r8, -40(%rsp)
-    jge .Lf15_while_exit.2
-.Lf15_while_body.1:
+    jge .Lf16_while_exit.2
+.Lf16_while_body.1:
     movq -32(%rsp), %r10
     movq -40(%rsp), %r8
     movq -24(%rsp), %r9
     movq %r9, (%r10,%r8,8)
     addq $1, -40(%rsp)
     movq -40(%rsp), %rax
-    jmp .Lf15_while_header.0
-.Lf15_while_exit.2:
+    jmp .Lf16_while_header.0
+.Lf16_while_exit.2:
     ret
     .size tl_array_fill8, . - tl_array_fill8
 
@@ -594,7 +613,7 @@ tl_array_fill8:
     .type tl_region_abort,@function
 tl_region_abort:
     subq $24, %rsp
-.Lf16_entry:
+.Lf17_entry:
     leaq .L_tl_str_l24_1300740986_1050262163(%rip), %r8
     movq %r8, %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write
@@ -607,7 +626,7 @@ tl_region_abort:
     .type tl_oom_abort,@function
 tl_oom_abort:
     subq $24, %rsp
-.Lf17_entry:
+.Lf18_entry:
     leaq .L_tl_str_l22_1063972566_1775948496(%rip), %r8
     movq %r8, %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write
@@ -622,10 +641,10 @@ _tl_helper_helper_helper_opaque:
     subq $56, %rsp
     movq %rdi, 40(%rsp)
     movq %rsi, 32(%rsp)
-.Lf18_entry:
+.Lf19_entry:
     cmpq $1, 32(%rsp)
-    jle .Lf18_if_else.1
-.Lf18_if_then.0:
+    jle .Lf19_if_else.1
+.Lf19_if_then.0:
     movq 32(%rsp), %r8
     subq $1, %r8
     movq 40(%rsp), %rdi
@@ -637,7 +656,7 @@ _tl_helper_helper_helper_opaque:
     movq %r8, %rax
     addq $56, %rsp
     ret
-.Lf18_if_else.1:
+.Lf19_if_else.1:
     movq 40(%rsp), %rax
     addq $56, %rsp
     ret
@@ -646,7 +665,7 @@ _tl_helper_helper_helper_opaque:
 .globl _tl_helper_helper_helper
     .type _tl_helper_helper_helper,@function
 _tl_helper_helper_helper:
-.Lf19_entry:
+.Lf20_entry:
     movl $38, %r8d
     addq _tl_shared_shared_shared(%rip), %r8
     movq %r8, %rdi
@@ -658,7 +677,7 @@ _tl_helper_helper_helper:
     .type main,@function
 main:
     subq $24, %rsp
-.Lf20_entry:
+.Lf21_entry:
     call _tl_helper_helper_helper
     movq _tl_shared_shared_shared(%rip), %r8
     addq %r8, %rax

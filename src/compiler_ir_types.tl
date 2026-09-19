@@ -4224,6 +4224,16 @@
           type-segment-bases
           (ast.ast-type-segment-bases-get type-segment-bases ret))
         ")")]
+    [(ast.AstType.CFunc signature mode)
+      (str_cat.str-cat
+        "(CFunc "
+        (ast.ast-c-function-mode-name mode)
+        " "
+        (compiler-ir-type-render
+          structural-session
+          type-segment-bases
+          (ast.ast-type-segment-bases-get type-segment-bases signature))
+        ")")]
     [(ast.AstType.Tuple elems)
       (str_cat.str-cat
         "(Tuple "
@@ -7463,6 +7473,15 @@
         (compiler-ir-type-name
           type-segment-bases
           (ast.ast-type-segment-bases-get type-segment-bases ret))
+        ")")]
+    [(ast.AstType.CFunc signature mode)
+      (str_cat.str-cat
+        "(CFunc "
+        (ast.ast-c-function-mode-name mode)
+        " "
+        (compiler-ir-type-name
+          type-segment-bases
+          (ast.ast-type-segment-bases-get type-segment-bases signature))
         ")")]
     [(ast.AstType.Tuple elems)
       (str_cat.str-cat

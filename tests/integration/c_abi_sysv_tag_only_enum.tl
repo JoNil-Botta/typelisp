@@ -5,11 +5,9 @@
 
 (extern (status-pick [arg0 : Status] [arg1 : Status] [choose-second : i64]) : Status (:symbol "tl_cabi_status_pick"))
 (extern (status-eq [arg0 : Status] [arg1 : Status]) : i64 (:symbol "tl_cabi_status_eq"))
-(extern status-pick-ptr (:symbol "tl_cabi_status_pick_ptr") : (->
-  Status
-  Status
-  i64
-  Status))
+(extern status-pick-ptr (:symbol "tl_cabi_status_pick_ptr") : (CFunc
+  non-null
+  (-> Status Status i64 Status)))
 
 (define (status-rank [s : Status]) : i64
   (match s
@@ -19,7 +17,7 @@
 
 (define (main) : i64
   (let
-    [pick-copy : (-> Status Status i64 Status) status-pick-ptr]
+    [pick-copy : (CFunc non-null (-> Status Status i64 Status)) status-pick-ptr]
     [ready : Status (Ready)]
     [done : Status (Done)]
     [failed : Status (Failed)]

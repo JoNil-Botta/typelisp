@@ -24,9 +24,10 @@ native_link_detect_host
 # generation adds seven public declaration macros to the loaded prefix. Test
 # declaration metadata adds two source-visible declarations to that prefix.
 # Removing the generic shared-view bridge subtracts one on both hosts.
+# The checked C function-pointer null abort adds one runtime declaration.
 case "$NL_HOST_OS" in
-    windows) TRUSTED_PREFIX_SKIPPED=223 ;;
-    *) TRUSTED_PREFIX_SKIPPED=218 ;;
+    windows) TRUSTED_PREFIX_SKIPPED=224 ;;
+    *) TRUSTED_PREFIX_SKIPPED=219 ;;
 esac
 
 COMPILER=${1:-${TYPELISP_BIN:-}}

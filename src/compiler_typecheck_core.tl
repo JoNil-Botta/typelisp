@@ -124,9 +124,8 @@
   ;; an additive splice. Explicit layers fuse that shrinking candidate-name
   ;; list into the tail of `unsafe-flags`: [flags x capacity, live count,
   ;; names x capacity]. The existing `ids` map recovers each value slot. This
-  ;; keeps the hot cache record at its original width.
+  ;; avoids a separate candidate-name array in the hot cache record.
   (unsafe-flags (__tl_dyn-array i64))
-  (c-abi-fnptr-flags (__tl_dyn-array i64))
   (shadow-flags (__tl_dyn-array i64))
   (scan-through bool)
   (partial bool)
@@ -216,8 +215,7 @@
 (defstruct TcCheckedLetBindingTransition
   (arena-owner-kind i64)
   ;; -1 means that the initializer did not produce an arena phase token.
-  (phase-owner-id i64)
-  (raw-c-fnptr bool))
+  (phase-owner-id i64))
 
 (defstruct TcCheckedLetBindingFact
   (declaration-ordinal i64)
@@ -456,7 +454,6 @@
 (defenum TcTypeEnvScopedMarkerKind
   (None)
   (UnsafeDecl)
-  (CAbiFnptr)
   (DefaultBoundary)
   (Region)
   (UnsafeContext)
@@ -621,7 +618,7 @@
 
 (defenum TcTypeEnvScopedLookup
   (Missing)
-  (Found ast.AstType bool bool TcTypeEnvScopedMarkerKind i64 i64))
+  (Found ast.AstType bool TcTypeEnvScopedMarkerKind i64 i64))
 
 (defenum TcTypeEnvScopedMarkerLookup
   (Missing)
@@ -1680,8 +1677,7 @@
   [right : TcCheckedLetBindingTransition]) : bool
   (and
     (= left.arena-owner-kind right.arena-owner-kind)
-    (= left.phase-owner-id right.phase-owner-id)
-    (= left.raw-c-fnptr right.raw-c-fnptr)))
+    (= left.phase-owner-id right.phase-owner-id)))
 
 (define (tc-checked-let-binding-fact-state-release-storage!
   [state : TcCheckedLetBindingFactState]) : unit
@@ -1928,9 +1924,9 @@
     [c : TcCheckedLetBindingFactState
       (tc-job-state-checked-let-binding-facts job-c)]
     [ordinary : TcCheckedLetBindingTransition
-      (TcCheckedLetBindingTransition 1 -1 false)]
+      (TcCheckedLetBindingTransition 1 -1)]
     [special : TcCheckedLetBindingTransition
-      (TcCheckedLetBindingTransition 2 91 true)]
+      (TcCheckedLetBindingTransition 2 91)]
     (begin
       (tc-checked-let-binding-facts-begin! a)
       (tc-checked-let-binding-facts-begin! b)
@@ -11526,8 +11522,8 @@
     (ptr-read ,cache-ptr)))
 
 ;; Physical byte offsets in TcTypeEnvCache after the four-word chain prefix:
-;; ids=32 (the map is inline and 24 bytes), values=56, sidecar arrays=64/72/80,
-;; flags=88/89, and rest/below=96/104. Keep these literals paired with the
+;; ids=32 (the map is inline and 24 bytes), values=56, sidecar arrays=64/72,
+;; flags=80/81, and rest/below=88/96. Keep these literals paired with the
 ;; raw-layout smoke and
 ;; cache behavior tests; `offset-of` currently treats the inline map as one word
 ;; and therefore under-reports every following field.
@@ -11672,15 +11668,15 @@
             (tc-type-env-cache-ptr store-handle (tc-type-env-cache-index head))]
           (TcTypeEnvView.Cache
             cache-ptr
-            (tc-type-env-cache-field-at cache-ptr 88 bool)
-            (tc-type-env-cache-field-at cache-ptr 89 bool)
+            (tc-type-env-cache-field-at cache-ptr 80 bool)
+            (tc-type-env-cache-field-at cache-ptr 81 bool)
             (TcTypeEnv
               store-handle
-              (tc-type-env-cache-field-at cache-ptr 96 i64)
+              (tc-type-env-cache-field-at cache-ptr 88 i64)
               env.abi-pad)
             (TcTypeEnv
               store-handle
-              (tc-type-env-cache-field-at cache-ptr 104 i64)
+              (tc-type-env-cache-field-at cache-ptr 96 i64)
               env.abi-pad)))])))
 
 (define (tc-empty-env) : TcTypeEnv
@@ -12410,7 +12406,7 @@
   (= key (tc-unsafe-decl-marker-id name-id)))
 
 ;; Environment keys are either interner ids or packed nonnegative composite
-;; ids. Negative odd/even ids form disjoint, allocation-free marker namespaces.
+;; ids. Negative odd ids form an allocation-free unsafe declaration marker namespace.
 (define (tc-unsafe-decl-marker-id [name-id : i64]) : i64
   (- 0 (+ (* name-id 2) 1)))
 
@@ -12434,67 +12430,8 @@
         unit)
       next-env)))
 
-(define (tc-c-abi-fnptr-marker-key-id? [key : i64] [name-id : i64]) : bool
-  (= key (tc-c-abi-fnptr-marker-id name-id)))
-
-(define (tc-c-abi-fnptr-marker-id [name-id : i64]) : i64
-  (- 0 (+ (* name-id 2) 2)))
-
-(define (tc-bind-c-abi-fnptr-id
-  [env : TcTypeEnv]
-  [name-id : i64]
-  [ty : ast.AstType]) : TcTypeEnv
-  (let
-    [next-env : TcTypeEnv
-      (tc-env-compact-local-if-threshold
-        (tc-bind-raw-id
-          (tc-bind-raw-id
-            env
-            (tc-c-abi-fnptr-marker-id name-id)
-            (ast.AstType.Unit))
-          name-id
-          ty))]
-    (begin
-      (if (tc-type-env-scoped-runtime-active? next-env)
-        (tc-type-env-scoped-runtime-mark-latest-flags-id!
-          next-env
-          name-id
-          tc-type-env-scoped-flag-c-abi-fnptr)
-        unit)
-      next-env)))
-
-(define (tc-bind-unsafe-c-abi-fnptr-id
-  [env : TcTypeEnv]
-  [name-id : i64]
-  [ty : ast.AstType]) : TcTypeEnv
-  (let
-    [next-env : TcTypeEnv
-      (tc-env-compact-local-if-threshold
-        (tc-bind-raw-id
-          (tc-bind-raw-id
-            (tc-bind-raw-id
-              env
-              (tc-c-abi-fnptr-marker-id name-id)
-              (ast.AstType.Unit))
-            (tc-unsafe-decl-marker-id name-id)
-            (ast.AstType.Unit))
-          name-id
-          ty))]
-    (begin
-      (if (tc-type-env-scoped-runtime-active? next-env)
-        (tc-type-env-scoped-runtime-mark-latest-flags-id!
-          next-env
-          name-id
-          (bit-or
-            tc-type-env-scoped-flag-unsafe
-            tc-type-env-scoped-flag-c-abi-fnptr))
-        unit)
-      next-env)))
-
 (define tc-type-env-scoped-flag-unsafe : i64
   1)
-(define tc-type-env-scoped-flag-c-abi-fnptr : i64
-  2)
 (define tc-type-env-scoped-flag-marker : i64
   4)
 
@@ -12507,7 +12444,6 @@
   (match kind
     [(TcTypeEnvScopedMarkerKind.None) 0]
     [(TcTypeEnvScopedMarkerKind.UnsafeDecl) 1]
-    [(TcTypeEnvScopedMarkerKind.CAbiFnptr) 2]
     [(TcTypeEnvScopedMarkerKind.DefaultBoundary) 3]
     [(TcTypeEnvScopedMarkerKind.Region) 4]
     [(TcTypeEnvScopedMarkerKind.UnsafeContext) 5]
@@ -12520,7 +12456,6 @@
   (cond
     [(= tag 0) TcTypeEnvScopedMarkerKind.None]
     [(= tag 1) TcTypeEnvScopedMarkerKind.UnsafeDecl]
-    [(= tag 2) TcTypeEnvScopedMarkerKind.CAbiFnptr]
     [(= tag 3) TcTypeEnvScopedMarkerKind.DefaultBoundary]
     [(= tag 4) TcTypeEnvScopedMarkerKind.Region]
     [(= tag 5) TcTypeEnvScopedMarkerKind.UnsafeContext]
@@ -12538,10 +12473,6 @@
 
 (define (tc-type-env-scoped-flag? [flags : i64] [flag : i64]) : bool
   (not (= (bit-and flags flag) 0)))
-
-(define (tc-type-env-scoped-slot-c-abi-fnptr?
-  [slot : (& slot TcTypeEnvScopedSlot)]) : bool
-  (tc-type-env-scoped-flag? slot.flags tc-type-env-scoped-flag-c-abi-fnptr))
 
 ;; Each scoped stack has a unique per-job epoch, so nested carriers can
 ;; overwrite that job's dense entries safely; restoring an older carrier lazily
@@ -12803,9 +12734,6 @@
       (TcTypeEnvScopedLookup.Found
         slot.ty
         (tc-type-env-scoped-flag? slot.flags tc-type-env-scoped-flag-unsafe)
-        (tc-type-env-scoped-flag?
-          slot.flags
-          tc-type-env-scoped-flag-c-abi-fnptr)
         (tc-type-env-scoped-marker-kind-from-tag slot.marker-kind-tag)
         slot.scope-depth
         slot.generation))))
@@ -13072,13 +13000,9 @@
 (define (tc-type-env-scoped-visible-bind-flags
   [rest-env : TcTypeEnv]
   [name-id : i64]) : i64
-  (bit-or
-    (if (tc-binding-unsafe-marker-head-id? rest-env name-id)
-      tc-type-env-scoped-flag-unsafe
-      0)
-    (if (tc-c-abi-fnptr-marker-near-id? rest-env name-id 3)
-      tc-type-env-scoped-flag-c-abi-fnptr
-      0)))
+  (if (tc-binding-unsafe-marker-head-id? rest-env name-id)
+    tc-type-env-scoped-flag-unsafe
+    0))
 
 (define (tc-type-env-scoped-stack-push-visible-bind!
   [stack : (&mut stack TcTypeEnvScopedStack)]
@@ -13262,7 +13186,7 @@
     (ast.AstType.Var name-id)
     TcTypeEnvScopedMarkerKind.AtomicArenaOwner))
 
-(define (tc-type-env-scoped-sidecar-bind-unsafe-c-abi-fnptr-id
+(define (tc-type-env-scoped-sidecar-bind-unsafe-id
   [sidecar : TcTypeEnvScopedSidecar]
   [name-id : i64]
   [ty : ast.AstType]) : TcTypeEnvScopedSidecar
@@ -13272,11 +13196,6 @@
     (begin
       (tc-type-env-scoped-stack-bind-marker-id!
         (&mut next.stack)
-        (tc-c-abi-fnptr-marker-id name-id)
-        (ast.AstType.Unit)
-        TcTypeEnvScopedMarkerKind.CAbiFnptr)
-      (tc-type-env-scoped-stack-bind-marker-id!
-        (&mut next.stack)
         (tc-unsafe-decl-marker-id name-id)
         (ast.AstType.Unit)
         TcTypeEnvScopedMarkerKind.UnsafeDecl)
@@ -13284,9 +13203,7 @@
         (&mut next.stack)
         name-id
         ty
-        (bit-or
-          tc-type-env-scoped-flag-unsafe
-          tc-type-env-scoped-flag-c-abi-fnptr))
+        tc-type-env-scoped-flag-unsafe)
       next)))
 
 ;; The scoped stack owns local bindings. The persistent env is an immutable
@@ -13439,16 +13356,13 @@
     (tc-global-shared-view carrier)
     (tc-type-env-scoped-sidecar-bind-atomic-arena-owner carrier.sidecar name-id)))
 
-(define (tc-type-env-scoped-carrier-bind-unsafe-c-abi-fnptr-id
+(define (tc-type-env-scoped-carrier-bind-unsafe-id
   [carrier : TcTypeEnvScopedCarrier]
   [name-id : i64]
   [ty : ast.AstType]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
     (tc-global-shared-view carrier)
-    (tc-type-env-scoped-sidecar-bind-unsafe-c-abi-fnptr-id
-      carrier.sidecar
-      name-id
-      ty)))
+    (tc-type-env-scoped-sidecar-bind-unsafe-id carrier.sidecar name-id ty)))
 
 (define (tc-type-env-scoped-carrier-lookup-id
   [carrier : TcTypeEnvScopedCarrier]
@@ -13525,33 +13439,13 @@
     [(ResultTcTypeUnsafe.Ok _ unsafe) unsafe]
     [(ResultTcTypeUnsafe.Err _) false]))
 
-(define (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
-  [carrier : TcTypeEnvScopedCarrier]
-  [name-id : i64]) : bool
-  (let
-    [sidecar : TcTypeEnvScopedSidecar (tc-global-shared-view carrier.sidecar)]
-    [stack : TcTypeEnvScopedStack (tc-global-shared-view sidecar.stack)]
-    [index : i64 (tc-type-env-scoped-stack-lookup-index stack name-id)]
-    (if (>= index 0)
-      (let
-        [slot : TcTypeEnvScopedSlot
-          (tc-global-array-element-shared-view stack.slots index)]
-        (tc-type-env-scoped-slot-c-abi-fnptr? slot))
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-env-profile-note-scoped-tail-fallback))
-        (tc-binding-c-abi-fnptr-persistent-id?
-          (tc-type-env-scoped-sidecar-persistent sidecar)
-          name-id)))))
-
 (define (tc-type-env-scoped-carrier-marker-type
   [carrier : TcTypeEnvScopedCarrier]
   [name-id : i64]) : ast.AstMaybeType
   (match (tc-type-env-scoped-sidecar-lookup-id
     (tc-global-shared-view carrier.sidecar)
     name-id)
-    [(TcTypeEnvScopedLookup.Found ty _ _ _ _ _) (ast.AstMaybeType.Some ty)]
+    [(TcTypeEnvScopedLookup.Found ty _ _ _ _) (ast.AstMaybeType.Some ty)]
     [(TcTypeEnvScopedLookup.Missing)
       (tc-env-marker-type
         (tc-type-env-scoped-sidecar-persistent carrier.sidecar)
@@ -14081,135 +13975,11 @@
         unit)
       next-env)))
 
-(define (tc-c-abi-fnptr-marker-near-id?
-  [env : TcTypeEnv]
-  [name-id : i64]
-  [remaining : i64]) : bool
-  (let
-    [store-handle : i64 env.store]
-    [head : i64 env.head]
-    [left : i64 remaining]
-    [done : bool false]
-    [found : bool false]
-    (begin
-      (while (and (> left 0) (not done))
-        (cond
-          [(= head -1) (set! done true)]
-          [(< head -1)
-            (let
-              [cache : TcTypeEnvCache
-                (tc-type-env-cache-at
-                  (tc-type-env-cache-ptr
-                    store-handle
-                    (tc-type-env-cache-index head)))]
-              (set! head cache.rest))]
-          [else
-            (let
-              [binding-ptr : (Ptr TcTypeEnvBinding)
-                (tc-type-env-binding-ptr store-handle head)]
-              [key : i64 (tc-type-env-binding-name-at binding-ptr)]
-              (cond
-                [(tc-c-abi-fnptr-marker-key-id? key name-id)
-                  (begin
-                    (set! found true)
-                    (set! done true))]
-                [(= key name-id) (set! done true)]
-                [else
-                  (begin
-                    (set! head (tc-type-env-binding-parent-at binding-ptr))
-                    (set! left (- left 1)))]))]))
-      found)))
-
 ;; `name-id` is the lookup key already selected by the caller. Module/import
 ;; bindings use structural keys, while local bindings use raw interner ids.
 ;; Do not normalize it with `tc-env-name-key-id` here: a qualified raw id and
 ;; its structural key are distinct storage domains, and the marker is stored
 ;; beside the value under the selected domain.
-(define (tc-binding-c-abi-fnptr-persistent-id?
-  [env : TcTypeEnv]
-  [name-id : i64]) : bool
-  (let
-    [store-handle : i64 env.store]
-    [head : i64 env.head]
-    (cond
-      [(= head -1) false]
-      [(< head -1)
-        (let
-          [node-addr : i64 (tc-type-env-cache-index head)]
-          (if (>= (tc-chain-node-depth node-addr) 0)
-            (let
-              [ref : i64 (tc-chain-resolve store-handle node-addr name-id)]
-              (if (>= ref 0)
-                (=
-                  (array-ref
-                    (__tl-project-field
-                      (tc-chain-ref-cache store-handle ref)
-                      c-abi-fnptr-flags)
-                    (tc-chain-ref-slot ref))
-                  1)
-                false))
-            (let
-              [cache : TcTypeEnvCache
-                (tc-type-env-cache-at
-                  (tc-type-env-cache-ptr store-handle node-addr))]
-              [ids : tc_i64_i64_map.Map cache.ids]
-              [index : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
-              (if (>= index 0)
-                (= (array-ref cache.c-abi-fnptr-flags index) 1)
-                (if cache.partial
-                  (tc-binding-c-abi-fnptr-persistent-id?
-                    (TcTypeEnv store-handle cache.below env.abi-pad)
-                    name-id)
-                  false)))))]
-      [else
-        (let
-          [binding-ptr : (Ptr TcTypeEnvBinding)
-            (tc-type-env-binding-ptr store-handle head)]
-          [rest : TcTypeEnv
-            (TcTypeEnv
-              store-handle
-              (tc-type-env-binding-parent-at binding-ptr)
-              env.abi-pad)]
-          (if (= (tc-type-env-binding-name-at binding-ptr) name-id)
-            (tc-c-abi-fnptr-marker-near-id? rest name-id 3)
-            (tc-binding-c-abi-fnptr-persistent-id? rest name-id)))])))
-
-(define (tc-binding-c-abi-fnptr-id? [env : TcTypeEnv] [name-id : i64]) : bool
-  (if (tc-type-env-scoped-runtime-active? env)
-    (let
-      [carrier : TcTypeEnvScopedCarrier
-        (tc-type-env-scoped-runtime-current env)]
-      [index : i64
-        (tc-type-env-scoped-carrier-lookup-index
-          (tc-global-shared-view carrier)
-          name-id)]
-      [scoped : bool
-        (if (>= index 0)
-          (tc-type-env-scoped-slot-c-abi-fnptr?
-            (array-ref
-              (__tl-project-field
-                (__tl-project-field (__tl-project-field carrier sidecar) stack)
-                slots)
-              index))
-          (begin
-            (cfg
-              compile-profile
-              (compiler-tc-env-profile-note-scoped-tail-fallback))
-            (tc-binding-c-abi-fnptr-persistent-id?
-              (__tl-project-field
-                (__tl-project-field carrier sidecar)
-                persistent)
-              name-id)))]
-      (begin
-        (cfg
-          tc-env-scoped-dual-verify
-          (if (= scoped (tc-binding-c-abi-fnptr-persistent-id? env name-id))
-            unit
-            (io.panic
-              "typecheck: scoped C ABI fnptr lookup diverged from persistent env")))
-        scoped))
-    (tc-binding-c-abi-fnptr-persistent-id? env name-id)))
-
 (define (tc-binding-unsafe-marker-head-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (let
     [head : i64 env.head]
@@ -14425,13 +14195,11 @@
   [ids : (&mut ids tc_i64_i64_map.Map)]
   [values : (&mut values (__tl_dyn-array ast.AstType))]
   [unsafe-flags : (&mut unsafe-flags (__tl_dyn-array i64))]
-  [c-abi-fnptr-flags : (&mut c-abi-fnptr-flags (__tl_dyn-array i64))]
   [shadow-flags : (&mut shadow-flags (__tl_dyn-array i64))]
   [name-id : i64]
   [next : i64]
   [ty : ast.AstType]
   [unsafe : bool]
-  [c-abi-fnptr : bool]
   [sidecar-flags : i64]
   [position : i64]) : bool
   (if (tc_i64_i64_map.insert-if-absent-ref! ids name-id next)
@@ -14444,11 +14212,6 @@
           1
           0))
       (set!
-        (array-ref c-abi-fnptr-flags next)
-        (if c-abi-fnptr
-          1
-          0))
-      (set!
         (array-ref shadow-flags next)
         (+ sidecar-flags (* position tc-env-cache-sidecar-position-scale)))
       true)
@@ -14458,7 +14221,6 @@
   [ids : (&mut ids tc_i64_i64_map.Map)]
   [values : (&mut values (__tl_dyn-array ast.AstType))]
   [unsafe-flags : (&mut unsafe-flags (__tl_dyn-array i64))]
-  [c-abi-fnptr-flags : (&mut c-abi-fnptr-flags (__tl_dyn-array i64))]
   [shadow-flags : (&mut shadow-flags (__tl_dyn-array i64))]
   [lifetime-id : i64]
   [next : i64]
@@ -14485,7 +14247,6 @@
         (begin
           (set! (array-ref values next) ty)
           (set! (array-ref unsafe-flags next) 0)
-          (set! (array-ref c-abi-fnptr-flags next) 0)
           (set!
             (array-ref shadow-flags next)
             (+
@@ -14502,7 +14263,6 @@
   [values : (&mut values (__tl_dyn-array ast.AstType))]
   [track-resolution : bool]
   [unsafe-flags : (&mut unsafe-flags (__tl_dyn-array i64))]
-  [c-abi-fnptr-flags : (&mut c-abi-fnptr-flags (__tl_dyn-array i64))]
   [shadow-flags : (&mut shadow-flags (__tl_dyn-array i64))]
   [above-boundary : bool]) : tc_i64_i64_map.Map
   (let
@@ -14551,13 +14311,11 @@
                   (&mut cur-ids)
                   values
                   unsafe-flags
-                  c-abi-fnptr-flags
                   shadow-flags
                   name-id
                   next
                   (tc-global-shared-view ty)
                   (tc-binding-unsafe-marker-head-id? rest-env name-id)
-                  (tc-c-abi-fnptr-marker-near-id? rest-env name-id 3)
                   (tc-env-cache-binding-sidecar-flags
                     rest-env
                     name-id
@@ -14595,7 +14353,6 @@
                     (&mut cur-ids)
                     values
                     unsafe-flags
-                    c-abi-fnptr-flags
                     shadow-flags
                     marker-lifetime-id
                     next
@@ -14632,7 +14389,6 @@
   [values : (&mut values (__tl_dyn-array ast.AstType))]
   [track-resolution : bool]
   [unsafe-flags : (&mut unsafe-flags (__tl_dyn-array i64))]
-  [c-abi-fnptr-flags : (&mut c-abi-fnptr-flags (__tl_dyn-array i64))]
   [shadow-flags : (&mut shadow-flags (__tl_dyn-array i64))]
   [above-boundary : bool]) : tc_i64_i64_map.Map
   (let
@@ -14679,13 +14435,11 @@
                   (&mut cur-ids)
                   values
                   unsafe-flags
-                  c-abi-fnptr-flags
                   shadow-flags
                   name-id
                   next
                   (tc-global-shared-view ty)
                   (tc-binding-unsafe-marker-head-id? rest-env name-id)
-                  (tc-c-abi-fnptr-marker-near-id? rest-env name-id 3)
                   (tc-env-cache-binding-sidecar-flags
                     rest-env
                     name-id
@@ -14723,7 +14477,6 @@
                     (&mut cur-ids)
                     values
                     unsafe-flags
-                    c-abi-fnptr-flags
                     shadow-flags
                     marker-lifetime-id
                     next
@@ -15166,7 +14919,6 @@
           (if scan-through
             capacity
             (+ (* capacity 2) 1)))]
-      [c-abi-fnptr-flags : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
       [shadow-flags : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
       [ids : tc_i64_i64_map.Map
         (tc-env-cache-fill
@@ -15175,7 +14927,6 @@
           (&mut values)
           (not scan-through)
           (&mut unsafe-flags)
-          (&mut c-abi-fnptr-flags)
           (&mut shadow-flags)
           true)]
       [node : TcTypeEnv
@@ -15191,7 +14942,6 @@
               ids
               values
               unsafe-flags
-              c-abi-fnptr-flags
               shadow-flags
               scan-through
               false
@@ -15234,7 +14984,6 @@
           (if scan-through
             capacity
             (+ (* capacity 2) 1)))]
-      [c-abi-fnptr-flags : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
       [shadow-flags : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
       [ids : tc_i64_i64_map.Map
         (tc-env-cache-fill-prefix
@@ -15244,7 +14993,6 @@
           (&mut values)
           (not scan-through)
           (&mut unsafe-flags)
-          (&mut c-abi-fnptr-flags)
           (&mut shadow-flags)
           true)]
       [node : TcTypeEnv
@@ -15260,7 +15008,6 @@
               ids
               values
               unsafe-flags
-              c-abi-fnptr-flags
               shadow-flags
               scan-through
               true
@@ -15542,49 +15289,6 @@
       import-unqualified
       name-id)
     (tc-bind-unsafe-id env (tc-module-name-id-by-id alias-id name-id) ty)))
-
-(define (tc-bind-import-alias-value-c-abi-fnptr-id
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [alias-id : i64]
-  [importer-module-id : i64]
-  [source-module-id : i64]
-  [import-unqualified : bool]
-  [name-id : i64]
-  [ty : ast.AstType]) : TcTypeEnv
-  (begin
-    (tc-unqualified-import-note-value!
-      ctx
-      env
-      alias-id
-      importer-module-id
-      source-module-id
-      import-unqualified
-      name-id)
-    (tc-bind-c-abi-fnptr-id env (tc-module-name-id-by-id alias-id name-id) ty)))
-
-(define (tc-bind-import-alias-value-unsafe-c-abi-fnptr-id
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [alias-id : i64]
-  [importer-module-id : i64]
-  [source-module-id : i64]
-  [import-unqualified : bool]
-  [name-id : i64]
-  [ty : ast.AstType]) : TcTypeEnv
-  (begin
-    (tc-unqualified-import-note-value!
-      ctx
-      env
-      alias-id
-      importer-module-id
-      source-module-id
-      import-unqualified
-      name-id)
-    (tc-bind-unsafe-c-abi-fnptr-id
-      env
-      (tc-module-name-id-by-id alias-id name-id)
-      ty)))
 
 (define (tc-struct-cleanup-function-type [struct-ty : ast.AstType]) : ast.AstType
   (tc-fn1 struct-ty (ast.AstType.Unit)))
@@ -16696,6 +16400,13 @@
         (tc-type-list-render (ast.ast-type-list-box-shared-view args))
         " "
         (tc-type-render (ast.ty-node-get ret))
+        ")")]
+    [(ast.AstType.CFunc signature mode)
+      (str_cat.str-cat
+        "(CFunc "
+        (ast.ast-c-function-mode-name mode)
+        " "
+        (tc-type-render (ast.ty-node-get signature))
         ")")]
     [(ast.AstType.Tuple elems)
       (str_cat.str-cat
@@ -19308,8 +19019,7 @@
             (begin
               (cfg compile-profile (compiler-tc-env-profile-note-lookup))
               (match (tc-type-env-scoped-stack-lookup-id-at sidecar.stack index)
-                [(TcTypeEnvScopedLookup.Found ty _ _ _ _ _)
-                  (ResultTcType.Ok ty)]
+                [(TcTypeEnvScopedLookup.Found ty _ _ _ _) (ResultTcType.Ok ty)]
                 [(TcTypeEnvScopedLookup.Missing)
                   (ResultTcType.Err
                     "typecheck: scoped lookup index unexpectedly missing")])))
@@ -20965,7 +20675,7 @@
         [ids : tc_i64_i64_map.Map
           (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
         [sidecar-flags : (__tl_dyn-array i64)
-          (tc-type-env-cache-field-at cache-ptr 80 (__tl_dyn-array i64))]
+          (tc-type-env-cache-field-at cache-ptr 72 (__tl_dyn-array i64))]
         (match (tc_i64_i64_map.get (& ids) name-id)
           [(tc_i64_i64_map.LookupFound index)
             (not (= (bit-and (array-ref sidecar-flags index) sidecar-flag) 0))]
@@ -21389,7 +21099,7 @@
     [ids : tc_i64_i64_map.Map
       (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
     [sidecar-flags : (__tl_dyn-array i64)
-      (tc-type-env-cache-field-at cache-ptr 80 (__tl_dyn-array i64))]
+      (tc-type-env-cache-field-at cache-ptr 72 (__tl_dyn-array i64))]
     [ordinary-index : i64 (tc_i64_i64_map.get-value-or (& ids) lifetime-id -1)]
     [marker-index : i64
       (tc_i64_i64_map.get-value-or
@@ -21472,7 +21182,7 @@
         [ids : tc_i64_i64_map.Map
           (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
         [sidecar-flags : (__tl_dyn-array i64)
-          (tc-type-env-cache-field-at cache-ptr 80 (__tl_dyn-array i64))]
+          (tc-type-env-cache-field-at cache-ptr 72 (__tl_dyn-array i64))]
         (if scan-through
           (match (tc_i64_i64_map.get (& ids) name-id)
             [(tc_i64_i64_map.LookupFound index)
@@ -23519,6 +23229,8 @@
     [(ast.AstType.Slice elem)
       (tc-type-needs-resolution-id-for-state? state elem)]
     [(ast.AstType.Box elem) (tc-type-needs-resolution-id-for-state? state elem)]
+    [(ast.AstType.CFunc signature _)
+      (tc-type-needs-resolution-id-for-state? state signature)]
     [(ast.AstType.Ptr elem) (tc-type-needs-resolution-id-for-state? state elem)]
     [(ast.AstType.MutPtr elem)
       (tc-type-needs-resolution-id-for-state? state elem)]
@@ -28376,6 +28088,7 @@
   ;; job-owned predicate only for composite shapes that the old resolver would
   ;; otherwise rebuild unconditionally.
   (match (tc-global-shared-view ty)
+    [(ast.AstType.CFunc _ _) (tc-resolve-type-composite ctx ty)]
     [(ast.AstType.Func _ _) (tc-resolve-type-composite ctx ty)]
     [(ast.AstType.Tuple _) (tc-resolve-type-composite ctx ty)]
     [(ast.AstType.Array _ _) (tc-resolve-type-composite ctx ty)]
@@ -28422,6 +28135,11 @@
           (tc-global-shared-view ctx)
           (ast.ast-type-list-box-shared-view args))
         (tc-resolve-type (tc-global-shared-view ctx) (ast.ty-node-get ret)))]
+    [(ast.AstType.CFunc signature mode)
+      (ast.AstType.CFunc
+        (ast.ast-node-pool-reader-type-push
+          (tc-resolve-type ctx (ast.ty-node-get signature)))
+        mode)]
     [(ast.AstType.Tuple elems)
       (ast.ast-ty-tuple
         (tc-resolve-type-list ctx (ast.ast-type-list-box-shared-view elems)))]
@@ -29230,6 +28948,15 @@
         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]
         [(ResultTcUnit.Ok)
           (match (tc-resolve-type (tc-global-shared-view ctx) ty)
+            [(ast.AstType.CFunc signature _)
+              (let
+                [shape : ast.AstType
+                  (tc-context-type-get (tc-global-shared-view ctx) signature)]
+                (match (tc-check-extern-c-abi
+                  (tc-global-shared-view ctx)
+                  (tc-global-shared-view shape))
+                  [(ResultTcUnit.Ok) (tc-source-type-policy-ok ctx shape)]
+                  [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
             [(ast.AstType.Func args ret)
               (tc-source-function-type-policy-ok
                 ctx
@@ -31584,6 +31311,15 @@
               (ast.ast-type-list-box-shared-view b-args))
             (tc-type-eq (ast.ty-node-get a-ret) (ast.ty-node-get b-ret)))]
         [_ false])]
+    [(ast.AstType.CFunc a-signature a-mode)
+      (match b
+        [(ast.AstType.CFunc b-signature b-mode)
+          (and
+            (ast.ast-c-function-mode-eq? a-mode b-mode)
+            (tc-type-eq
+              (ast.ty-node-get a-signature)
+              (ast.ty-node-get b-signature)))]
+        [_ false])]
     [(ast.AstType.Tuple a-elems)
       (match b
         [(ast.AstType.Tuple b-elems)
@@ -33188,6 +32924,7 @@
     ;; Function values are represented by the function type only. Capturing
     ;; closures carry a separate environment and remain a later issue.
     [(ast.AstType.Func _ _) (TcMoveKind.Copyable)]
+    [(ast.AstType.CFunc _ _) (TcMoveKind.Copyable)]
     [(ast.AstType.Ptr _) (TcMoveKind.Copyable)]
     [(ast.AstType.MutPtr _) (TcMoveKind.Copyable)]
     ;; Shared references are handles and remain Copyable independent of their
@@ -34242,8 +33979,41 @@
         0)
       (TcSpmdEnv merged left-len))))
 
+(define (tc-type-env-cache-raw-fields-match? [env : TcTypeEnv]) : bool
+  (let
+    [cache-ptr : (Ptr TcTypeEnvCache)
+      (tc-type-env-cache-ptr env.store (tc-type-env-cache-index env.head))]
+    [cache : TcTypeEnvCache (tc-type-env-cache-at cache-ptr)]
+    [raw-shadow : (__tl_dyn-array i64)
+      (tc-type-env-cache-field-at cache-ptr 72 (__tl_dyn-array i64))]
+    (and
+      (unsafe
+        (=
+          (ptr->int (__tl_array-data raw-shadow))
+          (ptr->int (__tl_array-data cache.shadow-flags))))
+      (= (tc-type-env-cache-field-at cache-ptr 80 bool) cache.scan-through)
+      (= (tc-type-env-cache-field-at cache-ptr 81 bool) cache.partial)
+      (= (tc-type-env-cache-field-at cache-ptr 88 i64) cache.rest)
+      (= (tc-type-env-cache-field-at cache-ptr 96 i64) cache.below))))
+
+(define (tc-type-env-cache-raw-fields-smoke?) : bool
+  (let
+    [base : TcTypeEnv
+      (tc-env-with-cache
+        (tc-bind-id
+          (tc-empty-env)
+          (ci.intern "raw-cache-base")
+          (ast.AstType.I64)))]
+    [layer : TcTypeEnv
+      (tc-env-with-cache-layer-over-explicit
+        (tc-bind-id base (ci.intern "raw-cache-layer") (ast.AstType.Bool)))]
+    (and
+      (tc-type-env-cache-raw-fields-match? base)
+      (tc-type-env-cache-raw-fields-match? layer))))
+
 (define (tc-type-env-raw-layout-smoke?) : bool
   (and
+    (tc-type-env-cache-raw-fields-smoke?)
     (= (comptime (offset-of (type TcTypeEnvBinding) name-id)) 0)
     (= (comptime (offset-of (type TcTypeEnvBinding) ty)) 8)
     (= (comptime (offset-of (type TcTypeEnvBinding) parent)) 32)
@@ -34811,29 +34581,63 @@
         [_ false])
       (not (tc-lifetime-visible-id? below-base (ci.intern "global"))))))
 
-(define (tc-type-env-local-cache-c-abi-fnptr-smoke?) : bool
+(define (tc-type-env-c-function-value-shape? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.CFunc signature mode)
+      (and
+        (= (ast.ast-c-function-mode-key mode) 1)
+        (tc-type-eq (ast.ty-node-get signature) (tc-fn0 (ast.AstType.I64))))]
+    [_ false]))
+
+(define (tc-type-env-has-c-function-value? [env : TcTypeEnv] [name-id : i64]) : bool
+  (match (tc-lookup-unsafe-key-id env name-id)
+    [(ResultTcTypeUnsafe.Ok ty _) (tc-type-env-c-function-value-shape? ty)]
+    [_ false]))
+
+(define (tc-type-env-scoped-has-c-function-value?
+  [carrier : TcTypeEnvScopedCarrier]
+  [name-id : i64]) : bool
+  (let
+    [index : i64
+      (tc-type-env-scoped-carrier-lookup-index
+        (tc-global-shared-view carrier)
+        name-id)]
+    (if (>= index 0)
+      (match (tc-type-env-scoped-stack-lookup-id-at carrier.sidecar.stack index)
+        [(TcTypeEnvScopedLookup.Found ty _ _ _ _)
+          (tc-type-env-c-function-value-shape? ty)]
+        [_ false])
+      (match (tc-lookup-unsafe-persistent-key-id
+        (tc-type-env-scoped-sidecar-persistent carrier.sidecar)
+        name-id
+        name-id)
+        [(ResultTcTypeUnsafe.Ok ty _) (tc-type-env-c-function-value-shape? ty)]
+        [_ false]))))
+
+(define (tc-type-env-local-cache-c-function-smoke?) : bool
   (let
     [base : TcTypeEnv (tc-env-with-cache (tc-empty-env))]
-    [callback-ty : ast.AstType (tc-fn0 (ast.AstType.I64))]
+    [callback-ty : ast.AstType
+      (ast.ast-ty-c-func
+        (ast.ast-type-list-new)
+        (ast.AstType.I64)
+        ast.AstCFunctionMode.NonNull)]
     [marked : TcTypeEnv
-      (tc-bind-c-abi-fnptr-id
+      (tc-bind-id
         base
         (ci.intern "callback")
         (tc-global-shared-view callback-ty))]
     [both : TcTypeEnv
-      (tc-bind-unsafe-c-abi-fnptr-id
-        marked
-        (ci.intern "danger-callback")
-        callback-ty)]
+      (tc-bind-unsafe-id marked (ci.intern "danger-callback") callback-ty)]
     [deep : TcTypeEnv
       (tc-type-env-bind-many both (+ (* (tc-local-cache-threshold) 2) 8))]
     (and
-      (tc-binding-c-abi-fnptr-id? deep (ci.intern "callback"))
+      (tc-type-env-has-c-function-value? deep (ci.intern "callback"))
       (not (tc-binding-unsafe-id? deep (ci.intern "callback")))
-      (tc-binding-c-abi-fnptr-id? deep (ci.intern "danger-callback"))
+      (tc-type-env-has-c-function-value? deep (ci.intern "danger-callback"))
       (tc-binding-unsafe-id? deep (ci.intern "danger-callback"))
       (match (tc-lookup-unsafe-id deep (ci.intern "danger-callback"))
-        [(ResultTcTypeUnsafe.Ok (ast.AstType.Func _ _) unsafe) unsafe]
+        [(ResultTcTypeUnsafe.Ok (ast.AstType.CFunc _ _) unsafe) unsafe]
         [_ false]))))
 
 (cfg
@@ -34988,7 +34792,7 @@
 
 (cfg
   test
-  (define (tc-type-env-c-abi-fnptr-selected-key-smoke?) : bool
+  (define (tc-type-env-c-function-selected-key-smoke?) : bool
     (let
       [module-id : i64 (ci.intern "selected-key-module")]
       [name-id : i64 (ci.intern "selected-key-callback")]
@@ -34999,10 +34803,14 @@
         (tc-env-name-key-id (cis.InternStructuralSessionHandle 0) qualified-id)]
       [local-id : i64 (ci.intern "selected-key-local")]
       [layer-id : i64 (ci.intern "selected-key-layer")]
-      [callback-ty : ast.AstType (tc-fn0 (ast.AstType.I64))]
+      [callback-ty : ast.AstType
+        (ast.ast-ty-c-func
+          (ast.ast-type-list-new)
+          (ast.AstType.I64)
+          ast.AstCFunctionMode.NonNull)]
       [structural-base : TcTypeEnv
         (tc-env-with-cache
-          (tc-bind-c-abi-fnptr-id
+          (tc-bind-id
             (tc-empty-env)
             structural-key
             (tc-global-shared-view callback-ty)))]
@@ -35011,13 +34819,13 @@
           (tc-bind-id structural-base layer-id (ast.AstType.Bool)))]
       [qualified-raw : TcTypeEnv
         (tc-env-with-cache
-          (tc-bind-c-abi-fnptr-id
+          (tc-bind-id
             (tc-empty-env)
             qualified-id
             (tc-global-shared-view callback-ty)))]
       [local-raw : TcTypeEnv
         (tc-env-with-cache
-          (tc-bind-c-abi-fnptr-id
+          (tc-bind-id
             (tc-empty-env)
             local-id
             (tc-global-shared-view callback-ty)))]
@@ -35025,7 +34833,7 @@
         (tc-type-env-scoped-carrier-from-env
           (tc-global-shared-view structural-layer))]
       [scoped-carrier : TcTypeEnvScopedCarrier
-        (tc-type-env-scoped-carrier-bind-unsafe-c-abi-fnptr-id
+        (tc-type-env-scoped-carrier-bind-unsafe-id
           (tc-type-env-scoped-carrier-from-env (tc-empty-env))
           structural-key
           callback-ty)]
@@ -35034,11 +34842,11 @@
         (tc-type-env-scoped-runtime-enter! (tc-global-shared-view tail-carrier))]
       [runtime-ok : bool
         (and
-          (tc-binding-c-abi-fnptr-id?
+          (tc-type-env-has-c-function-value?
             (tc-global-shared-view structural-layer)
             structural-key)
           (not
-            (tc-binding-c-abi-fnptr-id?
+            (tc-type-env-has-c-function-value?
               (tc-global-shared-view structural-layer)
               qualified-id)))]
       (begin
@@ -35051,33 +34859,33 @@
           (tc-env-cache-explicit-head? (tc-global-shared-view structural-layer))
           (tc-type-env-cache-partial-head?
             (tc-global-shared-view structural-layer))
-          (tc-binding-c-abi-fnptr-id?
+          (tc-type-env-has-c-function-value?
             (tc-global-shared-view structural-layer)
             structural-key)
           (not
-            (tc-binding-c-abi-fnptr-id?
+            (tc-type-env-has-c-function-value?
               (tc-global-shared-view structural-layer)
               qualified-id))
-          (tc-binding-c-abi-fnptr-id?
+          (tc-type-env-has-c-function-value?
             (tc-global-shared-view qualified-raw)
             qualified-id)
           (not
-            (tc-binding-c-abi-fnptr-id?
+            (tc-type-env-has-c-function-value?
               (tc-global-shared-view qualified-raw)
               normalized-key))
-          (tc-binding-c-abi-fnptr-id? local-raw local-id)
-          (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
+          (tc-type-env-has-c-function-value? local-raw local-id)
+          (tc-type-env-scoped-has-c-function-value?
             (tc-global-shared-view tail-carrier)
             structural-key)
           (not
-            (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
+            (tc-type-env-scoped-has-c-function-value?
               (tc-global-shared-view tail-carrier)
               qualified-id))
-          (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
+          (tc-type-env-scoped-has-c-function-value?
             (tc-global-shared-view scoped-carrier)
             structural-key)
           (not
-            (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
+            (tc-type-env-scoped-has-c-function-value?
               (tc-global-shared-view scoped-carrier)
               qualified-id))
           runtime-ok)))))
@@ -35114,27 +34922,31 @@
   test
   (define (tc-type-env-explicit-cache-layering-flags-smoke?) : bool
     (let
-      [callback-ty : ast.AstType (tc-fn0 (ast.AstType.I64))]
+      [callback-ty : ast.AstType
+        (ast.ast-ty-c-func
+          (ast.ast-type-list-new)
+          (ast.AstType.I64)
+          ast.AstCFunctionMode.NonNull)]
       [base-callback-id : i64 (ci.intern "base-callback")]
       [danger-callback-id : i64 (ci.intern "danger-callback")]
       [base : TcTypeEnv
         (tc-env-with-cache
-          (tc-bind-c-abi-fnptr-id
+          (tc-bind-id
             (tc-empty-env)
             base-callback-id
             (tc-global-shared-view callback-ty)))]
       [layer-source : TcTypeEnv
-        (tc-bind-unsafe-c-abi-fnptr-id base danger-callback-id callback-ty)]
+        (tc-bind-unsafe-id base danger-callback-id callback-ty)]
       [layer : TcTypeEnv (tc-env-with-cache-layer-over-explicit layer-source)]
       (and
         (tc-env-cache-explicit-head? layer)
         (tc-type-env-cache-partial-head? layer)
-        (tc-binding-c-abi-fnptr-id? layer base-callback-id)
+        (tc-type-env-has-c-function-value? layer base-callback-id)
         (not (tc-binding-unsafe-id? layer base-callback-id))
-        (tc-binding-c-abi-fnptr-id? layer danger-callback-id)
+        (tc-type-env-has-c-function-value? layer danger-callback-id)
         (tc-binding-unsafe-id? layer danger-callback-id)
         (match (tc-lookup-unsafe-id layer danger-callback-id)
-          [(ResultTcTypeUnsafe.Ok (ast.AstType.Func _ _) unsafe) unsafe]
+          [(ResultTcTypeUnsafe.Ok (ast.AstType.CFunc _ _) unsafe) unsafe]
           [_ false])))))
 
 (cfg
@@ -35246,11 +35058,10 @@
                       [(TcTypeEnvScopedLookup.Found
                           (ast.AstType.Bool)
                           unsafe
-                          c-abi-fnptr
                           _
                           depth
                           _)
-                        (and (not unsafe) (not c-abi-fnptr) (= depth 1))]
+                        (and (not unsafe) (= depth 1))]
                       [_ false]))]
                 (begin
                   (tc-type-env-scoped-stack-restore! (&mut stack) outer)
@@ -35266,13 +35077,11 @@
                       [(TcTypeEnvScopedLookup.Found
                           (ast.AstType.I64)
                           unsafe
-                          c-abi-fnptr
                           marker-kind
                           depth
                           _)
                         (and
                           (not unsafe)
-                          (not c-abi-fnptr)
                           (tc-type-env-scoped-marker-kind-same?
                             marker-kind
                             TcTypeEnvScopedMarkerKind.None)
@@ -35296,15 +35105,14 @@
           (let
             [shadowed : bool
               (match (tc-type-env-scoped-stack-lookup-id stack name-id)
-                [(TcTypeEnvScopedLookup.Found (ast.AstType.Bool) _ _ _ _ _)
-                  true]
+                [(TcTypeEnvScopedLookup.Found (ast.AstType.Bool) _ _ _ _) true]
                 [_ false])]
             (begin
               (tc-type-env-scoped-stack-restore! (&mut stack) mark)
               (let
                 [restored : bool
                   (match (tc-type-env-scoped-stack-lookup-id stack name-id)
-                    [(TcTypeEnvScopedLookup.Found (ast.AstType.I64) _ _ _ _ _)
+                    [(TcTypeEnvScopedLookup.Found (ast.AstType.I64) _ _ _ _)
                       true]
                     [_ false])]
                 [repaired-index : i64
@@ -35315,7 +35123,7 @@
                     [(tc_i64_i64_map.LookupMissing) -1])]
                 [restored-again : bool
                   (match (tc-type-env-scoped-stack-lookup-id stack name-id)
-                    [(TcTypeEnvScopedLookup.Found (ast.AstType.I64) _ _ _ _ _)
+                    [(TcTypeEnvScopedLookup.Found (ast.AstType.I64) _ _ _ _)
                       true]
                     [_ false])]
                 (and shadowed restored (= repaired-index 0) restored-again)))))))))
@@ -35347,7 +35155,7 @@
               (ast.AstType.Bool)))
           (set!
             sidecar
-            (tc-type-env-scoped-sidecar-bind-unsafe-c-abi-fnptr-id
+            (tc-type-env-scoped-sidecar-bind-unsafe-id
               sidecar
               fn-id
               (ast.AstType.I64)))
@@ -35360,13 +35168,11 @@
                   [(TcTypeEnvScopedLookup.Found
                       (ast.AstType.Bool)
                       unsafe
-                      c-abi-fnptr
                       marker-kind
                       depth
                       generation)
                     (and
                       (not unsafe)
-                      (not c-abi-fnptr)
                       (tc-type-env-scoped-marker-kind-same?
                         marker-kind
                         TcTypeEnvScopedMarkerKind.None)
@@ -35379,15 +35185,10 @@
                   [(TcTypeEnvScopedLookup.Found
                       (ast.AstType.I64)
                       unsafe
-                      c-abi-fnptr
                       _
                       depth
                       generation)
-                    (and
-                      unsafe
-                      c-abi-fnptr
-                      (= depth 1)
-                      (= generation generation-before))]
+                    (and unsafe (= depth 1) (= generation generation-before))]
                   [_ false])
                 (match (tc-type-env-scoped-stack-marker-lookup
                   (tc-global-shared-view sidecar.stack)
@@ -35414,10 +35215,6 @@
                   fn-id)
                   [(ResultTcTypeUnsafe.Ok (ast.AstType.I64) unsafe) unsafe]
                   [_ false])
-                (tc-binding-c-abi-fnptr-id?
-                  (tc-type-env-scoped-sidecar-materialize
-                    (tc-global-shared-view sidecar))
-                  fn-id)
                 (match (tc-lookup-id
                   (tc-type-env-scoped-sidecar-materialize
                     (tc-global-shared-view sidecar))
@@ -35444,13 +35241,11 @@
                   [(TcTypeEnvScopedLookup.Found
                       (ast.AstType.I64)
                       unsafe
-                      c-abi-fnptr
                       marker-kind
                       depth
                       _)
                     (and
                       (not unsafe)
-                      (not c-abi-fnptr)
                       (tc-type-env-scoped-marker-kind-same?
                         marker-kind
                         TcTypeEnvScopedMarkerKind.None)
@@ -35572,7 +35367,7 @@
             (tc-type-env-scoped-carrier-push-region carrier _inner-id))
           (set!
             carrier
-            (tc-type-env-scoped-carrier-bind-unsafe-c-abi-fnptr-id
+            (tc-type-env-scoped-carrier-bind-unsafe-id
               carrier
               fn-id
               callback-ty))
@@ -35655,20 +35450,16 @@
                 (tc-binding-unsafe-id?
                   (tc-type-env-scoped-carrier-env (tc-global-shared-view deep))
                   fn-id)
-                (tc-binding-c-abi-fnptr-id?
-                  (tc-type-env-scoped-carrier-env (tc-global-shared-view deep))
-                  fn-id)
                 (match (tc-type-env-scoped-sidecar-lookup-id
                   (tc-global-shared-view deep-sidecar)
                   fn-id)
                   [(TcTypeEnvScopedLookup.Found
                       (ast.AstType.Func _ _)
                       unsafe
-                      c-abi-fnptr
                       _
                       _
                       _)
-                    (and unsafe c-abi-fnptr)]
+                    (and unsafe)]
                   [_ false])
                 (match (tc-type-env-scoped-stack-marker-lookup
                   (tc-global-shared-view deep-sidecar.stack)
@@ -35750,10 +35541,7 @@
       [unsafe-env : TcTypeEnv
         (tc-bind-unsafe-id runtime-env runtime-unsafe-id (ast.AstType.I64))]
       [c-abi-env : TcTypeEnv
-        (tc-bind-c-abi-fnptr-id
-          unsafe-env
-          runtime-callback-id
-          (tc-fn0 (ast.AstType.I64)))]
+        (tc-bind-id unsafe-env runtime-callback-id (tc-fn0 (ast.AstType.I64)))]
       [shadow-env : TcTypeEnv
         (tc-bind-id
           c-abi-env
@@ -35775,7 +35563,6 @@
           (match (tc-lookup-unsafe-id inner-env runtime-unsafe-id)
             [(ResultTcTypeUnsafe.Ok (ast.AstType.I64) unsafe) unsafe]
             [_ false])
-          (tc-binding-c-abi-fnptr-id? inner-env runtime-callback-id)
           (not
             (tc-default-builtin-unshadowed-id?
               inner-env
@@ -35800,7 +35587,6 @@
                 [(ResultTcType.Err _) true]
                 [_ false])
               (not (tc-name-bound-id? runtime-env runtime-unsafe-id))
-              (not (tc-binding-c-abi-fnptr-id? runtime-env runtime-callback-id))
               (tc-default-builtin-unshadowed-id?
                 runtime-env
                 cbi.compiler-builtin-id-tl-private-string-length))]
@@ -35961,7 +35747,7 @@
           (ast.AstType.I64)))
       (set!
         carrier
-        (tc-type-env-scoped-carrier-bind-unsafe-c-abi-fnptr-id
+        (tc-type-env-scoped-carrier-bind-unsafe-id
           carrier
           fn-id
           (tc-fn0 (ast.AstType.I64))))
@@ -36008,9 +35794,6 @@
           (tc-type-env-scoped-carrier-binding-unsafe-id?
             (tc-global-shared-view carrier)
             fn-id)
-          (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
-            (tc-global-shared-view carrier)
-            fn-id)
           (match (tc-lookup-id snapshot tail-only-id)
             [(ResultTcType.Ok (ast.AstType.String)) true]
             [_ false])
@@ -36018,7 +35801,6 @@
             [(ResultTcType.Ok (ast.AstType.Bool)) true]
             [_ false])
           (tc-binding-unsafe-id? snapshot fn-id)
-          (tc-binding-c-abi-fnptr-id? snapshot fn-id)
           (not
             (tc-default-builtin-unshadowed-id?
               (tc-type-env-scoped-carrier-env default-carrier)
@@ -36148,7 +35930,7 @@
     (tc-type-env-local-cache-depth-cap-smoke?)
     (tc-arena-phase-nested-structural-record-smoke?)
     (tc-type-env-local-cache-deep-scan-smoke?)
-    (tc-type-env-local-cache-c-abi-fnptr-smoke?)
+    (tc-type-env-local-cache-c-function-smoke?)
     (tc-type-env-local-cache-lambda-capture-smoke?)
     (tc-type-env-scoped-stack-smoke?)
     (tc-type-env-walker-api-smoke?)))
@@ -36177,7 +35959,7 @@
     (if (tc-type-env-explicit-cache-layering-marker-smoke?)
       unit
       (io.panic "typecheck: explicit env cache marker layering smoke failed"))
-    (if (tc-type-env-c-abi-fnptr-selected-key-smoke?)
+    (if (tc-type-env-c-function-selected-key-smoke?)
       unit
       (io.panic "typecheck: selected C ABI fnptr key smoke failed"))))
 
@@ -37454,18 +37236,10 @@
                       name
                       (tc-global-shared-view ty))
                     (ResultTcEnv.Ok
-                      (if (tc-extern-value-c-abi-fnptr?
-                        extern-ctx
-                        kind
-                        (tc-global-shared-view ty))
-                        (tc-bind-unsafe-c-abi-fnptr-id
-                          env
-                          (tc-module-name-id-by-id module-id name)
-                          ty)
-                        (tc-bind-unsafe-id
-                          env
-                          (tc-module-name-id-by-id module-id name)
-                          ty))))]
+                      (tc-bind-unsafe-id
+                        env
+                        (tc-module-name-id-by-id module-id name)
+                        ty)))]
                 [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
           [_ (ResultTcEnv.Ok env)]))]
     [(ast.AstDecl.Def decl-meta name _ _)
@@ -37528,15 +37302,7 @@
                 name
                 (tc-global-shared-view ty))
               (ResultTcEnv.Ok
-                (if (tc-extern-value-c-abi-fnptr?
-                  extern-ctx
-                  kind
-                  (tc-global-shared-view ty))
-                  (tc-bind-c-abi-fnptr-id
-                    env
-                    (tc-module-name-id-by-id module-id name)
-                    ty)
-                  (tc-bind-id env (tc-module-name-id-by-id module-id name) ty))))]
+                (tc-bind-id env (tc-module-name-id-by-id module-id name) ty)))]
           [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
     [(ast.AstDecl.DefEnum decl-meta name cleanup variants)
       (let
@@ -38073,38 +37839,19 @@
                     ty))]
               [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
           [(ast.AstDecl.Extern decl-meta name kind _ _)
-            (let
-              [extern-ctx : TcContext
-                (tc-context-with-module-id
-                  (tc-global-shared-view ctx)
-                  (tc-env-key-name-text module)
-                  module)]
-              (match (tc-import-alias-source-value-type env module name)
-                [(ResultTcType.Ok ty)
-                  (ResultTcEnv.Ok
-                    (if (tc-extern-value-c-abi-fnptr?
-                      extern-ctx
-                      kind
-                      (tc-global-shared-view ty))
-                      (tc-bind-import-alias-value-unsafe-c-abi-fnptr-id
-                        ctx
-                        env
-                        alias
-                        importer-module
-                        module
-                        import-unqualified
-                        name
-                        ty)
-                      (tc-bind-import-alias-value-unsafe-id
-                        ctx
-                        env
-                        alias
-                        importer-module
-                        module
-                        import-unqualified
-                        name
-                        ty)))]
-                [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
+            (match (tc-import-alias-source-value-type env module name)
+              [(ResultTcType.Ok ty)
+                (ResultTcEnv.Ok
+                  (tc-bind-import-alias-value-unsafe-id
+                    ctx
+                    env
+                    alias
+                    importer-module
+                    module
+                    import-unqualified
+                    name
+                    ty))]
+              [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
           [_ (ResultTcEnv.Ok env)]))]
     [(ast.AstDecl.Def decl-meta name _ _)
       (match (tc-import-alias-source-value-type env module name)
@@ -38149,38 +37896,19 @@
               ty))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
     [(ast.AstDecl.Extern decl-meta name kind _ _)
-      (let
-        [extern-ctx : TcContext
-          (tc-context-with-module-id
-            (tc-global-shared-view ctx)
-            (tc-env-key-name-text module)
-            module)]
-        (match (tc-import-alias-source-value-type env module name)
-          [(ResultTcType.Ok ty)
-            (ResultTcEnv.Ok
-              (if (tc-extern-value-c-abi-fnptr?
-                extern-ctx
-                kind
-                (tc-global-shared-view ty))
-                (tc-bind-import-alias-value-c-abi-fnptr-id
-                  ctx
-                  env
-                  alias
-                  importer-module
-                  module
-                  import-unqualified
-                  name
-                  ty)
-                (tc-bind-import-alias-value-id
-                  ctx
-                  env
-                  alias
-                  importer-module
-                  module
-                  import-unqualified
-                  name
-                  ty)))]
-          [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
+      (match (tc-import-alias-source-value-type env module name)
+        [(ResultTcType.Ok ty)
+          (ResultTcEnv.Ok
+            (tc-bind-import-alias-value-id
+              ctx
+              env
+              alias
+              importer-module
+              module
+              import-unqualified
+              name
+              ty))]
+        [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
     [(ast.AstDecl.DefEnum decl-meta name cleanup variants)
       (let
         [scoped-name-id : i64 (tc-module-name-id-by-id module name)]
@@ -38429,48 +38157,26 @@
       (let
         [source-name : i64 (tc-module-name-id-by-id target-module item)]
         [unsafe-binding : bool (tc-binding-unsafe-id? env source-name)]
-        [c-abi-fnptr-binding : bool
-          (tc-binding-c-abi-fnptr-id? env source-name)]
         (ResultTcEnv.Ok
           (if unsafe-binding
-            (if c-abi-fnptr-binding
-              (tc-bind-import-alias-value-unsafe-c-abi-fnptr-id
-                ctx
-                env
-                importer-module
-                importer-module
-                target-module
-                true
-                alias
-                ty)
-              (tc-bind-import-alias-value-unsafe-id
-                ctx
-                env
-                importer-module
-                importer-module
-                target-module
-                true
-                alias
-                ty))
-            (if c-abi-fnptr-binding
-              (tc-bind-import-alias-value-c-abi-fnptr-id
-                ctx
-                env
-                importer-module
-                importer-module
-                target-module
-                true
-                alias
-                ty)
-              (tc-bind-import-alias-value-id
-                ctx
-                env
-                importer-module
-                importer-module
-                target-module
-                true
-                alias
-                ty)))))]
+            (tc-bind-import-alias-value-unsafe-id
+              ctx
+              env
+              importer-module
+              importer-module
+              target-module
+              true
+              alias
+              ty)
+            (tc-bind-import-alias-value-id
+              ctx
+              env
+              importer-module
+              importer-module
+              target-module
+              true
+              alias
+              ty))))]
     [(ResultTcType.Err _)
       (let
         [symbols (tc-context-symbols ctx)]
@@ -38963,13 +38669,7 @@
           [(ast.AstDecl.Extern decl-meta name kind _ _)
             (match (tc-top-decl-type (tc-global-shared-view ctx) inner)
               [(ResultTcType.Ok ty)
-                (ResultTcEnv.Ok
-                  (if (tc-extern-value-c-abi-fnptr?
-                    (tc-global-shared-view ctx)
-                    kind
-                    (tc-global-shared-view ty))
-                    (tc-bind-unsafe-c-abi-fnptr-id env name ty)
-                    (tc-bind-unsafe-id env name ty)))]
+                (ResultTcEnv.Ok (tc-bind-unsafe-id env name ty))]
               [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
           [_ (ResultTcEnv.Ok env)]))]
     [(ast.AstDecl.Def decl-meta name _ _)
@@ -39011,14 +38711,7 @@
         (match (tc-top-decl-type
           (tc-global-shared-view ctx)
           (tc-global-shared-view decl))
-          [(ResultTcType.Ok ty)
-            (ResultTcEnv.Ok
-              (if (tc-extern-value-c-abi-fnptr?
-                (tc-global-shared-view ctx)
-                kind
-                (tc-global-shared-view ty))
-                (tc-bind-c-abi-fnptr-id env name ty)
-                (tc-bind-id env name ty)))]
+          [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind-id env name ty))]
           [(ResultTcType.Err message) (ResultTcEnv.Err message)])
         (ResultTcEnv.Ok env))]
     [(ast.AstDecl.DefEnum decl-meta name cleanup variants)
@@ -41231,7 +40924,7 @@
         [ids : tc_i64_i64_map.Map
           (tc-type-env-cache-field-at cache-ptr 32 tc_i64_i64_map.Map)]
         [shadow-flags : (__tl_dyn-array i64)
-          (tc-type-env-cache-field-at cache-ptr 80 (__tl_dyn-array i64))]
+          (tc-type-env-cache-field-at cache-ptr 72 (__tl_dyn-array i64))]
         (match (tc_i64_i64_map.get (& ids) name-id)
           [(tc_i64_i64_map.LookupFound index)
             (=
@@ -44957,8 +44650,7 @@
             args
             resolved-params
             allow-region-args
-            (ast.AstMaybeType.Some (tc-global-shared-view target))
-            false)
+            (ast.AstMaybeType.Some (tc-global-shared-view target)))
             [(ResultTcUnit.Ok) (ResultTcType.Ok target)]
             [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
       [(ResultTcLifetimeSubst.Err message) (ResultTcType.Err message)])))
@@ -44979,8 +44671,7 @@
   [params : ast.AstTypeList]
   [ret : ast.AstType]
   [lifetimes : ast.AstLifetimeList]
-  [allow-region-args : bool]
-  [c-abi-args : bool]) : ResultTcType
+  [allow-region-args : bool]) : ResultTcType
   (match (tc-infer-call-lifetime-subst
     (tc-global-shared-view ctx)
     env
@@ -45006,8 +44697,7 @@
           args
           resolved-params
           allow-region-args
-          (ast.AstMaybeType.No)
-          c-abi-args)
+          (ast.AstMaybeType.No))
           [(ResultTcUnit.Ok)
             (ResultTcType.Ok (tc-tag-active-region env resolved-ret))]
           [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
@@ -45061,125 +44751,6 @@
   (match (ast.ast-expr-unspan func)
     [(ast.AstExpr.Var name) (tc-call-extern-abi-for-name-id ctx name)]
     [_ (TcMaybeExternAbi.No)]))
-
-(define (tc-c-abi-fnptr-type? [ty : ast.AstType]) : bool
-  (match (tc-type-strip-region ty)
-    [(ast.AstType.Func _ _) true]
-    [_ false]))
-
-(define (tc-extern-value-c-abi-fnptr?
-  [ctx : TcContext]
-  [kind : ast.AstExternKind]
-  [ty : ast.AstType]) : bool
-  (match kind
-    [(ast.AstExternKind.Value)
-      (tc-c-abi-fnptr-type? (tc-resolve-type (tc-global-shared-view ctx) ty))]
-    [(ast.AstExternKind.Function) false]))
-
-(define (tc-expr-list-last-c-abi-fnptr?
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [exprs : ast.AstExprList]) : bool
-  (if (ast.ast-expr-list-empty? (& exprs))
-    false
-    (tc-expr-c-abi-fnptr?
-      (tc-global-shared-view ctx)
-      env
-      (tc-context-expr-get
-        (tc-global-shared-view ctx)
-        (ast.ast-expr-list-get (& exprs) (- exprs.len 1) 0)))))
-
-(define (tc-hygiene-c-abi-fnptr-binding?
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [name-id : i64]) : bool
-  (let
-    [source-name-id : i64
-      (macro-hygiene-global-source-name-id-or
-        (tc-context-structural-session ctx)
-        name-id
-        -1)]
-    [module-id : i64
-      (if (macro-hygiene-global-id? (tc-context-structural-session ctx) name-id)
-        (macro-hygiene-global-module-id
-          (tc-context-structural-session ctx)
-          name-id)
-        (let
-          [qualified-module-id : i64 (ci.intern-qualified-module-id name-id)]
-          (if (< qualified-module-id 0)
-            cbi.compiler-builtin-id-fix-empty
-            qualified-module-id)))]
-    (if (< source-name-id 0)
-      false
-      (if (and
-        (macro-hygiene-global-legacy-id?
-          (tc-context-structural-session ctx)
-          name-id)
-        (csym.compiler-symbol-root-module-id? module-id))
-        (tc-binding-c-abi-fnptr-id? env source-name-id)
-        (match (tc-hygiene-definition-env-id
-          ctx
-          env
-          (macro-decl-module-display module-id)
-          module-id)
-          [(ResultTcEnv.Ok def-env)
-            (tc-binding-c-abi-fnptr-persistent-id? def-env source-name-id)]
-          [(ResultTcEnv.Err _) false])))))
-
-(define (tc-expr-c-abi-fnptr?
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [expr : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan expr)
-    [(ast.AstExpr.Var name)
-      (if (tc-hygiene-global-name-id? (tc-context-structural-session ctx) name)
-        (tc-hygiene-c-abi-fnptr-binding? ctx env name)
-        (tc-binding-c-abi-fnptr-id? env name))]
-    [(ast.AstExpr.Ann inner-box _)
-      (let
-        [inner : ast.AstExpr
-          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
-        (tc-expr-c-abi-fnptr? ctx env inner))]
-    [(ast.AstExpr.Let let-box)
-      (match (ast.ast-let-box-shared-view let-box)
-        [(ast.AstLet.Let bindings body-box)
-          (let
-            [body : ast.AstExpr
-              (tc-context-expr-get (tc-global-shared-view ctx) body-box)]
-            (match (tc-let-bindings-for-body
-              (tc-global-shared-view ctx)
-              env
-              (tc-global-shared-view bindings)
-              body-box
-              (tc-global-shared-view body))
-              [(ResultTcEnv.Ok next-env)
-                (tc-expr-c-abi-fnptr? ctx next-env body)]
-              [(ResultTcEnv.Err _) false]))])]
-    [(ast.AstExpr.Begin exprs) (tc-expr-list-last-c-abi-fnptr? ctx env exprs)]
-    [(ast.AstExpr.If _ then-box else-box)
-      (let
-        [then-branch : ast.AstExpr
-          (tc-context-expr-get (tc-global-shared-view ctx) then-box)]
-        [else-branch : ast.AstExpr
-          (tc-context-expr-get (tc-global-shared-view ctx) else-box)]
-        (and
-          (tc-expr-c-abi-fnptr? (tc-global-shared-view ctx) env then-branch)
-          (tc-expr-c-abi-fnptr? ctx env else-branch)))]
-    [(ast.AstExpr.Call func-box _)
-      (let
-        [func : ast.AstExpr
-          (tc-context-expr-get (tc-global-shared-view ctx) func-box)]
-        (match (tc-call-extern-abi
-          (tc-global-shared-view ctx)
-          (tc-global-shared-view func))
-          ;; A C-ABI call that returns a function value returns a raw C
-          ;; function pointer. The caller separately establishes that the
-          ;; expression's type is a function before recording this provenance.
-          [(TcMaybeExternAbi.Some _) true]
-          ;; Preserve the provenance through factories reached via an already
-          ;; raw C function pointer as well.
-          [(TcMaybeExternAbi.No) (tc-expr-c-abi-fnptr? ctx env func)]))]
-    [_ false]))
 
 (define (tc-name-base-eq? [name : String] [base : String]) : bool
   (if (string.eq name base)
@@ -45678,7 +45249,7 @@
       (tc-bind-arena-phase-token env name owner-id)]
     [(TcMaybeNameId.No) env]))
 
-(define (tc-bind-c-abi-fnptr-if-needed-id
+(define (tc-bind-initialized-value-id
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : i64]
@@ -45704,14 +45275,7 @@
         owner-env
         name
         (tc-global-shared-view init))]
-    (if (and
-      (tc-c-abi-fnptr-type? (tc-global-shared-view ty))
-      (tc-expr-c-abi-fnptr?
-        (tc-global-shared-view ctx)
-        (tc-global-shared-view env)
-        (tc-global-shared-view init)))
-      (tc-bind-c-abi-fnptr-id phase-env name ty)
-      (tc-bind-id phase-env name ty))))
+    (tc-bind-id phase-env name ty)))
 
 (define (tc-bind-checked-let-transition-id
   [ctx : TcContext]
@@ -45737,9 +45301,7 @@
       (if (>= transition.phase-owner-id 0)
         (tc-bind-arena-phase-token owner-env name transition.phase-owner-id)
         owner-env)]
-    (if transition.raw-c-fnptr
-      (tc-bind-c-abi-fnptr-id phase-env name (tc-global-shared-view ty))
-      (tc-bind-id phase-env name (tc-global-shared-view ty)))))
+    (tc-bind-id phase-env name (tc-global-shared-view ty))))
 
 (define (tc-checked-let-binding-apply
   [ctx : TcContext]
@@ -45779,39 +45341,11 @@
       (if (>= phase-owner-id 0)
         (tc-bind-arena-phase-token owner-env name phase-owner-id)
         owner-env)]
-    [raw-c-fnptr : bool
-      (and
-        (tc-c-abi-fnptr-type? (tc-global-shared-view ty))
-        (tc-expr-c-abi-fnptr?
-          (tc-global-shared-view ctx)
-          (tc-global-shared-view env)
-          (tc-global-shared-view init)))]
     [transition : TcCheckedLetBindingTransition
-      (TcCheckedLetBindingTransition owner-kind phase-owner-id raw-c-fnptr)]
+      (TcCheckedLetBindingTransition owner-kind phase-owner-id)]
     (TcCheckedLetBindingApplied
-      (if raw-c-fnptr
-        (tc-bind-c-abi-fnptr-id phase-env name (tc-global-shared-view ty))
-        (tc-bind-id phase-env name (tc-global-shared-view ty)))
+      (tc-bind-id phase-env name (tc-global-shared-view ty))
       transition)))
-
-(define (tc-raw-c-fnptr-flow-ok
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [expr : ast.AstExpr]
-  [expected : ast.AstType]
-  [c-abi-position : bool]) : ResultTcUnit
-  (if (and
-    (not c-abi-position)
-    (tc-c-abi-fnptr-type? (tc-global-shared-view expected))
-    (tc-expr-c-abi-fnptr?
-      (tc-global-shared-view ctx)
-      env
-      (tc-global-shared-view expr)))
-    (ResultTcUnit.Err
-      (tc-locate-error-at-expr
-        expr
-        "typecheck: raw C function pointer cannot be used as a TypeLisp function value"))
-    ResultTcUnit.Ok))
 
 (define (tc-call-varargs-tail-args
   [func : ast.AstExpr]
@@ -45967,16 +45501,9 @@
           (tc-global-shared-view params)
           abi)
           [(ResultTcTypeList.Ok expanded-params)
-            (tc-call-function-type-normal
-              ctx
-              env
-              func
-              args
-              expanded-params
-              ret
-              true)]
+            (tc-call-function-type-normal ctx env func args expanded-params ret)]
           [(ResultTcTypeList.Err message) (ResultTcType.Err message)])
-        (tc-call-function-type-normal ctx env func args params ret true))]
+        (tc-call-function-type-normal ctx env func args params ret))]
     [(TcMaybeExternAbi.No)
       (tc-call-function-type-normal
         (tc-global-shared-view ctx)
@@ -45984,8 +45511,7 @@
         (tc-global-shared-view func)
         args
         params
-        ret
-        (tc-expr-c-abi-fnptr? ctx env func))]))
+        ret)]))
 
 (define (tc-thread-name-last-dot [name : String]) : i64
   (let
@@ -47482,8 +47008,7 @@
   [func : ast.AstExpr]
   [args : ast.AstExprList]
   [params : ast.AstTypeList]
-  [ret : ast.AstType]
-  [c-abi-args : bool]) : ResultTcType
+  [ret : ast.AstType]) : ResultTcType
   (let
     [allow-region-args : bool
       (tc-call-region-args-allowed-for-func
@@ -47519,8 +47044,7 @@
               (tc-global-shared-view args)
               (tc-global-shared-view params)
               allow-region-args
-              (tc-global-shared-view constructor-target)
-              c-abi-args)
+              (tc-global-shared-view constructor-target))
               [(ResultTcUnit.Ok)
                 (match constructor-target
                   [(ast.AstMaybeType.Some target) (ResultTcType.Ok target)]
@@ -47551,8 +47075,7 @@
                     (TcArityMessage.Detailed
                       (tc-global-shared-view func)
                       (tc-global-shared-view args)
-                      (tc-global-shared-view params))
-                    c-abi-args)
+                      (tc-global-shared-view params)))
                   (tc-check-call-args-with-message
                     (tc-global-shared-view ctx)
                     env
@@ -47563,8 +47086,7 @@
                     (TcArityMessage.Detailed
                       (tc-global-shared-view func)
                       (tc-global-shared-view args)
-                      (tc-global-shared-view params))
-                    c-abi-args))
+                      (tc-global-shared-view params))))
                   [(ResultTcUnit.Ok)
                     (match (tc-check-thread-safe-spawn-call
                       (tc-global-shared-view ctx)
@@ -47599,8 +47121,7 @@
                   params
                   ret
                   lifetimes
-                  allow-region-args
-                  c-abi-args)))])))))
+                  allow-region-args)))])))))
 
 (define (tc-check-call-args-with-message
   [ctx : TcContext]
@@ -47609,8 +47130,7 @@
   [params : ast.AstTypeList]
   [allow-region-args : bool]
   [constructor-target : ast.AstMaybeType]
-  [arity-msg : TcArityMessage]
-  [c-abi-args : bool]) : ResultTcUnit
+  [arity-msg : TcArityMessage]) : ResultTcUnit
   (match (tc-normalize-dotted-local-field-expr-list!
     (tc-global-shared-view ctx)
     env
@@ -47625,7 +47145,6 @@
         allow-region-args
         constructor-target
         arity-msg
-        c-abi-args
         false)]
     [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
 
@@ -47636,8 +47155,7 @@
   [params : ast.AstTypeList]
   [allow-region-args : bool]
   [constructor-target : ast.AstMaybeType]
-  [arity-msg : TcArityMessage]
-  [c-abi-args : bool]) : ResultTcUnit
+  [arity-msg : TcArityMessage]) : ResultTcUnit
   (match (tc-normalize-dotted-local-field-expr-list!
     (tc-global-shared-view ctx)
     env
@@ -47652,7 +47170,6 @@
         allow-region-args
         constructor-target
         arity-msg
-        c-abi-args
         true)]
     [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
 
@@ -47694,7 +47211,6 @@
   [allow-region-args : bool]
   [constructor-target : ast.AstMaybeType]
   [arity-msg : TcArityMessage]
-  [c-abi-args : bool]
   [thread-spawn-args : bool]) : ResultTcUnit
   (if (>= index args.len)
     (if (>= index (ast.ast-type-list-len params))
@@ -47764,76 +47280,60 @@
                                   index))))])]
                     (match expect-result
                       [(ResultTcUnit.Ok)
-                        (match (tc-raw-c-fnptr-flow-ok
-                          (tc-global-shared-view ctx)
-                          env
-                          (tc-global-shared-view effective-arg)
-                          (tc-global-shared-view want)
-                          c-abi-args)
-                          [(ResultTcUnit.Ok)
-                            ;; Outside an active allocation scope, region values
-                            ;; cross a call only through an explicitly
-                            ;; region-bearing formal after lifetime substitution.
-                            ;; Plain constructor fields retain the legacy escape
-                            ;; rejection even when the result has other lifetimes.
-                            (if (and
-                              (tc-type-contains-any-region
-                                (tc-global-shared-view got))
-                              (not allow-region-args)
-                              (not
-                                (tc-type-contains-any-region
-                                  (tc-global-shared-view want)))
-                              (not
-                                (tc-type-regions-all-atomic-arena-owners?
-                                  env
-                                  (tc-global-shared-view got)))
-                              (not
-                                (tc-type-contains-reference?
-                                  (tc-global-shared-view got))))
-                              (ResultTcUnit.Err
-                                (tc-region-call-arg-error effective-arg))
-                              (match (tc-global-shared-view constructor-target)
-                                [(ast.AstMaybeType.Some target)
-                                  (match (tc-ensure-cleanup-resource-not-stored-expr
-                                    (tc-global-shared-view ctx)
+                        (if (and
+                          (tc-type-contains-any-region
+                            (tc-global-shared-view got))
+                          (not allow-region-args)
+                          (not
+                            (tc-type-contains-any-region
+                              (tc-global-shared-view want)))
+                          (not
+                            (tc-type-regions-all-atomic-arena-owners?
+                              env
+                              (tc-global-shared-view got)))
+                          (not
+                            (tc-type-contains-reference?
+                              (tc-global-shared-view got))))
+                          (ResultTcUnit.Err
+                            (tc-region-call-arg-error effective-arg))
+                          (match (tc-global-shared-view constructor-target)
+                            [(ast.AstMaybeType.Some target)
+                              (match (tc-ensure-cleanup-resource-not-stored-expr
+                                (tc-global-shared-view ctx)
+                                env
+                                effective-arg)
+                                [(ResultTcUnit.Ok)
+                                  (match (tc-ensure-region-value-can-flow-into
                                     env
-                                    effective-arg)
+                                    target
+                                    got
+                                    "constructor result")
                                     [(ResultTcUnit.Ok)
-                                      (match (tc-ensure-region-value-can-flow-into
+                                      (tc-check-call-args-with-message-at
+                                        ctx
                                         env
-                                        target
-                                        got
-                                        "constructor result")
-                                        [(ResultTcUnit.Ok)
-                                          (tc-check-call-args-with-message-at
-                                            ctx
-                                            env
-                                            args
-                                            params
-                                            (+ index 1)
-                                            allow-region-args
-                                            constructor-target
-                                            arity-msg
-                                            c-abi-args
-                                            thread-spawn-args)]
-                                        [(ResultTcUnit.Err message)
-                                          (ResultTcUnit.Err message)])]
+                                        args
+                                        params
+                                        (+ index 1)
+                                        allow-region-args
+                                        constructor-target
+                                        arity-msg
+                                        thread-spawn-args)]
                                     [(ResultTcUnit.Err message)
                                       (ResultTcUnit.Err message)])]
-                                [(ast.AstMaybeType.No)
-                                  (tc-check-call-args-with-message-at
-                                    ctx
-                                    env
-                                    args
-                                    params
-                                    (+ index 1)
-                                    allow-region-args
-                                    constructor-target
-                                    arity-msg
-                                    c-abi-args
-                                    thread-spawn-args)]))]
-                          [(ResultTcUnit.Err message)
-                            (ResultTcUnit.Err message)])]
+                                [(ResultTcUnit.Err message)
+                                  (ResultTcUnit.Err message)])]
+                            [(ast.AstMaybeType.No)
+                              (tc-check-call-args-with-message-at
+                                ctx
+                                env
+                                args
+                                params
+                                (+ index 1)
+                                allow-region-args
+                                constructor-target
+                                arity-msg
+                                thread-spawn-args)]))]
                       [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
                 [(ResultTcType.Err message) (ResultTcUnit.Err message)]))]
           [(ResultTcExpr.Err message)
@@ -47846,8 +47346,7 @@
   [args : ast.AstExprList]
   [params : ast.AstTypeList]
   [allow-region-args : bool]
-  [constructor-target : ast.AstMaybeType]
-  [c-abi-args : bool]) : ResultTcUnit
+  [constructor-target : ast.AstMaybeType]) : ResultTcUnit
   (tc-check-call-args-with-message
     ctx
     env
@@ -47855,8 +47354,7 @@
     (tc-global-shared-view params)
     allow-region-args
     constructor-target
-    (TcArityMessage.Detailed func args params)
-    c-abi-args))
+    (TcArityMessage.Detailed func args params)))
 
 (defenum TcDirectLambdaCheck
   (No)
@@ -47958,6 +47456,41 @@
               result))
           (ResultTcType.Err message))])))
 
+(define (tc-call-c-function-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : ast.AstExpr]
+  [args : ast.AstExprList]
+  [signature : i64]
+  [mode : ast.AstCFunctionMode]) : ResultTcType
+  (if (ast.ast-c-function-mode-nullable? mode)
+    (ResultTcType.Err
+      (tc-locate-error-at-expr
+        func
+        "typecheck: nullable C function pointer must be checked before calling"))
+    (match (if (ast.ast-c-function-mode-unsafe? mode)
+      (tc-require-unsafe (tc-global-shared-view ctx) env "C function pointer")
+      ResultTcUnit.Ok)
+      [(ResultTcUnit.Err message) (ResultTcType.Err message)]
+      [(ResultTcUnit.Ok)
+        (let
+          [signature-type : ast.AstType (ast.ty-node-get signature)]
+          (match (tc-check-extern-c-abi
+            (tc-global-shared-view ctx)
+            (tc-global-shared-view signature-type))
+            [(ResultTcUnit.Err message) (ResultTcType.Err message)]
+            [(ResultTcUnit.Ok)
+              (match signature-type
+                [(ast.AstType.Func params result)
+                  (tc-call-function-type-normal
+                    ctx
+                    env
+                    func
+                    args
+                    (ast.ast-type-list-box-shared-view params)
+                    (ast.ty-node-get result))]
+                [_ (ResultTcType.Err "typecheck: invalid C function signature")])]))])))
+
 (define (tc-call-expr-ordinary
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -47989,6 +47522,8 @@
           (tc-global-shared-view func))
           [(ResultTcType.Ok fn-ty)
             (match (tc-global-shared-view fn-ty)
+              [(ast.AstType.CFunc signature mode)
+                (tc-call-c-function-type ctx env func args signature mode)]
               [(ast.AstType.Func params ret)
                 (tc-call-function-type
                   ctx
@@ -47999,6 +47534,8 @@
                   (ast.ty-node-get ret))]
               [(ast.AstType.Region _ inner)
                 (match (ast.ty-node-get inner)
+                  [(ast.AstType.CFunc signature mode)
+                    (tc-call-c-function-type ctx env func args signature mode)]
                   [(ast.AstType.Func params ret)
                     (match (tc-check-call-args-with-message
                       (tc-global-shared-view ctx)
@@ -48011,8 +47548,7 @@
                       (TcArityMessage.Detailed
                         (tc-global-shared-view func)
                         (tc-global-shared-view args)
-                        (ast.ast-type-list-box-shared-view params))
-                      (tc-expr-c-abi-fnptr? ctx env func))
+                        (ast.ast-type-list-box-shared-view params)))
                       [(ResultTcUnit.Ok)
                         (ResultTcType.Ok
                           (tc-tag-active-region env (ast.ty-node-get ret)))]
@@ -48263,6 +47799,8 @@
         (match (tc-call-target-expr-id (tc-global-shared-view ctx) env func-id)
           [(ResultTcType.Ok fn-ty)
             (match (tc-global-shared-view fn-ty)
+              [(ast.AstType.CFunc signature mode)
+                (tc-call-c-function-type ctx env func args signature mode)]
               [(ast.AstType.Func params ret)
                 (tc-call-function-type
                   ctx
@@ -48273,6 +47811,8 @@
                   (ast.ty-node-get ret))]
               [(ast.AstType.Region _ inner)
                 (match (ast.ty-node-get inner)
+                  [(ast.AstType.CFunc signature mode)
+                    (tc-call-c-function-type ctx env func args signature mode)]
                   [(ast.AstType.Func params ret)
                     (match (tc-check-call-args-with-message
                       (tc-global-shared-view ctx)
@@ -48285,8 +47825,7 @@
                       (TcArityMessage.Detailed
                         (tc-global-shared-view func)
                         (tc-global-shared-view args)
-                        (ast.ast-type-list-box-shared-view params))
-                      (tc-expr-c-abi-fnptr? ctx env func))
+                        (ast.ast-type-list-box-shared-view params)))
                       [(ResultTcUnit.Ok)
                         (ResultTcType.Ok
                           (tc-tag-active-region env (ast.ty-node-get ret)))]
@@ -49855,6 +49394,36 @@
 ;; result is the argument's type, stripped of any inner-region tag (the copy
 ;; lands in the enclosing arena, not the source's region). Unsupported types are
 ;; rejected here so no heap-backed value silently lowers as a shallow handle copy.
+(define (tc-c-fn-check-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : ast.AstExprList]) : ResultTcType
+  (if (= args.len 1)
+    (match (tc-expr-id
+      (tc-global-shared-view ctx)
+      env
+      (ast.ast-expr-list-get (& args) 0 0))
+      [(ResultTcType.Ok ty)
+        (match (tc-type-strip-region
+          (tc-resolve-type (tc-global-shared-view ctx) ty))
+          [(ast.AstType.CFunc signature mode)
+            (match (tc-check-extern-c-abi
+              (tc-global-shared-view ctx)
+              (tc-context-type-get ctx signature))
+              [(ResultTcUnit.Err message) (ResultTcType.Err message)]
+              [(ResultTcUnit.Ok)
+                (ResultTcType.Ok
+                  (ast.AstType.CFunc
+                    signature
+                    (if (ast.ast-c-function-mode-unsafe? mode)
+                      ast.AstCFunctionMode.UnsafeNonNull
+                      ast.AstCFunctionMode.NonNull)))])]
+          [_
+            (ResultTcType.Err
+              "typecheck: c-fn-check requires a typed C function pointer")])]
+      [(ResultTcType.Err message) (ResultTcType.Err message)])
+    (ResultTcType.Err "typecheck: c-fn-check expects exactly one argument")))
+
 (define (tc-clone-call
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -50621,6 +50190,14 @@
                       name-id))
                   (tc-float-bitcast-call ctx env name-id args)]
                 [(and
+                    (cbi.compiler-builtin-c-fn-check-id? name-id)
+                    (not
+                      (tc-source-value-bound-id?
+                        (tc-global-shared-view ctx)
+                        env
+                        name-id)))
+                  (tc-c-fn-check-call ctx env args)]
+                [(and
                     (cbi.compiler-builtin-typecheck-clone-id? name-id)
                     (not
                       (tc-source-value-bound-id?
@@ -50753,7 +50330,7 @@
                         [(ResultTcUnit.Ok)
                           (tc-let-bindings-at
                             (tc-global-shared-view ctx)
-                            (tc-bind-c-abi-fnptr-if-needed-id
+                            (tc-bind-initialized-value-id
                               (tc-global-shared-view ctx)
                               env
                               name
@@ -52412,7 +51989,7 @@
                                                   binding-ty)
                                                 applied.transition)
                                               applied.env))
-                                          (tc-bind-c-abi-fnptr-if-needed-id
+                                          (tc-bind-initialized-value-id
                                             (tc-global-shared-view ctx)
                                             (tc-global-shared-view env)
                                             name
@@ -52468,7 +52045,7 @@
                                           (tc-global-shared-view binding-ty)
                                           applied.transition)
                                         applied.env))
-                                    (tc-bind-c-abi-fnptr-if-needed-id
+                                    (tc-bind-initialized-value-id
                                       (tc-global-shared-view ctx)
                                       (tc-global-shared-view env)
                                       name
@@ -63559,6 +63136,8 @@
         "typecheck: slice has no by-value layout; use a borrowed slice reference")]
     [(ast.AstType.Box _)
       (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info))]
+    [(ast.AstType.CFunc _ _)
+      (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info))]
     [(ast.AstType.Ptr _)
       (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info))]
     [(ast.AstType.MutPtr _)
@@ -70802,6 +70381,11 @@
         [(ast.AstType.String) ResultTcUnit.Ok]
         [(ast.AstType.Ptr _) ResultTcUnit.Ok]
         [(ast.AstType.MutPtr _) ResultTcUnit.Ok]
+        [(ast.AstType.CFunc _ mode)
+          (if (ast.ast-c-function-mode-nullable? mode)
+            ResultTcUnit.Ok
+            (ResultTcUnit.Err
+              "typecheck: init cannot create a non-null C function pointer"))]
         [(ast.AstType.DynArray elem)
           (let
             [elem-ty : ast.AstType
@@ -73762,6 +73346,11 @@
         [resolved : ast.AstType
           (tc-resolve-type (tc-global-shared-view ctx) (ast.ty-node-get ty-id))]
         (match (tc-global-shared-view resolved)
+          [(ast.AstType.CFunc _ mode)
+            (if (ast.ast-c-function-mode-nullable? mode)
+              (ResultTcType.Ok resolved)
+              (ResultTcType.Err
+                "typecheck: ptr-null cannot create a non-null C function pointer"))]
           [(ast.AstType.Ptr _) (ResultTcType.Ok resolved)]
           [(ast.AstType.MutPtr _) (ResultTcType.Ok resolved)]
           [_
@@ -73771,6 +73360,7 @@
       (match (tc-expr-id (tc-global-shared-view ctx) env inner-box)
         [(ResultTcType.Ok inner-ty)
           (match (tc-type-strip-region inner-ty)
+            [(ast.AstType.CFunc _ _) (ResultTcType.Ok (ast.AstType.Bool))]
             [(ast.AstType.Ptr _) (ResultTcType.Ok (ast.AstType.Bool))]
             [(ast.AstType.MutPtr _) (ResultTcType.Ok (ast.AstType.Bool))]
             [_
@@ -73961,6 +73551,12 @@
     [(ast.AstType.Char) true]
     [(ast.AstType.Unit) true]
     [(ast.AstType.Never) true]
+    [(ast.AstType.CFunc signature _)
+      (match (tc-check-extern-c-abi
+        (tc-global-shared-view ctx)
+        (tc-context-type-get (tc-global-shared-view ctx) signature))
+        [(ResultTcUnit.Ok) true]
+        [(ResultTcUnit.Err _) false])]
     [(ast.AstType.Func _ _) true]
     [(ast.AstType.Ptr _) true]
     [(ast.AstType.MutPtr _) true]
@@ -74014,32 +73610,64 @@
 (define (tc-extern-native-slice-ref-unsupported-message) : String
   "typecheck: extern/native Slice references are unsupported; use pointer+length")
 
-(define (tc-check-extern-native-slice-ref-args-at
+(define (tc-check-extern-native-value-type [ctx : TcContext] [ty : ast.AstType]) : ResultTcUnit
+  (let
+    [resolved : ast.AstType
+      (tc-type-strip-region (tc-resolve-type (tc-global-shared-view ctx) ty))]
+    (match (tc-global-shared-view resolved)
+      [(ast.AstType.CFunc signature _)
+        (tc-check-extern-c-abi
+          (tc-global-shared-view ctx)
+          (tc-context-type-get ctx signature))]
+      [_
+        (if (tc-extern-native-slice-ref-type? ctx resolved)
+          (ResultTcUnit.Err (tc-extern-native-slice-ref-unsupported-message))
+          ResultTcUnit.Ok)])))
+
+(define (tc-check-extern-native-signature-args-at
   [ctx : TcContext]
   [args : (& args ast.AstTypeList)]
   [index : i64]) : ResultTcUnit
   (if (>= index (ast.ast-type-list-len args))
     ResultTcUnit.Ok
-    (let
-      [head : ast.AstType
-        (ast.ty-node-get
-          (ast.ast-type-list-get args index (ast.ast-type-id-fallback)))]
-      (if (tc-extern-native-slice-ref-type? (tc-global-shared-view ctx) head)
-        (ResultTcUnit.Err (tc-extern-native-slice-ref-unsupported-message))
-        (tc-check-extern-native-slice-ref-args-at ctx args (+ index 1))))))
+    (match (tc-check-extern-native-value-type
+      (tc-global-shared-view ctx)
+      (tc-context-type-get
+        (tc-global-shared-view ctx)
+        (ast.ast-type-list-get args index (ast.ast-type-id-fallback))))
+      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]
+      [(ResultTcUnit.Ok)
+        (tc-check-extern-native-signature-args-at ctx args (+ index 1))])))
 
-(define (tc-check-extern-native-slice-ref [ctx : TcContext] [ty : ast.AstType]) : ResultTcUnit
+(define (tc-raw-c-function-pointer-type-message) : String
+  "typecheck: raw C function pointer requires an explicit CFunc type")
+
+(define (tc-check-extern-native-result-type
+  [ctx : TcContext]
+  [ty : ast.AstType]) : ResultTcUnit
+  (let
+    [resolved : ast.AstType
+      (tc-type-strip-region (tc-resolve-type (tc-global-shared-view ctx) ty))]
+    (match (tc-global-shared-view resolved)
+      [(ast.AstType.Func _ _)
+        (ResultTcUnit.Err (tc-raw-c-function-pointer-type-message))]
+      [_ (tc-check-extern-native-value-type ctx resolved)])))
+
+;; Default native declarations include private runtime contracts that are not
+;; ordinary C signatures. Still validate explicit C callable types and borrowed
+;; Slice boundaries regardless of whether the declaration writes `:abi c`.
+(define (tc-check-extern-native-signature [ctx : TcContext] [ty : ast.AstType]) : ResultTcUnit
   (match (tc-type-strip-region (tc-resolve-type (tc-global-shared-view ctx) ty))
     [(ast.AstType.Func args ret)
-      (match (tc-check-extern-native-slice-ref-args-at
+      (match (tc-check-extern-native-signature-args-at
         (tc-global-shared-view ctx)
         (__tl-box-place args)
         0)
         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]
         [(ResultTcUnit.Ok)
-          (if (tc-extern-native-slice-ref-type? ctx (ast.ty-node-get ret))
-            (ResultTcUnit.Err (tc-extern-native-slice-ref-unsupported-message))
-            ResultTcUnit.Ok)])]
+          (tc-check-extern-native-result-type
+            (tc-global-shared-view ctx)
+            (tc-context-type-get ctx ret))])]
     [_ ResultTcUnit.Ok]))
 
 (define (tc-check-extern-arg-abi [ctx : TcContext] [args : ast.AstTypeList]) : ResultTcUnit
@@ -74068,16 +73696,23 @@
         (tc-global-shared-view ctx)
         (ast.ast-type-list-box-shared-view args))
         [(ResultTcUnit.Ok)
-          (if (tc-extern-abi-value-type-ok? ctx (ast.ty-node-get ret))
-            ResultTcUnit.Ok
-            (ResultTcUnit.Err
-              (tc-extern-abi-unsupported-message "return" (ast.ty-node-get ret))))]
+          (match (tc-type-strip-region (ast.ty-node-get ret))
+            [(ast.AstType.Func _ _)
+              (ResultTcUnit.Err (tc-raw-c-function-pointer-type-message))]
+            [_
+              (if (tc-extern-abi-value-type-ok? ctx (ast.ty-node-get ret))
+                ResultTcUnit.Ok
+                (ResultTcUnit.Err
+                  (tc-extern-abi-unsupported-message
+                    "return"
+                    (ast.ty-node-get ret))))])]
         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
     [_ (ResultTcUnit.Err "typecheck: extern must have function type")]))
 
 (define (tc-check-extern-value-c-abi [ctx : TcContext] [ty : ast.AstType]) : ResultTcUnit
-  (match (tc-global-shared-view ty)
-    [(ast.AstType.Func _ _) (tc-check-extern-c-abi ctx ty)]
+  (match (tc-type-strip-region (tc-global-shared-view ty))
+    [(ast.AstType.Func _ _)
+      (ResultTcUnit.Err (tc-raw-c-function-pointer-type-message))]
     [_
       (if (tc-extern-abi-value-type-ok? ctx (tc-global-shared-view ty))
         ResultTcUnit.Ok
@@ -74111,7 +73746,7 @@
           (tc-resolve-type (tc-global-shared-view ctx) ty)]
         (match kind
           [(ast.AstExternKind.Function)
-            (match (tc-check-extern-native-slice-ref
+            (match (tc-check-extern-native-signature
               (tc-global-shared-view ctx)
               (tc-global-shared-view resolved))
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]
@@ -79552,6 +79187,7 @@
     [(string.eq kind "region") (shl 1 26)]
     [(string.eq kind "type-var") (shl 1 27)]
     [(string.eq kind "box") (shl 1 28)]
+    [(string.eq kind "c-function") (shl 1 30)]
     [else (shl 1 29)]))
 
 (define (tc-macro-abstract-kind-list-mask-from
@@ -84833,6 +84469,7 @@
     [(ast.AstType.Never) true]
     [(ast.AstType.Expr) true]
     [(ast.AstType.ExprList) true]
+    [(ast.AstType.CFunc _ _) true]
     [(ast.AstType.Func _ _) true]
     [(ast.AstType.Ptr _) true]
     [(ast.AstType.MutPtr _) true]
@@ -86761,7 +86398,7 @@
                     (tc-move-check-let-bindings-at
                       (tc-global-shared-view ctx)
                       expr-bases
-                      (tc-bind-c-abi-fnptr-if-needed-id
+                      (tc-bind-initialized-value-id
                         (tc-global-shared-view ctx)
                         (tc-global-shared-view env)
                         name
@@ -88109,7 +87746,7 @@
                         (tc-move-check-loop-let-bindings-at
                           (tc-global-shared-view ctx)
                           expr-bases
-                          (tc-bind-c-abi-fnptr-if-needed-id
+                          (tc-bind-initialized-value-id
                             (tc-global-shared-view ctx)
                             (tc-global-shared-view env)
                             name
@@ -91193,7 +90830,7 @@
           (tc-move-result-let-binding-facts-at
             (tc-global-shared-view ctx)
             expr-bases
-            (tc-bind-c-abi-fnptr-if-needed-id
+            (tc-bind-initialized-value-id
               (tc-global-shared-view ctx)
               env
               name
@@ -97756,7 +97393,7 @@
                       (tc-borrow-check-let-bindings-at
                         (tc-global-shared-view ctx)
                         expr-bases
-                        (tc-bind-c-abi-fnptr-if-needed-id
+                        (tc-bind-initialized-value-id
                           (tc-global-shared-view ctx)
                           (tc-global-shared-view env)
                           name
@@ -108535,6 +108172,29 @@
                     sret)
                   span))]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+    [(ast.AstType.CFunc signature mode)
+      (match (macro-type-to-spanned-sexpr
+        session
+        (ast.ty-node-get signature)
+        span
+        origin)
+        [(ResultMacroSexpr.Ok signature-sexpr)
+          (ResultMacroSexpr.Ok
+            (reader.spanned-sexpr-list-from-builder
+              (reader.spanned-sexpr-builder-push
+                (reader.spanned-sexpr-builder-push
+                  (reader.spanned-sexpr-builder-push
+                    (reader.spanned-sexpr-builder-new)
+                    (macro-spanned-symbol-id
+                      (ci.intern-generated-name "CFunc")
+                      span))
+                  (macro-spanned-symbol-id
+                    (ci.intern-generated-name
+                      (ast.ast-c-function-mode-name mode))
+                    span))
+                signature-sexpr)
+              span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstType.Struct name)
       (ResultMacroSexpr.Ok

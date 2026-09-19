@@ -3987,6 +3987,46 @@ is not propagated as a zero-trip substitute. Owners created inside the body
 remain available for moves confined to that iteration. These scalar rules do
 not relax the SPMD early-exit restrictions in section 5.15.
 
+Outside loop bodies the same divergence rule applies to `if` and `match`
+joins. A branch or arm whose type is `never` (it ends in `return`, `break`,
+`continue`, or a call whose result type is `never`) cannot complete normally
+and does not reach the code after the join, so its moves, borrows, and
+reinitializations do not affect that code:
+
+```lisp test=run name=move-diverging-branch exit=42 stdout=""
+(defstruct Token (id i64) (name String))
+
+(define (consume [t : Token]) : i64
+  t.id)
+
+(define (pick [failed : bool]) : i64
+  (let
+    [token : Token (Token 41 "t")]
+    (begin
+      (if failed
+        (return (consume token)) ; does not reach the join
+        unit)
+      (+ (consume token) 1))))   ; accepted: `token` is still initialized here
+
+(define (main) : i64
+  (pick false))
+```
+
+When exactly one `if` branch diverges, the state after the `if` is the other
+branch's state, including a reinitialization performed there. When both
+branches complete normally the join remains the conservative union of the
+moved places; when both diverge the code after the `if` is unreachable. A
+`match` joins the state before the match with every arm that can complete
+normally. A branch of any other type is treated as completing normally, even
+when it cannot in fact return (an endless loop, for example). A use after a
+move inside the diverging branch itself is still rejected.
+
+One fact survives a diverging branch: a move of an active non-move-aware `with`
+owner (section 5.19). The owner's cleanup runs on every `return`, `try`,
+`break`, and `continue` that leaves its scope, so moving it in a branch that
+leaves the scope is rejected with the same `cleanup owner ... moved before with
+scope exit` diagnostic as a move on the fallthrough path.
+
 **Borrowing use sites.** A borrowing use may inspect a move-only value without
 moving it. These are limited to:
 

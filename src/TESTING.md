@@ -58,6 +58,27 @@ later write must not change an already true predicate or unresolved candidate.
 Visit-counter mutation probes verify the cutoff without relying on invalid IR. Keep these storage checks alongside the existing
 call-memory semantic fixtures when changing traversal or block representation.
 
+## Move joins and diverging arms
+
+`tests/safety/move_diverging_*` and `move_*_reject` run the programs that an
+early `return`, `break`, `continue` or `never` call used to poison, next to the
+rejections that must survive: a move in an arm that completes normally, in both
+a diverging and a normal arm, inside the diverging arm itself, and before the
+branch. Two rows pin what is *not* divergence: an arm containing `try`, which
+may propagate but may also continue, and an arm whose only `return` belongs to
+a lambda defined in it. `move_diverging_reinit_other_arm_ok` keeps an arm that changes nothing
+but diverges opposite an arm that reinitializes; skipping unchanged arms
+unconditionally breaks it.
+
+The `with_owner_*_reject` rows are the soundness half. A `with` scope checks
+its owner only against the body's fallthrough state while lowering cleans the
+owner on every exit edge, so dropping a returning or breaking arm's facts
+without `tc-moved-retain-active-cleanup-owners` accepts a double cleanup: with
+the retention disabled all four rows type-check. Keep whole-owner, `(:owned)`
+field, `match` and loop `break` forms when changing either join. The join fast
+path runs for every branch in a self-compile; measure typecheck-only
+instruction counts on identical source when touching it.
+
 ## Vector reduction source ownership
 
 The backend smoke checks AVX2 i64 min/max with both ordinary and explicit

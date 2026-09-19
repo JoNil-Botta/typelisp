@@ -1978,8 +1978,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     # graph from 62 to 63 segments: the authoritative Windows CI probe measured
     # 4,063,428 used nodes, 4,128,768 capacity, and 132,120,576 physical payload
     # bytes.
+    # #7005's exact fused multiply-add in stdlib.math, which the compiler reaches
+    # through stdlib.io, crosses it from 63 to 64 segments: the authoritative
+    # Windows CI probe (run 35468434885) measured 4,130,315 used nodes, 4,194,304
+    # capacity, and 134,217,728 physical payload bytes. The other three selfhost
+    # pool boundaries keep their pins on that probe (82, 31 and 12 segments).
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 63 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 64 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain

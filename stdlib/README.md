@@ -466,7 +466,8 @@ Vec bang place macros as available yet.
   operand type. `f64-mul-add` / `f32-mul-add` and the type-preserving `mul-add`
   macro are the explicit fused multiply-add: `a * b + c` rounded once, computed
   exactly in integer arithmetic so every target returns the same bits;
-  ordinary `(+ (* a b) c)` is never contracted into it. Freestanding `f64-exp` and `f32-exp` use deterministic
+  ordinary `(+ (* a b) c)` is never contracted into it. Freestanding `f64-exp`
+  and `f32-exp` use deterministic
   table/range reduction and polynomial evaluation with at most one ULP error
   in default round-to-nearest mode; the one-evaluation `exp` macro preserves
   operand precision. Freestanding `f64-log` and `f32-log` use non-FMA

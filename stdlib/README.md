@@ -274,8 +274,14 @@ Vec bang place macros as available yet.
   for invalid names (empty, `=`, or NUL), and `set!` also rejects NUL values.
   Linux mutations publish process-lifetime replacement `envp` storage that is
   also inherited by `process` children; Windows uses
-  `SetEnvironmentVariableA`. Environment access/mutation and process spawning
-  must not race across threads.
+  `SetEnvironmentVariableA`. Lookups, `set!`/`unset!` and process spawning are
+  safe to call concurrently from any thread. On Linux mutators are serialized by
+  a futex lock, each rebuilds from its predecessor's table and publishes one
+  complete immutable table with a single atomic store, so updates to different
+  names are never lost and a lookup or spawned child sees one admitted table:
+  possibly older, never partial or dangling. A read-modify-write spanning
+  several calls is not one transaction. On Windows kernel32 owns and locks the
+  block. Foreign code that edits `environ` directly is outside the contract.
   `path-list`, `path-split`, and `path-join` remain list-compatible
   wrappers; new append-heavy callers should use the `StringVec` variants
   `path-list-vec`, `path-split-vec`, and `path-join-vec`. Import it

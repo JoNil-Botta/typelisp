@@ -1,7 +1,7 @@
 # ci-gate-ledger-schema	2
-# count	all	121
-# count	linux	118
-# count	windows	105
+# count	all	123
+# count	linux	120
+# count	windows	106
 id	hosts	label	needs
 cli-gate-inventory-and-ownership	all	CLI gate inventory and ownership	-
 ci-gate-ledger-self-tests	all	CI gate ledger self-tests	-
@@ -29,6 +29,7 @@ spmd-avx-512-instruction-harness-self-tests	all	SPMD AVX-512 instruction harness
 spmd-mode-instruction-count-harness-self-tests	all	SPMD mode instruction-count harness self-tests	-
 c-measured-region-instruction-harness-self-tests	all	C measured-region instruction harness self-tests	-
 instruction-count-comparison-self-tests	all	instruction-count comparison self-tests	-
+compiler-scaling-comparison-self-tests	all	compiler scaling comparison self-tests	-
 cli-tools-benchmark-repetition-self-test	all	CLI tools benchmark repetition self-test	-
 stage0-release-publication-verifier-self-tests	all	stage0 release publication verifier self-tests	-
 stage0-latest-staged-publication-self-tests	all	stage0 latest staged publication self-tests	-
@@ -119,6 +120,7 @@ stage2-cli-host-action-smoke	linux	stage2 CLI host-action smoke	bootstrap-fixpoi
 stage2-stdlib-documentation	linux	stage2 stdlib documentation	bootstrap-fixpoint
 linux-instruction-count-baseline	linux	Linux instruction-count baseline	bootstrap-fixpoint
 linux-heavy-instruction-count-baseline	linux	Linux heavy instruction-count baseline	bootstrap-fixpoint
+linux-compiler-scaling-budgets	linux	Linux compiler scaling budgets	bootstrap-fixpoint
 stage2-native-link-generated-programs	linux	stage2 native link generated programs	bootstrap-fixpoint
 stage2-rooted-linux-filesystem-boundary	linux	stage2 rooted Linux filesystem boundary	bootstrap-fixpoint
 stage2-linux-process-failure-boundary	linux	stage2 Linux process failure boundary	bootstrap-fixpoint

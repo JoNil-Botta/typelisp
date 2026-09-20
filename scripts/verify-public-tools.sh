@@ -3268,6 +3268,149 @@ fi
 assert_contains "$out" "TypeLisp integration test file:"
 assert_contains "$err" "typelisp test: test executable exited with exit status: 7"
 
+echo "[public-tools] test backend modes"
+# #7057: `typelisp test --backend-mode` must lower and emit the requested mode
+# for file, batch, package inline, and package integration harnesses. Every
+# fixture pins `(program-count)`, the backend gang width (1 scalar, 4 AVX2 i64
+# lanes, 8 AVX-512 i64 lanes), so a request that silently fell back to scalar
+# lowering or scalar emission fails its own assertions.
+TEST_MODES="$WORKDIR/test-backend-modes"
+mkdir -p "$TEST_MODES"
+write_test_backend_mode_fixture() {
+    # $1 = backend mode; $2 = expected gang width
+    _tbm_pkg="$TEST_MODES/$1-pkg"
+    mkdir -p "$_tbm_pkg/src" "$_tbm_pkg/tests"
+    cat > "$_tbm_pkg/typelisp.pkg" <<EOF
+(package
+  (name "test_backend_mode_$1_pkg")
+  (version "0.1.0")
+  (kind "lib"))
+EOF
+    maybe_strip_manifest_kind "$_tbm_pkg/typelisp.pkg"
+    cat > "$_tbm_pkg/src/lib.tl" <<EOF
+(import stdlib.test)
+
+(define (fill [out : (&mut out (__tl_dyn-array i64))] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (set! (array-ref out i) (+ (* (program-count) 100) (program-index)))))
+
+(define (lane-word [index : i64]) : i64
+  (let
+    [n : i64 13]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    (begin
+      (fill (&mut out) n)
+      (array-ref out index))))
+
+(test gang-width-$2
+  (begin
+    (test.assert-i64-eq (lane-word 0) $(($2 * 100)) "first lane")
+    (test.assert-i64-eq (lane-word $((13 - $2))) $((100 * $2 + (13 - $2) % $2)) "tail lane")
+    (test.assert-i64-eq (lane-word 12) $((100 * $2 + 12 % $2)) "last lane")))
+EOF
+    cat > "$_tbm_pkg/tests/gang.tl" <<EOF
+(define (fill [out : (&mut out (__tl_dyn-array i64))] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (set! (array-ref out i) (program-count))))
+
+(define (main) : i64
+  (let
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 13)]
+    (begin
+      (fill (&mut out) 13)
+      (if (= (array-ref out 0) $2)
+        0
+        7))))
+EOF
+    # The batch list is read by the compiler, not converted by the MSYS
+    # argument layer, so it needs the host's own path spelling.
+    native_arg_path "$_tbm_pkg/src/lib.tl" > "$TEST_MODES/$1-batch.txt"
+}
+write_test_backend_mode_fixture scalar 1
+write_test_backend_mode_fixture avx2 4
+write_test_backend_mode_fixture avx512 8
+
+# Accepting a mode never requires executing it: `--check` and `--list` work for
+# every documented spelling on every host.
+for _tbm_mode in scalar avx2 avx512; do
+    # cli-gate-expand test-backend-mode-check-{mode} wrapper run_cmd mode=scalar,avx2,avx512
+    run_cmd "test-backend-mode-check-$_tbm_mode" "$COMPILER" test --check --backend-mode "$_tbm_mode" --target "$HOST_TARGET" --manifest-path "$TEST_MODES/$_tbm_mode-pkg/typelisp.pkg" --stdlib-root "$ROOT/stdlib"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "TypeLisp package test typecheck passed: 2 test(s) in 2 file(s)"
+    # cli-gate-expand test-backend-mode-list-{mode} wrapper run_cmd mode=scalar,avx2,avx512
+    run_cmd "test-backend-mode-list-$_tbm_mode" "$COMPILER" test --list --backend-mode "$_tbm_mode" "$TEST_MODES/$_tbm_mode-pkg/src/lib.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "TypeLisp tests listed: 1 test(s)"
+    # cli-gate-expand test-backend-mode-batch-check-{mode} wrapper run_cmd mode=scalar,avx2,avx512
+    run_cmd "test-backend-mode-batch-check-$_tbm_mode" "$COMPILER" test --check --backend-mode "$_tbm_mode" --batch "$TEST_MODES/$_tbm_mode-batch.txt" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+    assert_success
+    assert_stderr_empty
+done
+
+# The SIMD fixtures must fail under scalar code generation on every host;
+# otherwise their passing runs below would not prove the mode reached codegen.
+for _tbm_mode in avx2 avx512; do
+    # cli-gate-expand test-backend-mode-{mode}-fixture-rejects-scalar wrapper run_cmd mode=avx2,avx512
+    run_cmd "test-backend-mode-$_tbm_mode-fixture-rejects-scalar" "$COMPILER" test --backend-mode scalar "$TEST_MODES/$_tbm_mode-pkg/src/lib.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+    assert_code 1
+    assert_contains "$err" "first lane: expected"
+    assert_contains "$err" "found 100"
+    assert_contains "$err" "TypeLisp tests: 0 passed; 1 failed; 0 ignored; 0 slow-skipped; 1 total"
+    # cli-gate-expand test-backend-mode-{mode}-package-rejects-default wrapper run_cmd mode=avx2,avx512
+    run_cmd "test-backend-mode-$_tbm_mode-package-rejects-default" "$COMPILER" test --target "$HOST_TARGET" --manifest-path "$TEST_MODES/$_tbm_mode-pkg/typelisp.pkg" --stdlib-root "$ROOT/stdlib"
+    assert_code 1
+    assert_contains "$err" "TypeLisp tests: 0 passed; 1 failed; 0 ignored; 0 slow-skipped; 1 total"
+    assert_contains "$err" "typelisp test: test executable exited with exit status: 7"
+done
+
+run_test_backend_mode() {
+    # $1 = backend mode; $2 = required ISA token, or "-" to always run;
+    # $3 = expected gang width
+    if [ "$2" != "-" ] && ! printf '%s\n' "$SIMD_ISAS" | grep -qx "$2"; then
+        # An incapable host is refused by name before any harness is built.
+        # cli-gate-expand test-backend-mode-{mode}-unsupported-host wrapper run_cmd mode=avx2,avx512
+        run_cmd "test-backend-mode-$1-unsupported-host" "$COMPILER" test --backend-mode "$1" "$TEST_MODES/$1-pkg/src/lib.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+        assert_code 1
+        assert_stdout_empty
+        assert_contains "$err" "test: backend mode $1 cannot run on this host"
+        assert_not_contains "$err" "unknown backend mode"
+        assert_not_contains "$err" "test gang-width-$3"
+        return
+    fi
+    # cli-gate-expand test-backend-mode-file-{mode} wrapper run_cmd mode=scalar,avx2,avx512
+    run_cmd "test-backend-mode-file-$1" "$COMPILER" test --backend-mode "$1" "$TEST_MODES/$1-pkg/src/lib.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+    assert_success
+    assert_stdout_empty
+    assert_contains "$err" "ok gang-width-$3"
+    assert_contains "$err" "TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total"
+    # cli-gate-expand test-backend-mode-batch-{mode} wrapper run_cmd mode=scalar,avx2,avx512
+    run_cmd "test-backend-mode-batch-$1" "$COMPILER" test --backend-mode "$1" --batch "$TEST_MODES/$1-batch.txt" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+    assert_success
+    assert_contains "$err" "ok gang-width-$3"
+    assert_contains "$out" "TypeLisp test batch passed: 1 test(s) in 1 file(s)"
+    # cli-gate-expand test-backend-mode-package-{mode} wrapper run_cmd mode=scalar,avx2,avx512
+    run_cmd "test-backend-mode-package-$1" "$COMPILER" test --backend-mode "$1" --target "$HOST_TARGET" --manifest-path "$TEST_MODES/$1-pkg/typelisp.pkg" --stdlib-root "$ROOT/stdlib"
+    assert_success
+    assert_contains "$err" "ok gang-width-$3"
+    assert_contains "$out" "TypeLisp integration test file:"
+    assert_contains "$out" "TypeLisp package tests passed: 2 test(s) in 2 file(s)"
+}
+run_test_backend_mode scalar - 1
+run_test_backend_mode avx2 avx2 4
+run_test_backend_mode avx512 avx512 8
+
+# An unknown spelling stays a parse error, distinct from an incapable host.
+# cli-gate-case test-unknown-backend-mode wrapper run_cmd
+run_cmd test-unknown-backend-mode "$COMPILER" test --backend-mode neon "$TEST_MODES/scalar-pkg/src/lib.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+assert_code 1
+assert_stdout_empty
+assert_contains "$err" "test: unknown backend mode neon"
+assert_not_contains "$err" "cannot run on this host"
+
 echo "[public-tools] package build"
 if [ "$IS_STAGE1_WRAPPER" -eq 0 ]; then
     echo "[public-tools] package artifact freshness"

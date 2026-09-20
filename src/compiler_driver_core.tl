@@ -2794,12 +2794,15 @@
         (&mut (array-ref state.intern-state 0)))
       public-cfgs)))
 
-(define (compiler-driver-emit-lowered-with-level
+;; `mode` must be the backend mode the program was lowered for: SIMD lower
+;; modes produce vector IR that only the matching backend mode can encode.
+(define (compiler-driver-emit-lowered-with-level-and-mode
   [input-path : String]
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [target : compiler_backend.CompilerBackendTarget]
   [has-target : bool]
+  [mode : compiler_backend.CompilerBackendMode]
   [opt-level : i64]) : ResultCompilerDriver
   (let
     [profile-state : profile_state.CompilerProfileState
@@ -2817,7 +2820,7 @@
         spans
         target
         has-target
-        (compiler_backend.CompilerBackendMode.Scalar)
+        mode
         opt-level
         true
         false
@@ -2828,6 +2831,22 @@
       (compiler_backend.compiler-backend-state-release-final-arenas!
         backend-state)
       result)))
+
+(define (compiler-driver-emit-lowered-with-level
+  [input-path : String]
+  [program : compiler_ir_types.CompilerIrProgram]
+  [spans : compiler_ir_types.CompilerSourceSpans]
+  [target : compiler_backend.CompilerBackendTarget]
+  [has-target : bool]
+  [opt-level : i64]) : ResultCompilerDriver
+  (compiler-driver-emit-lowered-with-level-and-mode
+    input-path
+    program
+    spans
+    target
+    has-target
+    (compiler_backend.CompilerBackendMode.Scalar)
+    opt-level))
 
 ;; The lowered IR functions live in a dedicated arena
 ;; (lower-ir-arena); at opt levels >= 1 the optimizer deep-clones every

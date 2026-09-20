@@ -67,6 +67,24 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   sensitivity and all multiplicity rules, declared-versus-approved behavior,
   allocation-free typed-field validation, deterministic first errors, and
   preservation of separate trailer field spelling/value/order.
+- `local_ipc_api.tl` is the conformance matrix for `stdlib.local_ipc`, driven
+  by `stdlib.local_ipc_fake`: endpoint validation boundaries and no dispatch for
+  an invalid endpoint; connect success, retry, timeout slices, cancellation
+  between attempts, cancel-over-timeout and expired-deadline precedence, clock
+  unavailable, budget exhaustion, host failure, policy rejection, peer failure,
+  corrupt peer facts and corrupt handles with exact close counts; explicit
+  close, close failure, double close, use after close and lexical cleanup;
+  every primitive transition (partial, would-block, interrupted, EOF, host
+  failure, oversized and zero adapter counts, zero-length and invalid ranges);
+  pending operations (progress winning cancellation, canceled completion,
+  another terminal error, oversized completion, and one that never completes);
+  wait retries, slice bounds, precedence, budget and wait failure; and
+  whole-buffer transfers that keep their count on EOF, timeout, budget, error
+  and cancellation. Platform leaves must pass the same traces.
+- `local_ipc_forged_connection_reject.tl` and
+  `local_ipc_connection_copy_reject.tl` are check-only rejections: safe code
+  cannot build a connection from a forged state pointer, and a connection
+  cannot gain a second cleanup owner.
 - `net_ip_api.tl` covers network-order constructors, exact borrowed byte
   lengths, family-sensitive equality/order/hash behavior, strict IPv4 and IPv6
   positive and negative text tables with byte offsets, RFC 5952 formatting,

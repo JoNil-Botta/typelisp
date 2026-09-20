@@ -236,6 +236,8 @@ net/http_types.tl
 net/ip.tl
 ssh_known_hosts_parse.tl
 json.tl
+local_ipc.tl
+local_ipc_fake.tl
 math.tl
 msvc.tl
 option.tl
@@ -287,6 +289,7 @@ stdlib/tests/crypto_rsa_verify_api.tl|42|-|-|-
 stdlib/tests/concurrency_registry_api.tl|42|-|-|-
 stdlib/tests/concurrency_registry_exhaustion.tl|42|-|-|-
 stdlib/tests/format_api.tl|42|-|-|-
+stdlib/tests/local_ipc_api.tl|42|-|-|-
 stdlib/tests/format_debug_bytes.tl|42|-|-|-
 stdlib/tests/format_debug_length_overflow.tl|134|-|literal:format: Debug output length overflow|-
 stdlib/tests/format_primitive_debug.tl|42|-|-|-
@@ -346,6 +349,8 @@ stdlib/tests/crypto_sha256_unsafe_adapter_reject.tl|fail|requires unsafe context
 stdlib/tests/crypto_sha512_inline.tl|pass|-
 stdlib/tests/crypto_sha512_unsafe_adapter_reject.tl|fail|requires unsafe context
 stdlib/tests/env_api.tl|pass|-
+stdlib/tests/local_ipc_forged_connection_reject.tl|fail|int->ptr requires unsafe context
+stdlib/tests/local_ipc_connection_copy_reject.tl|fail|cleanup-required resource already has a cleanup owner
 stdlib/tests/format_nonliteral_template_reject.tl|fail|format: template must be a string literal
 stdlib/tests/format_println_nonliteral_template_reject.tl|fail|format: template must be a string literal
 stdlib/tests/format_eprintln_nonliteral_template_reject.tl|fail|format: template must be a string literal

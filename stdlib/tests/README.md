@@ -81,6 +81,14 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   wait retries, slice bounds, precedence, budget and wait failure; and
   whole-buffer transfers that keep their count on EOF, timeout, budget, error
   and cancellation. Platform leaves must pass the same traces.
+- `local_ipc_owner_api.tl` pins the one-owner rule of `stdlib.local_ipc`: a
+  second `LocalIpcConnection` built from a copy of the owner words loses to
+  whichever value operates first (data, accessors and close all report
+  `Closed` without reaching the adapter, and a stale value's cleanup closes
+  nothing), an idle copy's cleanup is the one close, and the adapter's close
+  runs exactly once in every order. It also pins that a zero-length range
+  succeeds without a host or clock call in all three tiers and reports
+  `Closed` on a closed connection in all three.
 - `local_ipc_forged_connection_reject.tl` and
   `local_ipc_connection_copy_reject.tl` are check-only rejections: safe code
   cannot build a connection from a forged state pointer, and a connection

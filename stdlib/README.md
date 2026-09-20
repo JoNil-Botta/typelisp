@@ -339,7 +339,13 @@ Vec bang place macros as available yet.
   bound with `with`: its native identity lives behind a private pointer safe
   code cannot forge, `close!` poisons the handle before exactly one adapter
   close and returns a typed result, lexical cleanup is idempotent and
-  non-reporting, and any use after close fails before dispatch. `read-some!` and
+  non-reporting, and any use after close fails before dispatch. Fields are not
+  private in TypeLisp, so safe code can copy a connection's owner words into a
+  second `LocalIpcConnection`; the owner is therefore generation-checked: every
+  mutating operation atomically advances the state's generation from the
+  value's own, so once either value operates, closes or is cleaned up the other
+  is stale, fails with `Closed` before dispatch and closes nothing. There is
+  always one effective owner, one in-flight operation and one adapter close. `read-some!` and
   `write-some!` take a borrowed byte view and a range, make one adapter attempt,
   keep partial progress, distinguish would-block, interrupted, EOF and stable
   failures, reject invalid ranges and adapter counts outside the request, and
@@ -924,7 +930,7 @@ borrowed process runtime wrappers likewise copy at their owned boundary.
 |-----------|---------------------|
 | `string.is-char-whitespace`, `string.char-eq`, `string.index-of-byte`, `string.contains`, `string.contains-char`, `string.is-string-prefix-at` | Non-allocating string/char inspection; text parameters are borrowed `str` inputs. |
 | `string.append`, `string.concat`, `string.copy`, `string.substring`, `string.slice`, `string.concat-all` | Copying string helpers allocate fresh active-arena `String` storage and copy bytes from borrowed `str` inputs. Owned `String` places auto-borrow at call sites, and stdlib code that already has `(& r str)` values calls the same public helpers directly. `string.concat-all` accepts a borrowed native `Slice String`; long `str-cat` expansions pass a live-prefix Slice over one compiler-private packed buffer. |
-| `local_ipc.connect` | Allocates one private connection state cell in the active arena, including on failure, and nothing per retry; the connection must stay inside that arena. `close!`, the primitive and wait-capable reads and writes, the whole-buffer helpers and every accessor are non-allocating. |
+| `local_ipc.connect` | Allocates one private connection state cell in the active arena, including on failure, and nothing per retry; the connection must stay inside that arena (the checker enforces it for `with-arena`; `arena.destroy-safe!` does not yet invalidate `with`-bound owners, #7944). `close!`, the primitive and wait-capable reads and writes, the whole-buffer helpers and every accessor are non-allocating. |
 | `int->string` | Allocates fresh active-arena `String` storage, writes decimal bytes directly, and returns the zero, positive, negative, and signed edge-case spelling without calling the legacy runtime helper. Project callers should import the stdlib helper instead of relying on an unimported compiler default. |
 | `format.args` | Parses the same literal plan once and returns a structural, borrow-checked Arguments package containing one capture-free renderer plus shared anchors. Supplied and captured expressions are evaluated exactly once; replay does not move caller-owned lvalues, nested Arguments replay directly, and lifetime checking prevents a package from escaping any borrowed source. Construction allocates only aggregate package storage, never the final rendered text. |
 | `format.format` | Parses a deterministic literal plan and binds every selected value/count once. Display uses the shared decimal/radix/fixed/exponent converters and canonical owner hooks. Primitive `?`/`x?`/`X?` reuse those integer, exact-float, exponent-normalization, pointer, and byte-escape cores; quoted text ignores outer options and retained Arguments replay their stored plan. Nominal Debug remains independent from Display and unsupported until its hook layer lands. Each rendered scalar piece and any changed option-layout piece allocate exact active-arena Strings; finite floats additionally use the documented bignum scratch storage before final layout. Materializing the full result allocates its final String. |

@@ -290,6 +290,7 @@ stdlib/tests/concurrency_registry_api.tl|42|-|-|-
 stdlib/tests/concurrency_registry_exhaustion.tl|42|-|-|-
 stdlib/tests/format_api.tl|42|-|-|-
 stdlib/tests/local_ipc_api.tl|42|-|-|-
+stdlib/tests/local_ipc_owner_api.tl|42|-|-|-
 stdlib/tests/format_debug_bytes.tl|42|-|-|-
 stdlib/tests/format_debug_length_overflow.tl|134|-|literal:format: Debug output length overflow|-
 stdlib/tests/format_primitive_debug.tl|42|-|-|-

@@ -6,9 +6,11 @@
   (with
     ([forged
         (local_ipc.LocalIpcConnection
-          (int->ptr
-            (cast 4096 : u64)
-            : (MutPtr local_ipc.LocalIpcConnectionState)))
+          (local_ipc.LocalIpcOwner
+            (int->ptr
+              (cast 4096 : u64)
+              : (MutPtr local_ipc.LocalIpcConnectionState))
+            0))
         local_ipc.cleanup-local-ipc-connection])
     (if (local_ipc.connection-open? (& forged))
       1

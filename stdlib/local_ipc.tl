@@ -19,6 +19,10 @@
 ;# connection inside the arena that was active when it was created. No other
 ;# operation allocates. A connection is cleanup-owning, so bind it with `with`.
 ;#
+;# A connection has one effective owner. Its identity is a private pointer safe
+;# code cannot forge plus the generation the value last claimed; a value built
+;# from a copy of those words goes stale as soon as the other one operates.
+;#
 ;# ```lisp test=run name=local-ipc-endpoints exit=42 stdout=""
 ;# (import stdlib.local_ipc)
 ;#
@@ -332,7 +336,20 @@
   (result LocalIpcStatus)
   (closed LocalIpcStatus))
 
-;: Allocate private state. Safe code cannot forge the pointer it returns.
+;: Words of raw storage one state occupies. The cell is that many words followed
+;: by one generation word.
+(define (state-words) : i64
+  (/ (+ (comptime (size-of (type LocalIpcConnectionState))) 7) 8))
+
+;: The generation word of a state cell.
+(unsafe
+  (define (state-generation-ptr [state : (MutPtr LocalIpcConnectionState)]) : (MutPtr
+      i64)
+    (unsafe
+      (ptr-offset (ptr-cast state : (MutPtr i64)) (state-words)))))
+
+;: Allocate one private cell at generation 0. Safe code cannot forge the
+;: pointer it returns.
 (unsafe
   (define (state-new
     [handle : i64]
@@ -341,11 +358,9 @@
     [result : LocalIpcStatus]) : (MutPtr LocalIpcConnectionState)
     ;; The state holds function values, which have no zero initializer, so the
     ;; cell is raw 8-byte-aligned storage that is written before it is read.
+    ;; `__tl_make-array` zero-fills, which is the initial generation.
     (let
-      [words : (__tl_dyn-array u64)
-        (__tl_make-array
-          u64
-          (/ (+ (comptime (size-of (type LocalIpcConnectionState))) 7) 8))]
+      [words : (__tl_dyn-array u64) (__tl_make-array u64 (+ (state-words) 1))]
       [state : (MutPtr LocalIpcConnectionState)
         (unsafe
           (ptr-cast (__tl_array-data words) : (MutPtr LocalIpcConnectionState)))]
@@ -404,18 +419,69 @@
                       outcome)))
                 outcome))))))))
 
-;: Cleanup-field adapter: lexical cleanup is idempotent and reports nothing.
-(define (state-cleanup [state : (MutPtr LocalIpcConnectionState)]) : unit
-  (begin
-    (unsafe
-      (state-close state))
+;: The identity a connection value holds: the private cell and the generation
+;: this value last claimed it at. TypeLisp has no private fields, so safe code
+;: can copy these two words into a second `LocalIpcConnection`. The generation
+;: makes that harmless: every mutating operation atomically advances the cell's
+;: generation from the value's own, so as soon as one of two such values
+;: operates, closes or is cleaned up, the other is stale. A stale value fails
+;: with `Closed` before dispatch and its cleanup does nothing, which keeps one
+;: effective owner, one in-flight operation and exactly one adapter close.
+(defstruct LocalIpcOwner
+  (state (MutPtr LocalIpcConnectionState))
+  (generation i64))
+
+;: Atomically advance the cell from `generation`. True when this value was the
+;: current owner; it must then record `generation + 1`.
+(unsafe
+  (define (owner-claim
+    [state : (MutPtr LocalIpcConnectionState)]
+    [generation : i64]) : bool
+    (if (ptr-null? state)
+      false
+      (=
+        (unsafe
+          (atomic-cas! (state-generation-ptr state) generation (+ generation 1)))
+        generation))))
+
+;: Cleanup-field adapter: lexical cleanup is idempotent and reports nothing. A
+;: stale owner closes nothing.
+(define (owner-cleanup [owner : LocalIpcOwner]) : unit
+  (if (unsafe
+    (owner-claim owner.state owner.generation))
+    (begin
+      (unsafe
+        (state-close owner.state))
+      unit)
     unit))
 
 ;: Move-only, cleanup-owning client connection. One operation at a time: every
 ;: operation takes `&mut`. It cannot be cloned.
 (defstruct LocalIpcConnection
   (:cleanup cleanup-local-ipc-connection)
-  (state (MutPtr LocalIpcConnectionState) (:cleanup state-cleanup)))
+  (owner LocalIpcOwner (:cleanup owner-cleanup)))
+
+;: Claim the cell for one mutating operation. False for a stale value.
+(define (claim! [connection : (&mut connection LocalIpcConnection)]) : bool
+  (let
+    [generation : i64 connection.owner.generation]
+    (if (unsafe
+      (owner-claim connection.owner.state generation))
+      (begin
+        (set!
+          connection.owner
+          (LocalIpcOwner connection.owner.state (+ generation 1)))
+        true)
+      false)))
+
+;: True when this value still is the cell's current owner.
+(define (current? [connection : (& connection LocalIpcConnection)]) : bool
+  (if (ptr-null? connection.owner.state)
+    false
+    (=
+      (unsafe
+        (ptr-read (state-generation-ptr connection.owner.state)))
+      connection.owner.generation)))
 
 ;: Snapshot private state; a null pointer reads as closed.
 (unsafe
@@ -435,47 +501,52 @@
 ;: Construction outcome: `Ok` for a usable connection, otherwise why `connect`
 ;: failed. It does not change when the connection is closed later.
 (define (connection-result [connection : (& connection LocalIpcConnection)]) : LocalIpcStatus
-  (if (ptr-null? connection.state)
+  (if (not (current? connection))
     (LocalIpcStatus.Err (make-error (LocalIpcErrorKind.Closed) 0))
     (let
       [current : LocalIpcConnectionState
         (unsafe
-          (ptr-read connection.state))]
+          (ptr-read connection.owner.state))]
       current.result)))
 
 ;: True while the connection holds an open handle.
 (define (connection-open? [connection : (& connection LocalIpcConnection)]) : bool
-  (if (ptr-null? connection.state)
+  (if (not (current? connection))
     false
     (let
       [current : LocalIpcConnectionState
         (unsafe
-          (ptr-read connection.state))]
+          (ptr-read connection.owner.state))]
       (>= current.handle 0))))
 
 ;: Peer facts captured at connect time, or all -1 for a failed connection.
 (define (connection-peer [connection : (& connection LocalIpcConnection)]) : LocalIpcPeer
-  (if (ptr-null? connection.state)
+  (if (not (current? connection))
     (peer-unknown)
     (let
       [current : LocalIpcConnectionState
         (unsafe
-          (ptr-read connection.state))]
+          (ptr-read connection.owner.state))]
       current.peer)))
 
 ;: Close explicitly. The handle is poisoned, the adapter's close runs exactly
-;: once and its result is returned. Closing again reports `Closed`.
+;: once and its result is returned. Closing again, or closing through a stale
+;: value, reports `Closed`.
 (define (close! [connection : (&mut connection LocalIpcConnection)]) : LocalIpcStatus
-  (unsafe
-    (state-close connection.state)))
+  (if (claim! connection)
+    (unsafe
+      (state-close connection.owner.state))
+    (LocalIpcStatus.Err (make-error (LocalIpcErrorKind.Closed) 0))))
 
 ;: A failed connection: no handle, `failure` as its construction result.
 (define (failed-connection
   [adapter : LocalIpcAdapter]
   [failure : LocalIpcError]) : LocalIpcConnection
   (LocalIpcConnection
-    (unsafe
-      (state-new -1 adapter (peer-unknown) (LocalIpcStatus.Err failure)))))
+    (LocalIpcOwner
+      (unsafe
+        (state-new -1 adapter (peer-unknown) (LocalIpcStatus.Err failure)))
+      0)))
 
 ;: Why a wait-capable helper must stop before another host attempt, checked in
 ;: the contract's precedence order: cancellation, then an expired or
@@ -617,8 +688,10 @@
                       (make-error (LocalIpcErrorKind.PolicyRejected) 0)))]
                 [else
                   (LocalIpcConnection
-                    (unsafe
-                      (state-new handle adapter peer (LocalIpcStatus.Ok))))])]))))))
+                    (LocalIpcOwner
+                      (unsafe
+                        (state-new handle adapter peer (LocalIpcStatus.Ok)))
+                      0))])]))))))
 
 ;: Result of one primitive read or write. `Done n` has `n >= 1`, except that a
 ;: zero-length view yields `Done 0` without a host call.
@@ -702,7 +775,8 @@
       addr
       length)))
 
-;: One primitive attempt on an address range that is already validated. A
+;: One primitive attempt on an address range that is already validated. The
+;: value must still own the cell: a stale value fails with `Closed` here. A
 ;: primitive makes exactly one attempt, so an operation the adapter leaves
 ;: pending is canceled at once and drained to its terminal completion.
 (define (io-once
@@ -710,12 +784,12 @@
   [writing : bool]
   [addr : i64]
   [length : i64]) : LocalIpcIoResult
-  (if (ptr-null? connection.state)
+  (if (not (claim! connection))
     (LocalIpcIoResult.Failed (make-error (LocalIpcErrorKind.Closed) 0))
     (let
       [current : LocalIpcConnectionState
         (unsafe
-          (ptr-read connection.state))]
+          (ptr-read connection.owner.state))]
       (cond
         [(< current.handle 0)
           (LocalIpcIoResult.Failed (make-error (LocalIpcErrorKind.Closed) 0))]
@@ -852,14 +926,14 @@
   [deadline-ms : i64]
   [cancel-check : (-> bool)]
   [work-budget : i64]) : LocalIpcWaitOutcome
-  (if (ptr-null? connection.state)
+  (if (not (claim! connection))
     (LocalIpcWaitOutcome
       (LocalIpcIoResult.Failed (make-error (LocalIpcErrorKind.Closed) 0))
       work-budget)
     (let
       [current : LocalIpcConnectionState
         (unsafe
-          (ptr-read connection.state))]
+          (ptr-read connection.owner.state))]
       [work-left : i64 work-budget]
       [result : LocalIpcIoResult (LocalIpcIoResult.WouldBlock)]
       [running : bool true]
@@ -1013,7 +1087,10 @@
     [done : i64 0]
     [work-left : i64 work-budget]
     [status : LocalIpcStatus (LocalIpcStatus.Ok)]
-    [running : bool (> length 0)]
+    ;; A zero-length transfer still asks `io-wait` once: it answers `Done 0`
+    ;; without a host call, or `Closed` for a closed or stale connection, so the
+    ;; whole-buffer helpers agree with the primitives.
+    [running : bool true]
     (begin
       (while running
         (let

@@ -34094,6 +34094,17 @@ g:
 (define (compiler-backend-cpuid-operand-asm
   [leaf-home : i64]
   [subleaf-home : i64]) : String
+  (compiler-backend-cpuid-operand-asm-for
+    leaf-home
+    subleaf-home
+    (compiler_ir_types.CompilerIrValue.Var 0)
+    (compiler_ir_types.CompilerIrValue.Var 1)))
+
+(define (compiler-backend-cpuid-operand-asm-for
+  [leaf-home : i64]
+  [subleaf-home : i64]
+  [leaf : compiler_ir_types.CompilerIrValue]
+  [subleaf : compiler_ir_types.CompilerIrValue]) : String
   (let
     [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignments-prepend
@@ -34116,8 +34127,8 @@ g:
     (match (compiler_backend.compiler-backend-emit-cpuid
       assignments
       2
-      (compiler_ir_types.CompilerIrValue.Var 0)
-      (compiler_ir_types.CompilerIrValue.Var 1)
+      leaf
+      subleaf
       1
       "%r14"
       backend-state)
@@ -34144,7 +34155,66 @@ g:
           "    movq %rdx, %rcx\n    movq %rcx, %rax\n"))
       (compiler_backend.compiler-backend-string-contains?
         (owned_view.compiler-owned-shared-view sysv-wrapper)
-        "    movq %rsi, %rcx\n    movq %rdi, %rax\n    movq %rbx, %r14\n    cpuid\n"))))
+        "    movq %rsi, %rcx\n    movq %rdi, %rax\n    movq %rbx, %r14\n    cpuid\n")
+      (compiler-backend-cpuid-operand-boundaries-ok?))))
+
+;; The remaining operand-home shapes of #7927. A leaf in %rcx with the subleaf in
+;; %rax is a true cycle: it must go through a scratch register that is neither
+;; operand register. Operands
+;; already in place emit no move at all. A subleaf homed in %rax has to leave
+;; before the leaf lands there. The shape every `stdlib.cpu` wrapper has on
+;; Win64 -- a literal subleaf with the leaf in %rcx -- must read the leaf before
+;; the literal overwrites it.
+(define (compiler-backend-cpuid-operand-boundaries-ok?) : bool
+  (let
+    [swap : String
+      (compiler-backend-cpuid-operand-asm
+        compiler_abi.compiler-reg-id-rcx
+        compiler_abi.compiler-reg-id-rax)]
+    [in-place : String
+      (compiler-backend-cpuid-operand-asm
+        compiler_abi.compiler-reg-id-rax
+        compiler_abi.compiler-reg-id-rcx)]
+    [subleaf-in-rax : String
+      (compiler-backend-cpuid-operand-asm
+        compiler_abi.compiler-reg-id-rdx
+        compiler_abi.compiler-reg-id-rax)]
+    [literal-subleaf : String
+      (compiler-backend-cpuid-operand-asm-for
+        compiler_abi.compiler-reg-id-rcx
+        compiler_abi.compiler-reg-id-rdx
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.I64 0))]
+    [literal-leaf : String
+      (compiler-backend-cpuid-operand-asm-for
+        compiler_abi.compiler-reg-id-rdx
+        compiler_abi.compiler-reg-id-rax
+        (compiler_ir_types.CompilerIrValue.I64 7)
+        (compiler_ir_types.CompilerIrValue.Var 1))]
+    (and
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view swap)
+        "    movq %rax, %r9\n    movq %rcx, %rax\n    movq %r9, %rcx\n    movq %rbx, %r14\n    cpuid\n")
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view in-place)
+          ", %rcx\n"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view in-place)
+          "    movq %rcx, %rax\n"))
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view in-place)
+        "    movq %rbx, %r14\n    cpuid\n")
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view subleaf-in-rax)
+        "    movq %rax, %rcx\n    movq %rdx, %rax\n    movq %rbx, %r14\n    cpuid\n")
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view literal-subleaf)
+        "    movq %rcx, %rax\n    xorl %ecx, %ecx\n    movq %rbx, %r14\n    cpuid\n")
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view literal-leaf)
+        "    movq %rax, %rcx\n    movl $7, %eax\n    movq %rbx, %r14\n    cpuid\n"))))
 
 (define (compiler-backend-low-level-instr-ok?) : bool
   (and

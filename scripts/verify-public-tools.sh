@@ -3370,6 +3370,10 @@ done
 run_test_backend_mode() {
     # $1 = backend mode; $2 = required ISA token, or "-" to always run;
     # $3 = expected gang width
+    if [ "$IS_STAGE1_WRAPPER" -eq 1 ] && [ "$1" != scalar ]; then
+        echo "[public-tools] not applicable: test --backend-mode $1 needs the selfhost test runner, not the stage1 wrapper"
+        return
+    fi
     if [ "$2" != "-" ] && ! printf '%s\n' "$SIMD_ISAS" | grep -qx "$2"; then
         # An incapable host is refused by name before any harness is built.
         # cli-gate-expand test-backend-mode-{mode}-unsupported-host wrapper run_cmd mode=avx2,avx512

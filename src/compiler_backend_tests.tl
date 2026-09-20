@@ -34086,6 +34086,66 @@ g:
       (compiler-backend-instr-contains? instr "    orq %rdx, %rax\n")
       true)))
 
+;; #7927: the cpuid operand registers are allocator-pooled. A leaf homed in
+;; %rcx -- the first Win64 argument register, so every non-inlined wrapper --
+;; must reach %rax BEFORE the subleaf is moved into %rcx; the old subleaf-first
+;; pair of independent loads ran such a cpuid with the subleaf as its leaf. A
+;; conflict-free pair keeps the subleaf-first order it always had.
+(define (compiler-backend-cpuid-operand-asm
+  [leaf-home : i64]
+  [subleaf-home : i64]) : String
+  (let
+    [assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          0
+          (compiler_regalloc.CompilerRegLocation.Register leaf-home))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            1
+            (compiler_regalloc.CompilerRegLocation.Register subleaf-home))
+          (compiler_regalloc.compiler-reg-assignments-prepend
+            (compiler_regalloc.CompilerRegAssignment
+              2
+              (compiler_regalloc.CompilerRegLocation.Register
+                compiler_abi.compiler-reg-id-r12))
+            (compiler_regalloc.compiler-reg-assignment-table-empty))))]
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (match (compiler_backend.compiler-backend-emit-cpuid
+      assignments
+      2
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      1
+      "%r14"
+      backend-state)
+      [(compiler_backend.ResultCompilerBackend.Ok asm) asm]
+      [(compiler_backend.ResultCompilerBackend.Err _) ""])))
+
+(define (compiler-backend-cpuid-operand-moves-ok?) : bool
+  (let
+    [win64-wrapper : String
+      (compiler-backend-cpuid-operand-asm
+        compiler_abi.compiler-reg-id-rcx
+        compiler_abi.compiler-reg-id-rdx)]
+    [sysv-wrapper : String
+      (compiler-backend-cpuid-operand-asm
+        compiler_abi.compiler-reg-id-rdi
+        compiler_abi.compiler-reg-id-rsi)]
+    (and
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view win64-wrapper)
+        "    movq %rcx, %rax\n    movq %rdx, %rcx\n    movq %rbx, %r14\n    cpuid\n")
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view win64-wrapper)
+          "    movq %rdx, %rcx\n    movq %rcx, %rax\n"))
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view sysv-wrapper)
+        "    movq %rsi, %rcx\n    movq %rdi, %rax\n    movq %rbx, %r14\n    cpuid\n"))))
+
 (define (compiler-backend-low-level-instr-ok?) : bool
   (and
     (compiler_backend.backend-and8
@@ -34122,6 +34182,7 @@ g:
         "    movl %edx, %eax\n")
       (compiler-backend-xgetbv-zero-index-ok?))
     (compiler-backend-cpuid-direct-subleaf-ok?)
+    (compiler-backend-cpuid-operand-moves-ok?)
     (compiler_backend.backend-and8
       ;; A one-operand syscall loads the number into %rax and issues `syscall`.
       (compiler-backend-instr-contains?

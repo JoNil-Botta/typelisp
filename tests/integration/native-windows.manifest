@@ -190,6 +190,7 @@ param_memory_transport_abi|tests/integration/param_memory_transport_abi.tl|42|77
 crossblock_reload_elide|tests/integration/crossblock_reload_elide.tl|42|-|-|stdlib/io.tl
 licm_desc_hoist|tests/integration/licm_desc_hoist.tl|42|-|-|stdlib/io.tl
 licm_memclean_global_promote|tests/integration/licm_memclean_global_promote.tl|42|-|-|stdlib/io.tl
+cpuid_operand_homes|tests/integration/cpuid_operand_homes.tl|42|-|-|stdlib/io.tl
 lftr_counter_retire|tests/integration/lftr_counter_retire.tl|42|-|-|stdlib/io.tl
 licm_alias_stress|tests/integration/licm_alias_stress.tl|42|-|-|stdlib/io.tl
 loadcse_forward|tests/integration/loadcse_forward.tl|42|-|-|stdlib/io.tl

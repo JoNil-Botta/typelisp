@@ -103228,6 +103228,77 @@
                 (compiler_ir_types.CompilerIrValue.Var 3)))))
         (compiler_ir_types.CompilerIrBlockList.Nil)))))
 
+;; Nested loops where only the OUTER loop stores the cell: the two reads sit in
+;; an inner self-loop that never writes g, so they are invariant there and
+;; belong to the loop passes. Admitting the block because *some* loop around it
+;; is a writer would mint a value the inner loop's promotion can then hoist past
+;; its live-in budget -- every loop around the block has to be a writer.
+(define (opt-t22-cell-nested-loop-blocks [symbols : OptT22CellSymbols]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "outer"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "outer")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "inner"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "inner")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              2
+              compiler_ir_types.CompilerIrBinOp.Add
+              (compiler_ir_types.CompilerIrValue.Global symbols.g)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              3
+              compiler_ir_types.CompilerIrBinOp.Add
+              (compiler_ir_types.CompilerIrValue.Global symbols.g)
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              4
+              compiler_ir_types.CompilerIrBinOp.Lt
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ast_types.AstType.Bool))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ir_types.compiler-ir-label "inner")
+              (compiler_ir_types.compiler-ir-label "latch"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "latch")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Store
+                symbols.g
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                5
+                compiler_ir_types.CompilerIrBinOp.Lt
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ast_types.AstType.Bool))
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.compiler-ir-label "outer")
+                (compiler_ir_types.compiler-ir-label "exit"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "exit")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 3)))))
+            (compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
 (define (opt-t22-cell-blocks-run
   [symbols : OptT22CellSymbols]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
@@ -103572,6 +103643,11 @@
         (opt-t22-cell-loop-blocks
           (compiler_optimize.compiler-opt-global-shared-view cells)
           false))]
+    [outer-writer-only : compiler_ir_types.CompilerIrBlockList
+      (opt-t22-cell-blocks-run
+        (compiler_optimize.compiler-opt-global-shared-view cells)
+        (opt-t22-cell-nested-loop-blocks
+          (compiler_optimize.compiler-opt-global-shared-view cells)))]
     (cond
       ;; (b') an element store between two reads is not a price-test kill: one
       ;; materialized `mov @g`, no `Global g` operand left (#7926).
@@ -103620,6 +103696,24 @@
               cells.g)
             0))
         36]
+      ;; A writer loop AROUND a loop that only reads the cell admits nothing in
+      ;; the inner loop: every loop around the block has to store it.
+      [(not
+          (=
+            (opt-t22-count-cell-reads
+              (compiler_optimize.compiler-opt-global-shared-view
+                outer-writer-only)
+              cells.g)
+            2))
+        37]
+      [(not
+          (=
+            (opt-t22-count-cell-movs
+              (compiler_optimize.compiler-opt-global-shared-view
+                outer-writer-only)
+              cells.g)
+            0))
+        38]
       ;; (a) the second element load is CSE'd once the key resolves the copy the
       ;; pass itself made; the inliner's index copy keys alike too.
       [(not (= (opt-t22-canon-loads 1 false) 2)) 1]

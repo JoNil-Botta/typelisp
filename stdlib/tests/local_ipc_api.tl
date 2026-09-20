@@ -3,6 +3,7 @@
 (import stdlib.byte_buf)
 (import stdlib.local_ipc)
 (import stdlib.local_ipc_fake as fake)
+(import stdlib.str_cat)
 (import stdlib.string)
 
 (define (first-failure [current : i64] [ok : bool] [id : i64]) : i64
@@ -201,10 +202,10 @@
 (define (case-endpoints) : i64
   (let
     [failed : i64 0]
-    [long-ok : String (string.concat "/" (repeat-char 106))]
-    [long-bad : String (string.concat "/" (repeat-char 107))]
-    [pipe-long-ok : String (string.concat "\\\\.\\pipe\\" (repeat-char 247))]
-    [pipe-long-bad : String (string.concat "\\\\.\\pipe\\" (repeat-char 248))]
+    [long-ok : String (str_cat.str-cat "/" (repeat-char 106))]
+    [long-bad : String (str_cat.str-cat "/" (repeat-char 107))]
+    [pipe-long-ok : String (str_cat.str-cat "\\\\.\\pipe\\" (repeat-char 247))]
+    [pipe-long-bad : String (str_cat.str-cat "\\\\.\\pipe\\" (repeat-char 248))]
     [with-nul : String (text-with-nul)]
     (begin
       (set!

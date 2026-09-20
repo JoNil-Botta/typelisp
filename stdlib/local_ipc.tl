@@ -435,8 +435,7 @@
 ;: Construction outcome: `Ok` for a usable connection, otherwise why `connect`
 ;: failed. It does not change when the connection is closed later.
 (define (connection-result [connection : (& connection LocalIpcConnection)]) : LocalIpcStatus
-  (if (unsafe
-    (ptr-null? connection.state))
+  (if (ptr-null? connection.state)
     (LocalIpcStatus.Err (make-error (LocalIpcErrorKind.Closed) 0))
     (let
       [current : LocalIpcConnectionState
@@ -446,8 +445,7 @@
 
 ;: True while the connection holds an open handle.
 (define (connection-open? [connection : (& connection LocalIpcConnection)]) : bool
-  (if (unsafe
-    (ptr-null? connection.state))
+  (if (ptr-null? connection.state)
     false
     (let
       [current : LocalIpcConnectionState
@@ -457,8 +455,7 @@
 
 ;: Peer facts captured at connect time, or all -1 for a failed connection.
 (define (connection-peer [connection : (& connection LocalIpcConnection)]) : LocalIpcPeer
-  (if (unsafe
-    (ptr-null? connection.state))
+  (if (ptr-null? connection.state)
     (peer-unknown)
     (let
       [current : LocalIpcConnectionState
@@ -713,8 +710,7 @@
   [writing : bool]
   [addr : i64]
   [length : i64]) : LocalIpcIoResult
-  (if (unsafe
-    (ptr-null? connection.state))
+  (if (ptr-null? connection.state)
     (LocalIpcIoResult.Failed (make-error (LocalIpcErrorKind.Closed) 0))
     (let
       [current : LocalIpcConnectionState
@@ -856,8 +852,7 @@
   [deadline-ms : i64]
   [cancel-check : (-> bool)]
   [work-budget : i64]) : LocalIpcWaitOutcome
-  (if (unsafe
-    (ptr-null? connection.state))
+  (if (ptr-null? connection.state)
     (LocalIpcWaitOutcome
       (LocalIpcIoResult.Failed (make-error (LocalIpcErrorKind.Closed) 0))
       work-budget)

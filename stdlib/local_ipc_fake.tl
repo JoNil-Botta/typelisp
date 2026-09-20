@@ -252,7 +252,7 @@
 (define (fake-connect-attempt
   [context : i64]
   [family : i64]
-  [name-addr : i64]
+  [_name-addr : i64]
   [name-len : i64]) : local_ipc.LocalIpcConnectStep
   (let
     [code : i64 (next! context queue-connect 0)]
@@ -275,7 +275,7 @@
             (local_ipc.make-error (kind-from-code (- code 100)) 111))]))))
 
 ;: Adapter `peer`.
-(define (fake-peer [context : i64] [handle : i64]) : local_ipc.LocalIpcPeerStep
+(define (fake-peer [context : i64] [_handle : i64]) : local_ipc.LocalIpcPeerStep
   (begin
     (note-call! context)
     (bump! context slot-peer-calls)
@@ -327,7 +327,7 @@
 ;: Adapter `read-once`: progress fills the range with 1, 2, 3, ...
 (define (fake-read-once
   [context : i64]
-  [handle : i64]
+  [_handle : i64]
   [addr : i64]
   [length : i64]) : local_ipc.LocalIpcIoStep
   (let
@@ -356,7 +356,7 @@
 ;: Adapter `write-once`: progress adds the accepted bytes to the written sum.
 (define (fake-write-once
   [context : i64]
-  [handle : i64]
+  [_handle : i64]
   [addr : i64]
   [length : i64]) : local_ipc.LocalIpcIoStep
   (let
@@ -391,7 +391,7 @@
 ;: Adapter `poll-pending`: spends the slice, then answers from the pending
 ;: queue. The request length is unknown here, so scripted progress is returned
 ;: as written and the contract checks it against the original request.
-(define (fake-poll-pending [context : i64] [handle : i64] [slice-ms : i64]) : local_ipc.LocalIpcIoStep
+(define (fake-poll-pending [context : i64] [_handle : i64] [slice-ms : i64]) : local_ipc.LocalIpcIoStep
   (let
     [_count : unit (bump! context slot-poll-calls)]
     [_slice : unit (spend-slice! context slice-ms)]
@@ -405,14 +405,14 @@
       step)))
 
 ;: Adapter `cancel-pending`.
-(define (fake-cancel-pending [context : i64] [handle : i64]) : unit
+(define (fake-cancel-pending [context : i64] [_handle : i64]) : unit
   (bump! context slot-cancel-pending-calls))
 
 ;: Adapter `wait-ready`.
 (define (fake-wait-ready
   [context : i64]
-  [handle : i64]
-  [interest : i64]
+  [_handle : i64]
+  [_interest : i64]
   [slice-ms : i64]) : local_ipc.LocalIpcWaitStep
   (let
     [code : i64 (next! context queue-wait 0)]

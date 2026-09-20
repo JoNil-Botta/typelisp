@@ -54072,6 +54072,25 @@
     [(= reg-index 3) "    movl %edx, %eax\n"]
     [else "    xorq %rax, %rax\n"]))
 
+(define (compiler-backend-cpuid-operand-moves
+  [leaf : compiler_ir_types.CompilerIrValue]
+  [subleaf : compiler_ir_types.CompilerIrValue]) : CompilerBackendArgMoveSeq
+  (let
+    [out : CompilerBackendArgMoveSeq
+      (compiler-backend-arg-move-seq-with-capacity 2)]
+    (begin
+      (compiler-backend-arg-move-push!
+        (&mut out)
+        (BackendArgMove
+          compiler_abi.compiler-reg-id-rcx
+          (BackendArgMoveValue subleaf)))
+      (compiler-backend-arg-move-push!
+        (&mut out)
+        (BackendArgMove
+          compiler_abi.compiler-reg-id-rax
+          (BackendArgMoveValue leaf)))
+      out)))
+
 (define (compiler-backend-emit-cpuid
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
@@ -54080,55 +54099,52 @@
   [reg-index : i64]
   [planned-save : String]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-value-with-plan
+  ;; The two operand registers are allocator-pooled, so the leaf can be homed in
+  ;; %rcx (every non-inlined Win64 wrapper: it is the first argument register)
+  ;; or the subleaf in %rax. Two independent loads would overwrite one of them
+  ;; before it is read -- `movq %rdx, %rcx; movq %rcx, %rax` ran every such
+  ;; cpuid with the subleaf as its leaf (#7927). The call path's parallel-move
+  ;; solver orders the moves and breaks a true cycle through a temp; the
+  ;; subleaf-first list keeps every conflict-free site byte-identical.
+  (match (compiler-backend-emit-arg-move-list
     (compiler-backend-global-shared-view assignments)
-    subleaf
-    "%rcx"
+    (compiler-backend-cpuid-operand-moves leaf subleaf)
     backend-state)
-    [(ResultCompilerBackend.Ok subleaf-asm)
-      (match (compiler-backend-emit-load-value-with-plan
-        (compiler-backend-global-shared-view assignments)
-        leaf
-        "%rax"
-        backend-state)
-        [(ResultCompilerBackend.Ok leaf-asm)
+    [(ResultCompilerBackend.Ok operand-asm)
+      (let
+        [ex : (__tl_dyn-array String) (__tl_make-array String 3)]
+        (begin
+          (set! (array-ref ex 0) "%rcx")
+          (set! (array-ref ex 1) "%rdx")
+          (set! (array-ref ex 2) "%rbx")
           (let
-            [ex : (__tl_dyn-array String) (__tl_make-array String 3)]
-            (begin
-              (set! (array-ref ex 0) "%rcx")
-              (set! (array-ref ex 1) "%rdx")
-              (set! (array-ref ex 2) "%rbx")
-              (let
-                ;; cpuid clobbers rax/rbx/rcx/rdx; preserve the caller's %rbx in a
-                ;; scavenged free reg instead of pushq/popq (the no-stack-staging
-                ;; goal). rax/rsi/rdi aren't scavenge candidates, so excluding
-                ;; rcx/rdx/rbx leaves the temp in {r8-r15}, none of which cpuid
-                ;; touches. Falls back to %r8 / the emergency wrap if none free.
-                [scav : String
-                  (compiler-backend-planned-or-scavenge-reg-here
-                    planned-save
-                    ex
-                    3
-                    "%r8"
-                    backend-state)]
-                (ResultCompilerBackend.Ok
-                  (str_cat.str-cat
-                    subleaf-asm
-                    leaf-asm
-                    (str_cat.str-cat
-                      "    movq %rbx, "
-                      (compiler-backend-global-shared-view scav)
-                      "\n    cpuid\n")
-                    (compiler-backend-cpuid-result-move reg-index)
-                    (str_cat.str-cat "    movq " scav ", %rbx\n")
-                    (compiler-backend-emit-store-typed-var-with-plan
-                      assignments
-                      dst
-                      "%rax"
-                      (compiler_ast_types.AstType.I64)
-                      backend-state))))))]
-        [(ResultCompilerBackend.Err message)
-          (ResultCompilerBackend.Err message)])]
+            ;; cpuid clobbers rax/rbx/rcx/rdx; preserve the caller's %rbx in a
+            ;; scavenged free reg instead of pushq/popq (the no-stack-staging
+            ;; goal). rax/rsi/rdi aren't scavenge candidates, so excluding
+            ;; rcx/rdx/rbx leaves the temp in {r8-r15}, none of which cpuid
+            ;; touches. Falls back to %r8 / the emergency wrap if none free.
+            [scav : String
+              (compiler-backend-planned-or-scavenge-reg-here
+                planned-save
+                ex
+                3
+                "%r8"
+                backend-state)]
+            (ResultCompilerBackend.Ok
+              (str_cat.str-cat
+                operand-asm
+                (str_cat.str-cat
+                  "    movq %rbx, "
+                  (compiler-backend-global-shared-view scav)
+                  "\n    cpuid\n")
+                (compiler-backend-cpuid-result-move reg-index)
+                (str_cat.str-cat "    movq " scav ", %rbx\n")
+                (compiler-backend-emit-store-typed-var-with-plan
+                  assignments
+                  dst
+                  "%rax"
+                  (compiler_ast_types.AstType.I64)
+                  backend-state))))))]
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-xgetbv

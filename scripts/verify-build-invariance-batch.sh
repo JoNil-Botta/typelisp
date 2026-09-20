@@ -109,4 +109,178 @@ printf 'other|other.tl|2\n' > "$CORPUS"
 reject build_invariance_require_coverage "$CORPUS" "$BATCHES"
 printf 'first|input.tl|1\nfirst|other.tl|2\n' > "$CORPUS"
 reject build_invariance_require_coverage "$CORPUS" "$BATCHES"
-echo 'build-invariance batch reuse checks passed'
+
+# Worker pool: jobs start in queue order, only inside the memory budget, exactly
+# once; a drained pool passes only with one successful result per queued job.
+POOL="$WORKDIR/pool"
+QUEUE="$WORKDIR/queue"
+printf 'full-a|8192\nfull-b|8192\nsmall-a|4096\nsmall-b|4096\n' > "$QUEUE"
+build_invariance_pool_init "$POOL" 12288 "$QUEUE"
+test "$(build_invariance_pool_claim "$POOL")" = 'full-a|8192'
+# The second 8 GiB job does not fit beside the first; the next fitting job runs.
+test "$(build_invariance_pool_claim "$POOL")" = 'small-a|4096'
+pool_status=0
+build_invariance_pool_claim "$POOL" > "$WORKDIR/stdout" || pool_status=$?
+test "$pool_status" -eq 3
+test ! -s "$WORKDIR/stdout"
+reject build_invariance_pool_require_complete "$POOL"
+build_invariance_pool_finish "$POOL" small-a 0
+test "$(build_invariance_pool_claim "$POOL")" = 'small-b|4096'
+build_invariance_pool_finish "$POOL" full-a 0
+test "$(build_invariance_pool_claim "$POOL")" = 'full-b|8192'
+pool_status=0
+build_invariance_pool_claim "$POOL" > "$WORKDIR/stdout" || pool_status=$?
+test "$pool_status" -eq 1
+reject build_invariance_pool_require_complete "$POOL"
+build_invariance_pool_finish "$POOL" small-b 0
+build_invariance_pool_finish "$POOL" full-b 0
+build_invariance_pool_require_complete "$POOL"
+# A job reports once, and only after it was started.
+reject build_invariance_pool_finish "$POOL" full-b 0
+reject build_invariance_pool_finish "$POOL" never-started 0
+build_invariance_pool_require_complete "$POOL"
+
+# Failed, missing, foreign and unfinished results and an abort all fail closed.
+printf '1\n' > "$POOL/results/full-b"
+reject build_invariance_pool_require_complete "$POOL"
+rm "$POOL/results/full-b"
+reject build_invariance_pool_require_complete "$POOL"
+cp "$POOL/results/full-a" "$POOL/results/full-b"
+build_invariance_pool_require_complete "$POOL"
+cp "$POOL/results/full-a" "$POOL/results/foreign"
+reject build_invariance_pool_require_complete "$POOL"
+rm "$POOL/results/foreign"
+mkdir "$POOL/claims/foreign"
+reject build_invariance_pool_require_complete "$POOL"
+rmdir "$POOL/claims/foreign"
+printf '4096\n' > "$POOL/running/small-a"
+reject build_invariance_pool_require_complete "$POOL"
+rm "$POOL/running/small-a"
+: > "$POOL/abort"
+reject build_invariance_pool_require_complete "$POOL"
+reject build_invariance_pool_claim "$POOL"
+rm "$POOL/abort"
+build_invariance_pool_require_complete "$POOL"
+# A lock that is never released is reported instead of waited on forever.
+mkdir "$POOL/lock"
+reject build_invariance_pool_require_complete "$POOL"
+BUILD_INVARIANCE_POOL_LOCK_TRIES=2
+reject build_invariance_pool_claim "$POOL"
+reject build_invariance_pool_finish "$POOL" full-a 0
+BUILD_INVARIANCE_POOL_LOCK_TRIES=600
+rmdir "$POOL/lock"
+
+# Malformed, duplicate, empty and over-budget queues never start a pool.
+for bad_queue in 'job' 'job|' 'job|0' 'job|08' 'job|4096|extra' '../job|4096' \
+    'job|16384' 'job|4096
+job|4096'; do
+    printf '%s\n' "$bad_queue" > "$QUEUE"
+    reject build_invariance_pool_init "$POOL.bad" 12288 "$QUEUE"
+    test ! -e "$POOL.bad"
+done
+: > "$QUEUE"
+reject build_invariance_pool_init "$POOL.bad" 12288 "$QUEUE"
+# A final record without its newline would be validated but never run or counted.
+printf 'first|4096\nlast|4096' > "$QUEUE"
+reject build_invariance_pool_init "$POOL.bad" 12288 "$QUEUE"
+test ! -e "$POOL.bad"
+printf 'job|4096\n' > "$QUEUE"
+reject build_invariance_pool_init "$POOL.bad" 0 "$QUEUE"
+reject build_invariance_pool_init "$POOL.bad" '' "$QUEUE"
+
+# Concurrent workers: every job runs once and the running caps never exceed the
+# budget, which each job observes from inside the pool.
+write_pool_queue() {
+    i=0
+    : > "$QUEUE"
+    while [ "$i" -lt "$1" ]; do
+        case $((i % 3)) in
+            0) printf 'job%s|8192\n' "$i" >> "$QUEUE" ;;
+            *) printf 'job%s|4096\n' "$i" >> "$QUEUE" ;;
+        esac
+        i=$((i + 1))
+    done
+}
+count_entries() {
+    find "$1" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' '
+}
+POOL_FAIL_JOB=
+POOL_KILL_JOB=
+build_invariance_pool_run_job() {
+    build_invariance_pool_lock "$POOL"
+    pool_used=0
+    for pool_running in "$POOL/running"/*; do
+        pool_used=$((pool_used + $(cat "$pool_running")))
+    done
+    build_invariance_pool_unlock "$POOL"
+    [ "$pool_used" -ge "$2" ] && [ "$pool_used" -le 12288 ]
+    mkdir "$WORKDIR/ran/$1"
+    sleep 0.05
+    if [ "$1" = "$POOL_FAIL_JOB" ]; then
+        echo "job $1 fails" >&2
+        exit 7
+    fi
+    if [ "$1" = "$POOL_KILL_JOB" ]; then
+        # The parent publishes the only worker's process id after starting it.
+        until [ -s "$WORKDIR/worker.pid" ]; do
+            sleep 0.05
+        done
+        kill -KILL "$(cat "$WORKDIR/worker.pid")"
+        sleep 5
+    fi
+}
+write_pool_queue 24
+build_invariance_pool_init "$POOL" 12288 "$QUEUE"
+mkdir "$WORKDIR/ran"
+build_invariance_pool_start "$POOL" 3
+build_invariance_pool_wait_for "$POOL" job0 job23
+build_invariance_pool_join "$POOL"
+test "$(count_entries "$WORKDIR/ran")" -eq 24
+
+# A failing job aborts the pool: its status is kept, waiters and the join fail,
+# and the jobs queued behind it never start.
+rm -rf "$WORKDIR/ran"
+mkdir "$WORKDIR/ran"
+build_invariance_pool_init "$POOL" 12288 "$QUEUE"
+POOL_FAIL_JOB=job4
+build_invariance_pool_start "$POOL" 2 2>> "$WORKDIR/workers.log"
+reject build_invariance_pool_wait_for "$POOL" job23
+reject build_invariance_pool_join "$POOL"
+POOL_FAIL_JOB=
+test "$(cat "$POOL/results/job4")" -eq 7
+grep -q 'job job4 fails' "$WORKDIR/workers.log"
+test -e "$POOL/abort"
+test ! -e "$WORKDIR/ran/job23"
+test "$(count_entries "$WORKDIR/ran")" -lt 24
+reject build_invariance_pool_require_complete "$POOL"
+
+# A worker that dies without reporting cannot leave the gate waiting or green.
+rm -rf "$WORKDIR/ran"
+mkdir "$WORKDIR/ran"
+build_invariance_pool_init "$POOL" 12288 "$QUEUE"
+POOL_KILL_JOB=job2
+build_invariance_pool_start "$POOL" 1 2>> "$WORKDIR/workers.log"
+printf '%s\n' $BUILD_INVARIANCE_POOL_PIDS > "$WORKDIR/worker.pid.tmp"
+mv "$WORKDIR/worker.pid.tmp" "$WORKDIR/worker.pid"
+reject build_invariance_pool_wait_for "$POOL" job23
+grep -q 'every pool worker exited without a result for job23' "$WORKDIR/stderr"
+reject build_invariance_pool_join "$POOL"
+POOL_KILL_JOB=
+test -f "$POOL/running/job2"
+test ! -e "$POOL/results/job2"
+reject build_invariance_pool_require_complete "$POOL"
+
+# The caller's own failure stops the pool: running jobs finish, none starts.
+rm -rf "$WORKDIR/ran"
+mkdir "$WORKDIR/ran"
+build_invariance_pool_init "$POOL" 12288 "$QUEUE"
+build_invariance_pool_start "$POOL" 2 2>> "$WORKDIR/workers.log"
+build_invariance_pool_stop "$POOL"
+test "$(count_entries "$POOL/running")" -eq 0
+pool_started_jobs=$(count_entries "$WORKDIR/ran")
+test "$pool_started_jobs" -lt 24
+test "$(count_entries "$POOL/results")" -eq "$pool_started_jobs"
+sleep 0.2
+test "$(count_entries "$WORKDIR/ran")" -eq "$pool_started_jobs"
+reject build_invariance_pool_require_complete "$POOL"
+echo 'build-invariance batch reuse and worker pool checks passed'
